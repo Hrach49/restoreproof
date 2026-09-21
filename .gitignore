@@ -1,0 +1,25 @@
+# Build output
+build/
+out/
+vcpkg_installed/
+CMakeUserPresets.json
+.vs/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.coverage
+coverage.xml
+
+# Office lock files
+.~lock.*#
+~$*
+
+# Secrets: never commit these
+.env
+.env.*
+*.pfx
+*.key
+vault.bin

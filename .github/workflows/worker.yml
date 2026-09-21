@@ -1,0 +1,62 @@
+name: worker
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: worker-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build-test:
+    name: Worker build and test
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: worker
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up MSVC developer environment
+        uses: ilammy/msvc-dev-cmd@v1
+
+      # vcpkg is pinned to the builtin-baseline in worker/vcpkg.json so the
+      # tool and the port versions always match. Must run after the MSVC step:
+      # vcvars sets VCPKG_ROOT to Visual Studio's bundled vcpkg.
+      - name: Resolve vcpkg paths and commit
+        run: |
+          $baseline = (Get-Content vcpkg.json -Raw | ConvertFrom-Json).'builtin-baseline'
+          "VCPKG_COMMIT=$baseline" >> $env:GITHUB_ENV
+          "VCPKG_ROOT=$env:RUNNER_TEMP\vcpkg" >> $env:GITHUB_ENV
+          "VCPKG_DEFAULT_BINARY_CACHE=$env:RUNNER_TEMP\vcpkg-cache" >> $env:GITHUB_ENV
+          New-Item -ItemType Directory -Force "$env:RUNNER_TEMP\vcpkg-cache" | Out-Null
+
+      - name: Cache vcpkg binaries
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('worker/vcpkg.json') }}
+          restore-keys: vcpkg-${{ runner.os }}-
+
+      - name: Install vcpkg
+        run: |
+          git init $env:VCPKG_ROOT
+          git -C $env:VCPKG_ROOT fetch --depth 1 https://github.com/microsoft/vcpkg.git $env:VCPKG_COMMIT
+          git -C $env:VCPKG_ROOT checkout FETCH_HEAD
+          & "$env:VCPKG_ROOT\bootstrap-vcpkg.bat" -disableMetrics
+
+      - name: Configure
+        run: cmake --preset ci
+
+      - name: Build
+        run: cmake --build --preset ci
+
+      - name: Test
+        run: ctest --preset ci

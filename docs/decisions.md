@@ -7,18 +7,25 @@ Format: date, decision, reason, alternatives rejected.
 
 ---
 
-## 2026-09-22 — The Veeam host is a separate machine, not a Hyper-V VM on the dev laptop
+## 2026-09-22 — The Veeam lab VM runs on the dev laptop, with reduced resources
 
-**Decision.** Veeam Backup for Microsoft 365 runs on a machine of its own (a spare PC or a
-cloud VM). The exact host is chosen before L1.3 and recorded here in a follow-up entry.
+**Decision.** Veeam Backup for Microsoft 365 runs in a local Hyper-V VM on the dev laptop, as
+the plan says, but sized **2 vCPU and 6 GB RAM** with a dynamically expanding disk instead of
+the plan's 4 vCPU, 8 GB and 100 GB. The VM and a C++ build do not run at the same time. If
+W1.0 or the Sprint 3 end-to-end runs prove it too slow, the host moves to a spare PC or a
+cloud VM, recorded here in a follow-up entry.
 
-**Reason.** The plan's VM (4 vCPU, 8 GB RAM, 100 GB disk) does not fit the dev laptop: 2
-cores / 4 threads and 16 GB RAM, shared with Visual Studio and Docker. See
+**Reason.** The laptop has 2 cores / 4 threads and 16 GB RAM shared with Visual Studio and
+Docker, so the plan's sizing would leave nothing for the host. Reduced sizing is enough for a
+4-user test tenant, costs nothing, has no cloud credit clock, and keeps the Worker and Veeam
+on one internal network with no firewall rules to open. Disk is no longer a constraint: C:
+has 78 GB free and a dynamic VHDX only claims what it uses (realistically 35-50 GB). See
 [environment.md](environment.md).
 
-**Alternatives rejected.** Hyper-V VM on the laptop — too slow and too large. Veeam
-installed directly on the laptop — mixes the product under test with the dev toolchain, and
-does not resemble an MSP's server.
+**Alternatives rejected.** Cloud VM (AWS or Azure) — about $15-30 a month once the sign-up
+credits run out, plus firewall rules for the REST API; kept as the fallback. Spare PC — none
+free today; also a fallback. Veeam installed directly on the laptop — mixes the product under
+test with the dev toolchain and does not resemble an MSP's server.
 
 ---
 

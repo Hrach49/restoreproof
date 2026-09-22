@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Status
 
-Early Stage 1. The plan is `RestoreProof Stage 1 — Sprint Task Guide.docx`, which breaks a 16-week plan into tasks with IDs (e.g. `L0.1`, `W2.7`, `C5.7`). The CI skeleton (L0.1) exists: `worker/` builds a Catch2 smoke test, `cloud/` runs a pytest smoke test. Much of what follows describes the **planned** design from the guide; where code exists, trust the code over this file, and update this file.
+Early Stage 1. The plan is `RestoreProof Stage 1 — Sprint Task Guide.docx`, which breaks a 16-week plan into tasks with IDs (e.g. `L0.1`, `W2.7`, `C5.7`). L0.1–L0.5 are done: CI builds and tests `worker/` (`rpcore` with `include/rp/` and `src/`, Catch2 tests) and `cloud/` (pytest), with coverage gates and the "No test, no merge" PR guard (see `docs/testing.md`). Much of what follows describes the **planned** design from the guide; where code exists, trust the code over this file, and update this file.
 
 Task ID prefixes: `L` lab/env (`lab/`, `docs/`), `W` Worker C++ (`worker/`), `C` Cloud Python (`cloud/`), `Q` quality (`tests/`, `docs/`), `S` sales (`sales/`), `P` pilots (`docs/pilots/`). Each task is one GitHub issue; its "Done when" line is the acceptance criterion.
 
@@ -22,12 +22,15 @@ cmake --preset dev && cmake --build --preset dev && ctest --preset dev
 ctest --preset dev -R <test-name-regex>        # single test
 RP_LIVE=1 ctest --preset dev                   # also run live tests against the Veeam VM / test tenant
 ```
-Presets use Ninja + `cl`, so run CMake from a VS 2022 Developer PowerShell (or `Enter-VsDevShell`). The dev shell overwrites `VCPKG_ROOT` with VS's bundled vcpkg; set it back to the real clone (e.g. `C:\vcpkg`) after entering the shell. vcpkg is pinned by `builtin-baseline` in `worker/vcpkg.json`; CI checks out vcpkg at exactly that commit, so bump the baseline to upgrade ports. CI (`.github/workflows/worker.yml`) runs `cmake --preset ci` on windows-latest; OpenCppCoverage arrives in L0.5.
+Presets use Ninja + `cl`, so run CMake from a VS 2022 Developer PowerShell (or `Enter-VsDevShell`). The dev shell overwrites `VCPKG_ROOT` with VS's bundled vcpkg; set it back to the real clone (e.g. `C:\vcpkg`) after entering the shell. vcpkg is pinned by `builtin-baseline` in `worker/vcpkg.json`; CI checks out vcpkg at exactly that commit, so bump the baseline to upgrade ports. CI (`.github/workflows/worker.yml`) runs `cmake --preset ci` on windows-latest, then the `coverage` preset (Debug + PDBs) under OpenCppCoverage and `python tools/coverage_gate.py build/coverage/coverage.xml --min-line 80`. Local commands are in `docs/testing.md`.
 
 Cloud (`cloud/`, uv, Python 3.12):
 ```
-uv run pytest                                  # CI runs `uv run --locked pytest`; commit uv.lock with dependency changes
+uv run pytest                                  # commit uv.lock with dependency changes
 uv run pytest tests/test_x.py::test_name       # single test
+uv run --locked pytest --cov=app --cov-branch --cov-report=term-missing --cov-report=json:coverage.json --cov-fail-under=80   # CI gate
+uv run --locked python tools/check_coverage.py coverage.json                                                                 # CI: 100% on guarded paths
+uv run mutmut run                              # once per sprint, WSL/Linux only (see docs/testing.md)
 docker compose up                              # postgres:16, minio, api, scheduler
 uv run python manage.py <command>              # Typer admin CLI: create-msp, create-client, create-worker-token, ...
 ```
@@ -51,8 +54,8 @@ Milestone demo commands: `rpworker veeam list` (S1), `rpworker restore` (S2), `r
 - Anything talking to Veeam, Graph, the TSA or the Cloud is written against recorded fixtures first (`worker/tests/fixtures/<service>/`, recorded with `--record`, secrets scrubbed, served by `FakeHttpClient`). Live calls are gated behind `RP_LIVE=1`.
 - Write failure-path tests before happy paths (missing item, hash mismatch, tampered signature, wrong target, unreachable service).
 - Use parameterised tables (Catch2 `GENERATE`, `pytest.mark.parametrize`) for decision tables.
-- Coverage floors: 80% line on `rpcore` and `cloud/app`; 100% branch on vault, signer, target_guard, `app/auth`, `app/results.py`, `app/repo`.
-- A PR changing `worker/src/` or `cloud/app/` without changes under a tests directory fails CI ("No test, no merge").
+- Coverage floors: 80% line on `rpcore` and `cloud/app` (cloud gate is on the combined line+branch figure); 100% branch on vault, signer, target_guard, `app/auth`, `app/results.py`, `app/repo`. OpenCppCoverage has no branch data, so the Worker per-file floor is currently enforced as 100% line (`docs/decisions.md`). Any Worker file whose path has a part named or prefixed `vault`, `signer` or `target_guard` (e.g. `src/signer/ed25519.cpp`, `src/vault_dpapi.cpp`) is strict. Every `.cpp` under `worker/src/` and `worker/include/` must show up in the coverage report, so a file no test links in fails; `rpworker`'s `main()` goes outside `src/`.
+- A PR changing `worker/src/` or `worker/include/` without adding or changing C++ test code under `worker/tests/`, or changing `cloud/app/` without adding or changing a `.py` under `cloud/tests/`, fails CI ("No test, no merge"). Deleted tests, fixtures and `tests/e2e/` don't count.
 - Every bug gets a reproducing test before its fix.
 - End-to-end scenarios are tracked manually in `tests/e2e/scenarios.md`.
 

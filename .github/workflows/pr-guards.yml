@@ -1,0 +1,59 @@
+name: pr-guards
+
+on:
+  pull_request:
+    # `edited` covers a change of base branch, which changes the diff without
+    # a new commit. It also fires on title/body edits; the guard is cheap, and
+    # skipping those runs with an `if:` would post a skipped check that counts
+    # as passing and could hide an earlier failure.
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-guards-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Make "No test, no merge" a required status check on main.
+  tests-touched:
+    name: No test, no merge
+    runs-on: ubuntu-latest
+    steps:
+      # Full history so both the base and head commits and their merge base
+      # are present locally.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # The diff comes from git, not the GitHub API: the "list pull request
+      # files" API stops at 3000 files and needs pagination, while git is exact
+      # and needs no token scope. Three dots diff the head against the merge
+      # base, which is the set of changes the PR view on GitHub shows.
+      # --name-status gives each path's status, so a deleted test doesn't count
+      # as a test change. --no-renames lists a move as a delete plus an add, so
+      # moving a file out of worker/src/ or cloud/app/ still counts as a source
+      # change. -z avoids git quoting unusual file names.
+      # shell: bash turns on pipefail, so a failed git diff fails the job
+      # instead of passing an empty list to the script.
+      - name: Check that source changes come with test changes
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          git diff --name-status --no-renames -z "$BASE_SHA...$HEAD_SHA" \
+            | python3 .github/scripts/tests_touched.py
+
+  guard-tests:
+    name: PR guard tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Test
+        run: uvx --python 3.12 pytest .github/scripts

@@ -13,9 +13,16 @@ concurrency:
   group: worker-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+env:
+  # Pinned OpenCppCoverage release installer (verified by SHA-256 before use).
+  OPENCPPCOVERAGE_VERSION: 0.9.9.0
+  OPENCPPCOVERAGE_SHA256: 2295A733DA39412C61E4F478677519DD0BB1893D88313CE56B468C9E50517888
+  # Line-coverage floor for rpcore (CLAUDE.md "Coverage floors").
+  RP_MIN_LINE_COVERAGE: 80
+
 jobs:
   build-test:
-    name: Worker build and test
+    name: Worker build, test and coverage
     runs-on: windows-latest
     defaults:
       run:
@@ -52,11 +59,70 @@ jobs:
           git -C $env:VCPKG_ROOT checkout FETCH_HEAD
           & "$env:VCPKG_ROOT\bootstrap-vcpkg.bat" -disableMetrics
 
-      - name: Configure
+      # Two builds in one job:
+      #  - `ci` (Release) is what ships; tests run optimised to catch
+      #    optimisation-only bugs. It stays cheap: vcpkg's x64-windows triplet
+      #    builds Debug and Release libs anyway, so both presets share the same
+      #    cached dependencies, and rpcore is small.
+      #  - `coverage` (Debug, /Zi PDBs, no optimisation) is what OpenCppCoverage
+      #    needs for accurate line data.
+      # One job avoids paying the vcpkg/MSVC setup twice.
+      - name: Configure (Release)
         run: cmake --preset ci
 
-      - name: Build
+      - name: Build (Release)
         run: cmake --build --preset ci
 
-      - name: Test
+      - name: Test (Release)
         run: ctest --preset ci
+
+      - name: Coverage gate self-tests
+        run: python -m unittest discover -s tools -p "test_*.py" -v
+
+      - name: Install OpenCppCoverage
+        run: |
+          $url = "https://github.com/OpenCppCoverage/OpenCppCoverage/releases/download/release-$env:OPENCPPCOVERAGE_VERSION/OpenCppCoverageSetup-x64-$env:OPENCPPCOVERAGE_VERSION.exe"
+          $installer = "$env:RUNNER_TEMP\OpenCppCoverageSetup.exe"
+          Invoke-WebRequest -UseBasicParsing $url -OutFile $installer
+          $hash = (Get-FileHash $installer -Algorithm SHA256).Hash
+          if ($hash -ne $env:OPENCPPCOVERAGE_SHA256) { throw "OpenCppCoverage installer hash mismatch: $hash" }
+          Start-Process $installer -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-' -Wait
+          $dir = "$env:ProgramFiles\OpenCppCoverage"
+          if (-not (Test-Path "$dir\OpenCppCoverage.exe")) { throw "OpenCppCoverage not installed in $dir" }
+          $dir >> $env:GITHUB_PATH
+
+      - name: Configure (coverage)
+        run: cmake --preset coverage
+
+      - name: Build (coverage)
+        run: cmake --build --preset coverage
+
+      # --cover_children follows ctest into each rptests.exe process.
+      # --sources limits the report to rpcore (src/ and include/), so tests,
+      # Catch2 and the STL don't count. OpenCppCoverage returns the exit code
+      # of ctest, so a failing test fails this step.
+      - name: Test under OpenCppCoverage
+        run: |
+          OpenCppCoverage --quiet --cover_children `
+            --sources "$PWD\src" --sources "$PWD\include" `
+            --export_type "cobertura:$PWD\build\coverage\coverage.xml" `
+            -- ctest --preset coverage
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      # Fails below RP_MIN_LINE_COVERAGE on rpcore, below 100% line coverage
+      # on vault/signer/target_guard once those files exist, and on any .cpp
+      # under src/ or include/ that is missing from the report (--root lists
+      # them from disk: an rpcore file no test uses never reaches rptests.exe).
+      # OpenCppCoverage has no branch data, so the required 100% *branch*
+      # coverage on those files is only approximated by 100% line coverage
+      # (see tools/coverage_gate.py). Writes a table to the job summary.
+      - name: Coverage gate
+        run: python tools/coverage_gate.py build/coverage/coverage.xml --root . --min-line $env:RP_MIN_LINE_COVERAGE --summary $env:GITHUB_STEP_SUMMARY
+
+      - name: Upload coverage report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: worker-coverage-cobertura
+          path: worker/build/coverage/coverage.xml
+          if-no-files-found: warn

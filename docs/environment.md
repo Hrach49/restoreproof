@@ -21,11 +21,12 @@ Recorded for L0.2 on 2026-09-22. Update this file whenever a tool is upgraded.
 | Ninja | 1.12.1 | Bundled with VS |
 | vcpkg | 2026-07-27 (tool) | Full clone at `C:\vcpkg`; `VCPKG_ROOT=C:\vcpkg` (user env). Port versions come from `builtin-baseline` in `worker/vcpkg.json` |
 | Python | 3.12.9 | |
-| uv | 0.12.17 | Installed with winget (`astral-sh.uv`) |
+| uv | 0.12.17 | Installed with winget (`astral-sh.uv`); lives in `%LOCALAPPDATA%\Microsoft\WinGet\Links`, which is not on PATH in Git Bash or PowerShell here, so call it by full path or add that folder to PATH |
 | Docker Desktop | 4.73.0 | WSL2 backend; Compose v5.1.3 |
 | WSL | 2.7.14.0 | Capped by `%USERPROFILE%\.wslconfig`: `memory=4GB`, `processors=2` |
 | Git | 2.53.0.windows.2 | |
 | Bruno | 4.1.0 | Installed with winget (`Bruno.Bruno`) |
+| OpenCppCoverage | 0.9.9.0 | Installed with winget (`OpenCppCoverage.OpenCppCoverage`); Worker line coverage (L0.5). CI pins the same release by SHA-256 |
 
 ## Terminal setup
 

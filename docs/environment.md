@@ -40,4 +40,7 @@ L0.2 check (all succeed in that one terminal): `cmake --version`, `uv --version`
 
 ## Veeam host
 
-Not on this laptop. The planned Hyper-V VM (4 vCPU, 8 GB RAM, 100 GB disk) does not fit a 2-core, 16 GB machine alongside VS and Docker. The Veeam Backup for Microsoft 365 host will be a separate machine (spare PC or cloud VM), chosen before L1.3 and recorded in `docs/decisions.md`.
+A local Hyper-V VM on this laptop, sized **2 vCPU, 6 GB RAM, dynamically expanding disk**
+rather than the plan's 4 vCPU / 8 GB / 100 GB, which a 2-core, 16 GB machine cannot spare
+alongside VS and Docker. Do not run the VM and a C++ build at the same time. Built in L1.3;
+a spare PC or cloud VM is the fallback if it proves too slow. See `docs/decisions.md`.

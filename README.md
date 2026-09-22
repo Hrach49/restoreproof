@@ -28,6 +28,8 @@ Status: Stage 1, Sprint 0. See `CLAUDE.md` for the working agreements.
 - [Glossary](docs/glossary.md) — restore point, canary item, verification levels, pass /
   fail / error, evidence bundle, tokens, signing key.
 - [Environment](docs/environment.md) — the dev toolchain and its versions.
+- [Testing](docs/testing.md) — test rules, the CI coverage and "No test, no merge" gates, and
+  the once-per-sprint mutation run.
 
 ## Build
 

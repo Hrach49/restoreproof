@@ -30,5 +30,30 @@ jobs:
           cache-dependency-glob: cloud/uv.lock
 
       # --locked fails if uv.lock is out of date with pyproject.toml.
-      - name: Test
-        run: uv run --locked pytest
+      # Branch coverage is measured for the whole run, so the 80% total below is
+      # coverage's combined line+branch figure (stricter than line-only). The
+      # gate flags live here, not in pytest addopts, so a local single-test run
+      # (`uv run pytest tests/test_x.py::name`) is never failed by them.
+      - name: Test with coverage (80% floor on app/)
+        run: >-
+          uv run --locked pytest
+          --cov=app --cov-branch
+          --cov-report=term-missing
+          --cov-report=json:coverage.json
+          --cov-fail-under=80
+
+      - name: Coverage summary
+        if: ${{ !cancelled() && hashFiles('cloud/coverage.json') != '' }}
+        run: |
+          {
+            echo "### Cloud coverage (app/, line + branch)"
+            echo
+            uv run --locked coverage report --format=markdown
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # CLAUDE.md: 100% line + branch on app/auth, app/results.py, app/repo.
+      # pytest-cov has only a global threshold, so a script checks these paths
+      # (skipping any that don't exist yet) and appends its table to the summary.
+      - name: Guarded paths at 100% line + branch
+        if: ${{ !cancelled() && hashFiles('cloud/coverage.json') != '' }}
+        run: uv run --locked python tools/check_coverage.py coverage.json --summary "$GITHUB_STEP_SUMMARY"

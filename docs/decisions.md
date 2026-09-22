@@ -7,6 +7,31 @@ Format: date, decision, reason, alternatives rejected.
 
 ---
 
+## 2026-09-22 — Worker coverage via OpenCppCoverage; branch coverage deferred
+
+**Decision.** The Worker's coverage is measured with OpenCppCoverage 0.9.9.0 on an unoptimised
+Debug build (`coverage` preset), and `worker/tools/coverage_gate.py` enforces 80% line coverage
+on `rpcore`. CLAUDE.md asks for 100% *branch* coverage on vault, signer and target_guard;
+OpenCppCoverage measures lines only, so for now those files are held to 100% *line* coverage
+instead. This is a known gap, not the target.
+
+**Reason.** OpenCppCoverage works with the MSVC toolchain we already build with, needs only
+PDBs, is free, and installs on the GitHub Windows runner in seconds. It is enough for L0.5's
+"coverage numbers appear in the workflow summary". None of the three strict files exists
+yet, so the missing branch data costs nothing today.
+
+**Alternatives rejected.** clang-cl with `-fprofile-instr-generate -fcoverage-mapping` and
+llvm-cov — gives branch coverage, but means a second compiler, a separate vcpkg triplet and
+build, and possible MSVC/clang behaviour differences in the code we ship. Microsoft.CodeCoverage
+(`vstest` / `dotnet-coverage` for native code) — needs Visual Studio Enterprise, which we do
+not have.
+
+**Revisit** before vault, signer or target_guard land, i.e. in the W sprint that creates the
+first of them: either adopt a branch-capable tool for those files or record here why 100%
+line coverage plus the manual mutation pass (`docs/testing.md`) is accepted.
+
+---
+
 ## 2026-09-22 — The Veeam lab VM runs on the dev laptop, with reduced resources
 
 **Decision.** Veeam Backup for Microsoft 365 runs in a local Hyper-V VM on the dev laptop, as

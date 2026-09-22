@@ -7,11 +7,17 @@ CMakeUserPresets.json
 
 # Python
 .venv/
+.venv-wsl/
 __pycache__/
 *.pyc
 .pytest_cache/
 .coverage
 coverage.xml
+coverage.json
+mutants/
+
+# OpenCppCoverage writes this log to the working directory
+LastCoverageResults.log
 
 # Office lock files
 .~lock.*#
@@ -23,3 +29,6 @@ coverage.xml
 *.pfx
 *.key
 vault.bin
+
+# Planning documents kept locally, not in the repo
+/RestoreProof Stage 1 — Sprint Task Guide.docx

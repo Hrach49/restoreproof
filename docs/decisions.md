@@ -7,6 +7,27 @@ Format: date, decision, reason, alternatives rejected.
 
 ---
 
+## 2026-09-22 — Every rpcore `.cpp` must reach the coverage report; `main()` lives outside `src/`
+
+**Decision.** `worker/tools/coverage_gate.py` lists the `.cpp` files under `worker/src/` and
+`worker/include/` on disk and fails when one is missing from the OpenCppCoverage report.
+`rpworker`'s entry point (`main()`) will live outside `src/` (e.g. `worker/app/main.cpp`) and
+stay a thin call into `rpcore`.
+
+**Reason.** OpenCppCoverage only sees code linked into `rptests.exe`. `rpcore` is a static
+library, so the linker drops any object no test references, and an untested file would never
+appear in the report: it would count neither against the 80% floor nor, for vault, signer or
+target_guard, against the 100% floor. Listing files from disk is what the Cloud gate
+(`cloud/tools/check_coverage.py`) already does. `main()` can't be linked into a test
+executable, so it has to sit outside the checked folders.
+
+**Alternatives rejected.** Linking `rpcore` with `/WHOLEARCHIVE` into `rptests` — keeps every
+object, but the report would then show untested files at 0% and the gate would still need the
+disk list to tell a file with no executable lines from a missing one. An allowlist of files
+exempt from the check — easy to grow quietly.
+
+---
+
 ## 2026-09-22 — Worker coverage via OpenCppCoverage; branch coverage deferred
 
 **Decision.** The Worker's coverage is measured with OpenCppCoverage 0.9.9.0 on an unoptimised

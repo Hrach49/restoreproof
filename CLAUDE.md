@@ -54,8 +54,8 @@ Milestone demo commands: `rpworker veeam list` (S1), `rpworker restore` (S2), `r
 - Anything talking to Veeam, Graph, the TSA or the Cloud is written against recorded fixtures first (`worker/tests/fixtures/<service>/`, recorded with `--record`, secrets scrubbed, served by `FakeHttpClient`). Live calls are gated behind `RP_LIVE=1`.
 - Write failure-path tests before happy paths (missing item, hash mismatch, tampered signature, wrong target, unreachable service).
 - Use parameterised tables (Catch2 `GENERATE`, `pytest.mark.parametrize`) for decision tables.
-- Coverage floors: 80% line on `rpcore` and `cloud/app` (cloud gate is on the combined line+branch figure); 100% branch on vault, signer, target_guard, `app/auth`, `app/results.py`, `app/repo`. OpenCppCoverage has no branch data, so the Worker per-file floor is currently enforced as 100% line (`docs/decisions.md`).
-- A PR changing `worker/src/` or `cloud/app/` without changes under a tests directory fails CI ("No test, no merge").
+- Coverage floors: 80% line on `rpcore` and `cloud/app` (cloud gate is on the combined line+branch figure); 100% branch on vault, signer, target_guard, `app/auth`, `app/results.py`, `app/repo`. OpenCppCoverage has no branch data, so the Worker per-file floor is currently enforced as 100% line (`docs/decisions.md`). Any Worker file whose path has a part named or prefixed `vault`, `signer` or `target_guard` (e.g. `src/signer/ed25519.cpp`, `src/vault_dpapi.cpp`) is strict. Every `.cpp` under `worker/src/` and `worker/include/` must show up in the coverage report, so a file no test links in fails; `rpworker`'s `main()` goes outside `src/`.
+- A PR changing `worker/src/` or `worker/include/` without adding or changing C++ test code under `worker/tests/`, or changing `cloud/app/` without adding or changing a `.py` under `cloud/tests/`, fails CI ("No test, no merge"). Deleted tests, fixtures and `tests/e2e/` don't count.
 - Every bug gets a reproducing test before its fix.
 - End-to-end scenarios are tracked manually in `tests/e2e/scenarios.md`.
 

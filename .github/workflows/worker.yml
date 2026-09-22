@@ -109,13 +109,15 @@ jobs:
             -- ctest --preset coverage
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      # Fails below RP_MIN_LINE_COVERAGE on rpcore, and below 100% line
-      # coverage on vault/signer/target_guard once those files exist.
+      # Fails below RP_MIN_LINE_COVERAGE on rpcore, below 100% line coverage
+      # on vault/signer/target_guard once those files exist, and on any .cpp
+      # under src/ or include/ that is missing from the report (--root lists
+      # them from disk: an rpcore file no test uses never reaches rptests.exe).
       # OpenCppCoverage has no branch data, so the required 100% *branch*
       # coverage on those files is only approximated by 100% line coverage
       # (see tools/coverage_gate.py). Writes a table to the job summary.
       - name: Coverage gate
-        run: python tools/coverage_gate.py build/coverage/coverage.xml --min-line $env:RP_MIN_LINE_COVERAGE --summary $env:GITHUB_STEP_SUMMARY
+        run: python tools/coverage_gate.py build/coverage/coverage.xml --root . --min-line $env:RP_MIN_LINE_COVERAGE --summary $env:GITHUB_STEP_SUMMARY
 
       - name: Upload coverage report
         if: ${{ !cancelled() }}

@@ -24,9 +24,9 @@ How we test, what CI enforces, and the once-per-sprint mutation run. Set up in L
 
 | Guard | Where | Rule |
 |---|---|---|
-| Worker coverage | `.github/workflows/worker.yml`, OpenCppCoverage + `worker/tools/coverage_gate.py` | 80% line on `rpcore` (`worker/src/`, `worker/include/`); 100% **line** on vault, signer and target_guard once they exist |
+| Worker coverage | `.github/workflows/worker.yml`, OpenCppCoverage + `worker/tools/coverage_gate.py` | 80% line on `rpcore` (`worker/src/`, `worker/include/`); 100% **line** on vault, signer and target_guard once they exist, meaning any file with a path part named or prefixed `vault`, `signer` or `target_guard` (`src/signer/ed25519.cpp`, `src/vault_dpapi.cpp`); every `.cpp` on disk under `src/` and `include/` must appear in the report, so a file no test links into `rptests` fails (headers of declarations may be absent) |
 | Cloud coverage | `.github/workflows/cloud.yml`, pytest-cov | 80% on `app/`, measured as coverage's combined line + branch figure; 100% line + branch on `app/auth`, `app/results.py` and `app/repo` (skipped while absent), checked by `cloud/tools/check_coverage.py` |
-| No test, no merge | `.github/workflows/pr-guards.yml`, `.github/scripts/tests_touched.py` | A PR that changes `worker/src/` or `cloud/app/` without a change under `worker/tests/`, `cloud/tests/` or `tests/` fails |
+| No test, no merge | `.github/workflows/pr-guards.yml`, `.github/scripts/tests_touched.py` | Each side needs its own tests: a PR that changes `worker/src/` or `worker/include/` must add or change a C++ file (`.cpp`, `.hpp`, `.h`) under `worker/tests/`, and one that changes `cloud/app/` must add or change a `.py` under `cloud/tests/`. Deleting a test, editing fixtures or editing `tests/e2e/scenarios.md` doesn't count |
 | PR checklist | `.github/PULL_REQUEST_TEMPLATE.md` | Failing test written first, suite green locally, "Done when" observed |
 
 Both coverage jobs write their numbers to the workflow run's summary page; the Worker job

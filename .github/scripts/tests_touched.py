@@ -5,8 +5,8 @@ Reads a pull request's changes on stdin, as printed by
 "No test, no merge" if a side's source changed without a test change on the
 same side:
 
-    worker/src/, worker/include/  need a change to test code under worker/tests/
-    cloud/app/                    needs a change to test code under cloud/tests/
+    worker/src/, worker/include/, worker/app/  need a change to test code under worker/tests/
+    cloud/app/                                 needs a change to test code under cloud/tests/
 
 Test code means C++ files under worker/tests/ and .py files under cloud/tests/.
 Fixtures, docs and tests/e2e/scenarios.md don't count, and neither does a
@@ -33,7 +33,7 @@ class Side(NamedTuple):
 
 
 SIDES = (
-    Side(("worker/src/", "worker/include/"), "worker/tests/", (".cpp", ".hpp", ".h")),
+    Side(("worker/src/", "worker/include/", "worker/app/"), "worker/tests/", (".cpp", ".hpp", ".h")),
     Side(("cloud/app/",), "cloud/tests/", (".py",)),
 )
 

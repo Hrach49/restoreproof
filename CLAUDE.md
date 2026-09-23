@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Status
 
-Early Stage 1. The plan is `RestoreProof Stage 1 — Sprint Task Guide.docx`, which breaks a 16-week plan into tasks with IDs (e.g. `L0.1`, `W2.7`, `C5.7`). L0.1–L0.5 are done: CI builds and tests `worker/` (`rpcore` with `include/rp/` and `src/`, Catch2 tests) and `cloud/` (pytest), with coverage gates and the "No test, no merge" PR guard (see `docs/testing.md`). `main` is not branch-protected (free private repo), so the gates don't block merges; the owner merges only on green (`docs/decisions.md`). Tasks are tracked as issues #3–#95 on the "RestoreProof Stage 1" GitHub Project (columns Backlog, Sprint 1–8, In progress, Done), one per guide task, labelled with its prefix; use `Closes #N` in PRs. Much of what follows describes the **planned** design from the guide; where code exists, trust the code over this file, and update this file.
+Early Stage 1. The plan is `RestoreProof Stage 1 — Sprint Task Guide.docx`, which breaks a 16-week plan into tasks with IDs (e.g. `L0.1`, `W2.7`, `C5.7`). L0.1–L0.5 and W1.1 are done: CI builds and tests `worker/` (`rpcore` with `include/rp/` and `src/`, linking cpr, nlohmann-json, spdlog and OpenSSL; `rpworker` from `app/main.cpp`, which only answers `--version` so far; Catch2 tests) and `cloud/` (pytest), with coverage gates and the "No test, no merge" PR guard (see `docs/testing.md`). `main` is not branch-protected (free private repo), so the gates don't block merges; the owner merges only on green (`docs/decisions.md`). Tasks are tracked as issues #3–#95 on the "RestoreProof Stage 1" GitHub Project (columns Backlog, Sprint 1–8, In progress, Done), one per guide task, labelled with its prefix; use `Closes #N` in PRs. Much of what follows describes the **planned** design from the guide; where code exists, trust the code over this file, and update this file.
 
 Task ID prefixes: `L` lab/env (`lab/`, `docs/`), `W` Worker C++ (`worker/`), `C` Cloud Python (`cloud/`), `Q` quality (`tests/`, `docs/`), `S` sales (`sales/`), `P` pilots (`docs/pilots/`). Each task is one GitHub issue; its "Done when" line is the acceptance criterion.
 
@@ -16,10 +16,11 @@ Worker pipeline (`rpworker test`): cleanup → pick restore point → sample sel
 
 ## Planned commands
 
-Worker (`worker/`, CMake + vcpkg, C++20, MSVC; deps: cpr, nlohmann-json, spdlog, openssl, catch2). Targets: `rpcore` (static lib holding all logic), `rpworker` (exe), `rptests` (Catch2).
+Worker (`worker/`, CMake + vcpkg, C++20, MSVC; deps in `vcpkg.json`: cpr, nlohmann-json, spdlog, openssl, catch2). Targets: `rpcore` (static lib holding all logic; nlohmann-json and spdlog linked PUBLIC, cpr and OpenSSL::Crypto PRIVATE), `rpworker` (exe, `app/main.cpp`, kept thin), `rptests` (Catch2; `tests/deps_test.cpp` checks each dependency links). ctest also runs `rpworker --version`.
 ```
 cmake --preset dev && cmake --build --preset dev && ctest --preset dev
 ctest --preset dev -R <test-name-regex>        # single test
+build/dev/rpworker --version                   # prints project(VERSION)
 RP_LIVE=1 ctest --preset dev                   # also run live tests against the Veeam VM / test tenant
 ```
 Presets use Ninja + `cl`, so run CMake from a VS 2022 Developer PowerShell (or `Enter-VsDevShell`). The dev shell overwrites `VCPKG_ROOT` with VS's bundled vcpkg; set it back to the real clone (e.g. `C:\vcpkg`) after entering the shell. vcpkg is pinned by `builtin-baseline` in `worker/vcpkg.json`; CI checks out vcpkg at exactly that commit, so bump the baseline to upgrade ports. CI (`.github/workflows/worker.yml`) runs `cmake --preset ci` on windows-latest, then the `coverage` preset (Debug + PDBs) under OpenCppCoverage and `python tools/coverage_gate.py build/coverage/coverage.xml --min-line 80`. Local commands are in `docs/testing.md`.

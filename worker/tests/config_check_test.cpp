@@ -1,3 +1,4 @@
+#include <rp/config.hpp>
 #include <rp/config_check.hpp>
 #include <rp/secrets.hpp>
 
@@ -8,7 +9,9 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <filesystem>
+#include <functional>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -79,13 +82,33 @@ struct Run {
     std::string err;
 };
 
-Run run(const Args& args, const std::filesystem::path& default_path)
+using DefaultPath = std::function<std::filesystem::path()>;
+
+Run run(const Args& args, const DefaultPath& default_path)
 {
     std::ostringstream out;
     std::ostringstream err;
     const int exit_code = rp::run_config_command(args, out, err, default_path);
     return {exit_code, out.str(), err.str()};
 }
+
+Run run(const Args& args, const std::filesystem::path& default_path)
+{
+    return run(args, DefaultPath{[default_path] { return default_path; }});
+}
+
+// A default path that counts how often run_config_command asks for it.
+struct PathSpy {
+    int calls = 0;
+
+    DefaultPath provider()
+    {
+        return [this] {
+            ++calls;
+            return std::filesystem::path("unused.json");
+        };
+    }
+};
 
 } // namespace
 
@@ -105,12 +128,14 @@ TEST_CASE("rpworker config prints usage and exits 2 for arguments it doesn't und
         Args{"check", "--CONFIG", "x.json"},
         Args{"check", "check"});
     CAPTURE(args);
-    const rp::test::TempDir dir;
+    PathSpy spy;
 
-    const Run result = run(args, dir.write("config.json", kConfigJson));
+    const Run result = run(args, spy.provider());
     REQUIRE(result.exit_code == 2);
     REQUIRE(result.out.empty());
     REQUIRE(result.err == kUsage);
+    // Usage errors never look up ProgramData.
+    REQUIRE(spy.calls == 0);
 }
 
 TEST_CASE("rpworker config check exits 1 with the error when the config doesn't load",
@@ -120,7 +145,8 @@ TEST_CASE("rpworker config check exits 1 with the error when the config doesn't 
     const std::filesystem::path missing = dir.path() / "missing.json";
     const std::string missing_arg = utf8(missing);
 
-    const Run result = run(Args{"check", "--config", missing_arg}, dir.path() / "unused.json");
+    PathSpy spy;
+    const Run result = run(Args{"check", "--config", missing_arg}, spy.provider());
     REQUIRE(result.exit_code == 1);
     REQUIRE(result.out.empty());
     REQUIRE(result.err == "config error: " + missing_arg + ": cannot read config file\n");
@@ -132,7 +158,8 @@ TEST_CASE("rpworker config check reports an invalid config without its values", 
     const auto path = dir.write("config.json", R"({"cloud_url": "http://SENTINEL-2a9f"})");
     const std::string path_arg = utf8(path);
 
-    const Run result = run(Args{"check", "--config", path_arg}, dir.path() / "unused.json");
+    PathSpy spy;
+    const Run result = run(Args{"check", "--config", path_arg}, spy.provider());
     REQUIRE(result.exit_code == 1);
     REQUIRE(result.out.empty());
     REQUIRE(result.err ==
@@ -150,7 +177,8 @@ TEST_CASE("rpworker config check prints every setting and masks the secrets", "[
     const rp::test::ScopedEnv password(rp::kEnvVeeamPassword, "password-0c41");
     const rp::test::ScopedEnv graph(rp::kEnvGraphClientSecret, std::nullopt);
 
-    const Run result = run(Args{"check", "--config", path_arg}, dir.path() / "unused.json");
+    PathSpy spy;
+    const Run result = run(Args{"check", "--config", path_arg}, spy.provider());
     REQUIRE(result.err.empty());
     REQUIRE(result.out == expected_output(path, "**** (set)", "**** (set)", "(not set)"));
     REQUIRE(result.exit_code == 0);
@@ -200,4 +228,39 @@ TEST_CASE("rpworker config check never prints a password in a URL", "[config_che
     REQUIRE(result.exit_code == 1);
     REQUIRE_THAT(result.out + result.err, !ContainsSubstring("SENTINEL"));
     REQUIRE_THAT(result.err, ContainsSubstring("\"cloud_url\""));
+}
+
+TEST_CASE("rpworker config check --config never looks up the default path", "[config_check]")
+{
+    const rp::test::TempDir dir;
+    const std::string path_arg = utf8(dir.write("config.json", kConfigJson));
+    PathSpy spy;
+
+    REQUIRE(run(Args{"check", "--config", path_arg}, spy.provider()).exit_code == 0);
+    REQUIRE(spy.calls == 0);
+}
+
+TEST_CASE("rpworker config check reports a default path it can't find", "[config_check]")
+{
+    const DefaultPath fails = []() -> std::filesystem::path {
+        throw rp::ConfigError("", "cannot find the ProgramData folder");
+    };
+
+    const Run result = run(Args{"check"}, fails);
+    REQUIRE(result.exit_code == 1);
+    REQUIRE(result.out.empty());
+    REQUIRE(result.err == "config error: cannot find the ProgramData folder\n");
+}
+
+TEST_CASE("rpworker config check reports any other failure without its message",
+          "[config_check]")
+{
+    const DefaultPath fails = []() -> std::filesystem::path {
+        throw std::runtime_error("SENTINEL-d51f");
+    };
+
+    const Run result = run(Args{"check"}, fails);
+    REQUIRE(result.exit_code == 1);
+    REQUIRE(result.out.empty());
+    REQUIRE(result.err == "config error: unexpected failure\n");
 }

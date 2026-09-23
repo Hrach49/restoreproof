@@ -1,5 +1,4 @@
 #include <rp/cli.hpp>
-#include <rp/config.hpp>
 #include <rp/version.hpp>
 
 #include "test_support.hpp"
@@ -79,23 +78,4 @@ TEST_CASE("rpworker config check --config <file> checks that file", "[cli]")
     REQUIRE(rp::run_cli(args, out, err) == 0);
     REQUIRE(err.str().empty());
     REQUIRE(out.str().starts_with("config file: " + path_arg + "\n"));
-}
-
-TEST_CASE("rpworker config check without --config reads the ProgramData config", "[cli]")
-{
-    // Only reads: whether this machine has a config there or not, the output
-    // names the default path.
-    const Args args{"config", "check"};
-    const std::string path = rp::default_config_path().string();
-
-    std::ostringstream out;
-    std::ostringstream err;
-    const int exit_code = rp::run_cli(args, out, err);
-    CAPTURE(exit_code, err.str());
-    if (exit_code == 1) {
-        REQUIRE(err.str().starts_with("config error: " + path + ": "));
-    } else {
-        REQUIRE(exit_code == 0);
-        REQUIRE(out.str().starts_with("config file: " + path + "\n"));
-    }
 }

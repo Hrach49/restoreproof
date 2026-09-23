@@ -29,6 +29,10 @@ How we test, what CI enforces, and the once-per-sprint mutation run. Set up in L
 | No test, no merge | `.github/workflows/pr-guards.yml`, `.github/scripts/tests_touched.py` | Each side needs its own tests: a PR that changes `worker/src/` or `worker/include/` must add or change a C++ file (`.cpp`, `.hpp`, `.h`) under `worker/tests/`, and one that changes `cloud/app/` must add or change a `.py` under `cloud/tests/`. Deleting a test, editing fixtures or editing `tests/e2e/scenarios.md` doesn't count |
 | PR checklist | `.github/PULL_REQUEST_TEMPLATE.md` | Failing test written first, suite green locally, "Done when" observed |
 
+`main` has no branch protection (not available on a free private repo), so a red check does
+not disable the merge button. The rule is manual: merge only when every check is green. See
+`docs/decisions.md`.
+
 Both coverage jobs write their numbers to the workflow run's summary page; the Worker job
 also uploads the Cobertura XML as the `worker-coverage-cobertura` artifact.
 

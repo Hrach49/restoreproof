@@ -7,6 +7,60 @@ Format: date, decision, reason, alternatives rejected.
 
 ---
 
+## 2026-09-23 — `main` is not branch-protected; merging only on green is a manual rule
+
+**Decision.** L0.1's "Protect main: require CI green before merge" is replaced by a manual
+rule: a PR is merged only by the repo owner, and only when every check on it is green (worker,
+cloud and the "No test, no merge" guard). The CI gates in `docs/testing.md` still run on every
+PR; they turn the PR red but cannot block the merge button.
+
+**Reason.** Branch protection and rulesets are not available on a free private repository
+(the API returns 403, "Upgrade to GitHub Pro or make this repository public"). With one
+developer who reviews and merges every PR, a manual rule costs nothing and keeps the code
+private.
+
+**Alternatives rejected.** GitHub Pro: enforces the checks, but is a monthly cost for a guard
+that only protects the developer from themselves. Making the repository public: exposes the
+code before there is a product. Revisit when a second person gets write access or the repo
+moves to an organisation (L0.1), at which point required checks become worth paying for.
+
+---
+
+## 2026-09-23 — Test tenant on `onmicrosoft.com` with 4 licences; domain deferred to C5.12
+
+**Decision.** The L0.3 test tenant is `RestoreProofLab.onmicrosoft.com`, on its default
+domain, and needs **4 licences** instead of the guide's 3. No domain is bought in Sprint 0. It
+is bought before C5.12 (Sprint 5), which needs `api.<domain>` and `app.<domain>`, and C7.1
+(Sprint 7) then uses it as the verified alert sender. The tenant must stay licensed for all
+16 weeks.
+
+**What was actually bought (2026-09-23).** The sign-up gave a **Microsoft 365 Business
+Standard EEA (no Teams)** trial on an annual term, not the Business Basic trial the guide
+names. The trial has 25 licences and **ends on 2026-10-23, in Sprint 2**. It then converts to
+paid with only **1** licence. Before that date the renewal must be changed to 4 licences,
+preferably on monthly billing. Whether to stay on Standard or move to Business Basic ×4 is
+still open; this entry gets a follow-up once it is decided. Business Basic covers everything
+the lab uses (Exchange mailboxes, SharePoint, OneDrive). The global admin has a personal-name
+UPN rather than `admin@`; it is the fourth licensed user L1.1 calls "admin".
+
+**Reason.** The Worker, Veeam and Graph work the same on an `onmicrosoft.com` domain, so
+Sprints 1–4 don't need a custom domain. Only the Cloud deployment and email alerts do, and the
+week-4 go/no-go (S2.1) could make both unnecessary. The guide contradicts itself on licences:
+L0.3 says 3 users, but L1.1 needs four licensed mailboxes (admin, alice, bob, `restoretest`,
+the mail restore target). `rpoperator` (W1.0) needs no licence. The tenant must outlive the
+30-day trial because Veeam backs it up, `lab/seed-manifest.json` describes its data and the
+recorded fixtures point at it. If it expires, or converts with 1 licence, alice, bob and
+`restoretest` lose their mailboxes and the tenant is later disabled and deleted.
+
+**Alternatives rejected.** Buying the domain now and adding it to the tenant: costs money
+before the go/no-go, and a custom domain can be added to the tenant later without changing the
+`onmicrosoft.com` addresses the fixtures use. It is only worth buying early if the name itself
+matters and might be taken. A tenant from the Microsoft 365 Developer Program: its E5 sandbox
+is now limited to qualifying subscribers, and it can be removed at any time. Letting the trial
+lapse and creating a fresh tenant each month: every tenant ID, site ID and fixture would change.
+
+---
+
 ## 2026-09-22 — Every rpcore `.cpp` must reach the coverage report; `main()` lives outside `src/`
 
 **Decision.** `worker/tools/coverage_gate.py` lists the `.cpp` files under `worker/src/` and

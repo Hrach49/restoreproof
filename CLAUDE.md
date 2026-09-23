@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Status
 
-Early Stage 1. The plan is `RestoreProof Stage 1 — Sprint Task Guide.docx`, which breaks a 16-week plan into tasks with IDs (e.g. `L0.1`, `W2.7`, `C5.7`). L0.1–L0.5 are done: CI builds and tests `worker/` (`rpcore` with `include/rp/` and `src/`, Catch2 tests) and `cloud/` (pytest), with coverage gates and the "No test, no merge" PR guard (see `docs/testing.md`). Much of what follows describes the **planned** design from the guide; where code exists, trust the code over this file, and update this file.
+Early Stage 1. The plan is `RestoreProof Stage 1 — Sprint Task Guide.docx`, which breaks a 16-week plan into tasks with IDs (e.g. `L0.1`, `W2.7`, `C5.7`). L0.1–L0.5 are done: CI builds and tests `worker/` (`rpcore` with `include/rp/` and `src/`, Catch2 tests) and `cloud/` (pytest), with coverage gates and the "No test, no merge" PR guard (see `docs/testing.md`). `main` is not branch-protected (free private repo), so the gates don't block merges; the owner merges only on green (`docs/decisions.md`). Tasks are tracked as issues #3–#95 on the "RestoreProof Stage 1" GitHub Project (columns Backlog, Sprint 1–8, In progress, Done), one per guide task, labelled with its prefix; use `Closes #N` in PRs. Much of what follows describes the **planned** design from the guide; where code exists, trust the code over this file, and update this file.
 
 Task ID prefixes: `L` lab/env (`lab/`, `docs/`), `W` Worker C++ (`worker/`), `C` Cloud Python (`cloud/`), `Q` quality (`tests/`, `docs/`), `S` sales (`sales/`), `P` pilots (`docs/pilots/`). Each task is one GitHub issue; its "Done when" line is the acceptance criterion.
 

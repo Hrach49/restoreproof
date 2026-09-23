@@ -186,6 +186,25 @@ TEST_CASE("parse_config reports a secret-looking key before a missing required k
     REQUIRE(parse_error(doc.dump()).key() == "veeam_password");
 }
 
+TEST_CASE("parse_config reports a secret-looking key before an unknown key", "[config]")
+{
+    // Keys are checked in name order, so the unknown one comes first.
+    json doc = valid_doc();
+    doc["aaa_unknown"] = "value";
+    doc["zzz_password"] = "SENTINEL-8d2e";
+
+    REQUIRE(parse_error(doc.dump()).key() == "zzz_password");
+}
+
+TEST_CASE("parse_config reports an unknown key before a missing required key", "[config]")
+{
+    json doc = valid_doc();
+    doc.erase("cloud_url");
+    doc["zzz_unknown"] = "value";
+
+    REQUIRE(parse_error(doc.dump()).key() == "zzz_unknown");
+}
+
 TEST_CASE("parse_config rejects unknown keys, case-sensitively", "[config]")
 {
     const std::string key = GENERATE(std::string("cloud_uri"), "Cloud_Url", "LOG_LEVEL",

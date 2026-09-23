@@ -1,0 +1,350 @@
+#include <rp/config.hpp>
+
+#include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
+#include <catch2/generators/catch_generators_range.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
+
+#include <nlohmann/json.hpp>
+
+#include <cstdint>
+#include <limits>
+#include <string>
+#include <utility>
+#include <vector>
+
+using Catch::Matchers::ContainsSubstring;
+using nlohmann::json;
+
+namespace {
+
+// A config with every key set to a valid value.
+json valid_doc()
+{
+    return json{
+        {"cloud_url", "https://cloud.example.invalid"},
+        {"veeam_url", "https://veeam.example.invalid:4443"},
+        {"veeam_org_name", "example.onmicrosoft.com"},
+        {"graph_tenant_id", "00000000-0000-0000-0000-000000000001"},
+        {"graph_client_id", "00000000-0000-0000-0000-000000000002"},
+        {"test_mailbox", "restoretest@example.onmicrosoft.com"},
+        {"test_site_id", "site-id"},
+        {"test_library_id", "library-id"},
+        {"test_onedrive_drive_id", "drive-id"},
+        {"test_onedrive_folder_id", "folder-id"},
+        {"poll_interval_s", 60},
+        {"heartbeat_interval_s", 120},
+        {"sample_mail", 1},
+        {"sample_sp", 2},
+        {"sample_od", 3},
+        {"log_level", "debug"},
+    };
+}
+
+// A config with only the required keys.
+json required_only_doc()
+{
+    json doc = valid_doc();
+    for (const char* key : {"poll_interval_s", "heartbeat_interval_s", "sample_mail", "sample_sp",
+                            "sample_od", "log_level"}) {
+        doc.erase(key);
+    }
+    return doc;
+}
+
+// Parses `text`, expecting a ConfigError; returns it.
+rp::ConfigError parse_error(const std::string& text)
+{
+    try {
+        rp::parse_config(text);
+    } catch (const rp::ConfigError& e) {
+        return e;
+    }
+    FAIL("parse_config accepted: " << text);
+    return rp::ConfigError("", "unreachable");
+}
+
+const std::vector<std::string> kRequiredKeys{
+    "cloud_url",       "veeam_url",       "veeam_org_name",         "graph_tenant_id",
+    "graph_client_id", "test_mailbox",    "test_site_id",           "test_library_id",
+    "test_onedrive_drive_id", "test_onedrive_folder_id"};
+
+const std::vector<std::string> kIntKeys{"poll_interval_s", "heartbeat_interval_s", "sample_mail",
+                                        "sample_sp", "sample_od"};
+
+} // namespace
+
+TEST_CASE("ConfigError carries the offending key and the message", "[config]")
+{
+    const rp::ConfigError e("cloud_url", "config key \"cloud_url\" is missing (required)");
+    REQUIRE(e.key() == "cloud_url");
+    REQUIRE(std::string{e.what()} == "config key \"cloud_url\" is missing (required)");
+}
+
+TEST_CASE("parse_config rejects text that isn't JSON without quoting it", "[config]")
+{
+    // The last token nlohmann reads is the sentinel; its own message would quote it.
+    const auto [text, byte] = GENERATE(table<std::string, std::string>({
+        {"", "1"},
+        {"   ", "4"},
+        {"{\"cloud_url\": \"SENTINEL-4f1c", "29"},
+        {"{\"cloud_url\": SENTINEL-4f1c}", "15"},
+        {"{\"a\": 1,}", "9"},
+    }));
+    CAPTURE(text);
+
+    const rp::ConfigError e = parse_error(text);
+    REQUIRE(e.key().empty());
+    REQUIRE(std::string{e.what()} == "config is not valid JSON (error at byte " + byte + ")");
+    REQUIRE_THAT(e.what(), !ContainsSubstring("SENTINEL"));
+}
+
+TEST_CASE("parse_config rejects a root that isn't an object", "[config]")
+{
+    const std::string text = GENERATE("[]", "[{\"cloud_url\": \"x\"}]", "\"text\"", "42", "null",
+                                      "true");
+    CAPTURE(text);
+
+    const rp::ConfigError e = parse_error(text);
+    REQUIRE(e.key().empty());
+    REQUIRE(std::string{e.what()} == "config must be a JSON object");
+}
+
+TEST_CASE("parse_config rejects secret-looking keys without echoing the value", "[config]")
+{
+    const std::string key = GENERATE("password", "Password", "client_secret", "secret",
+                                     "api_token", "TOKEN", "veeam_passwd", "api_key", "apikey",
+                                     "Graph_Client_Secret");
+    CAPTURE(key);
+    json doc = valid_doc();
+    doc[key] = "SENTINEL-8d2e";
+
+    const rp::ConfigError e = parse_error(doc.dump());
+    REQUIRE(e.key() == key);
+    REQUIRE(std::string{e.what()} ==
+            "config key \"" + key +
+                "\" looks like a secret; secrets don't belong in config.json. Set "
+                "RP_VEEAM_USERNAME, RP_VEEAM_PASSWORD or RP_GRAPH_CLIENT_SECRET in the "
+                "environment instead (they move to the DPAPI vault in W4.5)");
+    REQUIRE_THAT(e.what(), !ContainsSubstring("SENTINEL"));
+}
+
+TEST_CASE("parse_config reports a secret-looking key before a missing required key", "[config]")
+{
+    json doc = valid_doc();
+    doc.erase("cloud_url");
+    doc["veeam_password"] = "SENTINEL-8d2e";
+
+    REQUIRE(parse_error(doc.dump()).key() == "veeam_password");
+}
+
+TEST_CASE("parse_config rejects unknown keys, case-sensitively", "[config]")
+{
+    const std::string key = GENERATE("cloud_uri", "Cloud_Url", "LOG_LEVEL", "sample_size", "");
+    CAPTURE(key);
+    json doc = valid_doc();
+    doc[key] = "value";
+
+    const rp::ConfigError e = parse_error(doc.dump());
+    REQUIRE(e.key() == key);
+    REQUIRE(std::string{e.what()} == "config key \"" + key + "\" is not a known setting");
+}
+
+TEST_CASE("parse_config rejects a config missing a required key", "[config]")
+{
+    const std::string key = GENERATE_REF(from_range(kRequiredKeys));
+    CAPTURE(key);
+    json doc = valid_doc();
+    doc.erase(key);
+
+    const rp::ConfigError e = parse_error(doc.dump());
+    REQUIRE(e.key() == key);
+    REQUIRE(std::string{e.what()} == "config key \"" + key + "\" is missing (required)");
+}
+
+TEST_CASE("parse_config rejects a string setting of the wrong JSON type", "[config]")
+{
+    std::vector<std::string> keys = kRequiredKeys;
+    keys.push_back("log_level");
+    const std::string key = GENERATE_REF(from_range(keys));
+    const json value = GENERATE(json(1), json(true), json(nullptr), json::array(),
+                                json::object(), json(1.5));
+    CAPTURE(key, value.dump());
+    json doc = valid_doc();
+    doc[key] = value;
+
+    const rp::ConfigError e = parse_error(doc.dump());
+    REQUIRE(e.key() == key);
+    REQUIRE(std::string{e.what()} == "config key \"" + key + "\" must be a string");
+}
+
+TEST_CASE("parse_config rejects an integer setting of the wrong JSON type", "[config]")
+{
+    const std::string key = GENERATE_REF(from_range(kIntKeys));
+    const json value = GENERATE(json("300"), json(3.5), json(5.0), json(true), json(nullptr),
+                                json::array(), json::object());
+    CAPTURE(key, value.dump());
+    json doc = valid_doc();
+    doc[key] = value;
+
+    const rp::ConfigError e = parse_error(doc.dump());
+    REQUIRE(e.key() == key);
+    REQUIRE(std::string{e.what()} == "config key \"" + key + "\" must be an integer");
+}
+
+TEST_CASE("parse_config rejects invalid values without echoing them", "[config]")
+{
+    const std::string interval = "must be an integer from 1 to 86400 (seconds)";
+    const std::string sample = "must be an integer from 0 to 100";
+    const auto [key, value, rule] = GENERATE_COPY(table<std::string, json, std::string>({
+        {"cloud_url", json(""), "must not be empty"},
+        {"veeam_org_name", json(""), "must not be empty"},
+        {"graph_tenant_id", json(""), "must not be empty"},
+        {"graph_client_id", json(""), "must not be empty"},
+        {"test_site_id", json(""), "must not be empty"},
+        {"test_library_id", json(""), "must not be empty"},
+        {"test_onedrive_drive_id", json(""), "must not be empty"},
+        {"test_onedrive_folder_id", json(""), "must not be empty"},
+        {"test_mailbox", json(""), "must not be empty"},
+        {"log_level", json(""), "must not be empty"},
+        {"cloud_url", json("http://cloud.example.invalid"), "must be an https:// URL"},
+        {"cloud_url", json("ftp://cloud.example.invalid"), "must be an https:// URL"},
+        {"cloud_url", json("cloud.example.invalid"), "must be an https:// URL"},
+        {"cloud_url", json("https://"), "must be an https:// URL"},
+        {"cloud_url", json("https:///"), "must be an https:// URL"},
+        {"cloud_url", json(" https://cloud.example.invalid"), "must be an https:// URL"},
+        {"veeam_url", json("http://veeam.example.invalid:4443"), "must be an https:// URL"},
+        {"veeam_url", json("https:"), "must be an https:// URL"},
+        {"test_mailbox", json("restoretest"), "must be an email address"},
+        {"test_mailbox", json("@example.invalid"), "must be an email address"},
+        {"test_mailbox", json("restoretest@"), "must be an email address"},
+        {"test_mailbox", json("@"), "must be an email address"},
+        {"poll_interval_s", json(0), interval},
+        {"poll_interval_s", json(-1), interval},
+        {"poll_interval_s", json(86401), interval},
+        {"poll_interval_s", json(1000000000000LL), interval},
+        {"poll_interval_s", json(std::numeric_limits<std::int64_t>::max()), interval},
+        {"poll_interval_s", json(std::numeric_limits<std::int64_t>::min()), interval},
+        {"poll_interval_s", json(std::numeric_limits<std::uint64_t>::max()), interval},
+        {"heartbeat_interval_s", json(0), interval},
+        {"heartbeat_interval_s", json(86401), interval},
+        {"heartbeat_interval_s", json(4294967297LL), interval},
+        {"sample_mail", json(-1), sample},
+        {"sample_mail", json(101), sample},
+        {"sample_sp", json(-1), sample},
+        {"sample_sp", json(101), sample},
+        {"sample_od", json(-1), sample},
+        {"sample_od", json(101), sample},
+        {"sample_od", json(std::numeric_limits<std::uint64_t>::max()), sample},
+        {"log_level", json("INFO"), "must be one of trace, debug, info, warn, error, critical, off"},
+        {"log_level", json("warning"), "must be one of trace, debug, info, warn, error, critical, off"},
+        {"log_level", json("info "), "must be one of trace, debug, info, warn, error, critical, off"},
+    }));
+    CAPTURE(key, value.dump());
+    json doc = valid_doc();
+    doc[key] = value;
+
+    const rp::ConfigError e = parse_error(doc.dump());
+    REQUIRE(e.key() == key);
+    // An exact match also proves the value isn't echoed.
+    REQUIRE(std::string{e.what()} == "config key \"" + key + "\" " + rule);
+}
+
+TEST_CASE("parse_config checks fields in declaration order", "[config]")
+{
+    json doc = valid_doc();
+    doc["sample_mail"] = 101;
+    doc["test_mailbox"] = "no-at-sign";
+    doc.erase("veeam_url");
+
+    REQUIRE(parse_error(doc.dump()).key() == "veeam_url");
+}
+
+TEST_CASE("parse_config rejects a config that samples nothing", "[config]")
+{
+    json doc = valid_doc();
+    doc["sample_mail"] = 0;
+    doc["sample_sp"] = 0;
+    doc["sample_od"] = 0;
+
+    const rp::ConfigError e = parse_error(doc.dump());
+    REQUIRE(e.key().empty());
+    REQUIRE(std::string{e.what()} == "config keys \"sample_mail\", \"sample_sp\" and \"sample_od\" "
+                                     "are all 0; at least one must be above 0");
+}
+
+TEST_CASE("parse_config accepts boundary and edge values", "[config]")
+{
+    const auto [key, value] = GENERATE(table<std::string, json>({
+        {"cloud_url", json("HTTPS://x")},
+        {"cloud_url", json("Https://cloud.example.invalid/path/")},
+        {"veeam_url", json("https://10.0.0.5:4443")},
+        {"test_mailbox", json("a@b")},
+        {"poll_interval_s", json(1)},
+        {"poll_interval_s", json(86400)},
+        {"heartbeat_interval_s", json(1)},
+        {"heartbeat_interval_s", json(86400)},
+        {"sample_mail", json(0)},
+        {"sample_mail", json(100)},
+        {"sample_sp", json(0)},
+        {"sample_od", json(100)},
+        {"log_level", json("trace")},
+        {"log_level", json("debug")},
+        {"log_level", json("info")},
+        {"log_level", json("warn")},
+        {"log_level", json("error")},
+        {"log_level", json("critical")},
+        {"log_level", json("off")},
+    }));
+    CAPTURE(key, value.dump());
+    json doc = valid_doc();
+    doc[key] = value;
+
+    const rp::Config config = rp::parse_config(doc.dump());
+    const json parsed{
+        {"cloud_url", config.cloud_url},
+        {"veeam_url", config.veeam_url},
+        {"test_mailbox", config.test_mailbox},
+        {"poll_interval_s", config.poll_interval_s},
+        {"heartbeat_interval_s", config.heartbeat_interval_s},
+        {"sample_mail", config.sample_mail},
+        {"sample_sp", config.sample_sp},
+        {"sample_od", config.sample_od},
+        {"log_level", config.log_level},
+    };
+    REQUIRE(parsed.at(key) == value);
+}
+
+TEST_CASE("parse_config reads every key", "[config]")
+{
+    const rp::Config config = rp::parse_config(valid_doc().dump(2));
+
+    REQUIRE(config.cloud_url == "https://cloud.example.invalid");
+    REQUIRE(config.veeam_url == "https://veeam.example.invalid:4443");
+    REQUIRE(config.veeam_org_name == "example.onmicrosoft.com");
+    REQUIRE(config.graph_tenant_id == "00000000-0000-0000-0000-000000000001");
+    REQUIRE(config.graph_client_id == "00000000-0000-0000-0000-000000000002");
+    REQUIRE(config.test_mailbox == "restoretest@example.onmicrosoft.com");
+    REQUIRE(config.test_site_id == "site-id");
+    REQUIRE(config.test_library_id == "library-id");
+    REQUIRE(config.test_onedrive_drive_id == "drive-id");
+    REQUIRE(config.test_onedrive_folder_id == "folder-id");
+    REQUIRE(config.poll_interval_s == 60);
+    REQUIRE(config.heartbeat_interval_s == 120);
+    REQUIRE(config.sample_mail == 1);
+    REQUIRE(config.sample_sp == 2);
+    REQUIRE(config.sample_od == 3);
+    REQUIRE(config.log_level == "debug");
+}
+
+TEST_CASE("parse_config fills in defaults for absent optional keys", "[config]")
+{
+    const rp::Config config = rp::parse_config(required_only_doc().dump());
+
+    REQUIRE(config.poll_interval_s == 300);
+    REQUIRE(config.heartbeat_interval_s == 900);
+    REQUIRE(config.sample_mail == 5);
+    REQUIRE(config.sample_sp == 5);
+    REQUIRE(config.sample_od == 5);
+    REQUIRE(config.log_level == "info");
+}

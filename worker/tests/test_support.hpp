@@ -4,6 +4,8 @@
 // environment variable that is put back as it was. Tests never write outside
 // temp_directory_path() and never leave the environment changed.
 
+#include <catch2/catch_test_macros.hpp>
+
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -43,6 +45,9 @@ public:
         const std::filesystem::path file = path_ / name;
         std::ofstream stream(file, std::ios::binary);
         stream.write(content.data(), static_cast<std::streamsize>(content.size()));
+        stream.close();
+        // A failed write would leave the test checking the wrong thing.
+        REQUIRE(stream);
         return file;
     }
 

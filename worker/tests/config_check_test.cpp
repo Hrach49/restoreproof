@@ -264,3 +264,36 @@ TEST_CASE("rpworker config check reports any other failure without its message",
     REQUIRE(result.out.empty());
     REQUIRE(result.err == "config error: unexpected failure\n");
 }
+
+TEST_CASE("rpworker config check prints no secret on any error path", "[config_check]")
+{
+    std::string with_password_key = kConfigJson;
+    with_password_key.insert(1, R"("veeam_password": "SENTINEL-FILE-7a64",)");
+    std::string with_userinfo = kConfigJson;
+    const std::string url = "https://veeam.example.invalid:4443";
+    with_userinfo.replace(with_userinfo.find(url), url.size(),
+                          "https://admin:SENTINEL-FILE-7a64@veeam.example.invalid:4443");
+    std::string with_key_name = kConfigJson;
+    with_key_name.insert(1, R"("SENTINEL-FILE-7a64\n": 1,)");
+
+    const std::string text = GENERATE_COPY(
+        std::string(R"({"cloud_url": "SENTINEL-FILE-7a64)"),
+        std::string(R"({"cloud_url": SENTINEL-FILE-7a64)"),
+        std::string(R"({"sample_mail": 1e400})"),
+        with_password_key,
+        with_userinfo,
+        with_key_name);
+    CAPTURE(text);
+    const rp::test::TempDir dir;
+    const auto path = dir.write("config.json", text);
+    const rp::test::ScopedEnv user(rp::kEnvVeeamUsername, "SENTINEL-ENV-USER-7a64");
+    const rp::test::ScopedEnv password(rp::kEnvVeeamPassword, "SENTINEL-ENV-PASSWORD-7a64");
+    const rp::test::ScopedEnv graph(rp::kEnvGraphClientSecret, "SENTINEL-ENV-GRAPH-7a64");
+
+    const Run result = run(Args{"check"}, path);
+    REQUIRE(result.exit_code == 1);
+    REQUIRE(result.out.empty());
+    REQUIRE_THAT(result.err, ContainsSubstring("config error: "));
+    REQUIRE_THAT(result.out + result.err, !ContainsSubstring("SENTINEL"));
+    REQUIRE_THAT(result.out + result.err, !ContainsSubstring("7a64"));
+}

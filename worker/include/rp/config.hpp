@@ -12,8 +12,8 @@ namespace rp {
 // see rp/secrets.hpp. The keys are documented in docs/worker-config.md.
 //
 //   key                      required  default  valid values
-//   cloud_url                yes       -        https:// URL
-//   veeam_url                yes       -        https:// URL
+//   cloud_url                yes       -        https:// URL (1)
+//   veeam_url                yes       -        https:// URL (1)
 //   veeam_org_name           yes       -        non-empty string
 //   graph_tenant_id          yes       -        non-empty string
 //   graph_client_id          yes       -        non-empty string
@@ -29,6 +29,8 @@ namespace rp {
 //   sample_od                no        5        integer, 0..100
 //   log_level                no        "info"   trace, debug, info, warn, error, critical, off
 //
+// (1) No user name, password, query or fragment: `config check` prints it.
+// No string value may contain a control character (below 0x20, or 0x7F).
 // At least one of sample_mail, sample_sp and sample_od must be above 0: a run
 // that restores nothing must not be able to report `pass`.
 struct Config {

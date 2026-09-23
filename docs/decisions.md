@@ -51,8 +51,10 @@ The `%ProgramData%` variable can be changed by whoever starts the process; the k
 API returns the machine's real location. `config check` prints the URLs and the error
 messages name keys, so anything the file controls that reaches the terminal is limited to
 what can't be a secret or forge output: a password in a URL's userinfo or a token in its
-query would be printed, a key name can be a pasted secret or a 200 KB string, and a control
-character in a value or key can fake or hide lines.
+query would be printed, a key name can be a 200 KB string, and a control character in a
+value or key can fake or hide lines. The key-name rule limits length and characters only: a
+pasted token that is itself a short identifier-like key is still echoed as an unknown key.
+Non-ASCII controls (C1, bidi overrides) are not yet rejected; a follow-up if it matters.
 
 **Alternatives rejected.** Collecting every error in one pass: more code and more test
 combinations, and later errors are often caused by the first. Ignoring unknown keys: typos

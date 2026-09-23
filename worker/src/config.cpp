@@ -226,6 +226,10 @@ Config parse_config(std::string_view json_text)
         // Never e.what(): it quotes the last token read, which may be a secret.
         throw ConfigError("", "config is not valid JSON (error at byte " + std::to_string(e.byte) +
                                   ")");
+    } catch (const json::exception&) {
+        // out_of_range 406: a number too large for a double, e.g. 1e400. Its
+        // message quotes the number, so it isn't shown either.
+        throw ConfigError("", "config is not valid JSON (a number is out of range)");
     }
     if (!doc.is_object()) {
         throw ConfigError("", "config must be a JSON object");

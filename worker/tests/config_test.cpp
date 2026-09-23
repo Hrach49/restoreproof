@@ -70,6 +70,17 @@ rp::ConfigError parse_error(const std::string& text)
     return rp::ConfigError("", "unreachable");
 }
 
+// A valid config whose sample_mail is `number`, written as is: for numbers
+// json can't hold or would write differently.
+std::string with_raw_sample_mail(const std::string& number)
+{
+    json doc = valid_doc();
+    doc.erase("sample_mail");
+    std::string text = doc.dump();
+    text.pop_back();
+    return text + ",\"sample_mail\":" + number + "}";
+}
+
 const std::vector<std::string> kRequiredKeys{
     "cloud_url",       "veeam_url",       "veeam_org_name",         "graph_tenant_id",
     "graph_client_id", "test_mailbox",    "test_site_id",           "test_library_id",
@@ -103,6 +114,26 @@ TEST_CASE("parse_config rejects text that isn't JSON without quoting it", "[conf
     REQUIRE(e.key().empty());
     REQUIRE(std::string{e.what()} == "config is not valid JSON (error at byte " + byte + ")");
     REQUIRE_THAT(e.what(), !ContainsSubstring("SENTINEL"));
+}
+
+TEST_CASE("parse_config rejects a number too large for a double without quoting it", "[config]")
+{
+    // nlohmann throws out_of_range (not parse_error) here, quoting the token.
+    const std::string number = GENERATE("1e400", "-1e400", "1e99999");
+    CAPTURE(number);
+    const std::string text = with_raw_sample_mail(number);
+
+    const rp::ConfigError e = parse_error(text);
+    REQUIRE(e.key().empty());
+    REQUIRE(std::string{e.what()} == "config is not valid JSON (a number is out of range)");
+}
+
+TEST_CASE("parse_config reports an integer too large for 64 bits as not an integer", "[config]")
+{
+    // nlohmann stores it as a double, so it isn't a JSON integer any more.
+    const rp::ConfigError e = parse_error(with_raw_sample_mail("99999999999999999999"));
+    REQUIRE(e.key() == "sample_mail");
+    REQUIRE(std::string{e.what()} == "config key \"sample_mail\" must be an integer");
 }
 
 TEST_CASE("parse_config rejects a root that isn't an object", "[config]")

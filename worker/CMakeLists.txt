@@ -19,6 +19,7 @@ enable_testing()
 add_library(rpcore STATIC
     src/cli.cpp
     src/config.cpp
+    src/secrets.cpp
     src/version.cpp
 )
 target_include_directories(rpcore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -45,6 +46,7 @@ add_executable(rptests
     tests/cli_test.cpp
     tests/config_test.cpp
     tests/deps_test.cpp
+    tests/secrets_test.cpp
     tests/smoke.cpp
     tests/version_test.cpp
 )

@@ -1,3 +1,4 @@
+#include <rp/config.hpp>
 #include <rp/secrets.hpp>
 
 #include "test_support.hpp"
@@ -76,6 +77,43 @@ TEST_CASE("load_secrets_from_env reads a variable when the others are unset", "[
             REQUIRE_FALSE(field_for(secrets, other).has_value());
         }
     }
+}
+
+TEST_CASE("load_secrets_from_env reads a value outside the ANSI code page as UTF-8", "[secrets]")
+{
+    // Armenian HO (U+0570) is in no Western code page; the euro sign (U+20AC)
+    // is 0x80 in cp1252, so a narrow read would return it unconverted.
+    const rp::test::ScopedEnv password(rp::kEnvVeeamPassword, L"pհss€");
+
+    REQUIRE(rp::load_secrets_from_env().veeam_password == "p\xD5\xB0ss\xE2\x82\xAC");
+}
+
+TEST_CASE("load_secrets_from_env rejects a value that isn't valid Unicode, without showing it",
+          "[secrets]")
+{
+    const std::string_view name = GENERATE(rp::kEnvVeeamUsername, rp::kEnvVeeamPassword,
+                                           rp::kEnvGraphClientSecret);
+    CAPTURE(name);
+    // An unpaired surrogate: no UTF-8 string holds it, so any conversion would
+    // change the secret.
+    const rp::test::ScopedEnv env(name, std::wstring{L"SENTINEL-c2e0"} + L'\xD800');
+
+    try {
+        rp::load_secrets_from_env();
+        FAIL("load_secrets_from_env accepted an unpaired surrogate");
+    } catch (const rp::ConfigError& e) {
+        REQUIRE(e.key() == name);
+        REQUIRE(std::string{e.what()} ==
+                "environment variable " + std::string{name} + " is not valid Unicode");
+    }
+}
+
+TEST_CASE("ScopedEnv sets and reads back a value outside the ANSI code page", "[secrets]")
+{
+    const std::string name = "RP_TEST_SCOPED_ENV_4a90";
+    const rp::test::ScopedEnv env(name, "p\xD5\xB0ss\xE2\x82\xAC");
+
+    REQUIRE(rp::test::get_env(name) == "p\xD5\xB0ss\xE2\x82\xAC");
 }
 
 TEST_CASE("ScopedEnv restores the variable it changed", "[secrets]")

@@ -1,23 +1,42 @@
 #include <rp/secrets.hpp>
 
-#include <cstdlib>
+#include <rp/config.hpp>
+
+#include "utf16.hpp"
+
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
 
 namespace rp {
 
 namespace {
 
-// The variable's value, or nullopt when it is unset or empty. _dupenv_s
-// rather than getenv, which MSVC flags as unsafe (C4996).
+// The longest value Windows allows in an environment variable, in UTF-16 units.
+constexpr DWORD kMaxEnvValue = 32767;
+
+// The variable's value as UTF-8, or nullopt when it is unset or empty. Read
+// from the process's own UTF-16 environment: the CRT's narrow copy
+// (getenv, _dupenv_s) is in the ANSI code page, which would silently change
+// any character outside it. Throws ConfigError naming the variable, never its
+// value, when the value isn't valid UTF-16.
 std::optional<std::string> read_env(std::string_view name)
 {
-    char* buffer = nullptr;
-    std::size_t length = 0;
-    if (_dupenv_s(&buffer, &length, std::string{name}.c_str()) != 0 || buffer == nullptr) {
+    // The names are ASCII constants, so widening byte by byte is exact.
+    const std::wstring wide_name(name.begin(), name.end());
+    std::wstring value(kMaxEnvValue + 1, L'\0');
+    const DWORD length = GetEnvironmentVariableW(wide_name.c_str(), value.data(), kMaxEnvValue + 1);
+    // 0: unset, or set to "". Above the buffer: can't happen within the limit.
+    if (length == 0 || length > kMaxEnvValue) {
         return std::nullopt;
     }
-    std::string value(buffer);
-    std::free(buffer);
-    return value.empty() ? std::nullopt : std::optional<std::string>{std::move(value)};
+    value.resize(length);
+    std::optional<std::string> utf8 = utf16_to_utf8(value);
+    if (!utf8) {
+        throw ConfigError(std::string{name},
+                          "environment variable " + std::string{name} + " is not valid Unicode");
+    }
+    return utf8;
 }
 
 } // namespace

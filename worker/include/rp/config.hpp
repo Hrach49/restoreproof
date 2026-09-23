@@ -55,15 +55,16 @@ struct Config {
     std::string log_level = "info";
 };
 
-// A config file that can't be read, isn't valid JSON or breaks a rule above.
-// what() is the message for the user; it names the offending key and never
-// contains a value from the file.
+// A config file that can't be read, isn't valid JSON or breaks a rule above,
+// or a secret environment variable that can't be read (rp/secrets.hpp).
+// what() is the message for the user; it names the offending key or variable
+// and never contains a value.
 class ConfigError : public std::runtime_error {
 public:
     ConfigError(std::string key, const std::string& message);
 
-    // The offending key, or empty when the error isn't about a single key
-    // (unreadable file, invalid JSON, all sample sizes 0).
+    // The offending key or environment variable, or empty when the error isn't
+    // about a single one (unreadable file, invalid JSON, all sample sizes 0).
     const std::string& key() const noexcept;
 
 private:

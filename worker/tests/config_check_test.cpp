@@ -265,6 +265,21 @@ TEST_CASE("rpworker config check reports any other failure without its message",
     REQUIRE(result.err == "config error: unexpected failure\n");
 }
 
+TEST_CASE("rpworker config check reports a secret variable that isn't valid Unicode",
+          "[config_check]")
+{
+    const rp::test::TempDir dir;
+    const auto path = dir.write("config.json", kConfigJson);
+    const rp::test::ScopedEnv password(rp::kEnvVeeamPassword,
+                                       std::wstring{L"SENTINEL-8e15"} + L'\xDC00');
+
+    const Run result = run(Args{"check"}, path);
+    REQUIRE(result.exit_code == 1);
+    REQUIRE(result.out.empty());
+    REQUIRE(result.err ==
+            "config error: environment variable RP_VEEAM_PASSWORD is not valid Unicode\n");
+}
+
 TEST_CASE("rpworker config check prints no secret on any error path", "[config_check]")
 {
     std::string with_password_key = kConfigJson;

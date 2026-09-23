@@ -18,6 +18,7 @@ enable_testing()
 # rptests both link it; coverage is measured on its sources (src/, include/).
 add_library(rpcore STATIC
     src/cli.cpp
+    src/config.cpp
     src/version.cpp
 )
 target_include_directories(rpcore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -40,6 +41,7 @@ target_link_libraries(rpworker PRIVATE rpcore)
 
 add_executable(rptests
     tests/cli_test.cpp
+    tests/config_test.cpp
     tests/deps_test.cpp
     tests/smoke.cpp
     tests/version_test.cpp

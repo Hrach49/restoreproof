@@ -21,8 +21,8 @@ Ten keys are required; the other six have defaults.
 
 | Key | Required | Default | Valid values | What it is for |
 |---|---|---|---|---|
-| `cloud_url` | yes | | `https://` URL, no user name, password, query or fragment | The RestoreProof Cloud the Worker gets jobs from and uploads results to. |
-| `veeam_url` | yes | | `https://` URL, no user name, password, query or fragment | The Veeam Backup for Microsoft 365 REST API, e.g. `https://veeam.example.invalid:4443`. |
+| `cloud_url` | yes | | `https://` URL, printable ASCII only, no user name, password, query or fragment | The RestoreProof Cloud the Worker gets jobs from and uploads results to. |
+| `veeam_url` | yes | | `https://` URL, printable ASCII only, no user name, password, query or fragment | The Veeam Backup for Microsoft 365 REST API, e.g. `https://veeam.example.invalid:4443`. |
 | `veeam_org_name` | yes | | non-empty string | The Microsoft 365 organisation as Veeam names it, e.g. `example.onmicrosoft.com`. |
 | `graph_tenant_id` | yes | | non-empty string | The Microsoft 365 tenant ID, for Microsoft Graph sign-in. |
 | `graph_client_id` | yes | | non-empty string | The app registration's client ID, for Microsoft Graph sign-in. |
@@ -40,8 +40,11 @@ Ten keys are required; the other six have defaults.
 
 At least one of `sample_mail`, `sample_sp` and `sample_od` must be above 0.
 
-No string setting may contain a control character (a byte below 0x20, such as a newline or
-tab, or 0x7F). Non-ASCII UTF-8 is fine.
+No string setting may contain a control character: an ASCII one (below 0x20, such as a
+newline or tab, or 0x7F), a C1 control (U+0080 to U+009F), the line or paragraph separator
+(U+2028, U+2029), or a bidirectional-text control (U+200E, U+200F, U+202A to U+202E, U+2066
+to U+2069), which can reorder how a line displays. Other non-ASCII text, such as `Zürich` or
+`東京`, is fine.
 
 ## Validation
 
@@ -63,9 +66,12 @@ together. Fix the reported problem and run `rpworker config check` again.
   are always named.
 - **URLs can't carry credentials.** `cloud_url` and `veeam_url` reject an `@` before the path
   (a user name or password, as in `https://user:password@host`) and any `?` or `#` (a query or
-  fragment, where tokens often hide), because `config check` prints both URLs.
-- **Control characters are rejected** in every string setting, for the same reason: a newline
-  or escape sequence in a value could forge or hide lines of `config check` output.
+  fragment, where tokens often hide), because `config check` prints both URLs. They must be
+  printable ASCII (no spaces), so a look-alike such as a fullwidth `＠` can't hide userinfo;
+  write an internationalised host name in its `xn--` form.
+- **Control characters are rejected** in every string setting, for the same reason: a newline,
+  escape sequence or bidi override in a value could forge, hide or reorder lines of
+  `config check` output.
 - **Unknown keys are rejected.** A misspelt optional key (`poll_intervall_s`) would otherwise
   be ignored and its default used without anyone noticing. Keys are case-sensitive.
 - **All sample sizes 0 is rejected.** A run that restores nothing has nothing to compare, and

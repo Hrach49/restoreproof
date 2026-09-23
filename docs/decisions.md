@@ -22,8 +22,9 @@ Format: date, decision, reason, alternatives rejected.
   `connection_string` is rejected, before any other key check.
 - A key name from the file is echoed only if it is 1-64 of `[A-Za-z0-9_.-]`; otherwise the
   message describes the key without naming it.
-- `cloud_url` and `veeam_url` reject userinfo (`@` before the path), queries and fragments;
-  every string setting rejects control characters.
+- `cloud_url` and `veeam_url` must be printable ASCII and reject userinfo (`@` before the
+  path), queries and fragments; every string setting rejects control characters: ASCII, C1,
+  U+2028/U+2029 and bidi controls.
 - Unknown keys are rejected (exact, case-sensitive match against the 16 known keys).
 - Validation stops at the first error, in a fixed order: unreadable file, invalid JSON, root
   not an object, secret-looking key, unknown key, each field in declaration order, all sample
@@ -54,7 +55,6 @@ what can't be a secret or forge output: a password in a URL's userinfo or a toke
 query would be printed, a key name can be a 200 KB string, and a control character in a
 value or key can fake or hide lines. The key-name rule limits length and characters only: a
 pasted token that is itself a short identifier-like key is still echoed as an unknown key.
-Non-ASCII controls (C1, bidi overrides) are not yet rejected; a follow-up if it matters.
 
 **Alternatives rejected.** Collecting every error in one pass: more code and more test
 combinations, and later errors are often caused by the first. Ignoring unknown keys: typos

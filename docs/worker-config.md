@@ -57,8 +57,9 @@ together. Fix the reported problem and run `rpworker config check` again.
   without the number.
 - **A key name from the file is printed only if it is safe:** 1 to 64 characters, each a
   letter, digit, `_`, `.` or `-`. Any other unknown or secret-looking key is reported as
-  `config has a key that ...` without its name, since the name could itself be a pasted
-  secret, a huge string, or contain control characters that forge lines of output. Known keys
+  `config has a key that ...` without its name, since the name could be a huge string or
+  contain control characters that forge lines of output. This limits length and characters
+  only; it can't recognise a pasted token that happens to look like a key name. Known keys
   are always named.
 - **URLs can't carry credentials.** `cloud_url` and `veeam_url` reject an `@` before the path
   (a user name or password, as in `https://user:password@host`) and any `?` or `#` (a query or

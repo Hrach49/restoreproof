@@ -13,6 +13,7 @@
 #include <cctype>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <limits>
 #include <string>
 #include <utility>
@@ -458,4 +459,29 @@ TEST_CASE("default_config_path is config.json in RestoreProof under ProgramData"
     REQUIRE(path.parent_path().filename() == "RestoreProof");
     REQUIRE(path.parent_path().parent_path() == rp::program_data_dir());
     REQUIRE(utf8(path).ends_with("\\RestoreProof\\config.json"));
+}
+
+TEST_CASE("config.example.json is a valid config of placeholders", "[config]")
+{
+    // RP_CONFIG_EXAMPLE is set by CMakeLists.txt, so the example can't rot.
+    const rp::Config config = rp::load_config(std::filesystem::path(RP_CONFIG_EXAMPLE));
+
+    REQUIRE_THAT(config.cloud_url, ContainsSubstring(".example.invalid"));
+    REQUIRE_THAT(config.veeam_url, ContainsSubstring(".example.invalid"));
+    REQUIRE(config.graph_tenant_id == "00000000-0000-0000-0000-000000000000");
+    REQUIRE(config.graph_client_id == "00000000-0000-0000-0000-000000000000");
+    // It shows every optional key at its default.
+    REQUIRE(config.poll_interval_s == 300);
+    REQUIRE(config.heartbeat_interval_s == 900);
+    REQUIRE(config.sample_mail == 5);
+    REQUIRE(config.sample_sp == 5);
+    REQUIRE(config.sample_od == 5);
+    REQUIRE(config.log_level == "info");
+}
+
+TEST_CASE("config.example.json sets every key", "[config]")
+{
+    std::ifstream file(std::filesystem::path(RP_CONFIG_EXAMPLE));
+    const json doc = json::parse(file);
+    REQUIRE(doc.size() == 16);
 }

@@ -54,6 +54,8 @@ add_executable(rptests
 )
 # deps_test.cpp uses cpr and OpenSSL directly, so it links them itself.
 target_link_libraries(rptests PRIVATE rpcore cpr::cpr OpenSSL::Crypto Catch2::Catch2WithMain)
+# config_test.cpp parses the shipped example, so it can't drift from the rules.
+target_compile_definitions(rptests PRIVATE RP_CONFIG_EXAMPLE="${CMAKE_CURRENT_SOURCE_DIR}/config.example.json")
 
 include(Catch)
 catch_discover_tests(rptests)

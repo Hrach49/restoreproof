@@ -2,12 +2,22 @@
 
 #include <rp/secrets.hpp>
 
+#include "path_utf8.hpp"
+
 #include <nlohmann/json.hpp>
+
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#include <shlobj.h>
 
 #include <algorithm>
 #include <array>
 #include <cctype>
 #include <cstdint>
+#include <fstream>
+#include <memory>
+#include <sstream>
 #include <utility>
 
 namespace rp {
@@ -246,6 +256,39 @@ Config parse_config(std::string_view json_text)
                               "all 0; at least one must be above 0");
     }
     return config;
+}
+
+Config load_config(const std::filesystem::path& path)
+{
+    const std::string prefix = path_to_utf8(path) + ": ";
+    std::ifstream file(path, std::ios::binary);
+    if (!file) {
+        throw ConfigError("", prefix + "cannot read config file");
+    }
+    std::ostringstream text;
+    text << file.rdbuf();
+    try {
+        return parse_config(text.str());
+    } catch (const ConfigError& e) {
+        throw ConfigError(e.key(), prefix + e.what());
+    }
+}
+
+std::filesystem::path program_data_dir()
+{
+    PWSTR raw = nullptr;
+    const HRESULT result = SHGetKnownFolderPath(FOLDERID_ProgramData, KF_FLAG_DEFAULT, nullptr, &raw);
+    // The buffer must be freed even when the call fails.
+    const std::unique_ptr<wchar_t, decltype(&CoTaskMemFree)> owner(raw, &CoTaskMemFree);
+    if (FAILED(result)) {
+        throw ConfigError("", "cannot find the ProgramData folder");
+    }
+    return std::filesystem::path(raw);
+}
+
+std::filesystem::path default_config_path()
+{
+    return program_data_dir() / "RestoreProof" / "config.json";
 }
 
 } // namespace rp

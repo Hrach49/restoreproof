@@ -30,6 +30,8 @@ target_link_libraries(rpcore
     PUBLIC nlohmann_json::nlohmann_json spdlog::spdlog
     PRIVATE cpr::cpr OpenSSL::Crypto
 )
+# program_data_dir() calls SHGetKnownFolderPath (shell32) and CoTaskMemFree (ole32).
+target_link_libraries(rpcore PRIVATE shell32 ole32)
 
 # rpworker: the Worker exe. main() lives in app/ and only hands argv to
 # rp::run_cli; all parsing is in rpcore, where rptests can reach it

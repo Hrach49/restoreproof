@@ -7,6 +7,52 @@ Format: date, decision, reason, alternatives rejected.
 
 ---
 
+## 2026-09-24 — Worker config: strict `config.json`, secrets from environment variables until the vault
+
+**Decision.** W1.2 loads the Worker's settings from `config.json` (default
+`%ProgramData%\RestoreProof\config.json`) through `rp::load_config`, and checks them with
+`rpworker config check`. Keys and rules are in [worker-config.md](worker-config.md).
+
+- Secrets never go in `config.json`. Until the DPAPI vault arrives in W4.5 (#48), they come
+  from `RP_VEEAM_USERNAME`, `RP_VEEAM_PASSWORD` and `RP_GRAPH_CLIENT_SECRET`, whose names are
+  defined once in `worker/include/rp/secrets.hpp`. An unset one is not an error, because
+  which ones a run needs depends on the Veeam auth mode W1.0 picks.
+- A top-level key whose lowercased name contains `password`, `passwd`, `secret`, `token`,
+  `api_key` or `apikey` is rejected, before any other key check.
+- Unknown keys are rejected (exact, case-sensitive match against the 16 known keys).
+- Validation stops at the first error, in a fixed order: unreadable file, invalid JSON, root
+  not an object, secret-looking key, unknown key, each field in declaration order, all sample
+  sizes 0.
+- Error messages name the key and never echo a value. A JSON parse error reports only the
+  byte offset, because nlohmann's message quotes the last token it read.
+- `poll_interval_s` and `heartbeat_interval_s` are bounded 1..86400; `sample_mail`,
+  `sample_sp` and `sample_od` 0..100, with at least one above 0.
+- No CLI library yet: `run_cli` parses `--version` and `config check [--config <path>]` by
+  hand. W1.6 (#21) decides between CLI11 and hand-rolled parsing once there are more
+  subcommands.
+- `%ProgramData%` is resolved with `SHGetKnownFolderPath(FOLDERID_ProgramData)`, not the
+  environment variable.
+
+**Reason.** A misspelt optional key would silently fall back to its default, and a secret
+pasted into `config.json` would sit in a plain file that gets copied into tickets; rejecting
+both turns a quiet mistake into a named error. Stopping at the first error is simpler,
+deterministic and easy to test one rule at a time; the user fixes one thing and reruns
+`config check`, and a config has few enough keys that this costs little. The bounds catch
+values that are clearly wrong (0 seconds, a thousand items per run) without guessing at
+tuning, and a run that restores nothing must not be able to report `pass`. Environment
+variables are the least code that keeps secrets out of the file until the vault exists.
+The `%ProgramData%` variable can be changed by whoever starts the process; the known-folder
+API returns the machine's real location.
+
+**Alternatives rejected.** Collecting every error in one pass: more code and more test
+combinations, and later errors are often caused by the first. Ignoring unknown keys: typos
+go unnoticed. Secrets in `config.json` protected by file ACLs: one careless copy of the file
+leaks them, and W4.5 replaces the mechanism anyway. Reading `%ProgramData%` from the
+environment variable: a process can override it. Pulling in CLI11 now: a dependency for two
+commands, before W1.6 has looked at what the rest of the CLI needs.
+
+---
+
 ## 2026-09-24 — `rpworker`'s command line lives in rpcore; `worker/app/` is guarded and measured
 
 **Decision.** Supersedes the part of the 2026-09-22 entry "Every rpcore `.cpp` must reach the

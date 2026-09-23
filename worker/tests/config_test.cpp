@@ -234,6 +234,7 @@ TEST_CASE("parse_config rejects invalid values without echoing them", "[config]"
     const std::string interval = "must be an integer from 1 to 86400 (seconds)";
     const std::string sample = "must be an integer from 0 to 100";
     const std::string url = "must be an https:// URL with no user name, password, query or fragment";
+    const std::string control = "must not contain control characters";
     const auto [key, value, rule] = GENERATE_COPY(table<std::string, json, std::string>({
         {"cloud_url", json(""), "must not be empty"},
         {"veeam_org_name", json(""), "must not be empty"},
@@ -245,6 +246,18 @@ TEST_CASE("parse_config rejects invalid values without echoing them", "[config]"
         {"test_onedrive_folder_id", json(""), "must not be empty"},
         {"test_mailbox", json(""), "must not be empty"},
         {"log_level", json(""), "must not be empty"},
+        // Checked before the rule, so a URL with a control character says so.
+        {"cloud_url", json("https://cloud.example.invalid\n"), control},
+        {"veeam_url", json("https://veeam.example.invalid\r"), control},
+        {"veeam_org_name", json("example\tonmicrosoft.com"), control},
+        {"graph_tenant_id", json("\x1b[2J"), control},
+        {"graph_client_id", json("client\x7f"), control},
+        {"test_mailbox", json("restoretest@example.invalid\n"), control},
+        {"test_site_id", json(std::string("site\0id", 7)), control},
+        {"test_library_id", json("\x01"), control},
+        {"test_onedrive_drive_id", json("drive\x1f"), control},
+        {"test_onedrive_folder_id", json("folder\n"), control},
+        {"log_level", json("info\n"), control},
         {"cloud_url", json("http://cloud.example.invalid"), url},
         {"cloud_url", json("ftp://cloud.example.invalid"), url},
         {"cloud_url", json("cloud.example.invalid"), url},
@@ -328,6 +341,8 @@ TEST_CASE("parse_config accepts boundary and edge values", "[config]")
         {"veeam_url", json("https://10.0.0.5:4443")},
         {"veeam_url", json("https://veeam.example.invalid:4443/v8/a@b")},
         {"test_mailbox", json("a@b")},
+        // Non-ASCII UTF-8 bytes are above 0x7F, not control characters.
+        {"test_mailbox", json("caf\xc3\xa9@example.invalid")},
         {"poll_interval_s", json(1)},
         {"poll_interval_s", json(86400)},
         {"heartbeat_interval_s", json(1)},

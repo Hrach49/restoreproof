@@ -1,17 +1,15 @@
-// rpworker entry point. Lives outside src/ so it isn't counted against rpcore
-// coverage (docs/decisions.md); keep it a thin call into rpcore.
+// rpworker entry point: hands argv to rpcore and nothing else. Parsing and
+// exit codes live in rp::run_cli, where rptests can reach them
+// (docs/decisions.md).
 
-#include <rp/version.hpp>
+#include <rp/cli.hpp>
 
 #include <iostream>
 #include <string_view>
+#include <vector>
 
 int main(int argc, char* argv[])
 {
-    if (argc == 2 && std::string_view{argv[1]} == "--version") {
-        std::cout << rp::version() << '\n';
-        return 0;
-    }
-    std::cerr << "usage: rpworker --version\n";
-    return 2;
+    const std::vector<std::string_view> args(argv + (argc > 0 ? 1 : 0), argv + argc);
+    return rp::run_cli(args, std::cout, std::cerr);
 }

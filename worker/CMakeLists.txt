@@ -17,6 +17,7 @@ enable_testing()
 # rpcore: static library holding all Worker logic. rpworker (the exe) and
 # rptests both link it; coverage is measured on its sources (src/, include/).
 add_library(rpcore STATIC
+    src/cli.cpp
     src/version.cpp
 )
 target_include_directories(rpcore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -29,14 +30,16 @@ target_link_libraries(rpcore
     PRIVATE cpr::cpr OpenSSL::Crypto
 )
 
-# rpworker: the Worker exe. main() lives in app/, outside the coverage
-# sources, and stays a thin call into rpcore (docs/decisions.md).
+# rpworker: the Worker exe. main() lives in app/ and only hands argv to
+# rp::run_cli; all parsing is in rpcore, where rptests can reach it
+# (docs/decisions.md).
 add_executable(rpworker
     app/main.cpp
 )
 target_link_libraries(rpworker PRIVATE rpcore)
 
 add_executable(rptests
+    tests/cli_test.cpp
     tests/deps_test.cpp
     tests/smoke.cpp
     tests/version_test.cpp
@@ -48,8 +51,31 @@ include(Catch)
 catch_discover_tests(rptests)
 
 # rpworker's main() can't be linked into rptests, so ctest runs the exe.
-add_test(NAME "rpworker --version prints the project version" COMMAND rpworker --version)
-set_tests_properties("rpworker --version prints the project version" PROPERTIES
-    PASS_REGULAR_EXPRESSION "^${PROJECT_VERSION}\r?\n$")
-add_test(NAME "rpworker rejects unknown arguments" COMMAND rpworker --no-such-option)
-set_tests_properties("rpworker rejects unknown arguments" PROPERTIES WILL_FAIL TRUE)
+# run_exe_test.cmake checks the exit code and both streams exactly; ctest's own
+# PASS_REGULAR_EXPRESSION and WILL_FAIL would ignore the exit code.
+set(RP_RUN_EXE_TEST ${CMAKE_CURRENT_SOURCE_DIR}/tests/run_exe_test.cmake)
+function(rp_add_exe_test name)
+    cmake_parse_arguments(PARSE_ARGV 1 T "" "ARGS;EXIT_CODE;STDOUT;STDERR" "")
+    add_test(NAME "${name}" COMMAND ${CMAKE_COMMAND}
+        "-DEXE=$<TARGET_FILE:rpworker>" "-DARGS=${T_ARGS}" "-DEXIT_CODE=${T_EXIT_CODE}"
+        "-DSTDOUT=${T_STDOUT}" "-DSTDERR=${T_STDERR}" -P ${RP_RUN_EXE_TEST})
+endfunction()
+
+rp_add_exe_test("rpworker --version prints the project version"
+    ARGS --version EXIT_CODE 0 STDOUT ${PROJECT_VERSION} STDERR "")
+rp_add_exe_test("rpworker rejects unknown arguments"
+    ARGS --no-such-option EXIT_CODE 2 STDOUT "" STDERR "usage: rpworker --version")
+
+# The checker itself must fail on a wrong exit code or wrong output, or the two
+# tests above would prove nothing.
+rp_add_exe_test("run_exe_test fails on a wrong exit code"
+    ARGS --version EXIT_CODE 1 STDOUT ${PROJECT_VERSION} STDERR "")
+rp_add_exe_test("run_exe_test fails on wrong stdout"
+    ARGS --version EXIT_CODE 0 STDOUT "${PROJECT_VERSION}x" STDERR "")
+rp_add_exe_test("run_exe_test fails on unexpected stderr"
+    ARGS --version EXIT_CODE 0 STDOUT ${PROJECT_VERSION} STDERR "usage: rpworker --version")
+set_tests_properties(
+    "run_exe_test fails on a wrong exit code"
+    "run_exe_test fails on wrong stdout"
+    "run_exe_test fails on unexpected stderr"
+    PROPERTIES WILL_FAIL TRUE)

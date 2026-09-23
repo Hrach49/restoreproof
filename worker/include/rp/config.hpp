@@ -33,7 +33,7 @@ namespace rp {
 //     `config check` prints it.
 // No string value may contain a control character: ASCII (below 0x20, 0x7F),
 // C1 (U+0080-U+009F), U+2028, U+2029 or a bidi control (U+200E, U+200F,
-// U+202A-U+202E, U+2066-U+2069).
+// U+202A-U+202E, U+2066-U+2069, U+061C).
 // At least one of sample_mail, sample_sp and sample_od must be above 0: a run
 // that restores nothing must not be able to report `pass`.
 struct Config {

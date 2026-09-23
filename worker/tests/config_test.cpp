@@ -347,7 +347,8 @@ TEST_CASE("parse_config rejects invalid values without echoing them", "[config]"
         {"log_level", json("info\n"), control},
         // Non-ASCII controls, as UTF-8: C1 (U+0080-U+009F), line and paragraph
         // separators (U+2028, U+2029), bidi marks and overrides (U+200E, U+200F,
-        // U+202A-U+202E) and isolates (U+2066-U+2069). Each row pins a boundary.
+        // U+202A-U+202E), isolates (U+2066-U+2069) and the Arabic letter mark
+        // (U+061C). Each row pins a boundary.
         {"veeam_org_name", json("example\xC2\x80"), control},
         {"veeam_org_name", json("example\xC2\x9F"), control},
         {"graph_tenant_id", json("tenant\xE2\x80\xA8"), control},
@@ -358,6 +359,7 @@ TEST_CASE("parse_config rejects invalid values without echoing them", "[config]"
         {"test_site_id", json("site\xE2\x80\xAE"), control},
         {"test_library_id", json("library\xE2\x81\xA6"), control},
         {"test_library_id", json("library\xE2\x81\xA9"), control},
+        {"test_onedrive_folder_id", json("folder\xD8\x9C"), control},
         {"test_mailbox", json("\xE2\x80\xAE" "moc.elpmaxe@tset"), control},
         {"cloud_url", json("https://cloud.example.invalid\xC2\x85"), control},
         {"log_level", json("info\xE2\x80\xA8"), control},
@@ -454,8 +456,11 @@ TEST_CASE("parse_config accepts boundary and edge values", "[config]")
         {"test_mailbox", json("caf\xc3\xa9@example.invalid")},
         {"test_mailbox", json("Z\xC3\xBC" "rich@example.invalid")},
         {"test_mailbox", json("\xE6\x9D\xB1\xE4\xBA\xAC@example.invalid")},
-        // Just outside the rejected ranges: U+00A0, U+200D, U+2027, U+202F, U+2065, U+206A.
+        // Just outside the rejected ranges: U+00A0, U+061B, U+061D, U+200D, U+2027,
+        // U+202F, U+2065, U+206A.
         {"test_mailbox", json("a\xC2\xA0" "b@example.invalid")},
+        {"test_mailbox", json("a\xD8\x9B" "b@example.invalid")},
+        {"test_mailbox", json("a\xD8\x9D" "b@example.invalid")},
         {"test_mailbox", json("a\xE2\x80\x8D" "b@example.invalid")},
         {"test_mailbox", json("a\xE2\x80\xA7" "b@example.invalid")},
         {"test_mailbox", json("a\xE2\x80\xAF" "b@example.invalid")},

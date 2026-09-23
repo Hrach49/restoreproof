@@ -8,8 +8,10 @@
 
 namespace rp {
 
-// `rpworker config ...`. `args` is what follows "config" on the command line;
-// the only subcommand is `check [--config <path>]`. Without --config it reads
+// `rpworker config ...`. `args` is what follows "config" on the command line,
+// in UTF-8; the only subcommand is `check [--config <path>]`. A --config path
+// that isn't valid UTF-8 fails the check ("config error: the --config path is
+// not valid UTF-8"). Without --config it reads
 // the path `default_path` returns (rp::run_cli passes rp::default_config_path;
 // tests pass a temp file, so they never touch ProgramData). It is called only
 // then, so usage errors and --config never look up ProgramData.

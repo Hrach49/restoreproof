@@ -9,7 +9,8 @@ How the Worker is configured: the settings file, the secrets, and how to check b
 By default the Worker reads `%ProgramData%\RestoreProof\config.json` (usually
 `C:\ProgramData\RestoreProof\config.json`). `%ProgramData%` is resolved through Windows
 (`FOLDERID_ProgramData`), not from the environment variable. `rpworker config check --config
-<path>` reads another file instead.
+<path>` reads another file instead; the path may contain any character, including ones
+outside the machine's ANSI code page.
 
 The file is JSON with one flat object of settings. A UTF-8 byte order mark, as Notepad writes,
 is accepted. `worker/config.example.json` has every key with placeholder values; copy it and

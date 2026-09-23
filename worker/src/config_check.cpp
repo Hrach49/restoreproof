@@ -4,12 +4,14 @@
 #include <rp/secrets.hpp>
 
 #include "path_utf8.hpp"
+#include "utf16.hpp"
 
 #include <exception>
 #include <format>
 #include <optional>
 #include <ostream>
 #include <string>
+#include <utility>
 
 namespace rp {
 
@@ -19,19 +21,30 @@ constexpr std::string_view kUsage =
     "usage: rpworker --version | rpworker config check [--config <path>]\n";
 
 // Whether `args` are `check` or `check --config <path>`; for the latter,
-// sets `config_path`.
+// sets `config_arg` to the path as given, in UTF-8.
 bool parse_check_args(std::span<const std::string_view> args,
-                      std::optional<std::filesystem::path>& config_path)
+                      std::optional<std::string_view>& config_arg)
 {
     if (args.size() == 1 && args[0] == "check") {
         return true;
     }
     if (args.size() == 3 && args[0] == "check" && args[1] == "--config") {
-        // argv is in the ANSI code page, which is what path(std::string) expects.
-        config_path = std::filesystem::path(std::string{args[2]});
+        config_arg = args[2];
         return true;
     }
     return false;
+}
+
+// The --config argument as a path. Not path(std::string), which reads the
+// ANSI code page, nor path(std::u8string), which throws a system_error whose
+// message isn't meant for the user.
+std::filesystem::path config_arg_to_path(std::string_view config_arg)
+{
+    std::optional<std::wstring> wide = utf8_to_utf16(config_arg);
+    if (!wide) {
+        throw ConfigError("", "the --config path is not valid UTF-8");
+    }
+    return std::filesystem::path(std::move(*wide));
 }
 
 template <typename Value>
@@ -45,8 +58,8 @@ void print_setting(std::ostream& out, std::string_view label, const Value& value
 int run_config_command(std::span<const std::string_view> args, std::ostream& out, std::ostream& err,
                        const std::function<std::filesystem::path()>& default_path)
 {
-    std::optional<std::filesystem::path> config_path;
-    if (!parse_check_args(args, config_path)) {
+    std::optional<std::string_view> config_arg;
+    if (!parse_check_args(args, config_arg)) {
         err << kUsage;
         return 2;
     }
@@ -57,7 +70,7 @@ int run_config_command(std::span<const std::string_view> args, std::ostream& out
     Config config;
     Secrets secrets;
     try {
-        path = config_path ? *config_path : default_path();
+        path = config_arg ? config_arg_to_path(*config_arg) : default_path();
         config = load_config(path);
         secrets = load_secrets_from_env();
     } catch (const ConfigError& e) {

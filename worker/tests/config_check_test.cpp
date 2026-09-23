@@ -230,6 +230,47 @@ TEST_CASE("rpworker config check never prints a password in a URL", "[config_che
     REQUIRE_THAT(result.err, ContainsSubstring("\"cloud_url\""));
 }
 
+TEST_CASE("rpworker config check --config reads a UTF-8 path outside the ANSI code page",
+          "[config_check]")
+{
+    const rp::test::TempDir dir;
+    // Armenian letters: in no Western code page.
+    const auto path = dir.write(std::filesystem::path(u8"հայ.json"), kConfigJson);
+    const std::string path_arg = utf8(path);
+    const rp::test::ScopedEnv user(rp::kEnvVeeamUsername, std::nullopt);
+    const rp::test::ScopedEnv password(rp::kEnvVeeamPassword, std::nullopt);
+    const rp::test::ScopedEnv graph(rp::kEnvGraphClientSecret, std::nullopt);
+
+    PathSpy spy;
+    const Run result = run(Args{"check", "--config", path_arg}, spy.provider());
+    REQUIRE(result.err.empty());
+    REQUIRE(result.out == expected_output(path, "(not set)", "(not set)", "(not set)"));
+    REQUIRE(result.exit_code == 0);
+}
+
+TEST_CASE("rpworker config check reports an empty --config path as unreadable", "[config_check]")
+{
+    PathSpy spy;
+    const Run result = run(Args{"check", "--config", ""}, spy.provider());
+    REQUIRE(result.exit_code == 1);
+    REQUIRE(result.out.empty());
+    REQUIRE(result.err == "config error: : cannot read config file\n");
+    REQUIRE(spy.calls == 0);
+}
+
+TEST_CASE("rpworker config check reports a --config path that isn't UTF-8", "[config_check]")
+{
+    const std::string path_arg = GENERATE(std::string("\xFF.json"), std::string("a\xC3.json"),
+                                          std::string("\xED\xA0\x80.json"));
+    CAPTURE(path_arg);
+
+    PathSpy spy;
+    const Run result = run(Args{"check", "--config", path_arg}, spy.provider());
+    REQUIRE(result.exit_code == 1);
+    REQUIRE(result.out.empty());
+    REQUIRE(result.err == "config error: the --config path is not valid UTF-8\n");
+}
+
 TEST_CASE("rpworker config check --config never looks up the default path", "[config_check]")
 {
     const rp::test::TempDir dir;

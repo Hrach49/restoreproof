@@ -25,6 +25,15 @@ Format: date, decision, reason, alternatives rejected.
 - `cloud_url` and `veeam_url` must be printable ASCII and reject userinfo (`@` before the
   path), queries and fragments; every string setting rejects control characters: ASCII, C1,
   U+2028/U+2029 and bidi controls.
+- `test_mailbox` must be `restoretest@<domain>` (local part in any case; the domain two or
+  more `.`-separated labels of ASCII letters, digits and `-`). Only the domain comes from
+  configuration, which applies the 2026-09-22 rule "Restores only ever target `restoretest` /
+  `RestoreTest`" at load time. `TargetGuard` still checks every item. The SharePoint and
+  OneDrive targets are opaque Graph IDs whose names the loader can't see, so `TargetGuard`
+  must resolve them and check they are the `RestoreTest` library or folder.
+- The environment and the command line are read as UTF-16 (`GetEnvironmentVariableW`,
+  `wmain`) and converted to UTF-8 exactly. Text that isn't valid UTF-16 is an error, never
+  replaced.
 - Unknown keys are rejected (exact, case-sensitive match against the 16 known keys).
 - Validation stops at the first error, in a fixed order: unreadable file, invalid JSON, root
   not an object, secret-looking key, unknown key, each field in declaration order, all sample
@@ -55,12 +64,19 @@ what can't be a secret or forge output: a password in a URL's userinfo or a toke
 query would be printed, a key name can be a 200 KB string, and a control character in a
 value or key can fake or hide lines. The key-name rule limits length and characters only: a
 pasted token that is itself a short identifier-like key is still echoed as an unknown key.
+A mailbox address that merely looked like an email let a typo or a look-alike name a live
+mailbox as the restore target. The CRT's narrow environment and `argv` are in the ANSI code
+page, so a password or path with a character outside it was silently changed.
 
 **Alternatives rejected.** Collecting every error in one pass: more code and more test
 combinations, and later errors are often caused by the first. Ignoring unknown keys: typos
 go unnoticed. Secrets in `config.json` protected by file ACLs: one careless copy of the file
 leaks them, and W4.5 replaces the mechanism anyway. Reading `%ProgramData%` from the
-environment variable: a process can override it. Pulling in CLI11 now: a dependency for two
+environment variable: a process can override it. Accepting any address for `test_mailbox`
+and leaving it all to `TargetGuard`: a mistake would only surface mid-run, as `error` on
+every test. An `activeCodePage` UTF-8 manifest instead of the wide APIs: older Windows
+Server releases ignore it, and `rptests.exe` would need the same manifest for the tests to
+mean anything. Pulling in CLI11 now: a dependency for two
 commands, before W1.6 has looked at what the rest of the CLI needs.
 
 ---

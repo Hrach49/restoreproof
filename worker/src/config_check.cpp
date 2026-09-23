@@ -5,6 +5,7 @@
 
 #include "path_utf8.hpp"
 
+#include <exception>
 #include <format>
 #include <optional>
 #include <ostream>
@@ -17,19 +18,20 @@ namespace {
 constexpr std::string_view kUsage =
     "usage: rpworker --version | rpworker config check [--config <path>]\n";
 
-// The path `check` should read: `default_path`, or the one --config names.
-// nullopt for arguments it doesn't understand.
-std::optional<std::filesystem::path> check_path(std::span<const std::string_view> args,
-                                                const std::filesystem::path& default_path)
+// Whether `args` are `check` or `check --config <path>`; for the latter,
+// sets `config_path`.
+bool parse_check_args(std::span<const std::string_view> args,
+                      std::optional<std::filesystem::path>& config_path)
 {
     if (args.size() == 1 && args[0] == "check") {
-        return default_path;
+        return true;
     }
     if (args.size() == 3 && args[0] == "check" && args[1] == "--config") {
         // argv is in the ANSI code page, which is what path(std::string) expects.
-        return std::filesystem::path(std::string{args[2]});
+        config_path = std::filesystem::path(std::string{args[2]});
+        return true;
     }
-    return std::nullopt;
+    return false;
 }
 
 template <typename Value>
@@ -41,24 +43,33 @@ void print_setting(std::ostream& out, std::string_view label, const Value& value
 } // namespace
 
 int run_config_command(std::span<const std::string_view> args, std::ostream& out, std::ostream& err,
-                       const std::filesystem::path& default_path)
+                       const std::function<std::filesystem::path()>& default_path)
 {
-    const std::optional<std::filesystem::path> path = check_path(args, default_path);
-    if (!path) {
+    std::optional<std::filesystem::path> config_path;
+    if (!parse_check_args(args, config_path)) {
         err << kUsage;
         return 2;
     }
 
+    // default_path() is called only here, so usage errors and --config never
+    // look up ProgramData. Nothing thrown here may escape to main().
+    std::filesystem::path path;
     Config config;
+    Secrets secrets;
     try {
-        config = load_config(*path);
+        path = config_path ? *config_path : default_path();
+        config = load_config(path);
+        secrets = load_secrets_from_env();
     } catch (const ConfigError& e) {
         err << "config error: " << e.what() << '\n';
         return 1;
+    } catch (const std::exception&) {
+        // Not a ConfigError, so its message may not be safe to show.
+        err << "config error: unexpected failure\n";
+        return 1;
     }
-    const Secrets secrets = load_secrets_from_env();
 
-    out << "config file: " << path_to_utf8(*path) << '\n';
+    out << "config file: " << path_to_utf8(path) << '\n';
     print_setting(out, "cloud_url", config.cloud_url);
     print_setting(out, "veeam_url", config.veeam_url);
     print_setting(out, "veeam_org_name", config.veeam_org_name);

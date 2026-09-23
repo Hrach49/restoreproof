@@ -74,12 +74,16 @@ CASES = [
     (["worker\\src\\a.cpp", "worker\\tests_old\\a.cpp"], ["worker/src/a.cpp"]),
     # Deeply nested source.
     (["cloud/app/repo/results_repo.py"], ["cloud/app/repo/results_repo.py"]),
+    # rpworker's main() in worker/app/ is Worker source too.
+    (["worker/app/main.cpp"], ["worker/app/main.cpp"]),
+    (["worker/app/main.cpp", "cloud/tests/test_a.py"], ["worker/app/main.cpp"]),
     # --- allowed ---
     ([], []),
     (["docs/decisions.md"], []),
     (["README.md", ".github/workflows/worker.yml"], []),
     (["worker/src/a.cpp", "worker/tests/a_test.cpp"], []),
     (["worker/include/rp/a.hpp", "worker/tests/a_test.cpp"], []),
+    (["worker/app/main.cpp", "worker/tests/cli_test.cpp"], []),
     (["worker/src/a.cpp", "worker/tests/support/fake_http_client.hpp"], []),
     (["cloud/app/a.py", "cloud/tests/test_a.py"], []),
     (["cloud/app/a.py", "cloud/tests/conftest.py"], []),
@@ -107,6 +111,8 @@ CASES = [
     (["worker/srcfoo/x.cpp"], []),
     (["worker/src.cpp"], []),
     (["worker/includes/x.hpp"], []),
+    (["worker/apps/x.cpp"], []),
+    (["worker/app.cpp"], []),
     (["cloud/application/x.py"], []),
     (["cloud/app.py"], []),
     (["cloud/apps/x.py"], []),

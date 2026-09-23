@@ -75,8 +75,10 @@ constexpr std::array<std::string_view, 7> kLogLevels{"trace", "debug", "info", "
                                                       "error", "critical", "off"};
 
 // Lowercased substrings that mark a key as a secret.
-constexpr std::array<std::string_view, 6> kSecretMarkers{"password", "passwd", "secret",
-                                                          "token",    "api_key", "apikey"};
+constexpr std::array<std::string_view, 12> kSecretMarkers{
+    "password",    "passwd",     "pwd",         "secret",      "token",
+    "api_key",     "apikey",     "credential",  "private_key", "access_key",
+    "signing_key", "connection_string"};
 
 // The error for a problem with one key: config key "<key>" <problem>.
 ConfigError key_error(std::string_view key, std::string_view problem)

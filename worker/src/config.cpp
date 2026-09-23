@@ -78,11 +78,12 @@ constexpr std::array<std::string_view, 7> kLogLevels{"trace", "debug", "info", "
 constexpr std::array<std::string_view, 6> kSecretMarkers{"password", "passwd", "secret",
                                                           "token",    "api_key", "apikey"};
 
-[[noreturn]] void fail(std::string_view key, std::string_view problem)
+// The error for a problem with one key: config key "<key>" <problem>.
+ConfigError key_error(std::string_view key, std::string_view problem)
 {
     std::string message = "config key \"";
     message.append(key).append("\" ").append(problem);
-    throw ConfigError(std::string{key}, message);
+    return ConfigError(std::string{key}, message);
 }
 
 bool is_known_key(std::string_view key)
@@ -165,19 +166,19 @@ void read_string(const json& doc, const StringField& field, Config& config)
     const auto it = doc.find(field.key);
     if (it == doc.end()) {
         if (field.required) {
-            fail(field.key, "is missing (required)");
+            throw key_error(field.key, "is missing (required)");
         }
         return;
     }
     if (!it->is_string()) {
-        fail(field.key, "must be a string");
+        throw key_error(field.key, "must be a string");
     }
     const auto& value = it->get_ref<const std::string&>();
     if (value.empty()) {
-        fail(field.key, "must not be empty");
+        throw key_error(field.key, "must not be empty");
     }
     if (!follows_rule(field.rule, value)) {
-        fail(field.key, rule_problem(field.rule));
+        throw key_error(field.key, rule_problem(field.rule));
     }
     config.*field.member = value;
 }
@@ -189,7 +190,7 @@ void read_int(const json& doc, const IntField& field, Config& config)
         return;
     }
     if (!it->is_number_integer()) {
-        fail(field.key, "must be an integer");
+        throw key_error(field.key, "must be an integer");
     }
     // Positive JSON integers are stored unsigned, negative ones signed; compare
     // each in its own type so no value overflows on the way to int.
@@ -199,7 +200,7 @@ void read_int(const json& doc, const IntField& field, Config& config)
                   it->get<std::uint64_t>() <= static_cast<std::uint64_t>(field.max)
             : it->get<std::int64_t>() >= field.min && it->get<std::int64_t>() <= field.max;
     if (!in_range) {
-        fail(field.key, field.range_message);
+        throw key_error(field.key, field.range_message);
     }
     config.*field.member = it->get<int>();
 }
@@ -233,12 +234,12 @@ Config parse_config(std::string_view json_text)
     // Secrets first, so the user takes one out of the file before anything else.
     for (const auto& item : doc.items()) {
         if (looks_like_secret(item.key())) {
-            fail(item.key(), secret_key_problem());
+            throw key_error(item.key(), secret_key_problem());
         }
     }
     for (const auto& item : doc.items()) {
         if (!is_known_key(item.key())) {
-            fail(item.key(), "is not a known setting");
+            throw key_error(item.key(), "is not a known setting");
         }
     }
 

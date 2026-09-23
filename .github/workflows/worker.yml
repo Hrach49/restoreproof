@@ -76,6 +76,17 @@ jobs:
       - name: Test (Release)
         run: ctest --preset ci
 
+      # The shipped Release exe starts and reports project(VERSION) from
+      # CMakeLists.txt. ctest also checks this; this step makes it visible.
+      - name: rpworker --version (Release)
+        run: |
+          $expected = [regex]::Match((Get-Content CMakeLists.txt -Raw), 'project\(\S+\s+VERSION\s+([0-9]+\.[0-9]+\.[0-9]+)').Groups[1].Value
+          if (-not $expected) { throw "No project(VERSION) found in CMakeLists.txt" }
+          $out = & .\build\ci\rpworker.exe --version
+          if ($LASTEXITCODE -ne 0) { throw "rpworker --version exited with $LASTEXITCODE" }
+          if ("$out".Trim() -ne $expected) { throw "rpworker --version printed '$out', expected '$expected'" }
+          "rpworker --version: $out"
+
       - name: Coverage gate self-tests
         run: python -m unittest discover -s tools -p "test_*.py" -v
 

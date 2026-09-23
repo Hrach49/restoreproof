@@ -99,6 +99,11 @@ secrets are read from these environment variables, whose names are defined once 
 Any of them may be unset for now: which ones a run needs depends on the Veeam authentication
 mode, which W1.0 decides. A variable set to an empty string counts as unset.
 
+Values are read from Windows' own Unicode environment, so any character works, including
+ones outside the machine's ANSI code page (such as `€` or `Հ` on a Western-European
+machine). A value that isn't valid Unicode, which only a program can create, is rejected with
+`config error: environment variable <name> is not valid Unicode` rather than changed.
+
 To set them for the current PowerShell session:
 
 ```powershell
@@ -124,7 +129,7 @@ doesn't look up `%ProgramData%` at all.
 | Exit code | Meaning |
 |---|---|
 | 0 | The config is valid. Unset secrets are not an error. |
-| 1 | The config failed to load or validate; stderr has `config error: <path>: <message>`. If `%ProgramData%` can't be resolved, `config error: cannot find the ProgramData folder`; any other failure prints `config error: unexpected failure`, never the underlying message. |
+| 1 | The config failed to load or validate; stderr has `config error: <path>: <message>`. If `%ProgramData%` can't be resolved, `config error: cannot find the ProgramData folder`; if a secret variable isn't valid Unicode, `config error: environment variable <name> is not valid Unicode`; any other failure prints `config error: unexpected failure`, never the underlying message. |
 | 2 | Arguments not understood; stderr has the usage line. |
 
 Sample output (placeholder values):

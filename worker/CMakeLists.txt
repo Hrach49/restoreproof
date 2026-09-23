@@ -21,6 +21,7 @@ add_library(rpcore STATIC
     src/config.cpp
     src/config_check.cpp
     src/secrets.cpp
+    src/utf16.cpp
     src/version.cpp
 )
 target_include_directories(rpcore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)

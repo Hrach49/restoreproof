@@ -26,7 +26,10 @@ struct Secrets {
     std::optional<std::string> graph_client_secret;
 };
 
-// Reads kSecretEnvVars from the process environment.
+// Reads kSecretEnvVars from the process environment, as UTF-8. Throws
+// ConfigError (rp/config.hpp), whose key() is the variable's name and whose
+// message never contains the value, when a value isn't valid Unicode (an
+// unpaired surrogate): it can't be converted without changing the secret.
 Secrets load_secrets_from_env();
 
 // What may be printed about a secret: "**** (set)" or "(not set)". Never any

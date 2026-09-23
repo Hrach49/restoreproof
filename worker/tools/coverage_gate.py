@@ -4,13 +4,13 @@ Usage (from worker/):
     python tools/coverage_gate.py coverage.xml [--root .] [--min-line 80] [--summary FILE]
 
 Rules (CLAUDE.md, "Coverage floors"):
-  * every .cpp under src/ and include/ on disk (relative to --root) must be in
-    the report. OpenCppCoverage only sees code linked into rptests.exe, and the
-    linker drops an rpcore object that no test references, so an untested file
-    would otherwise just be missing. Headers may be absent: a header of
-    declarations has no executable lines. rpworker's main() must therefore live
-    outside src/;
-  * total line coverage over the reported rpcore sources >= --min-line (80%);
+  * every .cpp under src/, include/ and app/ on disk (relative to --root) must
+    be in the report. OpenCppCoverage only sees code a test runs: rpcore
+    (src/, include/) through rptests.exe, where the linker drops an object no
+    test references, and rpworker's main() (app/) through ctest's runs of
+    rpworker.exe. An untested file would otherwise just be missing. Headers may
+    be absent: a header of declarations has no executable lines;
+  * total line coverage over the reported sources >= --min-line (80%);
   * vault, signer and target_guard need 100% *branch* coverage. OpenCppCoverage
     only measures lines (its Cobertura branch-rate is always 0), so this gate
     enforces 100% *line* coverage on those files as the closest proxy.
@@ -33,7 +33,7 @@ from pathlib import Path, PurePosixPath
 from typing import Iterable, TextIO
 
 STRICT_NAMES = ("vault", "signer", "target_guard")
-SOURCE_DIRS = ("src", "include")
+SOURCE_DIRS = ("src", "include", "app")
 SOURCE_EXTS = (".cpp", ".cc", ".cxx", ".c")
 HEADER_EXTS = (".h", ".hpp", ".hh", ".hxx", ".ipp", ".inl")
 BRANCH_NOTE = (
@@ -76,7 +76,7 @@ def load_lines(path: str) -> dict[str, dict[int, bool]]:
 
 
 def files_on_disk(root: Path) -> list[str]:
-    """rpcore's C++ files under root/src and root/include, as posix paths relative to root."""
+    """C++ files under root's SOURCE_DIRS, as posix paths relative to root."""
     found = []
     for folder in SOURCE_DIRS:
         for path in (root / folder).rglob("*"):

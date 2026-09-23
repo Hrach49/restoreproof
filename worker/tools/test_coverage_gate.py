@@ -112,6 +112,29 @@ class GateTest(unittest.TestCase):
         self.assertIn("not in coverage report", out)
         self.assertIn("| `src/untested.cpp` | not in report |", summary)
 
+    def test_app_file_missing_from_report_fails(self):
+        # rpworker's main() in app/ is measured through ctest's runs of
+        # rpworker.exe, so it must not vanish from the report either.
+        code, out, summary = self.run_gate(
+            cobertura((r"src\a.cpp", covered(10))),
+            disk=["src/a.cpp", "app/main.cpp"],
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("app/main.cpp", out)
+        self.assertIn("| `app/main.cpp` | not in report |", summary)
+
+    def test_app_file_counts_towards_the_total(self):
+        xml = cobertura(
+            (r"D:\a\restoreproof\worker\src\a.cpp", covered(8)),
+            (r"D:\a\restoreproof\worker\app\main.cpp", mixed(0, 2)),
+        )
+        code, out, summary = self.run_gate(
+            xml, "--min-line", "90", disk=["src/a.cpp", "app/main.cpp"]
+        )
+        self.assertEqual(code, 1, out)
+        self.assertIn("| `app/main.cpp` | 0/2 | 0.0% |", summary)
+        self.assertIn("80.0% lines, needs 90%", out)
+
     def test_strict_file_missing_from_report_fails(self):
         for rel, name in (("src/vault.cpp", "vault"), ("src/signer/ed25519.cpp", "signer")):
             with self.subTest(rel=rel):

@@ -3,6 +3,10 @@
   "version": "0.0.0",
   "builtin-baseline": "5f96cd15fd745122cf27e0524606d6c1efc5fd07",
   "dependencies": [
-    "catch2"
+    "catch2",
+    "cpr",
+    "nlohmann-json",
+    "openssl",
+    "spdlog"
   ]
 }

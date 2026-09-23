@@ -76,6 +76,20 @@ jobs:
       - name: Test (Release)
         run: ctest --preset ci
 
+      # The shipped Release exe starts and reports project(VERSION). ctest
+      # already checks this; the step puts the version in the job log. The
+      # expected value comes from CMake's own cache, not from parsing
+      # CMakeLists.txt.
+      - name: rpworker --version (Release)
+        run: |
+          $entry = Select-String -Path build\ci\CMakeCache.txt -Pattern '^CMAKE_PROJECT_VERSION:STATIC=(.+)$'
+          if (-not $entry) { throw "CMAKE_PROJECT_VERSION not found in build/ci/CMakeCache.txt" }
+          $expected = $entry.Matches[0].Groups[1].Value
+          $out = & .\build\ci\rpworker.exe --version
+          if ($LASTEXITCODE -ne 0) { throw "rpworker --version exited with $LASTEXITCODE" }
+          if ("$out".Trim() -ne $expected) { throw "rpworker --version printed '$out', expected '$expected'" }
+          "rpworker --version: $out"
+
       - name: Coverage gate self-tests
         run: python -m unittest discover -s tools -p "test_*.py" -v
 
@@ -97,22 +111,24 @@ jobs:
       - name: Build (coverage)
         run: cmake --build --preset coverage
 
-      # --cover_children follows ctest into each rptests.exe process.
-      # --sources limits the report to rpcore (src/ and include/), so tests,
-      # Catch2 and the STL don't count. OpenCppCoverage returns the exit code
-      # of ctest, so a failing test fails this step.
+      # --cover_children follows ctest into each rptests.exe process and, via
+      # tests/run_exe_test.cmake, into each rpworker.exe run. --sources limits
+      # the report to rpcore (src/, include/) and rpworker's main() (app/), so
+      # tests, Catch2 and the STL don't count. OpenCppCoverage returns the exit
+      # code of ctest, so a failing test fails this step.
       - name: Test under OpenCppCoverage
         run: |
           OpenCppCoverage --quiet --cover_children `
-            --sources "$PWD\src" --sources "$PWD\include" `
+            --sources "$PWD\src" --sources "$PWD\include" --sources "$PWD\app" `
             --export_type "cobertura:$PWD\build\coverage\coverage.xml" `
             -- ctest --preset coverage
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      # Fails below RP_MIN_LINE_COVERAGE on rpcore, below 100% line coverage
-      # on vault/signer/target_guard once those files exist, and on any .cpp
-      # under src/ or include/ that is missing from the report (--root lists
-      # them from disk: an rpcore file no test uses never reaches rptests.exe).
+      # Fails below RP_MIN_LINE_COVERAGE, below 100% line coverage on
+      # vault/signer/target_guard once those files exist, and on any .cpp
+      # under src/, include/ or app/ that is missing from the report (--root
+      # lists them from disk: an rpcore file no test uses never reaches
+      # rptests.exe).
       # OpenCppCoverage has no branch data, so the required 100% *branch*
       # coverage on those files is only approximated by 100% line coverage
       # (see tools/coverage_gate.py). Writes a table to the job summary.

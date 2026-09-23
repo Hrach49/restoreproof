@@ -42,7 +42,7 @@ At least one of `sample_mail`, `sample_sp` and `sample_od` must be above 0.
 
 No string setting may contain a control character: an ASCII one (below 0x20, such as a
 newline or tab, or 0x7F), a C1 control (U+0080 to U+009F), the line or paragraph separator
-(U+2028, U+2029), or a bidirectional-text control (U+200E, U+200F, U+202A to U+202E, U+2066
+(U+2028, U+2029), or a bidirectional-text control (U+061C, U+200E, U+200F, U+202A to U+202E, U+2066
 to U+2069), which can reorder how a line displays. Other non-ASCII text, such as `Zürich` or
 `東京`, is fine.
 

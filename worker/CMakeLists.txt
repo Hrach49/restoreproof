@@ -84,6 +84,11 @@ rp_add_exe_test("rpworker config without a subcommand prints usage"
 rp_add_exe_test("rpworker config check reports a missing config file"
     ARGS config check --config no-such-config.json EXIT_CODE 1 STDOUT ""
     STDERR "config error: no-such-config.json: cannot read config file")
+# Armenian letters are in no Western code page: a narrow argv would turn them
+# into '?' before the path reached rpcore.
+rp_add_exe_test("rpworker config check keeps a --config path outside the ANSI code page"
+    ARGS config check --config "հայ-no-such-config.json" EXIT_CODE 1 STDOUT ""
+    STDERR "config error: հայ-no-such-config.json: cannot read config file")
 
 # The checker itself must fail on a wrong exit code or wrong output, or the two
 # tests above would prove nothing.

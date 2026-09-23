@@ -6,6 +6,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
 
+#include <filesystem>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -16,6 +17,19 @@ using Args = std::vector<std::string_view>;
 namespace {
 
 const std::string kUsage = "usage: rpworker --version | rpworker config check [--config <path>]\n";
+
+const std::string kConfigJson = R"({
+    "cloud_url": "https://cloud.example.invalid",
+    "veeam_url": "https://veeam.example.invalid",
+    "veeam_org_name": "example.onmicrosoft.com",
+    "graph_tenant_id": "tenant",
+    "graph_client_id": "client",
+    "test_mailbox": "restoretest@example.onmicrosoft.com",
+    "test_site_id": "site",
+    "test_library_id": "library",
+    "test_onedrive_drive_id": "drive",
+    "test_onedrive_folder_id": "folder"
+})";
 
 } // namespace
 
@@ -58,19 +72,8 @@ TEST_CASE("rpworker --version prints the project version to stdout and exits 0",
 TEST_CASE("rpworker config check --config <file> checks that file", "[cli]")
 {
     const rp::test::TempDir dir;
-    const auto path = dir.write("config.json", R"({
-        "cloud_url": "https://cloud.example.invalid",
-        "veeam_url": "https://veeam.example.invalid",
-        "veeam_org_name": "example.onmicrosoft.com",
-        "graph_tenant_id": "tenant",
-        "graph_client_id": "client",
-        "test_mailbox": "restoretest@example.onmicrosoft.com",
-        "test_site_id": "site",
-        "test_library_id": "library",
-        "test_onedrive_drive_id": "drive",
-        "test_onedrive_folder_id": "folder"
-    })");
-    const std::string path_arg = path.string();
+    const auto path = dir.write("config.json", kConfigJson);
+    const std::string path_arg = rp::test::narrow(path.wstring());
     const Args args{"config", "check", "--config", path_arg};
 
     std::ostringstream out;
@@ -78,4 +81,80 @@ TEST_CASE("rpworker config check --config <file> checks that file", "[cli]")
     REQUIRE(rp::run_cli(args, out, err) == 0);
     REQUIRE(err.str().empty());
     REQUIRE(out.str().starts_with("config file: " + path_arg + "\n"));
+}
+
+TEST_CASE("rpworker's main() skips the program name and runs the rest", "[cli]")
+{
+    const std::vector<const wchar_t*> argv{L"rpworker.exe", L"--version"};
+
+    std::ostringstream out;
+    std::ostringstream err;
+    REQUIRE(rp::run_main(argv, out, err) == 0);
+    REQUIRE(out.str() == std::string{rp::version()} + "\n");
+    REQUIRE(err.str().empty());
+}
+
+TEST_CASE("rpworker's main() prints usage for an empty command line or argument", "[cli]")
+{
+    const std::vector<const wchar_t*> argv =
+        GENERATE(std::vector<const wchar_t*>{}, std::vector<const wchar_t*>{L"rpworker.exe"},
+                 std::vector<const wchar_t*>{L"rpworker.exe", L""});
+    CAPTURE(argv.size());
+
+    std::ostringstream out;
+    std::ostringstream err;
+    REQUIRE(rp::run_main(argv, out, err) == 2);
+    REQUIRE(out.str().empty());
+    REQUIRE(err.str() == kUsage);
+}
+
+TEST_CASE("rpworker's main() passes a path outside the ANSI code page on as UTF-8", "[cli]")
+{
+    const rp::test::TempDir dir;
+    // Armenian letters: in no Western code page, so a narrow argv would turn
+    // them into '?'.
+    const auto path = dir.write(std::filesystem::path(L"հայ.json"), kConfigJson);
+    const std::wstring wide_path = path.wstring();
+    const std::vector<const wchar_t*> argv{L"rpworker.exe", L"config", L"check", L"--config",
+                                           wide_path.c_str()};
+
+    std::ostringstream out;
+    std::ostringstream err;
+    REQUIRE(rp::run_main(argv, out, err) == 0);
+    REQUIRE(err.str().empty());
+    REQUIRE(out.str().starts_with("config file: " + rp::test::narrow(wide_path) + "\n"));
+}
+
+TEST_CASE("rpworker's main() rejects an argument that isn't valid Unicode", "[cli]")
+{
+    // An unpaired surrogate, which no UTF-8 string can hold. The program name
+    // is never converted, so it doesn't matter there.
+    const std::wstring bad = std::wstring{L"x"} + L'\xD800' + L".json";
+    // Generated values outlive each run of the test case, so they hold strings,
+    // not pointers into `bad`.
+    const std::vector<std::wstring> args = GENERATE_COPY(
+        std::vector<std::wstring>{L"rpworker.exe", bad},
+        std::vector<std::wstring>{L"rpworker.exe", L"config", L"check", L"--config", bad});
+    std::vector<const wchar_t*> argv;
+    for (const std::wstring& arg : args) {
+        argv.push_back(arg.c_str());
+    }
+    CAPTURE(argv.size());
+
+    std::ostringstream out;
+    std::ostringstream err;
+    REQUIRE(rp::run_main(argv, out, err) == 2);
+    REQUIRE(out.str().empty());
+    REQUIRE(err.str() == kUsage);
+}
+
+TEST_CASE("rpworker's main() ignores a program name that isn't valid Unicode", "[cli]")
+{
+    const std::wstring program = std::wstring{L"rp"} + L'\xDC00' + L".exe";
+    const std::vector<const wchar_t*> argv{program.c_str(), L"--version"};
+
+    std::ostringstream out;
+    std::ostringstream err;
+    REQUIRE(rp::run_main(argv, out, err) == 0);
+    REQUIRE(out.str() == std::string{rp::version()} + "\n");
 }

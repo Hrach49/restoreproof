@@ -1,5 +1,7 @@
 #include <rp/config.hpp>
 
+#include "test_support.hpp"
+
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
 #include <catch2/generators/catch_generators_range.hpp>
@@ -7,7 +9,10 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
+#include <cctype>
 #include <cstdint>
+#include <filesystem>
 #include <limits>
 #include <string>
 #include <utility>
@@ -347,4 +352,110 @@ TEST_CASE("parse_config fills in defaults for absent optional keys", "[config]")
     REQUIRE(config.sample_sp == 5);
     REQUIRE(config.sample_od == 5);
     REQUIRE(config.log_level == "info");
+}
+
+namespace {
+
+std::string utf8(const std::filesystem::path& path)
+{
+    const std::u8string text = path.u8string();
+    return {text.begin(), text.end()};
+}
+
+// load_config(path), expecting a ConfigError; returns it.
+rp::ConfigError load_error(const std::filesystem::path& path)
+{
+    try {
+        rp::load_config(path);
+    } catch (const rp::ConfigError& e) {
+        return e;
+    }
+    FAIL("load_config accepted " << utf8(path));
+    return rp::ConfigError("", "unreachable");
+}
+
+std::string lower(std::string text)
+{
+    std::transform(text.begin(), text.end(), text.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return text;
+}
+
+} // namespace
+
+TEST_CASE("load_config reports a file it can't read, with the path", "[config]")
+{
+    const rp::test::TempDir dir;
+    const std::filesystem::path path = GENERATE_REF(dir.path() / "missing.json", dir.path());
+    CAPTURE(utf8(path));
+
+    const rp::ConfigError e = load_error(path);
+    REQUIRE(e.key().empty());
+    REQUIRE(std::string{e.what()} == utf8(path) + ": cannot read config file");
+}
+
+TEST_CASE("load_config prefixes validation errors with the path and keeps the key", "[config]")
+{
+    const rp::test::TempDir dir;
+    json doc = valid_doc();
+    doc.erase("test_mailbox");
+    const auto path = dir.write("config.json", doc.dump());
+
+    const rp::ConfigError e = load_error(path);
+    REQUIRE(e.key() == "test_mailbox");
+    REQUIRE(std::string{e.what()} ==
+            utf8(path) + ": config key \"test_mailbox\" is missing (required)");
+}
+
+TEST_CASE("load_config reports an empty file as invalid JSON", "[config]")
+{
+    const rp::test::TempDir dir;
+    const auto path = dir.write("config.json", "");
+
+    REQUIRE(std::string{load_error(path).what()} ==
+            utf8(path) + ": config is not valid JSON (error at byte 1)");
+}
+
+TEST_CASE("load_config handles a non-ASCII path", "[config]")
+{
+    const rp::test::TempDir dir;
+    const auto path = dir.path() / std::filesystem::path(u8"r\u00e9sum\u00e9.json");
+
+    const std::string message = load_error(path).what();
+    REQUIRE(message == utf8(path) + ": cannot read config file");
+    REQUIRE_THAT(message, ContainsSubstring("r\xc3\xa9sum\xc3\xa9.json: "));
+}
+
+TEST_CASE("load_config reads a valid file", "[config]")
+{
+    const rp::test::TempDir dir;
+    const auto path = dir.write("config.json", valid_doc().dump(4));
+
+    REQUIRE(rp::load_config(path).sample_od == 3);
+}
+
+TEST_CASE("load_config accepts a UTF-8 byte order mark, as Notepad writes", "[config]")
+{
+    const rp::test::TempDir dir;
+    const auto path = dir.write("config.json", "\xEF\xBB\xBF" + valid_doc().dump(4));
+
+    REQUIRE(rp::load_config(path).cloud_url == "https://cloud.example.invalid");
+}
+
+TEST_CASE("program_data_dir is the absolute ProgramData folder", "[config]")
+{
+    const std::filesystem::path dir = rp::program_data_dir();
+    REQUIRE(dir.is_absolute());
+    if (const auto env = rp::test::get_env("ProgramData")) {
+        REQUIRE(lower(utf8(dir)) == lower(*env));
+    }
+}
+
+TEST_CASE("default_config_path is config.json in RestoreProof under ProgramData", "[config]")
+{
+    const std::filesystem::path path = rp::default_config_path();
+    REQUIRE(path.filename() == "config.json");
+    REQUIRE(path.parent_path().filename() == "RestoreProof");
+    REQUIRE(path.parent_path().parent_path() == rp::program_data_dir());
+    REQUIRE(utf8(path).ends_with("\\RestoreProof\\config.json"));
 }

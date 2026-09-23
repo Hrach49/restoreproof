@@ -118,10 +118,17 @@ std::string secret_key_problem()
 }
 
 // "https://" in any case, then a host: at least one character that isn't '/'.
+// No user name or password (an '@' before the path) and no query or fragment,
+// so a credential can't hide in the URL and get printed by `config check`.
 bool is_https_url(std::string_view value)
 {
     constexpr std::string_view scheme = "https://";
-    if (value.size() <= scheme.size() || value[scheme.size()] == '/') {
+    if (value.size() <= scheme.size() || value[scheme.size()] == '/' ||
+        value.find_first_of("?#") != std::string_view::npos) {
+        return false;
+    }
+    const std::string_view rest = value.substr(scheme.size());
+    if (rest.substr(0, rest.find('/')).find('@') != std::string_view::npos) {
         return false;
     }
     return std::equal(scheme.begin(), scheme.end(), value.begin(), [](char a, char b) {
@@ -153,7 +160,7 @@ std::string_view rule_problem(StringRule rule)
 {
     switch (rule) {
     case StringRule::https_url:
-        return "must be an https:// URL";
+        return "must be an https:// URL with no user name, password, query or fragment";
     case StringRule::email:
         return "must be an email address";
     default:

@@ -136,7 +136,9 @@ TEST_CASE("rpworker config check reports an invalid config without its values", 
     REQUIRE(result.exit_code == 1);
     REQUIRE(result.out.empty());
     REQUIRE(result.err ==
-            "config error: " + path_arg + ": config key \"cloud_url\" must be an https:// URL\n");
+            "config error: " + path_arg +
+                ": config key \"cloud_url\" must be an https:// URL with no user name, password, "
+                "query or fragment\n");
 }
 
 TEST_CASE("rpworker config check prints every setting and masks the secrets", "[config_check]")
@@ -184,4 +186,18 @@ TEST_CASE("rpworker config check never prints a secret's value", "[config_check]
     REQUIRE_THAT(all, ContainsSubstring("RP_VEEAM_USERNAME         **** (set)\n"));
     REQUIRE_THAT(all, ContainsSubstring("RP_VEEAM_PASSWORD         **** (set)\n"));
     REQUIRE_THAT(all, ContainsSubstring("RP_GRAPH_CLIENT_SECRET    **** (set)\n"));
+}
+
+TEST_CASE("rpworker config check never prints a password in a URL", "[config_check]")
+{
+    const rp::test::TempDir dir;
+    std::string text = kConfigJson;
+    const std::string url = "https://cloud.example.invalid";
+    text.replace(text.find(url), url.size(), "https://user:SENTINEL-3b8d@cloud.example.invalid");
+    const auto path = dir.write("config.json", text);
+
+    const Run result = run(Args{"check"}, path);
+    REQUIRE(result.exit_code == 1);
+    REQUIRE_THAT(result.out + result.err, !ContainsSubstring("SENTINEL"));
+    REQUIRE_THAT(result.err, ContainsSubstring("\"cloud_url\""));
 }

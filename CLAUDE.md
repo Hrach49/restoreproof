@@ -60,6 +60,6 @@ Milestone demo commands: `rpworker veeam list` (S1), `rpworker restore` (S2), `r
 - Every bug gets a reproducing test before its fix.
 - End-to-end scenarios are tracked manually in `tests/e2e/scenarios.md`.
 
-## Key docs (to be created)
+## Key docs
 
 `docs/decisions.md` (decision log, update on any new architectural choice), `docs/glossary.md`, `docs/verification.md`, `docs/api/veeam-feasibility.md` (admin vs operator Veeam auth mode; W1.0 must close before `VeeamClient` work), `docs/api/veeam-restore-flow.md`, `docs/security/graph-permissions.md`, `lab/tenant.md` and `lab/seed-manifest.json` (the 40 canary items: the expected set for verification). Already exist: `docs/decisions.md`, `docs/glossary.md`, `docs/testing.md`, `docs/environment.md`, and `docs/worker-config.md` (Worker `config.json` keys, secret env vars, `rpworker config check`).

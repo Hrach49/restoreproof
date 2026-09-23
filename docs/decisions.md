@@ -17,14 +17,20 @@ Format: date, decision, reason, alternatives rejected.
   from `RP_VEEAM_USERNAME`, `RP_VEEAM_PASSWORD` and `RP_GRAPH_CLIENT_SECRET`, whose names are
   defined once in `worker/include/rp/secrets.hpp`. An unset one is not an error, because
   which ones a run needs depends on the Veeam auth mode W1.0 picks.
-- A top-level key whose lowercased name contains `password`, `passwd`, `secret`, `token`,
-  `api_key` or `apikey` is rejected, before any other key check.
+- A top-level key whose lowercased name contains `password`, `passwd`, `pwd`, `secret`,
+  `token`, `api_key`, `apikey`, `credential`, `private_key`, `access_key`, `signing_key` or
+  `connection_string` is rejected, before any other key check.
+- A key name from the file is echoed only if it is 1-64 of `[A-Za-z0-9_.-]`; otherwise the
+  message describes the key without naming it.
+- `cloud_url` and `veeam_url` reject userinfo (`@` before the path), queries and fragments;
+  every string setting rejects control characters.
 - Unknown keys are rejected (exact, case-sensitive match against the 16 known keys).
 - Validation stops at the first error, in a fixed order: unreadable file, invalid JSON, root
   not an object, secret-looking key, unknown key, each field in declaration order, all sample
   sizes 0.
 - Error messages name the key and never echo a value. A JSON parse error reports only the
-  byte offset, because nlohmann's message quotes the last token it read.
+  byte offset, because nlohmann's message quotes the last token it read; a number out of the
+  parser's range (`1e400`) is reported without the number, for the same reason.
 - `poll_interval_s` and `heartbeat_interval_s` are bounded 1..86400; `sample_mail`,
   `sample_sp` and `sample_od` 0..100, with at least one above 0.
 - No CLI library yet: `run_cli` parses `--version` and `config check [--config <path>]` by
@@ -42,7 +48,11 @@ values that are clearly wrong (0 seconds, a thousand items per run) without gues
 tuning, and a run that restores nothing must not be able to report `pass`. Environment
 variables are the least code that keeps secrets out of the file until the vault exists.
 The `%ProgramData%` variable can be changed by whoever starts the process; the known-folder
-API returns the machine's real location.
+API returns the machine's real location. `config check` prints the URLs and the error
+messages name keys, so anything the file controls that reaches the terminal is limited to
+what can't be a secret or forge output: a password in a URL's userinfo or a token in its
+query would be printed, a key name can be a pasted secret or a 200 KB string, and a control
+character in a value or key can fake or hide lines.
 
 **Alternatives rejected.** Collecting every error in one pass: more code and more test
 combinations, and later errors are often caused by the first. Ignoring unknown keys: typos

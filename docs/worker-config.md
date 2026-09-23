@@ -21,8 +21,8 @@ Ten keys are required; the other six have defaults.
 
 | Key | Required | Default | Valid values | What it is for |
 |---|---|---|---|---|
-| `cloud_url` | yes | | `https://` URL | The RestoreProof Cloud the Worker gets jobs from and uploads results to. |
-| `veeam_url` | yes | | `https://` URL | The Veeam Backup for Microsoft 365 REST API, e.g. `https://veeam.example.invalid:4443`. |
+| `cloud_url` | yes | | `https://` URL, no user name, password, query or fragment | The RestoreProof Cloud the Worker gets jobs from and uploads results to. |
+| `veeam_url` | yes | | `https://` URL, no user name, password, query or fragment | The Veeam Backup for Microsoft 365 REST API, e.g. `https://veeam.example.invalid:4443`. |
 | `veeam_org_name` | yes | | non-empty string | The Microsoft 365 organisation as Veeam names it, e.g. `example.onmicrosoft.com`. |
 | `graph_tenant_id` | yes | | non-empty string | The Microsoft 365 tenant ID, for Microsoft Graph sign-in. |
 | `graph_client_id` | yes | | non-empty string | The app registration's client ID, for Microsoft Graph sign-in. |
@@ -40,6 +40,9 @@ Ten keys are required; the other six have defaults.
 
 At least one of `sample_mail`, `sample_sp` and `sample_od` must be above 0.
 
+No string setting may contain a control character (a byte below 0x20, such as a newline or
+tab, or 0x7F). Non-ASCII UTF-8 is fine.
+
 ## Validation
 
 The Worker checks the file when it loads it and stops at the first problem, in a fixed order:
@@ -49,7 +52,19 @@ together. Fix the reported problem and run `rpworker config check` again.
 
 - **Messages name the key and never repeat a value from the file.** A JSON syntax error
   reports only the byte offset where parsing failed, because the parser's own message can
-  quote whatever it read last, which might be a password.
+  quote whatever it read last, which might be a password. A number too large for the parser
+  (such as `1e400`) is reported as `config is not valid JSON (a number is out of range)`,
+  without the number.
+- **A key name from the file is printed only if it is safe:** 1 to 64 characters, each a
+  letter, digit, `_`, `.` or `-`. Any other unknown or secret-looking key is reported as
+  `config has a key that ...` without its name, since the name could itself be a pasted
+  secret, a huge string, or contain control characters that forge lines of output. Known keys
+  are always named.
+- **URLs can't carry credentials.** `cloud_url` and `veeam_url` reject an `@` before the path
+  (a user name or password, as in `https://user:password@host`) and any `?` or `#` (a query or
+  fragment, where tokens often hide), because `config check` prints both URLs.
+- **Control characters are rejected** in every string setting, for the same reason: a newline
+  or escape sequence in a value could forge or hide lines of `config check` output.
 - **Unknown keys are rejected.** A misspelt optional key (`poll_intervall_s`) would otherwise
   be ignored and its default used without anyone noticing. Keys are case-sensitive.
 - **All sample sizes 0 is rejected.** A run that restores nothing has nothing to compare, and
@@ -60,8 +75,9 @@ together. Fix the reported problem and run `rpworker config check` again.
 ## Secrets
 
 `config.json` must not contain secrets. Any top-level key whose name, in any case, contains
-`password`, `passwd`, `secret`, `token`, `api_key` or `apikey` is rejected, and checked before
-anything else so that the secret is removed first.
+`password`, `passwd`, `pwd`, `secret`, `token`, `api_key`, `apikey`, `credential`,
+`private_key`, `access_key`, `signing_key` or `connection_string` is rejected, and checked
+before anything else so that the secret is removed first. None of the 16 settings matches.
 
 Until the DPAPI vault (`%ProgramData%\RestoreProof\vault.bin`) arrives in W4.5 (issue #48),
 secrets are read from these environment variables, whose names are defined once in
@@ -94,12 +110,14 @@ read them.
 rpworker config check [--config <path>]
 ```
 
-Loads the config file and the secrets and prints what it found. It changes nothing.
+Loads the config file and the secrets and prints what it found. It changes nothing. Without
+`--config` it reads the default path; with `--config`, or when the arguments are wrong, it
+doesn't look up `%ProgramData%` at all.
 
 | Exit code | Meaning |
 |---|---|
 | 0 | The config is valid. Unset secrets are not an error. |
-| 1 | The config failed to load or validate; stderr has `config error: <path>: <message>`. |
+| 1 | The config failed to load or validate; stderr has `config error: <path>: <message>`. If `%ProgramData%` can't be resolved, `config error: cannot find the ProgramData folder`; any other failure prints `config error: unexpected failure`, never the underlying message. |
 | 2 | Arguments not understood; stderr has the usage line. |
 
 Sample output (placeholder values):

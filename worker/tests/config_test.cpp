@@ -322,6 +322,8 @@ TEST_CASE("parse_config rejects invalid values without echoing them", "[config]"
     const std::string sample = "must be an integer from 0 to 100";
     const std::string url = "must be an https:// URL with no user name, password, query or fragment";
     const std::string control = "must not contain control characters";
+    const std::string mailbox =
+        "must be restoretest@<domain>: restores only ever go to the restoretest mailbox";
     const auto [key, value, rule] = GENERATE_COPY(table<std::string, json, std::string>({
         {"cloud_url", json(""), "must not be empty"},
         {"veeam_org_name", json(""), "must not be empty"},
@@ -386,10 +388,34 @@ TEST_CASE("parse_config rejects invalid values without echoing them", "[config]"
         {"cloud_url", json("https://z\xC3\xBC" "rich.example.invalid"), url},
         {"cloud_url", json("https://\xC2\xA0" "cloud.example.invalid"), url},
         {"veeam_url", json("https://veeam example.invalid"), url},
-        {"test_mailbox", json("restoretest"), "must be an email address"},
-        {"test_mailbox", json("@example.invalid"), "must be an email address"},
-        {"test_mailbox", json("restoretest@"), "must be an email address"},
-        {"test_mailbox", json("@"), "must be an email address"},
+        {"test_mailbox", json("restoretest"), mailbox},
+        {"test_mailbox", json("@example.invalid"), mailbox},
+        {"test_mailbox", json("restoretest@"), mailbox},
+        {"test_mailbox", json("@"), mailbox},
+        // Any other mailbox could be a live one: restores only ever go to
+        // restoretest (docs/decisions.md).
+        {"test_mailbox", json("ceo@contoso.com"), mailbox},
+        {"test_mailbox", json("restoretest2@example.invalid"), mailbox},
+        {"test_mailbox", json("xrestoretest@example.invalid"), mailbox},
+        {"test_mailbox", json("restore.test@example.invalid"), mailbox},
+        {"test_mailbox", json(" restoretest@example.invalid"), mailbox},
+        {"test_mailbox", json("restoretest@example.invalid "), mailbox},
+        // One '@', then a domain of two or more dot-separated labels of ASCII
+        // letters, digits and '-'.
+        {"test_mailbox", json("restoretest@@example.invalid"), mailbox},
+        {"test_mailbox", json("restoretest@a@example.invalid"), mailbox},
+        {"test_mailbox", json("restoretest@example"), mailbox},
+        {"test_mailbox", json("restoretest@.example.invalid"), mailbox},
+        {"test_mailbox", json("restoretest@example..invalid"), mailbox},
+        {"test_mailbox", json("restoretest@example.invalid."), mailbox},
+        {"test_mailbox", json("restoretest@exa mple.invalid"), mailbox},
+        {"test_mailbox", json("restoretest@exa_mple.invalid"), mailbox},
+        // Look-alikes: a Cyrillic ie (U+0435) for the e, a fullwidth @ (U+FF20),
+        // a zero-width space (U+200B), a non-ASCII domain.
+        {"test_mailbox", json("restor\xD0\xB5test@example.invalid"), mailbox},
+        {"test_mailbox", json("restoretest\xEF\xBC\xA0" "example.invalid"), mailbox},
+        {"test_mailbox", json("restoretest\xE2\x80\x8B@example.invalid"), mailbox},
+        {"test_mailbox", json("restoretest@z\xC3\xBC" "rich.invalid"), mailbox},
         {"poll_interval_s", json(0), interval},
         {"poll_interval_s", json(-1), interval},
         {"poll_interval_s", json(86401), interval},
@@ -451,21 +477,24 @@ TEST_CASE("parse_config accepts boundary and edge values", "[config]")
         {"cloud_url", json("Https://cloud.example.invalid/path/")},
         {"veeam_url", json("https://10.0.0.5:4443")},
         {"veeam_url", json("https://veeam.example.invalid:4443/v8/a@b")},
-        {"test_mailbox", json("a@b")},
+        // The local part in any case: Exchange addresses are case-insensitive.
+        {"test_mailbox", json("RestoreTest@Example.Invalid")},
+        {"test_mailbox", json("RESTORETEST@x.y")},
+        {"test_mailbox", json("restoretest@my-tenant.example-1.invalid")},
         // Non-ASCII UTF-8 bytes are above 0x7F, not control characters.
-        {"test_mailbox", json("caf\xc3\xa9@example.invalid")},
-        {"test_mailbox", json("Z\xC3\xBC" "rich@example.invalid")},
-        {"test_mailbox", json("\xE6\x9D\xB1\xE4\xBA\xAC@example.invalid")},
+        {"veeam_org_name", json("caf\xc3\xa9")},
+        {"veeam_org_name", json("Z\xC3\xBC" "rich")},
+        {"veeam_org_name", json("\xE6\x9D\xB1\xE4\xBA\xAC")},
         // Just outside the rejected ranges: U+00A0, U+061B, U+061D, U+200D, U+2027,
         // U+202F, U+2065, U+206A.
-        {"test_mailbox", json("a\xC2\xA0" "b@example.invalid")},
-        {"test_mailbox", json("a\xD8\x9B" "b@example.invalid")},
-        {"test_mailbox", json("a\xD8\x9D" "b@example.invalid")},
-        {"test_mailbox", json("a\xE2\x80\x8D" "b@example.invalid")},
-        {"test_mailbox", json("a\xE2\x80\xA7" "b@example.invalid")},
-        {"test_mailbox", json("a\xE2\x80\xAF" "b@example.invalid")},
-        {"test_mailbox", json("a\xE2\x81\xA5" "b@example.invalid")},
-        {"test_mailbox", json("a\xE2\x81\xAA" "b@example.invalid")},
+        {"veeam_org_name", json("a\xC2\xA0" "b")},
+        {"veeam_org_name", json("a\xD8\x9B" "b")},
+        {"veeam_org_name", json("a\xD8\x9D" "b")},
+        {"veeam_org_name", json("a\xE2\x80\x8D" "b")},
+        {"veeam_org_name", json("a\xE2\x80\xA7" "b")},
+        {"veeam_org_name", json("a\xE2\x80\xAF" "b")},
+        {"veeam_org_name", json("a\xE2\x81\xA5" "b")},
+        {"veeam_org_name", json("a\xE2\x81\xAA" "b")},
         {"poll_interval_s", json(1)},
         {"poll_interval_s", json(86400)},
         {"heartbeat_interval_s", json(1)},
@@ -490,6 +519,7 @@ TEST_CASE("parse_config accepts boundary and edge values", "[config]")
     const json parsed{
         {"cloud_url", config.cloud_url},
         {"veeam_url", config.veeam_url},
+        {"veeam_org_name", config.veeam_org_name},
         {"test_mailbox", config.test_mailbox},
         {"poll_interval_s", config.poll_interval_s},
         {"heartbeat_interval_s", config.heartbeat_interval_s},

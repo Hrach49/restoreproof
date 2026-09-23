@@ -26,7 +26,7 @@ namespace {
 
 using nlohmann::json;
 
-enum class StringRule { non_empty, https_url, email, log_level };
+enum class StringRule { non_empty, https_url, restore_mailbox, log_level };
 
 struct StringField {
     std::string_view key;
@@ -51,7 +51,7 @@ constexpr std::array<StringField, 10> kRequiredStrings{{
     {"veeam_org_name", &Config::veeam_org_name, true, StringRule::non_empty},
     {"graph_tenant_id", &Config::graph_tenant_id, true, StringRule::non_empty},
     {"graph_client_id", &Config::graph_client_id, true, StringRule::non_empty},
-    {"test_mailbox", &Config::test_mailbox, true, StringRule::email},
+    {"test_mailbox", &Config::test_mailbox, true, StringRule::restore_mailbox},
     {"test_site_id", &Config::test_site_id, true, StringRule::non_empty},
     {"test_library_id", &Config::test_library_id, true, StringRule::non_empty},
     {"test_onedrive_drive_id", &Config::test_onedrive_drive_id, true, StringRule::non_empty},
@@ -165,10 +165,39 @@ bool is_https_url(std::string_view value)
     });
 }
 
-bool is_email(std::string_view value)
+// "restoretest@" in any case, then a domain: two or more non-empty labels of
+// ASCII letters, digits and '-', separated by '.'. The mailbox is the only
+// mail restore target (docs/decisions.md), so its name is fixed rather than
+// trusted: a typo, or a look-alike such as a Cyrillic letter or an invisible
+// character, can't point restores at a live mailbox. The domain varies per
+// tenant, so it is only checked for shape.
+bool is_restore_mailbox(std::string_view value)
 {
-    const std::size_t at = value.find('@');
-    return at != std::string_view::npos && at > 0 && at + 1 < value.size();
+    constexpr std::string_view local = "restoretest@";
+    if (value.size() <= local.size() ||
+        !std::equal(local.begin(), local.end(), value.begin(), [](char a, char b) {
+            return a == std::tolower(static_cast<unsigned char>(b));
+        })) {
+        return false;
+    }
+    const std::string_view domain = value.substr(local.size());
+    const auto label_char = [](char c) {
+        return std::isalnum(static_cast<unsigned char>(c)) || c == '-';
+    };
+    std::size_t labels = 0;
+    std::size_t start = 0;
+    while (true) {
+        const std::size_t dot = domain.find('.', start);
+        const std::string_view label = domain.substr(start, dot - start);
+        if (label.empty() || !std::all_of(label.begin(), label.end(), label_char)) {
+            return false;
+        }
+        ++labels;
+        if (dot == std::string_view::npos) {
+            return labels >= 2;
+        }
+        start = dot + 1;
+    }
 }
 
 // Control and invisible formatting characters that could forge, hide or
@@ -203,8 +232,8 @@ bool follows_rule(StringRule rule, std::string_view value)
     switch (rule) {
     case StringRule::https_url:
         return is_https_url(value);
-    case StringRule::email:
-        return is_email(value);
+    case StringRule::restore_mailbox:
+        return is_restore_mailbox(value);
     case StringRule::log_level:
         return std::find(kLogLevels.begin(), kLogLevels.end(), value) != kLogLevels.end();
     default:
@@ -217,8 +246,8 @@ std::string_view rule_problem(StringRule rule)
     switch (rule) {
     case StringRule::https_url:
         return "must be an https:// URL with no user name, password, query or fragment";
-    case StringRule::email:
-        return "must be an email address";
+    case StringRule::restore_mailbox:
+        return "must be restoretest@<domain>: restores only ever go to the restoretest mailbox";
     default:
         return "must be one of trace, debug, info, warn, error, critical, off";
     }

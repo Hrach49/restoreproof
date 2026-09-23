@@ -151,7 +151,10 @@ TEST_CASE("parse_config rejects secret-looking keys without echoing the value", 
 {
     const std::string key = GENERATE("password", "Password", "client_secret", "secret",
                                      "api_token", "TOKEN", "veeam_passwd", "api_key", "apikey",
-                                     "Graph_Client_Secret");
+                                     "Graph_Client_Secret", "pwd", "veeam_pwd", "credential",
+                                     "Credentials", "private_key", "tls_private_key",
+                                     "access_key", "AWS_ACCESS_KEY_ID", "signing_key",
+                                     "connection_string", "Db_Connection_String");
     CAPTURE(key);
     json doc = valid_doc();
     doc[key] = "SENTINEL-8d2e";
@@ -164,6 +167,14 @@ TEST_CASE("parse_config rejects secret-looking keys without echoing the value", 
                 "RP_VEEAM_USERNAME, RP_VEEAM_PASSWORD or RP_GRAPH_CLIENT_SECRET in the "
                 "environment instead (they move to the DPAPI vault in W4.5)");
     REQUIRE_THAT(e.what(), !ContainsSubstring("SENTINEL"));
+}
+
+TEST_CASE("none of the 16 known keys looks like a secret", "[config]")
+{
+    // valid_doc() sets all 16; it parses only if none trips the secret check.
+    const json doc = valid_doc();
+    REQUIRE(doc.size() == 16);
+    REQUIRE_NOTHROW(rp::parse_config(doc.dump()));
 }
 
 TEST_CASE("parse_config reports a secret-looking key before a missing required key", "[config]")

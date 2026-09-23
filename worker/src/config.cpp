@@ -144,11 +144,15 @@ std::string secret_key_problem()
 
 // "https://" in any case, then a host: at least one character that isn't '/'.
 // No user name or password (an '@' before the path) and no query or fragment,
-// so a credential can't hide in the URL and get printed by `config check`.
+// so a credential can't hide in the URL and get printed by `config check`;
+// printable ASCII (0x21-0x7E) only, so a look-alike such as a fullwidth @
+// can't stand in for the real one.
 bool is_https_url(std::string_view value)
 {
     constexpr std::string_view scheme = "https://";
-    if (value.size() <= scheme.size() || value[scheme.size()] == '/' ||
+    const auto printable_ascii = [](char c) { return c >= 0x21 && c <= 0x7E; };
+    if (!std::all_of(value.begin(), value.end(), printable_ascii) ||
+        value.size() <= scheme.size() || value[scheme.size()] == '/' ||
         value.find_first_of("?#") != std::string_view::npos) {
         return false;
     }
@@ -167,12 +171,29 @@ bool is_email(std::string_view value)
     return at != std::string_view::npos && at > 0 && at + 1 < value.size();
 }
 
-// ASCII control characters (below 0x20, and DEL). A newline or an escape
-// sequence in a value could forge or hide lines of `config check` output.
-bool is_control(char c)
+// Control and invisible formatting characters that could forge, hide or
+// reorder lines of `config check` output: ASCII controls (below 0x20, and
+// DEL) and, as UTF-8, C1 controls (U+0080-U+009F), the line and paragraph
+// separators (U+2028, U+2029), bidi marks and overrides (U+200E, U+200F,
+// U+202A-U+202E) and bidi isolates (U+2066-U+2069). The JSON parser has
+// already rejected invalid UTF-8, so matching byte sequences is enough.
+bool has_control_character(std::string_view value)
 {
-    const auto byte = static_cast<unsigned char>(c);
-    return byte < 0x20 || byte == 0x7F;
+    const auto byte = [value](std::size_t i) {
+        return i < value.size() ? static_cast<unsigned char>(value[i]) : 0;
+    };
+    for (std::size_t i = 0; i < value.size(); ++i) {
+        const unsigned char b0 = byte(i);
+        const unsigned char b1 = byte(i + 1);
+        const unsigned char b2 = byte(i + 2);
+        if (b0 < 0x20 || b0 == 0x7F || (b0 == 0xC2 && b1 >= 0x80 && b1 <= 0x9F) ||
+            (b0 == 0xE2 && b1 == 0x80 &&
+             (b2 == 0x8E || b2 == 0x8F || (b2 >= 0xA8 && b2 <= 0xAE))) ||
+            (b0 == 0xE2 && b1 == 0x81 && b2 >= 0xA6 && b2 <= 0xA9)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 bool follows_rule(StringRule rule, std::string_view value)
@@ -217,7 +238,7 @@ void read_string(const json& doc, const StringField& field, Config& config)
     if (value.empty()) {
         throw key_error(field.key, "must not be empty");
     }
-    if (std::any_of(value.begin(), value.end(), is_control)) {
+    if (has_control_character(value)) {
         throw key_error(field.key, "must not contain control characters");
     }
     if (!follows_rule(field.rule, value)) {

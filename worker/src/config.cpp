@@ -86,6 +86,29 @@ ConfigError key_error(std::string_view key, std::string_view problem)
     return ConfigError(std::string{key}, message);
 }
 
+// Whether a key name from the file may be printed: 1-64 of [A-Za-z0-9_.-].
+// Anything else could be a pasted secret, forge output lines with control
+// characters, or flood the output.
+bool is_printable_key(std::string_view key)
+{
+    return !key.empty() && key.size() <= 64 && std::all_of(key.begin(), key.end(), [](char c) {
+        return std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '.' || c == '-';
+    });
+}
+
+// The error for a key from the file: named when is_printable_key(), otherwise
+// "config has a key that <problem><unnamed_note>" with an empty key().
+ConfigError file_key_error(std::string_view key, std::string_view problem,
+                           std::string_view unnamed_note)
+{
+    if (is_printable_key(key)) {
+        return key_error(key, problem);
+    }
+    std::string message = "config has a key that ";
+    message.append(problem).append(unnamed_note);
+    return ConfigError("", message);
+}
+
 bool is_known_key(std::string_view key)
 {
     const auto named = [key](const auto& field) { return field.key == key; };
@@ -256,12 +279,14 @@ Config parse_config(std::string_view json_text)
     // Secrets first, so the user takes one out of the file before anything else.
     for (const auto& item : doc.items()) {
         if (looks_like_secret(item.key())) {
-            throw key_error(item.key(), secret_key_problem());
+            throw file_key_error(item.key(), secret_key_problem(), "");
         }
     }
     for (const auto& item : doc.items()) {
         if (!is_known_key(item.key())) {
-            throw key_error(item.key(), "is not a known setting");
+            throw file_key_error(item.key(), "is not a known setting",
+                                 " (its name isn't shown: only 1-64 letters, digits, '_', '.' "
+                                 "and '-' are printed)");
         }
     }
 

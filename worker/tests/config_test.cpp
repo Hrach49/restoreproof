@@ -177,7 +177,8 @@ TEST_CASE("parse_config reports a secret-looking key before a missing required k
 
 TEST_CASE("parse_config rejects unknown keys, case-sensitively", "[config]")
 {
-    const std::string key = GENERATE("cloud_uri", "Cloud_Url", "LOG_LEVEL", "sample_size", "");
+    const std::string key = GENERATE(std::string("cloud_uri"), "Cloud_Url", "LOG_LEVEL",
+                                     "sample_size", "a.b-c_9", "x", std::string(64, 'k'));
     CAPTURE(key);
     json doc = valid_doc();
     doc[key] = "value";
@@ -185,6 +186,62 @@ TEST_CASE("parse_config rejects unknown keys, case-sensitively", "[config]")
     const rp::ConfigError e = parse_error(doc.dump());
     REQUIRE(e.key() == key);
     REQUIRE(std::string{e.what()} == "config key \"" + key + "\" is not a known setting");
+}
+
+// Key names that could be a pasted secret, forge output lines or flood it.
+const std::vector<std::string> kUnprintableKeys{
+    "",
+    "SENTINEL-6c0a\nconfig file: forged",
+    "SENTINEL-6c0a\x1b[2J",
+    "log level",
+    "SENTINEL-6c0a\"",
+    "caf\xc3\xa9",
+    std::string(65, 'k'),
+    std::string(200000, 'k'),
+};
+
+TEST_CASE("parse_config rejects an unknown key without printing an unsafe name", "[config]")
+{
+    const std::string key = GENERATE_REF(from_range(kUnprintableKeys));
+    CAPTURE(key.size());
+    json doc = valid_doc();
+    doc[key] = "value";
+
+    const rp::ConfigError e = parse_error(doc.dump());
+    REQUIRE(e.key().empty());
+    REQUIRE(std::string{e.what()} ==
+            "config has a key that is not a known setting (its name isn't shown: only 1-64 "
+            "letters, digits, '_', '.' and '-' are printed)");
+}
+
+TEST_CASE("parse_config rejects a secret-looking key without printing an unsafe name",
+          "[config]")
+{
+    const std::string key = GENERATE(std::string("SENTINEL-6c0a\npassword"), "my password",
+                                     "password" + std::string(57, 'k'),
+                                     "token\x1b[2J");
+    CAPTURE(key.size());
+    json doc = valid_doc();
+    doc[key] = "SENTINEL-6c0a";
+
+    const rp::ConfigError e = parse_error(doc.dump());
+    REQUIRE(e.key().empty());
+    REQUIRE(std::string{e.what()} ==
+            "config has a key that looks like a secret; secrets don't belong in config.json. Set "
+            "RP_VEEAM_USERNAME, RP_VEEAM_PASSWORD or RP_GRAPH_CLIENT_SECRET in the environment "
+            "instead (they move to the DPAPI vault in W4.5)");
+}
+
+TEST_CASE("parse_config prints a secret-looking key of 64 safe characters", "[config]")
+{
+    const std::string key = "password" + std::string(56, 'k');
+    json doc = valid_doc();
+    doc[key] = "SENTINEL-6c0a";
+
+    const rp::ConfigError e = parse_error(doc.dump());
+    REQUIRE(e.key() == key);
+    REQUIRE_THAT(e.what(), ContainsSubstring("config key \"" + key + "\" looks like a secret"));
+    REQUIRE_THAT(e.what(), !ContainsSubstring("SENTINEL"));
 }
 
 TEST_CASE("parse_config rejects a config missing a required key", "[config]")

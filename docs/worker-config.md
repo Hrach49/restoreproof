@@ -26,7 +26,7 @@ Ten keys are required; the other six have defaults.
 | `veeam_org_name` | yes | | non-empty string | The Microsoft 365 organisation as Veeam names it, e.g. `example.onmicrosoft.com`. |
 | `graph_tenant_id` | yes | | non-empty string | The Microsoft 365 tenant ID, for Microsoft Graph sign-in. |
 | `graph_client_id` | yes | | non-empty string | The app registration's client ID, for Microsoft Graph sign-in. |
-| `test_mailbox` | yes | | email address (`@` with text both sides) | The `restoretest` mailbox: the only restore target for mail. |
+| `test_mailbox` | yes | | `restoretest@<domain>`: see below | The `restoretest` mailbox: the only restore target for mail. |
 | `test_site_id` | yes | | non-empty string | The SharePoint site holding the `RestoreTest` library. |
 | `test_library_id` | yes | | non-empty string | The `RestoreTest` library: the only restore target for SharePoint items. |
 | `test_onedrive_drive_id` | yes | | non-empty string | The OneDrive drive holding the `RestoreTest` folder. |
@@ -69,6 +69,13 @@ together. Fix the reported problem and run `rpworker config check` again.
   fragment, where tokens often hide), because `config check` prints both URLs. They must be
   printable ASCII (no spaces), so a look-alike such as a fullwidth `＠` can't hide userinfo;
   write an internationalised host name in its `xn--` form.
+- **`test_mailbox` must be the `restoretest` mailbox.** Restores only ever go there, so the
+  file can't name any other mailbox: a typo that named a live one would overwrite its mail.
+  The value is `restoretest@` (in any case) followed by the tenant's domain, two or more
+  `.`-separated labels of ASCII letters, digits and `-`, such as
+  `restoretest@contoso.onmicrosoft.com`. Spaces, look-alike letters and invisible characters
+  are rejected; write an internationalised domain in its `xn--` form. The Worker's
+  `TargetGuard` still checks every restore; this rule stops a wrong mailbox before any run.
 - **Control characters are rejected** in every string setting, for the same reason: a newline,
   escape sequence or bidi override in a value could forge, hide or reorder lines of
   `config check` output.

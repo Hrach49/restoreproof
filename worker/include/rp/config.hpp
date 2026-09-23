@@ -17,7 +17,7 @@ namespace rp {
 //   veeam_org_name           yes       -        non-empty string
 //   graph_tenant_id          yes       -        non-empty string
 //   graph_client_id          yes       -        non-empty string
-//   test_mailbox             yes       -        email address (contains '@')
+//   test_mailbox             yes       -        restoretest@<domain> (2)
 //   test_site_id             yes       -        non-empty string
 //   test_library_id          yes       -        non-empty string
 //   test_onedrive_drive_id   yes       -        non-empty string
@@ -31,6 +31,9 @@ namespace rp {
 //
 // (1) Printable ASCII only, with no user name, password, query or fragment:
 //     `config check` prints it.
+// (2) "restoretest" in any case, '@', then two or more '.'-separated labels of
+//     ASCII letters, digits and '-'. Restores only ever go to the restoretest
+//     mailbox, so no other name, and no look-alike of it, is accepted.
 // No string value may contain a control character: ASCII (below 0x20, 0x7F),
 // C1 (U+0080-U+009F), U+2028, U+2029 or a bidi control (U+200E, U+200F,
 // U+202A-U+202E, U+2066-U+2069, U+061C).

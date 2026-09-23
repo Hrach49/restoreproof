@@ -142,6 +142,14 @@ bool is_email(std::string_view value)
     return at != std::string_view::npos && at > 0 && at + 1 < value.size();
 }
 
+// ASCII control characters (below 0x20, and DEL). A newline or an escape
+// sequence in a value could forge or hide lines of `config check` output.
+bool is_control(char c)
+{
+    const auto byte = static_cast<unsigned char>(c);
+    return byte < 0x20 || byte == 0x7F;
+}
+
 bool follows_rule(StringRule rule, std::string_view value)
 {
     switch (rule) {
@@ -183,6 +191,9 @@ void read_string(const json& doc, const StringField& field, Config& config)
     const auto& value = it->get_ref<const std::string&>();
     if (value.empty()) {
         throw key_error(field.key, "must not be empty");
+    }
+    if (std::any_of(value.begin(), value.end(), is_control)) {
+        throw key_error(field.key, "must not contain control characters");
     }
     if (!follows_rule(field.rule, value)) {
         throw key_error(field.key, rule_problem(field.rule));

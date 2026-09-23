@@ -58,12 +58,14 @@ TEST_CASE("OpenSSL computes the known SHA-256 digest of \"abc\"", "[deps]")
     REQUIRE(hex.str() == expected);
 }
 
-TEST_CASE("cpr builds a session and URL-encodes through libcurl without a network call", "[deps]")
+TEST_CASE("cpr builds a session URL with encoded query parameters without a network call", "[deps]")
 {
     cpr::Session session;
     session.SetUrl(cpr::Url{"https://veeam.invalid/v8/Organizations"});
-    session.SetTimeout(cpr::Timeout{1000});
+    session.SetParameters(cpr::Parameters{{"name", "restore test"}, {"limit", "10"}});
 
-    // urlEncode calls into libcurl, so this also proves curl is linked.
-    REQUIRE(std::string{cpr::util::urlEncode("restore test")} == "restore%20test");
+    // The query string is URL-encoded by libcurl, so this also proves curl is
+    // linked. GetFullRequestUrl only builds the URL; nothing is sent.
+    REQUIRE(session.GetFullRequestUrl() ==
+            "https://veeam.invalid/v8/Organizations?name=restore%20test&limit=10");
 }

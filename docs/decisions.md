@@ -7,6 +7,32 @@ Format: date, decision, reason, alternatives rejected.
 
 ---
 
+## 2026-09-24 — `rpworker`'s command line lives in rpcore; `worker/app/` is guarded and measured
+
+**Decision.** Supersedes the part of the 2026-09-22 entry "Every rpcore `.cpp` must reach the
+coverage report; `main()` lives outside `src/`" that left `main()` untested. Argument parsing,
+output and exit codes live in `rp::run_cli(args, out, err)` in rpcore and are tested in
+`rptests`; `worker/app/main.cpp` only turns argv into a list and calls it. `worker/app/` is
+also Worker source for the "No test, no merge" guard and for the coverage gate, which measures
+it through ctest's runs of `rpworker.exe` (OpenCppCoverage `--cover_children`). Those runs go
+through `worker/tests/run_exe_test.cmake`, which checks the exit code, stdout and stderr
+exactly.
+
+**Reason.** A code review of W1.1 found that `main()` held the parsing, sat outside both the
+guard and coverage, and was tested only by ctest properties that ignore the exit code
+(`PASS_REGULAR_EXPRESSION`) or accept any non-zero one, a crash included (`WILL_FAIL`). The
+next subcommands (`veeam list`, `restore`, `test`, `doctor`) would have landed in that
+untested file. With the logic in rpcore, `main()` is four lines that one exe test runs in
+full, so measuring it costs nothing and catches it if it grows.
+
+**Alternatives rejected.** Keeping `app/` out of coverage and relying on review to keep
+`main()` thin: the guard would still let a PR change it with no test. Linking `main()` into a
+test executable: two `main`s in one binary, or preprocessor tricks to rename one. A future
+Windows service entry point that tests can't run will get its own entry if it has to be
+excluded.
+
+---
+
 ## 2026-09-23 — `main` is not branch-protected; merging only on green is a manual rule
 
 **Decision.** L0.1's "Protect main: require CI green before merge" is replaced by a manual

@@ -116,9 +116,12 @@ public:
 };
 
 struct HttpClientOptions {
-    // UTF-8 path of a PEM bundle trusted INSTEAD of the Windows certificate
-    // store, for a self-signed Veeam certificate (Config::veeam_ca_file). Only
-    // the Veeam connection sets it. There is no way to turn verification off.
+    // UTF-8 path of a PEM bundle of trusted certificates, for a self-signed
+    // Veeam certificate (Config::veeam_ca_file). Only the Veeam connection
+    // sets it. curl's Schannel backend builds the chain against the CA file
+    // alone (its exclusive-root engine), so the file replaces the Windows
+    // store rather than adding to it. A file that can't be read is a TLS
+    // failure. There is no way to turn verification off.
     std::optional<std::string> ca_file;
     // Where the per-attempt debug lines go; null = spdlog::default_logger() at
     // the time of the call.

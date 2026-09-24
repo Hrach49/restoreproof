@@ -666,6 +666,46 @@ TEST_CASE("no Worker source turns TLS verification off", "[http]")
     CHECK(std::filesystem::exists(root / "src" / "http_client.cpp"));
 }
 
+TEST_CASE("a failed attempt is described by what went wrong", "[http]")
+{
+    using E = cpr::ErrorCode;
+    const auto [code, text] = GENERATE(table<E, std::string_view>({
+        {E::COULDNT_RESOLVE_PROXY, "could not connect"},
+        {E::COULDNT_RESOLVE_HOST, "could not connect"},
+        {E::COULDNT_CONNECT, "could not connect"},
+        {E::NO_CONNECTION_AVAILABLE, "could not connect"},
+        // After the request went out: the server may have acted on it.
+        {E::SEND_ERROR, "connection dropped"},
+        {E::RECV_ERROR, "connection dropped"},
+        {E::GOT_NOTHING, "connection dropped"},
+        {E::PARTIAL_FILE, "connection dropped"},
+        {E::OPERATION_TIMEDOUT, "timed out"},
+        {E::SSL_CONNECT_ERROR, "TLS failure"},
+        {E::PEER_FAILED_VERIFICATION, "TLS failure"},
+        {E::URL_MALFORMAT, "request failed"},
+        {E::UNKNOWN_ERROR, "request failed"},
+    }));
+    CAPTURE(static_cast<int>(code));
+    CHECK(rp::detail::describe(code) == text);
+}
+
+TEST_CASE("curl's error text falls back to the error code's name when empty", "[http]")
+{
+    // Schannel often leaves curl's message empty (a TLS or hostname failure),
+    // and "...(not retried): " with nothing after it helps no one.
+    CHECK(rp::detail::error_text(cpr::Error{}) == "curl error OK");
+    cpr::Error tls;
+    tls.code = cpr::ErrorCode::PEER_FAILED_VERIFICATION;
+    CHECK(rp::detail::error_text(tls) == "curl error PEER_FAILED_VERIFICATION");
+    cpr::Error unnamed;
+    unnamed.code = static_cast<cpr::ErrorCode>(999);
+    CHECK(rp::detail::error_text(unnamed) == "curl error 999");
+    cpr::Error with_message;
+    with_message.code = cpr::ErrorCode::COULDNT_CONNECT;
+    with_message.message = "Failed to connect to 127.0.0.1 port 1";
+    CHECK(rp::detail::error_text(with_message) == "Failed to connect to 127.0.0.1 port 1");
+}
+
 TEST_CASE("curl errors map to the retry policy's transport errors", "[http]")
 {
     using E = cpr::ErrorCode;

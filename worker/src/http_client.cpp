@@ -77,17 +77,17 @@ TransportError classify(cpr::ErrorCode code) noexcept
     }
 }
 
-} // namespace detail
-
-namespace {
-
-using std::chrono::milliseconds;
-
-std::string_view describe(TransportError error)
+std::string_view describe(cpr::ErrorCode code) noexcept
 {
-    switch (error) {
+    using E = cpr::ErrorCode;
+    switch (classify(code)) {
     case TransportError::connect:
-        return "could not connect";
+        // These come after the request went out, so "could not connect" would
+        // mislead: the server may have received it.
+        return code == E::SEND_ERROR || code == E::RECV_ERROR || code == E::GOT_NOTHING ||
+                       code == E::PARTIAL_FILE
+                   ? "connection dropped"
+                   : "could not connect";
     case TransportError::timeout:
         return "timed out";
     case TransportError::tls:
@@ -96,6 +96,23 @@ std::string_view describe(TransportError error)
         return "request failed";
     }
 }
+
+std::string error_text(const cpr::Error& error)
+{
+    if (!error.message.empty()) {
+        return error.message;
+    }
+    const auto& names = cpr::get_error_code_to_string_mapping();
+    const auto name = names.find(error.code);
+    return "curl error " + (name != names.end() ? name->second
+                                                : std::to_string(static_cast<int>(error.code)));
+}
+
+} // namespace detail
+
+namespace {
+
+using std::chrono::milliseconds;
 
 cpr::Multipart make_multipart(const std::vector<MultipartPart>& parts)
 {
@@ -295,7 +312,8 @@ HttpResponse HttpClient::send(const HttpRequest& request)
         const std::string result =
             error == TransportError::none
                 ? "HTTP " + std::to_string(outcome.status)
-                : std::string{describe(error)} + " (" + response.error.message + ")";
+                : std::string{detail::describe(response.error.code)} + " (" +
+                      detail::error_text(response.error) + ")";
         std::string line = target + " attempt " + std::to_string(attempt) + "/" +
                            std::to_string(kMaxHttpAttempts) + ": " + result + " in " +
                            std::to_string(elapsed.count()) + " ms";
@@ -322,8 +340,8 @@ HttpResponse HttpClient::send(const HttpRequest& request)
         const std::string message =
             error == TransportError::none
                 ? target + ": HTTP " + std::to_string(outcome.status) + how
-                : target + ": " + std::string{describe(error)} + how + ": " +
-                      response.error.message;
+                : target + ": " + std::string{detail::describe(response.error.code)} + how +
+                      ": " + detail::error_text(response.error);
         throw HttpError(message, error, outcome.status, attempt);
     }
 }

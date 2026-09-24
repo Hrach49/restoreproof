@@ -124,7 +124,8 @@ struct HttpClientOptions {
     // failure. There is no way to turn verification off.
     std::optional<std::string> ca_file;
     // Where the per-attempt debug lines go; null = spdlog::default_logger() at
-    // the time of the call.
+    // the time of the call, and if that is null too (after spdlog::drop_all()
+    // or shutdown()), nothing is logged.
     std::shared_ptr<spdlog::logger> logger;
     // The wait between attempts; null = std::this_thread::sleep_for. Tests
     // record it instead of sleeping.

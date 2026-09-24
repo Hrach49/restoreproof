@@ -2,6 +2,7 @@
 // really sleeps for backoff: the waits are recorded instead.
 
 #include "local_http_server.hpp" // first: httplib needs winsock2.h before windows.h
+#include "test_support.hpp"
 
 #include <rp/http_client.hpp>
 #include <rp/retry_policy.hpp>
@@ -274,8 +275,7 @@ TEST_CASE("a connection dropped during the TLS handshake is retried", "[http]")
 
 TEST_CASE("a malformed URL fails once as other, without a retry", "[http]")
 {
-    const std::string url = GENERATE("nosuchscheme://127.0.0.1/", "http://[::1/");
-    CAPTURE(url);
+    const std::string url = "http://[::1/";
     TestClient t;
 
     try {
@@ -289,6 +289,70 @@ TEST_CASE("a malformed URL fails once as other, without a retry", "[http]")
     }
     CHECK(t.sleeps.empty());
     CHECK(count_of(t.log(), ": request failed (") == 1);
+}
+
+TEST_CASE("a URL that isn't http:// or https:// is refused before sending", "[http]")
+{
+    // curl here is built with FILE, FTP, SMB, LDAP and more. A URL taken from a
+    // server response (a nextLink, a Location, a _links href) must not read a
+    // local file or open a cleartext connection elsewhere. curl would also
+    // guess a scheme for a URL without one ("ftp.host/x" as FTP).
+    const rp::test::TempDir dir;
+    const std::filesystem::path secret = dir.write("vault.bin", "SENTINEL_FILE_91d2");
+    const std::u8string secret_u8 = secret.generic_u8string();
+    const std::string file_url = "file:///" + std::string{secret_u8.begin(), secret_u8.end()};
+    const std::string url = GENERATE_COPY(
+        file_url, std::string{"FILE:///C:/Windows/win.ini"}, std::string{"ftp://127.0.0.1/x"},
+        std::string{"smb://127.0.0.1/share"}, std::string{"ldap://127.0.0.1/"},
+        std::string{"nosuchscheme://127.0.0.1/"}, std::string{"127.0.0.1/x"},
+        std::string{"ftp.example.com/x"}, std::string{"//127.0.0.1/x"},
+        std::string{" http://127.0.0.1/"}, std::string{"http:/127.0.0.1/"},
+        std::string{"https:127.0.0.1/"}, std::string{""});
+    CAPTURE(url);
+    TestClient t;
+
+    try {
+        const rp::HttpResponse response = t.client->get(url);
+        FAIL("send() returned for a URL that isn't http:// or https://; body: " << response.body);
+    } catch (const rp::HttpError& e) {
+        const std::string what = e.what();
+        CAPTURE(what);
+        CHECK(e.error() == rp::TransportError::other);
+        CHECK(e.status() == 0);
+        CHECK(e.attempts() == 0);
+        CHECK(what == "GET " + url +
+                          ": refused before sending: only http:// and https:// URLs are sent");
+    }
+    CHECK(t.sleeps.empty());
+    CHECK(t.log().empty());
+}
+
+TEST_CASE("the URL scheme is matched in any case", "[http]")
+{
+    rp::test::LocalHttpServer server;
+    server.server().Get("/", [](const httplib::Request&, httplib::Response& res) {
+        res.set_content("ok", "text/plain");
+    });
+    const std::string scheme = GENERATE("http", "HTTP", "Http");
+    TestClient t;
+
+    const rp::HttpResponse response =
+        t.client->get(scheme + "://127.0.0.1:" + std::to_string(server.port()) + "/");
+
+    CHECK(response.status == 200);
+}
+
+TEST_CASE("a refused URL's message is redacted", "[http]")
+{
+    TestClient t;
+    try {
+        t.client->get("ftp://user:SENTINEL_PW_1b7e@127.0.0.1/?client_secret=SENTINEL_CS_4c0a");
+        FAIL("send() returned for an ftp:// URL");
+    } catch (const rp::HttpError& e) {
+        const std::string what = e.what();
+        CAPTURE(what);
+        CHECK(what.find("SENTINEL") == std::string::npos);
+    }
 }
 
 TEST_CASE("a plain multipart field with a NUL byte is refused before sending", "[http]")

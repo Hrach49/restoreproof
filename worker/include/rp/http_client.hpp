@@ -78,7 +78,8 @@ struct HttpResponse {
 
 // A request that got no usable response: every attempt failed with a transport
 // error or a 5xx, or one failed in a way that isn't retried (a certificate
-// failure, a malformed URL). Any other status (2xx, 3xx, 4xx) is returned, not thrown.
+// failure, a malformed URL), or the URL wasn't http:// or https:// and nothing
+// was sent (other, attempts() 0). Any other status (2xx, 3xx, 4xx) is returned, not thrown.
 class HttpError : public std::runtime_error {
 public:
     // `message` goes through rp::redact(), so what() never holds a secret.
@@ -148,6 +149,10 @@ struct HttpClientOptions {
 //    URLs are not.
 //  - A request timeout of zero or less throws std::invalid_argument before
 //    anything is sent (curl would read 0 as "no timeout").
+//  - Only http:// and https:// URLs are sent (the scheme in any case); any
+//    other URL, or one without a scheme, throws HttpError (other, 0 attempts)
+//    before anything is sent, so a URL from a server response can't read a
+//    local file or open an FTP, SMB or LDAP connection.
 //  - Redirects are never followed: a 3xx is returned to the caller.
 //  - TLS peer and host verification are always on.
 //  - One debug line per attempt, redacted with rp::redact(); headers and

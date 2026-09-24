@@ -236,7 +236,9 @@ def get_mail_folder_name(g: GraphClient, folder_id: str, owner: str) -> str:
     return data["displayName"]
 
 
-def send_mail(g: GraphClient, *, subject: str, body_text: str, to_address: str) -> None:
+def send_mail(
+    g: GraphClient, *, subject: str, body_text: str, to_address: str, owner: str | None = None
+) -> None:
     payload = {
         "message": {
             "subject": subject,
@@ -245,7 +247,7 @@ def send_mail(g: GraphClient, *, subject: str, body_text: str, to_address: str) 
         },
         "saveToSentItems": True,
     }
-    resp = g.post_json("/me/sendMail", payload)
+    resp = g.post_json("/me/sendMail", payload, owner=owner)
     if resp.status != 202:
         raise GraphError(
             f"POST /me/sendMail as {g.account}: expected HTTP 202, got {resp.status}",

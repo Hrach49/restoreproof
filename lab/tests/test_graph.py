@@ -219,6 +219,12 @@ def test_find_messages_403_names_owner():
         graph.find_messages_by_subject(g, "RP-CANARY-0011", BOB_UPN)
 
 
+def test_send_mail_403_names_the_owner():
+    g, _, _ = make_client([graph_error(403)])
+    with pytest.raises(GraphForbidden, match=f"needs {BOB_UPN}"):
+        graph.send_mail(g, subject="s", body_text="b", to_address=ALICE_UPN, owner=BOB_UPN)
+
+
 def test_get_message_quotes_id_and_uses_prefer():
     g, transport, _ = make_client([json_response(200, {"id": "AAk/+="})])
     assert graph.get_message(g, "AAk/+=", ALICE_UPN) == {"id": "AAk/+="}

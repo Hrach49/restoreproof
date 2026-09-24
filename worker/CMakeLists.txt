@@ -20,6 +20,7 @@ add_library(rpcore STATIC
     src/cli.cpp
     src/config.cpp
     src/config_check.cpp
+    src/retry_policy.cpp
     src/secrets.cpp
     src/utf16.cpp
     src/version.cpp
@@ -49,6 +50,7 @@ add_executable(rptests
     tests/config_check_test.cpp
     tests/config_test.cpp
     tests/deps_test.cpp
+    tests/retry_policy_test.cpp
     tests/secrets_test.cpp
     tests/smoke.cpp
     tests/version_test.cpp

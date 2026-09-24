@@ -247,29 +247,29 @@ TEST_CASE("a request that outlives its timeout is retried as a timeout", "[http]
     CHECK(count_of(t.log(), ": timed out (") == 5);
 }
 
-TEST_CASE("a TLS failure is not retried", "[http]")
+TEST_CASE("a connection dropped during the TLS handshake is retried", "[http]")
 {
-    // https:// to a plain-HTTP server: the TLS handshake can't succeed. The
-    // server waits for a request line that never comes; a short read timeout
-    // keeps that from taking its default 5 s.
-    rp::test::LocalHttpServer server;
-    server.server().set_read_timeout(0, 200000);
-    server.server().Get("/", [](const httplib::Request&, httplib::Response& res) {
-        res.set_content("plain", "text/plain");
-    });
+    // Schannel reports any failure to send or receive handshake data as
+    // SSL_CONNECT_ERROR, not as the RECV_ERROR a plain-HTTP drop gives. The
+    // server reads the ClientHello and closes, as a restarting Veeam REST
+    // service or a load balancer would.
+    rp::test::DroppingServer server;
     TestClient t;
     const std::string url = "https://127.0.0.1:" + std::to_string(server.port()) + "/";
 
     try {
         t.client->get(url);
-        FAIL("send() returned over a failed TLS handshake");
+        FAIL("send() returned over a dropped TLS handshake");
     } catch (const rp::HttpError& e) {
-        CHECK(e.error() == rp::TransportError::tls);
-        CHECK(e.attempts() == 1);
+        CHECK(e.error() == rp::TransportError::handshake);
+        CHECK(e.status() == 0);
+        CHECK(e.attempts() == 5);
         CHECK(std::string{e.what()}.starts_with("GET " + url +
-                                                ": TLS failure on attempt 1 (not retried): "));
+                                                ": TLS handshake failed after 5 attempts: "));
     }
-    CHECK(t.sleeps.empty());
+    CHECK(server.accepted() == 5);
+    CHECK(t.sleeps == std::vector<std::chrono::milliseconds>{1000ms, 2000ms, 4000ms, 8000ms});
+    CHECK(count_of(t.log(), ": TLS handshake failed (") == 5);
 }
 
 TEST_CASE("a malformed URL fails once as other, without a retry", "[http]")
@@ -737,7 +737,7 @@ TEST_CASE("a failed attempt is described by what went wrong", "[http]")
         {E::GOT_NOTHING, "connection dropped"},
         {E::PARTIAL_FILE, "connection dropped"},
         {E::OPERATION_TIMEDOUT, "timed out"},
-        {E::SSL_CONNECT_ERROR, "TLS failure"},
+        {E::SSL_CONNECT_ERROR, "TLS handshake failed"},
         {E::PEER_FAILED_VERIFICATION, "TLS failure"},
         {E::URL_MALFORMAT, "request failed"},
         {E::UNKNOWN_ERROR, "request failed"},
@@ -778,7 +778,10 @@ TEST_CASE("curl errors map to the retry policy's transport errors", "[http]")
         {E::PARTIAL_FILE, T::connect},
         {E::NO_CONNECTION_AVAILABLE, T::connect},
         {E::OPERATION_TIMEDOUT, T::timeout},
-        {E::SSL_CONNECT_ERROR, T::tls},
+        // Schannel's code for a connection dropped mid-handshake, as well as
+        // for a protocol or cipher the two sides can't agree on. A certificate
+        // verdict has codes of its own, below.
+        {E::SSL_CONNECT_ERROR, T::handshake},
         {E::SSL_ENGINE_NOTFOUND, T::tls},
         {E::SSL_ENGINE_SETFAILED, T::tls},
         {E::SSL_CERTPROBLEM, T::tls},

@@ -54,9 +54,16 @@ TransportError classify(cpr::ErrorCode code) noexcept
         return TransportError::connect;
     case E::OPERATION_TIMEDOUT:
         return TransportError::timeout;
-    // A TLS or certificate problem doesn't fix itself between attempts, and
-    // retrying would only hide it.
+    // curl's Schannel backend gives this for any failure to send or receive
+    // handshake data (a server restarting, a load balancer closing the
+    // socket) as well as for a protocol it can't negotiate. Certificate
+    // verdicts come back as the codes below, so retrying this one never
+    // retries a bad certificate; at worst a lasting negotiation failure takes
+    // five attempts to report.
     case E::SSL_CONNECT_ERROR:
+        return TransportError::handshake;
+    // A certificate or TLS setup problem doesn't fix itself between attempts,
+    // and retrying would only hide it.
     case E::SSL_ENGINE_NOTFOUND:
     case E::SSL_ENGINE_SETFAILED:
     case E::SSL_CERTPROBLEM:
@@ -90,6 +97,8 @@ std::string_view describe(cpr::ErrorCode code) noexcept
                    : "could not connect";
     case TransportError::timeout:
         return "timed out";
+    case TransportError::handshake:
+        return "TLS handshake failed";
     case TransportError::tls:
         return "TLS failure";
     default:

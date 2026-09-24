@@ -35,12 +35,14 @@ TEST_CASE("a request is made at most five times in total", "[retry]")
     REQUIRE(rp::kMaxHttpAttempts == 5);
 }
 
-TEST_CASE("is_retryable retries connection errors and timeouts but never tls or other errors",
+TEST_CASE("is_retryable retries connection errors, timeouts and failed handshakes but never tls "
+          "or other errors",
           "[retry]")
 {
     const auto [error, expected] = GENERATE(table<TransportError, bool>({
         {TransportError::connect, true},
         {TransportError::timeout, true},
+        {TransportError::handshake, true},
         {TransportError::tls, false},
         {TransportError::other, false},
     }));
@@ -76,6 +78,7 @@ TEST_CASE("should_retry stops a retryable outcome after the fifth attempt", "[re
 {
     const AttemptOutcome outcome = GENERATE(transport_error(TransportError::connect),
                                             transport_error(TransportError::timeout),
+                                            transport_error(TransportError::handshake),
                                             http_status(503));
     const auto [attempt, expected] = GENERATE(table<int, bool>({
         {1, true},

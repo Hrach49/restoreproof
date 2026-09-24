@@ -15,9 +15,11 @@ bool is_retryable(const AttemptOutcome& outcome) noexcept
         // outside 500-599 isn't a server failure either.
         return outcome.status >= 500 && outcome.status <= 599;
     }
-    // A dropped connection or a timeout can be transient. A bad certificate or
-    // a malformed URL won't fix itself between tries.
-    return outcome.error == TransportError::connect || outcome.error == TransportError::timeout;
+    // A dropped connection, a timeout or a broken-off handshake can be
+    // transient. A bad certificate or a malformed URL won't fix itself between
+    // tries.
+    return outcome.error == TransportError::connect || outcome.error == TransportError::timeout ||
+           outcome.error == TransportError::handshake;
 }
 
 bool should_retry(const AttemptOutcome& outcome, int attempt) noexcept

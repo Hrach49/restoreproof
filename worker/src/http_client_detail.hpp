@@ -25,7 +25,8 @@ TransportError classify(cpr::ErrorCode code) noexcept;
 
 // What went wrong, for logs and HttpError: "could not connect",
 // "connection dropped" (after the request went out: the server may have acted
-// on it), "timed out", "TLS failure" or "request failed".
+// on it), "timed out", "TLS handshake failed", "TLS failure" or
+// "request failed".
 std::string_view describe(cpr::ErrorCode code) noexcept;
 
 // curl's message, or "curl error <code name>" when it is empty, as it often is

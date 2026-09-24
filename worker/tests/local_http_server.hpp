@@ -9,6 +9,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <atomic>
 #include <memory>
 #include <string>
 #include <thread>
@@ -79,5 +80,62 @@ inline int closed_local_port()
     WSACleanup();
     return ntohs(addr.sin_port);
 }
+
+// A TCP listener on 127.0.0.1 that reads what each client sends first (for a
+// TLS client, the ClientHello) and then closes the connection: a server that
+// drops every connection mid-handshake.
+class DroppingServer {
+public:
+    DroppingServer()
+    {
+        REQUIRE(WSAStartup(MAKEWORD(2, 2), &wsa_) == 0);
+        listener_ = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        REQUIRE(listener_ != INVALID_SOCKET);
+        sockaddr_in addr{};
+        addr.sin_family = AF_INET;
+        addr.sin_port = 0;
+        inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr);
+        REQUIRE(::bind(listener_, reinterpret_cast<const sockaddr*>(&addr), sizeof(addr)) == 0);
+        REQUIRE(::listen(listener_, SOMAXCONN) == 0);
+        int length = sizeof(addr);
+        REQUIRE(::getsockname(listener_, reinterpret_cast<sockaddr*>(&addr), &length) == 0);
+        port_ = ntohs(addr.sin_port);
+        thread_ = std::thread([this] {
+            // Ends when the destructor closes the listener and accept() fails.
+            for (;;) {
+                const SOCKET client = ::accept(listener_, nullptr, nullptr);
+                if (client == INVALID_SOCKET) {
+                    return;
+                }
+                char buffer[4096];
+                ::recv(client, buffer, sizeof(buffer), 0);
+                // Counted before the close, which the client sees.
+                ++accepted_;
+                ::closesocket(client);
+            }
+        });
+    }
+
+    ~DroppingServer()
+    {
+        ::closesocket(listener_);
+        thread_.join();
+        WSACleanup();
+    }
+
+    DroppingServer(const DroppingServer&) = delete;
+    DroppingServer& operator=(const DroppingServer&) = delete;
+
+    int port() const { return port_; }
+    // Connections accepted and dropped so far.
+    int accepted() const { return accepted_; }
+
+private:
+    WSADATA wsa_{};
+    SOCKET listener_ = INVALID_SOCKET;
+    int port_ = 0;
+    std::atomic<int> accepted_ = 0;
+    std::thread thread_;
+};
 
 } // namespace rp::test

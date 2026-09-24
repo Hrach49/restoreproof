@@ -8,6 +8,7 @@
 
 #include <spdlog/logger.h>
 #include <spdlog/sinks/ostream_sink.h>
+#include <spdlog/spdlog.h>
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
@@ -454,6 +455,24 @@ TEST_CASE("the per-request timeout reaches the transport", "[http]")
 
 TEST_CASE("an HttpClient with default options sends a request", "[http]")
 {
+    rp::test::LocalHttpServer server;
+    server.server().Get("/", [](const httplib::Request&, httplib::Response& res) {
+        res.set_content("hi", "text/plain");
+    });
+    rp::HttpClient client;
+
+    CHECK(client.get(server.url("/")).body == "hi");
+}
+
+TEST_CASE("an HttpClient still sends when spdlog has no default logger", "[http]")
+{
+    // spdlog::drop_all() and shutdown() leave the default logger null.
+    struct RestoreDefaultLogger {
+        std::shared_ptr<spdlog::logger> saved = spdlog::default_logger();
+        ~RestoreDefaultLogger() { spdlog::set_default_logger(saved); }
+    } restore;
+    spdlog::drop_all();
+    REQUIRE(spdlog::default_logger() == nullptr);
     rp::test::LocalHttpServer server;
     server.server().Get("/", [](const httplib::Request&, httplib::Response& res) {
         res.set_content("hi", "text/plain");

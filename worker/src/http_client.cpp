@@ -297,6 +297,7 @@ HttpResponse HttpClient::send(const HttpRequest& request)
         throw std::invalid_argument("HTTP request timeout must be above 0 ms, got " +
                                     std::to_string(request.timeout.count()) + " ms");
     }
+    // May be null: spdlog::drop_all() and shutdown() clear the default logger.
     const std::shared_ptr<spdlog::logger> logger =
         options_.logger ? options_.logger : spdlog::default_logger();
     const cpr::SslOptions ssl = detail::make_ssl_options(options_.ca_file);
@@ -313,24 +314,30 @@ HttpResponse HttpClient::send(const HttpRequest& request)
         const AttemptOutcome outcome{error, error == TransportError::none
                                                 ? static_cast<int>(response.status_code)
                                                 : 0};
-        // "HTTP 503" or "could not connect (curl's message)".
-        const std::string result =
-            error == TransportError::none
-                ? "HTTP " + std::to_string(outcome.status)
-                : std::string{detail::describe(response.error.code)} + " (" +
-                      detail::error_text(response.error) + ")";
-        std::string line = target + " attempt " + std::to_string(attempt) + "/" +
-                           std::to_string(kMaxHttpAttempts) + ": " + result + " in " +
-                           std::to_string(elapsed.count()) + " ms";
+        const bool retry = should_retry(outcome, attempt);
+        const milliseconds wait =
+            retry ? retry_delay(attempt, options_.jitter()) : milliseconds::zero();
 
-        if (should_retry(outcome, attempt)) {
-            const milliseconds wait = retry_delay(attempt, options_.jitter());
-            line += "; retrying in " + std::to_string(wait.count()) + " ms";
+        // The line is only built (and redacted) when it will be written.
+        if (logger && logger->should_log(spdlog::level::debug)) {
+            // "HTTP 503" or "could not connect (curl's message)".
+            const std::string result =
+                error == TransportError::none
+                    ? "HTTP " + std::to_string(outcome.status)
+                    : std::string{detail::describe(response.error.code)} + " (" +
+                          detail::error_text(response.error) + ")";
+            std::string line = target + " attempt " + std::to_string(attempt) + "/" +
+                               std::to_string(kMaxHttpAttempts) + ": " + result + " in " +
+                               std::to_string(elapsed.count()) + " ms";
+            if (retry) {
+                line += "; retrying in " + std::to_string(wait.count()) + " ms";
+            }
             logger->debug("{}", redact(line));
+        }
+        if (retry) {
             options_.sleep(wait);
             continue;
         }
-        logger->debug("{}", redact(line));
 
         if (error == TransportError::none && !is_retryable(outcome)) {
             HttpResponse out;

@@ -29,7 +29,7 @@ changes a mail body, the manifest records the changed bytes and also says that t
 | `seeder/` | The tool: `catalog.py` (the 40 items and where they go), `tenant.py` (tenant IDs, copied from `tenant.md`), `generate.py`, `normalize.py`, `manifest.py`, `auth.py`, `graph.py`, `transport.py`, `seed.py`, `verify.py`, `cli.py` |
 | `tests/` | pytest, one file per module, against a fake in-memory Graph tenant. No network |
 | `canary/` | The 20 generated files, committed |
-| `seed-manifest.json` | Written by a live `seed` run only |
+| `seed-manifest.json` | Written by a live `seed` run only; not committed yet, so CI skips the `hash` check with a warning until it is |
 | `tenant.md` | Tenant, user and restore-target IDs |
 
 Shared with the Worker, outside `lab/`:

@@ -7,6 +7,34 @@ Format: date, decision, reason, alternatives rejected.
 
 ---
 
+## 2026-09-24 — Lab CI: canary files checked offline, the manifest hash check only once it is committed
+
+**Decision.** The `lab` workflow gets two checks after the tests, replacing the single
+`python -m seeder hash` step of the canary seeder entry below:
+
+- **Canary files match the generators.** `python -m seeder generate` writes into a temp dir,
+  and `diff -r` compares it with the committed `lab/canary/`. It fails on a changed, missing
+  or extra file, and needs no manifest.
+- **Canary hashes reproduce the manifest.** If `lab/seed-manifest.json` is committed,
+  `python -m seeder hash` runs and must pass, as before. If it is not, the step emits a
+  GitHub `::warning::` saying the check was skipped and that L1.2's Done when is not met until
+  a live `seed` run's manifest is committed, and succeeds.
+
+**Reason.** The manifest is written only by a live `seed` run, which needs three interactive
+tenant sign-ins and cannot run in CI. Until that run happens the hash step could only fail,
+so the lab job was always red and hid real test failures. The generator check covers the part
+that needs no tenant. Once the manifest is committed the hash check is a hard gate with no
+change to the workflow. The catch: a PR that deletes `lab/seed-manifest.json` silently turns
+it back into a warning, so a reviewer must treat deleting the manifest as a red flag.
+
+**Alternatives rejected.** Leaving the job red until the live run: a permanently red job
+trains everyone to ignore it. `continue-on-error` on the hash step: it would also hide a real
+mismatch once the manifest exists. A placeholder manifest: it would be a fake expected set,
+and `hash` would still have to fail on it. Failing when the manifest is missing only on
+`main`: the same always-red problem, one merge later.
+
+---
+
 ## 2026-09-24 — Canary seeder: a uv lab tool, a delegated public-client app, text-v1 mail hashes, hashes of what Graph returns
 
 **Decision.** L1.2 (#10) seeds the 40 canary items and writes `lab/seed-manifest.json`. How

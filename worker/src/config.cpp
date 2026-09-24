@@ -410,11 +410,23 @@ Config load_config(const std::filesystem::path& path)
     }
     std::ostringstream text;
     text << file.rdbuf();
+    Config config;
     try {
-        return parse_config(text.str());
+        config = parse_config(text.str());
     } catch (const ConfigError& e) {
         throw ConfigError(e.key(), prefix + e.what());
     }
+    // Here rather than in parse_config, which stays pure over the text. Opening
+    // for reading also fails on a directory. Like every message, it names the
+    // key, not the value.
+    if (config.veeam_ca_file) {
+        const std::optional<std::filesystem::path> ca_path = path_from_utf8(*config.veeam_ca_file);
+        if (!ca_path || !std::ifstream(*ca_path, std::ios::binary)) {
+            const ConfigError e = key_error(kCaFileKey, "names a file that can't be read");
+            throw ConfigError(e.key(), prefix + e.what());
+        }
+    }
+    return config;
 }
 
 std::filesystem::path program_data_dir()

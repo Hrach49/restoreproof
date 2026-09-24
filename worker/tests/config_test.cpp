@@ -722,6 +722,53 @@ TEST_CASE("load_config accepts a UTF-8 byte order mark, as Notepad writes", "[co
     REQUIRE(rp::load_config(path).cloud_url == "https://cloud.example.invalid");
 }
 
+TEST_CASE("load_config rejects a veeam_ca_file it can't read, without the file's path",
+          "[config]")
+{
+    const rp::test::TempDir dir;
+    std::filesystem::create_directory(dir.path() / "ca-dir.pem");
+    // Cyrillic letters: not in cp1252, the ANSI code page of a Western machine.
+    const std::filesystem::path ca = GENERATE_REF(
+        dir.path() / "missing.pem", dir.path() / "ca-dir.pem",
+        dir.path() / std::filesystem::path(u8"тест-missing.pem"));
+    CAPTURE(utf8(ca));
+    json doc = valid_doc();
+    doc["veeam_ca_file"] = utf8(ca);
+    const auto path = dir.write("config.json", doc.dump());
+
+    const rp::ConfigError e = load_error(path);
+    REQUIRE(e.key() == "veeam_ca_file");
+    REQUIRE(std::string{e.what()} ==
+            utf8(path) + ": config key \"veeam_ca_file\" names a file that can't be read");
+}
+
+TEST_CASE("load_config accepts a veeam_ca_file it can read", "[config]")
+{
+    const rp::test::TempDir dir;
+    const std::filesystem::path name =
+        GENERATE(std::filesystem::path("veeam-ca.pem"),
+                 std::filesystem::path(u8"тест-ca.pem"));
+    const std::filesystem::path ca =
+        dir.write(name, "-----BEGIN CERTIFICATE-----\n-----END CERTIFICATE-----\n");
+    CAPTURE(utf8(ca));
+    json doc = valid_doc();
+    doc["veeam_ca_file"] = utf8(ca);
+    const auto path = dir.write("config.json", doc.dump());
+
+    const rp::Config config = rp::load_config(path);
+    REQUIRE(config.veeam_ca_file == utf8(ca));
+}
+
+TEST_CASE("load_config reports a veeam_ca_file's form before trying to read it", "[config]")
+{
+    const rp::test::TempDir dir;
+    json doc = valid_doc();
+    doc["veeam_ca_file"] = "missing.pem";
+    const auto path = dir.write("config.json", doc.dump());
+
+    REQUIRE_THAT(load_error(path).what(), ContainsSubstring("must be an absolute path"));
+}
+
 TEST_CASE("program_data_dir is the absolute ProgramData folder", "[config]")
 {
     const std::filesystem::path dir = rp::program_data_dir();

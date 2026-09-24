@@ -234,8 +234,9 @@ TEST_CASE("rpworker config check --config reads a UTF-8 path outside the ANSI co
           "[config_check]")
 {
     const rp::test::TempDir dir;
-    // Armenian letters: in no Western code page.
-    const auto path = dir.write(std::filesystem::path(u8"հայ.json"), kConfigJson);
+    // Cyrillic letters: not in cp1252, the ANSI code page of a Western machine.
+    const auto path =
+        dir.write(std::filesystem::path(u8"\u0442\u0435\u0441\u0442.json"), kConfigJson);
     const std::string path_arg = utf8(path);
     const rp::test::ScopedEnv user(rp::kEnvVeeamUsername, std::nullopt);
     const rp::test::ScopedEnv password(rp::kEnvVeeamPassword, std::nullopt);

@@ -111,9 +111,10 @@ TEST_CASE("rpworker's main() prints usage for an empty command line or argument"
 TEST_CASE("rpworker's main() passes a path outside the ANSI code page on as UTF-8", "[cli]")
 {
     const rp::test::TempDir dir;
-    // Armenian letters: in no Western code page, so a narrow argv would turn
-    // them into '?'.
-    const auto path = dir.write(std::filesystem::path(L"հայ.json"), kConfigJson);
+    // Cyrillic letters: not in cp1252, so on a Western machine a narrow argv
+    // would turn them into '?'.
+    const auto path =
+        dir.write(std::filesystem::path(L"\u0442\u0435\u0441\u0442.json"), kConfigJson);
     const std::wstring wide_path = path.wstring();
     const std::vector<const wchar_t*> argv{L"rpworker.exe", L"config", L"check", L"--config",
                                            wide_path.c_str()};

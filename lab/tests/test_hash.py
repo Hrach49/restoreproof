@@ -69,6 +69,30 @@ def test_flipped_byte_names_file_and_both_hashes(lab):
     assert "39/40" in output
 
 
+def test_office_content_hash_that_the_local_file_does_not_reproduce_fails(lab):
+    # 02 is a SharePoint docx: its content_sha256 (office-v1) must be what the committed
+    # file's content parts hash to, since SharePoint only rewrites the package around them.
+    manifest_path, canary = lab
+
+    def tamper(m):
+        e = m["entries"][FIRST_FILE + 1]
+        e["content_sha256"] = "0" * 64
+
+    _rewrite(manifest_path, tamper)
+    code, output = _run(manifest_path, canary)
+    assert code == 1
+    line = next(line for line in output.splitlines() if "rp-canary-02.docx" in line)
+    assert line.startswith("FAIL") and "content_sha256" in line and "office-v1" in line
+
+
+def test_office_ok_line_shows_the_content_hash(lab):
+    manifest_path, canary = lab
+    code, output = _run(manifest_path, canary)
+    assert code == 0
+    line = next(line for line in output.splitlines() if "rp-canary-02.docx" in line)
+    assert "content_sha256" in line and "office-v1" in line
+
+
 def test_changed_size_is_reported(lab):
     manifest_path, canary = lab
     (canary / "rp-canary-05.png").write_bytes(fake_file_bytes("rp-canary-05.png") + b"x")

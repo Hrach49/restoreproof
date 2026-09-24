@@ -13,9 +13,10 @@ from seeder.graph import GraphClient, GraphError
 from seeder.http import Transport
 from seeder.manifest import ManifestError, iso_utc, load_manifest, sha256_hex, validate_manifest
 from seeder.normalize import body_sha256
+from seeder.office import OFFICE_RULE, OfficeContentError, office_content_sha256
 
 Out = Callable[[str], None]
-# (status, [differences]); status is "ok", "DIFF" or "MISSING".
+# (status, [differences]); status is "ok", "DIFF" or "MISSING". For "ok" the list holds notes.
 Result = tuple[str, list[str]]
 
 
@@ -68,12 +69,24 @@ def check_file(g: GraphClient, entry: dict) -> Result:
     diffs = []
     if item.get("name") != entry["name"]:
         diffs.append(_diff("name", entry["name"], item.get("name")))
-    if len(data) != entry["stored_size"]:
-        diffs.append(_diff("size", entry["stored_size"], len(data)))
-    actual = sha256_hex(data)
-    if actual != entry["stored_sha256"]:
-        diffs.append(_diff("stored_sha256", entry["stored_sha256"], actual))
-    return ("DIFF" if diffs else "ok"), diffs
+    rule = entry["content_rule"]
+    if rule == OFFICE_RULE:
+        try:
+            actual = office_content_sha256(data, entry["file_type"])
+        except OfficeContentError as exc:
+            actual = f"unreadable ({exc})"
+    else:
+        actual = sha256_hex(data)
+        if len(data) != entry["stored_size"]:
+            diffs.append(_diff("size", entry["stored_size"], len(data)))
+    if actual != entry["content_sha256"]:
+        diffs.append(_diff(f"content_sha256 ({rule})", entry["content_sha256"], actual))
+    if diffs:
+        return "DIFF", diffs
+    if rule == OFFICE_RULE and sha256_hex(data) != entry["stored_sha256"]:
+        # SharePoint rewrites Office packages again after the upload; the content is what counts.
+        return "ok", [f"content same by {OFFICE_RULE}; bytes changed since the seed ({entry['stored_size']} -> {len(data)})"]
+    return "ok", []
 
 
 def run_verify(
@@ -128,7 +141,7 @@ def run_verify(
     for entry in entries:
         status, diffs = results[entry["id"]]
         if status == "ok":
-            out(f"ok      {entry['id']}")
+            out(f"ok      {entry['id']}" + "".join(f"  ({note})" for note in diffs))
         for diff in diffs:
             out(f"{status.ljust(7)} {entry['id'].ljust(width)}  {diff}")
 

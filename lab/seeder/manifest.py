@@ -19,6 +19,7 @@ from jsonschema.exceptions import ValidationError
 from seeder import MANIFEST_SCHEMA_PATH, tenant
 from seeder.catalog import CanaryFile, CanaryMail, canary_files, canary_mails
 from seeder.normalize import NORMALIZATION_ID, body_sha256
+from seeder.office import CONTENT_FOLDERS, OFFICE_RULE, OfficeContentError, office_content_sha256
 
 SCHEMA_ID = "seed-manifest.v1"
 ENTRY_COUNT = 40
@@ -40,7 +41,9 @@ RULES: dict[str, str] = {
         "by body_normalization (text-v1, lab/README.md)"
     ),
     "file_hash": (
-        "compare a restored file with stored_sha256 (the bytes Graph returns), not local_sha256"
+        "compare a restored file with content_sha256 by content_rule: bytes = SHA-256 of the "
+        "whole file (equal to stored_sha256); office-v1 (docx, xlsx) = SHA-256 of the document's "
+        "content parts, because SharePoint rewrites Office packages (lab/README.md)"
     ),
 }
 
@@ -139,6 +142,10 @@ def file_entry(
             "folder_path": file.folder_path,
         }
     local_sha, stored_sha = sha256_hex(local_bytes), sha256_hex(stored_bytes)
+    if content_rule_for(file.file_type) == OFFICE_RULE:
+        content_sha = office_content_sha256(stored_bytes, file.file_type)
+    else:
+        content_sha = stored_sha
     return {
         "id": file.name,
         "kind": file.kind,
@@ -153,7 +160,14 @@ def file_entry(
         "stored_sha256": stored_sha,
         "stored_size": len(stored_bytes),
         "stored_matches_local": stored_sha == local_sha,
+        "content_rule": content_rule_for(file.file_type),
+        "content_sha256": content_sha,
     }
+
+
+def content_rule_for(file_type: str) -> str:
+    """office-v1 for the Office types SharePoint rewrites, bytes for everything else."""
+    return OFFICE_RULE if file_type in CONTENT_FOLDERS else "bytes"
 
 
 def build_manifest(entries: list[dict], seeded_at: str) -> dict:
@@ -304,6 +318,14 @@ def _file_problems(label: str, entry: dict) -> list[str]:
             f"(stored_sha256 {'==' if same else '!='} local_sha256), "
             f"got {str(entry['stored_matches_local']).lower()}"
         )
+    rule = content_rule_for(entry["file_type"])
+    if entry["content_rule"] != rule:
+        problems.append(f"{label}: content_rule expected {rule} for .{entry['file_type']}, got {entry['content_rule']}")
+    elif rule == "bytes" and entry["content_sha256"] != entry["stored_sha256"]:
+        problems.append(
+            f"{label}: content_sha256 expected stored_sha256 {entry['stored_sha256']} "
+            f"(content_rule bytes), got {entry['content_sha256']}"
+        )
     if same and entry["stored_size"] != entry["local_size"]:
         problems.append(
             f"{label}: stored_size {entry['stored_size']} != local_size {entry['local_size']} "
@@ -390,7 +412,19 @@ def _check_entry(entry: dict, canary_dir: Path, mails: dict[str, CanaryMail]) ->
         )
     if len(data) != entry["local_size"]:
         problems.append(f"local_size differs: manifest {entry['local_size']}, file {len(data)}")
-    return f"local_sha256 {actual}", problems
+    if entry["content_rule"] != OFFICE_RULE:
+        return f"local_sha256 {actual}", problems
+    # SharePoint rewrites the package, not the content: the committed file's content parts
+    # must hash to the content_sha256 recorded from the stored bytes.
+    try:
+        content = office_content_sha256(data, entry["file_type"])
+    except OfficeContentError as exc:
+        return "", problems + [f"content_sha256 ({OFFICE_RULE}) can't be computed: {exc}"]
+    if content != entry["content_sha256"]:
+        problems.append(
+            f"content_sha256 ({OFFICE_RULE}) differs: manifest {entry['content_sha256']}, file {content}"
+        )
+    return f"local_sha256 {actual}, content_sha256 ({OFFICE_RULE}) {content}", problems
 
 
 def _load_valid(manifest_path: Path) -> dict:

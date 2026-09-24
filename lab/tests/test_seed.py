@@ -296,7 +296,7 @@ def test_upload_and_readback_record_both_hashes_with_sharepoint_rewrite(tmp_path
     entries = {e["id"]: e for e in load_manifest(r.manifest_path)["entries"]}
     docx = entries["rp-canary-02.docx"]
     assert docx["stored_matches_local"] is False
-    assert docx["stored_size"] > docx["local_size"]
+    assert docx["stored_sha256"] != docx["local_sha256"]
     assert docx["location"]["folder_id"] != "root"
     assert entries["rp-canary-01.pdf"]["stored_matches_local"] is True
     assert entries["rp-canary-12.docx"]["stored_matches_local"] is True  # OneDrive: no rewrite
@@ -305,6 +305,36 @@ def test_upload_and_readback_record_both_hashes_with_sharepoint_rewrite(tmp_path
     assert all(b == "fail" for _, _, b in r.fake.uploads)
     uploaders = {name: acct for acct, name, _ in r.fake.uploads}
     assert uploaders["rp-canary-01.pdf"] == ADMIN and uploaders["rp-canary-11.pdf"] == ALICE
+
+
+def test_office_files_record_the_office_v1_content_hash(tmp_path):
+    from seeder.office import office_content_sha256
+
+    r = Run(FakeTenant(rewrite_types={"docx", "xlsx"}), tmp_path)
+    assert r() == 0
+    entries = {e["id"]: e for e in load_manifest(r.manifest_path)["entries"]}
+    for name in ("rp-canary-02.docx", "rp-canary-03.xlsx", "rp-canary-12.docx"):
+        e = entries[name]
+        local = (CANARY_DIR / name).read_bytes()
+        assert e["content_rule"] == "office-v1"
+        assert e["content_sha256"] == office_content_sha256(local, e["file_type"])
+    assert entries["rp-canary-01.pdf"]["content_rule"] == "bytes"
+    line = next(line for line in r.lines if "rp-canary-02.docx" in line and "stored bytes differ" in line)
+    assert "content unchanged (office-v1)" in line
+
+
+def test_sharepoint_changing_the_document_content_stops_the_seed(tmp_path):
+    from tests.office_fakes import change_content
+
+    fake = FakeTenant()
+    fake.put_item(
+        tenant.SHAREPOINT_DRIVE_ID, "rp-canary-03.xlsx",
+        change_content((CANARY_DIR / "rp-canary-03.xlsx").read_bytes(), "xlsx"),
+    )
+    r = Run(fake, tmp_path)
+    assert r() == 1
+    assert not r.manifest_path.exists()
+    assert any("rp-canary-03.xlsx" in line and "content differs" in line for line in r.lines), r.output
 
 
 def test_existing_file_is_not_uploaded_but_is_downloaded(run):

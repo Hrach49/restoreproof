@@ -64,6 +64,45 @@ def test_changed_body_is_a_body_sha256_diff(seeded):
     assert lines[-1].startswith("39/40 entries in the tenant match the manifest")
 
 
+def test_second_sharepoint_rewrite_with_the_same_content_is_ok(seeded):
+    # The live run: SharePoint rewrote the Office files again after the seed (+3073 bytes,
+    # same lastModifiedDateTime). Their content parts did not change, so they still match.
+    from tests.office_fakes import sharepoint_rewrite
+
+    fake, manifest_path = seeded
+    item_id, _ = fake.item(tenant.SHAREPOINT_DRIVE_ID, "rp-canary-02.docx")
+    item = fake.drives[tenant.SHAREPOINT_DRIVE_ID].items[item_id]
+    item["data"] = sharepoint_rewrite(item["data"], round_=2)
+    code, lines, _ = _verify(fake, manifest_path)
+    assert code == 0, lines
+    line = next(line for line in lines if "rp-canary-02.docx" in line)
+    assert line.startswith("ok") and "office-v1" in line and "bytes changed" in line
+
+
+def test_changed_office_content_is_a_content_sha256_diff(seeded):
+    from tests.office_fakes import change_content
+
+    fake, manifest_path = seeded
+    item_id, _ = fake.item(tenant.SHAREPOINT_DRIVE_ID, "rp-canary-08.xlsx")
+    item = fake.drives[tenant.SHAREPOINT_DRIVE_ID].items[item_id]
+    item["data"] = change_content(item["data"], "xlsx")
+    code, lines, _ = _verify(fake, manifest_path)
+    assert code == 1
+    line = next(line for line in lines if "rp-canary-08.xlsx" in line)
+    assert line.startswith("DIFF") and "content_sha256" in line
+
+
+def test_changed_pdf_bytes_are_a_content_sha256_diff(seeded):
+    fake, manifest_path = seeded
+    item_id, _ = fake.item(tenant.SHAREPOINT_DRIVE_ID, "rp-canary-06.pdf")
+    fake.drives[tenant.SHAREPOINT_DRIVE_ID].items[item_id]["data"] += b"%%extra"
+    code, lines, _ = _verify(fake, manifest_path)
+    assert code == 1
+    mine = [line for line in lines if "rp-canary-06.pdf" in line]
+    assert all(line.startswith("DIFF") for line in mine)
+    assert any("content_sha256 (bytes)" in line for line in mine)
+
+
 def test_deleted_file_is_missing(seeded):
     fake, manifest_path = seeded
     item_id, _ = fake.item(tenant.SHAREPOINT_DRIVE_ID, "rp-canary-07.docx")
@@ -91,7 +130,7 @@ def test_changed_stored_bytes_are_a_diff(seeded):
     diffs = [line for line in lines if "rp-canary-14.txt" in line]
     assert all(line.startswith("DIFF") for line in diffs)
     text = "\n".join(diffs)
-    assert "stored_sha256: manifest" in text and "size: manifest" in text
+    assert "content_sha256 (bytes): manifest" in text and "size: manifest" in text
 
 
 @pytest.mark.parametrize(

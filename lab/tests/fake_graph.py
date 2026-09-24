@@ -17,10 +17,10 @@ from seeder import tenant
 from seeder.graph import GRAPH_BASE
 from seeder.http import HttpResponse
 from tests.fake_transport import graph_error, json_response
+from tests.office_fakes import sharepoint_rewrite
 
 BASE_TIME = datetime(2026, 9, 25, 10, 0, 0, tzinfo=timezone.utc)
 SHAREPOINT_ROOT_ID = "01SPROOTFOLDERREALID"
-REWRITE_SUFFIX = b"<fake sharepoint property promotion>"
 
 _ITEM_BY_PATH = re.compile(r"^/drives/([^/]+)/items/([^/:]+):/([^/:]+):(/content)?$")
 _ITEM_BY_ID = re.compile(r"^/drives/([^/]+)/items/([^/:]+)(/content)?$")
@@ -270,7 +270,7 @@ class FakeTenant:
                 return graph_error(409, "nameAlreadyExists", "The specified item name already exists.")
             data = body or b""
             if drive.kind == "sharepoint" and name.rsplit(".", 1)[-1] in self.rewrite_types:
-                data = data + REWRITE_SUFFIX
+                data = sharepoint_rewrite(data)
             item_id = existing or self._next_id("01FAKEITEM")
             drive.items[item_id] = {"name": name, "parent": parent, "data": data, "modified": _iso(self._tick(), True)}
             return json_response(201 if existing is None else 200, self._item_json(drive, item_id))

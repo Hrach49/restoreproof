@@ -55,7 +55,7 @@ Worker, from `worker/` in a VS 2022 Developer PowerShell with OpenCppCoverage on
 cmake --preset coverage
 cmake --build --preset coverage
 OpenCppCoverage --quiet --cover_children --sources "$PWD\src" --sources "$PWD\include" `
-  --export_type "cobertura:$PWD\build\coverage\coverage.xml" -- ctest --preset coverage
+  --sources "$PWD\app" --export_type "cobertura:$PWD\build\coverage\coverage.xml" -- ctest --preset coverage
 python tools/coverage_gate.py build/coverage/coverage.xml --min-line 80
 ```
 

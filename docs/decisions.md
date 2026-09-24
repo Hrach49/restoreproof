@@ -45,6 +45,11 @@ Format: date, decision, reason, alternatives rejected.
   because URLs from server responses (Graph `nextLink`, the download `Location`, Veeam
   `_links`) will reach `send()`. A review showed a `file:///` URL returning the file's bytes
   as a status-0 response.
+- **No method falls through to DELETE.** `perform()` and `to_string()` have a case for each
+  `HttpMethod` and no `default`. An out-of-range value throws `std::invalid_argument` before
+  anything is sent. rpcore builds with `/we4062`, so a new method without its case is a
+  compile error. Before this, anything other than GET or POST (a future PATCH included) was
+  sent as DELETE.
 - **Redirects are never followed.** A 3xx is returned, so an `Authorization` header or a
   token body can't be sent to another host. The Graph download 302 will be followed
   explicitly by `GraphClient`, without the header.

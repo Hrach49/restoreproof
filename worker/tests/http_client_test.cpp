@@ -368,6 +368,32 @@ TEST_CASE("a plain multipart field with a NUL byte is refused before sending", "
     CHECK(hits == 0);
 }
 
+TEST_CASE("a request with an unknown method is refused, never sent as DELETE", "[http]")
+{
+    // perform() and to_string() used to send every method but GET and POST as
+    // DELETE. A method added later without a case, or a value out of range,
+    // would have deleted whatever the URL named.
+    std::atomic<int> hits = 0;
+    rp::test::LocalHttpServer server;
+    const auto count = [&](const httplib::Request&, httplib::Response&) { ++hits; };
+    server.server().Get("/item", count);
+    server.server().Post("/item", count);
+    server.server().Delete("/item", count);
+    TestClient t;
+    rp::HttpRequest request;
+    request.method = static_cast<rp::HttpMethod>(99);
+    request.url = server.url("/item");
+
+    try {
+        t.client->send(request);
+        FAIL("send() returned for an unknown method");
+    } catch (const std::invalid_argument& e) {
+        CHECK(std::string{e.what()} == "unknown HTTP method 99");
+    }
+    CHECK(hits == 0);
+    CHECK(rp::to_string(request.method) == "UNKNOWN");
+}
+
 TEST_CASE("a request timeout of zero or less is refused before sending", "[http]")
 {
     // curl reads a timeout of 0 as "none": the request could hang for ever.

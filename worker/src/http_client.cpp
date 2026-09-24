@@ -185,14 +185,19 @@ cpr::Response perform(const HttpRequest& request, const cpr::SslOptions& ssl, bo
     } else if (!request.body.empty()) {
         session.SetBody(cpr::Body{request.body});
     }
+    // Every method has its own case and there is no default: a method added
+    // to HttpMethod without one is a build error (/we4062), and a value out of
+    // range is refused rather than sent as some other method.
     switch (request.method) {
     case HttpMethod::get:
         return session.Get();
     case HttpMethod::post:
         return session.Post();
-    default:
+    case HttpMethod::del:
         return session.Delete();
     }
+    throw std::invalid_argument("unknown HTTP method " +
+                                std::to_string(static_cast<int>(request.method)));
 }
 
 // Plain form fields go to curl as C strings, so a '\0' would silently cut the
@@ -250,9 +255,10 @@ std::string_view to_string(HttpMethod method) noexcept
         return "GET";
     case HttpMethod::post:
         return "POST";
-    default:
+    case HttpMethod::del:
         return "DELETE";
     }
+    return "UNKNOWN";
 }
 
 bool CaseInsensitiveLess::operator()(std::string_view a, std::string_view b) const noexcept

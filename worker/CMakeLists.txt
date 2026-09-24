@@ -38,6 +38,10 @@ target_link_libraries(rpcore
     PUBLIC nlohmann_json::nlohmann_json spdlog::spdlog
     PRIVATE cpr::cpr OpenSSL::Crypto
 )
+# C4062 (an enumerator not handled in a switch that has no default) is an
+# error in rpcore, so a value added to an enum such as HttpMethod can't fall
+# through to another value's behaviour unnoticed.
+target_compile_options(rpcore PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/we4062>)
 # program_data_dir() calls SHGetKnownFolderPath (shell32) and CoTaskMemFree (ole32).
 target_link_libraries(rpcore PRIVATE shell32 ole32)
 

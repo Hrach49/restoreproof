@@ -23,7 +23,8 @@ namespace rp {
 
 enum class HttpMethod { get, post, del };
 
-// "GET", "POST" or "DELETE".
+// "GET", "POST" or "DELETE"; "UNKNOWN" for a value outside the enum, which
+// HttpClient::send() refuses with std::invalid_argument before sending.
 std::string_view to_string(HttpMethod method) noexcept;
 
 // Orders ASCII case-insensitively: HTTP header names are case-insensitive.

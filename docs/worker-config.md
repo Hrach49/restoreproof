@@ -108,7 +108,7 @@ Any of them may be unset for now: which ones a run needs depends on the Veeam au
 mode, which W1.0 decides. A variable set to an empty string counts as unset.
 
 Values are read from Windows' own Unicode environment, so any character works, including
-ones outside the machine's ANSI code page (such as `€` or `Հ` on a Western-European
+ones outside the machine's ANSI code page (such as `€` or `Ж` on a Western-European
 machine). A value that isn't valid Unicode, which only a program can create, is rejected with
 `config error: environment variable <name> is not valid Unicode` rather than changed.
 

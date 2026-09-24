@@ -8,6 +8,8 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 find_package(Catch2 3 CONFIG REQUIRED)
 find_package(cpr CONFIG REQUIRED)
+# Test-only: the local HTTP(S) server the HTTP client tests talk to.
+find_package(httplib CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(OpenSSL REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
@@ -20,6 +22,9 @@ add_library(rpcore STATIC
     src/cli.cpp
     src/config.cpp
     src/config_check.cpp
+    src/http_client.cpp
+    src/redact.cpp
+    src/retry_policy.cpp
     src/secrets.cpp
     src/utf16.cpp
     src/version.cpp
@@ -33,6 +38,10 @@ target_link_libraries(rpcore
     PUBLIC nlohmann_json::nlohmann_json spdlog::spdlog
     PRIVATE cpr::cpr OpenSSL::Crypto
 )
+# C4062 (an enumerator not handled in a switch that has no default) is an
+# error in rpcore, so a value added to an enum such as HttpMethod can't fall
+# through to another value's behaviour unnoticed.
+target_compile_options(rpcore PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/we4062>)
 # program_data_dir() calls SHGetKnownFolderPath (shell32) and CoTaskMemFree (ole32).
 target_link_libraries(rpcore PRIVATE shell32 ole32)
 
@@ -49,12 +58,22 @@ add_executable(rptests
     tests/config_check_test.cpp
     tests/config_test.cpp
     tests/deps_test.cpp
+    tests/http_client_test.cpp
+    tests/http_client_tls_test.cpp
+    tests/redact_test.cpp
+    tests/retry_policy_test.cpp
     tests/secrets_test.cpp
     tests/smoke.cpp
     tests/version_test.cpp
 )
 # deps_test.cpp uses cpr and OpenSSL directly, so it links them itself.
 target_link_libraries(rptests PRIVATE rpcore cpr::cpr OpenSSL::Crypto Catch2::Catch2WithMain)
+# httplib is test-only: the HTTP client tests run a server on 127.0.0.1.
+# http_client_test.cpp also reads rpcore's internal src/http_client_detail.hpp.
+target_link_libraries(rptests PRIVATE httplib::httplib)
+# The source scan in http_client_test.cpp looks for code that turns TLS
+# verification off anywhere in the Worker.
+target_compile_definitions(rptests PRIVATE RP_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
 # config_test.cpp parses the shipped example, so it can't drift from the rules.
 target_compile_definitions(rptests PRIVATE RP_CONFIG_EXAMPLE="${CMAKE_CURRENT_SOURCE_DIR}/config.example.json")
 

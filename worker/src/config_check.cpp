@@ -35,16 +35,14 @@ bool parse_check_args(std::span<const std::string_view> args,
     return false;
 }
 
-// The --config argument as a path. Not path(std::string), which reads the
-// ANSI code page, nor path(std::u8string), which throws a system_error whose
-// message isn't meant for the user.
+// The --config argument as a path.
 std::filesystem::path config_arg_to_path(std::string_view config_arg)
 {
-    std::optional<std::wstring> wide = utf8_to_utf16(config_arg);
-    if (!wide) {
+    std::optional<std::filesystem::path> path = path_from_utf8(config_arg);
+    if (!path) {
         throw ConfigError("", "the --config path is not valid UTF-8");
     }
-    return std::filesystem::path(std::move(*wide));
+    return std::move(*path);
 }
 
 template <typename Value>
@@ -99,6 +97,7 @@ int run_config_command(std::span<const std::string_view> args, std::ostream& out
     print_setting(out, "sample_sp", config.sample_sp);
     print_setting(out, "sample_od", config.sample_od);
     print_setting(out, "log_level", config.log_level);
+    print_setting(out, "veeam_ca_file", config.veeam_ca_file.value_or("(not set)"));
     out << "secrets (environment variables; values are never shown):\n";
     print_setting(out, kEnvVeeamUsername, mask_secret(secrets.veeam_username));
     print_setting(out, kEnvVeeamPassword, mask_secret(secrets.veeam_password));

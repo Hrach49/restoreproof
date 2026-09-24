@@ -17,6 +17,7 @@
 #include <cstdint>
 #include <fstream>
 #include <memory>
+#include <optional>
 #include <sstream>
 #include <utility>
 
@@ -71,6 +72,9 @@ constexpr std::array<IntField, 5> kIntFields{{
 
 constexpr StringField kLogLevel{"log_level", &Config::log_level, false, StringRule::log_level};
 
+// Optional, so not a StringField: checked last, after log_level.
+constexpr std::string_view kCaFileKey = "veeam_ca_file";
+
 constexpr std::array<std::string_view, 7> kLogLevels{"trace", "debug", "info", "warn",
                                                       "error", "critical", "off"};
 
@@ -115,7 +119,8 @@ bool is_known_key(std::string_view key)
 {
     const auto named = [key](const auto& field) { return field.key == key; };
     return std::any_of(kRequiredStrings.begin(), kRequiredStrings.end(), named) ||
-           std::any_of(kIntFields.begin(), kIntFields.end(), named) || key == kLogLevel.key;
+           std::any_of(kIntFields.begin(), kIntFields.end(), named) || key == kLogLevel.key ||
+           key == kCaFileKey;
 }
 
 bool looks_like_secret(std::string_view key)
@@ -227,55 +232,94 @@ bool has_control_character(std::string_view value)
     return false;
 }
 
-bool follows_rule(StringRule rule, std::string_view value)
+// What is wrong with `value` under `rule`, or nothing when it follows it. One
+// switch holds each rule's check and its message together, with no default:
+// a rule added to StringRule without a case is a build error (/we4062).
+std::optional<std::string_view> rule_problem(StringRule rule, std::string_view value)
 {
     switch (rule) {
+    case StringRule::non_empty:
+        // find_string() has already refused an empty value.
+        return std::nullopt;
     case StringRule::https_url:
-        return is_https_url(value);
-    case StringRule::restore_mailbox:
-        return is_restore_mailbox(value);
-    case StringRule::log_level:
-        return std::find(kLogLevels.begin(), kLogLevels.end(), value) != kLogLevels.end();
-    default:
-        return true;
-    }
-}
-
-std::string_view rule_problem(StringRule rule)
-{
-    switch (rule) {
-    case StringRule::https_url:
+        if (is_https_url(value)) {
+            return std::nullopt;
+        }
         return "must be an https:// URL with no user name, password, query or fragment";
     case StringRule::restore_mailbox:
+        if (is_restore_mailbox(value)) {
+            return std::nullopt;
+        }
         return "must be restoretest@<domain>: restores only ever go to the restoretest mailbox";
-    default:
+    case StringRule::log_level:
+        if (std::find(kLogLevels.begin(), kLogLevels.end(), value) != kLogLevels.end()) {
+            return std::nullopt;
+        }
         return "must be one of trace, debug, info, warn, error, critical, off";
     }
+    // Only a value outside StringRule gets here: refuse it rather than pass it.
+    return "has no known rule";
+}
+
+// The string at `key`, checked as every string setting is: a string, not
+// empty, no control characters. nullptr when it is absent and not required.
+const std::string* find_string(const json& doc, std::string_view key, bool required)
+{
+    const auto it = doc.find(key);
+    if (it == doc.end()) {
+        if (required) {
+            throw key_error(key, "is missing (required)");
+        }
+        return nullptr;
+    }
+    if (!it->is_string()) {
+        throw key_error(key, "must be a string");
+    }
+    const auto& value = it->get_ref<const std::string&>();
+    if (value.empty()) {
+        throw key_error(key, "must not be empty");
+    }
+    if (has_control_character(value)) {
+        throw key_error(key, "must not contain control characters");
+    }
+    return &value;
 }
 
 void read_string(const json& doc, const StringField& field, Config& config)
 {
-    const auto it = doc.find(field.key);
-    if (it == doc.end()) {
-        if (field.required) {
-            throw key_error(field.key, "is missing (required)");
-        }
+    const std::string* value = find_string(doc, field.key, field.required);
+    if (value == nullptr) {
         return;
     }
-    if (!it->is_string()) {
-        throw key_error(field.key, "must be a string");
+    if (const auto problem = rule_problem(field.rule, *value)) {
+        throw key_error(field.key, *problem);
     }
-    const auto& value = it->get_ref<const std::string&>();
-    if (value.empty()) {
-        throw key_error(field.key, "must not be empty");
+    config.*field.member = *value;
+}
+
+// A path with a drive and a root (C:\...) or a UNC share (\\server\share\...).
+// The Worker runs as a service whose working directory is System32, so a
+// relative, rooted-without-drive (\x) or drive-relative (C:x) path would name
+// a file that depends on where the process happens to be. The value is valid
+// UTF-8 (the JSON parser checked), so the conversion only fails in theory.
+bool is_absolute_path(std::string_view value)
+{
+    const std::optional<std::filesystem::path> path = path_from_utf8(value);
+    return path && path->is_absolute();
+}
+
+void read_ca_file(const json& doc, Config& config)
+{
+    const std::string* value = find_string(doc, kCaFileKey, false);
+    if (value == nullptr) {
+        return;
     }
-    if (has_control_character(value)) {
-        throw key_error(field.key, "must not contain control characters");
+    if (!is_absolute_path(*value)) {
+        throw key_error(kCaFileKey, "must be an absolute path, such as "
+                                    "C:\\ProgramData\\RestoreProof\\veeam-ca.pem or "
+                                    "\\\\server\\share\\veeam-ca.pem");
     }
-    if (!follows_rule(field.rule, value)) {
-        throw key_error(field.key, rule_problem(field.rule));
-    }
-    config.*field.member = value;
+    config.veeam_ca_file = *value;
 }
 
 void read_int(const json& doc, const IntField& field, Config& config)
@@ -352,6 +396,7 @@ Config parse_config(std::string_view json_text)
         read_int(doc, field, config);
     }
     read_string(doc, kLogLevel, config);
+    read_ca_file(doc, config);
 
     if (config.sample_mail == 0 && config.sample_sp == 0 && config.sample_od == 0) {
         throw ConfigError("", "config keys \"sample_mail\", \"sample_sp\" and \"sample_od\" are "
@@ -369,11 +414,23 @@ Config load_config(const std::filesystem::path& path)
     }
     std::ostringstream text;
     text << file.rdbuf();
+    Config config;
     try {
-        return parse_config(text.str());
+        config = parse_config(text.str());
     } catch (const ConfigError& e) {
         throw ConfigError(e.key(), prefix + e.what());
     }
+    // Here rather than in parse_config, which stays pure over the text. Opening
+    // for reading also fails on a directory. Like every message, it names the
+    // key, not the value.
+    if (config.veeam_ca_file) {
+        const std::optional<std::filesystem::path> ca_path = path_from_utf8(*config.veeam_ca_file);
+        if (!ca_path || !std::ifstream(*ca_path, std::ios::binary)) {
+            const ConfigError e = key_error(kCaFileKey, "names a file that can't be read");
+            throw ConfigError(e.key(), prefix + e.what());
+        }
+    }
+    return config;
 }
 
 std::filesystem::path program_data_dir()

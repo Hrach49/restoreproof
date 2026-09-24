@@ -89,6 +89,10 @@ const std::vector<std::string> kRequiredKeys{
 const std::vector<std::string> kIntKeys{"poll_interval_s", "heartbeat_interval_s", "sample_mail",
                                         "sample_sp", "sample_od"};
 
+// An absolute path for veeam_ca_file. parse_config never opens the file, so it
+// needn't exist; the load_config tests use real ones.
+const std::string kCaFile = "C:\\ProgramData\\RestoreProof\\veeam-ca.pem";
+
 } // namespace
 
 TEST_CASE("ConfigError carries the offending key and the message", "[config]")
@@ -169,11 +173,13 @@ TEST_CASE("parse_config rejects secret-looking keys without echoing the value", 
     REQUIRE_THAT(e.what(), !ContainsSubstring("SENTINEL"));
 }
 
-TEST_CASE("none of the 16 known keys looks like a secret", "[config]")
+TEST_CASE("none of the 17 known keys looks like a secret", "[config]")
 {
-    // valid_doc() sets all 16; it parses only if none trips the secret check.
-    const json doc = valid_doc();
-    REQUIRE(doc.size() == 16);
+    // valid_doc() sets the 16 that need no file, veeam_ca_file makes 17; it
+    // parses only if none trips the secret check.
+    json doc = valid_doc();
+    doc["veeam_ca_file"] = kCaFile;
+    REQUIRE(doc.size() == 17);
     REQUIRE_NOTHROW(rp::parse_config(doc.dump()));
 }
 
@@ -208,10 +214,27 @@ TEST_CASE("parse_config reports an unknown key before a missing required key", "
 TEST_CASE("parse_config rejects unknown keys, case-sensitively", "[config]")
 {
     const std::string key = GENERATE(std::string("cloud_uri"), "Cloud_Url", "LOG_LEVEL",
-                                     "sample_size", "a.b-c_9", "x", std::string(64, 'k'));
+                                     "sample_size", "a.b-c_9", "x", std::string(64, 'k'),
+                                     "Veeam_CA_File", "veeam_ca", "ca_file");
     CAPTURE(key);
     json doc = valid_doc();
     doc[key] = "value";
+
+    const rp::ConfigError e = parse_error(doc.dump());
+    REQUIRE(e.key() == key);
+    REQUIRE(std::string{e.what()} == "config key \"" + key + "\" is not a known setting");
+}
+
+TEST_CASE("parse_config has no key that turns TLS certificate verification off", "[config]")
+{
+    // veeam_ca_file only chooses what to trust; no setting skips verification.
+    const std::string key = GENERATE("veeam_verify_tls", "verify_tls", "insecure",
+                                     "veeam_insecure", "veeam_skip_tls_verify",
+                                     "tls_insecure_skip_verify", "ssl_verify", "verify_ssl",
+                                     "veeam_verify_ssl", "skip_verify");
+    CAPTURE(key);
+    json doc = valid_doc();
+    doc[key] = false;
 
     const rp::ConfigError e = parse_error(doc.dump());
     REQUIRE(e.key() == key);
@@ -290,6 +313,7 @@ TEST_CASE("parse_config rejects a string setting of the wrong JSON type", "[conf
 {
     std::vector<std::string> keys = kRequiredKeys;
     keys.push_back("log_level");
+    keys.push_back("veeam_ca_file");
     const std::string key = GENERATE_REF(from_range(keys));
     const json value = GENERATE(json(1), json(true), json(nullptr), json::array(),
                                 json::object(), json(1.5));
@@ -324,6 +348,9 @@ TEST_CASE("parse_config rejects invalid values without echoing them", "[config]"
     const std::string control = "must not contain control characters";
     const std::string mailbox =
         "must be restoretest@<domain>: restores only ever go to the restoretest mailbox";
+    const std::string absolute =
+        "must be an absolute path, such as C:\\ProgramData\\RestoreProof\\veeam-ca.pem or "
+        "\\\\server\\share\\veeam-ca.pem";
     const auto [key, value, rule] = GENERATE_COPY(table<std::string, json, std::string>({
         {"cloud_url", json(""), "must not be empty"},
         {"veeam_org_name", json(""), "must not be empty"},
@@ -436,6 +463,21 @@ TEST_CASE("parse_config rejects invalid values without echoing them", "[config]"
         {"log_level", json("INFO"), "must be one of trace, debug, info, warn, error, critical, off"},
         {"log_level", json("warning"), "must be one of trace, debug, info, warn, error, critical, off"},
         {"log_level", json("info "), "must be one of trace, debug, info, warn, error, critical, off"},
+        {"veeam_ca_file", json(""), "must not be empty"},
+        {"veeam_ca_file", json("C:\\ca.pem\n"), control},
+        {"veeam_ca_file", json("C:\\\xE2\x80\xAE" "mep.ac"), control},
+        // The Worker runs as a service whose working directory is System32, so
+        // a path that depends on it (or on the current drive) is rejected.
+        {"veeam_ca_file", json("ca.pem"), absolute},
+        {"veeam_ca_file", json(".\\ca.pem"), absolute},
+        {"veeam_ca_file", json("..\\ca.pem"), absolute},
+        {"veeam_ca_file", json("RestoreProof\\veeam-ca.pem"), absolute},
+        {"veeam_ca_file", json("\\ca.pem"), absolute},
+        {"veeam_ca_file", json("/ca.pem"), absolute},
+        {"veeam_ca_file", json("C:ca.pem"), absolute},
+        {"veeam_ca_file", json("C:"), absolute},
+        {"veeam_ca_file", json(" C:\\ca.pem"), absolute},
+        {"veeam_ca_file", json("\xD1\x82\xD0\xB5\xD1\x81\xD1\x82.pem"), absolute},
     }));
     CAPTURE(key, value.dump());
     json doc = valid_doc();
@@ -455,6 +497,24 @@ TEST_CASE("parse_config checks fields in declaration order", "[config]")
     doc.erase("veeam_url");
 
     REQUIRE(parse_error(doc.dump()).key() == "veeam_url");
+}
+
+TEST_CASE("parse_config checks veeam_ca_file after log_level", "[config]")
+{
+    json doc = valid_doc();
+    doc["veeam_ca_file"] = "ca.pem";
+    doc["log_level"] = "loud";
+    REQUIRE(parse_error(doc.dump()).key() == "log_level");
+}
+
+TEST_CASE("parse_config checks veeam_ca_file before the sample sizes together", "[config]")
+{
+    json doc = valid_doc();
+    doc["veeam_ca_file"] = "ca.pem";
+    doc["sample_mail"] = 0;
+    doc["sample_sp"] = 0;
+    doc["sample_od"] = 0;
+    REQUIRE(parse_error(doc.dump()).key() == "veeam_ca_file");
 }
 
 TEST_CASE("parse_config rejects a config that samples nothing", "[config]")
@@ -510,6 +570,12 @@ TEST_CASE("parse_config accepts boundary and edge values", "[config]")
         {"log_level", json("error")},
         {"log_level", json("critical")},
         {"log_level", json("off")},
+        // Absolute: a drive and a root, a UNC share, either slash, any script.
+        {"veeam_ca_file", json(kCaFile)},
+        {"veeam_ca_file", json("c:/ProgramData/RestoreProof/veeam-ca.pem")},
+        {"veeam_ca_file", json("\\\\server\\share\\veeam-ca.pem")},
+        {"veeam_ca_file", json("D:\\\xD1\x82\xD0\xB5\xD1\x81\xD1\x82\\ca.pem")},
+        {"veeam_ca_file", json("C:\\Program Files\\Veeam CA\\ca.crt")},
     }));
     CAPTURE(key, value.dump());
     json doc = valid_doc();
@@ -527,6 +593,7 @@ TEST_CASE("parse_config accepts boundary and edge values", "[config]")
         {"sample_sp", config.sample_sp},
         {"sample_od", config.sample_od},
         {"log_level", config.log_level},
+        {"veeam_ca_file", config.veeam_ca_file.value_or("(not set)")},
     };
     REQUIRE(parsed.at(key) == value);
 }
@@ -563,6 +630,8 @@ TEST_CASE("parse_config fills in defaults for absent optional keys", "[config]")
     REQUIRE(config.sample_sp == 5);
     REQUIRE(config.sample_od == 5);
     REQUIRE(config.log_level == "info");
+    // No CA file: the Windows certificate store is trusted.
+    REQUIRE_FALSE(config.veeam_ca_file.has_value());
 }
 
 namespace {
@@ -653,6 +722,53 @@ TEST_CASE("load_config accepts a UTF-8 byte order mark, as Notepad writes", "[co
     REQUIRE(rp::load_config(path).cloud_url == "https://cloud.example.invalid");
 }
 
+TEST_CASE("load_config rejects a veeam_ca_file it can't read, without the file's path",
+          "[config]")
+{
+    const rp::test::TempDir dir;
+    std::filesystem::create_directory(dir.path() / "ca-dir.pem");
+    // Cyrillic letters: not in cp1252, the ANSI code page of a Western machine.
+    const std::filesystem::path ca = GENERATE_REF(
+        dir.path() / "missing.pem", dir.path() / "ca-dir.pem",
+        dir.path() / std::filesystem::path(u8"тест-missing.pem"));
+    CAPTURE(utf8(ca));
+    json doc = valid_doc();
+    doc["veeam_ca_file"] = utf8(ca);
+    const auto path = dir.write("config.json", doc.dump());
+
+    const rp::ConfigError e = load_error(path);
+    REQUIRE(e.key() == "veeam_ca_file");
+    REQUIRE(std::string{e.what()} ==
+            utf8(path) + ": config key \"veeam_ca_file\" names a file that can't be read");
+}
+
+TEST_CASE("load_config accepts a veeam_ca_file it can read", "[config]")
+{
+    const rp::test::TempDir dir;
+    const std::filesystem::path name =
+        GENERATE(std::filesystem::path("veeam-ca.pem"),
+                 std::filesystem::path(u8"тест-ca.pem"));
+    const std::filesystem::path ca =
+        dir.write(name, "-----BEGIN CERTIFICATE-----\n-----END CERTIFICATE-----\n");
+    CAPTURE(utf8(ca));
+    json doc = valid_doc();
+    doc["veeam_ca_file"] = utf8(ca);
+    const auto path = dir.write("config.json", doc.dump());
+
+    const rp::Config config = rp::load_config(path);
+    REQUIRE(config.veeam_ca_file == utf8(ca));
+}
+
+TEST_CASE("load_config reports a veeam_ca_file's form before trying to read it", "[config]")
+{
+    const rp::test::TempDir dir;
+    json doc = valid_doc();
+    doc["veeam_ca_file"] = "missing.pem";
+    const auto path = dir.write("config.json", doc.dump());
+
+    REQUIRE_THAT(load_error(path).what(), ContainsSubstring("must be an absolute path"));
+}
+
 TEST_CASE("program_data_dir is the absolute ProgramData folder", "[config]")
 {
     const std::filesystem::path dir = rp::program_data_dir();
@@ -689,9 +805,12 @@ TEST_CASE("config.example.json is a valid config of placeholders", "[config]")
     REQUIRE(config.log_level == "info");
 }
 
-TEST_CASE("config.example.json sets every key", "[config]")
+TEST_CASE("config.example.json sets every key but veeam_ca_file", "[config]")
 {
+    // veeam_ca_file must name a file that exists, so a placeholder would make
+    // the example fail to load; docs/worker-config.md documents it instead.
     std::ifstream file(std::filesystem::path(RP_CONFIG_EXAMPLE));
     const json doc = json::parse(file);
     REQUIRE(doc.size() == 16);
+    REQUIRE_FALSE(doc.contains("veeam_ca_file"));
 }

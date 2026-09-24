@@ -15,7 +15,7 @@ original location, and never any other. Enforced per item by `TargetGuard`.
 
 **Canary item.** An item we seeded ourselves and whose expected content we recorded in
 `lab/seed-manifest.json` (mails `RP-CANARY-0001`…`0020`, files `rp-canary-01.pdf`…
-`rp-canary-20.docx`). Because the manifest holds the expected subject, sender, date and
+`rp-canary-20.png`, whose types cycle pdf, docx, xlsx, txt, png; see `lab/README.md`). Because the manifest holds the expected subject, sender, date and
 SHA-256, a canary can be checked against a known-correct answer rather than against the live
 tenant. Half of every sample is canaries, rotated so all of them get tested over a few runs.
 

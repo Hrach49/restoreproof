@@ -7,6 +7,77 @@ Format: date, decision, reason, alternatives rejected.
 
 ---
 
+## 2026-09-24 — Canary seeder: a uv lab tool, a delegated public-client app, text-v1 mail hashes, hashes of what Graph returns
+
+**Decision.** L1.2 (#10) seeds the 40 canary items and writes `lab/seed-manifest.json`. How
+to use it: `lab/README.md`.
+
+- **Tool layout.** `lab/` is its own uv project (Python 3.12, `uv.lock` committed) with a
+  `seeder` package run as `python -m seeder generate|hash|seed|verify` and a pytest suite in
+  `lab/tests/`. The tests run against a fake in-memory Graph tenant, never the network. A new
+  CI workflow, `lab` (`.github/workflows/lab.yml`), runs the tests and `python -m seeder hash`.
+- **Its own app registration.** The seeder signs in through "RestoreProof Lab Seeder", a
+  single-tenant public client (redirect URI `http://localhost`, public client flows allowed)
+  with delegated Microsoft Graph permissions only: `Mail.Send`, `Mail.Read`, `Files.ReadWrite`,
+  `Sites.ReadWrite.All` and `User.Read`, admin-consented. It has no client secret or
+  certificate. MSAL's token cache stays in memory, so no token is written to disk.
+- **Three sign-ins.** Delegated Graph reaches only the signed-in user's own mailbox and
+  OneDrive: a global admin gets 403 on alice's OneDrive. So a run signs in as alice (her
+  mailbox, her OneDrive files), bob (his mailbox) and the admin (sends all 20 mails, uploads
+  the SharePoint files), and re-uses alice's and bob's cached tokens to read the mails back.
+  After each sign-in the tool checks the signed-in account and stops if it is the wrong one.
+- **Hashes are of what Graph returns.** Each file is downloaded back after upload, and each
+  mail is read back from the recipient's mailbox. A file entry records both `local_sha256`
+  (the committed file) and `stored_sha256` (the bytes Graph returns), plus
+  `stored_matches_local`; the Worker compares a restored file with `stored_sha256`. A mail
+  entry records `body_sha256` (the read-back body) and `sent_body_sha256` (the sent body);
+  the Worker compares with `body_sha256`.
+- **Mail body rule `text-v1`.** Bodies are read with `Prefer: outlook.body-content-type="text"`
+  and normalised before hashing: drop one leading U+FEFF; CRLF, then lone CR, to LF; strip
+  trailing spaces and tabs from each line; strip trailing LFs; UTF-8; SHA-256. Nothing else is
+  changed. The rule is named in each entry (`body_normalization`), and a change gets a new name,
+  never an edit to `text-v1`. `shared/testdata/body-normalization-text-v1.json` holds test
+  vectors that the Python tests use now and W3.2's C++ checker must also pass. The manifest's
+  schema is `shared/schemas/seed-manifest.v1.json`.
+- **Mail recipients.** `RP-CANARY-0001`–`0010` go to alice, `0011`–`0020` to bob, all sent by
+  the admin. W1.0 restores `RP-CANARY-0001` from alice.
+- **File types.** The type cycles by number: pdf, docx, xlsx, txt, png (01 pdf … 20 png), so
+  each location gets two of each. 01–10 go to the SharePoint `RestoreTest` library root,
+  11–20 to alice's OneDrive `RestoreTest` folder. The guide's `rp-canary-20.docx` was an
+  illustration; W1.0 needs `rp-canary-01.pdf` in the library, which the cycle gives.
+- **Deterministic files.** The generators use the standard library only and no compression
+  (ZIP entries stored, PNG pixel data in stored deflate blocks), with fixed dates and metadata.
+  A test generates twice and compares with the committed `lab/canary/`, and `.gitattributes`
+  marks `lab/canary/**` binary.
+
+Live-run result: to be filled in.
+
+**Reason.** The Worker only ever sees an item through Graph, so the expected value has to be
+what Graph returns. SharePoint can rewrite Office files on upload (it writes library
+properties into them), and a hash of the local file would then report every restore of that file as
+a mismatch, a false `fail`. Recording both hashes shows whether that happened. Mail bodies
+can pick up line-ending and trailing-whitespace changes on the way through Exchange; the rule
+removes exactly those differences and nothing that could hide a real change of content. It
+has to be written down precisely because a second implementation, in C++, must give the same
+hash. The seeder has several modules (catalog, generators, Graph client, sign-in, manifest)
+and its own tests, which a uv project holds naturally. A dedicated app is needed because the
+Worker's app (L1.5) doesn't exist yet and will be app-only and read-only, while seeding needs
+to send mail and write files. Stdlib-only generators without compression keep the committed
+bytes, and therefore the manifest, reproducible regardless of library or zlib versions.
+
+**Alternatives rejected.** A single PEP 723 script: fine for one file, awkward for eight
+modules and a test suite. Putting the seeder in `cloud/`: it is lab tooling, not product
+code, and would bring its dependencies and coverage rules into the Cloud build. Using the
+Worker's app registration with application permissions: it doesn't exist yet, and giving it
+`Mail.Send` and write access to files to seed a lab would break its read-only scope. Making
+the admin a site collection admin of alice's OneDrive so one sign-in is enough: it changes
+tenant permissions to save two sign-ins. Hashing the raw body: a CRLF or trailing-space change
+by Exchange would read as a mismatch. Hashing the HTML body: Exchange rewrites HTML freely.
+Office and image libraries to write the files: their output changes between versions. Hashing
+only the local file: see the reason above.
+
+---
+
 ## 2026-09-24 — Worker HTTP client: one fakeable interface, five attempts, redacted logs, TLS always verified
 
 **Decision.** W1.3 (#18) adds the HTTP layer every Worker connector will use.

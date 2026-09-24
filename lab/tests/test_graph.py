@@ -162,6 +162,49 @@ def test_max_attempts_is_configurable():
     assert sleeps == [2]
 
 
+# A call that is not idempotent (sendMail, a fail-on-conflict upload) is sent once when the
+# outcome is unknown: no response, or a gateway error after Graph may have processed it.
+UNKNOWN_OUTCOME = [
+    TransportError("POST x: ReadTimeout: read timed out"),
+    graph_error(502),
+    graph_error(503),
+    graph_error(504, "GatewayTimeout", "timed out"),
+]
+UNKNOWN_OUTCOME_IDS = ["transport", "502", "503", "504"]
+
+
+@pytest.mark.parametrize("first", UNKNOWN_OUTCOME, ids=UNKNOWN_OUTCOME_IDS)
+def test_non_idempotent_request_is_not_retried_after_an_unknown_outcome(first, capsys):
+    g, transport, sleeps = make_client([first])
+    with pytest.raises(graph.GraphOutcomeUnknown) as info:
+        g.request("POST", "/me/x", json_body={}, idempotent=False)
+    assert len(transport.requests) == 1
+    assert sleeps == []
+    msg = str(info.value)
+    assert "POST /me/x" in msg and "outcome is unknown" in msg and "not retried" in msg
+    assert "attempts" not in msg
+    assert info.value.status == (None if isinstance(first, TransportError) else first.status)
+    assert_no_leak(info.value, capsys)
+
+
+def test_non_idempotent_request_still_retries_429():
+    g, transport, sleeps = make_client(
+        [graph_error(429, headers={"retry-after": "5"}), graph_error(429), HttpResponse(202)]
+    )
+    assert g.request("POST", "/me/x", json_body={}, idempotent=False).status == 202
+    assert len(transport.requests) == 3
+    assert sleeps == [5, 4]
+
+
+def test_non_idempotent_request_gives_up_on_429_like_any_other_call():
+    g, transport, _ = make_client([graph_error(429)] * 4)
+    with pytest.raises(GraphError) as info:
+        g.request("POST", "/me/x", json_body={}, idempotent=False)
+    assert not isinstance(info.value, graph.GraphOutcomeUnknown)
+    assert "4 attempts" in str(info.value)
+    assert len(transport.requests) == 4
+
+
 # ---- request building ----------------------------------------------------------------
 
 
@@ -325,6 +368,60 @@ def test_upload_conflict_says_use_force(capsys):
     assert "rp-canary-01.pdf already exists" in msg
     assert "re-run with --force to replace" in msg
     assert_no_leak(info.value, capsys)
+
+
+@pytest.mark.parametrize("first", UNKNOWN_OUTCOME, ids=UNKNOWN_OUTCOME_IDS)
+def test_send_mail_is_sent_once_when_the_outcome_is_unknown(first, capsys):
+    g, transport, sleeps = make_client([first, HttpResponse(202)], account="admin@x")
+    with pytest.raises(graph.GraphOutcomeUnknown) as info:
+        graph.send_mail(g, subject="RP-CANARY-0001", body_text="b", to_address=ALICE_UPN)
+    assert len(transport.requests) == 1
+    assert sleeps == []
+    msg = str(info.value)
+    assert "POST /me/sendMail as admin@x" in msg
+    assert "RP-CANARY-0001 may have been sent" in msg
+    assert "run seed again" in msg and "not sent twice" in msg
+    assert (info.value.method, info.value.path) == ("POST", "/me/sendMail")
+    assert_no_leak(info.value, capsys)
+
+
+def test_send_mail_retries_429():
+    g, transport, sleeps = make_client([graph_error(429, headers={"retry-after": "3"}), HttpResponse(202)])
+    graph.send_mail(g, subject="s", body_text="b", to_address="t@x")
+    assert len(transport.requests) == 2
+    assert sleeps == [3]
+
+
+@pytest.mark.parametrize("first", UNKNOWN_OUTCOME, ids=UNKNOWN_OUTCOME_IDS)
+def test_upload_that_fails_on_conflict_is_sent_once_when_the_outcome_is_unknown(first, capsys):
+    g, transport, sleeps = make_client([first, graph_error(409, "nameAlreadyExists")])
+    with pytest.raises(graph.GraphOutcomeUnknown) as info:
+        graph.upload_file(g, "d", "root", "rp-canary-01.pdf", b"x", replace=False, owner=ALICE_UPN)
+    assert len(transport.requests) == 1
+    assert sleeps == []
+    msg = str(info.value)
+    assert "rp-canary-01.pdf may have been uploaded" in msg
+    assert "run seed again" in msg and "not uploaded twice" in msg
+    assert "--force" not in msg
+    assert_no_leak(info.value, capsys)
+
+
+def test_upload_that_fails_on_conflict_retries_429():
+    item = {"id": "i"}
+    g, transport, sleeps = make_client([graph_error(429), json_response(201, item)])
+    assert graph.upload_file(g, "d", "root", "n", b"x", replace=False, owner=ALICE_UPN) == item
+    assert len(transport.requests) == 2
+    assert sleeps == [2]
+
+
+@pytest.mark.parametrize("first", UNKNOWN_OUTCOME, ids=UNKNOWN_OUTCOME_IDS)
+def test_upload_that_replaces_is_retried(first):
+    # conflictBehavior=replace: sending it twice leaves the same file, so it is retried.
+    item = {"id": "i"}
+    g, transport, sleeps = make_client([first, json_response(200, item)])
+    assert graph.upload_file(g, "d", "root", "n", b"x", replace=True, owner=ALICE_UPN) == item
+    assert len(transport.requests) == 2
+    assert len(sleeps) == 1
 
 
 def test_download_item_returns_bytes():

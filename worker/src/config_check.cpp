@@ -35,16 +35,14 @@ bool parse_check_args(std::span<const std::string_view> args,
     return false;
 }
 
-// The --config argument as a path. Not path(std::string), which reads the
-// ANSI code page, nor path(std::u8string), which throws a system_error whose
-// message isn't meant for the user.
+// The --config argument as a path.
 std::filesystem::path config_arg_to_path(std::string_view config_arg)
 {
-    std::optional<std::wstring> wide = utf8_to_utf16(config_arg);
-    if (!wide) {
+    std::optional<std::filesystem::path> path = path_from_utf8(config_arg);
+    if (!path) {
         throw ConfigError("", "the --config path is not valid UTF-8");
     }
-    return std::filesystem::path(std::move(*wide));
+    return std::move(*path);
 }
 
 template <typename Value>

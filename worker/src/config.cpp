@@ -17,6 +17,7 @@
 #include <cstdint>
 #include <fstream>
 #include <memory>
+#include <optional>
 #include <sstream>
 #include <utility>
 
@@ -231,30 +232,33 @@ bool has_control_character(std::string_view value)
     return false;
 }
 
-bool follows_rule(StringRule rule, std::string_view value)
+// What is wrong with `value` under `rule`, or nothing when it follows it. One
+// switch holds each rule's check and its message together, with no default:
+// a rule added to StringRule without a case is a build error (/we4062).
+std::optional<std::string_view> rule_problem(StringRule rule, std::string_view value)
 {
     switch (rule) {
+    case StringRule::non_empty:
+        // find_string() has already refused an empty value.
+        return std::nullopt;
     case StringRule::https_url:
-        return is_https_url(value);
-    case StringRule::restore_mailbox:
-        return is_restore_mailbox(value);
-    case StringRule::log_level:
-        return std::find(kLogLevels.begin(), kLogLevels.end(), value) != kLogLevels.end();
-    default:
-        return true;
-    }
-}
-
-std::string_view rule_problem(StringRule rule)
-{
-    switch (rule) {
-    case StringRule::https_url:
+        if (is_https_url(value)) {
+            return std::nullopt;
+        }
         return "must be an https:// URL with no user name, password, query or fragment";
     case StringRule::restore_mailbox:
+        if (is_restore_mailbox(value)) {
+            return std::nullopt;
+        }
         return "must be restoretest@<domain>: restores only ever go to the restoretest mailbox";
-    default:
+    case StringRule::log_level:
+        if (std::find(kLogLevels.begin(), kLogLevels.end(), value) != kLogLevels.end()) {
+            return std::nullopt;
+        }
         return "must be one of trace, debug, info, warn, error, critical, off";
     }
+    // Only a value outside StringRule gets here: refuse it rather than pass it.
+    return "has no known rule";
 }
 
 // The string at `key`, checked as every string setting is: a string, not
@@ -287,8 +291,8 @@ void read_string(const json& doc, const StringField& field, Config& config)
     if (value == nullptr) {
         return;
     }
-    if (!follows_rule(field.rule, *value)) {
-        throw key_error(field.key, rule_problem(field.rule));
+    if (const auto problem = rule_problem(field.rule, *value)) {
+        throw key_error(field.key, *problem);
     }
     config.*field.member = *value;
 }

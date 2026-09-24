@@ -49,7 +49,10 @@ Format: date, decision, reason, alternatives rejected.
   `HttpMethod` and no `default`. An out-of-range value throws `std::invalid_argument` before
   anything is sent. rpcore builds with `/we4062`, so a new method without its case is a
   compile error. Before this, anything other than GET or POST (a future PATCH included) was
-  sent as DELETE.
+  sent as DELETE. The same goes for `config.cpp`'s `StringRule`: its check and its error
+  message were two switches whose `default` gave the log-level message, and they are now one
+  exhaustive switch. The two switches left with a `default` are over curl's error codes in
+  `http_client.cpp`, where naming each of about 100 codes would add nothing.
 - **Redirects are never followed.** A 3xx is returned, so an `Authorization` header or a
   token body can't be sent to another host. The Graph download 302 will be followed
   explicitly by `GraphClient`, without the header.

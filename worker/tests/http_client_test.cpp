@@ -247,8 +247,11 @@ TEST_CASE("a request that outlives its timeout is retried as a timeout", "[http]
 
 TEST_CASE("a TLS failure is not retried", "[http]")
 {
-    // https:// to a plain-HTTP server: the TLS handshake can't succeed.
+    // https:// to a plain-HTTP server: the TLS handshake can't succeed. The
+    // server waits for a request line that never comes; a short read timeout
+    // keeps that from taking its default 5 s.
     rp::test::LocalHttpServer server;
+    server.server().set_read_timeout(0, 200000);
     server.server().Get("/", [](const httplib::Request&, httplib::Response& res) {
         res.set_content("plain", "text/plain");
     });
@@ -442,6 +445,29 @@ TEST_CASE("an HttpClient with default options sends a request", "[http]")
     rp::HttpClient client;
 
     CHECK(client.get(server.url("/")).body == "hi");
+}
+
+TEST_CASE("the default jitter shortens a wait by at most a quarter", "[http]")
+{
+    std::atomic<int> hits = 0;
+    rp::test::LocalHttpServer server;
+    server.server().Get("/flaky", [&](const httplib::Request&, httplib::Response& res) {
+        res.status = ++hits < 5 ? 500 : 200;
+    });
+    std::vector<std::chrono::milliseconds> sleeps;
+    rp::HttpClientOptions options;
+    options.sleep = [&](std::chrono::milliseconds wait) { sleeps.push_back(wait); };
+    rp::HttpClient client(std::move(options));
+
+    CHECK(client.get(server.url("/flaky")).status == 200);
+
+    REQUIRE(sleeps.size() == 4);
+    for (std::size_t i = 0; i < sleeps.size(); ++i) {
+        const std::chrono::milliseconds nominal = rp::retry_delay(static_cast<int>(i) + 1, 0.0);
+        CAPTURE(i, sleeps[i].count());
+        CHECK(sleeps[i] <= nominal);
+        CHECK(sleeps[i] >= nominal * 3 / 4);
+    }
 }
 
 namespace {

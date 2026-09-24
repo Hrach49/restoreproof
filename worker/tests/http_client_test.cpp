@@ -637,15 +637,33 @@ constexpr std::array<std::string_view, 16> kTlsBannedNames{
 // SslOptions members that may only ever be set to exactly `true`.
 constexpr std::array<std::string_view, 2> kMustBeTrue{"verify_peer", "verify_host"};
 
-// What in `source` could weaken TLS: each banned name present, and each
-// verify_peer / verify_host not followed by exactly "=true;" once whitespace
-// is removed, so `= allow`, `= !strict`, `{false}`, a reference to it, or a
-// read all count.
+// The one raw curl call allowed, whitespace removed: revocation checked on a
+// best-effort basis with a CA file (a revoked certificate is still rejected),
+// which cpr has no setting for. Only src/http_client.cpp may hold it, once.
+constexpr std::string_view kAllowedRevokeBestEffort =
+    "curl_easy_setopt(session.GetCurlHolder()->handle,CURLOPT_SSL_OPTIONS,CURLSSLOPT_NATIVE_CA|"
+    "CURLSSLOPT_REVOKE_BEST_EFFORT);";
+
+// `source` with whitespace removed.
+std::string compact(std::string_view source)
+{
+    std::string out;
+    std::copy_if(source.begin(), source.end(), std::back_inserter(out),
+                 [](char c) { return !std::isspace(static_cast<unsigned char>(c)); });
+    return out;
+}
+
+// What in `source` could weaken TLS: each banned name present outside the
+// allowed statement, and each verify_peer / verify_host not followed by
+// exactly "=true;" once whitespace is removed, so `= allow`, `= !strict`,
+// `{false}`, a reference to it, or a read all count.
 std::vector<std::string> find_tls_disablers(std::string_view source)
 {
-    std::string compact;
-    std::copy_if(source.begin(), source.end(), std::back_inserter(compact),
-                 [](char c) { return !std::isspace(static_cast<unsigned char>(c)); });
+    std::string compact = ::compact(source);
+    for (std::size_t at = compact.find(kAllowedRevokeBestEffort); at != std::string::npos;
+         at = compact.find(kAllowedRevokeBestEffort, at)) {
+        compact.erase(at, kAllowedRevokeBestEffort.size());
+    }
     std::vector<std::string> found;
     for (std::string_view name : kTlsBannedNames) {
         if (compact.find(name) != std::string::npos) {
@@ -681,6 +699,16 @@ TEST_CASE("the TLS scan flags each way to weaken verification", "[http]")
         "curl_easy_setopt(h, CURLOPT_SSL_VERIFYHOST, 0L);", "curl_easy_setopt(h, 64, 0L);",
         "CURLOPT_SSL_OPTIONS", "CURLOPT_SSL_CTX_FUNCTION", "CURLOPT_PROXY_SSL_VERIFYPEER",
         "flags |= CURLSSLOPT_NO_REVOKE;", "CURLSSLOPT_REVOKE_BEST_EFFORT",
+        // The allowed statement, changed or with more after it.
+        "curl_easy_setopt(session.GetCurlHolder()->handle, CURLOPT_SSL_OPTIONS,\n"
+        "    CURLSSLOPT_NATIVE_CA | CURLSSLOPT_NO_REVOKE);",
+        "curl_easy_setopt(session.GetCurlHolder()->handle, CURLOPT_SSL_OPTIONS,\n"
+        "    CURLSSLOPT_NATIVE_CA | CURLSSLOPT_REVOKE_BEST_EFFORT | CURLSSLOPT_NO_REVOKE);",
+        "curl_easy_setopt(session.GetCurlHolder()->handle, CURLOPT_SSL_OPTIONS,\n"
+        "    CURLSSLOPT_NATIVE_CA | CURLSSLOPT_REVOKE_BEST_EFFORT);\n"
+        "curl_easy_setopt(h, CURLOPT_SSL_VERIFYPEER, 0L);",
+        "curl_easy_setopt(other->handle, CURLOPT_SSL_OPTIONS,\n"
+        "    CURLSSLOPT_NATIVE_CA | CURLSSLOPT_REVOKE_BEST_EFFORT);",
         // Revocation opt-outs, context callbacks, in-memory CAs.
         "o.ssl_no_revoke = true;", "cpr::ssl::NoRevoke{true}", "o.ssl_ctx_callback = f;",
         "cpr::ssl::SslCtxCallback{f}", "CURLOPT_CAINFO_BLOB", "o.ca_info_blob = pem;",
@@ -694,6 +722,8 @@ TEST_CASE("the TLS scan passes what make_ssl_options needs", "[http]")
     const std::string_view legitimate = GENERATE(
         "options.verify_peer = true;", "options.verify_host   =\n true ;",
         "cpr::SslOptions options;", "options.ca_info = *ca_file;", "session.SetSslOptions(ssl);",
+        "curl_easy_setopt(session.GetCurlHolder()->handle, CURLOPT_SSL_OPTIONS,\n"
+        "                 CURLSSLOPT_NATIVE_CA | CURLSSLOPT_REVOKE_BEST_EFFORT);",
         "// CURLOPT_CAINFO, which curl's Schannel backend reads as UTF-8");
     CAPTURE(legitimate);
     CHECK(find_tls_disablers(legitimate).empty());
@@ -703,6 +733,7 @@ TEST_CASE("no Worker source turns TLS verification off", "[http]")
 {
     const std::filesystem::path root{RP_SOURCE_DIR};
     std::size_t scanned = 0;
+    std::vector<std::string> allowed_in;
     for (const char* dir : {"src", "include", "app"}) {
         for (const auto& entry : std::filesystem::recursive_directory_iterator(root / dir)) {
             const std::filesystem::path& path = entry.path();
@@ -715,12 +746,20 @@ TEST_CASE("no Worker source turns TLS verification off", "[http]")
             const std::string text{std::istreambuf_iterator<char>(file), {}};
             CAPTURE(path.generic_string());
             CHECK(find_tls_disablers(text) == std::vector<std::string>{});
+            const std::string compact_text = compact(text);
+            for (std::size_t at = compact_text.find(kAllowedRevokeBestEffort);
+                 at != std::string::npos;
+                 at = compact_text.find(kAllowedRevokeBestEffort, at + 1)) {
+                allowed_in.push_back(path.lexically_relative(root).generic_string());
+            }
             ++scanned;
         }
     }
     // The scan saw the HTTP client itself, so it isn't looking in the wrong place.
     CHECK(scanned >= 10);
     CHECK(std::filesystem::exists(root / "src" / "http_client.cpp"));
+    // The one raw curl call is where it belongs, and only there.
+    CHECK(allowed_in == std::vector<std::string>{"src/http_client.cpp"});
 }
 
 TEST_CASE("a failed attempt is described by what went wrong", "[http]")

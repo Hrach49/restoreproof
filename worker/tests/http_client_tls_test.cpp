@@ -2,6 +2,11 @@
 // certificates made at test time. This is the Veeam case: a self-signed
 // certificate the Windows store doesn't trust, trusted through
 // HttpClientOptions::ca_file (curl's Schannel backend and CURLOPT_CAINFO).
+// Offline, these tests show that the CA file's certificate is accepted and
+// that others are rejected. They can't show that the Windows store is left
+// out when a CA file is set: no certificate the store trusts can be served
+// from 127.0.0.1. That rests on how curl's Schannel backend verifies (see
+// HttpClientOptions::ca_file).
 
 #include "local_http_server.hpp" // first: httplib needs winsock2.h before windows.h
 #include "test_support.hpp"
@@ -23,6 +28,7 @@
 #include <optional>
 #include <random>
 #include <string>
+#include <string_view>
 
 namespace {
 
@@ -113,7 +119,7 @@ std::string to_utf8(const std::filesystem::path& path)
 
 } // namespace
 
-TEST_CASE("a self-signed server certificate is trusted only through its CA file", "[http][tls]")
+TEST_CASE("a self-signed server certificate is trusted through a CA file holding it", "[http][tls]")
 {
     const Pem server_pem = make_self_signed("rp-test-server");
     const Pem other_pem = make_self_signed("rp-test-other");
@@ -127,16 +133,22 @@ TEST_CASE("a self-signed server certificate is trusted only through its CA file"
                   server_pem.cert);
     const std::filesystem::path other_path = dir.write("other-ca.pem", other_pem.cert);
 
-    SECTION("the Windows store alone doesn't trust it: TLS failure, not retried")
+    SECTION("without a CA file it is rejected: TLS failure, not retried")
     {
         rp::HttpClient client = make_client(std::nullopt);
         try {
             client.get(url);
             FAIL("an untrusted self-signed certificate was accepted");
         } catch (const rp::HttpError& e) {
-            CAPTURE(e.what());
+            const std::string what = e.what();
+            CAPTURE(what);
             CHECK(e.error() == rp::TransportError::tls);
             CHECK(e.attempts() == 1);
+            // Some reason follows, even when curl gives no message of its own.
+            constexpr std::string_view marker = "(not retried): ";
+            const std::size_t at = what.find(marker);
+            REQUIRE(at != std::string::npos);
+            CHECK(what.size() > at + marker.size());
         }
     }
 
@@ -153,7 +165,7 @@ TEST_CASE("a self-signed server certificate is trusted only through its CA file"
         CHECK(response.body == "secure");
     }
 
-    SECTION("a CA file that doesn't exist: TLS failure, not a fallback to the Windows store")
+    SECTION("a CA file that doesn't exist: TLS failure, not retried")
     {
         rp::HttpClient client = make_client(to_utf8(dir.path() / "missing.pem"));
         try {
@@ -166,6 +178,9 @@ TEST_CASE("a self-signed server certificate is trusted only through its CA file"
         }
     }
 
+    // The Windows store doesn't trust either certificate, so this shows only
+    // that a certificate outside the CA file is rejected, not that the store
+    // is ignored when a CA file is set.
     SECTION("another certificate as the CA file: TLS failure, not retried")
     {
         rp::HttpClient client = make_client(to_utf8(other_path));

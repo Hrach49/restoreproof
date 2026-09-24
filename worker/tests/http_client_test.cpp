@@ -559,26 +559,48 @@ TEST_CASE("TLS verification is on with or without a custom CA file", "[http]")
 
 namespace {
 
-// Constructs that turn TLS verification (or revocation checking) off, with
-// all whitespace removed. None may appear in the Worker's own code.
-constexpr std::array<std::string_view, 14> kTlsDisablers{
-    "VerifySsl{false}",       "VerifySsl(false)",       "verify_peer=false",
-    "verify_host=false",      "CURLOPT_SSL_VERIFYPEER", "CURLOPT_SSL_VERIFYHOST",
-    "NO_REVOKE",              "ssl_no_revoke=true",     "NoRevoke",
-    "VerifyPeer{false}",      "VerifyHost{false}",      "VerifyPeer(false)",
-    "VerifyHost(false)",      "verify_peer=0",
+// A tripwire, not a proof: it catches the usual ways to weaken TLS through
+// cpr or curl; review catches the rest.
+//
+// Names with no business anywhere in Worker code, comments included: cpr's
+// per-option TLS switches, raw curl options and flags (CURLOPT_SSL_*,
+// CURLOPT_PROXY_SSL_*, CURLSSLOPT_*, and curl_easy_setopt itself: cpr sets
+// every option), revocation opt-outs, SSL_CTX callbacks that could replace
+// verification, in-memory CA bundles (only ca_file is a way to add trust),
+// and verify_status: OCSP stapling stays at cpr's default, off, on purpose
+// (many servers, a self-signed Veeam one included, don't staple), so nothing
+// should touch it.
+constexpr std::array<std::string_view, 16> kTlsBannedNames{
+    "VerifySsl",        "VerifyPeer",       "VerifyHost",          "NoRevoke",
+    "ssl_no_revoke",    "CURLOPT_SSL_",     "CURLOPT_PROXY_SSL_",  "CURLSSLOPT_",
+    "curl_easy_setopt", "ssl_ctx_callback", "SslCtxCallback",      "CURLOPT_CAINFO_BLOB",
+    "ca_info_blob",     "CaInfoBlob",       "ca_buffer",           "verify_status",
 };
 
-// The disablers found in `source`, ignoring whitespace.
-std::vector<std::string_view> find_tls_disablers(std::string_view source)
+// SslOptions members that may only ever be set to exactly `true`.
+constexpr std::array<std::string_view, 2> kMustBeTrue{"verify_peer", "verify_host"};
+
+// What in `source` could weaken TLS: each banned name present, and each
+// verify_peer / verify_host not followed by exactly "=true;" once whitespace
+// is removed, so `= allow`, `= !strict`, `{false}`, a reference to it, or a
+// read all count.
+std::vector<std::string> find_tls_disablers(std::string_view source)
 {
     std::string compact;
     std::copy_if(source.begin(), source.end(), std::back_inserter(compact),
                  [](char c) { return !std::isspace(static_cast<unsigned char>(c)); });
-    std::vector<std::string_view> found;
-    for (std::string_view pattern : kTlsDisablers) {
-        if (compact.find(pattern) != std::string::npos) {
-            found.push_back(pattern);
+    std::vector<std::string> found;
+    for (std::string_view name : kTlsBannedNames) {
+        if (compact.find(name) != std::string::npos) {
+            found.emplace_back(name);
+        }
+    }
+    for (std::string_view member : kMustBeTrue) {
+        for (std::size_t at = compact.find(member); at != std::string::npos;
+             at = compact.find(member, at + 1)) {
+            if (!std::string_view{compact}.substr(at + member.size()).starts_with("=true;")) {
+                found.push_back(std::string{member} + " not set to exactly true");
+            }
         }
     }
     return found;
@@ -586,19 +608,38 @@ std::vector<std::string_view> find_tls_disablers(std::string_view source)
 
 } // namespace
 
-TEST_CASE("the TLS scan finds each way to turn verification off", "[http]")
+TEST_CASE("the TLS scan flags each way to weaken verification", "[http]")
 {
     const std::string_view planted = GENERATE(
+        // Literal false or 0.
         "session.SetVerifySsl(cpr::VerifySsl{ false });", "cpr::VerifySsl(false)",
-        "options.verify_peer = false;", "opts.verify_host =\n false;",
+        "options.verify_peer = false;", "opts.verify_host =\n false;", "o.verify_peer = 0;",
+        "cpr::ssl::VerifyPeer{false}", "cpr::ssl::VerifyHost{false}", "ssl::VerifyPeer( false )",
+        // Anything but a literal true.
+        "cpr::VerifySsl{insecure}", "verify_peer = allow;", "verify_host = !strict;",
+        "o.verify_peer = true && strict;", "cpr::SslOptions o{.verify_peer{false}};",
+        "bool& v = o.verify_host;", "o.verify_status = true;",
+        // Raw curl options and flags.
         "curl_easy_setopt(h, CURLOPT_SSL_VERIFYPEER, 0L);",
-        "curl_easy_setopt(h, CURLOPT_SSL_VERIFYHOST, 0L);", "flags |= CURLSSLOPT_NO_REVOKE;",
-        "o.ssl_no_revoke = true;", "cpr::ssl::NoRevoke{true}", "cpr::ssl::VerifyPeer{false}",
-        "cpr::ssl::VerifyHost{false}", "ssl::VerifyPeer( false )", "ssl::VerifyHost(false)",
-        "o.verify_peer = 0;");
+        "curl_easy_setopt(h, CURLOPT_SSL_VERIFYHOST, 0L);", "curl_easy_setopt(h, 64, 0L);",
+        "CURLOPT_SSL_OPTIONS", "CURLOPT_SSL_CTX_FUNCTION", "CURLOPT_PROXY_SSL_VERIFYPEER",
+        "flags |= CURLSSLOPT_NO_REVOKE;", "CURLSSLOPT_REVOKE_BEST_EFFORT",
+        // Revocation opt-outs, context callbacks, in-memory CAs.
+        "o.ssl_no_revoke = true;", "cpr::ssl::NoRevoke{true}", "o.ssl_ctx_callback = f;",
+        "cpr::ssl::SslCtxCallback{f}", "CURLOPT_CAINFO_BLOB", "o.ca_info_blob = pem;",
+        "cpr::ssl::CaInfoBlob{pem}", "o.ca_buffer = pem;");
     CAPTURE(planted);
-    CHECK(find_tls_disablers(planted).size() == 1);
-    CHECK(find_tls_disablers("options.verify_peer = true; options.verify_host = true;").empty());
+    CHECK_FALSE(find_tls_disablers(planted).empty());
+}
+
+TEST_CASE("the TLS scan passes what make_ssl_options needs", "[http]")
+{
+    const std::string_view legitimate = GENERATE(
+        "options.verify_peer = true;", "options.verify_host   =\n true ;",
+        "cpr::SslOptions options;", "options.ca_info = *ca_file;", "session.SetSslOptions(ssl);",
+        "// CURLOPT_CAINFO, which curl's Schannel backend reads as UTF-8");
+    CAPTURE(legitimate);
+    CHECK(find_tls_disablers(legitimate).empty());
 }
 
 TEST_CASE("no Worker source turns TLS verification off", "[http]")
@@ -616,7 +657,7 @@ TEST_CASE("no Worker source turns TLS verification off", "[http]")
             std::ifstream file(path, std::ios::binary);
             const std::string text{std::istreambuf_iterator<char>(file), {}};
             CAPTURE(path.generic_string());
-            CHECK(find_tls_disablers(text).empty());
+            CHECK(find_tls_disablers(text) == std::vector<std::string>{});
             ++scanned;
         }
     }

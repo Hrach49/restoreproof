@@ -20,6 +20,7 @@
 #include <atomic>
 #include <cctype>
 #include <chrono>
+#include <clocale>
 #include <condition_variable>
 #include <filesystem>
 #include <fstream>
@@ -571,6 +572,27 @@ TEST_CASE("header names compare case-insensitively", "[http]")
     CHECK(less("Accept", "authorization"));
     CHECK(less("a", "AB"));
     CHECK_FALSE(less("AB", "a"));
+    // Bytes from 0x80 sort after ASCII (unsigned), whatever char's sign.
+    CHECK(less("z", "\x80"));
+    CHECK_FALSE(less("\x80", "z"));
+}
+
+TEST_CASE("header names fold only ASCII letters, whatever the C locale", "[http]")
+{
+    // Under a Western code page, std::tolower would fold 0xC4 (Ä in
+    // Windows-1252) to 0xE4 (ä) and make them one header name. HTTP header
+    // names are ASCII tokens; only A-Z fold.
+    struct RestoreLocale {
+        std::string saved = std::setlocale(LC_ALL, nullptr);
+        ~RestoreLocale() { std::setlocale(LC_ALL, saved.c_str()); }
+    } restore;
+    REQUIRE(std::setlocale(LC_ALL, ".1252") != nullptr);
+    const rp::CaseInsensitiveLess less;
+
+    CHECK(less("\xC4", "\xE4"));
+    CHECK_FALSE(less("\xE4", "\xC4"));
+    CHECK_FALSE(less("X-A", "x-a"));
+    CHECK_FALSE(less("x-a", "X-A"));
 }
 
 // --- TLS configuration ------------------------------------------------------

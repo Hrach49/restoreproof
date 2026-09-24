@@ -209,10 +209,14 @@ std::string_view to_string(HttpMethod method) noexcept
 
 bool CaseInsensitiveLess::operator()(std::string_view a, std::string_view b) const noexcept
 {
-    return std::lexicographical_compare(a.begin(), a.end(), b.begin(), b.end(), [](char x, char y) {
-        return std::tolower(static_cast<unsigned char>(x)) <
-               std::tolower(static_cast<unsigned char>(y));
-    });
+    // ASCII only: std::tolower follows the C locale, which under a Western
+    // code page would fold bytes above 0x7F too. Header names are ASCII.
+    const auto fold = [](char c) {
+        const auto byte = static_cast<unsigned char>(c);
+        return byte >= 'A' && byte <= 'Z' ? static_cast<unsigned char>(byte + ('a' - 'A')) : byte;
+    };
+    return std::lexicographical_compare(a.begin(), a.end(), b.begin(), b.end(),
+                                        [&fold](char x, char y) { return fold(x) < fold(y); });
 }
 
 HttpError::HttpError(std::string_view message, TransportError error, int status, int attempts)

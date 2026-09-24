@@ -207,6 +207,26 @@ void check_parts(const std::vector<MultipartPart>& parts)
     }
 }
 
+// Whether `url` starts with http:// or https://, the scheme in any case. curl
+// here also speaks FILE, FTP, SMB, LDAP and more, and guesses a scheme for a
+// URL without one; a URL from a server response must reach none of them.
+bool has_http_scheme(std::string_view url) noexcept
+{
+    const auto starts_with = [url](std::string_view prefix) {
+        if (url.size() < prefix.size()) {
+            return false;
+        }
+        for (std::size_t i = 0; i < prefix.size(); ++i) {
+            const char c = url[i];
+            if ((c >= 'A' && c <= 'Z' ? static_cast<char>(c - 'A' + 'a') : c) != prefix[i]) {
+                return false;
+            }
+        }
+        return true;
+    };
+    return starts_with("http://") || starts_with("https://");
+}
+
 std::function<double()> default_jitter()
 {
     struct State {
@@ -336,6 +356,11 @@ HttpResponse HttpClient::send(const HttpRequest& request)
     // Every line and message below is built from this and passed through
     // redact() whole: the URL may carry a client_secret.
     const std::string target = std::string{to_string(request.method)} + " " + request.url;
+    if (!has_http_scheme(request.url)) {
+        throw HttpError(target +
+                            ": refused before sending: only http:// and https:// URLs are sent",
+                        TransportError::other, 0, 0);
+    }
 
     for (int attempt = 1;; ++attempt) {
         const auto start = options_.now();

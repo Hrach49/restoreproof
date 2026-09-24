@@ -7,6 +7,147 @@ Format: date, decision, reason, alternatives rejected.
 
 ---
 
+## 2026-09-25 — Office files are compared by content (`office-v1`); the Worker compares `content_sha256`
+
+**Decision.** Supersedes the file-hash part of the 2026-09-24 canary seeder entry below. Every
+file entry in `lab/seed-manifest.json` gets a `content_rule` and a `content_sha256`, and the
+Worker compares a restored file with `content_sha256` by that rule:
+
+- `bytes` (pdf, txt, png): SHA-256 of the whole file; equal to `stored_sha256`.
+- `office-v1` (docx, xlsx, wherever stored): SHA-256 of a listing of the document's content
+  parts: every part under `word/` or `xl/` except `_rels/` folders, sorted by name, one line
+  per part with its SHA-256 and name. Metadata, `customXml/`, `[trash]/`, content types and
+  relationship files don't count. Rule and vectors: `lab/README.md`, `lab/seeder/office.py`,
+  `shared/testdata/office-content-v1/` (including real files SharePoint rewrote), which
+  W3.2's C++ checker must pass.
+
+`seed` stops, writing no manifest, if the stored document content of an Office file differs
+from `lab/canary/`; `hash` checks offline that the committed file reproduces its
+`content_sha256`. The type mix stays as it was (option 1 of the two the owner was offered),
+so SharePoint Office restores stay under test.
+
+**Reason.** The live run (2026-09-24/25, findings in `lab/README.md`) showed the SharePoint
+`RestoreTest` library rewriting every docx and xlsx on upload (3263 → 12617 bytes) and again
+some minutes later (+3073 bytes), with `lastModifiedDateTime` unchanged. The first `verify`
+therefore reported 4 DIFFs on files nobody had touched. No whole-file hash of an Office file
+in a SharePoint library is a stable expected value, and a restore there would be rewritten
+too: comparing bytes would report a good restore as `fail`. Part-by-part comparison showed
+that SharePoint changes only packaging and metadata; the content parts stayed byte-identical.
+OneDrive stored all its files unchanged, and pdf/txt/png were unchanged everywhere. The rule
+applies by type, not location, because a Veeam restore may rewrite an Office file wherever it
+lands.
+
+**Alternatives rejected.** Keeping `stored_sha256` as the expected value: it was already wrong
+minutes after the seed. Dropping Office files from SharePoint (option 2): simpler hashes, but
+the most common customer files in a library would go untested. Comparing only size for Office
+files: SharePoint changes the size too, and size misses real changes. Parsing the XML and
+comparing text: more code on both sides, and a byte comparison of the untouched parts is
+already exact. Hashing every part except a known list of SharePoint parts: breaks as soon as
+SharePoint adds a new kind of part.
+
+---
+
+## 2026-09-24 — Lab CI: canary files checked offline, the manifest hash check only once it is committed
+
+**Decision.** The `lab` workflow gets two checks after the tests, replacing the single
+`python -m seeder hash` step of the canary seeder entry below:
+
+- **Canary files match the generators.** `python -m seeder generate` writes into a temp dir,
+  and `diff -r` compares it with the committed `lab/canary/`. It fails on a changed, missing
+  or extra file, and needs no manifest.
+- **Canary hashes reproduce the manifest.** If `lab/seed-manifest.json` is committed,
+  `python -m seeder hash` runs and must pass, as before. If it is not, the step emits a
+  GitHub `::warning::` saying the check was skipped and that L1.2's Done when is not met until
+  a live `seed` run's manifest is committed, and succeeds.
+
+**Reason.** The manifest is written only by a live `seed` run, which needs three interactive
+tenant sign-ins and cannot run in CI. Until that run happens the hash step could only fail,
+so the lab job was always red and hid real test failures. The generator check covers the part
+that needs no tenant. Once the manifest is committed the hash check is a hard gate with no
+change to the workflow. The catch: a PR that deletes `lab/seed-manifest.json` silently turns
+it back into a warning, so a reviewer must treat deleting the manifest as a red flag.
+
+**Alternatives rejected.** Leaving the job red until the live run: a permanently red job
+trains everyone to ignore it. `continue-on-error` on the hash step: it would also hide a real
+mismatch once the manifest exists. A placeholder manifest: it would be a fake expected set,
+and `hash` would still have to fail on it. Failing when the manifest is missing only on
+`main`: the same always-red problem, one merge later.
+
+---
+
+## 2026-09-24 — Canary seeder: a uv lab tool, a delegated public-client app, text-v1 mail hashes, hashes of what Graph returns
+
+**Decision.** L1.2 (#10) seeds the 40 canary items and writes `lab/seed-manifest.json`. How
+to use it: `lab/README.md`.
+
+- **Tool layout.** `lab/` is its own uv project (Python 3.12, `uv.lock` committed) with a
+  `seeder` package run as `python -m seeder generate|hash|seed|verify` and a pytest suite in
+  `lab/tests/`. The tests run against a fake in-memory Graph tenant, never the network. A new
+  CI workflow, `lab` (`.github/workflows/lab.yml`), runs the tests and `python -m seeder hash`.
+- **Its own app registration.** The seeder signs in through "RestoreProof Lab Seeder", a
+  single-tenant public client (redirect URI `http://localhost`, public client flows allowed)
+  with delegated Microsoft Graph permissions only: `Mail.Send`, `Mail.Read`, `Files.ReadWrite`,
+  `Sites.ReadWrite.All` and `User.Read`, admin-consented. It has no client secret or
+  certificate. MSAL's token cache stays in memory, so no token is written to disk.
+- **Three sign-ins.** Delegated Graph reaches only the signed-in user's own mailbox and
+  OneDrive: a global admin gets 403 on alice's OneDrive. So a run signs in as alice (her
+  mailbox, her OneDrive files), bob (his mailbox) and the admin (sends all 20 mails, uploads
+  the SharePoint files), and re-uses alice's and bob's cached tokens to read the mails back.
+  After each sign-in the tool checks the signed-in account and stops if it is the wrong one.
+- **Hashes are of what Graph returns.** Each file is downloaded back after upload, and each
+  mail is read back from the recipient's mailbox. A file entry records both `local_sha256`
+  (the committed file) and `stored_sha256` (the bytes Graph returns), plus
+  `stored_matches_local`; the Worker compares a restored file with `stored_sha256`. A mail
+  entry records `body_sha256` (the read-back body) and `sent_body_sha256` (the sent body);
+  the Worker compares with `body_sha256`.
+- **Mail body rule `text-v1`.** Bodies are read with `Prefer: outlook.body-content-type="text"`
+  and normalised before hashing: drop one leading U+FEFF; CRLF, then lone CR, to LF; strip
+  trailing spaces and tabs from each line; strip trailing LFs; UTF-8; SHA-256. Nothing else is
+  changed. The rule is named in each entry (`body_normalization`), and a change gets a new name,
+  never an edit to `text-v1`. `shared/testdata/body-normalization-text-v1.json` holds test
+  vectors that the Python tests use now and W3.2's C++ checker must also pass. The manifest's
+  schema is `shared/schemas/seed-manifest.v1.json`.
+- **Mail recipients.** `RP-CANARY-0001`–`0010` go to alice, `0011`–`0020` to bob, all sent by
+  the admin. W1.0 restores `RP-CANARY-0001` from alice.
+- **File types.** The type cycles by number: pdf, docx, xlsx, txt, png (01 pdf … 20 png), so
+  each location gets two of each. 01–10 go to the SharePoint `RestoreTest` library root,
+  11–20 to alice's OneDrive `RestoreTest` folder. The guide's `rp-canary-20.docx` was an
+  illustration; W1.0 needs `rp-canary-01.pdf` in the library, which the cycle gives.
+- **Deterministic files.** The generators use the standard library only and no compression
+  (ZIP entries stored, PNG pixel data in stored deflate blocks), with fixed dates and metadata.
+  A test generates twice and compares with the committed `lab/canary/`, and `.gitattributes`
+  marks `lab/canary/**` binary.
+
+Live-run result: SharePoint rewrites Office files, twice, so files are now compared by
+`content_sha256` under a `content_rule`, superseding the `stored_sha256` comparison above. See
+the 2026-09-25 entry.
+
+**Reason.** The Worker only ever sees an item through Graph, so the expected value has to be
+what Graph returns. SharePoint can rewrite Office files on upload (it writes library
+properties into them), and a hash of the local file would then report every restore of that file as
+a mismatch, a false `fail`. Recording both hashes shows whether that happened. Mail bodies
+can pick up line-ending and trailing-whitespace changes on the way through Exchange; the rule
+removes exactly those differences and nothing that could hide a real change of content. It
+has to be written down precisely because a second implementation, in C++, must give the same
+hash. The seeder has several modules (catalog, generators, Graph client, sign-in, manifest)
+and its own tests, which a uv project holds naturally. A dedicated app is needed because the
+Worker's app (L1.5) doesn't exist yet and will be app-only and read-only, while seeding needs
+to send mail and write files. Stdlib-only generators without compression keep the committed
+bytes, and therefore the manifest, reproducible regardless of library or zlib versions.
+
+**Alternatives rejected.** A single PEP 723 script: fine for one file, awkward for eight
+modules and a test suite. Putting the seeder in `cloud/`: it is lab tooling, not product
+code, and would bring its dependencies and coverage rules into the Cloud build. Using the
+Worker's app registration with application permissions: it doesn't exist yet, and giving it
+`Mail.Send` and write access to files to seed a lab would break its read-only scope. Making
+the admin a site collection admin of alice's OneDrive so one sign-in is enough: it changes
+tenant permissions to save two sign-ins. Hashing the raw body: a CRLF or trailing-space change
+by Exchange would read as a mismatch. Hashing the HTML body: Exchange rewrites HTML freely.
+Office and image libraries to write the files: their output changes between versions. Hashing
+only the local file: see the reason above.
+
+---
+
 ## 2026-09-24 — Worker HTTP client: one fakeable interface, five attempts, redacted logs, TLS always verified
 
 **Decision.** W1.3 (#18) adds the HTTP layer every Worker connector will use.

@@ -1,0 +1,120 @@
+{
+  "normalization": "text-v1",
+  "description": "Test vectors for mail body normalisation text-v1 (lab/seeder/normalize.py, C++ W3.2). For each case, normalize(input) == normalized and sha256 is the lower-case hex SHA-256 of normalized encoded as UTF-8 without a BOM. Non-ASCII characters are written as JSON u-escapes so invisible ones (BOM, NBSP, combining marks) stay visible.",
+  "cases": [
+    {
+      "name": "plain",
+      "input": "Hello world",
+      "normalized": "Hello world",
+      "sha256": "64ec88ca00b268e5ba1a35678a1b5316d212f4f366b2477232534a8aeca37f3c"
+    },
+    {
+      "name": "crlf",
+      "input": "line one\r\nline two\r\nline three",
+      "normalized": "line one\nline two\nline three",
+      "sha256": "26a5cd654e540e91433a2f237e2709743fc4753e764deb74ed37299c2f338ece"
+    },
+    {
+      "name": "lone-cr",
+      "input": "line one\rline two\rline three",
+      "normalized": "line one\nline two\nline three",
+      "sha256": "26a5cd654e540e91433a2f237e2709743fc4753e764deb74ed37299c2f338ece"
+    },
+    {
+      "name": "mixed-endings",
+      "input": "a\r\nb\rc\nd\r\r\ne",
+      "normalized": "a\nb\nc\nd\n\ne",
+      "sha256": "99084c1bfc0a1b08f6369e179a667e67b751cecd6539e87e8105d6be9b9a9a23"
+    },
+    {
+      "name": "trailing-spaces",
+      "input": "first   \r\nsecond \r\nthird",
+      "normalized": "first\nsecond\nthird",
+      "sha256": "796c06772295d9604559518dc7fd2e3a2bc14970902a6fda43d636b29d6b27fc"
+    },
+    {
+      "name": "trailing-tabs",
+      "input": "first\t\t\nsecond \t \nthird",
+      "normalized": "first\nsecond\nthird",
+      "sha256": "796c06772295d9604559518dc7fd2e3a2bc14970902a6fda43d636b29d6b27fc"
+    },
+    {
+      "name": "trailing-spaces-last-line",
+      "input": "first\nlast line   ",
+      "normalized": "first\nlast line",
+      "sha256": "59d5870da64e3e1651a28eb580c2afe340ddf1992c3a42dc2d5e8040f4d55fee"
+    },
+    {
+      "name": "trailing-newlines",
+      "input": "text\n\n\n\n",
+      "normalized": "text",
+      "sha256": "982d9e3eb996f559e633f4d194def3761d909f5a3b647d1a851fead67c32c9d1"
+    },
+    {
+      "name": "trailing-crlf-blank-lines",
+      "input": "text\r\n\r\n  \r\n\t\r\n",
+      "normalized": "text",
+      "sha256": "982d9e3eb996f559e633f4d194def3761d909f5a3b647d1a851fead67c32c9d1"
+    },
+    {
+      "name": "leading-bom",
+      "input": "\ufeffBOM at start",
+      "normalized": "BOM at start",
+      "sha256": "bf5a3ccd241eb4aa5b5656bb2d9613333efd8b90a0aead776a80b60f5acc12ad"
+    },
+    {
+      "name": "bom-not-at-start",
+      "input": "text\ufeff with BOM inside",
+      "normalized": "text\ufeff with BOM inside",
+      "sha256": "34c2f842ddb120085e43512b1548ed0f82cde560b83b8e93fc8f965a9e1f453f"
+    },
+    {
+      "name": "leading-whitespace",
+      "input": "   indented\n\tand tabbed",
+      "normalized": "   indented\n\tand tabbed",
+      "sha256": "748a3fe5bf4536e428503749ee255f9fa75e2366477f7425d13499f4efe725bf"
+    },
+    {
+      "name": "nbsp-at-line-end",
+      "input": "no-break space\u00a0\r\nnext",
+      "normalized": "no-break space\u00a0\nnext",
+      "sha256": "bdba83ebb0057a8536fb231643fbf1be8108b766e32163dfadc370082172b07a"
+    },
+    {
+      "name": "non-ascii",
+      "input": "caf\u00e9 \u65e5\u672c \ud83d\ude00",
+      "normalized": "caf\u00e9 \u65e5\u672c \ud83d\ude00",
+      "sha256": "45f5d369839507c5e15c40af90b242be42d9929d299c18c3017adc01c88514be"
+    },
+    {
+      "name": "combining-sequence",
+      "input": "e\u0301 is not composed to \u00e9",
+      "normalized": "e\u0301 is not composed to \u00e9",
+      "sha256": "064d5ce1905928823fb74d3e891ec4ea2ebd00c540ca9debd89d9177ce056423"
+    },
+    {
+      "name": "empty",
+      "input": "",
+      "normalized": "",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "only-newlines",
+      "input": "\r\n\n\r",
+      "normalized": "",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "catalog-rp-canary-0001-crlf",
+      "input": "The lighthouse keeper counted forty-one ships before dawn.\r\n\r\nRestoreProof canary mail. Do not edit, move or delete this message.\r\nIt is one of the 40 expected items in lab/seed-manifest.json.",
+      "normalized": "The lighthouse keeper counted forty-one ships before dawn.\n\nRestoreProof canary mail. Do not edit, move or delete this message.\nIt is one of the 40 expected items in lab/seed-manifest.json.",
+      "sha256": "4e1a958631216825c0e67faadfe1d56b787cb6470a891f0860c21cc7bad19bbe"
+    },
+    {
+      "name": "catalog-rp-canary-0001-lf",
+      "input": "The lighthouse keeper counted forty-one ships before dawn.\n\nRestoreProof canary mail. Do not edit, move or delete this message.\nIt is one of the 40 expected items in lab/seed-manifest.json.",
+      "normalized": "The lighthouse keeper counted forty-one ships before dawn.\n\nRestoreProof canary mail. Do not edit, move or delete this message.\nIt is one of the 40 expected items in lab/seed-manifest.json.",
+      "sha256": "4e1a958631216825c0e67faadfe1d56b787cb6470a891f0860c21cc7bad19bbe"
+    }
+  ]
+}

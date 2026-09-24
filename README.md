@@ -16,8 +16,8 @@ Status: Stage 1, Sprint 1. See `CLAUDE.md` for the working agreements.
 |---|---|
 | `worker/` | C++20 Worker: `rpcore` (logic), `rpworker` (exe), `rptests` (Catch2) |
 | `cloud/` | FastAPI backend, dashboard and reports (Python 3.12, uv) |
-| `shared/schemas/` | `result.v1.json` — the one bundle schema, used by both builds |
-| `lab/` | Test tenant notes and the canary seed manifest |
+| `shared/schemas/` | `result.v1.json` — the one bundle schema, used by both builds; `seed-manifest.v1.json` — the canary manifest's schema |
+| `lab/` | Test tenant notes, the canary seeder (`python -m seeder`, a uv project) and the canary seed manifest |
 | `docs/` | Decisions, glossary, API and security notes |
 | `tests/e2e/` | Manually tracked end-to-end scenarios |
 | `sales/` | Pricing, pitch and pilot material |
@@ -30,6 +30,8 @@ Status: Stage 1, Sprint 1. See `CLAUDE.md` for the working agreements.
 - [Environment](docs/environment.md) — the dev toolchain and its versions.
 - [Worker configuration](docs/worker-config.md) — `config.json` settings, secrets from
   environment variables, and `rpworker config check`.
+- [Lab tools](lab/README.md) — the 40 canary items, the seeder app registration, and how to
+  seed and check them.
 - [Testing](docs/testing.md) — test rules, the CI coverage and "No test, no merge" gates, and
   the once-per-sprint mutation run.
 

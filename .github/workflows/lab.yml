@@ -1,0 +1,40 @@
+name: lab
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lab-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    name: Lab tests and canary hashes
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: lab
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: lab/uv.lock
+
+      # --locked fails if uv.lock is out of date with pyproject.toml. The tests use a
+      # fake Graph tenant; nothing here touches the network apart from installing.
+      - name: Tests
+        run: uv run --locked pytest -q
+
+      # L1.2's Done when: re-running the hash script reproduces the manifest's hashes.
+      # Offline: checks lab/canary/ and lab/seed-manifest.json against the catalog.
+      - name: Canary hashes reproduce the manifest
+        run: uv run --locked python -m seeder hash

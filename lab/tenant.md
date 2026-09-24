@@ -51,3 +51,15 @@ The Worker config keys `test_mailbox`, `test_site_id`, `test_library_id`,
 values. Open point: the library has both a list ID and a drive ID, and `test_library_id` does not
 yet say which one it holds. Graph reads files by drive ID; what the Veeam restore body needs
 is settled by W1.0/W2.4, and the config doc is updated then.
+
+## Seeder app
+
+The app registration the canary seeder (L1.2) signs in through. It is a public client with
+delegated Microsoft Graph permissions only, and has no client secret or certificate. Setup
+steps: `lab/README.md`. Record the ID in backticks, like the IDs above:
+`lab/tests/test_catalog.py` checks that it matches `SEEDER_CLIENT_ID` in
+`lab/seeder/tenant.py`.
+
+| | |
+|---|---|
+| RestoreProof Lab Seeder, application (client) ID | _to be added after the app is registered (lab/README.md)_ |

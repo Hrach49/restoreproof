@@ -26,6 +26,7 @@ How we test, what CI enforces, and the once-per-sprint mutation run. Set up in L
 |---|---|---|
 | Worker coverage | `.github/workflows/worker.yml`, OpenCppCoverage + `worker/tools/coverage_gate.py` | 80% line on `rpcore` (`worker/src/`, `worker/include/`) plus `rpworker`'s `main()` (`worker/app/`); 100% **line** on vault, signer and target_guard once they exist, meaning any file with a path part named or prefixed `vault`, `signer` or `target_guard` (`src/signer/ed25519.cpp`, `src/vault_dpapi.cpp`); every `.cpp` on disk under `src/`, `include/` and `app/` must appear in the report, so a file no test links into `rptests` (or, for `app/`, that ctest's runs of `rpworker.exe` don't reach) fails (headers of declarations may be absent) |
 | Cloud coverage | `.github/workflows/cloud.yml`, pytest-cov | 80% on `app/`, measured as coverage's combined line + branch figure; 100% line + branch on `app/auth`, `app/results.py` and `app/repo` (skipped while absent), checked by `cloud/tools/check_coverage.py` |
+| Lab tests and canary hashes | `.github/workflows/lab.yml` | `lab/`'s pytest suite passes (offline, fake Graph tenant), and `python -m seeder hash` reproduces every hash in `lab/seed-manifest.json` from the committed `lab/canary/` files and the catalog (L1.2's Done when). No coverage floor |
 | No test, no merge | `.github/workflows/pr-guards.yml`, `.github/scripts/tests_touched.py` | Each side needs its own tests: a PR that changes `worker/src/`, `worker/include/` or `worker/app/` must add or change a C++ file (`.cpp`, `.hpp`, `.h`) under `worker/tests/`, and one that changes `cloud/app/` must add or change a `.py` under `cloud/tests/`. Deleting a test, editing fixtures or editing `tests/e2e/scenarios.md` doesn't count |
 | PR checklist | `.github/PULL_REQUEST_TEMPLATE.md` | Failing test written first, suite green locally, "Done when" observed |
 
@@ -57,6 +58,13 @@ cmake --build --preset coverage
 OpenCppCoverage --quiet --cover_children --sources "$PWD\src" --sources "$PWD\include" `
   --sources "$PWD\app" --export_type "cobertura:$PWD\build\coverage\coverage.xml" -- ctest --preset coverage
 python tools/coverage_gate.py build/coverage/coverage.xml --min-line 80
+```
+
+Lab, from `lab/` (the same commands as CI; see `lab/README.md`):
+
+```bash
+uv run --locked pytest -q
+uv run --locked python -m seeder hash
 ```
 
 The guard scripts' own tests (from the repo root):

@@ -1,0 +1,356 @@
+#include <rp/config.hpp>
+#include <rp/config_check.hpp>
+#include <rp/secrets.hpp>
+
+#include "test_support.hpp"
+
+#include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
+
+#include <filesystem>
+#include <functional>
+#include <sstream>
+#include <stdexcept>
+#include <string>
+#include <string_view>
+#include <vector>
+
+using Catch::Matchers::ContainsSubstring;
+using Args = std::vector<std::string_view>;
+
+namespace {
+
+const std::string kUsage = "usage: rpworker --version | rpworker config check [--config <path>]\n";
+
+// Every key set; sample_od left out to show its default.
+const std::string kConfigJson = R"({
+    "cloud_url": "https://cloud.example.invalid",
+    "veeam_url": "https://veeam.example.invalid:4443",
+    "veeam_org_name": "example.onmicrosoft.com",
+    "graph_tenant_id": "00000000-0000-0000-0000-000000000001",
+    "graph_client_id": "00000000-0000-0000-0000-000000000002",
+    "test_mailbox": "restoretest@example.onmicrosoft.com",
+    "test_site_id": "site-id",
+    "test_library_id": "library-id",
+    "test_onedrive_drive_id": "drive-id",
+    "test_onedrive_folder_id": "folder-id",
+    "poll_interval_s": 60,
+    "heartbeat_interval_s": 120,
+    "sample_mail": 0,
+    "sample_sp": 7,
+    "log_level": "warn"
+})";
+
+std::string utf8(const std::filesystem::path& path)
+{
+    const std::u8string text = path.u8string();
+    return {text.begin(), text.end()};
+}
+
+// The output of a successful check of kConfigJson at `path`, with the three
+// secret lines given.
+std::string expected_output(const std::filesystem::path& path, std::string_view user,
+                            std::string_view password, std::string_view graph)
+{
+    return "config file: " + utf8(path) + "\n" +
+           "cloud_url                 https://cloud.example.invalid\n"
+           "veeam_url                 https://veeam.example.invalid:4443\n"
+           "veeam_org_name            example.onmicrosoft.com\n"
+           "graph_tenant_id           00000000-0000-0000-0000-000000000001\n"
+           "graph_client_id           00000000-0000-0000-0000-000000000002\n"
+           "test_mailbox              restoretest@example.onmicrosoft.com\n"
+           "test_site_id              site-id\n"
+           "test_library_id           library-id\n"
+           "test_onedrive_drive_id    drive-id\n"
+           "test_onedrive_folder_id   folder-id\n"
+           "poll_interval_s           60\n"
+           "heartbeat_interval_s      120\n"
+           "sample_mail               0\n"
+           "sample_sp                 7\n"
+           "sample_od                 5\n"
+           "log_level                 warn\n"
+           "secrets (environment variables; values are never shown):\n"
+           "RP_VEEAM_USERNAME         " +
+           std::string{user} + "\n" + "RP_VEEAM_PASSWORD         " + std::string{password} +
+           "\n" + "RP_GRAPH_CLIENT_SECRET    " + std::string{graph} + "\n";
+}
+
+struct Run {
+    int exit_code;
+    std::string out;
+    std::string err;
+};
+
+using DefaultPath = std::function<std::filesystem::path()>;
+
+Run run(const Args& args, const DefaultPath& default_path)
+{
+    std::ostringstream out;
+    std::ostringstream err;
+    const int exit_code = rp::run_config_command(args, out, err, default_path);
+    return {exit_code, out.str(), err.str()};
+}
+
+Run run(const Args& args, const std::filesystem::path& default_path)
+{
+    return run(args, DefaultPath{[default_path] { return default_path; }});
+}
+
+// A default path that counts how often run_config_command asks for it.
+struct PathSpy {
+    int calls = 0;
+
+    DefaultPath provider()
+    {
+        return [this] {
+            ++calls;
+            return std::filesystem::path("unused.json");
+        };
+    }
+};
+
+} // namespace
+
+TEST_CASE("rpworker config prints usage and exits 2 for arguments it doesn't understand",
+          "[config_check]")
+{
+    const Args args = GENERATE(
+        Args{},
+        Args{""},
+        Args{"Check"},
+        Args{"show"},
+        Args{"--config", "x.json", "check"},
+        Args{"check", "--config"},
+        Args{"check", "x.json"},
+        Args{"check", "--config", "x.json", "extra"},
+        Args{"check", "--config", "x.json", "--config", "y.json"},
+        Args{"check", "--CONFIG", "x.json"},
+        Args{"check", "check"});
+    CAPTURE(args);
+    PathSpy spy;
+
+    const Run result = run(args, spy.provider());
+    REQUIRE(result.exit_code == 2);
+    REQUIRE(result.out.empty());
+    REQUIRE(result.err == kUsage);
+    // Usage errors never look up ProgramData.
+    REQUIRE(spy.calls == 0);
+}
+
+TEST_CASE("rpworker config check exits 1 with the error when the config doesn't load",
+          "[config_check]")
+{
+    const rp::test::TempDir dir;
+    const std::filesystem::path missing = dir.path() / "missing.json";
+    const std::string missing_arg = utf8(missing);
+
+    PathSpy spy;
+    const Run result = run(Args{"check", "--config", missing_arg}, spy.provider());
+    REQUIRE(result.exit_code == 1);
+    REQUIRE(result.out.empty());
+    REQUIRE(result.err == "config error: " + missing_arg + ": cannot read config file\n");
+}
+
+TEST_CASE("rpworker config check reports an invalid config without its values", "[config_check]")
+{
+    const rp::test::TempDir dir;
+    const auto path = dir.write("config.json", R"({"cloud_url": "http://SENTINEL-2a9f"})");
+    const std::string path_arg = utf8(path);
+
+    PathSpy spy;
+    const Run result = run(Args{"check", "--config", path_arg}, spy.provider());
+    REQUIRE(result.exit_code == 1);
+    REQUIRE(result.out.empty());
+    REQUIRE(result.err ==
+            "config error: " + path_arg +
+                ": config key \"cloud_url\" must be an https:// URL with no user name, password, "
+                "query or fragment\n");
+}
+
+TEST_CASE("rpworker config check prints every setting and masks the secrets", "[config_check]")
+{
+    const rp::test::TempDir dir;
+    const auto path = dir.write("config.json", kConfigJson);
+    const std::string path_arg = utf8(path);
+    const rp::test::ScopedEnv user(rp::kEnvVeeamUsername, "user-0c41");
+    const rp::test::ScopedEnv password(rp::kEnvVeeamPassword, "password-0c41");
+    const rp::test::ScopedEnv graph(rp::kEnvGraphClientSecret, std::nullopt);
+
+    PathSpy spy;
+    const Run result = run(Args{"check", "--config", path_arg}, spy.provider());
+    REQUIRE(result.err.empty());
+    REQUIRE(result.out == expected_output(path, "**** (set)", "**** (set)", "(not set)"));
+    REQUIRE(result.exit_code == 0);
+}
+
+TEST_CASE("rpworker config check reads the default path without --config", "[config_check]")
+{
+    const rp::test::TempDir dir;
+    const auto path = dir.write("config.json", kConfigJson);
+    const rp::test::ScopedEnv user(rp::kEnvVeeamUsername, std::nullopt);
+    const rp::test::ScopedEnv password(rp::kEnvVeeamPassword, std::nullopt);
+    const rp::test::ScopedEnv graph(rp::kEnvGraphClientSecret, "graph-0c41");
+
+    const Run result = run(Args{"check"}, path);
+    REQUIRE(result.err.empty());
+    REQUIRE(result.out == expected_output(path, "(not set)", "(not set)", "**** (set)"));
+    REQUIRE(result.exit_code == 0);
+}
+
+TEST_CASE("rpworker config check never prints a secret's value", "[config_check]")
+{
+    const rp::test::TempDir dir;
+    const auto path = dir.write("config.json", kConfigJson);
+    const rp::test::ScopedEnv user(rp::kEnvVeeamUsername, "SENTINEL-USER-91e7");
+    const rp::test::ScopedEnv password(rp::kEnvVeeamPassword, "SENTINEL-PASSWORD-91e7");
+    const rp::test::ScopedEnv graph(rp::kEnvGraphClientSecret, "SENTINEL-GRAPH-91e7");
+
+    const Run result = run(Args{"check"}, path);
+    REQUIRE(result.exit_code == 0);
+    const std::string all = result.out + result.err;
+    REQUIRE_THAT(all, !ContainsSubstring("SENTINEL"));
+    REQUIRE_THAT(all, !ContainsSubstring("91e7"));
+    REQUIRE_THAT(all, ContainsSubstring("RP_VEEAM_USERNAME         **** (set)\n"));
+    REQUIRE_THAT(all, ContainsSubstring("RP_VEEAM_PASSWORD         **** (set)\n"));
+    REQUIRE_THAT(all, ContainsSubstring("RP_GRAPH_CLIENT_SECRET    **** (set)\n"));
+}
+
+TEST_CASE("rpworker config check never prints a password in a URL", "[config_check]")
+{
+    const rp::test::TempDir dir;
+    std::string text = kConfigJson;
+    const std::string url = "https://cloud.example.invalid";
+    text.replace(text.find(url), url.size(), "https://user:SENTINEL-3b8d@cloud.example.invalid");
+    const auto path = dir.write("config.json", text);
+
+    const Run result = run(Args{"check"}, path);
+    REQUIRE(result.exit_code == 1);
+    REQUIRE_THAT(result.out + result.err, !ContainsSubstring("SENTINEL"));
+    REQUIRE_THAT(result.err, ContainsSubstring("\"cloud_url\""));
+}
+
+TEST_CASE("rpworker config check --config reads a UTF-8 path outside the ANSI code page",
+          "[config_check]")
+{
+    const rp::test::TempDir dir;
+    // Cyrillic letters: not in cp1252, the ANSI code page of a Western machine.
+    const auto path =
+        dir.write(std::filesystem::path(u8"\u0442\u0435\u0441\u0442.json"), kConfigJson);
+    const std::string path_arg = utf8(path);
+    const rp::test::ScopedEnv user(rp::kEnvVeeamUsername, std::nullopt);
+    const rp::test::ScopedEnv password(rp::kEnvVeeamPassword, std::nullopt);
+    const rp::test::ScopedEnv graph(rp::kEnvGraphClientSecret, std::nullopt);
+
+    PathSpy spy;
+    const Run result = run(Args{"check", "--config", path_arg}, spy.provider());
+    REQUIRE(result.err.empty());
+    REQUIRE(result.out == expected_output(path, "(not set)", "(not set)", "(not set)"));
+    REQUIRE(result.exit_code == 0);
+}
+
+TEST_CASE("rpworker config check reports an empty --config path as unreadable", "[config_check]")
+{
+    PathSpy spy;
+    const Run result = run(Args{"check", "--config", ""}, spy.provider());
+    REQUIRE(result.exit_code == 1);
+    REQUIRE(result.out.empty());
+    REQUIRE(result.err == "config error: : cannot read config file\n");
+    REQUIRE(spy.calls == 0);
+}
+
+TEST_CASE("rpworker config check reports a --config path that isn't UTF-8", "[config_check]")
+{
+    const std::string path_arg = GENERATE(std::string("\xFF.json"), std::string("a\xC3.json"),
+                                          std::string("\xED\xA0\x80.json"));
+    CAPTURE(path_arg);
+
+    PathSpy spy;
+    const Run result = run(Args{"check", "--config", path_arg}, spy.provider());
+    REQUIRE(result.exit_code == 1);
+    REQUIRE(result.out.empty());
+    REQUIRE(result.err == "config error: the --config path is not valid UTF-8\n");
+}
+
+TEST_CASE("rpworker config check --config never looks up the default path", "[config_check]")
+{
+    const rp::test::TempDir dir;
+    const std::string path_arg = utf8(dir.write("config.json", kConfigJson));
+    PathSpy spy;
+
+    REQUIRE(run(Args{"check", "--config", path_arg}, spy.provider()).exit_code == 0);
+    REQUIRE(spy.calls == 0);
+}
+
+TEST_CASE("rpworker config check reports a default path it can't find", "[config_check]")
+{
+    const DefaultPath fails = []() -> std::filesystem::path {
+        throw rp::ConfigError("", "cannot find the ProgramData folder");
+    };
+
+    const Run result = run(Args{"check"}, fails);
+    REQUIRE(result.exit_code == 1);
+    REQUIRE(result.out.empty());
+    REQUIRE(result.err == "config error: cannot find the ProgramData folder\n");
+}
+
+TEST_CASE("rpworker config check reports any other failure without its message",
+          "[config_check]")
+{
+    const DefaultPath fails = []() -> std::filesystem::path {
+        throw std::runtime_error("SENTINEL-d51f");
+    };
+
+    const Run result = run(Args{"check"}, fails);
+    REQUIRE(result.exit_code == 1);
+    REQUIRE(result.out.empty());
+    REQUIRE(result.err == "config error: unexpected failure\n");
+}
+
+TEST_CASE("rpworker config check reports a secret variable that isn't valid Unicode",
+          "[config_check]")
+{
+    const rp::test::TempDir dir;
+    const auto path = dir.write("config.json", kConfigJson);
+    const rp::test::ScopedEnv password(rp::kEnvVeeamPassword,
+                                       std::wstring{L"SENTINEL-8e15"} + L'\xDC00');
+
+    const Run result = run(Args{"check"}, path);
+    REQUIRE(result.exit_code == 1);
+    REQUIRE(result.out.empty());
+    REQUIRE(result.err ==
+            "config error: environment variable RP_VEEAM_PASSWORD is not valid Unicode\n");
+}
+
+TEST_CASE("rpworker config check prints no secret on any error path", "[config_check]")
+{
+    std::string with_password_key = kConfigJson;
+    with_password_key.insert(1, R"("veeam_password": "SENTINEL-FILE-7a64",)");
+    std::string with_userinfo = kConfigJson;
+    const std::string url = "https://veeam.example.invalid:4443";
+    with_userinfo.replace(with_userinfo.find(url), url.size(),
+                          "https://admin:SENTINEL-FILE-7a64@veeam.example.invalid:4443");
+    std::string with_key_name = kConfigJson;
+    with_key_name.insert(1, R"("SENTINEL-FILE-7a64\n": 1,)");
+
+    const std::string text = GENERATE_COPY(
+        std::string(R"({"cloud_url": "SENTINEL-FILE-7a64)"),
+        std::string(R"({"cloud_url": SENTINEL-FILE-7a64)"),
+        std::string(R"({"sample_mail": 1e400})"),
+        with_password_key,
+        with_userinfo,
+        with_key_name);
+    CAPTURE(text);
+    const rp::test::TempDir dir;
+    const auto path = dir.write("config.json", text);
+    const rp::test::ScopedEnv user(rp::kEnvVeeamUsername, "SENTINEL-ENV-USER-7a64");
+    const rp::test::ScopedEnv password(rp::kEnvVeeamPassword, "SENTINEL-ENV-PASSWORD-7a64");
+    const rp::test::ScopedEnv graph(rp::kEnvGraphClientSecret, "SENTINEL-ENV-GRAPH-7a64");
+
+    const Run result = run(Args{"check"}, path);
+    REQUIRE(result.exit_code == 1);
+    REQUIRE(result.out.empty());
+    REQUIRE_THAT(result.err, ContainsSubstring("config error: "));
+    REQUIRE_THAT(result.out + result.err, !ContainsSubstring("SENTINEL"));
+    REQUIRE_THAT(result.out + result.err, !ContainsSubstring("7a64"));
+}

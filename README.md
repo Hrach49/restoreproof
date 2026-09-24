@@ -8,7 +8,7 @@ through Microsoft Graph, compares them, cleans up, and uploads a signed, RFC 316
 evidence bundle. A **Cloud** backend (FastAPI) dispatches jobs, verifies and stores bundles,
 shows a dashboard, and generates monthly PDF reports for MSPs.
 
-Status: Stage 1, Sprint 0. See `CLAUDE.md` for the working agreements.
+Status: Stage 1, Sprint 1. See `CLAUDE.md` for the working agreements.
 
 ## Layout
 
@@ -28,6 +28,8 @@ Status: Stage 1, Sprint 0. See `CLAUDE.md` for the working agreements.
 - [Glossary](docs/glossary.md) — restore point, canary item, verification levels, pass /
   fail / error, evidence bundle, tokens, signing key.
 - [Environment](docs/environment.md) — the dev toolchain and its versions.
+- [Worker configuration](docs/worker-config.md) — `config.json` settings, secrets from
+  environment variables, and `rpworker config check`.
 - [Testing](docs/testing.md) — test rules, the CI coverage and "No test, no merge" gates, and
   the once-per-sprint mutation run.
 

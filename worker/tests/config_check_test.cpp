@@ -8,6 +8,8 @@
 #include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <nlohmann/json.hpp>
+
 #include <filesystem>
 #include <functional>
 #include <sstream>
@@ -49,9 +51,10 @@ std::string utf8(const std::filesystem::path& path)
 }
 
 // The output of a successful check of kConfigJson at `path`, with the three
-// secret lines given.
+// secret lines given and, when `ca_file` is set, veeam_ca_file added.
 std::string expected_output(const std::filesystem::path& path, std::string_view user,
-                            std::string_view password, std::string_view graph)
+                            std::string_view password, std::string_view graph,
+                            std::string_view ca_file = "(not set)")
 {
     return "config file: " + utf8(path) + "\n" +
            "cloud_url                 https://cloud.example.invalid\n"
@@ -70,6 +73,8 @@ std::string expected_output(const std::filesystem::path& path, std::string_view 
            "sample_sp                 7\n"
            "sample_od                 5\n"
            "log_level                 warn\n"
+           "veeam_ca_file             " +
+           std::string{ca_file} + "\n" +
            "secrets (environment variables; values are never shown):\n"
            "RP_VEEAM_USERNAME         " +
            std::string{user} + "\n" + "RP_VEEAM_PASSWORD         " + std::string{password} +
@@ -246,6 +251,44 @@ TEST_CASE("rpworker config check --config reads a UTF-8 path outside the ANSI co
     const Run result = run(Args{"check", "--config", path_arg}, spy.provider());
     REQUIRE(result.err.empty());
     REQUIRE(result.out == expected_output(path, "(not set)", "(not set)", "(not set)"));
+    REQUIRE(result.exit_code == 0);
+}
+
+TEST_CASE("rpworker config check reports a veeam_ca_file it can't read", "[config_check]")
+{
+    const rp::test::TempDir dir;
+    std::string text = kConfigJson;
+    const std::string ca_arg = utf8(dir.path() / "missing.pem");
+    text.insert(1, "\"veeam_ca_file\": " + nlohmann::json(ca_arg).dump() + ",");
+    const std::string path_arg = utf8(dir.write("config.json", text));
+
+    PathSpy spy;
+    const Run result = run(Args{"check", "--config", path_arg}, spy.provider());
+    REQUIRE(result.exit_code == 1);
+    REQUIRE(result.out.empty());
+    REQUIRE(result.err == "config error: " + path_arg +
+                              ": config key \"veeam_ca_file\" names a file that can't be read\n");
+}
+
+TEST_CASE("rpworker config check prints veeam_ca_file, outside the ANSI code page too",
+          "[config_check]")
+{
+    const rp::test::TempDir dir;
+    const std::filesystem::path name =
+        GENERATE(std::filesystem::path("veeam-ca.pem"),
+                 std::filesystem::path(u8"тест-ca.pem"));
+    const std::string ca_arg = utf8(dir.write(name, "-----BEGIN CERTIFICATE-----\n"));
+    CAPTURE(ca_arg);
+    std::string text = kConfigJson;
+    text.insert(1, "\"veeam_ca_file\": " + nlohmann::json(ca_arg).dump() + ",");
+    const auto path = dir.write("config.json", text);
+    const rp::test::ScopedEnv user(rp::kEnvVeeamUsername, std::nullopt);
+    const rp::test::ScopedEnv password(rp::kEnvVeeamPassword, std::nullopt);
+    const rp::test::ScopedEnv graph(rp::kEnvGraphClientSecret, std::nullopt);
+
+    const Run result = run(Args{"check"}, path);
+    REQUIRE(result.err.empty());
+    REQUIRE(result.out == expected_output(path, "(not set)", "(not set)", "(not set)", ca_arg));
     REQUIRE(result.exit_code == 0);
 }
 

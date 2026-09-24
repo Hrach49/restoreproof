@@ -805,9 +805,12 @@ TEST_CASE("config.example.json is a valid config of placeholders", "[config]")
     REQUIRE(config.log_level == "info");
 }
 
-TEST_CASE("config.example.json sets every key", "[config]")
+TEST_CASE("config.example.json sets every key but veeam_ca_file", "[config]")
 {
+    // veeam_ca_file must name a file that exists, so a placeholder would make
+    // the example fail to load; docs/worker-config.md documents it instead.
     std::ifstream file(std::filesystem::path(RP_CONFIG_EXAMPLE));
     const json doc = json::parse(file);
     REQUIRE(doc.size() == 16);
+    REQUIRE_FALSE(doc.contains("veeam_ca_file"));
 }

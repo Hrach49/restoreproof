@@ -6,6 +6,8 @@
 
 #include <cpr/cpr.h>
 
+#include <curl/curl.h>
+
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
@@ -146,7 +148,21 @@ cpr::Multipart make_multipart(const std::vector<MultipartPart>& parts)
     return cpr::Multipart{std::move(out)};
 }
 
-cpr::Response perform(const HttpRequest& request, const cpr::SslOptions& ssl)
+// With a CA file, curl's Schannel backend verifies the chain itself and checks
+// every certificate in it for revocation. A private CA often publishes no
+// revocation list, or one the Worker can't reach, and the strict check fails
+// on "status unknown". Best effort still rejects a certificate the CA has
+// revoked; it only lets an unknown or offline status through. cpr has no
+// setting for it, so this replaces the flags cpr's SetSslOptions() wrote
+// (its native-CA flag, which Schannel ignores, kept). The TLS source scan
+// allows exactly this statement.
+void allow_unknown_revocation_status(cpr::Session& session)
+{
+    curl_easy_setopt(session.GetCurlHolder()->handle, CURLOPT_SSL_OPTIONS,
+                     CURLSSLOPT_NATIVE_CA | CURLSSLOPT_REVOKE_BEST_EFFORT);
+}
+
+cpr::Response perform(const HttpRequest& request, const cpr::SslOptions& ssl, bool has_ca_file)
 {
     cpr::Session session;
     session.SetUrl(cpr::Url{request.url});
@@ -161,6 +177,9 @@ cpr::Response perform(const HttpRequest& request, const cpr::SslOptions& ssl)
     // another host.
     session.SetRedirect(cpr::Redirect{0L, false, false, cpr::PostRedirectFlags::NONE});
     session.SetSslOptions(ssl);
+    if (has_ca_file) {
+        allow_unknown_revocation_status(session);
+    }
     if (!request.parts.empty()) {
         session.SetMultipart(make_multipart(request.parts));
     } else if (!request.body.empty()) {
@@ -320,7 +339,7 @@ HttpResponse HttpClient::send(const HttpRequest& request)
 
     for (int attempt = 1;; ++attempt) {
         const auto start = options_.now();
-        const cpr::Response response = perform(request, ssl);
+        const cpr::Response response = perform(request, ssl, options_.ca_file.has_value());
         const auto elapsed = std::chrono::duration_cast<milliseconds>(options_.now() - start);
 
         const TransportError error = detail::classify(response.error.code);

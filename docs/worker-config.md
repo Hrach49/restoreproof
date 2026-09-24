@@ -87,6 +87,9 @@ problem and run `rpworker config check` again.
   Windows certificate store. It is used for the Veeam connection only: Microsoft Graph and the
   Cloud always use the Windows store. Certificate verification is always on, and no setting
   turns it off: a key such as `veeam_verify_tls` or `insecure` is rejected as unknown.
+  With `veeam_ca_file`, revocation is checked on a best-effort basis: a certificate on its
+  CA's revocation list is rejected, but one whose status can't be learned (an internal CA
+  that publishes no revocation list, or one the Worker can't reach) is accepted.
 - **`veeam_ca_file` must be an absolute path**, with a drive and a root
   (`C:\ProgramData\RestoreProof\veeam-ca.pem`, `/` works too) or a UNC share
   (`\\server\share\veeam-ca.pem`). The Worker runs as a Windows service whose working

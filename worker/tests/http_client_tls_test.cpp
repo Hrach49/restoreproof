@@ -1,6 +1,6 @@
-// W1.3: TLS against a real HTTPS server on 127.0.0.1, with self-signed
-// certificates made at test time. This is the Veeam case: a self-signed
-// certificate the Windows store doesn't trust, trusted through
+// W1.3: TLS against a real HTTPS server on 127.0.0.1, with certificates made
+// at test time. This is the Veeam case: a self-signed certificate, or one from
+// a private CA, that the Windows store doesn't trust, trusted through
 // HttpClientOptions::ca_file (curl's Schannel backend and CURLOPT_CAINFO).
 // Offline, these tests show that the CA file's certificate is accepted and
 // that others are rejected. They can't show that the Windows store is left
@@ -44,50 +44,141 @@ std::string bio_to_string(BIO* bio)
     return {data, static_cast<std::size_t>(length)};
 }
 
-void add_extension(X509* cert, int nid, const char* value)
+using KeyPtr = std::unique_ptr<EVP_PKEY, decltype(&EVP_PKEY_free)>;
+using CertPtr = std::unique_ptr<X509, decltype(&X509_free)>;
+
+// A certificate and its private key.
+struct Cert {
+    KeyPtr key{nullptr, &EVP_PKEY_free};
+    CertPtr cert{nullptr, &X509_free};
+
+    Pem pem() const
+    {
+        const std::unique_ptr<BIO, decltype(&BIO_free)> cert_bio(BIO_new(BIO_s_mem()), &BIO_free);
+        const std::unique_ptr<BIO, decltype(&BIO_free)> key_bio(BIO_new(BIO_s_mem()), &BIO_free);
+        REQUIRE(PEM_write_bio_X509(cert_bio.get(), cert.get()) == 1);
+        REQUIRE(PEM_write_bio_PrivateKey(key_bio.get(), key.get(), nullptr, nullptr, 0, nullptr,
+                                         nullptr) == 1);
+        return {bio_to_string(cert_bio.get()), bio_to_string(key_bio.get())};
+    }
+};
+
+// `issuer` is null for a self-signed certificate.
+void add_extension(X509* cert, const X509* issuer, int nid, const char* value)
 {
     X509V3_CTX ctx;
     X509V3_set_ctx_nodb(&ctx);
-    X509V3_set_ctx(&ctx, cert, cert, nullptr, nullptr, 0);
+    X509V3_set_ctx(&ctx, const_cast<X509*>(issuer ? issuer : cert), cert, nullptr, nullptr, 0);
     X509_EXTENSION* ext = X509V3_EXT_conf_nid(nullptr, &ctx, nid, value);
     REQUIRE(ext != nullptr);
     REQUIRE(X509_add_ext(cert, ext, -1) == 1);
     X509_EXTENSION_free(ext);
 }
 
-// A self-signed EC P-256 server certificate for 127.0.0.1 and localhost,
-// valid from an hour ago for a day.
-Pem make_self_signed(const char* common_name)
+enum class Role {
+    self_signed_server, // the Veeam case: CA:TRUE and a server certificate at once
+    ca,                 // a private CA that issues server certificates
+    leaf,               // a server certificate issued by `issuer`
+};
+
+// An EC P-256 certificate valid from an hour ago for a day. Server
+// certificates (self_signed_server and leaf) name 127.0.0.1 and localhost.
+// `crl_url`, for a leaf, is its CRL distribution point.
+Cert make_cert(const char* common_name, Role role, const Cert* issuer = nullptr,
+               const char* crl_url = nullptr)
 {
-    const std::unique_ptr<EVP_PKEY, decltype(&EVP_PKEY_free)> key(EVP_EC_gen("P-256"),
-                                                                  &EVP_PKEY_free);
-    REQUIRE(key);
-    const std::unique_ptr<X509, decltype(&X509_free)> cert(X509_new(), &X509_free);
-    REQUIRE(cert);
-    REQUIRE(X509_set_version(cert.get(), X509_VERSION_3) == 1);
+    REQUIRE((role == Role::leaf) == (issuer != nullptr));
+    Cert out;
+    out.key.reset(EVP_EC_gen("P-256"));
+    REQUIRE(out.key);
+    out.cert.reset(X509_new());
+    REQUIRE(out.cert);
+    X509* cert = out.cert.get();
+    REQUIRE(X509_set_version(cert, X509_VERSION_3) == 1);
     // A random serial: two certificates with the same issuer name and serial
-    // could confuse the verifier.
+    // could confuse the verifier (and a CRL names certificates by serial).
     std::random_device rd;
-    REQUIRE(ASN1_INTEGER_set(X509_get_serialNumber(cert.get()), static_cast<long>(rd() >> 1)) == 1);
-    X509_gmtime_adj(X509_getm_notBefore(cert.get()), -3600);
-    X509_gmtime_adj(X509_getm_notAfter(cert.get()), 86400);
-    X509_NAME* name = X509_get_subject_name(cert.get());
+    REQUIRE(ASN1_INTEGER_set(X509_get_serialNumber(cert), static_cast<long>(rd() >> 1)) == 1);
+    X509_gmtime_adj(X509_getm_notBefore(cert), -3600);
+    X509_gmtime_adj(X509_getm_notAfter(cert), 86400);
+    X509_NAME* name = X509_get_subject_name(cert);
     X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC,
                                reinterpret_cast<const unsigned char*>(common_name), -1, -1, 0);
-    REQUIRE(X509_set_issuer_name(cert.get(), name) == 1);
-    REQUIRE(X509_set_pubkey(cert.get(), key.get()) == 1);
-    add_extension(cert.get(), NID_subject_alt_name, "IP:127.0.0.1,DNS:localhost");
-    add_extension(cert.get(), NID_basic_constraints, "critical,CA:TRUE");
-    add_extension(cert.get(), NID_key_usage, "critical,digitalSignature,keyCertSign");
-    add_extension(cert.get(), NID_ext_key_usage, "serverAuth");
-    REQUIRE(X509_sign(cert.get(), key.get(), EVP_sha256()) > 0);
+    const X509* issuer_cert = issuer ? issuer->cert.get() : nullptr;
+    REQUIRE(X509_set_issuer_name(cert, issuer_cert ? X509_get_subject_name(issuer_cert) : name) ==
+            1);
+    REQUIRE(X509_set_pubkey(cert, out.key.get()) == 1);
+    add_extension(cert, issuer_cert, NID_subject_key_identifier, "hash");
+    add_extension(cert, issuer_cert, NID_authority_key_identifier, "keyid:always");
+    switch (role) {
+    case Role::self_signed_server:
+        add_extension(cert, nullptr, NID_basic_constraints, "critical,CA:TRUE");
+        add_extension(cert, nullptr, NID_key_usage, "critical,digitalSignature,keyCertSign");
+        break;
+    case Role::ca:
+        add_extension(cert, nullptr, NID_basic_constraints, "critical,CA:TRUE");
+        add_extension(cert, nullptr, NID_key_usage, "critical,keyCertSign,cRLSign");
+        break;
+    case Role::leaf:
+        add_extension(cert, issuer_cert, NID_basic_constraints, "critical,CA:FALSE");
+        add_extension(cert, issuer_cert, NID_key_usage, "critical,digitalSignature");
+        if (crl_url) {
+            add_extension(cert, issuer_cert, NID_crl_distribution_points,
+                          (std::string{"URI:"} + crl_url).c_str());
+        }
+        break;
+    }
+    if (role != Role::ca) {
+        add_extension(cert, issuer_cert, NID_subject_alt_name, "IP:127.0.0.1,DNS:localhost");
+        add_extension(cert, issuer_cert, NID_ext_key_usage, "serverAuth");
+    }
+    EVP_PKEY* signer = issuer ? issuer->key.get() : out.key.get();
+    REQUIRE(X509_sign(cert, signer, EVP_sha256()) > 0);
+    return out;
+}
 
-    const std::unique_ptr<BIO, decltype(&BIO_free)> cert_bio(BIO_new(BIO_s_mem()), &BIO_free);
-    const std::unique_ptr<BIO, decltype(&BIO_free)> key_bio(BIO_new(BIO_s_mem()), &BIO_free);
-    REQUIRE(PEM_write_bio_X509(cert_bio.get(), cert.get()) == 1);
-    REQUIRE(PEM_write_bio_PrivateKey(key_bio.get(), key.get(), nullptr, nullptr, 0, nullptr,
-                                     nullptr) == 1);
-    return {bio_to_string(cert_bio.get()), bio_to_string(key_bio.get())};
+Pem make_self_signed(const char* common_name)
+{
+    return make_cert(common_name, Role::self_signed_server).pem();
+}
+
+// A DER CRL from `ca`, valid from an hour ago for a day, listing `revoked`
+// (none when null).
+std::string make_crl(const Cert& ca, const Cert* revoked)
+{
+    const std::unique_ptr<X509_CRL, decltype(&X509_CRL_free)> crl(X509_CRL_new(),
+                                                                  &X509_CRL_free);
+    REQUIRE(crl);
+    REQUIRE(X509_CRL_set_version(crl.get(), X509_CRL_VERSION_2) == 1);
+    REQUIRE(X509_CRL_set_issuer_name(crl.get(), X509_get_subject_name(ca.cert.get())) == 1);
+    const std::unique_ptr<ASN1_TIME, decltype(&ASN1_TIME_free)> last(
+        X509_gmtime_adj(nullptr, -3600), &ASN1_TIME_free);
+    const std::unique_ptr<ASN1_TIME, decltype(&ASN1_TIME_free)> next(
+        X509_gmtime_adj(nullptr, 86400), &ASN1_TIME_free);
+    REQUIRE(X509_CRL_set1_lastUpdate(crl.get(), last.get()) == 1);
+    REQUIRE(X509_CRL_set1_nextUpdate(crl.get(), next.get()) == 1);
+    if (revoked) {
+        X509_REVOKED* entry = X509_REVOKED_new();
+        REQUIRE(entry != nullptr);
+        REQUIRE(X509_REVOKED_set_serialNumber(entry,
+                                              X509_get_serialNumber(revoked->cert.get())) == 1);
+        REQUIRE(X509_REVOKED_set_revocationDate(entry, last.get()) == 1);
+        REQUIRE(X509_CRL_add0_revoked(crl.get(), entry) == 1);
+    }
+    X509V3_CTX ctx;
+    X509V3_set_ctx_nodb(&ctx);
+    X509V3_set_ctx(&ctx, ca.cert.get(), nullptr, nullptr, crl.get(), 0);
+    X509_EXTENSION* aki =
+        X509V3_EXT_conf_nid(nullptr, &ctx, NID_authority_key_identifier, "keyid:always");
+    REQUIRE(aki != nullptr);
+    REQUIRE(X509_CRL_add_ext(crl.get(), aki, -1) == 1);
+    X509_EXTENSION_free(aki);
+    REQUIRE(X509_CRL_sort(crl.get()) == 1);
+    REQUIRE(X509_CRL_sign(crl.get(), ca.key.get(), EVP_sha256()) > 0);
+
+    const std::unique_ptr<BIO, decltype(&BIO_free)> bio(BIO_new(BIO_s_mem()), &BIO_free);
+    REQUIRE(i2d_X509_CRL_bio(bio.get(), crl.get()) == 1);
+    return bio_to_string(bio.get());
 }
 
 std::unique_ptr<httplib::SSLServer> make_https_server(const Pem& pem)
@@ -191,6 +282,77 @@ TEST_CASE("a self-signed server certificate is trusted through a CA file holding
             CAPTURE(e.what());
             CHECK(e.error() == rp::TransportError::tls);
             CHECK(e.attempts() == 1);
+        }
+    }
+}
+
+// A CA file makes curl verify the chain itself, with a revocation check on
+// every certificate. A private CA often publishes no CRL at all, or one the
+// Worker can't reach, and a strict check fails on "status unknown" with no
+// setting to fix it. So revocation is checked on a best-effort basis: a
+// certificate the CA has revoked is still rejected.
+TEST_CASE("a certificate from a private CA is checked for revocation as far as it can be",
+          "[http][tls]")
+{
+    const Cert ca = make_cert("rp-test-private-ca", Role::ca);
+    const rp::test::TempDir dir;
+    const std::filesystem::path ca_path = dir.write("private-ca.pem", ca.pem().cert);
+    rp::HttpClient client = make_client(to_utf8(ca_path));
+
+    // The CRL is served over plain HTTP from 127.0.0.1, as a CA's CDP would be.
+    std::string crl;
+    rp::test::LocalHttpServer crl_server;
+    crl_server.server().Get("/ca.crl", [&crl](const httplib::Request&, httplib::Response& res) {
+        res.set_content(crl, "application/pkix-crl");
+    });
+    const std::string crl_url = crl_server.url("/ca.crl");
+    const std::string offline_url =
+        "http://127.0.0.1:" + std::to_string(rp::test::closed_local_port()) + "/ca.crl";
+
+    const auto get = [&client](const Cert& leaf) {
+        rp::test::BasicLocalServer<httplib::SSLServer> server(make_https_server(leaf.pem()));
+        return client.get(server.url("/"));
+    };
+    const auto check_accepted = [&get](const Cert& leaf) {
+        try {
+            const rp::HttpResponse response = get(leaf);
+            CHECK(response.status == 200);
+            CHECK(response.body == "secure");
+        } catch (const rp::HttpError& e) {
+            FAIL("HttpError: " << e.what());
+        }
+    };
+
+    SECTION("a leaf with no CRL distribution point is accepted")
+    {
+        check_accepted(make_cert("rp-test-leaf", Role::leaf, &ca));
+    }
+
+    SECTION("a leaf whose CRL can't be fetched is accepted")
+    {
+        check_accepted(make_cert("rp-test-leaf", Role::leaf, &ca, offline_url.c_str()));
+    }
+
+    SECTION("a leaf the CA's CRL doesn't list is accepted")
+    {
+        const Cert leaf = make_cert("rp-test-leaf", Role::leaf, &ca, crl_url.c_str());
+        crl = make_crl(ca, nullptr);
+        check_accepted(leaf);
+    }
+
+    SECTION("a leaf the CA's CRL lists as revoked is rejected: TLS failure, not retried")
+    {
+        const Cert leaf = make_cert("rp-test-leaf", Role::leaf, &ca, crl_url.c_str());
+        crl = make_crl(ca, &leaf);
+        try {
+            get(leaf);
+            FAIL("a revoked certificate was accepted");
+        } catch (const rp::HttpError& e) {
+            const std::string what = e.what();
+            CAPTURE(what);
+            CHECK(e.error() == rp::TransportError::tls);
+            CHECK(e.attempts() == 1);
+            CHECK(what.find("revoked") != std::string::npos);
         }
     }
 }

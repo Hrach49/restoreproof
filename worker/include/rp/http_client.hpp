@@ -120,8 +120,12 @@ struct HttpClientOptions {
     // Veeam certificate (Config::veeam_ca_file). Only the Veeam connection
     // sets it. curl's Schannel backend builds the chain against the CA file
     // alone (its exclusive-root engine), so the file replaces the Windows
-    // store rather than adding to it. A file that can't be read is a TLS
-    // failure. There is no way to turn verification off.
+    // store rather than adding to it. With a CA file, revocation is checked
+    // on a best-effort basis: a certificate on its CA's revocation list is
+    // rejected, but one whose status can't be learned (no CRL published, or
+    // not reachable) is accepted, as a private CA often publishes none. A
+    // file that can't be read is a TLS failure. There is no way to turn
+    // verification off.
     std::optional<std::string> ca_file;
     // Where the per-attempt debug lines go; null = spdlog::default_logger() at
     // the time of the call, and if that is null too (after spdlog::drop_all()

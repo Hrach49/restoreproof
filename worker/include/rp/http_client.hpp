@@ -140,6 +140,8 @@ struct HttpClientOptions {
 //  - Up to kMaxHttpAttempts attempts, as rp::should_retry() and
 //    rp::retry_delay() decide: connect errors, timeouts and 5xx are retried;
 //    4xx, TLS failures and malformed URLs are not.
+//  - A request timeout of zero or less throws std::invalid_argument before
+//    anything is sent (curl would read 0 as "no timeout").
 //  - Redirects are never followed: a 3xx is returned to the caller.
 //  - TLS peer and host verification are always on.
 //  - One debug line per attempt, redacted with rp::redact(); headers and

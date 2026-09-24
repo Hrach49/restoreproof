@@ -11,6 +11,7 @@ GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 
 RETRY_STATUSES = frozenset({429, 502, 503, 504})
 _MAX_DETAIL = 300
+_NOT_RETRIED = "the outcome is unknown, so it was not retried"
 
 # Kept literal in query strings, as in Graph's documented URLs ("$filter=subject eq 'x'",
 # "$select=a,b", "@microsoft.graph.conflictBehavior=fail"); all are legal in a query.
@@ -39,6 +40,10 @@ class GraphError(Exception):
 
 class GraphForbidden(GraphError):
     """HTTP 403: usually the wrong account is signed in, or consent is missing."""
+
+
+class GraphOutcomeUnknown(GraphError):
+    """A call that is not safe to repeat got no answer, or a 502/503/504: Graph may have done it."""
 
 
 class GraphClient:
@@ -72,7 +77,11 @@ class GraphClient:
         body: bytes | None = None,
         json_body: Any = None,
         owner: str | None = None,
+        idempotent: bool = True,
     ) -> HttpResponse:
+        """idempotent=False (sendMail, a fail-on-conflict upload): after no response or a
+        502/503/504 Graph may have done it, so raise GraphOutcomeUnknown instead of sending it
+        again. 429 is still retried: Graph rejected the request without doing it."""
         url = self._base_url + path
         if params:
             url += "?" + urlencode(params, safe=_QUERY_SAFE, quote_via=quote)
@@ -88,6 +97,9 @@ class GraphClient:
             try:
                 resp = self._transport.request(method, url, all_headers, body)
             except TransportError as exc:
+                if not idempotent:
+                    msg = f"{method} {path} as {self.account}: no response ({exc}); {_NOT_RETRIED}"
+                    raise GraphOutcomeUnknown(_scrub(msg, token), status=None, method=method, path=path) from None
                 if attempt == self._max_attempts:
                     msg = f"{method} {path} failed after {attempt} attempts: {exc}"
                     raise GraphError(_scrub(msg, token), status=None, method=method, path=path) from None
@@ -95,19 +107,30 @@ class GraphClient:
                 continue
             if 200 <= resp.status < 300:
                 return resp
-            if resp.status in RETRY_STATUSES and attempt < self._max_attempts:
+            retry = resp.status in RETRY_STATUSES and (idempotent or resp.status == 429)
+            if retry and attempt < self._max_attempts:
                 self._sleep(_retry_delay(resp, attempt))
                 continue
-            raise self._error(resp, method, path, owner, attempt, token)
+            raise self._error(resp, method, path, owner, attempt, token, idempotent)
         raise AssertionError("unreachable")  # pragma: no cover
 
     def _error(
-        self, resp: HttpResponse, method: str, path: str, owner: str | None, attempts: int, token: str
+        self,
+        resp: HttpResponse,
+        method: str,
+        path: str,
+        owner: str | None,
+        attempts: int,
+        token: str,
+        idempotent: bool = True,
     ) -> GraphError:
         where = f"{method} {path} as {self.account}"
         detail = _graph_detail(resp)
         cls = GraphError
-        if resp.status == 403:
+        if not idempotent and resp.status in RETRY_STATUSES - {429}:
+            cls = GraphOutcomeUnknown
+            msg = f"{where}: HTTP {resp.status}{detail}; {_NOT_RETRIED}"
+        elif resp.status == 403:
             cls = GraphForbidden
             if owner and owner.lower() != self.account.lower():
                 hint = (
@@ -143,11 +166,19 @@ class GraphClient:
     def get_bytes(self, path: str, owner: str | None = None) -> bytes:
         return self.request("GET", path, owner=owner).body
 
-    def post_json(self, path: str, payload: Any, owner: str | None = None) -> HttpResponse:
-        return self.request("POST", path, json_body=payload, owner=owner)
+    def post_json(
+        self, path: str, payload: Any, owner: str | None = None, *, idempotent: bool = True
+    ) -> HttpResponse:
+        return self.request("POST", path, json_body=payload, owner=owner, idempotent=idempotent)
 
     def put_bytes(
-        self, path: str, data: bytes, *, params: Mapping[str, str] | None = None, owner: str | None = None
+        self,
+        path: str,
+        data: bytes,
+        *,
+        params: Mapping[str, str] | None = None,
+        owner: str | None = None,
+        idempotent: bool = True,
     ) -> Any:
         resp = self.request(
             "PUT",
@@ -156,6 +187,7 @@ class GraphClient:
             headers={"Content-Type": "application/octet-stream"},
             body=data,
             owner=owner,
+            idempotent=idempotent,
         )
         return resp.json()
 
@@ -247,7 +279,17 @@ def send_mail(
         },
         "saveToSentItems": True,
     }
-    resp = g.post_json("/me/sendMail", payload, owner=owner)
+    # Not idempotent: a second POST after an unknown outcome could deliver the mail twice.
+    try:
+        resp = g.post_json("/me/sendMail", payload, owner=owner, idempotent=False)
+    except GraphOutcomeUnknown as exc:
+        raise GraphOutcomeUnknown(
+            f"{exc}. {subject} may have been sent. Wait a few minutes, then run seed again: "
+            "it finds the mails already delivered, and those are not sent twice.",
+            status=exc.status,
+            method=exc.method,
+            path=exc.path,
+        ) from None
     if resp.status != 202:
         raise GraphError(
             f"POST /me/sendMail as {g.account}: expected HTTP 202, got {resp.status}",
@@ -275,8 +317,18 @@ def upload_file(
     """Simple upload (fine below 250 MB). Returns the driveItem JSON."""
     path = _item_path(drive_id, folder_id, name) + "/content"
     params = {"@microsoft.graph.conflictBehavior": "replace" if replace else "fail"}
+    # Replacing is idempotent. Failing on a conflict is not: a retry after an upload that
+    # did happen gets 409, and the 409 message below would wrongly point at --force.
     try:
-        return g.put_bytes(path, data, params=params, owner=owner)
+        return g.put_bytes(path, data, params=params, owner=owner, idempotent=replace)
+    except GraphOutcomeUnknown as exc:
+        raise GraphOutcomeUnknown(
+            f"{exc}. {name} may have been uploaded; run seed again: it finds the files already "
+            "uploaded, and those are not uploaded twice.",
+            status=exc.status,
+            method=exc.method,
+            path=exc.path,
+        ) from None
     except GraphError as exc:
         if exc.status != 409:
             raise

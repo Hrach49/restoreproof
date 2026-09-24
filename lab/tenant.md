@@ -62,4 +62,8 @@ steps: `lab/README.md`. Record the ID in backticks, like the IDs above:
 
 | | |
 |---|---|
-| RestoreProof Lab Seeder, application (client) ID | _to be added after the app is registered (lab/README.md)_ |
+| RestoreProof Lab Seeder, application (client) ID | `153b6fd7-36c1-41bf-9e90-238326ba2364` |
+
+Created on 2026-09-25 with the Microsoft Graph PowerShell script in `lab/README.md`: single tenant,
+redirect URI `http://localhost`, public client flows allowed, and tenant-wide admin consent for
+the five delegated scopes.

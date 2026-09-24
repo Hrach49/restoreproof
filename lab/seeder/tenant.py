@@ -22,5 +22,5 @@ ONEDRIVE_FOLDER_ID = "01ZK75LGF7FPAIWTU5MFGIMX6YUFEV7ZC4"
 ONEDRIVE_FOLDER_PATH = "/RestoreTest"
 
 # "RestoreProof Lab Seeder" public-client app registration (lab/README.md). A client ID is
-# not a secret. Empty until the app exists; --client-id or RP_LAB_CLIENT_ID override it.
-SEEDER_CLIENT_ID = ""
+# not a secret. --client-id or RP_LAB_CLIENT_ID override it.
+SEEDER_CLIENT_ID = "153b6fd7-36c1-41bf-9e90-238326ba2364"

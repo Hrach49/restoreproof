@@ -76,6 +76,42 @@ A client ID is not a secret. No client secret or certificate is created: a publi
 none. Until the ID is committed, pass it with `--client-id` or the `RP_LAB_CLIENT_ID`
 environment variable.
 
+### Or with PowerShell
+
+The same registration from the Microsoft Graph PowerShell modules. This is how the lab's app
+was created (2026-09-25); its client ID is in `tenant.md`. Run as the global admin:
+
+```powershell
+Install-Module Microsoft.Graph.Authentication, Microsoft.Graph.Applications, Microsoft.Graph.Identity.SignIns -Scope CurrentUser
+
+$tenantId = 'bcd6bd1a-ea42-489d-aa28-2c19a44ad146'
+$appName  = 'RestoreProof Lab Seeder'
+$scopes   = 'Mail.Send','Mail.Read','Files.ReadWrite','Sites.ReadWrite.All','User.Read'
+
+Connect-MgGraph -TenantId $tenantId -Scopes 'Application.ReadWrite.All','DelegatedPermissionGrant.ReadWrite.All' -NoWelcome
+
+$existing = Get-MgApplication -Filter "displayName eq '$appName'"
+if ($existing) { "Already exists. Client ID: $($existing.AppId)"; return }
+
+# Delegated scope IDs looked up by name from Microsoft Graph's service principal.
+$graphSp = Get-MgServicePrincipal -Filter "appId eq '00000003-0000-0000-c000-000000000000'"
+$access  = $graphSp.Oauth2PermissionScopes | Where-Object { $scopes -contains $_.Value } |
+           ForEach-Object { @{ Id = $_.Id; Type = 'Scope' } }
+
+$app = New-MgApplication -DisplayName $appName -SignInAudience 'AzureADMyOrg' `
+         -IsFallbackPublicClient:$true `
+         -PublicClient @{ RedirectUris = @('http://localhost') } `
+         -RequiredResourceAccess @(@{ ResourceAppId = $graphSp.AppId; ResourceAccess = $access })
+
+# Service principal, then tenant-wide admin consent for the five delegated scopes.
+$sp = New-MgServicePrincipal -AppId $app.AppId
+New-MgOauth2PermissionGrant -ClientId $sp.Id -ConsentType 'AllPrincipals' `
+    -ResourceId $graphSp.Id -Scope ($scopes -join ' ') | Out-Null
+
+"Client ID: $($app.AppId)"
+Disconnect-MgGraph | Out-Null
+```
+
 ## Commands
 
 Run from `lab/`:

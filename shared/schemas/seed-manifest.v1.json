@@ -1,0 +1,398 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://restoreproof.local/schemas/seed-manifest.v1.json",
+  "title": "RestoreProof canary seed manifest v1",
+  "description": "lab/seed-manifest.json: the 40 known items (20 mails, 20 files) seeded into the test tenant by `python -m seeder seed` (L1.2). It is the expected set the Worker verifies restores against (W3.1 reads it, W3.2 compares). Written as UTF-8 JSON with sorted keys, 2-space indent and LF line endings. Hashes are 64 lower-case hex SHA-256 digits; dates are ISO-8601 UTC with whole seconds (YYYY-MM-DDTHH:MM:SSZ). Some rules the schema cannot express are checked by lab/seeder/manifest.py validate_manifest: entry ids are unique and in catalog order, mail subject == id, file name == id, file_type == the name's extension, location.mailbox == recipient, stored_matches_local == (stored_sha256 == local_sha256), body_readback_exact implies body_sha256 == sent_body_sha256, and dates are real calendar dates.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "tenant", "tenant_id", "seeded_at", "rules", "entries"],
+  "properties": {
+    "schema": {
+      "title": "Schema id",
+      "description": "Always \"seed-manifest.v1\". A reader must refuse any other value.",
+      "const": "seed-manifest.v1"
+    },
+    "tenant": {
+      "title": "Tenant domain",
+      "description": "Initial domain of the Microsoft 365 test tenant the items were seeded into, e.g. RestoreProofLab.onmicrosoft.com.",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9-]+\\.onmicrosoft\\.com$"
+    },
+    "tenant_id": {
+      "title": "Tenant id",
+      "description": "Entra ID (Azure AD) tenant GUID of the test tenant, lower-case.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "seeded_at": {
+      "title": "Seeded at",
+      "description": "UTC time the seed run wrote this manifest. Veeam backups taken after this time contain all 40 items.",
+      "$ref": "#/$defs/utc_datetime"
+    },
+    "rules": {
+      "title": "Rules",
+      "description": "Plain-English statements of how the set is laid out and how to compare restored items. Informational; the entry fields are authoritative.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mail_recipients", "file_types", "file_locations", "mail_body_hash", "file_hash"],
+      "properties": {
+        "mail_recipients": {
+          "title": "Mail recipients rule",
+          "description": "Which mailbox holds which canary mail and who sent them.",
+          "type": "string"
+        },
+        "file_types": {
+          "title": "File types rule",
+          "description": "How the file type follows from the file number.",
+          "type": "string"
+        },
+        "file_locations": {
+          "title": "File locations rule",
+          "description": "Which files are in the SharePoint library and which in the OneDrive folder.",
+          "type": "string"
+        },
+        "mail_body_hash": {
+          "title": "Mail body hash rule",
+          "description": "How body_sha256 is computed (normalisation text-v1).",
+          "type": "string"
+        },
+        "file_hash": {
+          "title": "File hash rule",
+          "description": "Which hash a restored file is compared with (stored_sha256).",
+          "type": "string"
+        }
+      }
+    },
+    "entries": {
+      "title": "Entries",
+      "description": "Exactly 40 items: mails RP-CANARY-0001..RP-CANARY-0020 in order, then files rp-canary-01..rp-canary-20 in order. The kind field selects the entry shape.",
+      "type": "array",
+      "minItems": 40,
+      "maxItems": 40,
+      "items": {
+        "oneOf": [
+          {"$ref": "#/$defs/mail_entry"},
+          {"$ref": "#/$defs/sharepoint_file_entry"},
+          {"$ref": "#/$defs/onedrive_file_entry"}
+        ]
+      }
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "title": "SHA-256",
+      "description": "SHA-256 digest as 64 lower-case hex characters.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "utc_datetime": {
+      "title": "UTC date-time",
+      "description": "ISO-8601 UTC date-time with whole seconds and a Z suffix, YYYY-MM-DDTHH:MM:SSZ. Graph's fractional seconds are dropped (truncated) and offsets converted to UTC.",
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+    },
+    "upn": {
+      "title": "User principal name",
+      "description": "A user's sign-in name / primary SMTP address in the test tenant.",
+      "type": "string",
+      "pattern": "^[^@\\s]+@[^@\\s]+$"
+    },
+    "non_empty": {
+      "title": "Non-empty string",
+      "description": "An opaque identifier; compare it exactly.",
+      "type": "string",
+      "minLength": 1
+    },
+    "size": {
+      "title": "Size in bytes",
+      "description": "Byte count of a file's content.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "file_name": {
+      "title": "Canary file name",
+      "description": "rp-canary-NN.<type>, NN = 01..20.",
+      "type": "string",
+      "pattern": "^rp-canary-(0[1-9]|1[0-9]|20)\\.(pdf|docx|xlsx|txt|png)$"
+    },
+    "file_type": {
+      "title": "File type",
+      "description": "The file's extension. Cycles pdf, docx, xlsx, txt, png by file number (01 pdf ... 20 png).",
+      "enum": ["pdf", "docx", "xlsx", "txt", "png"]
+    },
+    "mail_entry": {
+      "title": "Mail entry",
+      "description": "A plain-text mail sent by the tenant admin to alice (0001..0010) or bob (0011..0020), as read back from the recipient's mailbox through Microsoft Graph.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "kind", "subject", "sender", "recipient", "location", "sent_at", "received_at",
+        "internet_message_id", "graph_message_id", "body_content_type", "body_normalization",
+        "body_sha256", "sent_body_sha256", "body_readback_exact"
+      ],
+      "properties": {
+        "id": {
+          "title": "Entry id",
+          "description": "Unique entry id; for mails the same as the subject, RP-CANARY-0001..RP-CANARY-0020.",
+          "type": "string",
+          "pattern": "^RP-CANARY-(000[1-9]|001[0-9]|0020)$"
+        },
+        "kind": {
+          "title": "Kind",
+          "description": "Always \"mail\" for this entry shape.",
+          "const": "mail"
+        },
+        "subject": {
+          "title": "Subject",
+          "description": "Message subject; equal to id. Use it to find the restored message.",
+          "type": "string",
+          "pattern": "^RP-CANARY-(000[1-9]|001[0-9]|0020)$"
+        },
+        "sender": {
+          "title": "Sender",
+          "description": "from.emailAddress.address as Graph returned it on read-back (the admin). Compare case-insensitively.",
+          "$ref": "#/$defs/upn"
+        },
+        "recipient": {
+          "title": "Recipient",
+          "description": "UPN of the mailbox the mail was sent to (from the catalog).",
+          "$ref": "#/$defs/upn"
+        },
+        "location": {
+          "title": "Mail location",
+          "description": "Where the message sits in the tenant.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mailbox", "folder"],
+          "properties": {
+            "mailbox": {
+              "title": "Mailbox",
+              "description": "UPN of the mailbox holding the message; equal to recipient.",
+              "$ref": "#/$defs/upn"
+            },
+            "folder": {
+              "title": "Folder",
+              "description": "displayName of the message's parent folder at seed time (normally Inbox).",
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "sent_at": {
+          "title": "Sent at",
+          "description": "Graph sentDateTime, UTC, whole seconds.",
+          "$ref": "#/$defs/utc_datetime"
+        },
+        "received_at": {
+          "title": "Received at",
+          "description": "Graph receivedDateTime in the recipient's mailbox, UTC, whole seconds.",
+          "$ref": "#/$defs/utc_datetime"
+        },
+        "internet_message_id": {
+          "title": "Internet message id",
+          "description": "RFC 5322 Message-ID (Graph internetMessageId), angle brackets included. Stable across restores.",
+          "type": "string",
+          "pattern": "^<[^<>\\s]+>$"
+        },
+        "graph_message_id": {
+          "title": "Graph message id",
+          "description": "Graph ImmutableId of the message in the recipient's mailbox (read with Prefer: IdType=\"ImmutableId\"). A restored copy gets a new id.",
+          "$ref": "#/$defs/non_empty"
+        },
+        "body_content_type": {
+          "title": "Body content type",
+          "description": "Always \"text\": the body was sent as text and read back with Prefer: outlook.body-content-type=\"text\".",
+          "const": "text"
+        },
+        "body_normalization": {
+          "title": "Body normalisation",
+          "description": "Always \"text-v1\": drop one leading U+FEFF; CRLF then lone CR to LF; strip trailing spaces and tabs per line; strip trailing LFs; UTF-8. Vectors: shared/testdata/body-normalization-text-v1.json.",
+          "const": "text-v1"
+        },
+        "body_sha256": {
+          "title": "Body SHA-256",
+          "description": "SHA-256 of the body READ BACK from the recipient's mailbox, normalised with body_normalization. Compare a restored message's normalised body with this.",
+          "$ref": "#/$defs/sha256"
+        },
+        "sent_body_sha256": {
+          "title": "Sent body SHA-256",
+          "description": "SHA-256 of the catalog body that was sent, normalised the same way. Lets `python -m seeder hash` re-check the catalog offline.",
+          "$ref": "#/$defs/sha256"
+        },
+        "body_readback_exact": {
+          "title": "Body read back exactly",
+          "description": "True when the read-back body string equalled the sent string before normalisation. When true, body_sha256 == sent_body_sha256.",
+          "type": "boolean"
+        }
+      }
+    },
+    "file_entry_common": {
+      "title": "File entry fields",
+      "description": "Fields shared by SharePoint and OneDrive file entries (location is defined per kind).",
+      "type": "object",
+      "required": [
+        "id", "kind", "name", "file_type", "location", "drive_item_id", "uploaded_by",
+        "last_modified_at", "local_sha256", "local_size", "stored_sha256", "stored_size",
+        "stored_matches_local"
+      ],
+      "properties": {
+        "id": {
+          "title": "Entry id",
+          "description": "Unique entry id; for files the same as the file name.",
+          "$ref": "#/$defs/file_name"
+        },
+        "kind": {
+          "title": "Kind",
+          "description": "sharepoint_file or onedrive_file; selects the location shape.",
+          "enum": ["sharepoint_file", "onedrive_file"]
+        },
+        "name": {
+          "title": "File name",
+          "description": "The driveItem name; equal to id.",
+          "$ref": "#/$defs/file_name"
+        },
+        "file_type": {
+          "title": "File type",
+          "description": "Extension of name.",
+          "$ref": "#/$defs/file_type"
+        },
+        "location": {
+          "title": "File location",
+          "description": "Where the file sits; shape depends on kind.",
+          "type": "object"
+        },
+        "drive_item_id": {
+          "title": "Drive item id",
+          "description": "Graph driveItem id of the uploaded file. A restored copy gets a new id.",
+          "$ref": "#/$defs/non_empty"
+        },
+        "uploaded_by": {
+          "title": "Uploaded by",
+          "description": "UPN that uploaded the file (from the catalog): the admin for SharePoint, alice for OneDrive.",
+          "$ref": "#/$defs/upn"
+        },
+        "last_modified_at": {
+          "title": "Last modified at",
+          "description": "driveItem lastModifiedDateTime after the upload, UTC, whole seconds.",
+          "$ref": "#/$defs/utc_datetime"
+        },
+        "local_sha256": {
+          "title": "Local SHA-256",
+          "description": "SHA-256 of the committed file lab/canary/<name>. `python -m seeder hash` re-checks it offline.",
+          "$ref": "#/$defs/sha256"
+        },
+        "local_size": {
+          "title": "Local size",
+          "description": "Byte size of lab/canary/<name>.",
+          "$ref": "#/$defs/size"
+        },
+        "stored_sha256": {
+          "title": "Stored SHA-256",
+          "description": "SHA-256 of the bytes Graph returned when the file was downloaded back after upload (SharePoint may rewrite Office files). Compare a restored file with this, not local_sha256.",
+          "$ref": "#/$defs/sha256"
+        },
+        "stored_size": {
+          "title": "Stored size",
+          "description": "Byte size of the bytes downloaded back through Graph.",
+          "$ref": "#/$defs/size"
+        },
+        "stored_matches_local": {
+          "title": "Stored matches local",
+          "description": "True exactly when stored_sha256 == local_sha256.",
+          "type": "boolean"
+        }
+      }
+    },
+    "sharepoint_file_entry": {
+      "title": "SharePoint file entry",
+      "description": "rp-canary-01..10, in the root folder of the SharePoint RestoreTest document library.",
+      "$ref": "#/$defs/file_entry_common",
+      "unevaluatedProperties": false,
+      "properties": {
+        "kind": {
+          "title": "Kind",
+          "description": "Always \"sharepoint_file\" for this entry shape.",
+          "const": "sharepoint_file"
+        },
+        "location": {
+          "title": "SharePoint location",
+          "description": "Site, library and folder holding the file.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["site_id", "list_id", "drive_id", "folder_id", "folder_path"],
+          "properties": {
+            "site_id": {
+              "title": "Site id",
+              "description": "Graph site id (hostname,siteCollectionId,webId) of the RestoreTest site.",
+              "$ref": "#/$defs/non_empty"
+            },
+            "list_id": {
+              "title": "List id",
+              "description": "SharePoint list GUID of the RestoreTest document library.",
+              "$ref": "#/$defs/non_empty"
+            },
+            "drive_id": {
+              "title": "Drive id",
+              "description": "Graph drive id of the RestoreTest document library.",
+              "$ref": "#/$defs/non_empty"
+            },
+            "folder_id": {
+              "title": "Folder id",
+              "description": "Real driveItem id of the parent folder (parentReference.id), not the alias \"root\".",
+              "$ref": "#/$defs/non_empty"
+            },
+            "folder_path": {
+              "title": "Folder path",
+              "description": "Path of the parent folder inside the library; \"/\" is the library root.",
+              "type": "string",
+              "pattern": "^/"
+            }
+          }
+        }
+      }
+    },
+    "onedrive_file_entry": {
+      "title": "OneDrive file entry",
+      "description": "rp-canary-11..20, in the RestoreTest folder of alice's OneDrive.",
+      "$ref": "#/$defs/file_entry_common",
+      "unevaluatedProperties": false,
+      "properties": {
+        "kind": {
+          "title": "Kind",
+          "description": "Always \"onedrive_file\" for this entry shape.",
+          "const": "onedrive_file"
+        },
+        "location": {
+          "title": "OneDrive location",
+          "description": "User, drive and folder holding the file.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["user", "drive_id", "folder_id", "folder_path"],
+          "properties": {
+            "user": {
+              "title": "OneDrive owner",
+              "description": "UPN of the user whose OneDrive holds the file (alice).",
+              "$ref": "#/$defs/upn"
+            },
+            "drive_id": {
+              "title": "Drive id",
+              "description": "Graph drive id of the user's OneDrive.",
+              "$ref": "#/$defs/non_empty"
+            },
+            "folder_id": {
+              "title": "Folder id",
+              "description": "driveItem id of the RestoreTest folder (parentReference.id).",
+              "$ref": "#/$defs/non_empty"
+            },
+            "folder_path": {
+              "title": "Folder path",
+              "description": "Path of the parent folder from the drive root, e.g. /RestoreTest.",
+              "type": "string",
+              "pattern": "^/"
+            }
+          }
+        }
+      }
+    }
+  }
+}

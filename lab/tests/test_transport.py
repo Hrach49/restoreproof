@@ -50,6 +50,54 @@ def test_requests_exceptions_become_transport_errors_without_headers(exc, capsys
     assert info.value.__cause__ is None
 
 
+SECRET = "SECRET123"
+QUERY = f"UniqueId=abc&tempauth={SECRET}&ApiVersion=2.0"
+DOWNLOAD = "https://contoso.sharepoint.com/sites/rt/_layouts/15/download.aspx"
+
+
+@pytest.mark.parametrize(
+    "exc_type",
+    [requests.ConnectionError, requests.Timeout, requests.exceptions.SSLError, requests.TooManyRedirects],
+)
+@pytest.mark.parametrize(
+    "detail",
+    [
+        # requests' own form: a pool message with the bare path and query of the redirected URL.
+        "HTTPSConnectionPool(host='contoso.sharepoint.com', port=443): Max retries exceeded with url: "
+        f"/sites/rt/_layouts/15/download.aspx?{QUERY} (Caused by NewConnectionError('refused'))",
+        f"Exceeded 30 redirects: {DOWNLOAD}?{QUERY}",
+        f"'{DOWNLOAD}?{QUERY.replace('&', '&amp;')}'",
+        f"url: /sites/rt/_layouts/15/download.aspx?{QUERY}",
+        # A long prefix pushes the query across the 300-char cut.
+        "x" * 250 + f" url: /download.aspx?{QUERY}",
+        # No "?" at all, but the credential's name is still there.
+        f"bad url /download.aspx%3F{QUERY}",
+        f"Tempauth: {SECRET}",
+    ],
+)
+def test_transport_errors_never_carry_url_query_strings(exc_type, detail):
+    transport = RequestsTransport(session=FakeSession(exc_type(detail)))
+    with pytest.raises(TransportError) as info:
+        transport.request("GET", f"{DOWNLOAD}?{QUERY}", {})
+    text = str(info.value)
+    assert SECRET not in text
+    assert "ApiVersion" not in text
+    assert text.startswith(f"GET {DOWNLOAD}?[redacted]: {exc_type.__name__}: ")
+    assert info.value.__cause__ is None
+    assert info.value.__suppress_context__
+
+
+def test_transport_error_keeps_host_and_path_of_urls_in_the_detail():
+    detail = f"Max retries exceeded with url: /sites/rt/download.aspx?{QUERY} (Caused by X)"
+    transport = RequestsTransport(session=FakeSession(requests.ConnectionError(detail)))
+    with pytest.raises(TransportError) as info:
+        transport.request("GET", "https://graph.microsoft.com/v1.0/me/messages?$filter=subject eq 'x'", {})
+    assert str(info.value) == (
+        "GET https://graph.microsoft.com/v1.0/me/messages?[redacted]: ConnectionError: "
+        "Max retries exceeded with url: /sites/rt/download.aspx?[redacted] (Caused by X)"
+    )
+
+
 def test_passes_method_url_headers_body_timeout_and_follows_redirects():
     session = FakeSession(FakeResponse(201, b'{"id": "1"}', {"Content-Type": "application/json", "ETag": "x"}))
     transport = RequestsTransport(session=session, timeout=17)

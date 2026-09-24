@@ -65,6 +65,7 @@ class _Seed:
         self.existing: dict[str, dict] = {}  # subject -> the one message already there
         # subject -> ids already in the mailbox before sending; --force reads back a copy not among them
         self.seen_ids: dict[str, set[str]] = {}
+        self.deleted_items: dict[str, str] = {}  # upn -> id of that mailbox's Deleted Items folder
         self.to_send: list[CanaryMail] = []
         self.file_entries: dict[str, dict] = {}
         self.mail_entries: dict[str, dict] = {}
@@ -96,11 +97,18 @@ class _Seed:
 
     # --- mails ---------------------------------------------------------------------------
 
+    def find(self, g: GraphClient, upn: str, subject: str) -> list[dict]:
+        """Copies of this subject in upn's mailbox, ignoring Deleted Items: a copy the user
+        deleted is gone as far as the seed is concerned."""
+        if upn not in self.deleted_items:
+            self.deleted_items[upn] = graph.get_deleted_items_id(g, owner=upn)
+        return graph.find_messages_by_subject(g, subject, owner=upn, exclude_folder_id=self.deleted_items[upn])
+
     def check_mailbox(self, g: GraphClient, upn: str) -> bool:
         """Record which mails are already there; False if a subject is there more than once."""
         duplicates = []
         for mail in self.mails_for(upn):
-            found = graph.find_messages_by_subject(g, mail.subject, owner=upn)
+            found = self.find(g, upn, mail.subject)
             self.seen_ids[mail.subject] = {m["id"] for m in found}
             if not found or self.force:
                 self.to_send.append(mail)
@@ -114,7 +122,7 @@ class _Seed:
         for subject, count in duplicates:
             self.out(
                 f"error: {subject} is in {upn}'s mailbox {count} times. Delete the extra copies "
-                "(keep one, or delete all) and run seed again."
+                "(keep one, or delete all; copies in Deleted Items don't count) and run seed again."
             )
         return not duplicates
 
@@ -142,7 +150,7 @@ class _Seed:
         found: dict[str, dict] = {s: msg for s, msg in self.existing.items() if s in {m.subject for m in self.mails_for(upn)}}
         while True:
             for mail in list(pending):
-                msg = self._pick(mail.subject, graph.find_messages_by_subject(g, mail.subject, owner=upn))
+                msg = self._pick(mail.subject, self.find(g, upn, mail.subject))
                 if msg is not None:
                     found[mail.subject] = msg
                     pending.remove(mail)

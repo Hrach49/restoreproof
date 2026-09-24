@@ -256,6 +256,33 @@ def test_find_messages_doubles_single_quotes_and_encodes_specials():
     assert "$filter=subject%20eq%20'it''s%20%26%20%231'&" in transport.requests[0].url
 
 
+def test_find_messages_leaves_out_the_excluded_folder():
+    messages = [
+        {"id": "m1", "parentFolderId": "INBOX"},
+        {"id": "m2", "parentFolderId": "DELETED"},
+        {"id": "m3", "parentFolderId": "Archive"},
+    ]
+    g, transport, _ = make_client([json_response(200, {"value": messages})] * 2)
+    found = graph.find_messages_by_subject(g, "RP-CANARY-0001", ALICE_UPN, exclude_folder_id="DELETED")
+    assert [m["id"] for m in found] == ["m1", "m3"]
+    assert "parentFolderId" not in transport.requests[0].url.split("$filter=")[1].split("&")[0]
+    assert len(graph.find_messages_by_subject(g, "RP-CANARY-0001", ALICE_UPN)) == 3
+
+
+def test_get_deleted_items_id_uses_the_well_known_name_and_immutable_ids():
+    g, transport, _ = make_client([json_response(200, {"id": "AAMkDeleted/="})])
+    assert graph.get_deleted_items_id(g, ALICE_UPN) == "AAMkDeleted/="
+    (req,) = transport.requests
+    assert (req.method, req.url) == ("GET", f"{GRAPH_BASE}/me/mailFolders/deleteditems?$select=id")
+    assert req.headers["Prefer"] == MAIL_PREFER
+
+
+def test_get_deleted_items_id_403_names_owner():
+    g, _, _ = make_client([graph_error(403)])
+    with pytest.raises(GraphForbidden, match=BOB_UPN):
+        graph.get_deleted_items_id(g, BOB_UPN)
+
+
 def test_find_messages_403_names_owner():
     g, _, _ = make_client([graph_error(403)])
     with pytest.raises(GraphForbidden, match=BOB_UPN):

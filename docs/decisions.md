@@ -22,9 +22,15 @@ Format: date, decision, reason, alternatives rejected.
   (`rp::kMaxHttpAttempts`). The waits are 1, 2, 4 and 8 s. `rp::retry_delay` caps a wait at
   16 s, but with 5 attempts a request never reaches the cap. The Done-when test asserts
   exactly 5 attempts.
-- **What is retried.** Connect errors (resolve, connect, send/receive, empty reply) and
-  timeouts are retried, and so is HTTP 500-599. Nothing else is: no 4xx (408 and 429
-  included), no TLS failure, no malformed URL. A 2xx, 3xx or 4xx is returned to the caller.
+- **What is retried.** Connect errors (resolve, connect, send/receive, empty reply),
+  timeouts and TLS handshakes that break off (`TransportError::handshake`) are retried, and
+  so is HTTP 500-599. Nothing else is: no 4xx (408 and 429 included), no certificate
+  failure, no malformed URL. curl's Schannel backend reports a connection dropped
+  mid-handshake as `SSL_CONNECT_ERROR`, the same code it uses for a protocol or cipher the
+  two sides can't agree on. Certificate verdicts have codes of their own
+  (`PEER_FAILED_VERIFICATION`, `SSL_CACERT_BADFILE`, ...) and stay `tls`, not retried. So
+  a restarting Veeam REST service is retried over HTTPS as it is over HTTP, and a lasting
+  negotiation failure takes five attempts to report. A 2xx, 3xx or 4xx is returned to the caller.
   An `rp::HttpError` is thrown when the attempts run out, and immediately for a failure that
   isn't retried. The policy is a pure unit (`rp/retry_policy.hpp`). The worst case for one
   call is 5 × its timeout + about 15 s of waiting, about 165 s at the 30 s default.
@@ -33,6 +39,12 @@ Format: date, decision, reason, alternatives rejected.
   16 s cap. `retry_delay` works in whole milliseconds: `nominal - round(nominal * 0.25 *
   jitter)`, with jitter clamped to [0, 1] and NaN counting as 0. The client takes the sleeper,
   the jitter source and the clock as `HttpClientOptions`, so tests never sleep.
+- **Only `http://` and `https://` URLs are sent** (scheme in any case). curl here is built
+  with FILE, FTP, SMB, LDAP and more, and guesses a scheme for a URL without one. Any other
+  URL throws `HttpError` (`other`, 0 attempts) before anything is sent. The check matters
+  because URLs from server responses (Graph `nextLink`, the download `Location`, Veeam
+  `_links`) will reach `send()`. A review showed a `file:///` URL returning the file's bytes
+  as a status-0 response.
 - **Redirects are never followed.** A 3xx is returned, so an `Authorization` header or a
   token body can't be sent to another host. The Graph download 302 will be followed
   explicitly by `GraphClient`, without the header.
@@ -55,6 +67,9 @@ Format: date, decision, reason, alternatives rejected.
   - a quoted value up to its matching quote;
   - URL userinfo (`https://user:password@host`).
 
+  Only an odd run of backslashes before a quote escapes it; an even run is escaped
+  backslashes before a real quote (a review found `{\\"password\\":\\"x\\"}` leaking).
+
   Names match in any case. It over-redacts on purpose:
   - a key that ends in a name after a non-alphanumeric character counts (`new_password`,
     `db.password`);
@@ -67,7 +82,16 @@ Format: date, decision, reason, alternatives rejected.
   single-quoted keys. The HTTP client never logs bodies or headers, and the W4.9 sentinel
   audit is the backstop for the rest.
 - **TLS.** Peer and host verification are set on for every request, and nothing can turn
-  them off: no option, no config key, no revocation opt-out. The optional config key
+  them off: no option, no config key, no revocation opt-out. With `veeam_ca_file`, curl
+  checks every certificate in the chain for revocation, and a strict check fails on "the
+  revocation status is unknown" for an internal CA that publishes no CRL, or one the Worker
+  can't reach. So with a CA file (only then) the check is **best effort**
+  (`CURLSSLOPT_REVOKE_BEST_EFFORT`): a certificate on its CA's CRL is still rejected, an
+  unknown or offline status is let through. cpr 1.14 has no setting for it, so it is one
+  `curl_easy_setopt` call after `SetSslOptions`; the source scan allows that exact
+  statement, and only in `src/http_client.cpp`. A TLS test serves a CRL from 127.0.0.1 and
+  shows a leaf from a private CA accepted with no CDP, an unreachable CDP, or a CRL that
+  doesn't list it, and rejected when the CRL lists it. The optional config key
   `veeam_ca_file` names a PEM file trusted for `veeam_url` only. It is an absolute local or
   UNC path; `load_config` checks the file can be read. The path goes to curl as raw UTF-8
   bytes. `cpr::ssl::CaInfo` would convert it to the ANSI code page. With Schannel, curl builds
@@ -102,7 +126,11 @@ certificate, so an MSP must be able to trust it without turning verification off
 cpp-httplib is one header, runs in-process, and can serve TLS for the tests.
 
 **Alternatives rejected.** Four virtual methods on the interface: every fake would implement
-four. Six attempts: see above. Retrying 429 honouring `Retry-After`: neither Veeam nor Graph
+four. Telling a dropped handshake from a failed negotiation by curl's message text: it
+changes between curl versions. `ssl_no_revoke` for a CA file: it would also accept a
+certificate the CA has revoked. Best-effort revocation for Graph, the TSA and the Cloud
+too: their public CAs publish reachable CRLs, so nothing needs relaxing there. Patching cpr
+in a vcpkg overlay to add the option: a fork to maintain for one flag. Six attempts: see above. Retrying 429 honouring `Retry-After`: neither Veeam nor Graph
 throttling has been seen yet, so it waits for evidence. Following redirects and relying on
 curl to drop `Authorization` on a cross-host hop: the rule would live in curl's defaults,
 not in our code. `std::regex` for redaction: slow, and MSVC's implementation recurses deeply

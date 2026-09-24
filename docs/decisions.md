@@ -7,6 +7,46 @@ Format: date, decision, reason, alternatives rejected.
 
 ---
 
+## 2026-09-25 — Office files are compared by content (`office-v1`); the Worker compares `content_sha256`
+
+**Decision.** Supersedes the file-hash part of the 2026-09-24 canary seeder entry below. Every
+file entry in `lab/seed-manifest.json` gets a `content_rule` and a `content_sha256`, and the
+Worker compares a restored file with `content_sha256` by that rule:
+
+- `bytes` (pdf, txt, png): SHA-256 of the whole file; equal to `stored_sha256`.
+- `office-v1` (docx, xlsx, wherever stored): SHA-256 of a listing of the document's content
+  parts: every part under `word/` or `xl/` except `_rels/` folders, sorted by name, one line
+  per part with its SHA-256 and name. Metadata, `customXml/`, `[trash]/`, content types and
+  relationship files don't count. Rule and vectors: `lab/README.md`, `lab/seeder/office.py`,
+  `shared/testdata/office-content-v1/` (including real files SharePoint rewrote), which
+  W3.2's C++ checker must pass.
+
+`seed` stops, writing no manifest, if the stored document content of an Office file differs
+from `lab/canary/`; `hash` checks offline that the committed file reproduces its
+`content_sha256`. The type mix stays as it was (option 1 of the two the owner was offered),
+so SharePoint Office restores stay under test.
+
+**Reason.** The live run (2026-09-24/25, findings in `lab/README.md`) showed the SharePoint
+`RestoreTest` library rewriting every docx and xlsx on upload (3263 → 12617 bytes) and again
+some minutes later (+3073 bytes), with `lastModifiedDateTime` unchanged. The first `verify`
+therefore reported 4 DIFFs on files nobody had touched. No whole-file hash of an Office file
+in a SharePoint library is a stable expected value, and a restore there would be rewritten
+too: comparing bytes would report a good restore as `fail`. Part-by-part comparison showed
+that SharePoint changes only packaging and metadata; the content parts stayed byte-identical.
+OneDrive stored all its files unchanged, and pdf/txt/png were unchanged everywhere. The rule
+applies by type, not location, because a Veeam restore may rewrite an Office file wherever it
+lands.
+
+**Alternatives rejected.** Keeping `stored_sha256` as the expected value: it was already wrong
+minutes after the seed. Dropping Office files from SharePoint (option 2): simpler hashes, but
+the most common customer files in a library would go untested. Comparing only size for Office
+files: SharePoint changes the size too, and size misses real changes. Parsing the XML and
+comparing text: more code on both sides, and a byte comparison of the untouched parts is
+already exact. Hashing every part except a known list of SharePoint parts: breaks as soon as
+SharePoint adds a new kind of part.
+
+---
+
 ## 2026-09-24 — Lab CI: canary files checked offline, the manifest hash check only once it is committed
 
 **Decision.** The `lab` workflow gets two checks after the tests, replacing the single
@@ -78,7 +118,9 @@ to use it: `lab/README.md`.
   A test generates twice and compares with the committed `lab/canary/`, and `.gitattributes`
   marks `lab/canary/**` binary.
 
-Live-run result: to be filled in.
+Live-run result: SharePoint rewrites Office files, twice, so files are now compared by
+`content_sha256` under a `content_rule`, superseding the `stored_sha256` comparison above. See
+the 2026-09-25 entry.
 
 **Reason.** The Worker only ever sees an item through Graph, so the expected value has to be
 what Graph returns. SharePoint can rewrite Office files on upload (it writes library

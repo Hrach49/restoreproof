@@ -130,7 +130,7 @@ uv run python -m seeder verify        # live: re-read the 40 items and compare w
 | `generate` | no | Writes the 20 canary files into `canary/`. The output is byte-identical on every run, so after a clean checkout it changes nothing | 0 |
 | `hash` | no | Checks that `seed-manifest.json` exists, is valid JSON and matches the schema; has exactly 40 entries whose ids, kinds and order match the catalog; that each file in `canary/` has the recorded `local_sha256` and `local_size` and that `stored_matches_local` is consistent; that each mail's `sent_body_sha256` equals the text-v1 hash of the catalog body and its subject and recipient match the catalog. Prints one line per entry and a summary (`40/40 entries reproduce the manifest hashes`) | 0 all reproduce; 1 any difference (each message names the entry, expected and actual); 2 manifest missing, unreadable or invalid (wrong count, order or schema) |
 | `seed` | yes | Signs in three times, sends the missing mails, uploads the missing files, reads all 40 back and writes the manifest. Step by step below | 0 manifest written; 1 a problem the output explains (missing canary file, duplicate subject, mail timeout); 2 sign-in or Graph error. No manifest is written unless it exits 0 |
-| `verify` | yes | Re-reads every item by its Graph id as the account that owns it (alice: mails 0001–0010 and the OneDrive files; bob: mails 0011–0020; admin: the SharePoint files). Compares subject, sender (case-insensitive), sent and received dates, `internet_message_id` and `body_sha256`; for files name, size and `stored_sha256`. Prints `ok`, `DIFF` or `MISSING` per entry and a summary (`40/40 entries in the tenant match the manifest`) | 0 all ok; 1 any DIFF or MISSING; 2 manifest missing or invalid, or a sign-in or Graph error |
+| `verify` | yes | Re-reads every item by its Graph id as the account that owns it (alice: mails 0001–0010 and the OneDrive files; bob: mails 0011–0020; admin: the SharePoint files). Compares subject, sender (case-insensitive), sent and received dates, `internet_message_id` and `body_sha256`; for files name and `content_sha256` by `content_rule` (and size for `bytes` files); an Office file whose bytes changed but whose content didn't is `ok`, with a note. Prints `ok`, `DIFF` or `MISSING` per entry and a summary (`40/40 entries in the tenant match the manifest`) | 0 all ok; 1 any DIFF or MISSING; 2 manifest missing or invalid, or a sign-in or Graph error |
 
 A usage error (unknown command or option) exits 2. Ctrl+C exits 130; `seed` then says nothing was written.
 
@@ -227,6 +227,31 @@ a new name (`text-v2`), never a change to `text-v1`. The C++ checker (W3.2) must
 exactly this rule. `shared/testdata/body-normalization-text-v1.json` is the shared contract:
 both the Python and the C++ tests must pass every vector in it.
 
+## Office file content: rule `office-v1`
+
+The SharePoint `RestoreTest` library rewrites docx and xlsx files: once on upload and again
+some minutes later, without changing `lastModifiedDateTime` (see the findings below). No
+whole-file hash of them stays valid, so Office files are compared on their content parts:
+
+1. Open the file as a ZIP package.
+2. Take every part whose name starts with the content folder, `word/` for docx and `xl/` for
+   xlsx, except parts inside a `_rels/` folder.
+3. Sort the part names by their UTF-8 bytes.
+4. For each part write one line: lower-case hex SHA-256 of the uncompressed part bytes, two
+   spaces, the part name, LF.
+5. `content_sha256` is the lower-case hex SHA-256 of those lines (UTF-8).
+
+Metadata (`docProps/`), `customXml/`, `[trash]/`, `[Content_Types].xml` and relationship files
+don't count: that is exactly what SharePoint changes. Every piece of document text, sheet data,
+style and embedded media does. The rule applies to every docx and xlsx, wherever it is stored,
+because a restore may rewrite an Office file too. pdf, txt and png use `bytes`: the SHA-256 of
+the whole file.
+
+`shared/testdata/office-content-v1/` is the shared contract, as for `text-v1`: the committed
+canaries and the same files as SharePoint rewrote them, which must give equal hashes, with the
+expected values in `cases.json`. W3.2's C++ checker must pass them. A different rule gets a new
+name (`office-v2`).
+
 ## The manifest
 
 `lab/seed-manifest.json`, schema `shared/schemas/seed-manifest.v1.json`. Written as sorted-key
@@ -275,8 +300,10 @@ File entry (`kind` `"sharepoint_file"` or `"onedrive_file"`):
 | `uploaded_by` | The UPN that uploaded it, from the catalog |
 | `last_modified_at` | The driveItem's `lastModifiedDateTime` after the upload |
 | `local_sha256`, `local_size` | The committed file in `canary/` |
-| `stored_sha256`, `stored_size` | The bytes downloaded back through Graph. **The Worker compares with `stored_sha256`**, not `local_sha256` |
+| `stored_sha256`, `stored_size` | The bytes downloaded back through Graph at seed time. Evidence only: SharePoint may have rewritten an Office file since |
 | `stored_matches_local` | `true` if the stored bytes equal the local file |
+| `content_rule` | `"office-v1"` for docx and xlsx, `"bytes"` for pdf, txt and png |
+| `content_sha256` | The expected value by `content_rule`, from the stored bytes. For `bytes` it equals `stored_sha256`; for `office-v1` it also equals the committed file's content hash, which `hash` checks. **The Worker compares with this** |
 
 ## Rules
 
@@ -318,8 +345,25 @@ change their line endings (and with them their hashes).
 
 ## Findings from the live seed run
 
-_To be filled in after the first live seed run: which file types SharePoint/OneDrive stored
-with different bytes, and whether Exchange changed any mail body._
+First live run, 2026-09-24 (seed) and 2026-09-25 (verify, then a diagnostic download):
+
+- **Mail: Exchange changed nothing.** All 20 plain-text bodies read back through Graph were
+  exactly the sent string (`body_readback_exact: true`), so `body_sha256 == sent_body_sha256`.
+  All 20 arrived in the Inbox 3–6 s after sending.
+- **pdf, txt, png: stored byte for byte**, in both the SharePoint library and OneDrive.
+- **OneDrive: Office files stored byte for byte.** alice's `RestoreTest` folder kept the four
+  docx/xlsx files unchanged.
+- **SharePoint library: every docx and xlsx rewritten, twice.** On upload SharePoint wrote the
+  library's content-type metadata into the package (docx 3263 → 12617 bytes, xlsx 5844 →
+  17047). Some minutes later it rewrote them again (+3073 bytes each: 15690 and 20120), with
+  `lastModifiedDateTime` unchanged, so the first `verify` reported 4 DIFFs. After that, three
+  downloads 15 s apart gave identical bytes. Part by part, only packaging and metadata changed:
+  `customXml/` (the content-type schema, 11 KB), `docProps/custom.xml` (`ContentTypeId`),
+  `docProps/core.xml`, the `_rels` files, `[Content_Types].xml`, and `[trash]/` parts left by
+  the rewrites. `word/document.xml`, `xl/workbook.xml`, `xl/worksheets/sheet1.xml` and
+  `xl/styles.xml` were byte-identical to the committed files. Hence `office-v1`.
+- **Open for W1.0:** whether a Veeam restore into the library gives the same `office-v1` hash.
+  It should, since only metadata changes, but it is a lab check, not an assumption.
 
 ## Order with L1.3
 

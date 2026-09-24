@@ -18,6 +18,10 @@ enable_testing()
 # rptests both link it; coverage is measured on its sources (src/, include/).
 add_library(rpcore STATIC
     src/cli.cpp
+    src/config.cpp
+    src/config_check.cpp
+    src/secrets.cpp
+    src/utf16.cpp
     src/version.cpp
 )
 target_include_directories(rpcore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -29,6 +33,8 @@ target_link_libraries(rpcore
     PUBLIC nlohmann_json::nlohmann_json spdlog::spdlog
     PRIVATE cpr::cpr OpenSSL::Crypto
 )
+# program_data_dir() calls SHGetKnownFolderPath (shell32) and CoTaskMemFree (ole32).
+target_link_libraries(rpcore PRIVATE shell32 ole32)
 
 # rpworker: the Worker exe. main() lives in app/ and only hands argv to
 # rp::run_cli; all parsing is in rpcore, where rptests can reach it
@@ -40,22 +46,28 @@ target_link_libraries(rpworker PRIVATE rpcore)
 
 add_executable(rptests
     tests/cli_test.cpp
+    tests/config_check_test.cpp
+    tests/config_test.cpp
     tests/deps_test.cpp
+    tests/secrets_test.cpp
     tests/smoke.cpp
     tests/version_test.cpp
 )
 # deps_test.cpp uses cpr and OpenSSL directly, so it links them itself.
 target_link_libraries(rptests PRIVATE rpcore cpr::cpr OpenSSL::Crypto Catch2::Catch2WithMain)
+# config_test.cpp parses the shipped example, so it can't drift from the rules.
+target_compile_definitions(rptests PRIVATE RP_CONFIG_EXAMPLE="${CMAKE_CURRENT_SOURCE_DIR}/config.example.json")
 
 include(Catch)
 catch_discover_tests(rptests)
 
 # rpworker's main() can't be linked into rptests, so ctest runs the exe.
 # run_exe_test.cmake checks the exit code and both streams exactly; ctest's own
-# PASS_REGULAR_EXPRESSION and WILL_FAIL would ignore the exit code.
+# PASS_REGULAR_EXPRESSION and WILL_FAIL would ignore the exit code. ARGS takes
+# any number of arguments; they reach the script as one list.
 set(RP_RUN_EXE_TEST ${CMAKE_CURRENT_SOURCE_DIR}/tests/run_exe_test.cmake)
 function(rp_add_exe_test name)
-    cmake_parse_arguments(PARSE_ARGV 1 T "" "ARGS;EXIT_CODE;STDOUT;STDERR" "")
+    cmake_parse_arguments(PARSE_ARGV 1 T "" "EXIT_CODE;STDOUT;STDERR" "ARGS")
     add_test(NAME "${name}" COMMAND ${CMAKE_COMMAND}
         "-DEXE=$<TARGET_FILE:rpworker>" "-DARGS=${T_ARGS}" "-DEXIT_CODE=${T_EXIT_CODE}"
         "-DSTDOUT=${T_STDOUT}" "-DSTDERR=${T_STDERR}" -P ${RP_RUN_EXE_TEST})
@@ -63,8 +75,20 @@ endfunction()
 
 rp_add_exe_test("rpworker --version prints the project version"
     ARGS --version EXIT_CODE 0 STDOUT ${PROJECT_VERSION} STDERR "")
+set(RP_USAGE "usage: rpworker --version | rpworker config check [--config <path>]")
 rp_add_exe_test("rpworker rejects unknown arguments"
-    ARGS --no-such-option EXIT_CODE 2 STDOUT "" STDERR "usage: rpworker --version")
+    ARGS --no-such-option EXIT_CODE 2 STDOUT "" STDERR "${RP_USAGE}")
+rp_add_exe_test("rpworker config without a subcommand prints usage"
+    ARGS config EXIT_CODE 2 STDOUT "" STDERR "${RP_USAGE}")
+# Relative to the test's working directory, the build tree, where no config is.
+rp_add_exe_test("rpworker config check reports a missing config file"
+    ARGS config check --config no-such-config.json EXIT_CODE 1 STDOUT ""
+    STDERR "config error: no-such-config.json: cannot read config file")
+# Cyrillic letters aren't in cp1252: on a Western machine a narrow argv would turn them
+# into '?' before the path reached rpcore.
+rp_add_exe_test("rpworker config check keeps a --config path outside the ANSI code page"
+    ARGS config check --config "тест-no-such-config.json" EXIT_CODE 1 STDOUT ""
+    STDERR "config error: тест-no-such-config.json: cannot read config file")
 
 # The checker itself must fail on a wrong exit code or wrong output, or the two
 # tests above would prove nothing.

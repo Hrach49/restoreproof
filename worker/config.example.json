@@ -1,0 +1,18 @@
+{
+    "cloud_url": "https://cloud.example.invalid",
+    "veeam_url": "https://veeam.example.invalid:4443",
+    "veeam_org_name": "example.onmicrosoft.com",
+    "graph_tenant_id": "00000000-0000-0000-0000-000000000000",
+    "graph_client_id": "00000000-0000-0000-0000-000000000000",
+    "test_mailbox": "restoretest@example.onmicrosoft.com",
+    "test_site_id": "example.sharepoint.com,00000000-0000-0000-0000-000000000000,00000000-0000-0000-0000-000000000000",
+    "test_library_id": "b!EXAMPLE-library-drive-id",
+    "test_onedrive_drive_id": "b!EXAMPLE-onedrive-drive-id",
+    "test_onedrive_folder_id": "EXAMPLE-restoretest-folder-item-id",
+    "poll_interval_s": 300,
+    "heartbeat_interval_s": 900,
+    "sample_mail": 5,
+    "sample_sp": 5,
+    "sample_od": 5,
+    "log_level": "info"
+}

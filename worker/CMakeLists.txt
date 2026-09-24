@@ -55,6 +55,7 @@ add_executable(rptests
     tests/config_test.cpp
     tests/deps_test.cpp
     tests/http_client_test.cpp
+    tests/http_client_tls_test.cpp
     tests/redact_test.cpp
     tests/retry_policy_test.cpp
     tests/secrets_test.cpp

@@ -95,6 +95,16 @@ def test_duplicate_subject_fails_naming_subject_and_mailbox_without_manifest(run
     assert not run.manifest_path.exists()
 
 
+def test_two_copies_in_inbox_are_a_duplicate_even_with_a_third_in_deleted_items(run):
+    for folder in ("Inbox", "Inbox", "Deleted Items"):
+        run.fake.add_message(BOB, "RP-CANARY-0017", MAILS["RP-CANARY-0017"].body, folder=folder)
+    assert run() == 1
+    assert f"RP-CANARY-0017 is in {BOB}'s mailbox 2 times" in run.output
+    assert "Deleted Items" in run.output  # the advice says a deleted copy no longer counts
+    assert run.fake.calls["send_mail"] == 0
+    assert not run.manifest_path.exists()
+
+
 def test_mail_poll_timeout_names_missing_subjects_and_mailbox_and_writes_no_manifest(tmp_path):
     fake = FakeTenant(delivery_delay=None)  # sent mails never arrive
     # Bob already has his mails; only alice's are missing.
@@ -165,6 +175,44 @@ def test_existing_subject_is_not_sent_again_others_are(run):
     assert all(p["sender"] == ADMIN for p in run.fake.sent)
     assert "RP-CANARY-0002" in run.output and "already in mailbox, not sent" in run.output
     assert len(run.fake.messages(ALICE, "RP-CANARY-0002")) == 1
+
+
+# Bug found in review: the subject lookup searched every folder, so a copy the user deleted
+# (it moves to Deleted Items) still counted: the duplicate error never went away, and a lone
+# deleted canary was not re-sent and was recorded in folder "Deleted Items".
+
+def test_copy_in_deleted_items_is_not_a_duplicate(run):
+    kept = run.fake.add_message(ALICE, "RP-CANARY-0003", MAILS["RP-CANARY-0003"].body)
+    run.fake.add_message(ALICE, "RP-CANARY-0003", MAILS["RP-CANARY-0003"].body, folder="Deleted Items")
+    assert run() == 0
+    assert "RP-CANARY-0003" not in [p["message"]["subject"] for p in run.fake.sent]
+    entry = load_manifest(run.manifest_path)["entries"][2]
+    assert entry["graph_message_id"] == kept["id"]
+    assert entry["location"]["folder"] == "Inbox"
+    assert "Deleted Items" not in run.output
+    assert run.fake.calls["deleted_items"] == 2  # looked up once per mailbox
+
+
+def test_canary_only_in_deleted_items_is_sent_again_and_the_new_copy_read_back(run):
+    deleted = run.fake.add_message(BOB, "RP-CANARY-0014", MAILS["RP-CANARY-0014"].body, folder="Deleted Items")
+    assert run() == 0
+    assert "RP-CANARY-0014" in [p["message"]["subject"] for p in run.fake.sent]
+    assert "RP-CANARY-0014: sent to" in run.output
+    entry = load_manifest(run.manifest_path)["entries"][13]
+    assert entry["graph_message_id"] != deleted["id"]
+    assert entry["graph_message_id"] == run.fake.messages(BOB, "RP-CANARY-0014")[-1]["id"]
+    assert entry["location"]["folder"] == "Inbox"
+
+
+def test_force_reads_back_the_new_copy_not_the_deleted_one(run):
+    _populate(run.fake)
+    deleted = run.fake.add_message(ALICE, "RP-CANARY-0001", MAILS["RP-CANARY-0001"].body, folder="Deleted Items")
+    assert run(force=True) == 0
+    assert "RP-CANARY-0001: 1 already in mailbox, sending again (--force)" in run.output
+    entry = load_manifest(run.manifest_path)["entries"][0]
+    assert entry["graph_message_id"] != deleted["id"]
+    assert entry["graph_message_id"] == run.fake.messages(ALICE, "RP-CANARY-0001")[-1]["id"]
+    assert entry["location"]["folder"] == "Inbox"
 
 
 def test_mails_are_sent_with_the_catalog_body_to_the_catalog_recipient(run):

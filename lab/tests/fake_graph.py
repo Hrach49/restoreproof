@@ -103,7 +103,8 @@ class FakeTenant:
     def add_message(
         self, recipient: str, subject: str, body: str, *, sender: str = tenant.ADMIN_UPN, folder: str = "Inbox"
     ) -> dict:
-        """Put a message straight into a mailbox (as if delivered earlier)."""
+        """Put a message straight into a mailbox (as if delivered earlier). folder="Deleted Items"
+        puts it where a deleted message goes."""
         sent = self._tick()
         received = sent + timedelta(seconds=1)
         message = {
@@ -165,6 +166,10 @@ class FakeTenant:
                 if message["id"] == m.group(1):
                     return json_response(200, message)
             return graph_error(404, "ErrorItemNotFound", "The specified object was not found in the store.")
+        if path.lower() == "/me/mailfolders/deleteditems" and method == "GET":
+            # The well-known name; the answer is the folder's real id, as Graph's is.
+            self.calls["deleted_items"] += 1
+            return json_response(200, {"id": self.folder_id(account, "Deleted Items"), "displayName": "Deleted Items"})
         if (m := _FOLDER.match(path)) and method == "GET":
             self.calls["get_folder"] += 1
             if m.group(1) not in self.folders:

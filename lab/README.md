@@ -148,7 +148,9 @@ sent or uploaded. Run it again.
 
 - A mail whose subject is already in the recipient's mailbox is not sent again ("already in
   mailbox, not sent"). If a subject is there more than once, the tool stops and names the
-  subject and the mailbox: delete the extra copies and run again.
+  subject and the mailbox: delete the extra copies and run again. Copies in Deleted Items are
+  ignored (not its subfolders), so there is no need to empty it, and a canary that is only
+  there counts as missing and is sent again.
 - A file already in its folder is not uploaded again. It is still downloaded, so the manifest
   records what is stored. If the stored bytes differ from the file in `canary/`, the tool says
   so (a SharePoint rewrite, or an old copy).

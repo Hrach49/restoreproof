@@ -238,13 +238,28 @@ def _none_on_404(call: Callable[[], Any]) -> Any:
         raise
 
 
-def find_messages_by_subject(g: GraphClient, subject: str, owner: str) -> list[dict]:
-    """Messages in any folder of the signed-in mailbox with exactly this subject.
-    No $orderby: Graph rejects it combined with this $filter."""
+def find_messages_by_subject(
+    g: GraphClient, subject: str, owner: str, *, exclude_folder_id: str | None = None
+) -> list[dict]:
+    """Messages in any folder of the signed-in mailbox with exactly this subject, except those
+    directly in exclude_folder_id. No $orderby: Graph rejects it combined with this $filter.
+    The folder is left out here, not in the $filter: Graph often rejects that as inefficient."""
     literal = subject.replace("'", "''")
     params = {"$filter": f"subject eq '{literal}'", "$select": MESSAGE_FIELDS, "$top": "50"}
     data = g.get_json("/me/messages", params=params, headers={"Prefer": MAIL_PREFER}, owner=owner)
-    return list(data.get("value", []))
+    messages = list(data.get("value", []))
+    if exclude_folder_id is None:
+        return messages
+    return [m for m in messages if m.get("parentFolderId") != exclude_folder_id]
+
+
+def get_deleted_items_id(g: GraphClient, owner: str) -> str:
+    """The id of the signed-in mailbox's Deleted Items folder, in the same ImmutableId form as a
+    message's parentFolderId (hence the Prefer header)."""
+    data = g.get_json(
+        "/me/mailFolders/deleteditems", params={"$select": "id"}, headers={"Prefer": MAIL_PREFER}, owner=owner
+    )
+    return data["id"]
 
 
 def get_message(g: GraphClient, message_id: str, owner: str) -> dict | None:

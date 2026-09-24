@@ -41,7 +41,10 @@ L0.2 check (all succeed in that one terminal): `cmake --version`, `uv --version`
 
 ## Veeam host
 
-A local Hyper-V VM on this laptop, sized **2 vCPU, 6 GB RAM, dynamically expanding disk**
-rather than the plan's 4 vCPU / 8 GB / 100 GB, which a 2-core, 16 GB machine cannot spare
-alongside VS and Docker. Do not run the VM and a C++ build at the same time. Built in L1.3;
-a spare PC or cloud VM is the fallback if it proves too slow. See `docs/decisions.md`.
+Veeam Backup for Microsoft 365 (v8, Community Edition) is installed **directly on this
+laptop**, not in a VM (decision of 2026-09-25, superseding the Hyper-V VM of 2026-09-22).
+Windows 10 22H2 is a supported backup server OS. The laptop is below Veeam's stated minimum
+(8 cores, 16 GB RAM), so expect slow backups; Veeam's services start with Windows and can be
+stopped in `services.msc` during heavy C++ builds (scheduled backups then don't run). REST
+API on port 4443. A spare PC or cloud VM remains the fallback. Installed in L1.3; version
+and job details are recorded below once the install is done.

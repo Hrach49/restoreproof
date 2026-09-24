@@ -2,6 +2,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
+#include <catch2/generators/catch_generators_range.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <string>
@@ -324,6 +325,46 @@ TEST_CASE("redact redacts to the end of the enclosing string for escaped JSON", 
         // Unterminated: to the end.
         {R"({"body":"{\"password\":\"abc)", R"({"body":"{\"password\":\"[REDACTED]\")"},
     })));
+}
+
+// An even run of backslashes before a quote is escaped backslashes, not an
+// escaped quote: the quote is real. Treating it as escaped (while the closing
+// quote search pairs the backslashes) left the secret after it in the output.
+TEST_CASE("redact reads an even run of backslashes before a quote as a real quote", "[redact]")
+{
+    check_row(GENERATE(values<Row>({
+        {R"({\\"password\\":\\"SECRET1\\"})", R"({\\"password\\":"[REDACTED]"})"},
+        {R"(password=\\"SECRET2")", R"(password="[REDACTED]")"},
+        {R"(password: \\\\"SECRET3" x)", R"(password: "[REDACTED]" x)"},
+    })));
+}
+
+TEST_CASE("redact hides a quoted secret behind any number of backslashes", "[redact]")
+{
+    // Every mix of 0-4 backslashes before the key's closing quote and before
+    // each of the value's quotes. The secret holds a comma and a space, which
+    // end an unquoted value, so a value cut short there shows up too.
+    const int key_run = GENERATE(range(0, 5));
+    const int value_run = GENERATE(range(0, 5));
+    const std::string format = GENERATE(as<std::string>{}, "{K\"passwordK\":V\"SE,C RETV\"}",
+                                         "{K\"passwordK\" : V\"SE,C RETV\", \"x\": 1}",
+                                         "password=V\"SE,C RETV\" user=bob",
+                                         "password: V\"SE,C RETV\" user=bob");
+    std::string input;
+    for (const char c : format) {
+        if (c == 'K' || c == 'V') {
+            input.append(static_cast<std::size_t>(c == 'K' ? key_run : value_run), '\\');
+        } else {
+            input += c;
+        }
+    }
+    CAPTURE(input);
+    const std::string out = rp::redact(input);
+    CAPTURE(out);
+    CHECK_THAT(out, ContainsSubstring("[REDACTED]"));
+    for (const std::string_view part : {"SE", "RET"}) {
+        CHECK(out.find(part) == std::string::npos);
+    }
 }
 
 // A truncated body must not leak its tail: an unterminated value is redacted

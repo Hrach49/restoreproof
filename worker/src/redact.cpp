@@ -183,17 +183,6 @@ constexpr std::string_view kRedactedDoubleQuoted = "\"[REDACTED]\"";
 constexpr std::string_view kRedactedSingleQuoted = "'[REDACTED]'";
 constexpr std::string_view kRedactedEscapedQuoted = "\\\"[REDACTED]\\\"";
 
-// Whether text at `pos` is one or more backslashes and then a '"': a quote
-// escaped for a JSON string (or escaped again, for a string in a string).
-bool is_escaped_quote(std::string_view text, std::size_t pos) noexcept
-{
-    std::size_t p = pos;
-    while (p < text.size() && text[p] == '\\') {
-        ++p;
-    }
-    return p > pos && p < text.size() && text[p] == '"';
-}
-
 // An escaped value inside a JSON string: finding its own end means counting
 // backslashes by nesting level, so instead everything up to the end of the
 // enclosing string (its first quote no backslash escapes) goes.
@@ -202,6 +191,25 @@ Replacement redact_to_enclosing_quote(std::string_view text, std::size_t from)
     const std::size_t quote = find_closing_quote(text, from, '"');
     return Replacement{from, quote == std::string_view::npos ? text.size() : quote,
                        kRedactedEscapedQuoted};
+}
+
+// A value starting at `from` with one or more backslashes and then a '"'. An
+// odd run escapes the quote: a quoted value inside a JSON string, redacted to
+// the end of the enclosing string. An even run is escaped backslashes before a
+// real quote, which opens the value: redacted up to its matching quote.
+std::optional<Replacement> match_backslashed_value(std::string_view text, std::size_t from)
+{
+    std::size_t quote = from;
+    while (quote < text.size() && text[quote] == '\\') {
+        ++quote;
+    }
+    if (quote == from || quote == text.size() || text[quote] != '"') {
+        return std::nullopt;
+    }
+    if ((quote - from) % 2 == 1) {
+        return redact_to_enclosing_quote(text, from);
+    }
+    return Replacement{from, end_of_quoted(text, quote + 1, '"'), kRedactedDoubleQuoted};
 }
 
 // The value of key=value or "name: value" starting at `from`: a quoted value
@@ -219,8 +227,8 @@ std::optional<Replacement> match_plain_value(std::string_view text, std::size_t 
         return Replacement{from, end_of_quoted(text, from + 1, first),
                            first == '"' ? kRedactedDoubleQuoted : kRedactedSingleQuoted};
     }
-    if (is_escaped_quote(text, from)) {
-        return redact_to_enclosing_quote(text, from);
+    if (auto r = match_backslashed_value(text, from)) {
+        return r;
     }
     std::size_t to = from;
     if (to_line_end) {
@@ -274,7 +282,9 @@ std::optional<Replacement> match_key_value(std::string_view text, std::size_t na
 
 // "name": value, the key's closing quote at `name_end`. Also \"name\": value
 // (or \\\"name\\\", and so on), a JSON body logged inside a JSON string, whose
-// value goes up to the end of the enclosing string.
+// value goes up to the end of the enclosing string. Only an odd run of
+// backslashes escapes the key's quote; an even one is escaped backslashes
+// before a real closing quote.
 std::optional<Replacement> match_json_key(std::string_view text, std::size_t name_end)
 {
     std::size_t quote = name_end;
@@ -284,7 +294,7 @@ std::optional<Replacement> match_json_key(std::string_view text, std::size_t nam
     if (quote == text.size() || text[quote] != '"') {
         return std::nullopt;
     }
-    const bool escaped = quote > name_end;
+    const bool escaped = (quote - name_end) % 2 == 1;
     const std::size_t colon = skip_json_space(text, quote + 1);
     if (colon == text.size() || text[colon] != ':') {
         return std::nullopt;
@@ -293,7 +303,10 @@ std::optional<Replacement> match_json_key(std::string_view text, std::size_t nam
     if (from == text.size()) {
         return std::nullopt;
     }
-    if (escaped) {
+    if (auto r = match_backslashed_value(text, from)) {
+        return r;
+    }
+    if (escaped && text[from] != '"') {
         return redact_to_enclosing_quote(text, from);
     }
     const std::size_t to = end_of_json_value(text, from);

@@ -34,7 +34,22 @@ jobs:
       - name: Tests
         run: uv run --locked pytest -q
 
+      # The committed lab/canary/ must be exactly what the generators write: regenerate into
+      # a temp dir and compare. diff -r also fails on a missing or extra file. No manifest needed.
+      - name: Canary files match the generators
+        run: |
+          uv run --locked python -m seeder generate --canary-dir "$RUNNER_TEMP/canary" > /dev/null
+          diff -r "$RUNNER_TEMP/canary" canary
+
       # L1.2's Done when: re-running the hash script reproduces the manifest's hashes.
-      # Offline: checks lab/canary/ and lab/seed-manifest.json against the catalog.
+      # Offline: checks lab/canary/ and lab/seed-manifest.json against the catalog. The
+      # manifest comes from a live `seed` run; until it is committed this step only warns.
+      # Once it is, the check is strict (docs/decisions.md), so a PR that deletes the
+      # manifest silently turns it back into a warning: watch for that in review.
       - name: Canary hashes reproduce the manifest
-        run: uv run --locked python -m seeder hash
+        run: |
+          if [ ! -f seed-manifest.json ]; then
+            echo "::warning file=lab/seed-manifest.json::lab/seed-manifest.json is not committed yet, so the canary hash check was skipped. L1.2's Done when is not met until the manifest from a live 'python -m seeder seed' run is committed."
+            exit 0
+          fi
+          uv run --locked python -m seeder hash

@@ -13,12 +13,14 @@ By default the Worker reads `%ProgramData%\RestoreProof\config.json` (usually
 outside the machine's ANSI code page.
 
 The file is JSON with one flat object of settings. A UTF-8 byte order mark, as Notepad writes,
-is accepted. `worker/config.example.json` has every key with placeholder values; copy it and
-fill in your own.
+is accepted. `worker/config.example.json` has every key with placeholder values, except
+`veeam_ca_file`: it must name a file that exists, so a placeholder would make the example fail
+to load. Copy the example, fill in your own values, and add `veeam_ca_file` if you need it.
 
 ## Settings
 
-Ten keys are required; the other six have defaults.
+Ten keys are required; the other seven are optional. Six of those have defaults; without
+`veeam_ca_file` the Worker trusts the Windows certificate store.
 
 | Key | Required | Default | Valid values | What it is for |
 |---|---|---|---|---|
@@ -38,6 +40,7 @@ Ten keys are required; the other six have defaults.
 | `sample_sp` | no | `5` | integer, 0 to 100 | SharePoint items restored per test run. |
 | `sample_od` | no | `5` | integer, 0 to 100 | OneDrive items restored per test run. |
 | `log_level` | no | `"info"` | `trace`, `debug`, `info`, `warn`, `error`, `critical`, `off` | How much the Worker logs. Lowercase only. |
+| `veeam_ca_file` | no | (not set) | absolute path of a readable file: see below | PEM file with the CA certificate(s), or Veeam's self-signed certificate itself, that the Worker trusts for `veeam_url` instead of the Windows certificate store. TLS verification can't be turned off. |
 
 At least one of `sample_mail`, `sample_sp` and `sample_od` must be above 0.
 
@@ -52,7 +55,8 @@ to U+2069), which can reorder how a line displays. Other non-ASCII text, such as
 The Worker checks the file when it loads it and stops at the first problem, in a fixed order:
 the file can't be read; it isn't valid JSON; it isn't a JSON object; a key looks like a secret;
 a key is unknown; then each setting in the order of the table above; then the sample sizes
-together. Fix the reported problem and run `rpworker config check` again.
+together; last, that the `veeam_ca_file` named can be opened for reading. Fix the reported
+problem and run `rpworker config check` again.
 
 - **Messages name the key and never repeat a value from the file.** A JSON syntax error
   reports only the byte offset where parsing failed, because the parser's own message can
@@ -77,6 +81,25 @@ together. Fix the reported problem and run `rpworker config check` again.
   `restoretest@contoso.onmicrosoft.com`. Spaces, look-alike letters and invisible characters
   are rejected; write an internationalised domain in its `xn--` form. The Worker's
   `TargetGuard` still checks every restore; this rule stops a wrong mailbox before any run.
+- **`veeam_ca_file` only chooses what to trust.** The Veeam REST API often has a self-signed
+  certificate; point `veeam_ca_file` at a PEM file holding that certificate, or the CA
+  certificate(s) that issued it, and the Worker trusts it for `veeam_url` instead of the
+  Windows certificate store. It is used for the Veeam connection only: Microsoft Graph and the
+  Cloud always use the Windows store. Certificate verification is always on, and no setting
+  turns it off: a key such as `veeam_verify_tls` or `insecure` is rejected as unknown.
+  With `veeam_ca_file`, revocation is checked on a best-effort basis: a certificate on its
+  CA's revocation list is rejected, but one whose status can't be learned (an internal CA
+  that publishes no revocation list, or one the Worker can't reach) is accepted.
+- **`veeam_ca_file` must be an absolute path**, with a drive and a root
+  (`C:\ProgramData\RestoreProof\veeam-ca.pem`, `/` works too) or a UNC share
+  (`\\server\share\veeam-ca.pem`). The Worker runs as a Windows service whose working
+  directory is `System32`, so relative paths (`ca.pem`, `..\ca.pem`), paths rooted without a
+  drive (`\ca.pem`) and drive-relative paths (`C:ca.pem`) are rejected. Any character is
+  allowed apart from control characters, including ones outside the ANSI code page. The file
+  must exist and be readable by the account the Worker runs as; a missing file or a directory
+  is reported as `config key "veeam_ca_file" names a file that can't be read`. Its contents
+  aren't checked until the Worker connects to Veeam. In a JSON string each `\` is written
+  `\\`: `"C:\\ProgramData\\RestoreProof\\veeam-ca.pem"`.
 - **Control characters are rejected** in every string setting, for the same reason: a newline,
   escape sequence or bidi override in a value could forge, hide or reorder lines of
   `config check` output.
@@ -92,7 +115,7 @@ together. Fix the reported problem and run `rpworker config check` again.
 `config.json` must not contain secrets. Any top-level key whose name, in any case, contains
 `password`, `passwd`, `pwd`, `secret`, `token`, `api_key`, `apikey`, `credential`,
 `private_key`, `access_key`, `signing_key` or `connection_string` is rejected, and checked
-before anything else so that the secret is removed first. None of the 16 settings matches.
+before anything else so that the secret is removed first. None of the 17 settings matches.
 
 Until the DPAPI vault (`%ProgramData%\RestoreProof\vault.bin`) arrives in W4.5 (issue #48),
 secrets are read from these environment variables, whose names are defined once in
@@ -160,11 +183,14 @@ sample_mail               5
 sample_sp                 5
 sample_od                 5
 log_level                 info
+veeam_ca_file             C:\ProgramData\RestoreProof\veeam-ca.pem
 secrets (environment variables; values are never shown):
 RP_VEEAM_USERNAME         **** (set)
 RP_VEEAM_PASSWORD         **** (set)
 RP_GRAPH_CLIENT_SECRET    (not set)
 ```
+
+Without `veeam_ca_file` its line reads `veeam_ca_file             (not set)`.
 
 A secret prints only as `**** (set)` or `(not set)`: never any character of its value, nor its
 length.

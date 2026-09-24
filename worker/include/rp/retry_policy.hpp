@@ -9,8 +9,12 @@ enum class TransportError {
     none,    // a response arrived: see the status
     connect, // couldn't resolve or connect, or the connection dropped before a response
     timeout, // the per-request timeout expired
-    tls,     // TLS handshake or certificate verification failed
-    other,   // anything else (malformed URL, local failure)
+    // The TLS handshake broke off without a verdict on the certificate: the
+    // connection dropped mid-handshake, or the two sides share no protocol or
+    // cipher. Schannel reports both the same way, so both are retried.
+    handshake,
+    tls,   // certificate verification or TLS setup failed (bad CA file, untrusted chain)
+    other, // anything else (malformed URL, local failure)
 };
 
 struct AttemptOutcome {
@@ -25,8 +29,8 @@ inline constexpr int kMaxHttpAttempts = 5;
 inline constexpr std::chrono::milliseconds kFirstRetryDelay{1000};
 inline constexpr std::chrono::milliseconds kMaxRetryDelay{16000};
 
-// Worth another attempt: connect and timeout errors, and HTTP 500-599. Never
-// 4xx (or any non-5xx status), tls or other.
+// Worth another attempt: connect, timeout and handshake errors, and HTTP
+// 500-599. Never 4xx (or any non-5xx status), tls or other.
 bool is_retryable(const AttemptOutcome& outcome) noexcept;
 
 // Whether to make another attempt after attempt number `attempt` (1-based)

@@ -7,6 +7,122 @@ Format: date, decision, reason, alternatives rejected.
 
 ---
 
+## 2026-09-24 — Worker HTTP client: one fakeable interface, five attempts, redacted logs, TLS always verified
+
+**Decision.** W1.3 (#18) adds the HTTP layer every Worker connector will use.
+
+- **Interface and fake split.** `rp::IHttpClient` (`worker/include/rp/http_client.hpp`) has
+  exactly one virtual, `send(const HttpRequest&)`. `get`, `post`, `post_multipart` and `del`
+  are non-virtual shorthands that build an `HttpRequest` and call `send`. `rp::HttpClient` is
+  the cpr/libcurl implementation. `VeeamClient` (W1.5), `GraphClient` (W2.1) and the Cloud
+  uploader take an `IHttpClient&`. Q2.1's `FakeHttpClient` and its `--record` wrapper
+  implement or wrap `send` only. No cpr type appears in the header: cpr stays private to rpcore.
+- **Five attempts in total.** The guide's steps say "up to 5 attempts"; its Done when says
+  "retries five times". We read both as **5 attempts: 1 initial + 4 retries**
+  (`rp::kMaxHttpAttempts`). The waits are 1, 2, 4 and 8 s. `rp::retry_delay` caps a wait at
+  16 s, but with 5 attempts a request never reaches the cap. The Done-when test asserts
+  exactly 5 attempts.
+- **What is retried.** Connect errors (resolve, connect, send/receive, empty reply) and
+  timeouts are retried, and so is HTTP 500-599. Nothing else is: no 4xx (408 and 429
+  included), no TLS failure, no malformed URL. A 2xx, 3xx or 4xx is returned to the caller.
+  An `rp::HttpError` is thrown when the attempts run out, and immediately for a failure that
+  isn't retried. The policy is a pure unit (`rp/retry_policy.hpp`). The worst case for one
+  call is 5 × its timeout + about 15 s of waiting, about 165 s at the 30 s default.
+  `GraphClient` handles Graph's 429/`Retry-After` throttling itself.
+- **Jitter** only shortens a wait, by up to 25%, so no wait exceeds its nominal value or the
+  16 s cap. `retry_delay` works in whole milliseconds: `nominal - round(nominal * 0.25 *
+  jitter)`, with jitter clamped to [0, 1] and NaN counting as 0. The client takes the sleeper,
+  the jitter source and the clock as `HttpClientOptions`, so tests never sleep.
+- **Redirects are never followed.** A 3xx is returned, so an `Authorization` header or a
+  token body can't be sent to another host. The Graph download 302 will be followed
+  explicitly by `GraphClient`, without the header.
+- **Timeout.** A per-request timeout covers the whole attempt, and each retry gets it again.
+  It defaults to 30 s (`kDefaultHttpTimeout`); a long poll raises it with
+  `RequestOptions::timeout`.
+- **Logging.** One debug line per attempt: method, URL, `attempt n/5`, then the status or
+  the error kind with curl's message, the duration, and the wait before the next attempt.
+  Nothing is logged above debug, and request/response headers and bodies are never logged.
+  Every logged string, and every `HttpError::what()`, goes through `rp::redact()`.
+- **Redaction** (`rp/redact.hpp`) is one pure function, a hand-written linear scan (no
+  `std::regex`). The exact rules are in the header comment. It redacts:
+  - the value of an `Authorization` or `Proxy-Authorization` header, whatever the scheme, up
+    to `\r\n`, `\n` or the end of the text;
+  - `client_secret`, `password`, `refresh_token`, `access_token`, `authorization`,
+    `tempauth` (Graph's pre-authenticated download URLs), `sig` (Azure SAS),
+    `client_assertion` and `id_token` as `key=value` (query strings, fragments, form bodies)
+    and as JSON keys at any nesting depth;
+  - the first four also in the form `name: value`;
+  - a quoted value up to its matching quote;
+  - URL userinfo (`https://user:password@host`).
+
+  Names match in any case. It over-redacts on purpose:
+  - a key that ends in a name after a non-alphanumeric character counts (`new_password`,
+    `db.password`);
+  - a JSON value of any type becomes `"[REDACTED]"`;
+  - an unterminated value is redacted to the end of the text.
+
+  `code` is not on the list: Graph's error JSON (`"code":"ErrorItemNotFound"`) must stay
+  readable. It does not recognise URL-encoded key names (`client%5Fsecret`), hyphenated
+  spellings (`client-secret`), JSON keys written with `\u` escapes, or Python-style
+  single-quoted keys. The HTTP client never logs bodies or headers, and the W4.9 sentinel
+  audit is the backstop for the rest.
+- **TLS.** Peer and host verification are set on for every request, and nothing can turn
+  them off: no option, no config key, no revocation opt-out. The optional config key
+  `veeam_ca_file` names a PEM file trusted for `veeam_url` only. It is an absolute local or
+  UNC path; `load_config` checks the file can be read. The path goes to curl as raw UTF-8
+  bytes. `cpr::ssl::CaInfo` would convert it to the ANSI code page. With Schannel, curl builds
+  the chain against that file alone (its exclusive-root engine), so the file **replaces** the
+  Windows store. An HTTPS test against a certificate generated at run time shows four things:
+  the server is trusted through a CA file at a Cyrillic path; it is rejected without one; it
+  is rejected with a different CA; and a missing file is a TLS failure. Graph and the Cloud
+  never set it. Two tests guard this: one checks the `cpr::SslOptions` the client builds, and a
+  source scan over `worker/src`, `worker/include` and `worker/app` fails on any TLS switch
+  name (`VerifySsl`, `CURLOPT_SSL_*`, `CURLSSLOPT_*`, `curl_easy_setopt`, `verify_status`,
+  ...) and on any `verify_peer`/`verify_host` not set to exactly `true`. `verify_status`
+  (OCSP stapling) stays off because a self-signed Veeam server doesn't staple. The scan is a
+  tripwire, not a proof: review still applies. The known config keys are now 17. `veeam_ca_file` is checked after
+  `log_level`, and its readability after the whole parse. It is left out of
+  `config.example.json` because it has to name a real file.
+- **Test server: cpp-httplib**, with the `openssl` feature and without brotli, linked only to
+  `rptests` (`worker/tests/local_http_server.hpp`). The tests serve HTTP and HTTPS on
+  127.0.0.1 with an ephemeral port, and generate their certificate with OpenSSL at run time,
+  so they need no network and commit no private key.
+
+**Reason.** One virtual function is the smallest seam a fake and a recorder can implement,
+and it keeps every connector's tests on fixtures (CLAUDE.md). Taking the Done when's
+"retries five times" as five retries would make six attempts and about 31 s of waiting.
+Five attempts keep a dead Veeam server's wait to about 15 s, and they are what the guide's
+steps say. A 4xx won't change on retry, and TLS failures and bad URLs are configuration
+errors; retrying them only delays the `error` status. A redirect that carries credentials to
+another host is how bearer tokens leak. Redacting the text itself, rather than trusting
+callers to leave secrets out, means a secret that gets into a URL or an error message is
+still caught. The redaction errs towards removing too much, because a log that says too
+little costs a rerun and a leaked secret can't be taken back. Veeam ships with a self-signed
+certificate, so an MSP must be able to trust it without turning verification off.
+cpp-httplib is one header, runs in-process, and can serve TLS for the tests.
+
+**Alternatives rejected.** Four virtual methods on the interface: every fake would implement
+four. Six attempts: see above. Retrying 429 honouring `Retry-After`: neither Veeam nor Graph
+throttling has been seen yet, so it waits for evidence. Following redirects and relying on
+curl to drop `Authorization` on a cross-host hop: the rule would live in curl's defaults,
+not in our code. `std::regex` for redaction: slow, and MSVC's implementation recurses deeply
+on long input. A `verify_tls: false` escape hatch: one support call away from being set
+everywhere. Adding the CA to the Windows store on the MSP's server: it changes machine-wide
+trust for one Worker connection. A mock HTTP library or a Python test server: the first
+wouldn't exercise cpr and curl, and the second needs a runtime in CI and a process to manage.
+
+**Open.** POSTs are retried on 5xx and timeouts like any other request. A "start restore" or
+bundle-upload POST that timed out after the server accepted it could run twice. Before
+`VeeamClient` starts restores (W2.x) or the uploader lands, add a per-request opt-out or
+idempotency keys. Until then, a timeout, dropped connection or 5xx after the server
+accepted a POST can repeat it. A code review reproduced this with a server that read the
+POST and closed the connection without answering: the POST arrived five times. curl also
+honours the `HTTP(S)_PROXY` environment variables, which is untested on MSP servers. The
+`HttpError` for a final 5xx carries the status but not the response body, so `VeeamClient`
+may want the body kept (never logged) to say why.
+
+---
+
 ## 2026-09-24 — Worker config: strict `config.json`, secrets from environment variables until the vault
 
 **Decision.** W1.2 loads the Worker's settings from `config.json` (default

@@ -141,7 +141,41 @@ def test_sharepoint_file_entry_fields():
         "stored_sha256": hashlib.sha256(b"abcd").hexdigest(),
         "stored_size": 4,
         "stored_matches_local": False,
+        "content_rule": "bytes",
+        "content_sha256": hashlib.sha256(b"abcd").hexdigest(),
     }
+
+
+@pytest.mark.parametrize("file_type", ["docx", "xlsx"])
+def test_office_entry_hashes_content_parts_so_a_sharepoint_rewrite_matches(file_type):
+    from seeder.catalog import canary_files
+    from seeder.office import office_content_sha256
+    from tests.office_fakes import office_zip, sharepoint_rewrite
+
+    f = next(c for c in canary_files() if c.file_type == file_type and c.kind == "sharepoint_file")
+    local = office_zip(file_type, "hello")
+    stored = sharepoint_rewrite(local)
+    entry = file_entry(
+        f, folder_id="01PARENT", drive_item_id="01ITEM",
+        last_modified_at="2026-09-25T10:00:00Z", local_bytes=local, stored_bytes=stored,
+    )
+    assert entry["stored_matches_local"] is False
+    assert entry["content_rule"] == "office-v1"
+    assert entry["content_sha256"] == office_content_sha256(local, file_type)
+    assert entry["content_sha256"] == office_content_sha256(stored, file_type)
+
+
+def test_office_entry_whose_stored_bytes_are_not_a_package_is_an_error():
+    from seeder.catalog import canary_files
+    from seeder.office import OfficeContentError
+    from tests.office_fakes import office_zip
+
+    f = next(c for c in canary_files() if c.file_type == "docx")
+    with pytest.raises(OfficeContentError):
+        file_entry(
+            f, folder_id="01PARENT", drive_item_id="01ITEM", last_modified_at="2026-09-25T10:00:00Z",
+            local_bytes=office_zip("docx", "x"), stored_bytes=b"<html>error page</html>",
+        )
 
 
 def test_onedrive_file_entry_location():
@@ -299,6 +333,11 @@ MUTATIONS = [
     ("negative-size", _set(FIRST_FILE, "local_size", -1), "local_size"),
     ("wrong-normalization", _set(0, "body_normalization", "text-v2"), "text-v1"),
     ("secret-word", _set(0, "graph_message_id", "Bearer abc"), "bearer"),
+    ("missing-content-rule", _del(FIRST_FILE, "content_rule"), "content_rule"),
+    ("unknown-content-rule", _set(FIRST_FILE, "content_rule", "office-v2"), "content_rule"),
+    ("office-type-with-bytes-rule", _set(FIRST_FILE + 1, "content_rule", "bytes"), "content_rule"),
+    ("pdf-with-office-rule", _set(FIRST_FILE, "content_rule", "office-v1"), "content_rule"),
+    ("bytes-content-hash-not-stored", _set(FIRST_FILE, "content_sha256", "0" * 64), "content_sha256"),
 ]
 
 

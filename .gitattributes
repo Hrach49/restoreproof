@@ -3,3 +3,5 @@
 lab/canary/** binary
 # Written with LF by `python -m seeder seed`; keep it LF on every checkout.
 lab/seed-manifest.json text eol=lf
+shared/testdata/office-content-v1/*.docx binary
+shared/testdata/office-content-v1/*.xlsx binary

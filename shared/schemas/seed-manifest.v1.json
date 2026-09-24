@@ -233,7 +233,7 @@
       "required": [
         "id", "kind", "name", "file_type", "location", "drive_item_id", "uploaded_by",
         "last_modified_at", "local_sha256", "local_size", "stored_sha256", "stored_size",
-        "stored_matches_local"
+        "stored_matches_local", "content_rule", "content_sha256"
       ],
       "properties": {
         "id": {
@@ -300,6 +300,16 @@
           "title": "Stored matches local",
           "description": "True exactly when stored_sha256 == local_sha256.",
           "type": "boolean"
+        },
+        "content_rule": {
+          "title": "Content rule",
+          "description": "How to compare a restored file: \"bytes\" = SHA-256 of the whole file; \"office-v1\" (docx, xlsx) = SHA-256 of the document's content parts, ignoring the metadata and packaging SharePoint rewrites (lab/README.md, shared/testdata/office-content-v1/).",
+          "enum": ["bytes", "office-v1"]
+        },
+        "content_sha256": {
+          "title": "Content SHA-256",
+          "description": "The expected value for a restored copy, computed by content_rule from the stored bytes. For \"bytes\" it equals stored_sha256. The Worker compares with this.",
+          "$ref": "#/$defs/sha256"
         }
       }
     },

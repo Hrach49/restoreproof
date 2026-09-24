@@ -16,6 +16,7 @@ from seeder.graph import GraphClient
 from seeder.http import Transport
 from seeder.manifest import build_manifest, file_entry, iso_utc, mail_entry, write_manifest
 from seeder.normalize import NORMALIZATION_ID, normalize_body
+from seeder.office import OFFICE_RULE, OfficeContentError, office_content_sha256
 
 Out = Callable[[str], None]
 STEPS = 5
@@ -70,6 +71,7 @@ class _Seed:
         self.file_entries: dict[str, dict] = {}
         self.mail_entries: dict[str, dict] = {}
         self.stored_differs: list[str] = []
+        self.content_differs: list[str] = []  # stored document content != canary/: stops the seed
         self.body_differs: list[str] = []
         self.not_inbox: list[str] = []
         self.uploaded = 0
@@ -213,16 +215,36 @@ class _Seed:
                 self.uploaded += 1
                 action = "replaced" if existing is not None else "uploaded"
             stored = graph.download_item(g, file.drive_id, item["id"], owner=owner)
-            self.file_entries[file.name] = file_entry(
-                file,
-                folder_id=item["parentReference"]["id"],
-                drive_item_id=item["id"],
-                last_modified_at=item["lastModifiedDateTime"],
-                local_bytes=local,
-                stored_bytes=stored,
-            )
             line = f"  {file.name}: {action}"
-            if stored != local:
+            try:
+                entry = file_entry(
+                    file,
+                    folder_id=item["parentReference"]["id"],
+                    drive_item_id=item["id"],
+                    last_modified_at=item["lastModifiedDateTime"],
+                    local_bytes=local,
+                    stored_bytes=stored,
+                )
+            except OfficeContentError as exc:
+                self.content_differs.append(f"{file.name}: the stored file can't be read as .{file.file_type}: {exc}")
+                self.out(line + f"; the stored file can't be read as .{file.file_type}: {exc}")
+                continue
+            self.file_entries[file.name] = entry
+            office = entry["content_rule"] == OFFICE_RULE
+            if office and entry["content_sha256"] != office_content_sha256(local, file.file_type):
+                what = f"stored document content differs from canary/ ({OFFICE_RULE})"
+                self.content_differs.append(
+                    f"{file.name}: {what}"
+                    + (": an old copy? Re-run with --force to replace it" if skipped else "")
+                )
+                self.out(line + f"; {what}")
+                continue
+            if stored != local and office:
+                sizes = f"size {len(local)} -> {len(stored)} bytes, local -> stored"
+                why = f"SharePoint/OneDrive rewrote the package; content unchanged ({OFFICE_RULE})"
+                self.stored_differs.append(f"{file.name}: {sizes}; {why}")
+                line += f"; stored bytes differ ({sizes}): {why}"
+            elif stored != local:
                 sizes = f"size {len(local)} -> {len(stored)} bytes, local -> stored"
                 why = (
                     "either a SharePoint/OneDrive rewrite or a stale copy (use --force to replace)"
@@ -296,6 +318,13 @@ def run_seed(
         for upn, subjects in missing.items():
             out(f"error: missing after {mail_timeout:g} s in {upn}'s mailbox: {', '.join(subjects)}")
         out("No manifest was written. Run seed again later: mails already delivered are not sent twice.")
+        return 1
+
+    if s.content_differs:
+        out("error: the tenant holds different document content than lab/canary/:")
+        for line in s.content_differs:
+            out(f"  {line}")
+        out("No manifest was written.")
         return 1
 
     entries = [s.mail_entries[m.subject] for m in s.mails] + [s.file_entries[f.name] for f in s.files]

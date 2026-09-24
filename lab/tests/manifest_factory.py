@@ -8,6 +8,7 @@ from pathlib import Path
 
 from seeder.catalog import canary_files, canary_mails
 from seeder.manifest import build_manifest, file_entry, mail_entry
+from tests.office_fakes import office_zip, sharepoint_rewrite
 
 SEEDED_AT = "2026-09-25T10:00:00Z"
 # SharePoint rewrites Office files on upload, so the fake stores different bytes for these.
@@ -15,13 +16,16 @@ REWRITTEN_TYPES = {"docx", "xlsx"}
 
 
 def fake_file_bytes(name: str) -> bytes:
+    file_type = name.rsplit(".", 1)[-1]
+    if file_type in REWRITTEN_TYPES:
+        return office_zip(file_type, f"fake canary content of {name}")
     return f"fake canary content of {name}\n".encode("ascii")
 
 
 def fake_stored_bytes(name: str, file_type: str, kind: str) -> bytes:
     local = fake_file_bytes(name)
     if kind == "sharepoint_file" and file_type in REWRITTEN_TYPES:
-        return local + b"<sharepoint metadata>"
+        return sharepoint_rewrite(local)
     return local
 
 

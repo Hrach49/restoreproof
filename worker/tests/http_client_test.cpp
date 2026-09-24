@@ -302,6 +302,22 @@ TEST_CASE("a plain multipart field with a NUL byte is refused before sending", "
     CHECK(hits == 0);
 }
 
+TEST_CASE("a request timeout of zero or less is refused before sending", "[http]")
+{
+    // curl reads a timeout of 0 as "none": the request could hang for ever.
+    const std::chrono::milliseconds timeout = GENERATE(0ms, -1ms, -30000ms);
+    CAPTURE(timeout.count());
+    std::atomic<int> hits = 0;
+    rp::test::LocalHttpServer server;
+    server.server().Get("/", [&](const httplib::Request&, httplib::Response&) { ++hits; });
+    TestClient t;
+    rp::RequestOptions options;
+    options.timeout = timeout;
+
+    REQUIRE_THROWS_AS(t.client->get(server.url("/"), options), std::invalid_argument);
+    CHECK(hits == 0);
+}
+
 TEST_CASE("HttpError redacts its message", "[http]")
 {
     // A fake (Q2.1) may throw HttpError with any text; it still can't carry a

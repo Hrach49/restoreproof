@@ -292,6 +292,11 @@ HttpClient::HttpClient(HttpClientOptions options) : options_(std::move(options))
 HttpResponse HttpClient::send(const HttpRequest& request)
 {
     check_parts(request.parts);
+    // curl reads 0 as "no timeout", which could hang a job for ever.
+    if (request.timeout <= milliseconds::zero()) {
+        throw std::invalid_argument("HTTP request timeout must be above 0 ms, got " +
+                                    std::to_string(request.timeout.count()) + " ms");
+    }
     const std::shared_ptr<spdlog::logger> logger =
         options_.logger ? options_.logger : spdlog::default_logger();
     const cpr::SslOptions ssl = detail::make_ssl_options(options_.ca_file);

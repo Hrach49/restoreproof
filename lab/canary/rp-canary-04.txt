@@ -1,0 +1,3 @@
+rp-canary-04.txt
+Canary file rp-canary-04 (txt) holds this fixed text for the RestoreProof restore tests.
+RestoreProof canary file. Do not edit, move or delete it.

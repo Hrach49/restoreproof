@@ -1,0 +1,7 @@
+# The canary files are hashed byte for byte (lab/seed-manifest.json). Never let
+# git convert their line endings (core.autocrlf) or diff them as text.
+lab/canary/** binary
+# Written with LF by `python -m seeder seed`; keep it LF on every checkout.
+lab/seed-manifest.json text eol=lf
+shared/testdata/office-content-v1/*.docx binary
+shared/testdata/office-content-v1/*.xlsx binary

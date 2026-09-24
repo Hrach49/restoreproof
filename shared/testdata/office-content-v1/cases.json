@@ -1,0 +1,26 @@
+{
+  "cases": [
+    {
+      "content_sha256": "5540efd7b59d4573f6dacbeaace49561ac0e86b0ff29edd7c76a8f4b5342f30b",
+      "file": "rp-canary-02.local.docx",
+      "file_type": "docx"
+    },
+    {
+      "content_sha256": "5540efd7b59d4573f6dacbeaace49561ac0e86b0ff29edd7c76a8f4b5342f30b",
+      "file": "rp-canary-02.sharepoint.docx",
+      "file_type": "docx"
+    },
+    {
+      "content_sha256": "f06d33a67fed0dbd170ce68a988a983f8b2614a9ad8ea787e8f44b5568ac252a",
+      "file": "rp-canary-03.local.xlsx",
+      "file_type": "xlsx"
+    },
+    {
+      "content_sha256": "f06d33a67fed0dbd170ce68a988a983f8b2614a9ad8ea787e8f44b5568ac252a",
+      "file": "rp-canary-03.sharepoint.xlsx",
+      "file_type": "xlsx"
+    }
+  ],
+  "description": "office-v1 content hashes (lab/seeder/office.py, lab/README.md). *.local.* are the committed canaries; *.sharepoint.* are the same files as downloaded from the SharePoint RestoreTest library on 2026-09-25, after SharePoint rewrote them. Each pair must give the same content_sha256.",
+  "rule": "office-v1"
+}

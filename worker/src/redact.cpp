@@ -12,19 +12,38 @@ namespace {
 // recursive matcher overflows the stack on long input. Every byte is looked at
 // a bounded number of times, so the whole pass is linear in the text's length.
 
-constexpr std::string_view kAuthorization = "authorization";
-constexpr std::string_view kProxyAuthorization = "proxy-authorization";
-
 // Header names whose whole value is a secret ("Name: value").
-constexpr std::array<std::string_view, 2> kSecretHeaders{kAuthorization, kProxyAuthorization};
+constexpr std::array<std::string_view, 2> kSecretHeaders{"authorization", "proxy-authorization"};
 
-// Keys whose value is a secret in key=value text and in JSON.
-constexpr std::array<std::string_view, 4> kSecretKeys{"client_secret", "password", "refresh_token",
-                                                      "access_token"};
+// A name whose value is a secret wherever it appears as key=value or as a
+// JSON key.
+struct SecretKey {
+    std::string_view name;
+    // key=value runs to the end of the line, not to '&' or a space: an
+    // authorization value has a space after its scheme.
+    bool value_to_line_end;
+    // Also "name: value" (a hand-written log line or YAML-like text). Only
+    // for names that aren't header names nor short enough to show up in
+    // prose ("sig: ...").
+    bool colon_form;
+};
 
-// JSON keys also include authorization: a logged header map is an object.
-constexpr std::array<std::string_view, 5> kSecretJsonKeys{
-    "client_secret", "password", "refresh_token", "access_token", kAuthorization};
+constexpr std::array<SecretKey, 9> kSecretKeys{{
+    {"client_secret", false, true},
+    {"password", false, true},
+    {"refresh_token", false, true},
+    {"access_token", false, true},
+    {"authorization", true, false},
+    // Tokens that travel in URLs: Graph's pre-authenticated downloadUrl, an
+    // Azure SAS signature, OAuth's client assertion and ID token. Not "code":
+    // Graph error JSON ({"code":"ErrorItemNotFound"}) must stay readable.
+    {"tempauth", false, false},
+    {"sig", false, false},
+    {"client_assertion", false, false},
+    {"id_token", false, false},
+}};
+
+constexpr std::string_view kSchemeSeparator = "://";
 
 // ASCII only: a byte of a multi-byte UTF-8 sequence is never a letter here,
 // so non-ASCII text can't match a name or be changed by case folding.
@@ -79,13 +98,23 @@ std::size_t skip_json_space(std::string_view text, std::size_t pos) noexcept
     return pos;
 }
 
-// The closing quote of a JSON string whose content starts at `pos` (just
-// after the opening quote), honouring backslash escapes; npos when the string
-// is unterminated.
-std::size_t find_closing_quote(std::string_view text, std::size_t pos) noexcept
+// Where the line holding `pos` ends: at "\r\n", "\n" or the end of the text.
+// A bare '\r' can't end a header line on the wire, so it doesn't end one here.
+std::size_t end_of_line(std::string_view text, std::size_t pos) noexcept
+{
+    while (pos < text.size() && text[pos] != '\n' &&
+           !(text[pos] == '\r' && pos + 1 < text.size() && text[pos + 1] == '\n')) {
+        ++pos;
+    }
+    return pos;
+}
+
+// The closing `quote` of a string whose content starts at `pos` (just after
+// the opening quote), honouring backslash escapes; npos when unterminated.
+std::size_t find_closing_quote(std::string_view text, std::size_t pos, char quote) noexcept
 {
     while (pos < text.size()) {
-        if (text[pos] == '"') {
+        if (text[pos] == quote) {
             return pos;
         }
         // A backslash escapes the byte after it, even a quote.
@@ -96,10 +125,10 @@ std::size_t find_closing_quote(std::string_view text, std::size_t pos) noexcept
 
 // The position after that string's closing quote; text.size() when
 // unterminated.
-std::size_t end_of_json_string(std::string_view text, std::size_t pos) noexcept
+std::size_t end_of_quoted(std::string_view text, std::size_t pos, char quote) noexcept
 {
-    const std::size_t quote = find_closing_quote(text, pos);
-    return quote == std::string_view::npos ? text.size() : quote + 1;
+    const std::size_t close = find_closing_quote(text, pos, quote);
+    return close == std::string_view::npos ? text.size() : close + 1;
 }
 
 // The end of the JSON value starting at `pos`, a non-space byte: a string, an
@@ -109,14 +138,14 @@ std::size_t end_of_json_string(std::string_view text, std::size_t pos) noexcept
 std::size_t end_of_json_value(std::string_view text, std::size_t pos) noexcept
 {
     if (text[pos] == '"') {
-        return end_of_json_string(text, pos + 1);
+        return end_of_quoted(text, pos + 1, '"');
     }
     if (text[pos] == '{' || text[pos] == '[') {
         std::size_t depth = 0;
         while (pos < text.size()) {
             const char c = text[pos];
             if (c == '"') {
-                pos = end_of_json_string(text, pos + 1);
+                pos = end_of_quoted(text, pos + 1, '"');
                 continue;
             }
             if (c == '{' || c == '[') {
@@ -135,8 +164,8 @@ std::size_t end_of_json_value(std::string_view text, std::size_t pos) noexcept
     return pos;
 }
 
-// Where a key=value value ends: '&' and '#' end a query parameter; whitespace,
-// '"' and ',' end it inside a log line or a JSON string.
+// Where an unquoted key=value value ends: '&' and '#' end a query parameter;
+// whitespace, '"' and ',' end it inside a log line or a JSON string.
 constexpr bool ends_form_value(char c) noexcept
 {
     return c == '&' || c == '#' || c == '"' || c == ',' || c == ' ' || c == '\t' || c == '\r' ||
@@ -150,8 +179,62 @@ struct Replacement {
     std::string_view with;
 };
 
-constexpr std::string_view kRedactedJsonString = "\"[REDACTED]\"";
-constexpr std::string_view kRedactedEscapedJsonString = "\\\"[REDACTED]\\\"";
+constexpr std::string_view kRedactedDoubleQuoted = "\"[REDACTED]\"";
+constexpr std::string_view kRedactedSingleQuoted = "'[REDACTED]'";
+constexpr std::string_view kRedactedEscapedQuoted = "\\\"[REDACTED]\\\"";
+
+// Whether text at `pos` is one or more backslashes and then a '"': a quote
+// escaped for a JSON string (or escaped again, for a string in a string).
+bool is_escaped_quote(std::string_view text, std::size_t pos) noexcept
+{
+    std::size_t p = pos;
+    while (p < text.size() && text[p] == '\\') {
+        ++p;
+    }
+    return p > pos && p < text.size() && text[p] == '"';
+}
+
+// An escaped value inside a JSON string: finding its own end means counting
+// backslashes by nesting level, so instead everything up to the end of the
+// enclosing string (its first quote no backslash escapes) goes.
+Replacement redact_to_enclosing_quote(std::string_view text, std::size_t from)
+{
+    const std::size_t quote = find_closing_quote(text, from, '"');
+    return Replacement{from, quote == std::string_view::npos ? text.size() : quote,
+                       kRedactedEscapedQuoted};
+}
+
+// The value of key=value or "name: value" starting at `from`: a quoted value
+// up to its matching quote (the end of the text when unterminated), or an
+// unquoted one up to the end of the line or the end of a form value. An empty
+// unquoted value has nothing to hide and is left alone.
+std::optional<Replacement> match_plain_value(std::string_view text, std::size_t from,
+                                             bool to_line_end)
+{
+    if (from == text.size()) {
+        return std::nullopt;
+    }
+    const char first = text[from];
+    if (first == '"' || first == '\'') {
+        return Replacement{from, end_of_quoted(text, from + 1, first),
+                           first == '"' ? kRedactedDoubleQuoted : kRedactedSingleQuoted};
+    }
+    if (is_escaped_quote(text, from)) {
+        return redact_to_enclosing_quote(text, from);
+    }
+    std::size_t to = from;
+    if (to_line_end) {
+        to = end_of_line(text, from);
+    } else {
+        while (to < text.size() && !ends_form_value(text[to])) {
+            ++to;
+        }
+    }
+    if (to == from) {
+        return std::nullopt;
+    }
+    return Replacement{from, to, kRedacted};
+}
 
 // "Name: value", a secret header's name ending at `name_end`. The value runs
 // from the first non-blank after ':' to the end of the line: it can hold
@@ -164,39 +247,34 @@ std::optional<Replacement> match_header(std::string_view text, std::size_t name_
         return std::nullopt;
     }
     const std::size_t from = skip_blanks(text, colon + 1);
-    std::size_t to = from;
-    while (to < text.size() && text[to] != '\r' && text[to] != '\n') {
-        ++to;
-    }
+    const std::size_t to = end_of_line(text, from);
     if (to == from) {
         return std::nullopt;
     }
     return Replacement{from, to, kRedacted};
 }
 
-// "name=value": blanks are allowed around '=', for hand-written log lines.
-std::optional<Replacement> match_key_value(std::string_view text, std::size_t name_end)
+// "name=value" (blanks allowed around '=', for hand-written log lines), or,
+// for a key with colon_form, "name: value" up to the end of the line.
+std::optional<Replacement> match_key_value(std::string_view text, std::size_t name_end,
+                                           const SecretKey& key)
 {
-    const std::size_t equals = skip_blanks(text, name_end);
-    if (equals == text.size() || text[equals] != '=') {
+    const std::size_t sep = skip_blanks(text, name_end);
+    if (sep == text.size()) {
         return std::nullopt;
     }
-    const std::size_t from = skip_blanks(text, equals + 1);
-    std::size_t to = from;
-    while (to < text.size() && !ends_form_value(text[to])) {
-        ++to;
+    if (text[sep] == '=') {
+        return match_plain_value(text, skip_blanks(text, sep + 1), key.value_to_line_end);
     }
-    if (to == from) {
-        return std::nullopt;
+    if (text[sep] == ':' && key.colon_form) {
+        return match_plain_value(text, skip_blanks(text, sep + 1), true);
     }
-    return Replacement{from, to, kRedacted};
+    return std::nullopt;
 }
 
 // "name": value, the key's closing quote at `name_end`. Also \"name\": value
-// (or \\\"name\\\", and so on), a JSON body logged inside a JSON string: finding
-// the end of the inner value there means counting backslashes by nesting
-// level, so instead everything up to the end of the enclosing string (its
-// next unescaped quote) goes.
+// (or \\\"name\\\", and so on), a JSON body logged inside a JSON string, whose
+// value goes up to the end of the enclosing string.
 std::optional<Replacement> match_json_key(std::string_view text, std::size_t name_end)
 {
     std::size_t quote = name_end;
@@ -216,25 +294,49 @@ std::optional<Replacement> match_json_key(std::string_view text, std::size_t nam
         return std::nullopt;
     }
     if (escaped) {
-        // The enclosing string ends at the first quote a backslash doesn't
-        // escape, which is where a string scan from here stops.
-        const std::size_t quote = find_closing_quote(text, from);
-        return Replacement{from, quote == std::string_view::npos ? text.size() : quote,
-                           kRedactedEscapedJsonString};
+        return redact_to_enclosing_quote(text, from);
     }
     const std::size_t to = end_of_json_value(text, from);
     if (to == from) {
         return std::nullopt;
     }
-    return Replacement{from, to, kRedactedJsonString};
+    return Replacement{from, to, kRedactedDoubleQuoted};
 }
 
-// The secret at `pos`, if one starts there: a secret name not run into a
-// preceding letter or digit, then a header colon, '=' or a JSON key's quote.
-// A name after '_', '-', '.' or any other non-alphanumeric byte still counts,
-// so "new_password" is as secret as "password".
+// URL userinfo, with "://" at `pos`: "scheme://user:password@host". The
+// authority ends at the first '/', '?' or '#' (or a byte that can't be in a
+// URL); an '@' before that ends the userinfo. The last such '@' counts, so an
+// unencoded '@' in a password doesn't leak what follows it.
+std::optional<Replacement> match_userinfo(std::string_view text, std::size_t pos)
+{
+    const std::size_t from = pos + kSchemeSeparator.size();
+    std::size_t at = std::string_view::npos;
+    for (std::size_t p = from; p < text.size(); ++p) {
+        const char c = text[p];
+        if (c == '/' || c == '?' || c == '#' || c == '"' || c == '\'' || c == '<' || c == '>' ||
+            is_json_space(c)) {
+            break;
+        }
+        if (c == '@') {
+            at = p;
+        }
+    }
+    if (at == std::string_view::npos || at == from) {
+        return std::nullopt;
+    }
+    return Replacement{from, at, kRedacted};
+}
+
+// The secret at `pos`, if one starts there: URL userinfo after "://", or a
+// secret name not run into a preceding letter or digit, then a header colon,
+// '=', a key's colon or a JSON key's quote. A name after '_', '-', '.' or any
+// other non-alphanumeric byte still counts, so "new_password" is as secret as
+// "password".
 std::optional<Replacement> match_at(std::string_view text, std::size_t pos)
 {
+    if (starts_with_name(text, pos, kSchemeSeparator)) {
+        return match_userinfo(text, pos);
+    }
     if (pos > 0 && is_alnum(text[pos - 1])) {
         return std::nullopt;
     }
@@ -249,16 +351,13 @@ std::optional<Replacement> match_at(std::string_view text, std::size_t pos)
             }
         }
     }
-    for (const std::string_view name : kSecretKeys) {
-        if (starts_with_name(text, pos, name)) {
-            if (auto r = match_key_value(text, pos + name.size())) {
+    for (const SecretKey& key : kSecretKeys) {
+        if (starts_with_name(text, pos, key.name)) {
+            const std::size_t name_end = pos + key.name.size();
+            if (auto r = match_key_value(text, name_end, key)) {
                 return r;
             }
-        }
-    }
-    for (const std::string_view name : kSecretJsonKeys) {
-        if (starts_with_name(text, pos, name)) {
-            if (auto r = match_json_key(text, pos + name.size())) {
+            if (auto r = match_json_key(text, name_end)) {
                 return r;
             }
         }

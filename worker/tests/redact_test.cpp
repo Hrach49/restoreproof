@@ -72,6 +72,30 @@ TEST_CASE("redact leaves text without secrets unchanged", "[redact]")
         R"({"password":)",
         R"({"password": )",
         R"({"password":,"a":1})",
+        // Graph error codes stay readable: "code" is not a secret name, even
+        // though an OAuth authorization code travels as code=.
+        R"({"error":{"code":"ErrorItemNotFound","message":"The specified object was not found in the store."}})",
+        // Names that start with a token name but go on.
+        "signature=x",
+        "sigma=1",
+        R"({"signature":"x"})",
+        "design=x",
+        "client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
+        "id_tokens=x",
+        "tempauthority=x",
+        // The colon form needs a value.
+        "password:",
+        "password:   \nnext",
+        "password_hint: x",
+        // '@' outside a URL's userinfo.
+        "https://host/a@b",
+        "https://host/path?mail=a@b.c",
+        "https://host#a@b",
+        "https://host",
+        "https://@host/x",
+        "mailto:a@b.c",
+        "see https://host and bob@example.com",
+        R"({"url":"https://host/x","owner":"bob@example.com"})",
         // Non-ASCII UTF-8 (Cyrillic "password: test").
         "\xD0\x9F\xD0\xB0\xD1\x80\xD0\xBE\xD0\xBB\xD1\x8C: \xD1\x82\xD0\xB5\xD1\x81\xD1\x82",
     }));
@@ -158,8 +182,9 @@ TEST_CASE("redact replaces secret values in form-encoded bodies", "[redact]")
         {"password=a+b", "password=[REDACTED]"},
         // Non-ASCII.
         {"password=\xD0\xBF\xD0\xB0\xD1\x80&x=1", "password=[REDACTED]&x=1"},
-        // Backslashes and quotes that aren't '"'.
-        {"password='a\\b'&x=1", "password=[REDACTED]&x=1"},
+        // Backslashes: in a single-quoted value, and in an unquoted one.
+        {"password='a\\b'&x=1", "password='[REDACTED]'&x=1"},
+        {"password=a\\b&x=1", "password=[REDACTED]&x=1"},
         // Spaces around '=' (a hand-written log line).
         {"password = hunter2", "password = [REDACTED]"},
         {"password=\thunter2 next", "password=\t[REDACTED] next"},
@@ -316,6 +341,101 @@ TEST_CASE("redact redacts an unterminated JSON value to the end of the text", "[
     })));
 }
 
+TEST_CASE("redact replaces a quoted value after = or : up to its matching quote", "[redact]")
+{
+    check_row(GENERATE(values<Row>({
+        {R"(password="hunter2")", R"(password="[REDACTED]")"},
+        {R"(password = "hunter 2" next)", R"(password = "[REDACTED]" next)"},
+        {"client_secret='a b'&x=1", "client_secret='[REDACTED]'&x=1"},
+        {R"(password="ab\"cd" user=bob)", R"(password="[REDACTED]" user=bob)"},
+        {R"(client_secret='a\'b c' x)", R"(client_secret='[REDACTED]' x)"},
+        {R"(password: "hunter 2", user: bob)", R"(password: "[REDACTED]", user: bob)"},
+        {R"(password="")", R"(password="[REDACTED]")"},
+        // Unterminated: to the end of the text.
+        {R"(password="abc def)", R"(password="[REDACTED]")"},
+        {"password='abc\ndef", "password='[REDACTED]'"},
+        // A quoted value inside a JSON string: its quotes are escaped, so the
+        // rest of the enclosing string goes.
+        {R"({"cmd":"login password=\"a b\" now","x":1})", R"({"cmd":"login password=\"[REDACTED]\"","x":1})"},
+    })));
+}
+
+TEST_CASE("redact replaces the value after a secret key name and a colon", "[redact]")
+{
+    check_row(GENERATE(values<Row>({
+        {"password: hunter2", "password: [REDACTED]"},
+        {"Password: hunter2\r\nnext", "Password: [REDACTED]\r\nnext"},
+        {"client_secret: abc", "client_secret: [REDACTED]"},
+        {"refresh_token:abc def", "refresh_token:[REDACTED]"},
+        {"ACCESS_TOKEN :\tx", "ACCESS_TOKEN :\t[REDACTED]"},
+        {"new_password: x\nnext", "new_password: [REDACTED]\nnext"},
+        // To the end of the line, like a header.
+        {"{password: hunter2, user: bob}\nnext", "{password: [REDACTED]\nnext"},
+        {"password: a\rb\nnext", "password: [REDACTED]\nnext"},
+    })));
+}
+
+// A scheme contains a space ("Bearer x"), so this value runs to the end of the
+// line even in a query string.
+TEST_CASE("redact replaces an authorization=value to the end of the line", "[redact]")
+{
+    check_row(GENERATE(values<Row>({
+        {"Authorization=Bearer tok123", "Authorization=[REDACTED]"},
+        {"authorization=Bearer tok123\nnext", "authorization=[REDACTED]\nnext"},
+        {"/x?authorization=abc&a=1\nnext", "/x?authorization=[REDACTED]\nnext"},
+        {R"(authorization="Bearer x" rest)", R"(authorization="[REDACTED]" rest)"},
+        {"x_authorization=Bearer y", "x_authorization=[REDACTED]"},
+    })));
+}
+
+TEST_CASE("redact replaces tokens that travel in URLs", "[redact]")
+{
+    check_row(GENERATE(values<Row>({
+        // Graph's pre-authenticated downloadUrl.
+        {"https://t.sharepoint.com/_layouts/15/download.aspx?UniqueId=1&tempauth=eyJ0eXAi.x.y&ApiVersion=2.0",
+         "https://t.sharepoint.com/_layouts/15/download.aspx?UniqueId=1&tempauth=[REDACTED]&ApiVersion=2.0"},
+        {R"({"@microsoft.graph.downloadUrl":"https://h/d.aspx?tempauth=eyJ&x=1"})",
+         R"({"@microsoft.graph.downloadUrl":"https://h/d.aspx?tempauth=[REDACTED]&x=1"})"},
+        // Azure SAS.
+        {"https://a.blob.core.windows.net/c/b?sv=2021-08-06&sr=b&sig=abc%2Fdef%3D&se=2026",
+         "https://a.blob.core.windows.net/c/b?sv=2021-08-06&sr=b&sig=[REDACTED]&se=2026"},
+        // OAuth.
+        {"client_assertion_type=urn:x&client_assertion=eyJ.eyJ.sig&scope=s",
+         "client_assertion_type=urn:x&client_assertion=[REDACTED]&scope=s"},
+        {"https://h/cb#id_token=eyJ&state=1", "https://h/cb#id_token=[REDACTED]&state=1"},
+        // Any case, and the suffix rule.
+        {"TempAuth=x&SIG=y", "TempAuth=[REDACTED]&SIG=[REDACTED]"},
+        {"x_sig=abc", "x_sig=[REDACTED]"},
+        // As JSON keys.
+        {R"({"id_token":"eyJ","sig":1,"client_assertion":"a","tempauth":"t","my_id_token":"m"})",
+         R"({"id_token":"[REDACTED]","sig":"[REDACTED]","client_assertion":"[REDACTED]","tempauth":"[REDACTED]","my_id_token":"[REDACTED]"})"},
+    })));
+}
+
+TEST_CASE("redact replaces the userinfo of a URL", "[redact]")
+{
+    check_row(GENERATE(values<Row>({
+        {"https://admin:hunter2@host/path", "https://[REDACTED]@host/path"},
+        {"http://u:p@h", "http://[REDACTED]@h"},
+        {"ftp://user@host?x=1", "ftp://[REDACTED]@host?x=1"},
+        {"https://h#x", "https://h#x"},
+        // An unencoded '@' in the password: up to the last '@' of the authority.
+        {"https://u:p@ss@h/x@y", "https://[REDACTED]@h/x@y"},
+        {"https://a:b@h1 and https://c:d@h2/", "https://[REDACTED]@h1 and https://[REDACTED]@h2/"},
+        {R"({"url":"https://u:p%40x@h/"})", R"({"url":"https://[REDACTED]@h/"})"},
+    })));
+}
+
+// A bare '\r' can't end a header on the wire, so it doesn't end the value.
+TEST_CASE("redact ends a header value only at CRLF, LF or the end", "[redact]")
+{
+    check_row(GENERATE(values<Row>({
+        {"Authorization: Bearer a\rb\r\nHost: h", "Authorization: [REDACTED]\r\nHost: h"},
+        {"Authorization: Bearer a\rb", "Authorization: [REDACTED]"},
+        {"Authorization: x\r", "Authorization: [REDACTED]"},
+    })));
+}
+
 TEST_CASE("redact finds a secret in deeply nested JSON", "[redact]")
 {
     constexpr int kDepth = 500;
@@ -350,7 +470,7 @@ TEST_CASE("redact handles a megabyte of input in one pass", "[redact]")
     {
         std::string input;
         while (input.size() < kSize) {
-            input += R"({"password":"s3cret"},password=s3cret&Authorization: s3cret)"
+            input += R"({"password":"s3cret"},password=s3cret&https://u:s3cret@h/ Authorization: s3cret)"
                      "\n";
         }
         const std::string output = rp::redact(input);
@@ -361,7 +481,8 @@ TEST_CASE("redact handles a megabyte of input in one pass", "[redact]")
     {
         std::string input;
         while (input.size() < kSize) {
-            input += "password passwords \"password\" grant_type=password authorization ";
+            input += "password passwords \"password\" grant_type=password authorization signature "
+                     "https://host/a@b ";
         }
         CHECK(rp::redact(input) == input);
     }

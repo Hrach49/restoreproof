@@ -14,18 +14,30 @@ bool is_secret_header(std::string_view name) noexcept;
 
 // `text` with every secret value replaced by kRedacted. The HTTP client passes
 // every string it logs through this (CLAUDE.md "Secrets"). Names match in any
-// case:
-//  - Authorization / Proxy-Authorization as a header ("Name: value"): the whole
-//    value, any scheme, up to the end of the line;
-//  - client_secret, password, refresh_token, access_token as key=value (URL
-//    query strings, application/x-www-form-urlencoded bodies): the value;
-//  - those four and authorization as JSON object keys, at any nesting: the
-//    whole value.
-// Over-redacting is preferred to leaking: a key or JSON key that ends in one
-// of the names after a non-alphanumeric character ("new_password",
-// "db.password") counts as the name; a JSON value of any type becomes the
-// string "[REDACTED]"; an unterminated JSON value is redacted to the end of
-// the text. The rules are in docs/decisions.md.
+// case. The forms:
+//  - header "Name: value", Name exactly Authorization or Proxy-Authorization:
+//    the whole value, any scheme, up to "\r\n", "\n" or the end of the text
+//    (a bare '\r' doesn't end it);
+//  - key=value, key one of client_secret, password, refresh_token,
+//    access_token, authorization, tempauth, sig, client_assertion, id_token
+//    (URL query strings and fragments, form bodies, log lines; blanks allowed
+//    around '='): the value up to '&', '#', '"', ',' or whitespace, but for
+//    authorization up to the end of the line;
+//  - "key: value" for client_secret, password, refresh_token and access_token
+//    only: the value up to the end of the line;
+//  - in both forms a value starting with a quote (' or ") goes up to its
+//    matching quote, backslash escapes honoured, and keeps its quotes;
+//  - JSON object keys, any of the nine key=value names, at any nesting: the
+//    whole value, of any type, becomes the string "[REDACTED]";
+//  - URL userinfo, "scheme://user:password@host": everything between "://"
+//    and the last '@' before the first '/', '?' or '#'.
+// A key that ends in one of the names after a non-alphanumeric byte
+// ("new_password", "db.password", "x_sig") counts as the name; a name run
+// into a letter or digit ("xpassword", "signature") doesn't. A quoted value
+// or JSON value left unterminated is redacted to the end of the text, and a
+// value inside a JSON-escaped string (\"password\":\"...\") to the end of
+// the enclosing string. An empty unquoted value is left as it is. Over-
+// redacting is preferred to leaking (docs/decisions.md).
 // Text with nothing to redact comes back unchanged.
 std::string redact(std::string_view text);
 

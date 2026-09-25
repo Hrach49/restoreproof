@@ -10,8 +10,9 @@ the backed-up mailboxes, sites and OneDrives as of the moment that backup ran. A
 names the restore point it used, because "the data restores" is only true of a point in time.
 
 **Restore target.** The place a restored item is written. In RestoreProof it is always the
-`restoretest` mailbox, or the `RestoreTest` SharePoint library or OneDrive folder — never the
-original location, and never any other. Enforced per item by `TargetGuard`.
+`restoretest` mailbox, or the `RestoreTarget` SharePoint library or OneDrive folder — never the
+original location, and never any other. Enforced per item by `TargetGuard`. (The `RestoreTest`
+library and OneDrive folder hold the canary files and are not restore targets.)
 
 **Canary item.** An item we seeded ourselves and whose expected content we recorded in
 `lab/seed-manifest.json` (mails `RP-CANARY-0001`…`0020`, files `rp-canary-01.pdf`…

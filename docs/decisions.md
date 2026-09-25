@@ -7,6 +7,43 @@ Format: date, decision, reason, alternatives rejected.
 
 ---
 
+## 2026-09-25 — Restored files go to `RestoreTarget`, not to the `RestoreTest` library/folder that holds the canaries
+
+**Decision.** Supersedes the file part of "Restores only ever target `restoretest` /
+`RestoreTest`" (2026-09-22). SharePoint items are restored into a new library
+**`RestoreTarget`** in the RestoreTest site, and OneDrive items into a new folder
+**`/RestoreTarget`** in alice's OneDrive (IDs in `lab/tenant.md`). The `restoretest` mailbox
+stays the mail target. The canary files stay where L1.2 seeded them: `rp-canary-01…10` in
+the `RestoreTest` library, `11…20` in alice's `/RestoreTest`. Both new targets were created
+on 2026-09-25, before any restore. The rest of the 2026-09-22 rule (one guarded code path,
+checked per item, a violation is `error`) is unchanged.
+
+**Reason.** The guide uses the RestoreTest library and alice's RestoreTest folder both as
+L1.2's canary source and as the restore target. With one place for both:
+- a restore of `rp-canary-01.pdf` lands on top of the original, which Veeam overwrites,
+  skips or renames, and L1.4's "delete the restored items" can then delete the canary;
+- the checker (W3.2) finds the original by name, so a restore that wrote nothing still passes:
+  the false pass the product exists to prevent;
+- the Cleaner (W3.4) empties the target after every run, and so would delete the canaries.
+
+The mail side never had the problem: the canaries are in alice's and bob's mailboxes, the
+target is `restoretest`.
+
+**Alternatives rejected.** A `Restored` subfolder inside the current library and folder: less
+setup, but the Cleaner would then have to spare the parent, and one scoping bug deletes the
+canaries. Moving the canaries and keeping `RestoreTest` as the target: a new seed run, a new
+manifest and a new Veeam backup for the same result. A target in `restoretest`'s own
+OneDrive: not provisioned, and it would add a second user's drive to Graph permissions (L1.5).
+
+**Consequences.** `TargetGuard` (W2.7) checks against `RestoreTarget`'s IDs, and the random
+sample (W2.6) must exclude both `RestoreTarget` and the canary locations it already
+handles. Both are in the same site and drive as before, so `Sites.Selected` on the
+RestoreTest site (L1.5) still covers the SharePoint target. Veeam's backup job covers all
+sites and OneDrives, so it will also back up whatever is left in `RestoreTarget`. The
+Cleaner keeps it empty.
+
+---
+
 ## 2026-09-25 — Veeam Backup for Microsoft 365 runs directly on the dev laptop, not in a VM
 
 **Decision.** Supersedes "The Veeam lab VM runs on the dev laptop, with reduced resources"

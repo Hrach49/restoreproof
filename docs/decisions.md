@@ -7,6 +7,34 @@ Format: date, decision, reason, alternatives rejected.
 
 ---
 
+## 2026-09-25 — Veeam Backup for Microsoft 365 runs directly on the dev laptop, not in a VM
+
+**Decision.** Supersedes "The Veeam lab VM runs on the dev laptop, with reduced resources"
+(2026-09-22). L1.3 installs Veeam Backup for Microsoft 365 v8 (Community Edition) on the
+laptop's own Windows 10 Pro 22H2, with no Hyper-V VM. The Worker will reach its REST API on
+the same machine (port 4443). A spare PC or a cloud VM stays the fallback, now also for when
+a separate host is needed to test the Worker across a network and a certificate name.
+
+**Reason.** Veeam's v8 system requirements (8.6) list Windows 10 21H2/22H2 as a supported
+backup server OS and ask for at least 8 cores and 16 GB RAM. The laptop has 2 cores / 4
+threads and 16 GB, so the planned 2 vCPU / 6 GB VM would give Veeam well under half its
+minimum, plus the overhead of a second Windows. On the host it gets the whole machine, and
+L1.3 skips installing and updating Windows Server. The 2026-09-22 entry rejected a host
+install because it mixes the product under test with the dev toolchain and doesn't resemble
+an MSP's server. Both still hold, but a starved VM is the bigger risk for the Sprint 1
+feasibility work. An MSP may also run the Worker on its Veeam server, so a local REST API is
+not unrealistic.
+
+**Alternatives rejected.** The 6 GB VM as planned: far below Veeam's minimum, with no gain
+beyond isolation. A bigger VM: the laptop has no RAM or cores to spare. A cloud VM now: a
+monthly cost and firewall rules before we know the laptop is too slow; kept as the fallback.
+
+**Costs we accept.** Veeam's services and their database run on the dev laptop and start
+with Windows. There are no checkpoints to roll back to. The Cloud's local Postgres (Docker,
+later) must not clash with a database port Veeam uses. Check the ports when C-work starts.
+
+---
+
 ## 2026-09-25 — Office files are compared by content (`office-v1`); the Worker compares `content_sha256`
 
 **Decision.** Supersedes the file-hash part of the 2026-09-24 canary seeder entry below. Every

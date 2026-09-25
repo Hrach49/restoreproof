@@ -41,7 +41,29 @@ L0.2 check (all succeed in that one terminal): `cmake --version`, `uv --version`
 
 ## Veeam host
 
-A local Hyper-V VM on this laptop, sized **2 vCPU, 6 GB RAM, dynamically expanding disk**
-rather than the plan's 4 vCPU / 8 GB / 100 GB, which a 2-core, 16 GB machine cannot spare
-alongside VS and Docker. Do not run the VM and a C++ build at the same time. Built in L1.3;
-a spare PC or cloud VM is the fallback if it proves too slow. See `docs/decisions.md`.
+Veeam Backup for Microsoft 365 (v8, Community Edition) is installed **directly on this
+laptop**, not in a VM (decision of 2026-09-25, superseding the Hyper-V VM of 2026-09-22).
+Windows 10 22H2 is a supported backup server OS. The laptop is below Veeam's stated minimum
+(8 cores, 16 GB RAM), so expect slow backups; Veeam's services start with Windows and can be
+stopped in `services.msc` during heavy C++ builds (scheduled backups then don't run). REST
+API on port 4443. A spare PC or cloud VM remains the fallback. Installed in L1.3 on
+2026-09-25:
+
+| | |
+|---|---|
+| Veeam Backup for Microsoft 365 | 13.6.0.237 (Veeam now numbers it like Backup & Replication; the installer also put VBR 13.1.0.26072 and the Exchange/SharePoint Explorers 13.6.0.237 on the laptop) |
+| REST API | Still **`v8`**: Swagger at `https://localhost:4443/swagger/index.html` reports `version: v8`, `/v8/...` answers, `/v13/...` is 404. Self-signed certificate |
+| Services | `Veeam.Archiver.Service`, `Veeam.Archiver.Proxy`, `Veeam.Archiver.REST.Service` (automatic) |
+| Organisation | `RestoreProofLab.onmicrosoft.com` (modern app-only authentication) |
+| Backup job | `RP-Lab-Full`: all users, all SharePoint sites and OneDrives |
+| Restore points | Full `2fb3c7e0-ff6e-4949-8b2d-ae32ecf9e9a7` at 2026-09-25 19:24:31 UTC (60.7 MB, 1495 items); incremental `71ac3d9c-eb29-42b6-a391-ae81fcc4681c` at 19:37:15 UTC (0 changed items). Job history: `docs/lab/l1.3-job-history.png` |
+
+All 40 canaries are in the latest point (checked with Veeam's PowerShell explore cmdlets):
+`RP-CANARY-0001…0010` in alice's mailbox, `0011…0020` in bob's, `rp-canary-01…10` in the
+RestoreTest library, `rp-canary-11…20` in alice's OneDrive.
+
+Veeam's PowerShell module is `C:\Program Files\Veeam\Backup365\Veeam.Archiver.PowerShell\`,
+with the Explorer modules under `C:\Program Files\Veeam\Backup and Replication\Explorers\`.
+It needs **PowerShell 7** (`pwsh`): under Windows PowerShell 5.1 it loads with a deprecation
+warning, and opening a restore session fails on a missing `Microsoft.Bcl.TimeProvider`.
+Relevant to the PowerShell fallback in the Sprint 1 gate.

@@ -143,6 +143,16 @@ for the application certificate, as the cmdlets do.
 
 ## Cleanup
 
-The three restored items are deleted from `restoretest`'s Inbox, the `RestoreTarget` library and
-alice's `/RestoreTarget` after this document is written (step 5 of L1.4), leaving all three
-targets empty.
+Done on 2026-09-25, leaving all three targets empty:
+
+- **Mail**: deleted by hand in Outlook on the web as `restoretest`, from the Inbox and then
+  from Deleted Items. Deleting through Graph needs `Mail.ReadWrite`, which the seeder app lacks,
+  and the tenant does not let users consent to apps (Microsoft Graph Command Line Tools asked
+  `restoretest` for admin approval). The Worker's cleanup (W3.4) needs its own scoped mail
+  write permission for this.
+- **Files**: deleted through Graph (`DELETE /drives/{drive}/items/{id}`, so they went to the
+  recycle bins), as the admin for the `RestoreTarget` library and as alice for her
+  `/RestoreTarget`. Before each delete the script checked that exactly one file with that name
+  was in the target, in the target's drive or folder.
+- **Afterwards**: `RestoreTarget` and alice's `/RestoreTarget` list 0 items, and the canary
+  locations still list 10 files each.

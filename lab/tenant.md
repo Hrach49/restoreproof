@@ -25,16 +25,34 @@ All licensed (Microsoft 365 Business Standard trial), usage location PL.
 
 ## Restore targets
 
-Every restore goes to one of these (CLAUDE.md, "Restore targets").
+Every restore goes to one of these (CLAUDE.md, "Restore targets"). The canary files are
+**not** in them: `rp-canary-01…10` are in the `RestoreTest` library and `11…20` in alice's
+`/RestoreTest` folder (see "Canary sources" below), so a restore never lands on top of a canary
+and the Cleaner never deletes one (`docs/decisions.md`, 2026-09-25).
 
 | Target | Value |
 |---|---|
 | Mail | `restoretest@RestoreProofLab.onmicrosoft.com` |
 | SharePoint site URL | `https://restoreprooflab.sharepoint.com/sites/RestoreTest` |
 | SharePoint site ID | `restoreprooflab.sharepoint.com,fe08085d-eb70-42e8-95a6-470189bd98eb,4ecaf399-cc0e-4d95-b3fe-cd091a09e689` |
+| RestoreTarget library, URL | `https://restoreprooflab.sharepoint.com/sites/RestoreTest/RestoreTarget` |
+| RestoreTarget library, list ID | `ffec069d-65e4-4c3a-9da2-ac086cf9dafa` |
+| RestoreTarget library, drive ID | `b!XQgI_nDr6EKVpkcBib2Y65nzyk4OzJVNs_7NCRoJ5omdBuz_5GU6TJ2irAhs-dr6` |
+| alice's OneDrive, drive ID | `b!wA9gbfhlEUitGAluxbfoNBr_z5gEtDhErm5pJ6bMwyXfZJ8a_dkCQ696RX0r7_U3` |
+| alice's OneDrive `RestoreTarget` folder, item ID | `01ZK75LGDGB6QOO3MGNFGYOY6C6VBDG5OH` |
+
+Both `RestoreTarget`s were created on 2026-09-25 (L1.4): the library by hand in the site (New >
+Document library; the seeder app lacks `Sites.Manage.All`), the folder through Graph as alice.
+
+## Canary sources
+
+Where L1.2 seeded the canary files. Never a restore target; `lab/seed-manifest.json` has the
+same IDs per item.
+
+| Source | Value |
+|---|---|
 | RestoreTest library, list ID | `7eb0f08a-f57b-418c-8ca6-f2ab81297666` |
 | RestoreTest library, drive ID | `b!XQgI_nDr6EKVpkcBib2Y65nzyk4OzJVNs_7NCRoJ5omK8LB-e_WMQYym8quBKXZm` |
-| alice's OneDrive, drive ID | `b!wA9gbfhlEUitGAluxbfoNBr_z5gEtDhErm5pJ6bMwyXfZJ8a_dkCQ696RX0r7_U3` |
 | alice's OneDrive `RestoreTest` folder, item ID | `01ZK75LGF7FPAIWTU5MFGIMX6YUFEV7ZC4` |
 
 The site is a team site without a Microsoft 365 group (template `STS#3`): a group-connected
@@ -47,8 +65,8 @@ global admin gets 403 on another user's OneDrive through delegated Graph unless 
 collection admin of it. The Worker uses app-only permissions (L1.5), which this does not affect.
 
 The Worker config keys `test_mailbox`, `test_site_id`, `test_library_id`,
-`test_onedrive_drive_id` and `test_onedrive_folder_id` (`docs/worker-config.md`) take these
-values. Open point: the library has both a list ID and a drive ID, and `test_library_id` does not
+`test_onedrive_drive_id` and `test_onedrive_folder_id` (`docs/worker-config.md`) take the
+"Restore targets" values. Open point: the library has both a list ID and a drive ID, and `test_library_id` does not
 yet say which one it holds. Graph reads files by drive ID; what the Veeam restore body needs
 is settled by W1.0/W2.4, and the config doc is updated then.
 

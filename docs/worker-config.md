@@ -30,10 +30,10 @@ Ten keys are required; the other seven are optional. Six of those have defaults;
 | `graph_tenant_id` | yes | | non-empty string | The Microsoft 365 tenant ID, for Microsoft Graph sign-in. |
 | `graph_client_id` | yes | | non-empty string | The app registration's client ID, for Microsoft Graph sign-in. |
 | `test_mailbox` | yes | | `restoretest@<domain>`: see below | The `restoretest` mailbox: the only restore target for mail. |
-| `test_site_id` | yes | | non-empty string | The SharePoint site holding the `RestoreTest` library. |
-| `test_library_id` | yes | | non-empty string | The `RestoreTest` library: the only restore target for SharePoint items. |
-| `test_onedrive_drive_id` | yes | | non-empty string | The OneDrive drive holding the `RestoreTest` folder. |
-| `test_onedrive_folder_id` | yes | | non-empty string | The `RestoreTest` folder: the only restore target for OneDrive items. |
+| `test_site_id` | yes | | non-empty string | The SharePoint site holding the `RestoreTarget` library (the RestoreTest site in the lab). |
+| `test_library_id` | yes | | non-empty string | The `RestoreTarget` library: the only restore target for SharePoint items. Not the `RestoreTest` library, which holds the canary files. |
+| `test_onedrive_drive_id` | yes | | non-empty string | The OneDrive drive holding the `RestoreTarget` folder. |
+| `test_onedrive_folder_id` | yes | | non-empty string | The `RestoreTarget` folder: the only restore target for OneDrive items. Not `/RestoreTest`, which holds the canary files. |
 | `poll_interval_s` | no | `300` | integer, 1 to 86400 | Seconds between the Worker's requests to the Cloud for new jobs. |
 | `heartbeat_interval_s` | no | `900` | integer, 1 to 86400 | Seconds between the Worker's reports to the Cloud that it is alive. |
 | `sample_mail` | no | `5` | integer, 0 to 100 | Mail items restored per test run. |

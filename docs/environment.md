@@ -55,6 +55,7 @@ API on port 4443. A spare PC or cloud VM remains the fallback. Installed in L1.3
 | REST API | Still **`v8`**: Swagger at `https://localhost:4443/swagger/index.html` reports `version: v8`, `/v8/...` answers, `/v13/...` is 404. Self-signed certificate |
 | Services | `Veeam.Archiver.Service`, `Veeam.Archiver.Proxy`, `Veeam.Archiver.REST.Service` (automatic) |
 | Organisation | `RestoreProofLab.onmicrosoft.com` (modern app-only authentication) |
+| Veeam's Entra app | `RestoreProof Lab Veeam`, app ID `1fd2609d-1242-43fe-94b5-d58688a90bd6`, certificate `CN=RestoreProof Lab Veeam` (thumbprint `AC3220B5…`, LocalMachine\My, private key exportable, expires 2028-09-25). Its backup permissions lacked Microsoft Graph `Group.ReadWrite.All`, which SharePoint restores need; granted on 2026-09-25 (L1.4, `docs/manual-restore-reference.md`). This is Veeam's app, not the Worker's (L1.5) |
 | Backup job | `RP-Lab-Full`: all users, all SharePoint sites and OneDrives |
 | Restore points | Full `2fb3c7e0-ff6e-4949-8b2d-ae32ecf9e9a7` at 2026-09-25 19:24:31 UTC (60.7 MB, 1495 items); incremental `71ac3d9c-eb29-42b6-a391-ae81fcc4681c` at 19:37:15 UTC (0 changed items). Job history: `docs/lab/l1.3-job-history.png` |
 

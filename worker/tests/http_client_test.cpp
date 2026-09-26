@@ -242,6 +242,47 @@ TEST_CASE("with retry_on_status off, transport errors are still retried", "[http
     CHECK(t.sleeps == std::vector<std::chrono::milliseconds>{1000ms, 2000ms, 4000ms, 8000ms});
 }
 
+TEST_CASE("max_attempts caps the attempts; at 1 the error names no count", "[http]")
+{
+    // VeeamClient does its own retrying (W1.5 review): it sends with
+    // max_attempts 1 and counts the attempts itself.
+    const int max_attempts = GENERATE(1, 2);
+    CAPTURE(max_attempts);
+    TestClient t;
+    rp::HttpRequest request;
+    request.url = "http://127.0.0.1:" + std::to_string(rp::test::closed_local_port()) + "/x";
+    request.max_attempts = max_attempts;
+
+    try {
+        t.client->send(request);
+        FAIL("send() returned for an unreachable host");
+    } catch (const rp::HttpError& e) {
+        CHECK(e.error() == rp::TransportError::connect);
+        CHECK(e.attempts() == max_attempts);
+        const std::string what = e.what();
+        CAPTURE(what);
+        if (max_attempts == 1) {
+            CHECK(what.starts_with("GET " + request.url + ": could not connect: "));
+        } else {
+            CHECK(what.starts_with("GET " + request.url + ": could not connect after 2 attempts: "));
+        }
+    }
+    CHECK(t.sleeps.size() == static_cast<std::size_t>(max_attempts - 1));
+}
+
+TEST_CASE("max_attempts outside 1 to 5 is refused before sending", "[http]")
+{
+    const int max_attempts = GENERATE(-1, 0, 6);
+    CAPTURE(max_attempts);
+    TestClient t;
+    rp::HttpRequest request;
+    request.url = "http://127.0.0.1:" + std::to_string(rp::test::closed_local_port()) + "/x";
+    request.max_attempts = max_attempts;
+
+    CHECK_THROWS_AS(t.client->send(request), std::invalid_argument);
+    CHECK(rp::HttpRequest{}.max_attempts == rp::kMaxHttpAttempts);
+}
+
 TEST_CASE("a request that outlives its timeout is retried as a timeout", "[http]")
 {
     // The handler holds each request until the gate opens or 1.5 s pass; the
@@ -1027,10 +1068,12 @@ TEST_CASE("curl errors map to the retry policy's transport errors", "[http]")
         {E::COULDNT_RESOLVE_PROXY, T::connect},
         {E::COULDNT_RESOLVE_HOST, T::connect},
         {E::COULDNT_CONNECT, T::connect},
-        {E::SEND_ERROR, T::connect},
-        {E::RECV_ERROR, T::connect},
-        {E::GOT_NOTHING, T::connect},
-        {E::PARTIAL_FILE, T::connect},
+        // After the request went out: the server may have acted on it, so a
+        // caller that must not send twice can tell these from `connect`.
+        {E::SEND_ERROR, T::dropped},
+        {E::RECV_ERROR, T::dropped},
+        {E::GOT_NOTHING, T::dropped},
+        {E::PARTIAL_FILE, T::dropped},
         {E::NO_CONNECTION_AVAILABLE, T::connect},
         {E::OPERATION_TIMEDOUT, T::timeout},
         // Schannel's code for a connection dropped mid-handshake, as well as

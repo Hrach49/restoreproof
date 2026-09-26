@@ -72,6 +72,11 @@ struct HttpRequest {
     // acted on: this flag alone doesn't make a request run at most once, as a
     // restore must (docs/decisions.md, W1.3's open point).
     bool retry_on_status = true;
+    // Attempts at most, 1 to kMaxHttpAttempts (send() throws
+    // std::invalid_argument otherwise). 1: a caller that retries itself
+    // (VeeamClient) gets every failure after one attempt, and the HttpError
+    // message carries no attempt count.
+    int max_attempts = kMaxHttpAttempts;
 };
 
 // Per-call extras for the IHttpClient helpers.
@@ -180,7 +185,8 @@ struct HttpClientOptions {
 //  - TLS peer verification is always on, and so is host verification unless
 //    a certificate is pinned (HttpClientOptions::pinned_cert_sha256).
 //  - A request with retry_on_status off gets any status back after one
-//    attempt; transport errors are still retried.
+//    attempt; transport errors are still retried, up to the request's
+//    max_attempts.
 //  - One debug line per attempt, redacted with rp::redact(); headers and
 //    bodies are never logged.
 // send() may be called from several threads at once if the injected options

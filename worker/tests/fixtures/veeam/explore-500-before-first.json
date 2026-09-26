@@ -1,0 +1,11 @@
+{
+  "source": "docs/api/veeam-lab/w1.4-session-explore-before.json",
+  "request": "POST /v8/Organizations/ff96d072-29e2-4cb4-a155-2590f5473176/explore",
+  "status": 500,
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8"
+  },
+  "body": {
+    "message": "The chosen restore point date precedes the date of the first available restore point (9/25/2026 7:24:31 PM)."
+  }
+}

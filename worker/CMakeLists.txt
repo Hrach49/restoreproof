@@ -19,6 +19,7 @@ enable_testing()
 # rpcore: static library holding all Worker logic. rpworker (the exe) and
 # rptests both link it; coverage is measured on its sources (src/, include/).
 add_library(rpcore STATIC
+    src/cert_pin.cpp
     src/cli.cpp
     src/config.cpp
     src/config_check.cpp
@@ -54,6 +55,7 @@ add_executable(rpworker
 target_link_libraries(rpworker PRIVATE rpcore)
 
 add_executable(rptests
+    tests/cert_pin_test.cpp
     tests/cli_test.cpp
     tests/config_check_test.cpp
     tests/config_test.cpp
@@ -76,6 +78,8 @@ target_link_libraries(rptests PRIVATE httplib::httplib)
 target_compile_definitions(rptests PRIVATE RP_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
 # config_test.cpp parses the shipped example, so it can't drift from the rules.
 target_compile_definitions(rptests PRIVATE RP_CONFIG_EXAMPLE="${CMAKE_CURRENT_SOURCE_DIR}/config.example.json")
+# Recorded service responses (tests/fixtures/<service>/), served by FakeHttpClient.
+target_compile_definitions(rptests PRIVATE RP_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")
 
 include(Catch)
 catch_discover_tests(rptests)

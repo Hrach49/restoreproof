@@ -7,6 +7,82 @@ Format: date, decision, reason, alternatives rejected.
 
 ---
 
+## 2026-09-26 — VeeamClient after review: one retry budget, token requests at most once, renewal failures shared only while no token works (W1.5)
+
+Supersedes parts of the entry below ("VeeamClient: status retries off per request ...") and
+of "Veeam TLS" (how the CA file is read), after the review of PR #124.
+
+**Decision.**
+
+- **VeeamClient makes every attempt itself: five per request in all.** A new
+  `HttpRequest::max_attempts` (1 to 5, default 5) caps `HttpClient`'s attempts; every
+  Veeam request goes out with 1, so `HttpClient` never retries under the client (one GET had
+  made up to 25 requests, 50 through the 401 path). With 1, `HttpError`'s message carries no
+  attempt count; the client adds its own ("... (5 attempts)", "HTTP 503 after 5 attempts").
+- **A new `TransportError::dropped`** for a connection that broke after the request may have
+  gone out (curl's `SEND_ERROR`, `RECV_ERROR`, `GOT_NOTHING`, `PARTIAL_FILE`, formerly
+  `connect`). `connect` now means the request never went out. `HttpClient` retries both, as
+  before.
+- **Which failures are retried.** A GET: `connect`, `dropped`, `timeout`, `handshake`, and a
+  transient 5xx, with `rp::retry_delay`'s backoff. A token request (`/v8/token`): only
+  `connect` and `handshake`, which never reached Veeam. After a timeout or a dropped
+  connection it is not resent: a second password grant is a second logon (towards an
+  account lockout, or another token chain nobody holds), a second refresh presents a used
+  token. A logout: one attempt, never retried.
+- **`/v8/token`'s 5xx.** Only a 500 is a refusal (`AuthError`, whatever its body). A 502,
+  503 or 504 is a gateway or a service starting up (`TransientError`); any other 5xx maps
+  as on any call. None is retried: the next call signs in again.
+- **A refresh that fails with a `TransientError` is thrown as it is**, not followed by a
+  password sign-in, which would meet the same unreachable server while every other caller
+  waits on the lock. A refresh Veeam refuses (401 "Refresh token is not valid", an empty
+  500) or garbles still falls back to the password.
+- **Renewal failures are shared only while no token works.** A caller that waited for the
+  lock while a sign-in or refresh failed gets that failure only if it still has to renew
+  when it gets the lock and no renewal has succeeded since (a stored token clears the kept
+  failure). A waiter was handed an earlier failure after a later sign-in had succeeded.
+- **An empty 401 for a newer token** another caller brought is followed by the one fresh
+  sign-in if that token is dead too (a REST restart kills every token), then one more
+  resend; at most three resends per call. It used to end in `AuthError`.
+- **`logout()` refreshes an access token within 60 s of expiry first** (one try, no password
+  sign-in): Veeam refuses a logout with an expired one, and the refresh token it would end
+  outlives it (veeam-notes §1.5). It sends outside the lock.
+- **Paging** gives up after 3 full pages in a row that bring nothing new, not 1: with a small
+  page size, points added in front between two reads repeat the last page.
+- **List entries are moved out of the parsed page**, never copied: copying a JSON value
+  recurses once per level, and a deeply nested value overflowed the stack.
+- **Text from a response** (`message`, `errorCode`, `WWW-Authenticate`'s
+  `error_description`, a bad `backupTime`) has every control character replaced, including
+  the multi-byte ones config values refuse (C1, U+2028/U+2029, bidi marks, embeddings,
+  overrides and isolates, U+061C); one list in `worker/src/control_chars.hpp` serves both.
+- **`expires_in`** of 2^63 or more is capped at a day like any other large value, not refused.
+- **The CA file is read as curl's Schannel backend reads it** (`rp::public_key_pin`, so
+  `config check` too): each exact `-----BEGIN CERTIFICATE-----` line through the next
+  `\n-----END CERTIFICATE-----`, decoded by the same `CryptQueryObject` call, stopping at
+  the first BEGIN marker with anything after it on its line, and failing on a block without
+  its END line or one Windows can't decode. OpenSSL's PEM reader accepted files curl then
+  loaded as empty (a trailing space after the marker, the old `X509 CERTIFICATE` label) or
+  refused, and asked for a pass phrase on the console for a block with PEM encryption
+  headers. rpcore links `crypt32`.
+
+**Reason.** The review found each of these as a failing scenario (retries multiplied to
+11-23 minutes per GET; a stale sign-in error with a valid token stored; an `AuthError` after
+a REST restart; 330 s instead of 165 s behind a hung server; a refused logout; a CA file
+that passed `config check` and failed every connection). Each has a test that reproduced it
+before the fix.
+
+**Alternatives rejected.** *A retry predicate on `HttpRequest` so `HttpClient` keeps the only
+loop:* `FakeHttpClient` doesn't retry, so every Veeam retry test would move to the local
+server; a cap is simpler. *A single-flight future per renewal:* also correct, but a larger
+change than clearing the kept failure on success. *Never resending a token request:* a
+connection refused while Veeam restarts would fail the run at once. *Our own base64 decoder
+for the CA file:* the only way to agree with curl exactly is to call what curl calls.
+
+**Open.** A restore POST (W2.x) gets the same at-most-once rule as a token request from
+`send_with_retries`; whether a timed-out restore started is still to be found in
+`GET /v8/RestoreSessions` before any resend (veeam-notes §6).
+
+---
+
 ## 2026-09-26 — VeeamClient: status retries off per request, Veeam's 5xx classified by the client; token and paging rules (W1.5)
 
 **Decision.** `rp::VeeamClient` (`worker/include/rp/veeam_client.hpp`) follows

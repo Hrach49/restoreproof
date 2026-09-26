@@ -60,7 +60,8 @@ the file can't be read; it isn't valid JSON; it isn't a JSON object; a key looks
 a key is unknown; then each setting in the order of the table above (for `veeam_cert_sha256`,
 its form first, then that `veeam_ca_file` is set); then the sample sizes together; then that
 the `veeam_ca_file` named can be opened for reading; last, when `veeam_cert_sha256` is set,
-that `veeam_ca_file` holds a certificate with that SHA-256. Fix the reported problem and run
+that `veeam_ca_file` holds a certificate with that SHA-256, read the way the Worker's TLS
+connection reads it. Fix the reported problem and run
 `rpworker config check` again.
 
 - **Messages name the key and never repeat a value from the file.** A JSON syntax error
@@ -103,9 +104,10 @@ that `veeam_ca_file` holds a certificate with that SHA-256. Fix the reported pro
   drive (`\ca.pem`) and drive-relative paths (`C:ca.pem`) are rejected. Any character is
   allowed apart from control characters, including ones outside the ANSI code page. The file
   must exist and be readable by the account the Worker runs as; a missing file or a directory
-  is reported as `config key "veeam_ca_file" names a file that can't be read`. Its contents
-  aren't checked until the Worker connects to Veeam. In a JSON string each `\` is written
-  `\\`: `"C:\\ProgramData\\RestoreProof\\veeam-ca.pem"`.
+  is reported as `config key "veeam_ca_file" names a file that can't be read`. Without
+  `veeam_cert_sha256`, its contents aren't checked until the Worker connects to Veeam; with
+  it, the Worker reads the file when it loads the config (see the next item). In a JSON
+  string each `\` is written `\\`: `"C:\\ProgramData\\RestoreProof\\veeam-ca.pem"`.
 - **`veeam_cert_sha256` must be a SHA-256 and needs `veeam_ca_file`.** The value is 64
   hexadecimal digits, upper or lower case, with nothing between them: no colons, spaces or
   `0x`. A 40-digit SHA-1 thumbprint, which the Veeam console shows, is rejected with
@@ -114,7 +116,18 @@ that `veeam_ca_file` holds a certificate with that SHA-256. Fix the reported pro
   "veeam_cert_sha256" needs veeam_ca_file: set it to a PEM file holding that certificate`. When
   the Worker loads the file it also reads `veeam_ca_file` and reports `config key
   "veeam_cert_sha256": veeam_ca_file holds no certificate whose SHA-256 is veeam_cert_sha256`
-  when no PEM certificate in it matches. See "Veeam's default certificate" below.
+  when no PEM certificate in it matches. It reads the file exactly as the TLS connection
+  does (curl's Windows backend, with the same Windows decoder): at most 1 MiB; each
+  certificate starts with a line that is exactly `-----BEGIN CERTIFICATE-----`, with nothing
+  after it, not even a space, and ends with `-----END CERTIFICATE-----`; reading stops at the
+  first BEGIN line with anything after the marker (certificates below it are never loaded);
+  a block without its END line, or one that doesn't decode (such as one with
+  `Proc-Type`/`DEK-Info` encryption headers), makes the whole file unusable. The messages are
+  `veeam_ca_file is larger than 1 MiB`, `veeam_ca_file holds no certificate curl can read:
+  each must begin with a line that is exactly -----BEGIN CERTIFICATE-----`, `veeam_ca_file
+  has a BEGIN CERTIFICATE line without its END CERTIFICATE line` and `veeam_ca_file holds a
+  certificate block that can't be read`, each after `config key "veeam_cert_sha256": `. See
+  "Veeam's default certificate" below.
 - **Control characters are rejected** in every string setting, for the same reason: a newline,
   escape sequence or bidi override in a value could forge, hide or reorder lines of
   `config check` output.

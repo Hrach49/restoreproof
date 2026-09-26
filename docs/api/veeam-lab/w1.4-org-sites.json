@@ -1,0 +1,147 @@
+{
+  "note": "GET /v8/Organizations/{organizationId}/Sites (default: no personal sites)",
+  "captured_utc": "2026-09-26T16:02:12.717Z",
+  "duration_ms": 8,
+  "request": {
+    "method": "GET",
+    "path": "/v8/Organizations/ff96d072-29e2-4cb4-a155-2590f5473176/Sites",
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "content_type": "application/json; charset=utf-8",
+    "headers": {
+      "Date": "Sat, 26 Sep 2026 16:02:11 GMT",
+      "Cache-Control": "no-store",
+      "Pragma": "no-cache",
+      "Transfer-Encoding": "chunked",
+      "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+      "X-Content-Type-Options": "nosniff",
+      "X-XSS-Protection": "1; mode=block",
+      "X-Frame-Options": "SAMEORIGIN",
+      "Content-Type": "application/json; charset=utf-8"
+    },
+    "body": {
+      "offset": 0,
+      "limit": 30,
+      "_links": {
+        "self": {
+          "href": "/v8/Organizations/ff96d072-29e2-4cb4-a155-2590f5473176/Sites?setid=57070b51-1be6-08df-0000-000000000000&offset=0&limit=30"
+        }
+      },
+      "results": [
+        {
+          "id": "fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689",
+          "eTag": 1,
+          "url": "https://restoreprooflab.sharepoint.com/sites/RestoreTest",
+          "name": "RestoreTest",
+          "isCloud": true,
+          "isPersonal": false,
+          "title": "RestoreTest",
+          "isAvailable": true,
+          "msid": "fe08085d-eb70-42e8-95a6-470189bd98eb,4ecaf399-cc0e-4d95-b3fe-cd091a09e689",
+          "_links": {
+            "self": {
+              "href": "/v8/organizations/ff96d072-29e2-4cb4-a155-2590f5473176/sites/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689"
+            },
+            "children": {
+              "href": "/v8/organizations/ff96d072-29e2-4cb4-a155-2590f5473176/sites?parentId=fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689"
+            },
+            "organization": {
+              "href": "/v8/organizations/ff96d072-29e2-4cb4-a155-2590f5473176"
+            }
+          }
+        },
+        {
+          "id": "6f9f9513-4db4-4056-ac00-bd1e294f9d9c4ecaf399-cc0e-4d95-b3fe-cd091a09e689",
+          "eTag": 1,
+          "url": "https://restoreprooflab.sharepoint.com/sites/contentTypeHub",
+          "name": "Witryna zespołu",
+          "isCloud": true,
+          "isPersonal": false,
+          "title": "Witryna zespołu",
+          "isAvailable": true,
+          "msid": "6f9f9513-4db4-4056-ac00-bd1e294f9d9c,4ecaf399-cc0e-4d95-b3fe-cd091a09e689",
+          "_links": {
+            "self": {
+              "href": "/v8/organizations/ff96d072-29e2-4cb4-a155-2590f5473176/sites/6f9f9513-4db4-4056-ac00-bd1e294f9d9c4ecaf399-cc0e-4d95-b3fe-cd091a09e689"
+            },
+            "children": {
+              "href": "/v8/organizations/ff96d072-29e2-4cb4-a155-2590f5473176/sites?parentId=6f9f9513-4db4-4056-ac00-bd1e294f9d9c4ecaf399-cc0e-4d95-b3fe-cd091a09e689"
+            },
+            "organization": {
+              "href": "/v8/organizations/ff96d072-29e2-4cb4-a155-2590f5473176"
+            }
+          }
+        },
+        {
+          "id": "d6c78dab-79e4-49a4-a555-3cbcf156d1442c774206-37f2-41ba-b9cc-c8bb5d2d322d",
+          "eTag": 1,
+          "url": "https://restoreprooflab-my.sharepoint.com",
+          "name": "restoreprooflab-my.sharepoint.com",
+          "isCloud": true,
+          "isPersonal": false,
+          "title": "restoreprooflab-my.sharepoint.com",
+          "isAvailable": true,
+          "msid": "d6c78dab-79e4-49a4-a555-3cbcf156d144,2c774206-37f2-41ba-b9cc-c8bb5d2d322d",
+          "_links": {
+            "self": {
+              "href": "/v8/organizations/ff96d072-29e2-4cb4-a155-2590f5473176/sites/d6c78dab-79e4-49a4-a555-3cbcf156d1442c774206-37f2-41ba-b9cc-c8bb5d2d322d"
+            },
+            "children": {
+              "href": "/v8/organizations/ff96d072-29e2-4cb4-a155-2590f5473176/sites?parentId=d6c78dab-79e4-49a4-a555-3cbcf156d1442c774206-37f2-41ba-b9cc-c8bb5d2d322d"
+            },
+            "organization": {
+              "href": "/v8/organizations/ff96d072-29e2-4cb4-a155-2590f5473176"
+            }
+          }
+        },
+        {
+          "id": "2ce7dd81-391c-4550-8a71-a69801456911ab951931-99dc-480a-bc98-9486e09da443",
+          "eTag": 1,
+          "url": "https://restoreprooflab.sharepoint.com",
+          "name": "Witryna do komunikacji",
+          "isCloud": true,
+          "isPersonal": false,
+          "title": "Witryna do komunikacji",
+          "isAvailable": true,
+          "msid": "2ce7dd81-391c-4550-8a71-a69801456911,ab951931-99dc-480a-bc98-9486e09da443",
+          "_links": {
+            "self": {
+              "href": "/v8/organizations/ff96d072-29e2-4cb4-a155-2590f5473176/sites/2ce7dd81-391c-4550-8a71-a69801456911ab951931-99dc-480a-bc98-9486e09da443"
+            },
+            "children": {
+              "href": "/v8/organizations/ff96d072-29e2-4cb4-a155-2590f5473176/sites?parentId=2ce7dd81-391c-4550-8a71-a69801456911ab951931-99dc-480a-bc98-9486e09da443"
+            },
+            "organization": {
+              "href": "/v8/organizations/ff96d072-29e2-4cb4-a155-2590f5473176"
+            }
+          }
+        },
+        {
+          "id": "8940f75b-a091-4115-80e0-418447edb6e3b0066e5e-cea1-4afd-bdc5-4907d626db31",
+          "eTag": 1,
+          "url": "https://restoreprooflab.sharepoint.com/sites/allcompany",
+          "name": "All Company",
+          "isCloud": true,
+          "isPersonal": false,
+          "title": "All Company",
+          "isAvailable": true,
+          "msid": "8940f75b-a091-4115-80e0-418447edb6e3,b0066e5e-cea1-4afd-bdc5-4907d626db31",
+          "_links": {
+            "self": {
+              "href": "/v8/organizations/ff96d072-29e2-4cb4-a155-2590f5473176/sites/8940f75b-a091-4115-80e0-418447edb6e3b0066e5e-cea1-4afd-bdc5-4907d626db31"
+            },
+            "children": {
+              "href": "/v8/organizations/ff96d072-29e2-4cb4-a155-2590f5473176/sites?parentId=8940f75b-a091-4115-80e0-418447edb6e3b0066e5e-cea1-4afd-bdc5-4907d626db31"
+            },
+            "organization": {
+              "href": "/v8/organizations/ff96d072-29e2-4cb4-a155-2590f5473176"
+            }
+          }
+        }
+      ],
+      "setId": "57070b51-1be6-08df-0000-000000000000"
+    }
+  }
+}

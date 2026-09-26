@@ -1,0 +1,34 @@
+{
+  "note": "POST /v8/Organizations/{organizationId}/explore {dateTime: 2026-09-25T21:37:15+02:00 (local), type: Vex}",
+  "captured_utc": "2026-09-26T16:13:37.829Z",
+  "duration_ms": 47,
+  "request": {
+    "method": "POST",
+    "path": "/v8/Organizations/ff96d072-29e2-4cb4-a155-2590f5473176/explore",
+    "body": {
+      "dateTime": "2026-09-25T21:37:15+02:00",
+      "type": "Vex",
+      "showDeleted": false,
+      "showAllVersions": false
+    }
+  },
+  "response": {
+    "status": 500,
+    "content_type": "application/json; charset=utf-8",
+    "headers": {
+      "Date": "Sat, 26 Sep 2026 16:13:37 GMT",
+      "Cache-Control": "no-store, no-cache",
+      "Pragma": "no-cache",
+      "Transfer-Encoding": "chunked",
+      "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+      "X-Content-Type-Options": "nosniff",
+      "X-XSS-Protection": "1; mode=block",
+      "X-Frame-Options": "SAMEORIGIN",
+      "Content-Type": "application/json; charset=utf-8",
+      "Expires": "-1"
+    },
+    "body": {
+      "message": "Date/time value must be based on Coordinated Universal Time (UTC). Current value: 9/25/2026 9:37:15 PM, based on: Local. (Parameter 'dateTime.Value')"
+    }
+  }
+}

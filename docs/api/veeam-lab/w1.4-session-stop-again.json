@@ -1,0 +1,24 @@
+{
+  "note": "POST /v8/RestoreSessions/{restoreSessionId}/Stop on a session already stopped",
+  "captured_utc": "2026-09-26T16:13:35.465Z",
+  "duration_ms": 32,
+  "request": {
+    "method": "POST",
+    "path": "/v8/RestoreSessions/6ee50a66-c46f-4200-b793-c03f8bcbbb8b/Stop",
+    "body": null
+  },
+  "response": {
+    "status": 204,
+    "content_type": "",
+    "headers": {
+      "Date": "Sat, 26 Sep 2026 16:13:35 GMT",
+      "Cache-Control": "no-store",
+      "Pragma": "no-cache",
+      "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+      "X-Content-Type-Options": "nosniff",
+      "X-XSS-Protection": "1; mode=block",
+      "X-Frame-Options": "SAMEORIGIN"
+    },
+    "body": null
+  }
+}

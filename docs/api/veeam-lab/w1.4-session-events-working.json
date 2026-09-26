@@ -1,0 +1,56 @@
+{
+  "note": "GET /v8/RestoreSessions/{restoreSessionId}/Events of an explore session with no restore yet",
+  "captured_utc": "2026-09-26T16:13:34.961Z",
+  "duration_ms": 23,
+  "request": {
+    "method": "GET",
+    "path": "/v8/RestoreSessions/6ee50a66-c46f-4200-b793-c03f8bcbbb8b/Events",
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "content_type": "application/json; charset=utf-8",
+    "headers": {
+      "Date": "Sat, 26 Sep 2026 16:13:34 GMT",
+      "Cache-Control": "no-store",
+      "Pragma": "no-cache",
+      "Transfer-Encoding": "chunked",
+      "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+      "X-Content-Type-Options": "nosniff",
+      "X-XSS-Protection": "1; mode=block",
+      "X-Frame-Options": "SAMEORIGIN",
+      "Content-Type": "application/json; charset=utf-8"
+    },
+    "body": {
+      "offset": 0,
+      "limit": 30,
+      "_links": {
+        "self": {
+          "href": "/v8/RestoreSessions/6ee50a66-c46f-4200-b793-c03f8bcbbb8b/Events?offset=0&limit=30"
+        }
+      },
+      "results": [
+        {
+          "itemSizeBytes": 0,
+          "id": "fe4309d0-42dc-46e1-be1a-2e6131345e92",
+          "type": "None",
+          "status": "Success",
+          "startTime": "2026-09-26T16:13:34.493983Z",
+          "endTime": "2026-09-26T16:13:34.493983Z",
+          "duration": "00:00:00",
+          "title": "Restore session started",
+          "message": "Restore session started",
+          "order": 0,
+          "_links": {
+            "self": {
+              "href": "/v8/restoresessions/6ee50a66-c46f-4200-b793-c03f8bcbbb8b/events/fe4309d0-42dc-46e1-be1a-2e6131345e92"
+            },
+            "restoreSession": {
+              "href": "/v8/restoresessions/6ee50a66-c46f-4200-b793-c03f8bcbbb8b"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "note": "GET /v8/RestorePoints/{pointId} with the bare point id (as Get-VBORestorePoint shows it)",
+  "captured_utc": "2026-09-26T16:02:14.669Z",
+  "duration_ms": 6,
+  "request": {
+    "method": "GET",
+    "path": "/v8/RestorePoints/71ac3d9c-eb29-42b6-a391-ae81fcc4681c",
+    "body": null
+  },
+  "response": {
+    "status": 400,
+    "content_type": "application/json; charset=utf-8",
+    "headers": {
+      "Date": "Sat, 26 Sep 2026 16:02:13 GMT",
+      "Cache-Control": "no-store, no-cache",
+      "Pragma": "no-cache",
+      "Transfer-Encoding": "chunked",
+      "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+      "X-Content-Type-Options": "nosniff",
+      "X-XSS-Protection": "1; mode=block",
+      "X-Frame-Options": "SAMEORIGIN",
+      "Content-Type": "application/json; charset=utf-8",
+      "Expires": "-1"
+    },
+    "body": {
+      "message": "Incorrect restore point ID format. Restore point ID should contain 64 digits in the following format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxxxxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx (ID: 71ac3d9c-eb29-42b6-a391-ae81fcc4681c).",
+      "errorCode": "ParameterValidationFailure"
+    }
+  }
+}

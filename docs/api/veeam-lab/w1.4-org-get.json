@@ -1,0 +1,85 @@
+{
+  "note": "GET /v8/Organizations/{organizationId}",
+  "captured_utc": "2026-09-26T16:02:12.308Z",
+  "duration_ms": 7,
+  "request": {
+    "method": "GET",
+    "path": "/v8/Organizations/ff96d072-29e2-4cb4-a155-2590f5473176",
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "content_type": "application/json; charset=utf-8",
+    "headers": {
+      "Date": "Sat, 26 Sep 2026 16:02:11 GMT",
+      "Cache-Control": "no-store",
+      "Pragma": "no-cache",
+      "Transfer-Encoding": "chunked",
+      "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+      "X-Content-Type-Options": "nosniff",
+      "X-XSS-Protection": "1; mode=block",
+      "X-Frame-Options": "SAMEORIGIN",
+      "Content-Type": "application/json; charset=utf-8"
+    },
+    "body": {
+      "isTeamsOnline": false,
+      "isTeamsChatsOnline": false,
+      "exchangeOnlineSettings": {
+        "useApplicationOnlyAuth": true,
+        "sharePointSaveAllWebParts": false,
+        "account": "HrachyaHarutyunyan@RestoreProofLab.onmicrosoft.com",
+        "grantAdminAccess": true,
+        "useMfa": true,
+        "applicationId": "1fd2609d-1242-43fe-94b5-d58688a90bd6",
+        "applicationCertificateThumbprint": "AC3220B58A2B4C438DA13816C2DD1E25D1F783A7"
+      },
+      "sharePointOnlineSettings": {
+        "useApplicationOnlyAuth": true,
+        "officeOrganizationName": "RestoreProofLab.onmicrosoft.com",
+        "sharePointSaveAllWebParts": false,
+        "account": "HrachyaHarutyunyan@RestoreProofLab.onmicrosoft.com",
+        "grantAdminAccess": true,
+        "useMfa": true,
+        "applicationId": "1fd2609d-1242-43fe-94b5-d58688a90bd6",
+        "applicationCertificateThumbprint": "AC3220B58A2B4C438DA13816C2DD1E25D1F783A7"
+      },
+      "isExchangeOnline": true,
+      "isSharePointOnline": true,
+      "isM365Backup": false,
+      "type": "Office365",
+      "region": "Worldwide",
+      "id": "ff96d072-29e2-4cb4-a155-2590f5473176",
+      "name": "RestoreProofLab.onmicrosoft.com",
+      "officeName": "RestoreProofLab.onmicrosoft.com",
+      "msid": "bcd6bd1a-ea42-489d-aa28-2c19a44ad146",
+      "backedUpOrganizationId": "RestoreProofLab.onmicrosoft.com:00000000-0000-0000-0000-000000000000:00000000-0000-0000-0000-000000000000",
+      "_links": {
+        "self": {
+          "href": "/v8/organizations/ff96d072-29e2-4cb4-a155-2590f5473176"
+        },
+        "jobs": {
+          "href": "/v8/organizations/ff96d072-29e2-4cb4-a155-2590f5473176/jobs"
+        },
+        "groups": {
+          "href": "/v8/organizations/ff96d072-29e2-4cb4-a155-2590f5473176/groups"
+        },
+        "users": {
+          "href": "/v8/organizations/ff96d072-29e2-4cb4-a155-2590f5473176/users"
+        },
+        "sites": {
+          "href": "/v8/organizations/ff96d072-29e2-4cb4-a155-2590f5473176/sites"
+        },
+        "teams": {
+          "href": "/v8/organizations/ff96d072-29e2-4cb4-a155-2590f5473176/teams"
+        },
+        "usedRepositories": {
+          "href": "/v8/organizations/ff96d072-29e2-4cb4-a155-2590f5473176/usedRepositories"
+        },
+        "rbacRoles": {
+          "href": "/v8/organizations/ff96d072-29e2-4cb4-a155-2590f5473176/rbacRoles"
+        }
+      },
+      "_actions": {}
+    }
+  }
+}

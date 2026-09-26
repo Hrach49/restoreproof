@@ -1,0 +1,26 @@
+{
+  "note": "GET /v8/Organizations with an access token past its .expires (09/26/2026 17:01:43 +00:00)",
+  "captured_utc": "2026-09-26T17:08:04.485Z",
+  "duration_ms": 115,
+  "request": {
+    "method": "GET",
+    "path": "/v8/Organizations?limit=1",
+    "body": null
+  },
+  "response": {
+    "status": 401,
+    "content_type": "",
+    "headers": {
+      "Date": "Sat, 26 Sep 2026 17:08:04 GMT",
+      "Cache-Control": "no-store",
+      "Pragma": "no-cache",
+      "WWW-Authenticate": "Bearer error=\"invalid_token\", error_description=\"The token expired at '09/26/2026 17:01:43'\"",
+      "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+      "X-Content-Type-Options": "nosniff",
+      "X-XSS-Protection": "1; mode=block",
+      "X-Frame-Options": "SAMEORIGIN",
+      "Content-Length": "0"
+    },
+    "body": null
+  }
+}

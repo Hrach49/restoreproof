@@ -49,6 +49,17 @@ std::string lab_cert_path()
     return std::string{RP_FIXTURE_DIR} + "/veeam/rest-certificate.pem";
 }
 
+constexpr std::string_view kNoReadableCertificate =
+    "veeam_ca_file holds no certificate curl can read: each must begin with a line that is "
+    "exactly -----BEGIN CERTIFICATE-----";
+
+// `pem` with its first "-----BEGIN CERTIFICATE-----" line replaced by `line`.
+std::string with_begin_line(std::string pem, std::string_view line)
+{
+    constexpr std::string_view begin = "-----BEGIN CERTIFICATE-----";
+    return pem.replace(pem.find(begin), begin.size(), line);
+}
+
 } // namespace
 
 TEST_CASE("is_sha256_hex accepts 64 hex digits in any case and nothing else", "[cert_pin]")
@@ -133,8 +144,7 @@ TEST_CASE("public_key_pin refuses what it can't pin, without quoting the file", 
             rp::public_key_pin(file, hash);
             FAIL("a file without certificates was accepted");
         } catch (const rp::CertPinError& e) {
-            CHECK(std::string{e.what()} ==
-                  "veeam_ca_file holds no certificate whose SHA-256 is veeam_cert_sha256");
+            CHECK(std::string{e.what()} == std::string{kNoReadableCertificate});
         }
     }
 
@@ -193,5 +203,88 @@ TEST_CASE("public_key_pin refuses a file too large to be a certificate bundle", 
         FAIL("an oversized file was read");
     } catch (const rp::CertPinError& e) {
         CHECK(std::string{e.what()} == "veeam_ca_file is larger than 1 MiB");
+    }
+}
+
+TEST_CASE("public_key_pin reads the CA file as curl's Schannel backend does", "[cert_pin]")
+{
+    // W1.5 review: OpenSSL's PEM reader accepts files curl then loads as empty
+    // or refuses, so a CA file config check called good failed every TLS
+    // connection. curl (lib/vtls/schannel_verify.c) takes each exact
+    // "-----BEGIN CERTIFICATE-----" line through the next
+    // "\n-----END CERTIFICATE-----" and decodes it with CryptQueryObject; it
+    // stops at the first BEGIN marker that doesn't end its line, and fails
+    // the whole file on a block it can't decode.
+    const Cert veeam = rp::test::make_cert("Veeam Software", Role::veeam_default);
+    const Cert ca = rp::test::make_cert("rp-test-private-ca", Role::ca);
+    const rp::test::TempDir dir;
+    const std::string pem = veeam.pem().cert;
+    const std::string hash = rp::test::cert_sha256_hex(veeam);
+    const auto refused = [&](const std::string& text) -> std::string {
+        const std::string file = to_utf8(dir.write("veeam.pem", text));
+        try {
+            rp::public_key_pin(file, hash);
+        } catch (const rp::CertPinError& e) {
+            return e.what();
+        }
+        return "(accepted)";
+    };
+
+    SECTION("CRLF line ends and text around the certificates are read as curl reads them")
+    {
+        std::string crlf;
+        for (const char c : "Veeam REST certificate\n" + ca.pem().cert + pem) {
+            if (c == '\n') {
+                crlf += '\r';
+            }
+            crlf += c;
+        }
+        CHECK(refused(crlf) == "(accepted)");
+    }
+
+    SECTION("a BEGIN line with anything after the marker: curl reads no certificate")
+    {
+        CHECK(refused(with_begin_line(pem, "-----BEGIN CERTIFICATE----- ")) ==
+              kNoReadableCertificate);
+    }
+
+    SECTION("the old X509 CERTIFICATE label, which OpenSSL reads and curl doesn't")
+    {
+        std::string old_label = with_begin_line(pem, "-----BEGIN X509 CERTIFICATE-----");
+        const std::string end = "-----END CERTIFICATE-----";
+        old_label.replace(old_label.find(end), end.size(), "-----END X509 CERTIFICATE-----");
+        CHECK(refused(old_label) == kNoReadableCertificate);
+    }
+
+    SECTION("curl stops at a malformed BEGIN line: certificates after it aren't read")
+    {
+        const std::string first = with_begin_line(ca.pem().cert, "-----BEGIN CERTIFICATE-----\t");
+        CHECK(refused(first + pem) ==
+              "veeam_ca_file holds no certificate curl can read: each must begin with a line "
+              "that is exactly -----BEGIN CERTIFICATE-----");
+    }
+
+    SECTION("a block curl can't decode fails the whole file, even after the certificate")
+    {
+        std::string broken = ca.pem().cert;
+        broken.insert(broken.find('\n') + 1, "not base64 at all!\n");
+        CHECK(refused(pem + broken) == "veeam_ca_file holds a certificate block that can't be read");
+    }
+
+    SECTION("a BEGIN line without its END line fails the whole file")
+    {
+        const std::string cut = ca.pem().cert.substr(0, ca.pem().cert.find("-----END"));
+        CHECK(refused(pem + cut) ==
+              "veeam_ca_file has a BEGIN CERTIFICATE line without its END CERTIFICATE line");
+    }
+
+    SECTION("PEM encryption headers: refused, and no pass phrase is asked for")
+    {
+        // OpenSSL's reader would prompt on the console for a pass phrase
+        // (PEM_def_callback) and block `config check`.
+        std::string encrypted = pem;
+        encrypted.insert(encrypted.find('\n') + 1,
+                         "Proc-Type: 4,ENCRYPTED\nDEK-Info: AES-128-CBC,00112233445566778899AABBCCDDEEFF\n\n");
+        CHECK(refused(encrypted) == "veeam_ca_file holds a certificate block that can't be read");
     }
 }

@@ -29,10 +29,15 @@ public:
 // path) whose SHA-256, over its DER encoding, is `cert_sha256`: the base64
 // SHA-256 of that certificate's SubjectPublicKeyInfo, the form curl's
 // pinned-public-key option takes after "sha256//". The file may hold other
-// certificates too (a CA and its leaf); only PEM is read, as curl's Schannel
-// backend reads only PEM from a CA file. Throws CertPinError when
-// `cert_sha256` isn't is_sha256_hex(), the file can't be read or is over
-// 1 MiB, or it holds no such certificate.
+// certificates too (a CA and its leaf). It is read exactly as curl's Schannel
+// backend reads a CA file, with the same Windows decoder: PEM only, each
+// certificate from a line that is exactly "-----BEGIN CERTIFICATE-----" to
+// its END line, stopping at the first BEGIN marker with anything after it on
+// its line. So a file this accepts is one curl loads the certificate from.
+// Throws CertPinError when `cert_sha256` isn't is_sha256_hex(), the file
+// can't be read or is over 1 MiB (curl's limit too), a certificate block has
+// no END line or can't be decoded (curl refuses the whole file), curl would
+// read no certificate from it, or none has that SHA-256.
 std::string public_key_pin(std::string_view ca_file, std::string_view cert_sha256);
 
 } // namespace rp

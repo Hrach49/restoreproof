@@ -3,6 +3,8 @@
 #include <rp/redact.hpp>
 #include <rp/retry_policy.hpp>
 
+#include "control_chars.hpp"
+
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
@@ -32,6 +34,13 @@ constexpr std::chrono::seconds kMaxTokenLifetime{86400};
 // response can't flood a log line.
 constexpr std::size_t kMaxMessageChars = 500;
 constexpr int kMaxPageSize = 10000;
+// A 401 with an empty body is followed by at most this many resends: with a
+// newer token another caller brought, then with one fresh sign-in.
+constexpr int kMaxUnauthorizedResends = 3;
+// Full pages in a row that bring nothing new before paging gives up: a point
+// added in front while the list is read repeats the last one on the next page,
+// but a server that ignores offset repeats a page for ever.
+constexpr int kMaxStalePages = 3;
 
 // Percent-encoding for an application/x-www-form-urlencoded value: every byte
 // but ASCII letters, digits and -._~ becomes %XX, so a password may hold any
@@ -82,9 +91,10 @@ bool is_blank(std::string_view text) noexcept
                        [](char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n'; });
 }
 
-// Text from a response, made fit for one log line: control characters become
-// spaces, and it is cut at kMaxMessageChars bytes, back to the start of a
-// UTF-8 character so none is split.
+// Text from a response, made fit for one log line: each control character
+// (control_chars.hpp: the multi-byte ones that forge or reorder lines too)
+// becomes a space, and it is cut at kMaxMessageChars bytes, back to the start
+// of a UTF-8 character so none is split.
 std::string one_line(std::string_view text)
 {
     std::size_t cut = std::min(text.size(), kMaxMessageChars);
@@ -93,10 +103,18 @@ std::string one_line(std::string_view text)
             --cut;
         }
     }
-    std::string out{text.substr(0, cut)};
-    std::replace_if(
-        out.begin(), out.end(),
-        [](char c) { return static_cast<unsigned char>(c) < 0x20 || c == 0x7F; }, ' ');
+    const std::string_view kept = text.substr(0, cut);
+    std::string out;
+    out.reserve(kept.size());
+    for (std::size_t i = 0; i < kept.size();) {
+        if (const std::size_t length = control_character_length(kept, i); length != 0) {
+            out += ' ';
+            i += length;
+        } else {
+            out += kept[i];
+            ++i;
+        }
+    }
     if (text.size() > kMaxMessageChars) {
         out += "...";
     }
@@ -169,15 +187,17 @@ ErrorKind classify_api(int status, const ErrorBody& body) noexcept
     return ErrorKind::veeam;
 }
 
-// /v8/token's status as an error kind: Veeam has refused a sign-in with an
-// empty 500 (veeam-notes §1.2), so no 5xx there is transient.
+// /v8/token's status as an error kind. Veeam has refused a sign-in with an
+// empty 500 (veeam-notes §1.2), so a 500 there is a refusal whatever its body;
+// any other status means what it means on any call (a 502, 503 or 504 is a
+// gateway or a service starting up, not the credentials).
 ErrorKind classify_token(int status, const ErrorBody& body) noexcept
 {
-    if (status == 401 || status == 403 || (status >= 500 && status <= 599) ||
-        body.error_code == "ResourceAccessDenied") {
+    if (status == 500) {
         return ErrorKind::auth;
     }
-    return ErrorKind::veeam;
+    const ErrorKind kind = classify_api(status, body);
+    return kind == ErrorKind::not_found ? ErrorKind::veeam : kind;
 }
 
 // "HTTP 404 (ResourceNotFound): Organization does not exist: ..."
@@ -209,18 +229,22 @@ std::string describe(int status, const ErrorBody& body)
     throw VeeamError(message, status, parsed.error_code, body);
 }
 
-// HttpClient gave up: it has already retried what can be retried.
-[[noreturn]] void throw_transport_error(const HttpError& e)
+// The client gave up on a request after `attempts` attempts, the last of which
+// got no response.
+[[noreturn]] void throw_transport_error(const HttpError& e, int attempts)
 {
-    const std::string message = std::string{"Veeam "} + e.what();
+    std::string message = std::string{"Veeam "} + e.what();
+    if (attempts > 1) {
+        message += " (" + std::to_string(attempts) + " attempts)";
+    }
     switch (e.error()) {
     case TransportError::connect:
+    case TransportError::dropped:
     case TransportError::timeout:
     case TransportError::handshake:
         throw TransientError(message, e.status());
     case TransportError::none:
-        // Only with retry_on_status on, which this client never sends: a 5xx
-        // after every retry.
+        // Only with retry_on_status on, which this client never sends.
         throw TransientError(message, e.status());
     case TransportError::tls:
     case TransportError::other:
@@ -338,21 +362,23 @@ std::optional<TimeKey> parse_backup_time(std::string_view text)
         *day < 1 || *day > 31 || *hour > 23 || *minute > 59 || *second > 59) {
         return std::nullopt;
     }
+    // Between the seconds and 'Z': nothing, or '.' and 1 to 7 digits. With
+    // nothing, text[19] is the 'Z' checked above. The count is checked before
+    // the digits are read, so a long fraction can't overflow an int.
     int ticks = 0;
-    const std::size_t rest = text.size() - 20; // between the seconds and 'Z'
-    if (rest > 0) {
-        // '.' and 1 to 7 digits.
+    if (const std::size_t rest = text.size() - 20; rest > 0) {
         const std::size_t count = rest - 1;
+        if (text[19] != '.' || count < 1 || count > 7) {
+            return std::nullopt;
+        }
         const auto fraction = digits(20, count);
-        if (text[19] != '.' || count < 1 || count > 7 || !fraction) {
+        if (!fraction) {
             return std::nullopt;
         }
         ticks = *fraction;
         for (std::size_t i = count; i < 7; ++i) {
             ticks *= 10;
         }
-    } else if (text[19] != 'Z') {
-        return std::nullopt;
     }
     return TimeKey{*year, *month, *day, *hour, *minute, *second, ticks};
 }
@@ -442,7 +468,46 @@ void VeeamClient::log_debug(const std::string& line) const
     }
 }
 
-HttpResponse VeeamClient::send_token_request(const std::string& form)
+HttpResponse VeeamClient::send_with_retries(HttpRequest request, const std::string& what,
+                                            bool idempotent, int max_attempts, int& attempts)
+{
+    request.timeout = options_.timeout;
+    // This client decides which failures are worth another attempt and counts
+    // them: HttpClient retrying underneath would multiply its attempts by
+    // these (25 requests for one GET).
+    request.retry_on_status = false;
+    request.max_attempts = 1;
+    for (int attempt = 1;; ++attempt) {
+        attempts = attempt;
+        std::string reason;
+        try {
+            HttpResponse response = http_.send(request);
+            // A GET changes nothing, so a transient 5xx can be sent again.
+            if (!idempotent || !is_transient(response) || attempt >= max_attempts) {
+                return response;
+            }
+            reason = "HTTP " + std::to_string(response.status);
+        } catch (const HttpError& e) {
+            // No connection or no handshake: the request never went out, so
+            // even a token request can go again. After a timeout or a dropped
+            // connection Veeam may have acted on it: only a GET is resent.
+            const TransportError error = e.error();
+            const bool unsent =
+                error == TransportError::connect || error == TransportError::handshake;
+            const bool worth_it = unsent || (idempotent && is_retryable(AttemptOutcome{error, 0}));
+            if (!worth_it || attempt >= max_attempts) {
+                throw_transport_error(e, attempt);
+            }
+            reason = std::string{"no response ("} + e.what() + ")";
+        }
+        const milliseconds wait = retry_delay(attempt, options_.jitter());
+        log_debug(what + ": " + reason + " on attempt " + std::to_string(attempt) + "; retrying in " +
+                  std::to_string(wait.count()) + " ms");
+        options_.sleep(wait);
+    }
+}
+
+HttpResponse VeeamClient::send_token_request(const std::string& form, int max_attempts)
 {
     HttpRequest request;
     request.method = HttpMethod::post;
@@ -450,14 +515,12 @@ HttpResponse VeeamClient::send_token_request(const std::string& form)
     request.headers["Accept"] = "application/json";
     request.body = form;
     request.content_type = "application/x-www-form-urlencoded";
-    request.timeout = options_.timeout;
-    // Never retried on a 5xx: Veeam has answered a refused sign-in with one.
-    request.retry_on_status = false;
-    try {
-        return http_.send(request);
-    } catch (const HttpError& e) {
-        throw_transport_error(e);
-    }
+    // Never resent after it may have reached Veeam, and never on a 5xx: a
+    // second password grant is a second logon (a wrong password counts twice
+    // towards a lockout), a second refresh presents a used token.
+    int attempts = 0;
+    return send_with_retries(std::move(request), "Veeam POST /v8/token", false, max_attempts,
+                             attempts);
 }
 
 void VeeamClient::store_tokens_locked(const HttpResponse& response, std::string_view event)
@@ -474,15 +537,17 @@ void VeeamClient::store_tokens_locked(const HttpResponse& response, std::string_
         access->get_ref<const std::string&>().empty()) {
         throw VeeamError(std::string{what} + "the response has no access_token", response.status);
     }
+    // A positive integer (the parser gives those the unsigned type, however
+    // large); anything above kMaxTokenLifetime counts as that.
     const auto expires_in = doc.find("expires_in");
-    if (expires_in == doc.end() || !expires_in->is_number_integer() ||
-        expires_in->get<std::int64_t>() <= 0) {
+    if (expires_in == doc.end() || !expires_in->is_number_unsigned() ||
+        expires_in->get<std::uint64_t>() == 0) {
         throw VeeamError(std::string{what} + "the response has no valid expires_in",
                          response.status);
     }
     const auto refresh = doc.find("refresh_token");
-    const std::chrono::seconds lifetime{
-        std::min<std::int64_t>(expires_in->get<std::int64_t>(), kMaxTokenLifetime.count())};
+    const std::chrono::seconds lifetime{static_cast<std::int64_t>(std::min<std::uint64_t>(
+        expires_in->get<std::uint64_t>(), static_cast<std::uint64_t>(kMaxTokenLifetime.count())))};
     // A lifetime of twice the margin or less is refreshed at its half, so a
     // short-lived token isn't refreshed on every call.
     const std::chrono::milliseconds margin =
@@ -500,8 +565,16 @@ void VeeamClient::store_tokens_locked(const HttpResponse& response, std::string_
     refresh_token_.swap(new_refresh);
     refresh_at_ = refresh_at;
     ++generation_;
+    // A token now works: an earlier failure is no answer for anyone.
+    last_renewal_failure_ = nullptr;
     log_debug("Veeam: " + std::string{event} + "; the token expires in " +
               std::to_string(lifetime.count()) + " s");
+}
+
+void VeeamClient::record_failure_locked()
+{
+    last_renewal_failure_ = std::current_exception();
+    ++renewal_failures_;
 }
 
 void VeeamClient::login_locked()
@@ -521,19 +594,19 @@ void VeeamClient::login_locked()
         }
         store_tokens_locked(response, "signed in");
     } catch (...) {
-        last_sign_in_failure_ = std::current_exception();
-        ++sign_in_failures_;
+        record_failure_locked();
         throw;
     }
 }
 
 void VeeamClient::rethrow_failure_since_locked(std::uint64_t failures_seen) const
 {
-    // A sign-in failed while this caller waited for the lock. Behind a server
-    // that is down, each attempt takes HttpClient's five tries; N callers
-    // trying in turn would wait N times as long for the same answer.
-    if (sign_in_failures_.load() != failures_seen && last_sign_in_failure_) {
-        std::rethrow_exception(last_sign_in_failure_);
+    // A renewal failed while this caller waited for the lock, and none has
+    // succeeded since. Behind a server that is down, each attempt takes the
+    // client's retries; N callers trying in turn would wait N times as long
+    // for the same answer.
+    if (renewal_failures_.load() != failures_seen && last_renewal_failure_) {
+        std::rethrow_exception(last_renewal_failure_);
     }
 }
 
@@ -551,9 +624,19 @@ void VeeamClient::refresh_locked()
                 store_tokens_locked(response, "token refreshed");
                 return;
             }
-            log_debug("Veeam: token refresh failed (" +
-                      describe(response.status, parse_error_body(response.body)) +
+            const ErrorBody body = parse_error_body(response.body);
+            if (classify_token(response.status, body) == ErrorKind::transient) {
+                throw TransientError("Veeam POST /v8/token: " + describe(response.status, body),
+                                     response.status, body.error_code);
+            }
+            log_debug("Veeam: token refresh failed (" + describe(response.status, body) +
                       "); signing in again");
+        } catch (const TransientError&) {
+            // Veeam can't be reached, or a gateway answers for it: a password
+            // sign-in would spend the same retries on the same answer, with
+            // every other caller waiting on the lock.
+            record_failure_locked();
+            throw;
         } catch (const VeeamError& e) {
             log_debug(std::string{"Veeam: token refresh failed ("} + e.what() +
                       "); signing in again");
@@ -562,21 +645,31 @@ void VeeamClient::refresh_locked()
             log_debug("Veeam: token refresh failed; signing in again");
         }
     }
-    // Whatever went wrong (a used or restart-killed refresh token, Veeam
-    // restarting, a garbled answer), the password still works.
+    // Veeam answered, and not with a token (a used or restart-killed refresh
+    // token, a garbled answer): the password still works.
     login_locked();
+}
+
+void VeeamClient::renew_if_due_locked(std::uint64_t failures_seen)
+{
+    if (!access_token_.empty() && options_.now() < refresh_at_) {
+        return;
+    }
+    // Only a caller that has to renew shares a failure: one that finds a
+    // good token (another caller's success) uses it.
+    rethrow_failure_since_locked(failures_seen);
+    if (access_token_.empty()) {
+        login_locked();
+    } else {
+        refresh_locked();
+    }
 }
 
 VeeamClient::Token VeeamClient::current_token()
 {
-    const std::uint64_t failures_seen = sign_in_failures_.load();
+    const std::uint64_t failures_seen = renewal_failures_.load();
     const std::lock_guard lock(mutex_);
-    rethrow_failure_since_locked(failures_seen);
-    if (access_token_.empty()) {
-        login_locked();
-    } else if (options_.now() >= refresh_at_) {
-        refresh_locked();
-    }
+    renew_if_due_locked(failures_seen);
     return {access_token_, generation_};
 }
 
@@ -594,14 +687,37 @@ void VeeamClient::ensure_token()
 void VeeamClient::logout() noexcept
 {
     try {
-        const std::lock_guard lock(mutex_);
-        if (access_token_.empty()) {
-            return;
+        std::string token;
+        {
+            const std::lock_guard lock(mutex_);
+            if (access_token_.empty()) {
+                return;
+            }
+            // Veeam refuses a logout with an expired access token, and the
+            // refresh token it would end outlives it (veeam-notes §1.5): one
+            // due for renewal is refreshed first. One try, no password
+            // sign-in: a logout is best effort.
+            if (options_.now() >= refresh_at_ && !refresh_token_.empty()) {
+                try {
+                    const HttpResponse response = send_token_request(
+                        "grant_type=refresh_token&refresh_token=" + form_encode(refresh_token_) +
+                            "&disable_antiforgery_token=true",
+                        1);
+                    if (response.status >= 200 && response.status <= 299) {
+                        store_tokens_locked(response, "token refreshed for the logout");
+                    } else {
+                        log_debug("Veeam: token refresh before the logout answered HTTP " +
+                                  std::to_string(response.status));
+                    }
+                } catch (const std::exception&) {
+                    log_debug("Veeam: token refresh before the logout failed");
+                }
+            }
+            // Forgotten first: whatever the answer, this chain is done with.
+            token = std::exchange(access_token_, {});
+            refresh_token_.clear();
+            ++generation_;
         }
-        // Forgotten first: whatever the answer, this chain is done with.
-        const std::string token = std::exchange(access_token_, {});
-        refresh_token_.clear();
-        ++generation_;
 
         HttpRequest request;
         request.method = HttpMethod::post;
@@ -610,6 +726,7 @@ void VeeamClient::logout() noexcept
         request.headers["Accept"] = "application/json";
         request.timeout = options_.timeout;
         request.retry_on_status = false;
+        request.max_attempts = 1;
         try {
             const HttpResponse response = http_.send(request);
             if (response.status >= 200 && response.status <= 299) {
@@ -635,29 +752,7 @@ HttpResponse VeeamClient::send_get(const std::string& path_and_query, const std:
     request.url = base_url_ + path_and_query;
     request.headers["Authorization"] = "Bearer " + token;
     request.headers["Accept"] = "application/json";
-    request.timeout = options_.timeout;
-    // This client decides which 5xx are worth another attempt.
-    request.retry_on_status = false;
-    for (int attempt = 1;; ++attempt) {
-        HttpResponse response;
-        try {
-            response = http_.send(request);
-        } catch (const HttpError& e) {
-            throw_transport_error(e);
-        }
-        // A GET changes nothing, so a transient 5xx can be sent again, as
-        // HttpClient would for any 5xx.
-        if (is_transient(response) && attempt < kMaxHttpAttempts) {
-            const milliseconds wait = retry_delay(attempt, options_.jitter());
-            log_debug(what + ": HTTP " + std::to_string(response.status) + " on attempt " +
-                      std::to_string(attempt) + "; retrying in " + std::to_string(wait.count()) +
-                      " ms");
-            options_.sleep(wait);
-            continue;
-        }
-        attempts = attempt;
-        return response;
-    }
+    return send_with_retries(std::move(request), what, true, kMaxHttpAttempts, attempts);
 }
 
 HttpResponse VeeamClient::get(const std::string& path_and_query)
@@ -670,17 +765,24 @@ HttpResponse VeeamClient::get(const std::string& path_and_query)
     // An empty 401 is a token Veeam no longer accepts: expired, revoked by a
     // refresh or logout, or killed by a REST service restart (veeam-notes
     // §1.3). A 401 with a message is the account's role: signing in again
-    // wouldn't change it.
-    if (response.status == 401 && is_blank(response.body)) {
+    // wouldn't change it. A token another caller brought meanwhile is tried
+    // first; one this call has to replace itself, once, with a fresh sign-in.
+    bool signed_in = false;
+    for (int resends = 0; response.status == 401 && is_blank(response.body); ++resends) {
+        if (signed_in || resends == kMaxUnauthorizedResends) {
+            const ErrorBody body = parse_error_body(response.body);
+            throw AuthError(what + ": HTTP 401 again " +
+                                (signed_in ? "after signing in afresh" : "with a newer token"),
+                            401, body.error_code, response.body);
+        }
         const std::string description = auth_description(response);
         const std::string reason = description.empty() ? "" : " (" + description + ")";
-        bool signed_in = false;
-        const std::uint64_t failures_seen = sign_in_failures_.load();
+        const std::uint64_t failures_seen = renewal_failures_.load();
         {
             const std::lock_guard lock(mutex_);
-            rethrow_failure_since_locked(failures_seen);
             if (generation_ == token.generation || access_token_.empty()) {
                 log_debug(what + ": HTTP 401" + reason + "; signing in again");
+                rethrow_failure_since_locked(failures_seen);
                 login_locked();
                 signed_in = true;
             } else {
@@ -689,19 +791,11 @@ HttpResponse VeeamClient::get(const std::string& path_and_query)
                 // perhaps itself near its end by now.
                 log_debug(what + ": HTTP 401" + reason +
                           " for a replaced token; resending with the current one");
-                if (options_.now() >= refresh_at_) {
-                    refresh_locked();
-                }
+                renew_if_due_locked(failures_seen);
             }
             token = {access_token_, generation_};
         }
         response = send_get(path_and_query, token.access, what, attempts);
-        if (response.status == 401) {
-            const ErrorBody body = parse_error_body(response.body);
-            throw AuthError(what + ": HTTP 401 again " +
-                                (signed_in ? "after signing in afresh" : "with a newer token"),
-                            401, body.error_code, response.body);
-        }
     }
 
     if (response.status >= 200 && response.status <= 299) {
@@ -722,18 +816,23 @@ std::vector<json> VeeamClient::get_all_pages(const std::string& path_and_query)
     const auto page_size = static_cast<std::size_t>(options_.page_size);
     std::vector<json> items;
     std::set<std::string> seen;
+    int stale_pages = 0;
     for (std::size_t offset = 0;;) {
         const std::string page = path_and_query + separator + "limit=" +
                                  std::to_string(page_size) + "&offset=" + std::to_string(offset);
         const std::string what = "Veeam GET " + page;
         const HttpResponse response = get(page);
-        const json doc = json::parse(response.body, nullptr, false);
+        // Not const: entries are moved out. Parsing and destroying a JSON
+        // value are iterative, but copying one recurses once per level, and a
+        // deeply nested value would overflow the stack.
+        json doc = json::parse(response.body, nullptr, false);
         const auto results = doc.is_object() ? doc.find("results") : doc.end();
         if (!doc.is_object() || results == doc.end() || !results->is_array()) {
             throw VeeamError(what + ": unexpected response: no \"results\" list", response.status);
         }
+        const std::size_t count = results->size();
         std::size_t added = 0;
-        for (const json& item : *results) {
+        for (json& item : *results) {
             const auto id = item.is_object() ? item.find("id") : item.end();
             if (!item.is_object() || id == item.end() || !id->is_string() ||
                 id->get_ref<const std::string&>().empty()) {
@@ -743,7 +842,7 @@ std::vector<json> VeeamClient::get_all_pages(const std::string& path_and_query)
             // A point added while the list is read shifts later pages by one,
             // so an entry can come round twice.
             if (seen.insert(id->get<std::string>()).second) {
-                items.push_back(item);
+                items.push_back(std::move(item));
                 ++added;
             }
         }
@@ -756,15 +855,16 @@ std::vector<json> VeeamClient::get_all_pages(const std::string& path_and_query)
             limit->get<std::uint64_t>() < page_size) {
             applied = static_cast<std::size_t>(limit->get<std::uint64_t>());
         }
-        if (results->size() < applied) {
+        if (count < applied) {
             return items;
         }
-        // A full page of nothing new: the server isn't honouring offset.
-        if (added == 0) {
-            throw VeeamError(what + ": the page repeats earlier results; paging stopped",
+        stale_pages = added == 0 ? stale_pages + 1 : 0;
+        if (stale_pages == kMaxStalePages) {
+            throw VeeamError(what + ": " + std::to_string(kMaxStalePages) +
+                                 " full pages in a row brought nothing new; paging stopped",
                              response.status);
         }
-        offset += results->size();
+        offset += count;
     }
 }
 

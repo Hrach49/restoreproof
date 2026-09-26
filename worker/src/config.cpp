@@ -3,6 +3,7 @@
 #include <rp/cert_pin.hpp>
 #include <rp/secrets.hpp>
 
+#include "control_chars.hpp"
 #include "path_utf8.hpp"
 
 #include <nlohmann/json.hpp>
@@ -208,26 +209,13 @@ bool is_restore_mailbox(std::string_view value)
 }
 
 // Control and invisible formatting characters that could forge, hide or
-// reorder lines of `config check` output: ASCII controls (below 0x20, and
-// DEL) and, as UTF-8, C1 controls (U+0080-U+009F), the line and paragraph
-// separators (U+2028, U+2029), bidi marks and overrides (U+200E, U+200F,
-// U+202A-U+202E, and the Arabic letter mark U+061C) and bidi isolates
-// (U+2066-U+2069). The JSON parser has
-// already rejected invalid UTF-8, so matching byte sequences is enough.
+// reorder lines of `config check` output (control_chars.hpp lists them). The
+// JSON parser has already rejected invalid UTF-8, so matching byte sequences
+// is enough.
 bool has_control_character(std::string_view value)
 {
-    const auto byte = [value](std::size_t i) {
-        return i < value.size() ? static_cast<unsigned char>(value[i]) : 0;
-    };
     for (std::size_t i = 0; i < value.size(); ++i) {
-        const unsigned char b0 = byte(i);
-        const unsigned char b1 = byte(i + 1);
-        const unsigned char b2 = byte(i + 2);
-        if (b0 < 0x20 || b0 == 0x7F || (b0 == 0xC2 && b1 >= 0x80 && b1 <= 0x9F) ||
-            (b0 == 0xD8 && b1 == 0x9C) ||
-            (b0 == 0xE2 && b1 == 0x80 &&
-             (b2 == 0x8E || b2 == 0x8F || (b2 >= 0xA8 && b2 <= 0xAE))) ||
-            (b0 == 0xE2 && b1 == 0x81 && b2 >= 0xA6 && b2 <= 0xA9)) {
+        if (control_character_length(value, i) != 0) {
             return true;
         }
     }

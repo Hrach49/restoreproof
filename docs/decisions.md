@@ -7,6 +7,56 @@ Format: date, decision, reason, alternatives rejected.
 
 ---
 
+## 2026-09-26 — Bruno collection replaced by PowerShell scripts (W1.4)
+
+**Decision.** The guide's W1.4 asks for a Bruno collection exported to
+`docs/api/veeam-m365.bru`. Instead, the Veeam REST calls are small PowerShell 7 scripts in
+`docs/api/veeam-m365/`:
+
+- one script per step (`01-auth.ps1` … `09-token-expiry.ps1`);
+- a shared, dot-sourced helper (`VeeamLab.ps1`);
+- an evidence audit (`audit-evidence.ps1`);
+- a README.
+
+They record their responses, scrubbed, as `docs/api/veeam-lab/w1.4-*.json`, the format W1.0
+started. `docs/api/veeam-notes.md` is written from those files. Later API exploration (W2.4's
+restore flow) extends the same collection.
+
+**Reason.**
+
+- **TLS without switching verification off.** Veeam's default REST certificate has no SAN, so
+  no host name verifies (`docs/api/veeam-feasibility.md` §5.1). Bruno can trust a CA file or
+  turn verification off, and it can't pin one leaf certificate. The helper pins the leaf's
+  SHA-256 in a compiled .NET callback, which is the same trust the Worker will need (W1.5).
+- **No secrets on disk.** rp-veeam's password is read from Windows Credential Manager at run
+  time, and tokens live only in the process. A Bruno environment keeps variables in files next
+  to the collection, easy to commit by mistake.
+- **Evidence comes out scrubbed and audited.** Every call can write its exchange straight into
+  the repo's evidence format. The writer replaces known secret values, token-shaped values and
+  JWTs, and refuses to write a file in which a secret survived. The audit script re-checks
+  everything before a commit. W1.0 did this by hand-run helpers; now it is in the repo.
+- **Session hygiene in code.** Every explore session is stopped in a `finally`, and a sweep
+  script stops leftovers. A request collection can't express "stop what you opened, even on
+  failure", and a leaked session stays `Working` for a long time (W1.0 saw 36 minutes).
+- **Already proven.** W1.0 ran entirely on PowerShell and raw REST.
+- **Nothing new to install.** PowerShell 7 is already on every machine that runs Veeam's own
+  cmdlets (`docs/environment.md`), including an MSP's Veeam server.
+
+**Alternatives rejected.**
+
+- *Bruno (the guide's choice):* no leaf pinning (above), and its variables sit next to the
+  collection.
+- *Postman:* the same TLS options, plus a cloud account and sync.
+- *curl scripts:* `--cacert` fails the host-name check on the SAN-less certificate. `--pinnedpubkey`
+  pins the public key but still needs `-k` to skip the name check, which is off-limits.
+- *A Python (httpx) collection in `lab/`:* would work, but it would add a second HTTP stack for
+  the same job. PowerShell already has the working pinned client, and the Credential Manager
+  and DPAPI calls, from W1.0.
+- *Writing it in C++ straight away:* that is W1.5. W1.4 is exploration, and a C++ program
+  would be tested against a moving target.
+
+---
+
 ## 2026-09-26 — Veeam: admin mode is the default and the only mode in Stage 1; restores send an application certificate
 
 **Decision.** This settles the 2026-09-22 entry "Veeam authentication supports two modes;

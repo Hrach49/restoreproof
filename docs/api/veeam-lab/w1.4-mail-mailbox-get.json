@@ -1,0 +1,64 @@
+{
+  "note": "GET .../organization/mailboxes/{mailboxId} (alice)",
+  "captured_utc": "2026-09-26T16:14:08.503Z",
+  "duration_ms": 3,
+  "request": {
+    "method": "GET",
+    "path": "/v8/RestoreSessions/d84eeaee-734c-4c39-aa00-0676fc6c4861/organization/mailboxes/e00393b0-a896-4487-ad04-0e1be36468fb",
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "content_type": "application/json; charset=utf-8",
+    "headers": {
+      "Date": "Sat, 26 Sep 2026 16:14:08 GMT",
+      "Cache-Control": "no-store",
+      "Pragma": "no-cache",
+      "Transfer-Encoding": "chunked",
+      "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+      "X-Content-Type-Options": "nosniff",
+      "X-XSS-Protection": "1; mode=block",
+      "X-Frame-Options": "SAMEORIGIN",
+      "Content-Type": "application/json; charset=utf-8"
+    },
+    "body": {
+      "id": "e00393b0-a896-4487-ad04-0e1be36468fb",
+      "name": "Alice Test",
+      "email": "alice@RestoreProofLab.onmicrosoft.com",
+      "isArchive": false,
+      "isPublic": false,
+      "_links": {
+        "self": {
+          "href": "/v8/restoresessions/d84eeaee-734c-4c39-aa00-0676fc6c4861/organization/mailboxes/e00393b0-a896-4487-ad04-0e1be36468fb"
+        },
+        "folders": {
+          "href": "/v8/restoresessions/d84eeaee-734c-4c39-aa00-0676fc6c4861/organization/mailboxes/e00393b0-a896-4487-ad04-0e1be36468fb/folders?parentId=root"
+        },
+        "allfolders": {
+          "href": "/v8/restoresessions/d84eeaee-734c-4c39-aa00-0676fc6c4861/organization/mailboxes/e00393b0-a896-4487-ad04-0e1be36468fb/folders"
+        },
+        "items": {
+          "href": "/v8/restoresessions/d84eeaee-734c-4c39-aa00-0676fc6c4861/organization/mailboxes/e00393b0-a896-4487-ad04-0e1be36468fb/items"
+        }
+      },
+      "_actions": {
+        "restoreToOriginalLocation": {
+          "uri": "/v8/restoresessions/d84eeaee-734c-4c39-aa00-0676fc6c4861/organization/mailboxes/e00393b0-a896-4487-ad04-0e1be36468fb/restore",
+          "method": "POST"
+        },
+        "restoreTo": {
+          "uri": "/v8/restoresessions/d84eeaee-734c-4c39-aa00-0676fc6c4861/organization/mailboxes/e00393b0-a896-4487-ad04-0e1be36468fb/restoreTo",
+          "method": "POST"
+        },
+        "exportToPst": {
+          "uri": "/v8/restoresessions/d84eeaee-734c-4c39-aa00-0676fc6c4861/organization/mailboxes/e00393b0-a896-4487-ad04-0e1be36468fb/exportToPst",
+          "method": "POST"
+        },
+        "search": {
+          "uri": "/v8/restoresessions/d84eeaee-734c-4c39-aa00-0676fc6c4861/organization/mailboxes/e00393b0-a896-4487-ad04-0e1be36468fb/search",
+          "method": "POST"
+        }
+      }
+    }
+  }
+}

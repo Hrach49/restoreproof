@@ -1,0 +1,34 @@
+{
+  "note": "POST /v8/token grant_type=refresh_token with the refresh token of that expired access token",
+  "captured_utc": "2026-09-26T17:08:04.759Z",
+  "duration_ms": 17,
+  "request": {
+    "method": "POST",
+    "path": "/v8/token",
+    "body": "grant_type=refresh_token&refresh_token=[REDACTED]&disable_antiforgery_token=true"
+  },
+  "response": {
+    "status": 200,
+    "content_type": "application/json; charset=utf-8",
+    "headers": {
+      "Date": "Sat, 26 Sep 2026 17:08:04 GMT",
+      "Cache-Control": "no-store",
+      "Pragma": "no-cache",
+      "Transfer-Encoding": "chunked",
+      "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+      "X-Content-Type-Options": "nosniff",
+      "X-XSS-Protection": "1; mode=block",
+      "X-Frame-Options": "SAMEORIGIN",
+      "Content-Type": "application/json; charset=utf-8"
+    },
+    "body": {
+      "access_token": "[REDACTED]",
+      "refresh_token": "[REDACTED]",
+      "token_type": "bearer",
+      "expires_in": 3600,
+      "userName": "DESKTOP-P55CDUM\\rp-veeam",
+      ".issued": "2026-09-26T17:08:04.7676453Z",
+      ".expires": "2026-09-26T18:08:04.7676453Z"
+    }
+  }
+}

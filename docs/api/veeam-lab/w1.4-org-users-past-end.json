@@ -1,0 +1,42 @@
+{
+  "note": "GET /v8/Organizations/{organizationId}/Users?limit=2&offset=100 (past the end)",
+  "captured_utc": "2026-09-26T16:02:12.552Z",
+  "duration_ms": 18,
+  "request": {
+    "method": "GET",
+    "path": "/v8/Organizations/ff96d072-29e2-4cb4-a155-2590f5473176/Users?limit=2&offset=100",
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "content_type": "application/json; charset=utf-8",
+    "headers": {
+      "Date": "Sat, 26 Sep 2026 16:02:11 GMT",
+      "Cache-Control": "no-store",
+      "Pragma": "no-cache",
+      "Transfer-Encoding": "chunked",
+      "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+      "X-Content-Type-Options": "nosniff",
+      "X-XSS-Protection": "1; mode=block",
+      "X-Frame-Options": "SAMEORIGIN",
+      "Content-Type": "application/json; charset=utf-8"
+    },
+    "body": {
+      "offset": 100,
+      "limit": 2,
+      "_links": {
+        "first": {
+          "href": "/v8/Organizations/ff96d072-29e2-4cb4-a155-2590f5473176/Users?setid=53c685d0-1be6-08df-0000-000000000000&offset=0&limit=2"
+        },
+        "prev": {
+          "href": "/v8/Organizations/ff96d072-29e2-4cb4-a155-2590f5473176/Users?setid=53c685d0-1be6-08df-0000-000000000000&offset=98&limit=2"
+        },
+        "self": {
+          "href": "/v8/Organizations/ff96d072-29e2-4cb4-a155-2590f5473176/Users?setid=53c685d0-1be6-08df-0000-000000000000&offset=100&limit=2"
+        }
+      },
+      "results": [],
+      "setId": "53c685d0-1be6-08df-0000-000000000000"
+    }
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "note": "POST .../mailboxes/{mailboxId}/search {query: \"subject:(RP-CANARY-0001\"} (unbalanced parenthesis)",
+  "captured_utc": "2026-09-26T16:14:13.428Z",
+  "duration_ms": 32,
+  "request": {
+    "method": "POST",
+    "path": "/v8/RestoreSessions/d84eeaee-734c-4c39-aa00-0676fc6c4861/organization/mailboxes/e00393b0-a896-4487-ad04-0e1be36468fb/search",
+    "body": {
+      "query": "subject:(RP-CANARY-0001"
+    }
+  },
+  "response": {
+    "status": 500,
+    "content_type": "application/json; charset=utf-8",
+    "headers": {
+      "Date": "Sat, 26 Sep 2026 16:14:12 GMT",
+      "Cache-Control": "no-store, no-cache",
+      "Pragma": "no-cache",
+      "Transfer-Encoding": "chunked",
+      "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+      "X-Content-Type-Options": "nosniff",
+      "X-XSS-Protection": "1; mode=block",
+      "X-Frame-Options": "SAMEORIGIN",
+      "Content-Type": "application/json; charset=utf-8",
+      "Expires": "-1"
+    },
+    "body": {
+      "message": "Syntax error: unexpected end of input, expected Right Parenthesis."
+    }
+  }
+}

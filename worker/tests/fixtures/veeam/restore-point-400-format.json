@@ -1,0 +1,12 @@
+{
+  "source": "docs/api/veeam-lab/w1.4-rp-get-bare-id.json",
+  "request": "GET /v8/RestorePoints/71ac3d9c-eb29-42b6-a391-ae81fcc4681c",
+  "status": 400,
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8"
+  },
+  "body": {
+    "message": "Incorrect restore point ID format. Restore point ID should contain 64 digits in the following format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxxxxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx (ID: 71ac3d9c-eb29-42b6-a391-ae81fcc4681c).",
+    "errorCode": "ParameterValidationFailure"
+  }
+}

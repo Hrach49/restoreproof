@@ -1,0 +1,7 @@
+{
+  "source": "docs/api/veeam-lab/w1.4-rp-guide-path-404.json",
+  "request": "GET /v8/Organizations/ff96d072-29e2-4cb4-a155-2590f5473176/RestorePoints",
+  "status": 404,
+  "headers": {},
+  "body": null
+}

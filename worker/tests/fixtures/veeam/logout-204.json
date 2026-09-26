@@ -1,0 +1,7 @@
+{
+  "source": "docs/api/veeam-lab/w1.4-auth-logout.json",
+  "request": "POST /v8/token/logout",
+  "status": 204,
+  "headers": {},
+  "body": null
+}

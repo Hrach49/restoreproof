@@ -7,6 +7,121 @@ Format: date, decision, reason, alternatives rejected.
 
 ---
 
+## 2026-09-26 — VeeamClient: status retries off per request, Veeam's 5xx classified by the client; token and paging rules (W1.5)
+
+**Decision.** `rp::VeeamClient` (`worker/include/rp/veeam_client.hpp`) follows
+`docs/api/veeam-notes.md` §1.7 and §8, with these choices:
+
+- **`retry_on_status`** is a new per-request flag (`HttpRequest`, `RequestOptions`, default
+  on). Off, every response, 5xx included, comes back after one attempt; transport errors
+  (connect, timeout, dropped handshake) are still retried. Every Veeam request goes out
+  with it off.
+- **The client classifies Veeam's 5xx itself.** Any 5xx on `/v8/token` → `AuthError`, never
+  retried. A 500 whose body is a JSON object with a string `message` → `VeeamError` with
+  that message, not retried. 502/503/504, and any other 5xx without such a body →
+  `TransientError`; on a GET, the client retries it first with `rp::retry_delay`'s backoff (five
+  attempts in all). 401/403 and `errorCode: ResourceAccessDenied` → `AuthError`; 404 with
+  `ResourceNotFound` → `NotFoundError`; everything else → `VeeamError`. All four derive
+  from `VeeamError`, which keeps the status, Veeam's `errorCode` and the error body (never
+  for `/v8/token`: a proxy could echo the posted password).
+- **Tokens.** Refresh 60 s before expiry, counted on the local steady clock from receipt;
+  `expires_in` capped at a day, and a lifetime of 120 s or less refreshed at its half. One
+  mutex covers sign-in, refresh and the swap of both tokens. Any refresh failure falls back
+  to the password. An empty 401 on an API call: resend with the current token if another
+  caller has replaced it, otherwise sign in once and resend; a second 401 → `AuthError`. A
+  401 with a message (the account's role) → `AuthError` at once. Callers that waited on the
+  lock while a sign-in failed get that failure rather than each trying in turn.
+- **Lists page until a page is shorter than the limit Veeam echoes** (1000 asked). An `id`
+  seen on an earlier page is dropped (a backup finishing mid-read shifts the pages); a full
+  page with nothing new stops with an error instead of looping.
+- **Restore points are sorted newest first by `backupTime`'s value**, and `backupTime` is
+  kept as the raw string. A point whose `backupTime` isn't Veeam's UTC form
+  (`YYYY-MM-DDTHH:MM:SS[.1-7 digits]Z`) fails the whole list: explore sessions are opened by
+  that string, and Veeam answers 500 to any other form.
+- **Names are snake_case** (`list_restore_points`, `ensure_token`), like the rest of rpcore,
+  not the guide's camelCase. `RestorePoint` has no `isModified`: v8 has no such field
+  (veeam-notes §3, §10).
+- **Tests run on recorded fixtures** (`worker/tests/fixtures/veeam/`, from the W1.4/L1.6
+  evidence) served by a minimal `FakeHttpClient` (`worker/tests/fake_http_client.hpp`);
+  Q2.1 extends it and adds `--record`. The live test runs only with `RP_LIVE=1` and is
+  read-only.
+
+**Reason.** Veeam answers 500 to many requests that will never succeed (an explore before
+the first point, a stopped session, a bad search, a `dateTime` without `Z`). With W1.3's
+rule each cost about 15 s of retries and then lost the body that said why. A refused
+sign-in has been an empty 500, so retrying `/v8/token` only delays an `AuthError`. The token
+rules follow what the lab showed: refresh tokens rotate and are single-use, a refresh
+revokes the old access token at once, and a REST service restart kills every token.
+
+**Alternatives rejected.** *A retry predicate on the request instead of a flag:* more
+general, but a callback in every request for one caller's rule. *Letting `HttpClient` retry
+GETs' 5xx and classifying afterwards:* a deterministic 500 would still cost 15 s. *Sorting
+`backupTime` as text:* Veeam drops trailing zeros of the fraction, so `…15Z` would sort
+after `…15.2Z`. *Skipping points with an odd `backupTime`:* hides a format change that
+would break every explore anyway. *Parsing `backupTime` into a date type:* drops digits;
+W2.x must send it unchanged. *Trusting `.expires`:* it is the server's clock.
+
+**Open.** W1.3's open point is half closed: the 5xx half is settled here, but a timeout or
+a connection dropped after a POST went out is still retried by `HttpClient`, so a restore
+POST could still run twice. W2.x must add an at-most-once mode (no retry once the request
+may have been sent) or find its own session in `GET /v8/RestoreSessions` before resending
+(veeam-notes §6). `logout()` holds the lock while it sends, so a hanging logout delays
+other calls; it runs at the end of a job. Veeam's "cannot manage selected object" 500
+(an operator outside its scope, veeam-notes §8) maps to `VeeamError`, not `AuthError`;
+operator mode is out of Stage 1.
+
+---
+
+## 2026-09-26 — Veeam TLS: the CA file plus a pinned certificate; only the host-name check is skipped (W1.5)
+
+**Decision.** This settles the TLS point left open by "Veeam: admin mode is the default"
+(2026-09-26). A new optional config key, `veeam_cert_sha256`, names Veeam's REST
+certificate by its SHA-256, as Windows shows it (`GetCertHashString('SHA256')`, the value
+the W1.4 scripts pin). It requires `veeam_ca_file`, which must hold that certificate in
+PEM. With both set, the Veeam connection:
+
+- keeps peer verification on, with the CA file as the only trust anchor (curl's Schannel
+  backend validates the chain against it alone, dates included);
+- pins the certificate's public key (`CURLOPT_PINNEDPUBLICKEY`, `sha256//` + the base64
+  SHA-256 of its SubjectPublicKeyInfo, worked out by `rp::public_key_pin` from the CA file);
+- skips only the host-name check.
+
+Without a pin nothing is relaxed: a CA file alone, or no setting at all, keeps full
+verification. `load_config` checks that the CA file holds the named certificate. If the pin
+can't be worked out when the client is built, every request is refused before sending.
+The TLS source scan gets narrow reviewed exceptions, each allowed once and only in
+`src/http_client.cpp`: the statement that writes the pin, and
+`options.verify_host = options.pinned_public_key.empty();`. Any other mention of the pinned key in
+Worker code fails the build.
+
+**Reason.** Veeam's default REST certificate is self-signed, `CN=Veeam Software`, with no
+extensions at all, so no subject alternative name: no host name can ever verify against it,
+and `veeam_ca_file` alone fails on every default install (feasibility §5.1). A probe on
+127.0.0.1 with a certificate built the same way (curl 8.22, Schannel) showed:
+
+- Schannel honours the pinned key whether or not peer verification is on;
+- the host check can be turned off on its own;
+- with CA file + pin + host check off, the right pin passes, while a wrong pin, another
+  server key, a CA file without the certificate, no pin, a CA file alone and an expired
+  certificate all fail;
+- with peer verification off as well, an expired certificate passed.
+
+So keeping the chain check costs nothing and keeps the dates. The TLS tests
+(`worker/tests/http_client_tls_test.cpp`) repeat each case with a certificate made at run
+time.
+
+**Alternatives rejected.** *Pin only, with peer and host verification off:* one setting
+fewer, but the config would have to hold the public-key hash (not what Windows shows), the
+expiry would go unchecked, and the scan exception would be two switched-off checks. *A
+certificate with the server's DNS name (`Set-VBORestAPISettings`):* still supported, through
+`veeam_ca_file` alone, but it asks every MSP to replace Veeam's certificate before a first
+test. *Importing Veeam's certificate into the Worker machine's Windows root store:* it
+would let a key on the Veeam server sign certificates the whole machine trusts. *Checking the certificate's hash
+after the handshake (`CURLOPT_CERTINFO`):* the request, password included, would already
+be sent.
+
+---
+
 ## 2026-09-26 — Bruno collection replaced by PowerShell scripts (W1.4)
 
 **Decision.** The guide's W1.4 asks for a Bruno collection exported to

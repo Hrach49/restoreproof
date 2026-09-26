@@ -860,6 +860,8 @@ the composite-ID handling.
 - **Which point a between-points session opens** (§4.2): can't be shown on this lab (identical
   content). If it matters, a later task can seed a change between two backups. The Worker
   sidesteps it by always sending an exact `backupTime`.
-- **Retry classification of 5xx** (§8): a W1.5 decision.
+- **Retry classification of 5xx** (§8): decided in W1.5, as proposed there
+  (`docs/decisions.md` 2026-09-26, "VeeamClient: status retries off per request"). A restore
+  POST running twice after a timeout is still open for W2.x.
 - **A new user and Veeam's cache** (§2.4): observed in W1.0, not re-tested (it needs a tenant
   change).

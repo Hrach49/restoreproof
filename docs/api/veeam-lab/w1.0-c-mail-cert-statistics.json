@@ -1,0 +1,32 @@
+{
+  "note": "rp-veeam: GET /v8/RestoreSessions/{sessionId}/Statistics",
+  "captured_utc": "2026-09-26T14:54:25.210Z",
+  "duration_ms": 22,
+  "request": {
+    "method": "GET",
+    "path": "/v8/RestoreSessions/27c3ad6c-8ff2-4b5f-8e3d-aa1c82a60cbb/Statistics",
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "content_type": "application/json; charset=utf-8",
+    "headers": {
+      "Date": "Sat, 26 Sep 2026 14:54:24 GMT",
+      "Cache-Control": "no-store",
+      "Pragma": "no-cache",
+      "Transfer-Encoding": "chunked",
+      "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+      "X-Content-Type-Options": "nosniff",
+      "X-XSS-Protection": "1; mode=block",
+      "X-Frame-Options": "SAMEORIGIN",
+      "Content-Type": "application/json; charset=utf-8"
+    },
+    "body": {
+      "totalItemsCount": 1,
+      "restoredItemsCount": 1,
+      "failedItemsCount": 0,
+      "skippedItemsCount": 0,
+      "items": []
+    }
+  }
+}

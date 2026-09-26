@@ -7,6 +7,65 @@ Format: date, decision, reason, alternatives rejected.
 
 ---
 
+## 2026-09-26 — Veeam: admin mode is the default and the only mode in Stage 1; restores send an application certificate
+
+**Decision.** This settles the 2026-09-22 entry "Veeam authentication supports two modes;
+W1.0 picks the default". The evidence is in `docs/api/veeam-feasibility.md`.
+
+- **`VeeamClient` uses admin mode.** A dedicated local Windows account (L1.6: `rp-veeam`, a
+  standard user in the Veeam Backup Administrator role, interactive and RDP logon denied)
+  signs in with `grant_type=password` and `disable_antiforgery_token=true`.
+- **Operator mode is not built in Stage 1.** Plan section 9 and the security one-pager (Q7.3)
+  must not claim "never a Veeam administrator".
+- **Restores to another location send restore credentials in the body.** The only kind that
+  works unattended is an Entra application ID with its certificate (PFX, Base64, and its
+  password). Veeam refuses a body without credentials (400), and user credentials fail on MFA.
+- **Tokens.** Refresh tokens are single-use and die with every restart of Veeam's REST service,
+  so on any refresh failure the client signs in again with the password.
+- **The Sprint 1 gate's fallback** (Veeam's PowerShell module run on the Veeam server) is not
+  needed. It stays the answer for an MSP that refuses admin mode.
+
+**Reason.**
+
+- **Operator restores can't reach our targets.** The operator endpoints can only restore mail
+  into the original mailbox and OneDrive files to their original place. The schema has no
+  target field, and Veeam's docs say the same. So two of the three restore targets are out of
+  reach, and CLAUDE.md forbids original locations.
+- **Operator sessions can't be kept alive unattended.** A REST service restart (a reboot, a
+  Veeam update) ends every session. Starting one again needs an interactive browser sign-in:
+  - security defaults block the documented device-code flow (AADSTS530035);
+  - the Restore Portal app must be multi-tenant (Veeam's on-behalf-of call uses `/common`);
+  - each operator explore session stops after one restore.
+- **Admin mode passed every check.** It restored mail, SharePoint and OneDrive into the three
+  targets, and it can sign in again without a person.
+
+**Alternatives rejected.**
+
+- *Operator mode for SharePoint only:* two modes to build and support, for one of three item
+  types.
+- *Restoring into the original mailbox or OneDrive in a marked folder:* breaks the restore
+  target rule (2026-09-22, 2026-09-25) and puts test copies in production mailboxes.
+- *User credentials in the restore body:* need an account without MFA, which no MSP should
+  have.
+- *Device codes (`userCode`):* blocked by security defaults, and interactive.
+- *The PowerShell module now:* admin mode works, and a second connector isn't needed yet.
+
+**Open.**
+
+- **Which Entra app's certificate the Worker holds** (L1.5, W2.4, W4.5). The lab used Veeam's
+  own backup app, which has broad application permissions. A dedicated restore app with
+  narrower permissions (Exchange application RBAC scoped to `restoretest`, SharePoint
+  `Sites.Selected`) is to be tested before the Worker stores any certificate. Either way the
+  PFX and its password are vault secrets, and `worker/include/rp/secrets.hpp` changes with W1.5.
+- **TLS** (W1.5): Veeam's default REST certificate has no SAN, so no host name verifies and
+  `veeam_ca_file` alone can't reach a default install. The options are to require a
+  certificate with the server's DNS name (`Set-VBORestAPISettings`) or to add a pinned-leaf
+  option. Verification stays on either way.
+- **The operator refresh-token lifetime** (48 h and 7 days) is still being measured, due
+  2026-09-28 and 2026-10-03. It is recorded for completeness and does not change this decision.
+
+---
+
 ## 2026-09-25 — Restored files go to `RestoreTarget`, not to the `RestoreTest` library/folder that holds the canaries
 
 **Decision.** Supersedes the file part of "Restores only ever target `restoretest` /

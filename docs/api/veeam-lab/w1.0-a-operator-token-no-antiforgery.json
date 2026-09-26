@@ -1,0 +1,34 @@
+{
+  "note": "disable_antiforgery_token=true; rpoperator: POST /v8/token grant_type=operator, client_id=<oid>.<tid>, assertion=[REDACTED] v2 access token for api://<portal app>/access_as_user, obtained by auth code + PKCE>",
+  "captured_utc": "2026-09-26T14:24:04.014Z",
+  "duration_ms": 735,
+  "request": {
+    "method": "POST",
+    "path": "/v8/token",
+    "body": "client_id=5108276f-c9d8-4603-b742-e35c6fc3f4f7.bcd6bd1a-ea42-489d-aa28-2c19a44ad146&grant_type=operator&assertion=[REDACTED]&disable_antiforgery_token=true"
+  },
+  "response": {
+    "status": 200,
+    "content_type": "application/json; charset=utf-8",
+    "headers": {
+      "Date": "Sat, 26 Sep 2026 14:24:04 GMT",
+      "Cache-Control": "no-store",
+      "Pragma": "no-cache",
+      "Transfer-Encoding": "chunked",
+      "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+      "X-Content-Type-Options": "nosniff",
+      "X-XSS-Protection": "1; mode=block",
+      "X-Frame-Options": "SAMEORIGIN",
+      "Content-Type": "application/json; charset=utf-8"
+    },
+    "body": {
+      "access_token": "[REDACTED]",
+      "refresh_token": "[REDACTED]",
+      "token_type": "bearer",
+      "expires_in": 3600,
+      "userName": "5108276f-c9d8-4603-b742-e35c6fc3f4f7.bcd6bd1a-ea42-489d-aa28-2c19a44ad146",
+      ".issued": "2026-09-26T14:24:04.7268611Z",
+      ".expires": "2026-09-26T15:24:04.7268611Z"
+    }
+  }
+}

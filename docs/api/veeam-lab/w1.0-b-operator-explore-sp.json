@@ -1,0 +1,69 @@
+{
+  "note": "rpoperator: POST /v8/Organization/OperatorExplore, type Vesp, scope = RestoreTest site, latest point",
+  "captured_utc": "2026-09-26T14:29:10.556Z",
+  "duration_ms": 8557,
+  "request": {
+    "method": "POST",
+    "path": "/v8/Organization/OperatorExplore",
+    "body": {
+      "dateTime": "2026-09-25T19:37:15Z",
+      "type": "Vesp",
+      "showDeleted": false,
+      "showAllVersions": false,
+      "scope": {
+        "type": "Site",
+        "site": {
+          "id": "fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689",
+          "url": "https://restoreprooflab.sharepoint.com/sites/RestoreTest",
+          "title": "RestoreTest",
+          "isCloud": true,
+          "isPersonal": false
+        },
+        "id": "46c7c3c7-338e-4a28-b2de-e12c6936c979fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689"
+      },
+      "reason": "W1.0 check b: operator scope"
+    }
+  },
+  "response": {
+    "status": 201,
+    "content_type": "application/json; charset=utf-8",
+    "headers": {
+      "Date": "Sat, 26 Sep 2026 14:29:18 GMT",
+      "Cache-Control": "no-store",
+      "Location": "/v8/restoresessions/3c06abab-afed-4980-99f1-93f1009365b1",
+      "Pragma": "no-cache",
+      "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+      "X-Content-Type-Options": "nosniff",
+      "X-XSS-Protection": "1; mode=block",
+      "X-Frame-Options": "SAMEORIGIN",
+      "Content-Length": "860",
+      "Content-Type": "application/json; charset=utf-8"
+    },
+    "body": {
+      "id": "3c06abab-afed-4980-99f1-93f1009365b1",
+      "name": "SharePoint restore (Restore operator: rpoperator@RestoreProofLab.onmicrosoft.com - 9/25/2026 7:37:15 PM)",
+      "organization": "RestoreProofLab.onmicrosoft.com",
+      "type": "Vesp",
+      "creationTime": "2026-09-26T14:29:10.8294085Z",
+      "endTime": "9999-12-31T23:59:59.9999999",
+      "state": "Working",
+      "result": "Success",
+      "initiatedBy": "rpoperator@RestoreProofLab.onmicrosoft.com",
+      "scopeName": "https://restoreprooflab.sharepoint.com/sites/RestoreTest",
+      "clientHost": "localhost:4443 (via: [::ffff:127.0.0.1])",
+      "reason": "W1.0 check b: operator scope",
+      "eTag": 1,
+      "_links": {
+        "self": {
+          "href": "/v8/restoresessions/3c06abab-afed-4980-99f1-93f1009365b1"
+        },
+        "organization": {
+          "href": "/v8/restoresessions/3c06abab-afed-4980-99f1-93f1009365b1/organization"
+        },
+        "restoreSessionEvents": {
+          "href": "/v8/restoresessions/3c06abab-afed-4980-99f1-93f1009365b1/events"
+        }
+      }
+    }
+  }
+}

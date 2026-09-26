@@ -1,0 +1,68 @@
+{
+  "note": "rpoperator: OperatorExplore Vex, scope alice, latest point",
+  "captured_utc": "2026-09-26T14:34:04.964Z",
+  "duration_ms": 750,
+  "request": {
+    "method": "POST",
+    "path": "/v8/Organization/OperatorExplore",
+    "body": {
+      "dateTime": "2026-09-25T19:37:15Z",
+      "type": "Vex",
+      "showDeleted": false,
+      "showAllVersions": false,
+      "scope": {
+        "type": "User",
+        "user": {
+          "id": "RestoreProofLab.onmicrosoft.com:00000000-0000-0000-0000-000000000000:00000000-0000-0000-0000-000000000000:b8712372-d84b-4c0c-8d78-5ab08331da42:00000000-0000-0000-0000-000000000000",
+          "displayName": "Alice Test",
+          "name": "alice@RestoreProofLab.onmicrosoft.com",
+          "type": "User"
+        },
+        "id": "a4e58481-9bd5-4d41-9f46-01c14862f6f4RestoreProofLab.onmicrosoft.com:00000000-0000-0000-0000-000000000000:00000000-0000-0000-0000-000000000000:b8712372-d84b-4c0c-8d78-5ab08331da42:00000000-0000-0000-0000-000000000000"
+      },
+      "reason": "W1.0 check d: export mail"
+    }
+  },
+  "response": {
+    "status": 201,
+    "content_type": "application/json; charset=utf-8",
+    "headers": {
+      "Date": "Sat, 26 Sep 2026 14:34:05 GMT",
+      "Cache-Control": "no-store",
+      "Location": "/v8/restoresessions/cf3e901c-7c58-410c-9df5-1b9924b75f8c",
+      "Pragma": "no-cache",
+      "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+      "X-Content-Type-Options": "nosniff",
+      "X-XSS-Protection": "1; mode=block",
+      "X-Frame-Options": "SAMEORIGIN",
+      "Content-Length": "835",
+      "Content-Type": "application/json; charset=utf-8"
+    },
+    "body": {
+      "id": "cf3e901c-7c58-410c-9df5-1b9924b75f8c",
+      "name": "Exchange restore (Restore operator: rpoperator@RestoreProofLab.onmicrosoft.com - 9/25/2026 7:37:15 PM)",
+      "organization": "RestoreProofLab.onmicrosoft.com",
+      "type": "Vex",
+      "creationTime": "2026-09-26T14:34:05.0338515Z",
+      "endTime": "9999-12-31T23:59:59.9999999",
+      "state": "Working",
+      "result": "Success",
+      "initiatedBy": "rpoperator@RestoreProofLab.onmicrosoft.com",
+      "scopeName": "alice@RestoreProofLab.onmicrosoft.com",
+      "clientHost": "localhost:4443 (via: [::ffff:127.0.0.1])",
+      "reason": "W1.0 check d: export mail",
+      "eTag": 1,
+      "_links": {
+        "self": {
+          "href": "/v8/restoresessions/cf3e901c-7c58-410c-9df5-1b9924b75f8c"
+        },
+        "organization": {
+          "href": "/v8/restoresessions/cf3e901c-7c58-410c-9df5-1b9924b75f8c/organization"
+        },
+        "restoreSessionEvents": {
+          "href": "/v8/restoresessions/cf3e901c-7c58-410c-9df5-1b9924b75f8c/events"
+        }
+      }
+    }
+  }
+}

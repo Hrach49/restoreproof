@@ -1,0 +1,60 @@
+{
+  "note": "rp-veeam: POST /v8/RestoreSessions/{restoreSessionId}/Organization/OneDrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/Documents/copyTo with cert credentials",
+  "captured_utc": "2026-09-26T14:52:13.011Z",
+  "duration_ms": 237,
+  "request": {
+    "method": "POST",
+    "path": "/v8/RestoreSessions/cfaa0fcf-fa67-4911-ad0a-ffc2830b0c75/Organization/OneDrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/Documents/copyTo",
+    "body": {
+      "documents": [
+        {
+          "oneDriveId": "6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325",
+          "sizeBytes": 925,
+          "inheritedPermissions": true,
+          "version": "1.0",
+          "id": "bab96008-6315-4110-89bc-75f4f3d587a4",
+          "versionId": 1,
+          "name": "rp-canary-11.pdf",
+          "createdBy": "Alice Test",
+          "creationTime": "2026-09-24T22:11:23Z",
+          "modifiedBy": "Alice Test",
+          "modificationTime": "2026-09-24T22:11:23Z",
+          "isFolder": false
+        }
+      ],
+      "onedrive": {
+        "id": "6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325",
+        "name": "Alice Test",
+        "url": "https://restoreprooflab-my.sharepoint.com/personal/alice_restoreprooflab_onmicrosoft_com"
+      },
+      "folder": "RestoreTarget",
+      "changedItems": true,
+      "deletedItems": true,
+      "documentVersion": "Last",
+      "documentLastVersionAction": "Merge",
+      "officeRegion": "Worldwide",
+      "organizationName": "RestoreProofLab.onmicrosoft.com",
+      "applicationId": "1fd2609d-1242-43fe-94b5-d58688a90bd6",
+      "applicationCertificate": "[REDACTED]",
+      "applicationCertificatePassword": "[REDACTED]"
+    }
+  },
+  "response": {
+    "status": 200,
+    "content_type": "application/json; charset=utf-8",
+    "headers": {
+      "Date": "Sat, 26 Sep 2026 14:52:12 GMT",
+      "Cache-Control": "no-store",
+      "Pragma": "no-cache",
+      "Transfer-Encoding": "chunked",
+      "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+      "X-Content-Type-Options": "nosniff",
+      "X-XSS-Protection": "1; mode=block",
+      "X-Frame-Options": "SAMEORIGIN",
+      "Content-Type": "application/json; charset=utf-8"
+    },
+    "body": {
+      "sessionId": "c939545a-a647-4506-80bd-86294481fc49"
+    }
+  }
+}

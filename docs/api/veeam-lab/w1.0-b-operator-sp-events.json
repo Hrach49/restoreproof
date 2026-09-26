@@ -1,0 +1,103 @@
+{
+  "note": "rpoperator: GET /v8/RestoreSessions/{sessionId}/Events at the end of polling",
+  "captured_utc": "2026-09-26T14:30:45.764Z",
+  "duration_ms": 48,
+  "request": {
+    "method": "GET",
+    "path": "/v8/RestoreSessions/72ff2c45-8fe9-44f7-b5b0-15768c8acddf/Events?limit=100",
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "content_type": "application/json; charset=utf-8",
+    "headers": {
+      "Date": "Sat, 26 Sep 2026 14:30:45 GMT",
+      "Cache-Control": "no-store",
+      "Pragma": "no-cache",
+      "Transfer-Encoding": "chunked",
+      "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+      "X-Content-Type-Options": "nosniff",
+      "X-XSS-Protection": "1; mode=block",
+      "X-Frame-Options": "SAMEORIGIN",
+      "Content-Type": "application/json; charset=utf-8"
+    },
+    "body": {
+      "offset": 0,
+      "limit": 100,
+      "_links": {
+        "self": {
+          "href": "/v8/RestoreSessions/72ff2c45-8fe9-44f7-b5b0-15768c8acddf/Events?offset=0&limit=100"
+        }
+      },
+      "results": [
+        {
+          "itemSizeBytes": 0,
+          "id": "5357b617-a8c3-43c7-a2dd-846a9bdefb07",
+          "type": "None",
+          "status": "Success",
+          "startTime": "2026-09-26T14:29:58.9668498Z",
+          "endTime": "2026-09-26T14:29:58.9668498Z",
+          "duration": "00:00:00",
+          "title": "Restore session started",
+          "message": "Restore session started",
+          "order": 0,
+          "_links": {
+            "self": {
+              "href": "/v8/restoresessions/72ff2c45-8fe9-44f7-b5b0-15768c8acddf/events/5357b617-a8c3-43c7-a2dd-846a9bdefb07"
+            },
+            "restoreSession": {
+              "href": "/v8/restoresessions/72ff2c45-8fe9-44f7-b5b0-15768c8acddf"
+            }
+          }
+        },
+        {
+          "itemName": "rp-canary-01.pdf",
+          "itemType": "File",
+          "itemSizeBytes": 925,
+          "source": "/sites/RestoreTest/RestoreTest/rp-canary-01.pdf",
+          "target": "https://restoreprooflab.sharepoint.com/sites/RestoreTest",
+          "id": "b4cee243-fe8d-e737-0a9a-f72c4cdb153d",
+          "type": "Restore",
+          "status": "Success",
+          "startTime": "2026-09-26T14:30:33.3505188Z",
+          "endTime": "2026-09-26T14:30:33.4444025Z",
+          "duration": "00:00:00.0938837",
+          "title": "Item is successfully restored.",
+          "message": "Item rp-canary-01.pdf was restored successfully (type: File; source: /sites/RestoreTest/RestoreTest/rp-canary-01.pdf; target: https://restoreprooflab.sharepoint.com/sites/RestoreTest)",
+          "order": 1,
+          "organizationId": "ff96d072-29e2-4cb4-a155-2590f5473176",
+          "backedUpOrganizationId": "RestoreProofLab.onmicrosoft.com:00000000-0000-0000-0000-000000000000:00000000-0000-0000-0000-000000000000",
+          "siteId": "fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689",
+          "_links": {
+            "self": {
+              "href": "/v8/restoresessions/72ff2c45-8fe9-44f7-b5b0-15768c8acddf/events/b4cee243-fe8d-e737-0a9a-f72c4cdb153d"
+            },
+            "restoreSession": {
+              "href": "/v8/restoresessions/72ff2c45-8fe9-44f7-b5b0-15768c8acddf"
+            }
+          }
+        },
+        {
+          "itemSizeBytes": 0,
+          "id": "5dc61c88-3732-4a7e-8593-bc1f25d1670a",
+          "type": "None",
+          "status": "Success",
+          "startTime": "2026-09-26T14:30:43.7296654Z",
+          "endTime": "2026-09-26T14:30:43.7296654Z",
+          "duration": "00:00:00",
+          "title": "Restore session completed",
+          "message": "Restore session completed",
+          "order": 2,
+          "_links": {
+            "self": {
+              "href": "/v8/restoresessions/72ff2c45-8fe9-44f7-b5b0-15768c8acddf/events/5dc61c88-3732-4a7e-8593-bc1f25d1670a"
+            },
+            "restoreSession": {
+              "href": "/v8/restoresessions/72ff2c45-8fe9-44f7-b5b0-15768c8acddf"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

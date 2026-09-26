@@ -1,0 +1,52 @@
+{
+  "note": "rpoperator: GET /v8/RestoreSessions/{sessionId returned by operatorRestore} at the end of polling",
+  "captured_utc": "2026-09-26T14:30:45.714Z",
+  "duration_ms": 43,
+  "request": {
+    "method": "GET",
+    "path": "/v8/RestoreSessions/72ff2c45-8fe9-44f7-b5b0-15768c8acddf",
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "content_type": "application/json; charset=utf-8",
+    "headers": {
+      "Date": "Sat, 26 Sep 2026 14:30:45 GMT",
+      "Cache-Control": "no-store",
+      "Pragma": "no-cache",
+      "Transfer-Encoding": "chunked",
+      "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+      "X-Content-Type-Options": "nosniff",
+      "X-XSS-Protection": "1; mode=block",
+      "X-Frame-Options": "SAMEORIGIN",
+      "Content-Type": "application/json; charset=utf-8"
+    },
+    "body": {
+      "id": "72ff2c45-8fe9-44f7-b5b0-15768c8acddf",
+      "name": "SharePoint restore (Restore operator: rpoperator@RestoreProofLab.onmicrosoft.com - 9/25/2026 7:37:15 PM)",
+      "organization": "RestoreProofLab.onmicrosoft.com",
+      "type": "Vesp",
+      "creationTime": "2026-09-26T14:29:58.9552828Z",
+      "endTime": "2026-09-26T14:30:43.7028056Z",
+      "state": "Stopped",
+      "result": "Success",
+      "initiatedBy": "rpoperator@RestoreProofLab.onmicrosoft.com",
+      "details": "1 item processed (1 success)",
+      "scopeName": "https://restoreprooflab.sharepoint.com/sites/RestoreTest",
+      "clientHost": "localhost:4443 (via: [::ffff:127.0.0.1])",
+      "reason": "W1.0 check b: operator restore into RestoreTarget",
+      "eTag": 2,
+      "_links": {
+        "self": {
+          "href": "/v8/restoresessions/72ff2c45-8fe9-44f7-b5b0-15768c8acddf"
+        },
+        "organization": {
+          "href": "/v8/restoresessions/72ff2c45-8fe9-44f7-b5b0-15768c8acddf/organization"
+        },
+        "restoreSessionEvents": {
+          "href": "/v8/restoresessions/72ff2c45-8fe9-44f7-b5b0-15768c8acddf/events"
+        }
+      }
+    }
+  }
+}

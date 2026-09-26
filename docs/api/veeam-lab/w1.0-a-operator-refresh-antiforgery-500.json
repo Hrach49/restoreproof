@@ -1,0 +1,29 @@
+{
+  "note": "rpoperator: POST /v8/token grant_type=refresh_token immediately after the operator grant (check a, t0)",
+  "captured_utc": "2026-09-26T14:20:24.179Z",
+  "duration_ms": 35,
+  "request": {
+    "method": "POST",
+    "path": "/v8/token",
+    "body": "grant_type=refresh_token&refresh_token=[REDACTED]"
+  },
+  "response": {
+    "status": 500,
+    "content_type": "application/json; charset=utf-8",
+    "headers": {
+      "Date": "Sat, 26 Sep 2026 14:20:23 GMT",
+      "Cache-Control": "no-store, no-cache",
+      "Pragma": "no-cache",
+      "Transfer-Encoding": "chunked",
+      "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+      "X-Content-Type-Options": "nosniff",
+      "X-XSS-Protection": "1; mode=block",
+      "X-Frame-Options": "SAMEORIGIN",
+      "Content-Type": "application/json; charset=utf-8",
+      "Expires": "-1"
+    },
+    "body": {
+      "message": "An antiforgery token is not specified."
+    }
+  }
+}

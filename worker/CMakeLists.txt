@@ -44,8 +44,9 @@ target_link_libraries(rpcore
 # error in rpcore, so a value added to an enum such as HttpMethod can't fall
 # through to another value's behaviour unnoticed.
 target_compile_options(rpcore PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/we4062>)
-# program_data_dir() calls SHGetKnownFolderPath (shell32) and CoTaskMemFree (ole32).
-target_link_libraries(rpcore PRIVATE shell32 ole32)
+# program_data_dir() calls SHGetKnownFolderPath (shell32) and CoTaskMemFree (ole32);
+# public_key_pin() reads the CA file with CryptQueryObject (crypt32), as curl does.
+target_link_libraries(rpcore PRIVATE shell32 ole32 crypt32)
 
 # rpworker: the Worker exe. main() lives in app/ and only hands argv to
 # rp::run_cli; all parsing is in rpcore, where rptests can reach it

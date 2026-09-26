@@ -1,0 +1,25 @@
+{
+  "note": "GET /v8/Organizations/{organizationId}/RestorePoints (the guide's path)",
+  "captured_utc": "2026-09-26T16:02:14.701Z",
+  "duration_ms": 3,
+  "request": {
+    "method": "GET",
+    "path": "/v8/Organizations/ff96d072-29e2-4cb4-a155-2590f5473176/RestorePoints",
+    "body": null
+  },
+  "response": {
+    "status": 404,
+    "content_type": "",
+    "headers": {
+      "Date": "Sat, 26 Sep 2026 16:02:13 GMT",
+      "Cache-Control": "no-store",
+      "Pragma": "no-cache",
+      "Transfer-Encoding": "chunked",
+      "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+      "X-Content-Type-Options": "nosniff",
+      "X-XSS-Protection": "1; mode=block",
+      "X-Frame-Options": "SAMEORIGIN"
+    },
+    "body": null
+  }
+}

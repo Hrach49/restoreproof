@@ -1,0 +1,94 @@
+{
+  "note": "GET /v8/RestorePoints (no filter, default order and page)",
+  "captured_utc": "2026-09-26T16:02:14.256Z",
+  "duration_ms": 26,
+  "request": {
+    "method": "GET",
+    "path": "/v8/RestorePoints",
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "content_type": "application/json; charset=utf-8",
+    "headers": {
+      "Date": "Sat, 26 Sep 2026 16:02:13 GMT",
+      "Cache-Control": "no-store",
+      "Pragma": "no-cache",
+      "Transfer-Encoding": "chunked",
+      "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+      "X-Content-Type-Options": "nosniff",
+      "X-XSS-Protection": "1; mode=block",
+      "X-Frame-Options": "SAMEORIGIN",
+      "Content-Type": "application/json; charset=utf-8"
+    },
+    "body": {
+      "offset": 0,
+      "limit": 30,
+      "_links": {
+        "self": {
+          "href": "/v8/RestorePoints?offset=0&limit=30"
+        }
+      },
+      "results": [
+        {
+          "id": "c2f0f2e7-177f-48ac-992b-93a50cf702e371ac3d9c-eb29-42b6-a391-ae81fcc4681c",
+          "isDeleted": false,
+          "repositoryId": "c2f0f2e7-177f-48ac-992b-93a50cf702e3",
+          "backupTime": "2026-09-25T19:37:15.2145203Z",
+          "jobId": "4cf03510-457c-401b-a1c6-e7e69be296e1",
+          "retrievalId": "00000000-0000-0000-0000-000000000000",
+          "organizationId": "ff96d072-29e2-4cb4-a155-2590f5473176",
+          "isExchange": true,
+          "isSharePoint": true,
+          "isOneDrive": true,
+          "isTeams": false,
+          "isLongTermCopy": false,
+          "isCopy": false,
+          "isRetrieved": false,
+          "eTag": 1,
+          "objectsEtag": 5,
+          "_links": {
+            "self": {
+              "href": "/v8/restorePoints/c2f0f2e7-177f-48ac-992b-93a50cf702e371ac3d9c-eb29-42b6-a391-ae81fcc4681c"
+            },
+            "organization": {
+              "href": "/v8/organizations/ff96d072-29e2-4cb4-a155-2590f5473176"
+            },
+            "backupRepository": {
+              "href": "/v8/backuprepositories/c2f0f2e7-177f-48ac-992b-93a50cf702e3"
+            }
+          }
+        },
+        {
+          "id": "c2f0f2e7-177f-48ac-992b-93a50cf702e32fb3c7e0-ff6e-4949-8b2d-ae32ecf9e9a7",
+          "isDeleted": false,
+          "repositoryId": "c2f0f2e7-177f-48ac-992b-93a50cf702e3",
+          "backupTime": "2026-09-25T19:24:31.0936821Z",
+          "jobId": "4cf03510-457c-401b-a1c6-e7e69be296e1",
+          "retrievalId": "00000000-0000-0000-0000-000000000000",
+          "organizationId": "ff96d072-29e2-4cb4-a155-2590f5473176",
+          "isExchange": true,
+          "isSharePoint": true,
+          "isOneDrive": true,
+          "isTeams": false,
+          "isLongTermCopy": false,
+          "isCopy": false,
+          "isRetrieved": false,
+          "eTag": 1,
+          "objectsEtag": 5,
+          "_links": {
+            "self": {
+              "href": "/v8/restorePoints/c2f0f2e7-177f-48ac-992b-93a50cf702e32fb3c7e0-ff6e-4949-8b2d-ae32ecf9e9a7"
+            },
+            "organization": {
+              "href": "/v8/organizations/ff96d072-29e2-4cb4-a155-2590f5473176"
+            },
+            "backupRepository": {
+              "href": "/v8/backuprepositories/c2f0f2e7-177f-48ac-992b-93a50cf702e3"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

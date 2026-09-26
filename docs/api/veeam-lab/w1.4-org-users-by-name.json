@@ -1,0 +1,64 @@
+{
+  "note": "GET /v8/Organizations/{organizationId}/Users?userName=alice@...",
+  "captured_utc": "2026-09-26T16:02:12.590Z",
+  "duration_ms": 14,
+  "request": {
+    "method": "GET",
+    "path": "/v8/Organizations/ff96d072-29e2-4cb4-a155-2590f5473176/Users?userName=alice@RestoreProofLab.onmicrosoft.com",
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "content_type": "application/json; charset=utf-8",
+    "headers": {
+      "Date": "Sat, 26 Sep 2026 16:02:11 GMT",
+      "Cache-Control": "no-store",
+      "Pragma": "no-cache",
+      "Transfer-Encoding": "chunked",
+      "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+      "X-Content-Type-Options": "nosniff",
+      "X-XSS-Protection": "1; mode=block",
+      "X-Frame-Options": "SAMEORIGIN",
+      "Content-Type": "application/json; charset=utf-8"
+    },
+    "body": {
+      "offset": 0,
+      "limit": 30,
+      "_links": {
+        "self": {
+          "href": "/v8/Organizations/ff96d072-29e2-4cb4-a155-2590f5473176/Users?username=alice%40RestoreProofLab.onmicrosoft.com&setid=54394ff5-1be6-08df-0000-000000000000&offset=0&limit=30"
+        }
+      },
+      "results": [
+        {
+          "id": "RestoreProofLab.onmicrosoft.com:00000000-0000-0000-0000-000000000000:00000000-0000-0000-0000-000000000000:b8712372-d84b-4c0c-8d78-5ab08331da42:00000000-0000-0000-0000-000000000000",
+          "eTag": 1,
+          "displayName": "Alice Test",
+          "name": "alice@RestoreProofLab.onmicrosoft.com",
+          "type": "User",
+          "locationType": "Cloud",
+          "assignedLicenses": [
+            {
+              "skuId": "ffa3a2a0-3820-462a-aa81-8a4d741f0cba",
+              "skuPartNumber": "Microsoft_365_Business_Standard_EEA_(no_Teams)",
+              "detectedSkuType": "Other"
+            }
+          ],
+          "msid": "b8712372-d84b-4c0c-8d78-5ab08331da42",
+          "_links": {
+            "self": {
+              "href": "/v8/organizations/ff96d072-29e2-4cb4-a155-2590f5473176/users/RestoreProofLab.onmicrosoft.com:00000000-0000-0000-0000-000000000000:00000000-0000-0000-0000-000000000000:b8712372-d84b-4c0c-8d78-5ab08331da42:00000000-0000-0000-0000-000000000000"
+            },
+            "organization": {
+              "href": "/v8/organizations/ff96d072-29e2-4cb4-a155-2590f5473176"
+            },
+            "onedrives": {
+              "href": "/v8/organizations/ff96d072-29e2-4cb4-a155-2590f5473176/users/RestoreProofLab.onmicrosoft.com:00000000-0000-0000-0000-000000000000:00000000-0000-0000-0000-000000000000:b8712372-d84b-4c0c-8d78-5ab08331da42:00000000-0000-0000-0000-000000000000/onedrives"
+            }
+          }
+        }
+      ],
+      "setId": "54394ff5-1be6-08df-0000-000000000000"
+    }
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "note": "GET /v8/RestoreSessions/{restoreSessionId}/organization",
+  "captured_utc": "2026-09-26T16:13:34.895Z",
+  "duration_ms": 18,
+  "request": {
+    "method": "GET",
+    "path": "/v8/RestoreSessions/6ee50a66-c46f-4200-b793-c03f8bcbbb8b/organization",
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "content_type": "application/json; charset=utf-8",
+    "headers": {
+      "Date": "Sat, 26 Sep 2026 16:13:34 GMT",
+      "Cache-Control": "no-store",
+      "Pragma": "no-cache",
+      "Transfer-Encoding": "chunked",
+      "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+      "X-Content-Type-Options": "nosniff",
+      "X-XSS-Protection": "1; mode=block",
+      "X-Frame-Options": "SAMEORIGIN",
+      "Content-Type": "application/json; charset=utf-8"
+    },
+    "body": {
+      "id": "ff96d072-29e2-4cb4-a155-2590f5473176",
+      "name": "RestoreProofLab.onmicrosoft.com (9/25/2026 9:37:15 PM)",
+      "type": "Office365",
+      "_links": {
+        "self": {
+          "href": "/v8/restoresessions/6ee50a66-c46f-4200-b793-c03f8bcbbb8b/organization"
+        },
+        "mailboxes": {
+          "href": "/v8/restoresessions/6ee50a66-c46f-4200-b793-c03f8bcbbb8b/organization/mailboxes"
+        }
+      }
+    }
+  }
+}

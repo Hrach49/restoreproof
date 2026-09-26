@@ -1,0 +1,91 @@
+{
+  "note": "POST .../mailboxes/{mailboxId}/search {query: \"subject:rp-canary-0001\"} (lower case)",
+  "captured_utc": "2026-09-26T16:14:12.942Z",
+  "duration_ms": 207,
+  "request": {
+    "method": "POST",
+    "path": "/v8/RestoreSessions/d84eeaee-734c-4c39-aa00-0676fc6c4861/organization/mailboxes/e00393b0-a896-4487-ad04-0e1be36468fb/search",
+    "body": {
+      "query": "subject:rp-canary-0001"
+    }
+  },
+  "response": {
+    "status": 200,
+    "content_type": "application/json; charset=utf-8",
+    "headers": {
+      "Date": "Sat, 26 Sep 2026 16:14:12 GMT",
+      "Cache-Control": "no-store",
+      "Pragma": "no-cache",
+      "Transfer-Encoding": "chunked",
+      "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+      "X-Content-Type-Options": "nosniff",
+      "X-XSS-Protection": "1; mode=block",
+      "X-Frame-Options": "SAMEORIGIN",
+      "Content-Type": "application/json; charset=utf-8"
+    },
+    "body": {
+      "offset": 0,
+      "limit": 30,
+      "_links": {
+        "self": {
+          "href": "/v8/RestoreSessions/d84eeaee-734c-4c39-aa00-0676fc6c4861/organization/mailboxes/e00393b0-a896-4487-ad04-0e1be36468fb/search?setid=61e93c98-3657-48d0-a39f-f17af86271c2&offset=0&limit=30"
+        }
+      },
+      "results": [
+        {
+          "mailboxId": "e00393b0-a896-4487-ad04-0e1be36468fb",
+          "attachments": [],
+          "subject": "RP-CANARY-0001",
+          "itemClass": "IPM.Note",
+          "_links": {
+            "self": {
+              "href": "/v8/restoresessions/d84eeaee-734c-4c39-aa00-0676fc6c4861/organization/mailboxes/e00393b0-a896-4487-ad04-0e1be36468fb/items/LgAAAEYAAAAWAAAAAAAAAJQ40Ee3vkxBk1fd6-4CAU4BAP0LwXmScMJMnrn-sNESuJ8AAAAAAQwAAAAAAACUONBHt75MQZNX3evuAgFOBwD9C8F5knDCTJ65_rDRErifAAAAAAEMAAD9C8F5knDCTJ65_rDRErifAAAAAFuMAAD9C8F5knDCTJ65_rDRErifAAAAADr_"
+            },
+            "parent": {
+              "href": "/v8/restoresessions/d84eeaee-734c-4c39-aa00-0676fc6c4861/organization/mailboxes/e00393b0-a896-4487-ad04-0e1be36468fb/folders/AAAAAJQ40Ee3vkxBk1fd6-4CAU4BAP0LwXmScMJMnrn-sNESuJ8AAAAAAQwAAA"
+            },
+            "mailbox": {
+              "href": "/v8/restoresessions/d84eeaee-734c-4c39-aa00-0676fc6c4861/organization/mailboxes/e00393b0-a896-4487-ad04-0e1be36468fb"
+            }
+          },
+          "_actions": {
+            "restoreToOriginalLocation": {
+              "uri": "/v8/restoresessions/d84eeaee-734c-4c39-aa00-0676fc6c4861/organization/mailboxes/e00393b0-a896-4487-ad04-0e1be36468fb/items/LgAAAEYAAAAWAAAAAAAAAJQ40Ee3vkxBk1fd6-4CAU4BAP0LwXmScMJMnrn-sNESuJ8AAAAAAQwAAAAAAACUONBHt75MQZNX3evuAgFOBwD9C8F5knDCTJ65_rDRErifAAAAAAEMAAD9C8F5knDCTJ65_rDRErifAAAAAFuMAAD9C8F5knDCTJ65_rDRErifAAAAADr_/restore",
+              "method": "POST"
+            },
+            "restoreTo": {
+              "uri": "/v8/restoresessions/d84eeaee-734c-4c39-aa00-0676fc6c4861/organization/mailboxes/e00393b0-a896-4487-ad04-0e1be36468fb/items/LgAAAEYAAAAWAAAAAAAAAJQ40Ee3vkxBk1fd6-4CAU4BAP0LwXmScMJMnrn-sNESuJ8AAAAAAQwAAAAAAACUONBHt75MQZNX3evuAgFOBwD9C8F5knDCTJ65_rDRErifAAAAAAEMAAD9C8F5knDCTJ65_rDRErifAAAAAFuMAAD9C8F5knDCTJ65_rDRErifAAAAADr_/restoreTo",
+              "method": "POST"
+            },
+            "exportToPst": {
+              "uri": "/v8/restoresessions/d84eeaee-734c-4c39-aa00-0676fc6c4861/organization/mailboxes/e00393b0-a896-4487-ad04-0e1be36468fb/items/LgAAAEYAAAAWAAAAAAAAAJQ40Ee3vkxBk1fd6-4CAU4BAP0LwXmScMJMnrn-sNESuJ8AAAAAAQwAAAAAAACUONBHt75MQZNX3evuAgFOBwD9C8F5knDCTJ65_rDRErifAAAAAAEMAAD9C8F5knDCTJ65_rDRErifAAAAAFuMAAD9C8F5knDCTJ65_rDRErifAAAAADr_/exportToPst",
+              "method": "POST"
+            },
+            "saveToMsg": {
+              "uri": "/v8/restoresessions/d84eeaee-734c-4c39-aa00-0676fc6c4861/organization/mailboxes/e00393b0-a896-4487-ad04-0e1be36468fb/items/LgAAAEYAAAAWAAAAAAAAAJQ40Ee3vkxBk1fd6-4CAU4BAP0LwXmScMJMnrn-sNESuJ8AAAAAAQwAAAAAAACUONBHt75MQZNX3evuAgFOBwD9C8F5knDCTJ65_rDRErifAAAAAAEMAAD9C8F5knDCTJ65_rDRErifAAAAAFuMAAD9C8F5knDCTJ65_rDRErifAAAAADr_/Save",
+              "method": "POST"
+            },
+            "sendToDefaultAddress": {
+              "uri": "/v8/restoresessions/d84eeaee-734c-4c39-aa00-0676fc6c4861/organization/mailboxes/e00393b0-a896-4487-ad04-0e1be36468fb/items/LgAAAEYAAAAWAAAAAAAAAJQ40Ee3vkxBk1fd6-4CAU4BAP0LwXmScMJMnrn-sNESuJ8AAAAAAQwAAAAAAACUONBHt75MQZNX3evuAgFOBwD9C8F5knDCTJ65_rDRErifAAAAAAEMAAD9C8F5knDCTJ65_rDRErifAAAAAFuMAAD9C8F5knDCTJ65_rDRErifAAAAADr_/sendToDefaultAddress",
+              "method": "POST"
+            },
+            "sendToDifferentAddress": {
+              "uri": "/v8/restoresessions/d84eeaee-734c-4c39-aa00-0676fc6c4861/organization/mailboxes/e00393b0-a896-4487-ad04-0e1be36468fb/items/LgAAAEYAAAAWAAAAAAAAAJQ40Ee3vkxBk1fd6-4CAU4BAP0LwXmScMJMnrn-sNESuJ8AAAAAAQwAAAAAAACUONBHt75MQZNX3evuAgFOBwD9C8F5knDCTJ65_rDRErifAAAAAAEMAAD9C8F5knDCTJ65_rDRErifAAAAAFuMAAD9C8F5knDCTJ65_rDRErifAAAAADr_/sendToDifferentAddress",
+              "method": "POST"
+            }
+          },
+          "id": "LgAAAEYAAAAWAAAAAAAAAJQ40Ee3vkxBk1fd6-4CAU4BAP0LwXmScMJMnrn-sNESuJ8AAAAAAQwAAAAAAACUONBHt75MQZNX3evuAgFOBwD9C8F5knDCTJ65_rDRErifAAAAAAEMAAD9C8F5knDCTJ65_rDRErifAAAAAFuMAAD9C8F5knDCTJ65_rDRErifAAAAADr_",
+          "from": "Hrachya Harutyunyan",
+          "importance": "Normal",
+          "cc": "",
+          "bcc": "",
+          "to": "Alice Test",
+          "sent": "2026-09-24T22:14:40Z",
+          "received": "2026-09-24T22:14:43.5020317Z",
+          "reminder": false
+        }
+      ],
+      "setId": "61e93c98-3657-48d0-a39f-f17af86271c2"
+    }
+  }
+}

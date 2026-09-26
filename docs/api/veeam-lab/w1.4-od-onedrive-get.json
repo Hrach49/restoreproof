@@ -1,0 +1,47 @@
+{
+  "note": "GET .../Organization/OneDrives/{oneDriveId} (alice)",
+  "captured_utc": "2026-09-26T16:14:35.307Z",
+  "duration_ms": 17,
+  "request": {
+    "method": "GET",
+    "path": "/v8/RestoreSessions/28e29339-e28e-4db2-8e0f-ec715f0989b8/Organization/OneDrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325",
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "content_type": "application/json; charset=utf-8",
+    "headers": {
+      "Date": "Sat, 26 Sep 2026 16:14:34 GMT",
+      "Cache-Control": "no-store",
+      "Pragma": "no-cache",
+      "Transfer-Encoding": "chunked",
+      "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+      "X-Content-Type-Options": "nosniff",
+      "X-XSS-Protection": "1; mode=block",
+      "X-Frame-Options": "SAMEORIGIN",
+      "Content-Type": "application/json; charset=utf-8"
+    },
+    "body": {
+      "id": "6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325",
+      "name": "Alice Test",
+      "url": "https://restoreprooflab-my.sharepoint.com/personal/alice_restoreprooflab_onmicrosoft_com",
+      "_links": {
+        "self": {
+          "href": "/v8/restoresessions/28e29339-e28e-4db2-8e0f-ec715f0989b8/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325"
+        },
+        "folders": {
+          "href": "/v8/restoresessions/28e29339-e28e-4db2-8e0f-ec715f0989b8/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/folders?parentId=Root"
+        },
+        "allfolders": {
+          "href": "/v8/restoresessions/28e29339-e28e-4db2-8e0f-ec715f0989b8/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/folders"
+        },
+        "documents": {
+          "href": "/v8/restoresessions/28e29339-e28e-4db2-8e0f-ec715f0989b8/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/documents?parentId=Root"
+        },
+        "alldocuments": {
+          "href": "/v8/restoresessions/28e29339-e28e-4db2-8e0f-ec715f0989b8/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/documents"
+        }
+      }
+    }
+  }
+}

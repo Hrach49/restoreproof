@@ -201,7 +201,7 @@ not SMTP; match mail on `internetMessageId` (as L1.4 found).
 
 1. The restore POST returns `{sessionId}` at once. HTTP 200 says nothing about the restore.
 2. Poll `GET /v8/RestoreSessions/{sessionId}`: `state` is `Working`, then **`Stopped`**. While
-   it runs, `endTime` is `9999-12-31T23:59:59`. `result` is `Success`, `Warning` or `Failed`;
+   it runs, `endTime` is `9999-12-31T23:59:59.9999999`, with no `Z` (`docs/api/veeam-notes.md` §4.1). `result` is `Success`, `Warning` or `Failed`;
    `details` reads like "1 item processed (1 success)". 30–45 s per item here.
 3. `GET …/Statistics` answers **409 until the session stops**, then 200 with
    `totalItemsCount`, `restoredItemsCount`, `failedItemsCount`, `skippedItemsCount`, `errors`

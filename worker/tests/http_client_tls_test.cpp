@@ -254,3 +254,128 @@ TEST_CASE("a certificate from a private CA is checked for revocation as far as i
         }
     }
 }
+
+// W1.5 (docs/decisions.md 2026-09-26): Veeam's default REST certificate is
+// self-signed, CN=Veeam Software, with no subject alternative name, so the
+// host-name check can never pass. With veeam_cert_sha256 set, the client
+// verifies the chain against the CA file as usual, pins the named
+// certificate's public key, and skips only the host-name check. Without a
+// pin, nothing is relaxed.
+TEST_CASE("Veeam's SAN-less certificate is accepted only with its pin and a CA file holding it",
+          "[http][tls]")
+{
+    using rp::test::cert_sha256_hex;
+    const Cert veeam = make_cert("Veeam Software", Role::veeam_default);
+    const Cert impostor = make_cert("Veeam Software", Role::veeam_default);
+    rp::test::BasicLocalServer<httplib::SSLServer> server(make_https_server(veeam.pem()));
+    const std::string url = server.url("/");
+    const rp::test::TempDir dir;
+    const std::string ca_file = to_utf8(dir.write("veeam.pem", veeam.pem().cert));
+    // Both certificates, so either can be pinned.
+    const std::string both_file =
+        to_utf8(dir.write("both.pem", impostor.pem().cert + veeam.pem().cert));
+
+    const auto client = [](std::optional<std::string> ca, std::optional<std::string> pin) {
+        rp::HttpClientOptions options;
+        options.ca_file = std::move(ca);
+        options.pinned_cert_sha256 = std::move(pin);
+        options.sleep = [](std::chrono::milliseconds) {};
+        options.jitter = [] { return 0.0; };
+        return rp::HttpClient(std::move(options));
+    };
+    // The request fails with a certificate verdict (tls) and `attempts`.
+    const auto check_refused = [&url](rp::HttpClient c, int attempts, std::string_view reason) {
+        try {
+            c.get(url);
+            FAIL("the request succeeded");
+        } catch (const rp::HttpError& e) {
+            const std::string what = e.what();
+            CAPTURE(what);
+            CHECK(e.error() == rp::TransportError::tls);
+            CHECK(e.attempts() == attempts);
+            CHECK(what.find(reason) != std::string::npos);
+        }
+    };
+
+    SECTION("the right pin and a CA file holding the certificate: accepted")
+    {
+        rp::HttpClient c = client(ca_file, cert_sha256_hex(veeam));
+        rp::HttpResponse response;
+        try {
+            response = c.get(url);
+        } catch (const rp::HttpError& e) {
+            FAIL("HttpError: " << e.what());
+        }
+        CHECK(response.status == 200);
+        CHECK(response.body == "secure");
+    }
+
+    SECTION("the pin of another certificate in the CA file: rejected, not retried")
+    {
+        check_refused(client(both_file, cert_sha256_hex(impostor)), 1, "pinned public key");
+    }
+
+    SECTION("the right pin, but the server presents another certificate: rejected")
+    {
+        // The server's key is the impostor's; the CA file and pin name veeam's.
+        rp::test::BasicLocalServer<httplib::SSLServer> other(make_https_server(impostor.pem()));
+        rp::HttpClient c = client(both_file, cert_sha256_hex(veeam));
+        try {
+            c.get(other.url("/"));
+            FAIL("a certificate other than the pinned one was accepted");
+        } catch (const rp::HttpError& e) {
+            CAPTURE(e.what());
+            CHECK(e.error() == rp::TransportError::tls);
+            CHECK(e.attempts() == 1);
+        }
+    }
+
+    SECTION("no pin, no CA file: rejected (untrusted)")
+    {
+        check_refused(client(std::nullopt, std::nullopt), 1, "(not retried): ");
+    }
+
+    SECTION("a CA file holding the certificate but no pin: rejected, the host name still checked")
+    {
+        // This is why the pin exists: the certificate is trusted, but it
+        // names no host, and without a pin nothing is relaxed.
+        check_refused(client(ca_file, std::nullopt), 1, "(not retried): ");
+    }
+
+    SECTION("a pin without a CA file: refused before anything is sent")
+    {
+        check_refused(client(std::nullopt, cert_sha256_hex(veeam)), 0,
+                      "refused before sending: veeam_cert_sha256 needs veeam_ca_file");
+    }
+
+    SECTION("a pin whose certificate isn't in the CA file: refused before anything is sent")
+    {
+        check_refused(client(ca_file, cert_sha256_hex(impostor)), 0,
+                      "refused before sending: veeam_ca_file holds no certificate whose SHA-256 "
+                      "is veeam_cert_sha256");
+    }
+}
+
+TEST_CASE("an expired Veeam certificate is rejected even with its pin", "[http][tls]")
+{
+    // Peer verification stays on with a pin, so validity dates still count.
+    const Cert expired = make_cert("Veeam Software", Role::veeam_default, nullptr, nullptr, true);
+    rp::test::BasicLocalServer<httplib::SSLServer> server(make_https_server(expired.pem()));
+    const rp::test::TempDir dir;
+    rp::HttpClientOptions options;
+    options.ca_file = to_utf8(dir.write("veeam.pem", expired.pem().cert));
+    options.pinned_cert_sha256 = rp::test::cert_sha256_hex(expired);
+    options.sleep = [](std::chrono::milliseconds) {};
+    rp::HttpClient client(std::move(options));
+
+    try {
+        client.get(server.url("/"));
+        FAIL("an expired certificate was accepted");
+    } catch (const rp::HttpError& e) {
+        const std::string what = e.what();
+        CAPTURE(what);
+        CHECK(e.error() == rp::TransportError::tls);
+        CHECK(e.attempts() == 1);
+        CHECK(what.find("time valid") != std::string::npos);
+    }
+}

@@ -1,5 +1,6 @@
 #include <rp/http_client.hpp>
 
+#include <rp/cert_pin.hpp>
 #include <rp/redact.hpp>
 
 #include "http_client_detail.hpp"
@@ -22,7 +23,8 @@ namespace rp {
 
 namespace detail {
 
-cpr::SslOptions make_ssl_options(const std::optional<std::string>& ca_file)
+cpr::SslOptions make_ssl_options(const std::optional<std::string>& ca_file,
+                                 const std::optional<std::string>& public_key_pin)
 {
     cpr::SslOptions options;
     options.verify_peer = true;
@@ -33,6 +35,22 @@ cpr::SslOptions make_ssl_options(const std::optional<std::string>& ca_file)
         // path::string(), converting to the ANSI code page and mangling any
         // character outside it.
         options.ca_info = *ca_file;
+    }
+    if (public_key_pin) {
+        // Without a CA file, Schannel would verify the chain against the
+        // Windows store, where any trusted certificate for any host would do
+        // once the host check is off.
+        if (!ca_file || public_key_pin->empty()) {
+            throw std::invalid_argument("a pinned public key needs a CA file and a pin");
+        }
+        options.pinned_public_key = "sha256//" + *public_key_pin;
+        // Veeam's default certificate names no host (docs/decisions.md
+        // 2026-09-26), so the host-name check can never pass. The pinned key
+        // takes its place: curl's Schannel backend checks the pin whatever
+        // the other settings, and peer verification still builds the chain
+        // against the CA file. The TLS source scan allows exactly this
+        // statement: the host check is off only while a pin is set.
+        options.verify_host = options.pinned_public_key.empty();
     }
     return options;
 }
@@ -302,6 +320,7 @@ HttpRequest make_request(HttpMethod method, const std::string& url, const Reques
     request.url = url;
     request.headers = options.headers;
     request.timeout = options.timeout;
+    request.retry_on_status = options.retry_on_status;
     return request;
 }
 
@@ -336,6 +355,19 @@ HttpResponse IHttpClient::del(const std::string& url, const RequestOptions& opti
 
 HttpClient::HttpClient(HttpClientOptions options) : options_(std::move(options))
 {
+    if (options_.pinned_cert_sha256) {
+        // Worked out once; send() refuses every request if it can't be, so a
+        // pin that doesn't match the CA file never falls back to anything.
+        if (!options_.ca_file) {
+            pin_error_ = "veeam_cert_sha256 needs veeam_ca_file";
+        } else {
+            try {
+                public_key_pin_ = public_key_pin(*options_.ca_file, *options_.pinned_cert_sha256);
+            } catch (const CertPinError& e) {
+                pin_error_ = e.what();
+            }
+        }
+    }
     if (!options_.sleep) {
         options_.sleep = [](milliseconds wait) { std::this_thread::sleep_for(wait); };
     }
@@ -358,7 +390,6 @@ HttpResponse HttpClient::send(const HttpRequest& request)
     // May be null: spdlog::drop_all() and shutdown() clear the default logger.
     const std::shared_ptr<spdlog::logger> logger =
         options_.logger ? options_.logger : spdlog::default_logger();
-    const cpr::SslOptions ssl = detail::make_ssl_options(options_.ca_file);
     // Every line and message below is built from this and passed through
     // redact() whole: the URL may carry a client_secret.
     const std::string target = std::string{to_string(request.method)} + " " + request.url;
@@ -367,6 +398,11 @@ HttpResponse HttpClient::send(const HttpRequest& request)
                             ": refused before sending: only http:// and https:// URLs are sent",
                         TransportError::other, 0, 0);
     }
+    if (pin_error_) {
+        throw HttpError(target + ": refused before sending: " + *pin_error_, TransportError::tls,
+                        0, 0);
+    }
+    const cpr::SslOptions ssl = detail::make_ssl_options(options_.ca_file, public_key_pin_);
 
     for (int attempt = 1;; ++attempt) {
         const auto start = options_.now();
@@ -377,7 +413,9 @@ HttpResponse HttpClient::send(const HttpRequest& request)
         const AttemptOutcome outcome{error, error == TransportError::none
                                                 ? static_cast<int>(response.status_code)
                                                 : 0};
-        const bool retry = should_retry(outcome, attempt);
+        // With retry_on_status off, a response is final whatever its status.
+        const bool final_status = error == TransportError::none && !request.retry_on_status;
+        const bool retry = !final_status && should_retry(outcome, attempt);
         const milliseconds wait =
             retry ? retry_delay(attempt, options_.jitter()) : milliseconds::zero();
 
@@ -402,7 +440,7 @@ HttpResponse HttpClient::send(const HttpRequest& request)
             continue;
         }
 
-        if (error == TransportError::none && !is_retryable(outcome)) {
+        if (error == TransportError::none && (final_status || !is_retryable(outcome))) {
             HttpResponse out;
             out.status = outcome.status;
             out.headers.insert(response.header.begin(), response.header.end());

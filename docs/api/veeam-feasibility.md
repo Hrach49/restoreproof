@@ -245,7 +245,9 @@ sent, and then the Graph read-back decides `pass`/`fail` (`docs/verification.md`
    match connection hostname". So `veeam_ca_file` alone can't reach a default install. The
    spike pinned the leaf's SHA-256 instead. W1.5 decides between requiring the MSP to install a
    certificate with the server's DNS name (`Set-VBORestAPISettings -CertificateFilePath`) and a
-   pinned-leaf option. Turning verification off stays out.
+   pinned-leaf option. Turning verification off stays out. *Settled in W1.5: `veeam_ca_file`
+   plus `veeam_cert_sha256`, peer verification on, the key pinned, only the host-name check
+   skipped (`docs/decisions.md` 2026-09-26, "Veeam TLS").*
 2. **Status codes (W1.5).** Veeam uses **500** for client errors:
    - a refused login before a service restart;
    - the antiforgery refusal;

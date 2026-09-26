@@ -46,13 +46,13 @@ values and are kept as recorded: they exercise the composite-ID handling.
 | `health-200.json` | `w1.4-auth-health.json` | doctor |
 | `organizations-200.json` | `w1.4-org-list.json` | `listOrganizations()` → `{id, name}` |
 | `organization-200.json` | `w1.4-org-get-extended.json` | org details (msid, region, officeName) |
-| `organization-404.json` | `w1.4-org-get-unknown-404.json` | `ResourceNotFound` → `VeeamError` |
+| `organization-404.json` | `w1.4-org-get-unknown-404.json` | `ResourceNotFound` → `NotFoundError` (a `VeeamError`) |
 | `restore-points-200.json` | `w1.4-rp-list-org.json` | `listRestorePoints()` sorted newest first, raw `backupTime` kept |
 | `restore-points-asc-200.json` | `w1.4-rp-list-asc.json` | sorting doesn't rely on server order |
 | `restore-points-empty-200.json` | `w1.4-rp-list-empty.json` | no point → caller reports `error` |
-| `restore-points-page1.json` | `w1.4-rp-list-limit1.json` | paging stops when a page is short |
-| `restore-points-page2.json` | `w1.4-rp-list-limit1-offset1.json` | paging stops when a page is short |
-| `restore-points-unknown-org-404.json` | `w1.4-rp-list-unknown-org.json` | `ResourceNotFound` for an unknown organisation → `VeeamError` |
+| `restore-points-page1.json` | `w1.4-rp-list-limit1.json` | paging: the first full page of limit=1 |
+| `restore-points-page2.json` | `w1.4-rp-list-limit1-offset1.json` | paging: the second page is full too, so the client asks for a third (the tests serve `restore-points-empty-200` there) |
+| `restore-points-unknown-org-404.json` | `w1.4-rp-list-unknown-org.json` | `ResourceNotFound` for an unknown organisation → `NotFoundError` |
 | `restore-point-400-format.json` | `w1.4-rp-get-bare-id.json` | 400 `ParameterValidationFailure` → `VeeamError` |
 | `restore-points-bad-query-400.json` | `w1.4-rp-list-bad-from.json` | ProblemDetails body parses |
 | `explore-201.json` | `w1.4-session-explore.json` | W2.x: explore |
@@ -64,3 +64,9 @@ values and are kept as recorded: they exercise the composite-ID handling.
 | `statistics-409.json` | `w1.4-session-statistics-working-409.json` | W2.x: 409 = keep polling |
 | `sessions-list.json` | `w1.4-sweep-list.json` | W2.x: the sweep picks only `Working` + own `initiatedBy` |
 | `route-404-empty.json` | `w1.4-rp-guide-path-404.json` | a route that doesn't exist: empty 404 → `VeeamError` |
+
+`rest-certificate.pem` is not a response: it is the lab's Veeam REST certificate (public, as
+every TLS client sees it; no private key), exported on the Veeam server with
+`ExportCertificatePem()`. `cert_pin_test.cpp` checks `rp::public_key_pin` against the two
+hashes .NET computed for it there: SHA-256 `9FB19E0E…A213` and public-key pin
+`jSOf+h9iDQY3dg41YdNXwUU7XTKxMeNbPlcqP1xhD0Q=`.

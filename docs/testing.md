@@ -41,6 +41,24 @@ also uploads the Cobertura XML as the `worker-coverage-cobertura` artifact.
 for 100% branch on vault, signer and target_guard; until the Worker has a branch-capable tool,
 those files are held to 100% line instead. See `docs/decisions.md`.
 
+### Live tests
+
+Tests tagged `[live]` call the lab's real services and are skipped unless `RP_LIVE=1` is set;
+they are read-only. `RP_LIVE=1 ctest --preset dev` runs them with the rest, or run them alone
+with `build\dev\rptests.exe "[live]"` (which also prints what they found). The Veeam one
+(W1.5, `worker/tests/veeam_client_live_test.cpp`) signs in, lists organisations and restore
+points, and logs out. It reads:
+
+| Variable | Value |
+|---|---|
+| `RP_VEEAM_USERNAME`, `RP_VEEAM_PASSWORD` | the Veeam account (`MACHINE\user`), as the Worker reads them |
+| `RP_LIVE_VEEAM_CA_FILE` | PEM of Veeam's REST certificate (required) |
+| `RP_LIVE_VEEAM_CERT_SHA256` | its SHA-256; default: the lab's |
+| `RP_LIVE_VEEAM_URL` | default `https://localhost:4443` |
+
+Set the password for one shell only, and never on a command line that ends up in history or
+a transcript: read it from Windows Credential Manager or `Read-Host -AsSecureString`.
+
 ### Running the gates locally
 
 Cloud, from `cloud/` (the same commands as CI; `make cov` runs both in WSL or Linux):

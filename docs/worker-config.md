@@ -148,6 +148,7 @@ On the Veeam server, in PowerShell 7 run as administrator:
 2. Run the following, replacing `895C6325` with the start of your thumbprint:
 
    ```powershell
+   New-Item -ItemType Directory -Force C:\ProgramData\RestoreProof | Out-Null
    $c = Get-ChildItem Cert:\LocalMachine\My | Where-Object Thumbprint -like '895C6325*'
    $c.Subject; $c.GetCertHashString('SHA256')        # the value for veeam_cert_sha256
    Set-Content -Encoding ascii -Path C:\ProgramData\RestoreProof\veeam-rest.pem -Value $c.ExportCertificatePem()
@@ -175,6 +176,11 @@ Export, and export it as "Base-64 encoded X.509 (.CER)", which is PEM. Save it a
 
 If Veeam's certificate is renewed or replaced, both values change and the Worker stops
 connecting until they are updated.
+
+The trust comes from `config.json`: the SHA-256 there decides which certificate the Worker
+accepts, so replacing the `.pem` file alone gets nobody past the pin. Keep `config.json`
+writable by administrators only, as a file an administrator creates under `%ProgramData%` is
+by default.
 
 ## Secrets
 

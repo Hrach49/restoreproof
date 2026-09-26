@@ -1,0 +1,104 @@
+{
+  "note": "rp-veeam: GET /v8/RestoreSessions/{sessionId}/Events",
+  "captured_utc": "2026-09-26T14:52:50.929Z",
+  "duration_ms": 36,
+  "request": {
+    "method": "GET",
+    "path": "/v8/RestoreSessions/c939545a-a647-4506-80bd-86294481fc49/Events?limit=100",
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "content_type": "application/json; charset=utf-8",
+    "headers": {
+      "Date": "Sat, 26 Sep 2026 14:52:50 GMT",
+      "Cache-Control": "no-store",
+      "Pragma": "no-cache",
+      "Transfer-Encoding": "chunked",
+      "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+      "X-Content-Type-Options": "nosniff",
+      "X-XSS-Protection": "1; mode=block",
+      "X-Frame-Options": "SAMEORIGIN",
+      "Content-Type": "application/json; charset=utf-8"
+    },
+    "body": {
+      "offset": 0,
+      "limit": 100,
+      "_links": {
+        "self": {
+          "href": "/v8/RestoreSessions/c939545a-a647-4506-80bd-86294481fc49/Events?offset=0&limit=100"
+        }
+      },
+      "results": [
+        {
+          "itemSizeBytes": 0,
+          "id": "43853233-11ec-4d65-8133-de51fe9b87c1",
+          "type": "None",
+          "status": "Success",
+          "startTime": "2026-09-26T14:52:13.1170983Z",
+          "endTime": "2026-09-26T14:52:13.1170983Z",
+          "duration": "00:00:00",
+          "title": "Restore session started",
+          "message": "Restore session started",
+          "order": 0,
+          "_links": {
+            "self": {
+              "href": "/v8/restoresessions/c939545a-a647-4506-80bd-86294481fc49/events/43853233-11ec-4d65-8133-de51fe9b87c1"
+            },
+            "restoreSession": {
+              "href": "/v8/restoresessions/c939545a-a647-4506-80bd-86294481fc49"
+            }
+          }
+        },
+        {
+          "itemName": "rp-canary-11.pdf",
+          "itemType": "File",
+          "itemSizeBytes": 925,
+          "source": "personal/alice_restoreprooflab_onmicrosoft_com/Documents/RestoreTarget/rp-canary-11.pdf",
+          "target": "https://restoreprooflab-my.sharepoint.com/personal/alice_restoreprooflab_onmicrosoft_com",
+          "id": "fe3a553d-17f0-35b7-42c3-cfe64635f854",
+          "type": "Restore",
+          "status": "Success",
+          "startTime": "2026-09-26T14:52:34.9964974Z",
+          "endTime": "2026-09-26T14:52:35.0618187Z",
+          "duration": "00:00:00.0653213",
+          "title": "Item is successfully restored.",
+          "message": "Item rp-canary-11.pdf was restored successfully (type: File; source: personal/alice_restoreprooflab_onmicrosoft_com/Documents/RestoreTarget/rp-canary-11.pdf; target: https://restoreprooflab-my.sharepoint.com/personal/alice_restoreprooflab_onmicrosoft_com)",
+          "order": 1,
+          "organizationId": "ff96d072-29e2-4cb4-a155-2590f5473176",
+          "backedUpOrganizationId": "RestoreProofLab.onmicrosoft.com:00000000-0000-0000-0000-000000000000:00000000-0000-0000-0000-000000000000",
+          "userId": "RestoreProofLab.onmicrosoft.com:00000000-0000-0000-0000-000000000000:00000000-0000-0000-0000-000000000000:b8712372-d84b-4c0c-8d78-5ab08331da42:00000000-0000-0000-0000-000000000000",
+          "siteId": "6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325",
+          "_links": {
+            "self": {
+              "href": "/v8/restoresessions/c939545a-a647-4506-80bd-86294481fc49/events/fe3a553d-17f0-35b7-42c3-cfe64635f854"
+            },
+            "restoreSession": {
+              "href": "/v8/restoresessions/c939545a-a647-4506-80bd-86294481fc49"
+            }
+          }
+        },
+        {
+          "itemSizeBytes": 0,
+          "id": "4338d077-de39-497e-b078-905dd364bdb2",
+          "type": "None",
+          "status": "Success",
+          "startTime": "2026-09-26T14:52:45.1716328Z",
+          "endTime": "2026-09-26T14:52:45.1716328Z",
+          "duration": "00:00:00",
+          "title": "Restore session completed",
+          "message": "Restore session completed",
+          "order": 2,
+          "_links": {
+            "self": {
+              "href": "/v8/restoresessions/c939545a-a647-4506-80bd-86294481fc49/events/4338d077-de39-497e-b078-905dd364bdb2"
+            },
+            "restoreSession": {
+              "href": "/v8/restoresessions/c939545a-a647-4506-80bd-86294481fc49"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

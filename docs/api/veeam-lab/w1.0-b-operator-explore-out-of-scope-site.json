@@ -1,0 +1,46 @@
+{
+  "note": "rpoperator: POST /v8/Organization/OperatorExplore with scope = tenant root site (not in the role)",
+  "captured_utc": "2026-09-26T14:31:44.857Z",
+  "duration_ms": 368,
+  "request": {
+    "method": "POST",
+    "path": "/v8/Organization/OperatorExplore",
+    "body": {
+      "dateTime": "2026-09-25T19:37:15Z",
+      "type": "Vesp",
+      "showDeleted": false,
+      "showAllVersions": false,
+      "scope": {
+        "type": "Site",
+        "id": "2ce7dd81-391c-4550-8a71-a69801456911ab951931-99dc-480a-bc98-9486e09da443",
+        "site": {
+          "id": "2ce7dd81-391c-4550-8a71-a69801456911ab951931-99dc-480a-bc98-9486e09da443",
+          "url": "https://restoreprooflab.sharepoint.com",
+          "title": "Witryna do komunikacji",
+          "isCloud": true,
+          "isPersonal": false
+        }
+      },
+      "reason": "W1.0 check b: out-of-scope must be refused"
+    }
+  },
+  "response": {
+    "status": 500,
+    "content_type": "application/json; charset=utf-8",
+    "headers": {
+      "Date": "Sat, 26 Sep 2026 14:31:45 GMT",
+      "Cache-Control": "no-store, no-cache",
+      "Pragma": "no-cache",
+      "Transfer-Encoding": "chunked",
+      "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+      "X-Content-Type-Options": "nosniff",
+      "X-XSS-Protection": "1; mode=block",
+      "X-Frame-Options": "SAMEORIGIN",
+      "Content-Type": "application/json; charset=utf-8",
+      "Expires": "-1"
+    },
+    "body": {
+      "message": "User rpoperator@RestoreProofLab.onmicrosoft.com cannot manage selected object."
+    }
+  }
+}

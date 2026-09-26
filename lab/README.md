@@ -362,8 +362,12 @@ First live run, 2026-09-24 (seed) and 2026-09-25 (verify, then a diagnostic down
   `docProps/core.xml`, the `_rels` files, `[Content_Types].xml`, and `[trash]/` parts left by
   the rewrites. `word/document.xml`, `xl/workbook.xml`, `xl/worksheets/sheet1.xml` and
   `xl/styles.xml` were byte-identical to the committed files. Hence `office-v1`.
-- **Open for W1.0:** whether a Veeam restore into the library gives the same `office-v1` hash.
-  It should, since only metadata changes, but it is a lab check, not an assumption.
+- **Checked in W1.0 (2026-09-26): a Veeam restore keeps the `office-v1` hash.**
+  `rp-canary-02.docx`, restored from the backup into the `RestoreTarget` library, was
+  rewritten again. It is 15 563 bytes, and its whole-file hash matches neither the canary
+  nor the stored copy. Its `office-v1` hash equals the manifest's `content_sha256`, and was
+  unchanged 16 minutes later. The Veeam export of the same file (the stored 15 690 bytes)
+  gives the same `office-v1` hash (`docs/api/veeam-feasibility.md`, check d).
 
 ## Order with L1.3
 

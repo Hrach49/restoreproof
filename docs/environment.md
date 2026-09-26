@@ -51,8 +51,8 @@ API on port 4443. A spare PC or cloud VM remains the fallback. Installed in L1.3
 
 | | |
 |---|---|
-| Veeam Backup for Microsoft 365 | 13.6.0.237 (Veeam now numbers it like Backup & Replication; the installer also put VBR 13.1.0.26072 and the Exchange/SharePoint Explorers 13.6.0.237 on the laptop) |
-| REST API | Still **`v8`**: Swagger at `https://localhost:4443/swagger/index.html` reports `version: v8`, `/v8/...` answers, `/v13/...` is 404. Self-signed certificate |
+| Veeam Backup for Microsoft 365 | 13.6.0.237: the "build in logs" number of product version **8.6** (`Config.xml` `ProductVersion="8.6.0.237"`; Veeam [KB4106](https://www.veeam.com/kb4106) lists both numbers; the help center documents 8.6.0.1102). The installer also put VBR 13.1.0.26072 and the Exchange/SharePoint Explorers 13.6.0.237 on the laptop. Licence: Community (10 users, 4 used) |
+| REST API | Still **`v8`**: Swagger at `https://localhost:4443/swagger/index.html` reports `version: v8`, `/v8/...` answers, `/v13/...` is 404. Self-signed certificate `CN=Veeam Software` (thumbprint `895C6325…`, SHA-256 `9FB19E0E…A213`, valid to 2036) with **no SAN**: no host name verifies against it (`docs/api/veeam-feasibility.md` §5.1). Access tokens 60 min. Every restart of `Veeam.Archiver.REST.Service` invalidates all REST tokens |
 | Services | `Veeam.Archiver.Service`, `Veeam.Archiver.Proxy`, `Veeam.Archiver.REST.Service` (automatic) |
 | Organisation | `RestoreProofLab.onmicrosoft.com` (modern app-only authentication) |
 | Veeam's Entra app | `RestoreProof Lab Veeam`, app ID `1fd2609d-1242-43fe-94b5-d58688a90bd6`, certificate `CN=RestoreProof Lab Veeam` (thumbprint `AC3220B5…`, LocalMachine\My, private key exportable, expires 2028-09-25). Its backup permissions lacked Microsoft Graph `Group.ReadWrite.All`, which SharePoint restores need; granted on 2026-09-25 (L1.4, `docs/manual-restore-reference.md`). This is Veeam's app, not the Worker's (L1.5) |
@@ -68,3 +68,31 @@ with the Explorer modules under `C:\Program Files\Veeam\Backup and Replication\E
 It needs **PowerShell 7** (`pwsh`): under Windows PowerShell 5.1 it loads with a deprecation
 warning, and opening a restore session fails on a missing `Microsoft.Bcl.TimeProvider`.
 Relevant to the PowerShell fallback in the Sprint 1 gate.
+
+### Veeam accounts and settings (L1.6, W1.0; 2026-09-26)
+
+- **`DESKTOP-P55CDUM\rp-veeam`** is the Worker's admin-mode REST account
+  (`docs/decisions.md`, 2026-09-26).
+  - A standard local user (SID `S-1-5-21-3314352153-334213494-2992209376-1006`), in no local
+    group. Password never expires; the user can't change it.
+  - Veeam role **Veeam Backup Administrator**, given in the console (Manage Users & Roles →
+    Users and Roles). No cmdlet or REST endpoint can set it.
+  - Local security policy denies it **interactive and Remote Desktop logon**
+    (`SeDenyInteractiveLogonRight`, `SeDenyRemoteInteractiveLogonRight`). The REST password
+    grant still works: Veeam uses a network logon.
+  - The 32-character random password is in Windows Credential Manager on this laptop
+    ("RestoreProof Lab - rp-veeam (local Veeam REST)"), never in the repo.
+- **Restore operator authentication**: enabled, certificate `CN=RestoreProof Lab Veeam
+  Operator Auth` (thumbprint `26F8C9B2…E21A`, LocalMachine\My, to 2028-09-26).
+- **Restore Portal**: enabled for the Entra app `RestoreProof Lab Restore Portal`
+  (`lab/tenant.md`), region Worldwide, portal URI `https://localhost:4443`, certificate
+  `CN=RestoreProof Lab Restore Portal` (thumbprint `9E498EC6…42D0`, to 2028-09-26).
+- **Restore operator role** `RestoreProof Lab Operators`: `rpoperator`, scoped to alice, bob,
+  restoretest and the RestoreTest site. Operator mode is not used by the product; these stay
+  until the refresh-token checks end (2026-10-03).
+- **REST tracing** (`EnableTracing` on `<Rest>` in `C:\ProgramData\Veeam\Backup365\Config.xml`)
+  was switched on for W1.0 and is off again. When on, `Logs\Veeam.Archiver.REST_*.log` gives
+  the reason behind a bare 401/500, such as the AADSTS code. Each REST restore also writes
+  `Logs\RestoreREST\restore_<date>_<sessionId>_<orgId>.log`, tracing or not.
+- **Veeam's user cache.** A new tenant user reaches it with
+  `Get-VBOOrganizationUser -Organization $org -DataSource PreferLocalResynced`.

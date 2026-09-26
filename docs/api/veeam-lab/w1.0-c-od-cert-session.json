@@ -1,0 +1,51 @@
+{
+  "note": "rp-veeam: GET /v8/RestoreSessions/{sessionId returned by the restore} at the end",
+  "captured_utc": "2026-09-26T14:52:49.782Z",
+  "duration_ms": 13,
+  "request": {
+    "method": "GET",
+    "path": "/v8/RestoreSessions/c939545a-a647-4506-80bd-86294481fc49",
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "content_type": "application/json; charset=utf-8",
+    "headers": {
+      "Date": "Sat, 26 Sep 2026 14:52:49 GMT",
+      "Cache-Control": "no-store",
+      "Pragma": "no-cache",
+      "Transfer-Encoding": "chunked",
+      "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+      "X-Content-Type-Options": "nosniff",
+      "X-XSS-Protection": "1; mode=block",
+      "X-Frame-Options": "SAMEORIGIN",
+      "Content-Type": "application/json; charset=utf-8"
+    },
+    "body": {
+      "id": "c939545a-a647-4506-80bd-86294481fc49",
+      "name": "OneDrive restore (Entire organization - 9/25/2026 7:37:15 PM)",
+      "organization": "RestoreProofLab.onmicrosoft.com",
+      "type": "Veod",
+      "creationTime": "2026-09-26T14:52:13.1051499Z",
+      "endTime": "2026-09-26T14:52:45.1572294Z",
+      "state": "Stopped",
+      "result": "Success",
+      "initiatedBy": "rp-veeam",
+      "details": "1 item processed (1 success)",
+      "scopeName": "",
+      "clientHost": "[::ffff:127.0.0.1]",
+      "eTag": 2,
+      "_links": {
+        "self": {
+          "href": "/v8/restoresessions/c939545a-a647-4506-80bd-86294481fc49"
+        },
+        "organization": {
+          "href": "/v8/restoresessions/c939545a-a647-4506-80bd-86294481fc49/organization"
+        },
+        "restoreSessionEvents": {
+          "href": "/v8/restoresessions/c939545a-a647-4506-80bd-86294481fc49/events"
+        }
+      }
+    }
+  }
+}

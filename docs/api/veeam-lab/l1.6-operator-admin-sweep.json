@@ -1,0 +1,66 @@
+{
+  "note": "rpoperator (operator token) against administrative endpoints; captured_utc per row",
+  "captured_utc": "2026-09-26T14:25:20Z",
+  "results": [
+    {
+      "method": "GET",
+      "path": "/v8/RestorePoints",
+      "status": 401,
+      "body": "{\"message\":\"The server has rejected the client credentials.\"}"
+    },
+    {
+      "method": "GET",
+      "path": "/v8/Organizations",
+      "status": 401,
+      "body": "{\"message\":\"The server has rejected the client credentials.\"}"
+    },
+    {
+      "method": "GET",
+      "path": "/v8/Organizations/ff96d072-29e2-4cb4-a155-2590f5473176/Users",
+      "status": 401,
+      "body": "{\"message\":\"The server has rejected the client credentials.\"}"
+    },
+    {
+      "method": "GET",
+      "path": "/v8/Jobs",
+      "status": 401,
+      "body": "{\"message\":\"The server has rejected the client credentials.\"}"
+    },
+    {
+      "method": "GET",
+      "path": "/v8/BackupRepositories",
+      "status": 401,
+      "body": "{\"message\":\"The server has rejected the client credentials.\"}"
+    },
+    {
+      "method": "GET",
+      "path": "/v8/RbacRoles",
+      "status": 401,
+      "body": "{\"message\":\"The server has rejected the client credentials.\"}"
+    },
+    {
+      "method": "GET",
+      "path": "/v8/Proxies",
+      "status": 401,
+      "body": "{\"message\":\"The server has rejected the client credentials.\"}"
+    },
+    {
+      "method": "GET",
+      "path": "/v8/RestoreSessions",
+      "status": 200,
+      "body": "{\"offset\":0,\"limit\":30,\"_links\":{\"self\":{\"href\":\"/v8/RestoreSessions?offset=0&limit=30\"}},\"results\":[]}"
+    },
+    {
+      "method": "GET",
+      "path": "/v8/Organizations/ff96d072-29e2-4cb4-a155-2590f5473176/RbacRoles",
+      "status": 401,
+      "body": "{\"message\":\"The server has rejected the client credentials.\"}"
+    },
+    {
+      "method": "POST",
+      "path": "/v8/Organizations/{organizationId}/explore",
+      "status": 400,
+      "body": "{\"message\":\"Missing mandatory parameters: ShowAllVersions.\",\"errorCode\":\"ParameterValidationFailure\"}"
+    }
+  ]
+}

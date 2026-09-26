@@ -1,0 +1,40 @@
+{
+  "note": "rp-veeam: GET /v8/RestoreSessions/{sessionId}/Statistics",
+  "captured_utc": "2026-09-26T14:51:46.308Z",
+  "duration_ms": 20,
+  "request": {
+    "method": "GET",
+    "path": "/v8/RestoreSessions/e09bc42d-f421-49c4-a2e9-4f544b48508d/Statistics",
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "content_type": "application/json; charset=utf-8",
+    "headers": {
+      "Date": "Sat, 26 Sep 2026 14:51:45 GMT",
+      "Cache-Control": "no-store",
+      "Pragma": "no-cache",
+      "Transfer-Encoding": "chunked",
+      "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+      "X-Content-Type-Options": "nosniff",
+      "X-XSS-Protection": "1; mode=block",
+      "X-Frame-Options": "SAMEORIGIN",
+      "Content-Type": "application/json; charset=utf-8"
+    },
+    "body": {
+      "totalItemsCount": 1,
+      "restoredItemsCount": 1,
+      "failedItemsCount": 0,
+      "skippedItemsCount": 0,
+      "items": [
+        {
+          "id": "c137e9be-2c7c-49b8-b09a-8ada92102e78",
+          "itemRestoreDetailsType": "Item",
+          "name": "rp-canary-01.pdf",
+          "itemType": "SharePointItem",
+          "status": "Success"
+        }
+      ]
+    }
+  }
+}

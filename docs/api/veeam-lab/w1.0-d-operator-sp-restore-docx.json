@@ -1,0 +1,55 @@
+{
+  "note": "rpoperator: operatorRestore rp-canary-02.docx -> RestoreTarget",
+  "captured_utc": "2026-09-26T14:33:08.866Z",
+  "duration_ms": 328,
+  "request": {
+    "method": "POST",
+    "path": "/v8/RestoreSessions/9742e148-01b0-4737-976a-6cf834686452/Organization/Sites/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689/Documents/operatorRestore",
+    "body": {
+      "documentsRestoreConfigs": [
+        {
+          "document": {
+            "siteId": "fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689",
+            "sizeBytes": 15690,
+            "version": "1.0",
+            "versionId": 1,
+            "id": "fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e6897eb0f08a-f57b-418c-8ca6-f2ab81297666f10ca0c2-1946-45df-97d4-17f81d23dcba",
+            "name": "rp-canary-02.docx",
+            "createdBy": "Hrachya Harutyunyan",
+            "creationTime": "2026-09-24T22:14:45Z",
+            "modifiedBy": "Hrachya Harutyunyan",
+            "modificationTime": "2026-09-24T22:14:45Z",
+            "isFolder": false
+          },
+          "documentVersion": "Last"
+        }
+      ],
+      "list": "RestoreTarget",
+      "restorePermissions": false,
+      "sendSharedLinksNotification": false,
+      "documentVersion": "Last",
+      "documentLastVersionAction": "Merge",
+      "restoreChangedItems": true,
+      "restoreDeletedItems": true,
+      "reason": "W1.0 check d: office-v1 after restore"
+    }
+  },
+  "response": {
+    "status": 200,
+    "content_type": "application/json; charset=utf-8",
+    "headers": {
+      "Date": "Sat, 26 Sep 2026 14:33:08 GMT",
+      "Cache-Control": "no-store",
+      "Pragma": "no-cache",
+      "Transfer-Encoding": "chunked",
+      "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+      "X-Content-Type-Options": "nosniff",
+      "X-XSS-Protection": "1; mode=block",
+      "X-Frame-Options": "SAMEORIGIN",
+      "Content-Type": "application/json; charset=utf-8"
+    },
+    "body": {
+      "sessionId": "cbada73d-a36b-4407-99e6-835ce26c876b"
+    }
+  }
+}

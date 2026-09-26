@@ -1,0 +1,75 @@
+{
+  "note": "rpoperator: mailboxes in the operator Exchange session",
+  "captured_utc": "2026-09-26T14:34:06.515Z",
+  "duration_ms": 46,
+  "request": {
+    "method": "GET",
+    "path": "/v8/RestoreSessions/cf3e901c-7c58-410c-9df5-1b9924b75f8c/organization/mailboxes?limit=50",
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "content_type": "application/json; charset=utf-8",
+    "headers": {
+      "Date": "Sat, 26 Sep 2026 14:34:06 GMT",
+      "Cache-Control": "no-store",
+      "Pragma": "no-cache",
+      "Transfer-Encoding": "chunked",
+      "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+      "X-Content-Type-Options": "nosniff",
+      "X-XSS-Protection": "1; mode=block",
+      "X-Frame-Options": "SAMEORIGIN",
+      "Content-Type": "application/json; charset=utf-8"
+    },
+    "body": {
+      "offset": 0,
+      "limit": 50,
+      "_links": {
+        "self": {
+          "href": "/v8/RestoreSessions/cf3e901c-7c58-410c-9df5-1b9924b75f8c/organization/mailboxes?offset=0&limit=50"
+        }
+      },
+      "results": [
+        {
+          "id": "e00393b0-a896-4487-ad04-0e1be36468fb",
+          "name": "Alice Test",
+          "email": "alice@RestoreProofLab.onmicrosoft.com",
+          "isArchive": false,
+          "isPublic": false,
+          "_links": {
+            "self": {
+              "href": "/v8/restoresessions/cf3e901c-7c58-410c-9df5-1b9924b75f8c/organization/mailboxes/e00393b0-a896-4487-ad04-0e1be36468fb"
+            },
+            "folders": {
+              "href": "/v8/restoresessions/cf3e901c-7c58-410c-9df5-1b9924b75f8c/organization/mailboxes/e00393b0-a896-4487-ad04-0e1be36468fb/folders?parentId=root"
+            },
+            "allfolders": {
+              "href": "/v8/restoresessions/cf3e901c-7c58-410c-9df5-1b9924b75f8c/organization/mailboxes/e00393b0-a896-4487-ad04-0e1be36468fb/folders"
+            },
+            "items": {
+              "href": "/v8/restoresessions/cf3e901c-7c58-410c-9df5-1b9924b75f8c/organization/mailboxes/e00393b0-a896-4487-ad04-0e1be36468fb/items"
+            }
+          },
+          "_actions": {
+            "restoreToOriginalLocation": {
+              "uri": "/v8/restoresessions/cf3e901c-7c58-410c-9df5-1b9924b75f8c/organization/mailboxes/e00393b0-a896-4487-ad04-0e1be36468fb/restore",
+              "method": "POST"
+            },
+            "restoreTo": {
+              "uri": "/v8/restoresessions/cf3e901c-7c58-410c-9df5-1b9924b75f8c/organization/mailboxes/e00393b0-a896-4487-ad04-0e1be36468fb/restoreTo",
+              "method": "POST"
+            },
+            "exportToPst": {
+              "uri": "/v8/restoresessions/cf3e901c-7c58-410c-9df5-1b9924b75f8c/organization/mailboxes/e00393b0-a896-4487-ad04-0e1be36468fb/exportToPst",
+              "method": "POST"
+            },
+            "search": {
+              "uri": "/v8/restoresessions/cf3e901c-7c58-410c-9df5-1b9924b75f8c/organization/mailboxes/e00393b0-a896-4487-ad04-0e1be36468fb/search",
+              "method": "POST"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

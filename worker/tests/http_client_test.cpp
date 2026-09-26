@@ -808,12 +808,15 @@ namespace {
 // verification, in-memory CA bundles (only ca_file is a way to add trust),
 // and verify_status: OCSP stapling stays at cpr's default, off, on purpose
 // (many servers, a self-signed Veeam one included, don't staple), so nothing
-// should touch it.
-constexpr std::array<std::string_view, 16> kTlsBannedNames{
-    "VerifySsl",        "VerifyPeer",       "VerifyHost",          "NoRevoke",
-    "ssl_no_revoke",    "CURLOPT_SSL_",     "CURLOPT_PROXY_SSL_",  "CURLSSLOPT_",
-    "curl_easy_setopt", "ssl_ctx_callback", "SslCtxCallback",      "CURLOPT_CAINFO_BLOB",
-    "ca_info_blob",     "CaInfoBlob",       "ca_buffer",           "verify_status",
+// should touch it. The pinned public key too: the host-name check is off
+// exactly while one is set, so the pin is written in one reviewed statement
+// (below) and nowhere else, and nothing can clear or replace it.
+constexpr std::array<std::string_view, 19> kTlsBannedNames{
+    "VerifySsl",         "VerifyPeer",       "VerifyHost",          "NoRevoke",
+    "ssl_no_revoke",     "CURLOPT_SSL_",     "CURLOPT_PROXY_SSL_",  "CURLSSLOPT_",
+    "curl_easy_setopt",  "ssl_ctx_callback", "SslCtxCallback",      "CURLOPT_CAINFO_BLOB",
+    "ca_info_blob",      "CaInfoBlob",       "ca_buffer",           "verify_status",
+    "pinned_public_key", "PinnedPublicKey",  "PINNEDPUBLICKEY",
 };
 
 // SslOptions members that may only ever be set to exactly `true`.
@@ -824,12 +827,14 @@ constexpr std::array<std::string_view, 2> kMustBeTrue{"verify_peer", "verify_hos
 //  - The one raw curl call: revocation checked on a best-effort basis with a
 //    CA file (a revoked certificate is still rejected), which cpr has no
 //    setting for (W1.3).
-//  - The host-name check off exactly when a public key is pinned, for Veeam's
-//    SAN-less certificate (W1.5, docs/decisions.md 2026-09-26). make_ssl_options
-//    sets the pin only together with a CA file, so the chain is still verified.
-constexpr std::array<std::string_view, 2> kAllowedTlsStatements{
+//  - The pin, and the host-name check off exactly when a public key is
+//    pinned, for Veeam's SAN-less certificate (W1.5, docs/decisions.md
+//    2026-09-26). make_ssl_options sets the pin only together with a CA file,
+//    so the chain is still verified.
+constexpr std::array<std::string_view, 3> kAllowedTlsStatements{
     "curl_easy_setopt(session.GetCurlHolder()->handle,CURLOPT_SSL_OPTIONS,CURLSSLOPT_NATIVE_CA|"
     "CURLSSLOPT_REVOKE_BEST_EFFORT);",
+    "options.pinned_public_key=\"sha256//\"+*public_key_pin;",
     "options.verify_host=options.pinned_public_key.empty();",
 };
 
@@ -909,6 +914,11 @@ TEST_CASE("the TLS scan flags each way to weaken verification", "[http]")
         "options.verify_host = options.ca_info.empty();",
         "options.verify_host = options.pinned_public_key.empty();\n"
         "options.verify_peer = options.pinned_public_key.empty();",
+        // The pin itself cleared, replaced or set another way.
+        "options.pinned_public_key.clear();", "o.pinned_public_key = pin;",
+        "options.pinned_public_key = \"sha256//\" + *public_key_pin;\n"
+        "options.pinned_public_key = \"\";",
+        "cpr::ssl::PinnedPublicKey{p}", "CURLOPT_PINNEDPUBLICKEY",
         "o.ssl_no_revoke = true;", "cpr::ssl::NoRevoke{true}", "o.ssl_ctx_callback = f;",
         "cpr::ssl::SslCtxCallback{f}", "CURLOPT_CAINFO_BLOB", "o.ca_info_blob = pem;",
         "cpr::ssl::CaInfoBlob{pem}", "o.ca_buffer = pem;");

@@ -106,6 +106,12 @@ std::string public_key_pin(std::string_view ca_file, std::string_view cert_sha25
     }
     const Digest wanted = parse_hex(cert_sha256);
     const std::string text = read_ca_file(ca_file);
+    // Reading to the end of the PEM data leaves a "no start line" error
+    // queued, and a failed encoding leaves its own; none may surface in some
+    // later, unrelated OpenSSL call, whichever way this function ends.
+    struct ClearErrors {
+        ~ClearErrors() { ERR_clear_error(); }
+    } const clear_errors;
 
     const std::unique_ptr<BIO, decltype(&BIO_free)> bio(
         BIO_new_mem_buf(text.data(), static_cast<int>(text.size())), &BIO_free);
@@ -131,9 +137,6 @@ std::string public_key_pin(std::string_view ca_file, std::string_view cert_sha25
         pin = base64(sha256_and_free(key_der, key_size));
         break;
     }
-    // The end of the data leaves a "no start line" error queued; it must not
-    // surface in some later, unrelated OpenSSL call.
-    ERR_clear_error();
     if (!pin) {
         throw CertPinError("veeam_ca_file holds no certificate whose SHA-256 is veeam_cert_sha256");
     }

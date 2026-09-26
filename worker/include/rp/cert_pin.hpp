@@ -28,7 +28,7 @@ public:
 // The public-key pin of the certificate in the PEM file `ca_file` (a UTF-8
 // path) whose SHA-256, over its DER encoding, is `cert_sha256`: the base64
 // SHA-256 of that certificate's SubjectPublicKeyInfo, the form curl's
-// CURLOPT_PINNEDPUBLICKEY takes after "sha256//". The file may hold other
+// pinned-public-key option takes after "sha256//". The file may hold other
 // certificates too (a CA and its leaf); only PEM is read, as curl's Schannel
 // backend reads only PEM from a CA file. Throws CertPinError when
 // `cert_sha256` isn't is_sha256_hex(), the file can't be read or is over

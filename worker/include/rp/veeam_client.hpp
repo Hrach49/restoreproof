@@ -11,8 +11,10 @@
 #include <nlohmann/json.hpp>
 #include <spdlog/logger.h>
 
+#include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <exception>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -68,9 +70,9 @@ public:
 
 // Might work later: no connection, a timeout or a dropped TLS handshake (after
 // HttpClient's retries), or a 5xx that isn't Veeam reporting an error: 502,
-// 503 and 504, and any other 5xx whose body isn't a JSON object with a
-// "message". GET requests are retried first, as HttpClient would; other
-// methods aren't.
+// 503 and 504, and any other 5xx whose body isn't a JSON object with a string
+// "message" (and whose errorCode isn't ResourceAccessDenied). GET requests
+// are retried first, as HttpClient would; other methods aren't.
 class TransientError : public VeeamError {
 public:
     using VeeamError::VeeamError;
@@ -120,9 +122,10 @@ struct VeeamClientOptions {
     // Jitter for retry_delay(), in [0, 1); null = uniform random.
     std::function<double()> jitter;
     // `limit` of each page of a list; 1 to 10000. The server's default of 30
-    // would cut lists short, so every list pages until a page is short.
+    // would cut lists short, so every list pages until a page is shorter than
+    // the limit Veeam says it applied.
     int page_size = 1000;
-    // Per request, as HttpRequest::timeout.
+    // Per request, as HttpRequest::timeout; above 0.
     std::chrono::milliseconds timeout = kDefaultHttpTimeout;
 };
 
@@ -130,15 +133,18 @@ struct VeeamClientOptions {
 // IHttpClient's send() may (HttpClient's can). The client holds one token
 // pair: a refresh revokes the previous access token at once, so refreshes and
 // sign-ins happen one at a time under a lock, and every caller then uses the
-// new token.
+// new token. Callers that waited for the lock while a sign-in failed get that
+// failure instead of trying again one after another.
 class VeeamClient {
 public:
     // `base_url`: the REST API's root, as Config::veeam_url, e.g.
     // https://veeam.example:4443 (a trailing '/' is ignored). `username` is
     // MACHINE\user or DOMAIN\user; it and `password` come from the
     // environment (rp/secrets.hpp), never config.json, and are never logged.
-    // `http` must outlive the client. Throws std::invalid_argument for an
-    // empty URL, username or password, or a page_size outside 1..10000.
+    // `http` must outlive the client. Throws std::invalid_argument for a URL
+    // that isn't https:// (the password would go out in clear), an empty
+    // username or password, a page_size outside 1..10000, or a timeout of
+    // 0 or less.
     VeeamClient(IHttpClient& http, std::string base_url, std::string username,
                 std::string password, VeeamClientOptions options = {});
 
@@ -147,18 +153,24 @@ public:
 
     // Signs in with the password (POST /v8/token, grant_type=password) and
     // keeps the new token pair. Throws AuthError when Veeam refuses (401, 403,
-    // or any 5xx, never retried), TransientError when it can't be reached.
+    // or any 5xx, never retried), TransientError when it can't be reached, and
+    // VeeamError for any other answer (a 400, a 3xx, a 200 without a usable
+    // token). None of them keeps the response body.
     void login();
 
-    // Makes sure the access token has at least 60 s left: none yet → login();
-    // within 60 s of expiry (expires_in, counted on the local clock from when
-    // the token arrived) → refresh (grant_type=refresh_token), and on any
-    // failure of the refresh, login(). Every API call does this first.
+    // Makes sure the access token isn't about to expire: none yet → login();
+    // within 60 s of expiry → refresh (grant_type=refresh_token), and on any
+    // failure of the refresh, login(). The expiry is expires_in counted on the
+    // local clock from when the token arrived, capped at a day; a token that
+    // lives 120 s or less is refreshed at half its lifetime instead. Every API
+    // call does this first.
     void ensure_token();
 
     // Ends the token chain (POST /v8/token/logout). Best effort: any failure is
     // logged at debug and swallowed. The tokens are forgotten either way, so a
-    // later call signs in again. Does nothing when not signed in.
+    // later call signs in again; so may a call still in flight when logout()
+    // runs, if Veeam refuses its token, so log out after the last call.
+    // Does nothing when not signed in.
     void logout() noexcept;
 
     // GET /v8/Organizations, every page.
@@ -180,7 +192,11 @@ private:
 
     // The token to call with, after ensure_token()'s checks.
     Token current_token();
-    // These three expect mutex_ held.
+    // Rethrows the last renewal failure if one happened since the caller read
+    // `failures_seen` (before waiting for the lock). Expects mutex_ held.
+    void rethrow_failure_since_locked(std::uint64_t failures_seen) const;
+    // These three expect mutex_ held. login_locked records its failure for
+    // rethrow_failure_since_locked.
     void login_locked();
     void refresh_locked();
     void store_tokens_locked(const HttpResponse& response, std::string_view event);
@@ -207,8 +223,13 @@ private:
     std::mutex mutex_; // guards everything below
     std::string access_token_;
     std::string refresh_token_;
-    std::chrono::steady_clock::time_point expires_at_{};
+    // When ensure_token() refreshes: the expiry less the margin.
+    std::chrono::steady_clock::time_point refresh_at_{};
     std::uint64_t generation_ = 0; // bumped whenever the token pair changes
+    // Counts failed sign-ins; atomic so a caller can read it before taking
+    // the lock. The failure itself is kept for callers that waited on it.
+    std::atomic<std::uint64_t> sign_in_failures_ = 0;
+    std::exception_ptr last_sign_in_failure_;
 };
 
 } // namespace rp

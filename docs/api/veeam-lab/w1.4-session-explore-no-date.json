@@ -1,0 +1,32 @@
+{
+  "note": "POST /v8/Organizations/{organizationId}/explore with no dateTime",
+  "captured_utc": "2026-09-26T16:13:38.046Z",
+  "duration_ms": 10,
+  "request": {
+    "method": "POST",
+    "path": "/v8/Organizations/ff96d072-29e2-4cb4-a155-2590f5473176/explore",
+    "body": {
+      "type": "Vex"
+    }
+  },
+  "response": {
+    "status": 400,
+    "content_type": "application/json; charset=utf-8",
+    "headers": {
+      "Date": "Sat, 26 Sep 2026 16:13:37 GMT",
+      "Cache-Control": "no-store, no-cache",
+      "Pragma": "no-cache",
+      "Transfer-Encoding": "chunked",
+      "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+      "X-Content-Type-Options": "nosniff",
+      "X-XSS-Protection": "1; mode=block",
+      "X-Frame-Options": "SAMEORIGIN",
+      "Content-Type": "application/json; charset=utf-8",
+      "Expires": "-1"
+    },
+    "body": {
+      "message": "Missing mandatory parameters: DateTime.",
+      "errorCode": "ParameterValidationFailure"
+    }
+  }
+}

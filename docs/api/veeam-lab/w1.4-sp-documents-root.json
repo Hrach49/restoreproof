@@ -1,0 +1,30 @@
+{
+  "note": "GET .../Organization/Sites/{siteId}/Documents?parentId=root",
+  "captured_utc": "2026-09-26T16:14:17.125Z",
+  "duration_ms": 7,
+  "request": {
+    "method": "GET",
+    "path": "/v8/RestoreSessions/d60208cd-d3dc-4e9b-9788-3eff69186213/Organization/Sites/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689/Documents?parentId=root",
+    "body": null
+  },
+  "response": {
+    "status": 400,
+    "content_type": "application/json; charset=utf-8",
+    "headers": {
+      "Date": "Sat, 26 Sep 2026 16:14:16 GMT",
+      "Cache-Control": "no-store, no-cache",
+      "Pragma": "no-cache",
+      "Transfer-Encoding": "chunked",
+      "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+      "X-Content-Type-Options": "nosniff",
+      "X-XSS-Protection": "1; mode=block",
+      "X-Frame-Options": "SAMEORIGIN",
+      "Content-Type": "application/json; charset=utf-8",
+      "Expires": "-1"
+    },
+    "body": {
+      "message": "Root parentId is unsupported.",
+      "errorCode": "ParameterValidationFailure"
+    }
+  }
+}

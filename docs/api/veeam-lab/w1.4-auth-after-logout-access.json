@@ -1,0 +1,26 @@
+{
+  "note": "GET /v8/Organizations with the access token that was logged out",
+  "captured_utc": "2026-09-26T16:02:10.549Z",
+  "duration_ms": 6,
+  "request": {
+    "method": "GET",
+    "path": "/v8/Organizations?limit=1",
+    "body": null
+  },
+  "response": {
+    "status": 401,
+    "content_type": "",
+    "headers": {
+      "Date": "Sat, 26 Sep 2026 16:02:09 GMT",
+      "Cache-Control": "no-store",
+      "Pragma": "no-cache",
+      "WWW-Authenticate": "Bearer error=\"invalid_token\"",
+      "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+      "X-Content-Type-Options": "nosniff",
+      "X-XSS-Protection": "1; mode=block",
+      "X-Frame-Options": "SAMEORIGIN",
+      "Content-Length": "0"
+    },
+    "body": null
+  }
+}

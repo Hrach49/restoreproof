@@ -1,0 +1,77 @@
+{
+  "note": "rpoperator (operator token): GET /v8/Organization/LoggedInUser/EffectiveScope after the org user cache was resynced",
+  "captured_utc": "2026-09-26T14:25:55.453Z",
+  "duration_ms": 341,
+  "request": {
+    "method": "GET",
+    "path": "/v8/Organization/LoggedInUser/EffectiveScope",
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "content_type": "application/json; charset=utf-8",
+    "headers": {
+      "Date": "Sat, 26 Sep 2026 14:25:55 GMT",
+      "Cache-Control": "no-store",
+      "Pragma": "no-cache",
+      "Transfer-Encoding": "chunked",
+      "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+      "X-Content-Type-Options": "nosniff",
+      "X-XSS-Protection": "1; mode=block",
+      "X-Frame-Options": "SAMEORIGIN",
+      "Content-Type": "application/json; charset=utf-8"
+    },
+    "body": {
+      "users": [
+        {
+          "type": "User",
+          "user": {
+            "id": "RestoreProofLab.onmicrosoft.com:00000000-0000-0000-0000-000000000000:00000000-0000-0000-0000-000000000000:057d796c-1706-4ad4-80bc-cdff314e66d0:00000000-0000-0000-0000-000000000000",
+            "displayName": "Bob Test",
+            "name": "bob@RestoreProofLab.onmicrosoft.com",
+            "type": "User"
+          },
+          "id": "a4e58481-9bd5-4d41-9f46-01c14862f6f4RestoreProofLab.onmicrosoft.com:00000000-0000-0000-0000-000000000000:00000000-0000-0000-0000-000000000000:057d796c-1706-4ad4-80bc-cdff314e66d0:00000000-0000-0000-0000-000000000000",
+          "_links": {}
+        },
+        {
+          "type": "User",
+          "user": {
+            "id": "RestoreProofLab.onmicrosoft.com:00000000-0000-0000-0000-000000000000:00000000-0000-0000-0000-000000000000:b8712372-d84b-4c0c-8d78-5ab08331da42:00000000-0000-0000-0000-000000000000",
+            "displayName": "Alice Test",
+            "name": "alice@RestoreProofLab.onmicrosoft.com",
+            "type": "User"
+          },
+          "id": "a4e58481-9bd5-4d41-9f46-01c14862f6f4RestoreProofLab.onmicrosoft.com:00000000-0000-0000-0000-000000000000:00000000-0000-0000-0000-000000000000:b8712372-d84b-4c0c-8d78-5ab08331da42:00000000-0000-0000-0000-000000000000",
+          "_links": {}
+        },
+        {
+          "type": "User",
+          "user": {
+            "id": "RestoreProofLab.onmicrosoft.com:00000000-0000-0000-0000-000000000000:00000000-0000-0000-0000-000000000000:944cf34b-dce3-4004-943c-25539c6c56cc:00000000-0000-0000-0000-000000000000",
+            "displayName": "Restore\n  Test",
+            "name": "restoretest@RestoreProofLab.onmicrosoft.com",
+            "type": "User"
+          },
+          "id": "a4e58481-9bd5-4d41-9f46-01c14862f6f4RestoreProofLab.onmicrosoft.com:00000000-0000-0000-0000-000000000000:00000000-0000-0000-0000-000000000000:944cf34b-dce3-4004-943c-25539c6c56cc:00000000-0000-0000-0000-000000000000",
+          "_links": {}
+        }
+      ],
+      "sites": [
+        {
+          "type": "Site",
+          "site": {
+            "id": "fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689",
+            "url": "https://restoreprooflab.sharepoint.com/sites/RestoreTest",
+            "title": "RestoreTest",
+            "isCloud": true,
+            "isPersonal": false
+          },
+          "id": "46c7c3c7-338e-4a28-b2de-e12c6936c979fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689",
+          "_links": {}
+        }
+      ],
+      "teams": []
+    }
+  }
+}

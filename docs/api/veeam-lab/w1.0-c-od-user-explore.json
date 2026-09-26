@@ -1,0 +1,56 @@
+{
+  "note": "rp-veeam: POST /v8/Organizations/{organizationId}/explore type Veod at the latest point",
+  "captured_utc": "2026-09-26T15:02:09.732Z",
+  "duration_ms": 242,
+  "request": {
+    "method": "POST",
+    "path": "/v8/Organizations/ff96d072-29e2-4cb4-a155-2590f5473176/explore",
+    "body": {
+      "dateTime": "2026-09-25T19:37:15Z",
+      "type": "Veod",
+      "showDeleted": false,
+      "showAllVersions": false
+    }
+  },
+  "response": {
+    "status": 201,
+    "content_type": "application/json; charset=utf-8",
+    "headers": {
+      "Date": "Sat, 26 Sep 2026 15:02:09 GMT",
+      "Cache-Control": "no-store",
+      "Location": "/v8/restoresessions/74bcefdd-acf4-4167-96e4-a13a4ab8d273",
+      "Pragma": "no-cache",
+      "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+      "X-Content-Type-Options": "nosniff",
+      "X-XSS-Protection": "1; mode=block",
+      "X-Frame-Options": "SAMEORIGIN",
+      "Content-Length": "687",
+      "Content-Type": "application/json; charset=utf-8"
+    },
+    "body": {
+      "id": "74bcefdd-acf4-4167-96e4-a13a4ab8d273",
+      "name": "OneDrive restore (Entire organization - 9/25/2026 7:37:15 PM)",
+      "organization": "RestoreProofLab.onmicrosoft.com",
+      "type": "Veod",
+      "creationTime": "2026-09-26T15:02:09.7991486Z",
+      "endTime": "9999-12-31T23:59:59.9999999",
+      "state": "Working",
+      "result": "Success",
+      "initiatedBy": "rp-veeam",
+      "scopeName": "",
+      "clientHost": "localhost:4443 (via: [::ffff:127.0.0.1])",
+      "eTag": 1,
+      "_links": {
+        "self": {
+          "href": "/v8/restoresessions/74bcefdd-acf4-4167-96e4-a13a4ab8d273"
+        },
+        "organization": {
+          "href": "/v8/restoresessions/74bcefdd-acf4-4167-96e4-a13a4ab8d273/organization"
+        },
+        "restoreSessionEvents": {
+          "href": "/v8/restoresessions/74bcefdd-acf4-4167-96e4-a13a4ab8d273/events"
+        }
+      }
+    }
+  }
+}

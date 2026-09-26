@@ -127,8 +127,14 @@ secrets are read from these environment variables, whose names are defined once 
 | `RP_VEEAM_PASSWORD` | That account's password. |
 | `RP_GRAPH_CLIENT_SECRET` | The client secret of the app registration named by `graph_client_id`. |
 
-Any of them may be unset for now: which ones a run needs depends on the Veeam authentication
-mode, which W1.0 decides. A variable set to an empty string counts as unset.
+Any of them may be unset for now. W1.0 chose admin mode (`docs/decisions.md`, 2026-09-26):
+
+- `RP_VEEAM_USERNAME` and `RP_VEEAM_PASSWORD` are the local Veeam account (`rp-veeam` in the
+  lab);
+- the Entra application certificate that restore requests must carry gets its own secret with
+  W1.5/W2.4.
+
+A variable set to an empty string counts as unset.
 
 Values are read from Windows' own Unicode environment, so any character works, including
 ones outside the machine's ANSI code page (such as `€` or `Ж` on a Western-European

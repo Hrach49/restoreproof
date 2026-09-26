@@ -1,0 +1,96 @@
+{
+  "note": "rp-veeam: GET /v8/RestoreSessions/{sessionId}/Events",
+  "captured_utc": "2026-09-26T15:02:46.008Z",
+  "duration_ms": 20,
+  "request": {
+    "method": "GET",
+    "path": "/v8/RestoreSessions/0a1f03fb-4448-4d8d-a4ff-b63cb1780661/Events?limit=100",
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "content_type": "application/json; charset=utf-8",
+    "headers": {
+      "Date": "Sat, 26 Sep 2026 15:02:45 GMT",
+      "Cache-Control": "no-store",
+      "Pragma": "no-cache",
+      "Transfer-Encoding": "chunked",
+      "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+      "X-Content-Type-Options": "nosniff",
+      "X-XSS-Protection": "1; mode=block",
+      "X-Frame-Options": "SAMEORIGIN",
+      "Content-Type": "application/json; charset=utf-8"
+    },
+    "body": {
+      "offset": 0,
+      "limit": 100,
+      "_links": {
+        "self": {
+          "href": "/v8/RestoreSessions/0a1f03fb-4448-4d8d-a4ff-b63cb1780661/Events?offset=0&limit=100"
+        }
+      },
+      "results": [
+        {
+          "itemSizeBytes": 0,
+          "id": "78a1e5c9-ff75-4b17-a0f9-56535150b732",
+          "type": "None",
+          "status": "Success",
+          "startTime": "2026-09-26T15:02:13.5856667Z",
+          "endTime": "2026-09-26T15:02:13.5856667Z",
+          "duration": "00:00:00",
+          "title": "Restore session started",
+          "message": "Restore session started",
+          "order": 0,
+          "_links": {
+            "self": {
+              "href": "/v8/restoresessions/0a1f03fb-4448-4d8d-a4ff-b63cb1780661/events/78a1e5c9-ff75-4b17-a0f9-56535150b732"
+            },
+            "restoreSession": {
+              "href": "/v8/restoresessions/0a1f03fb-4448-4d8d-a4ff-b63cb1780661"
+            }
+          }
+        },
+        {
+          "itemSizeBytes": 0,
+          "id": "25483236-926c-4302-a327-910f62f843b2",
+          "type": "None",
+          "status": "Failed",
+          "startTime": "2026-09-26T15:02:30.9218663Z",
+          "endTime": "2026-09-26T15:02:30.9218663Z",
+          "duration": "00:00:00",
+          "title": "Cannot connect to Microsoft 365. Failed to connect to https://restoreprooflab-my.sharepoint.com/personal/alice_restoreprooflab_onmicrosoft_com.",
+          "message": "Cannot connect to Microsoft 365. Failed to connect to https://restoreprooflab-my.sharepoint.com/personal/alice_restoreprooflab_onmicrosoft_com.",
+          "order": 1,
+          "_links": {
+            "self": {
+              "href": "/v8/restoresessions/0a1f03fb-4448-4d8d-a4ff-b63cb1780661/events/25483236-926c-4302-a327-910f62f843b2"
+            },
+            "restoreSession": {
+              "href": "/v8/restoresessions/0a1f03fb-4448-4d8d-a4ff-b63cb1780661"
+            }
+          }
+        },
+        {
+          "itemSizeBytes": 0,
+          "id": "29887512-081e-479d-9ff3-39263c5189cc",
+          "type": "None",
+          "status": "Failed",
+          "startTime": "2026-09-26T15:02:41.0698671Z",
+          "endTime": "2026-09-26T15:02:41.0698671Z",
+          "duration": "00:00:00",
+          "title": "Restore session failed",
+          "message": "Restore session failed",
+          "order": 2,
+          "_links": {
+            "self": {
+              "href": "/v8/restoresessions/0a1f03fb-4448-4d8d-a4ff-b63cb1780661/events/29887512-081e-479d-9ff3-39263c5189cc"
+            },
+            "restoreSession": {
+              "href": "/v8/restoresessions/0a1f03fb-4448-4d8d-a4ff-b63cb1780661"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

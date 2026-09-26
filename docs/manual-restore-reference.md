@@ -41,10 +41,13 @@ files each, and `rp-canary-01.pdf` and `rp-canary-11.pdf` keep their manifest
   and deleted after the restores. No user signs in.
 - **Never** `-Overwrite`, never "original location".
 
-**API equivalent.** The Worker logs in to the Veeam REST API (`/v8/token`, W1.0 decides admin
-or operator mode) and passes restore credentials in the restore request body. Whether that body
-takes the app ID and certificate, a user, or nothing (Veeam using the organisation's saved app)
-is one of W1.0's lab checks.
+**API equivalent.** The Worker logs in to the Veeam REST API (`/v8/token`) and passes restore
+credentials in the restore request body. W1.0 answered both questions
+(`docs/api/veeam-feasibility.md`):
+
+- the login uses admin mode;
+- the body must carry credentials, since Veeam refuses a body with none;
+- the app ID and certificate work, and a user fails on MFA.
 
 ## 1. Mail
 
@@ -107,8 +110,8 @@ Stop-VBOSharePointItemRestoreSession -Session $s
 **For the Worker.** An MSP's Veeam app may also lack restore permissions; the Worker must map
 this Veeam error to `error` (infrastructure), not `fail`, and `rpworker doctor` (W7.2) should
 test a restore permission, not only listing. Restored files keep their original timestamps
-too, so the same "target empty before the run" rule applies. Whether `office-v1` holds for a
-restored docx/xlsx is still open for W1.0 (this was a pdf).
+too, so the same "target empty before the run" rule applies. W1.0 later showed that
+`office-v1` holds for a restored docx (this one was a pdf).
 
 ## 3. OneDrive
 

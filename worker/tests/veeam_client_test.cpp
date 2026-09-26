@@ -1,0 +1,1089 @@
+// W1.5: VeeamClient against the recorded Veeam responses in
+// tests/fixtures/veeam/ (docs/api/veeam-notes.md §9), served by
+// FakeHttpClient. Nothing here touches the network; the live check against the
+// lab is veeam_client_live_test.cpp (RP_LIVE=1). The token rules are
+// veeam-notes §1.7, the error table §8 with the 2026-09-26 decisions
+// (docs/decisions.md).
+
+#include "fake_http_client.hpp"
+
+#include <rp/http_client.hpp>
+#include <rp/retry_policy.hpp>
+#include <rp/veeam_client.hpp>
+
+#include <nlohmann/json.hpp>
+
+#include <spdlog/logger.h>
+#include <spdlog/sinks/ostream_sink.h>
+
+#include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
+
+#include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <functional>
+#include <latch>
+#include <memory>
+#include <mutex>
+#include <optional>
+#include <sstream>
+#include <stdexcept>
+#include <string>
+#include <string_view>
+#include <thread>
+#include <vector>
+
+using namespace std::chrono_literals;
+
+namespace {
+
+using nlohmann::json;
+using rp::HttpMethod;
+using rp::HttpRequest;
+using rp::HttpResponse;
+using rp::test::load_fixture;
+using rp::test::load_fixture_json;
+using rp::test::make_response;
+using rp::test::to_response;
+
+const std::string kBase = "https://veeam.test:4443";
+const std::string kTokenUrl = kBase + "/v8/token";
+const std::string kLogoutUrl = kBase + "/v8/token/logout";
+const std::string kOrgId = "ff96d072-29e2-4cb4-a155-2590f5473176";
+const std::string kUnknownOrgId = "00000000-0000-0000-0000-000000000001";
+const std::string kUsername = "DESKTOP-P55CDUM\\rp-veeam";
+// A password with every character form encoding must escape, and a non-ASCII
+// one ("ö" in UTF-8). It must never show up in a log line or an error.
+const std::string kPassword = "Sentinel&Pa55=w\xc3\xb6rd+%";
+const std::string kPasswordForm = "Sentinel%26Pa55%3Dw%C3%B6rd%2B%25";
+
+const std::string kNewestPoint =
+    "c2f0f2e7-177f-48ac-992b-93a50cf702e371ac3d9c-eb29-42b6-a391-ae81fcc4681c";
+const std::string kOldestPoint =
+    "c2f0f2e7-177f-48ac-992b-93a50cf702e32fb3c7e0-ff6e-4949-8b2d-ae32ecf9e9a7";
+
+std::string orgs_url(int limit = 1000, int offset = 0)
+{
+    return kBase + "/v8/Organizations?limit=" + std::to_string(limit) +
+           "&offset=" + std::to_string(offset);
+}
+
+std::string points_url(const std::string& org = kOrgId, int limit = 1000, int offset = 0)
+{
+    return kBase + "/v8/RestorePoints?organizationId=" + org + "&limit=" + std::to_string(limit) +
+           "&offset=" + std::to_string(offset);
+}
+
+// The recorded 200 token response with these tokens in place of [REDACTED].
+HttpResponse token_response(const std::string& access, const std::string& refresh,
+                            int expires_in = 3600)
+{
+    json fixture = load_fixture_json("veeam", "token-200");
+    fixture["body"]["access_token"] = access;
+    fixture["body"]["refresh_token"] = refresh;
+    fixture["body"]["expires_in"] = expires_in;
+    return to_response(fixture);
+}
+
+// The value of `key` in a form body, as sent (still percent-encoded).
+std::string form_value(const std::string& body, const std::string& key)
+{
+    const std::string prefix = key + "=";
+    std::size_t start = 0;
+    while (start <= body.size()) {
+        const std::size_t end = std::min(body.find('&', start), body.size());
+        const std::string_view pair = std::string_view{body}.substr(start, end - start);
+        if (pair.starts_with(prefix)) {
+            return std::string{pair.substr(prefix.size())};
+        }
+        start = end + 1;
+    }
+    return "(absent)";
+}
+
+std::string bearer(const HttpRequest& request)
+{
+    const auto it = request.headers.find("Authorization");
+    return it == request.headers.end() ? "(none)" : it->second;
+}
+
+std::size_t count_of(std::string_view text, std::string_view needle)
+{
+    std::size_t n = 0;
+    for (std::size_t at = text.find(needle); at != std::string_view::npos;
+         at = text.find(needle, at + needle.size())) {
+        ++n;
+    }
+    return n;
+}
+
+// The Veeam server as a test sees it. The token endpoint grants numbered
+// tokens: the n-th password sign-in "access-login-<n>" / "refresh-login-<n>",
+// the n-th refresh "access-refresh-<n>" / "refresh-refresh-<n>", unless a test
+// replaces on_login or on_refresh. Time only moves when the test says so;
+// waits are recorded, never slept; debug lines go to a string.
+struct Lab {
+    Lab()
+    {
+        auto sink = std::make_shared<spdlog::sinks::ostream_sink_mt>(log_stream);
+        logger = std::make_shared<spdlog::logger>("veeam_test", sink);
+        logger->set_pattern("[%l] %v");
+        logger->set_level(spdlog::level::debug);
+        http.on(HttpMethod::post, kTokenUrl, [this](const HttpRequest& request) {
+            const std::string grant = form_value(request.body, "grant_type");
+            if (grant == "password") {
+                return on_login(++logins);
+            }
+            if (grant == "refresh_token") {
+                return on_refresh(++refreshes, form_value(request.body, "refresh_token"));
+            }
+            throw std::logic_error("unexpected grant_type " + grant);
+        });
+    }
+
+    std::unique_ptr<rp::VeeamClient> make_client(int page_size = 1000)
+    {
+        rp::VeeamClientOptions options;
+        options.logger = logger;
+        options.now = [this] { return std::chrono::steady_clock::time_point{} + now.load(); };
+        options.sleep = [this](std::chrono::milliseconds wait) {
+            const std::lock_guard lock(mutex);
+            sleeps.push_back(wait);
+        };
+        options.jitter = [] { return 0.0; };
+        options.page_size = page_size;
+        options.timeout = 45s;
+        return std::make_unique<rp::VeeamClient>(http, kBase, kUsername, kPassword,
+                                                 std::move(options));
+    }
+
+    void advance(std::chrono::milliseconds by) { now = now.load() + by; }
+
+    std::string log()
+    {
+        logger->flush();
+        return log_stream.str();
+    }
+
+    // The token requests, in order: "password" or "refresh_token".
+    std::vector<std::string> grants() const
+    {
+        std::vector<std::string> out;
+        for (const HttpRequest& request : http.requests()) {
+            if (request.url == kTokenUrl) {
+                out.push_back(form_value(request.body, "grant_type"));
+            }
+        }
+        return out;
+    }
+
+    rp::test::FakeHttpClient http;
+    std::atomic<std::chrono::milliseconds> now{0ms};
+    std::mutex mutex;
+    std::vector<std::chrono::milliseconds> sleeps;
+    std::ostringstream log_stream;
+    std::shared_ptr<spdlog::logger> logger;
+    std::atomic<int> logins = 0;
+    std::atomic<int> refreshes = 0;
+    std::function<HttpResponse(int)> on_login = [](int n) {
+        return token_response("access-login-" + std::to_string(n),
+                              "refresh-login-" + std::to_string(n));
+    };
+    std::function<HttpResponse(int, const std::string&)> on_refresh = [](int n,
+                                                                          const std::string&) {
+        return token_response("access-refresh-" + std::to_string(n),
+                              "refresh-refresh-" + std::to_string(n));
+    };
+};
+
+// Which of the four exception types `call` threw ("none" if it returned).
+std::string thrown_kind(const std::function<void()>& call)
+{
+    try {
+        call();
+    } catch (const rp::AuthError&) {
+        return "AuthError";
+    } catch (const rp::NotFoundError&) {
+        return "NotFoundError";
+    } catch (const rp::TransientError&) {
+        return "TransientError";
+    } catch (const rp::VeeamError&) {
+        return "VeeamError";
+    }
+    return "none";
+}
+
+// A page of restore points with these backupTimes (IDs "p<i>").
+HttpResponse points_page(const std::vector<json>& backup_times)
+{
+    json results = json::array();
+    for (std::size_t i = 0; i < backup_times.size(); ++i) {
+        json point = {{"id", "p" + std::to_string(i)}, {"organizationId", kOrgId}};
+        if (!backup_times[i].is_null()) {
+            point["backupTime"] = backup_times[i];
+        }
+        results.push_back(point);
+    }
+    return make_response(200, json{{"offset", 0}, {"limit", 1000}, {"results", results}}.dump());
+}
+
+} // namespace
+
+// --- Failure paths ----------------------------------------------------------
+
+TEST_CASE("a refused sign-in is an AuthError, sent once and never retried", "[veeam]")
+{
+    // Veeam refuses a wrong password, an unknown user and a missing role the
+    // same way: 401 with a message, or, before its REST service restarts, an
+    // empty 500 (veeam-notes §1.2).
+    const auto [fixture, expected] = GENERATE(table<std::string, std::string>({
+        {"token-rejected-401",
+         "Veeam POST /v8/token: HTTP 401: The server has rejected the client credentials."},
+        {"token-rejected-500-empty", "Veeam POST /v8/token: HTTP 500"},
+    }));
+    CAPTURE(fixture);
+    Lab lab;
+    lab.on_login = [fixture = fixture](int) { return load_fixture("veeam", fixture); };
+    auto client = lab.make_client();
+
+    try {
+        client->list_organizations();
+        FAIL("list_organizations() returned after a refused sign-in");
+    } catch (const rp::AuthError& e) {
+        CHECK(std::string{e.what()} == expected);
+        CHECK(e.status() == load_fixture("veeam", fixture).status);
+    }
+    CHECK_THROWS_AS(client->login(), rp::AuthError);
+
+    CHECK(lab.logins == 2);
+    CHECK(lab.http.requests().size() == 2); // no API call went out
+    CHECK(lab.sleeps.empty());
+    for (const HttpRequest& request : lab.http.requests()) {
+        CHECK_FALSE(request.retry_on_status);
+    }
+    const std::string log = lab.log();
+    CHECK(log.find(kPassword) == std::string::npos);
+    CHECK(log.find(kPasswordForm) == std::string::npos);
+}
+
+TEST_CASE("any failed refresh falls back to a password sign-in", "[veeam]")
+{
+    using Refresh = std::function<HttpResponse(int, const std::string&)>;
+    const Refresh failure = GENERATE(
+        // The recorded one: a used, logged-out or restart-killed refresh token.
+        Refresh{[](int, const std::string&) { return load_fixture("veeam", "token-refresh-invalid-401"); }},
+        Refresh{[](int, const std::string&) { return make_response(500); }},
+        Refresh{[](int, const std::string&) {
+            return make_response(500, R"({"message":"An antiforgery token is not specified."})");
+        }},
+        Refresh{[](int, const std::string&) { return make_response(200, "not json"); }},
+        Refresh{[](int, const std::string&) -> HttpResponse {
+            throw rp::HttpError("POST https://veeam.test:4443/v8/token: could not connect",
+                                rp::TransportError::connect, 0, 5);
+        }});
+    Lab lab;
+    lab.on_refresh = failure;
+    lab.http.on(HttpMethod::get, orgs_url(), {load_fixture("veeam", "organizations-200")});
+    auto client = lab.make_client();
+
+    client->list_organizations();
+    lab.advance(3540s);
+    const std::vector<rp::Organization> orgs = client->list_organizations();
+
+    CHECK(orgs.size() == 1);
+    CHECK(lab.grants() == std::vector<std::string>{"password", "refresh_token", "password"});
+    const std::vector<HttpRequest> sent = lab.http.requests();
+    REQUIRE(sent.size() == 5);
+    CHECK(form_value(sent[2].body, "refresh_token") == "refresh-login-1");
+    CHECK(form_value(sent[2].body, "disable_antiforgery_token") == "true");
+    CHECK(bearer(sent[4]) == "Bearer access-login-2");
+}
+
+TEST_CASE("an expired or revoked token gets one fresh sign-in, then the call is resent",
+          "[veeam]")
+{
+    // Past its expiry, revoked by a refresh or a logout, or killed by a REST
+    // service restart: all are a 401 with an empty body (veeam-notes §1.3).
+    const std::string fixture = GENERATE("api-expired-token-401", "api-invalid-token-401");
+    CAPTURE(fixture);
+    Lab lab;
+    lab.http.on(HttpMethod::get, orgs_url(), [&fixture](const HttpRequest& request) {
+        return bearer(request) == "Bearer access-login-1"
+                   ? load_fixture("veeam", fixture)
+                   : load_fixture("veeam", "organizations-200");
+    });
+    auto client = lab.make_client();
+
+    CHECK(client->list_organizations().size() == 1);
+
+    CHECK(lab.grants() == std::vector<std::string>{"password", "password"});
+    const std::vector<HttpRequest> sent = lab.http.requests();
+    REQUIRE(sent.size() == 4);
+    CHECK(bearer(sent[1]) == "Bearer access-login-1");
+    CHECK(bearer(sent[3]) == "Bearer access-login-2");
+    // Only an expired token says why, and that isn't secret: it is logged.
+    if (fixture == "api-expired-token-401") {
+        CHECK(lab.log().find("The token expired at '09/26/2026 17:01:43'") != std::string::npos);
+    }
+}
+
+TEST_CASE("a second 401 after a fresh sign-in is an AuthError", "[veeam]")
+{
+    Lab lab;
+    lab.http.on(HttpMethod::get, orgs_url(), {load_fixture("veeam", "api-invalid-token-401")});
+    auto client = lab.make_client();
+
+    try {
+        client->list_organizations();
+        FAIL("list_organizations() returned after two 401s");
+    } catch (const rp::AuthError& e) {
+        CHECK(e.status() == 401);
+        CHECK(std::string{e.what()} ==
+              "Veeam GET /v8/Organizations?limit=1000&offset=0: HTTP 401 again after signing in "
+              "afresh");
+    }
+    CHECK(lab.logins == 2);
+    CHECK(lab.http.count(HttpMethod::get, orgs_url()) == 2);
+}
+
+TEST_CASE("a 401 with a message on an API call is an AuthError without a new sign-in", "[veeam]")
+{
+    // The credentials are valid but the account's role doesn't allow the call
+    // (veeam-notes §8): signing in again would only loop.
+    Lab lab;
+    lab.http.on(HttpMethod::get, orgs_url(),
+                {make_response(401, R"({"message":"The server has rejected the client credentials."})")});
+    auto client = lab.make_client();
+
+    CHECK(thrown_kind([&] { client->list_organizations(); }) == "AuthError");
+    CHECK(lab.logins == 1);
+    CHECK(lab.http.count(HttpMethod::get, orgs_url()) == 1);
+}
+
+TEST_CASE("a 401 for a token older than the current one is resent without a new sign-in",
+          "[veeam]")
+{
+    // Another caller refreshed or signed in while this request was in
+    // flight, which revoked the token it carried (veeam-notes §1.4).
+    Lab lab;
+    std::unique_ptr<rp::VeeamClient> client = lab.make_client();
+    std::atomic<int> gets = 0;
+    lab.http.on(HttpMethod::get, orgs_url(), [&](const HttpRequest& request) {
+        if (++gets == 1) {
+            client->login(); // the other caller
+            CHECK(bearer(request) == "Bearer access-login-1");
+            return load_fixture("veeam", "api-invalid-token-401");
+        }
+        return load_fixture("veeam", "organizations-200");
+    });
+
+    CHECK(client->list_organizations().size() == 1);
+
+    CHECK(lab.logins == 2); // the first sign-in and the other caller's; none by this call
+    const std::vector<HttpRequest> sent = lab.http.requests();
+    REQUIRE(sent.size() == 4);
+    CHECK(bearer(sent.back()) == "Bearer access-login-2");
+}
+
+TEST_CASE("a 500 with a Veeam message is a VeeamError, sent once", "[veeam]")
+{
+    Lab lab;
+    const HttpResponse recorded = load_fixture("veeam", "explore-500-before-first");
+    lab.http.on(HttpMethod::get, orgs_url(), {recorded});
+    auto client = lab.make_client();
+
+    try {
+        client->list_organizations();
+        FAIL("list_organizations() returned after a 500");
+    } catch (const rp::TransientError&) {
+        FAIL("a 500 with Veeam's message was treated as transient");
+    } catch (const rp::VeeamError& e) {
+        CHECK(e.status() == 500);
+        CHECK(e.body() == recorded.body);
+        CHECK(std::string{e.what()} ==
+              "Veeam GET /v8/Organizations?limit=1000&offset=0: HTTP 500: The chosen restore "
+              "point date precedes the date of the first available restore point (9/25/2026 "
+              "7:24:31 PM).");
+    }
+    CHECK(lab.http.count(HttpMethod::get, orgs_url()) == 1);
+    CHECK(lab.sleeps.empty());
+}
+
+TEST_CASE("an empty 503 on a GET is retried, then a TransientError", "[veeam]")
+{
+    Lab lab;
+    auto client = lab.make_client();
+
+    SECTION("it clears: the call succeeds")
+    {
+        lab.http.on(HttpMethod::get, orgs_url(),
+                    {make_response(503), make_response(503),
+                     load_fixture("veeam", "organizations-200")});
+        CHECK(client->list_organizations().size() == 1);
+        CHECK(lab.http.count(HttpMethod::get, orgs_url()) == 3);
+        CHECK(lab.sleeps == std::vector<std::chrono::milliseconds>{1000ms, 2000ms});
+    }
+
+    SECTION("it doesn't: TransientError after five attempts")
+    {
+        lab.http.on(HttpMethod::get, orgs_url(), {make_response(503)});
+        try {
+            client->list_organizations();
+            FAIL("list_organizations() returned after five 503s");
+        } catch (const rp::TransientError& e) {
+            CHECK(e.status() == 503);
+            CHECK(std::string{e.what()} ==
+                  "Veeam GET /v8/Organizations?limit=1000&offset=0: HTTP 503 after 5 attempts");
+        }
+        CHECK(lab.http.count(HttpMethod::get, orgs_url()) == 5);
+        CHECK(lab.sleeps ==
+              std::vector<std::chrono::milliseconds>{1000ms, 2000ms, 4000ms, 8000ms});
+    }
+}
+
+TEST_CASE("an unknown organisation is a NotFoundError", "[veeam]")
+{
+    Lab lab;
+    lab.http.on(HttpMethod::get, points_url(kUnknownOrgId),
+                {load_fixture("veeam", "restore-points-unknown-org-404")});
+    auto client = lab.make_client();
+
+    try {
+        client->list_restore_points(kUnknownOrgId);
+        FAIL("list_restore_points() returned for an unknown organisation");
+    } catch (const rp::NotFoundError& e) {
+        CHECK(e.status() == 404);
+        CHECK(e.error_code() == "ResourceNotFound");
+        CHECK(std::string{e.what()} ==
+              "Veeam GET /v8/RestorePoints?organizationId=" + kUnknownOrgId +
+                  "&limit=1000&offset=0: HTTP 404 (ResourceNotFound): Organization does not "
+                  "exist: ID " +
+                  kUnknownOrgId + ".");
+    }
+}
+
+TEST_CASE("an organisation with no restore points gives an empty list", "[veeam]")
+{
+    Lab lab;
+    lab.http.on(HttpMethod::get, points_url(), {load_fixture("veeam", "restore-points-empty-200")});
+    auto client = lab.make_client();
+
+    CHECK(client->list_restore_points(kOrgId).empty());
+    CHECK(lab.http.count(HttpMethod::get, points_url()) == 1);
+}
+
+TEST_CASE("each HTTP status maps to one kind of error", "[veeam]")
+{
+    // veeam-notes §8 with the 2026-09-26 decisions. `sends`: how many times
+    // the GET went out (a transient 5xx is retried, nothing else is).
+    const std::string rejected = R"({"message":"The server has rejected the client credentials."})";
+    const std::string denied = R"({"message":"Access denied.","errorCode":"ResourceAccessDenied"})";
+    const auto [status, body, kind, sends] =
+        GENERATE_COPY(table<int, std::string, std::string, int>({
+            {400, load_fixture("veeam", "restore-point-400-format").body, "VeeamError", 1},
+            {400, load_fixture("veeam", "restore-points-bad-query-400").body, "VeeamError", 1},
+            {400, denied, "AuthError", 1},
+            {401, rejected, "AuthError", 1},
+            {403, "", "AuthError", 1},
+            {404, load_fixture("veeam", "organization-404").body, "NotFoundError", 1},
+            {404, "", "VeeamError", 1}, // a route that doesn't exist
+            {409, R"({"message":"Unable to provide statistics until the restore session completes."})",
+             "VeeamError", 1},
+            {500, R"({"message":"Restore session is stopped."})", "VeeamError", 1},
+            {500, denied, "AuthError", 1},
+            {500, "", "TransientError", 5},
+            {500, "<html><body>Internal Server Error</body></html>", "TransientError", 5},
+            {500, "[1, 2]", "TransientError", 5},
+            {500, R"({"errorCode":"Timeout"})", "TransientError", 5},
+            {500, R"({"message": 42})", "TransientError", 5},
+            {501, "", "TransientError", 5},
+            {502, R"({"message":"Bad gateway"})", "TransientError", 5},
+            {503, "", "TransientError", 5},
+            {504, R"({"message":"Gateway timeout"})", "TransientError", 5},
+            {302, "", "VeeamError", 1},
+            {418, "", "VeeamError", 1},
+        }));
+    CAPTURE(status, body);
+    Lab lab;
+    lab.http.on(HttpMethod::get, orgs_url(), {make_response(status, body)});
+    auto client = lab.make_client();
+
+    CHECK(thrown_kind([&] { client->list_organizations(); }) == kind);
+    CHECK(lab.http.count(HttpMethod::get, orgs_url()) == static_cast<std::size_t>(sends));
+    CHECK(lab.logins == 1);
+}
+
+TEST_CASE("each HTTP status from the token endpoint maps to one kind of error", "[veeam]")
+{
+    // Any 5xx on /v8/token is a refused sign-in, never retried: Veeam has
+    // answered a wrong password with an empty 500.
+    const auto [status, body, kind] = GENERATE(table<int, std::string, std::string>({
+        {400, R"({"message":"Missing mandatory parameters: grant_type.","errorCode":"ParameterValidationFailure"})",
+         "VeeamError"},
+        {401, R"({"message":"The server has rejected the client credentials."})", "AuthError"},
+        {403, "", "AuthError"},
+        {500, "", "AuthError"},
+        {500, R"({"message":"An antiforgery token is not specified."})", "AuthError"},
+        {502, "", "AuthError"},
+        {503, R"({"message":"Service unavailable"})", "AuthError"},
+        {302, "", "VeeamError"},
+    }));
+    CAPTURE(status, body);
+    Lab lab;
+    lab.on_login = [status = status, body = body](int) { return make_response(status, body); };
+    auto client = lab.make_client();
+
+    CHECK(thrown_kind([&] { client->login(); }) == kind);
+    CHECK(lab.logins == 1);
+    CHECK(lab.sleeps.empty());
+}
+
+TEST_CASE("a transport failure is a TransientError, a TLS failure a plain VeeamError", "[veeam]")
+{
+    const auto [error, kind] = GENERATE(table<rp::TransportError, std::string>({
+        {rp::TransportError::connect, "TransientError"},
+        {rp::TransportError::timeout, "TransientError"},
+        {rp::TransportError::handshake, "TransientError"},
+        // A certificate that doesn't verify won't fix itself.
+        {rp::TransportError::tls, "VeeamError"},
+        {rp::TransportError::other, "VeeamError"},
+    }));
+    const bool on_sign_in = GENERATE(true, false);
+    CAPTURE(error, on_sign_in);
+    Lab lab;
+    const auto fail = [error = error](const HttpRequest& request) -> HttpResponse {
+        throw rp::HttpError(std::string{rp::to_string(request.method)} + " " + request.url +
+                                ": failed",
+                            error, 0, 1);
+    };
+    if (on_sign_in) {
+        lab.http.on(HttpMethod::post, kTokenUrl, fail);
+    } else {
+        lab.http.on(HttpMethod::get, orgs_url(), fail);
+    }
+    auto client = lab.make_client();
+
+    try {
+        client->list_organizations();
+        FAIL("list_organizations() returned after a transport failure");
+    } catch (const rp::VeeamError& e) {
+        CHECK(e.status() == 0);
+        CHECK(thrown_kind([&e] { throw; }) == kind);
+        const std::string expected_url = on_sign_in ? kTokenUrl : orgs_url();
+        CHECK(std::string{e.what()} ==
+              "Veeam " + std::string{on_sign_in ? "POST " : "GET "} + expected_url + ": failed");
+    }
+    // HttpClient has done the retrying; the client adds none.
+    CHECK(lab.sleeps.empty());
+}
+
+TEST_CASE("a token response without a usable token is a VeeamError that doesn't quote it",
+          "[veeam]")
+{
+    const std::string body = GENERATE(
+        R"({"refresh_token":"SENTINEL_RT_9c1d","expires_in":3600})",
+        R"({"access_token":"","refresh_token":"SENTINEL_RT_9c1d","expires_in":3600})",
+        R"({"access_token":"SENTINEL_AT_77aa","refresh_token":"SENTINEL_RT_9c1d"})",
+        R"({"access_token":"SENTINEL_AT_77aa","refresh_token":"SENTINEL_RT_9c1d","expires_in":0})",
+        R"({"access_token":"SENTINEL_AT_77aa","refresh_token":"SENTINEL_RT_9c1d","expires_in":"3600"})",
+        R"({"access_token":["SENTINEL_AT_77aa"],"expires_in":3600})",
+        R"(["SENTINEL_AT_77aa"])", "SENTINEL_AT_77aa not json");
+    CAPTURE(body);
+    Lab lab;
+    lab.on_login = [body](int) { return make_response(200, body); };
+    auto client = lab.make_client();
+
+    try {
+        client->login();
+        FAIL("login() accepted a token response without a usable token");
+    } catch (const rp::AuthError&) {
+        FAIL("a malformed token response isn't a refusal");
+    } catch (const rp::VeeamError& e) {
+        const std::string what = e.what();
+        CAPTURE(what);
+        CHECK(e.body().empty());
+        CHECK(what.find("SENTINEL") == std::string::npos);
+        CHECK(what.starts_with("Veeam POST /v8/token: "));
+    }
+    CHECK(lab.log().find("SENTINEL") == std::string::npos);
+}
+
+TEST_CASE("a list response of the wrong shape is a VeeamError", "[veeam]")
+{
+    const std::string body = GENERATE(
+        "not json", "[]", "{}", R"({"results":{}})", R"({"results":[1]})",
+        R"({"results":[{"name":"no id"}]})", R"({"results":[{"id":7,"name":"x"}]})",
+        R"({"results":[{"id":"ff96d072-29e2-4cb4-a155-2590f5473176"}]})",
+        R"({"results":[{"id":"x","name":"y","msid":5}]})");
+    CAPTURE(body);
+    Lab lab;
+    lab.http.on(HttpMethod::get, orgs_url(), {make_response(200, body)});
+    auto client = lab.make_client();
+
+    CHECK(thrown_kind([&] { client->list_organizations(); }) == "VeeamError");
+}
+
+TEST_CASE("a backupTime that isn't a UTC time in Veeam's form is a VeeamError", "[veeam]")
+{
+    // Explore sessions are opened by this exact string: a point whose time
+    // Veeam itself would refuse (veeam-notes §4.2) can't be tested.
+    const json backup_time = GENERATE(
+        json("2026-09-25T19:37:15.2145203+00:00"), json("2026-09-25T19:37:15"),
+        json("2026-09-25T19:37:15.12345678Z"), json("2026-09-25T19:37:15.Z"),
+        json("2026-09-25 19:37:15Z"), json("2026-9-25T19:37:15Z"), json("2026-13-25T19:37:15Z"),
+        json("2026-09-25T24:00:00Z"), json("2026-09-25T19:37:15.21x5203Z"), json("yesterday"),
+        json(""), json(20260925), json(nullptr));
+    CAPTURE(backup_time.dump());
+    Lab lab;
+    lab.http.on(HttpMethod::get, points_url(), {points_page({backup_time})});
+    auto client = lab.make_client();
+
+    CHECK(thrown_kind([&] { client->list_restore_points(kOrgId); }) == "VeeamError");
+}
+
+TEST_CASE("an organisation ID that isn't a UUID is refused before any request", "[veeam]")
+{
+    const std::string id = GENERATE(
+        "", "not-a-guid", "ff96d072-29e2-4cb4-a155-2590f547317",
+        "ff96d072-29e2-4cb4-a155-2590f54731766", "ff96d072x29e2-4cb4-a155-2590f5473176",
+        "ff96d072-29e2-4cb4-a155-2590f547317g", "ff96d072-29e2-4cb4-a155-2590f5473176&limit=1",
+        "{ff96d072-29e2-4cb4-a155-2590f5473176}");
+    CAPTURE(id);
+    Lab lab;
+    auto client = lab.make_client();
+
+    CHECK_THROWS_AS(client->list_restore_points(id), std::invalid_argument);
+    CHECK(lab.http.requests().empty());
+}
+
+TEST_CASE("paging that makes no progress is a VeeamError, not an endless loop", "[veeam]")
+{
+    // A server that ignores offset returns the same full page for ever.
+    Lab lab;
+    for (int offset : {0, 1, 2}) {
+        lab.http.on(HttpMethod::get, points_url(kOrgId, 1, offset),
+                    {load_fixture("veeam", "restore-points-page1")});
+    }
+    auto client = lab.make_client(1);
+
+    try {
+        client->list_restore_points(kOrgId);
+        FAIL("list_restore_points() returned for a server that repeats one page");
+    } catch (const rp::VeeamError& e) {
+        CHECK(std::string{e.what()} ==
+              "Veeam GET /v8/RestorePoints?organizationId=" + kOrgId +
+                  "&limit=1&offset=1: the page repeats earlier results; paging stopped");
+    }
+    CHECK(lab.http.requests().size() == 3); // sign-in and two pages
+}
+
+TEST_CASE("the constructor refuses what can't work", "[veeam]")
+{
+    rp::test::FakeHttpClient http;
+    CHECK_THROWS_AS(rp::VeeamClient(http, "", kUsername, kPassword), std::invalid_argument);
+    CHECK_THROWS_AS(rp::VeeamClient(http, kBase, "", kPassword), std::invalid_argument);
+    CHECK_THROWS_AS(rp::VeeamClient(http, kBase, kUsername, ""), std::invalid_argument);
+    const int page_size = GENERATE(-1, 0, 10001);
+    CAPTURE(page_size);
+    rp::VeeamClientOptions options;
+    options.page_size = page_size;
+    CHECK_THROWS_AS(rp::VeeamClient(http, kBase, kUsername, kPassword, options),
+                    std::invalid_argument);
+    CHECK(http.requests().empty());
+}
+
+// --- Happy paths --------------------------------------------------------------
+
+TEST_CASE("the sign-in is a form-encoded password grant with the antiforgery flag", "[veeam]")
+{
+    Lab lab;
+    rp::VeeamClientOptions options;
+    options.timeout = 45s;
+    // A trailing '/' on the configured URL is ignored.
+    rp::VeeamClient client(lab.http, kBase + "/", kUsername, kPassword, options);
+
+    client.login();
+
+    const std::vector<HttpRequest> sent = lab.http.requests();
+    REQUIRE(sent.size() == 1);
+    CHECK(sent[0].method == HttpMethod::post);
+    CHECK(sent[0].url == kTokenUrl);
+    CHECK(sent[0].content_type == "application/x-www-form-urlencoded");
+    CHECK(sent[0].body == "grant_type=password&username=DESKTOP-P55CDUM%5Crp-veeam&password=" +
+                              kPasswordForm + "&disable_antiforgery_token=true");
+    CHECK(sent[0].headers.find("Authorization") == sent[0].headers.end());
+    CHECK(sent[0].headers.at("Accept") == "application/json");
+    CHECK_FALSE(sent[0].retry_on_status);
+    CHECK(sent[0].timeout == 45s);
+}
+
+TEST_CASE("list_organizations reads every organisation with the bearer token", "[veeam]")
+{
+    Lab lab;
+    lab.http.on(HttpMethod::get, orgs_url(), {load_fixture("veeam", "organizations-200")});
+    auto client = lab.make_client();
+
+    const std::vector<rp::Organization> orgs = client->list_organizations();
+
+    REQUIRE(orgs.size() == 1);
+    CHECK(orgs[0].id == kOrgId);
+    CHECK(orgs[0].name == "RestoreProofLab.onmicrosoft.com");
+    CHECK(orgs[0].msid == "bcd6bd1a-ea42-489d-aa28-2c19a44ad146");
+    CHECK(orgs[0].region == "Worldwide");
+    CHECK(orgs[0].office_name == "RestoreProofLab.onmicrosoft.com");
+    const std::vector<HttpRequest> sent = lab.http.requests();
+    REQUIRE(sent.size() == 2);
+    CHECK(sent[1].method == HttpMethod::get);
+    CHECK(bearer(sent[1]) == "Bearer access-login-1");
+    CHECK(sent[1].headers.at("Accept") == "application/json");
+    CHECK_FALSE(sent[1].retry_on_status);
+    CHECK(sent[1].timeout == 45s);
+}
+
+TEST_CASE("restore points come back newest first whatever order Veeam sends", "[veeam]")
+{
+    const std::string fixture = GENERATE("restore-points-200", "restore-points-asc-200");
+    CAPTURE(fixture);
+    Lab lab;
+    lab.http.on(HttpMethod::get, points_url(), {load_fixture("veeam", fixture)});
+    auto client = lab.make_client();
+
+    const std::vector<rp::RestorePoint> points = client->list_restore_points(kOrgId);
+
+    REQUIRE(points.size() == 2);
+    CHECK(points[0].id == kNewestPoint);
+    CHECK(points[0].backup_time == "2026-09-25T19:37:15.2145203Z");
+    CHECK(points[1].id == kOldestPoint);
+    CHECK(points[1].backup_time == "2026-09-25T19:24:31.0936821Z");
+    for (const rp::RestorePoint& point : points) {
+        CHECK(point.id.size() == 72);
+        CHECK(point.organization_id == kOrgId);
+        CHECK(point.repository_id == "c2f0f2e7-177f-48ac-992b-93a50cf702e3");
+        CHECK(point.job_id == "4cf03510-457c-401b-a1c6-e7e69be296e1");
+        CHECK(point.is_exchange);
+        CHECK(point.is_sharepoint);
+        CHECK(point.is_onedrive);
+        CHECK_FALSE(point.is_teams);
+        CHECK_FALSE(point.is_deleted);
+        CHECK_FALSE(point.is_long_term_copy);
+        CHECK_FALSE(point.is_copy);
+    }
+}
+
+TEST_CASE("restore points are paged until a page is short", "[veeam]")
+{
+    // The recorded pages of limit=1 hold one point each, so the second is
+    // still full and a third, empty page ends the list.
+    Lab lab;
+    lab.http.on(HttpMethod::get, points_url(kOrgId, 1, 0), {load_fixture("veeam", "restore-points-page1")});
+    lab.http.on(HttpMethod::get, points_url(kOrgId, 1, 1), {load_fixture("veeam", "restore-points-page2")});
+    lab.http.on(HttpMethod::get, points_url(kOrgId, 1, 2),
+                {load_fixture("veeam", "restore-points-empty-200")});
+    auto client = lab.make_client(1);
+
+    const std::vector<rp::RestorePoint> points = client->list_restore_points(kOrgId);
+
+    REQUIRE(points.size() == 2);
+    CHECK(points[0].id == kNewestPoint);
+    CHECK(points[1].id == kOldestPoint);
+    for (int offset : {0, 1, 2}) {
+        CHECK(lab.http.count(HttpMethod::get, points_url(kOrgId, 1, offset)) == 1);
+    }
+}
+
+TEST_CASE("organisations are paged too", "[veeam]")
+{
+    Lab lab;
+    json second = load_fixture_json("veeam", "organizations-200");
+    second["body"]["results"][0]["id"] = "11111111-2222-3333-4444-555555555555";
+    second["body"]["results"][0]["name"] = "second.onmicrosoft.com";
+    lab.http.on(HttpMethod::get, orgs_url(1, 0), {load_fixture("veeam", "organizations-200")});
+    lab.http.on(HttpMethod::get, orgs_url(1, 1), {to_response(second)});
+    lab.http.on(HttpMethod::get, orgs_url(1, 2), {make_response(200, R"({"results":[]})")});
+    auto client = lab.make_client(1);
+
+    const std::vector<rp::Organization> orgs = client->list_organizations();
+
+    REQUIRE(orgs.size() == 2);
+    CHECK(orgs[0].id == kOrgId);
+    CHECK(orgs[1].name == "second.onmicrosoft.com");
+}
+
+TEST_CASE("a point seen on an earlier page is kept once", "[veeam]")
+{
+    // A backup finishing while the list is read pushes every point one place
+    // down, so the next page starts with one already seen.
+    Lab lab;
+    const auto page = [](std::vector<std::string> ids) {
+        json results = json::array();
+        for (const std::string& id : ids) {
+            results.push_back({{"id", id}, {"backupTime", "2026-09-25T19:00:0" + id.substr(1) + "Z"}});
+        }
+        return make_response(200, json{{"results", results}}.dump());
+    };
+    lab.http.on(HttpMethod::get, points_url(kOrgId, 2, 0), {page({"p1", "p2"})});
+    lab.http.on(HttpMethod::get, points_url(kOrgId, 2, 2), {page({"p2", "p3"})});
+    lab.http.on(HttpMethod::get, points_url(kOrgId, 2, 4), {page({})});
+    auto client = lab.make_client(2);
+
+    const std::vector<rp::RestorePoint> points = client->list_restore_points(kOrgId);
+
+    REQUIRE(points.size() == 3);
+    CHECK(points[0].id == "p3");
+    CHECK(points[1].id == "p2");
+    CHECK(points[2].id == "p1");
+}
+
+TEST_CASE("backupTime is kept as sent and sorted by its value, not its text", "[veeam]")
+{
+    // Veeam's serializer drops trailing zeros from the fraction, so "…15Z"
+    // (15.0 s) must sort before "…15.2Z" although 'Z' > '.' as text.
+    Lab lab;
+    lab.http.on(HttpMethod::get, points_url(),
+                {points_page({json("2026-09-25T19:37:15Z"), json("2026-09-24T23:59:59.9999999Z"),
+                              json("2026-09-25T19:37:15.2Z"), json("2027-01-01T00:00:00Z"),
+                              json("2026-09-25T19:37:15.0000001Z")})});
+    auto client = lab.make_client();
+
+    const std::vector<rp::RestorePoint> points = client->list_restore_points(kOrgId);
+
+    std::vector<std::string> times;
+    for (const rp::RestorePoint& point : points) {
+        times.push_back(point.backup_time);
+    }
+    CHECK(times == std::vector<std::string>{"2027-01-01T00:00:00Z", "2026-09-25T19:37:15.2Z",
+                                            "2026-09-25T19:37:15.0000001Z", "2026-09-25T19:37:15Z",
+                                            "2026-09-24T23:59:59.9999999Z"});
+}
+
+TEST_CASE("the token is refreshed 60 s before it expires, not earlier", "[veeam]")
+{
+    Lab lab;
+    lab.http.on(HttpMethod::get, orgs_url(), {load_fixture("veeam", "organizations-200")});
+    auto client = lab.make_client();
+
+    client->ensure_token(); // none yet: signs in
+    CHECK(lab.grants() == std::vector<std::string>{"password"});
+
+    lab.advance(3539s);
+    client->list_organizations();
+    CHECK(lab.refreshes == 0);
+
+    lab.advance(1s); // 3540 s: 60 s left
+    client->list_organizations();
+    CHECK(lab.refreshes == 1);
+
+    // The next refresh counts from the refreshed token's arrival and uses the
+    // newest refresh token: the one it came with.
+    lab.advance(3539s);
+    client->list_organizations();
+    CHECK(lab.refreshes == 1);
+    lab.advance(1s);
+    client->list_organizations();
+    CHECK(lab.refreshes == 2);
+
+    const std::vector<HttpRequest> sent = lab.http.requests();
+    std::vector<std::string> refresh_tokens;
+    std::vector<std::string> bearers;
+    for (const HttpRequest& request : sent) {
+        if (request.url == kTokenUrl && form_value(request.body, "grant_type") == "refresh_token") {
+            refresh_tokens.push_back(form_value(request.body, "refresh_token"));
+            CHECK(form_value(request.body, "disable_antiforgery_token") == "true");
+        } else if (request.method == HttpMethod::get) {
+            bearers.push_back(bearer(request));
+        }
+    }
+    CHECK(refresh_tokens == std::vector<std::string>{"refresh-login-1", "refresh-refresh-1"});
+    CHECK(bearers == std::vector<std::string>{"Bearer access-login-1", "Bearer access-refresh-1",
+                                              "Bearer access-refresh-1", "Bearer access-refresh-2"});
+    CHECK(lab.logins == 1);
+}
+
+TEST_CASE("the refresh point follows expires_in", "[veeam]")
+{
+    Lab lab;
+    lab.on_login = [](int n) {
+        return token_response("access-login-" + std::to_string(n), "r", 120);
+    };
+    auto client = lab.make_client();
+
+    client->login();
+    lab.advance(59s);
+    client->ensure_token();
+    CHECK(lab.refreshes == 0);
+    lab.advance(1s); // 60 of 120 s: 60 s left
+    client->ensure_token();
+    CHECK(lab.refreshes == 1);
+}
+
+TEST_CASE("concurrent calls share one refresh", "[veeam]")
+{
+    constexpr int kThreads = 8;
+    Lab lab;
+    lab.http.on(HttpMethod::get, orgs_url(), {load_fixture("veeam", "organizations-200")});
+    lab.on_refresh = [](int n, const std::string&) {
+        // Long enough for every other thread to be waiting on the lock.
+        std::this_thread::sleep_for(50ms);
+        return token_response("access-refresh-" + std::to_string(n), "refresh-refresh-1");
+    };
+    auto client = lab.make_client();
+    client->login();
+    lab.advance(3590s);
+
+    std::atomic<int> succeeded = 0;
+    {
+        std::vector<std::jthread> threads;
+        for (int i = 0; i < kThreads; ++i) {
+            threads.emplace_back([&] {
+                if (client->list_organizations().size() == 1) {
+                    ++succeeded;
+                }
+            });
+        }
+    }
+
+    CHECK(succeeded == kThreads);
+    CHECK(lab.refreshes == 1);
+    CHECK(lab.logins == 1);
+    for (const HttpRequest& request : lab.http.requests()) {
+        if (request.method == HttpMethod::get) {
+            CHECK(bearer(request) == "Bearer access-refresh-1");
+        }
+    }
+}
+
+TEST_CASE("concurrent 401s share one fresh sign-in", "[veeam]")
+{
+    // A REST service restart kills the token every request in flight carries.
+    constexpr int kThreads = 8;
+    Lab lab;
+    std::latch all_sent(kThreads);
+    lab.http.on(HttpMethod::get, orgs_url(), [&](const HttpRequest& request) {
+        if (bearer(request) == "Bearer access-login-1") {
+            all_sent.arrive_and_wait(); // every thread got its 401 with the same token
+            return load_fixture("veeam", "api-invalid-token-401");
+        }
+        return load_fixture("veeam", "organizations-200");
+    });
+    auto client = lab.make_client();
+    client->login();
+
+    std::atomic<int> succeeded = 0;
+    {
+        std::vector<std::jthread> threads;
+        for (int i = 0; i < kThreads; ++i) {
+            threads.emplace_back([&] {
+                if (client->list_organizations().size() == 1) {
+                    ++succeeded;
+                }
+            });
+        }
+    }
+
+    CHECK(succeeded == kThreads);
+    CHECK(lab.logins == 2);
+    CHECK(lab.http.count(HttpMethod::get, orgs_url()) == 2 * kThreads);
+}
+
+TEST_CASE("logout ends the chain; a later call signs in again", "[veeam]")
+{
+    Lab lab;
+    lab.http.on(HttpMethod::get, orgs_url(), {load_fixture("veeam", "organizations-200")});
+
+    SECTION("not signed in: nothing is sent")
+    {
+        auto client = lab.make_client();
+        client->logout();
+        CHECK(lab.http.requests().empty());
+    }
+
+    SECTION("signed in: POST /v8/token/logout with the bearer token")
+    {
+        lab.http.on(HttpMethod::post, kLogoutUrl, {load_fixture("veeam", "logout-204")});
+        auto client = lab.make_client();
+        client->login();
+        client->logout();
+        client->logout(); // the second has nothing to end
+
+        CHECK(lab.http.count(HttpMethod::post, kLogoutUrl) == 1);
+        const HttpRequest logout = lab.http.requests().back();
+        CHECK(bearer(logout) == "Bearer access-login-1");
+        CHECK(logout.body.empty());
+        CHECK_FALSE(logout.retry_on_status);
+
+        client->list_organizations();
+        CHECK(lab.logins == 2);
+    }
+
+    SECTION("a failed logout is swallowed and the tokens are forgotten anyway")
+    {
+        const auto failure = GENERATE(
+            std::function<HttpResponse(const HttpRequest&)>{
+                [](const HttpRequest&) { return make_response(500); }},
+            std::function<HttpResponse(const HttpRequest&)>{
+                [](const HttpRequest&) { return load_fixture("veeam", "api-invalid-token-401"); }},
+            std::function<HttpResponse(const HttpRequest&)>{[](const HttpRequest&) -> HttpResponse {
+                throw rp::HttpError("POST: could not connect", rp::TransportError::connect, 0, 5);
+            }});
+        lab.http.on(HttpMethod::post, kLogoutUrl, failure);
+        auto client = lab.make_client();
+        client->login();
+
+        client->logout(); // noexcept: a throw here would terminate
+        client->list_organizations();
+
+        CHECK(lab.logins == 2);
+    }
+}
+
+TEST_CASE("nothing secret reaches the log or an error message", "[veeam]")
+{
+    // A whole session: sign-in, a revoked token and a fresh sign-in, a
+    // refresh, a refused refresh, and a logout. The tokens and the password
+    // go out in headers and bodies, which are never logged.
+    Lab lab;
+    lab.on_refresh = [](int n, const std::string&) {
+        return n == 1 ? token_response("access-refresh-1", "refresh-refresh-1")
+                      : load_fixture("veeam", "token-refresh-invalid-401");
+    };
+    std::atomic<int> gets = 0;
+    lab.http.on(HttpMethod::get, orgs_url(), [&](const HttpRequest&) {
+        return ++gets == 1 ? load_fixture("veeam", "api-expired-token-401")
+                           : load_fixture("veeam", "organizations-200");
+    });
+    lab.http.on(HttpMethod::post, kLogoutUrl, {load_fixture("veeam", "logout-204")});
+    auto client = lab.make_client();
+
+    client->list_organizations();
+    lab.advance(3540s);
+    client->list_organizations();
+    lab.advance(3540s);
+    client->list_organizations();
+    client->logout();
+    lab.on_login = [](int) { return load_fixture("veeam", "token-rejected-401"); };
+    std::string what;
+    try {
+        client->list_organizations();
+    } catch (const rp::AuthError& e) {
+        what = e.what();
+    }
+
+    CHECK(lab.grants() == std::vector<std::string>{"password", "password", "refresh_token",
+                                                   "refresh_token", "password", "password"});
+    const std::string log = lab.log();
+    CAPTURE(log);
+    CHECK_FALSE(what.empty());
+    for (const std::string& secret :
+         {kPassword, kPasswordForm, std::string{"access-login"}, std::string{"refresh-login"},
+          std::string{"access-refresh"}, std::string{"refresh-refresh"}}) {
+        CHECK(log.find(secret) == std::string::npos);
+        CHECK(what.find(secret) == std::string::npos);
+    }
+    // And the log says what happened.
+    CHECK(count_of(log, "signed in") == 3);
+    CHECK(count_of(log, "token refreshed") == 1);
+    CHECK(count_of(log, "refresh failed") == 1);
+    CHECK(count_of(log, "signing in again") >= 1);
+    CHECK(count_of(log, "logged out") == 1);
+}

@@ -66,8 +66,11 @@ struct HttpRequest {
     // Whether a 5xx is retried. False: every response, 5xx included, is
     // returned after its attempt, for a caller that classifies server errors
     // itself (VeeamClient: Veeam answers 500 to many requests that will never
-    // succeed) or whose request must not run twice (a restore). Transport
-    // errors (connect, timeout, dropped handshake) are retried either way.
+    // succeed). Transport errors (connect, timeout, dropped handshake) are
+    // retried either way, and some of those (a timeout, a connection dropped
+    // after the request went out) can follow a request the server already
+    // acted on: this flag alone doesn't make a request run at most once, as a
+    // restore must (docs/decisions.md, W1.3's open point).
     bool retry_on_status = true;
 };
 

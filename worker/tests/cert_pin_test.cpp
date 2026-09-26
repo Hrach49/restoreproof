@@ -8,6 +8,8 @@
 
 #include <rp/cert_pin.hpp>
 
+#include <openssl/err.h>
+
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
 
@@ -162,6 +164,21 @@ TEST_CASE("public_key_pin refuses what it can't pin, without quoting the file", 
     {
         CHECK_THROWS_AS(rp::public_key_pin("C:\\bad\xff.pem", hash), rp::CertPinError);
     }
+}
+
+TEST_CASE("public_key_pin leaves no OpenSSL error queued, found or not", "[cert_pin]")
+{
+    // A leftover error would surface in some later, unrelated OpenSSL call.
+    const Cert veeam = rp::test::make_cert("Veeam Software", Role::veeam_default);
+    const Cert other = rp::test::make_cert("Veeam Software", Role::veeam_default);
+    const rp::test::TempDir dir;
+    const std::string file = to_utf8(dir.write("veeam.pem", veeam.pem().cert));
+    ERR_clear_error();
+
+    rp::public_key_pin(file, rp::test::cert_sha256_hex(veeam));
+    CHECK(ERR_peek_error() == 0);
+    CHECK_THROWS_AS(rp::public_key_pin(file, rp::test::cert_sha256_hex(other)), rp::CertPinError);
+    CHECK(ERR_peek_error() == 0);
 }
 
 TEST_CASE("public_key_pin refuses a file too large to be a certificate bundle", "[cert_pin]")

@@ -25,6 +25,9 @@ using std::chrono::milliseconds;
 // ensure_token() refreshes when this little is left: Veeam allows no clock
 // skew past a token's expiry (docs/api/veeam-notes.md §1.5).
 constexpr std::chrono::seconds kRefreshMargin{60};
+// A token lifetime above this is taken as this: Veeam gives 3600 s, and no
+// later arithmetic on the clock can overflow.
+constexpr std::chrono::seconds kMaxTokenLifetime{86400};
 // Veeam's messages are a sentence; anything longer is cut, so a strange
 // response can't flood a log line.
 constexpr std::size_t kMaxMessageChars = 500;
@@ -80,10 +83,17 @@ bool is_blank(std::string_view text) noexcept
 }
 
 // Text from a response, made fit for one log line: control characters become
-// spaces, and it is cut at kMaxMessageChars.
+// spaces, and it is cut at kMaxMessageChars bytes, back to the start of a
+// UTF-8 character so none is split.
 std::string one_line(std::string_view text)
 {
-    std::string out{text.substr(0, kMaxMessageChars)};
+    std::size_t cut = std::min(text.size(), kMaxMessageChars);
+    if (cut < text.size()) {
+        while (cut > 0 && (static_cast<unsigned char>(text[cut]) & 0xC0) == 0x80) {
+            --cut;
+        }
+    }
+    std::string out{text.substr(0, cut)};
     std::replace_if(
         out.begin(), out.end(),
         [](char c) { return static_cast<unsigned char>(c) < 0x20 || c == 0x7F; }, ' ');
@@ -393,11 +403,23 @@ VeeamClient::VeeamClient(IHttpClient& http, std::string base_url, std::string us
     while (!base_url_.empty() && base_url_.back() == '/') {
         base_url_.pop_back();
     }
-    if (base_url_.empty() || username_.empty() || password_.empty()) {
-        throw std::invalid_argument("VeeamClient needs a URL, a username and a password");
+    // The password grant goes to this URL: never over plain HTTP. Config
+    // checks veeam_url the same way; this holds for any other caller too.
+    constexpr std::string_view https = "https://";
+    const bool is_https =
+        base_url_.size() > https.size() &&
+        std::equal(https.begin(), https.end(), base_url_.begin(), [](char a, char b) {
+            return a == (b >= 'A' && b <= 'Z' ? static_cast<char>(b - 'A' + 'a') : b);
+        });
+    if (!is_https || username_.empty() || password_.empty()) {
+        throw std::invalid_argument(
+            "VeeamClient needs an https:// URL, a username and a password");
     }
     if (options_.page_size < 1 || options_.page_size > kMaxPageSize) {
         throw std::invalid_argument("VeeamClient page_size must be from 1 to 10000");
+    }
+    if (options_.timeout <= milliseconds::zero()) {
+        throw std::invalid_argument("VeeamClient timeout must be above 0 ms");
     }
     if (!options_.now) {
         options_.now = [] { return std::chrono::steady_clock::now(); };
@@ -459,32 +481,60 @@ void VeeamClient::store_tokens_locked(const HttpResponse& response, std::string_
                          response.status);
     }
     const auto refresh = doc.find("refresh_token");
-    const std::int64_t seconds = expires_in->get<std::int64_t>();
+    const std::chrono::seconds lifetime{
+        std::min<std::int64_t>(expires_in->get<std::int64_t>(), kMaxTokenLifetime.count())};
+    // A lifetime of twice the margin or less is refreshed at its half, so a
+    // short-lived token isn't refreshed on every call.
+    const std::chrono::milliseconds margin =
+        std::min<std::chrono::milliseconds>(kRefreshMargin, milliseconds{lifetime} / 2);
 
-    access_token_ = access->get<std::string>();
-    // Without one, the next refresh is a password sign-in.
-    refresh_token_ = refresh != doc.end() && refresh->is_string() ? refresh->get<std::string>()
-                                                                   : std::string{};
+    // Built first, then swapped in without anything that can throw, so a
+    // failure leaves the old pair whole.
+    std::string new_access = access->get<std::string>();
+    // Without one, the next renewal is a password sign-in.
+    std::string new_refresh =
+        refresh != doc.end() && refresh->is_string() ? refresh->get<std::string>() : std::string{};
     // Counted from now, on the local clock: `.expires` is the server's clock.
-    expires_at_ = options_.now() + std::chrono::seconds{seconds};
+    const auto refresh_at = options_.now() + lifetime - margin;
+    access_token_.swap(new_access);
+    refresh_token_.swap(new_refresh);
+    refresh_at_ = refresh_at;
     ++generation_;
     log_debug("Veeam: " + std::string{event} + "; the token expires in " +
-              std::to_string(seconds) + " s");
+              std::to_string(lifetime.count()) + " s");
 }
 
 void VeeamClient::login_locked()
 {
-    const HttpResponse response =
-        send_token_request("grant_type=password&username=" + form_encode(username_) +
-                           "&password=" + form_encode(password_) +
-                           "&disable_antiforgery_token=true");
-    if (response.status < 200 || response.status > 299) {
-        const ErrorBody body = parse_error_body(response.body);
-        throw_error(classify_token(response.status, body),
-                    "Veeam POST /v8/token: " + describe(response.status, body), response.status,
-                    body, response.body);
+    try {
+        const HttpResponse response =
+            send_token_request("grant_type=password&username=" + form_encode(username_) +
+                               "&password=" + form_encode(password_) +
+                               "&disable_antiforgery_token=true");
+        if (response.status < 200 || response.status > 299) {
+            // The body isn't kept: a proxy or a broken server could echo the
+            // posted form, password included.
+            const ErrorBody body = parse_error_body(response.body);
+            throw_error(classify_token(response.status, body),
+                        "Veeam POST /v8/token: " + describe(response.status, body),
+                        response.status, body, {});
+        }
+        store_tokens_locked(response, "signed in");
+    } catch (...) {
+        last_sign_in_failure_ = std::current_exception();
+        ++sign_in_failures_;
+        throw;
     }
-    store_tokens_locked(response, "signed in");
+}
+
+void VeeamClient::rethrow_failure_since_locked(std::uint64_t failures_seen) const
+{
+    // A sign-in failed while this caller waited for the lock. Behind a server
+    // that is down, each attempt takes HttpClient's five tries; N callers
+    // trying in turn would wait N times as long for the same answer.
+    if (sign_in_failures_.load() != failures_seen && last_sign_in_failure_) {
+        std::rethrow_exception(last_sign_in_failure_);
+    }
 }
 
 void VeeamClient::refresh_locked()
@@ -507,6 +557,9 @@ void VeeamClient::refresh_locked()
         } catch (const VeeamError& e) {
             log_debug(std::string{"Veeam: token refresh failed ("} + e.what() +
                       "); signing in again");
+        } catch (const std::exception&) {
+            // Not ours, so its message may not be safe to log.
+            log_debug("Veeam: token refresh failed; signing in again");
         }
     }
     // Whatever went wrong (a used or restart-killed refresh token, Veeam
@@ -516,10 +569,12 @@ void VeeamClient::refresh_locked()
 
 VeeamClient::Token VeeamClient::current_token()
 {
+    const std::uint64_t failures_seen = sign_in_failures_.load();
     const std::lock_guard lock(mutex_);
+    rethrow_failure_since_locked(failures_seen);
     if (access_token_.empty()) {
         login_locked();
-    } else if (options_.now() >= expires_at_ - kRefreshMargin) {
+    } else if (options_.now() >= refresh_at_) {
         refresh_locked();
     }
     return {access_token_, generation_};
@@ -619,24 +674,33 @@ HttpResponse VeeamClient::get(const std::string& path_and_query)
     if (response.status == 401 && is_blank(response.body)) {
         const std::string description = auth_description(response);
         const std::string reason = description.empty() ? "" : " (" + description + ")";
+        bool signed_in = false;
+        const std::uint64_t failures_seen = sign_in_failures_.load();
         {
             const std::lock_guard lock(mutex_);
+            rethrow_failure_since_locked(failures_seen);
             if (generation_ == token.generation || access_token_.empty()) {
                 log_debug(what + ": HTTP 401" + reason + "; signing in again");
                 login_locked();
+                signed_in = true;
             } else {
                 // Someone refreshed or signed in since this token was handed
-                // out, which revoked it: the current one is newer.
+                // out, which revoked it: the current one is newer, though
+                // perhaps itself near its end by now.
                 log_debug(what + ": HTTP 401" + reason +
                           " for a replaced token; resending with the current one");
+                if (options_.now() >= refresh_at_) {
+                    refresh_locked();
+                }
             }
             token = {access_token_, generation_};
         }
         response = send_get(path_and_query, token.access, what, attempts);
         if (response.status == 401) {
             const ErrorBody body = parse_error_body(response.body);
-            throw AuthError(what + ": HTTP 401 again after signing in afresh", 401,
-                            body.error_code, response.body);
+            throw AuthError(what + ": HTTP 401 again " +
+                                (signed_in ? "after signing in afresh" : "with a newer token"),
+                            401, body.error_code, response.body);
         }
     }
 
@@ -683,7 +747,16 @@ std::vector<json> VeeamClient::get_all_pages(const std::string& path_and_query)
                 ++added;
             }
         }
-        if (results->size() < page_size) {
+        // Veeam echoes the limit it applied. Should it ever cap the one asked
+        // for, a page of its size isn't the end, and stopping there would cut
+        // the list short without a word.
+        std::size_t applied = page_size;
+        if (const auto limit = doc.find("limit");
+            limit != doc.end() && limit->is_number_unsigned() && limit->get<std::uint64_t>() > 0 &&
+            limit->get<std::uint64_t>() < page_size) {
+            applied = static_cast<std::size_t>(limit->get<std::uint64_t>());
+        }
+        if (results->size() < applied) {
             return items;
         }
         // A full page of nothing new: the server isn't honouring offset.

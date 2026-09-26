@@ -1,0 +1,103 @@
+{
+  "note": "rp-veeam: GET /v8/RestoreSessions/{sessionId}/Events",
+  "captured_utc": "2026-09-26T14:54:25.783Z",
+  "duration_ms": 32,
+  "request": {
+    "method": "GET",
+    "path": "/v8/RestoreSessions/27c3ad6c-8ff2-4b5f-8e3d-aa1c82a60cbb/Events?limit=100",
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "content_type": "application/json; charset=utf-8",
+    "headers": {
+      "Date": "Sat, 26 Sep 2026 14:54:24 GMT",
+      "Cache-Control": "no-store",
+      "Pragma": "no-cache",
+      "Transfer-Encoding": "chunked",
+      "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+      "X-Content-Type-Options": "nosniff",
+      "X-XSS-Protection": "1; mode=block",
+      "X-Frame-Options": "SAMEORIGIN",
+      "Content-Type": "application/json; charset=utf-8"
+    },
+    "body": {
+      "offset": 0,
+      "limit": 100,
+      "_links": {
+        "self": {
+          "href": "/v8/RestoreSessions/27c3ad6c-8ff2-4b5f-8e3d-aa1c82a60cbb/Events?offset=0&limit=100"
+        }
+      },
+      "results": [
+        {
+          "itemSizeBytes": 0,
+          "id": "91c94cf3-f2b3-4107-9d51-bcaa87c277a0",
+          "type": "None",
+          "status": "Success",
+          "startTime": "2026-09-26T14:53:47.8386772Z",
+          "endTime": "2026-09-26T14:53:47.8386772Z",
+          "duration": "00:00:00",
+          "title": "Restore session started",
+          "message": "Restore session started",
+          "order": 0,
+          "_links": {
+            "self": {
+              "href": "/v8/restoresessions/27c3ad6c-8ff2-4b5f-8e3d-aa1c82a60cbb/events/91c94cf3-f2b3-4107-9d51-bcaa87c277a0"
+            },
+            "restoreSession": {
+              "href": "/v8/restoresessions/27c3ad6c-8ff2-4b5f-8e3d-aa1c82a60cbb"
+            }
+          }
+        },
+        {
+          "itemName": "RP-CANARY-0001",
+          "itemType": "IPM.Note",
+          "itemSizeBytes": 42155,
+          "source": "Alice Test\\Inbox",
+          "target": "restoretest@RestoreProofLab.onmicrosoft.com\\<null>\\Inbox",
+          "id": "ba19065e-c178-6f63-e07d-c25b8a70a8c1",
+          "type": "Restore",
+          "status": "Success",
+          "startTime": "2026-09-26T14:54:10.2971744Z",
+          "endTime": "2026-09-26T14:54:10.3494622Z",
+          "duration": "00:00:00.0522878",
+          "title": "Folder successfully restored",
+          "message": "Item RP-CANARY-0001 was restored successfully (type: IPM.Note; source: Alice Test\\Inbox; target: restoretest@RestoreProofLab.onmicrosoft.com\\<null>\\Inbox)",
+          "order": 1,
+          "organizationId": "ff96d072-29e2-4cb4-a155-2590f5473176",
+          "backedUpOrganizationId": "RestoreProofLab.onmicrosoft.com:00000000-0000-0000-0000-000000000000:00000000-0000-0000-0000-000000000000",
+          "userId": "RestoreProofLab.onmicrosoft.com:00000000-0000-0000-0000-000000000000:00000000-0000-0000-0000-000000000000:b8712372-d84b-4c0c-8d78-5ab08331da42:00000000-0000-0000-0000-000000000000",
+          "_links": {
+            "self": {
+              "href": "/v8/restoresessions/27c3ad6c-8ff2-4b5f-8e3d-aa1c82a60cbb/events/ba19065e-c178-6f63-e07d-c25b8a70a8c1"
+            },
+            "restoreSession": {
+              "href": "/v8/restoresessions/27c3ad6c-8ff2-4b5f-8e3d-aa1c82a60cbb"
+            }
+          }
+        },
+        {
+          "itemSizeBytes": 0,
+          "id": "5fcd0923-9abc-4809-8015-1fcee56393b9",
+          "type": "None",
+          "status": "Success",
+          "startTime": "2026-09-26T14:54:20.4533421Z",
+          "endTime": "2026-09-26T14:54:20.4533421Z",
+          "duration": "00:00:00",
+          "title": "Restore session completed",
+          "message": "Restore session completed",
+          "order": 2,
+          "_links": {
+            "self": {
+              "href": "/v8/restoresessions/27c3ad6c-8ff2-4b5f-8e3d-aa1c82a60cbb/events/5fcd0923-9abc-4809-8015-1fcee56393b9"
+            },
+            "restoreSession": {
+              "href": "/v8/restoresessions/27c3ad6c-8ff2-4b5f-8e3d-aa1c82a60cbb"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

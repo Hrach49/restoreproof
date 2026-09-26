@@ -1,0 +1,49 @@
+{
+  "note": "rp-veeam: POST /v8/RestoreSessions/{restoreSessionId}/organization/mailboxes/e00393b0-a896-4487-ad04-0e1be36468fb/items/restoreTo with cert credentials",
+  "captured_utc": "2026-09-26T14:53:47.765Z",
+  "duration_ms": 365,
+  "request": {
+    "method": "POST",
+    "path": "/v8/RestoreSessions/ef162997-805e-40b3-9f24-07831237935c/organization/mailboxes/e00393b0-a896-4487-ad04-0e1be36468fb/items/restoreTo",
+    "body": {
+      "mailbox": "restoretest@RestoreProofLab.onmicrosoft.com",
+      "folder": "Inbox",
+      "items": [
+        {
+          "id": "LgAAAEYAAAAWAAAAAAAAAJQ40Ee3vkxBk1fd6-4CAU4BAP0LwXmScMJMnrn-sNESuJ8AAAAAAQwAAAAAAACUONBHt75MQZNX3evuAgFOBwD9C8F5knDCTJ65_rDRErifAAAAAAEMAAD9C8F5knDCTJ65_rDRErifAAAAAFuMAAD9C8F5knDCTJ65_rDRErifAAAAADr_"
+        }
+      ],
+      "changedItems": true,
+      "deletedItems": true,
+      "markRestoredAsUnread": false,
+      "excludeDrafts": false,
+      "excludeDeletedItems": false,
+      "excludeInPlaceHoldItems": true,
+      "excludeLitigationHoldItems": true,
+      "officeRegion": "Worldwide",
+      "officeOrganizationName": "RestoreProofLab.onmicrosoft.com",
+      "applicationId": "1fd2609d-1242-43fe-94b5-d58688a90bd6",
+      "applicationCertificate": "[REDACTED]",
+      "applicationCertificatePassword": "[REDACTED]",
+      "impersonationAccountName": "restoretest@RestoreProofLab.onmicrosoft.com"
+    }
+  },
+  "response": {
+    "status": 200,
+    "content_type": "application/json; charset=utf-8",
+    "headers": {
+      "Date": "Sat, 26 Sep 2026 14:53:47 GMT",
+      "Cache-Control": "no-store",
+      "Pragma": "no-cache",
+      "Transfer-Encoding": "chunked",
+      "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+      "X-Content-Type-Options": "nosniff",
+      "X-XSS-Protection": "1; mode=block",
+      "X-Frame-Options": "SAMEORIGIN",
+      "Content-Type": "application/json; charset=utf-8"
+    },
+    "body": {
+      "sessionId": "27c3ad6c-8ff2-4b5f-8e3d-aa1c82a60cbb"
+    }
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "note": "rpoperator: POST .../mailboxes/{mailboxId}/items/{itemId}/save (MSG), RP-CANARY-0001",
+  "captured_utc": "2026-09-26T14:34:07.998Z",
+  "duration_ms": 2483,
+  "request": {
+    "method": "POST",
+    "path": "/v8/RestoreSessions/cf3e901c-7c58-410c-9df5-1b9924b75f8c/organization/mailboxes/e00393b0-a896-4487-ad04-0e1be36468fb/items/LgAAAEYAAAAWAAAAAAAAAJQ40Ee3vkxBk1fd6-4CAU4BAP0LwXmScMJMnrn-sNESuJ8AAAAAAQwAAAAAAACUONBHt75MQZNX3evuAgFOBwD9C8F5knDCTJ65_rDRErifAAAAAAEMAAD9C8F5knDCTJ65_rDRErifAAAAAFuMAAD9C8F5knDCTJ65_rDRErifAAAAADr_/save",
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "content_type": "application/octet-stream",
+    "headers": {
+      "Date": "Sat, 26 Sep 2026 14:34:10 GMT",
+      "Cache-Control": "no-store",
+      "Pragma": "no-cache",
+      "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+      "X-Content-Type-Options": "nosniff",
+      "X-XSS-Protection": "1; mode=block",
+      "X-Frame-Options": "SAMEORIGIN",
+      "Content-Length": "72704",
+      "Content-Type": "application/octet-stream",
+      "Content-Disposition": "attachment; filename=RP-CANARY-0001.msg; filename*=UTF-8''RP-CANARY-0001.msg"
+    },
+    "body": "<72704 bytes written to file>"
+  }
+}

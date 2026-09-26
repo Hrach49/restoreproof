@@ -1,0 +1,45 @@
+{
+  "note": "rpoperator: POST /v8/Organization/OperatorExplore with a scope outside the role (admin mailbox (Vex))",
+  "captured_utc": "2026-09-26T14:31:26.584Z",
+  "duration_ms": 1253,
+  "request": {
+    "method": "POST",
+    "path": "/v8/Organization/OperatorExplore",
+    "body": {
+      "dateTime": "2026-09-25T19:37:15Z",
+      "type": "Vex",
+      "showDeleted": false,
+      "showAllVersions": false,
+      "scope": {
+        "type": "User",
+        "id": "RestoreProofLab.onmicrosoft.com:00000000-0000-0000-0000-000000000000:00000000-0000-0000-0000-000000000000:533138fa-6982-4fd2-a8b1-593d3f655d32:00000000-0000-0000-0000-000000000000",
+        "user": {
+          "id": "RestoreProofLab.onmicrosoft.com:00000000-0000-0000-0000-000000000000:00000000-0000-0000-0000-000000000000:533138fa-6982-4fd2-a8b1-593d3f655d32:00000000-0000-0000-0000-000000000000",
+          "displayName": "Hrachya Harutyunyan",
+          "name": "HrachyaHarutyunyan@RestoreProofLab.onmicrosoft.com",
+          "type": "User"
+        }
+      },
+      "reason": "W1.0 check b: out-of-scope must be refused"
+    }
+  },
+  "response": {
+    "status": 500,
+    "content_type": "application/json; charset=utf-8",
+    "headers": {
+      "Date": "Sat, 26 Sep 2026 14:31:26 GMT",
+      "Cache-Control": "no-store, no-cache",
+      "Pragma": "no-cache",
+      "Transfer-Encoding": "chunked",
+      "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+      "X-Content-Type-Options": "nosniff",
+      "X-XSS-Protection": "1; mode=block",
+      "X-Frame-Options": "SAMEORIGIN",
+      "Content-Type": "application/json; charset=utf-8",
+      "Expires": "-1"
+    },
+    "body": {
+      "message": "User rpoperator@RestoreProofLab.onmicrosoft.com cannot manage selected object."
+    }
+  }
+}

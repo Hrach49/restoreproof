@@ -1,0 +1,19 @@
+{
+  "note": "rp-veeam password grant before it has the Veeam Backup Administrator role (standard local user, no groups)",
+  "captured_utc": "2026-09-25T21:17:56.259Z",
+  "duration_ms": 818,
+  "request": {
+    "method": "POST",
+    "path": "/v8/token",
+    "body": "username=DESKTOP-P55CDUM\\rp-veeam&grant_type=password&password=[REDACTED]"
+  },
+  "response": {
+    "status": 500,
+    "content_type": "",
+    "headers": {
+      "Date": "Fri, 25 Sep 2026 21:17:56 GMT",
+      "Content-Length": "0"
+    },
+    "body": null
+  }
+}

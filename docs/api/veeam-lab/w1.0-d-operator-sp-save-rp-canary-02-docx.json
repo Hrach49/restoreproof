@@ -1,0 +1,29 @@
+{
+  "note": "rpoperator: POST .../Documents/{documentId}/save {asZip:false}, rp-canary-02.docx",
+  "captured_utc": "2026-09-26T14:32:42.967Z",
+  "duration_ms": 3017,
+  "request": {
+    "method": "POST",
+    "path": "/v8/RestoreSessions/9742e148-01b0-4737-976a-6cf834686452/Organization/Sites/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689/Documents/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e6897eb0f08a-f57b-418c-8ca6-f2ab81297666f10ca0c2-1946-45df-97d4-17f81d23dcba/save",
+    "body": {
+      "asZip": false
+    }
+  },
+  "response": {
+    "status": 200,
+    "content_type": "application/octet-stream",
+    "headers": {
+      "Date": "Sat, 26 Sep 2026 14:32:45 GMT",
+      "Cache-Control": "no-store",
+      "Pragma": "no-cache",
+      "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+      "X-Content-Type-Options": "nosniff",
+      "X-XSS-Protection": "1; mode=block",
+      "X-Frame-Options": "SAMEORIGIN",
+      "Content-Length": "15690",
+      "Content-Type": "application/octet-stream",
+      "Content-Disposition": "attachment; filename=rp-canary-02.docx; filename*=UTF-8''rp-canary-02.docx"
+    },
+    "body": "<15690 bytes written to file>"
+  }
+}

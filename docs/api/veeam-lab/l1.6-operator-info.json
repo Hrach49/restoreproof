@@ -1,0 +1,33 @@
+{
+  "note": "rpoperator (operator token): GET /v8/Organization/LoggedInUser/OperatorInfo",
+  "captured_utc": "2026-09-26T14:25:15.633Z",
+  "duration_ms": 136,
+  "request": {
+    "method": "GET",
+    "path": "/v8/Organization/LoggedInUser/OperatorInfo",
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "content_type": "application/json; charset=utf-8",
+    "headers": {
+      "Date": "Sat, 26 Sep 2026 14:25:14 GMT",
+      "Cache-Control": "no-store",
+      "Pragma": "no-cache",
+      "Transfer-Encoding": "chunked",
+      "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+      "X-Content-Type-Options": "nosniff",
+      "X-XSS-Protection": "1; mode=block",
+      "X-Frame-Options": "SAMEORIGIN",
+      "Content-Type": "application/json; charset=utf-8"
+    },
+    "body": {
+      "isOperator": true,
+      "_links": {
+        "effectiveScope": {
+          "href": "/v8/organization/loggedInUser/effectiveScope"
+        }
+      }
+    }
+  }
+}

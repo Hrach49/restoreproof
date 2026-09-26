@@ -22,6 +22,15 @@ All licensed (Microsoft 365 Business Standard trial), usage location PL.
 | Test user, mail and OneDrive source | `alice@RestoreProofLab.onmicrosoft.com` |
 | Test user, mail source | `bob@RestoreProofLab.onmicrosoft.com` |
 | Mail restore target | `restoretest@RestoreProofLab.onmicrosoft.com` |
+| Veeam restore operator (L1.6), **no licence** | `rpoperator@RestoreProofLab.onmicrosoft.com` |
+
+`rpoperator` (object ID `5108276f-c9d8-4603-b742-e35c6fc3f4f7`, usage location PL) was created
+on 2026-09-26 through Graph for W1.0's operator-mode checks. Operator mode was not adopted
+(`docs/decisions.md`, 2026-09-26), so nothing in the product uses it. `restoretest`'s display
+name contains a line break ("Restore⏎Test"); Veeam shows it that way too.
+
+The Worker's own Veeam account, `rp-veeam`, is a local Windows account on the Veeam server,
+not a tenant user: see `docs/environment.md`.
 
 ## Restore targets
 
@@ -67,8 +76,33 @@ collection admin of it. The Worker uses app-only permissions (L1.5), which this 
 The Worker config keys `test_mailbox`, `test_site_id`, `test_library_id`,
 `test_onedrive_drive_id` and `test_onedrive_folder_id` (`docs/worker-config.md`) take the
 "Restore targets" values. Open point: the library has both a list ID and a drive ID, and `test_library_id` does not
-yet say which one it holds. Graph reads files by drive ID; what the Veeam restore body needs
-is settled by W1.0/W2.4, and the config doc is updated then.
+yet say which one it holds. Graph reads files by drive ID. W1.0 found that the Veeam restore
+body takes none of these IDs (`docs/api/veeam-feasibility.md` §5.5):
+
+- the mail body names the mailbox address and a folder name;
+- the SharePoint body names the site URL and the library's display name `RestoreTarget`;
+- the OneDrive body names the user's OneDrive (an object from the Veeam session) and the
+  folder name `RestoreTarget`.
+
+W2.4/W2.7 settle how the configured IDs map to these names, and update the config doc.
+
+## Veeam Restore Portal app and operator role (W1.0 / L1.6)
+
+Made on 2026-09-26 to test operator mode. Not used by the product (admin mode is the default,
+`docs/decisions.md` 2026-09-26). They are kept, because the operator refresh-token checks run
+until 2026-10-03. Delete the app and `rpoperator` after that, unless operator mode comes back.
+
+| | |
+|---|---|
+| RestoreProof Lab Restore Portal, application (client) ID | `65558485-d895-4274-8d89-f18c954530ab` |
+| Application object ID | `6862b27c-29d7-4d53-b1ed-9e4ec5b34ccf` |
+| Service principal object ID | `f1ec13c2-fa48-4282-ba50-435ca55eb54d` |
+| Sign-in audience | Multi-tenant (`AzureADMultipleOrgs`): Veeam's on-behalf-of call uses the `/common` authority and fails with AADSTS50194 on a single-tenant app |
+| Exposed API | `api://65558485-d895-4274-8d89-f18c954530ab`, delegated scope `access_as_user` (v2 tokens) |
+| Permissions | Delegated: Microsoft Graph `User.Read`, own `access_as_user`; tenant-wide admin consent |
+| Redirect URIs | SPA `https://localhost:4443/` (the portal), public client `http://localhost` (MSAL sign-in; the device-code flow is blocked by security defaults) |
+| Credential | Certificate `CN=RestoreProof Lab Restore Portal`, thumbprint `9E498EC6…` (in `docs/environment.md`) |
+| Veeam restore operator role | `RestoreProof Lab Operators` (ID `45106dff-0f96-4095-b30c-bf4417b852bd`): operator `rpoperator`; objects alice, bob, restoretest and the RestoreTest site |
 
 ## Seeder app
 

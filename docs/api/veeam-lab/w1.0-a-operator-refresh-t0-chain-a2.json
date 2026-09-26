@@ -1,0 +1,34 @@
+{
+  "note": "rpoperator: chain A2 refresh immediately after its grant (t0)",
+  "captured_utc": "2026-09-26T15:06:36.547Z",
+  "duration_ms": 9,
+  "request": {
+    "method": "POST",
+    "path": "/v8/token",
+    "body": "refresh_token=[REDACTED]&grant_type=refresh_token"
+  },
+  "response": {
+    "status": 200,
+    "content_type": "application/json; charset=utf-8",
+    "headers": {
+      "Date": "Sat, 26 Sep 2026 15:06:36 GMT",
+      "Cache-Control": "no-store",
+      "Pragma": "no-cache",
+      "Transfer-Encoding": "chunked",
+      "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+      "X-Content-Type-Options": "nosniff",
+      "X-XSS-Protection": "1; mode=block",
+      "X-Frame-Options": "SAMEORIGIN",
+      "Content-Type": "application/json; charset=utf-8"
+    },
+    "body": {
+      "access_token": "[REDACTED]",
+      "refresh_token": "[REDACTED]",
+      "token_type": "bearer",
+      "expires_in": 3600,
+      "userName": "5108276f-c9d8-4603-b742-e35c6fc3f4f7.bcd6bd1a-ea42-489d-aa28-2c19a44ad146",
+      ".issued": "2026-09-26T15:06:36.5544328Z",
+      ".expires": "2026-09-26T16:06:36.5544328Z"
+    }
+  }
+}

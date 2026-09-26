@@ -28,6 +28,7 @@ add_library(rpcore STATIC
     src/retry_policy.cpp
     src/secrets.cpp
     src/utf16.cpp
+    src/veeam_client.cpp
     src/version.cpp
 )
 target_include_directories(rpcore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -66,6 +67,8 @@ add_executable(rptests
     tests/retry_policy_test.cpp
     tests/secrets_test.cpp
     tests/smoke.cpp
+    tests/veeam_client_live_test.cpp
+    tests/veeam_client_test.cpp
     tests/version_test.cpp
 )
 # deps_test.cpp uses cpr and OpenSSL directly, so it links them itself.

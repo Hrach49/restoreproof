@@ -225,8 +225,10 @@ try {
         Done "$name granted"
     }
     foreach ($extra in $assigned | Where-Object { -not ($_.resourceId -eq $graphSp.id -and @($roleIds.Values) -contains $_.appRoleId) }) {
-        $label = ($graphSp.appRoles | Where-Object { $_.id -eq $extra.appRoleId } | Select-Object -First 1).value
-        if (-not $label) { $label = "$($extra.resourceDisplayName) role $($extra.appRoleId)" }
+        # A consent on another API (Exchange's full_access_as_app, SharePoint's Sites.FullControl.All)
+        # has no Graph role: reading .value off $null throws under strict mode, so test first.
+        $graphRole = $graphSp.appRoles | Where-Object { $_.id -eq $extra.appRoleId } | Select-Object -First 1
+        $label = if ($graphRole) { $graphRole.value } else { "$($extra.resourceDisplayName) role $($extra.appRoleId)" }
         Invoke-Graph DELETE "servicePrincipals/$spId/appRoleAssignments/$($extra.id)" | Out-Null
         Done "removed consent for $($label): not needed (docs/security/graph-permissions.md)"
     }
@@ -284,18 +286,23 @@ finally {
 # ---- 4. Exchange Online RBAC for Applications -------------------------------------------------------
 Step "Exchange Online: '$MailRoleName' on $RestoreTestUpn only (sign in as $AdminUpn)"
 # Import-Module takes the highest version. Veeam Backup for Microsoft 365 ships its own copy,
-# which Install-Module counts as installed but PowerShell 7 can't load.
-try { Import-Module ExchangeOnlineManagement -MinimumVersion 3.2.0 }
+# which Install-Module counts as installed but PowerShell 7 can't load. 3.7.2 is the first
+# version with Connect-ExchangeOnline -DisableWAM.
+try { Import-Module ExchangeOnlineManagement -MinimumVersion 3.7.2 }
 catch {
     throw "Can't load the ExchangeOnlineManagement module ($($_.Exception.Message)). Install your own copy: " +
-          "Install-Module ExchangeOnlineManagement -Scope CurrentUser -Force -AllowClobber (installs it next to Veeam's bundled one), then run this script again."
+          "Install-Module ExchangeOnlineManagement -Scope CurrentUser -Force -AllowClobber (installs it next to Veeam's bundled one, or upgrades an older copy), then run this script again."
 }
 # -DisableWAM: the Windows sign-in broker fails with a NullReferenceException when the module
 # runs from a script (no parent window); a browser sign-in works.
-Connect-ExchangeOnline -UserPrincipalName $AdminUpn -ShowBanner:$false -DisableWAM
+# Every Exchange call below carries -ErrorAction Stop: its cmdlets are functions in a generated
+# module, which don't see this script's $ErrorActionPreference when it is started as
+# .
+ew-worker-app.ps1 from an open window, so their errors would print and the run carry on.
+Connect-ExchangeOnline -UserPrincipalName $AdminUpn -ShowBanner:$false -DisableWAM -ErrorAction Stop
 try {
     if (-not (Get-ServicePrincipal -Identity $appId -ErrorAction SilentlyContinue)) {
-        New-ServicePrincipal -AppId $appId -ObjectId $spId -DisplayName $AppName | Out-Null
+        New-ServicePrincipal -AppId $appId -ObjectId $spId -DisplayName $AppName -ErrorAction Stop | Out-Null
         Done 'service principal pointer created'
     }
     else { Done 'service principal pointer exists' }
@@ -305,11 +312,11 @@ try {
     if (-not $scope) {
         # A new tenant is "dehydrated": it can't hold custom RBAC objects such as a management
         # scope until this one-time, tenant-wide and irreversible step (docs/decisions.md 2026-09-27).
-        if ((Get-OrganizationConfig).IsDehydrated) {
-            Enable-OrganizationCustomization
+        if ((Get-OrganizationConfig -ErrorAction Stop).IsDehydrated) {
+            Enable-OrganizationCustomization -ErrorAction Stop
             Done 'Enable-OrganizationCustomization run (once per tenant)'
         }
-        try { New-ManagementScope -Name $MailScopeName -RecipientRestrictionFilter $filter | Out-Null }
+        try { New-ManagementScope -Name $MailScopeName -RecipientRestrictionFilter $filter -ErrorAction Stop | Out-Null }
         catch {
             if ("$_" -notmatch 'Enable-OrganizationCustomization') { throw }
             throw 'Exchange has not finished Enable-OrganizationCustomization yet. Wait 15 to 60 minutes, then run this script again.'
@@ -317,27 +324,27 @@ try {
         Done "management scope '$MailScopeName' created"
     }
     elseif ($scope.RecipientFilter -ne $filter) {
-        Set-ManagementScope -Identity $MailScopeName -RecipientRestrictionFilter $filter
+        Set-ManagementScope -Identity $MailScopeName -RecipientRestrictionFilter $filter -ErrorAction Stop
         Done "management scope filter reset to: $filter"
     }
     else { Done "management scope '$MailScopeName' exists" }
 
     # Every assignment held by this app (the lab has few, so list them all).
-    $mineRoles = @(Get-ManagementRoleAssignment |
+    $mineRoles = @(Get-ManagementRoleAssignment -ErrorAction Stop |
             Where-Object { $_.Name -eq $MailAssignmentName -or ("$($_.RoleAssigneeType)" -eq 'ServicePrincipal' -and @($spId, $appId, $AppName) -contains "$($_.RoleAssigneeName)") })
     if (-not ($mineRoles | Where-Object Name -eq $MailAssignmentName)) {
-        New-ManagementRoleAssignment -Name $MailAssignmentName -App $spId -Role $MailRoleName -CustomResourceScope $MailScopeName | Out-Null
+        New-ManagementRoleAssignment -Name $MailAssignmentName -App $spId -Role $MailRoleName -CustomResourceScope $MailScopeName -ErrorAction Stop | Out-Null
         Done "role assignment '$MailAssignmentName' created"
     }
     else { Done "role assignment '$MailAssignmentName' exists" }
     foreach ($extra in $mineRoles | Where-Object Name -ne $MailAssignmentName) {
-        Remove-ManagementRoleAssignment -Identity $extra.Identity -Confirm:$false
+        Remove-ManagementRoleAssignment -Identity $extra.Identity -Confirm:$false -ErrorAction Stop
         Done "removed role assignment '$($extra.Name)' ($($extra.Role)): not needed"
     }
 
     Done 'Test-ServicePrincipalAuthorization (bypasses the 30 min to 2 h permission cache):'
     foreach ($mailbox in @($RestoreTestUpn, $AliceUpn)) {
-        Test-ServicePrincipalAuthorization -Identity $appId -Resource $mailbox |
+        Test-ServicePrincipalAuthorization -Identity $appId -Resource $mailbox -ErrorAction Stop |
             Select-Object @{ n = 'Mailbox'; e = { $mailbox } }, RoleName, AllowedResourceScope, InScope |
             Format-Table -AutoSize | Out-String -Stream | Where-Object { $_ } | ForEach-Object { Done $_ }
     }

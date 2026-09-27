@@ -20,6 +20,7 @@
 #include <optional>
 #include <regex>
 #include <set>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -133,13 +134,39 @@ std::string read_file(const std::filesystem::path& path)
     return {std::istreambuf_iterator<char>(file), {}};
 }
 
+struct IncludeDirective {
+    char kind; // '<' or '"'
+    std::string name;
+    bool operator==(const IncludeDirective&) const = default;
+};
+
+// The #include directives in `text`, one line at a time. Each line is matched
+// whole, so the result doesn't hang on whether `^` matches after a newline:
+// the standard makes that std::regex::multiline, and MSVC's STL changed its
+// default between toolsets.
+std::vector<IncludeDirective> include_directives(const std::string& text)
+{
+    const std::regex directive(R"re(\s*#\s*include\s*([<"])([^>"]+)[>"].*)re");
+    std::vector<IncludeDirective> out;
+    std::istringstream lines(text);
+    for (std::string line; std::getline(lines, line);) {
+        if (!line.empty() && line.back() == '\r') {
+            line.pop_back();
+        }
+        std::smatch match;
+        if (std::regex_match(line, match, directive)) {
+            out.push_back({match[1].str()[0], match[2].str()});
+        }
+    }
+    return out;
+}
+
 // Every Worker source file `start` reaches through #include, itself included:
 // <rp/...> resolves in include/, "..." next to the including file. System and
 // vcpkg headers are left out; they can't include Worker headers.
 std::set<std::filesystem::path> worker_includes(const std::filesystem::path& start)
 {
     const std::filesystem::path include_dir = std::filesystem::path{RP_SOURCE_DIR} / "include";
-    const std::regex directive(R"re(^\s*#\s*include\s*([<"])([^>"]+)[>"])re");
     std::set<std::filesystem::path> seen;
     std::vector<std::filesystem::path> todo{start.lexically_normal()};
     while (!todo.empty()) {
@@ -148,17 +175,12 @@ std::set<std::filesystem::path> worker_includes(const std::filesystem::path& sta
         if (!seen.insert(file).second) {
             continue;
         }
-        const std::string text = read_file(file);
-        for (auto it = std::sregex_iterator(text.begin(), text.end(), directive,
-                                            std::regex_constants::match_default);
-             it != std::sregex_iterator(); ++it) {
-            const std::string kind = (*it)[1];
-            const std::string name = (*it)[2];
+        for (const IncludeDirective& include : include_directives(read_file(file))) {
             std::filesystem::path target;
-            if (kind == "\"") {
-                target = file.parent_path() / name;
-            } else if (name.starts_with("rp/")) {
-                target = include_dir / name;
+            if (include.kind == '"') {
+                target = file.parent_path() / include.name;
+            } else if (include.name.starts_with("rp/")) {
+                target = include_dir / include.name;
             } else {
                 continue;
             }
@@ -177,6 +199,20 @@ std::string lower(std::string text)
 }
 
 } // namespace
+
+TEST_CASE("the include scan finds directives on every line, not only the first", "[connector]")
+{
+    // The CI toolset's std::regex reads `^` as the start of the text only, so a
+    // scan anchored with it found no #include after the first line and the
+    // test below failed there (PR #127).
+    const std::string text = "// comment first\n"
+                             "#include <rp/a.hpp>\r\n"
+                             "  #  include \"b.hpp\"\n"
+                             "#include <vector>\n"
+                             "int x; // #include <rp/not_a_directive.hpp>\n";
+    REQUIRE(include_directives(text) == std::vector<IncludeDirective>{
+                                            {'<', "rp/a.hpp"}, {'"', "b.hpp"}, {'<', "vector"}});
+}
 
 TEST_CASE("code holding an IConnector& reaches no Veeam header", "[connector]")
 {

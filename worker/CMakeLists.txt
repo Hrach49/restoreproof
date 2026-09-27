@@ -102,11 +102,11 @@ endfunction()
 
 rp_add_exe_test("rpworker --version prints the project version"
     ARGS --version EXIT_CODE 0 STDOUT ${PROJECT_VERSION} STDERR "")
-set(RP_USAGE "usage: rpworker --version | rpworker config check [--config <path>]")
+set(RP_USAGE "usage: rpworker --version | rpworker config check [--config <path>] | rpworker veeam list [--config <path>]")
 rp_add_exe_test("rpworker rejects unknown arguments"
-    ARGS --no-such-option EXIT_CODE 2 STDOUT "" STDERR "${RP_USAGE}")
+    ARGS --no-such-option EXIT_CODE 64 STDOUT "" STDERR "${RP_USAGE}")
 rp_add_exe_test("rpworker config without a subcommand prints usage"
-    ARGS config EXIT_CODE 2 STDOUT "" STDERR "${RP_USAGE}")
+    ARGS config EXIT_CODE 64 STDOUT "" STDERR "${RP_USAGE}")
 # Relative to the test's working directory, the build tree, where no config is.
 rp_add_exe_test("rpworker config check reports a missing config file"
     ARGS config check --config no-such-config.json EXIT_CODE 1 STDOUT ""

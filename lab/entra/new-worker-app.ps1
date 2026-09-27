@@ -323,7 +323,7 @@ try {
     else { Done "management scope '$MailScopeName' exists" }
 
     # Every assignment held by this app (the lab has few, so list them all).
-    $mineRoles = @(Get-ManagementRoleAssignment -ResultSize Unlimited |
+    $mineRoles = @(Get-ManagementRoleAssignment |
             Where-Object { $_.Name -eq $MailAssignmentName -or ("$($_.RoleAssigneeType)" -eq 'ServicePrincipal' -and @($spId, $appId, $AppName) -contains "$($_.RoleAssigneeName)") })
     if (-not ($mineRoles | Where-Object Name -eq $MailAssignmentName)) {
         New-ManagementRoleAssignment -Name $MailAssignmentName -App $spId -Role $MailRoleName -CustomResourceScope $MailScopeName | Out-Null

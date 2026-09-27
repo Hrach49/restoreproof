@@ -75,6 +75,7 @@ add_executable(rptests
     tests/connector_registry_test.cpp
     tests/connector_test.cpp
     tests/deps_test.cpp
+    tests/graph_client_live_test.cpp
     tests/graph_client_test.cpp
     tests/graph_errors_test.cpp
     tests/http_client_test.cpp

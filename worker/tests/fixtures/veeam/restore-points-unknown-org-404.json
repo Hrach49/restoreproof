@@ -1,0 +1,12 @@
+{
+  "source": "docs/api/veeam-lab/w1.4-rp-list-unknown-org.json",
+  "request": "GET /v8/RestorePoints?organizationId=00000000-0000-0000-0000-000000000001",
+  "status": 404,
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8"
+  },
+  "body": {
+    "message": "Organization does not exist: ID 00000000-0000-0000-0000-000000000001.",
+    "errorCode": "ResourceNotFound"
+  }
+}

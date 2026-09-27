@@ -196,6 +196,93 @@ TEST_CASE("a 5xx followed by a success returns the success", "[http]")
     CHECK(t.sleeps == std::vector<std::chrono::milliseconds>{1000ms, 2000ms});
 }
 
+// W1.5 (docs/decisions.md 2026-09-26): Veeam answers 500 for many requests
+// that will never succeed, so VeeamClient opts out of status retries and
+// classifies each 5xx itself.
+TEST_CASE("with retry_on_status off, a 5xx is returned after one attempt", "[http]")
+{
+    const int status = GENERATE(500, 502, 503, 504);
+    CAPTURE(status);
+    std::atomic<int> hits = 0;
+    rp::test::LocalHttpServer server;
+    server.server().Post("/token", [&](const httplib::Request&, httplib::Response& res) {
+        ++hits;
+        res.status = status;
+        res.set_content(R"({"message":"Restore session is stopped."})", "application/json");
+    });
+    TestClient t;
+    rp::RequestOptions options;
+    options.retry_on_status = false;
+
+    const rp::HttpResponse response =
+        t.client->post(server.url("/token"), "grant_type=password", "text/plain", options);
+
+    CHECK(response.status == status);
+    CHECK(response.body == R"({"message":"Restore session is stopped."})");
+    CHECK(hits == 1);
+    CHECK(t.sleeps.empty());
+    CHECK(count_of(t.log(), "attempt 1/5: HTTP " + std::to_string(status) + " in ") == 1);
+    CHECK(count_of(t.log(), "retrying") == 0);
+}
+
+TEST_CASE("with retry_on_status off, transport errors are still retried", "[http]")
+{
+    TestClient t;
+    rp::HttpRequest request;
+    request.url = "http://127.0.0.1:" + std::to_string(rp::test::closed_local_port()) + "/x";
+    request.retry_on_status = false;
+
+    try {
+        t.client->send(request);
+        FAIL("send() returned for an unreachable host");
+    } catch (const rp::HttpError& e) {
+        CHECK(e.error() == rp::TransportError::connect);
+        CHECK(e.attempts() == 5);
+    }
+    CHECK(t.sleeps == std::vector<std::chrono::milliseconds>{1000ms, 2000ms, 4000ms, 8000ms});
+}
+
+TEST_CASE("max_attempts caps the attempts; at 1 the error names no count", "[http]")
+{
+    // VeeamClient does its own retrying (W1.5 review): it sends with
+    // max_attempts 1 and counts the attempts itself.
+    const int max_attempts = GENERATE(1, 2);
+    CAPTURE(max_attempts);
+    TestClient t;
+    rp::HttpRequest request;
+    request.url = "http://127.0.0.1:" + std::to_string(rp::test::closed_local_port()) + "/x";
+    request.max_attempts = max_attempts;
+
+    try {
+        t.client->send(request);
+        FAIL("send() returned for an unreachable host");
+    } catch (const rp::HttpError& e) {
+        CHECK(e.error() == rp::TransportError::connect);
+        CHECK(e.attempts() == max_attempts);
+        const std::string what = e.what();
+        CAPTURE(what);
+        if (max_attempts == 1) {
+            CHECK(what.starts_with("GET " + request.url + ": could not connect: "));
+        } else {
+            CHECK(what.starts_with("GET " + request.url + ": could not connect after 2 attempts: "));
+        }
+    }
+    CHECK(t.sleeps.size() == static_cast<std::size_t>(max_attempts - 1));
+}
+
+TEST_CASE("max_attempts outside 1 to 5 is refused before sending", "[http]")
+{
+    const int max_attempts = GENERATE(-1, 0, 6);
+    CAPTURE(max_attempts);
+    TestClient t;
+    rp::HttpRequest request;
+    request.url = "http://127.0.0.1:" + std::to_string(rp::test::closed_local_port()) + "/x";
+    request.max_attempts = max_attempts;
+
+    CHECK_THROWS_AS(t.client->send(request), std::invalid_argument);
+    CHECK(rp::HttpRequest{}.max_attempts == rp::kMaxHttpAttempts);
+}
+
 TEST_CASE("a request that outlives its timeout is retried as a timeout", "[http]")
 {
     // The handler holds each request until the gate opens or 1.5 s pass; the
@@ -644,6 +731,27 @@ TEST_CASE("the IHttpClient helpers build the request and call send", "[http]")
     CHECK(fake.sent[3].timeout == 120s);
 }
 
+TEST_CASE("the IHttpClient helpers retry on status unless told not to", "[http]")
+{
+    RecordingClient fake;
+    rp::RequestOptions no_status_retry;
+    no_status_retry.retry_on_status = false;
+
+    fake.get("https://h/a");
+    fake.get("https://h/a", no_status_retry);
+    fake.post("https://h/b", "x=1", "text/plain", no_status_retry);
+    fake.post_multipart("https://h/c", {{"f", "v", "", ""}}, no_status_retry);
+    fake.del("https://h/d", no_status_retry);
+
+    REQUIRE(fake.sent.size() == 5);
+    CHECK(rp::HttpRequest{}.retry_on_status);
+    CHECK(fake.sent[0].retry_on_status);
+    for (std::size_t i = 1; i < fake.sent.size(); ++i) {
+        CAPTURE(i);
+        CHECK_FALSE(fake.sent[i].retry_on_status);
+    }
+}
+
 TEST_CASE("to_string names each HTTP method", "[http]")
 {
     const auto [method, name] = GENERATE(table<rp::HttpMethod, std::string_view>({
@@ -700,8 +808,33 @@ TEST_CASE("TLS verification is on with or without a custom CA file", "[http]")
     CHECK(options.verify_peer);
     CHECK(options.verify_host);
     CHECK_FALSE(options.ssl_no_revoke);
+    CHECK(options.pinned_public_key.empty());
     // The exact UTF-8 bytes: no conversion through the ANSI code page.
     CHECK(options.ca_info == ca_file.value_or(""));
+}
+
+// W1.5: the one relaxation, for Veeam's SAN-less certificate (docs/decisions.md
+// 2026-09-26). A pinned key turns off the host-name check and nothing else,
+// and only together with a CA file, so peer verification still builds the
+// chain against it.
+TEST_CASE("a pinned key replaces only the host-name check, and needs a CA file", "[http]")
+{
+    const std::string pin = "jSOf+h9iDQY3dg41YdNXwUU7XTKxMeNbPlcqP1xhD0Q=";
+
+    const cpr::SslOptions options = rp::detail::make_ssl_options("C:\\certs\\veeam.pem", pin);
+
+    CHECK(options.verify_peer);
+    CHECK_FALSE(options.verify_host);
+    CHECK_FALSE(options.ssl_no_revoke);
+    CHECK(options.pinned_public_key == "sha256//" + pin);
+    CHECK(options.ca_info == "C:\\certs\\veeam.pem");
+
+    // Without a CA file, peer verification would use the Windows store, and a
+    // store-trusted certificate for any host would do with the host check off.
+    CHECK_THROWS_AS(rp::detail::make_ssl_options(std::nullopt, pin), std::invalid_argument);
+    // An empty pin is no pin: it must not turn the host check off.
+    CHECK_THROWS_AS(rp::detail::make_ssl_options("C:\\certs\\veeam.pem", std::string{}),
+                    std::invalid_argument);
 }
 
 namespace {
@@ -716,23 +849,35 @@ namespace {
 // verification, in-memory CA bundles (only ca_file is a way to add trust),
 // and verify_status: OCSP stapling stays at cpr's default, off, on purpose
 // (many servers, a self-signed Veeam one included, don't staple), so nothing
-// should touch it.
-constexpr std::array<std::string_view, 16> kTlsBannedNames{
-    "VerifySsl",        "VerifyPeer",       "VerifyHost",          "NoRevoke",
-    "ssl_no_revoke",    "CURLOPT_SSL_",     "CURLOPT_PROXY_SSL_",  "CURLSSLOPT_",
-    "curl_easy_setopt", "ssl_ctx_callback", "SslCtxCallback",      "CURLOPT_CAINFO_BLOB",
-    "ca_info_blob",     "CaInfoBlob",       "ca_buffer",           "verify_status",
+// should touch it. The pinned public key too: the host-name check is off
+// exactly while one is set, so the pin is written in one reviewed statement
+// (below) and nowhere else, and nothing can clear or replace it.
+constexpr std::array<std::string_view, 19> kTlsBannedNames{
+    "VerifySsl",         "VerifyPeer",       "VerifyHost",          "NoRevoke",
+    "ssl_no_revoke",     "CURLOPT_SSL_",     "CURLOPT_PROXY_SSL_",  "CURLSSLOPT_",
+    "curl_easy_setopt",  "ssl_ctx_callback", "SslCtxCallback",      "CURLOPT_CAINFO_BLOB",
+    "ca_info_blob",      "CaInfoBlob",       "ca_buffer",           "verify_status",
+    "pinned_public_key", "PinnedPublicKey",  "PINNEDPUBLICKEY",
 };
 
 // SslOptions members that may only ever be set to exactly `true`.
 constexpr std::array<std::string_view, 2> kMustBeTrue{"verify_peer", "verify_host"};
 
-// The one raw curl call allowed, whitespace removed: revocation checked on a
-// best-effort basis with a CA file (a revoked certificate is still rejected),
-// which cpr has no setting for. Only src/http_client.cpp may hold it, once.
-constexpr std::string_view kAllowedRevokeBestEffort =
+// The reviewed exceptions, whitespace removed. Only src/http_client.cpp may
+// hold them, each exactly once.
+//  - The one raw curl call: revocation checked on a best-effort basis with a
+//    CA file (a revoked certificate is still rejected), which cpr has no
+//    setting for (W1.3).
+//  - The pin, and the host-name check off exactly when a public key is
+//    pinned, for Veeam's SAN-less certificate (W1.5, docs/decisions.md
+//    2026-09-26). make_ssl_options sets the pin only together with a CA file,
+//    so the chain is still verified.
+constexpr std::array<std::string_view, 3> kAllowedTlsStatements{
     "curl_easy_setopt(session.GetCurlHolder()->handle,CURLOPT_SSL_OPTIONS,CURLSSLOPT_NATIVE_CA|"
-    "CURLSSLOPT_REVOKE_BEST_EFFORT);";
+    "CURLSSLOPT_REVOKE_BEST_EFFORT);",
+    "options.pinned_public_key=\"sha256//\"+*public_key_pin;",
+    "options.verify_host=options.pinned_public_key.empty();",
+};
 
 // `source` with whitespace removed.
 std::string compact(std::string_view source)
@@ -750,9 +895,11 @@ std::string compact(std::string_view source)
 std::vector<std::string> find_tls_disablers(std::string_view source)
 {
     std::string compact = ::compact(source);
-    for (std::size_t at = compact.find(kAllowedRevokeBestEffort); at != std::string::npos;
-         at = compact.find(kAllowedRevokeBestEffort, at)) {
-        compact.erase(at, kAllowedRevokeBestEffort.size());
+    for (std::string_view allowed : kAllowedTlsStatements) {
+        for (std::size_t at = compact.find(allowed); at != std::string::npos;
+             at = compact.find(allowed, at)) {
+            compact.erase(at, allowed.size());
+        }
     }
     std::vector<std::string> found;
     for (std::string_view name : kTlsBannedNames) {
@@ -800,6 +947,19 @@ TEST_CASE("the TLS scan flags each way to weaken verification", "[http]")
         "curl_easy_setopt(other->handle, CURLOPT_SSL_OPTIONS,\n"
         "    CURLSSLOPT_NATIVE_CA | CURLSSLOPT_REVOKE_BEST_EFFORT);",
         // Revocation opt-outs, context callbacks, in-memory CAs.
+        // The pin exception, changed: another object, the test inverted, or
+        // tied to something other than the pin.
+        "o.verify_host = o.pinned_public_key.empty();",
+        "options.verify_host = !options.pinned_public_key.empty();",
+        "options.verify_host = options.pinned_public_key.empty() || relaxed;",
+        "options.verify_host = options.ca_info.empty();",
+        "options.verify_host = options.pinned_public_key.empty();\n"
+        "options.verify_peer = options.pinned_public_key.empty();",
+        // The pin itself cleared, replaced or set another way.
+        "options.pinned_public_key.clear();", "o.pinned_public_key = pin;",
+        "options.pinned_public_key = \"sha256//\" + *public_key_pin;\n"
+        "options.pinned_public_key = \"\";",
+        "cpr::ssl::PinnedPublicKey{p}", "CURLOPT_PINNEDPUBLICKEY",
         "o.ssl_no_revoke = true;", "cpr::ssl::NoRevoke{true}", "o.ssl_ctx_callback = f;",
         "cpr::ssl::SslCtxCallback{f}", "CURLOPT_CAINFO_BLOB", "o.ca_info_blob = pem;",
         "cpr::ssl::CaInfoBlob{pem}", "o.ca_buffer = pem;");
@@ -814,6 +974,8 @@ TEST_CASE("the TLS scan passes what make_ssl_options needs", "[http]")
         "cpr::SslOptions options;", "options.ca_info = *ca_file;", "session.SetSslOptions(ssl);",
         "curl_easy_setopt(session.GetCurlHolder()->handle, CURLOPT_SSL_OPTIONS,\n"
         "                 CURLSSLOPT_NATIVE_CA | CURLSSLOPT_REVOKE_BEST_EFFORT);",
+        "options.verify_host = options.pinned_public_key.empty();",
+        "options.pinned_public_key = \"sha256//\" + *public_key_pin;",
         "// CURLOPT_CAINFO, which curl's Schannel backend reads as UTF-8");
     CAPTURE(legitimate);
     CHECK(find_tls_disablers(legitimate).empty());
@@ -823,7 +985,8 @@ TEST_CASE("no Worker source turns TLS verification off", "[http]")
 {
     const std::filesystem::path root{RP_SOURCE_DIR};
     std::size_t scanned = 0;
-    std::vector<std::string> allowed_in;
+    // Per entry of kAllowedTlsStatements, the files holding it (once per hit).
+    std::array<std::vector<std::string>, kAllowedTlsStatements.size()> allowed_in;
     for (const char* dir : {"src", "include", "app"}) {
         for (const auto& entry : std::filesystem::recursive_directory_iterator(root / dir)) {
             const std::filesystem::path& path = entry.path();
@@ -837,10 +1000,12 @@ TEST_CASE("no Worker source turns TLS verification off", "[http]")
             CAPTURE(path.generic_string());
             CHECK(find_tls_disablers(text) == std::vector<std::string>{});
             const std::string compact_text = compact(text);
-            for (std::size_t at = compact_text.find(kAllowedRevokeBestEffort);
-                 at != std::string::npos;
-                 at = compact_text.find(kAllowedRevokeBestEffort, at + 1)) {
-                allowed_in.push_back(path.lexically_relative(root).generic_string());
+            for (std::size_t i = 0; i < kAllowedTlsStatements.size(); ++i) {
+                const std::string_view allowed = kAllowedTlsStatements[i];
+                for (std::size_t at = compact_text.find(allowed); at != std::string::npos;
+                     at = compact_text.find(allowed, at + 1)) {
+                    allowed_in[i].push_back(path.lexically_relative(root).generic_string());
+                }
             }
             ++scanned;
         }
@@ -848,8 +1013,10 @@ TEST_CASE("no Worker source turns TLS verification off", "[http]")
     // The scan saw the HTTP client itself, so it isn't looking in the wrong place.
     CHECK(scanned >= 10);
     CHECK(std::filesystem::exists(root / "src" / "http_client.cpp"));
-    // The one raw curl call is where it belongs, and only there.
-    CHECK(allowed_in == std::vector<std::string>{"src/http_client.cpp"});
+    // Each reviewed exception is where it belongs, once, and nowhere else.
+    for (const std::vector<std::string>& files : allowed_in) {
+        CHECK(files == std::vector<std::string>{"src/http_client.cpp"});
+    }
 }
 
 TEST_CASE("a failed attempt is described by what went wrong", "[http]")
@@ -901,10 +1068,12 @@ TEST_CASE("curl errors map to the retry policy's transport errors", "[http]")
         {E::COULDNT_RESOLVE_PROXY, T::connect},
         {E::COULDNT_RESOLVE_HOST, T::connect},
         {E::COULDNT_CONNECT, T::connect},
-        {E::SEND_ERROR, T::connect},
-        {E::RECV_ERROR, T::connect},
-        {E::GOT_NOTHING, T::connect},
-        {E::PARTIAL_FILE, T::connect},
+        // After the request went out: the server may have acted on it, so a
+        // caller that must not send twice can tell these from `connect`.
+        {E::SEND_ERROR, T::dropped},
+        {E::RECV_ERROR, T::dropped},
+        {E::GOT_NOTHING, T::dropped},
+        {E::PARTIAL_FILE, T::dropped},
         {E::NO_CONNECTION_AVAILABLE, T::connect},
         {E::OPERATION_TIMEDOUT, T::timeout},
         // Schannel's code for a connection dropped mid-handshake, as well as

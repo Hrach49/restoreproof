@@ -30,6 +30,7 @@ namespace rp {
 //   sample_od                no        5        integer, 0..100
 //   log_level                no        "info"   trace, debug, info, warn, error, critical, off
 //   veeam_ca_file            no        (none)   absolute path of a readable file (3)
+//   veeam_cert_sha256        no        (none)   64 hex digits; needs veeam_ca_file (4)
 //
 // (1) Printable ASCII only, with no user name, password, query or fragment:
 //     `config check` prints it.
@@ -45,6 +46,16 @@ namespace rp {
 //     working directory is System32, so relative and drive-relative paths are
 //     rejected. parse_config checks the form; load_config also checks the file
 //     can be opened for reading.
+// (4) The SHA-256 of Veeam's REST certificate, as Windows shows it: 64
+//     hexadecimal digits in any case, with no separators (PowerShell's
+//     GetCertHashString('SHA256')). Requires veeam_ca_file, which must hold
+//     that certificate in PEM. With both set, the Worker trusts exactly that
+//     certificate's public key and skips only the host-name check, which a
+//     certificate with no subject alternative name (Veeam's default,
+//     CN=Veeam Software) can never pass; the chain and validity dates are
+//     still checked against veeam_ca_file. Not a secret. parse_config checks
+//     the form and that veeam_ca_file is set; load_config also checks that
+//     veeam_ca_file holds the certificate (rp/cert_pin.hpp).
 // No string value may contain a control character: ASCII (below 0x20, 0x7F),
 // C1 (U+0080-U+009F), U+2028, U+2029 or a bidi control (U+200E, U+200F,
 // U+202A-U+202E, U+2066-U+2069, U+061C).
@@ -69,6 +80,9 @@ struct Config {
     std::string log_level = "info";
     // UTF-8; nullopt when absent (trust the Windows certificate store).
     std::optional<std::string> veeam_ca_file;
+    // As written in the file (either case); nullopt when absent (the host
+    // name is checked).
+    std::optional<std::string> veeam_cert_sha256;
 };
 
 // A config file that can't be read, isn't valid JSON or breaks a rule above,
@@ -92,8 +106,9 @@ private:
 Config parse_config(std::string_view json_text);
 
 // Reads the file at `path` and parses it. Throws ConfigError, with the path in
-// the message, when the file can't be read, fails validation, or names a
-// veeam_ca_file that can't be opened for reading.
+// the message, when the file can't be read, fails validation, names a
+// veeam_ca_file that can't be opened for reading, or has a veeam_cert_sha256
+// whose certificate veeam_ca_file doesn't hold.
 Config load_config(const std::filesystem::path& path);
 
 // %ProgramData% (FOLDERID_ProgramData), e.g. C:\ProgramData. Throws

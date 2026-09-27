@@ -1,0 +1,7 @@
+{
+  "source": "docs/api/veeam-lab/l1.6-admin-token-wrong-password.json",
+  "request": "POST /v8/token",
+  "status": 500,
+  "headers": {},
+  "body": null
+}

@@ -2,6 +2,7 @@
 #include <rp/config_check.hpp>
 #include <rp/secrets.hpp>
 
+#include "test_certs.hpp"
 #include "test_support.hpp"
 
 #include <catch2/catch_test_macros.hpp>
@@ -51,10 +52,12 @@ std::string utf8(const std::filesystem::path& path)
 }
 
 // The output of a successful check of kConfigJson at `path`, with the three
-// secret lines given and, when `ca_file` is set, veeam_ca_file added.
+// secret lines given and, when `ca_file` and `cert_sha256` are set,
+// veeam_ca_file and veeam_cert_sha256 added.
 std::string expected_output(const std::filesystem::path& path, std::string_view user,
                             std::string_view password, std::string_view graph,
-                            std::string_view ca_file = "(not set)")
+                            std::string_view ca_file = "(not set)",
+                            std::string_view cert_sha256 = "(not set)")
 {
     return "config file: " + utf8(path) + "\n" +
            "cloud_url                 https://cloud.example.invalid\n"
@@ -75,6 +78,7 @@ std::string expected_output(const std::filesystem::path& path, std::string_view 
            "log_level                 warn\n"
            "veeam_ca_file             " +
            std::string{ca_file} + "\n" +
+           "veeam_cert_sha256         " + std::string{cert_sha256} + "\n" +
            "secrets (environment variables; values are never shown):\n"
            "RP_VEEAM_USERNAME         " +
            std::string{user} + "\n" + "RP_VEEAM_PASSWORD         " + std::string{password} +
@@ -290,6 +294,52 @@ TEST_CASE("rpworker config check prints veeam_ca_file, outside the ANSI code pag
     REQUIRE(result.err.empty());
     REQUIRE(result.out == expected_output(path, "(not set)", "(not set)", "(not set)", ca_arg));
     REQUIRE(result.exit_code == 0);
+}
+
+TEST_CASE("rpworker config check prints veeam_cert_sha256 after veeam_ca_file", "[config_check]")
+{
+    const rp::test::TempDir dir;
+    const rp::test::Cert cert =
+        rp::test::make_cert("Veeam Software", rp::test::Role::veeam_default);
+    const std::string ca_arg = utf8(dir.write("veeam-rest.pem", cert.pem().cert));
+    const std::string sha256 = rp::test::cert_sha256_hex(cert);
+    std::string text = kConfigJson;
+    text.insert(1, "\"veeam_ca_file\": " + nlohmann::json(ca_arg).dump() +
+                       ", \"veeam_cert_sha256\": \"" + sha256 + "\",");
+    const auto path = dir.write("config.json", text);
+    const rp::test::ScopedEnv user(rp::kEnvVeeamUsername, std::nullopt);
+    const rp::test::ScopedEnv password(rp::kEnvVeeamPassword, std::nullopt);
+    const rp::test::ScopedEnv graph(rp::kEnvGraphClientSecret, std::nullopt);
+
+    const Run result = run(Args{"check"}, path);
+    REQUIRE(result.err.empty());
+    REQUIRE(result.out ==
+            expected_output(path, "(not set)", "(not set)", "(not set)", ca_arg, sha256));
+    REQUIRE(result.exit_code == 0);
+}
+
+TEST_CASE("rpworker config check reports a veeam_ca_file that doesn't hold the pinned "
+          "certificate",
+          "[config_check]")
+{
+    const rp::test::TempDir dir;
+    const rp::test::Cert held =
+        rp::test::make_cert("Veeam Software", rp::test::Role::veeam_default);
+    const rp::test::Cert other =
+        rp::test::make_cert("Veeam Software", rp::test::Role::veeam_default);
+    const std::string ca_arg = utf8(dir.write("veeam-rest.pem", held.pem().cert));
+    std::string text = kConfigJson;
+    text.insert(1, "\"veeam_ca_file\": " + nlohmann::json(ca_arg).dump() +
+                       ", \"veeam_cert_sha256\": \"" + rp::test::cert_sha256_hex(other) + "\",");
+    const std::string path_arg = utf8(dir.write("config.json", text));
+
+    PathSpy spy;
+    const Run result = run(Args{"check", "--config", path_arg}, spy.provider());
+    REQUIRE(result.exit_code == 1);
+    REQUIRE(result.out.empty());
+    REQUIRE(result.err == "config error: " + path_arg +
+                              ": config key \"veeam_cert_sha256\": veeam_ca_file holds no "
+                              "certificate whose SHA-256 is veeam_cert_sha256\n");
 }
 
 TEST_CASE("rpworker config check reports an empty --config path as unreadable", "[config_check]")

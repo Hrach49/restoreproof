@@ -1,0 +1,9 @@
+{
+  "source": "docs/api/veeam-lab/w1.4-auth-pre-refresh-access.json",
+  "request": "GET /v8/Organizations?limit=1",
+  "status": 401,
+  "headers": {
+    "WWW-Authenticate": "Bearer error=\"invalid_token\""
+  },
+  "body": null
+}

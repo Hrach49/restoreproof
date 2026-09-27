@@ -63,12 +63,27 @@ struct HttpRequest {
     std::vector<MultipartPart> parts;
     // For the whole attempt: connect, send, and receive. Each retry gets it again.
     std::chrono::milliseconds timeout = kDefaultHttpTimeout;
+    // Whether a 5xx is retried. False: every response, 5xx included, is
+    // returned after its attempt, for a caller that classifies server errors
+    // itself (VeeamClient: Veeam answers 500 to many requests that will never
+    // succeed). Transport errors (connect, timeout, dropped handshake) are
+    // retried either way, and some of those (a timeout, a connection dropped
+    // after the request went out) can follow a request the server already
+    // acted on: this flag alone doesn't make a request run at most once, as a
+    // restore must (docs/decisions.md, W1.3's open point).
+    bool retry_on_status = true;
+    // Attempts at most, 1 to kMaxHttpAttempts (send() throws
+    // std::invalid_argument otherwise). 1: a caller that retries itself
+    // (VeeamClient) gets every failure after one attempt, and the HttpError
+    // message carries no attempt count.
+    int max_attempts = kMaxHttpAttempts;
 };
 
 // Per-call extras for the IHttpClient helpers.
 struct RequestOptions {
     HttpHeaders headers;
     std::chrono::milliseconds timeout = kDefaultHttpTimeout; // raise it for long polls
+    bool retry_on_status = true;                             // see HttpRequest
 };
 
 struct HttpResponse {
@@ -79,8 +94,10 @@ struct HttpResponse {
 
 // A request that got no usable response: every attempt failed with a transport
 // error or a 5xx, or one failed in a way that isn't retried (a certificate
-// failure, a malformed URL), or the URL wasn't http:// or https:// and nothing
-// was sent (other, attempts() 0). Any other status (2xx, 3xx, 4xx) is returned, not thrown.
+// failure, a malformed URL), or nothing was sent: the URL wasn't http:// or
+// https:// (other, attempts() 0) or the pinned certificate can't be used
+// (tls, attempts() 0). Any other status (2xx, 3xx, 4xx, and 5xx with
+// retry_on_status off) is returned, not thrown.
 class HttpError : public std::runtime_error {
 public:
     // `message` goes through rp::redact(), so what() never holds a secret.
@@ -129,6 +146,16 @@ struct HttpClientOptions {
     // file that can't be read is a TLS failure. There is no way to turn
     // verification off.
     std::optional<std::string> ca_file;
+    // SHA-256 of the one certificate the server may present, as 64 hex digits
+    // (Config::veeam_cert_sha256), for Veeam's default REST certificate,
+    // which names no host (no subject alternative name). Needs `ca_file`,
+    // which must hold that certificate: the chain is still verified against
+    // it, its public key is pinned (rp::public_key_pin), and only the
+    // host-name check is skipped. When the pin can't be computed (no ca_file,
+    // or the file doesn't hold that certificate), send() throws HttpError
+    // (tls, attempts() 0) without sending anything. Unset: the host name is
+    // checked as usual.
+    std::optional<std::string> pinned_cert_sha256;
     // Where the per-attempt debug lines go; null = spdlog::default_logger() at
     // the time of the call, and if that is null too (after spdlog::drop_all()
     // or shutdown()), nothing is logged.
@@ -155,7 +182,11 @@ struct HttpClientOptions {
 //    before anything is sent, so a URL from a server response can't read a
 //    local file or open an FTP, SMB or LDAP connection.
 //  - Redirects are never followed: a 3xx is returned to the caller.
-//  - TLS peer and host verification are always on.
+//  - TLS peer verification is always on, and so is host verification unless
+//    a certificate is pinned (HttpClientOptions::pinned_cert_sha256).
+//  - A request with retry_on_status off gets any status back after one
+//    attempt; transport errors are still retried, up to the request's
+//    max_attempts.
 //  - One debug line per attempt, redacted with rp::redact(); headers and
 //    bodies are never logged.
 // send() may be called from several threads at once if the injected options
@@ -168,6 +199,9 @@ public:
 
 private:
     HttpClientOptions options_;
+    // From pinned_cert_sha256: the public-key pin, or why there is none.
+    std::optional<std::string> public_key_pin_;
+    std::optional<std::string> pin_error_;
 };
 
 } // namespace rp

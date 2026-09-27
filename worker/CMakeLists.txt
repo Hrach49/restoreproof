@@ -19,6 +19,7 @@ enable_testing()
 # rpcore: static library holding all Worker logic. rpworker (the exe) and
 # rptests both link it; coverage is measured on its sources (src/, include/).
 add_library(rpcore STATIC
+    src/cert_pin.cpp
     src/cli.cpp
     src/config.cpp
     src/config_check.cpp
@@ -27,6 +28,7 @@ add_library(rpcore STATIC
     src/retry_policy.cpp
     src/secrets.cpp
     src/utf16.cpp
+    src/veeam_client.cpp
     src/version.cpp
 )
 target_include_directories(rpcore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -42,8 +44,9 @@ target_link_libraries(rpcore
 # error in rpcore, so a value added to an enum such as HttpMethod can't fall
 # through to another value's behaviour unnoticed.
 target_compile_options(rpcore PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/we4062>)
-# program_data_dir() calls SHGetKnownFolderPath (shell32) and CoTaskMemFree (ole32).
-target_link_libraries(rpcore PRIVATE shell32 ole32)
+# program_data_dir() calls SHGetKnownFolderPath (shell32) and CoTaskMemFree (ole32);
+# public_key_pin() reads the CA file with CryptQueryObject (crypt32), as curl does.
+target_link_libraries(rpcore PRIVATE shell32 ole32 crypt32)
 
 # rpworker: the Worker exe. main() lives in app/ and only hands argv to
 # rp::run_cli; all parsing is in rpcore, where rptests can reach it
@@ -54,6 +57,7 @@ add_executable(rpworker
 target_link_libraries(rpworker PRIVATE rpcore)
 
 add_executable(rptests
+    tests/cert_pin_test.cpp
     tests/cli_test.cpp
     tests/config_check_test.cpp
     tests/config_test.cpp
@@ -64,6 +68,8 @@ add_executable(rptests
     tests/retry_policy_test.cpp
     tests/secrets_test.cpp
     tests/smoke.cpp
+    tests/veeam_client_live_test.cpp
+    tests/veeam_client_test.cpp
     tests/version_test.cpp
 )
 # deps_test.cpp uses cpr and OpenSSL directly, so it links them itself.
@@ -76,6 +82,8 @@ target_link_libraries(rptests PRIVATE httplib::httplib)
 target_compile_definitions(rptests PRIVATE RP_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
 # config_test.cpp parses the shipped example, so it can't drift from the rules.
 target_compile_definitions(rptests PRIVATE RP_CONFIG_EXAMPLE="${CMAKE_CURRENT_SOURCE_DIR}/config.example.json")
+# Recorded service responses (tests/fixtures/<service>/), served by FakeHttpClient.
+target_compile_definitions(rptests PRIVATE RP_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")
 
 include(Catch)
 catch_discover_tests(rptests)

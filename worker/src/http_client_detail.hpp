@@ -18,8 +18,12 @@ namespace rp::detail {
 // revocation opt-out, and, when `ca_file` (UTF-8) is set, that PEM bundle as
 // CURLOPT_CAINFO, which curl's Schannel backend verifies against alone. (With
 // a CA file, perform() then makes the revocation check best effort, which
-// SslOptions can't express.)
-cpr::SslOptions make_ssl_options(const std::optional<std::string>& ca_file);
+// SslOptions can't express.) With `public_key_pin` (rp::public_key_pin's
+// base64), that key is pinned and the host-name check is off; the pin
+// requires a CA file, so the chain is still verified against it, and an
+// empty pin is refused: both throw std::invalid_argument.
+cpr::SslOptions make_ssl_options(const std::optional<std::string>& ca_file,
+                                 const std::optional<std::string>& public_key_pin = std::nullopt);
 
 // How a failed attempt is retried (rp::retry_policy): which TransportError a
 // curl error code is.

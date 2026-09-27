@@ -41,6 +41,7 @@ TEST_CASE("is_retryable retries connection errors, timeouts and failed handshake
 {
     const auto [error, expected] = GENERATE(table<TransportError, bool>({
         {TransportError::connect, true},
+        {TransportError::dropped, true},
         {TransportError::timeout, true},
         {TransportError::handshake, true},
         {TransportError::tls, false},
@@ -77,6 +78,7 @@ TEST_CASE("should_retry never retries a non-retryable outcome", "[retry]")
 TEST_CASE("should_retry stops a retryable outcome after the fifth attempt", "[retry]")
 {
     const AttemptOutcome outcome = GENERATE(transport_error(TransportError::connect),
+                                            transport_error(TransportError::dropped),
                                             transport_error(TransportError::timeout),
                                             transport_error(TransportError::handshake),
                                             http_status(503));

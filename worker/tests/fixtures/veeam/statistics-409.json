@@ -1,0 +1,11 @@
+{
+  "source": "docs/api/veeam-lab/w1.4-session-statistics-working-409.json",
+  "request": "GET /v8/RestoreSessions/6ee50a66-c46f-4200-b793-c03f8bcbbb8b/Statistics",
+  "status": 409,
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8"
+  },
+  "body": {
+    "message": "Unable to provide statistics until the restore session completes."
+  }
+}

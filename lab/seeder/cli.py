@@ -52,6 +52,10 @@ def _parser() -> argparse.ArgumentParser:
     )
     worker.add_argument("--client-id", help="Worker app client ID (else RP_LAB_WORKER_CLIENT_ID, else tenant.py)")
     worker.add_argument("--pfx", type=Path, help=f"the app's certificate (default: {default_pfx_path()})")
+    worker.add_argument(
+        "--seeder-client-id", help="seeder app client ID, to sign in as alice (else RP_LAB_CLIENT_ID, else tenant.py)"
+    )
+    worker.add_argument("--auth", choices=MODES, default="browser", help="alice's sign-in flow (default: browser)")
     return parser
 
 
@@ -71,6 +75,8 @@ def _run(args: argparse.Namespace) -> int:
             pfx_path=args.pfx or default_pfx_path(),
             read_password=read_generic_credential,
             transport=RequestsTransport(),
+            alice_token=SignIn(resolve_client_id(args.seeder_client_id), tenant.TENANT_ID, mode=args.auth, out=print)
+            .token_provider(tenant.ALICE_UPN, "confirm her RestoreTest canary folder exists"),
         )
     client_id = resolve_client_id(args.client_id)
     signin = SignIn(client_id, tenant.TENANT_ID, mode=args.auth, out=print)

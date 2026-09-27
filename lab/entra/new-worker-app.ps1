@@ -12,9 +12,10 @@
        credential "RestoreProof Lab - Worker Graph app PFX"). The copy in the certificate store is
        deleted once the PFX is written. An existing PFX and password are reused.
     2. App registration "RestoreProof Worker": single tenant, the certificate as its only
-       credential, and exactly two Microsoft Graph application permissions: Sites.Selected and
-       Files.SelectedOperations.Selected. Admin consent is granted for those two; any other
-       consented application permission (e.g. Mail.Read) is removed.
+       credential (any other certificate or client secret is removed), and exactly two Microsoft
+       Graph application permissions: Sites.Selected and Files.SelectedOperations.Selected. Admin
+       consent is granted for those two; any other consented application permission, on Graph
+       (e.g. Mail.Read) or another API (e.g. Exchange's full_access_as_app), is removed.
     3. SharePoint: read on the RestoreTest site (Sites.Selected), read on alice's OneDrive
        RestoreTarget folder (Files.SelectedOperations.Selected). Nothing else.
     4. Exchange Online RBAC for Applications: "Application Mail.Read" on the restoretest mailbox
@@ -60,10 +61,10 @@ function Step([string]$Text) { Write-Host "`n==> $Text" -ForegroundColor Cyan }
 function Done([string]$Text) { Write-Host "    $Text" }
 
 # Credential Manager, generic credentials; the password is stored as UTF-16, like cmdkey does.
-if (-not ('RpWorkerCred' -as [type])) {
+if (-not ('RpWorkerCredential' -as [type])) {
     Add-Type -TypeDefinition @"
 using System; using System.Runtime.InteropServices;
-public static class RpWorkerCred {
+public static class RpWorkerCredential {
   [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
   struct CREDENTIAL { public int Flags; public int Type; public string TargetName; public string Comment;
     public System.Runtime.InteropServices.ComTypes.FILETIME LastWritten; public int CredentialBlobSize; public IntPtr CredentialBlob;
@@ -71,9 +72,17 @@ public static class RpWorkerCred {
   [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool CredReadW(string t, int type, int f, out IntPtr c);
   [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool CredWriteW(ref CREDENTIAL c, int f);
   [DllImport("advapi32.dll")] static extern void CredFree(IntPtr p);
+  // null only when there is no such credential (ERROR_NOT_FOUND); any other failure throws, so a
+  // session that can't reach Credential Manager is never told the password is gone.
   public static string Read(string t) {
-    IntPtr p; if (!CredReadW(t, 1, 0, out p)) return null;
+    IntPtr p;
+    if (!CredReadW(t, 1, 0, out p)) {
+      int error = Marshal.GetLastWin32Error();
+      if (error == 1168) return null;
+      throw new System.ComponentModel.Win32Exception(error);
+    }
     try { var c = (CREDENTIAL)Marshal.PtrToStructure(p, typeof(CREDENTIAL));
+          if (c.CredentialBlobSize == 0) return "";
           return Marshal.PtrToStringUni(c.CredentialBlob, c.CredentialBlobSize / 2); } finally { CredFree(p); } }
   public static void Write(string t, string user, string secret) {
     var c = new CREDENTIAL(); c.Type = 1; c.TargetName = t; c.UserName = user; c.Persist = 2;
@@ -93,24 +102,52 @@ function Invoke-Graph([string]$Method, [string]$Uri, $Body = $null) {
     Invoke-MgGraphRequest @request
 }
 
-# A new app or service principal takes a few seconds to reach every directory replica.
+# The HTTP status of a failed Invoke-MgGraphRequest, or $null when there was no answer.
+function Get-GraphStatus($ErrorRecord) {
+    $response = $ErrorRecord.Exception.PSObject.Properties['Response']
+    if ($response -and $response.Value) { return [int]$response.Value.StatusCode }
+    if ("$ErrorRecord" -match '\b(BadRequest|NotFound)\b') { return @{ BadRequest = 400; NotFound = 404 }[$Matches[1]] }
+    return $null
+}
+
+# A new app or service principal takes a few seconds to reach every directory replica; until then
+# Graph answers 400 or 404 about it. Anything else (403, or a 5xx the SDK already retried) is final.
 function Invoke-WithRetry([scriptblock]$Action, [string]$What) {
     for ($attempt = 1; ; $attempt++) {
         try { return & $Action }
         catch {
-            if ($attempt -ge 6) { throw }
+            if ($attempt -ge 6 -or @(400, 404) -notcontains (Get-GraphStatus $_)) { throw }
             Done "$What not ready yet (attempt $attempt): retrying in 10 s"
             Start-Sleep -Seconds 10
         }
     }
 }
 
+# The certificate as the app's only credential: any other certificate and every client secret go
+# (an app first made by hand may have a secret). A GET never returns a certificate's key, so the
+# list is replaced with just this one; a secret can only be removed by its keyId.
+function Set-OnlyCredential($App, $KeyCredential, [string]$Thumbprint) {
+    $keys = @($App.keyCredentials | Where-Object { $_ })
+    $current = @($keys | Where-Object { $_.displayName -like "*$Thumbprint" })
+    if ($current.Count -eq 1 -and $keys.Count -eq 1) {
+        Done "exists, client ID $($App.appId); certificate already uploaded"
+    }
+    else {
+        Invoke-Graph PATCH "applications/$($App.id)" @{ keyCredentials = @($KeyCredential) } | Out-Null
+        Done "exists, client ID $($App.appId); uploaded the certificate (replaces $($keys.Count) certificate(s))"
+    }
+    foreach ($secret in @($App.passwordCredentials | Where-Object { $_ })) {
+        Invoke-Graph POST "applications/$($App.id)/removePassword" @{ keyId = $secret.keyId } | Out-Null
+        Done "removed client secret '$($secret.displayName)': the certificate is the only credential"
+    }
+}
+
 # ---- 1. certificate -------------------------------------------------------------------------------
 Step "Certificate ($PfxPath)"
-$password = [RpWorkerCred]::Read($CredTarget)
+$password = [RpWorkerCredential]::Read($CredTarget)
 $haveFile = Test-Path -LiteralPath $PfxPath
 if ($haveFile -and -not $password) {
-    throw "$PfxPath exists but Credential Manager has no '$CredTarget', so the PFX can't be opened. " +
+    throw "$PfxPath exists but Credential Manager has no '$CredTarget' (or an empty one), so the PFX can't be opened. " +
           "Delete the PFX and run this script again: it makes a new certificate and replaces the app's old one."
 }
 if (-not $haveFile) {
@@ -122,7 +159,7 @@ if (-not $haveFile) {
         -KeyUsage DigitalSignature -NotAfter (Get-Date).AddYears(1)
     try {
         # Password first: a PFX without its password would be useless.
-        [RpWorkerCred]::Write($CredTarget, $CredUser, $password)
+        [RpWorkerCredential]::Write($CredTarget, $CredUser, $password)
         New-Item -ItemType Directory -Force -Path (Split-Path -Parent $PfxPath) | Out-Null
         $secure = ConvertTo-SecureString $password -AsPlainText -Force
         Export-PfxCertificate -Cert $new -FilePath $PfxPath -Password $secure -CryptoAlgorithmOption AES256_SHA256 | Out-Null
@@ -175,7 +212,7 @@ try {
         displayName = "$CertSubject $thumbprint"
     }
 
-    $found = @((Invoke-Graph GET "applications?`$filter=displayName eq '$AppName'&`$select=id,appId,keyCredentials").value)
+    $found = @((Invoke-Graph GET "applications?`$filter=displayName eq '$AppName'&`$select=id,appId,keyCredentials,passwordCredentials").value)
     if ($found.Count -gt 1) { throw "There are $($found.Count) app registrations named '$AppName'; delete the extra ones first." }
     if ($found.Count -eq 0) {
         $app = Invoke-Graph POST 'applications' @{
@@ -190,15 +227,7 @@ try {
         $app = $found[0]
         # Exactly these two permissions: anything else once added is dropped here.
         Invoke-Graph PATCH "applications/$($app.id)" @{ signInAudience = 'AzureADMyOrg'; requiredResourceAccess = $required } | Out-Null
-        $current = @($app.keyCredentials | Where-Object { $_.displayName -like "*$thumbprint" })
-        if ($current.Count -eq 0) {
-            $old = @($app.keyCredentials).Count
-            Invoke-Graph PATCH "applications/$($app.id)" @{ keyCredentials = @($keyCredential) } | Out-Null
-            Done "uploaded the certificate (replaces $old old one(s))"
-        }
-        else {
-            Done "exists, client ID $($app.appId); certificate already uploaded"
-        }
+        Set-OnlyCredential -App $app -KeyCredential $keyCredential -Thumbprint $thumbprint
     }
     $appId = $app.appId
 
@@ -218,8 +247,14 @@ try {
             continue
         }
         Invoke-WithRetry -What 'consent' -Action {
-            Invoke-Graph POST "servicePrincipals/$spId/appRoleAssignments" @{
-                principalId = $spId; resourceId = $graphSp.id; appRoleId = $roleIds[$name]
+            try {
+                Invoke-Graph POST "servicePrincipals/$spId/appRoleAssignments" @{
+                    principalId = $spId; resourceId = $graphSp.id; appRoleId = $roleIds[$name]
+                }
+            }
+            catch {
+                # An earlier attempt got through but its answer was lost: the grant is in place.
+                if ("$_" -notmatch 'Permission being assigned already exists') { throw }
             }
         } | Out-Null
         Done "$name granted"

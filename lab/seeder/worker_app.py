@@ -3,8 +3,10 @@
 Signs in as the Worker's own app registration with its certificate (client credentials, no
 user), then sends one GET per probe and compares the HTTP status with the expected one: 200
 where L1.5 granted access, 403 on what it didn't grant, and 404 where SharePoint hides items
-around the one folder the app may read. docs/security/graph-permissions.md says why each probe
-is there. The check only reads.
+around the one folder the app may read. It also asks for tokens for Exchange Online's and
+SharePoint's own APIs, which must carry no roles, and signs in as alice (the seeder app,
+delegated) to confirm her canary folder exists, so the app's 404 on it means "hidden", not
+"gone". docs/security/graph-permissions.md says why each probe is there. The check only reads.
 
 The certificate's private key is in a PFX file outside the repo; its password is a generic
 credential in Windows Credential Manager. Neither, nor the token, is ever printed.
@@ -34,6 +36,14 @@ CLIENT_ID_ENV = "RP_LAB_WORKER_CLIENT_ID"
 CREDENTIAL_TARGET = "RestoreProof Lab - Worker Graph app PFX"
 PFX_NAME = "worker-graph.pfx"
 GRAPH_SCOPES = ["https://graph.microsoft.com/.default"]
+# The other APIs that reach mail or files if an admin consents a role on them (Exchange's
+# full_access_as_app, SharePoint's Sites.Read.All). The Graph token doesn't show those roles.
+OTHER_API_SCOPES = {
+    "Exchange Online": ["https://outlook.office365.com/.default"],
+    "SharePoint": [f"https://{tenant.SHAREPOINT_HOST}/.default"],
+}
+MSAL_TIMEOUT = 60  # seconds, like the Graph calls; MSAL's default waits forever
+TARGET_FOLDER_NAME = "RestoreTarget"  # Veeam's OneDrive restore finds the folder by this name
 SETUP_SCRIPT = "lab/entra/new-worker-app.ps1"
 # The Entra application permissions (the token's "roles") L1.5 consents to, and nothing else.
 # Mail access comes from Exchange RBAC for Applications, which is not in the token.
@@ -173,19 +183,32 @@ class AppSignIn:
     @property
     def app(self) -> Any:
         if self._app is None:
-            self._app = msal.ConfidentialClientApplication(
-                self._client_id,
-                authority=f"https://login.microsoftonline.com/{self._tenant_id}",
-                # A PEM key with its public certificate: MSAL signs with PS256 and the SHA-256 thumbprint.
-                client_credential={
-                    "private_key": self._certificate.private_key_pem,
-                    "public_certificate": self._certificate.certificate_pem,
-                },
-            )
+            try:
+                # The constructor already looks the tenant up over the network.
+                self._app = msal.ConfidentialClientApplication(
+                    self._client_id,
+                    authority=f"https://login.microsoftonline.com/{self._tenant_id}",
+                    # A PEM key with its public certificate: MSAL signs with PS256 and the SHA-256 thumbprint.
+                    client_credential={
+                        "private_key": self._certificate.private_key_pem,
+                        "public_certificate": self._certificate.certificate_pem,
+                    },
+                    timeout=MSAL_TIMEOUT,
+                )
+            except Exception as exc:  # noqa: BLE001 - network, proxy or tenant errors: all "can't sign in"
+                raise self._failed(exc) from None
         return self._app
 
-    def token(self) -> str:
-        result = self.app.acquire_token_for_client(scopes=GRAPH_SCOPES)
+    def _failed(self, exc: Exception) -> AuthError:
+        message = f"Sign-in as the RestoreProof Worker app failed: {type(exc).__name__}: {exc}"
+        return AuthError(_redact(message, self._secrets))
+
+    def token(self, scopes: list[str] = GRAPH_SCOPES) -> str:
+        app = self.app
+        try:
+            result = app.acquire_token_for_client(scopes=scopes)
+        except Exception as exc:  # noqa: BLE001 - as above
+            raise self._failed(exc) from None
         if "error" in result:
             # Only error and error_description: a result may also hold a token.
             error = result.get("error") or "unknown_error"
@@ -224,8 +247,9 @@ class Probe:
     path: str
     expected: int
     params: Mapping[str, str] | None = None
-    # For a listing: the only item id it may contain. Anything else listed is unexpected.
-    only_child: str | None = None
+    # For a listing: the one item (id, name) it must hold. The item missing or renamed, or
+    # anything else listed, is unexpected.
+    only_item: tuple[str, str] | None = None
 
 
 _ONE_ID = {"$top": "1", "$select": "id"}
@@ -251,7 +275,7 @@ def probes() -> list[Probe]:
             f"/drives/{od}/root/children",
             200,
             {"$select": "id,name"},  # no $top: a page of one would hide anything else
-            only_child=target,
+            only_item=(target, TARGET_FOLDER_NAME),
         ),
         Probe("alice's mailbox: list messages", f"/users/{tenant.ALICE_UPN}/messages", 403, _ONE_ID),
         Probe("tenant root site: the site", f"/sites/{tenant.SHAREPOINT_HOST}", 403),
@@ -267,43 +291,68 @@ def probes() -> list[Probe]:
 class ProbeResult:
     probe: Probe
     actual: int | None  # None: no HTTP response
-    other_items: int = 0  # items listed besides probe.only_child
+    problem: str = ""  # what is wrong with a listing (probe.only_item)
 
     @property
     def ok(self) -> bool:
-        return self.actual == self.probe.expected and self.other_items == 0
+        return self.actual == self.probe.expected and not self.problem
 
     @property
     def note(self) -> str:
-        if not self.other_items:
-            return ""
-        return f"  ({self.other_items} other item{'s' if self.other_items != 1 else ''} listed)"
+        return f"  ({self.problem})" if self.problem else ""
 
 
 def run_probes(graph: GraphClient, items: list[Probe]) -> list[ProbeResult]:
     results = []
     for probe in items:
-        other_items = 0
+        problem = ""
         try:
             resp = graph.request("GET", probe.path, params=probe.params)
             actual: int | None = resp.status
-            if probe.only_child is not None:
-                other_items = _count_others(resp, probe.only_child)
+            if probe.only_item is not None:
+                problem = _listing_problem(resp, *probe.only_item)
         except GraphError as exc:
             actual = exc.status  # the message is not shown: the status is the evidence
-        results.append(ProbeResult(probe, actual, other_items))
+        results.append(ProbeResult(probe, actual, problem))
     return results
 
 
-def _count_others(resp: Any, only: str) -> int:
-    """Items in a listing other than `only`. An unreadable listing counts as one: unexpected."""
+def _listing_problem(resp: Any, item_id: str, name: str) -> str:
+    """Empty when the listing holds exactly the item `item_id` named `name`, else what differs."""
     try:
-        ids = [item["id"] for item in resp.json()["value"]]
-    except (ValueError, KeyError, TypeError):
-        return 1
-    if resp.json().get("@odata.nextLink"):
-        ids.append("(another page)")
-    return sum(1 for i in ids if i != only)
+        body = resp.json()
+        items = [(item["id"], item.get("name")) for item in body["value"]]
+    except (ValueError, KeyError, TypeError, AttributeError):
+        return "listing can't be read"
+    problems = []
+    names = [n for i, n in items if i == item_id]
+    if not names:
+        problems.append(f"{name} not listed")
+    elif names[0] != name:
+        problems.append(f"{name} is named {names[0]!r}")
+    others = sum(1 for i, _ in items if i != item_id) + (1 if body.get("@odata.nextLink") else 0)
+    if others:
+        problems.append(f"{others} other item{'s' if others != 1 else ''} listed")
+    return "; ".join(problems)
+
+
+def confirm_canary_folder(graph: GraphClient) -> tuple[bool, str]:
+    """As alice: her RestoreTest canary folder exists and holds files. Without this, the app's
+    404 on it could mean the folder is gone rather than hidden."""
+    path = f"/drives/{tenant.ONEDRIVE_DRIVE_ID}/items/{tenant.ONEDRIVE_FOLDER_ID}"
+    try:
+        body = graph.request("GET", path, params={"$select": "id,name,folder"}).json()
+    except GraphError as exc:
+        return False, f"HTTP {exc.status if exc.status is not None else 'none'}"
+    except ValueError:
+        return False, "the answer can't be read"
+    folder = body.get("folder") if isinstance(body, dict) else None
+    children = folder.get("childCount") if isinstance(folder, dict) else None
+    if not isinstance(children, int):
+        return False, "not a folder"
+    if children == 0:
+        return False, "empty: run python -m seeder seed"
+    return True, f"{body.get('name')}, {children} item{'s' if children != 1 else ''}"
 
 
 # ---- the command ---------------------------------------------------------------------------
@@ -316,12 +365,14 @@ def run_check(
     pfx_path: Path,
     read_password: Callable[[str], str | None],
     transport: Transport,
+    alice_token: Callable[[], str],
     app: Any = None,
     out: Callable[[str], None] = print,
     sleep: Callable[[float], None] | None = None,
 ) -> int:
-    """0: every probe and the token's roles as expected. 1: anything unexpected. Credential and
-    sign-in problems raise CredentialError/AuthError (the CLI exits 2)."""
+    """0: every probe, every token's roles and the canary folder as expected. 1: anything
+    unexpected. Credential and sign-in problems raise CredentialError/AuthError (the CLI exits 2).
+    alice_token: alice's delegated Graph token (the seeder app), for one read of her canary folder."""
     password = read_password(CREDENTIAL_TARGET)
     if not password:
         raise CredentialError(
@@ -333,6 +384,8 @@ def run_check(
     signin = AppSignIn(client_id, tenant_id, certificate, app=app, secrets=secrets)
     token = signin.token()
     secrets.append(token)
+    other_tokens = {api: signin.token(scopes) for api, scopes in OTHER_API_SCOPES.items()}
+    secrets.extend(other_tokens.values())
 
     def say(line: str) -> None:
         out(_redact(line, secrets))
@@ -342,14 +395,26 @@ def run_check(
     say(f"client ID    {client_id}")
     say(f"certificate  SHA-1 thumbprint {certificate.thumbprint_sha1}, expires {certificate.not_after:%Y-%m-%d}")
 
-    roles = token_roles(token)
-    roles_ok = roles is not None and set(roles) == EXPECTED_ROLES
-    if roles is None:
-        say("token roles  (the token can't be read)  UNEXPECTED")
-    elif roles_ok:
-        say(f"token roles  {', '.join(roles) or '(none)'}  ok")
-    else:
-        say(f"token roles  {', '.join(roles) or '(none)'}  UNEXPECTED: expected exactly {', '.join(sorted(EXPECTED_ROLES))}")
+    unexpected = 0
+    checks = [("Microsoft Graph", token, EXPECTED_ROLES)]
+    checks += [(api, api_token, frozenset()) for api, api_token in other_tokens.items()]
+    for api, api_token, expected in checks:
+        roles = token_roles(api_token)
+        label = f"token roles, {api}"
+        if roles is None:
+            say(f"{label:<32}  (the token can't be read)  UNEXPECTED")
+            unexpected += 1
+        elif set(roles) == expected:
+            say(f"{label:<32}  {', '.join(roles) or '(none)'}  ok")
+        else:
+            want = ", ".join(sorted(expected)) or "none"
+            say(f"{label:<32}  {', '.join(roles) or '(none)'}  UNEXPECTED: expected exactly {want}")
+            unexpected += 1
+
+    alice = GraphClient(transport, alice_token, f"{tenant.ALICE_UPN} (seeder app)", sleep=sleep or _sleep)
+    canary_ok, canary_note = confirm_canary_folder(alice)
+    say(f"{'canary folder, read as alice':<32}  {canary_note}  {'ok' if canary_ok else 'UNEXPECTED'}")
+    unexpected += 0 if canary_ok else 1
     say("")
 
     graph = GraphClient(transport, signin.token, "RestoreProof Worker (app-only)", sleep=sleep or _sleep)
@@ -361,7 +426,7 @@ def run_check(
         verdict = "ok" if r.ok else "UNEXPECTED"
         say(f"{verdict:<10}  {r.probe.expected:>6}  {actual:>6}  {r.probe.label:<58}  GET {r.probe.path}{r.note}")
     passed = sum(r.ok for r in results)
-    unexpected = len(results) - passed + (0 if roles_ok else 1)
+    unexpected += len(results) - passed
     summary = f"{passed}/{len(results)} probes as expected"
     say(summary if unexpected == 0 else f"{summary}; {unexpected} UNEXPECTED")
     return 0 if unexpected == 0 else 1

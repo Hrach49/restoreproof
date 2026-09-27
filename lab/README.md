@@ -116,7 +116,9 @@ Disconnect-MgGraph | Out-Null
 ## One-time setup: the RestoreProof Worker app (L1.5)
 
 The Worker's own app registration: single tenant, app-only, with a certificate. It can read
-the three restore targets and nothing else. What is granted and why:
+the three restore targets, and two things it doesn't use: the rest of the RestoreTest site (the
+canary library included, since a site grant covers the whole site) and the metadata of alice's
+OneDrive site and root folder. Nothing else. What is granted and why:
 `docs/security/graph-permissions.md`. `entra/new-worker-app.ps1` does everything below the
 first two steps, and is safe to run again.
 
@@ -161,6 +163,9 @@ first two steps, and is safe to run again.
    uv run python -m seeder check-worker-app --client-id <the client ID the script printed>
    ```
 
+   A browser window opens once: sign in as alice. The check reads her canary folder with the
+   seeder app to confirm it exists (the Worker app gets 404 on it either way).
+
 5. **Optional: remove the admin from alice's OneDrive.** Open her OneDrive with the link from
    step 2, then gear icon > **OneDrive settings** > **More settings** > **Site collection
    administrators**, and remove the admin. The Worker's grant stays. Running the script again
@@ -191,7 +196,7 @@ uv run python -m seeder check-worker-app  # live: what the Worker app can and ca
 | `hash` | no | Checks that `seed-manifest.json` exists, is valid JSON and matches the schema; has exactly 40 entries whose ids, kinds and order match the catalog; that each file in `canary/` has the recorded `local_sha256` and `local_size` and that `stored_matches_local` is consistent; that each mail's `sent_body_sha256` equals the text-v1 hash of the catalog body and its subject and recipient match the catalog. Prints one line per entry and a summary (`40/40 entries reproduce the manifest hashes`) | 0 all reproduce; 1 any difference (each message names the entry, expected and actual); 2 manifest missing, unreadable or invalid (wrong count, order or schema) |
 | `seed` | yes | Signs in three times, sends the missing mails, uploads the missing files, reads all 40 back and writes the manifest. Step by step below | 0 manifest written; 1 a problem the output explains (missing canary file, duplicate subject, mail timeout); 2 sign-in or Graph error. No manifest is written unless it exits 0 |
 | `verify` | yes | Re-reads every item by its Graph id as the account that owns it (alice: mails 0001–0010 and the OneDrive files; bob: mails 0011–0020; admin: the SharePoint files). Compares subject, sender (case-insensitive), sent and received dates, `internet_message_id` and `body_sha256`; for files name and `content_sha256` by `content_rule` (and size for `bytes` files); an Office file whose bytes changed but whose content didn't is `ok`, with a note. Prints `ok`, `DIFF` or `MISSING` per entry and a summary (`40/40 entries in the tenant match the manifest`) | 0 all ok; 1 any DIFF or MISSING; 2 manifest missing or invalid, or a sign-in or Graph error |
-| `check-worker-app` | yes | Signs in as the RestoreProof Worker app with its certificate (PFX from `--pfx`, default `%LOCALAPPDATA%\RestoreProof\lab\worker-graph.pfx`; password from Credential Manager). Checks the token's roles are exactly `Files.SelectedOperations.Selected` and `Sites.Selected`, then sends one GET per probe and prints `ok` or `UNEXPECTED` per row with the expected and actual status (the probe table is in `docs/security/graph-permissions.md`). Only reads | 0 all as expected; 1 anything unexpected; 2 a missing or unusable credential, or a sign-in error |
+| `check-worker-app` | yes | Signs in as the RestoreProof Worker app with its certificate (PFX from `--pfx`, default `%LOCALAPPDATA%\RestoreProof\lab\worker-graph.pfx`; password from Credential Manager). Checks the Graph token's roles are exactly `Files.SelectedOperations.Selected` and `Sites.Selected` and that its Exchange Online and SharePoint tokens carry none, signs in as alice (the seeder app) to confirm her canary folder exists, then sends one GET per probe and prints `ok` or `UNEXPECTED` per row with the expected and actual status (the probe table is in `docs/security/graph-permissions.md`). Only reads | 0 all as expected; 1 anything unexpected; 2 a missing or unusable credential, or a sign-in error (the app's or alice's) |
 
 A usage error (unknown command or option) exits 2. Ctrl+C exits 130; `seed` then says nothing was written.
 
@@ -202,7 +207,8 @@ Options:
 | `--client-id <id>` | `seed`, `verify` | The seeder app's client ID. Order: this option, then `RP_LAB_CLIENT_ID`, then `SEEDER_CLIENT_ID` in `seeder/tenant.py`. If all are empty the tool stops and points here |
 | `--client-id <id>` | `check-worker-app` | The Worker app's client ID. Order: this option, then `RP_LAB_WORKER_CLIENT_ID`, then `WORKER_CLIENT_ID` in `seeder/tenant.py` |
 | `--pfx <path>` | `check-worker-app` | The Worker app's certificate, if not in the default place |
-| `--auth browser\|device` | `seed`, `verify` | `browser` (default) opens a browser window for each sign-in. `device` prints a code to enter at https://microsoft.com/devicelogin instead |
+| `--seeder-client-id <id>` | `check-worker-app` | The seeder app's client ID, for alice's sign-in. Same order as `--client-id` for `seed` |
+| `--auth browser\|device` | `seed`, `verify`, `check-worker-app` | `browser` (default) opens a browser window for each sign-in. `device` prints a code to enter at https://microsoft.com/devicelogin instead |
 | `--force` | `seed` | Send every mail again and replace every file, even if it is already there |
 | `--mail-timeout <seconds>` | `seed` | How long to wait for sent mails to arrive (default 600) |
 | `--canary-dir`, `--manifest` | all that use them | Other paths than `canary/` and `seed-manifest.json` (tests use these) |

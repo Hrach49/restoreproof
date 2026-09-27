@@ -90,8 +90,10 @@ W2.4/W2.7 settle how the configured IDs map to these names, and update the confi
 
 ## RestoreProof Worker app (L1.5)
 
-The Worker's own app registration: it reads back what Veeam restored, app-only, and can reach
-the three restore targets and nothing else. What is granted, why, and how it is checked:
+The Worker's own app registration: it reads back what Veeam restored, app-only. It can read
+the three restore targets, the rest of the RestoreTest site (canary library included) and the
+metadata of alice's OneDrive site and root folder, nothing else. What is granted, why, and how
+it is checked:
 `docs/security/graph-permissions.md`. Made on 2026-09-27 with `lab/entra/new-worker-app.ps1`
 (steps in `lab/README.md`), which is safe to re-run. `lab/tests/test_catalog.py` checks the
 client ID matches `WORKER_CLIENT_ID` in `lab/seeder/tenant.py`.

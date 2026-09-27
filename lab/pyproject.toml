@@ -4,8 +4,11 @@ version = "0.0.0"
 description = "Lab tools: seed and check the canary set (L1.2)"
 requires-python = ">=3.12"
 dependencies = [
+    # 42: Certificate.not_valid_after_utc (check-worker-app reads the Worker app's PFX)
+    "cryptography>=42",
     "jsonschema>=4.23",
-    "msal>=1.31",
+    # 1.35: a certificate credential given as {private_key, public_certificate}, no thumbprint
+    "msal>=1.35",
     "requests>=2.32",
 ]
 

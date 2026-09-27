@@ -34,10 +34,14 @@ Format: date, decision, reason, alternatives rejected.
    `Lists.SelectedOperations.Selected` `write` on the RestoreTarget list only, the folder
    grant raised to `write`, and `Application Mail.ReadWrite` on the same scope.
 5. The setup is a script the admin runs, `lab/entra/new-worker-app.ps1` (idempotent). It is
-   checked by `python -m seeder check-worker-app`: 200 on the three targets, 403 on alice's
-   mailbox, other sites and their drives, 404 on the canary folder (SharePoint masks items the
-   app may not see), alice's OneDrive root listing only `RestoreTarget`, and exactly two roles
-   in the token.
+   checked by `python -m seeder check-worker-app`: 200 on the three targets (and on the
+   metadata of alice's OneDrive site and root folder, which a folder grant opens), 403 on
+   alice's mailbox, the tenant root site and its drives, and the OneDrive host site, 404 on the
+   canary folder (SharePoint masks items the app may not see; a sign-in as alice first confirms
+   the folder exists), alice's OneDrive root listing only `RestoreTarget` by that name, exactly
+   two roles in the Graph token and none in the Exchange Online and SharePoint tokens. The
+   RestoreTest site's canary library stays readable: `Sites.Selected` covers the whole site.
+   The script leaves the certificate as the app's only credential (no client secret).
 
 **Reason.**
 

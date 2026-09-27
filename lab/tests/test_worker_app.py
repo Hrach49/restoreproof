@@ -16,6 +16,8 @@ from seeder.auth import AuthError
 from seeder.http import TransportError
 from seeder.worker_app import (
     CLIENT_ID_ENV,
+    GRAPH_SCOPES,
+    OTHER_API_SCOPES,
     CREDENTIAL_TARGET,
     EXPECTED_ROLES,
     CredentialError,
@@ -25,7 +27,8 @@ from seeder.worker_app import (
     resolve_worker_client_id,
     run_check,
 )
-from tests.fake_graph import APP_GRANTS, FakeTenant, make_app_token
+from tests.fake_graph import APP_GRANTS, FakeSignIn, FakeTenant, make_app_token
+from tests.fake_transport import json_response
 
 CLIENT_ID = "11111111-2222-3333-4444-555555555555"
 PASSWORD_SENTINEL = "pfx-password-SENTINEL-DO-NOT-LEAK"
@@ -71,20 +74,26 @@ def key_pem_lines(key) -> list[str]:
     return [line for line in pem.splitlines() if line and not line.startswith("-----")]
 
 
-class FakeConfidentialApp:
-    """msal.ConfidentialClientApplication look-alike: acquire_token_for_client returns `result`."""
+def token_result(roles=None) -> dict:
+    token = make_app_token(CLIENT_ID, signature=TOKEN_SENTINEL, **({} if roles is None else {"roles": roles}))
+    return {"access_token": token, "token_type": "Bearer", "expires_in": 3599}
 
-    def __init__(self, result: dict | None = None) -> None:
-        self.result = result if result is not None else {
-            "access_token": make_app_token(CLIENT_ID, signature=TOKEN_SENTINEL),
-            "token_type": "Bearer",
-            "expires_in": 3599,
-        }
+
+class FakeConfidentialApp:
+    """msal.ConfidentialClientApplication look-alike. acquire_token_for_client returns `result`
+    for Graph and, for the other APIs, `others[api]` or a token without roles."""
+
+    def __init__(self, result: dict | None = None, others: dict[str, dict] | None = None) -> None:
+        self.result = result if result is not None else token_result()
+        self.others = others or {}
         self.calls: list[tuple] = []
 
     def acquire_token_for_client(self, scopes):
         self.calls.append(("for_client", tuple(scopes)))
-        return dict(self.result)
+        if list(scopes) == GRAPH_SCOPES:
+            return dict(self.result)
+        api = next(api for api, api_scopes in OTHER_API_SCOPES.items() if api_scopes == list(scopes))
+        return dict(self.others.get(api) or token_result(roles=()))
 
 
 def password_store(value: str | None = PASSWORD_SENTINEL):
@@ -98,9 +107,15 @@ def password_store(value: str | None = PASSWORD_SENTINEL):
     return read
 
 
+def with_canary(fake: FakeTenant) -> FakeTenant:
+    """alice's canary folder holds a file, as after `seed`."""
+    fake.put_item(tenant.ONEDRIVE_DRIVE_ID, "canary.docx", b"canary")
+    return fake
+
+
 def check(pfx_path, *, fake=None, app=None, read_password=None, transport=None):
     """Runs run_check and returns (exit code, output lines, fake tenant)."""
-    fake = fake if fake is not None else FakeTenant()
+    fake = fake if fake is not None else with_canary(FakeTenant())
     lines: list[str] = []
     code = run_check(
         client_id=CLIENT_ID,
@@ -108,6 +123,7 @@ def check(pfx_path, *, fake=None, app=None, read_password=None, transport=None):
         pfx_path=pfx_path,
         read_password=read_password or password_store(),
         transport=transport or fake,
+        alice_token=FakeSignIn().token_provider(tenant.ALICE_UPN, "test"),
         app=app if app is not None else FakeConfidentialApp(),
         out=lines.append,
         sleep=lambda s: None,
@@ -204,7 +220,7 @@ def test_no_request_reaches_graph_when_sign_in_fails(pfx):
     fake = FakeTenant()
     with pytest.raises(AuthError):
         check(pfx, fake=fake, app=FakeConfidentialApp({"error": "invalid_client"}))
-    assert fake.app_requests == []
+    assert fake.headers_seen == []  # nothing at all, not only nothing with an app token
 
 
 # ---- failure paths: unexpected answers ------------------------------------------------------
@@ -212,7 +228,7 @@ def test_no_request_reaches_graph_when_sign_in_fails(pfx):
 
 def test_unexpected_200_on_a_forbidden_mailbox_fails_the_check(pfx):
     # alice's mailbox answers: e.g. the Entra Mail.Read consent was left in place.
-    fake = FakeTenant(app_grants=APP_GRANTS | {f"mailbox:{tenant.ALICE_UPN.lower()}"})
+    fake = with_canary(FakeTenant(app_grants=APP_GRANTS | {f"mailbox:{tenant.ALICE_UPN.lower()}"}))
     code, lines, _ = check(pfx, fake=fake)
     assert code == 1
     line = row(lines, "alice's mailbox")
@@ -231,7 +247,7 @@ def test_unexpected_200_on_another_site_fails_the_check(pfx):
 def test_unexpected_200_on_alices_whole_onedrive_fails_the_check(pfx):
     # Sites.Selected on her OneDrive instead of the folder grant would open the canary folder.
     site = f"site:{tenant.ONEDRIVE_HOST}:{tenant.ALICE_ONEDRIVE_SITE_PATH}"
-    code, lines, _ = check(pfx, fake=FakeTenant(app_grants=APP_GRANTS | {site}))
+    code, lines, _ = check(pfx, fake=with_canary(FakeTenant(app_grants=APP_GRANTS | {site})))
     assert code == 1
     assert row(lines, "alice's OneDrive: RestoreTest canary folder").startswith("UNEXPECTED")
     line = row(lines, "alice's OneDrive: files in her root")
@@ -241,7 +257,7 @@ def test_unexpected_200_on_alices_whole_onedrive_fails_the_check(pfx):
 def test_a_second_folder_visible_in_alices_root_fails_the_check(pfx):
     # SharePoint masks what the app may not see; if the canary folder shows up, it isn't masked.
     canary = f"folder:{tenant.ONEDRIVE_DRIVE_ID}/{tenant.ONEDRIVE_FOLDER_ID}"
-    code, lines, _ = check(pfx, fake=FakeTenant(app_grants=APP_GRANTS | {canary}))
+    code, lines, _ = check(pfx, fake=with_canary(FakeTenant(app_grants=APP_GRANTS | {canary})))
     assert code == 1
     line = row(lines, "alice's OneDrive: files in her root")
     assert line.startswith("UNEXPECTED") and " 200 " in line and "1 other item" in line
@@ -250,13 +266,13 @@ def test_a_second_folder_visible_in_alices_root_fails_the_check(pfx):
 
 
 def test_unexpected_200_on_the_onedrive_host_site_fails_the_check(pfx):
-    code, lines, _ = check(pfx, fake=FakeTenant(app_grants=APP_GRANTS | {f"site:{tenant.ONEDRIVE_HOST}"}))
+    code, lines, _ = check(pfx, fake=with_canary(FakeTenant(app_grants=APP_GRANTS | {f"site:{tenant.ONEDRIVE_HOST}"})))
     assert code == 1
     assert row(lines, "OneDrive host root site").startswith("UNEXPECTED")
 
 
 def test_403_on_an_allowed_site_fails_the_check(pfx):
-    fake = FakeTenant(app_grants=APP_GRANTS - {f"site:{tenant.SHAREPOINT_SITE_ID}"})
+    fake = with_canary(FakeTenant(app_grants=APP_GRANTS - {f"site:{tenant.SHAREPOINT_SITE_ID}"}))
     code, lines, _ = check(pfx, fake=fake)
     assert code == 1
     line = row(lines, "RestoreTest site: the site")
@@ -265,7 +281,7 @@ def test_403_on_an_allowed_site_fails_the_check(pfx):
 
 
 def test_403_on_the_test_mailbox_fails_the_check(pfx):
-    fake = FakeTenant(app_grants=APP_GRANTS - {f"mailbox:{tenant.RESTORETEST_UPN.lower()}"})
+    fake = with_canary(FakeTenant(app_grants=APP_GRANTS - {f"mailbox:{tenant.RESTORETEST_UPN.lower()}"}))
     code, lines, _ = check(pfx, fake=fake)
     assert code == 1
     assert row(lines, "restoretest's mailbox").startswith("UNEXPECTED")
@@ -275,7 +291,7 @@ def test_extra_role_in_the_token_fails_the_check_even_if_every_probe_passes(pfx)
     token = make_app_token(CLIENT_ID, roles=("Sites.Selected", "Files.SelectedOperations.Selected", "Mail.Read"))
     code, lines, _ = check(pfx, app=FakeConfidentialApp({"access_token": token}))
     assert code == 1
-    line = row(lines, "token roles")
+    line = row(lines, "token roles, Microsoft Graph")
     assert "UNEXPECTED" in line and "Mail.Read" in line
     assert lines[-1].endswith("; 1 UNEXPECTED")
 
@@ -284,14 +300,16 @@ def test_missing_role_in_the_token_fails_the_check(pfx):
     token = make_app_token(CLIENT_ID, roles=("Sites.Selected",))
     code, lines, _ = check(pfx, app=FakeConfidentialApp({"access_token": token}))
     assert code == 1
-    assert "UNEXPECTED" in row(lines, "token roles")
+    assert "UNEXPECTED" in row(lines, "token roles, Microsoft Graph")
 
 
 def test_token_that_is_not_a_jwt_fails_the_roles_row(pfx):
-    fake = FakeTenant()
+    fake = with_canary(FakeTenant())
 
     def transport(method, url, headers, body=None):
         # The fake tenant answers app-only calls only for JWT-shaped tokens; re-sign as one.
+        if headers.get("Authorization", "").startswith("Bearer token:"):  # alice, delegated
+            return fake.request(method, url, headers, body)
         return fake.request(method, url, {**headers, "Authorization": "Bearer " + make_app_token(CLIENT_ID)}, body)
 
     class Wrapped:
@@ -299,11 +317,11 @@ def test_token_that_is_not_a_jwt_fails_the_roles_row(pfx):
 
     code, lines, _ = check(pfx, fake=fake, transport=Wrapped(), app=FakeConfidentialApp({"access_token": "opaque"}))
     assert code == 1
-    assert "can't be read" in row(lines, "token roles")
+    assert "can't be read" in row(lines, "token roles, Microsoft Graph")
 
 
 def test_no_response_on_a_probe_is_reported_and_fails_the_check(pfx):
-    fake = FakeTenant()
+    fake = with_canary(FakeTenant())
 
     class Flaky:
         def request(self, method, url, headers, body=None):
@@ -325,6 +343,7 @@ def test_missing_client_id_is_an_auth_error(monkeypatch):
 
 
 def test_cli_credential_error_is_one_line_exit_2(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(cli, "SignIn", fake_seeder_signin())
     monkeypatch.setattr(cli, "read_generic_credential", lambda target: None)
     code = cli.main(["check-worker-app", "--client-id", CLIENT_ID, "--pfx", str(tmp_path / "x.pfx")])
     captured = capsys.readouterr()
@@ -334,17 +353,115 @@ def test_cli_credential_error_is_one_line_exit_2(monkeypatch, tmp_path, capsys):
     assert "Traceback" not in captured.err + captured.out
 
 
+@pytest.mark.parametrize(
+    ("api", "role"),
+    [("Exchange Online", "full_access_as_app"), ("SharePoint", "Sites.Read.All")],
+)
+def test_a_role_on_another_api_fails_the_check_although_graph_looks_right(pfx, api, role):
+    # Such a consent never shows in the Graph token, and every Graph probe still answers as expected.
+    app = FakeConfidentialApp(others={api: token_result(roles=(role,))})
+    code, lines, _ = check(pfx, app=app)
+    assert code == 1
+    line = row(lines, f"token roles, {api}")
+    assert "UNEXPECTED" in line and role in line
+    assert lines[-1] == f"{len(probes())}/{len(probes())} probes as expected; 1 UNEXPECTED"
+
+
+def test_a_token_error_on_another_api_is_an_auth_error(pfx):
+    error = {"error": "invalid_resource", "error_description": "AADSTS500011: resource not found"}
+    with pytest.raises(AuthError, match="invalid_resource"):
+        check(pfx, app=FakeConfidentialApp(others={"Exchange Online": error}))
+
+
+@pytest.mark.parametrize("error", [ConnectionError("proxy refused"), ValueError("Unable to get authority configuration")])
+def test_msal_exceptions_are_auth_errors(pfx, error):
+    class Raising(FakeConfidentialApp):
+        def acquire_token_for_client(self, scopes):
+            raise error
+
+    with pytest.raises(AuthError, match=type(error).__name__):
+        check(pfx, app=Raising())
+
+
+@pytest.mark.parametrize("error", [ConnectionError("no route"), ValueError("Unable to get authority configuration")])
+def test_cli_sign_in_exceptions_exit_2_without_a_traceback(monkeypatch, pfx, capsys, error):
+    # MSAL's constructor already goes to the network (tenant discovery).
+    def failing_app(*args, **kwargs):
+        raise error
+
+    monkeypatch.setattr(cli, "SignIn", fake_seeder_signin())
+    monkeypatch.setattr(cli, "read_generic_credential", password_store())
+    monkeypatch.setattr(cli, "RequestsTransport", lambda: FakeTenant())
+    monkeypatch.setattr(worker_app.msal, "ConfidentialClientApplication", failing_app)
+    code = cli.main(["check-worker-app", "--client-id", CLIENT_ID, "--pfx", str(pfx)])
+    captured = capsys.readouterr()
+    assert code == 2
+    assert captured.err.startswith("error: Sign-in as the RestoreProof Worker app failed")
+    assert "Traceback" not in captured.err + captured.out
+
+
+def test_restore_target_renamed_fails_the_root_listing(pfx):
+    # Veeam's OneDrive restore finds the folder by name: a renamed one keeps its grant, but
+    # restores would land in a new folder the app can't read.
+    fake = with_canary(FakeTenant())
+    fake.item_names[tenant.ONEDRIVE_TARGET_FOLDER_ID] = "RestoreTarget (old)"
+    code, lines, _ = check(pfx, fake=fake)
+    assert code == 1
+    line = row(lines, "alice's OneDrive: files in her root")
+    assert line.startswith("UNEXPECTED") and "RestoreTarget is named 'RestoreTarget (old)'" in line
+
+
+def test_an_empty_root_listing_fails_the_check(pfx):
+    # RestoreTarget moved out of her root: its ID still answers, but nothing is listed.
+    fake = with_canary(FakeTenant())
+
+    class Empty:
+        def request(self, method, url, headers, body=None):
+            if url.split("?")[0].endswith("/root/children"):
+                return json_response(200, {"value": []})
+            return fake.request(method, url, headers, body)
+
+    code, lines, _ = check(pfx, fake=fake, transport=Empty())
+    assert code == 1
+    line = row(lines, "alice's OneDrive: files in her root")
+    assert line.startswith("UNEXPECTED") and "RestoreTarget not listed" in line
+
+
+def test_a_missing_canary_folder_fails_the_check_although_the_app_gets_404(pfx):
+    # A deleted folder answers 404 too, so then the 404 rows prove nothing about masking.
+    site = f"site:{tenant.ONEDRIVE_HOST}:{tenant.ALICE_ONEDRIVE_SITE_PATH}"
+    fake = FakeTenant(app_grants=APP_GRANTS | {site})
+    del fake.drives[tenant.ONEDRIVE_DRIVE_ID].folders[tenant.ONEDRIVE_FOLDER_ID]
+    code, lines, _ = check(pfx, fake=fake)
+    assert code == 1
+    line = row(lines, "canary folder, read as alice")
+    assert "UNEXPECTED" in line and "HTTP 404" in line
+
+
+def test_an_empty_canary_folder_fails_the_check(pfx):
+    code, lines, _ = check(pfx, fake=FakeTenant())  # not seeded
+    assert code == 1
+    line = row(lines, "canary folder, read as alice")
+    assert "UNEXPECTED" in line and "seed" in line
+
+
 # ---- happy paths ---------------------------------------------------------------------------
 
 
 def test_everything_as_granted_passes(pfx, key_and_cert):
-    code, lines, fake = check(pfx)
+    app = FakeConfidentialApp()
+    code, lines, fake = check(pfx, app=app)
     assert code == 0
     assert lines[-1] == f"{len(probes())}/{len(probes())} probes as expected"
     assert not any(line.startswith("UNEXPECTED") for line in lines)
-    roles_line = row(lines, "token roles")
+    roles_line = row(lines, "token roles, Microsoft Graph")
     assert roles_line.rstrip().endswith("ok")
     assert "Files.SelectedOperations.Selected, Sites.Selected" in roles_line
+    for api in OTHER_API_SCOPES:
+        assert row(lines, f"token roles, {api}").rstrip().endswith("(none)  ok")
+    assert row(lines, "canary folder, read as alice").rstrip().endswith("RestoreTest, 1 item  ok")
+    asked = list(dict.fromkeys(scopes for _, scopes in app.calls))  # each probe asks again (MSAL caches)
+    assert asked == [tuple(GRAPH_SCOPES)] + [tuple(v) for v in OTHER_API_SCOPES.values()]
     # the header names the app and the certificate, never the key
     _, cert = key_and_cert
     thumbprint = cert.fingerprint(hashes.SHA1()).hex().upper()
@@ -384,9 +501,9 @@ def test_probe_table_covers_the_done_when():
 
 
 def test_only_the_root_listing_checks_what_is_listed():
-    listing = [p for p in probes() if p.only_child is not None]
+    listing = [p for p in probes() if p.only_item is not None]
     assert [p.label for p in listing] == ["alice's OneDrive: files in her root (only RestoreTarget)"]
-    assert listing[0].only_child == tenant.ONEDRIVE_TARGET_FOLDER_ID
+    assert listing[0].only_item == (tenant.ONEDRIVE_TARGET_FOLDER_ID, "RestoreTarget")
     assert listing[0].params is not None and "$top" not in listing[0].params  # a page of 1 would hide the rest
 
 
@@ -448,14 +565,25 @@ def test_credential_manager_off_windows_is_a_credential_error():
         worker_app.read_generic_credential(CREDENTIAL_TARGET)
 
 
-def test_cli_runs_the_check_end_to_end(monkeypatch, pfx, capsys):
-    fake = FakeTenant()
-    made: list[tuple] = []
+def fake_seeder_signin(signins: list[tuple] | None = None):
+    def make(client_id, tenant_id, *, mode, out):
+        if signins is not None:
+            signins.append((client_id, tenant_id, mode))
+        return FakeSignIn()
 
-    def fake_app(client_id, *, authority, client_credential):
-        made.append((client_id, authority, sorted(client_credential)))
+    return make
+
+
+def test_cli_runs_the_check_end_to_end(monkeypatch, pfx, capsys):
+    fake = with_canary(FakeTenant())
+    made: list[tuple] = []
+    signins: list[tuple] = []
+
+    def fake_app(client_id, *, authority, client_credential, timeout):
+        made.append((client_id, authority, sorted(client_credential), timeout))
         return FakeConfidentialApp()
 
+    monkeypatch.setattr(cli, "SignIn", fake_seeder_signin(signins))
     monkeypatch.setattr(cli, "read_generic_credential", password_store())
     monkeypatch.setattr(cli, "RequestsTransport", lambda: fake)
     monkeypatch.setattr(worker_app.msal, "ConfidentialClientApplication", fake_app)
@@ -463,8 +591,9 @@ def test_cli_runs_the_check_end_to_end(monkeypatch, pfx, capsys):
     out = capsys.readouterr().out
     assert code == 0, out
     assert made == [
-        (CLIENT_ID, f"https://login.microsoftonline.com/{tenant.TENANT_ID}", ["private_key", "public_certificate"])
+        (CLIENT_ID, f"https://login.microsoftonline.com/{tenant.TENANT_ID}", ["private_key", "public_certificate"], 60)
     ]
+    assert signins == [(tenant.SEEDER_CLIENT_ID, tenant.TENANT_ID, "browser")]
     assert out.strip().endswith(f"{len(probes())}/{len(probes())} probes as expected")
 
 
@@ -476,7 +605,7 @@ def test_cli_runs_the_check_end_to_end(monkeypatch, pfx, capsys):
     ["ok", "unexpected", "no_credential", "wrong_password", "token_error", "no_response"],
 )
 def test_no_output_contains_a_secret(scenario, monkeypatch, pfx, key_and_cert, capsys):
-    fake = FakeTenant()
+    fake = with_canary(FakeTenant())
     app = FakeConfidentialApp()
     read = password_store()
     transport = fake
@@ -503,6 +632,7 @@ def test_no_output_contains_a_secret(scenario, monkeypatch, pfx, key_and_cert, c
         transport = Down()
 
     monkeypatch.setattr(worker_app, "_sleep", lambda seconds: None)  # no real retry waits
+    monkeypatch.setattr(cli, "SignIn", fake_seeder_signin())
     monkeypatch.setattr(cli, "read_generic_credential", read)
     monkeypatch.setattr(cli, "RequestsTransport", lambda: transport)
     monkeypatch.setattr(worker_app.msal, "ConfidentialClientApplication", lambda *a, **k: app)

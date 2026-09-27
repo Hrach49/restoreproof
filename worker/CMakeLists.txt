@@ -24,6 +24,8 @@ add_library(rpcore STATIC
     src/command_config.cpp
     src/config.cpp
     src/config_check.cpp
+    src/connector.cpp
+    src/connector_registry.cpp
     src/http_client.cpp
     src/redact.cpp
     src/retry_policy.cpp
@@ -31,6 +33,7 @@ add_library(rpcore STATIC
     src/utf16.cpp
     src/veeam_client.cpp
     src/veeam_command.cpp
+    src/veeam_m365_connector.cpp
     src/version.cpp
 )
 target_include_directories(rpcore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -63,6 +66,8 @@ add_executable(rptests
     tests/cli_test.cpp
     tests/config_check_test.cpp
     tests/config_test.cpp
+    tests/connector_registry_test.cpp
+    tests/connector_test.cpp
     tests/deps_test.cpp
     tests/http_client_test.cpp
     tests/http_client_tls_test.cpp
@@ -73,6 +78,7 @@ add_executable(rptests
     tests/veeam_client_live_test.cpp
     tests/veeam_client_test.cpp
     tests/veeam_command_test.cpp
+    tests/veeam_m365_connector_test.cpp
     tests/version_test.cpp
 )
 # deps_test.cpp uses cpr and OpenSSL directly, so it links them itself.

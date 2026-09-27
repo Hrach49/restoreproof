@@ -4,6 +4,7 @@
 #include <rp/retry_policy.hpp>
 
 #include "control_chars.hpp"
+#include "uuid.hpp"
 
 #include <spdlog/spdlog.h>
 
@@ -63,26 +64,6 @@ std::string form_encode(std::string_view text)
         }
     }
     return out;
-}
-
-bool is_hex(char c) noexcept
-{
-    return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
-}
-
-// 8-4-4-4-12 hex digits, nothing else: safe to put in a URL as it is.
-bool is_uuid(std::string_view id) noexcept
-{
-    if (id.size() != 36) {
-        return false;
-    }
-    for (std::size_t i = 0; i < id.size(); ++i) {
-        const bool dash_here = i == 8 || i == 13 || i == 18 || i == 23;
-        if (dash_here ? id[i] != '-' : !is_hex(id[i])) {
-            return false;
-        }
-    }
-    return true;
 }
 
 bool is_blank(std::string_view text) noexcept

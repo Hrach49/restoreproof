@@ -37,6 +37,6 @@ RESTORE_TARGET_LIST_ID = "ffec069d-65e4-4c3a-9da2-ac086cf9dafa"
 RESTORE_TARGET_DRIVE_ID = "b!XQgI_nDr6EKVpkcBib2Y65nzyk4OzJVNs_7NCRoJ5omdBuz_5GU6TJ2irAhs-dr6"
 ONEDRIVE_TARGET_FOLDER_ID = "01ZK75LGDGB6QOO3MGNFGYOY6C6VBDG5OH"
 
-# "RestoreProof Worker" app registration (lab/entra/new-worker-app.ps1). Empty until it is
-# created; --client-id or RP_LAB_WORKER_CLIENT_ID override it. Not a secret.
-WORKER_CLIENT_ID = ""
+# "RestoreProof Worker" app registration (lab/entra/new-worker-app.ps1, lab/tenant.md).
+# --client-id or RP_LAB_WORKER_CLIENT_ID override it. Not a secret.
+WORKER_CLIENT_ID = "737da5ef-baf2-4198-b009-e160d8ca77c9"

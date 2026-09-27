@@ -173,41 +173,6 @@ bool is_https_url(std::string_view value)
     });
 }
 
-// "restoretest@" in any case, then a domain: two or more non-empty labels of
-// ASCII letters, digits and '-', separated by '.'. The mailbox is the only
-// mail restore target (docs/decisions.md), so its name is fixed rather than
-// trusted: a typo, or a look-alike such as a Cyrillic letter or an invisible
-// character, can't point restores at a live mailbox. The domain varies per
-// tenant, so it is only checked for shape.
-bool is_restore_mailbox(std::string_view value)
-{
-    constexpr std::string_view local = "restoretest@";
-    if (value.size() <= local.size() ||
-        !std::equal(local.begin(), local.end(), value.begin(), [](char a, char b) {
-            return a == std::tolower(static_cast<unsigned char>(b));
-        })) {
-        return false;
-    }
-    const std::string_view domain = value.substr(local.size());
-    const auto label_char = [](char c) {
-        return std::isalnum(static_cast<unsigned char>(c)) || c == '-';
-    };
-    std::size_t labels = 0;
-    std::size_t start = 0;
-    while (true) {
-        const std::size_t dot = domain.find('.', start);
-        const std::string_view label = domain.substr(start, dot - start);
-        if (label.empty() || !std::all_of(label.begin(), label.end(), label_char)) {
-            return false;
-        }
-        ++labels;
-        if (dot == std::string_view::npos) {
-            return labels >= 2;
-        }
-        start = dot + 1;
-    }
-}
-
 // Control and invisible formatting characters that could forge, hide or
 // reorder lines of `config check` output (control_chars.hpp lists them). The
 // JSON parser has already rejected invalid UTF-8, so matching byte sequences
@@ -355,6 +320,35 @@ void read_int(const json& doc, const IntField& field, Config& config)
 }
 
 } // namespace
+
+bool is_restore_mailbox(std::string_view value)
+{
+    constexpr std::string_view local = "restoretest@";
+    if (value.size() <= local.size() ||
+        !std::equal(local.begin(), local.end(), value.begin(), [](char a, char b) {
+            return a == std::tolower(static_cast<unsigned char>(b));
+        })) {
+        return false;
+    }
+    const std::string_view domain = value.substr(local.size());
+    const auto label_char = [](char c) {
+        return std::isalnum(static_cast<unsigned char>(c)) || c == '-';
+    };
+    std::size_t labels = 0;
+    std::size_t start = 0;
+    while (true) {
+        const std::size_t dot = domain.find('.', start);
+        const std::string_view label = domain.substr(start, dot - start);
+        if (label.empty() || !std::all_of(label.begin(), label.end(), label_char)) {
+            return false;
+        }
+        ++labels;
+        if (dot == std::string_view::npos) {
+            return labels >= 2;
+        }
+        start = dot + 1;
+    }
+}
 
 ConfigError::ConfigError(std::string key, const std::string& message)
     : std::runtime_error(message), key_(std::move(key))

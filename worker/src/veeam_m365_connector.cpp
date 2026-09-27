@@ -1,5 +1,8 @@
 #include <rp/veeam_m365_connector.hpp>
 
+#include "control_chars.hpp"
+#include "uuid.hpp"
+
 #include <algorithm>
 #include <iterator>
 #include <memory>
@@ -20,6 +23,25 @@ bool ascii_iequals(std::string_view a, std::string_view b) noexcept
         return c >= 'A' && c <= 'Z' ? static_cast<char>(c - 'A' + 'a') : c;
     };
     return std::ranges::equal(a, b, [&](char x, char y) { return lower(x) == lower(y); });
+}
+
+// A client reference as error messages show it: each control character
+// (control_chars.hpp), which could forge, hide or reorder a log or stderr
+// line, becomes a space. client_ref will come from a Cloud job (C5.6).
+std::string shown(std::string_view client_ref)
+{
+    std::string out;
+    out.reserve(client_ref.size());
+    for (std::size_t i = 0; i < client_ref.size();) {
+        if (const std::size_t length = control_character_length(client_ref, i); length != 0) {
+            out += ' ';
+            i += length;
+        } else {
+            out += client_ref[i];
+            ++i;
+        }
+    }
+    return out;
 }
 
 connector::RestorePoint to_connector(const RestorePoint& point)
@@ -78,20 +100,19 @@ std::vector<connector::RestorePoint> VeeamM365Connector::list_restore_points(
             }
         }
         if (matches.empty()) {
-            throw connector::NotFoundError("client " + client_ref + " not found in Veeam");
+            throw connector::NotFoundError("client " + shown(client_ref) + " not found in Veeam");
         }
         if (matches.size() > 1) {
-            throw connector::Error("client " + client_ref + " matches " +
+            throw connector::Error("client " + shown(client_ref) + " matches " +
                                    std::to_string(matches.size()) + " organisations in Veeam");
         }
-        std::vector<RestorePoint> points;
-        try {
-            points = client_->list_restore_points(matches.front().id);
-        } catch (const std::invalid_argument&) {
-            // VeeamClient refuses an ID that isn't a UUID before sending it.
-            throw connector::Error("Veeam returned an organisation ID for client " + client_ref +
-                                   " that isn't a UUID");
+        // VeeamClient would refuse it with std::invalid_argument; checked here
+        // so that only this case reads as Veeam's fault.
+        if (!is_uuid(matches.front().id)) {
+            throw connector::Error("Veeam returned an organisation ID for client " +
+                                   shown(client_ref) + " that isn't a UUID");
         }
+        const std::vector<RestorePoint> points = client_->list_restore_points(matches.front().id);
         std::vector<connector::RestorePoint> out;
         out.reserve(points.size());
         std::ranges::transform(points, std::back_inserter(out), to_connector);

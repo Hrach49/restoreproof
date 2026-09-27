@@ -22,6 +22,10 @@ RestoreTargets RestoreTargets::from_config(const Config& config)
 {
     RestoreTargets targets;
     targets.mailbox_ = require_set(config.test_mailbox, "test_mailbox");
+    // The same rule parse_config applies: never a mailbox other than restoretest.
+    if (!is_restore_mailbox(targets.mailbox_)) {
+        throw std::invalid_argument("restore target test_mailbox must be restoretest@<domain>");
+    }
     targets.site_id_ = require_set(config.test_site_id, "test_site_id");
     targets.library_id_ = require_set(config.test_library_id, "test_library_id");
     targets.onedrive_drive_id_ = require_set(config.test_onedrive_drive_id, "test_onedrive_drive_id");

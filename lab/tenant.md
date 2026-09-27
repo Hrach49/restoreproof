@@ -88,6 +88,32 @@ body takes none of these IDs (`docs/api/veeam-feasibility.md` §5.5):
 
 W2.4/W2.7 settle how the configured IDs map to these names, and update the config doc.
 
+## RestoreProof Worker app (L1.5)
+
+The Worker's own app registration: it reads back what Veeam restored, app-only, and can reach
+the three restore targets and nothing else. What is granted, why, and how it is checked:
+`docs/security/graph-permissions.md`. Made on 2026-09-27 with `lab/entra/new-worker-app.ps1`
+(steps in `lab/README.md`), which is safe to re-run. `lab/tests/test_catalog.py` checks the
+client ID matches `WORKER_CLIENT_ID` in `lab/seeder/tenant.py`.
+
+| | |
+|---|---|
+| RestoreProof Worker, application (client) ID | `737da5ef-baf2-4198-b009-e160d8ca77c9` |
+| Service principal object ID | `f5a56ba3-1b8f-4d4c-8a0a-b2b579b7bd5f` |
+| Sign-in audience | Single tenant (`AzureADMyOrg`) |
+| Credential | Certificate (no client secret): self-signed RSA 2048, `CN=RestoreProof Worker (lab)`, SHA-1 thumbprint `B56D2BD39945BAB1484A53F6C78C059A369EDBB3`, created 2026-09-27, expires 2027-09-27. Private key only in `%LOCALAPPDATA%\RestoreProof\lab\worker-graph.pfx`; its password only in Credential Manager (`RestoreProof Lab - Worker Graph app PFX`) |
+| Graph application permissions (admin consent) | `Sites.Selected`, `Files.SelectedOperations.Selected`; nothing else |
+| SharePoint grants | `read` on the RestoreTest site; `read` on alice's OneDrive `RestoreTarget` folder |
+| Exchange Online | Role assignment `RestoreProof Worker - Application Mail.Read - restoretest` (role `Application Mail.Read`), management scope `RestoreProof Worker - restoretest mailbox` (`PrimarySmtpAddress -eq 'restoretest@RestoreProofLab.onmicrosoft.com'`) |
+| Live check | `python -m seeder check-worker-app`: 16/16 on 2026-09-27, `docs/security/l1.5-worker-app-check.txt` |
+
+Setting it up changed the tenant in two other ways:
+
+- `Enable-OrganizationCustomization` was run on 2026-09-27. Exchange needs it before a
+  management scope can exist. It is tenant-wide and can't be undone.
+- The global admin is a site collection admin of alice's OneDrive (admin center, "Create link
+  to files"), which the folder grant needed. `lab/README.md` says how to remove it.
+
 ## Veeam Restore Portal app and operator role (W1.0 / L1.6)
 
 Made on 2026-09-26 to test operator mode. Not used by the product (admin mode is the default,

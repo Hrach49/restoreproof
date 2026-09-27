@@ -1,7 +1,8 @@
-// W1.5 "Done when": a live call against the lab's Veeam returns the real
-// organisation and its restore points. Skipped unless RP_LIVE=1. Read-only:
-// it signs in, lists organisations and restore points, and logs out; no
-// explore session, no restore.
+// W1.5 and W1.6 "Done when": the lab's Veeam returns the real organisation
+// and its restore points, through VeeamClient and through `rpworker veeam
+// list`. Skipped unless RP_LIVE=1. Read-only: each signs in, lists
+// organisations and restore points, and logs out; no explore session, no
+// restore.
 //
 // Environment (docs/testing.md):
 //   RP_LIVE=1
@@ -15,13 +16,19 @@
 #include <rp/http_client.hpp>
 #include <rp/secrets.hpp>
 #include <rp/veeam_client.hpp>
+#include <rp/veeam_command.hpp>
+
+#include <nlohmann/json.hpp>
 
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <filesystem>
 #include <iostream>
 #include <optional>
+#include <sstream>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -89,4 +96,56 @@ TEST_CASE("live: the lab's Veeam returns the real organisation and its restore p
         CHECK(point.organization_id == kLabOrgId);
         CHECK(point.id.size() == 72);
     }
+}
+
+// W1.6 "Done when": `rpworker veeam list` prints the two restore points of the
+// lab's organisation. The same environment as above; the config is written to
+// a temp file from it. Read-only, like the test above.
+TEST_CASE("live: rpworker veeam list prints the lab organisation's two restore points",
+          "[veeam][live]")
+{
+    if (rp::test::get_env("RP_LIVE") != std::optional<std::string>{"1"}) {
+        SKIP("set RP_LIVE=1 to run against the lab's Veeam");
+    }
+    const std::optional<std::string> ca_file = rp::test::get_env("RP_LIVE_VEEAM_CA_FILE");
+    REQUIRE(ca_file);
+    const nlohmann::json config = {
+        {"cloud_url", "https://cloud.example.invalid"},
+        {"veeam_url", env_or("RP_LIVE_VEEAM_URL", "https://localhost:4443")},
+        {"veeam_org_name", kLabOrgName},
+        {"graph_tenant_id", "unused"},
+        {"graph_client_id", "unused"},
+        {"test_mailbox", "restoretest@RestoreProofLab.onmicrosoft.com"},
+        {"test_site_id", "unused"},
+        {"test_library_id", "unused"},
+        {"test_onedrive_drive_id", "unused"},
+        {"test_onedrive_folder_id", "unused"},
+        {"veeam_ca_file", *ca_file},
+        {"veeam_cert_sha256", env_or("RP_LIVE_VEEAM_CERT_SHA256", kLabCertSha256)}};
+    const rp::test::TempDir dir;
+    const std::filesystem::path path = dir.write("config.json", config.dump());
+    const std::u8string path_utf8 = path.u8string();
+    const std::string path_arg(path_utf8.begin(), path_utf8.end());
+    const std::vector<std::string_view> args{"list", "--config", path_arg};
+
+    std::ostringstream out;
+    std::ostringstream err;
+    const int exit_code = rp::run_veeam_command(args, out, err, rp::default_veeam_command_env());
+    std::cout << out.str();
+    INFO(err.str());
+    REQUIRE(exit_code == 0);
+    REQUIRE(err.str().empty());
+
+    // The rows of the organisation, marked as veeam_org_name. The lab has
+    // exactly two points; a later backup would add a row here.
+    std::vector<std::string> rows;
+    std::istringstream lines(out.str());
+    for (std::string line; std::getline(lines, line);) {
+        if (line.starts_with("* " + kLabOrgName + "  ")) {
+            rows.push_back(line);
+        }
+    }
+    REQUIRE(rows.size() == 2);
+    CHECK(rows[0].find(kLabIncremental) != std::string::npos);
+    CHECK(rows[1].find(kLabFull) != std::string::npos);
 }

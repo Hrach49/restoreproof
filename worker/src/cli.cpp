@@ -2,6 +2,7 @@
 
 #include <rp/config.hpp>
 #include <rp/config_check.hpp>
+#include <rp/veeam_command.hpp>
 #include <rp/version.hpp>
 
 #include "utf16.hpp"
@@ -13,21 +14,17 @@
 
 namespace rp {
 
-namespace {
-
-constexpr std::string_view kUsage =
-    "usage: rpworker --version | rpworker config check [--config <path>]\n";
-
-} // namespace
-
 int run_cli(std::span<const std::string_view> args, std::ostream& out, std::ostream& err)
 {
     if (args.size() == 1 && args[0] == "--version") {
         out << version() << '\n';
-        return 0;
+        return exit_code::ok;
     }
     if (!args.empty() && args[0] == "config") {
         return run_config_command(args.subspan(1), out, err, default_config_path);
+    }
+    if (!args.empty() && args[0] == "veeam") {
+        return run_veeam_command(args.subspan(1), out, err, default_veeam_command_env());
     }
     err << kCliUsage;
     return exit_code::usage;

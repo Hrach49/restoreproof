@@ -21,6 +21,7 @@ enable_testing()
 add_library(rpcore STATIC
     src/cert_pin.cpp
     src/cli.cpp
+    src/command_config.cpp
     src/config.cpp
     src/config_check.cpp
     src/http_client.cpp
@@ -29,6 +30,7 @@ add_library(rpcore STATIC
     src/secrets.cpp
     src/utf16.cpp
     src/veeam_client.cpp
+    src/veeam_command.cpp
     src/version.cpp
 )
 target_include_directories(rpcore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -70,6 +72,7 @@ add_executable(rptests
     tests/smoke.cpp
     tests/veeam_client_live_test.cpp
     tests/veeam_client_test.cpp
+    tests/veeam_command_test.cpp
     tests/version_test.cpp
 )
 # deps_test.cpp uses cpr and OpenSSL directly, so it links them itself.

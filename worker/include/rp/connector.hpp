@@ -45,9 +45,11 @@ struct RestorePoint {
 // restore_sample, before any call to the backup product.
 class RestoreTargets {
 public:
-    // Copies Config's test_* values. Throws std::invalid_argument ("restore
-    // target <key> is empty") for an empty one, which load_config never
-    // returns but a Config built in code could hold.
+    // Copies Config's test_* values and checks them as parse_config does, since
+    // a Config built in code skips that. Throws std::invalid_argument ("restore
+    // target <key> is empty") for an empty one, and ("restore target
+    // test_mailbox must be restoretest@<domain>") for a mailbox that
+    // rp::is_restore_mailbox refuses.
     static RestoreTargets from_config(const Config& config);
 
     const std::string& mailbox() const noexcept { return mailbox_; }
@@ -106,14 +108,16 @@ struct RestoreSpec {
 
 // The restore's own outcome, as the backup product reported it. Not
 // pass/fail/error: W3.3 decides those from this and the Graph comparison.
-//  - not_run: nothing was sent to restore (an empty spec).
-//  - succeeded: every restore session succeeded and restored every item sent
-//    (Veeam: result Success and restoredItemsCount equal to the items sent).
-//  - partial: something was restored, but not cleanly: a warning, a failed
-//    session beside ones that restored items, or fewer items restored than
-//    sent (Veeam: Warning; Failed beside restored items; Success with a short
-//    restoredItemsCount).
-//  - failed: nothing was restored (Veeam: every session Failed, or 0 restored).
+// Decided in this order; the first that fits wins:
+//  1. not_run: nothing was sent to restore (an empty spec).
+//  2. failed: nothing was restored, whatever the sessions' results say
+//     (Veeam: every session Failed, or 0 restored in total, so a Warning or a
+//     Success with 0 restored is failed too).
+//  3. succeeded: every restore session succeeded and restored every item sent
+//     (Veeam: result Success and restoredItemsCount equal to the items sent).
+//  4. partial: anything else: something was restored, but not cleanly (Veeam:
+//     Warning; Failed beside restored items; Success with a short
+//     restoredItemsCount).
 // A failure to run at all (unreachable, refused, a guard violation) is an
 // exception, never a status.
 enum class RestoreStatus { not_run, succeeded, partial, failed };

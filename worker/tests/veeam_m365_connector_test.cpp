@@ -329,6 +329,53 @@ TEST_CASE("veeam_m365: an organisation ID that isn't a UUID is an Error", "[veea
     REQUIRE(kind_of([&] { (void)made->list_restore_points(kOrgName); }, message) == "Error");
     REQUIRE(message == "Veeam returned an organisation ID for client " + kOrgName +
                            " that isn't a UUID");
+    REQUIRE(lab.http.count(HttpMethod::get, points_url()) == 0);
+}
+
+TEST_CASE("veeam_m365: an invalid_argument from below isn't reported as a bad organisation ID",
+          "[veeam_m365]")
+{
+    Harness lab;
+    lab.http.on(HttpMethod::get, points_url(), [](const rp::HttpRequest&) -> HttpResponse {
+        throw std::invalid_argument("some other argument check");
+    });
+    const std::unique_ptr<connector::IConnector> made = lab.make();
+
+    REQUIRE_THROWS_MATCHES(made->list_restore_points(kOrgName), std::invalid_argument,
+                           Message("some other argument check"));
+}
+
+TEST_CASE("veeam_m365: a client reference's control characters never reach a message",
+          "[veeam_m365]")
+{
+    // client_ref will come from a Cloud job (C5.6): a CR/LF or a bidi override
+    // in it must not forge, hide or reorder a log or stderr line.
+    const auto [client_ref, shown] = GENERATE(table<std::string, std::string>({
+        {"Other\r\nERROR forged", "Other  ERROR forged"},
+        {"Other\x1B[31m", "Other [31m"},
+        {"Other\xE2\x80\xAE" "moc.tfosorcim", "Other moc.tfosorcim"},
+        {"Other\xC2\x85line", "Other line"},
+    }));
+    CAPTURE(shown);
+    Harness lab;
+    const std::unique_ptr<connector::IConnector> made = lab.make();
+
+    REQUIRE_THROWS_MATCHES(made->list_restore_points(client_ref), connector::NotFoundError,
+                           Message("client " + shown + " not found in Veeam"));
+}
+
+TEST_CASE("veeam_m365: the matches-N message hides control characters too", "[veeam_m365]")
+{
+    const std::string evil = "Twin\nforged";
+    Harness lab;
+    lab.http.on(HttpMethod::get, orgs_url(),
+                {orgs_response([&](json& org) { org["name"] = evil; },
+                               {{"0b6f7c52-4f3e-4a51-9d4a-5f0a3c2b1e90", evil}})});
+    const std::unique_ptr<connector::IConnector> made = lab.make();
+
+    std::string message;
+    REQUIRE(kind_of([&] { (void)made->list_restore_points(evil); }, message) == "Error");
+    REQUIRE(message == "client Twin forged matches 2 organisations in Veeam");
 }
 
 TEST_CASE("veeam_m365: an empty client reference is refused before any request",

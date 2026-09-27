@@ -23,7 +23,12 @@ Format: date, decision, reason, alternatives rejected.
   - The connector resolves the name to Veeam's organisation ID on every call, ASCII
     case-insensitively, as `veeam list` marks it.
   - No match is `NotFoundError`; two matches are a plain `Error`; an empty `client_ref` is
-    `std::invalid_argument` before any request.
+    `std::invalid_argument` before any request. A matched organisation whose ID isn't a UUID
+    is an `Error`, checked before the restore points are asked for; any other
+    `std::invalid_argument` passes through as it is.
+  - Error messages show `client_ref` with each control character (`control_chars.hpp`) made
+    a space, as `veeam list` shows Veeam's text: it will come from a Cloud job (C5.6), and
+    a CR/LF or bidi override in it must not forge, hide or reorder a log line.
 - **Neutral types, in namespace `rp::connector`.**
   - `RestorePoint` holds:
     - `id`: opaque, only meaningful to the connector that returned it.
@@ -51,6 +56,11 @@ Format: date, decision, reason, alternatives rejected.
   | `failed` | nothing restored | every session `Failed`, or 0 restored; this covers the OneDrive trap in `docs/api/veeam-feasibility.md` §3 (`Failed`, 0 restored, no `errors`) |
   | `not_run` | nothing was sent | the default; what an empty spec returns |
 
+  - The rows are tried in this order, and the first that fits wins: `not_run` (nothing
+    sent), `failed` (0 restored in total, whatever the results say), `succeeded`, then
+    `partial` for everything else. So `Warning` with 0 restored and `Success` with 0
+    restored are `failed`, never `partial`.
+
   - W3.3 then reads: `failed` → fail; `partial` → fail unless every item verifies.
   - Infrastructure failures and guard violations are exceptions, never a status.
   - `RestoreResult` also carries:
@@ -58,7 +68,9 @@ Format: date, decision, reason, alternatives rejected.
     - `log`: the sessions' logs, as text.
     - `items_restored`.
 - **Restore targets come only from Config.** `RestoreTargets::from_config` is the only way
-  to build one (the default constructor is private), and it rejects an empty value.
+  to build one (the default constructor is private). It rejects an empty value and, as
+  `parse_config` does, a `test_mailbox` that isn't `restoretest@<domain>`
+  (`rp::is_restore_mailbox`), since a `Config` built in code skips `parse_config`.
   - It holds `test_mailbox`, `test_site_id`, `test_library_id`, `test_onedrive_drive_id` and
     `test_onedrive_folder_id`.
   - `RestoreSpec` holds a copy, so a spec can't be made without the configured targets and

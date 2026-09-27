@@ -259,6 +259,34 @@ TEST_CASE("restore targets can't be built from a config missing one", "[connecto
                            Catch::Matchers::Message("restore target " + key + " is empty"));
 }
 
+TEST_CASE("restore targets refuse a mailbox that isn't restoretest@<domain>", "[connector]")
+{
+    // load_config refuses these already; a Config built in code must not get
+    // past from_config either (CLAUDE.md, "Restore targets").
+    const std::string mailbox = GENERATE("alice@example.onmicrosoft.com",
+                                         "restoretest@localhost", "restoretest@",
+                                         "restoretest@example..com",
+                                         "xrestoretest@example.onmicrosoft.com",
+                                         "restoretest@exa mple.com",
+                                         "restor\xD0\xB5test@example.onmicrosoft.com");
+    CAPTURE(mailbox);
+    rp::Config config = config_with_targets();
+    config.test_mailbox = mailbox;
+
+    REQUIRE_THROWS_MATCHES(
+        connector::RestoreTargets::from_config(config), std::invalid_argument,
+        Catch::Matchers::Message("restore target test_mailbox must be restoretest@<domain>"));
+}
+
+TEST_CASE("restore targets take restoretest@<domain> in any case", "[connector]")
+{
+    rp::Config config = config_with_targets();
+    config.test_mailbox = "RestoreTest@Example.onmicrosoft.com";
+
+    REQUIRE(connector::RestoreTargets::from_config(config).mailbox() ==
+            "RestoreTest@Example.onmicrosoft.com");
+}
+
 // --- Happy paths -------------------------------------------------------------------
 
 TEST_CASE("restore targets are the configured test locations", "[connector]")

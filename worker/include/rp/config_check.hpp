@@ -17,9 +17,10 @@ namespace rp {
 // then, so usage errors and --config never look up ProgramData.
 //
 // `check` loads the config and the secrets and prints every config field and
-// every secret variable, masked, to `out`. Returns 0 on success, 2 with the
-// usage line on `err` for arguments it doesn't understand, and 1 when the
-// check fails: "config error: <message>" on `err` for a ConfigError (including
+// every secret variable, masked, to `out`. Returns (rp::exit_code) 0 on
+// success, 64 with the usage line (rp::kCliUsage) on `err` for arguments it
+// doesn't understand, and 1 when the check fails: "config error: <message>"
+// on `err` for a ConfigError (including
 // one from `default_path`), "config error: unexpected failure" for any other
 // exception, whose message is never shown. No exception escapes.
 int run_config_command(std::span<const std::string_view> args, std::ostream& out, std::ostream& err,

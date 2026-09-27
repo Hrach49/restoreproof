@@ -1,5 +1,6 @@
 #include <rp/config_check.hpp>
 
+#include <rp/cli.hpp>
 #include <rp/config.hpp>
 #include <rp/secrets.hpp>
 
@@ -58,8 +59,8 @@ int run_config_command(std::span<const std::string_view> args, std::ostream& out
 {
     std::optional<std::string_view> config_arg;
     if (!parse_check_args(args, config_arg)) {
-        err << kUsage;
-        return 2;
+        err << kCliUsage;
+        return exit_code::usage;
     }
 
     // default_path() is called only here, so usage errors and --config never
@@ -103,7 +104,7 @@ int run_config_command(std::span<const std::string_view> args, std::ostream& out
     print_setting(out, kEnvVeeamUsername, mask_secret(secrets.veeam_username));
     print_setting(out, kEnvVeeamPassword, mask_secret(secrets.veeam_password));
     print_setting(out, kEnvGraphClientSecret, mask_secret(secrets.graph_client_secret));
-    return 0;
+    return exit_code::ok;
 }
 
 } // namespace rp

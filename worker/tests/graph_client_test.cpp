@@ -1,8 +1,11 @@
-// W2.1: GraphClient's token handling against the recorded Entra replies in
-// tests/fixtures/graph/ (README.md there), served by FakeHttpClient: the
-// AADSTS error table, redirects, retries and their waits, the reply checks,
-// the cache and its renewal, single-flight renewals, and no secret in any
-// message or log line. Nothing here touches the network.
+// W2.1: GraphClient against the recorded Entra and Graph replies in
+// tests/fixtures/graph/ (README.md there), served by FakeHttpClient. The
+// token: the AADSTS error table, redirects, retries and their waits, the
+// reply checks, the cache and its renewal, single-flight renewals. GET: the
+// URLs the token may go to, 401 and a fresh token, 403 naming the grant, 404,
+// 429/5xx/transport retries within their caps, redirects, get_json and
+// paging. No secret in any message or log line. Nothing here touches the
+// network.
 
 #include "fake_http_client.hpp"
 #include "test_certs.hpp"
@@ -862,37 +865,327 @@ TEST_CASE("the constructor's certificate error comes before any request", "[grap
     CHECK(http.requests().empty());
 }
 
-TEST_CASE("get() refuses anything but a path before any request", "[graph][client]")
+// --- GET: where the token may go ---------------------------------------------
+
+TEST_CASE("get() sends the token nowhere but https://graph.microsoft.com/v1.0/",
+          "[graph][client][get]")
 {
-    const std::string target = GENERATE(as<std::string>{}, "", "users/x",
-                                        "https://graph.microsoft.com/v1.0/users/x",
-                                        "https://evil.example/v1.0/users/x");
+    // Refused before anything is sent, the token request included: an
+    // @odata.nextLink (or a path) that points elsewhere, or that curl might
+    // read differently from a text compare, never gets the token.
+    const std::string target = GENERATE(
+        as<std::string>{}, "", "users/x", "v1.0/users/x", "graph.microsoft.com/v1.0/users/x",
+        // Another host that starts or ends like Graph's.
+        "https://graph.microsoft.com.evil.example/v1.0/users/x",
+        "https://evilgraph.microsoft.com/v1.0/users/x", "https://evil.example/v1.0/users/x",
+        "https://login.microsoftonline.com/common/v1.0/users/x",
+        "https://graph.microsoft.us/v1.0/users/x",
+        "https://microsoftgraph.chinacloudapi.cn/v1.0/users/x",
+        // Not https, or not spelled exactly so.
+        "http://graph.microsoft.com/v1.0/users/x", "HTTPS://GRAPH.MICROSOFT.COM/v1.0/users/x",
+        "https:/graph.microsoft.com/v1.0/users/x", "https:///graph.microsoft.com/v1.0/users/x",
+        "//graph.microsoft.com/v1.0/users/x",
+        // Userinfo, a port, a trailing dot, an encoded dot or slash, a
+        // backslash: all before the path.
+        "https://user@graph.microsoft.com/v1.0/users/x",
+        "https://graph.microsoft.com@evil.example/v1.0/users/x",
+        "https://graph.microsoft.com:443/v1.0/users/x",
+        "https://graph.microsoft.com:444/v1.0/users/x",
+        "https://graph.microsoft.com./v1.0/users/x",
+        "https://graph.microsoft.com.:443/v1.0/users/x",
+        "https://graph.microsoft.com%2eevil.example/v1.0/users/x",
+        "https://graph.microsoft.com%2Fv1.0/users/x",
+        "https://graph.microsoft.com\\@evil.example/v1.0/users/x",
+        // Another API version, or v1.0 without its slash.
+        "https://graph.microsoft.com/beta/users/x", "https://graph.microsoft.com/v1.0",
+        "https://graph.microsoft.com/v1.0?$top=1", "https://graph.microsoft.com/v1.0.evil/users",
+        "https://graph.microsoft.com/V1.0/users/x",
+        // Whitespace, control characters, a backslash or a fragment anywhere.
+        " https://graph.microsoft.com/v1.0/users/x", "https://graph.microsoft.com/v1.0/users/x\t",
+        "https://graph.microsoft.com/v1.0/users/x y", "/users/x\ty", "/users/x y",
+        "/users/x\r\nHost: evil.example", "/users/x\ny", std::string("/users/x\0y", 10),
+        "/users/x\x7f", "/users/x\x1b[0m", "/users\\x", "https://graph.microsoft.com/v1.0/users\\x",
+        "/users/x#y", "/users/x?$top=1#y",
+        // Dot segments, plain or encoded, which curl would resolve out of v1.0.
+        "/../beta/users", "/users/../../beta/users", "/users/./x", "/users/..", "/users/.",
+        "https://graph.microsoft.com/v1.0/../beta/users", "/users/%2e%2e/x", "/users/%2E%2e/x",
+        "/users/%2e/x", "/%2e%2e/beta/users",
+        // An empty segment: a protocol-relative URL passed as a path.
+        "//evil.example/v1.0/users/x", "/users//x");
     CAPTURE(target);
     Lab lab;
     auto client = lab.make_client();
 
-    CHECK(catch_graph([&] { client->get(target, rp::graph::kMailReadGrant); }).kind ==
-          "GraphError");
+    const Caught by_get = catch_graph([&] { client->get(target, rp::graph::kMailReadGrant); });
+    const Caught by_json =
+        catch_graph([&] { client->get_json(target, rp::graph::kMailReadGrant); });
+
+    CHECK(by_get.kind == "GraphError");
+    CHECK(by_json.kind == "GraphError");
+    CHECK(by_get.status == 0);
+    CHECK_THAT(by_get.what, ContainsSubstring("https://graph.microsoft.com/v1.0/"));
+    // Quoted on one line at most: no control character reaches a log.
+    CHECK(std::none_of(by_get.what.begin(), by_get.what.end(),
+                       [](char c) { return static_cast<unsigned char>(c) < 0x20 || c == 0x7F; }));
     CHECK(lab.http.requests().empty());
 }
 
-TEST_CASE("a Graph error status is a GraphError for now", "[graph][client]")
+// --- GET: 401 ------------------------------------------------------------------
+
+TEST_CASE("a 401 after a fresh token is an AuthError that names the grant", "[graph][client][get]")
 {
-    // W2.1's next step maps 401, 403, 404, 429 and 5xx; until then any non-2xx
-    // is at least an error, never a response taken for data.
+    struct Row {
+        std::string fixture;
+        std::string request_id;
+    };
+    const Row row = GENERATE(values<Row>({
+        {"api-invalid-token-401", "8d99e65f-8a32-4f9e-8e3f-6373ee609d8f"},
+        {"api-no-token-401", "aab1166d-fbde-4b5d-9e9d-8b3c4f51bb5a"},
+    }));
+    CAPTURE(row.fixture);
     Lab lab;
-    lab.http.on(HttpMethod::get, kMessagesUrl, {load_fixture("graph", "messages-403-exchange")});
+    lab.http.on(HttpMethod::get, kMessagesUrl, {load_fixture("graph", row.fixture)});
 
     const Caught caught = get_once(lab);
 
-    CHECK_FALSE(caught.kind == "none");
-    CHECK(caught.status == 403);
-    CHECK(caught.code == "ErrorAccessDenied");
-    CHECK(caught.request_id == "a6273daa-7ac8-44a8-bda9-b9d8e07d0a45");
-    CHECK(caught.what.find("$top") == std::string::npos);
+    CHECK(caught.kind == "AuthError");
+    CHECK(caught.status == 401);
+    CHECK(caught.code == "InvalidAuthenticationToken");
+    CHECK(caught.request_id == row.request_id);
+    CHECK(caught.what ==
+          "Graph GET /v1.0/users/restoretest@RestoreProofLab.onmicrosoft.com/mailFolders/inbox/"
+          "messages: HTTP 401 (InvalidAuthenticationToken) again after a fresh token: the Worker "
+          "app relies on Exchange RBAC \"Application Mail.Read\" in a management scope covering "
+          "the test mailbox; see docs/security/graph-permissions.md (request ID " +
+              row.request_id + ")");
+    // One fresh token, one resend, no wait.
+    CHECK(lab.token_requests == 2);
+    CHECK(lab.bearers() == std::vector<std::string>{"Bearer token-1", "Bearer token-2"});
+    CHECK(lab.waits().empty());
 }
 
-TEST_CASE("a Graph error keeps innerError's code and request ID", "[graph][client]")
+TEST_CASE("a 401 asking for more claims is an AuthError at once", "[graph][client][get]")
+{
+    HttpResponse upper = load_fixture("graph", "api-no-token-401");
+    upper.headers["WWW-Authenticate"] =
+        R"(Bearer realm="", ERROR="INSUFFICIENT_CLAIMS", claims="e30=")";
+    const HttpResponse response =
+        GENERATE_COPY(load_fixture("graph", "api-insufficient-claims-401"), upper);
+    CAPTURE(response.headers.at("WWW-Authenticate"));
+    Lab lab;
+    lab.http.on(HttpMethod::get, kMessagesUrl, {response});
+
+    const Caught caught = get_once(lab);
+
+    CHECK(caught.kind == "AuthError");
+    CHECK(caught.status == 401);
+    CHECK_THAT(caught.what, ContainsSubstring("insufficient_claims"));
+    CHECK_THAT(caught.what, ContainsSubstring("Conditional Access"));
+    CHECK(lab.token_requests == 1);
+    CHECK(lab.bearers().size() == 1);
+}
+
+TEST_CASE("a 401 for a token another call has replaced is resent with the current one",
+          "[graph][client][get]")
+{
+    // The first answer comes back after another call has renewed the token
+    // (here: while the request was out, the clock passed the renewal and a
+    // second call on the same client fetched token-2). The 401 is for the old
+    // token, so the call is resent with the current one: no third token.
+    const std::string other_url = std::string{rp::graph::kGraphBaseUrl} + "/sites/root";
+    Lab lab;
+    std::unique_ptr<GraphClient> client;
+    std::atomic<int> calls = 0;
+    lab.http.on(HttpMethod::get, other_url, {load_fixture("graph", "messages-200")});
+    lab.http.on(HttpMethod::get, kMessagesUrl, [&](const HttpRequest&) {
+        if (++calls == 1) {
+            lab.advance(3600s);
+            client->get("/sites/root", rp::graph::kSitesReadGrant);
+            return load_fixture("graph", "api-invalid-token-401");
+        }
+        return load_fixture("graph", "messages-200");
+    });
+    client = lab.make_client();
+
+    CHECK(client->get(kMessagesPath, rp::graph::kMailReadGrant).status == 200);
+    CHECK(lab.token_requests == 2);
+    CHECK(lab.bearers() ==
+          std::vector<std::string>{"Bearer token-1", "Bearer token-2", "Bearer token-2"});
+}
+
+TEST_CASE("a 401 that keeps coming for replaced tokens ends after three resends",
+          "[graph][client][get]")
+{
+    const std::string other_url = std::string{rp::graph::kGraphBaseUrl} + "/sites/root";
+    Lab lab;
+    std::unique_ptr<GraphClient> client;
+    lab.http.on(HttpMethod::get, other_url, {load_fixture("graph", "messages-200")});
+    lab.http.on(HttpMethod::get, kMessagesUrl, [&](const HttpRequest&) {
+        // Every answer comes back after another call has renewed the token.
+        lab.advance(3600s);
+        client->get("/sites/root", rp::graph::kSitesReadGrant);
+        return load_fixture("graph", "api-invalid-token-401");
+    });
+    client = lab.make_client();
+
+    const Caught caught =
+        catch_graph([&] { client->get(kMessagesPath, rp::graph::kMailReadGrant); });
+
+    CHECK(caught.kind == "AuthError");
+    CHECK_THAT(caught.what, ContainsSubstring("again with a newer token"));
+    CHECK_THAT(caught.what, ContainsSubstring("Application Mail.Read"));
+    CHECK(lab.http.count(HttpMethod::get, kMessagesUrl) == 4);
+}
+
+TEST_CASE("a failed token renewal after a 401 is that failure", "[graph][client][get]")
+{
+    Lab lab;
+    lab.set_on_token([](int n, const HttpRequest&) {
+        return n == 1 ? token_response("token-1") : load_fixture("graph", "token-bad-signature-401");
+    });
+    lab.http.on(HttpMethod::get, kMessagesUrl, {load_fixture("graph", "api-invalid-token-401")});
+
+    const Caught caught = get_once(lab);
+
+    CHECK(caught.kind == "AuthError");
+    CHECK(caught.code == "700027");
+    CHECK(lab.bearers().size() == 1);
+}
+
+// --- GET: 403, 404 and other refusals --------------------------------------------
+
+TEST_CASE("a 403 is a PermissionError naming the grant the call relies on",
+          "[graph][client][get]")
+{
+    struct Row {
+        std::string fixture;
+        std::string path;
+        rp::graph::Grant grant;
+        std::string code;
+        std::string request_id;
+    };
+    const Row row = GENERATE(values<Row>({
+        {"messages-403-exchange",
+         "/users/alice@RestoreProofLab.onmicrosoft.com/mailFolders/inbox/messages?$top=1&$select=id",
+         rp::graph::kMailReadGrant, "ErrorAccessDenied", "a6273daa-7ac8-44a8-bda9-b9d8e07d0a45"},
+        {"site-403-accessdenied", "/sites/restoreprooflab.sharepoint.com",
+         rp::graph::kSitesReadGrant, "accessDenied", "fc57d2c2-4ef3-48fe-ac0b-bd0c465230fa"},
+        {"users-403-requestdenied", "/users?$top=1&$select=id", rp::graph::kMailReadGrant,
+         "Authorization_RequestDenied", "198f38e0-bd47-43ee-a692-a321529ce5d2"},
+    }));
+    CAPTURE(row.fixture);
+    const std::string url = std::string{rp::graph::kGraphBaseUrl} + row.path;
+    Lab lab;
+    lab.http.on(HttpMethod::get, url, {load_fixture("graph", row.fixture)});
+    auto client = lab.make_client();
+
+    try {
+        client->get(row.path, row.grant);
+        FAIL("get() returned after a 403");
+    } catch (const rp::graph::PermissionError& e) {
+        CHECK(std::string{e.what()} ==
+              "Graph denied GET /v1.0" + row.path.substr(0, row.path.find('?')) + " (403 " +
+                  row.code + "): the Worker app relies on " +
+                  std::string{row.grant.description} +
+                  "; see docs/security/graph-permissions.md (request ID " + row.request_id + ")");
+        CHECK(e.grant() == row.grant.description);
+        CHECK(e.status() == 403);
+        CHECK(e.code() == row.code);
+        CHECK(e.request_id() == row.request_id);
+    }
+    // Neither resent nor re-tokened: another token has the same roles.
+    CHECK(lab.http.count(HttpMethod::get, url) == 1);
+    CHECK(lab.token_requests == 1);
+    CHECK(lab.waits().empty());
+}
+
+TEST_CASE("a 403 without Graph's JSON is still a PermissionError", "[graph][client][get]")
+{
+    Lab lab;
+    lab.http.on(HttpMethod::get, kMessagesUrl,
+                {make_response(403, "<html>Forbidden</html>", "text/html")});
+    auto client = lab.make_client();
+
+    try {
+        client->get(kMessagesPath, rp::graph::kSitesReadGrant);
+        FAIL("get() returned after a 403");
+    } catch (const rp::graph::PermissionError& e) {
+        CHECK(std::string{e.what()} ==
+              "Graph denied GET /v1.0/users/restoretest@RestoreProofLab.onmicrosoft.com/"
+              "mailFolders/inbox/messages (403): the Worker app relies on Sites.Selected read on "
+              "the test site; see docs/security/graph-permissions.md");
+        CHECK(e.code().empty());
+    }
+}
+
+TEST_CASE("a 404 is a NotFoundError with Graph's explanation", "[graph][client][get]")
+{
+    const std::string path =
+        "/users/nobody-670f8a55@RestoreProofLab.onmicrosoft.com/mailFolders/inbox/messages?$top=1";
+    const std::string url = std::string{rp::graph::kGraphBaseUrl} + path;
+    Lab lab;
+    lab.http.on(HttpMethod::get, url, {load_fixture("graph", "messages-404-unknown-user")});
+    auto client = lab.make_client();
+
+    const Caught caught = catch_graph([&] { client->get(path, rp::graph::kMailReadGrant); });
+
+    CHECK(caught.kind == "NotFoundError");
+    CHECK(caught.status == 404);
+    CHECK(caught.code == "ErrorInvalidUser");
+    CHECK(caught.what ==
+          "Graph GET /v1.0/users/nobody-670f8a55@RestoreProofLab.onmicrosoft.com/mailFolders/"
+          "inbox/messages: HTTP 404 (ErrorInvalidUser): The requested user "
+          "'nobody-670f8a55@RestoreProofLab.onmicrosoft.com' is invalid. (request ID "
+          "6491e50f-2c2f-4d02-9cf2-e700351b1c3d)");
+    CHECK(lab.http.count(HttpMethod::get, url) == 1);
+}
+
+TEST_CASE("a mailbox Graph can't read is a GraphError, not a NotFoundError",
+          "[graph][client][get]")
+{
+    HttpResponse not_supported = load_fixture("graph", "messages-404-mailbox-not-enabled");
+    not_supported.body = R"({"error":{"code":"MailboxNotSupportedForRESTAPI",)"
+                         R"("message":"REST API is not yet supported for this mailbox."}})";
+    HttpResponse as_400 = load_fixture("graph", "messages-404-mailbox-not-enabled");
+    as_400.status = 400;
+    const HttpResponse response =
+        GENERATE_COPY(load_fixture("graph", "messages-404-mailbox-not-enabled"), not_supported,
+                      as_400);
+    CAPTURE(response.body);
+    Lab lab;
+    lab.http.on(HttpMethod::get, kMessagesUrl, {response});
+
+    const Caught caught = get_once(lab);
+
+    CHECK(caught.kind == "GraphError");
+    CHECK(caught.status == response.status);
+    CHECK_THAT(caught.code, ContainsSubstring("ForRESTAPI"));
+    CHECK_THAT(caught.what, ContainsSubstring("Exchange Online licence"));
+    CHECK(lab.http.count(HttpMethod::get, kMessagesUrl) == 1);
+}
+
+TEST_CASE("other refusals are a GraphError with Graph's code and message, sent once",
+          "[graph][client][get]")
+{
+    const int status = GENERATE(400, 405, 409, 410, 412, 413, 422);
+    CAPTURE(status);
+    Lab lab;
+    lab.http.on(HttpMethod::get, kMessagesUrl,
+                {make_response(status, R"({"error":{"code":"BadRequest",)"
+                                       R"("message":"Invalid filter clause"}})")});
+
+    const Caught caught = get_once(lab);
+
+    CHECK(caught.kind == "GraphError");
+    CHECK(caught.status == status);
+    CHECK(caught.code == "BadRequest");
+    CHECK_THAT(caught.what, ContainsSubstring("HTTP " + std::to_string(status) +
+                                              " (BadRequest): Invalid filter clause"));
+    CHECK(lab.http.count(HttpMethod::get, kMessagesUrl) == 1);
+    CHECK(lab.waits().empty());
+}
+
+TEST_CASE("a Graph error keeps innerError's code and request ID", "[graph][client][get]")
 {
     struct Row {
         HttpResponse response;
@@ -908,7 +1201,7 @@ TEST_CASE("a Graph error keeps innerError's code and request ID", "[graph][clien
         {load_fixture("graph", "site-403-accessdenied"), "accessDenied", "",
          "fc57d2c2-4ef3-48fe-ac0b-bd0c465230fa"},
         {lower_case, "itemNotFound", "resourceNotFound", "from-body"},
-        {make_response(500, R"({"error":{"code":"x","innerError":"not an object"}})"), "x", "", ""},
+        {make_response(400, R"({"error":{"code":"x","innerError":"not an object"}})"), "x", "", ""},
     }));
     CAPTURE(row.response.body);
     Lab lab;
@@ -929,20 +1222,213 @@ TEST_CASE("a Graph error keeps innerError's code and request ID", "[graph][clien
     }
 }
 
-TEST_CASE("a Graph GET that gets no response is a TransientError, a TLS failure a GraphError",
-          "[graph][client]")
+// --- GET: 429, 5xx and transport failures -------------------------------------------
+
+TEST_CASE("a GET's 429 or 503 waits as Retry-After says, never below the backoff",
+          "[graph][client][get]")
+{
+    struct Row {
+        int status;
+        std::optional<std::string> retry_after;
+        std::chrono::milliseconds wait;
+    };
+    const Row row = GENERATE(values<Row>({
+        {429, "3", 3s},
+        {503, "10", 10s},
+        {429, " 45\t", 45s},
+        {429, "Mon, 28 Sep 2026 12:00:45 GMT", 45s},
+        {503, "Mon, 28 Sep 2026 12:02:00 GMT", 120s},
+        {429, "120", 120s},
+        // Below the backoff, past, junk, absent, or on another status: the
+        // backoff (1 s before the second attempt).
+        {429, "0", 1s},
+        {429, "Mon, 28 Sep 2026 11:00:00 GMT", 1s},
+        {429, "soon", 1s},
+        {429, "-30", 1s},
+        {503, std::nullopt, 1s},
+        {500, "30", 1s},
+        {502, "30", 1s},
+        {504, "30", 1s},
+    }));
+    CAPTURE(row.status, row.retry_after);
+    HttpResponse first = make_response(row.status, R"({"error":{"code":"x","message":"busy"}})");
+    if (row.retry_after) {
+        first.headers["Retry-After"] = *row.retry_after;
+    }
+    Lab lab;
+    lab.http.on(HttpMethod::get, kMessagesUrl, {first, load_fixture("graph", "messages-200")});
+
+    CHECK(get_once(lab).kind == "none");
+    CHECK(lab.waits() == std::vector<std::chrono::milliseconds>{row.wait});
+    CHECK(lab.http.count(HttpMethod::get, kMessagesUrl) == 2);
+    CHECK(lab.token_requests == 1);
+}
+
+TEST_CASE("the recorded throttling replies are waited out", "[graph][client][get]")
+{
+    struct Row {
+        std::string fixture;
+        std::chrono::milliseconds wait;
+    };
+    const Row row = GENERATE(values<Row>({
+        {"messages-429-throttled", 3s},
+        {"messages-503-unavailable", 10s},
+    }));
+    CAPTURE(row.fixture);
+    Lab lab;
+    lab.http.on(HttpMethod::get, kMessagesUrl,
+                {load_fixture("graph", row.fixture), load_fixture("graph", "messages-200")});
+
+    CHECK(get_once(lab).kind == "none");
+    CHECK(lab.waits() == std::vector<std::chrono::milliseconds>{row.wait});
+    const std::string log = lab.log();
+    CHECK_THAT(log, ContainsSubstring("retrying in"));
+    CHECK(log.find("$select") == std::string::npos);
+}
+
+TEST_CASE("429 and 5xx are tried five times, then a TransientError", "[graph][client][get]")
+{
+    struct Row {
+        HttpResponse response;
+        std::string code;
+    };
+    const Row row = GENERATE_COPY(values<Row>({
+        {load_fixture("graph", "messages-429-throttled"), "ApplicationThrottled"},
+        {load_fixture("graph", "messages-503-unavailable"), "serviceNotAvailable"},
+        {make_response(500, R"({"error":{"code":"generalException","message":"x"}})"),
+         "generalException"},
+        {make_response(502, "<html><body>Bad gateway: SecretProxyPage</body></html>", "text/html"),
+         ""},
+        {make_response(504, ""), ""},
+        {make_response(599, "not json"), ""},
+    }));
+    CAPTURE(row.response.status);
+    Lab lab;
+    lab.http.on(HttpMethod::get, kMessagesUrl, {row.response});
+
+    const Caught caught = get_once(lab);
+
+    CHECK(caught.kind == "TransientError");
+    CHECK(caught.status == row.response.status);
+    CHECK(caught.code == row.code);
+    CHECK_THAT(caught.what, ContainsSubstring("after 5 attempts"));
+    CHECK(caught.what.find("SecretProxyPage") == std::string::npos);
+    CHECK(caught.what.find("not json") == std::string::npos);
+    CHECK(lab.http.count(HttpMethod::get, kMessagesUrl) == 5);
+    std::vector<std::chrono::milliseconds> expected{1s, 2s, 4s, 8s};
+    if (row.response.status == 429) {
+        expected = {3s, 3s, 4s, 8s};
+    } else if (row.response.status == 503) {
+        expected = {10s, 10s, 10s, 10s};
+    }
+    CHECK(lab.waits() == expected);
+}
+
+TEST_CASE("a GET's Retry-After over 120 s ends the call at once, carrying it",
+          "[graph][client][get]")
+{
+    struct Row {
+        std::string retry_after;
+        std::chrono::seconds expected;
+    };
+    const Row row = GENERATE(values<Row>({
+        {"121", 121s},
+        {"3600", 3600s},
+        {"Mon, 28 Sep 2026 13:00:00 GMT", 3600s},
+    }));
+    CAPTURE(row.retry_after);
+    HttpResponse response = load_fixture("graph", "messages-429-throttled");
+    response.headers["Retry-After"] = row.retry_after;
+    Lab lab;
+    lab.http.on(HttpMethod::get, kMessagesUrl, {response});
+
+    const Caught caught = get_once(lab);
+
+    CHECK(caught.kind == "TransientError");
+    CHECK(caught.status == 429);
+    CHECK(caught.code == "ApplicationThrottled");
+    CHECK(caught.retry_after == row.expected);
+    CHECK_THAT(caught.what, ContainsSubstring(std::to_string(row.expected.count()) + " s"));
+    CHECK(lab.http.count(HttpMethod::get, kMessagesUrl) == 1);
+    CHECK(lab.waits().empty());
+}
+
+TEST_CASE("a GET's waits stay within 300 s in all", "[graph][client][get]")
+{
+    HttpResponse response = load_fixture("graph", "messages-503-unavailable");
+    response.headers["Retry-After"] = "100";
+    Lab lab;
+    lab.http.on(HttpMethod::get, kMessagesUrl, {response});
+
+    const Caught caught = get_once(lab);
+
+    CHECK(caught.kind == "TransientError");
+    CHECK(caught.retry_after == 100s);
+    CHECK_THAT(caught.what, ContainsSubstring("300 s"));
+    CHECK(lab.waits() == std::vector<std::chrono::milliseconds>{100s, 100s, 100s});
+    CHECK(lab.http.count(HttpMethod::get, kMessagesUrl) == 4);
+}
+
+TEST_CASE("the token is checked again before every attempt", "[graph][client][get]")
+{
+    // A long wait can outlast the token: the retry goes out with a new one.
+    Lab lab;
+    lab.http.on(HttpMethod::get, kMessagesUrl,
+                {load_fixture("graph", "messages-503-unavailable"),
+                 load_fixture("graph", "messages-200")});
+    GraphClientOptions options = lab.options();
+    options.sleep = [&lab](std::chrono::milliseconds) { lab.advance(3600s); };
+    GraphClient client(lab.http, kTenant, kClient, certificate(), options);
+
+    CHECK(client.get(kMessagesPath, rp::graph::kMailReadGrant).status == 200);
+    CHECK(lab.token_requests == 2);
+    CHECK(lab.bearers() == std::vector<std::string>{"Bearer token-1", "Bearer token-2"});
+}
+
+TEST_CASE("5xx, 429 and transport failures share the five attempts", "[graph][client][get]")
+{
+    Lab lab;
+    std::atomic<int> calls = 0;
+    lab.http.on(HttpMethod::get, kMessagesUrl, [&calls](const HttpRequest&) -> HttpResponse {
+        switch (++calls) {
+        case 1:
+            return make_response(503, "");
+        case 2:
+            throw rp::HttpError("GET: timed out", rp::TransportError::timeout, 0, 1);
+        case 3:
+            return make_response(429, "");
+        case 4:
+            throw rp::HttpError("GET: dropped", rp::TransportError::dropped, 0, 1);
+        default:
+            return make_response(500, "");
+        }
+    });
+
+    const Caught caught = get_once(lab);
+
+    CHECK(caught.kind == "TransientError");
+    CHECK(caught.status == 500);
+    CHECK(calls == 5);
+    CHECK(lab.waits() == std::vector<std::chrono::milliseconds>{1s, 2s, 4s, 8s});
+}
+
+TEST_CASE("a GET that gets no response is tried five times, a TLS failure once",
+          "[graph][client][get]")
 {
     struct Row {
         rp::TransportError error;
         std::string kind;
+        std::size_t sent;
     };
     const Row row = GENERATE(values<Row>({
-        {rp::TransportError::timeout, "TransientError"},
-        {rp::TransportError::connect, "TransientError"},
-        {rp::TransportError::tls, "GraphError"},
-        {rp::TransportError::other, "GraphError"},
+        {rp::TransportError::connect, "TransientError", 5},
+        {rp::TransportError::handshake, "TransientError", 5},
+        {rp::TransportError::dropped, "TransientError", 5},
+        {rp::TransportError::timeout, "TransientError", 5},
+        {rp::TransportError::tls, "GraphError", 1},
+        {rp::TransportError::other, "GraphError", 1},
     }));
-    CAPTURE(row.kind);
+    CAPTURE(row.kind, row.sent);
     Lab lab;
     lab.http.on(HttpMethod::get, kMessagesUrl, [row](const HttpRequest&) -> HttpResponse {
         throw rp::HttpError("GET " + kMessagesUrl + ": no response", row.error, 0, 1);
@@ -952,6 +1438,101 @@ TEST_CASE("a Graph GET that gets no response is a TransientError, a TLS failure 
 
     CHECK(caught.kind == row.kind);
     CHECK_THAT(caught.what, ContainsSubstring("Graph GET /v1.0/users/"));
+    CHECK(lab.http.count(HttpMethod::get, kMessagesUrl) == row.sent);
+    CHECK(lab.waits().size() == row.sent - 1);
+}
+
+TEST_CASE("a GET that gets no response once is sent again", "[graph][client][get]")
+{
+    const rp::TransportError error =
+        GENERATE(rp::TransportError::connect, rp::TransportError::handshake,
+                 rp::TransportError::dropped, rp::TransportError::timeout);
+    Lab lab;
+    std::atomic<int> calls = 0;
+    lab.http.on(HttpMethod::get, kMessagesUrl, [&calls, error](const HttpRequest&) {
+        if (++calls == 1) {
+            throw rp::HttpError("GET: no response", error, 0, 1);
+        }
+        return load_fixture("graph", "messages-200");
+    });
+
+    CHECK(get_once(lab).kind == "none");
+    CHECK(calls == 2);
+    CHECK(lab.waits() == std::vector<std::chrono::milliseconds>{1s});
+}
+
+// --- GET: redirects ------------------------------------------------------------
+
+TEST_CASE("a GET's redirect is returned, not followed, and get_json refuses it",
+          "[graph][client][get]")
+{
+    const int status = GENERATE(301, 302, 303, 307, 308);
+    CAPTURE(status);
+    HttpResponse redirect = make_response(status);
+    redirect.headers["Location"] = "https://evil.example/steal";
+    Lab lab;
+    lab.http.on(HttpMethod::get, kMessagesUrl, {redirect});
+    auto client = lab.make_client();
+
+    const HttpResponse response = client->get(kMessagesPath, rp::graph::kMailReadGrant);
+    const Caught by_json =
+        catch_graph([&] { client->get_json(kMessagesPath, rp::graph::kMailReadGrant); });
+
+    CHECK(response.status == status);
+    CHECK(response.headers.at("Location") == "https://evil.example/steal");
+    CHECK(by_json.kind == "GraphError");
+    CHECK(by_json.status == status);
+    CHECK(lab.http.count(HttpMethod::get, "https://evil.example/steal") == 0);
+    CHECK(lab.http.count(HttpMethod::get, kMessagesUrl) == 2);
+    CHECK(lab.token_requests == 1);
+}
+
+TEST_CASE("get_json refuses a reply that isn't a JSON object without quoting it",
+          "[graph][client][get]")
+{
+    const std::string body = GENERATE(as<std::string>{}, "", "SecretBody", "[1,2]", "\"text\"",
+                                      "{\"value\":[]", "null");
+    CAPTURE(body);
+    Lab lab;
+    lab.http.on(HttpMethod::get, kMessagesUrl, {make_response(200, body)});
+    auto client = lab.make_client();
+
+    const Caught caught =
+        catch_graph([&] { client->get_json(kMessagesPath, rp::graph::kMailReadGrant); });
+
+    CHECK(caught.kind == "GraphError");
+    CHECK(caught.status == 200);
+    CHECK(caught.what.find("SecretBody") == std::string::npos);
+    CHECK_THAT(caught.what, ContainsSubstring("Graph GET /v1.0/users/"));
+}
+
+TEST_CASE("no token reaches a GET's error message or the log", "[graph][client][get]")
+{
+    const std::string token_1 = "SentinelGraphAccessTokenOne";
+    const std::string token_2 = "SentinelGraphAccessTokenTwo";
+    Lab lab;
+    lab.set_on_token([&](int n, const HttpRequest&) {
+        return token_response(n == 1 ? token_1 : token_2);
+    });
+    auto client = lab.make_client();
+    std::vector<std::string> messages;
+    for (const char* fixture : {"api-invalid-token-401", "messages-403-exchange",
+                                "messages-404-unknown-user", "messages-503-unavailable",
+                                "api-insufficient-claims-401"}) {
+        lab.http.on(HttpMethod::get, kMessagesUrl, {load_fixture("graph", fixture)});
+        messages.push_back(
+            catch_graph([&] { client->get(kMessagesPath, rp::graph::kMailReadGrant); }).what);
+    }
+
+    const std::string log = lab.log();
+    CAPTURE(log);
+    CHECK_THAT(log, ContainsSubstring("fresh token"));
+    for (const std::string& secret : {token_1, token_2, std::string{"Bearer Sentinel"}}) {
+        CHECK(log.find(secret) == std::string::npos);
+        for (const std::string& message : messages) {
+            CHECK(message.find(secret) == std::string::npos);
+        }
+    }
 }
 
 TEST_CASE("a client with default clocks and jitter signs in and waits at least 5 s",
@@ -1102,6 +1683,103 @@ TEST_CASE("get() returns the recorded inbox", "[graph][client]")
 
     CHECK(response.status == 200);
     CHECK(json::parse(response.body).at("value") == json::array());
+}
+
+TEST_CASE("get() sends a path under v1.0 and an exact v1.0 URL as they are, with the token",
+          "[graph][client][get]")
+{
+    struct Row {
+        std::string target;
+        std::string url;
+    };
+    const std::string base{rp::graph::kGraphBaseUrl};
+    const Row row = GENERATE_COPY(values<Row>({
+        {kMessagesPath, kMessagesUrl},
+        {kMessagesUrl, kMessagesUrl},
+        {"/sites/restoreprooflab.sharepoint.com:/sites/RestoreTest",
+         base + "/sites/restoreprooflab.sharepoint.com:/sites/RestoreTest"},
+        // An @odata.nextLink: encoded characters in the query are Graph's
+        // business, and a dot inside a segment is no dot segment.
+        {base + "/users/x/messages?%24top=1&%24skiptoken=a%2eb%3D%3D",
+         base + "/users/x/messages?%24top=1&%24skiptoken=a%2eb%3D%3D"},
+        {"/users/x/messages?$filter=subject eq 'a'", base + "/users/x/messages?$filter=subject eq 'a'"},
+        {"/drives/b!x..y/items/root:/a.b..c", base + "/drives/b!x..y/items/root:/a.b..c"},
+    }));
+    CAPTURE(row.target);
+    Lab lab;
+    lab.http.on(HttpMethod::get, row.url, {load_fixture("graph", "messages-200")});
+    auto client = lab.make_client();
+
+    // Whitespace in the query is refused like anywhere else.
+    if (row.target.find(' ') != std::string::npos) {
+        CHECK(catch_graph([&] { client->get(row.target, rp::graph::kMailReadGrant); }).kind ==
+              "GraphError");
+        CHECK(lab.http.requests().empty());
+        return;
+    }
+    CHECK(client->get(row.target, rp::graph::kMailReadGrant).status == 200);
+    CHECK(lab.http.count(HttpMethod::get, row.url) == 1);
+    CHECK(lab.bearers() == std::vector<std::string>{"Bearer token-1"});
+}
+
+TEST_CASE("get_json returns the recorded inbox", "[graph][client][get]")
+{
+    Lab lab;
+    auto client = lab.make_client();
+
+    const json doc = client->get_json(kMessagesPath, rp::graph::kMailReadGrant);
+
+    CHECK(doc.at("value") == json::array());
+    CHECK(doc.at("@odata.context").get<std::string>().starts_with(
+        "https://graph.microsoft.com/v1.0/$metadata#users("));
+}
+
+TEST_CASE("pages follow @odata.nextLink with the same token", "[graph][client][get]")
+{
+    const std::string next =
+        kMessagesUrl + "&$skiptoken=MSZZVlhKbFkwMWhhV3c9";
+    const std::string last = kMessagesUrl + "&$skiptoken=MiZZVlhKbFkwMWhhV3c9";
+    Lab lab;
+    lab.http.on(HttpMethod::get, kMessagesUrl,
+                {make_response(200, json{{"value", {{{"id", "a"}}}}, {"@odata.nextLink", next}}.dump())});
+    lab.http.on(HttpMethod::get, next,
+                {make_response(200, json{{"value", {{{"id", "b"}}}}, {"@odata.nextLink", last}}.dump())});
+    lab.http.on(HttpMethod::get, last, {make_response(200, json{{"value", {{{"id", "c"}}}}}.dump())});
+    auto client = lab.make_client();
+
+    std::vector<std::string> ids;
+    std::string target = kMessagesPath;
+    for (int page = 0; page < 10 && !target.empty(); ++page) {
+        const json doc = client->get_json(target, rp::graph::kMailReadGrant);
+        for (const json& item : doc.at("value")) {
+            ids.push_back(item.at("id").get<std::string>());
+        }
+        target = doc.value("@odata.nextLink", std::string{});
+    }
+
+    CHECK(ids == std::vector<std::string>{"a", "b", "c"});
+    CHECK(lab.token_requests == 1);
+    CHECK(lab.bearers() ==
+          std::vector<std::string>{"Bearer token-1", "Bearer token-1", "Bearer token-1"});
+    const std::vector<HttpRequest> sent = lab.http.requests();
+    REQUIRE(sent.size() == 4);
+    CHECK(sent[2].url == next);
+    CHECK(sent[3].url == last);
+}
+
+TEST_CASE("the Graph HTTP client trusts the Windows store alone: no CA file, no pin",
+          "[graph][client]")
+{
+    auto logger = std::make_shared<spdlog::logger>("graph_http_test");
+    const rp::HttpClientOptions options = rp::graph::graph_http_client_options(logger);
+
+    CHECK_FALSE(options.ca_file.has_value());
+    CHECK_FALSE(options.pinned_cert_sha256.has_value());
+    CHECK(options.logger == logger);
+    CHECK_FALSE(rp::graph::graph_http_client_options().logger);
+
+    const std::unique_ptr<rp::IHttpClient> http = rp::graph::make_graph_http_client(logger);
+    CHECK(dynamic_cast<rp::HttpClient*>(http.get()) != nullptr);
 }
 
 TEST_CASE("the token is kept and used for later calls", "[graph][client]")

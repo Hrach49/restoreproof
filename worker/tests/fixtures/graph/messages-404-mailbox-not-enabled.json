@@ -1,0 +1,16 @@
+{
+  "source": "hand-written: a mailbox Graph can't read (no Exchange Online licence, inactive, soft-deleted or on-premises), code and message as Graph returns them; the lab can't provoke it until a licence lapses",
+  "request": "GET /v1.0/users/restoretest@RestoreProofLab.onmicrosoft.com/mailFolders/inbox/messages?$top=1&$select=id",
+  "status": 404,
+  "headers": {
+    "Content-Type": "application/json",
+    "request-id": "71d3b8e2-4a9f-4c05-b6e1-3f8a2d7c9b40",
+    "client-request-id": "71d3b8e2-4a9f-4c05-b6e1-3f8a2d7c9b40"
+  },
+  "body": {
+    "error": {
+      "code": "MailboxNotEnabledForRESTAPI",
+      "message": "The mailbox is either inactive, soft-deleted, or is hosted on-premise."
+    }
+  }
+}

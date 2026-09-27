@@ -13,6 +13,8 @@
 #include <rp/graph_errors.hpp>
 #include <rp/http_client.hpp>
 
+#include <nlohmann/json.hpp>
+
 #include <spdlog/logger.h>
 
 #include <atomic>
@@ -89,6 +91,20 @@ struct GraphClientOptions {
     std::chrono::milliseconds timeout = kDefaultHttpTimeout;
 };
 
+// The resends one call makes for 401s while other calls keep replacing the
+// token (as VeeamClient's).
+inline constexpr int kMaxUnauthorizedResends = 3;
+
+// The options of the HttpClient for Graph and Entra: the Windows certificate
+// store with full checks, no CA file, no pin (both are public, worldwide
+// hosts). `logger` as HttpClientOptions::logger. GraphClient makes every
+// attempt itself, so HttpClient's retry settings stay at their defaults.
+HttpClientOptions graph_http_client_options(std::shared_ptr<spdlog::logger> logger = nullptr);
+
+// An HttpClient built from graph_http_client_options(), for GraphClient.
+std::unique_ptr<IHttpClient> make_graph_http_client(
+    std::shared_ptr<spdlog::logger> logger = nullptr);
+
 // Every public member may be called from several threads at once, if the
 // IHttpClient's send() may (HttpClient's can). The client holds one token;
 // renewals happen one at a time under a lock. Callers that waited for the
@@ -126,12 +142,44 @@ public:
     GraphClient(const GraphClient&) = delete;
     GraphClient& operator=(const GraphClient&) = delete;
 
-    // GET `path_or_url` with the token, for a call relying on `grant`. A path
-    // starting with '/' is taken relative to kGraphBaseUrl
-    // ("/users/x/messages?$top=1"). Returns a 2xx response; throws GraphError
-    // (or a subclass) for anything else, and whatever the token renewal
-    // throws.
+    // GET `path_or_url` with the token, for a call relying on `grant`.
+    //  - Where: a path starting with '/' is taken relative to kGraphBaseUrl
+    //    ("/users/x/messages?$top=1"); an absolute URL (an @odata.nextLink)
+    //    must start with exactly "https://graph.microsoft.com/v1.0/". Either
+    //    way the URL may hold no whitespace, control character, backslash or
+    //    '#', and its path no dot segment ("/../", "%2e") or empty one
+    //    ("//", a protocol-relative URL passed as a path). Anything else is a
+    //    GraphError before anything is sent, the token request included: the
+    //    token goes to Graph's v1.0 and nowhere else (a text compare, so the
+    //    client can't read a URL differently from curl).
+    //  - Returns a 2xx or 3xx response. A redirect is never followed (W2.2's
+    //    downloads follow theirs without the token).
+    //  - 401: one fresh token and the call is sent again (at most
+    //    kMaxUnauthorizedResends resends when other calls keep replacing the
+    //    token); another 401 is an AuthError naming `grant`. A 401 asking for
+    //    more claims (WWW-Authenticate error="insufficient_claims") is an
+    //    AuthError at once.
+    //  - 403: a PermissionError naming `grant`: "Graph denied GET <path>
+    //    (403 <code>): the Worker app relies on <grant>; see
+    //    docs/security/graph-permissions.md", the path without its query.
+    //  - 404: a NotFoundError; but a mailbox Graph can't read
+    //    (MailboxNotEnabledForRESTAPI, MailboxNotSupportedForRESTAPI) is a
+    //    plain GraphError, whatever the status.
+    //  - 429, 5xx and a lost connection or a timeout (connect, handshake,
+    //    dropped, timeout; a GET changes nothing) share kMaxHttpAttempts
+    //    attempts, waiting rp::retry_delay() and at least a Retry-After on a
+    //    429 or 503, within kMaxRetryWait each and kMaxRetryWaitPerCall in
+    //    all; then a TransientError (carrying the Retry-After). The token is
+    //    checked before every attempt. A TLS failure or a malformed URL is a
+    //    GraphError after one.
+    //  - Any other status is a GraphError with Graph's code and message.
+    // Errors keep Graph's code, inner code and request ID, never the body.
+    // Whatever the token renewal throws is thrown as it is.
     HttpResponse get(std::string_view path_or_url, const Grant& grant);
+
+    // get(), and the body as a JSON object: a 3xx, or a body that isn't a
+    // JSON object, is a GraphError (the body is never quoted).
+    nlohmann::json get_json(std::string_view path_or_url, const Grant& grant);
 
 private:
     struct Token {
@@ -152,6 +200,8 @@ private:
     // rethrow_failure_since_locked; a stored token clears it.
     void fetch_token_locked();
     void store_token_locked(const HttpResponse& response);
+    // One GET of `url` with `token`, one attempt.
+    HttpRequest api_request(const std::string& url, const std::string& token) const;
     // One token request with a new assertion.
     HttpRequest token_request() const;
     void log_debug(const std::string& line) const;

@@ -53,14 +53,22 @@ real lab values.
 | `token-503-temporarily-unavailable.json` | hand-written: Entra's reply shape with the transient AADSTS90033 | 503 `temporarily_unavailable` → `TransientError`, retried |
 | `token-500-html.json` | hand-written: a proxy's HTML error page | a 5xx that isn't JSON → `TransientError`; the body is never quoted |
 | `token-302-redirect.json` | hand-written: a redirect from the token endpoint | 3xx → `GraphError`, nothing sent to its `Location` |
-| `messages-200.json` | live: the restoretest inbox, `$top=1&$select=id` | a GET that works (`value: []`) |
-| `messages-403-exchange.json` | live: alice's inbox, outside the Exchange RBAC scope | 403 `ErrorAccessDenied`, no innerError: the request ID comes from the headers |
+| `messages-200.json` | live: the restoretest inbox, `$top=1&$select=id` | a GET that works (`value: []`): `get()`, `get_json()`, the token's reuse and renewal |
+| `messages-403-exchange.json` | live: alice's inbox, outside the Exchange RBAC scope | 403 `ErrorAccessDenied` → `PermissionError` naming the Mail grant; no innerError: the request ID comes from the headers |
 | `messages-404-unknown-user.json` | live: the inbox of a user who doesn't exist | 404 `ErrorInvalidUser` → `NotFoundError` |
-| `site-403-accessdenied.json` | live: the tenant root site, no Sites.Selected grant on it | 403 `accessDenied` with innerError: the request ID comes from the body |
+| `site-403-accessdenied.json` | live: the tenant root site, no Sites.Selected grant on it | 403 `accessDenied` → `PermissionError` naming the Sites grant; innerError: the request ID comes from the body |
 | `users-403-requestdenied.json` | live: `GET /users`, no directory role | 403 `Authorization_RequestDenied` → `PermissionError` naming the grant |
 | `api-invalid-token-401.json` | live: a GET with a malformed bearer token | 401 `InvalidAuthenticationToken` with WWW-Authenticate → one new token, then `AuthError` |
 | `api-no-token-401.json` | live: a GET without Authorization | 401 `InvalidAuthenticationToken` with WWW-Authenticate → one new token, then `AuthError` |
+| `api-insufficient-claims-401.json` | hand-written: a claims challenge (`error="insufficient_claims"` in WWW-Authenticate), as Conditional Access or continuous access evaluation sends it | 401 → `AuthError` at once, no new token |
+| `messages-404-mailbox-not-enabled.json` | hand-written: `MailboxNotEnabledForRESTAPI`, what Graph says for a mailbox without an Exchange Online licence, inactive or on-premises | 404 → a plain `GraphError`, not `NotFoundError` |
+| `messages-429-throttled.json` | hand-written: Graph throttling a mailbox (`ApplicationThrottled`, `Retry-After: 3`) | 429 → retried after the Retry-After, then `TransientError` |
+| `messages-503-unavailable.json` | hand-written: Graph briefly unavailable (`serviceNotAvailable`, `Retry-After: 10`) | 503 → retried after the Retry-After, then `TransientError` |
 
 Entra's refusals that the lab can't provoke (Conditional Access, a disabled app, the other
 transient codes) are built in `graph_client_test.cpp` from `entra_error()`, in the recorded
 shape, rather than kept as files.
+
+Graph replies that only vary a recorded one (another status, Retry-After or WWW-Authenticate
+value, a redirect, a body that isn't JSON, a page with `@odata.nextLink`) are built in the
+test from `make_response()` or an edited fixture, rather than kept as files.

@@ -12,6 +12,7 @@
 #include "test_certs.hpp"
 #include "test_support.hpp"
 
+#include <rp/graph_client.hpp>
 #include <rp/http_client.hpp>
 #include <rp/retry_policy.hpp>
 
@@ -377,5 +378,28 @@ TEST_CASE("an expired Veeam certificate is rejected even with its pin", "[http][
         CHECK(e.error() == rp::TransportError::tls);
         CHECK(e.attempts() == 1);
         CHECK(what.find("time valid") != std::string::npos);
+    }
+}
+
+// W2.1: Graph and Entra are served under public certificates, so the Graph
+// client trusts the Windows store alone. A certificate the store doesn't know
+// is refused like any other: no CA file, no pin, no way around the check.
+TEST_CASE("the Graph HTTP client refuses a certificate the Windows store doesn't trust",
+          "[http][tls][graph]")
+{
+    const Pem server_pem = make_self_signed("rp-test-graph");
+    rp::test::BasicLocalServer<httplib::SSLServer> server(make_https_server(server_pem));
+    const std::unique_ptr<rp::IHttpClient> client = rp::graph::make_graph_http_client();
+    rp::HttpRequest request;
+    request.url = server.url("/");
+    request.max_attempts = 1;
+
+    try {
+        client->send(request);
+        FAIL("the Graph client accepted an untrusted self-signed certificate");
+    } catch (const rp::HttpError& e) {
+        CAPTURE(e.what());
+        CHECK(e.error() == rp::TransportError::tls);
+        CHECK(e.attempts() == 1);
     }
 }

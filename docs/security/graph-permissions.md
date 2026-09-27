@@ -107,6 +107,10 @@ A sentinel test greps every output for the PFX password, the token and the priva
 
 ## Caveats
 
+- **A management scope needs `Enable-OrganizationCustomization`.** New tenants start
+  "dehydrated" and refuse `New-ManagementScope` until this one-time, tenant-wide, irreversible
+  step. The script runs it when `Get-OrganizationConfig` reports `IsDehydrated`. The lab tenant
+  ran it on 2026-09-27; a customer tenant may need it too (open item 3).
 - **Exchange permission changes are cached for 30 minutes to 2 hours.** Until then the mail
   probes can still show the old state. `Test-ServicePrincipalAuthorization` skips the cache.
 - **The RestoreTest site holds the canary library too.** `Sites.Selected` applies to the whole

@@ -303,7 +303,17 @@ try {
     $filter = "PrimarySmtpAddress -eq '$RestoreTestUpn'"
     $scope = Get-ManagementScope -Identity $MailScopeName -ErrorAction SilentlyContinue
     if (-not $scope) {
-        New-ManagementScope -Name $MailScopeName -RecipientRestrictionFilter $filter | Out-Null
+        # A new tenant is "dehydrated": it can't hold custom RBAC objects such as a management
+        # scope until this one-time, tenant-wide and irreversible step (docs/decisions.md 2026-09-27).
+        if ((Get-OrganizationConfig).IsDehydrated) {
+            Enable-OrganizationCustomization
+            Done 'Enable-OrganizationCustomization run (once per tenant)'
+        }
+        try { New-ManagementScope -Name $MailScopeName -RecipientRestrictionFilter $filter | Out-Null }
+        catch {
+            if ("$_" -notmatch 'Enable-OrganizationCustomization') { throw }
+            throw 'Exchange has not finished Enable-OrganizationCustomization yet. Wait 15 to 60 minutes, then run this script again.'
+        }
         Done "management scope '$MailScopeName' created"
     }
     elseif ($scope.RecipientFilter -ne $filter) {

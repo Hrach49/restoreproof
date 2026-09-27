@@ -1,7 +1,8 @@
 # Worker configuration
 
 How the Worker is configured: the settings file, the secrets, and how to check both with
-`rpworker config check`. The contract is in `worker/include/rp/config.hpp` and
+`rpworker config check`, then how `rpworker veeam list` uses them, and the exit codes of every
+`rpworker` command. The contract is in `worker/include/rp/config.hpp` and
 `worker/include/rp/secrets.hpp`; where this page and the code disagree, the code wins.
 
 ## Where the file lives
@@ -252,7 +253,7 @@ doesn't look up `%ProgramData%` at all.
 |---|---|
 | 0 | The config is valid. Unset secrets are not an error. |
 | 1 | The config failed to load or validate; stderr has `config error: <path>: <message>`. If `%ProgramData%` can't be resolved, `config error: cannot find the ProgramData folder`; if a secret variable isn't valid Unicode, `config error: environment variable <name> is not valid Unicode`; any other failure prints `config error: unexpected failure`, never the underlying message. |
-| 2 | Arguments not understood; stderr has the usage line. |
+| 64 | Arguments not understood; stderr has the usage line. |
 
 Sample output (placeholder values):
 
@@ -292,4 +293,75 @@ An error looks like this:
 
 ```
 config error: C:\ProgramData\RestoreProof\config.json: config key "poll_interval_s" must be an integer from 1 to 86400 (seconds)
+```
+
+## `rpworker veeam list`
+
+```
+rpworker veeam list [--config <path>]
+```
+
+Signs in to the Veeam REST API (`veeam_url`, with `veeam_ca_file` and `veeam_cert_sha256` as
+in the config), lists every Microsoft 365 organisation Veeam backs up and each one's restore
+points, logs out, and prints them as a table. It reads nothing else and changes nothing. The
+config is read as `rpworker config check` reads it; `RP_VEEAM_USERNAME` and
+`RP_VEEAM_PASSWORD` must be set (see "Secrets"). The code is `rp::run_veeam_command` in
+`worker/include/rp/veeam_command.hpp`.
+
+With the lab's organisation (the recorded responses in `worker/tests/fixtures/veeam/`):
+
+```
+  ORGANIZATION                     BACKUP TIME                   EX  SP  OD  TM  LONG-TERM  RESTORE POINT ID
+* RestoreProofLab.onmicrosoft.com  2026-09-25T19:37:15.2145203Z  x   x   x   -   no         c2f0f2e7-177f-48ac-992b-93a50cf702e371ac3d9c-eb29-42b6-a391-ae81fcc4681c
+* RestoreProofLab.onmicrosoft.com  2026-09-25T19:24:31.0936821Z  x   x   x   -   no         c2f0f2e7-177f-48ac-992b-93a50cf702e32fb3c7e0-ff6e-4949-8b2d-ae32ecf9e9a7
+
+1 organisation(s), 2 restore point(s); * = veeam_org_name
+```
+
+- **Every organisation** Veeam returns is listed, sorted by name (ignoring ASCII case), then
+  by ID. The one `veeam_org_name` names (ignoring ASCII case) is marked `*`. If none is, the
+  table is still printed, so the right name can be copied from it, and the command fails
+  with exit code 4.
+- **Restore points** are newest first. `BACKUP TIME` is exactly what Veeam sent, the form
+  the Worker opens explore sessions with. `EX`, `SP`, `OD` and `TM` are `x` when the point
+  holds Exchange, SharePoint, OneDrive or Teams data, `-` when not. `LONG-TERM` is `yes` for
+  a copy in archive storage, which needs a retrieval before a restore.
+- An organisation with no restore points gets one row, with `(no restore points)` under
+  `BACKUP TIME`. With no organisations at all, the command prints `no organisations in Veeam`
+  and the summary line, and fails with exit code 4.
+- **Everything is read before anything is printed.** If any call fails, stdout stays empty:
+  a partial table never looks like a complete one. The command logs out of Veeam whether it
+  succeeded or not.
+- **The output is UTF-8.** Columns are padded by character, so a name such as `Zürich` lines
+  up. `rpworker` doesn't change the console's code page: to see non-ASCII names correctly in
+  a console, use PowerShell 7, or run `chcp 65001` first in `cmd.exe`. Redirected to a file,
+  the bytes are UTF-8 either way. Control characters in names from Veeam are shown as
+  spaces.
+
+An error is one line on stderr, and nothing is printed on stdout:
+
+```
+veeam error: Veeam POST /v8/token: HTTP 401: The server has rejected the client credentials.
+```
+
+Veeam's messages never contain the password or a token: they are redacted before they are
+shown. Debug lines are not shown.
+
+## Exit codes
+
+The same for every `rpworker` command (`rp::exit_code` in `worker/include/rp/cli.hpp`):
+
+| Exit code | Meaning | stderr |
+|---|---|---|
+| 0 | Success. | (nothing) |
+| 1 | The config or a secret is missing or invalid, or something unexpected failed. | `config error: <path>: <message>`, `config error: the --config path is not valid UTF-8`, `config error: RP_VEEAM_USERNAME is not set` (then `RP_VEEAM_PASSWORD`), `config error: unexpected failure` or `error: unexpected failure`; an unexpected failure's own message is never shown |
+| 2 | Veeam refused the sign-in, the account's role or the token. | `veeam error: <message>` |
+| 3 | Veeam couldn't be reached: no connection, a timeout, a TLS handshake that broke off, or a 502, 503 or 504 after the retries. | `veeam error: <message>` |
+| 4 | Any other Veeam error (an unknown organisation, a bad request, an unexpected answer), or no organisation named `veeam_org_name`. | `veeam error: <message>`, or `veeam error: organisation <name> (veeam_org_name) not found in Veeam` |
+| 64 | The command line isn't understood. | the usage line |
+
+The usage line is:
+
+```
+usage: rpworker --version | rpworker config check [--config <path>] | rpworker veeam list [--config <path>]
 ```

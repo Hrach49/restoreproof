@@ -108,8 +108,8 @@ rp::Config lab_config()
     config.cloud_url = "https://cloud.example.invalid";
     config.veeam_url = kBase;
     config.veeam_org_name = kOrgName;
-    config.graph_tenant_id = "tenant";
-    config.graph_client_id = "client";
+    config.graph_tenant_id = "00000000-0000-0000-0000-000000000001";
+    config.graph_client_id = "00000000-0000-0000-0000-000000000002";
     config.test_mailbox = "restoretest@example.onmicrosoft.com";
     config.test_site_id = "site";
     config.test_library_id = "library";

@@ -16,8 +16,8 @@ namespace rp {
 //   cloud_url                yes       -        https:// URL (1)
 //   veeam_url                yes       -        https:// URL (1)
 //   veeam_org_name           yes       -        non-empty string
-//   graph_tenant_id          yes       -        non-empty string
-//   graph_client_id          yes       -        non-empty string
+//   graph_tenant_id          yes       -        GUID (5)
+//   graph_client_id          yes       -        GUID (5)
 //   test_mailbox             yes       -        restoretest@<domain> (2)
 //   test_site_id             yes       -        non-empty string
 //   test_library_id          yes       -        non-empty string
@@ -56,6 +56,10 @@ namespace rp {
 //     still checked against veeam_ca_file. Not a secret. parse_config checks
 //     the form and that veeam_ca_file is set; load_config also checks that
 //     veeam_ca_file holds the certificate (rp/cert_pin.hpp).
+// (5) 8-4-4-4-12 hexadecimal digits in any case, nothing around them
+//     (rp::is_uuid): the tenant's ID and the Worker app's Application
+//     (client) ID. Not a domain name nor an app name: both go into Entra and
+//     Graph URLs.
 // No string value may contain a control character: ASCII (below 0x20, 0x7F),
 // C1 (U+0080-U+009F), U+2028, U+2029 or a bidi control (U+200E, U+200F,
 // U+202A-U+202E, U+2066-U+2069, U+061C).

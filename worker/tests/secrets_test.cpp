@@ -21,22 +21,28 @@ const std::optional<std::string>& field_for(const rp::Secrets& secrets, std::str
     if (name == rp::kEnvVeeamPassword) {
         return secrets.veeam_password;
     }
-    return secrets.graph_client_secret;
+    if (name == rp::kEnvGraphCertPfxBase64) {
+        return secrets.graph_cert_pfx_base64;
+    }
+    return secrets.graph_cert_password;
 }
 
 } // namespace
 
-TEST_CASE("the secret variables are the three documented names", "[secrets]")
+TEST_CASE("the secret variables are the four documented names", "[secrets]")
 {
+    // The Graph app signs in with a certificate, not a client secret (W2.1).
+    REQUIRE(rp::kSecretEnvVars.size() == 4);
     REQUIRE(rp::kSecretEnvVars[0] == "RP_VEEAM_USERNAME");
     REQUIRE(rp::kSecretEnvVars[1] == "RP_VEEAM_PASSWORD");
-    REQUIRE(rp::kSecretEnvVars[2] == "RP_GRAPH_CLIENT_SECRET");
+    REQUIRE(rp::kSecretEnvVars[2] == "RP_GRAPH_CERT_PFX_BASE64");
+    REQUIRE(rp::kSecretEnvVars[3] == "RP_GRAPH_CERT_PASSWORD");
 }
 
 TEST_CASE("load_secrets_from_env leaves an unset or empty variable empty", "[secrets]")
 {
     const std::string_view name = GENERATE(rp::kEnvVeeamUsername, rp::kEnvVeeamPassword,
-                                           rp::kEnvGraphClientSecret);
+                                           rp::kEnvGraphCertPfxBase64, rp::kEnvGraphCertPassword);
     // On Windows, setting a variable to "" through the CRT removes it.
     const std::optional<std::string> value = GENERATE(std::optional<std::string>{},
                                                       std::optional<std::string>{""});
@@ -50,22 +56,25 @@ TEST_CASE("load_secrets_from_env reads each variable into its own field", "[secr
 {
     const rp::test::ScopedEnv user(rp::kEnvVeeamUsername, "user-5b1a");
     const rp::test::ScopedEnv password(rp::kEnvVeeamPassword, "password-5b1a");
-    const rp::test::ScopedEnv graph(rp::kEnvGraphClientSecret, "graph-5b1a");
+    const rp::test::ScopedEnv pfx(rp::kEnvGraphCertPfxBase64, "pfx-5b1a");
+    const rp::test::ScopedEnv pfx_password(rp::kEnvGraphCertPassword, "pfx-password-5b1a");
 
     const rp::Secrets secrets = rp::load_secrets_from_env();
     REQUIRE(secrets.veeam_username == "user-5b1a");
     REQUIRE(secrets.veeam_password == "password-5b1a");
-    REQUIRE(secrets.graph_client_secret == "graph-5b1a");
+    REQUIRE(secrets.graph_cert_pfx_base64 == "pfx-5b1a");
+    REQUIRE(secrets.graph_cert_password == "pfx-password-5b1a");
 }
 
 TEST_CASE("load_secrets_from_env reads a variable when the others are unset", "[secrets]")
 {
     const std::string_view name = GENERATE(rp::kEnvVeeamUsername, rp::kEnvVeeamPassword,
-                                           rp::kEnvGraphClientSecret);
+                                           rp::kEnvGraphCertPfxBase64, rp::kEnvGraphCertPassword);
     CAPTURE(name);
     const rp::test::ScopedEnv user(rp::kEnvVeeamUsername, std::nullopt);
     const rp::test::ScopedEnv password(rp::kEnvVeeamPassword, std::nullopt);
-    const rp::test::ScopedEnv graph(rp::kEnvGraphClientSecret, std::nullopt);
+    const rp::test::ScopedEnv pfx(rp::kEnvGraphCertPfxBase64, std::nullopt);
+    const rp::test::ScopedEnv pfx_password(rp::kEnvGraphCertPassword, std::nullopt);
     const rp::test::ScopedEnv env(name, "value with spaces & symbols = !");
 
     const rp::Secrets secrets = rp::load_secrets_from_env();
@@ -77,6 +86,19 @@ TEST_CASE("load_secrets_from_env reads a variable when the others are unset", "[
             REQUIRE_FALSE(field_for(secrets, other).has_value());
         }
     }
+}
+
+TEST_CASE("load_secrets_from_env reads a PFX of several kilobytes whole", "[secrets]")
+{
+    // A 4096-bit key with its certificate chain is a few KB of Base64; the
+    // variable may hold up to 32767 characters.
+    std::string pfx;
+    while (pfx.size() < 12000) {
+        pfx += "MIIKXAIBAzCCChIGCSqGSIb3DQEHAaCCCgMEggn/+/==";
+    }
+    const rp::test::ScopedEnv env(rp::kEnvGraphCertPfxBase64, pfx);
+
+    REQUIRE(rp::load_secrets_from_env().graph_cert_pfx_base64 == pfx);
 }
 
 TEST_CASE("load_secrets_from_env reads a value outside the ANSI code page as UTF-8", "[secrets]")
@@ -92,7 +114,7 @@ TEST_CASE("load_secrets_from_env rejects a value that isn't valid Unicode, witho
           "[secrets]")
 {
     const std::string_view name = GENERATE(rp::kEnvVeeamUsername, rp::kEnvVeeamPassword,
-                                           rp::kEnvGraphClientSecret);
+                                           rp::kEnvGraphCertPfxBase64, rp::kEnvGraphCertPassword);
     CAPTURE(name);
     // An unpaired surrogate: no UTF-8 string holds it, so any conversion would
     // change the secret.

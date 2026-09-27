@@ -27,6 +27,24 @@ prove the test covers real content and not just our own planted evidence.
 **Sample.** The set of items one run selects and tests — canaries plus random items, chosen
 from a seed so the selection is reproducible.
 
+**Client.** One of an MSP's customers: one Microsoft 365 tenant, which Veeam backs up as one
+organisation. One Veeam server may back up many clients; one Worker talks to it with one set
+of credentials and names the client in each call.
+
+**Client reference (`client_ref`).** How a connector call names the client: the name the
+backup product knows it by. For Veeam, the organisation's name as in `veeam_org_name` (e.g.
+`RestoreProofLab.onmicrosoft.com`), matched ASCII case-insensitively; the connector looks up
+Veeam's organisation ID itself.
+
+**Connector.** The Worker's adapter to one backup product (`rp::connector::IConnector`,
+W1.7): it lists a client's restore points and restores a sample into the restore targets.
+Registered by name; the only one is `veeam_m365` (Veeam Backup for Microsoft 365). Nothing
+past the interface sees the product's own types or errors.
+
+**Restore status.** A connector's report of how the restore itself went: `succeeded`,
+`partial`, `failed` or `not_run` (`rp::connector::RestoreStatus`). Not a run outcome: `pass`,
+`fail` and `error` are decided afterwards from it and the Graph comparison (W3.3).
+
 ## Verification levels
 
 How deeply a backup has been verified. RestoreProof's own ladder, used in reports so the

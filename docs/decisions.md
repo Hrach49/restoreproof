@@ -7,6 +7,133 @@ Format: date, decision, reason, alternatives rejected.
 
 ---
 
+## 2026-09-27 — W1.7: the connector interface; clients by name, neutral types and errors, targets only from Config
+
+**Decision.**
+
+- **`rp::connector::IConnector`** (`worker/include/rp/connector.hpp`) has `describe()`,
+  `list_restore_points(client_ref)` and `restore_sample(spec)`. These are the guide's
+  `Describe`, `ListRestorePoints` and `RestoreSample`, in the Worker's snake_case. One instance
+  talks to one backup server with one set of credentials.
+- **`client_ref` is the client's name in the backup product.** For Veeam that is the
+  organisation name, as in `veeam_org_name`. A *client* is one MSP customer: one Microsoft 365
+  tenant, one Veeam organisation.
+  - An MSP whose Veeam server backs up many tenants uses one connector, and each call names
+    its client.
+  - The connector resolves the name to Veeam's organisation ID on every call, ASCII
+    case-insensitively, as `veeam list` marks it.
+  - No match is `NotFoundError`; two matches are a plain `Error`; an empty `client_ref` is
+    `std::invalid_argument` before any request. A matched organisation whose ID isn't a UUID
+    is an `Error`, checked before the restore points are asked for; any other
+    `std::invalid_argument` passes through as it is.
+  - Error messages show `client_ref` with each control character (`control_chars.hpp`) made
+    a space, as `veeam list` shows Veeam's text: it will come from a Cloud job (C5.6), and
+    a CR/LF or bidi override in it must not forge, hide or reorder a log line.
+- **Neutral types, in namespace `rp::connector`.**
+  - `RestorePoint` holds:
+    - `id`: opaque, only meaningful to the connector that returned it.
+    - `backup_time`: byte for byte as the product sent it, since Veeam opens explore sessions
+      by that exact string.
+    - `has_mail`, `has_sharepoint`, `has_onedrive`.
+    - `is_archive`: Veeam's long-term copy, whose restore needs a retrieval first.
+  - Veeam's organisation, repository and job IDs, `isCopy`, `isDeleted` and Teams stay behind
+    the interface.
+  - Errors: `connector::Error` (a `runtime_error`; `what()` is safe to print), with subclasses
+    `AuthError`, `TransientError`, `NotFoundError` and `NotImplementedError`.
+  - `VeeamM365Connector` catches the `VeeamError` family and rethrows the matching class with
+    the same, already redacted, message: `AuthError`, `TransientError` and `NotFoundError` map
+    to their namesakes, and any other `VeeamError` becomes `Error`.
+  - The classes line up with `rp::exit_code`: 2 auth, 3 transient, 4 the rest. A command
+    that runs a connector (W2.8) maps them as `veeam list` maps the Veeam ones.
+- **`RestoreStatus` is the restore's own outcome**, not pass/fail/error, which W3.3 decides
+  from it and the Graph comparison. How W2.5 will map Veeam's session `result` and
+  `restoredItemsCount` onto it, one session per item type:
+
+  | Status | Meaning | Veeam |
+  |---|---|---|
+  | `succeeded` | every session succeeded and restored every item sent | every session `Success`, each `restoredItemsCount` equal to the items it was sent |
+  | `partial` | something restored, but not cleanly | any `Warning`; a `Failed` session beside sessions that restored items; `Success` with a short `restoredItemsCount` |
+  | `failed` | nothing restored | every session `Failed`, or 0 restored; this covers the OneDrive trap in `docs/api/veeam-feasibility.md` §3 (`Failed`, 0 restored, no `errors`) |
+  | `not_run` | nothing was sent | the default; what an empty spec returns |
+
+  - The rows are tried in this order, and the first that fits wins: `not_run` (nothing
+    sent), `failed` (0 restored in total, whatever the results say), `succeeded`, then
+    `partial` for everything else. So `Warning` with 0 restored and `Success` with 0
+    restored are `failed`, never `partial`.
+
+  - W3.3 then reads: `failed` → fail; `partial` → fail unless every item verifies.
+  - Infrastructure failures and guard violations are exceptions, never a status.
+  - `RestoreResult` also carries:
+    - `session_ids`: a vector, one per session (the guide's `sessionId`).
+    - `log`: the sessions' logs, as text.
+    - `items_restored`.
+- **Restore targets come only from Config.** `RestoreTargets::from_config` is the only way
+  to build one (the default constructor is private). It rejects an empty value and, as
+  `parse_config` does, a `test_mailbox` that isn't `restoretest@<domain>`
+  (`rp::is_restore_mailbox`), since a `Config` built in code skips `parse_config`.
+  - It holds `test_mailbox`, `test_site_id`, `test_library_id`, `test_onedrive_drive_id` and
+    `test_onedrive_folder_id`.
+  - `RestoreSpec` holds a copy, so a spec can't be made without the configured targets and
+    nothing dangles.
+  - W2.7's `TargetGuard` compares each item's target with these, inside `restore_sample`.
+    Resolving the Graph IDs to the names and URLs Veeam's restore bodies take (§5.5) is W2.4
+    and W2.7's job.
+  - `RestoreSpec` also holds the `client_ref`, the whole `RestorePoint` (for its
+    `backup_time`), and mail, SharePoint and OneDrive selectors shaped like
+    `lab/seed-manifest.json` entries. W2.5 and W2.6 may add fields.
+- **`rpworker veeam list` stays on `VeeamClient`.** It lists every organisation, with Teams
+  and raw Veeam IDs: a Veeam diagnostic, not a per-client connector operation. Its output and
+  exit codes don't change.
+  - The Done-when is shown in `worker/tests/connector_test.cpp` instead: scheduler-like code
+    drives a fake connector through `IConnector&`, and a scan checks that nothing the file
+    includes reaches a Veeam header.
+  - `veeam_m365_connector_test.cpp` drives the registry's `veeam_m365` through `IConnector&`
+    on recorded fixtures, and a `[live]` test does the same against the lab.
+  - W2.8 `rpworker restore` will be the first command to go through the registry.
+- **No config key picks the connector.** The name stays hard-wired as
+  `rp::connector::kVeeamM365` until there is a second connector.
+  - C5.2/C5.6 already give each client's connector a `type` in the job, which is where the
+    name will come from.
+  - `ConnectorRegistry` (`rp/connector_registry.hpp`) is an explicit name → factory map:
+    - `add` rejects an empty name, a null factory and a duplicate.
+    - `create` matches names exactly.
+    - `default_connector_registry()` registers `veeam_m365`.
+  - An unknown name is `UnknownConnectorError` (`std::invalid_argument`), listing the known
+    names. The asked-for name is quoted only when it is 1–64 printable ASCII characters. It
+    is a configuration error: exit 1 where a command meets it, `error` for a run.
+  - The Veeam factory throws `ConfigError` "RP_VEEAM_USERNAME is not set" (then
+    `RP_VEEAM_PASSWORD`), as `veeam list` reports them.
+- **The connector owns its HTTP client and `VeeamClient`,** made from `ConnectorOptions`
+  (HTTP factory, logger, sleep, jitter) with `veeam_ca_file` and `veeam_cert_sha256` from
+  the config (TLS never off). It logs out in its destructor, and does nothing if it never
+  signed in. `describe()` is offline: `{"veeam_m365", "v8"}`, the REST API version it
+  speaks. `restore_sample` throws `NotImplementedError` before any request until W2.5.
+
+**Reason.** The Done-when asks that the scheduler hold an `IConnector&` without knowing
+Veeam. That rules out Veeam types and exceptions crossing the interface, and a scan makes it
+checkable. C5.6's job carries the Veeam org name, not an ID, so the name is the reference
+that will arrive. A targets type that can only come from a validated Config gives TargetGuard
+one source of truth, and leaves no code path that builds free-form targets.
+
+**Alternatives rejected.**
+
+- *Veeam's organisation ID as `client_ref`:* a Veeam concept in the neutral interface, and
+  not what the job sends.
+- *Reusing `rp::RestorePoint` and the Veeam exceptions:* the scheduler would include
+  `veeam_client.hpp`.
+- *Veeam exceptions that also derive from the connector ones:* multiple inheritance, and
+  `VeeamClient` would depend on the connector layer.
+- *pass/fail/error as the connector's status:* the connector can't see the Graph comparison.
+- *A spec holding a reference to one `RestoreTargets`:* it could dangle once runs go to a
+  worker thread.
+- *Moving `veeam list` onto the connector:* it would need a `ListClients` and Veeam-only
+  fields on the interface.
+- *A `connector` key in `config.json`:* the wrong place once jobs carry the type.
+- *Self-registering factories:* the linker drops unreferenced objects from the static
+  `rpcore`, and their registration with them.
+
+---
+
 ## 2026-09-27 — The Worker's Graph app: a certificate, `*.Selected` grants, Exchange RBAC for mail, read-only for now (L1.5)
 
 **Decision.** The Worker reads the restore targets through its own app registration,

@@ -101,6 +101,16 @@ private:
     std::string key_;
 };
 
+// "restoretest@" in any case, then a domain: two or more non-empty labels of
+// ASCII letters, digits and '-', separated by '.'. The mailbox is the only
+// mail restore target (docs/decisions.md), so its name is fixed rather than
+// trusted: a typo, or a look-alike such as a Cyrillic letter or an invisible
+// character, can't point restores at a live mailbox. The domain varies per
+// tenant, so it is only checked for shape. parse_config applies it to
+// test_mailbox, and connector::RestoreTargets::from_config again, for a
+// Config built in code.
+bool is_restore_mailbox(std::string_view value);
+
 // Parses and validates config.json's text. Stops at the first error and
 // throws ConfigError.
 Config parse_config(std::string_view json_text);

@@ -1,6 +1,6 @@
 // W1.5 and W1.6 "Done when": the lab's Veeam returns the real organisation
 // and its restore points, through VeeamClient and through `rpworker veeam
-// list`. Skipped unless RP_LIVE=1. Read-only: each signs in, lists
+// list`; and W1.7's "veeam_m365" connector, held as an IConnector&, does too. Skipped unless RP_LIVE=1. Read-only: each signs in, lists
 // organisations and restore points, and logs out; no explore session, no
 // restore.
 //
@@ -13,6 +13,9 @@
 
 #include "test_support.hpp"
 
+#include <rp/config.hpp>
+#include <rp/connector.hpp>
+#include <rp/connector_registry.hpp>
 #include <rp/http_client.hpp>
 #include <rp/secrets.hpp>
 #include <rp/veeam_client.hpp>
@@ -25,6 +28,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <iostream>
+#include <memory>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -154,5 +158,41 @@ TEST_CASE("live: rpworker veeam list prints the lab organisation's two restore p
     const auto full = row_with(kLabFull);
     REQUIRE(incremental != rows.end());
     REQUIRE(full != rows.end());
+    CHECK(incremental < full);
+}
+
+// W1.7: the default registry's "veeam_m365" connector, through IConnector&
+// only, lists the lab organisation's restore points by its name. The same
+// environment as above; the real rp::HttpClient. Read-only, like the tests
+// above: the connector signs in, lists, and logs out when it goes.
+TEST_CASE("live: the veeam_m365 connector lists the lab's restore points as an IConnector&",
+          "[veeam][live]")
+{
+    if (rp::test::get_env("RP_LIVE") != std::optional<std::string>{"1"}) {
+        SKIP("set RP_LIVE=1 to run against the lab's Veeam");
+    }
+    const std::optional<std::string> ca_file = rp::test::get_env("RP_LIVE_VEEAM_CA_FILE");
+    REQUIRE(ca_file);
+    rp::Config config;
+    config.veeam_url = env_or("RP_LIVE_VEEAM_URL", "https://localhost:4443");
+    config.veeam_ca_file = ca_file;
+    config.veeam_cert_sha256 = env_or("RP_LIVE_VEEAM_CERT_SHA256", kLabCertSha256);
+
+    const std::unique_ptr<rp::connector::IConnector> made =
+        rp::connector::default_connector_registry().create(rp::connector::kVeeamM365, config,
+                                                           rp::load_secrets_from_env());
+    rp::connector::IConnector& source = *made;
+    CHECK(source.describe().name == "veeam_m365");
+    const std::vector<rp::connector::RestorePoint> points =
+        source.list_restore_points(kLabOrgName);
+    std::vector<std::string> times;
+    for (const rp::connector::RestorePoint& point : points) {
+        std::cout << "connector restore point " << point.backup_time << " " << point.id << "\n";
+        times.push_back(point.backup_time);
+    }
+    const auto incremental = std::find(times.begin(), times.end(), kLabIncremental);
+    const auto full = std::find(times.begin(), times.end(), kLabFull);
+    REQUIRE(incremental != times.end());
+    REQUIRE(full != times.end());
     CHECK(incremental < full);
 }

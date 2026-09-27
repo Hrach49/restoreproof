@@ -30,8 +30,8 @@ Ten keys are required; the other eight are optional. Six of those have defaults;
 | `cloud_url` | yes | | `https://` URL, printable ASCII only, no user name, password, query or fragment | The RestoreProof Cloud the Worker gets jobs from and uploads results to. |
 | `veeam_url` | yes | | `https://` URL, printable ASCII only, no user name, password, query or fragment | The Veeam Backup for Microsoft 365 REST API, e.g. `https://veeam.example.invalid:4443`. |
 | `veeam_org_name` | yes | | non-empty string | The Microsoft 365 organisation as Veeam names it, e.g. `example.onmicrosoft.com`. |
-| `graph_tenant_id` | yes | | non-empty string | The Microsoft 365 tenant ID, for Microsoft Graph sign-in. |
-| `graph_client_id` | yes | | non-empty string | The app registration's client ID, for Microsoft Graph sign-in. |
+| `graph_tenant_id` | yes | | non-empty string | The Microsoft 365 tenant ID (a GUID), for Microsoft Graph sign-in: see "Microsoft Graph app" below. |
+| `graph_client_id` | yes | | non-empty string | The application (client) ID of the Worker's own app registration, "RestoreProof Worker": see "Microsoft Graph app" below. |
 | `test_mailbox` | yes | | `restoretest@<domain>`: see below | The `restoretest` mailbox: the only restore target for mail. |
 | `test_site_id` | yes | | non-empty string | The SharePoint site holding the `RestoreTarget` library (the RestoreTest site in the lab). |
 | `test_library_id` | yes | | non-empty string | The `RestoreTarget` library: the only restore target for SharePoint items. Not the `RestoreTest` library, which holds the canary files. |
@@ -212,7 +212,7 @@ secrets are read from these environment variables, whose names are defined once 
 |---|---|
 | `RP_VEEAM_USERNAME` | The account the Worker signs in to the Veeam REST API with. |
 | `RP_VEEAM_PASSWORD` | That account's password. |
-| `RP_GRAPH_CLIENT_SECRET` | The client secret of the app registration named by `graph_client_id`. |
+| `RP_GRAPH_CLIENT_SECRET` | Planned to be replaced (W2.1): the app named by `graph_client_id` has a certificate, not a client secret. See "Microsoft Graph app" below. |
 
 Any of them may be unset for now. W1.0 chose admin mode (`docs/decisions.md`, 2026-09-26):
 
@@ -239,6 +239,31 @@ $env:RP_GRAPH_CLIENT_SECRET = '...'
 A Windows service does not see a user's session variables. Until the vault lands, a Worker
 running as a service would need them set at machine level, where any local administrator can
 read them.
+
+## Microsoft Graph app
+
+The Worker reads the restore targets through Microsoft Graph, app-only, as its own app
+registration, **RestoreProof Worker** (L1.5). What it may read and why is in
+`docs/security/graph-permissions.md`.
+
+- **`graph_tenant_id`** is the tenant's ID, a GUID: in the lab
+  `bcd6bd1a-ea42-489d-aa28-2c19a44ad146` (`lab/tenant.md`). In the Entra admin center it is
+  on the tenant's Overview page.
+- **`graph_client_id`** is the Application (client) ID of "RestoreProof Worker" (the lab's
+  value is in `lab/tenant.md`, "RestoreProof Worker app"). It is printed at the end of
+  `lab/entra/new-worker-app.ps1`. Not the seeder's app, nor Veeam's.
+- **The credential is a certificate, not a secret** (`docs/decisions.md`, 2026-09-27). The
+  Worker doesn't sign in to Graph yet. When it does (W2.1), two variables replace
+  `RP_GRAPH_CLIENT_SECRET` until the vault arrives:
+
+  | Variable (planned) | What it is for |
+  |---|---|
+  | `RP_GRAPH_CERT_PFX_BASE64` | The app's certificate with its private key: the PFX file, Base64. |
+  | `RP_GRAPH_CERT_PASSWORD` | The PFX's password. |
+
+  In the lab the PFX is `%LOCALAPPDATA%\RestoreProof\lab\worker-graph.pfx` and its password
+  is the Credential Manager generic credential `RestoreProof Lab - Worker Graph app PFX`.
+  Neither ever goes into `config.json`, which rejects key names like `private_key`.
 
 ## `rpworker config check`
 

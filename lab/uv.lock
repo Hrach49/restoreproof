@@ -678,6 +678,7 @@ name = "restoreproof-lab"
 version = "0.0.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "cryptography" },
     { name = "jsonschema" },
     { name = "msal" },
     { name = "requests" },
@@ -694,8 +695,9 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "cryptography", specifier = ">=42" },
     { name = "jsonschema", specifier = ">=4.23" },
-    { name = "msal", specifier = ">=1.31" },
+    { name = "msal", specifier = ">=1.35" },
     { name = "requests", specifier = ">=2.32" },
 ]
 

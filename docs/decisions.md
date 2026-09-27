@@ -7,6 +7,85 @@ Format: date, decision, reason, alternatives rejected.
 
 ---
 
+## 2026-09-27 — The Worker's Graph app: a certificate, `*.Selected` grants, Exchange RBAC for mail, read-only for now (L1.5)
+
+**Decision.** The Worker reads the restore targets through its own app registration,
+"RestoreProof Worker" (single tenant, app-only). Details and the per-permission reasons:
+`docs/security/graph-permissions.md`.
+
+1. **Credential: a certificate, not a client secret.**
+   - Until the vault, the private key exists only in a PFX outside the repo
+     (`%LOCALAPPDATA%\RestoreProof\lab\worker-graph.pfx`). Its random password is in
+     Credential Manager (`RestoreProof Lab - Worker Graph app PFX`).
+   - When the Worker's Graph code lands (W2.1), `RP_GRAPH_CLIENT_SECRET` is replaced by
+     `RP_GRAPH_CERT_PFX_BASE64` (the PFX, Base64) and `RP_GRAPH_CERT_PASSWORD`. That is the
+     same form Veeam's restore body takes, and the vault (W4.5) will hold it.
+2. **No `Files.Read.All`.** SharePoint access is `Sites.Selected` `read` on the RestoreTest
+   site. OneDrive access is `Files.SelectedOperations.Selected` `read` on alice's
+   `/RestoreTarget` folder: not `Sites.Selected` on her OneDrive.
+3. **Mail through Exchange Online RBAC for Applications.** The role is `Application
+   Mail.Read`, with a management scope of `PrimarySmtpAddress -eq 'restoretest@…'`. The Entra
+   `Mail.Read` consent is not granted, and the setup script removes it if present.
+   A management scope needs the tenant "hydrated", so the lab tenant ran
+   `Enable-OrganizationCustomization` on 2026-09-27. That is once per tenant, tenant-wide and
+   irreversible, and was chosen over scoping by an Entra administrative unit, which would add
+   an Entra object and a Graph scope for the same result.
+4. **Read-only in L1.5.** The write needs of cleanup (W3.x) are an open item, with a proposal:
+   `Lists.SelectedOperations.Selected` `write` on the RestoreTarget list only, the folder
+   grant raised to `write`, and `Application Mail.ReadWrite` on the same scope.
+5. The setup is a script the admin runs, `lab/entra/new-worker-app.ps1` (idempotent). It is
+   checked by `python -m seeder check-worker-app`: 200 on the three targets (and on the
+   metadata of alice's OneDrive site and root folder, which a folder grant opens), 403 on
+   alice's mailbox, the tenant root site and its drives, and the OneDrive host site, 404 on the
+   canary folder (SharePoint masks items the app may not see; a sign-in as alice first confirms
+   the folder exists), alice's OneDrive root listing only `RestoreTarget` by that name, exactly
+   two roles in the Graph token and none in the Exchange Online and SharePoint tokens. The
+   RestoreTest site's canary library stays readable: `Sites.Selected` covers the whole site.
+   The script leaves the certificate as the app's only credential (no client secret).
+
+**Reason.**
+
+- **Certificate.** A secret is a password sent with every token request; a certificate signs
+  a short-lived assertion, so the key never leaves the machine. W1.0 showed Veeam's restore
+  body needs an app certificate as a PFX anyway (`docs/api/veeam-feasibility.md` §5.4), so one
+  credential kind and one storage path cover both. A non-exportable key in the certificate
+  store would be stronger at rest, but the lab's Python checker can't sign with it, and
+  Veeam needs the PFX bytes regardless.
+- **`Files.Read.All`** reads every drive in the tenant through `/drives/{id}`, so "403 on any
+  other site" (the Done-when) could never hold.
+- **`Sites.Selected` on alice's OneDrive** would open her whole OneDrive, the canary folder
+  included. Graph's `*.Selected` scopes now reach a single folder, and every `*.Selected`
+  scope works app-only (Microsoft, "Overview of Selected permissions in OneDrive and
+  SharePoint").
+- **Mail.** An Entra `Mail.Read` consent covers every mailbox. Exchange adds RBAC grants to it
+  as a union, so a scoped grant only means something if the consent is gone (Microsoft,
+  "Role Based Access Control for Applications in Exchange Online", FAQ). RBAC for
+  Applications replaces Application Access Policies.
+- **Read-only.** `Sites.Selected` roles apply to the whole site, and the canary `RestoreTest`
+  library shares the site with `RestoreTarget`. A site-wide `write` would put the canaries in
+  reach of the Cleaner. Nothing in L1.5 writes, so nothing is granted to write.
+
+**Alternatives rejected.**
+
+- *A client secret (the issue's wording):* weaker, and a second kind of credential next to
+  the PFX Veeam needs.
+- *A non-exportable key in `Cert:\CurrentUser\My`:* see above. Reconsider when the Worker
+  signs its own assertions in C++ (W2.1): CNG can sign with a key it never exports. Veeam's
+  PFX would still be needed.
+- *`Files.Read.All` or `Sites.Read.All`:* tenant-wide.
+- *`Sites.Selected` on alice's OneDrive:* her whole OneDrive for one folder.
+- *An Application Access Policy on top of Entra `Mail.Read`:* legacy, replaced by RBAC for
+  Applications.
+- *Granting `write` now:* no L1.5 need, and the only site-level form reaches the canaries.
+
+**Open.**
+
+- The write grants for W3.x (above).
+- Which app's certificate goes in Veeam's restore body (W2.4). Not this one: it can't write.
+- Per-customer onboarding of these grants, and certificate renewal (a one-year lab cert).
+
+---
+
 ## 2026-09-27 — W1.6: rpworker veeam list, exit codes and output
 
 Changes the usage exit code from 2 to 64. The 2 was set with W1.1/W1.2 in the `cli.hpp` and

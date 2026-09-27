@@ -1,7 +1,8 @@
 # Test tenant
 
 The Microsoft 365 tenant the lab backs up with Veeam and the Worker restores into (L1.1).
-IDs only: passwords and secrets live in the password manager, never here.
+IDs only: passwords and secrets live in Windows Credential Manager (generic credentials
+named "RestoreProof Lab - …"), never here.
 Tenant choice and licences: `docs/decisions.md`, 2026-09-23.
 
 ## Tenant
@@ -49,6 +50,7 @@ and the Cleaner never deletes one (`docs/decisions.md`, 2026-09-25).
 | RestoreTarget library, drive ID | `b!XQgI_nDr6EKVpkcBib2Y65nzyk4OzJVNs_7NCRoJ5omdBuz_5GU6TJ2irAhs-dr6` |
 | alice's OneDrive, drive ID | `b!wA9gbfhlEUitGAluxbfoNBr_z5gEtDhErm5pJ6bMwyXfZJ8a_dkCQ696RX0r7_U3` |
 | alice's OneDrive `RestoreTarget` folder, item ID | `01ZK75LGDGB6QOO3MGNFGYOY6C6VBDG5OH` |
+| alice's OneDrive as a site: host, path | `restoreprooflab-my.sharepoint.com`, `/personal/alice_restoreprooflab_onmicrosoft_com` (not a target; the Worker app sees only its metadata, and in it only the `RestoreTarget` folder) |
 
 Both `RestoreTarget`s were created on 2026-09-25 (L1.4): the library by hand in the site (New >
 Document library; the seeder app lacks `Sites.Manage.All`), the folder through Graph as alice.
@@ -85,6 +87,34 @@ body takes none of these IDs (`docs/api/veeam-feasibility.md` §5.5):
   folder name `RestoreTarget`.
 
 W2.4/W2.7 settle how the configured IDs map to these names, and update the config doc.
+
+## RestoreProof Worker app (L1.5)
+
+The Worker's own app registration: it reads back what Veeam restored, app-only. It can read
+the three restore targets, the rest of the RestoreTest site (canary library included) and the
+metadata of alice's OneDrive site and root folder, nothing else. What is granted, why, and how
+it is checked:
+`docs/security/graph-permissions.md`. Made on 2026-09-27 with `lab/entra/new-worker-app.ps1`
+(steps in `lab/README.md`), which is safe to re-run. `lab/tests/test_catalog.py` checks the
+client ID matches `WORKER_CLIENT_ID` in `lab/seeder/tenant.py`.
+
+| | |
+|---|---|
+| RestoreProof Worker, application (client) ID | `737da5ef-baf2-4198-b009-e160d8ca77c9` |
+| Service principal object ID | `f5a56ba3-1b8f-4d4c-8a0a-b2b579b7bd5f` |
+| Sign-in audience | Single tenant (`AzureADMyOrg`) |
+| Credential | Certificate (no client secret): self-signed RSA 2048, `CN=RestoreProof Worker (lab)`, SHA-1 thumbprint `B56D2BD39945BAB1484A53F6C78C059A369EDBB3`, created 2026-09-27, expires 2027-09-27. Private key only in `%LOCALAPPDATA%\RestoreProof\lab\worker-graph.pfx`; its password only in Credential Manager (`RestoreProof Lab - Worker Graph app PFX`) |
+| Graph application permissions (admin consent) | `Sites.Selected`, `Files.SelectedOperations.Selected`; nothing else |
+| SharePoint grants | `read` on the RestoreTest site; `read` on alice's OneDrive `RestoreTarget` folder |
+| Exchange Online | Role assignment `RestoreProof Worker - Application Mail.Read - restoretest` (role `Application Mail.Read`), management scope `RestoreProof Worker - restoretest mailbox` (`PrimarySmtpAddress -eq 'restoretest@RestoreProofLab.onmicrosoft.com'`) |
+| Live check | `python -m seeder check-worker-app`: 16/16 on 2026-09-27, `docs/security/l1.5-worker-app-check.txt` |
+
+Setting it up changed the tenant in two other ways:
+
+- `Enable-OrganizationCustomization` was run on 2026-09-27. Exchange needs it before a
+  management scope can exist. It is tenant-wide and can't be undone.
+- The global admin is a site collection admin of alice's OneDrive (admin center, "Create link
+  to files"), which the folder grant needed. `lab/README.md` says how to remove it.
 
 ## Veeam Restore Portal app and operator role (W1.0 / L1.6)
 

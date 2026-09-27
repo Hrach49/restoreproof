@@ -784,3 +784,59 @@ TEST_CASE("rpworker veeam list says so when Veeam has no organisations, and exit
     REQUIRE(lab.http.count(HttpMethod::get, points_url()) == 0);
     REQUIRE(logouts(lab) == 1);
 }
+
+// --- Secrets -------------------------------------------------------------------
+
+TEST_CASE("rpworker veeam list never prints or logs the password or a token", "[veeam_command]")
+{
+    // What a proxy or a broken server might echo back: the posted form, and
+    // the password and tokens in the other forms rp::redact() knows.
+    const std::string echoed = "grant_type=password&username=x&password=" + kPasswordForm +
+                               "&refresh_token=" + kRefreshToken + " access_token=" +
+                               kAccessToken + "\npassword: " + kPassword;
+    struct Case {
+        std::string name;
+        int exit_code;
+        bool signs_in;
+        std::function<void(Harness&)> arrange;
+    };
+    const Case c = GENERATE_COPY(
+        Case{"success", 0, true, [](Harness&) {}},
+        Case{"sign-in refused", 2, false,
+             [](Harness& lab) {
+                 lab.http.on(HttpMethod::post, kTokenUrl,
+                             {load_fixture("veeam", "token-rejected-401")});
+             }},
+        Case{"sign-in answered with the form echoed", 4, false,
+             [echoed](Harness& lab) {
+                 lab.http.on(HttpMethod::post, kTokenUrl,
+                             {make_response(400, json{{"message", echoed}}.dump())});
+             }},
+        Case{"Veeam unreachable after the sign-in", 3, true,
+             [](Harness& lab) { lab.http.on(HttpMethod::get, orgs_url(), {make_response(503)}); }},
+        Case{"a 4xx whose body echoes the secrets", 4, true,
+             [echoed](Harness& lab) {
+                 lab.http.on(HttpMethod::get, points_url(),
+                             {make_response(400, json{{"message", echoed},
+                                                      {"errorCode", "ParameterValidationFailure"}}
+                                                     .dump())});
+             }});
+    CAPTURE(c.name);
+    Harness lab;
+    c.arrange(lab);
+
+    const Run result = lab.run_list();
+    REQUIRE(result.exit_code == c.exit_code);
+    const std::string log = lab.log();
+    CAPTURE(result.out, result.err, log);
+    for (const std::string& text : {result.out, result.err, log}) {
+        CHECK_THAT(text, !ContainsSubstring(kPassword));
+        CHECK_THAT(text, !ContainsSubstring(kPasswordForm));
+        CHECK_THAT(text, !ContainsSubstring("Sentinel"));
+        CHECK_THAT(text, !ContainsSubstring(kAccessToken));
+        CHECK_THAT(text, !ContainsSubstring(kRefreshToken));
+        CHECK_THAT(text, !ContainsSubstring("4c1e"));
+    }
+    // After a sign-in the client has logged, so there was a log to leak into.
+    CHECK(log.empty() == !c.signs_in);
+}

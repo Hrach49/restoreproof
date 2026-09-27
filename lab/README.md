@@ -131,6 +131,8 @@ first two steps, and is safe to run again.
    yours next to it: `-Force` for a second version, `-AllowClobber` because Veeam's copy already
    has the same commands:
    `Install-Module ExchangeOnlineManagement -Scope CurrentUser -Force -AllowClobber`.
+   The script needs version 3.7.2 or later (for `Connect-ExchangeOnline -DisableWAM`); the same
+   command upgrades an older copy.
 
 2. **Make the admin a site collection admin of alice's OneDrive.** Even a global admin can't
    grant access to another user's OneDrive otherwise.

@@ -3,8 +3,13 @@
 Tokens are "token:<upn>"; the fake reads the signed-in account from the Authorization header,
 so "/me" is always that account's own mailbox. Drives are reachable only by the account in
 `drive_access` (403 otherwise), like delegated Graph.
+
+App-only tokens (the RestoreProof Worker app, L1.5) are JWT-shaped, made by make_app_token. The
+fake answers them from `app_grants`, the resources the app was granted, the way Graph does:
+200 on a granted resource, 403 on any other one. APP_GRANTS is what L1.5 grants.
 """
 
+import base64
 import json
 import re
 from collections import Counter
@@ -27,6 +32,36 @@ _ITEM_BY_ID = re.compile(r"^/drives/([^/]+)/items/([^/:]+)(/content)?$")
 _MESSAGE = re.compile(r"^/me/messages/([^/]+)$")
 _FOLDER = re.compile(r"^/me/mailFolders/([^/]+)$")
 _SUBJECT_FILTER = re.compile(r"^subject eq '(.*)'$")
+_USER_MESSAGES = re.compile(r"^/users/([^/]+)/messages$")
+_SITE = re.compile(r"^/sites/(.+?)(/drives)?$")
+_DRIVE = re.compile(r"^/drives/([^/]+)(?:/(root|items/[^/]+)(/children)?)?$")
+
+# Grant keys: "mailbox:<upn lower>", "site:<site id>", "folder:<drive id>/<item id>", "directory".
+APP_GRANTS = frozenset(
+    {
+        f"mailbox:{tenant.RESTORETEST_UPN.lower()}",
+        f"site:{tenant.SHAREPOINT_SITE_ID}",
+        f"folder:{tenant.ONEDRIVE_DRIVE_ID}/{tenant.ONEDRIVE_TARGET_FOLDER_ID}",
+    }
+)
+# The drives of each site, as far as the fake knows.
+SITE_DRIVES = {
+    tenant.SHAREPOINT_SITE_ID: (tenant.RESTORE_TARGET_DRIVE_ID, tenant.SHAREPOINT_DRIVE_ID),
+    f"{tenant.ONEDRIVE_HOST}:{tenant.ALICE_ONEDRIVE_SITE_PATH}": (tenant.ONEDRIVE_DRIVE_ID,),
+    tenant.SHAREPOINT_HOST: ("b!FAKEROOTSITEDOCUMENTS",),
+}
+APP_ROLES = ("Sites.Selected", "Files.SelectedOperations.Selected")
+
+
+def _b64url(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).decode("ascii").rstrip("=")
+
+
+def make_app_token(client_id: str, roles=APP_ROLES, signature: str = "fake-signature") -> str:
+    """An unsigned JWT-shaped app-only token, as Entra's client-credentials grant returns one."""
+    header = _b64url(json.dumps({"typ": "JWT", "alg": "RS256"}).encode())
+    payload = _b64url(json.dumps({"appid": client_id, "idtyp": "app", "roles": list(roles)}).encode())
+    return f"{header}.{payload}.{signature}"
 
 
 def _iso(moment: datetime, fraction: bool = False) -> str:
@@ -50,6 +85,7 @@ class FakeTenant:
         body_transform: Callable[[str], str] | None = None,
         rewrite_types: frozenset[str] | set[str] = frozenset(),
         drive_access: Mapping[str, str] | None = None,
+        app_grants: frozenset[str] | set[str] = APP_GRANTS,
     ) -> None:
         """delivery_delay: number of message-list calls by the recipient before a sent mail
         shows up (None = never delivered). body_transform: what "Exchange" does to the body.
@@ -57,6 +93,8 @@ class FakeTenant:
         self.delivery_delay = delivery_delay
         self.body_transform = body_transform or (lambda text: text)
         self.rewrite_types = set(rewrite_types)
+        self.app_grants = set(app_grants)
+        self.app_requests: list[tuple[str, str]] = []  # (method, path) of every app-only call
         self.drive_access = dict(
             drive_access
             or {tenant.SHAREPOINT_DRIVE_ID: tenant.ADMIN_UPN, tenant.ONEDRIVE_DRIVE_ID: tenant.ALICE_UPN}
@@ -145,6 +183,8 @@ class FakeTenant:
     def request(self, method: str, url: str, headers: Mapping[str, str], body: bytes | None = None) -> HttpResponse:
         self.headers_seen.append(dict(headers))
         auth = headers.get("Authorization", "")
+        if auth.startswith("Bearer eyJ"):
+            return self._app_request(method, url)
         if not auth.startswith("Bearer token:"):
             return graph_error(401, "InvalidAuthenticationToken", "no token")
         account = auth[len("Bearer token:") :]
@@ -180,6 +220,46 @@ class FakeTenant:
         if (m := _ITEM_BY_ID.match(path)) and method == "GET":
             return self._item_by_id(account, m.group(1), m.group(2), bool(m.group(3)))
         return graph_error(400, "BadRequest", f"fake tenant has no route for {method} {path}")
+
+    # --- app-only (the Worker app) ------------------------------------------------------------
+
+    def _app_request(self, method: str, url: str) -> HttpResponse:
+        assert url.startswith(GRAPH_BASE), url
+        path = unquote(urlsplit(url[len(GRAPH_BASE) :]).path)
+        self.app_requests.append((method, path))
+        if method != "GET":
+            return graph_error(405, "BadRequest", "the fake answers app-only GETs only")
+        grant, body = self._app_resource(path)
+        if grant is None:
+            return graph_error(400, "BadRequest", f"fake tenant has no app-only route for {path}")
+        if grant not in self.app_grants:
+            return graph_error(403, "accessDenied", "Access denied")
+        return json_response(200, body)
+
+    def _app_resource(self, path: str) -> tuple[str | None, dict]:
+        """The grant a path needs, and what the fake returns when it is granted."""
+        if path == "/users":
+            return "directory", {"value": [{"id": "u1"}]}
+        if m := _USER_MESSAGES.match(path):
+            return f"mailbox:{m.group(1).lower()}", {"value": [{"id": "AAMkFakeMessage"}]}
+        if m := _SITE.match(path):
+            site = m.group(1)
+            if site not in SITE_DRIVES:
+                return None, {}
+            if m.group(2):
+                return f"site:{site}", {"value": [{"id": d} for d in SITE_DRIVES[site]]}
+            return f"site:{site}", {"id": site}
+        if m := _DRIVE.match(path):
+            drive_id, where, children = m.group(1), m.group(2), m.group(3)
+            site = next((s for s, drives in SITE_DRIVES.items() if drive_id in drives), None)
+            if site is None:
+                return None, {}
+            body = {"value": [{"id": "01FAKECHILD"}]} if children else {"id": where or drive_id}
+            # A folder grant covers the folder and what is in it, nothing above or beside it.
+            if where and where.startswith("items/") and f"folder:{drive_id}/{where[6:]}" in self.app_grants:
+                return f"folder:{drive_id}/{where[6:]}", body
+            return f"site:{site}", body
+        return None, {}
 
     # --- mail --------------------------------------------------------------------------------
 

@@ -3,18 +3,26 @@
 #include <rp/base64.hpp>
 #include <rp/redact.hpp>
 
+#include "uuid.hpp"
+
+#include <nlohmann/json.hpp>
+
 #include <openssl/crypto.h>
 #include <openssl/err.h>
 #include <openssl/evp.h>
 #include <openssl/objects.h>
 #include <openssl/pkcs12.h>
 #include <openssl/pkcs7.h>
+#include <openssl/rand.h>
+#include <openssl/rsa.h>
 #include <openssl/sha.h>
 #include <openssl/x509.h>
 
 #include <spdlog/logger.h>
 #include <spdlog/spdlog.h>
 
+#include <array>
+#include <cstdint>
 #include <cstdio>
 #include <ctime>
 #include <format>
@@ -290,6 +298,97 @@ ClientCertificate load_client_certificate(std::string_view pfx_base64, std::stri
                                         which, format_utc(impl->not_after), days.count()));
     }
     return ClientCertificate(std::move(impl));
+}
+
+namespace {
+
+// PS256's salt: as long as its SHA-256 digest (RFC 7518 section 3.5).
+constexpr int kPssSaltLength = 32;
+
+// A random UUID v4 (RFC 9562 section 5.4) in lowercase, from OpenSSL's CSPRNG.
+std::string random_uuid_v4()
+{
+    std::array<unsigned char, 16> bytes{};
+    if (RAND_bytes(bytes.data(), static_cast<int>(bytes.size())) != 1) {
+        throw CertificateError("could not make a random ID for the client assertion");
+    }
+    bytes[6] = static_cast<unsigned char>((bytes[6] & 0x0F) | 0x40); // version 4
+    bytes[8] = static_cast<unsigned char>((bytes[8] & 0x3F) | 0x80); // RFC variant
+    static constexpr char kDigits[] = "0123456789abcdef";
+    std::string out;
+    out.reserve(36);
+    for (std::size_t i = 0; i < bytes.size(); ++i) {
+        if (i == 4 || i == 6 || i == 8 || i == 10) {
+            out += '-';
+        }
+        out += kDigits[bytes[i] >> 4];
+        out += kDigits[bytes[i] & 0x0F];
+    }
+    return out;
+}
+
+// An RSASSA-PSS signature over `input` with SHA-256, MGF1-SHA-256 and a
+// 32-byte salt.
+std::vector<unsigned char> sign_ps256(EVP_PKEY* key, std::string_view input)
+{
+    const std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)> ctx(EVP_MD_CTX_new(),
+                                                                       &EVP_MD_CTX_free);
+    EVP_PKEY_CTX* pctx = nullptr; // owned by ctx
+    std::size_t size = 0;
+    const auto* data = reinterpret_cast<const unsigned char*>(input.data());
+    const bool ready = ctx &&
+                       EVP_DigestSignInit(ctx.get(), &pctx, EVP_sha256(), nullptr, key) == 1 &&
+                       EVP_PKEY_CTX_set_rsa_padding(pctx, RSA_PKCS1_PSS_PADDING) == 1 &&
+                       EVP_PKEY_CTX_set_rsa_mgf1_md(pctx, EVP_sha256()) == 1 &&
+                       EVP_PKEY_CTX_set_rsa_pss_saltlen(pctx, kPssSaltLength) == 1 &&
+                       EVP_DigestSign(ctx.get(), nullptr, &size, data, input.size()) == 1;
+    std::vector<unsigned char> signature(ready ? size : 0);
+    if (!ready || EVP_DigestSign(ctx.get(), signature.data(), &size, data, input.size()) != 1) {
+        throw CertificateError("could not sign the client assertion with the certificate's key");
+    }
+    signature.resize(size);
+    return signature;
+}
+
+} // namespace
+
+std::string entra_token_url(std::string_view tenant_id)
+{
+    if (!is_uuid(tenant_id)) {
+        throw GraphError("the Graph tenant ID is not a GUID");
+    }
+    return "https://login.microsoftonline.com/" + std::string(tenant_id) + "/oauth2/v2.0/token";
+}
+
+std::string make_client_assertion(const ClientCertificate& certificate,
+                                  std::string_view tenant_id, std::string_view client_id,
+                                  Clock::time_point wall_now)
+{
+    const std::string audience = entra_token_url(tenant_id);
+    if (!is_uuid(client_id)) {
+        throw GraphError("the Graph client ID is not a GUID");
+    }
+    const ClearOpenSslErrors clear_errors;
+    const std::int64_t now =
+        std::chrono::floor<std::chrono::seconds>(wall_now.time_since_epoch()).count();
+
+    // nlohmann::json keeps keys sorted and dump() is compact.
+    const nlohmann::json header = {
+        {"alg", "PS256"}, {"typ", "JWT"}, {"x5t#S256", certificate.x5t_s256()}};
+    const nlohmann::json claims = {
+        {"aud", audience},
+        {"iss", client_id},
+        {"sub", client_id},
+        {"jti", random_uuid_v4()},
+        {"nbf", now},
+        {"iat", now},
+        {"exp", now + kClientAssertionLifetime.count()},
+    };
+    const std::string signing_input =
+        base64url_encode(header.dump()) + "." + base64url_encode(claims.dump());
+    const std::vector<unsigned char> signature =
+        sign_ps256(certificate.impl().key.get(), signing_input);
+    return signing_input + "." + base64url_encode(signature);
 }
 
 } // namespace rp::graph

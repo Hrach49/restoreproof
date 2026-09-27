@@ -1,21 +1,36 @@
 #include <rp/base64.hpp>
 #include <rp/client_assertion.hpp>
+#include <rp/redact.hpp>
 
+#include "../src/uuid.hpp"
 #include "test_certs.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
+#include <catch2/matchers/catch_matchers_exception.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
+
+#include <nlohmann/json.hpp>
+
+#include <openssl/err.h>
+#include <openssl/evp.h>
+#include <openssl/rsa.h>
 
 #include <spdlog/logger.h>
 #include <spdlog/pattern_formatter.h>
 #include <spdlog/sinks/ostream_sink.h>
+#include <spdlog/spdlog.h>
 
+#include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <ctime>
 #include <memory>
+#include <optional>
+#include <set>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -23,7 +38,10 @@ using Catch::Matchers::ContainsSubstring;
 using rp::graph::CertificateError;
 using rp::graph::CertificateSecretNames;
 using rp::graph::ClientCertificate;
+using rp::graph::entra_token_url;
+using rp::graph::GraphError;
 using rp::graph::load_client_certificate;
+using rp::graph::make_client_assertion;
 using rp::test::Cert;
 using rp::test::ClientCertOptions;
 using rp::test::KeyType;
@@ -341,4 +359,281 @@ TEST_CASE("A ClientCertificate can be moved", "[graph][certificate]")
         load_client_certificate(to_base64(make_pfx(good_cert(), kPassword)), kPassword, kNow);
     third = std::move(second);
     CHECK(third.sha1_thumbprint() == rp::test::cert_sha1_hex(cert));
+}
+
+// --- The client assertion ---
+
+namespace {
+
+constexpr const char* kTenant = "bcd6bd1a-0000-4000-8000-2c19a44ad146";
+constexpr const char* kClient = "737da5ef-0000-4000-8000-e160d8ca77c9";
+
+// kNow in whole seconds since the epoch, as the claims carry it.
+const long long kNowSeconds =
+    std::chrono::duration_cast<std::chrono::seconds>(kNow.time_since_epoch()).count();
+
+// A JWT's three parts, and what they encode.
+struct Jwt {
+    std::string header_part;
+    std::string payload_part;
+    std::string signature_part;
+    nlohmann::json header;
+    nlohmann::json payload;
+    std::vector<unsigned char> signature;
+
+    std::string signing_input() const { return header_part + "." + payload_part; }
+};
+
+// base64url without padding, as RFC 7515 wants it, decoded through the strict
+// standard decoder.
+std::vector<unsigned char> b64url_decode(std::string text)
+{
+    REQUIRE(text.find_first_of("+/=") == std::string::npos);
+    std::replace(text.begin(), text.end(), '-', '+');
+    std::replace(text.begin(), text.end(), '_', '/');
+    REQUIRE(text.size() % 4 != 1);
+    text.append((4 - text.size() % 4) % 4, '=');
+    std::optional<std::vector<unsigned char>> bytes = rp::base64_decode(text);
+    REQUIRE(bytes);
+    return *bytes;
+}
+
+std::string as_text(const std::vector<unsigned char>& bytes)
+{
+    return {bytes.begin(), bytes.end()};
+}
+
+Jwt split(const std::string& jwt)
+{
+    const auto first = jwt.find('.');
+    REQUIRE(first != std::string::npos);
+    const auto second = jwt.find('.', first + 1);
+    REQUIRE(second != std::string::npos);
+    REQUIRE(jwt.find('.', second + 1) == std::string::npos);
+    Jwt out;
+    out.header_part = jwt.substr(0, first);
+    out.payload_part = jwt.substr(first + 1, second - first - 1);
+    out.signature_part = jwt.substr(second + 1);
+    out.header = nlohmann::json::parse(as_text(b64url_decode(out.header_part)));
+    out.payload = nlohmann::json::parse(as_text(b64url_decode(out.payload_part)));
+    out.signature = b64url_decode(out.signature_part);
+    return out;
+}
+
+ClientCertificate load(const Cert& cert)
+{
+    return load_client_certificate(to_base64(make_pfx(cert, kPassword)), kPassword, kNow);
+}
+
+// How a verifier is set up; the message digest is SHA-256 every time.
+struct Verifier {
+    int padding = RSA_PKCS1_PSS_PADDING;
+    int salt_length = 32;
+    const EVP_MD* mgf1 = nullptr; // SHA-256 when null
+};
+
+// Whether `signature` over `input` verifies with the certificate's public key
+// under `verifier`. Every PSS parameter is set, none left to OpenSSL.
+bool verifies(const Cert& cert, std::string_view input, const std::vector<unsigned char>& signature,
+              const Verifier& verifier = {})
+{
+    EVP_PKEY* public_key = X509_get0_pubkey(cert.cert.get());
+    REQUIRE(public_key != nullptr);
+    const std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)> ctx(EVP_MD_CTX_new(),
+                                                                       &EVP_MD_CTX_free);
+    REQUIRE(ctx);
+    EVP_PKEY_CTX* pctx = nullptr;
+    REQUIRE(EVP_DigestVerifyInit(ctx.get(), &pctx, EVP_sha256(), nullptr, public_key) == 1);
+    REQUIRE(EVP_PKEY_CTX_set_rsa_padding(pctx, verifier.padding) == 1);
+    if (verifier.padding == RSA_PKCS1_PSS_PADDING) {
+        REQUIRE(EVP_PKEY_CTX_set_rsa_mgf1_md(pctx, verifier.mgf1 ? verifier.mgf1 : EVP_sha256()) ==
+                1);
+        REQUIRE(EVP_PKEY_CTX_set_rsa_pss_saltlen(pctx, verifier.salt_length) == 1);
+    }
+    const int result =
+        EVP_DigestVerify(ctx.get(), signature.data(), signature.size(),
+                         reinterpret_cast<const unsigned char*>(input.data()), input.size());
+    ERR_clear_error();
+    return result == 1;
+}
+
+// What make_client_assertion throws for these IDs.
+std::string id_error(const ClientCertificate& certificate, std::string_view tenant,
+                     std::string_view client)
+{
+    try {
+        make_client_assertion(certificate, tenant, client, kNow);
+    } catch (const CertificateError&) {
+        FAIL("a bad ID is a plain GraphError, not a CertificateError");
+    } catch (const GraphError& error) {
+        CHECK(error.status() == 0);
+        return error.what();
+    }
+    FAIL("make_client_assertion did not throw GraphError");
+    return {};
+}
+
+std::string lowercase(std::string text)
+{
+    std::transform(text.begin(), text.end(), text.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return text;
+}
+
+} // namespace
+
+TEST_CASE("The token URL takes only a GUID tenant", "[graph][assertion]")
+{
+    const std::string bad =
+        GENERATE(std::string(), std::string("contoso.onmicrosoft.com"), std::string("common"),
+                 std::string(kTenant) + "/../x", std::string(kTenant).substr(1),
+                 "{" + std::string(kTenant) + "}");
+    CHECK_THROWS_MATCHES(entra_token_url(bad), GraphError,
+                         Catch::Matchers::Message("the Graph tenant ID is not a GUID"));
+}
+
+TEST_CASE("A client assertion needs GUID tenant and client IDs", "[graph][assertion]")
+{
+    const ClientCertificate certificate = load(good_cert());
+    const std::string bad = GENERATE(std::string(), std::string("contoso.onmicrosoft.com"),
+                                     std::string(kClient) + " ", std::string(kClient) + "\n",
+                                     std::string("737da5ef_0000_4000_8000_e160d8ca77c9"));
+    CHECK(id_error(certificate, bad, kClient) == "the Graph tenant ID is not a GUID");
+    CHECK(id_error(certificate, kTenant, bad) == "the Graph client ID is not a GUID");
+}
+
+TEST_CASE("The token URL is Entra's v2 endpoint for the tenant", "[graph][assertion]")
+{
+    CHECK(entra_token_url(kTenant) ==
+          "https://login.microsoftonline.com/bcd6bd1a-0000-4000-8000-2c19a44ad146/oauth2/v2.0/"
+          "token");
+}
+
+TEST_CASE("A tampered assertion does not verify", "[graph][assertion]")
+{
+    const Cert cert = good_cert();
+    const Jwt jwt = split(make_client_assertion(load(cert), kTenant, kClient, kNow));
+    REQUIRE(verifies(cert, jwt.signing_input(), jwt.signature));
+
+    SECTION("a payload with another subject")
+    {
+        nlohmann::json payload = jwt.payload;
+        payload["sub"] = "00000000-0000-4000-8000-000000000000";
+        CHECK_FALSE(verifies(cert, jwt.header_part + "." + rp::base64url_encode(payload.dump()),
+                             jwt.signature));
+    }
+    SECTION("a later exp")
+    {
+        nlohmann::json payload = jwt.payload;
+        payload["exp"] = kNowSeconds + 3600;
+        CHECK_FALSE(verifies(cert, jwt.header_part + "." + rp::base64url_encode(payload.dump()),
+                             jwt.signature));
+    }
+    SECTION("one flipped bit in the signature")
+    {
+        std::vector<unsigned char> signature = jwt.signature;
+        signature[signature.size() / 2] ^= 0x01;
+        CHECK_FALSE(verifies(cert, jwt.signing_input(), signature));
+    }
+    SECTION("another certificate's key")
+    {
+        const Cert other = make_client_cert("Someone Else", at_now({.fresh_key = true}));
+        CHECK_FALSE(verifies(other, jwt.signing_input(), jwt.signature));
+    }
+}
+
+TEST_CASE("The assertion is RSA-PSS with SHA-256, MGF1-SHA-256 and a 32-byte salt",
+          "[graph][assertion]")
+{
+    const Cert cert = good_cert();
+    const Jwt jwt = split(make_client_assertion(load(cert), kTenant, kClient, kNow));
+
+    // RSA-2048: a 256-byte signature.
+    CHECK(jwt.signature.size() == 256);
+    // Not RS256 (PKCS#1 v1.5).
+    CHECK_FALSE(
+        verifies(cert, jwt.signing_input(), jwt.signature, {.padding = RSA_PKCS1_PADDING}));
+    // Not MGF1 with SHA-1.
+    CHECK_FALSE(verifies(cert, jwt.signing_input(), jwt.signature, {.mgf1 = EVP_sha1()}));
+    // The salt is exactly the digest's length: any other fails, and a
+    // verifier that reads the length from the signature accepts it.
+    const int wrong_salt = GENERATE(0, 20, 31, 33, 64, RSA_PSS_SALTLEN_MAX);
+    const std::string input = jwt.signing_input();
+    CHECK_FALSE(verifies(cert, input, jwt.signature, {.salt_length = wrong_salt}));
+    CHECK(verifies(cert, input, jwt.signature, {.salt_length = 32}));
+    CHECK(verifies(cert, input, jwt.signature, {.salt_length = RSA_PSS_SALTLEN_AUTO}));
+    CHECK(verifies(cert, input, jwt.signature, {.salt_length = RSA_PSS_SALTLEN_DIGEST}));
+}
+
+TEST_CASE("The assertion's header names PS256 and the certificate's SHA-256 thumbprint",
+          "[graph][assertion]")
+{
+    const ClientCertificate certificate = load(good_cert());
+    const Jwt jwt = split(make_client_assertion(certificate, kTenant, kClient, kNow));
+
+    // Compact, keys in order: the exact bytes Entra gets.
+    CHECK(as_text(b64url_decode(jwt.header_part)) ==
+          R"({"alg":"PS256","typ":"JWT","x5t#S256":")" + certificate.x5t_s256() + R"("})");
+    // No SHA-1 "x5t", no "kid".
+    CHECK(jwt.header.size() == 3);
+}
+
+TEST_CASE("The assertion's claims are the token URL, the app, and five minutes from now",
+          "[graph][assertion]")
+{
+    const ClientCertificate certificate = load(good_cert());
+    // A fraction of a second is dropped, not rounded up.
+    const auto offset = GENERATE(0ms, 1ms, 999ms);
+    const Jwt jwt = split(make_client_assertion(certificate, kTenant, kClient, kNow + offset));
+
+    const std::string jti = jwt.payload.at("jti").get<std::string>();
+    // Compact, keys sorted, times as integers: the exact bytes Entra gets.
+    CHECK(as_text(b64url_decode(jwt.payload_part)) ==
+          R"({"aud":"https://login.microsoftonline.com/)" + std::string(kTenant) +
+              R"(/oauth2/v2.0/token","exp":)" + std::to_string(kNowSeconds + 300) +
+              R"(,"iat":)" + std::to_string(kNowSeconds) + R"(,"iss":")" + kClient +
+              R"(","jti":")" + jti + R"(","nbf":)" + std::to_string(kNowSeconds) +
+              R"(,"sub":")" + kClient + R"("})");
+    CHECK(jwt.payload.at("aud") == entra_token_url(kTenant));
+    CHECK(jwt.payload.at("exp").get<long long>() - jwt.payload.at("nbf").get<long long>() ==
+          rp::graph::kClientAssertionLifetime.count());
+}
+
+TEST_CASE("Each assertion has a new random UUID v4 as its jti", "[graph][assertion]")
+{
+    const ClientCertificate certificate = load(good_cert());
+    std::set<std::string> jtis;
+    std::set<std::string> signatures;
+    for (int i = 0; i < 20; ++i) {
+        const Jwt jwt = split(make_client_assertion(certificate, kTenant, kClient, kNow));
+        const std::string jti = jwt.payload.at("jti").get<std::string>();
+        CHECK(rp::is_uuid(jti));
+        CHECK(jti == lowercase(jti));
+        CHECK(jti[14] == '4');
+        CHECK(std::string_view("89ab").find(jti[19]) != std::string_view::npos);
+        jtis.insert(jti);
+        signatures.insert(jwt.signature_part);
+    }
+    CHECK(jtis.size() == 20);
+    CHECK(signatures.size() == 20);
+}
+
+TEST_CASE("An assertion is plain base64url, logs nothing, and redact() hides it",
+          "[graph][assertion]")
+{
+    const ClientCertificate certificate = load(good_cert());
+    std::ostringstream log;
+    const std::shared_ptr<spdlog::logger> previous = spdlog::default_logger();
+    spdlog::set_default_logger(string_logger(log));
+    const std::string assertion = make_client_assertion(certificate, kTenant, kClient, kNow);
+    spdlog::set_default_logger(previous);
+
+    CHECK(log.str().empty());
+    CHECK(assertion.find_first_not_of("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+                                      "0123456789-_.") == std::string::npos);
+    CHECK(assertion.rfind("eyJ", 0) == 0);
+    const Jwt jwt = split(assertion);
+    const std::string redacted = rp::redact("sending " + assertion);
+    CHECK(redacted.find(jwt.payload_part) == std::string::npos);
+    CHECK(redacted.find(jwt.signature_part) == std::string::npos);
 }

@@ -290,7 +290,9 @@ catch {
     throw "Can't load the ExchangeOnlineManagement module ($($_.Exception.Message)). Install your own copy: " +
           "Install-Module ExchangeOnlineManagement -Scope CurrentUser -Force -AllowClobber (installs it next to Veeam's bundled one), then run this script again."
 }
-Connect-ExchangeOnline -UserPrincipalName $AdminUpn -ShowBanner:$false
+# -DisableWAM: the Windows sign-in broker fails with a NullReferenceException when the module
+# runs from a script (no parent window); a browser sign-in works.
+Connect-ExchangeOnline -UserPrincipalName $AdminUpn -ShowBanner:$false -DisableWAM
 try {
     if (-not (Get-ServicePrincipal -Identity $appId -ErrorAction SilentlyContinue)) {
         New-ServicePrincipal -AppId $appId -ObjectId $spId -DisplayName $AppName | Out-Null

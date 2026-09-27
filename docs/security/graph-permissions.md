@@ -70,13 +70,20 @@ Until the vault (W4.5), the Worker will take the same two values from environmen
 `python -m seeder check-worker-app` (run from `lab/`) signs in with the certificate and sends
 one GET per probe, then compares the HTTP status with the expected one. It only reads. The
 expected statuses are the ones Graph gave in the lab: 403 where nothing is granted, 404 for an
-item hidden inside a site where the app holds a folder grant. Exit 0
-means everything was as expected; 1 means any probe or the token's roles were not; 2 means
-the credential or sign-in failed.
+item hidden inside a site where the app holds a folder grant. It also takes a token for
+Exchange Online's and SharePoint's own APIs: a role consented there (`full_access_as_app`,
+`Sites.Read.All`) never shows in the Graph token, and all Graph probes would still pass. And it
+signs in as alice (the seeder app, delegated; a browser opens, `--auth device` for a code) to
+confirm her canary folder exists, since a deleted folder answers 404 too. Exit 0 means
+everything was as expected; 1 means any probe, token or the canary folder was not; 2 means
+the credential or a sign-in failed.
 
 | Probe | Request | Expected | What it proves |
 |---|---|---|---|
-| token roles | the access token's `roles` claim | exactly `Files.SelectedOperations.Selected`, `Sites.Selected` | No Entra permission beyond #1 and #2, in particular no `Mail.Read` |
+| token roles, Microsoft Graph | the Graph token's `roles` claim | exactly `Files.SelectedOperations.Selected`, `Sites.Selected` | No Graph permission beyond #1 and #2, in particular no `Mail.Read` |
+| token roles, Exchange Online | a token for `https://outlook.office365.com` | no roles | No `full_access_as_app` or other Exchange application role (that would reach every mailbox over EWS) |
+| token roles, SharePoint | a token for `https://restoreprooflab.sharepoint.com` | no roles | No SharePoint application role (`Sites.Read.All` there would reach every site over SharePoint REST) |
+| canary folder, read as alice | `GET /drives/{alice's drive}/items/{RestoreTest}`, as alice | a folder with files | The folder the last two probes expect 404 on exists, so their 404 means "hidden", not "gone" |
 | restoretest's mailbox | `GET /users/restoretest@…/messages` | 200 | #3 reaches the test mailbox |
 | RestoreTest site | `GET /sites/{RestoreTest site ID}` | 200 | #1 reaches the site |
 | RestoreTarget library: the drive | `GET /drives/{RestoreTarget drive ID}` | 200 | #1 covers the SharePoint restore target |
@@ -85,7 +92,7 @@ the credential or sign-in failed.
 | alice's OneDrive: files in RestoreTarget | `GET …/items/{RestoreTarget}/children` | 200 | #2 lets it read the restored files |
 | alice's OneDrive: the site (metadata) | `GET /sites/restoreprooflab-my.sharepoint.com:/personal/alice_…` | 200 | Seen in the lab: a grant on a folder opens the metadata of the site and drive around it (name, URL), not their content. The next two rows prove that |
 | alice's OneDrive: root folder (metadata) | `GET /drives/{alice's drive}/root` | 200 | As above: the root folder item, not its content |
-| alice's OneDrive: files in her root | `GET /drives/{alice's drive}/root/children` | 200, **listing only `RestoreTarget`** | SharePoint masks every item the app may not see: her other files and the canary folder aren't even listed. Any other item listed (or a next page) fails the probe |
+| alice's OneDrive: files in her root | `GET /drives/{alice's drive}/root/children` | 200, **listing only `RestoreTarget`, by that name** | SharePoint masks every item the app may not see: her other files and the canary folder aren't even listed. Any other item listed (or a next page) fails the probe, and so does `RestoreTarget` missing or renamed: Veeam's OneDrive restore finds the folder by name |
 | alice's mailbox | `GET /users/alice@…/messages` | 403 | #3 is scoped to restoretest; no Entra `Mail.Read` |
 | tenant root site: the site | `GET /sites/restoreprooflab.sharepoint.com` | 403 | #1 is on one site only (the Done-when's "403 on any other site") |
 | tenant root site: its libraries | `GET /sites/restoreprooflab.sharepoint.com/drives` | 403 | No `Files.Read.All`-style access to other sites' drives |
@@ -103,10 +110,16 @@ paths first:
 
 - an unexpected 200 on a forbidden resource;
 - a 403 on an allowed one;
-- an extra or missing role;
+- an extra or missing role, and any role in the Exchange Online or SharePoint token;
+- `RestoreTarget` renamed or missing from alice's root listing;
+- the canary folder missing or empty, although the app still gets 404 on it;
 - no response;
-- a token failure;
+- a token failure, including MSAL raising (no network, unknown tenant);
 - a missing or wrong credential.
+
+`lab/tests/test_entra_script.py` runs parts of the setup script with stubs: removing a
+consent on an API other than Graph, removing client secrets and other certificates, retrying
+only replication lag, and treating "already exists" as granted.
 
 A sentinel test greps every output for the PFX password, the token and the private key.
 

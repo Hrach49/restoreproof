@@ -57,6 +57,8 @@ DRIVE_ROOT_ITEMS = {
     tenant.ONEDRIVE_DRIVE_ID: (tenant.ONEDRIVE_TARGET_FOLDER_ID, tenant.ONEDRIVE_FOLDER_ID, "01FAKEALICEFILE"),
 }
 APP_ROLES = ("Sites.Selected", "Files.SelectedOperations.Selected")
+# The folders' names, as a listing shows them.
+ITEM_NAMES = {tenant.ONEDRIVE_TARGET_FOLDER_ID: "RestoreTarget", tenant.ONEDRIVE_FOLDER_ID: "RestoreTest"}
 
 
 def _b64url(data: bytes) -> str:
@@ -101,6 +103,7 @@ class FakeTenant:
         self.rewrite_types = set(rewrite_types)
         self.app_grants = set(app_grants)
         self.app_requests: list[tuple[str, str]] = []  # (method, path) of every app-only call
+        self.item_names = dict(ITEM_NAMES)
         self.drive_access = dict(
             drive_access
             or {tenant.SHAREPOINT_DRIVE_ID: tenant.ADMIN_UPN, tenant.ONEDRIVE_DRIVE_ID: tenant.ALICE_UPN}
@@ -280,7 +283,8 @@ class FakeTenant:
                 body = {"value": [{"id": "01FAKECHILD"}]} if children else {"id": item}
                 return json_response(200, body)
             if where == "root":
-                body = {"value": [{"id": f} for f in sorted(folders)]} if children else {"id": "root"}
+                listed = [{"id": f, "name": self.item_names.get(f, f)} for f in sorted(folders)]
+                body = {"value": listed} if children else {"id": "root"}
                 return json_response(200, body)
             return denied
         return None
@@ -388,6 +392,9 @@ class FakeTenant:
         drive = self._drive(account, drive_id)
         if isinstance(drive, HttpResponse):
             return drive
+        if item_id in drive.folders.values() and item_id != SHAREPOINT_ROOT_ID and not content:
+            count = sum(1 for item in drive.items.values() if item["parent"] == item_id)
+            return json_response(200, {"id": item_id, "name": self.item_names.get(item_id, item_id), "folder": {"childCount": count}})
         if item_id not in drive.items:
             return graph_error(404, "itemNotFound", "The resource could not be found.")
         if content:

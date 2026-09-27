@@ -25,10 +25,11 @@ changes a mail body, the manifest records the changed bytes and also says that t
 
 | Path | What |
 |---|---|
-| `pyproject.toml`, `uv.lock`, `.python-version` | Its own uv project (Python 3.12). Runtime: msal, requests, jsonschema. Dev only: pytest and the readers the tests use to open the files (python-docx, openpyxl, pypdf, pillow) |
-| `seeder/` | The tool: `catalog.py` (the 40 items and where they go), `tenant.py` (tenant IDs, copied from `tenant.md`), `generate.py`, `normalize.py`, `manifest.py`, `auth.py`, `graph.py`, `transport.py`, `seed.py`, `verify.py`, `cli.py`; `worker_app.py` is `check-worker-app` (L1.5) |
+| `pyproject.toml`, `uv.lock`, `.python-version` | Its own uv project (Python 3.12). Runtime: msal, requests, jsonschema, cryptography. Dev only: pytest and the readers the tests use to open the files (python-docx, openpyxl, pypdf, pillow) |
+| `seeder/` | The tool: `catalog.py` (the 40 items and where they go), `tenant.py` (tenant IDs, copied from `tenant.md`), `generate.py`, `normalize.py`, `manifest.py`, `auth.py`, `graph.py`, `transport.py`, `seed.py`, `verify.py`, `cli.py`; `worker_app.py` is `check-worker-app` (L1.5); `graph_fixtures.py` is `record-graph-fixtures` (W2.1) |
 | `tests/` | pytest, one file per module, against a fake in-memory Graph tenant. No network |
 | `entra/new-worker-app.ps1` | Creates or updates the RestoreProof Worker app registration and its grants (L1.5), below |
+| `entra/set-worker-env.ps1` | Puts the Worker app's certificate into `RP_GRAPH_CERT_PFX_BASE64` and `RP_GRAPH_CERT_PASSWORD` for one PowerShell session (W2.1), below |
 | `canary/` | The 20 generated files, committed |
 | `seed-manifest.json` | Written by a live `seed` run only; not committed yet, so CI skips the `hash` check with a warning until it is |
 | `tenant.md` | Tenant, user and restore-target IDs |
@@ -176,6 +177,24 @@ The certificate's private key exists only in `%LOCALAPPDATA%\RestoreProof\lab\wo
 `RestoreProof Lab - Worker Graph app PFX`. The script never prints either. To renew the
 certificate, delete the PFX and run the script again.
 
+### The certificate in a Worker session (W2.1)
+
+Until the Worker's DPAPI vault lands (W4.5), `rpworker` reads the Worker app's certificate from
+two environment variables: `RP_GRAPH_CERT_PFX_BASE64` (the PFX file, Base64) and
+`RP_GRAPH_CERT_PASSWORD` (its password). `entra/set-worker-env.ps1` fills both from the PFX and
+the Credential Manager entry above, after checking the password opens the PFX. Dot-source it
+(the leading `. ` matters; run any other way it refuses and exits 1), from the repo root:
+
+```powershell
+. lab\entra\set-worker-env.ps1          # set both for this PowerShell session
+. lab\entra\set-worker-env.ps1 -Clear   # remove both again
+```
+
+It prints only `set RP_GRAPH_CERT_PFX_BASE64 and RP_GRAPH_CERT_PASSWORD for this session` and
+writes nothing to disk: the variables live in that PowerShell process only (and in the programs
+it starts, such as `rpworker` and `ctest`) and are gone when the window closes. `-PfxPath` and
+`-CredentialTarget` point it at another PFX or credential (the tests use them).
+
 ## Commands
 
 Run from `lab/`:
@@ -188,6 +207,7 @@ uv run python -m seeder hash          # offline check: canary/ and the manifest 
 uv run python -m seeder seed          # live: put the 40 items in the tenant, write seed-manifest.json
 uv run python -m seeder verify        # live: re-read the 40 items and compare with the manifest
 uv run python -m seeder check-worker-app  # live: what the Worker app can and can't read (L1.5)
+uv run python -m seeder record-graph-fixtures  # live: re-record worker/tests/fixtures/graph/ (W2.1)
 ```
 
 | Command | Network | What it does | Exit code |
@@ -197,6 +217,7 @@ uv run python -m seeder check-worker-app  # live: what the Worker app can and ca
 | `seed` | yes | Signs in three times, sends the missing mails, uploads the missing files, reads all 40 back and writes the manifest. Step by step below | 0 manifest written; 1 a problem the output explains (missing canary file, duplicate subject, mail timeout); 2 sign-in or Graph error. No manifest is written unless it exits 0 |
 | `verify` | yes | Re-reads every item by its Graph id as the account that owns it (alice: mails 0001–0010 and the OneDrive files; bob: mails 0011–0020; admin: the SharePoint files). Compares subject, sender (case-insensitive), sent and received dates, `internet_message_id` and `body_sha256`; for files name and `content_sha256` by `content_rule` (and size for `bytes` files); an Office file whose bytes changed but whose content didn't is `ok`, with a note. Prints `ok`, `DIFF` or `MISSING` per entry and a summary (`40/40 entries in the tenant match the manifest`) | 0 all ok; 1 any DIFF or MISSING; 2 manifest missing or invalid, or a sign-in or Graph error |
 | `check-worker-app` | yes | Signs in as the RestoreProof Worker app with its certificate (PFX from `--pfx`, default `%LOCALAPPDATA%\RestoreProof\lab\worker-graph.pfx`; password from Credential Manager). Checks the Graph token's roles are exactly `Files.SelectedOperations.Selected` and `Sites.Selected` and that its Exchange Online and SharePoint tokens carry none, signs in as alice (the seeder app) to confirm her canary folder exists, then sends one GET per probe and prints `ok` or `UNEXPECTED` per row with the expected and actual status (the probe table is in `docs/security/graph-permissions.md`). Only reads | 0 all as expected; 1 anything unexpected; 2 a missing or unusable credential, or a sign-in error (the app's or alice's) |
+| `record-graph-fixtures` | yes | Records the Graph and Entra replies the Worker's GraphClient tests replay (W2.1) into `--out`, default `worker/tests/fixtures/graph/`. Signs in as the RestoreProof Worker app the way the Worker does: its own client assertion (PS256, header `x5t#S256`), certificate and password as for `check-worker-app`. Then sends six more token requests that must fail (an assertion signed by an unknown key, an unknown certificate, app and tenant, one expired and one not yet valid by an hour) and seven GETs (the restoretest inbox, alice's inbox, the tenant root site, `/users`, a bad and a missing token, an unknown user). Prints one line per file with the status and error code. Only reads. Details below | 0 all 14 written; 1 a reply had another status than its file name says, nothing written; 2 a missing or unusable credential, a failed sign-in, a network error, or a reply that holds something secret-looking, nothing written |
 
 A usage error (unknown command or option) exits 2. Ctrl+C exits 130; `seed` then says nothing was written.
 
@@ -206,12 +227,40 @@ Options:
 |---|---|---|
 | `--client-id <id>` | `seed`, `verify` | The seeder app's client ID. Order: this option, then `RP_LAB_CLIENT_ID`, then `SEEDER_CLIENT_ID` in `seeder/tenant.py`. If all are empty the tool stops and points here |
 | `--client-id <id>` | `check-worker-app` | The Worker app's client ID. Order: this option, then `RP_LAB_WORKER_CLIENT_ID`, then `WORKER_CLIENT_ID` in `seeder/tenant.py` |
-| `--pfx <path>` | `check-worker-app` | The Worker app's certificate, if not in the default place |
+| `--client-id <id>` | `record-graph-fixtures` | As for `check-worker-app` |
+| `--pfx <path>` | `check-worker-app`, `record-graph-fixtures` | The Worker app's certificate, if not in the default place |
+| `--out <dir>` | `record-graph-fixtures` | Where to write the fixtures (default `worker/tests/fixtures/graph/` in the repo). Existing files of the same names are replaced; other files are left alone |
 | `--seeder-client-id <id>` | `check-worker-app` | The seeder app's client ID, for alice's sign-in. Same order as `--client-id` for `seed` |
 | `--auth browser\|device` | `seed`, `verify`, `check-worker-app` | `browser` (default) opens a browser window for each sign-in. `device` prints a code to enter at https://microsoft.com/devicelogin instead |
 | `--force` | `seed` | Send every mail again and replace every file, even if it is already there |
 | `--mail-timeout <seconds>` | `seed` | How long to wait for sent mails to arrive (default 600) |
 | `--canary-dir`, `--manifest` | all that use them | Other paths than `canary/` and `seed-manifest.json` (tests use these) |
+
+## Recording the Worker's Graph fixtures (W2.1)
+
+`record-graph-fixtures` writes the 14 live fixtures in `worker/tests/fixtures/graph/`, in the
+format of `worker/tests/fixtures/veeam/README.md`: `source` (`live <date>: <what was sent>`),
+`request` (method and path with query; the random tenant ID shows as `<random GUID>` and the
+random unknown user as `nobody-…`), `status`, `headers` (only `Content-Type`,
+`WWW-Authenticate`, `Retry-After`, `Location`, `request-id`, `client-request-id` and
+`x-ms-request-id`) and `body` (JSON as sent, a string if it isn't JSON, `null` if empty).
+The hand-written fixtures in that folder are not touched.
+
+Safety, all checked before anything is written:
+
+- The access token in `token-200.json` becomes a fake unsigned JWT
+  (`eyJ0eXAiOiJKV1QiLCJhbGciOiJub25lIn0.eyJzY3J1YmJlZCI6dHJ1ZX0.`, `alg: none`).
+- A file is refused (exit 2, nothing written) if it holds anything that looks like a real JWT
+  (`eyJ` and 37 or more base64url characters), the text `client_assertion`, the PFX password,
+  the real token, one of the assertions sent, or a line of the private key.
+- Every reply must have the status in its file name; if Graph or Entra answers differently
+  (a permission changed, say), nothing is written and the line says `UNEXPECTED`.
+- It never prints the password, the token or an assertion: only file name, status and error
+  code. Graph is only read (GET); the only POSTs are the token requests to Entra.
+
+Run it from `lab/` after a permission change or to refresh the recordings, then look at the
+diff in `worker/tests/fixtures/graph/` before committing: request IDs, dates and trace IDs
+always change.
 
 ## The seed run, step by step
 

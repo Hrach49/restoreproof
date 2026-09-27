@@ -144,4 +144,17 @@ private:
     std::vector<HttpRequest> requests_;
 };
 
+// An IHttpClient the code under test owns that sends through a fake the test
+// keeps, so the test can still read the fake's log after that code (and the
+// client) are gone.
+class ForwardingHttpClient final : public IHttpClient {
+public:
+    explicit ForwardingHttpClient(IHttpClient& target) : target_(target) {}
+
+    HttpResponse send(const HttpRequest& request) override { return target_.send(request); }
+
+private:
+    IHttpClient& target_;
+};
+
 } // namespace rp::test

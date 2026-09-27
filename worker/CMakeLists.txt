@@ -28,6 +28,7 @@ add_library(rpcore STATIC
     src/config_check.cpp
     src/connector.cpp
     src/connector_registry.cpp
+    src/graph_client.cpp
     src/graph_errors.cpp
     src/http_client.cpp
     src/redact.cpp
@@ -74,6 +75,7 @@ add_executable(rptests
     tests/connector_registry_test.cpp
     tests/connector_test.cpp
     tests/deps_test.cpp
+    tests/graph_client_test.cpp
     tests/graph_errors_test.cpp
     tests/http_client_test.cpp
     tests/http_client_tls_test.cpp

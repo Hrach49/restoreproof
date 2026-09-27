@@ -1,0 +1,22 @@
+{
+  "source": "live 2026-09-28: GET without Authorization",
+  "request": "GET /v1.0/users/restoretest@RestoreProofLab.onmicrosoft.com/mailFolders/inbox/messages?$top=1",
+  "status": 401,
+  "headers": {
+    "Content-Type": "application/json",
+    "request-id": "aab1166d-fbde-4b5d-9e9d-8b3c4f51bb5a",
+    "client-request-id": "aab1166d-fbde-4b5d-9e9d-8b3c4f51bb5a",
+    "WWW-Authenticate": "Bearer realm=\"\", authorization_uri=\"https://login.microsoftonline.com/common/oauth2/authorize\", client_id=\"00000003-0000-0000-c000-000000000000\""
+  },
+  "body": {
+    "error": {
+      "code": "InvalidAuthenticationToken",
+      "message": "Access token is empty.",
+      "innerError": {
+        "date": "2026-09-27T22:22:45",
+        "request-id": "aab1166d-fbde-4b5d-9e9d-8b3c4f51bb5a",
+        "client-request-id": "aab1166d-fbde-4b5d-9e9d-8b3c4f51bb5a"
+      }
+    }
+  }
+}

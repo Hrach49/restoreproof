@@ -1,0 +1,22 @@
+{
+  "source": "live 2026-09-28: GET with a malformed bearer token",
+  "request": "GET /v1.0/users/restoretest@RestoreProofLab.onmicrosoft.com/mailFolders/inbox/messages?$top=1",
+  "status": 401,
+  "headers": {
+    "Content-Type": "application/json",
+    "request-id": "8d99e65f-8a32-4f9e-8e3f-6373ee609d8f",
+    "client-request-id": "8d99e65f-8a32-4f9e-8e3f-6373ee609d8f",
+    "WWW-Authenticate": "Bearer realm=\"\", authorization_uri=\"https://login.microsoftonline.com/common/oauth2/authorize\", client_id=\"00000003-0000-0000-c000-000000000000\""
+  },
+  "body": {
+    "error": {
+      "code": "InvalidAuthenticationToken",
+      "message": "NoAppIdInToken",
+      "innerError": {
+        "date": "2026-09-27T22:22:45",
+        "request-id": "8d99e65f-8a32-4f9e-8e3f-6373ee609d8f",
+        "client-request-id": "8d99e65f-8a32-4f9e-8e3f-6373ee609d8f"
+      }
+    }
+  }
+}

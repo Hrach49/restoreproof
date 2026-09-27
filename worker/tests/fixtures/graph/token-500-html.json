@@ -1,0 +1,9 @@
+{
+  "source": "hand-written: a proxy or gateway answering for Entra with an HTML page instead of JSON",
+  "request": "POST /bcd6bd1a-ea42-489d-aa28-2c19a44ad146/oauth2/v2.0/token",
+  "status": 500,
+  "headers": {
+    "Content-Type": "text/html"
+  },
+  "body": "<html><head><title>500 Internal Server Error</title></head><body><h1>Internal Server Error</h1><p>Echoed request: grant_type=client_credentials&amp;scope=...</p></body></html>"
+}

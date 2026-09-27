@@ -354,7 +354,7 @@ The same for every `rpworker` command (`rp::exit_code` in `worker/include/rp/cli
 | Exit code | Meaning | stderr |
 |---|---|---|
 | 0 | Success. | (nothing) |
-| 1 | The config or a secret is missing or invalid, or something unexpected failed. | `config error: <path>: <message>`, `config error: the --config path is not valid UTF-8`, `config error: RP_VEEAM_USERNAME is not set` (then `RP_VEEAM_PASSWORD`), `config error: unexpected failure` or `error: unexpected failure`; an unexpected failure's own message is never shown |
+| 1 | The config or a secret is missing or invalid, or something unexpected failed. | `config error: <path>: <message>`, `config error: the --config path is not valid UTF-8`, `config error: cannot find the ProgramData folder`, `config error: environment variable <name> is not valid Unicode`, `config error: RP_VEEAM_USERNAME is not set` (then `RP_VEEAM_PASSWORD`), `config error: unexpected failure` or `error: unexpected failure`; an unexpected failure's own message is never shown |
 | 2 | Veeam refused the sign-in, the account's role or the token. | `veeam error: <message>` |
 | 3 | Veeam couldn't be reached: no connection, a timeout, a TLS handshake that broke off, or a 502, 503 or 504 after the retries. | `veeam error: <message>` |
 | 4 | Any other Veeam error (an unknown organisation, a bad request, an unexpected answer), or no organisation named `veeam_org_name`. | `veeam error: <message>`, or `veeam error: organisation <name> (veeam_org_name) not found in Veeam` |

@@ -9,8 +9,9 @@ Format: date, decision, reason, alternatives rejected.
 
 ## 2026-09-27 — W1.6: rpworker veeam list, exit codes and output
 
-Supersedes the exit codes of the 2026-09-24 entry "`rpworker`'s command line lives in
-rpcore" (usage was 2).
+Changes the usage exit code from 2 to 64. The 2 was set with W1.1/W1.2 in the `cli.hpp` and
+`config_check.hpp` comments and `docs/worker-config.md`, never recorded in this log; the
+2026-09-24 entry "`rpworker`'s command line lives in rpcore" only says where exit codes live.
 
 **Decision.**
 

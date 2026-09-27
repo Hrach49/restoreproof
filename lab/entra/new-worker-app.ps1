@@ -288,7 +288,7 @@ Step "Exchange Online: '$MailRoleName' on $RestoreTestUpn only (sign in as $Admi
 try { Import-Module ExchangeOnlineManagement -MinimumVersion 3.2.0 }
 catch {
     throw "Can't load the ExchangeOnlineManagement module ($($_.Exception.Message)). Install your own copy: " +
-          "Install-Module ExchangeOnlineManagement -Scope CurrentUser -Force (-Force installs it next to Veeam's bundled one), then run this script again."
+          "Install-Module ExchangeOnlineManagement -Scope CurrentUser -Force -AllowClobber (installs it next to Veeam's bundled one), then run this script again."
 }
 Connect-ExchangeOnline -UserPrincipalName $AdminUpn -ShowBanner:$false
 try {

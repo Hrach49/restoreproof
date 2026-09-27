@@ -1,0 +1,9 @@
+{
+  "source": "docs/api/veeam-lab/w1.4-auth-expired-access-401.json",
+  "request": "GET /v8/Organizations?limit=1",
+  "status": 401,
+  "headers": {
+    "WWW-Authenticate": "Bearer error=\"invalid_token\", error_description=\"The token expired at '09/26/2026 17:01:43'\""
+  },
+  "body": null
+}

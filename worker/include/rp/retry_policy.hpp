@@ -7,8 +7,13 @@ namespace rp {
 // How one HTTP attempt ended when no response came back.
 enum class TransportError {
     none,    // a response arrived: see the status
-    connect, // couldn't resolve or connect, or the connection dropped before a response
-    timeout, // the per-request timeout expired
+    // Couldn't resolve the host or connect: the request never went out.
+    connect,
+    // The connection broke after the request may have gone out (a send or
+    // receive error, no reply, a truncated reply): the server may have acted
+    // on it.
+    dropped,
+    timeout, // the per-request timeout expired (before or after the request went out)
     // The TLS handshake broke off without a verdict on the certificate: the
     // connection dropped mid-handshake, or the two sides share no protocol or
     // cipher. Schannel reports both the same way, so both are retried.
@@ -29,8 +34,8 @@ inline constexpr int kMaxHttpAttempts = 5;
 inline constexpr std::chrono::milliseconds kFirstRetryDelay{1000};
 inline constexpr std::chrono::milliseconds kMaxRetryDelay{16000};
 
-// Worth another attempt: connect, timeout and handshake errors, and HTTP
-// 500-599. Never 4xx (or any non-5xx status), tls or other.
+// Worth another attempt: connect, dropped, timeout and handshake errors, and
+// HTTP 500-599. Never 4xx (or any non-5xx status), tls or other.
 bool is_retryable(const AttemptOutcome& outcome) noexcept;
 
 // Whether to make another attempt after attempt number `attempt` (1-based)

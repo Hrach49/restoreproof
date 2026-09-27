@@ -1,0 +1,19 @@
+{
+  "source": "docs/api/veeam-lab/w1.4-rp-list-bad-from.json",
+  "request": "GET /v8/RestorePoints?organizationId=ff96d072-29e2-4cb4-a155-2590f5473176&from=yesterday",
+  "status": 400,
+  "headers": {
+    "Content-Type": "application/problem+json; charset=utf-8"
+  },
+  "body": {
+    "errors": {
+      "from": [
+        "The value 'yesterday' is not valid."
+      ]
+    },
+    "type": "https://tools.ietf.org/html/rfc9110#section-15.5.1",
+    "title": "One or more validation errors occurred.",
+    "status": 400,
+    "traceId": "00-bbc414272b6153254d43b8d627b76b4c-87f3173521c3b56b-00"
+  }
+}

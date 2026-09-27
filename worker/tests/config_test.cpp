@@ -1,5 +1,6 @@
 #include <rp/config.hpp>
 
+#include "test_certs.hpp"
 #include "test_support.hpp"
 
 #include <catch2/catch_test_macros.hpp>
@@ -93,6 +94,17 @@ const std::vector<std::string> kIntKeys{"poll_interval_s", "heartbeat_interval_s
 // needn't exist; the load_config tests use real ones.
 const std::string kCaFile = "C:\\ProgramData\\RestoreProof\\veeam-ca.pem";
 
+// A value for veeam_cert_sha256: the lab certificate's SHA-256, as Windows
+// shows it. parse_config only checks its form.
+const std::string kCertSha256 = "9FB19E0E604C9BE49F83D8E508EFA8EA0986A952377C783E5035CEA2D772A213";
+
+std::string lower(std::string text)
+{
+    std::transform(text.begin(), text.end(), text.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return text;
+}
+
 } // namespace
 
 TEST_CASE("ConfigError carries the offending key and the message", "[config]")
@@ -173,13 +185,14 @@ TEST_CASE("parse_config rejects secret-looking keys without echoing the value", 
     REQUIRE_THAT(e.what(), !ContainsSubstring("SENTINEL"));
 }
 
-TEST_CASE("none of the 17 known keys looks like a secret", "[config]")
+TEST_CASE("none of the 18 known keys looks like a secret", "[config]")
 {
-    // valid_doc() sets the 16 that need no file, veeam_ca_file makes 17; it
-    // parses only if none trips the secret check.
+    // valid_doc() sets the 16 that need no file; veeam_ca_file and
+    // veeam_cert_sha256 make 18. It parses only if none trips the secret check.
     json doc = valid_doc();
     doc["veeam_ca_file"] = kCaFile;
-    REQUIRE(doc.size() == 17);
+    doc["veeam_cert_sha256"] = kCertSha256;
+    REQUIRE(doc.size() == 18);
     REQUIRE_NOTHROW(rp::parse_config(doc.dump()));
 }
 
@@ -215,7 +228,9 @@ TEST_CASE("parse_config rejects unknown keys, case-sensitively", "[config]")
 {
     const std::string key = GENERATE(std::string("cloud_uri"), "Cloud_Url", "LOG_LEVEL",
                                      "sample_size", "a.b-c_9", "x", std::string(64, 'k'),
-                                     "Veeam_CA_File", "veeam_ca", "ca_file");
+                                     "Veeam_CA_File", "veeam_ca", "ca_file",
+                                     "Veeam_Cert_SHA256", "veeam_cert_sha1",
+                                     "veeam_cert_thumbprint");
     CAPTURE(key);
     json doc = valid_doc();
     doc[key] = "value";
@@ -314,6 +329,7 @@ TEST_CASE("parse_config rejects a string setting of the wrong JSON type", "[conf
     std::vector<std::string> keys = kRequiredKeys;
     keys.push_back("log_level");
     keys.push_back("veeam_ca_file");
+    keys.push_back("veeam_cert_sha256");
     const std::string key = GENERATE_REF(from_range(keys));
     const json value = GENERATE(json(1), json(true), json(nullptr), json::array(),
                                 json::object(), json(1.5));
@@ -517,6 +533,92 @@ TEST_CASE("parse_config checks veeam_ca_file before the sample sizes together", 
     REQUIRE(parse_error(doc.dump()).key() == "veeam_ca_file");
 }
 
+TEST_CASE("parse_config rejects a veeam_cert_sha256 that isn't a SHA-256, without echoing it",
+          "[config]")
+{
+    const std::string sha256 =
+        "must be the certificate's SHA-256: 64 hexadecimal digits, as Windows shows it";
+    const std::string control = "must not contain control characters";
+    const auto [value, rule] = GENERATE_COPY(table<std::string, std::string>({
+        {"", "must not be empty"},
+        {kCertSha256.substr(0, 63) + "\n", control},
+        {"\x1b[2J" + kCertSha256, control},
+        {kCertSha256 + "\xE2\x80\xAE", control},
+        {kCertSha256.substr(0, 63), sha256},
+        {kCertSha256 + "A", sha256},
+        {std::string(128, 'A'), sha256},
+        // The colon-separated form `openssl x509 -fingerprint` prints, and the
+        // spaced form of the Windows certificate dialog.
+        {"9F:B1:9E:0E:60:4C:9B:E4:9F:83:D8:E5:08:EF:A8:EA:09:86:A9:52:37:7C:78:3E:50:35:CE:A2:"
+         "D7:72:A2:13",
+         sha256},
+        {"9f b1 9e 0e 60 4c 9b e4 9f 83 d8 e5 08 ef a8 ea 09 86 a9 52 37 7c 78 3e 50 35 ce a2 "
+         "d7 72 a2 13",
+         sha256},
+        {" " + kCertSha256, sha256},
+        {kCertSha256 + " ", sha256},
+        {"0x" + kCertSha256.substr(2), sha256},
+        {kCertSha256.substr(0, 63) + "G", sha256},
+        {"SENTINEL-5e0c" + std::string(51, 'A'), sha256},
+        // A fullwidth digit zero (U+FF10) looks like hex but isn't.
+        {"\xEF\xBC\x90" + kCertSha256.substr(1), sha256},
+        // The SHA-1 thumbprint the Veeam console shows: 40 digits.
+        {"895C6325" + std::string(32, 'B'), sha256},
+    }));
+    CAPTURE(value);
+    json doc = valid_doc();
+    doc["veeam_ca_file"] = kCaFile;
+    doc["veeam_cert_sha256"] = value;
+
+    const rp::ConfigError e = parse_error(doc.dump());
+    REQUIRE(e.key() == "veeam_cert_sha256");
+    // An exact match also proves the value isn't echoed.
+    REQUIRE(std::string{e.what()} == "config key \"veeam_cert_sha256\" " + rule);
+}
+
+TEST_CASE("parse_config rejects veeam_cert_sha256 without veeam_ca_file", "[config]")
+{
+    // The pin names a certificate that veeam_ca_file must hold: without the
+    // file there is nothing to trust it through.
+    json doc = valid_doc();
+    doc["veeam_cert_sha256"] = kCertSha256;
+
+    const rp::ConfigError e = parse_error(doc.dump());
+    REQUIRE(e.key() == "veeam_cert_sha256");
+    REQUIRE(std::string{e.what()} == "config key \"veeam_cert_sha256\" needs veeam_ca_file: set "
+                                     "it to a PEM file holding that certificate");
+}
+
+TEST_CASE("parse_config checks veeam_cert_sha256's form before asking for veeam_ca_file",
+          "[config]")
+{
+    json doc = valid_doc();
+    doc["veeam_cert_sha256"] = "not-a-hash";
+
+    const rp::ConfigError e = parse_error(doc.dump());
+    REQUIRE(e.key() == "veeam_cert_sha256");
+    REQUIRE_THAT(e.what(), ContainsSubstring("must be the certificate's SHA-256"));
+}
+
+TEST_CASE("parse_config checks veeam_cert_sha256 after veeam_ca_file", "[config]")
+{
+    json doc = valid_doc();
+    doc["veeam_ca_file"] = "ca.pem";
+    doc["veeam_cert_sha256"] = "not-a-hash";
+    REQUIRE(parse_error(doc.dump()).key() == "veeam_ca_file");
+}
+
+TEST_CASE("parse_config checks veeam_cert_sha256 before the sample sizes together", "[config]")
+{
+    json doc = valid_doc();
+    doc["veeam_ca_file"] = kCaFile;
+    doc["veeam_cert_sha256"] = "not-a-hash";
+    doc["sample_mail"] = 0;
+    doc["sample_sp"] = 0;
+    doc["sample_od"] = 0;
+    REQUIRE(parse_error(doc.dump()).key() == "veeam_cert_sha256");
+}
+
 TEST_CASE("parse_config rejects a config that samples nothing", "[config]")
 {
     json doc = valid_doc();
@@ -598,9 +700,28 @@ TEST_CASE("parse_config accepts boundary and edge values", "[config]")
     REQUIRE(parsed.at(key) == value);
 }
 
+TEST_CASE("parse_config accepts veeam_cert_sha256 in any case, with veeam_ca_file",
+          "[config]")
+{
+    const std::string value = GENERATE_COPY(
+        kCertSha256, lower(kCertSha256), std::string(64, '0'),
+        std::string{"0123456789abcdefABCDEF"} + std::string(42, 'f'));
+    CAPTURE(value);
+    json doc = valid_doc();
+    doc["veeam_ca_file"] = kCaFile;
+    doc["veeam_cert_sha256"] = value;
+
+    const rp::Config config = rp::parse_config(doc.dump());
+    REQUIRE(config.veeam_cert_sha256 == value);
+    REQUIRE(config.veeam_ca_file == kCaFile);
+}
+
 TEST_CASE("parse_config reads every key", "[config]")
 {
-    const rp::Config config = rp::parse_config(valid_doc().dump(2));
+    json doc = valid_doc();
+    doc["veeam_ca_file"] = kCaFile;
+    doc["veeam_cert_sha256"] = kCertSha256;
+    const rp::Config config = rp::parse_config(doc.dump(2));
 
     REQUIRE(config.cloud_url == "https://cloud.example.invalid");
     REQUIRE(config.veeam_url == "https://veeam.example.invalid:4443");
@@ -618,6 +739,8 @@ TEST_CASE("parse_config reads every key", "[config]")
     REQUIRE(config.sample_sp == 2);
     REQUIRE(config.sample_od == 3);
     REQUIRE(config.log_level == "debug");
+    REQUIRE(config.veeam_ca_file == kCaFile);
+    REQUIRE(config.veeam_cert_sha256 == kCertSha256);
 }
 
 TEST_CASE("parse_config fills in defaults for absent optional keys", "[config]")
@@ -632,6 +755,8 @@ TEST_CASE("parse_config fills in defaults for absent optional keys", "[config]")
     REQUIRE(config.log_level == "info");
     // No CA file: the Windows certificate store is trusted.
     REQUIRE_FALSE(config.veeam_ca_file.has_value());
+    // No pin: with a CA file, the host name would be checked as usual.
+    REQUIRE_FALSE(config.veeam_cert_sha256.has_value());
 }
 
 namespace {
@@ -652,13 +777,6 @@ rp::ConfigError load_error(const std::filesystem::path& path)
     }
     FAIL("load_config accepted " << utf8(path));
     return rp::ConfigError("", "unreachable");
-}
-
-std::string lower(std::string text)
-{
-    std::transform(text.begin(), text.end(), text.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    return text;
 }
 
 } // namespace
@@ -759,6 +877,62 @@ TEST_CASE("load_config accepts a veeam_ca_file it can read", "[config]")
     REQUIRE(config.veeam_ca_file == utf8(ca));
 }
 
+TEST_CASE("load_config accepts a veeam_cert_sha256 that veeam_ca_file holds", "[config]")
+{
+    const rp::test::TempDir dir;
+    const rp::test::Cert cert =
+        rp::test::make_cert("Veeam Software", rp::test::Role::veeam_default);
+    const std::filesystem::path ca = dir.write("veeam-rest.pem", cert.pem().cert);
+    // A loop, not GENERATE: each run of the test makes a new certificate.
+    for (const std::string& sha256 :
+         {rp::test::cert_sha256_hex(cert), lower(rp::test::cert_sha256_hex(cert))}) {
+        CAPTURE(sha256);
+        json doc = valid_doc();
+        doc["veeam_ca_file"] = utf8(ca);
+        doc["veeam_cert_sha256"] = sha256;
+        const auto path = dir.write("config.json", doc.dump());
+
+        const rp::Config config = rp::load_config(path);
+        REQUIRE(config.veeam_ca_file == utf8(ca));
+        REQUIRE(config.veeam_cert_sha256 == sha256);
+    }
+}
+
+TEST_CASE("load_config rejects a veeam_cert_sha256 that veeam_ca_file doesn't hold",
+          "[config]")
+{
+    const rp::test::TempDir dir;
+    const rp::test::Cert held =
+        rp::test::make_cert("Veeam Software", rp::test::Role::veeam_default);
+    const rp::test::Cert other =
+        rp::test::make_cert("Veeam Software", rp::test::Role::veeam_default);
+    const std::filesystem::path ca = dir.write("veeam-rest.pem", held.pem().cert);
+    json doc = valid_doc();
+    doc["veeam_ca_file"] = utf8(ca);
+    doc["veeam_cert_sha256"] = rp::test::cert_sha256_hex(other);
+    const auto path = dir.write("config.json", doc.dump());
+
+    const rp::ConfigError e = load_error(path);
+    REQUIRE(e.key() == "veeam_cert_sha256");
+    REQUIRE(std::string{e.what()} ==
+            utf8(path) + ": config key \"veeam_cert_sha256\": veeam_ca_file holds no certificate "
+                         "whose SHA-256 is veeam_cert_sha256");
+}
+
+TEST_CASE("load_config reports an unreadable veeam_ca_file before checking the pin", "[config]")
+{
+    const rp::test::TempDir dir;
+    json doc = valid_doc();
+    doc["veeam_ca_file"] = utf8(dir.path() / "missing.pem");
+    doc["veeam_cert_sha256"] = kCertSha256;
+    const auto path = dir.write("config.json", doc.dump());
+
+    const rp::ConfigError e = load_error(path);
+    REQUIRE(e.key() == "veeam_ca_file");
+    REQUIRE(std::string{e.what()} ==
+            utf8(path) + ": config key \"veeam_ca_file\" names a file that can't be read");
+}
+
 TEST_CASE("load_config reports a veeam_ca_file's form before trying to read it", "[config]")
 {
     const rp::test::TempDir dir;
@@ -805,12 +979,15 @@ TEST_CASE("config.example.json is a valid config of placeholders", "[config]")
     REQUIRE(config.log_level == "info");
 }
 
-TEST_CASE("config.example.json sets every key but veeam_ca_file", "[config]")
+TEST_CASE("config.example.json sets every key but veeam_ca_file and veeam_cert_sha256",
+          "[config]")
 {
     // veeam_ca_file must name a file that exists, so a placeholder would make
-    // the example fail to load; docs/worker-config.md documents it instead.
+    // the example fail to load, and veeam_cert_sha256 needs veeam_ca_file (and
+    // a certificate in it); docs/worker-config.md documents both instead.
     std::ifstream file(std::filesystem::path(RP_CONFIG_EXAMPLE));
     const json doc = json::parse(file);
     REQUIRE(doc.size() == 16);
     REQUIRE_FALSE(doc.contains("veeam_ca_file"));
+    REQUIRE_FALSE(doc.contains("veeam_cert_sha256"));
 }

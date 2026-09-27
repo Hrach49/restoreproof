@@ -198,16 +198,22 @@ The Worker logs out at the end of each run, so tokens don't outlive the job.
 ```
 login():        POST /v8/token grant_type=password (+ disable_antiforgery_token=true)
 ensureToken():  under a mutex: if now >= received_at + expires_in - 60 s:
-                   refresh (grant_type=refresh_token); on ANY failure → login()
+                   refresh (grant_type=refresh_token); Veeam refuses or garbles it → login();
+                   Veeam unreachable (TransientError) → throw, no login()
                 store the newest access AND refresh token; the old ones are dead
 call(req):      send with the current token
-                on 401 (empty body): if the token used is older than the current one → resend once;
-                   else login() once and resend once (the REST service may have restarted);
-                   a second 401 → AuthError
-logout():       POST /v8/token/logout, best effort, at the end of the run
+                on 401 (empty body): if the token used is older than the current one → resend;
+                   else login() once and resend (the REST service may have restarted);
+                   a 401 after that login() → AuthError
+logout():       refresh first if within 60 s of expiry (Veeam refuses an expired token);
+                POST /v8/token/logout, one attempt, best effort, at the end of the run
 ```
 
-Never retry `/v8/token` on a 5xx (see §8). A refused login is sometimes a 500.
+Never resend `/v8/token` once it may have reached Veeam (a timeout, a dropped connection), and
+never on a 5xx (see §8): a refused login is sometimes a 500, a resent password grant is another
+logon, a resent refresh a used token. Only a request that never went out (no connection, no
+handshake) is sent again. (W1.5 as built: `docs/decisions.md` 2026-09-26, "VeeamClient after
+review".)
 
 ## 2. Organisation, users, sites; paging
 
@@ -776,8 +782,8 @@ Veeam's error body is `{"message": "…", "errorCode": "…"?}` (`RESTExceptionI
 | 401 | `{"message":"The server has rejected the client credentials."}` | `/v8/token`: wrong password, unknown user, no Veeam role | `l1.6-admin-token-*-traced` | `AuthError` |
 | 401 | `{"message":"The server has rejected the client credentials."}` | an API call the account's role doesn't allow (seen with an operator token) | `l1.6-operator-admin-sweep` | `AuthError` (don't re-login in a loop: the credentials are valid, the role isn't) |
 | 401 | `{"message":"Refresh token is not valid"}` | `/v8/token` refresh: used, logged out, or killed by a restart | `w1.4-auth-refresh-reuse-401`, `-after-logout-refresh`, `w1.0-a-restart-*-refresh` | not an error: fall back to the password grant; `AuthError` only if that fails |
-| 500 | **empty** | `/v8/token`: a refused login before the REST service's restart | `l1.6-admin-token-no-role`, `-wrong-password`, `-unknown-user` | `AuthError` (never retry `/v8/token` on 5xx) |
-| 500 | `{"message":"An antiforgery token is not specified."}` | refresh without `disable_antiforgery_token` | `w1.0-a-operator-refresh-antiforgery-500` | `VeeamError` (a bug in the client) |
+| 500 | **empty** | `/v8/token`: a refused login before the REST service's restart | `l1.6-admin-token-no-role`, `-wrong-password`, `-unknown-user` | `AuthError` (never retry `/v8/token` on 5xx; any 500 there is `AuthError`, a 502/503/504 `TransientError`) |
+| 500 | `{"message":"An antiforgery token is not specified."}` | refresh without `disable_antiforgery_token` | `w1.0-a-operator-refresh-antiforgery-500` | a bug in the client; as built, `AuthError` like any 500 on `/v8/token` (a refresh falls back to the password first) |
 | 400 | `{"message":"Missing mandatory parameters: …","errorCode":"ParameterValidationFailure"}` | restore without `folder`, credentials, `casServer`; explore without `dateTime` | `w1.0-c-mail-cert-restore-no-folder-400`, `w1.0-c-*-none-restore`, `w1.4-session-explore-no-date` | `VeeamError` |
 | 400 | `ParameterValidationFailure`: "Error converting value …", "Incorrect restore point ID format…", "Item ID is not valid…", "Root parentId is unsupported." | bad enum/date/ID in a body or path | `w1.4-session-explore-bad-*-400`, `w1.4-rp-get-bare-id`, `w1.4-mail-item-get-unknown`, `w1.4-sp-documents-root` | `VeeamError` |
 | 400 | ProblemDetails `{"errors":{"from":[…]},"status":400,…}` | bad query-string value | `w1.4-rp-list-bad-from` | `VeeamError` |
@@ -792,7 +798,7 @@ Veeam's error body is `{"message": "…", "errorCode": "…"?}` (`RESTExceptionI
 | 500 | `{"message":"Syntax error: …"}` | bad search query | `w1.4-mail-search-bad-query` | `VeeamError` |
 | 500 | `{"message":"User … cannot manage selected object."}` | operator outside its scope | `w1.0-b-operator-explore-out-of-scope-*` | `AuthError` |
 | 500 | `{"message":"The session was forcibly closed."}` | the next call on an operator session after its restore (feasibility §2b) | not saved | `VeeamError` |
-| 5xx without a Veeam JSON body, connect/TLS-handshake errors, timeouts | — | service down or restarting | (W1.3 tests) | `TransientError` (retried by `HttpClient`) |
+| 5xx without a Veeam JSON body, connect/TLS-handshake errors, timeouts, dropped connections | — | service down or restarting | (W1.3 tests) | `TransientError` (as built, retried by `VeeamClient` itself: five attempts per GET; a token request only when it never went out) |
 
 The problem: **W1.3's `HttpClient` retries every 5xx (five attempts in total, about 15 s of waiting).** Every 500 above is
 deterministic, so each would cost about 15 s of retries and then surface as an `HttpError`
@@ -860,6 +866,8 @@ the composite-ID handling.
 - **Which point a between-points session opens** (§4.2): can't be shown on this lab (identical
   content). If it matters, a later task can seed a change between two backups. The Worker
   sidesteps it by always sending an exact `backupTime`.
-- **Retry classification of 5xx** (§8): a W1.5 decision.
+- **Retry classification of 5xx** (§8): decided in W1.5, as proposed there
+  (`docs/decisions.md` 2026-09-26, "VeeamClient: status retries off per request"). A restore
+  POST running twice after a timeout is still open for W2.x.
 - **A new user and Veeam's cache** (§2.4): observed in W1.0, not re-tested (it needs a tenant
   change).

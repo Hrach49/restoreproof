@@ -1,7 +1,9 @@
 #include <rp/config.hpp>
 
+#include <rp/cert_pin.hpp>
 #include <rp/secrets.hpp>
 
+#include "control_chars.hpp"
 #include "path_utf8.hpp"
 
 #include <nlohmann/json.hpp>
@@ -72,8 +74,9 @@ constexpr std::array<IntField, 5> kIntFields{{
 
 constexpr StringField kLogLevel{"log_level", &Config::log_level, false, StringRule::log_level};
 
-// Optional, so not a StringField: checked last, after log_level.
+// Optional, so not StringFields: checked last, after log_level, in this order.
 constexpr std::string_view kCaFileKey = "veeam_ca_file";
+constexpr std::string_view kCertSha256Key = "veeam_cert_sha256";
 
 constexpr std::array<std::string_view, 7> kLogLevels{"trace", "debug", "info", "warn",
                                                       "error", "critical", "off"};
@@ -120,7 +123,7 @@ bool is_known_key(std::string_view key)
     const auto named = [key](const auto& field) { return field.key == key; };
     return std::any_of(kRequiredStrings.begin(), kRequiredStrings.end(), named) ||
            std::any_of(kIntFields.begin(), kIntFields.end(), named) || key == kLogLevel.key ||
-           key == kCaFileKey;
+           key == kCaFileKey || key == kCertSha256Key;
 }
 
 bool looks_like_secret(std::string_view key)
@@ -206,26 +209,13 @@ bool is_restore_mailbox(std::string_view value)
 }
 
 // Control and invisible formatting characters that could forge, hide or
-// reorder lines of `config check` output: ASCII controls (below 0x20, and
-// DEL) and, as UTF-8, C1 controls (U+0080-U+009F), the line and paragraph
-// separators (U+2028, U+2029), bidi marks and overrides (U+200E, U+200F,
-// U+202A-U+202E, and the Arabic letter mark U+061C) and bidi isolates
-// (U+2066-U+2069). The JSON parser has
-// already rejected invalid UTF-8, so matching byte sequences is enough.
+// reorder lines of `config check` output (control_chars.hpp lists them). The
+// JSON parser has already rejected invalid UTF-8, so matching byte sequences
+// is enough.
 bool has_control_character(std::string_view value)
 {
-    const auto byte = [value](std::size_t i) {
-        return i < value.size() ? static_cast<unsigned char>(value[i]) : 0;
-    };
     for (std::size_t i = 0; i < value.size(); ++i) {
-        const unsigned char b0 = byte(i);
-        const unsigned char b1 = byte(i + 1);
-        const unsigned char b2 = byte(i + 2);
-        if (b0 < 0x20 || b0 == 0x7F || (b0 == 0xC2 && b1 >= 0x80 && b1 <= 0x9F) ||
-            (b0 == 0xD8 && b1 == 0x9C) ||
-            (b0 == 0xE2 && b1 == 0x80 &&
-             (b2 == 0x8E || b2 == 0x8F || (b2 >= 0xA8 && b2 <= 0xAE))) ||
-            (b0 == 0xE2 && b1 == 0x81 && b2 >= 0xA6 && b2 <= 0xA9)) {
+        if (control_character_length(value, i) != 0) {
             return true;
         }
     }
@@ -322,6 +312,26 @@ void read_ca_file(const json& doc, Config& config)
     config.veeam_ca_file = *value;
 }
 
+// After read_ca_file: the pin names a certificate that veeam_ca_file holds,
+// so it means nothing without it. Whether the file really holds it is
+// load_config's check, since parse_config never opens files.
+void read_cert_sha256(const json& doc, Config& config)
+{
+    const std::string* value = find_string(doc, kCertSha256Key, false);
+    if (value == nullptr) {
+        return;
+    }
+    if (!is_sha256_hex(*value)) {
+        throw key_error(kCertSha256Key, "must be the certificate's SHA-256: 64 hexadecimal "
+                                        "digits, as Windows shows it");
+    }
+    if (!config.veeam_ca_file) {
+        throw key_error(kCertSha256Key,
+                        "needs veeam_ca_file: set it to a PEM file holding that certificate");
+    }
+    config.veeam_cert_sha256 = *value;
+}
+
 void read_int(const json& doc, const IntField& field, Config& config)
 {
     const auto it = doc.find(field.key);
@@ -397,6 +407,7 @@ Config parse_config(std::string_view json_text)
     }
     read_string(doc, kLogLevel, config);
     read_ca_file(doc, config);
+    read_cert_sha256(doc, config);
 
     if (config.sample_mail == 0 && config.sample_sp == 0 && config.sample_od == 0) {
         throw ConfigError("", "config keys \"sample_mail\", \"sample_sp\" and \"sample_od\" are "
@@ -428,6 +439,18 @@ Config load_config(const std::filesystem::path& path)
         if (!ca_path || !std::ifstream(*ca_path, std::ios::binary)) {
             const ConfigError e = key_error(kCaFileKey, "names a file that can't be read");
             throw ConfigError(e.key(), prefix + e.what());
+        }
+    }
+    // The pin is discarded: computing it only proves the file holds the named
+    // certificate, so a wrong value is reported now rather than as a TLS
+    // failure later. CertPinError never quotes the file.
+    if (config.veeam_cert_sha256) {
+        try {
+            static_cast<void>(public_key_pin(*config.veeam_ca_file, *config.veeam_cert_sha256));
+        } catch (const CertPinError& e) {
+            throw ConfigError(std::string{kCertSha256Key},
+                              prefix + "config key \"" + std::string{kCertSha256Key} +
+                                  "\": " + e.what());
         }
     }
     return config;

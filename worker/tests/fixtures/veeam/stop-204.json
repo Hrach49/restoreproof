@@ -1,0 +1,7 @@
+{
+  "source": "docs/api/veeam-lab/w1.4-session-stop.json",
+  "request": "POST /v8/RestoreSessions/6ee50a66-c46f-4200-b793-c03f8bcbbb8b/Stop",
+  "status": 204,
+  "headers": {},
+  "body": null
+}

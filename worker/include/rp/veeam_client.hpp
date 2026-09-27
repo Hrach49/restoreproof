@@ -198,6 +198,9 @@ private:
     struct Token {
         std::string access;
         std::uint64_t generation = 0;
+        // renewal_failures_ when the token was handed out: a renewal that
+        // fails while a request with it is in flight is one its caller waited on.
+        std::uint64_t failures_seen = 0;
     };
 
     // The token to call with, after ensure_token()'s checks.

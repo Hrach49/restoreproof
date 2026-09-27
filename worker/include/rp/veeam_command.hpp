@@ -57,8 +57,9 @@ VeeamCommandEnv default_veeam_command_env();
 //    load, a --config path that isn't UTF-8, a secret that can't be read),
 //    "config error: RP_VEEAM_USERNAME is not set" (then RP_VEEAM_PASSWORD)
 //    for a missing secret, "config error: unexpected failure" for any other
-//    exception before the sign-in and "error: unexpected failure" after it;
-//    neither ever shows the exception's message;
+//    exception while loading the config and secrets, and "error: unexpected
+//    failure" for one that isn't a VeeamError afterwards; neither ever shows
+//    the exception's message;
 //  - 2: "veeam error: <what()>" for an AuthError, 3 for a TransientError, 4
 //    for any other VeeamError (a restore-point list that fails for any
 //    organisation fails the command);

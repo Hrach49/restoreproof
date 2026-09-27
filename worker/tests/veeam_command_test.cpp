@@ -401,3 +401,225 @@ TEST_CASE("rpworker veeam's real environment reads ProgramData and the process e
     REQUIRE(env.client_options.logger != spdlog::default_logger());
     REQUIRE(env.client_options.logger->level() == spdlog::level::warn);
 }
+
+// --- Veeam ---------------------------------------------------------------------
+
+namespace {
+
+// The recorded organisation list with one entry per (id, name), each a copy of
+// the recorded organisation.
+HttpResponse orgs_response(const std::vector<std::pair<std::string, std::string>>& orgs)
+{
+    json fixture = load_fixture_json("veeam", "organizations-200");
+    const json recorded = fixture["body"]["results"].at(0);
+    json results = json::array();
+    for (const auto& [id, name] : orgs) {
+        json org = recorded;
+        org["id"] = id;
+        org["name"] = name;
+        results.push_back(std::move(org));
+    }
+    fixture["body"]["results"] = std::move(results);
+    return to_response(fixture);
+}
+
+const std::string kOtherOrgId = "0b5e0a52-6d3c-4f55-9a53-6f6f2c7c1d11";
+
+std::size_t logouts(const Harness& lab)
+{
+    return lab.http.count(HttpMethod::post, kLogoutUrl);
+}
+
+} // namespace
+
+TEST_CASE("rpworker veeam list gives the HTTP client the config's CA file and pin",
+          "[veeam_command]")
+{
+    const std::string ca_file = std::string{RP_FIXTURE_DIR} + "/veeam/rest-certificate.pem";
+    Harness lab(config_json(kOrgName, "\"veeam_ca_file\": " + json(ca_file).dump() +
+                                          ", \"veeam_cert_sha256\": \"" + kLabCertSha256 +
+                                          "\","));
+
+    const Run result = lab.run_list();
+    REQUIRE(result.err.empty());
+    REQUIRE(result.exit_code == 0);
+    REQUIRE(lab.make_http_calls == 1);
+    REQUIRE(lab.http_options);
+    CHECK(lab.http_options->ca_file == std::optional<std::string>{ca_file});
+    CHECK(lab.http_options->pinned_cert_sha256 == std::optional<std::string>{kLabCertSha256});
+    // The injected logger and waits reach the HTTP layer too.
+    CHECK(lab.http_options->logger == lab.logger);
+    CHECK(lab.http_options->sleep);
+    CHECK(lab.http_options->jitter);
+}
+
+TEST_CASE("rpworker veeam list without a CA file leaves the HTTP client's trust as it is",
+          "[veeam_command]")
+{
+    Harness lab;
+
+    REQUIRE(lab.run_list().exit_code == 0);
+    REQUIRE(lab.http_options);
+    CHECK_FALSE(lab.http_options->ca_file);
+    CHECK_FALSE(lab.http_options->pinned_cert_sha256);
+}
+
+TEST_CASE("rpworker veeam list signs in with the secrets, then logs out", "[veeam_command]")
+{
+    Harness lab;
+
+    REQUIRE(lab.run_list().exit_code == 0);
+    const std::vector<HttpRequest> requests = lab.http.requests();
+    REQUIRE(requests.size() == 4);
+    CHECK(requests[0].url == kTokenUrl);
+    CHECK(requests[0].body.find("&password=" + kPasswordForm + "&") != std::string::npos);
+    CHECK(requests[1].url == orgs_url());
+    CHECK(requests[2].url == points_url());
+    CHECK(requests[3].url == kLogoutUrl);
+}
+
+TEST_CASE("rpworker veeam list exits 2 when Veeam refuses the sign-in", "[veeam_command]")
+{
+    Harness lab;
+    lab.http.on(HttpMethod::post, kTokenUrl, {load_fixture("veeam", "token-rejected-401")});
+
+    const Run result = lab.run_list();
+    REQUIRE(result.exit_code == 2);
+    REQUIRE(result.out.empty());
+    REQUIRE(result.err == "veeam error: Veeam POST /v8/token: HTTP 401: The server has rejected "
+                          "the client credentials.\n");
+    // Never signed in, so there is nothing to log out of.
+    REQUIRE(logouts(lab) == 0);
+}
+
+TEST_CASE("rpworker veeam list exits 2 when Veeam refuses a call after the sign-in, and logs out",
+          "[veeam_command]")
+{
+    Harness lab;
+    lab.http.on(HttpMethod::get, orgs_url(),
+                {make_response(403, R"({"message":"Access denied."})")});
+
+    const Run result = lab.run_list();
+    REQUIRE(result.exit_code == 2);
+    REQUIRE(result.out.empty());
+    REQUIRE(result.err ==
+            "veeam error: Veeam GET /v8/Organizations?limit=1000&offset=0: HTTP 403: Access "
+            "denied.\n");
+    REQUIRE(logouts(lab) == 1);
+}
+
+TEST_CASE("rpworker veeam list exits 3 when Veeam can't be reached", "[veeam_command]")
+{
+    SECTION("no connection at the sign-in")
+    {
+        Harness lab;
+        lab.http.on(HttpMethod::post, kTokenUrl, [](const HttpRequest&) -> HttpResponse {
+            throw rp::HttpError("connection refused", rp::TransportError::connect, 0, 1);
+        });
+
+        const Run result = lab.run_list();
+        REQUIRE(result.exit_code == 3);
+        REQUIRE(result.out.empty());
+        REQUIRE_THAT(result.err, Catch::Matchers::StartsWith("veeam error: Veeam "));
+        REQUIRE_THAT(result.err, ContainsSubstring("connection refused"));
+        REQUIRE(logouts(lab) == 0);
+        // Retried without waiting: the test's sleep only records.
+        REQUIRE(lab.http.count(HttpMethod::post, kTokenUrl) == 5);
+        REQUIRE(lab.sleeps.size() == 4);
+    }
+    SECTION("a gateway answering 503 to every attempt after the sign-in")
+    {
+        Harness lab;
+        lab.http.on(HttpMethod::get, orgs_url(), {make_response(503)});
+
+        const Run result = lab.run_list();
+        REQUIRE(result.exit_code == 3);
+        REQUIRE(result.out.empty());
+        REQUIRE(result.err == "veeam error: Veeam GET /v8/Organizations?limit=1000&offset=0: "
+                              "HTTP 503 after 5 attempts\n");
+        REQUIRE(logouts(lab) == 1);
+    }
+}
+
+TEST_CASE("rpworker veeam list exits 4 for any other Veeam error, and logs out", "[veeam_command]")
+{
+    struct Case {
+        std::string fixture;
+        std::string expected;
+    };
+    const Case c = GENERATE(
+        Case{"restore-points-unknown-org-404",
+             "veeam error: Veeam GET /v8/RestorePoints?organizationId=" + kOrgId +
+                 "&limit=1000&offset=0: HTTP 404 (ResourceNotFound): Organization does not "
+                 "exist: ID 00000000-0000-0000-0000-000000000001.\n"},
+        Case{"route-404-empty", "veeam error: Veeam GET /v8/RestorePoints?organizationId=" +
+                                    kOrgId + "&limit=1000&offset=0: HTTP 404\n"});
+    CAPTURE(c.fixture);
+    Harness lab;
+    lab.http.on(HttpMethod::get, points_url(), {load_fixture("veeam", c.fixture)});
+
+    const Run result = lab.run_list();
+    REQUIRE(result.exit_code == 4);
+    REQUIRE(result.out.empty());
+    REQUIRE(result.err == c.expected);
+    REQUIRE(logouts(lab) == 1);
+}
+
+TEST_CASE("rpworker veeam list fails as a whole when any organisation's restore points fail",
+          "[veeam_command]")
+{
+    // Both organisations list; the second one's points vanish in between.
+    Harness lab;
+    lab.http.on(HttpMethod::get, orgs_url(),
+                {orgs_response({{kOrgId, kOrgName}, {kOtherOrgId, "Zeta.onmicrosoft.com"}})});
+    lab.http.on(HttpMethod::get, points_url(kOtherOrgId),
+                {load_fixture("veeam", "restore-points-unknown-org-404")});
+
+    const Run result = lab.run_list();
+    REQUIRE(result.exit_code == 4);
+    // No partial table.
+    REQUIRE(result.out.empty());
+    REQUIRE_THAT(result.err,
+                 Catch::Matchers::StartsWith("veeam error: Veeam GET "
+                                             "/v8/RestorePoints?organizationId=" +
+                                             kOtherOrgId));
+    REQUIRE(lab.http.count(HttpMethod::get, points_url()) == 1);
+    REQUIRE(logouts(lab) == 1);
+}
+
+TEST_CASE("rpworker veeam list reports an unexpected failure without its message, and logs out",
+          "[veeam_command]")
+{
+    SECTION("after the sign-in")
+    {
+        // Not a VeeamError: a failure the command doesn't expect.
+        Harness lab;
+        lab.http.on(HttpMethod::get, points_url(), [](const HttpRequest&) -> HttpResponse {
+            throw std::logic_error("SENTINEL-6b0f");
+        });
+
+        const Run result = lab.run_list();
+        REQUIRE(result.exit_code == 1);
+        REQUIRE(result.out.empty());
+        REQUIRE(result.err == "error: unexpected failure\n");
+        REQUIRE(logouts(lab) == 1);
+    }
+    SECTION("making the HTTP client")
+    {
+        Harness lab;
+        const bool throws = GENERATE(true, false);
+        CAPTURE(throws);
+        lab.make_http = [throws]() -> std::unique_ptr<rp::IHttpClient> {
+            if (throws) {
+                throw std::runtime_error("SENTINEL-6b0f");
+            }
+            return nullptr;
+        };
+
+        const Run result = lab.run_list();
+        REQUIRE(result.exit_code == 1);
+        REQUIRE(result.out.empty());
+        REQUIRE(result.err == "error: unexpected failure\n");
+        REQUIRE(lab.http.requests().empty());
+    }
+}

@@ -22,11 +22,13 @@ add_library(rpcore STATIC
     src/base64.cpp
     src/cert_pin.cpp
     src/cli.cpp
+    src/client_assertion.cpp
     src/command_config.cpp
     src/config.cpp
     src/config_check.cpp
     src/connector.cpp
     src/connector_registry.cpp
+    src/graph_errors.cpp
     src/http_client.cpp
     src/redact.cpp
     src/retry_policy.cpp
@@ -65,12 +67,14 @@ target_link_libraries(rpworker PRIVATE rpcore)
 add_executable(rptests
     tests/base64_test.cpp
     tests/cert_pin_test.cpp
+    tests/client_assertion_test.cpp
     tests/cli_test.cpp
     tests/config_check_test.cpp
     tests/config_test.cpp
     tests/connector_registry_test.cpp
     tests/connector_test.cpp
     tests/deps_test.cpp
+    tests/graph_errors_test.cpp
     tests/http_client_test.cpp
     tests/http_client_tls_test.cpp
     tests/redact_test.cpp

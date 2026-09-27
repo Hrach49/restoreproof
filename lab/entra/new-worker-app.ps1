@@ -283,7 +283,13 @@ finally {
 
 # ---- 4. Exchange Online RBAC for Applications -------------------------------------------------------
 Step "Exchange Online: '$MailRoleName' on $RestoreTestUpn only (sign in as $AdminUpn)"
-Import-Module ExchangeOnlineManagement
+# Import-Module takes the highest version. Veeam Backup for Microsoft 365 ships its own copy,
+# which Install-Module counts as installed but PowerShell 7 can't load.
+try { Import-Module ExchangeOnlineManagement -MinimumVersion 3.2.0 }
+catch {
+    throw "Can't load the ExchangeOnlineManagement module ($($_.Exception.Message)). Install your own copy: " +
+          "Install-Module ExchangeOnlineManagement -Scope CurrentUser -Force (-Force installs it next to Veeam's bundled one), then run this script again."
+}
 Connect-ExchangeOnline -UserPrincipalName $AdminUpn -ShowBanner:$false
 try {
     if (-not (Get-ServicePrincipal -Identity $appId -ErrorAction SilentlyContinue)) {

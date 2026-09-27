@@ -136,8 +136,8 @@ TEST_CASE("live: rpworker veeam list prints the lab organisation's two restore p
     REQUIRE(exit_code == 0);
     REQUIRE(err.str().empty());
 
-    // The rows of the organisation, marked as veeam_org_name. The lab has
-    // exactly two points; a later backup would add a row here.
+    // The rows of the organisation, marked as veeam_org_name. The lab's two
+    // points, newest first; a later backup adds newer rows in front of them.
     std::vector<std::string> rows;
     std::istringstream lines(out.str());
     for (std::string line; std::getline(lines, line);) {
@@ -145,7 +145,14 @@ TEST_CASE("live: rpworker veeam list prints the lab organisation's two restore p
             rows.push_back(line);
         }
     }
-    REQUIRE(rows.size() == 2);
-    CHECK(rows[0].find(kLabIncremental) != std::string::npos);
-    CHECK(rows[1].find(kLabFull) != std::string::npos);
+    const auto row_with = [&rows](const std::string& backup_time) {
+        return std::find_if(rows.begin(), rows.end(), [&backup_time](const std::string& row) {
+            return row.find("  " + backup_time + "  ") != std::string::npos;
+        });
+    };
+    const auto incremental = row_with(kLabIncremental);
+    const auto full = row_with(kLabFull);
+    REQUIRE(incremental != rows.end());
+    REQUIRE(full != rows.end());
+    CHECK(incremental < full);
 }

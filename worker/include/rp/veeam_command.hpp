@@ -48,8 +48,9 @@ VeeamCommandEnv default_veeam_command_env();
 // (sorted by name, ASCII case-insensitively, then ID) with its restore points
 // (newest first), the organisation named by Config::veeam_org_name marked
 // with "*", then a blank line and a summary line. The table is built in full
-// before anything is printed, so a failure prints nothing on `out`. Logs out
-// of Veeam at the end, whatever happened after the sign-in.
+// before anything is printed, so a Veeam failure prints nothing on `out`. Logs
+// out of Veeam at the end, after the table, whatever happened after the
+// sign-in.
 //
 // Returns an rp::exit_code, with one line on `err` for each failure:
 //  - 64: arguments it doesn't understand (rp::kCliUsage);
@@ -58,11 +59,13 @@ VeeamCommandEnv default_veeam_command_env();
 //    "config error: RP_VEEAM_USERNAME is not set" (then RP_VEEAM_PASSWORD)
 //    for a missing secret, "config error: unexpected failure" for any other
 //    exception while loading the config and secrets, and "error: unexpected
-//    failure" for one that isn't a VeeamError afterwards; neither ever shows
-//    the exception's message;
+//    failure" for one that isn't a VeeamError afterwards (one while writing
+//    the table included, after which `out` may hold part of it); neither
+//    ever shows the exception's message;
 //  - 2: "veeam error: <what()>" for an AuthError, 3 for a TransientError, 4
 //    for any other VeeamError (a restore-point list that fails for any
-//    organisation fails the command);
+//    organisation fails the command; a certificate that fails verification
+//    is one too);
 //  - 4 also when no organisation is named veeam_org_name: the table is
 //    printed, then "veeam error: organisation <name> (veeam_org_name) not
 //    found in Veeam".

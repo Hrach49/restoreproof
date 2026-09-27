@@ -1,0 +1,20 @@
+{
+  "source": "live 2026-09-28: x5t#S256 of no uploaded certificate",
+  "request": "POST /bcd6bd1a-ea42-489d-aa28-2c19a44ad146/oauth2/v2.0/token",
+  "status": 401,
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8",
+    "x-ms-request-id": "f5c0a2ec-9401-4564-bdbf-4c5cba8e0b00"
+  },
+  "body": {
+    "error": "invalid_client",
+    "error_description": "AADSTS700027: The certificate with identifier used to sign the client assertion is not registered on application. [Reason - The key was not found., Please visit the Azure Portal, Graph Explorer or directly use MS Graph to see configured keys for app Id '737da5ef-baf2-4198-b009-e160d8ca77c9'. Review the documentation at https://docs.microsoft.com/en-us/graph/deployments to determine the corresponding service endpoint and https://docs.microsoft.com/en-us/graph/api/application-get?view=graph-rest-1.0&tabs=http to build a query request URL, such as 'https://graph.microsoft.com/beta/applications/737da5ef-baf2-4198-b009-e160d8ca77c9']. Trace ID: f5c0a2ec-9401-4564-bdbf-4c5cba8e0b00 Correlation ID: 27a1240a-31da-4586-9940-5bc0103cb891 Timestamp: 2026-09-27 22:22:40Z",
+    "error_codes": [
+      700027
+    ],
+    "timestamp": "2026-09-27 22:22:40Z",
+    "trace_id": "f5c0a2ec-9401-4564-bdbf-4c5cba8e0b00",
+    "correlation_id": "27a1240a-31da-4586-9940-5bc0103cb891",
+    "error_uri": "https://login.microsoftonline.com/error?code=700027"
+  }
+}

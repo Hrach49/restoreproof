@@ -1,0 +1,15 @@
+{
+  "source": "live 2026-09-28: token request, PS256 header ['x5t#S256']",
+  "request": "POST /bcd6bd1a-ea42-489d-aa28-2c19a44ad146/oauth2/v2.0/token",
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8",
+    "x-ms-request-id": "42b5f166-6019-48b6-94eb-0a9d73ec0d00"
+  },
+  "body": {
+    "token_type": "Bearer",
+    "expires_in": 3599,
+    "ext_expires_in": 3599,
+    "access_token": "eyJ0eXAiOiJKV1QiLCJhbGciOiJub25lIn0.eyJzY3J1YmJlZCI6dHJ1ZX0."
+  }
+}

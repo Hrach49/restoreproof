@@ -16,7 +16,8 @@ using Args = std::vector<std::string_view>;
 
 namespace {
 
-const std::string kUsage = "usage: rpworker --version | rpworker config check [--config <path>]\n";
+const std::string kUsage = "usage: rpworker --version | rpworker config check [--config <path>] | "
+                           "rpworker veeam list [--config <path>]\n";
 
 const std::string kConfigJson = R"({
     "cloud_url": "https://cloud.example.invalid",
@@ -33,7 +34,7 @@ const std::string kConfigJson = R"({
 
 } // namespace
 
-TEST_CASE("rpworker prints usage to stderr and exits 2 for a command line it doesn't know", "[cli]")
+TEST_CASE("rpworker prints usage to stderr and exits 64 for a command line it doesn't know", "[cli]")
 {
     const Args args = GENERATE(
         Args{},
@@ -48,14 +49,30 @@ TEST_CASE("rpworker prints usage to stderr and exits 2 for a command line it doe
         Args{"config"},
         Args{"Config", "check"},
         Args{"--version", "config", "check"},
-        Args{"config", "check", "--config"});
+        Args{"config", "check", "--config"},
+        Args{"veeam"},
+        Args{"Veeam", "list"},
+        Args{"veeam", "lst"},
+        Args{"veeam", "list", "--config"});
     CAPTURE(args);
 
     std::ostringstream out;
     std::ostringstream err;
-    REQUIRE(rp::run_cli(args, out, err) == 2);
+    REQUIRE(rp::run_cli(args, out, err) == 64);
     REQUIRE(out.str().empty());
     REQUIRE(err.str() == kUsage);
+}
+
+TEST_CASE("rpworker's exit codes are fixed: 0 ok, 1 config, 2 auth, 3 transient, 4 Veeam, 64 usage",
+          "[cli]")
+{
+    STATIC_REQUIRE(rp::exit_code::ok == 0);
+    STATIC_REQUIRE(rp::exit_code::config == 1);
+    STATIC_REQUIRE(rp::exit_code::auth == 2);
+    STATIC_REQUIRE(rp::exit_code::transient == 3);
+    STATIC_REQUIRE(rp::exit_code::veeam == 4);
+    STATIC_REQUIRE(rp::exit_code::usage == 64);
+    REQUIRE(rp::kCliUsage == kUsage);
 }
 
 TEST_CASE("rpworker --version prints the project version to stdout and exits 0", "[cli]")
@@ -67,6 +84,36 @@ TEST_CASE("rpworker --version prints the project version to stdout and exits 0",
     REQUIRE(rp::run_cli(args, out, err) == 0);
     REQUIRE(out.str() == std::string{rp::version()} + "\n");
     REQUIRE(err.str().empty());
+}
+
+TEST_CASE("rpworker reports an exception a command doesn't handle as exit 1, never a crash",
+          "[cli]")
+{
+    // Escaping wmain, it would end in abort(), whose exit code on Windows is
+    // 3: exit_code::transient, "try again later".
+    rp::test::FailingStreamBuf failing;
+    std::ostream out(&failing);
+    out.exceptions(std::ios::badbit);
+    std::ostringstream err;
+
+    const Args args{"--version"};
+
+    SECTION("run_cli")
+    {
+        REQUIRE(rp::run_cli(args, out, err) == 1);
+        // Its message may not be safe to show.
+        REQUIRE(err.str() == "error: unexpected failure\n");
+    }
+    SECTION("run_main")
+    {
+        const std::vector<const wchar_t*> argv{L"rpworker.exe", L"--version"};
+        REQUIRE(rp::run_main(argv, out, err) == 1);
+        REQUIRE(err.str() == "error: unexpected failure\n");
+    }
+    SECTION("with stderr failing too, the exit code still says so")
+    {
+        REQUIRE(rp::run_cli(args, out, out) == 1);
+    }
 }
 
 TEST_CASE("rpworker config check --config <file> checks that file", "[cli]")
@@ -103,7 +150,7 @@ TEST_CASE("rpworker's main() prints usage for an empty command line or argument"
 
     std::ostringstream out;
     std::ostringstream err;
-    REQUIRE(rp::run_main(argv, out, err) == 2);
+    REQUIRE(rp::run_main(argv, out, err) == 64);
     REQUIRE(out.str().empty());
     REQUIRE(err.str() == kUsage);
 }
@@ -144,7 +191,7 @@ TEST_CASE("rpworker's main() rejects an argument that isn't valid Unicode", "[cl
 
     std::ostringstream out;
     std::ostringstream err;
-    REQUIRE(rp::run_main(argv, out, err) == 2);
+    REQUIRE(rp::run_main(argv, out, err) == 64);
     REQUIRE(out.str().empty());
     REQUIRE(err.str() == kUsage);
 }

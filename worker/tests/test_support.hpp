@@ -19,6 +19,7 @@
 #include <fstream>
 #include <optional>
 #include <random>
+#include <streambuf>
 #include <string>
 #include <string_view>
 
@@ -151,6 +152,15 @@ private:
 
     std::wstring name_;
     std::optional<std::wstring> original_;
+};
+
+// A stream buffer that takes no bytes. An std::ostream on it with
+// exceptions(std::ios::badbit) throws std::ios_base::failure on the first
+// write: an exception from inside a command that the command doesn't expect.
+class FailingStreamBuf : public std::streambuf {
+protected:
+    int_type overflow(int_type) override { return traits_type::eof(); }
+    std::streamsize xsputn(const char*, std::streamsize) override { return 0; }
 };
 
 } // namespace rp::test

@@ -24,7 +24,8 @@ using Args = std::vector<std::string_view>;
 
 namespace {
 
-const std::string kUsage = "usage: rpworker --version | rpworker config check [--config <path>]\n";
+const std::string kUsage = "usage: rpworker --version | rpworker config check [--config <path>] | "
+                           "rpworker veeam list [--config <path>]\n";
 
 // Every key set; sample_od left out to show its default.
 const std::string kConfigJson = R"({
@@ -121,7 +122,7 @@ struct PathSpy {
 
 } // namespace
 
-TEST_CASE("rpworker config prints usage and exits 2 for arguments it doesn't understand",
+TEST_CASE("rpworker config prints usage and exits 64 for arguments it doesn't understand",
           "[config_check]")
 {
     const Args args = GENERATE(
@@ -140,7 +141,7 @@ TEST_CASE("rpworker config prints usage and exits 2 for arguments it doesn't und
     PathSpy spy;
 
     const Run result = run(args, spy.provider());
-    REQUIRE(result.exit_code == 2);
+    REQUIRE(result.exit_code == 64);
     REQUIRE(result.out.empty());
     REQUIRE(result.err == kUsage);
     // Usage errors never look up ProgramData.

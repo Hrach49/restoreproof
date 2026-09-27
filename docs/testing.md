@@ -45,9 +45,11 @@ those files are held to 100% line instead. See `docs/decisions.md`.
 
 Tests tagged `[live]` call the lab's real services and are skipped unless `RP_LIVE=1` is set;
 they are read-only. `RP_LIVE=1 ctest --preset dev` runs them with the rest, or run them alone
-with `build\dev\rptests.exe "[live]"` (which also prints what they found). The Veeam one
-(W1.5, `worker/tests/veeam_client_live_test.cpp`) signs in, lists organisations and restore
-points, and logs out. It reads:
+with `build\dev\rptests.exe "[live]"` (which also prints what they found). The two Veeam ones
+(`worker/tests/veeam_client_live_test.cpp`) each sign in, list organisations and restore
+points, and log out: W1.5's through `VeeamClient`, W1.6's through `rpworker veeam list`
+(`rp::run_veeam_command` with a temp config written from these variables, expecting the lab
+organisation's two restore points). They read:
 
 | Variable | Value |
 |---|---|

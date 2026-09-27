@@ -127,9 +127,10 @@ first two steps, and is safe to run again.
    ```
 
    On a machine with Veeam Backup for Microsoft 365, Install-Module finds Veeam's own
-   ExchangeOnlineManagement and installs nothing, but PowerShell 7 can't load that copy. Add
-   `-Force` to install yours next to it:
-   `Install-Module ExchangeOnlineManagement -Scope CurrentUser -Force`.
+   ExchangeOnlineManagement and installs nothing, but PowerShell 7 can't load that copy. Install
+   yours next to it: `-Force` for a second version, `-AllowClobber` because Veeam's copy already
+   has the same commands:
+   `Install-Module ExchangeOnlineManagement -Scope CurrentUser -Force -AllowClobber`.
 
 2. **Make the admin a site collection admin of alice's OneDrive.** Even a global admin can't
    grant access to another user's OneDrive otherwise.

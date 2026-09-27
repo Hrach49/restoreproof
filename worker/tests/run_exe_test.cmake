@@ -2,12 +2,14 @@
 # ctest's PASS_REGULAR_EXPRESSION ignores the exit code and WILL_FAIL accepts
 # any non-zero one, a crash included, so tests of rpworker.exe go through here.
 #
-#   cmake -DEXE=<path> [-DARGS=<arg>] -DEXIT_CODE=<n> -DSTDOUT=<line> -DSTDERR=<line>
-#         -P run_exe_test.cmake
+#   cmake -DEXE=<path> [-DARGS=<arg>] [-DUNSET_ENV=<name>] -DEXIT_CODE=<n>
+#         -DSTDOUT=<line> -DSTDERR=<line> -P run_exe_test.cmake
 #
 # STDOUT and STDERR each name the one line the stream must hold, newline
 # included; an empty value means the stream must be empty. CRLF counts as LF.
 # ARGS is a CMake list; pass one argument unless you escape the semicolons.
+# UNSET_ENV, also a list, names environment variables removed before the run,
+# so a test doesn't depend on what the shell that started ctest has set.
 
 cmake_minimum_required(VERSION 3.25)
 
@@ -15,6 +17,10 @@ foreach(var IN ITEMS EXE EXIT_CODE STDOUT STDERR)
     if(NOT DEFINED ${var})
         message(FATAL_ERROR "run_exe_test.cmake: -D${var}=... is required")
     endif()
+endforeach()
+
+foreach(var IN LISTS UNSET_ENV)
+    unset(ENV{${var}})
 endforeach()
 
 execute_process(

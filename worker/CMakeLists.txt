@@ -94,13 +94,15 @@ catch_discover_tests(rptests)
 # rpworker's main() can't be linked into rptests, so ctest runs the exe.
 # run_exe_test.cmake checks the exit code and both streams exactly; ctest's own
 # PASS_REGULAR_EXPRESSION and WILL_FAIL would ignore the exit code. ARGS takes
-# any number of arguments; they reach the script as one list.
+# any number of arguments; they reach the script as one list. UNSET_ENV names
+# environment variables the script removes before running the exe.
 set(RP_RUN_EXE_TEST ${CMAKE_CURRENT_SOURCE_DIR}/tests/run_exe_test.cmake)
 function(rp_add_exe_test name)
-    cmake_parse_arguments(PARSE_ARGV 1 T "" "EXIT_CODE;STDOUT;STDERR" "ARGS")
+    cmake_parse_arguments(PARSE_ARGV 1 T "" "EXIT_CODE;STDOUT;STDERR" "ARGS;UNSET_ENV")
     add_test(NAME "${name}" COMMAND ${CMAKE_COMMAND}
-        "-DEXE=$<TARGET_FILE:rpworker>" "-DARGS=${T_ARGS}" "-DEXIT_CODE=${T_EXIT_CODE}"
-        "-DSTDOUT=${T_STDOUT}" "-DSTDERR=${T_STDERR}" -P ${RP_RUN_EXE_TEST})
+        "-DEXE=$<TARGET_FILE:rpworker>" "-DARGS=${T_ARGS}" "-DUNSET_ENV=${T_UNSET_ENV}"
+        "-DEXIT_CODE=${T_EXIT_CODE}" "-DSTDOUT=${T_STDOUT}" "-DSTDERR=${T_STDERR}"
+        -P ${RP_RUN_EXE_TEST})
 endfunction()
 
 rp_add_exe_test("rpworker --version prints the project version"
@@ -119,6 +121,30 @@ rp_add_exe_test("rpworker config check reports a missing config file"
 rp_add_exe_test("rpworker config check keeps a --config path outside the ANSI code page"
     ARGS config check --config "тест-no-such-config.json" EXIT_CODE 1 STDOUT ""
     STDERR "config error: тест-no-such-config.json: cannot read config file")
+
+# veeam list stops before any request in each of these, so none reaches the
+# network. config.example.json is valid, so the last two get as far as the
+# secrets. ctest sets both variables and run_exe_test removes the ones named
+# in UNSET_ENV, which also shows that UNSET_ENV works.
+rp_add_exe_test("rpworker veeam without a subcommand prints usage"
+    ARGS veeam EXIT_CODE 64 STDOUT "" STDERR "${RP_USAGE}")
+rp_add_exe_test("rpworker veeam rejects an unknown subcommand"
+    ARGS veeam lst EXIT_CODE 64 STDOUT "" STDERR "${RP_USAGE}")
+rp_add_exe_test("rpworker veeam list reports a missing config file"
+    ARGS veeam list --config no-such-config.json EXIT_CODE 1 STDOUT ""
+    STDERR "config error: no-such-config.json: cannot read config file")
+rp_add_exe_test("rpworker veeam list needs RP_VEEAM_USERNAME"
+    ARGS veeam list --config ${CMAKE_CURRENT_SOURCE_DIR}/config.example.json
+    UNSET_ENV RP_VEEAM_USERNAME RP_VEEAM_PASSWORD
+    EXIT_CODE 1 STDOUT "" STDERR "config error: RP_VEEAM_USERNAME is not set")
+rp_add_exe_test("rpworker veeam list needs RP_VEEAM_PASSWORD"
+    ARGS veeam list --config ${CMAKE_CURRENT_SOURCE_DIR}/config.example.json
+    UNSET_ENV RP_VEEAM_PASSWORD
+    EXIT_CODE 1 STDOUT "" STDERR "config error: RP_VEEAM_PASSWORD is not set")
+set_tests_properties(
+    "rpworker veeam list needs RP_VEEAM_USERNAME"
+    "rpworker veeam list needs RP_VEEAM_PASSWORD"
+    PROPERTIES ENVIRONMENT "RP_VEEAM_USERNAME=set-by-ctest;RP_VEEAM_PASSWORD=set-by-ctest")
 
 # The checker itself must fail on a wrong exit code or wrong output, or the two
 # tests above would prove nothing.

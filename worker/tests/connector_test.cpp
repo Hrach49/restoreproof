@@ -1,0 +1,335 @@
+// W1.7 "Done when": code that holds only an rp::connector::IConnector& (as
+// the scheduler will, W4.8) runs a connector without knowing Veeam. This file
+// includes rp/connector.hpp and nothing from Veeam, and a scan below checks
+// that nothing it includes reaches a Veeam header. The types and rules are the
+// 2026-09-27 W1.7 entry in docs/decisions.md.
+
+#include <rp/config.hpp>
+#include <rp/connector.hpp>
+
+#include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
+#include <catch2/matchers/catch_matchers_exception.hpp>
+
+#include <algorithm>
+#include <cctype>
+#include <filesystem>
+#include <fstream>
+#include <functional>
+#include <iterator>
+#include <optional>
+#include <regex>
+#include <set>
+#include <stdexcept>
+#include <string>
+#include <utility>
+#include <vector>
+
+
+namespace {
+
+namespace connector = rp::connector;
+
+// The values config.json holds for the three restore targets.
+rp::Config config_with_targets()
+{
+    rp::Config config;
+    config.test_mailbox = "restoretest@example.onmicrosoft.com";
+    config.test_site_id = "site-id";
+    config.test_library_id = "library-id";
+    config.test_onedrive_drive_id = "drive-id";
+    config.test_onedrive_folder_id = "folder-id";
+    return config;
+}
+
+connector::RestorePoint point(std::string id, std::string backup_time, bool mail = true)
+{
+    connector::RestorePoint p;
+    p.id = std::move(id);
+    p.backup_time = std::move(backup_time);
+    p.has_mail = mail;
+    p.has_sharepoint = true;
+    p.has_onedrive = true;
+    return p;
+}
+
+// A connector that isn't Veeam: it answers from what the test gives it and
+// keeps the specs it was asked to restore.
+class FakeConnector final : public connector::IConnector {
+public:
+    connector::ConnectorInfo describe() const override { return {"fake", "1"}; }
+
+    std::vector<connector::RestorePoint> list_restore_points(const std::string& client_ref) override
+    {
+        clients.push_back(client_ref);
+        if (list_error) {
+            list_error();
+        }
+        return points;
+    }
+
+    connector::RestoreResult restore_sample(const connector::RestoreSpec& spec) override
+    {
+        specs.push_back(spec);
+        connector::RestoreResult result;
+        result.status = connector::RestoreStatus::succeeded;
+        result.session_ids = {"session-1"};
+        result.log = "restored";
+        result.items_restored = static_cast<int>(spec.item_count());
+        return result;
+    }
+
+    std::vector<connector::RestorePoint> points;
+    std::function<void()> list_error;
+    std::vector<std::string> clients;
+    std::vector<connector::RestoreSpec> specs;
+};
+
+// What a scheduler-like caller learns from one run.
+struct Outcome {
+    std::string connector;
+    std::optional<connector::RestoreResult> result;
+    std::string error; // "auth", "transient", "not_found", "other"; empty when none
+};
+
+// Scheduler-like code: it knows only IConnector. Picks the newest restore
+// point that holds mail and restores one canary mail into the configured
+// targets.
+Outcome run_one(connector::IConnector& source, const std::string& client_ref,
+                const connector::RestoreTargets& targets)
+{
+    Outcome outcome;
+    outcome.connector = source.describe().name;
+    try {
+        const std::vector<connector::RestorePoint> points = source.list_restore_points(client_ref);
+        const auto newest = std::ranges::find_if(points, &connector::RestorePoint::has_mail);
+        if (newest == points.end()) {
+            return outcome;
+        }
+        connector::RestoreSpec spec{.client_ref = client_ref,
+                                    .restore_point = *newest,
+                                    .targets = targets,
+                                    .mail = {{"alice@example.onmicrosoft.com", "Inbox",
+                                              "RP-CANARY-0001"}}};
+        outcome.result = source.restore_sample(spec);
+    } catch (const connector::AuthError&) {
+        outcome.error = "auth";
+    } catch (const connector::TransientError&) {
+        outcome.error = "transient";
+    } catch (const connector::NotFoundError&) {
+        outcome.error = "not_found";
+    } catch (const connector::Error&) {
+        outcome.error = "other";
+    }
+    return outcome;
+}
+
+// --- The include scan ----------------------------------------------------------
+
+std::string read_file(const std::filesystem::path& path)
+{
+    std::ifstream file(path, std::ios::binary);
+    REQUIRE(file);
+    return {std::istreambuf_iterator<char>(file), {}};
+}
+
+// Every Worker source file `start` reaches through #include, itself included:
+// <rp/...> resolves in include/, "..." next to the including file. System and
+// vcpkg headers are left out; they can't include Worker headers.
+std::set<std::filesystem::path> worker_includes(const std::filesystem::path& start)
+{
+    const std::filesystem::path include_dir = std::filesystem::path{RP_SOURCE_DIR} / "include";
+    const std::regex directive(R"re(^\s*#\s*include\s*([<"])([^>"]+)[>"])re");
+    std::set<std::filesystem::path> seen;
+    std::vector<std::filesystem::path> todo{start.lexically_normal()};
+    while (!todo.empty()) {
+        const std::filesystem::path file = todo.back();
+        todo.pop_back();
+        if (!seen.insert(file).second) {
+            continue;
+        }
+        const std::string text = read_file(file);
+        for (auto it = std::sregex_iterator(text.begin(), text.end(), directive,
+                                            std::regex_constants::match_default);
+             it != std::sregex_iterator(); ++it) {
+            const std::string kind = (*it)[1];
+            const std::string name = (*it)[2];
+            std::filesystem::path target;
+            if (kind == "\"") {
+                target = file.parent_path() / name;
+            } else if (name.starts_with("rp/")) {
+                target = include_dir / name;
+            } else {
+                continue;
+            }
+            REQUIRE(std::filesystem::exists(target));
+            todo.push_back(target.lexically_normal());
+        }
+    }
+    return seen;
+}
+
+std::string lower(std::string text)
+{
+    std::ranges::transform(text, text.begin(),
+                           [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return text;
+}
+
+} // namespace
+
+TEST_CASE("code holding an IConnector& reaches no Veeam header", "[connector]")
+{
+    const std::filesystem::path self =
+        std::filesystem::path{RP_SOURCE_DIR} / "tests" / "connector_test.cpp";
+    const std::set<std::filesystem::path> reached = worker_includes(self);
+
+    std::set<std::string> names;
+    for (const std::filesystem::path& file : reached) {
+        names.insert(file.filename().string());
+    }
+    CAPTURE(names);
+    // Not vacuous: the scan did follow the interface's own header.
+    REQUIRE(names.contains("connector.hpp"));
+    REQUIRE(names.contains("config.hpp"));
+    for (const std::string& name : names) {
+        CHECK_FALSE(lower(name).find("veeam") != std::string::npos);
+    }
+}
+
+// --- Failure paths ---------------------------------------------------------------
+
+TEST_CASE("a connector's errors reach the caller as connector errors", "[connector]")
+{
+    using Thrower = std::function<void()>;
+    const auto [thrower, expected] = GENERATE(table<Thrower, std::string>({
+        {[] { throw connector::AuthError("refused"); }, "auth"},
+        {[] { throw connector::TransientError("unreachable"); }, "transient"},
+        {[] { throw connector::NotFoundError("no such client"); }, "not_found"},
+        {[] { throw connector::NotImplementedError("later"); }, "other"},
+        {[] { throw connector::Error("anything else"); }, "other"},
+    }));
+    CAPTURE(expected);
+    FakeConnector fake;
+    fake.list_error = thrower;
+    const connector::RestoreTargets targets =
+        connector::RestoreTargets::from_config(config_with_targets());
+
+    const Outcome outcome = run_one(fake, "client.onmicrosoft.com", targets);
+    REQUIRE(outcome.error == expected);
+    REQUIRE_FALSE(outcome.result);
+    REQUIRE(fake.specs.empty());
+}
+
+TEST_CASE("every connector error is a connector::Error that keeps its message", "[connector]")
+{
+    using Thrower = std::function<void()>;
+    const Thrower thrower = GENERATE(
+        Thrower{[] { throw connector::AuthError("the message"); }},
+        Thrower{[] { throw connector::TransientError("the message"); }},
+        Thrower{[] { throw connector::NotFoundError("the message"); }},
+        Thrower{[] { throw connector::NotImplementedError("the message"); }});
+    try {
+        thrower();
+        FAIL("nothing thrown");
+    } catch (const connector::Error& e) {
+        REQUIRE(std::string{e.what()} == "the message");
+    }
+}
+
+TEST_CASE("restore targets can't be built from a config missing one", "[connector]")
+{
+    const std::string key = GENERATE("test_mailbox", "test_site_id", "test_library_id",
+                                     "test_onedrive_drive_id", "test_onedrive_folder_id");
+    CAPTURE(key);
+    rp::Config config = config_with_targets();
+    if (key == "test_mailbox") {
+        config.test_mailbox.clear();
+    } else if (key == "test_site_id") {
+        config.test_site_id.clear();
+    } else if (key == "test_library_id") {
+        config.test_library_id.clear();
+    } else if (key == "test_onedrive_drive_id") {
+        config.test_onedrive_drive_id.clear();
+    } else {
+        config.test_onedrive_folder_id.clear();
+    }
+
+    REQUIRE_THROWS_MATCHES(connector::RestoreTargets::from_config(config), std::invalid_argument,
+                           Catch::Matchers::Message("restore target " + key + " is empty"));
+}
+
+// --- Happy paths -------------------------------------------------------------------
+
+TEST_CASE("restore targets are the configured test locations", "[connector]")
+{
+    const connector::RestoreTargets targets =
+        connector::RestoreTargets::from_config(config_with_targets());
+    REQUIRE(targets.mailbox() == "restoretest@example.onmicrosoft.com");
+    REQUIRE(targets.site_id() == "site-id");
+    REQUIRE(targets.library_id() == "library-id");
+    REQUIRE(targets.onedrive_drive_id() == "drive-id");
+    REQUIRE(targets.onedrive_folder_id() == "folder-id");
+}
+
+TEST_CASE("a restore status has one name each", "[connector]")
+{
+    const auto [status, name] = GENERATE(table<connector::RestoreStatus, std::string>({
+        {connector::RestoreStatus::not_run, "not_run"},
+        {connector::RestoreStatus::succeeded, "succeeded"},
+        {connector::RestoreStatus::partial, "partial"},
+        {connector::RestoreStatus::failed, "failed"},
+    }));
+    REQUIRE(connector::to_string(status) == name);
+}
+
+TEST_CASE("a new restore result has not run", "[connector]")
+{
+    const connector::RestoreResult result;
+    REQUIRE(result.status == connector::RestoreStatus::not_run);
+    REQUIRE(result.session_ids.empty());
+    REQUIRE(result.log.empty());
+    REQUIRE(result.items_restored == 0);
+}
+
+TEST_CASE("a restore spec counts its items across the three types", "[connector]")
+{
+    const connector::RestoreTargets targets =
+        connector::RestoreTargets::from_config(config_with_targets());
+    connector::RestoreSpec spec{.client_ref = "c", .restore_point = point("p", "t"),
+                                .targets = targets};
+    REQUIRE(spec.item_count() == 0);
+    spec.mail = {{"alice@x", "Inbox", "RP-CANARY-0001"}, {"bob@x", "Inbox", "RP-CANARY-0002"}};
+    spec.sharepoint = {{"site", "drive", "/", "rp-canary-01.pdf"}};
+    spec.onedrive = {{"alice@x", "/RestoreTest", "rp-canary-11.pdf"}};
+    REQUIRE(spec.item_count() == 4);
+}
+
+TEST_CASE("scheduler-like code runs a connector it knows only as IConnector&", "[connector]")
+{
+    FakeConnector fake;
+    // Newest first, as list_restore_points promises; the newest holds no mail.
+    fake.points = {point("p3", "2026-09-27T02:00:00.0000000Z", false),
+                   point("p2", "2026-09-26T02:00:00.0000000Z"),
+                   point("p1", "2026-09-25T02:00:00.0000000Z")};
+    const connector::RestoreTargets targets =
+        connector::RestoreTargets::from_config(config_with_targets());
+
+    const Outcome outcome = run_one(fake, "client.onmicrosoft.com", targets);
+    REQUIRE(outcome.error.empty());
+    REQUIRE(outcome.connector == "fake");
+    REQUIRE(fake.clients == std::vector<std::string>{"client.onmicrosoft.com"});
+    REQUIRE(fake.specs.size() == 1);
+    const connector::RestoreSpec& spec = fake.specs[0];
+    REQUIRE(spec.client_ref == "client.onmicrosoft.com");
+    REQUIRE(spec.restore_point.id == "p2");
+    REQUIRE(spec.restore_point.backup_time == "2026-09-26T02:00:00.0000000Z");
+    REQUIRE(spec.targets.mailbox() == "restoretest@example.onmicrosoft.com");
+    REQUIRE(spec.targets.onedrive_folder_id() == "folder-id");
+    REQUIRE(spec.mail.size() == 1);
+    REQUIRE(spec.mail[0].subject == "RP-CANARY-0001");
+    REQUIRE(outcome.result);
+    REQUIRE(outcome.result->status == connector::RestoreStatus::succeeded);
+    REQUIRE(outcome.result->items_restored == 1);
+    REQUIRE(outcome.result->session_ids == std::vector<std::string>{"session-1"});
+}

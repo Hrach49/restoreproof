@@ -24,6 +24,8 @@ add_library(rpcore STATIC
     src/command_config.cpp
     src/config.cpp
     src/config_check.cpp
+    src/connector.cpp
+    src/connector_registry.cpp
     src/http_client.cpp
     src/redact.cpp
     src/retry_policy.cpp
@@ -63,6 +65,8 @@ add_executable(rptests
     tests/cli_test.cpp
     tests/config_check_test.cpp
     tests/config_test.cpp
+    tests/connector_registry_test.cpp
+    tests/connector_test.cpp
     tests/deps_test.cpp
     tests/http_client_test.cpp
     tests/http_client_tls_test.cpp

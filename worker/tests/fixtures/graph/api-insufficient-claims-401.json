@@ -1,0 +1,22 @@
+{
+  "source": "hand-written: a Graph 401 asking for more claims (Conditional Access or continuous access evaluation), shape as documented in 'Claims challenges, claims requests and client capabilities'; the lab has no policy that provokes it",
+  "request": "GET /v1.0/users/restoretest@RestoreProofLab.onmicrosoft.com/mailFolders/inbox/messages?$top=1&$select=id",
+  "status": 401,
+  "headers": {
+    "Content-Type": "application/json",
+    "request-id": "3e0b5c1a-7d2f-4c8e-9a61-0f4d2b8c7e15",
+    "client-request-id": "3e0b5c1a-7d2f-4c8e-9a61-0f4d2b8c7e15",
+    "WWW-Authenticate": "Bearer realm=\"\", authorization_uri=\"https://login.microsoftonline.com/common/oauth2/authorize\", client_id=\"00000003-0000-0000-c000-000000000000\", error=\"insufficient_claims\", claims=\"eyJhY2Nlc3NfdG9rZW4iOnt9fQ==\""
+  },
+  "body": {
+    "error": {
+      "code": "InvalidAuthenticationToken",
+      "message": "Continuous access evaluation resulted in challenge with result: InteractionRequired and code: TokenIssuedBeforeRevocationTimestamp",
+      "innerError": {
+        "date": "2026-09-28T10:00:00",
+        "request-id": "3e0b5c1a-7d2f-4c8e-9a61-0f4d2b8c7e15",
+        "client-request-id": "3e0b5c1a-7d2f-4c8e-9a61-0f4d2b8c7e15"
+      }
+    }
+  }
+}

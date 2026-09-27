@@ -340,6 +340,75 @@ Failure token_failure(const HttpResponse& response, const HintContext& context)
     return failure;
 }
 
+// Where the token may go: Graph's v1.0 root and a '/'.
+std::string graph_prefix()
+{
+    return std::string{kGraphBaseUrl} + "/";
+}
+
+// The URL a GET for `path_or_url` goes to (see GraphClient::get); throws
+// GraphError for anything else. Checked as text, before anything is sent.
+std::string graph_url(std::string_view path_or_url)
+{
+    const std::string prefix = graph_prefix();
+    const auto refuse = [&](std::string_view why) {
+        throw GraphError("Graph GET: refused \"" + one_line(path_or_url, 200) + "\": " +
+                         std::string{why} + "; the token goes only to " + prefix);
+    };
+    if (path_or_url.empty()) {
+        refuse("neither a path starting with '/' nor a URL");
+    }
+    const std::string url = path_or_url.front() == '/'
+                                ? std::string{kGraphBaseUrl} + std::string{path_or_url}
+                                : std::string{path_or_url};
+    if (!url.starts_with(prefix)) {
+        refuse(path_or_url.front() == '/' ? "not a path under v1.0"
+                                          : "a URL outside Graph's v1.0");
+    }
+    for (const char c : url) {
+        const auto byte = static_cast<unsigned char>(c);
+        if (byte <= 0x20 || byte == 0x7F || c == '\\' || c == '#') {
+            refuse("it holds whitespace, a control character, a backslash or a '#'");
+        }
+    }
+    // curl resolves dot segments ("/v1.0/../beta"), and a server may decode
+    // "%2e" first; "//" is what a protocol-relative URL ("//host/...") passed
+    // as a path looks like. None has any use in a Graph path. The query is
+    // Graph's (a $skiptoken is opaque).
+    const std::string_view rest = std::string_view{url}.substr(prefix.size() - 1);
+    const std::string path = ascii_lower(rest.substr(0, rest.find('?')));
+    if (path.find("%2e") != std::string::npos || path.find("/./") != std::string::npos ||
+        path.find("/../") != std::string::npos || path.ends_with("/.") ||
+        path.ends_with("/..") || path.find("//") != std::string::npos) {
+        refuse("its path has a dot segment or an empty one");
+    }
+    return url;
+}
+
+// "/v1.0/users/x/messages" for a URL graph_url() gave: the path without the
+// query (a $filter may name what is looked for), on one line.
+std::string display_path(std::string_view url)
+{
+    constexpr std::string_view root = "https://graph.microsoft.com";
+    url.remove_prefix(root.size());
+    return one_line(url.substr(0, url.find('?')), 200);
+}
+
+// Graph asks for a token with more claims (Conditional Access, continuous
+// access evaluation): WWW-Authenticate: Bearer ..., error="insufficient_claims".
+bool asks_for_claims(const HttpResponse& response)
+{
+    const auto it = response.headers.find("WWW-Authenticate");
+    return it != response.headers.end() &&
+           ascii_lower(it->second).find("insufficient_claims") != std::string::npos;
+}
+
+std::string relies_on(const Grant& grant)
+{
+    return "the Worker app relies on " + std::string{grant.description} +
+           "; see docs/security/graph-permissions.md";
+}
+
 } // namespace
 
 std::string user_agent()
@@ -602,48 +671,215 @@ GraphClient::Token GraphClient::current_token()
     return {access_token_, generation_, renewal_failures_.load()};
 }
 
-HttpResponse GraphClient::get(std::string_view path_or_url, const Grant& grant)
+HttpRequest GraphClient::api_request(const std::string& url, const std::string& token) const
 {
-    // W2.1's GET mapping (401, 403 with the grant, 404, 429, 5xx) and
-    // absolute URLs (@odata.nextLink) build on this.
-    static_cast<void>(grant);
-    if (path_or_url.empty() || path_or_url.front() != '/') {
-        throw GraphError("Graph GET: only a path starting with '/' can be sent");
-    }
-    const std::string what =
-        "Graph GET /v1.0" + one_line(path_or_url.substr(0, path_or_url.find('?')), 200);
-    const Token token = current_token();
-
     HttpRequest request;
     request.method = HttpMethod::get;
-    request.url = std::string{kGraphBaseUrl} + std::string{path_or_url};
+    request.url = url;
     request.headers = common_headers();
-    request.headers["Authorization"] = "Bearer " + token.access;
+    request.headers["Authorization"] = "Bearer " + token;
     request.timeout = options_.timeout;
+    // This client decides what is worth another attempt and counts them.
     request.retry_on_status = false;
     request.max_attempts = 1;
-    HttpResponse response;
-    try {
-        response = http_.send(request);
-    } catch (const HttpError& e) {
-        if (is_retryable(AttemptOutcome{e.error(), 0})) {
-            throw TransientError(what + ": " + e.what(), e.status());
+    return request;
+}
+
+HttpResponse GraphClient::get(std::string_view path_or_url, const Grant& grant)
+{
+    // Before anything is sent, the token request included.
+    const std::string url = graph_url(path_or_url);
+    const std::string path = display_path(url);
+    const std::string what = "Graph GET " + path;
+
+    Token token = current_token();
+    bool renewed = false; // this call fetched a fresh token after a 401
+    int unauthorized = 0;
+    milliseconds waited{0};
+    for (int attempt = 1;;) {
+        // What went wrong with an attempt worth another.
+        struct Retry {
+            std::string summary;
+            int status = 0;
+            std::string code;
+            std::string inner_code;
+            std::string request_id;
+            std::optional<seconds> retry_after;
+        } retry;
+
+        HttpResponse response;
+        try {
+            response = http_.send(api_request(url, token.access));
+        } catch (const HttpError& e) {
+            // A GET changes nothing, so a lost connection or a timeout is
+            // sent again; a certificate failure or a malformed URL won't fix
+            // itself.
+            if (!is_retryable(AttemptOutcome{e.error(), 0})) {
+                throw GraphError(what + ": " + e.what(), e.status());
+            }
+            retry.summary = e.what();
+            retry.status = e.status();
         }
-        throw GraphError(what + ": " + e.what(), e.status());
+
+        if (retry.summary.empty()) {
+            const int status = response.status;
+            if (status >= 200 && status <= 399) {
+                return response;
+            }
+            const GraphReply reply = parse_graph_reply(response);
+            const std::string code_part = reply.code.empty() ? "" : " (" + reply.code + ")";
+            const std::string head = what + ": HTTP " + std::to_string(status) + code_part;
+            const std::string rid = request_id_suffix(reply.request_id);
+
+            if (status == 401) {
+                if (asks_for_claims(response)) {
+                    throw AuthError(head +
+                                        ": Graph wants a token with more claims "
+                                        "(insufficient_claims): a Conditional Access policy or "
+                                        "continuous access evaluation blocks the Worker app, "
+                                        "which can't satisfy it; exclude the app from the policy" +
+                                        rid,
+                                    status, reply.code, reply.inner_code, reply.request_id);
+                }
+                if (renewed || unauthorized == kMaxUnauthorizedResends) {
+                    throw AuthError(head + " again " +
+                                        (renewed ? "after a fresh token" : "with a newer token") +
+                                        ": " + relies_on(grant) + rid,
+                                    status, reply.code, reply.inner_code, reply.request_id);
+                }
+                {
+                    const std::lock_guard lock(mutex_);
+                    if (generation_ == token.generation) {
+                        // Graph no longer takes the token: a fresh one, once
+                        // (its failure is thrown as it is).
+                        log_debug(head + "; getting a fresh token");
+                        rethrow_failure_since_locked(token.failures_seen);
+                        fetch_token_locked();
+                        renewed = true;
+                    } else {
+                        // Another call replaced the token meanwhile: the
+                        // current one is newer.
+                        log_debug(head + " for a replaced token; resending with the current one");
+                        renew_if_due_locked(token.failures_seen);
+                    }
+                    token = {access_token_, generation_, renewal_failures_.load()};
+                }
+                ++unauthorized;
+                continue;
+            }
+
+            if (status != 429 && (status < 500 || status > 599)) {
+                // A licence lapsed, the mailbox is inactive or on-premises:
+                // not an item missing from a restore.
+                if (reply.code == "MailboxNotEnabledForRESTAPI" ||
+                    reply.code == "MailboxNotSupportedForRESTAPI") {
+                    throw GraphError(head +
+                                         ": Graph can't read this mailbox: it has no Exchange "
+                                         "Online licence, is inactive or soft-deleted, or is "
+                                         "on-premises" +
+                                         rid,
+                                     status, reply.code, reply.inner_code, reply.request_id);
+                }
+                if (status == 403) {
+                    throw PermissionError("Graph denied GET " + path + " (403" +
+                                              (reply.code.empty() ? "" : " " + reply.code) +
+                                              "): " + relies_on(grant) + rid,
+                                          std::string{grant.description}, status, reply.code,
+                                          reply.inner_code, reply.request_id);
+                }
+                const std::string message =
+                    head + (reply.message.empty() ? "" : ": " + reply.message) + rid;
+                if (status == 404) {
+                    throw NotFoundError(message, status, reply.code, reply.inner_code,
+                                        reply.request_id);
+                }
+                throw GraphError(message, status, reply.code, reply.inner_code, reply.request_id);
+            }
+
+            // 429 or 5xx: a body that isn't Graph's JSON is never quoted.
+            retry.summary = "HTTP " + std::to_string(status) + code_part;
+            retry.status = status;
+            retry.code = reply.code;
+            retry.inner_code = reply.inner_code;
+            retry.request_id = reply.request_id;
+            if (status == 429 || status == 503) {
+                if (const auto it = response.headers.find("Retry-After");
+                    it != response.headers.end()) {
+                    retry.retry_after = parse_retry_after(it->second, options_.wall_now());
+                }
+            }
+        }
+
+        // Another attempt, within the budget.
+        const auto give_up = [&](const std::string& extra) {
+            throw TransientError(what + ": " + retry.summary +
+                                     (attempt > 1 ? " after " + std::to_string(attempt) +
+                                                        " attempts"
+                                                  : std::string{}) +
+                                     extra + request_id_suffix(retry.request_id),
+                                 retry.status, retry.code, retry.inner_code, retry.request_id,
+                                 retry.retry_after);
+        };
+        if (attempt >= kMaxHttpAttempts) {
+            give_up({});
+        }
+        if (retry.retry_after && *retry.retry_after > kMaxRetryWait) {
+            give_up("; Graph asked to wait " + std::to_string(retry.retry_after->count()) +
+                    " s, more than the " + std::to_string(kMaxRetryWait.count()) +
+                    " s the Worker waits");
+        }
+        milliseconds wait = retry_delay(attempt, options_.jitter());
+        if (retry.retry_after) {
+            wait = std::max<milliseconds>(wait, *retry.retry_after);
+        }
+        if (waited + wait > kMaxRetryWaitPerCall) {
+            give_up("; another wait would pass the " +
+                    std::to_string(kMaxRetryWaitPerCall.count()) +
+                    " s the Worker waits for one call");
+        }
+        log_debug(what + ": " + retry.summary + " on attempt " + std::to_string(attempt) +
+                  "; retrying in " + std::to_string(wait.count()) + " ms");
+        options_.sleep(wait);
+        waited += wait;
+        ++attempt;
+        // A long wait can outlast the token.
+        token = current_token();
     }
-    if (response.status >= 200 && response.status <= 299) {
-        return response;
+}
+
+json GraphClient::get_json(std::string_view path_or_url, const Grant& grant)
+{
+    const HttpResponse response = get(path_or_url, grant);
+    const std::string what = "Graph GET " + display_path(graph_url(path_or_url)) + ": HTTP " +
+                             std::to_string(response.status);
+    const std::string request_id = header_request_id(response);
+    if (response.status >= 300) {
+        throw GraphError(what + ", a redirect where JSON was expected" +
+                             request_id_suffix(request_id),
+                         response.status, {}, {}, request_id);
     }
-    const GraphReply reply = parse_graph_reply(response);
-    std::string message = what + ": HTTP " + std::to_string(response.status);
-    if (!reply.code.empty()) {
-        message += " (" + reply.code + ")";
+    // Not const: the caller gets it moved.
+    json doc = json::parse(response.body, nullptr, false);
+    if (doc.is_discarded() || !doc.is_object()) {
+        throw GraphError(what + ", but the reply isn't a JSON object" +
+                             request_id_suffix(request_id),
+                         response.status, {}, {}, request_id);
     }
-    if (!reply.message.empty()) {
-        message += ": " + reply.message;
-    }
-    throw GraphError(message + request_id_suffix(reply.request_id), response.status, reply.code,
-                     reply.inner_code, reply.request_id);
+    return doc;
+}
+
+HttpClientOptions graph_http_client_options(std::shared_ptr<spdlog::logger> logger)
+{
+    // Public hosts under public certificates: the Windows store, full checks.
+    // Never a CA file or a pin (those are for Veeam's own certificate).
+    HttpClientOptions options;
+    options.logger = std::move(logger);
+    return options;
+}
+
+std::unique_ptr<IHttpClient> make_graph_http_client(std::shared_ptr<spdlog::logger> logger)
+{
+    return std::make_unique<HttpClient>(graph_http_client_options(std::move(logger)));
 }
 
 } // namespace rp::graph

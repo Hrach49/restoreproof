@@ -1,14 +1,20 @@
 # L1.5 Done-when evidence: the RestoreProof Worker app's live permission check
-# Run 2026-09-27 20:10:24Z from lab/ on the dev laptop:
+# Run 2026-09-27 from lab/ on the dev laptop, by the lab owner, with the checker as of commit 0669f16:
 #   uv run python -m seeder check-worker-app --client-id 737da5ef-baf2-4198-b009-e160d8ca77c9
-# Exit code 0. What each probe proves: docs/security/graph-permissions.md. No secrets: the
-# checker prints statuses, IDs and the certificate thumbprint only.
+# Every row ok (the checker exits 0 exactly then). What each row proves:
+# docs/security/graph-permissions.md. No secrets: the checker prints statuses, IDs and the
+# certificate thumbprint only; alice's sign-in line is the seeder app's prompt.
 
 RestoreProof Worker app check (L1.5): app-only Microsoft Graph, GET only
 tenant ID    bcd6bd1a-ea42-489d-aa28-2c19a44ad146
 client ID    737da5ef-baf2-4198-b009-e160d8ca77c9
 certificate  SHA-1 thumbprint B56D2BD39945BAB1484A53F6C78C059A369EDBB3, expires 2027-09-27
-token roles  Files.SelectedOperations.Selected, Sites.Selected  ok
+token roles, Microsoft Graph      Files.SelectedOperations.Selected, Sites.Selected  ok
+token roles, Exchange Online      (none)  ok
+token roles, SharePoint           (none)  ok
+==> Sign in as alice@RestoreProofLab.onmicrosoft.com  (confirm her RestoreTest canary folder exists)
+    A browser window opens; choose or type alice@RestoreProofLab.onmicrosoft.com.
+canary folder, read as alice      RestoreTest, 10 items  ok
 
 result      expect     got  probe                                                       request
 ok             200     200  restoretest's mailbox: list messages                        GET /users/restoretest@RestoreProofLab.onmicrosoft.com/messages

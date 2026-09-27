@@ -189,7 +189,8 @@ Export, and export it as "Base-64 encoded X.509 (.CER)", which is PEM. Save it a
 `veeam_ca_file` must match it).
 
 If Veeam's certificate is renewed or replaced, both values change and the Worker stops
-connecting until they are updated.
+connecting until they are updated: `rpworker veeam list` then fails with exit code 4 and
+`veeam error: Veeam POST /v8/token: TLS failure: ...`.
 
 The trust comes from `config.json`: the SHA-256 there decides which certificate the Worker
 accepts, so replacing the `.pem` file alone gets nobody past the pin. Keep `config.json`
@@ -333,9 +334,13 @@ With the lab's organisation (the recorded responses in `worker/tests/fixtures/ve
   a partial table never looks like a complete one. The command logs out of Veeam whether it
   succeeded or not.
 - **The output is UTF-8.** Columns are padded by character, so a name such as `Zürich` lines
-  up. `rpworker` doesn't change the console's code page: to see non-ASCII names correctly in
-  a console, use PowerShell 7, or run `chcp 65001` first in `cmd.exe`. Redirected to a file,
-  the bytes are UTF-8 either way. Control characters in names from Veeam are shown as
+  up. `rpworker` doesn't change the console's code page, and neither does PowerShell 7: on a
+  console still on code page 437 or 850, `Zürich` shows as `Z├╝rich` and its row is out of
+  line. To see non-ASCII names correctly, switch the console to UTF-8 first: in PowerShell
+  run `[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()`, in `cmd.exe` run
+  `chcp 65001`. The same PowerShell setting also matters when PowerShell captures the output
+  or pipes it to a cmdlet, since it decodes a program's output with it; `> file` in `cmd.exe`
+  writes the UTF-8 bytes as they are. Control characters in names from Veeam are shown as
   spaces.
 
 An error is one line on stderr, and nothing is printed on stdout:
@@ -354,10 +359,10 @@ The same for every `rpworker` command (`rp::exit_code` in `worker/include/rp/cli
 | Exit code | Meaning | stderr |
 |---|---|---|
 | 0 | Success. | (nothing) |
-| 1 | The config or a secret is missing or invalid, or something unexpected failed. | `config error: <path>: <message>`, `config error: the --config path is not valid UTF-8`, `config error: cannot find the ProgramData folder`, `config error: environment variable <name> is not valid Unicode`, `config error: RP_VEEAM_USERNAME is not set` (then `RP_VEEAM_PASSWORD`), `config error: unexpected failure` or `error: unexpected failure`; an unexpected failure's own message is never shown |
+| 1 | The config or a secret is missing or invalid, or something unexpected failed (an error no command handles ends here too, never in an `abort()`, whose exit code would be 3). | `config error: <path>: <message>`, `config error: the --config path is not valid UTF-8`, `config error: cannot find the ProgramData folder`, `config error: environment variable <name> is not valid Unicode`, `config error: RP_VEEAM_USERNAME is not set` (then `RP_VEEAM_PASSWORD`), `config error: unexpected failure` or `error: unexpected failure`; an unexpected failure's own message is never shown |
 | 2 | Veeam refused the sign-in, the account's role or the token. | `veeam error: <message>` |
 | 3 | Veeam couldn't be reached: no connection, a timeout, a TLS handshake that broke off, or a 502, 503 or 504 after the retries. | `veeam error: <message>` |
-| 4 | Any other Veeam error (an unknown organisation, a bad request, an unexpected answer), or no organisation named `veeam_org_name`. | `veeam error: <message>`, or `veeam error: organisation <name> (veeam_org_name) not found in Veeam` |
+| 4 | Any other Veeam error (an unknown organisation, a bad request, an unexpected answer), or no organisation named `veeam_org_name`. Also Veeam's certificate failing verification, which a retry won't fix: `veeam_ca_file` doesn't hold Veeam's certificate or its CA, or Veeam's certificate was renewed and no longer matches `veeam_cert_sha256` (see "Veeam's default certificate"). | `veeam error: <message>` (`... TLS failure: ...` for a certificate), or `veeam error: organisation <name> (veeam_org_name) not found in Veeam` |
 | 64 | The command line isn't understood. | the usage line |
 
 The usage line is:

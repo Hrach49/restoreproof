@@ -12,7 +12,6 @@
 #include <algorithm>
 #include <array>
 #include <cstddef>
-#include <exception>
 #include <format>
 #include <memory>
 #include <optional>
@@ -201,7 +200,7 @@ int run_veeam_command(std::span<const std::string_view> args, std::ostream& out,
     } catch (const ConfigError& e) {
         err << "config error: " << e.what() << '\n';
         return exit_code::config;
-    } catch (const std::exception&) {
+    } catch (...) {
         // Not a ConfigError, so its message may not be safe to show.
         err << "config error: unexpected failure\n";
         return exit_code::config;
@@ -226,8 +225,9 @@ int run_veeam_command(std::span<const std::string_view> args, std::ostream& out,
     // HTTP client, goes first.
     std::unique_ptr<IHttpClient> http;
     std::unique_ptr<VeeamClient> client;
-    std::vector<OrgListing> listing;
     int code = exit_code::ok;
+    // Everything that can throw is in here, the table's formatting and
+    // printing included, so no exception escapes.
     try {
         http = env.make_http(http_options);
         if (!http) {
@@ -238,10 +238,19 @@ int run_veeam_command(std::span<const std::string_view> args, std::ostream& out,
         std::vector<Organization> orgs = client->list_organizations();
         std::ranges::sort(orgs, org_less);
         // Every list first: a failure prints no partial table.
+        std::vector<OrgListing> listing;
         for (Organization& org : orgs) {
             std::vector<RestorePoint> points = client->list_restore_points(org.id);
             const bool configured = ascii_lower(org.name) == ascii_lower(config.veeam_org_name);
             listing.push_back({std::move(org), std::move(points), configured});
+        }
+        // Before the logout: everything is read, so the table needn't wait for
+        // Veeam to answer it.
+        out << format_listing(listing);
+        if (std::ranges::none_of(listing, &OrgListing::configured)) {
+            err << "veeam error: organisation " << config.veeam_org_name
+                << " (veeam_org_name) not found in Veeam\n";
+            code = exit_code::veeam;
         }
     } catch (const AuthError& e) {
         code = report_veeam_error(err, e, exit_code::auth);
@@ -249,25 +258,15 @@ int run_veeam_command(std::span<const std::string_view> args, std::ostream& out,
         code = report_veeam_error(err, e, exit_code::transient);
     } catch (const VeeamError& e) {
         code = report_veeam_error(err, e, exit_code::veeam);
-    } catch (const std::exception&) {
-        // Its message may not be safe to show.
+    } catch (...) {
+        // Its message, if it has one, may not be safe to show.
         err << "error: unexpected failure\n";
         code = exit_code::config;
     }
     if (client) {
         client->logout();
     }
-    if (code != exit_code::ok) {
-        return code;
-    }
-
-    out << format_listing(listing);
-    if (std::ranges::none_of(listing, &OrgListing::configured)) {
-        err << "veeam error: organisation " << config.veeam_org_name
-            << " (veeam_org_name) not found in Veeam\n";
-        return exit_code::veeam;
-    }
-    return exit_code::ok;
+    return code;
 }
 
 } // namespace rp

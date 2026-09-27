@@ -29,6 +29,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <ostream>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -193,6 +194,13 @@ struct Harness {
     {
         const std::string path_arg = utf8(config_path);
         return run(Args{"list", "--config", path_arg});
+    }
+
+    // The same, onto the streams given.
+    int run_list(std::ostream& out, std::ostream& err)
+    {
+        const std::string path_arg = utf8(config_path);
+        return rp::run_veeam_command(Args{"list", "--config", path_arg}, out, err, env());
     }
 
     std::string log()
@@ -602,6 +610,33 @@ TEST_CASE("rpworker veeam list reports an unexpected failure without its message
         REQUIRE(result.exit_code == 1);
         REQUIRE(result.out.empty());
         REQUIRE(result.err == "error: unexpected failure\n");
+        REQUIRE(logouts(lab) == 1);
+    }
+    SECTION("one that isn't a std::exception")
+    {
+        Harness lab;
+        lab.http.on(HttpMethod::get, points_url(),
+                    [](const HttpRequest&) -> HttpResponse { throw 42; });
+
+        const Run result = lab.run_list();
+        REQUIRE(result.exit_code == 1);
+        REQUIRE(result.out.empty());
+        REQUIRE(result.err == "error: unexpected failure\n");
+        REQUIRE(logouts(lab) == 1);
+    }
+    SECTION("writing the table")
+    {
+        // Every list read, then stdout fails: no exception escapes, and the
+        // command still logs out.
+        Harness lab;
+        rp::test::FailingStreamBuf failing;
+        std::ostream out(&failing);
+        out.exceptions(std::ios::badbit);
+        std::ostringstream err;
+
+        REQUIRE(lab.run_list(out, err) == 1);
+        REQUIRE(err.str() == "error: unexpected failure\n");
+        REQUIRE(lab.http.count(HttpMethod::get, points_url()) == 1);
         REQUIRE(logouts(lab) == 1);
     }
     SECTION("making the HTTP client")

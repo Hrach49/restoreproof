@@ -86,6 +86,36 @@ TEST_CASE("rpworker --version prints the project version to stdout and exits 0",
     REQUIRE(err.str().empty());
 }
 
+TEST_CASE("rpworker reports an exception a command doesn't handle as exit 1, never a crash",
+          "[cli]")
+{
+    // Escaping wmain, it would end in abort(), whose exit code on Windows is
+    // 3: exit_code::transient, "try again later".
+    rp::test::FailingStreamBuf failing;
+    std::ostream out(&failing);
+    out.exceptions(std::ios::badbit);
+    std::ostringstream err;
+
+    const Args args{"--version"};
+
+    SECTION("run_cli")
+    {
+        REQUIRE(rp::run_cli(args, out, err) == 1);
+        // Its message may not be safe to show.
+        REQUIRE(err.str() == "error: unexpected failure\n");
+    }
+    SECTION("run_main")
+    {
+        const std::vector<const wchar_t*> argv{L"rpworker.exe", L"--version"};
+        REQUIRE(rp::run_main(argv, out, err) == 1);
+        REQUIRE(err.str() == "error: unexpected failure\n");
+    }
+    SECTION("with stderr failing too, the exit code still says so")
+    {
+        REQUIRE(rp::run_cli(args, out, out) == 1);
+    }
+}
+
 TEST_CASE("rpworker config check --config <file> checks that file", "[cli]")
 {
     const rp::test::TempDir dir;

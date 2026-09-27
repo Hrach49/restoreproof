@@ -27,6 +27,13 @@ def test_tenant_ids_match_tenant_md():
         tenant.SHAREPOINT_DRIVE_ID,
         tenant.ONEDRIVE_DRIVE_ID,
         tenant.ONEDRIVE_FOLDER_ID,
+        tenant.RESTORETEST_UPN,
+        tenant.SHAREPOINT_HOST,
+        tenant.ONEDRIVE_HOST,
+        tenant.ALICE_ONEDRIVE_SITE_PATH,
+        tenant.RESTORE_TARGET_LIST_ID,
+        tenant.RESTORE_TARGET_DRIVE_ID,
+        tenant.ONEDRIVE_TARGET_FOLDER_ID,
     ]
     missing = [v for v in values if f"`{v}`" not in text]
     assert not missing, f"seeder/tenant.py values not in lab/tenant.md: {missing}"
@@ -37,6 +44,15 @@ def test_seeder_client_id_is_recorded_in_tenant_md_once_set():
         pytest.skip("seeder app not registered yet")
     text = (LAB_DIR / "tenant.md").read_text(encoding="utf-8")
     assert f"`{tenant.SEEDER_CLIENT_ID}`" in text
+
+
+def test_worker_client_id_is_recorded_in_tenant_md_once_set():
+    if not tenant.WORKER_CLIENT_ID:
+        pytest.skip("RestoreProof Worker app not registered yet")
+    text = (LAB_DIR / "tenant.md").read_text(encoding="utf-8")
+    section = text.split("## RestoreProof Worker app", 1)
+    assert len(section) == 2, "lab/tenant.md has no 'RestoreProof Worker app' section"
+    assert f"`{tenant.WORKER_CLIENT_ID}`" in section[1]
 
 
 def test_twenty_mails_with_unique_subjects_and_sentences():

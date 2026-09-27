@@ -267,6 +267,11 @@ sent, and then the Graph read-back decides `pass`/`fail` (`docs/verification.md`
    holds broad application permissions. Whether the Worker gets that certificate or a
    dedicated restore app with narrower permissions is open. Either way the PFX is a vault
    secret, and the `RP_*` variables in `worker/include/rp/secrets.hpp` will change.
+   *Still open after L1.5 (W2.4).* L1.5 made the Worker's own Graph app, "RestoreProof
+   Worker" (`docs/security/graph-permissions.md`). It can only read the three restore
+   targets, so it can't be the app in Veeam's restore body, since Veeam writes the restored
+   items. Its credential is already a certificate kept as a PFX plus password
+   (`docs/decisions.md` 2026-09-27), the form this body takes.
 5. **Addressing (W2.4, W2.7).**
    - Mail targets a mailbox **address** plus a folder **name**.
    - SharePoint targets a site URL plus a library **display name** (`RestoreTarget`).

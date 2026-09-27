@@ -82,6 +82,85 @@ Format: date, decision, reason, alternatives rejected.
 
 ---
 
+## 2026-09-27 — W1.6: rpworker veeam list, exit codes and output
+
+Changes the usage exit code from 2 to 64. The 2 was set with W1.1/W1.2 in the `cli.hpp` and
+`config_check.hpp` comments and `docs/worker-config.md`, never recorded in this log; the
+2026-09-24 entry "`rpworker`'s command line lives in rpcore" only says where exit codes live.
+
+**Decision.**
+
+- **One set of exit codes for the whole `rpworker` CLI**, in `rp::exit_code`
+  (`worker/include/rp/cli.hpp`): `0` success; `1` config error (`config.json` missing or
+  invalid, a `--config` path that isn't UTF-8, `RP_VEEAM_USERNAME` or `RP_VEEAM_PASSWORD`
+  unset or empty, or any unexpected exception that isn't a Veeam one, whose message is never
+  shown); `2` `AuthError` (Veeam refused the credentials, the role or the token); `3`
+  `TransientError` (unreachable, timeout, TLS handshake failure, 502/503/504); `4` any other
+  `VeeamError`, `NotFoundError` included, and `veeam_org_name` not among Veeam's
+  organisations. A certificate that fails verification (`TransportError::tls`: a
+  `veeam_ca_file` that doesn't hold Veeam's certificate or its CA, or a `veeam_cert_sha256`
+  that no longer matches after Veeam's certificate was renewed) is a plain `VeeamError`, so
+  exit 4, not 3: it won't fix itself on a retry. `64` usage (sysexits' `EX_USAGE`): a command line `rpworker` doesn't
+  understand, an argument that isn't valid UTF-16 included. The usage line is one string,
+  `rp::kCliUsage`, listing all three forms.
+- **Messages on stderr, one line each:** `config error: <ConfigError what()>` as in `config
+  check`; `config error: RP_VEEAM_USERNAME is not set` (checked first), then the same for
+  `RP_VEEAM_PASSWORD`; `veeam error: <what()>` (already redacted by `VeeamError`);
+  `error: unexpected failure` for an unexpected exception after the config loaded.
+- **No exception leaves `rpworker`.** `rp::run_cli` and `rp::run_main` are `noexcept` and
+  catch anything a command lets out: `error: unexpected failure`, exit 1. Uncaught, it would
+  end in `abort()`, whose exit code with the MSVC runtime is 3, the code for "Veeam
+  unreachable, try again later". `veeam list` catches everything itself too, formatting and
+  writing the table included.
+- **`veeam list` lists every organisation Veeam returns**, sorted by name (ASCII
+  case-insensitive), then ID, and marks the one `veeam_org_name` names (ASCII
+  case-insensitive) with `*` in a leading marker column. When none matches, the table is
+  still printed, then `veeam error: organisation <name> (veeam_org_name) not found in
+  Veeam`, exit 4; with no organisations at all it prints `no organisations in Veeam` and the
+  summary, exit 4.
+- **Every list is read before anything is printed.** A restore-point list that fails for
+  any organisation (a `NotFoundError` if it vanished between the two calls included) fails
+  the whole command with that error's code, and stdout stays empty: no partial table.
+  `logout()` runs after any sign-in, on success and on failure, and after the table is
+  printed, so a slow logout doesn't hold the table back.
+- **The table** (stdout, UTF-8 bytes): columns `ORGANIZATION`, `BACKUP TIME`, `EX`, `SP`,
+  `OD`, `TM`, `LONG-TERM`, `RESTORE POINT ID`, after the two-character marker column
+  (`* ` or two spaces); left-aligned, padded to the widest cell counted in code points, two
+  spaces apart, no trailing spaces. `backupTime` exactly as Veeam sent it; points newest
+  first; the flags `x`/`-`, `LONG-TERM` `yes`/`no`; the organisation name on every row; an
+  organisation without points gets one row with `(no restore points)`. Control characters
+  in text from Veeam become spaces. Then a blank line and `<n> organisation(s), <m> restore
+  point(s); * = veeam_org_name`. `rpworker` never changes the console code page, and
+  PowerShell 7 doesn't either: non-ASCII names show correctly on a console only once its
+  output code page is UTF-8 (`chcp 65001`, or `[Console]::OutputEncoding` set to UTF-8 in
+  PowerShell). On code page 437 `Zürich` shows as `Z├╝rich`.
+- **Testability.** `rp::run_veeam_command` (`worker/include/rp/veeam_command.hpp`) takes a
+  `VeeamCommandEnv` (default config path, secrets loader, HTTP client factory, client
+  options); `run_cli` passes `default_veeam_command_env()`, whose logger writes warnings and
+  worse to stderr, never to stdout where the table is. The HTTP client gets `ca_file` and
+  `pinned_cert_sha256` from the config (TLS never off). The `[--config <path>]` handling
+  `config check` had moved to `worker/src/command_config.{hpp,cpp}`, shared by both
+  commands. `run_exe_test.cmake` takes an optional `UNSET_ENV` list, so an exe test can
+  remove variables the developer's shell has set.
+
+**Reason.** The issue asks for exit code 2 on an authentication failure, which usage held.
+Distinct codes let a script or the future service tell a wrong password from a server that
+is down from a missing organisation without parsing text. Listing every organisation, rather
+than only the configured one, is what an operator needs when `veeam_org_name` is wrong: the
+right name is on screen. Building the whole table first keeps a failure from looking like a
+short, successful list.
+
+**Alternatives rejected.** *Keeping usage at 2 and giving auth another code:* the issue fixes
+auth at 2. *Printing only `veeam_org_name`'s restore points:* a typo would show nothing
+useful. *Printing organisations as they are read:* a later failure would leave a partial
+table that looks complete. *Setting the console to UTF-8 from `rpworker`:* it changes the
+shell's state for everything run after it; the bytes are UTF-8 either way. *CLI11:* the
+hand-rolled parser still has three forms; not worth a dependency. *A code of its own for an
+exception no command caught (70, sysexits' `EX_SOFTWARE`):* exit 1 already means "something
+unexpected failed" and says nothing more; what matters is that it isn't 3.
+
+---
+
 ## 2026-09-26 — VeeamClient after review: one retry budget, token requests at most once, renewal failures shared only while no token works (W1.5)
 
 Supersedes parts of the entry below ("VeeamClient: status retries off per request ...") and

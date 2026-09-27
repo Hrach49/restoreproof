@@ -670,7 +670,7 @@ VeeamClient::Token VeeamClient::current_token()
     const std::uint64_t failures_seen = renewal_failures_.load();
     const std::lock_guard lock(mutex_);
     renew_if_due_locked(failures_seen);
-    return {access_token_, generation_};
+    return {access_token_, generation_, renewal_failures_.load()};
 }
 
 void VeeamClient::login()
@@ -777,12 +777,11 @@ HttpResponse VeeamClient::get(const std::string& path_and_query)
         }
         const std::string description = auth_description(response);
         const std::string reason = description.empty() ? "" : " (" + description + ")";
-        const std::uint64_t failures_seen = renewal_failures_.load();
         {
             const std::lock_guard lock(mutex_);
             if (generation_ == token.generation || access_token_.empty()) {
                 log_debug(what + ": HTTP 401" + reason + "; signing in again");
-                rethrow_failure_since_locked(failures_seen);
+                rethrow_failure_since_locked(token.failures_seen);
                 login_locked();
                 signed_in = true;
             } else {
@@ -791,9 +790,9 @@ HttpResponse VeeamClient::get(const std::string& path_and_query)
                 // perhaps itself near its end by now.
                 log_debug(what + ": HTTP 401" + reason +
                           " for a replaced token; resending with the current one");
-                renew_if_due_locked(failures_seen);
+                renew_if_due_locked(token.failures_seen);
             }
-            token = {access_token_, generation_};
+            token = {access_token_, generation_, renewal_failures_.load()};
         }
         response = send_get(path_and_query, token.access, what, attempts);
     }

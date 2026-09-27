@@ -1076,75 +1076,54 @@ TEST_CASE("a Veeam message is cut at 500 bytes without splitting a character", "
     }
 }
 
-TEST_CASE("a sign-in failure isn't handed to a waiter once a later sign-in succeeded",
-          "[veeam]")
+TEST_CASE("a renewal failure is shared only while no renewal has succeeded since", "[veeam]")
 {
-    // W1.5 review: A waits for the lock while B's sign-in fails and C's then
-    // succeeds; A must use C's token, not fail with B's error. Which of A and
-    // C takes the lock first after B is the scheduler's choice (C is made
-    // likely to win: it is running when B lets go), so the scenario runs
-    // several times. A may fail only when it came first; before the fix it
-    // failed every time. C starts once B has let go of the lock (its call has
-    // returned), while A is still being woken: running, C usually wins.
-    constexpr int kRounds = 20;
-    int a_succeeded = 0;
-    int a_failed_otherwise = 0;
-    for (int round = 0; round < kRounds; ++round) {
-        Lab lab;
-        lab.http.on(HttpMethod::get, orgs_url(), {load_fixture("veeam", "organizations-200")});
-        std::atomic<bool> a_started = false;
-        std::atomic<bool> b_done = false;
-        lab.on_login = [&](int n) -> HttpResponse {
-            if (n == 1) {
-                // B, holding the lock: wait until A queues behind it.
-                while (!a_started.load()) {
-                    std::this_thread::yield();
-                }
-                std::this_thread::sleep_for(20ms);
+    // W1.5 review: a caller that waited while B's sign-in failed was handed
+    // B's error even after C's later sign-in had succeeded. Here the caller's
+    // request is in flight (its GET handler plays B and C, on the caller's
+    // thread, so the order is fixed) and comes back with an empty 401.
+    const bool c_signs_in = GENERATE(true, false);
+    CAPTURE(c_signs_in);
+    Lab lab;
+    std::unique_ptr<rp::VeeamClient> client = lab.make_client();
+    client->login();
+    std::atomic<int> gets = 0;
+    std::atomic<int> b_failed = 0;
+    lab.http.on(HttpMethod::get, orgs_url(), [&](const HttpRequest&) {
+        if (++gets == 1) {
+            lab.on_login = [](int) -> HttpResponse {
                 throw rp::HttpError("POST https://veeam.test:4443/v8/token: timed out",
                                     rp::TransportError::timeout, 0, 1);
+            };
+            try {
+                client->login(); // B
+            } catch (const rp::TransientError&) {
+                ++b_failed;
             }
-            return token_response("access-login-" + std::to_string(n), "r");
-        };
-        auto client = lab.make_client();
-
-        std::atomic<int> a_result = 0; // 1 succeeded, 2 TransientError, 3 anything else
-        {
-            std::jthread b([&] {
-                try {
-                    client->login();
-                } catch (...) {
-                    b_done = true;
-                }
-            });
-            while (lab.logins.load() == 0) {
-                std::this_thread::yield();
+            lab.on_login = [](int n) {
+                return token_response("access-login-" + std::to_string(n), "r");
+            };
+            if (c_signs_in) {
+                client->login(); // C
             }
-            std::jthread a([&] {
-                a_started = true;
-                try {
-                    a_result = client->list_organizations().size() == 1 ? 1 : 3;
-                } catch (const rp::TransientError&) {
-                    a_result = 2;
-                } catch (...) {
-                    a_result = 3;
-                }
-            });
-            std::jthread c([&] {
-                while (!b_done.load()) {
-                    std::this_thread::yield();
-                }
-                try {
-                    client->login();
-                } catch (...) {
-                }
-            });
+            return load_fixture("veeam", "api-invalid-token-401");
         }
-        a_succeeded += a_result == 1 ? 1 : 0;
-        a_failed_otherwise += a_result == 3 ? 1 : 0;
+        return load_fixture("veeam", "organizations-200");
+    });
+
+    if (c_signs_in) {
+        // C's token works: the caller resends with it, B's error is history.
+        CHECK(client->list_organizations().size() == 1);
+        CHECK(lab.logins == 3);
+        CHECK(bearer(lab.http.requests().back()) == "Bearer access-login-3");
+    } else {
+        // Nothing has worked since B failed: the caller gets B's failure
+        // rather than trying again itself.
+        CHECK(thrown_kind([&] { client->list_organizations(); }) == "TransientError");
+        CHECK(lab.logins == 2);
+        CHECK(gets == 1);
     }
-    CHECK(a_failed_otherwise == 0);
-    CHECK(a_succeeded > 0);
+    CHECK(b_failed == 1);
 }
 
 TEST_CASE("a deeply nested value in a list entry doesn't overflow the stack", "[veeam]")

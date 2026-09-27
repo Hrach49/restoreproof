@@ -557,3 +557,96 @@ TEST_CASE("is_secret_header names Authorization and Proxy-Authorization in any c
     CAPTURE(name);
     CHECK(rp::is_secret_header(name) == secret);
 }
+
+// W2.1: Graph access tokens and client assertions are JWTs; one can turn up
+// in a log line without a key in front of it (a URL, a copied header, an
+// error message). Failure paths first: text that looks a little like one.
+TEST_CASE("redact leaves text that only resembles a JWT or a bearer token unchanged",
+          "[redact][jwt]")
+{
+    const std::string_view text = GENERATE(values<std::string_view>({
+        // Not starting with eyJ, or eyJ run into a preceding token character.
+        "abc.def.ghi",
+        "xeyJhbGciOiJQUzI1NiJ9.e30.sig",
+        "_eyJhbGciOiJQUzI1NiJ9.e30.sig",
+        "-eyJhbGciOiJQUzI1NiJ9.e30.sig",
+        // Case matters: base64 of '{"' is eyJ.
+        "EYJhbGciOiJQUzI1NiJ9.e30.sig",
+        // Only one part, or nothing after the first dot.
+        "eyJhbGciOiJQUzI1NiJ9",
+        "eyJhbGciOiJQUzI1NiJ9.",
+        "eyJhbGciOiJQUzI1NiJ9. next",
+        "eyJ",
+        // A bearer scheme without a token, or with auth-params (WWW-Authenticate).
+        "Bearer",
+        "Bearer ",
+        R"({"token_type":"Bearer","expires_in":3599})",
+        R"(WWW-Authenticate: Bearer realm="", authorization_uri="https://login.microsoftonline.com/common/oauth2/authorize", client_id="00000003-0000-0000-c000-000000000000")",
+        R"(Bearer error="insufficient_claims", claims="e30=")",
+        "Bearer error=invalid_token",
+        // "bearer" run into a word.
+        "nobearer abc",
+        "Bearers abc",
+        // Names that start with pfx but go on, or end in it without a separator.
+        "pfxfile=x",
+        "mypfx=x",
+        "RP_GRAPH_CERT_PFX_BASE64 is not set",
+        "the pfx does not open",
+    }));
+    CAPTURE(text);
+    CHECK(rp::redact(text) == text);
+}
+
+TEST_CASE("redact replaces a raw JWT, signed or unsigned, wherever it stands", "[redact][jwt]")
+{
+    check_row(GENERATE(values<Row>({
+        // Signed (three parts).
+        {"eyJhbGciOiJQUzI1NiJ9.eyJhdWQiOiJ4In0.c2lnbmF0dXJl", "[REDACTED]"},
+        {"token eyJhbGciOiJQUzI1NiJ9.eyJhdWQiOiJ4In0.c2ln-_x end",
+         "token [REDACTED] end"},
+        // Unsigned: an empty third part, or only two parts.
+        {"eyJhbGciOiJub25lIn0.e30.", "[REDACTED]"},
+        {"eyJhbGciOiJub25lIn0.e30. next", "[REDACTED] next"},
+        {"eyJhbGciOiJub25lIn0.e30", "[REDACTED]"},
+        // Five parts (JWE): every part goes.
+        {"eyJhbGciOiJSU0EifQ.a.b.c.d rest", "[REDACTED] rest"},
+        // In a URL without a secret key name, in quotes, after punctuation.
+        {"https://h/cb?token=eyJhbGciOiJQUzI1NiJ9.e30.sig&state=1",
+         "https://h/cb?token=[REDACTED]&state=1"},
+        {R"({"assertion_hint":"eyJhbGciOiJQUzI1NiJ9.e30.sig"})",
+         R"({"assertion_hint":"[REDACTED]"})"},
+        {"(eyJhbGciOiJQUzI1NiJ9.e30.sig)", "([REDACTED])"},
+        {"a.eyJhbGciOiJQUzI1NiJ9.e30.sig", "a.[REDACTED]"},
+        // Two in one text.
+        {"eyJa.eyJb.c and eyJd.e", "[REDACTED] and [REDACTED]"},
+    })));
+}
+
+TEST_CASE("redact replaces the token after a Bearer scheme", "[redact][jwt]")
+{
+    check_row(GENERATE(values<Row>({
+        {"Bearer abc123", "Bearer [REDACTED]"},
+        {"bearer abc123 next", "bearer [REDACTED] next"},
+        {"BEARER   a-b.c_d~e+f/g==", "BEARER   [REDACTED]"},
+        {"Bearer\tabc", "Bearer\t[REDACTED]"},
+        {"sent Bearer abc, then", "sent Bearer [REDACTED], then"},
+        {"Bearer abc==", "Bearer [REDACTED]"},
+        {R"("Bearer abc")", R"("Bearer [REDACTED]")"},
+        {"Bearer eyJhbGciOiJQUzI1NiJ9.e30.sig", "Bearer [REDACTED]"},
+        // A token of characters outside token68 still goes up to whitespace or
+        // a quote: over-redacting is preferred to leaking.
+        {"Bearer abc!def ok", "Bearer [REDACTED] ok"},
+    })));
+}
+
+TEST_CASE("redact treats pfx and pfx_base64 as secret key names", "[redact][jwt]")
+{
+    check_row(GENERATE(values<Row>({
+        {"pfx=MIIKsecret&a=1", "pfx=[REDACTED]&a=1"},
+        {"cert_pfx=MIIK", "cert_pfx=[REDACTED]"},
+        {"RP_GRAPH_CERT_PFX_BASE64=MIIKsecret", "RP_GRAPH_CERT_PFX_BASE64=[REDACTED]"},
+        {R"({"pfx":"MIIK"})", R"({"pfx":"[REDACTED]"})"},
+        {R"({"graph_cert_pfx_base64":"MIIK"})", R"({"graph_cert_pfx_base64":"[REDACTED]"})"},
+        {"pfx_base64: MIIK", "pfx_base64: [REDACTED]"},
+    })));
+}

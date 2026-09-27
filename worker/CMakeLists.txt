@@ -19,6 +19,7 @@ enable_testing()
 # rpcore: static library holding all Worker logic. rpworker (the exe) and
 # rptests both link it; coverage is measured on its sources (src/, include/).
 add_library(rpcore STATIC
+    src/base64.cpp
     src/cert_pin.cpp
     src/cli.cpp
     src/command_config.cpp
@@ -62,6 +63,7 @@ add_executable(rpworker
 target_link_libraries(rpworker PRIVATE rpcore)
 
 add_executable(rptests
+    tests/base64_test.cpp
     tests/cert_pin_test.cpp
     tests/cli_test.cpp
     tests/config_check_test.cpp
@@ -75,6 +77,7 @@ add_executable(rptests
     tests/retry_policy_test.cpp
     tests/secrets_test.cpp
     tests/smoke.cpp
+    tests/text_util_test.cpp
     tests/veeam_client_live_test.cpp
     tests/veeam_client_test.cpp
     tests/veeam_command_test.cpp

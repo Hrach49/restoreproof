@@ -1,5 +1,7 @@
 #include <rp/connector_registry.hpp>
 
+#include <rp/veeam_m365_connector.hpp>
+
 #include <algorithm>
 #include <cstddef>
 #include <stdexcept>
@@ -83,6 +85,13 @@ std::vector<std::string> ConnectorRegistry::names() const
         out.push_back(entry.first);
     }
     return out;
+}
+
+ConnectorRegistry default_connector_registry()
+{
+    ConnectorRegistry registry;
+    registry.add(std::string{kVeeamM365}, make_veeam_m365_connector);
+    return registry;
 }
 
 } // namespace rp::connector

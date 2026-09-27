@@ -120,18 +120,6 @@ HttpResponse token_response()
     return to_response(fixture);
 }
 
-// An IHttpClient the command owns that sends through the test's fake, so the
-// test can still read the fake's log after the command has returned.
-class ForwardingHttpClient final : public rp::IHttpClient {
-public:
-    explicit ForwardingHttpClient(rp::IHttpClient& target) : target_(target) {}
-
-    HttpResponse send(const HttpRequest& request) override { return target_.send(request); }
-
-private:
-    rp::IHttpClient& target_;
-};
-
 struct Run {
     int exit_code;
     std::string out;
@@ -217,7 +205,7 @@ struct Harness {
         return rp::Secrets{kUsername, kPassword, std::nullopt};
     };
     std::function<std::unique_ptr<rp::IHttpClient>()> make_http = [this] {
-        return std::make_unique<ForwardingHttpClient>(http);
+        return std::make_unique<rp::test::ForwardingHttpClient>(http);
     };
     int default_path_calls = 0;
     int load_secrets_calls = 0;

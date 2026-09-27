@@ -1,7 +1,8 @@
 # Test tenant
 
 The Microsoft 365 tenant the lab backs up with Veeam and the Worker restores into (L1.1).
-IDs only: passwords and secrets live in the password manager, never here.
+IDs only: passwords and secrets live in Windows Credential Manager (generic credentials
+named "RestoreProof Lab - …"), never here.
 Tenant choice and licences: `docs/decisions.md`, 2026-09-23.
 
 ## Tenant
@@ -49,6 +50,7 @@ and the Cleaner never deletes one (`docs/decisions.md`, 2026-09-25).
 | RestoreTarget library, drive ID | `b!XQgI_nDr6EKVpkcBib2Y65nzyk4OzJVNs_7NCRoJ5omdBuz_5GU6TJ2irAhs-dr6` |
 | alice's OneDrive, drive ID | `b!wA9gbfhlEUitGAluxbfoNBr_z5gEtDhErm5pJ6bMwyXfZJ8a_dkCQ696RX0r7_U3` |
 | alice's OneDrive `RestoreTarget` folder, item ID | `01ZK75LGDGB6QOO3MGNFGYOY6C6VBDG5OH` |
+| alice's OneDrive as a site: host, path | `restoreprooflab-my.sharepoint.com`, `/personal/alice_restoreprooflab_onmicrosoft_com` (not a target: the Worker app must get 403 on it) |
 
 Both `RestoreTarget`s were created on 2026-09-25 (L1.4): the library by hand in the site (New >
 Document library; the seeder app lacks `Sites.Manage.All`), the folder through Graph as alice.

@@ -1,4 +1,4 @@
-# Lab tools: the canary set (L1.2)
+# Lab tools: the canary set (L1.2) and the Worker app (L1.5)
 
 `lab/` holds the test tenant's notes (`tenant.md`) and the seeder, a small Python tool that
 puts 40 known items into the tenant and records what they look like in
@@ -26,8 +26,9 @@ changes a mail body, the manifest records the changed bytes and also says that t
 | Path | What |
 |---|---|
 | `pyproject.toml`, `uv.lock`, `.python-version` | Its own uv project (Python 3.12). Runtime: msal, requests, jsonschema. Dev only: pytest and the readers the tests use to open the files (python-docx, openpyxl, pypdf, pillow) |
-| `seeder/` | The tool: `catalog.py` (the 40 items and where they go), `tenant.py` (tenant IDs, copied from `tenant.md`), `generate.py`, `normalize.py`, `manifest.py`, `auth.py`, `graph.py`, `transport.py`, `seed.py`, `verify.py`, `cli.py` |
+| `seeder/` | The tool: `catalog.py` (the 40 items and where they go), `tenant.py` (tenant IDs, copied from `tenant.md`), `generate.py`, `normalize.py`, `manifest.py`, `auth.py`, `graph.py`, `transport.py`, `seed.py`, `verify.py`, `cli.py`; `worker_app.py` is `check-worker-app` (L1.5) |
 | `tests/` | pytest, one file per module, against a fake in-memory Graph tenant. No network |
+| `entra/new-worker-app.ps1` | Creates or updates the RestoreProof Worker app registration and its grants (L1.5), below |
 | `canary/` | The 20 generated files, committed |
 | `seed-manifest.json` | Written by a live `seed` run only; not committed yet, so CI skips the `hash` check with a warning until it is |
 | `tenant.md` | Tenant, user and restore-target IDs |
@@ -112,6 +113,56 @@ New-MgOauth2PermissionGrant -ClientId $sp.Id -ConsentType 'AllPrincipals' `
 Disconnect-MgGraph | Out-Null
 ```
 
+## One-time setup: the RestoreProof Worker app (L1.5)
+
+The Worker's own app registration: single tenant, app-only, with a certificate. It can read
+the three restore targets and nothing else. What is granted and why:
+`docs/security/graph-permissions.md`. `entra/new-worker-app.ps1` does everything below the
+first two steps, and is safe to run again.
+
+1. **Install the modules** (once), in PowerShell 7 (Start, type `pwsh`, open "PowerShell 7"):
+
+   ```powershell
+   Install-Module Microsoft.Graph.Authentication, ExchangeOnlineManagement -Scope CurrentUser
+   ```
+
+2. **Make the admin a site collection admin of alice's OneDrive.** Even a global admin can't
+   grant access to another user's OneDrive otherwise.
+   1. Open https://admin.microsoft.com, signed in as the global admin.
+   2. **Users** > **Active users** > click **alice**.
+   3. On the **OneDrive** tab, under **Get access to files**, click **Create link to files**.
+      A link to her OneDrive appears. You don't need to open it: creating it made the admin a
+      site collection admin.
+3. **Run the script** from the repo root:
+
+   ```powershell
+   pwsh -NoProfile -File lab\entra\new-worker-app.ps1
+   ```
+
+   It signs in twice, both times as the global admin: first Microsoft Graph, then Exchange
+   Online. If the account picker offers another account, choose **"Use another account"**.
+   The first time, Microsoft Graph PowerShell asks to consent to "Read and write all
+   applications", "Manage app permission grants and app role assignments" and "Have full
+   control of all site collections". Leave "Consent on behalf of your organization"
+   **unticked**, so only the admin's own sessions get these, then click **Accept**.
+4. **Wait, then check.** Exchange applies permission changes after 30 minutes to 2 hours. The
+   script's `Test-ServicePrincipalAuthorization` lines show the new state at once. Then, from
+   `lab/`:
+
+   ```powershell
+   uv run python -m seeder check-worker-app --client-id <the client ID the script printed>
+   ```
+
+5. **Optional: remove the admin from alice's OneDrive.** Open her OneDrive with the link from
+   step 2, then gear icon > **OneDrive settings** > **More settings** > **Site collection
+   administrators**, and remove the admin. The Worker's grant stays. Running the script again
+   needs step 2 again.
+
+The certificate's private key exists only in `%LOCALAPPDATA%\RestoreProof\lab\worker-graph.pfx`
+(outside the repo). Its password exists only in Credential Manager, as the generic credential
+`RestoreProof Lab - Worker Graph app PFX`. The script never prints either. To renew the
+certificate, delete the PFX and run the script again.
+
 ## Commands
 
 Run from `lab/`:
@@ -123,6 +174,7 @@ uv run python -m seeder generate      # write the 20 files into canary/
 uv run python -m seeder hash          # offline check: canary/ and the manifest agree (L1.2's Done when)
 uv run python -m seeder seed          # live: put the 40 items in the tenant, write seed-manifest.json
 uv run python -m seeder verify        # live: re-read the 40 items and compare with the manifest
+uv run python -m seeder check-worker-app  # live: what the Worker app can and can't read (L1.5)
 ```
 
 | Command | Network | What it does | Exit code |
@@ -131,6 +183,7 @@ uv run python -m seeder verify        # live: re-read the 40 items and compare w
 | `hash` | no | Checks that `seed-manifest.json` exists, is valid JSON and matches the schema; has exactly 40 entries whose ids, kinds and order match the catalog; that each file in `canary/` has the recorded `local_sha256` and `local_size` and that `stored_matches_local` is consistent; that each mail's `sent_body_sha256` equals the text-v1 hash of the catalog body and its subject and recipient match the catalog. Prints one line per entry and a summary (`40/40 entries reproduce the manifest hashes`) | 0 all reproduce; 1 any difference (each message names the entry, expected and actual); 2 manifest missing, unreadable or invalid (wrong count, order or schema) |
 | `seed` | yes | Signs in three times, sends the missing mails, uploads the missing files, reads all 40 back and writes the manifest. Step by step below | 0 manifest written; 1 a problem the output explains (missing canary file, duplicate subject, mail timeout); 2 sign-in or Graph error. No manifest is written unless it exits 0 |
 | `verify` | yes | Re-reads every item by its Graph id as the account that owns it (alice: mails 0001–0010 and the OneDrive files; bob: mails 0011–0020; admin: the SharePoint files). Compares subject, sender (case-insensitive), sent and received dates, `internet_message_id` and `body_sha256`; for files name and `content_sha256` by `content_rule` (and size for `bytes` files); an Office file whose bytes changed but whose content didn't is `ok`, with a note. Prints `ok`, `DIFF` or `MISSING` per entry and a summary (`40/40 entries in the tenant match the manifest`) | 0 all ok; 1 any DIFF or MISSING; 2 manifest missing or invalid, or a sign-in or Graph error |
+| `check-worker-app` | yes | Signs in as the RestoreProof Worker app with its certificate (PFX from `--pfx`, default `%LOCALAPPDATA%\RestoreProof\lab\worker-graph.pfx`; password from Credential Manager). Checks the token's roles are exactly `Files.SelectedOperations.Selected` and `Sites.Selected`, then sends one GET per probe and prints `ok` or `UNEXPECTED` per row with the expected and actual status (the probe table is in `docs/security/graph-permissions.md`). Only reads | 0 all as expected; 1 anything unexpected; 2 a missing or unusable credential, or a sign-in error |
 
 A usage error (unknown command or option) exits 2. Ctrl+C exits 130; `seed` then says nothing was written.
 
@@ -139,6 +192,8 @@ Options:
 | Option | Commands | Meaning |
 |---|---|---|
 | `--client-id <id>` | `seed`, `verify` | The seeder app's client ID. Order: this option, then `RP_LAB_CLIENT_ID`, then `SEEDER_CLIENT_ID` in `seeder/tenant.py`. If all are empty the tool stops and points here |
+| `--client-id <id>` | `check-worker-app` | The Worker app's client ID. Order: this option, then `RP_LAB_WORKER_CLIENT_ID`, then `WORKER_CLIENT_ID` in `seeder/tenant.py` |
+| `--pfx <path>` | `check-worker-app` | The Worker app's certificate, if not in the default place |
 | `--auth browser\|device` | `seed`, `verify` | `browser` (default) opens a browser window for each sign-in. `device` prints a code to enter at https://microsoft.com/devicelogin instead |
 | `--force` | `seed` | Send every mail again and replace every file, even if it is already there |
 | `--mail-timeout <seconds>` | `seed` | How long to wait for sent mails to arrive (default 600) |

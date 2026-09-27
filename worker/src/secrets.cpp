@@ -44,7 +44,7 @@ std::optional<std::string> read_env(std::string_view name)
 Secrets load_secrets_from_env()
 {
     return {read_env(kEnvVeeamUsername), read_env(kEnvVeeamPassword),
-            read_env(kEnvGraphClientSecret)};
+            read_env(kEnvGraphCertPfxBase64), read_env(kEnvGraphCertPassword)};
 }
 
 std::string_view mask_secret(const std::optional<std::string>& secret) noexcept

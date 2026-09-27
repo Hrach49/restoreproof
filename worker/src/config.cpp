@@ -5,6 +5,7 @@
 
 #include "control_chars.hpp"
 #include "path_utf8.hpp"
+#include "uuid.hpp"
 
 #include <nlohmann/json.hpp>
 
@@ -29,7 +30,7 @@ namespace {
 
 using nlohmann::json;
 
-enum class StringRule { non_empty, https_url, restore_mailbox, log_level };
+enum class StringRule { non_empty, https_url, guid, restore_mailbox, log_level };
 
 struct StringField {
     std::string_view key;
@@ -52,8 +53,8 @@ constexpr std::array<StringField, 10> kRequiredStrings{{
     {"cloud_url", &Config::cloud_url, true, StringRule::https_url},
     {"veeam_url", &Config::veeam_url, true, StringRule::https_url},
     {"veeam_org_name", &Config::veeam_org_name, true, StringRule::non_empty},
-    {"graph_tenant_id", &Config::graph_tenant_id, true, StringRule::non_empty},
-    {"graph_client_id", &Config::graph_client_id, true, StringRule::non_empty},
+    {"graph_tenant_id", &Config::graph_tenant_id, true, StringRule::guid},
+    {"graph_client_id", &Config::graph_client_id, true, StringRule::guid},
     {"test_mailbox", &Config::test_mailbox, true, StringRule::restore_mailbox},
     {"test_site_id", &Config::test_site_id, true, StringRule::non_empty},
     {"test_library_id", &Config::test_library_id, true, StringRule::non_empty},
@@ -81,11 +82,13 @@ constexpr std::string_view kCertSha256Key = "veeam_cert_sha256";
 constexpr std::array<std::string_view, 7> kLogLevels{"trace", "debug", "info", "warn",
                                                       "error", "critical", "off"};
 
-// Lowercased substrings that mark a key as a secret.
-constexpr std::array<std::string_view, 12> kSecretMarkers{
+// Lowercased substrings that mark a key as a secret. "pfx" and "passphrase"
+// catch the Graph certificate and its password (W2.1); "cert" is not one, as
+// a certificate's hash or path is public and veeam_cert_sha256 is a setting.
+constexpr std::array<std::string_view, 14> kSecretMarkers{
     "password",    "passwd",     "pwd",         "secret",      "token",
     "api_key",     "apikey",     "credential",  "private_key", "access_key",
-    "signing_key", "connection_string"};
+    "signing_key", "connection_string", "pfx", "passphrase"};
 
 // The error for a problem with one key: config key "<key>" <problem>.
 ConfigError key_error(std::string_view key, std::string_view problem)
@@ -201,6 +204,13 @@ std::optional<std::string_view> rule_problem(StringRule rule, std::string_view v
             return std::nullopt;
         }
         return "must be an https:// URL with no user name, password, query or fragment";
+    case StringRule::guid:
+        // Not a domain name either: the IDs go into Entra and Graph URLs.
+        if (is_uuid(value)) {
+            return std::nullopt;
+        }
+        return "must be a GUID (8-4-4-4-12 hexadecimal digits, as the Entra admin center shows "
+               "it), not a name";
     case StringRule::restore_mailbox:
         if (is_restore_mailbox(value)) {
             return std::nullopt;

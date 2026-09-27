@@ -12,10 +12,14 @@ namespace rp {
 // names are defined.
 inline constexpr std::string_view kEnvVeeamUsername = "RP_VEEAM_USERNAME";
 inline constexpr std::string_view kEnvVeeamPassword = "RP_VEEAM_PASSWORD";
-inline constexpr std::string_view kEnvGraphClientSecret = "RP_GRAPH_CLIENT_SECRET";
+// The Worker's Graph app signs in with a certificate, not a client secret
+// (W2.1): its PFX file as one line of standard Base64, and the PFX's password.
+// rp::graph::certificate_from_secrets (rp/client_assertion.hpp) opens them.
+inline constexpr std::string_view kEnvGraphCertPfxBase64 = "RP_GRAPH_CERT_PFX_BASE64";
+inline constexpr std::string_view kEnvGraphCertPassword = "RP_GRAPH_CERT_PASSWORD";
 
-inline constexpr std::array<std::string_view, 3> kSecretEnvVars{
-    kEnvVeeamUsername, kEnvVeeamPassword, kEnvGraphClientSecret};
+inline constexpr std::array<std::string_view, 4> kSecretEnvVars{
+    kEnvVeeamUsername, kEnvVeeamPassword, kEnvGraphCertPfxBase64, kEnvGraphCertPassword};
 
 // Each field is empty when its variable is unset or set to "". Which ones a
 // run needs depends on the Veeam auth mode (W1.0), so loading never fails on
@@ -23,7 +27,8 @@ inline constexpr std::array<std::string_view, 3> kSecretEnvVars{
 struct Secrets {
     std::optional<std::string> veeam_username;
     std::optional<std::string> veeam_password;
-    std::optional<std::string> graph_client_secret;
+    std::optional<std::string> graph_cert_pfx_base64;
+    std::optional<std::string> graph_cert_password;
 };
 
 // Reads kSecretEnvVars from the process environment, as UTF-8. Throws

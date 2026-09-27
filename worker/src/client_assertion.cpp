@@ -352,6 +352,18 @@ std::vector<unsigned char> sign_ps256(EVP_PKEY* key, std::string_view input)
 
 } // namespace
 
+ClientCertificate certificate_from_secrets(const Secrets& secrets, Clock::time_point wall_now,
+                                           std::shared_ptr<spdlog::logger> logger)
+{
+    // Views, not value_or(): that would leave an unwiped copy of each secret.
+    const auto view = [](const std::optional<std::string>& secret) {
+        return secret ? std::string_view{*secret} : std::string_view{};
+    };
+    return load_client_certificate(view(secrets.graph_cert_pfx_base64),
+                                   view(secrets.graph_cert_password), wall_now, {},
+                                   std::move(logger));
+}
+
 std::string entra_token_url(std::string_view tenant_id)
 {
     if (!is_uuid(tenant_id)) {

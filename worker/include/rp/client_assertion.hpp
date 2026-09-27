@@ -11,6 +11,7 @@
 // appears here.
 
 #include <rp/graph_errors.hpp>
+#include <rp/secrets.hpp>
 
 #include <chrono>
 #include <memory>
@@ -60,8 +61,8 @@ private:
 
 // What the messages call the two secrets: the variables they come from.
 struct CertificateSecretNames {
-    std::string_view pfx_base64 = "RP_GRAPH_CERT_PFX_BASE64";
-    std::string_view password = "RP_GRAPH_CERT_PASSWORD";
+    std::string_view pfx_base64 = kEnvGraphCertPfxBase64;
+    std::string_view password = kEnvGraphCertPassword;
 };
 
 // A warning is logged when the certificate expires this soon.
@@ -88,6 +89,16 @@ ClientCertificate load_client_certificate(std::string_view pfx_base64, std::stri
                                           std::chrono::system_clock::time_point wall_now,
                                           const CertificateSecretNames& names = {},
                                           std::shared_ptr<spdlog::logger> logger = nullptr);
+
+// load_client_certificate on the Worker's secrets: the PFX from
+// RP_GRAPH_CERT_PFX_BASE64 and its password from RP_GRAPH_CERT_PASSWORD, an
+// unset password standing for an empty one. The one entry point the Worker
+// uses, before any Graph call: an unset PFX is "RP_GRAPH_CERT_PFX_BASE64 is
+// not set", a PFX that needs a password when none is set is "RP_GRAPH_CERT_PASSWORD
+// is not set, and ...", and every other message names the variables too.
+ClientCertificate certificate_from_secrets(const Secrets& secrets,
+                                           std::chrono::system_clock::time_point wall_now,
+                                           std::shared_ptr<spdlog::logger> logger = nullptr);
 
 // Entra's v2 token endpoint for `tenant_id`, worldwide cloud:
 // "https://login.microsoftonline.com/<tenant_id>/oauth2/v2.0/token". It is

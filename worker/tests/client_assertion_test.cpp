@@ -1,6 +1,7 @@
 #include <rp/base64.hpp>
 #include <rp/client_assertion.hpp>
 #include <rp/redact.hpp>
+#include <rp/secrets.hpp>
 
 #include "../src/uuid.hpp"
 #include "test_certs.hpp"
@@ -35,6 +36,7 @@
 #include <vector>
 
 using Catch::Matchers::ContainsSubstring;
+using rp::graph::certificate_from_secrets;
 using rp::graph::CertificateError;
 using rp::graph::CertificateSecretNames;
 using rp::graph::ClientCertificate;
@@ -359,6 +361,99 @@ TEST_CASE("A ClientCertificate can be moved", "[graph][certificate]")
         load_client_certificate(to_base64(make_pfx(good_cert(), kPassword)), kPassword, kNow);
     third = std::move(second);
     CHECK(third.sha1_thumbprint() == rp::test::cert_sha1_hex(cert));
+}
+
+// --- From the Worker's secrets ---
+
+TEST_CASE("The certificate's messages name the variables of rp/secrets.hpp",
+          "[graph][certificate]")
+{
+    const CertificateSecretNames names;
+    CHECK(names.pfx_base64 == rp::kEnvGraphCertPfxBase64);
+    CHECK(names.password == rp::kEnvGraphCertPassword);
+}
+
+TEST_CASE("certificate_from_secrets reports an unset or wrong secret by its variable",
+          "[graph][certificate]")
+{
+    const std::string pfx = to_base64(make_pfx(good_cert(), kPassword));
+    const auto error_of = [](const rp::Secrets& secrets) {
+        try {
+            certificate_from_secrets(secrets, kNow);
+        } catch (const CertificateError& error) {
+            return std::string{error.what()};
+        }
+        return std::string{"(no error)"};
+    };
+
+    SECTION("no PFX")
+    {
+        // Whether or not the password is set: the PFX is reported first.
+        rp::Secrets secrets;
+        CHECK(error_of(secrets) == "RP_GRAPH_CERT_PFX_BASE64 is not set");
+        secrets.graph_cert_pfx_base64 = "";
+        secrets.graph_cert_password = kPassword;
+        CHECK(error_of(secrets) == "RP_GRAPH_CERT_PFX_BASE64 is not set");
+    }
+    SECTION("a PFX that needs a password, and none set")
+    {
+        const std::optional<std::string> password =
+            GENERATE(std::optional<std::string>{}, std::optional<std::string>{""});
+        rp::Secrets secrets;
+        secrets.graph_cert_pfx_base64 = pfx;
+        secrets.graph_cert_password = password;
+        CHECK(error_of(secrets) == "RP_GRAPH_CERT_PASSWORD is not set, and the PFX in "
+                                   "RP_GRAPH_CERT_PFX_BASE64 needs a password");
+    }
+    SECTION("the wrong password")
+    {
+        rp::Secrets secrets;
+        secrets.graph_cert_pfx_base64 = pfx;
+        secrets.graph_cert_password = "Sentinel-Wrong-3f0d";
+        const std::string what = error_of(secrets);
+        CHECK(what == "RP_GRAPH_CERT_PASSWORD does not open the PFX in RP_GRAPH_CERT_PFX_BASE64");
+        CHECK(what.find("Sentinel") == std::string::npos);
+    }
+    SECTION("the Veeam secrets play no part")
+    {
+        rp::Secrets secrets;
+        secrets.veeam_username = pfx;
+        secrets.veeam_password = kPassword;
+        CHECK(error_of(secrets) == "RP_GRAPH_CERT_PFX_BASE64 is not set");
+    }
+}
+
+TEST_CASE("certificate_from_secrets loads the PFX the secrets hold", "[graph][certificate]")
+{
+    SECTION("with its password")
+    {
+        const Cert cert = good_cert();
+        rp::Secrets secrets;
+        secrets.graph_cert_pfx_base64 = to_base64(make_pfx(cert, kPassword));
+        secrets.graph_cert_password = kPassword;
+        CHECK(certificate_from_secrets(secrets, kNow).sha1_thumbprint() ==
+              rp::test::cert_sha1_hex(cert));
+    }
+    SECTION("without a password, when the PFX has none")
+    {
+        const Cert cert = good_cert();
+        rp::Secrets secrets;
+        secrets.graph_cert_pfx_base64 = to_base64(make_pfx(cert, ""));
+        CHECK(certificate_from_secrets(secrets, kNow).sha1_thumbprint() ==
+              rp::test::cert_sha1_hex(cert));
+    }
+    SECTION("at the wall-clock time given, warning the logger given")
+    {
+        const Cert cert = make_client_cert("Soon", at_now({.not_after = 10L * 86400}));
+        rp::Secrets secrets;
+        secrets.graph_cert_pfx_base64 = to_base64(make_pfx(cert, kPassword));
+        secrets.graph_cert_password = kPassword;
+        std::ostringstream log;
+        certificate_from_secrets(secrets, kNow, string_logger(log));
+        CHECK_THAT(log.str(), ContainsSubstring("the certificate in RP_GRAPH_CERT_PFX_BASE64"));
+        CHECK_THAT(log.str(), ContainsSubstring("in 10 day(s)"));
+        CHECK_THROWS_AS(certificate_from_secrets(secrets, kNow + 11 * 24h), CertificateError);
+    }
 }
 
 // --- The client assertion ---

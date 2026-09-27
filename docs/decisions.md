@@ -26,6 +26,10 @@ Format: date, decision, reason, alternatives rejected.
 3. **Mail through Exchange Online RBAC for Applications.** The role is `Application
    Mail.Read`, with a management scope of `PrimarySmtpAddress -eq 'restoretest@…'`. The Entra
    `Mail.Read` consent is not granted, and the setup script removes it if present.
+   A management scope needs the tenant "hydrated", so the lab tenant ran
+   `Enable-OrganizationCustomization` on 2026-09-27. That is once per tenant, tenant-wide and
+   irreversible, and was chosen over scoping by an Entra administrative unit, which would add
+   an Entra object and a Graph scope for the same result.
 4. **Read-only in L1.5.** The write needs of cleanup (W3.x) are an open item, with a proposal:
    `Lists.SelectedOperations.Selected` `write` on the RestoreTarget list only, the folder
    grant raised to `write`, and `Application Mail.ReadWrite` on the same scope.

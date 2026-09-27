@@ -6,7 +6,9 @@
 // PFX that arrives as Base64 in RP_GRAPH_CERT_PFX_BASE64, with its password
 // in RP_GRAPH_CERT_PASSWORD, until the vault (W4.5). It is opened once,
 // checked in full before any network call, and from then on only the key and
-// certificate objects are kept. No OpenSSL type appears here.
+// certificate objects are kept. Each token request then carries a new client
+// assertion signed with that key (make_client_assertion). No OpenSSL type
+// appears here.
 
 #include <rp/graph_errors.hpp>
 
@@ -86,5 +88,29 @@ ClientCertificate load_client_certificate(std::string_view pfx_base64, std::stri
                                           std::chrono::system_clock::time_point wall_now,
                                           const CertificateSecretNames& names = {},
                                           std::shared_ptr<spdlog::logger> logger = nullptr);
+
+// Entra's v2 token endpoint for `tenant_id`, worldwide cloud:
+// "https://login.microsoftonline.com/<tenant_id>/oauth2/v2.0/token". It is
+// also the assertion's audience. Throws GraphError unless `tenant_id` is a
+// GUID (rp::is_uuid), so nothing else can end up in the URL.
+std::string entra_token_url(std::string_view tenant_id);
+
+// How long a client assertion is good for: exp = nbf + this.
+inline constexpr std::chrono::seconds kClientAssertionLifetime{300};
+
+// A fresh client assertion (RFC 7523) for one token request by app
+// `client_id` in `tenant_id`; never reuse one. Header
+// {"alg":"PS256","typ":"JWT","x5t#S256":<certificate.x5t_s256()>} and claims
+// aud = entra_token_url(tenant_id), iss = sub = client_id, jti = a new random
+// UUID v4, nbf = iat = `wall_now` in whole seconds, exp = nbf +
+// kClientAssertionLifetime; both as compact JSON, keys sorted. Signed with
+// RSA-PSS: SHA-256, MGF1 with SHA-256, a 32-byte salt, all set explicitly
+// (OpenSSL's default salt length is not the digest's). The result is a
+// credential for its lifetime: never log it (rp::redact masks it). Throws
+// GraphError unless both IDs are GUIDs, and CertificateError if OpenSSL
+// can't sign.
+std::string make_client_assertion(const ClientCertificate& certificate,
+                                  std::string_view tenant_id, std::string_view client_id,
+                                  std::chrono::system_clock::time_point wall_now);
 
 } // namespace rp::graph

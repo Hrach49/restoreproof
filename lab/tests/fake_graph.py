@@ -3,8 +3,14 @@
 Tokens are "token:<upn>"; the fake reads the signed-in account from the Authorization header,
 so "/me" is always that account's own mailbox. Drives are reachable only by the account in
 `drive_access` (403 otherwise), like delegated Graph.
+
+App-only tokens (the RestoreProof Worker app, L1.5) are JWT-shaped, made by make_app_token. The
+fake answers them from `app_grants`, the resources the app was granted, the way Graph answered
+in the lab: 200 on a granted resource, 403 on any other one, and 404 on items a folder grant
+masks. APP_GRANTS is what L1.5 grants.
 """
 
+import base64
 import json
 import re
 from collections import Counter
@@ -27,6 +33,43 @@ _ITEM_BY_ID = re.compile(r"^/drives/([^/]+)/items/([^/:]+)(/content)?$")
 _MESSAGE = re.compile(r"^/me/messages/([^/]+)$")
 _FOLDER = re.compile(r"^/me/mailFolders/([^/]+)$")
 _SUBJECT_FILTER = re.compile(r"^subject eq '(.*)'$")
+_USER_MESSAGES = re.compile(r"^/users/([^/]+)/messages$")
+_SITE = re.compile(r"^/sites/(.+?)(/drives)?$")
+_DRIVE = re.compile(r"^/drives/([^/]+)(?:/(root|items/[^/]+)(/children)?)?$")
+
+# Grant keys: "mailbox:<upn lower>", "site:<site id>", "folder:<drive id>/<item id>", "directory".
+APP_GRANTS = frozenset(
+    {
+        f"mailbox:{tenant.RESTORETEST_UPN.lower()}",
+        f"site:{tenant.SHAREPOINT_SITE_ID}",
+        f"folder:{tenant.ONEDRIVE_DRIVE_ID}/{tenant.ONEDRIVE_TARGET_FOLDER_ID}",
+    }
+)
+# The drives of each site, as far as the fake knows.
+SITE_DRIVES = {
+    tenant.SHAREPOINT_SITE_ID: (tenant.RESTORE_TARGET_DRIVE_ID, tenant.SHAREPOINT_DRIVE_ID),
+    f"{tenant.ONEDRIVE_HOST}:{tenant.ALICE_ONEDRIVE_SITE_PATH}": (tenant.ONEDRIVE_DRIVE_ID,),
+    tenant.SHAREPOINT_HOST: ("b!FAKEROOTSITEDOCUMENTS",),
+    tenant.ONEDRIVE_HOST: ("b!FAKEMYSITEHOSTDOCUMENTS",),
+}
+# What each drive's root folder holds (the rest are "01FAKECHILD").
+DRIVE_ROOT_ITEMS = {
+    tenant.ONEDRIVE_DRIVE_ID: (tenant.ONEDRIVE_TARGET_FOLDER_ID, tenant.ONEDRIVE_FOLDER_ID, "01FAKEALICEFILE"),
+}
+APP_ROLES = ("Sites.Selected", "Files.SelectedOperations.Selected")
+# The folders' names, as a listing shows them.
+ITEM_NAMES = {tenant.ONEDRIVE_TARGET_FOLDER_ID: "RestoreTarget", tenant.ONEDRIVE_FOLDER_ID: "RestoreTest"}
+
+
+def _b64url(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).decode("ascii").rstrip("=")
+
+
+def make_app_token(client_id: str, roles=APP_ROLES, signature: str = "fake-signature") -> str:
+    """An unsigned JWT-shaped app-only token, as Entra's client-credentials grant returns one."""
+    header = _b64url(json.dumps({"typ": "JWT", "alg": "RS256"}).encode())
+    payload = _b64url(json.dumps({"appid": client_id, "idtyp": "app", "roles": list(roles)}).encode())
+    return f"{header}.{payload}.{signature}"
 
 
 def _iso(moment: datetime, fraction: bool = False) -> str:
@@ -50,6 +93,7 @@ class FakeTenant:
         body_transform: Callable[[str], str] | None = None,
         rewrite_types: frozenset[str] | set[str] = frozenset(),
         drive_access: Mapping[str, str] | None = None,
+        app_grants: frozenset[str] | set[str] = APP_GRANTS,
     ) -> None:
         """delivery_delay: number of message-list calls by the recipient before a sent mail
         shows up (None = never delivered). body_transform: what "Exchange" does to the body.
@@ -57,6 +101,9 @@ class FakeTenant:
         self.delivery_delay = delivery_delay
         self.body_transform = body_transform or (lambda text: text)
         self.rewrite_types = set(rewrite_types)
+        self.app_grants = set(app_grants)
+        self.app_requests: list[tuple[str, str]] = []  # (method, path) of every app-only call
+        self.item_names = dict(ITEM_NAMES)
         self.drive_access = dict(
             drive_access
             or {tenant.SHAREPOINT_DRIVE_ID: tenant.ADMIN_UPN, tenant.ONEDRIVE_DRIVE_ID: tenant.ALICE_UPN}
@@ -145,6 +192,8 @@ class FakeTenant:
     def request(self, method: str, url: str, headers: Mapping[str, str], body: bytes | None = None) -> HttpResponse:
         self.headers_seen.append(dict(headers))
         auth = headers.get("Authorization", "")
+        if auth.startswith("Bearer eyJ"):
+            return self._app_request(method, url)
         if not auth.startswith("Bearer token:"):
             return graph_error(401, "InvalidAuthenticationToken", "no token")
         account = auth[len("Bearer token:") :]
@@ -180,6 +229,69 @@ class FakeTenant:
         if (m := _ITEM_BY_ID.match(path)) and method == "GET":
             return self._item_by_id(account, m.group(1), m.group(2), bool(m.group(3)))
         return graph_error(400, "BadRequest", f"fake tenant has no route for {method} {path}")
+
+    # --- app-only (the Worker app) ------------------------------------------------------------
+
+    def _app_request(self, method: str, url: str) -> HttpResponse:
+        assert url.startswith(GRAPH_BASE), url
+        path = unquote(urlsplit(url[len(GRAPH_BASE) :]).path)
+        self.app_requests.append((method, path))
+        if method != "GET":
+            return graph_error(405, "BadRequest", "the fake answers app-only GETs only")
+        answer = self._app_answer(path)
+        if answer is None:
+            return graph_error(400, "BadRequest", f"fake tenant has no app-only route for {path}")
+        return answer
+
+    def _app_answer(self, path: str) -> HttpResponse | None:
+        """What Graph answered the Worker app in the lab (docs/security/graph-permissions.md): 200
+        on what is granted, 403 on anything else. A folder grant inside a site also opens that
+        site's and drive root's metadata, lists only the granted folder at the root, and masks
+        every other item as 404."""
+        denied = graph_error(403, "accessDenied", "Access denied")
+        if path == "/users":
+            return json_response(200, {"value": [{"id": "u1"}]}) if "directory" in self.app_grants else denied
+        if m := _USER_MESSAGES.match(path):
+            granted = f"mailbox:{m.group(1).lower()}" in self.app_grants
+            return json_response(200, {"value": [{"id": "AAMkFakeMessage"}]}) if granted else denied
+        if m := _SITE.match(path):
+            site = m.group(1)
+            if site not in SITE_DRIVES:
+                return None
+            if f"site:{site}" in self.app_grants:
+                body = {"value": [{"id": d} for d in SITE_DRIVES[site]]} if m.group(2) else {"id": site}
+                return json_response(200, body)
+            if not m.group(2) and any(self._folder_grants(d) for d in SITE_DRIVES[site]):
+                return json_response(200, {"id": site})
+            return denied
+        if m := _DRIVE.match(path):
+            drive_id, where, children = m.group(1), m.group(2), m.group(3)
+            site = next((s for s, drives in SITE_DRIVES.items() if drive_id in drives), None)
+            if site is None:
+                return None
+            item = where[len("items/") :] if where and where.startswith("items/") else None
+            if f"site:{site}" in self.app_grants:
+                if children:
+                    return json_response(200, {"value": [{"id": i} for i in DRIVE_ROOT_ITEMS.get(drive_id, ("01FAKECHILD",))]})
+                return json_response(200, {"id": item or where or drive_id})
+            folders = self._folder_grants(drive_id)
+            if not folders:
+                return denied
+            if item is not None:
+                if item not in folders:
+                    return graph_error(404, "itemNotFound", "The resource could not be found.")
+                body = {"value": [{"id": "01FAKECHILD"}]} if children else {"id": item}
+                return json_response(200, body)
+            if where == "root":
+                listed = [{"id": f, "name": self.item_names.get(f, f)} for f in sorted(folders)]
+                body = {"value": listed} if children else {"id": "root"}
+                return json_response(200, body)
+            return denied
+        return None
+
+    def _folder_grants(self, drive_id: str) -> set[str]:
+        prefix = f"folder:{drive_id}/"
+        return {g[len(prefix) :] for g in self.app_grants if g.startswith(prefix)}
 
     # --- mail --------------------------------------------------------------------------------
 
@@ -280,6 +392,9 @@ class FakeTenant:
         drive = self._drive(account, drive_id)
         if isinstance(drive, HttpResponse):
             return drive
+        if item_id in drive.folders.values() and item_id != SHAREPOINT_ROOT_ID and not content:
+            count = sum(1 for item in drive.items.values() if item["parent"] == item_id)
+            return json_response(200, {"id": item_id, "name": self.item_names.get(item_id, item_id), "folder": {"childCount": count}})
         if item_id not in drive.items:
             return graph_error(404, "itemNotFound", "The resource could not be found.")
         if content:

@@ -1,4 +1,4 @@
-"""`python -m seeder {generate,hash,seed,verify}`."""
+"""`python -m seeder {generate,hash,seed,verify,check-worker-app}`."""
 
 import argparse
 import sys
@@ -13,14 +13,17 @@ from seeder.manifest import ManifestError, run_hash
 from seeder.seed import run_seed
 from seeder.transport import RequestsTransport
 from seeder.verify import run_verify
+from seeder.worker_app import default_pfx_path, read_generic_credential, resolve_worker_client_id, run_check
 
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m seeder",
-        description="Seed and check the RestoreProof canary set (L1.2). See lab/README.md.",
+        description="Seed and check the RestoreProof canary set (L1.2) and the Worker app (L1.5). See lab/README.md.",
     )
-    sub = parser.add_subparsers(dest="command", required=True, metavar="{generate,hash,seed,verify}")
+    sub = parser.add_subparsers(
+        dest="command", required=True, metavar="{generate,hash,seed,verify,check-worker-app}"
+    )
 
     def paths(p: argparse.ArgumentParser, *, manifest: bool = True, canary: bool = True) -> None:
         if canary:
@@ -44,6 +47,15 @@ def _parser() -> argparse.ArgumentParser:
     verify = sub.add_parser("verify", help="re-read the 40 items and compare with the manifest (live)")
     paths(verify, canary=False)
     signin(verify)
+    worker = sub.add_parser(
+        "check-worker-app", help="probe what the RestoreProof Worker app can and can't read (live, L1.5)"
+    )
+    worker.add_argument("--client-id", help="Worker app client ID (else RP_LAB_WORKER_CLIENT_ID, else tenant.py)")
+    worker.add_argument("--pfx", type=Path, help=f"the app's certificate (default: {default_pfx_path()})")
+    worker.add_argument(
+        "--seeder-client-id", help="seeder app client ID, to sign in as alice (else RP_LAB_CLIENT_ID, else tenant.py)"
+    )
+    worker.add_argument("--auth", choices=MODES, default="browser", help="alice's sign-in flow (default: browser)")
     return parser
 
 
@@ -56,6 +68,16 @@ def _run(args: argparse.Namespace) -> int:
         return run_generate(args.canary_dir)
     if args.command == "hash":
         return run_hash(args.manifest, args.canary_dir)
+    if args.command == "check-worker-app":
+        return run_check(
+            client_id=resolve_worker_client_id(args.client_id),
+            tenant_id=tenant.TENANT_ID,
+            pfx_path=args.pfx or default_pfx_path(),
+            read_password=read_generic_credential,
+            transport=RequestsTransport(),
+            alice_token=SignIn(resolve_client_id(args.seeder_client_id), tenant.TENANT_ID, mode=args.auth, out=print)
+            .token_provider(tenant.ALICE_UPN, "confirm her RestoreTest canary folder exists"),
+        )
     client_id = resolve_client_id(args.client_id)
     signin = SignIn(client_id, tenant.TENANT_ID, mode=args.auth, out=print)
     transport = RequestsTransport()

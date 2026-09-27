@@ -2,8 +2,9 @@
 
 Signs in as the Worker's own app registration with its certificate (client credentials, no
 user), then sends one GET per probe and compares the HTTP status with the expected one: 200
-where L1.5 granted access, 403 everywhere else. docs/security/graph-permissions.md says why
-each probe is there. The check only reads.
+where L1.5 granted access, 403 on what it didn't grant, and 404 where SharePoint hides items
+around the one folder the app may read. docs/security/graph-permissions.md says why each probe
+is there. The check only reads.
 
 The certificate's private key is in a PFX file outside the repo; its password is a generic
 credential in Windows Credential Manager. Neither, nor the token, is ever printed.
@@ -223,28 +224,42 @@ class Probe:
     path: str
     expected: int
     params: Mapping[str, str] | None = None
+    # For a listing: the only item id it may contain. Anything else listed is unexpected.
+    only_child: str | None = None
 
 
 _ONE_ID = {"$top": "1", "$select": "id"}
 
 
 def probes() -> list[Probe]:
-    """Every GET the check sends. 200: what the Worker needs. 403: what it must not reach."""
+    """Every GET the check sends. 200: what the Worker needs, and the metadata SharePoint opens
+    on the way to the granted OneDrive folder. 403: what it must not reach. 404: items SharePoint
+    masks because the app may not see them (it answers "not found", not "forbidden")."""
     od, sp_site = tenant.ONEDRIVE_DRIVE_ID, tenant.SHAREPOINT_SITE_ID
+    target, canary = tenant.ONEDRIVE_TARGET_FOLDER_ID, tenant.ONEDRIVE_FOLDER_ID
     return [
         Probe("restoretest's mailbox: list messages", f"/users/{tenant.RESTORETEST_UPN}/messages", 200, _ONE_ID),
         Probe("RestoreTest site: the site", f"/sites/{sp_site}", 200),
         Probe("RestoreTarget library: the drive", f"/drives/{tenant.RESTORE_TARGET_DRIVE_ID}", 200),
         Probe("RestoreTarget library: files in its root", f"/drives/{tenant.RESTORE_TARGET_DRIVE_ID}/root/children", 200, _ONE_ID),
-        Probe("alice's OneDrive: RestoreTarget folder", f"/drives/{od}/items/{tenant.ONEDRIVE_TARGET_FOLDER_ID}", 200),
-        Probe("alice's OneDrive: files in RestoreTarget", f"/drives/{od}/items/{tenant.ONEDRIVE_TARGET_FOLDER_ID}/children", 200, _ONE_ID),
+        Probe("alice's OneDrive: RestoreTarget folder", f"/drives/{od}/items/{target}", 200),
+        Probe("alice's OneDrive: files in RestoreTarget", f"/drives/{od}/items/{target}/children", 200, _ONE_ID),
+        Probe("alice's OneDrive: the site (metadata)", f"/sites/{tenant.ONEDRIVE_HOST}:{tenant.ALICE_ONEDRIVE_SITE_PATH}", 200),
+        Probe("alice's OneDrive: root folder (metadata)", f"/drives/{od}/root", 200),
+        Probe(
+            "alice's OneDrive: files in her root (only RestoreTarget)",
+            f"/drives/{od}/root/children",
+            200,
+            {"$select": "id,name"},  # no $top: a page of one would hide anything else
+            only_child=target,
+        ),
         Probe("alice's mailbox: list messages", f"/users/{tenant.ALICE_UPN}/messages", 403, _ONE_ID),
         Probe("tenant root site: the site", f"/sites/{tenant.SHAREPOINT_HOST}", 403),
         Probe("tenant root site: its libraries (/drives)", f"/sites/{tenant.SHAREPOINT_HOST}/drives", 403),
-        Probe("alice's OneDrive: the site", f"/sites/{tenant.ONEDRIVE_HOST}:{tenant.ALICE_ONEDRIVE_SITE_PATH}", 403),
-        Probe("alice's OneDrive: root", f"/drives/{od}/root", 403),
-        Probe("alice's OneDrive: RestoreTest canary folder", f"/drives/{od}/items/{tenant.ONEDRIVE_FOLDER_ID}", 403),
+        Probe("OneDrive host root site: the site", f"/sites/{tenant.ONEDRIVE_HOST}", 403),
         Probe("directory: list users", "/users", 403, _ONE_ID),
+        Probe("alice's OneDrive: RestoreTest canary folder", f"/drives/{od}/items/{canary}", 404),
+        Probe("alice's OneDrive: files in the RestoreTest canary folder", f"/drives/{od}/items/{canary}/children", 404, _ONE_ID),
     ]
 
 
@@ -252,21 +267,43 @@ def probes() -> list[Probe]:
 class ProbeResult:
     probe: Probe
     actual: int | None  # None: no HTTP response
+    other_items: int = 0  # items listed besides probe.only_child
 
     @property
     def ok(self) -> bool:
-        return self.actual == self.probe.expected
+        return self.actual == self.probe.expected and self.other_items == 0
+
+    @property
+    def note(self) -> str:
+        if not self.other_items:
+            return ""
+        return f"  ({self.other_items} other item{'s' if self.other_items != 1 else ''} listed)"
 
 
 def run_probes(graph: GraphClient, items: list[Probe]) -> list[ProbeResult]:
     results = []
     for probe in items:
+        other_items = 0
         try:
-            actual: int | None = graph.request("GET", probe.path, params=probe.params).status
+            resp = graph.request("GET", probe.path, params=probe.params)
+            actual: int | None = resp.status
+            if probe.only_child is not None:
+                other_items = _count_others(resp, probe.only_child)
         except GraphError as exc:
             actual = exc.status  # the message is not shown: the status is the evidence
-        results.append(ProbeResult(probe, actual))
+        results.append(ProbeResult(probe, actual, other_items))
     return results
+
+
+def _count_others(resp: Any, only: str) -> int:
+    """Items in a listing other than `only`. An unreadable listing counts as one: unexpected."""
+    try:
+        ids = [item["id"] for item in resp.json()["value"]]
+    except (ValueError, KeyError, TypeError):
+        return 1
+    if resp.json().get("@odata.nextLink"):
+        ids.append("(another page)")
+    return sum(1 for i in ids if i != only)
 
 
 # ---- the command ---------------------------------------------------------------------------
@@ -318,11 +355,11 @@ def run_check(
     graph = GraphClient(transport, signin.token, "RestoreProof Worker (app-only)", sleep=sleep or _sleep)
     items = probes()
     results = run_probes(graph, items)
-    say(f"{'result':<10}  {'expect':>6}  {'got':>6}  {'probe':<44}  request")
+    say(f"{'result':<10}  {'expect':>6}  {'got':>6}  {'probe':<58}  request")
     for r in results:
         actual = "none" if r.actual is None else str(r.actual)
         verdict = "ok" if r.ok else "UNEXPECTED"
-        say(f"{verdict:<10}  {r.probe.expected:>6}  {actual:>6}  {r.probe.label:<44}  GET {r.probe.path}")
+        say(f"{verdict:<10}  {r.probe.expected:>6}  {actual:>6}  {r.probe.label:<58}  GET {r.probe.path}{r.note}")
     passed = sum(r.ok for r in results)
     unexpected = len(results) - passed + (0 if roles_ok else 1)
     summary = f"{passed}/{len(results)} probes as expected"

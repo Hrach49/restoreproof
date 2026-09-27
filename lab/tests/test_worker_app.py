@@ -234,7 +234,25 @@ def test_unexpected_200_on_alices_whole_onedrive_fails_the_check(pfx):
     code, lines, _ = check(pfx, fake=FakeTenant(app_grants=APP_GRANTS | {site}))
     assert code == 1
     assert row(lines, "alice's OneDrive: RestoreTest canary folder").startswith("UNEXPECTED")
-    assert row(lines, "alice's OneDrive: root").startswith("UNEXPECTED")
+    line = row(lines, "alice's OneDrive: files in her root")
+    assert line.startswith("UNEXPECTED") and "2 other items" in line
+
+
+def test_a_second_folder_visible_in_alices_root_fails_the_check(pfx):
+    # SharePoint masks what the app may not see; if the canary folder shows up, it isn't masked.
+    canary = f"folder:{tenant.ONEDRIVE_DRIVE_ID}/{tenant.ONEDRIVE_FOLDER_ID}"
+    code, lines, _ = check(pfx, fake=FakeTenant(app_grants=APP_GRANTS | {canary}))
+    assert code == 1
+    line = row(lines, "alice's OneDrive: files in her root")
+    assert line.startswith("UNEXPECTED") and " 200 " in line and "1 other item" in line
+    assert row(lines, "alice's OneDrive: RestoreTest canary folder").startswith("UNEXPECTED")
+    assert row(lines, "alice's OneDrive: files in the RestoreTest canary folder").startswith("UNEXPECTED")
+
+
+def test_unexpected_200_on_the_onedrive_host_site_fails_the_check(pfx):
+    code, lines, _ = check(pfx, fake=FakeTenant(app_grants=APP_GRANTS | {f"site:{tenant.ONEDRIVE_HOST}"}))
+    assert code == 1
+    assert row(lines, "OneDrive host root site").startswith("UNEXPECTED")
 
 
 def test_403_on_an_allowed_site_fails_the_check(pfx):
@@ -336,26 +354,40 @@ def test_everything_as_granted_passes(pfx, key_and_cert):
 
 
 def test_probe_table_covers_the_done_when():
-    expected = {(p.label, p.expected) for p in probes()}
-    allowed = {label for label, status in expected if status == 200}
-    forbidden = {label for label, status in expected if status == 403}
-    assert {s for s, _ in expected} and allowed and forbidden
-    assert {p.expected for p in probes()} == {200, 403}
-    for needed in (
-        "restoretest's mailbox",
-        "RestoreTest site: the site",
-        "RestoreTarget library: the drive",
-        "alice's OneDrive: RestoreTarget folder",
-    ):
-        assert any(label.startswith(needed) for label in allowed), needed
-    for needed in (
-        "alice's mailbox",
-        "tenant root site: the site",
-        "tenant root site: its libraries",
-        "alice's OneDrive: the site",
-        "alice's OneDrive: RestoreTest canary folder",
-    ):
-        assert any(label.startswith(needed) for label in forbidden), needed
+    by_status: dict[int, set[str]] = {}
+    for p in probes():
+        by_status.setdefault(p.expected, set()).add(p.label)
+    assert set(by_status) == {200, 403, 404}
+    needed = {
+        200: [
+            "restoretest's mailbox",
+            "RestoreTest site: the site",
+            "RestoreTarget library: the drive",
+            "alice's OneDrive: RestoreTarget folder",
+            "alice's OneDrive: files in her root",
+        ],
+        403: [
+            "alice's mailbox",
+            "tenant root site: the site",
+            "tenant root site: its libraries",
+            "OneDrive host root site",
+            "directory: list users",
+        ],
+        404: [
+            "alice's OneDrive: RestoreTest canary folder",
+            "alice's OneDrive: files in the RestoreTest canary folder",
+        ],
+    }
+    for status, labels in needed.items():
+        for label in labels:
+            assert any(have.startswith(label) for have in by_status[status]), (status, label)
+
+
+def test_only_the_root_listing_checks_what_is_listed():
+    listing = [p for p in probes() if p.only_child is not None]
+    assert [p.label for p in listing] == ["alice's OneDrive: files in her root (only RestoreTarget)"]
+    assert listing[0].only_child == tenant.ONEDRIVE_TARGET_FOLDER_ID
+    assert listing[0].params is not None and "$top" not in listing[0].params  # a page of 1 would hide the rest
 
 
 def test_the_check_only_reads_and_never_touches_other_drives_by_write(pfx):

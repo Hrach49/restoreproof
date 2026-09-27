@@ -68,7 +68,9 @@ Until the vault (W4.5), the Worker will take the same two values from environmen
 ## How it is verified
 
 `python -m seeder check-worker-app` (run from `lab/`) signs in with the certificate and sends
-one GET per probe, then compares the HTTP status with the expected one. It only reads. Exit 0
+one GET per probe, then compares the HTTP status with the expected one. It only reads. The
+expected statuses are the ones Graph gave in the lab: 403 where nothing is granted, 404 for an
+item hidden inside a site where the app holds a folder grant. Exit 0
 means everything was as expected; 1 means any probe or the token's roles were not; 2 means
 the credential or sign-in failed.
 
@@ -81,13 +83,16 @@ the credential or sign-in failed.
 | RestoreTarget library: files in its root | `GET /drives/{RestoreTarget drive ID}/root/children` | 200 | #1 lets it read the restored files |
 | alice's OneDrive: RestoreTarget folder | `GET /drives/{alice's drive}/items/{RestoreTarget}` | 200 | #2 reaches the OneDrive restore target |
 | alice's OneDrive: files in RestoreTarget | `GET …/items/{RestoreTarget}/children` | 200 | #2 lets it read the restored files |
+| alice's OneDrive: the site (metadata) | `GET /sites/restoreprooflab-my.sharepoint.com:/personal/alice_…` | 200 | Seen in the lab: a grant on a folder opens the metadata of the site and drive around it (name, URL), not their content. The next two rows prove that |
+| alice's OneDrive: root folder (metadata) | `GET /drives/{alice's drive}/root` | 200 | As above: the root folder item, not its content |
+| alice's OneDrive: files in her root | `GET /drives/{alice's drive}/root/children` | 200, **listing only `RestoreTarget`** | SharePoint masks every item the app may not see: her other files and the canary folder aren't even listed. Any other item listed (or a next page) fails the probe |
 | alice's mailbox | `GET /users/alice@…/messages` | 403 | #3 is scoped to restoretest; no Entra `Mail.Read` |
-| tenant root site: the site | `GET /sites/restoreprooflab.sharepoint.com` | 403 | #1 is on one site only |
+| tenant root site: the site | `GET /sites/restoreprooflab.sharepoint.com` | 403 | #1 is on one site only (the Done-when's "403 on any other site") |
 | tenant root site: its libraries | `GET /sites/restoreprooflab.sharepoint.com/drives` | 403 | No `Files.Read.All`-style access to other sites' drives |
-| alice's OneDrive: the site | `GET /sites/restoreprooflab-my.sharepoint.com:/personal/alice_…` | 403 | A second site (her OneDrive) is closed: #2 is on a folder, not the site |
-| alice's OneDrive: root | `GET /drives/{alice's drive}/root` | 403 | #2 doesn't reach up to the rest of her OneDrive |
-| alice's OneDrive: RestoreTest canary folder | `GET /drives/{alice's drive}/items/{RestoreTest}` | 403 | The canary folder can't be read, let alone written |
+| OneDrive host root site | `GET /sites/restoreprooflab-my.sharepoint.com` | 403 | A second site with no grant in it: closed too |
 | directory: list users | `GET /users` | 403 | No directory permission |
+| alice's OneDrive: RestoreTest canary folder | `GET /drives/{alice's drive}/items/{RestoreTest}` | 404 | The canary folder can't be read, let alone written. SharePoint answers "not found", not "forbidden", for an item the app may not see (seen in the lab) |
+| alice's OneDrive: files in the canary folder | `GET …/items/{RestoreTest}/children` | 404 | Nor its files |
 
 The live run's output is the Done-when evidence: `docs/security/l1.5-worker-app-check.txt`.
 The script also prints Exchange's own view (`Test-ServicePrincipalAuthorization`): `InScope`

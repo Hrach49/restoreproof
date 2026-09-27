@@ -35,8 +35,9 @@ Format: date, decision, reason, alternatives rejected.
    grant raised to `write`, and `Application Mail.ReadWrite` on the same scope.
 5. The setup is a script the admin runs, `lab/entra/new-worker-app.ps1` (idempotent). It is
    checked by `python -m seeder check-worker-app`: 200 on the three targets, 403 on alice's
-   mailbox, other sites, other drives and the canary folder, and exactly two roles in the
-   token.
+   mailbox, other sites and their drives, 404 on the canary folder (SharePoint masks items the
+   app may not see), alice's OneDrive root listing only `RestoreTarget`, and exactly two roles
+   in the token.
 
 **Reason.**
 

@@ -5,8 +5,9 @@ so "/me" is always that account's own mailbox. Drives are reachable only by the 
 `drive_access` (403 otherwise), like delegated Graph.
 
 App-only tokens (the RestoreProof Worker app, L1.5) are JWT-shaped, made by make_app_token. The
-fake answers them from `app_grants`, the resources the app was granted, the way Graph does:
-200 on a granted resource, 403 on any other one. APP_GRANTS is what L1.5 grants.
+fake answers them from `app_grants`, the resources the app was granted, the way Graph answered
+in the lab: 200 on a granted resource, 403 on any other one, and 404 on items a folder grant
+masks. APP_GRANTS is what L1.5 grants.
 """
 
 import base64
@@ -49,6 +50,11 @@ SITE_DRIVES = {
     tenant.SHAREPOINT_SITE_ID: (tenant.RESTORE_TARGET_DRIVE_ID, tenant.SHAREPOINT_DRIVE_ID),
     f"{tenant.ONEDRIVE_HOST}:{tenant.ALICE_ONEDRIVE_SITE_PATH}": (tenant.ONEDRIVE_DRIVE_ID,),
     tenant.SHAREPOINT_HOST: ("b!FAKEROOTSITEDOCUMENTS",),
+    tenant.ONEDRIVE_HOST: ("b!FAKEMYSITEHOSTDOCUMENTS",),
+}
+# What each drive's root folder holds (the rest are "01FAKECHILD").
+DRIVE_ROOT_ITEMS = {
+    tenant.ONEDRIVE_DRIVE_ID: (tenant.ONEDRIVE_TARGET_FOLDER_ID, tenant.ONEDRIVE_FOLDER_ID, "01FAKEALICEFILE"),
 }
 APP_ROLES = ("Sites.Selected", "Files.SelectedOperations.Selected")
 
@@ -229,37 +235,59 @@ class FakeTenant:
         self.app_requests.append((method, path))
         if method != "GET":
             return graph_error(405, "BadRequest", "the fake answers app-only GETs only")
-        grant, body = self._app_resource(path)
-        if grant is None:
+        answer = self._app_answer(path)
+        if answer is None:
             return graph_error(400, "BadRequest", f"fake tenant has no app-only route for {path}")
-        if grant not in self.app_grants:
-            return graph_error(403, "accessDenied", "Access denied")
-        return json_response(200, body)
+        return answer
 
-    def _app_resource(self, path: str) -> tuple[str | None, dict]:
-        """The grant a path needs, and what the fake returns when it is granted."""
+    def _app_answer(self, path: str) -> HttpResponse | None:
+        """What Graph answered the Worker app in the lab (docs/security/graph-permissions.md): 200
+        on what is granted, 403 on anything else. A folder grant inside a site also opens that
+        site's and drive root's metadata, lists only the granted folder at the root, and masks
+        every other item as 404."""
+        denied = graph_error(403, "accessDenied", "Access denied")
         if path == "/users":
-            return "directory", {"value": [{"id": "u1"}]}
+            return json_response(200, {"value": [{"id": "u1"}]}) if "directory" in self.app_grants else denied
         if m := _USER_MESSAGES.match(path):
-            return f"mailbox:{m.group(1).lower()}", {"value": [{"id": "AAMkFakeMessage"}]}
+            granted = f"mailbox:{m.group(1).lower()}" in self.app_grants
+            return json_response(200, {"value": [{"id": "AAMkFakeMessage"}]}) if granted else denied
         if m := _SITE.match(path):
             site = m.group(1)
             if site not in SITE_DRIVES:
-                return None, {}
-            if m.group(2):
-                return f"site:{site}", {"value": [{"id": d} for d in SITE_DRIVES[site]]}
-            return f"site:{site}", {"id": site}
+                return None
+            if f"site:{site}" in self.app_grants:
+                body = {"value": [{"id": d} for d in SITE_DRIVES[site]]} if m.group(2) else {"id": site}
+                return json_response(200, body)
+            if not m.group(2) and any(self._folder_grants(d) for d in SITE_DRIVES[site]):
+                return json_response(200, {"id": site})
+            return denied
         if m := _DRIVE.match(path):
             drive_id, where, children = m.group(1), m.group(2), m.group(3)
             site = next((s for s, drives in SITE_DRIVES.items() if drive_id in drives), None)
             if site is None:
-                return None, {}
-            body = {"value": [{"id": "01FAKECHILD"}]} if children else {"id": where or drive_id}
-            # A folder grant covers the folder and what is in it, nothing above or beside it.
-            if where and where.startswith("items/") and f"folder:{drive_id}/{where[6:]}" in self.app_grants:
-                return f"folder:{drive_id}/{where[6:]}", body
-            return f"site:{site}", body
-        return None, {}
+                return None
+            item = where[len("items/") :] if where and where.startswith("items/") else None
+            if f"site:{site}" in self.app_grants:
+                if children:
+                    return json_response(200, {"value": [{"id": i} for i in DRIVE_ROOT_ITEMS.get(drive_id, ("01FAKECHILD",))]})
+                return json_response(200, {"id": item or where or drive_id})
+            folders = self._folder_grants(drive_id)
+            if not folders:
+                return denied
+            if item is not None:
+                if item not in folders:
+                    return graph_error(404, "itemNotFound", "The resource could not be found.")
+                body = {"value": [{"id": "01FAKECHILD"}]} if children else {"id": item}
+                return json_response(200, body)
+            if where == "root":
+                body = {"value": [{"id": f} for f in sorted(folders)]} if children else {"id": "root"}
+                return json_response(200, body)
+            return denied
+        return None
+
+    def _folder_grants(self, drive_id: str) -> set[str]:
+        prefix = f"folder:{drive_id}/"
+        return {g[len(prefix) :] for g in self.app_grants if g.startswith(prefix)}
 
     # --- mail --------------------------------------------------------------------------------
 

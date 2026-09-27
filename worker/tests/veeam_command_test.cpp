@@ -623,3 +623,164 @@ TEST_CASE("rpworker veeam list reports an unexpected failure without its message
         REQUIRE(lab.http.requests().empty());
     }
 }
+
+// --- The table -----------------------------------------------------------------
+
+namespace {
+
+const std::string kHeader = "  ORGANIZATION                     BACKUP TIME                   EX  SP  "
+                            "OD  TM  LONG-TERM  RESTORE POINT ID\n";
+const std::string kNewestRow = "* RestoreProofLab.onmicrosoft.com  2026-09-25T19:37:15.2145203Z  "
+                               "x   x   x   -   no         " +
+                               kNewestPoint + "\n";
+const std::string kOldestRow = "* RestoreProofLab.onmicrosoft.com  2026-09-25T19:24:31.0936821Z  "
+                               "x   x   x   -   no         " +
+                               kOldestPoint + "\n";
+
+const std::string kMissingOrg = "veeam error: organisation RestoreProofLab.onmicrosoft.com "
+                                "(veeam_org_name) not found in Veeam\n";
+
+} // namespace
+
+TEST_CASE("rpworker veeam list prints the lab's organisation and its two restore points",
+          "[veeam_command]")
+{
+    Harness lab;
+
+    const Run result = lab.run_list();
+    REQUIRE(result.err.empty());
+    REQUIRE(result.out == kHeader + kNewestRow + kOldestRow + "\n" +
+                              "1 organisation(s), 2 restore point(s); * = veeam_org_name\n");
+    REQUIRE(result.exit_code == 0);
+}
+
+TEST_CASE("rpworker veeam list marks veeam_org_name in any case", "[veeam_command]")
+{
+    Harness lab(config_json("RESTOREPROOFLAB.onmicrosoft.COM"));
+
+    const Run result = lab.run_list();
+    REQUIRE(result.exit_code == 0);
+    REQUIRE(result.out.starts_with(kHeader + kNewestRow + kOldestRow));
+}
+
+TEST_CASE("rpworker veeam list shows each workload flag and long-term copies", "[veeam_command]")
+{
+    json fixture = load_fixture_json("veeam", "restore-points-200");
+    json& oldest = fixture["body"]["results"].at(1);
+    oldest["isExchange"] = false;
+    oldest["isSharePoint"] = false;
+    oldest["isOneDrive"] = false;
+    oldest["isTeams"] = true;
+    oldest["isLongTermCopy"] = true;
+    Harness lab;
+    lab.http.on(HttpMethod::get, points_url(), {to_response(fixture)});
+
+    const Run result = lab.run_list();
+    REQUIRE(result.exit_code == 0);
+    REQUIRE(result.out == kHeader + kNewestRow +
+                              "* RestoreProofLab.onmicrosoft.com  2026-09-25T19:24:31.0936821Z  "
+                              "-   -   -   x   yes        " +
+                              kOldestPoint + "\n\n" +
+                              "1 organisation(s), 2 restore point(s); * = veeam_org_name\n");
+}
+
+TEST_CASE("rpworker veeam list prints an organisation with no restore points on one row",
+          "[veeam_command]")
+{
+    Harness lab;
+    lab.http.on(HttpMethod::get, points_url(), {load_fixture("veeam", "restore-points-empty-200")});
+
+    const Run result = lab.run_list();
+    REQUIRE(result.err.empty());
+    REQUIRE(result.out ==
+            "  ORGANIZATION                     BACKUP TIME          EX  SP  OD  TM  LONG-TERM  "
+            "RESTORE POINT ID\n"
+            "* RestoreProofLab.onmicrosoft.com  (no restore points)\n"
+            "\n"
+            "1 organisation(s), 0 restore point(s); * = veeam_org_name\n");
+    REQUIRE(result.exit_code == 0);
+}
+
+TEST_CASE("rpworker veeam list sorts organisations by name in any case, then ID, and pads by "
+          "character",
+          "[veeam_command]")
+{
+    const std::string alpha_id = "a1a1a1a1-0000-4000-8000-000000000001";
+    const std::string same_lower_id = "11111111-0000-4000-8000-000000000001";
+    const std::string same_upper_id = "22222222-0000-4000-8000-000000000002";
+    // "ü" is two bytes in UTF-8 but one character: the column is padded by
+    // characters.
+    const std::string zurich = "Z\xc3\xbcrich-Versicherung-Test.onmicrosoft.com";
+    Harness lab;
+    lab.http.on(HttpMethod::get, orgs_url(),
+                {orgs_response({{kOtherOrgId, zurich},
+                                {same_upper_id, "Same.onmicrosoft.com"},
+                                {kOrgId, kOrgName},
+                                {same_lower_id, "same.onmicrosoft.com"},
+                                {alpha_id, "alpha.onmicrosoft.com"}})});
+    for (const std::string& id : {kOtherOrgId, alpha_id, same_lower_id, same_upper_id}) {
+        lab.http.on(HttpMethod::get, points_url(id),
+                    {load_fixture("veeam", "restore-points-empty-200")});
+    }
+
+    const Run result = lab.run_list();
+    REQUIRE(result.err.empty());
+    REQUIRE(result.out ==
+            "  ORGANIZATION                              BACKUP TIME                   EX  SP  OD  "
+            "TM  LONG-TERM  RESTORE POINT ID\n"
+            "  alpha.onmicrosoft.com                     (no restore points)\n"
+            "* RestoreProofLab.onmicrosoft.com           2026-09-25T19:37:15.2145203Z  x   x   x   "
+            "-   no         " +
+                kNewestPoint +
+                "\n"
+                "* RestoreProofLab.onmicrosoft.com           2026-09-25T19:24:31.0936821Z  x   x   "
+                "x   -   no         " +
+                kOldestPoint +
+                "\n"
+                "  same.onmicrosoft.com                      (no restore points)\n"
+                "  Same.onmicrosoft.com                      (no restore points)\n"
+                "  " +
+                zurich +
+                "  (no restore points)\n"
+                "\n"
+                "5 organisation(s), 2 restore point(s); * = veeam_org_name\n");
+    REQUIRE(result.exit_code == 0);
+}
+
+TEST_CASE("rpworker veeam list prints the table, then exits 4, when veeam_org_name isn't there",
+          "[veeam_command]")
+{
+    // The one organisation's name also carries a newline and a right-to-left
+    // override from the server, which must not forge or reorder a line.
+    Harness lab;
+    lab.http.on(HttpMethod::get, orgs_url(),
+                {orgs_response({{kOtherOrgId, "Evil\nOrg\xe2\x80\xae"}})});
+    lab.http.on(HttpMethod::get, points_url(kOtherOrgId),
+                {load_fixture("veeam", "restore-points-empty-200")});
+
+    const Run result = lab.run_list();
+    REQUIRE(result.out == "  ORGANIZATION  BACKUP TIME          EX  SP  OD  TM  LONG-TERM  "
+                          "RESTORE POINT ID\n"
+                          "  Evil Org      (no restore points)\n"
+                          "\n"
+                          "1 organisation(s), 0 restore point(s); * = veeam_org_name\n");
+    REQUIRE(result.err == kMissingOrg);
+    REQUIRE(result.exit_code == 4);
+    REQUIRE(logouts(lab) == 1);
+}
+
+TEST_CASE("rpworker veeam list says so when Veeam has no organisations, and exits 4",
+          "[veeam_command]")
+{
+    Harness lab;
+    lab.http.on(HttpMethod::get, orgs_url(), {orgs_response({})});
+
+    const Run result = lab.run_list();
+    REQUIRE(result.out == "no organisations in Veeam\n"
+                          "\n"
+                          "0 organisation(s), 0 restore point(s); * = veeam_org_name\n");
+    REQUIRE(result.err == kMissingOrg);
+    REQUIRE(result.exit_code == 4);
+    REQUIRE(lab.http.count(HttpMethod::get, points_url()) == 0);
+    REQUIRE(logouts(lab) == 1);
+}

@@ -19,6 +19,7 @@
 //   RP_LIVE_TARGET_ONEDRIVE_DRIVE_ID    default: alice's OneDrive
 //   RP_LIVE_TARGET_ONEDRIVE_FOLDER_ID   default: its /RestoreTarget folder
 
+#include "found_item_line.hpp"
 #include "test_support.hpp"
 
 #include <rp/client_assertion.hpp>
@@ -101,15 +102,11 @@ TEST_CASE("live: the three restore targets list as the tenant shows them",
     std::vector<rp::graph::FoundItem> items;
     REQUIRE_NOTHROW(items = reader.list_all());
 
-    // One line per item: type, id, name (files) or subject (mail), size, hash.
+    // One line per item (found_item_line.hpp), Graph's text made fit for one line.
     std::map<std::string, int> totals{{"mail", 0}, {"sharepoint", 0}, {"onedrive", 0}};
     for (const rp::graph::FoundItem& item : items) {
-        const std::string type{rp::graph::to_string(item.type)};
-        ++totals[type];
-        std::cout << type << "  " << item.id << "  "
-                  << (item.name ? *item.name : item.subject.value_or("")) << "  "
-                  << (item.size_bytes ? std::to_string(*item.size_bytes) : std::string{"-"})
-                  << "  " << item.sha256 << " (" << item.sha256_rule << ")\n";
+        ++totals[std::string{rp::graph::to_string(item.type)}];
+        std::cout << rp::test::found_item_line(item) << "\n";
     }
     for (const auto& [type, total] : totals) {
         std::cout << type << " total: " << total << "\n";

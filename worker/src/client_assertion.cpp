@@ -122,7 +122,10 @@ std::optional<Clock::time_point> to_time_point(const ASN1_TIME* time)
     using namespace std::chrono;
     const sys_days day = year{tm.tm_year + 1900} / month{static_cast<unsigned>(tm.tm_mon + 1)} /
                          std::chrono::day{static_cast<unsigned>(tm.tm_mday)};
-    return day + hours{tm.tm_hour} + minutes{tm.tm_min} + seconds{tm.tm_sec};
+    // In seconds from the start: MSVC's hours and minutes count in int, and a
+    // sum in minutes wraps from about year 6053 (99991231235959Z is RFC 5280's
+    // "no expiry").
+    return sys_seconds{day} + hours{tm.tm_hour} + minutes{tm.tm_min} + seconds{tm.tm_sec};
 }
 
 std::string format_utc(Clock::time_point time)

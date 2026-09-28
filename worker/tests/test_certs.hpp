@@ -247,6 +247,10 @@ struct ClientCertOptions {
     long not_after = 365L * 86400;
     // What the offsets count from; 0 is the real current time.
     std::time_t now = 0;
+    // A GeneralizedTime ("99991231235959Z") that replaces the offset, for
+    // dates no time_t offset reaches.
+    const char* not_before_text = nullptr;
+    const char* not_after_text = nullptr;
 };
 
 // A self-signed client certificate as lab/entra/new-worker-app.ps1 makes for
@@ -264,6 +268,12 @@ inline Cert make_client_cert(const char* common_name, const ClientCertOptions& o
     std::time_t now = options.now != 0 ? options.now : std::time(nullptr);
     REQUIRE(X509_time_adj_ex(X509_getm_notBefore(cert), 0, options.not_before, &now) != nullptr);
     REQUIRE(X509_time_adj_ex(X509_getm_notAfter(cert), 0, options.not_after, &now) != nullptr);
+    if (options.not_before_text != nullptr) {
+        REQUIRE(ASN1_TIME_set_string_X509(X509_getm_notBefore(cert), options.not_before_text) == 1);
+    }
+    if (options.not_after_text != nullptr) {
+        REQUIRE(ASN1_TIME_set_string_X509(X509_getm_notAfter(cert), options.not_after_text) == 1);
+    }
     X509_NAME* name = X509_get_subject_name(cert);
     REQUIRE(X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC,
                                        reinterpret_cast<const unsigned char*>(common_name), -1,

@@ -715,7 +715,13 @@ TEST_CASE("Retry-After values parse as delta-seconds or an IMF-fixdate", "[graph
         {"Tue, 29 Sep 2026 12:00:00 GMT", 86400},
         {"Mon, 28 Sep 2026 12:00:00 GMT", 0},
         {"Sun, 06 Nov 1994 08:49:37 GMT", 0}, // past: no wait
-        {"Thu, 01 Jan 2099 00:00:00 GMT", 2280312000},
+        {"Tue, 01 Jan 2030 00:00:00 GMT", 102859200},
+        // More than 1e9 s away is kept as 1e9 s (about 31 years): a date past
+        // the year MSVC's int minutes wrap at (about 6053) included.
+        {"Thu, 01 Jan 2099 00:00:00 GMT", 1'000'000'000},
+        {"Mon, 01 Jan 6053 00:00:00 GMT", 1'000'000'000},
+        {"Tue, 01 Jan 6054 00:00:00 GMT", 1'000'000'000},
+        {"Fri, 31 Dec 9999 23:59:59 GMT", 1'000'000'000},
         // The day name isn't checked against the date.
         {"Fri, 28 Sep 2026 12:00:10 GMT", 10},
         // Junk and the obsolete forms: ignored.
@@ -756,11 +762,15 @@ TEST_CASE("Retry-After values parse as delta-seconds or an IMF-fixdate", "[graph
 
 TEST_CASE("huge delta-seconds saturate instead of wrapping", "[graph][client]")
 {
-    const std::string value = GENERATE(as<std::string>{}, "9223372036854775807",
-                                       "9223372036854775808", std::string(400, '9'));
+    // 1e9 s: over any cap, and small enough to add to either clock's now().
+    const std::string value =
+        GENERATE(as<std::string>{}, "1000000001", "9223372036854775807", "9223372036854775808",
+                 std::string(400, '9'));
     const auto parsed = rp::graph::parse_retry_after(value, kNow);
     REQUIRE(parsed.has_value());
-    CHECK(*parsed > std::chrono::seconds{1'000'000'000});
+    CHECK(*parsed == std::chrono::seconds{1'000'000'000});
+    CHECK_NOTHROW(std::chrono::steady_clock::now() + *parsed);
+    CHECK(Clock::now() + *parsed > Clock::now());
 }
 
 TEST_CASE("a token reply without a usable token is a GraphError that doesn't quote it",

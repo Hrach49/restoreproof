@@ -198,22 +198,34 @@ TEST_CASE("A wrong password is reported by the variable's name", "[graph][certif
 TEST_CASE("A PFX with a cipher OpenSSL 3 no longer reads asks for a re-export",
           "[graph][certificate]")
 {
-    const std::string pfx =
-        to_base64(make_pfx(good_cert(), kPassword, PfxOptions{.cipher = PfxCipher::legacy_rc2}));
+    // RC2 in the certificate's safe, whether the key is under 3DES or AES
+    // (review of W2.1: with a 3DES key alone, a check that never looked at
+    // the safe passed), and PBES2 with DES.
+    const PfxCipher cipher =
+        GENERATE(PfxCipher::legacy_rc2, PfxCipher::rc2_cert_aes_key, PfxCipher::des_pbes2);
+    CAPTURE(static_cast<int>(cipher));
+    const std::string pfx = to_base64(make_pfx(good_cert(), kPassword, PfxOptions{.cipher = cipher}));
     CHECK(load_error(pfx) ==
           "the PFX in RP_GRAPH_CERT_PFX_BASE64 uses a legacy cipher (RC2 or similar) the Worker "
           "can't read; re-export it with AES256_SHA256");
 }
 
-TEST_CASE("A PFX whose encrypted safe has no content is refused without a crash",
+// Review of W2.1: once the MAC has checked out with the password, the password
+// is right; a file that still doesn't parse is damaged or built in a way the
+// Worker can't read, and its cipher (3DES included) is not to blame if
+// OpenSSL runs it.
+TEST_CASE("A PFX that fails to parse with the right password doesn't blame the password",
           "[graph][certificate]")
 {
     // The MAC is real, so this gets past the password check to PKCS12_parse,
-    // which fails, and then to the legacy-cipher diagnosis (CVE-2024-0727).
-    const std::string pfx = to_base64(
-        make_pfx(good_cert(), kPassword, PfxOptions{.cipher = PfxCipher::empty_encrypted}));
-    CHECK(load_error(pfx) == "RP_GRAPH_CERT_PASSWORD does not open the PFX in "
-                             "RP_GRAPH_CERT_PFX_BASE64");
+    // which fails, then to the diagnosis without a crash (CVE-2024-0727).
+    const PfxCipher cipher =
+        GENERATE(PfxCipher::empty_encrypted, PfxCipher::empty_encrypted_3des);
+    CAPTURE(static_cast<int>(cipher));
+    const std::string pfx = to_base64(make_pfx(good_cert(), kPassword, PfxOptions{.cipher = cipher}));
+    CHECK(load_error(pfx) ==
+          "the PFX in RP_GRAPH_CERT_PFX_BASE64 can't be read: it is damaged, or built in a way "
+          "the Worker can't read; re-export it with AES256_SHA256");
 }
 
 TEST_CASE("A PFX must hold a private key and its certificate", "[graph][certificate]")

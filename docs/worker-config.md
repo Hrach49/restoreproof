@@ -282,8 +282,9 @@ registration, **RestoreProof Worker** (L1.5). What it may read and why is in
   strict Base64; it doesn't hold a PFX; the PFX has no integrity check (MAC), so its password
   can't be checked; the password doesn't open it (`RP_GRAPH_CERT_PASSWORD is not set, and the
   PFX in RP_GRAPH_CERT_PFX_BASE64 needs a password` when it is unset); it uses a legacy cipher
-  that OpenSSL 3 no longer reads (re-export it with `AES256_SHA256`, as
-  `lab/entra/new-worker-app.ps1` does); it holds no private key, no certificate, or a key
+  that OpenSSL 3 no longer reads (RC2, RC4, DES), or the password is right and it still can't
+  be read (a damaged file), in both cases re-export it with `AES256_SHA256`, as
+  `lab/entra/new-worker-app.ps1` does; it holds no private key, no certificate, or a key
   that matches no certificate in it; the key isn't RSA of at least 2048 bits; the certificate
   has expired or isn't valid yet. A certificate that expires within 30 days still loads, with
   a warning in the log. `rpworker config check` doesn't do any of this: it stays offline and

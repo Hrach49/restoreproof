@@ -56,7 +56,15 @@ secret `RP_GRAPH_CLIENT_SECRET` and its list of secret-key markers.
      `NotFoundError` is only a 404 Graph explains in its JSON error; a mailbox Graph can't
      read (`MailboxNotEnabledForRESTAPI`, `MailboxNotSupportedForRESTAPI`) and a 404 without
      Graph's JSON (a proxy, a wrong path) are plain `GraphError`s.
-   - Every Graph error means run status `error`, never `fail`.
+   - Every Graph error means run status `error`, never `fail`. So `get` is for what must
+     be there (the test mailbox, site or drive): its 404 is a `NotFoundError`. An item a
+     restore should have put there is looked up with `find`/`find_json`, which answer a 404
+     Graph explains with `nullopt` (the item is missing: W3's `fail`), except the codes that
+     say the mailbox or user doesn't exist (`ErrorInvalidUser`, `ErrorNonExistentMailbox`,
+     `Request_ResourceNotFound`), still a `NotFoundError`. SharePoint and OneDrive answer
+     `itemNotFound` for a missing drive as for a missing item, so W2.2 checks the drive with
+     `get` first (review of W2.1: one `NotFoundError` for both would have made either a
+     misconfigured mailbox a `fail` or a failed restore an `error`).
    - **Exit codes are unchanged in W2.1**: no command calls Graph yet. `rpworker graph list`
      (W2.3) is the first to map these errors. Recommended there: `AuthError` and
      `PermissionError` 2, `TransientError` 3, other `GraphError`s 4, and `CertificateError`

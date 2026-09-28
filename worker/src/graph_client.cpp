@@ -441,6 +441,15 @@ bool asks_for_claims(const HttpResponse& response)
            ascii_lower(it->second).find("insufficient_claims") != std::string::npos;
 }
 
+// The 404 codes that say the mailbox or user a call addresses doesn't exist:
+// a wrong test_mailbox, never an item missing from a restore.
+bool names_missing_container(std::string_view code)
+{
+    constexpr std::array<std::string_view, 3> codes{"ErrorInvalidUser", "ErrorNonExistentMailbox",
+                                                     "Request_ResourceNotFound"};
+    return std::find(codes.begin(), codes.end(), code) != codes.end();
+}
+
 std::string relies_on(const Grant& grant)
 {
     return "the Worker app relies on " + std::string{grant.description} +
@@ -755,6 +764,18 @@ HttpRequest GraphClient::api_request(const std::string& url, const std::string& 
 
 HttpResponse GraphClient::get(std::string_view path_or_url, const Grant& grant)
 {
+    // Never nullopt: only an item lookup answers a 404 with it.
+    return *send_get(path_or_url, grant, false);
+}
+
+std::optional<HttpResponse> GraphClient::find(std::string_view path_or_url, const Grant& grant)
+{
+    return send_get(path_or_url, grant, true);
+}
+
+std::optional<HttpResponse> GraphClient::send_get(std::string_view path_or_url, const Grant& grant,
+                                                  bool item_lookup)
+{
     // Before anything is sent, the token request included.
     const std::string url = graph_url(path_or_url);
     const std::string path = display_path(url);
@@ -871,8 +892,13 @@ HttpResponse GraphClient::get(std::string_view path_or_url, const Grant& grant)
                 const std::string message =
                     head + (reply.message.empty() ? "" : ": " + reply.message) + rid;
                 // Only a 404 Graph explains: a proxy's, a gateway's or a
-                // wrong path's is no item missing from a restore.
+                // wrong path's is no item missing from a restore. Nor is a
+                // mailbox or user that doesn't exist.
                 if (status == 404 && !reply.code.empty()) {
+                    if (item_lookup && !names_missing_container(reply.code)) {
+                        log_debug(head + ": not there");
+                        return std::nullopt;
+                    }
                     throw NotFoundError(message, status, reply.code, reply.inner_code,
                                         reply.request_id);
                 }
@@ -932,7 +958,20 @@ HttpResponse GraphClient::get(std::string_view path_or_url, const Grant& grant)
 
 json GraphClient::get_json(std::string_view path_or_url, const Grant& grant)
 {
-    const HttpResponse response = get(path_or_url, grant);
+    return json_body(path_or_url, get(path_or_url, grant));
+}
+
+std::optional<json> GraphClient::find_json(std::string_view path_or_url, const Grant& grant)
+{
+    const std::optional<HttpResponse> response = find(path_or_url, grant);
+    if (!response) {
+        return std::nullopt;
+    }
+    return json_body(path_or_url, *response);
+}
+
+json GraphClient::json_body(std::string_view path_or_url, const HttpResponse& response)
+{
     const std::string what = "Graph GET " + display_path(graph_url(path_or_url)) + ": HTTP " +
                              std::to_string(response.status);
     const std::string request_id = header_request_id(response);

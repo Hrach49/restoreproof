@@ -65,7 +65,10 @@ private:
     std::string grant_;
 };
 
-// The mailbox, site, drive or item doesn't exist (a 404 Graph explains).
+// What GraphClient::get() addresses doesn't exist: the mailbox, site, drive
+// or item it must find there (a 404 Graph explains). Like every GraphError, the
+// run can't test: an item a restore should have put there is looked up with
+// GraphClient::find(), which answers its absence with nullopt instead.
 class NotFoundError : public GraphError {
 public:
     using GraphError::GraphError;

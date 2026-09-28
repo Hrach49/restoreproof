@@ -1183,6 +1183,72 @@ TEST_CASE("a 404 is a NotFoundError with Graph's explanation", "[graph][client][
     CHECK(lab.http.count(HttpMethod::get, url) == 1);
 }
 
+// Review of W2.1: get() can't tell a missing mailbox, site or drive (the
+// setup is wrong: status `error`) from an item missing from a restore (the
+// restore failed: `fail`). An item lookup says so by calling find(), which
+// answers a missing item with nullopt; a missing mailbox or user still throws.
+TEST_CASE("find() answers an item Graph says is missing with nullopt", "[graph][client][get]")
+{
+    const HttpResponse response = GENERATE(
+        make_response(404, R"({"error":{"code":"ErrorItemNotFound",)"
+                           R"("message":"The specified object was not found in the store."}})"),
+        make_response(404, R"({"error":{"code":"itemNotFound","message":"Item not found"}})"));
+    CAPTURE(response.body);
+    Lab lab;
+    lab.http.on(HttpMethod::get, kMessagesUrl, {response});
+    auto client = lab.make_client();
+
+    CHECK_FALSE(client->find(kMessagesPath, rp::graph::kMailReadGrant).has_value());
+    CHECK_FALSE(client->find_json(kMessagesPath, rp::graph::kMailReadGrant).has_value());
+    // get() is for what must be there: the same 404 is an error.
+    CHECK(catch_graph([&] { client->get(kMessagesPath, rp::graph::kMailReadGrant); }).kind ==
+          "NotFoundError");
+    CHECK(lab.http.count(HttpMethod::get, kMessagesUrl) == 3);
+}
+
+TEST_CASE("find() still throws for a missing mailbox or user and anything but Graph's 404",
+          "[graph][client][get]")
+{
+    struct Row {
+        HttpResponse response;
+        std::string kind;
+    };
+    const Row row = GENERATE(values<Row>({
+        {load_fixture("graph", "messages-404-unknown-user"), "NotFoundError"},
+        {make_response(404, R"({"error":{"code":"ErrorNonExistentMailbox","message":"x"}})"),
+         "NotFoundError"},
+        {make_response(404, R"({"error":{"code":"Request_ResourceNotFound","message":"x"}})"),
+         "NotFoundError"},
+        {load_fixture("graph", "messages-404-mailbox-not-enabled"), "GraphError"},
+        {make_response(404, "<html>Not Found</html>", "text/html"), "GraphError"},
+        {load_fixture("graph", "messages-403-exchange"), "PermissionError"},
+    }));
+    CAPTURE(row.response.body);
+    Lab lab;
+    lab.http.on(HttpMethod::get, kMessagesUrl, {row.response});
+    auto client = lab.make_client();
+
+    CHECK(catch_graph([&] { client->find(kMessagesPath, rp::graph::kMailReadGrant); }).kind ==
+          row.kind);
+    CHECK(catch_graph([&] { client->find_json(kMessagesPath, rp::graph::kMailReadGrant); }).kind ==
+          row.kind);
+}
+
+TEST_CASE("find() returns what is there, as get() does", "[graph][client][get]")
+{
+    Lab lab;
+    auto client = lab.make_client();
+
+    const std::optional<HttpResponse> response =
+        client->find(kMessagesPath, rp::graph::kMailReadGrant);
+    const std::optional<json> doc = client->find_json(kMessagesPath, rp::graph::kMailReadGrant);
+
+    REQUIRE(response.has_value());
+    CHECK(response->status == 200);
+    REQUIRE(doc.has_value());
+    CHECK(doc->at("value") == json::array());
+}
+
 TEST_CASE("a 404 that isn't Graph's JSON is a GraphError, not a NotFoundError",
           "[graph][client][get]")
 {

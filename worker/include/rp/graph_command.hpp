@@ -35,8 +35,7 @@ struct GraphCommandEnv {
     // rp::graph::make_graph_http_client, called with client_options.logger.
     std::function<std::unique_ptr<IHttpClient>(std::shared_ptr<spdlog::logger>)> make_graph_http;
     // The HTTP client for downloads, which never carries the token:
-    // rp::graph::make_download_http_client. Created on every run; sent through
-    // only with --hash.
+    // rp::graph::make_download_http_client. Called only with --hash.
     std::function<std::unique_ptr<IHttpClient>()> make_download_http;
     // Passed to GraphClient as they are, but a null `logger` is replaced by
     // make_command_logger()'s (warnings and worse, to stderr), never spdlog's

@@ -191,13 +191,17 @@ int run_graph_command(std::span<const std::string_view> args, std::ostream& out,
                                   std::move(*certificate), client_options);
         graph::TargetReaderOptions options;
         options.logger = logger;
-        options.hash_files = hash;
+        options.hash_items = hash;
         options.download.logger = logger;
         graph::TargetReader reader(client, *download,
                                    connector::RestoreTargets::from_config(config), options);
         // Every list first, in the order printed: a failure prints no partial table.
         const Listing listing{reader.list_mail(), reader.list_sharepoint(), reader.list_onedrive()};
         out << format_listing(config.test_mailbox, listing, hash);
+        // A full disk or a closed pipe: never exit 0 with a short listing.
+        if (!out.flush()) {
+            throw std::runtime_error("writing the tables failed");
+        }
         return exit_code::ok;
     } catch (const graph::AuthError& e) {
         return report_graph_error(err, e, exit_code::auth);

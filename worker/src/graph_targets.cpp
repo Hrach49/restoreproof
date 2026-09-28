@@ -384,7 +384,7 @@ std::vector<FoundItem> TargetReader::list_files(const FileTarget& target)
             item.id = id;
             item.name = *name;
             item.size_bytes = size->get<std::uint64_t>();
-            if (!options_.hash_files) {
+            if (!options_.hash_items) {
                 items.push_back(std::move(item));
                 continue;
             }
@@ -409,6 +409,32 @@ std::vector<FoundItem> TargetReader::list_files(const FileTarget& target)
     return items;
 }
 
+namespace {
+
+// text-v1 of a listed message's body, which comes in the listing (Prefer asks
+// for text): no GET per mail.
+std::string mail_body_sha256(const json& message, const std::string& location)
+{
+    const auto found = message.find("body");
+    const json none;
+    const json& body = found == message.end() ? none : *found;
+    const std::string* type = string_at(body, "contentType");
+    if (type == nullptr || !ascii_iequals(*type, "text")) {
+        throw GraphError("Graph returned the body of a message in the test mailbox as \"" +
+                         (type ? one_line(*type, 20) : std::string{"(none)"}) +
+                         "\", not text, although the Worker asked for text; its text-v1 "
+                         "hash would be wrong");
+    }
+    const std::string* content = string_at(body, "content");
+    if (content == nullptr) {
+        throw GraphError("Graph's reply listing " + location +
+                         " has a message without body.content");
+    }
+    return text_v1_sha256(*content);
+}
+
+} // namespace
+
 std::vector<FoundItem> TargetReader::list_mail()
 {
     const std::string& mailbox = targets_.mailbox();
@@ -417,7 +443,8 @@ std::vector<FoundItem> TargetReader::list_mail()
     const std::vector<json> pages =
         list_pages(graph_,
                    "/users/" + mailbox + "/mailFolders/inbox/messages" +
-                       "?$select=id,subject,from,receivedDateTime,internetMessageId,body&$top=100",
+                       "?$select=id,subject,from,receivedDateTime,internetMessageId" +
+                       (options_.hash_items ? ",body" : "") + "&$top=100",
                    kMailReadGrant, prefer, location, [&mailbox](const std::vector<std::string>& path) {
                        return is_inbox_path(path, mailbox);
                    });
@@ -427,21 +454,9 @@ std::vector<FoundItem> TargetReader::list_mail()
             FoundItem item;
             item.type = ItemType::mail;
             item.id = graph_id(message, "a message in " + location);
-            // The body comes in the listing (Prefer asks for text): no GET per mail.
-            const auto found = message.find("body");
-            const json none;
-            const json& body = found == message.end() ? none : *found;
-            const std::string* type = string_at(body, "contentType");
-            if (type == nullptr || !ascii_iequals(*type, "text")) {
-                throw GraphError("Graph returned the body of a message in the test mailbox as \"" +
-                                 (type ? one_line(*type, 20) : std::string{"(none)"}) +
-                                 "\", not text, although the Worker asked for text; its text-v1 "
-                                 "hash would be wrong");
-            }
-            const std::string* content = string_at(body, "content");
-            if (content == nullptr) {
-                throw GraphError("Graph's reply listing " + location +
-                                 " has a message without body.content");
+            if (options_.hash_items) {
+                item.sha256 = mail_body_sha256(message, location);
+                item.sha256_rule = std::string{kTextV1};
             }
             item.subject = optional_string(message, "subject");
             const auto from = message.find("from");
@@ -453,8 +468,6 @@ std::vector<FoundItem> TargetReader::list_mail()
             }
             item.received_at = optional_string(message, "receivedDateTime");
             item.internet_message_id = optional_string(message, "internetMessageId");
-            item.sha256 = text_v1_sha256(*content);
-            item.sha256_rule = std::string{kTextV1};
             items.push_back(std::move(item));
         }
     }

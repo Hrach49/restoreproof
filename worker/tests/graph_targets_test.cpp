@@ -1191,14 +1191,14 @@ TEST_CASE("one file in each file location lists as one FoundItem", "[graph][targ
     CHECK_THAT(lab.log(), ContainsSubstring("info listed 1 item(s) in " + at.location));
 }
 
-// ---- without hash_files (W2.3: `rpworker graph list` without --hash) ---------------------
+// ---- without hash_items (W2.3: `rpworker graph list` without --hash) ---------------------
 
-TEST_CASE("files are hashed unless hash_files says not to", "[graph][targets]")
+TEST_CASE("files are hashed unless hash_items says not to", "[graph][targets]")
 {
-    CHECK(TargetReaderOptions{}.hash_files);
+    CHECK(TargetReaderOptions{}.hash_items);
 }
 
-TEST_CASE("without hash_files no file is downloaded and each keeps Graph's size",
+TEST_CASE("without hash_items no file is downloaded and each keeps Graph's size",
           "[graph][targets]")
 {
     const FileLocation at = GENERATE(sharepoint_location(), onedrive_location());
@@ -1213,7 +1213,7 @@ TEST_CASE("without hash_files no file is downloaded and each keeps Graph's size"
     Lab lab;
     serve_location(lab, at, page_of(json::array({file})));
     TargetReaderOptions options = lab.reader_options();
-    options.hash_files = false;
+    options.hash_items = false;
     int on_file_calls = 0;
     options.on_file = [&on_file_calls](const FoundItem&, std::string_view) { ++on_file_calls; };
     TargetReader reader(*lab.graph, lab.dl_http,
@@ -1241,7 +1241,7 @@ TEST_CASE("without hash_files no file is downloaded and each keeps Graph's size"
     CHECK_THAT(lab.log(), ContainsSubstring("info listed 1 item(s) in " + at.location));
 }
 
-TEST_CASE("without hash_files the guards still refuse a wrong drive or folder",
+TEST_CASE("without hash_items the guards still refuse a wrong drive or folder",
           "[graph][targets]")
 {
     const FileLocation at = GENERATE(sharepoint_location(), onedrive_location());
@@ -1252,7 +1252,7 @@ TEST_CASE("without hash_files the guards still refuse a wrong drive or folder",
     lab.serve(at.guard_url, guard);
     lab.serve_file(at.children_url, at.one_item_fixture);
     TargetReaderOptions options = lab.reader_options();
-    options.hash_files = false;
+    options.hash_items = false;
     TargetReader reader(*lab.graph, lab.dl_http,
                         rp::connector::RestoreTargets::from_config(lab_config()), options);
 
@@ -1264,22 +1264,38 @@ TEST_CASE("without hash_files the guards still refuse a wrong drive or folder",
     CHECK(lab.dl_http.requests().empty());
 }
 
-TEST_CASE("without hash_files mail is still hashed by text-v1", "[graph][targets]")
+TEST_CASE("without hash_items no mail body is asked for or checked", "[graph][targets]")
 {
+    // Even a body Graph sends anyway, as html or without content, is ignored:
+    // nothing is hashed, so nothing can be hashed wrongly.
+    json value = messages_of("mail-list-200-one-item");
+    const std::string body = GENERATE(as<std::string>{}, "as recorded", "html", "no content");
+    CAPTURE(body);
+    if (body == "html") {
+        value[0]["body"]["contentType"] = "html";
+    } else if (body == "no content") {
+        value[0]["body"].erase("content");
+    }
     Lab lab;
-    lab.serve_file(mail_list_url(), "mail-list-200-one-item");
-    const json message = messages_of("mail-list-200-one-item").at(0);
+    lab.graph_http.on(HttpMethod::get, mail_list_url(false), {page_of(value)});
     TargetReaderOptions options = lab.reader_options();
-    options.hash_files = false;
+    options.hash_items = false;
     TargetReader reader(*lab.graph, lab.dl_http,
                         rp::connector::RestoreTargets::from_config(lab_config()), options);
 
     const std::vector<FoundItem> items = reader.list_mail();
 
     REQUIRE(items.size() == 1);
-    CHECK(items[0].sha256 ==
-          rp::text_v1_sha256(message.at("body").at("content").get<std::string>()));
-    CHECK(items[0].sha256_rule == "text-v1");
+    CHECK(items[0].id == value[0].at("id").get<std::string>());
+    CHECK(items[0].subject == value[0].at("subject").get<std::string>());
+    CHECK(items[0].internet_message_id == value[0].at("internetMessageId").get<std::string>());
+    CHECK(items[0].sha256.empty());
+    CHECK(items[0].sha256_rule.empty());
+    // One listing, without body in $select, and still the Prefer header (ImmutableId).
+    const std::vector<HttpRequest> gets = lab.graph_gets();
+    REQUIRE(gets.size() == 1);
+    CHECK(gets[0].url == mail_list_url(false));
+    CHECK(gets[0].headers.at("Prefer") == kPrefer);
 }
 
 TEST_CASE("folders and non-file items are skipped and logged", "[graph][targets]")

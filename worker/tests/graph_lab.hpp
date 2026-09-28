@@ -38,8 +38,8 @@ inline const std::chrono::system_clock::time_point kNow =
     std::chrono::sys_days{std::chrono::year{2026} / 9 / 28} + 12h;
 inline constexpr const char* kPfxPassword = "Sentinel-Targets-PFX-Password-3b9d";
 
-inline const std::string kMailSelect =
-    "?$select=id,subject,from,receivedDateTime,internetMessageId,body";
+// Without the body when nothing is hashed (`graph list` without --hash).
+inline const std::string kMailSelect = "?$select=id,subject,from,receivedDateTime,internetMessageId";
 inline const std::string kChildrenQuery = "/children?$select=id,name,size,file,folder&$top=200";
 inline const std::string kPrefer = std::string{rp::graph::kMailPrefer};
 
@@ -131,10 +131,10 @@ inline std::string folder_children_url()
     return kGraph + "/drives/" + lab_values().onedrive_drive_id + "/items/" +
            lab_values().folder_id + kChildrenQuery;
 }
-inline std::string mail_list_url()
+inline std::string mail_list_url(bool with_body = true)
 {
     return kGraph + "/users/" + lab_values().mailbox + "/mailFolders/inbox/messages" +
-           kMailSelect + "&$top=100";
+           kMailSelect + (with_body ? ",body" : "") + "&$top=100";
 }
 
 // The messages of a recorded listing.

@@ -53,12 +53,12 @@ struct FoundItem {
     std::optional<std::string> received_at;         // mail: receivedDateTime as Graph gives it
     std::optional<std::string> internet_message_id; // mail: what W3.1 matches mail on
     // Lower-case hex SHA-256. Mail: text-v1 of body.content. Files: the downloaded
-    // bytes; empty when TargetReaderOptions::hash_files is false.
+    // bytes. Empty when TargetReaderOptions::hash_items is false.
     std::string sha256;
     // How sha256 was computed: "text-v1" or "bytes"; empty when sha256 is.
     std::string sha256_rule;
     // Files: the bytes downloaded; Graph's size, but for a docx or xlsx SharePoint
-    // rewrote. Without hash_files, Graph's size as listed.
+    // rewrote. Without hash_items, Graph's size as listed.
     std::optional<std::uint64_t> size_bytes;
 
     bool operator==(const FoundItem&) const = default;
@@ -78,17 +78,18 @@ using NextLinkRule = std::function<bool(const std::vector<std::string>& path)>;
 struct TargetReaderOptions {
     // The reader's own lines (counts, skipped items); null: spdlog::default_logger().
     std::shared_ptr<spdlog::logger> logger;
-    // Whether each file is downloaded and hashed. False (`rpworker graph list`
-    // without --hash, W2.3): nothing is downloaded, the download client is never
-    // called, and a file's sha256 and sha256_rule stay empty and its size_bytes
-    // is Graph's size. The guards run the same either way, and mail is hashed
-    // either way (its body comes in the listing).
-    bool hash_files = true;
+    // Whether each item is hashed: each file downloaded, each mail's body asked
+    // for. False (`rpworker graph list` without --hash, W2.3): nothing is
+    // downloaded, the download client is never called, the mail listing leaves
+    // body out of $select and nothing checks a body Graph sends anyway; every
+    // sha256 and sha256_rule stays empty and a file's size_bytes is Graph's
+    // size. The guards run the same either way.
+    bool hash_items = true;
     DownloadOptions download;
     // Called with each file's bytes after they were size-checked and hashed,
     // before the next download; the bytes are gone after it returns. W3.2
     // computes office-v1 here. What it throws is thrown as it is. Never called
-    // without hash_files.
+    // without hash_items.
     std::function<void(const FoundItem&, std::string_view bytes)> on_file;
 };
 

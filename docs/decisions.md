@@ -21,13 +21,14 @@ Format: date, decision, reason, alternatives rejected.
    order, each once. Everything is read before anything is printed. The table layout moved
    from `veeam_command.cpp` into `src/text_table.{hpp,cpp}` (`table_cell`, `display_width`,
    `format_table`), which both commands use; `veeam list`'s output is unchanged.
-2. **Without `--hash`, nothing is downloaded**: `TargetReaderOptions::hash_files` (default
-   `true`, W2.2's behaviour). When it is `false`, the file listings skip `/content` and the
-   download client entirely; a file's `sha256` and `sha256_rule` stay empty (documented on
-   `FoundItem`, not an `optional`, so W2.2's callers are untouched) and `size_bytes` is Graph's
-   `size`; `on_file` is never called. The guards run the same either way. Mail is still hashed
-   (its body comes in the listing, so it costs nothing), but the command shows hashes only with
-   `--hash`, so every table has the same columns for a given command line.
+2. **Without `--hash`, nothing is downloaded or hashed**: `TargetReaderOptions::hash_items`
+   (default `true`, W2.2's behaviour). When it is `false`, the file listings skip `/content` and
+   the download client entirely, `size_bytes` is Graph's `size` and `on_file` is never called;
+   the mail listing leaves `body` out of `$select` and never checks a body. Every `sha256` and
+   `sha256_rule` stays empty (documented on `FoundItem`, not an `optional`, so W2.2's callers
+   are untouched). The guards run the same either way. (First named `hash_files`, with mail
+   hashed either way; the review found that fetched every body for a hash never printed, and
+   that one body Graph sent as html failed the whole hash-less listing with exit 4.)
 3. **The exit codes are service-neutral** (supersedes the wording of the 2026-09-27 W1.6
    entry, not its numbers): `exit_code::veeam` is renamed `exit_code::service`, and the
    comments in `rp/cli.hpp` and the table in `docs/worker-config.md` speak of "the service".
@@ -41,6 +42,9 @@ Format: date, decision, reason, alternatives rejected.
    in `src/command_config.cpp`, now shared with `veeam list`); a `GraphCommandEnv` without a
    logger gets that one too, never spdlog's default logger, which writes to stdout. Downloads go through
    `make_download_http_client()`, whose logger is a null sink, so no download link is logged.
+5. **A failed write to stdout is a failure**: after printing, the command flushes `out` and
+   checks its state; a full disk or a closed pipe gives `error: unexpected failure`, exit 1,
+   never exit 0 with a short listing (exceptions are off on `std::cout`, so nothing throws).
 
 **Reason.** The operator needs to see the targets before and after a restore (W2.8, W3.4)
 without waiting for every file to download; `--hash` is there when the content matters. An

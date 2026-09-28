@@ -163,7 +163,7 @@ struct Harness {
     // All three targets empty.
     void serve_empty()
     {
-        graph_http.on(HttpMethod::get, mail_list_url(), {load_fixture("graph", "mail-list-200-empty")});
+        serve_mail(load_fixture("graph", "mail-list-200-empty"));
         graph_http.on(HttpMethod::get, drive_url(), {load_fixture("graph", "restoretarget-drive-200")});
         graph_http.on(HttpMethod::get, library_children_url(),
                       {load_fixture("graph", "restoretarget-children-200-empty")});
@@ -175,10 +175,16 @@ struct Harness {
     // One item in each target, as recorded.
     void serve_one_each()
     {
-        graph_http.on(HttpMethod::get, mail_list_url(),
-                      {load_fixture("graph", "mail-list-200-one-item")});
+        serve_mail(load_fixture("graph", "mail-list-200-one-item"));
         serve_location(graph_http, dl_http, sharepoint_location());
         serve_location(graph_http, dl_http, onedrive_location());
+    }
+
+    // The mail listing with the bodies (--hash) and without.
+    void serve_mail(const HttpResponse& response)
+    {
+        graph_http.on(HttpMethod::get, mail_list_url(true), {response});
+        graph_http.on(HttpMethod::get, mail_list_url(false), {response});
     }
 
     void serve(const std::string& url, HttpResponse response)
@@ -287,10 +293,19 @@ std::size_t line_count(const std::string& text)
     return static_cast<std::size_t>(std::ranges::count(text, '\n'));
 }
 
-// A stream every write to fails, with exceptions on: writing the tables throws.
+// A stream every write to fails: writing the tables sets badbit, or throws
+// with exceptions on.
 struct FailingBuffer : std::streambuf {
     int_type overflow(int_type) override { return traits_type::eof(); }
     std::streamsize xsputn(const char*, std::streamsize) override { return 0; }
+};
+
+// A stream that takes every write but fails to flush them, as a buffered
+// write to a full disk does.
+struct FailingFlushBuffer : std::streambuf {
+    int_type overflow(int_type c) override { return traits_type::not_eof(c); }
+    std::streamsize xsputn(const char*, std::streamsize n) override { return n; }
+    int sync() override { return -1; }
 };
 
 } // namespace
@@ -471,7 +486,7 @@ TEST_CASE("rpworker graph list maps each Graph failure to its exit code and prin
             rp::exit_code::auth, "AADSTS700027"},
         Row{"403 on the mailbox", false,
             [](Harness& lab) {
-                lab.serve(mail_list_url(), load_fixture("graph", "messages-403-exchange"));
+                lab.serve_mail(load_fixture("graph", "messages-403-exchange"));
             },
             rp::exit_code::auth, std::string{rp::graph::kMailReadGrant.description}},
         Row{"403 on the RestoreTarget library", false,
@@ -484,7 +499,7 @@ TEST_CASE("rpworker graph list maps each Graph failure to its exit code and prin
             rp::exit_code::auth, std::string{rp::graph::kOneDriveReadGrant.description}},
         Row{"404 on the mailbox", false,
             [](Harness& lab) {
-                lab.serve(mail_list_url(), load_fixture("graph", "messages-404-unknown-user"));
+                lab.serve_mail(load_fixture("graph", "messages-404-unknown-user"));
             },
             rp::exit_code::service, "HTTP 404 (ErrorInvalidUser)"},
         Row{"404 on the RestoreTarget drive", false,
@@ -595,11 +610,19 @@ TEST_CASE("rpworker graph list reports an unexpected failure without its message
     }
     SECTION("writing the tables")
     {
+        // A full disk or a closed pipe: with exceptions on, and off as in
+        // production, where only the stream's state tells.
+        const bool exceptions = GENERATE(true, false);
+        const bool on_flush = GENERATE(false, true);
+        CAPTURE(exceptions, on_flush);
         Harness lab;
         lab.serve_empty();
-        FailingBuffer buffer;
-        std::ostream out(&buffer);
-        out.exceptions(std::ios::badbit);
+        FailingBuffer failing_write;
+        FailingFlushBuffer failing_flush;
+        std::ostream out(on_flush ? static_cast<std::streambuf*>(&failing_flush) : &failing_write);
+        if (exceptions) {
+            out.exceptions(std::ios::badbit);
+        }
         std::ostringstream err;
         const std::string path_arg = utf8(lab.config_path);
 
@@ -626,7 +649,7 @@ TEST_CASE("rpworker graph list prints three empty tables for empty targets", "[g
     CHECK(result.out == kEmptyOutput);
     CHECK(result.err.empty());
     // The mailbox, then each file target's guard and listing; nothing downloaded.
-    CHECK(lab.graph_gets() == std::vector<std::string>{mail_list_url(), drive_url(),
+    CHECK(lab.graph_gets() == std::vector<std::string>{mail_list_url(hash), drive_url(),
                                                        library_children_url(), folder_url(),
                                                        folder_children_url()});
     CHECK(lab.dl_http.requests().empty());
@@ -779,7 +802,7 @@ TEST_CASE("rpworker graph list shows a missing mail field as - and an empty subj
     value[0]["subject"] = GENERATE(json(""), json(nullptr));
     Harness lab;
     lab.serve_empty();
-    lab.serve(mail_list_url(), page_of(value));
+    lab.serve_mail(page_of(value));
 
     const Run result = lab.run_list();
 
@@ -802,7 +825,7 @@ TEST_CASE("rpworker graph list turns control characters in Graph's text into spa
     file["name"] = "x\x1b[2J\xE2\x80\xAE" "txt.exe";
     Harness lab;
     lab.serve_empty();
-    lab.serve(mail_list_url(), page_of(value));
+    lab.serve_mail(page_of(value));
     serve_location(lab.graph_http, lab.dl_http, sharepoint_location(),
                    page_of(json::array({file})));
 

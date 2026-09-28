@@ -7,6 +7,57 @@ Format: date, decision, reason, alternatives rejected.
 
 ---
 
+## 2026-09-28 — W2.3: `rpworker graph list`; a hash-less listing; service-neutral exit codes
+
+**Decision.**
+
+1. **`rpworker graph list [--hash] [--config <path>]`** prints what is in the three restore
+   targets now, through W2.2's `TargetReader`: the test mailbox's Inbox, the RestoreTarget
+   library, the test OneDrive's RestoreTarget folder, in that order, each a heading with its
+   count and, if it holds anything, a table (mail: received, sender, subject, ID; files: name,
+   size, ID), then a summary line (`docs/worker-config.md`). It follows `veeam list` in shape:
+   `rp/graph_command.hpp` with a `GraphCommandEnv` (config path, secrets, the two HTTP client
+   factories, `GraphClientOptions`), dispatched by `rp::run_cli`. The flags come in either
+   order, each once. Everything is read before anything is printed. The table layout moved
+   from `veeam_command.cpp` into `src/text_table.{hpp,cpp}` (`table_cell`, `display_width`,
+   `format_table`), which both commands use; `veeam list`'s output is unchanged.
+2. **Without `--hash`, nothing is downloaded**: `TargetReaderOptions::hash_files` (default
+   `true`, W2.2's behaviour). When it is `false`, the file listings skip `/content` and the
+   download client entirely; a file's `sha256` and `sha256_rule` stay empty (documented on
+   `FoundItem`, not an `optional`, so W2.2's callers are untouched) and `size_bytes` is Graph's
+   `size`; `on_file` is never called. The guards run the same either way. Mail is still hashed
+   (its body comes in the listing, so it costs nothing), but the command shows hashes only with
+   `--hash`, so every table has the same columns for a given command line.
+3. **The exit codes are service-neutral** (supersedes the wording of the 2026-09-27 W1.6
+   entry, not its numbers): `exit_code::veeam` is renamed `exit_code::service`, and the
+   comments in `rp/cli.hpp` and the table in `docs/worker-config.md` speak of "the service".
+   For Graph: 1 for a `ConfigError`, a `graph::CertificateError` among them (an unset
+   `RP_GRAPH_CERT_PFX_BASE64`, a PFX that doesn't open, a certificate not valid now: all found
+   before any request), and any unexpected failure; 2 for `graph::AuthError` and
+   `PermissionError` (whose message names the grant); 3 for `graph::TransientError`; 4 for any
+   other `GraphError`: `NotFoundError`, `WrongTargetError`, a failed download, an unexpected
+   answer. One line on stderr, `graph error: <what()>`; nothing on stdout.
+4. **The command's logger writes warnings and worse to stderr only** (`make_command_logger()`
+   in `src/command_config.cpp`, now shared with `veeam list`); a `GraphCommandEnv` without a
+   logger gets that one too, never spdlog's default logger, which writes to stdout. Downloads go through
+   `make_download_http_client()`, whose logger is a null sink, so no download link is logged.
+
+**Reason.** The operator needs to see the targets before and after a restore (W2.8, W3.4)
+without waiting for every file to download; `--hash` is there when the content matters. An
+empty target is the normal state, so it prints `0 item(s)` rather than nothing. Graph's
+failures map onto the same four meanings as Veeam's, so a script reading exit codes needs no
+per-service table.
+
+**Alternatives rejected.**
+- *Always hashing:* a slow check that downloads every file, and SharePoint's download host
+  becomes a dependency of a listing.
+- *`std::optional<std::string>` for `sha256`:* stricter, but it changes every W2.2 caller and
+  test for a state only this command produces.
+- *Graph-only exit codes (5, 6, ...):* two numbers for the same meaning.
+- *A `--json` output:* not needed yet; W2.8/W3.6 decide its shape.
+
+---
+
 ## 2026-09-28 — W2.2 review: fixes to reading the restore targets
 
 **Decision.** A code review of W2.2 (`/code-review`, xhigh) found thirteen problems; this entry

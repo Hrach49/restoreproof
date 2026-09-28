@@ -1,0 +1,21 @@
+{
+  "source": "live 2026-09-28: GET a drive ID of no drive (the RestoreTarget drive's list GUID random)",
+  "request": "GET /v1.0/drives/<random drive ID>?$select=id,name,driveType,webUrl,sharePointIds",
+  "status": 404,
+  "headers": {
+    "Content-Type": "application/json",
+    "request-id": "67235a10-2e2b-4f40-99a4-1fe06bc94609",
+    "client-request-id": "67235a10-2e2b-4f40-99a4-1fe06bc94609"
+  },
+  "body": {
+    "error": {
+      "code": "itemNotFound",
+      "message": "Item not found",
+      "innerError": {
+        "date": "2026-09-28T16:28:17",
+        "request-id": "67235a10-2e2b-4f40-99a4-1fe06bc94609",
+        "client-request-id": "67235a10-2e2b-4f40-99a4-1fe06bc94609"
+      }
+    }
+  }
+}

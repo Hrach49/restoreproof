@@ -8,7 +8,7 @@ from seeder import CANARY_DIR, MANIFEST_PATH, tenant
 from seeder.auth import MODES, AuthError, SignIn, resolve_client_id
 from seeder.generate import run_generate
 from seeder.graph import GraphError
-from seeder.graph_fixtures import DEFAULT_OUT_DIR, FixtureError, run_record
+from seeder.graph_fixtures import DEFAULT_OUT_DIR, STATES, FixtureError, run_record
 from seeder.http import TransportError
 from seeder.manifest import ManifestError, run_hash
 from seeder.seed import run_seed
@@ -61,9 +61,16 @@ def _parser() -> argparse.ArgumentParser:
     )
     worker.add_argument("--auth", choices=MODES, default="browser", help="alice's sign-in flow (default: browser)")
     fixtures = sub.add_parser(
-        "record-graph-fixtures", help="record the Worker's Graph and Entra fixtures as the Worker app (live, W2.1)"
+        "record-graph-fixtures",
+        help=(
+            "record the Worker's Graph and Entra fixtures as the Worker app "
+            "(live, W2.1/W2.2; empty, one-item and paged need the restore targets in that state)"
+        ),
     )
     fixtures.add_argument("--out", type=Path, default=DEFAULT_OUT_DIR, help=f"default: {DEFAULT_OUT_DIR}")
+    fixtures.add_argument(
+        "--state", choices=STATES, default="auth", help="which fixtures: auth (W2.1, default) or a restore-target state"
+    )
     fixtures.add_argument(
         "--client-id", help="Worker app client ID (else RP_LAB_WORKER_CLIENT_ID, else tenant.py)"
     )
@@ -88,6 +95,7 @@ def _run(args: argparse.Namespace) -> int:
             read_password=read_generic_credential,
             transport=RequestsTransport(),
             out_dir=args.out,
+            state=args.state,
         )
     if args.command == "check-worker-app":
         return run_check(

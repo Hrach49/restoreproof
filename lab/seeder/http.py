@@ -27,6 +27,10 @@ class Transport(Protocol):
         url: str,
         headers: Mapping[str, str],
         body: bytes | None = None,
+        *,
+        follow_redirects: bool = True,
     ) -> HttpResponse:
-        """Send one request. Follows redirects. Raises TransportError when no response came."""
+        """Send one request. Follows redirects unless follow_redirects is False, in which case a
+        3xx comes back as it is (its Location header included). Raises TransportError when no
+        response came."""
         ...

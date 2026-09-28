@@ -38,6 +38,33 @@ recorder refuses to write one, and `lab/tests/test_graph_fixtures.py` checks eve
 the same way, hand-written ones included. Tenant and app IDs, UPNs, request and trace IDs are
 real lab values.
 
+## The restore-target states (W2.2)
+
+The `TargetReader` tests (`graph_targets_test.cpp`, `graph_download_test.cpp`) replay the three
+restore targets in three states, recorded with `record-graph-fixtures --state
+empty|one-item|paged` (`lab/README.md`, "The restore-target states"): `empty` after L1.4's
+cleanup, `one-item` with one mail and one file in each file target, `paged` with two mails and
+`$top=1`. Until a state is recorded, its files are hand-written **stand-ins** under the same
+names, shaped as the recorder writes them; their `source` starts `hand-written: stand-in until
+the <state> state is recorded (W2.2)`, the lab's plan test skips them, and a lab test keeps the
+table below and the files here in step. Recording a state overwrites its stand-ins; switch their
+rows to `live: …`. `onedrive-folder-403-accessdenied.json` stays hand-written: SharePoint
+answers 404 for an item the app may not read, so the lab can't provoke that 403 read-only.
+
+- **Request lines** are documentation. IDs a reply gave are written as placeholders
+  (`<message id>`, `<item id>`, `<@odata.nextLink of mail-list-200-page1.json>`, …), and the
+  not-found cases' random IDs as `<random item ID>` and `<random drive ID>`. No canary ID
+  appears in any file here, nor anywhere under `worker/`.
+- **Download links are scrubbed.** A `/content` 302's `Location` carries a pre-authenticated
+  `tempauth` credential. The recorder never follows it, keeps the scheme, host, path and the
+  values of `UniqueId`, `Translate` and `ApiVersion`, and writes every other query value as
+  `SCRUBBED`; `@microsoft.graph.downloadUrl` is dropped from bodies. The tests serve the
+  download from a second fake client and put their own sentinel in the link, which the
+  sentinel test then looks for in the logs.
+- **Tests read lab values from the files**, never spell them: a re-recording changes request
+  IDs, and the scan in `graph_client_test.cpp` fails on any recorded GUID a test source spells
+  other than its `stable` ones.
+
 ## Files
 
 | Fixture | Source | For |
@@ -64,6 +91,22 @@ real lab values.
 | `messages-404-mailbox-not-enabled.json` | hand-written: `MailboxNotEnabledForRESTAPI`, what Graph says for a mailbox without an Exchange Online licence, inactive or on-premises | 404 → a plain `GraphError`, not `NotFoundError` |
 | `messages-429-throttled.json` | hand-written: Graph throttling a mailbox (`ApplicationThrottled`, `Retry-After: 3`) | 429 → retried after the Retry-After, then `TransientError` |
 | `messages-503-unavailable.json` | hand-written: Graph briefly unavailable (`serviceNotAvailable`, `Retry-After: 10`) | 503 → retried after the Retry-After, then `TransientError` |
+| `onedrive-folder-403-accessdenied.json` | hand-written: a 403 on the OneDrive folder in the recorded `site-403-accessdenied.json` shape; SharePoint masks an ungranted item as 404 (L1.5), so the lab can't provoke one read-only | 403 `accessDenied` → `PermissionError` naming the OneDrive grant (W2.2) |
+| `mail-list-200-empty.json` | live: the restoretest inbox as the Worker lists it, empty | an empty Inbox lists as an empty vector; the tests read the mailbox from its request line (W2.2) |
+| `mail-list-200-one-item.json` | live: the restoretest inbox as the Worker lists it, one mail, its body as text (`Prefer`) | one mail lists as one `FoundItem` (subject, sender, received, internetMessageId and the text-v1 hash of `body.content` read from it); its edits are the not-text refusals (W2.2) |
+| `mail-list-200-page1.json` | live: the restoretest inbox with `$top=1`, two mails: page 1, with `@odata.nextLink` | mail follows `@odata.nextLink`; the link's shape is what the Inbox's nextLink rule must take (W2.2 review) |
+| `mail-list-200-page2.json` | live: page 1's `@odata.nextLink`: the second mail, and a link again, since Exchange links every full page | the second page (W2.2) |
+| `mail-list-200-page3.json` | live: page 2's `@odata.nextLink`: empty, no link | the last page is an empty one: the listing ends on it with two mails (W2.2) |
+| `restoretarget-drive-200.json` | live: the RestoreTarget library's drive, as the guard reads it | the SharePoint guard: name, `webUrl`, `driveType` and `sharePointIds` of the RestoreTarget library; its edits are the refusals (W2.2) |
+| `restoretarget-children-200-empty.json` | live: the RestoreTarget library's root children, empty | an empty library lists as an empty vector (W2.2) |
+| `restoretarget-children-200-one-item.json` | live: the RestoreTarget library's root children, one file | one file lists as one `FoundItem` (name, size and the bytes' SHA-256); its edits are the bad-driveItem, folder and package rows (W2.2) |
+| `onedrive-folder-200.json` | live: alice's OneDrive `/RestoreTarget` folder, as the guard reads it | the OneDrive guard: name, folder facet, `parentReference.driveId`, `.driveType` and `.path`; its edits are the refusals (W2.2) |
+| `onedrive-children-200-empty.json` | live: the children of alice's `/RestoreTarget`, empty | an empty folder lists as an empty vector (W2.2) |
+| `onedrive-children-200-one-item.json` | live: the children of alice's `/RestoreTarget`, one file | one file lists as one `FoundItem`, downloaded from the `-my` host (W2.2) |
+| `drive-404-itemnotfound.json` | live: a drive ID of no drive | 404 `itemNotFound` on the drive → `NotFoundError`, never an empty listing (W2.2) |
+| `onedrive-folder-404-itemnotfound.json` | live: an item ID of no item in alice's OneDrive | 404 `itemNotFound` → `NotFoundError` (W2.2) |
+| `restoretarget-content-302.json` | live: a file's `/content` in the RestoreTarget library, redirect not followed, `Location` scrubbed | 302 → the download follows `Location` without the token (W2.2) |
+| `onedrive-content-302.json` | live: a file's `/content` in alice's `/RestoreTarget`, redirect not followed, `Location` scrubbed | 302 on the `-my` host → the download follows `Location` without the token (W2.2) |
 
 Entra's refusals that the lab can't provoke (Conditional Access, a disabled app, the other
 transient codes) are built in `graph_client_test.cpp` from `entra_error()`, in the recorded

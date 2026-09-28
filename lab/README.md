@@ -26,7 +26,7 @@ changes a mail body, the manifest records the changed bytes and also says that t
 | Path | What |
 |---|---|
 | `pyproject.toml`, `uv.lock`, `.python-version` | Its own uv project (Python 3.12). Runtime: msal, requests, jsonschema, cryptography. Dev only: pytest and the readers the tests use to open the files (python-docx, openpyxl, pypdf, pillow) |
-| `seeder/` | The tool: `catalog.py` (the 40 items and where they go), `tenant.py` (tenant IDs, copied from `tenant.md`), `generate.py`, `normalize.py`, `manifest.py`, `auth.py`, `graph.py`, `transport.py`, `seed.py`, `verify.py`, `cli.py`; `worker_app.py` is `check-worker-app` (L1.5); `graph_fixtures.py` is `record-graph-fixtures` (W2.1) |
+| `seeder/` | The tool: `catalog.py` (the 40 items and where they go), `tenant.py` (tenant IDs, copied from `tenant.md`), `generate.py`, `normalize.py`, `manifest.py`, `auth.py`, `graph.py`, `transport.py`, `seed.py`, `verify.py`, `cli.py`; `worker_app.py` is `check-worker-app` (L1.5); `graph_fixtures.py` is `record-graph-fixtures` (W2.1, and W2.2's restore-target states) |
 | `tests/` | pytest, one file per module, against a fake in-memory Graph tenant. No network |
 | `entra/new-worker-app.ps1` | Creates or updates the RestoreProof Worker app registration and its grants (L1.5), below |
 | `entra/set-worker-env.ps1` | Puts the Worker app's certificate into `RP_GRAPH_CERT_PFX_BASE64` and `RP_GRAPH_CERT_PASSWORD` for one PowerShell session (W2.1), below |
@@ -208,6 +208,7 @@ uv run python -m seeder seed          # live: put the 40 items in the tenant, wr
 uv run python -m seeder verify        # live: re-read the 40 items and compare with the manifest
 uv run python -m seeder check-worker-app  # live: what the Worker app can and can't read (L1.5)
 uv run python -m seeder record-graph-fixtures  # live: re-record worker/tests/fixtures/graph/ (W2.1)
+uv run python -m seeder record-graph-fixtures --state empty  # live: the restore targets, empty (W2.2)
 ```
 
 | Command | Network | What it does | Exit code |
@@ -217,7 +218,7 @@ uv run python -m seeder record-graph-fixtures  # live: re-record worker/tests/fi
 | `seed` | yes | Signs in three times, sends the missing mails, uploads the missing files, reads all 40 back and writes the manifest. Step by step below | 0 manifest written; 1 a problem the output explains (missing canary file, duplicate subject, mail timeout); 2 sign-in or Graph error. No manifest is written unless it exits 0 |
 | `verify` | yes | Re-reads every item by its Graph id as the account that owns it (alice: mails 0001–0010 and the OneDrive files; bob: mails 0011–0020; admin: the SharePoint files). Compares subject, sender (case-insensitive), sent and received dates, `internet_message_id` and `body_sha256`; for files name and `content_sha256` by `content_rule` (and size for `bytes` files); an Office file whose bytes changed but whose content didn't is `ok`, with a note. Prints `ok`, `DIFF` or `MISSING` per entry and a summary (`40/40 entries in the tenant match the manifest`) | 0 all ok; 1 any DIFF or MISSING; 2 manifest missing or invalid, or a sign-in or Graph error |
 | `check-worker-app` | yes | Signs in as the RestoreProof Worker app with its certificate (PFX from `--pfx`, default `%LOCALAPPDATA%\RestoreProof\lab\worker-graph.pfx`; password from Credential Manager). Checks the Graph token's roles are exactly `Files.SelectedOperations.Selected` and `Sites.Selected` and that its Exchange Online and SharePoint tokens carry none, signs in as alice (the seeder app) to confirm her canary folder exists, then sends one GET per probe and prints `ok` or `UNEXPECTED` per row with the expected and actual status (the probe table is in `docs/security/graph-permissions.md`). Only reads | 0 all as expected; 1 anything unexpected; 2 a missing or unusable credential, or a sign-in error (the app's or alice's) |
-| `record-graph-fixtures` | yes | Records the Graph and Entra replies the Worker's GraphClient tests replay (W2.1) into `--out`, default `worker/tests/fixtures/graph/`. Signs in as the RestoreProof Worker app the way the Worker does: its own client assertion (PS256, header `x5t#S256`), certificate and password as for `check-worker-app`. Then sends six more token requests that must fail (an assertion signed by an unknown key, an unknown certificate, app and tenant, one expired and one not yet valid by an hour) and seven GETs (the restoretest inbox, alice's inbox, the tenant root site, `/users`, a bad and a missing token, an unknown user). Prints one line per file with the status and error code. Only reads. Details below | 0 all 14 written; 1 a reply had another status than its file name says, nothing written; 2 a missing or unusable credential, a failed sign-in, a network error, or a reply that holds something secret-looking, nothing written |
+| `record-graph-fixtures` | yes | Records the Graph and Entra replies the Worker's GraphClient tests replay (W2.1) into `--out`, default `worker/tests/fixtures/graph/`. Signs in as the RestoreProof Worker app the way the Worker does: its own client assertion (PS256, header `x5t#S256`), certificate and password as for `check-worker-app`. Then sends six more token requests that must fail (an assertion signed by an unknown key, an unknown certificate, app and tenant, one expired and one not yet valid by an hour) and seven GETs (the restoretest inbox, alice's inbox, the tenant root site, `/users`, a bad and a missing token, an unknown user). Prints one line per file with the status and error code. With `--state empty\|one-item\|paged` (W2.2) it records the three restore targets instead, read the way the Worker's `TargetReader` reads them. Only reads. Details below | 0 all of the state's files written; 1 a reply had another status than its file name says, or not the content its state needs, nothing written; 2 a missing or unusable credential, a failed sign-in, a network error, a reply that holds something secret-looking, or a request that needs an item or link an earlier reply didn't give, nothing written |
 
 A usage error (unknown command or option) exits 2. Ctrl+C exits 130; `seed` then says nothing was written.
 
@@ -230,6 +231,7 @@ Options:
 | `--client-id <id>` | `record-graph-fixtures` | As for `check-worker-app` |
 | `--pfx <path>` | `check-worker-app`, `record-graph-fixtures` | The Worker app's certificate, if not in the default place |
 | `--out <dir>` | `record-graph-fixtures` | Where to write the fixtures (default `worker/tests/fixtures/graph/` in the repo). Existing files of the same names are replaced; other files are left alone |
+| `--state auth\|empty\|one-item\|paged` | `record-graph-fixtures` | Which fixtures: `auth` (default) the 14 of W2.1; the others the restore targets in that state (W2.2), see below |
 | `--seeder-client-id <id>` | `check-worker-app` | The seeder app's client ID, for alice's sign-in. Same order as `--client-id` for `seed` |
 | `--auth browser\|device` | `seed`, `verify`, `check-worker-app` | `browser` (default) opens a browser window for each sign-in. `device` prints a code to enter at https://microsoft.com/devicelogin instead |
 | `--force` | `seed` | Send every mail again and replace every file, even if it is already there |
@@ -261,6 +263,81 @@ Safety, all checked before anything is written:
 Run it from `lab/` after a permission change or to refresh the recordings, then look at the
 diff in `worker/tests/fixtures/graph/` before committing: request IDs, dates and trace IDs
 always change.
+
+### The restore-target states (W2.2)
+
+`--state` records what the Worker's `TargetReader` reads in the three restore targets: the
+`restoretest` Inbox, the RestoreTarget library's root and alice's OneDrive `/RestoreTarget`
+folder (never the RestoreTest library or alice's `/RestoreTest` folder, which hold the
+canaries). It signs in as above but writes no `token-200.json`. Each state needs the targets to
+be in that state first; the recorder checks, and if they aren't, the line says
+`UNEXPECTED (<what differs>)`, it writes nothing and exits 1 (for example
+`mail-list-200-empty.json  200  -  UNEXPECTED (expected 0 item(s), got 1)`).
+
+| State | The targets must hold | Files (in the order sent) |
+|---|---|---|
+| `empty` | nothing: no mail in the Inbox, no file or folder in either root (after L1.4's cleanup) | `mail-list-200-empty.json`, `restoretarget-drive-200.json`, `restoretarget-children-200-empty.json`, `onedrive-folder-200.json`, `onedrive-children-200-empty.json`, `onedrive-folder-404-itemnotfound.json`, `drive-404-itemnotfound.json` |
+| `one-item` | exactly one mail in the Inbox, one file in the RestoreTarget library's root and one in alice's `/RestoreTarget` | `mail-list-200-one-item.json`, `restoretarget-children-200-one-item.json`, `restoretarget-content-302.json`, `onedrive-children-200-one-item.json`, `onedrive-content-302.json` |
+| `paged` | exactly two mails in the Inbox (the files don't matter) | `mail-list-200-page1.json` (`$top=1`), `mail-list-200-page2.json` (page 1's `@odata.nextLink`), `mail-list-200-page3.json` (page 2's). Exchange puts a link on every full page, the last one included, so page 2 has one and page 3 is empty without one |
+
+What each request is and what is checked:
+
+- The mail requests carry `Prefer: outlook.body-content-type="text", IdType="ImmutableId"`, as
+  the seeder's and the Worker's do (`MAIL_PREFER` in `seeder/graph.py`); no other request
+  carries anything but `Authorization`. The list is the Worker's
+  (`$select=id,subject,from,receivedDateTime,internetMessageId,body&$top=100`): the bodies
+  come in the listing, and each must come back as `text`.
+- `restoretarget-drive-200.json` is the Worker's guard read of the library's drive
+  (`$select=id,name,driveType,webUrl,sharePointIds`): it must be named `RestoreTarget`, its
+  `webUrl` must end `/RestoreTarget`, and it must have `sharePointIds.siteId` and `.webId`.
+  `onedrive-folder-200.json` (`$select=id,name,folder,parentReference`) must be named
+  `RestoreTarget`, be a folder and sit in alice's OneDrive. Both lines also print the facts the
+  Worker's guard depends on: `webUrl last segment=… sharePointIds=present|absent` and
+  `parentReference.path=<value or (absent)> parentReference.id=present|absent`.
+- The children lists use `$select=id,name,size,file,folder&$top=200`. In `one-item` the one
+  child must be a file (a `file` facet).
+- The not-found cases use random IDs of the right shape, never a canary's: `01` and 32 base32
+  letters for the OneDrive item, and the RestoreTarget drive ID with its last 16 bytes (the
+  list GUID) random for the drive. Both must answer 404 `itemNotFound`.
+- IDs taken from a reply (the mail, the files) go in the next URL only if they are made of
+  letters, digits, `!`, `_`, `=` and `-`; a nextLink is followed only if it is on
+  `https://graph.microsoft.com/v1.0/`. Anything else, or a missing item or link, stops the run
+  with an error (exit 2) before the request is sent.
+- The two `/content` requests are sent **without following the redirect**, so the 302 is
+  recorded and nothing is downloaded. Request lines show the IDs a reply gave as
+  `<item id>` and `<@odata.nextLink of mail-list-200-page1.json>` (or `page2`), and the
+  random ones as `<random item ID>` and `<random drive ID>`.
+
+Download links are scrubbed before the safety check: a `Location` keeps its scheme, host and
+path and only the values of `UniqueId`, `Translate` and `ApiVersion`; every other query value
+(`tempauth`, the pre-authenticated credential, and anything new) becomes `SCRUBBED`, and a
+fragment is dropped. `@microsoft.graph.downloadUrl` is removed from every body, a
+`tempauth=` value in any body string becomes `SCRUBBED`, and a `download.aspx` link in any body
+string (a 302's HTML "Object moved" page too, whose `&` is written `&amp;`) has its query
+scrubbed as a `Location`'s is. The safety check then also refuses a
+file holding a `tempauth` whose value isn't `SCRUBBED` (as `tempauth=`, `tempauth%3D` or a JSON
+key) or a `download.aspx` URL with another query value that isn't `SCRUBBED`.
+
+Until a state is recorded, `worker/tests/fixtures/graph/` holds hand-written stand-ins under
+the same names (`source` starting `hand-written: stand-in`); the plan test skips them, and a
+test keeps the README's file table and the folder in step. To record a state:
+
+1. **empty**: with the three targets empty, run
+   `uv run python -m seeder record-graph-fixtures --state empty`.
+2. **one-item**: send one mail to `restoretest@RestoreProofLab.onmicrosoft.com` and wait until
+   it is in the Inbox; upload one small file to the root of the RestoreTarget library (site
+   RestoreTest, library RestoreTarget) and one to alice's OneDrive `/RestoreTarget`. Give the
+   mail's subject, its body and both file names distinctive text of at least 12 characters,
+   e.g. `RestoreProof W2.2 one-item 7f3k`: the Worker's log sentinel test checks none of them
+   reaches the log, and fails on an empty or short value, which could match by chance. Then
+   `--state one-item`.
+3. **paged**: send a second mail to restoretest and wait for it. Then `--state paged`.
+4. Delete the two mails and the two files by hand (L1.4's cleanup), so the targets are empty
+   again.
+
+Each run replaces only its own files. Switch their rows in
+`worker/tests/fixtures/graph/README.md` from the stand-in text to `live: …`, and read the diff
+before committing.
 
 ## The seed run, step by step
 

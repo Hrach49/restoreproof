@@ -1,0 +1,24 @@
+{
+  "source": "live 2026-09-28: GET the RestoreTarget library's drive, as the Worker's guard reads it",
+  "request": "GET /v1.0/drives/b!XQgI_nDr6EKVpkcBib2Y65nzyk4OzJVNs_7NCRoJ5omdBuz_5GU6TJ2irAhs-dr6?$select=id,name,driveType,webUrl,sharePointIds",
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/json;odata.metadata=minimal;odata.streaming=true;IEEE754Compatible=false;charset=utf-8",
+    "request-id": "cf394e5d-aab8-4620-82a1-bbc2879b5482",
+    "client-request-id": "cf394e5d-aab8-4620-82a1-bbc2879b5482"
+  },
+  "body": {
+    "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#drives(id,name,driveType,webUrl,sharePointIds)/$entity",
+    "id": "b!XQgI_nDr6EKVpkcBib2Y65nzyk4OzJVNs_7NCRoJ5omdBuz_5GU6TJ2irAhs-dr6",
+    "name": "RestoreTarget",
+    "webUrl": "https://restoreprooflab.sharepoint.com/sites/RestoreTest/RestoreTarget",
+    "driveType": "documentLibrary",
+    "sharePointIds": {
+      "listId": "ffec069d-65e4-4c3a-9da2-ac086cf9dafa",
+      "siteId": "fe08085d-eb70-42e8-95a6-470189bd98eb",
+      "siteUrl": "https://restoreprooflab.sharepoint.com/sites/RestoreTest",
+      "tenantId": "bcd6bd1a-ea42-489d-aa28-2c19a44ad146",
+      "webId": "4ecaf399-cc0e-4d95-b3fe-cd091a09e689"
+    }
+  }
+}

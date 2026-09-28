@@ -46,7 +46,7 @@ those files are held to 100% line instead. See `docs/decisions.md`.
 Tests tagged `[live]` call the lab's real services and are skipped unless `RP_LIVE=1` is set;
 they are read-only. `RP_LIVE=1 ctest --preset dev` runs them with the rest, or run them alone
 with `build\dev\rptests.exe "[live]"` (which also prints what they found). Three are Veeam's
-and two Graph's; once `RP_LIVE=1` is set, each needs its variables below and fails, rather than
+and three Graph's; once `RP_LIVE=1` is set, each needs its variables below and fails, rather than
 skips, without them.
 
 The three Veeam ones
@@ -79,10 +79,34 @@ one naming `Sites.Selected` for a site the app has no grant on. They read:
 | `RP_LIVE_GRAPH_DENIED_MAILBOX` | default: `alice@`, outside it |
 | `RP_LIVE_GRAPH_DENIED_SITE` | default: the tenant's root site (no `Sites.Selected` grant) |
 
+The third Graph one (W2.2, `worker/tests/graph_targets_live_test.cpp`, tag
+`[graph][targets][live]`) is the Done-when of issue #27: `rp::graph::TargetReader::list_all()`
+lists the three restore targets (the `restoretest` Inbox, the RestoreTarget library's root,
+alice's OneDrive `/RestoreTarget`), downloading each file through
+`make_download_http_client()` without the token, and prints one line per item
+(`type  id  name|subject  size  sha256 (rule)`) and a `total` line per type. It asserts only that
+nothing was thrown; whoever runs it compares the output with what the tenant shows. It never
+names or reads the canary locations. Besides the certificate, tenant and client variables above,
+it reads (defaults: the lab's restore targets in `lab/tenant.md`):
+
+| Variable | Value |
+|---|---|
+| `RP_LIVE_TARGET_MAILBOX` | default: `restoretest@` |
+| `RP_LIVE_TARGET_SITE_ID` | default: the RestoreTest site (`<host>,<site GUID>,<web GUID>`) |
+| `RP_LIVE_TARGET_LIBRARY_ID` | default: the RestoreTarget library's **drive** ID |
+| `RP_LIVE_TARGET_ONEDRIVE_DRIVE_ID` | default: alice's OneDrive drive |
+| `RP_LIVE_TARGET_ONEDRIVE_FOLDER_ID` | default: its `RestoreTarget` folder |
+
+Run it alone, with its output shown (ctest names tests by case and hides output without `-V`):
+
+```powershell
+.\worker\build\dev\rptests.exe "[targets][live]"
+```
+
 Set the passwords for one shell only, and never on a command line that ends up in history or
 a transcript: read them from Windows Credential Manager or `Read-Host -AsSecureString`.
 
-To run the two Graph ones on the dev laptop (the PFX and its Credential Manager entry come from
+To run the three Graph ones on the dev laptop (the PFX and its Credential Manager entry come from
 `lab/entra/new-worker-app.ps1`, `lab/README.md`):
 
 1. Open a VS 2022 Developer PowerShell: Start menu, type `Developer PowerShell for VS 2022`,
@@ -112,8 +136,9 @@ To run the two Graph ones on the dev laptop (the PFX and its Credential Manager 
    ```
 
    Expected: a line `inbox of restoretest@…: N message(s) on the first page`, two lines
-   `denied as expected: Graph denied GET …` (the Mail grant, then `Sites.Selected`), and
-   `All tests passed` for 2 test cases. To run them with everything else instead, run
+   `denied as expected: Graph denied GET …` (the Mail grant, then `Sites.Selected`), the
+   restore targets' listing (one line per item, then `mail total: N`, `onedrive total: N`,
+   `sharepoint total: N`), and `All tests passed` for 3 test cases. To run them with everything else instead, run
    `ctest --preset dev` from `C:\restoreproof\worker` (the Veeam live tests then need their
    variables too).
 5. Remove the variables again, or close the window:

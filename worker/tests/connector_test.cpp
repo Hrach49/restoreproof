@@ -36,9 +36,9 @@ rp::Config config_with_targets()
 {
     rp::Config config;
     config.test_mailbox = "restoretest@example.onmicrosoft.com";
-    config.test_site_id = "site-id";
-    config.test_library_id = "library-id";
-    config.test_onedrive_drive_id = "drive-id";
+    config.test_site_id = "example.sharepoint.com,00000000-0000-4000-8000-000000000001,00000000-0000-4000-8000-000000000002";
+    config.test_library_id = "b!library-id";
+    config.test_onedrive_drive_id = "b!drive-id";
     config.test_onedrive_folder_id = "folder-id";
     return config;
 }
@@ -314,6 +314,36 @@ TEST_CASE("restore targets refuse a mailbox that isn't restoretest@<domain>", "[
         Catch::Matchers::Message("restore target test_mailbox must be restoretest@<domain>"));
 }
 
+// Review of W2.2: load_config checks the shapes; a Config built in code must
+// not get past from_config either, since the IDs go into Graph URL paths.
+TEST_CASE("restore targets refuse IDs that can't be Graph IDs", "[connector]")
+{
+    const auto [key, value, rule] = GENERATE(table<std::string, std::string, std::string>({
+        {"test_site_id", "site-id",
+         "must be a Graph site ID (\"<tenant>.sharepoint.com,<site GUID>,<web GUID>\")"},
+        {"test_library_id", "x/children",
+         "must be a Graph drive ID (\"b!\" then letters, digits, '-' and '_'), not a list ID"},
+        {"test_onedrive_drive_id", "b!a b",
+         "must be a Graph drive ID (\"b!\" then letters, digits, '-' and '_'), not a list ID"},
+        {"test_onedrive_folder_id", "a?b",
+         "must be a Graph item ID (letters, digits, '!', '-' and '_')"},
+    }));
+    CAPTURE(key, value);
+    rp::Config config = config_with_targets();
+    if (key == "test_site_id") {
+        config.test_site_id = value;
+    } else if (key == "test_library_id") {
+        config.test_library_id = value;
+    } else if (key == "test_onedrive_drive_id") {
+        config.test_onedrive_drive_id = value;
+    } else {
+        config.test_onedrive_folder_id = value;
+    }
+
+    REQUIRE_THROWS_MATCHES(connector::RestoreTargets::from_config(config), std::invalid_argument,
+                           Catch::Matchers::Message("restore target " + key + " " + rule));
+}
+
 TEST_CASE("restore targets take restoretest@<domain> in any case", "[connector]")
 {
     rp::Config config = config_with_targets();
@@ -330,9 +360,9 @@ TEST_CASE("restore targets are the configured test locations", "[connector]")
     const connector::RestoreTargets targets =
         connector::RestoreTargets::from_config(config_with_targets());
     REQUIRE(targets.mailbox() == "restoretest@example.onmicrosoft.com");
-    REQUIRE(targets.site_id() == "site-id");
-    REQUIRE(targets.library_id() == "library-id");
-    REQUIRE(targets.onedrive_drive_id() == "drive-id");
+    REQUIRE(targets.site_id() == "example.sharepoint.com,00000000-0000-4000-8000-000000000001,00000000-0000-4000-8000-000000000002");
+    REQUIRE(targets.library_id() == "b!library-id");
+    REQUIRE(targets.onedrive_drive_id() == "b!drive-id");
     REQUIRE(targets.onedrive_folder_id() == "folder-id");
 }
 

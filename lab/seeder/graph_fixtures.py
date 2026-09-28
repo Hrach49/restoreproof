@@ -175,7 +175,7 @@ def check_safe(name: str, text: str, secrets: list[str]) -> None:
     for match in _DOWNLOAD_QUERY.finditer(text):
         for pair in match.group(1).split("&"):
             key, _, value = pair.partition("=")
-            if key.lower() not in DOWNLOAD_QUERY_KEPT and value != SCRUB_MARK:
+            if _query_key(key) not in DOWNLOAD_QUERY_KEPT and value != SCRUB_MARK:
                 raise FixtureError(f"{name}: refused to write it: a download URL holds an unknown query value")
     if _JWT.search(text):
         raise FixtureError(f"{name}: refused to write it: it holds what looks like a JWT")
@@ -185,26 +185,41 @@ def check_safe(name: str, text: str, secrets: list[str]) -> None:
         raise FixtureError(f"{name}: refused to write it: it holds the password, the token or an assertion")
 
 
-def _scrubbed_location(url: str) -> str:
-    """A download link with its scheme, host and path, and only the allowed query values."""
-    parts = urlsplit(url)
-    query = "&".join(
-        pair if key.lower() in DOWNLOAD_QUERY_KEPT and sep else f"{key}={SCRUB_MARK}"
-        for pair in parts.query.split("&")
+def _query_key(key: str) -> str:
+    """A query key as DOWNLOAD_QUERY_KEPT spells it. In HTML the separator is "&amp;", so a
+    key after it reads "amp;<key>" once the text is split at "&"."""
+    return key.lower().removeprefix("amp;")
+
+
+def _scrubbed_query(query: str) -> str:
+    """A download link's query with only the allowed values kept, every other one SCRUB_MARK."""
+    return "&".join(
+        pair if _query_key(key) in DOWNLOAD_QUERY_KEPT and sep else f"{key}={SCRUB_MARK}"
+        for pair in query.split("&")
         if pair
         for key, sep, _ in [pair.partition("=")]
     )
-    return urlunsplit((parts.scheme, parts.netloc, parts.path, query, ""))
+
+
+def _scrubbed_location(url: str) -> str:
+    """A download link with its scheme, host and path, and only the allowed query values."""
+    parts = urlsplit(url)
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, _scrubbed_query(parts.query), ""))
 
 
 def _scrubbed_value(value: Any) -> Any:
-    """Every download link key dropped, every tempauth value in a string masked, recursively."""
+    """Every download link key dropped, and in every string each tempauth value masked and each
+    download link's query scrubbed as a Location's is, recursively. A body that isn't JSON (a
+    302's HTML "Object moved" page) is one string."""
     if isinstance(value, dict):
         return {k: _scrubbed_value(v) for k, v in value.items() if k != DOWNLOAD_URL_KEY}
     if isinstance(value, list):
         return [_scrubbed_value(v) for v in value]
     if isinstance(value, str):
-        return _TEMPAUTH_VALUE.sub(lambda m: m.group(1) + SCRUB_MARK, value)
+        masked = _TEMPAUTH_VALUE.sub(lambda m: m.group(1) + SCRUB_MARK, value)
+        return _DOWNLOAD_QUERY.sub(
+            lambda m: m.group(0)[: m.start(1) - m.start(0)] + _scrubbed_query(m.group(1)), masked
+        )
     return value
 
 

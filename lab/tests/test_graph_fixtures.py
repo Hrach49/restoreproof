@@ -557,6 +557,51 @@ def test_check_safe_accepts_a_scrubbed_download_link(text):
     graph_fixtures.check_safe("f.json", text, secrets=[])
 
 
+# Review of W2.2: a 302 may repeat its Location in an HTML "Object moved" body, its
+# '&' written "&amp;". That link must be scrubbed as the header is, or check_safe
+# refuses the reply and the one-item state can never be recorded.
+def html_moved(location: str) -> bytes:
+    href = location.replace("&", "&amp;")
+    return f'<html><head><title>Object moved</title></head><body><h2>Object moved to <a href="{href}">here</a>.</h2></body></html>'.encode()
+
+
+def test_scrub_rewrites_a_download_link_in_an_html_body():
+    reply = HttpResponse(302, html_moved(DOWNLOAD_LOCATION + "&Translate=false"), {"location": DOWNLOAD_LOCATION})
+    scrubbed = graph_fixtures._scrubbed(reply)
+    text = scrubbed.body.decode()
+    assert "?UniqueId=u&amp;tempauth=SCRUBBED&amp;Extra=SCRUBBED&amp;ApiVersion=2.0&amp;Translate=false" in text
+    assert FAKE_TEMPAUTH not in text and "secret" not in text
+    graph_fixtures.check_safe("f.json", fixture_text("live x: y", "GET /v1.0/z", scrubbed), secrets=[])
+
+
+def test_scrub_rewrites_a_download_link_in_a_json_string():
+    reply = json_response(200, {"note": f"see {DOWNLOAD_LOCATION} now"})
+    assert graph_fixtures._scrubbed(reply).json() == {
+        "note": "see https://restoreprooflab.sharepoint.com/sites/RestoreTest/_layouts/15/download.aspx"
+        "?UniqueId=u&tempauth=SCRUBBED&Extra=SCRUBBED&ApiVersion=2.0 now"
+    }
+
+
+@pytest.mark.parametrize("query", ["UniqueId=u&amp;Extra=secret", "sig=abc&amp;ApiVersion=2.0"])
+def test_check_safe_refuses_an_unknown_value_after_an_html_ampersand(query):
+    text = f'"body": "<a href=\\"https://t.sharepoint.com/_layouts/15/download.aspx?{query}\\">"'
+    with pytest.raises(FixtureError) as info:
+        graph_fixtures.check_safe("f.json", text, secrets=[])
+    assert str(info.value) == "f.json: refused to write it: a download URL holds an unknown query value"
+
+
+def test_one_item_state_records_a_302_whose_body_repeats_the_link(pfx, tmp_path, key_and_cert, other_key):
+    cloud = a_cloud(key_and_cert, "one-item")
+    cloud.overrides[f"/drives/{RT}/items/{a_file(1)['id']}/content"] = HttpResponse(
+        302, html_moved(CONTENT_LOCATION), {"location": CONTENT_LOCATION, "content-type": "text/html", "request-id": "r"}
+    )
+    code, lines = record(pfx, tmp_path / "out", cloud, other_key=other_key, state="one-item")
+    assert code == 0, lines
+    rec = written(tmp_path / "out")["restoretarget-content-302.json"]
+    assert isinstance(rec["body"], str) and "tempauth=SCRUBBED&amp;Extra=SCRUBBED" in rec["body"]
+    assert TEMPAUTH_SENTINEL not in json.dumps(rec) and "secret" not in json.dumps(rec)
+
+
 def test_a_scrubbed_location_passes_check_safe():
     text = fixture_text("live x: y", "GET /v1.0/z", graph_fixtures._scrubbed(HttpResponse(302, b"", {"location": DOWNLOAD_LOCATION})))
     graph_fixtures.check_safe("f.json", text, secrets=[])

@@ -21,6 +21,7 @@
 #include <atomic>
 #include <cctype>
 #include <chrono>
+#include <cstdint>
 #include <clocale>
 #include <condition_variable>
 #include <filesystem>
@@ -1103,4 +1104,103 @@ TEST_CASE("curl errors map to the retry policy's transport errors", "[http]")
     }));
     CAPTURE(static_cast<int>(code));
     CHECK(rp::detail::classify(code) == expected);
+}
+
+// W2.2: the hard cap on a download's body (HttpRequest::max_body_bytes).
+
+TEST_CASE("a body past max_body_bytes is cut after one byte more and returned, not retried",
+          "[http][max-body]")
+{
+    const int status = GENERATE(200, 503);
+    CAPTURE(status);
+    std::atomic<int> hits = 0;
+    rp::test::LocalHttpServer server;
+    server.server().Get("/big", [&](const httplib::Request&, httplib::Response& res) {
+        ++hits;
+        res.status = status;
+        res.set_content(std::string(100, 'x'), "application/octet-stream");
+    });
+    TestClient t;
+    rp::HttpRequest request;
+    request.url = server.url("/big");
+    request.max_body_bytes = 10;
+
+    const rp::HttpResponse response = t.client->send(request);
+
+    CHECK(response.status == status);
+    CHECK(response.body == std::string(11, 'x'));
+    CHECK(response.headers.at("content-type") == "application/octet-stream");
+    CHECK(hits == 1);
+    CHECK(t.sleeps.empty());
+    CHECK(count_of(t.log(), "attempt 1/5: HTTP " + std::to_string(status) +
+                                ", body cut at 11 bytes in ") == 1);
+    CHECK(count_of(t.log(), "retrying") == 0);
+}
+
+TEST_CASE("a body within max_body_bytes is returned whole", "[http][max-body]")
+{
+    struct Row {
+        std::size_t size;
+        std::uint64_t cap;
+    };
+    const Row row = GENERATE(values<Row>({{10, 10}, {0, 0}, {9, 10}, {3000000, 3000000}}));
+    CAPTURE(row.size, row.cap);
+    std::string body(row.size, '\0');
+    for (std::size_t i = 0; i < body.size(); ++i) {
+        body[i] = static_cast<char>(i % 251);
+    }
+    rp::test::LocalHttpServer server;
+    server.server().Get("/file", [&](const httplib::Request&, httplib::Response& res) {
+        res.set_content(body, "application/octet-stream");
+    });
+    TestClient t;
+    rp::HttpRequest request;
+    request.url = server.url("/file");
+    request.max_body_bytes = row.cap;
+
+    const rp::HttpResponse response = t.client->send(request);
+
+    CHECK(response.status == 200);
+    CHECK(response.body.size() == body.size());
+    CHECK(response.body == body);
+    CHECK(count_of(t.log(), "body cut") == 0);
+}
+
+TEST_CASE("a body arriving in many pieces is cut at the cap across them", "[http][max-body]")
+{
+    rp::test::LocalHttpServer server;
+    server.server().Get("/chunked", [&](const httplib::Request&, httplib::Response& res) {
+        res.set_chunked_content_provider(
+            "application/octet-stream", [](std::size_t offset, httplib::DataSink& sink) {
+                if (offset >= 4 * 70000) {
+                    sink.done();
+                    return true;
+                }
+                const std::string piece(70000, static_cast<char>('a' + offset / 70000));
+                sink.write(piece.data(), piece.size());
+                return true;
+            });
+    });
+    TestClient t;
+    rp::HttpRequest request;
+    request.url = server.url("/chunked");
+    request.max_body_bytes = 100000;
+
+    const rp::HttpResponse response = t.client->send(request);
+
+    CHECK(response.status == 200);
+    CHECK(response.body == std::string(70000, 'a') + std::string(30001, 'b'));
+}
+
+TEST_CASE("without max_body_bytes a body is read whole", "[http][max-body]")
+{
+    rp::test::LocalHttpServer server;
+    server.server().Get("/file", [&](const httplib::Request&, httplib::Response& res) {
+        res.set_content(std::string(100, 'y'), "text/plain");
+    });
+    TestClient t;
+    rp::HttpRequest request;
+    request.url = server.url("/file");
+
+    CHECK(t.client->send(request).body == std::string(100, 'y'));
 }

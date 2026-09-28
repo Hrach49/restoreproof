@@ -208,10 +208,16 @@ cpr::Response perform(const HttpRequest& request, const cpr::SslOptions& ssl, bo
     if (capped != nullptr) {
         // One byte past the cap is kept, so the caller's length check fails;
         // returning false makes curl stop with CURLE_WRITE_ERROR. With a write
-        // callback, cpr leaves Response::text empty.
-        const std::uint64_t limit = *request.max_body_bytes;
+        // callback, cpr leaves Response::text empty. The status is known by the
+        // first body byte: a 2xx body is held to the caller's cap, any other
+        // (an error page) to kMaxErrorBodyBytes.
+        const std::uint64_t cap = *request.max_body_bytes;
+        CURL* const handle = session.GetCurlHolder()->handle;
         session.SetWriteCallback(cpr::WriteCallback{
-            [capped, limit](std::string_view data, intptr_t) {
+            [capped, cap, handle](std::string_view data, intptr_t) {
+                long status = 0;
+                curl_easy_getinfo(handle, CURLINFO_RESPONSE_CODE, &status);
+                const std::uint64_t limit = status >= 200 && status <= 299 ? cap : kMaxErrorBodyBytes;
                 const std::uint64_t room = limit + 1 - capped->data.size();
                 capped->data.append(data.substr(0, static_cast<std::size_t>(
                                                        std::min<std::uint64_t>(room, data.size()))));
@@ -444,9 +450,11 @@ HttpResponse HttpClient::send(const HttpRequest& request)
             perform(request, ssl, options_.ca_file.has_value(), capped ? &*capped : nullptr);
         const auto elapsed = std::chrono::duration_cast<milliseconds>(options_.now() - start);
 
-        // A body cut at the cap is final: the caller checks its length, and
-        // another attempt would read just as much.
-        if (capped && capped->cut) {
+        // A 2xx body cut at the cap is final: the caller checks its length, and
+        // another attempt would read just as much. A cut error page is handled
+        // as its status says, below.
+        const bool cut = capped && capped->cut;
+        if (cut && response.status_code >= 200 && response.status_code <= 299) {
             const int status = static_cast<int>(response.status_code);
             if (logger && logger->should_log(spdlog::level::debug)) {
                 logger->debug("{}", redact(target + " attempt " + std::to_string(attempt) + "/" +
@@ -462,7 +470,9 @@ HttpResponse HttpClient::send(const HttpRequest& request)
             return out;
         }
 
-        const TransportError error = detail::classify(response.error.code);
+        // A cut body stopped curl with a write error, yet the reply came whole enough.
+        const TransportError error =
+            cut ? TransportError::none : detail::classify(response.error.code);
         const AttemptOutcome outcome{error, error == TransportError::none
                                                 ? static_cast<int>(response.status_code)
                                                 : 0};

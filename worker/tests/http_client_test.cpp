@@ -1108,10 +1108,10 @@ TEST_CASE("curl errors map to the retry policy's transport errors", "[http]")
 
 // W2.2: the hard cap on a download's body (HttpRequest::max_body_bytes).
 
-TEST_CASE("a body past max_body_bytes is cut after one byte more and returned, not retried",
+TEST_CASE("a 2xx body past max_body_bytes is cut after one byte more and returned, not retried",
           "[http][max-body]")
 {
-    const int status = GENERATE(200, 503);
+    const int status = GENERATE(200, 206);
     CAPTURE(status);
     std::atomic<int> hits = 0;
     rp::test::LocalHttpServer server;
@@ -1135,6 +1135,72 @@ TEST_CASE("a body past max_body_bytes is cut after one byte more and returned, n
     CHECK(count_of(t.log(), "attempt 1/5: HTTP " + std::to_string(status) +
                                 ", body cut at 11 bytes in ") == 1);
     CHECK(count_of(t.log(), "retrying") == 0);
+}
+
+// Review of W2.2: the cap is the file's size, so an error page longer than a
+// small file must not be cut there and returned as final: a 503 would never be
+// retried, and whether it counts as transient would depend on the file's size.
+TEST_CASE("a non-2xx body is not held to max_body_bytes, and its status decides a retry",
+          "[http][max-body]")
+{
+    struct Row {
+        int status;
+        bool retry_on_status;
+        int hits;
+    };
+    const Row row = GENERATE(values<Row>({{503, true, 5}, {500, true, 5}, {404, true, 1},
+                                          {503, false, 1}, {302, true, 1}}));
+    CAPTURE(row.status, row.retry_on_status);
+    std::atomic<int> hits = 0;
+    rp::test::LocalHttpServer server;
+    server.server().Get("/page", [&](const httplib::Request&, httplib::Response& res) {
+        ++hits;
+        res.status = row.status;
+        res.set_content(std::string(2000, 'e'), "text/html");
+    });
+    TestClient t;
+    rp::HttpRequest request;
+    request.url = server.url("/page");
+    request.max_body_bytes = 10;
+    request.retry_on_status = row.retry_on_status;
+
+    if (row.hits > 1) {
+        try {
+            t.client->send(request);
+            FAIL("no HttpError");
+        } catch (const rp::HttpError& e) {
+            CHECK(e.error() == rp::TransportError::none);
+            CHECK(e.status() == row.status);
+            CHECK(e.attempts() == row.hits);
+        }
+    } else {
+        const rp::HttpResponse response = t.client->send(request);
+        CHECK(response.status == row.status);
+        CHECK(response.body == std::string(2000, 'e'));
+    }
+    CHECK(hits == row.hits);
+    CHECK(count_of(t.log(), "body cut") == 0);
+}
+
+TEST_CASE("a non-2xx body is cut after kMaxErrorBodyBytes + 1 bytes", "[http][max-body]")
+{
+    const std::uint64_t cap = GENERATE(std::uint64_t{0}, std::uint64_t{10}, rp::kMaxErrorBodyBytes);
+    CAPTURE(cap);
+    rp::test::LocalHttpServer server;
+    server.server().Get("/page", [&](const httplib::Request&, httplib::Response& res) {
+        res.status = 404;
+        res.set_content(std::string(rp::kMaxErrorBodyBytes * 3, 'e'), "text/html");
+    });
+    TestClient t;
+    rp::HttpRequest request;
+    request.url = server.url("/page");
+    request.max_body_bytes = cap;
+
+    const rp::HttpResponse response = t.client->send(request);
+
+    CHECK(response.status == 404);
+    CHECK(response.body.size() == rp::kMaxErrorBodyBytes + 1);
+    CHECK(rp::kMaxErrorBodyBytes == 64 * 1024);
 }
 
 TEST_CASE("a body within max_body_bytes is returned whole", "[http][max-body]")

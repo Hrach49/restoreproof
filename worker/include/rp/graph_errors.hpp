@@ -5,6 +5,8 @@
 // them means the run could not test anything: its status is `error`, never
 // `fail` (docs/verification.md).
 
+#include <rp/config.hpp>
+
 #include <chrono>
 #include <optional>
 #include <stdexcept>
@@ -24,7 +26,7 @@ public:
                         std::string inner_code = {}, std::string request_id = {});
 
     // The HTTP status of the answer; 0 when none came back, or when the error
-    // isn't about an answer at all (CertificateError).
+    // isn't about an answer at all.
     int status() const noexcept;
     // Graph's error.code ("ErrorAccessDenied", "accessDenied", ...), or
     // Entra's AADSTS number ("700027") or its "error" when it gave no number;
@@ -91,9 +93,12 @@ private:
 
 // The Worker's client certificate can't be used: its secret variable is unset
 // or doesn't hold a PFX the Worker can open, or the certificate in it isn't
-// one Entra would accept. Found before any network call. The message names
-// the variable, never its value.
-class CertificateError : public GraphError {
+// one Entra would accept. Found by load_client_certificate, before any network
+// call. A configuration error, not a GraphError: a command catching
+// ConfigError reports it as one (exit 1), and a `catch (const GraphError&)`
+// doesn't take it for a failed call. what() names the variable, never its
+// value, and went through rp::redact(); key() is empty.
+class CertificateError : public ConfigError {
 public:
     explicit CertificateError(std::string_view message);
 };

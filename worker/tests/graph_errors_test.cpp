@@ -1,9 +1,11 @@
+#include <rp/config.hpp>
 #include <rp/graph_errors.hpp>
 
 #include <catch2/catch_test_macros.hpp>
 
 #include <chrono>
 #include <string>
+#include <type_traits>
 
 using rp::graph::AuthError;
 using rp::graph::CertificateError;
@@ -83,13 +85,35 @@ TEST_CASE("TransientError carries Retry-After when there was one", "[graph][erro
     CHECK(error.code() == "TooManyRequests");
 }
 
-TEST_CASE("CertificateError is a GraphError about no answer", "[graph][errors]")
+TEST_CASE("CertificateError keeps its message and names no key", "[graph][errors]")
 {
-    try {
-        throw CertificateError("RP_GRAPH_CERT_PFX_BASE64 is not set");
-    } catch (const GraphError& error) {
-        CHECK(std::string(error.what()) == "RP_GRAPH_CERT_PFX_BASE64 is not set");
-        CHECK(error.status() == 0);
-        CHECK(error.code().empty());
-    }
+    const CertificateError error("RP_GRAPH_CERT_PFX_BASE64 is not set");
+    CHECK(std::string(error.what()) == "RP_GRAPH_CERT_PFX_BASE64 is not set");
+    CHECK(error.key().empty());
+}
+
+// Review of W2.1: CertificateError derived from GraphError, so a natural
+// `catch (const GraphError&)` (a command's "other Graph error") would map an
+// unset certificate variable to that rather than to a configuration error.
+// It is a ConfigError now: exit 1 wherever configuration errors are caught.
+TEST_CASE("CertificateError is a configuration error, not a GraphError", "[graph][errors]")
+{
+    CHECK(std::is_base_of_v<rp::ConfigError, CertificateError>);
+    CHECK_FALSE(std::is_base_of_v<GraphError, CertificateError>);
+
+    const auto kind = [](const std::exception_ptr& thrown) -> std::string {
+        try {
+            std::rethrow_exception(thrown);
+        } catch (const GraphError&) {
+            return "GraphError";
+        } catch (const rp::ConfigError&) {
+            return "ConfigError";
+        } catch (...) {
+            return "other";
+        }
+    };
+    CHECK(kind(std::make_exception_ptr(CertificateError("RP_GRAPH_CERT_PFX_BASE64 is not set"))) ==
+          "ConfigError");
+    const CertificateError error(std::string("pfx=") + kToken);
+    CHECK(std::string(error.what()).find(kToken) == std::string::npos);
 }

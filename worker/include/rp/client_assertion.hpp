@@ -120,8 +120,9 @@ inline constexpr std::chrono::seconds kClientAssertionLifetime{300};
 // RSA-PSS: SHA-256, MGF1 with SHA-256, a 32-byte salt, all set explicitly
 // (OpenSSL's default salt length is not the digest's). The result is a
 // credential for its lifetime: never log it (rp::redact masks it). Throws
-// GraphError unless both IDs are GUIDs, and CertificateError if OpenSSL
-// can't sign.
+// GraphError unless both IDs are GUIDs, or if OpenSSL can't make the jti or
+// sign (a runtime failure, not the configuration: the certificate was checked
+// when it was loaded).
 std::string make_client_assertion(const ClientCertificate& certificate,
                                   std::string_view tenant_id, std::string_view client_id,
                                   std::chrono::system_clock::time_point wall_now);

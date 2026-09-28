@@ -522,6 +522,25 @@ TEST_CASE("rpworker graph list maps each Graph failure to its exit code and prin
     CHECK(result.err.back() == '\n');
 }
 
+// The exact line docs/worker-config.md shows for an error.
+TEST_CASE("rpworker graph list prints Graph's 403 as one line naming the grant", "[graph_command]")
+{
+    Harness lab;
+    lab.serve_one_each();
+    const json fixture = load_fixture_json("graph", "site-403-accessdenied");
+    lab.serve(drive_url(), to_response(fixture));
+
+    const Run result = lab.run_list();
+
+    CHECK(result.exit_code == rp::exit_code::auth);
+    CHECK(result.out.empty());
+    CHECK(result.err == "graph error: Graph denied GET /v1.0/drives/" + lab_values().library_id +
+                            " (403 accessDenied): the Worker app relies on " +
+                            std::string{rp::graph::kSitesReadGrant.description} +
+                            "; see docs/security/graph-permissions.md (request ID " +
+                            fixture.at("headers").at("request-id").get<std::string>() + ")\n");
+}
+
 TEST_CASE("rpworker graph list reports an unexpected failure without its message",
           "[graph_command]")
 {

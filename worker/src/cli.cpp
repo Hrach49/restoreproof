@@ -2,6 +2,7 @@
 
 #include <rp/config.hpp>
 #include <rp/config_check.hpp>
+#include <rp/graph_command.hpp>
 #include <rp/veeam_command.hpp>
 #include <rp/version.hpp>
 
@@ -46,6 +47,9 @@ int dispatch(std::span<const std::string_view> args, std::ostream& out, std::ost
     }
     if (!args.empty() && args[0] == "veeam") {
         return run_veeam_command(args.subspan(1), out, err, default_veeam_command_env());
+    }
+    if (!args.empty() && args[0] == "graph") {
+        return run_graph_command(args.subspan(1), out, err, default_graph_command_env());
     }
     err << kCliUsage;
     return exit_code::usage;

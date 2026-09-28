@@ -17,7 +17,8 @@ using Args = std::vector<std::string_view>;
 namespace {
 
 const std::string kUsage = "usage: rpworker --version | rpworker config check [--config <path>] | "
-                           "rpworker veeam list [--config <path>]\n";
+                           "rpworker veeam list [--config <path>] | "
+                           "rpworker graph list [--hash] [--config <path>]\n";
 
 const std::string kConfigJson = R"({
     "cloud_url": "https://cloud.example.invalid",
@@ -70,7 +71,7 @@ TEST_CASE("rpworker's exit codes are fixed: 0 ok, 1 config, 2 auth, 3 transient,
     STATIC_REQUIRE(rp::exit_code::config == 1);
     STATIC_REQUIRE(rp::exit_code::auth == 2);
     STATIC_REQUIRE(rp::exit_code::transient == 3);
-    STATIC_REQUIRE(rp::exit_code::veeam == 4);
+    STATIC_REQUIRE(rp::exit_code::service == 4);
     STATIC_REQUIRE(rp::exit_code::usage == 64);
     REQUIRE(rp::kCliUsage == kUsage);
 }

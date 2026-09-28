@@ -4,6 +4,8 @@
 
 #include "path_utf8.hpp"
 
+#include <spdlog/sinks/stdout_sinks.h>
+
 #include <utility>
 
 namespace rp {
@@ -32,6 +34,14 @@ std::filesystem::path command_config_path(std::optional<std::string_view> config
         throw ConfigError("", "the --config path is not valid UTF-8");
     }
     return std::move(*path);
+}
+
+std::shared_ptr<spdlog::logger> make_command_logger()
+{
+    auto logger = std::make_shared<spdlog::logger>(
+        "rpworker", std::make_shared<spdlog::sinks::stderr_sink_mt>());
+    logger->set_level(spdlog::level::warn);
+    return logger;
 }
 
 } // namespace rp

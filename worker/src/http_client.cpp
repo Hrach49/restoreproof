@@ -182,7 +182,15 @@ void allow_unknown_revocation_status(cpr::Session& session)
                      CURLSSLOPT_NATIVE_CA | CURLSSLOPT_REVOKE_BEST_EFFORT);
 }
 
-cpr::Response perform(const HttpRequest& request, const cpr::SslOptions& ssl, bool has_ca_file)
+// The body of a request with max_body_bytes, read through a write callback:
+// curl stops once it holds more than the cap.
+struct CappedBody {
+    std::string data;
+    bool cut = false;
+};
+
+cpr::Response perform(const HttpRequest& request, const cpr::SslOptions& ssl, bool has_ca_file,
+                      CappedBody* capped)
 {
     cpr::Session session;
     session.SetUrl(cpr::Url{request.url});
@@ -197,6 +205,21 @@ cpr::Response perform(const HttpRequest& request, const cpr::SslOptions& ssl, bo
     // another host.
     session.SetRedirect(cpr::Redirect{0L, false, false, cpr::PostRedirectFlags::NONE});
     session.SetSslOptions(ssl);
+    if (capped != nullptr) {
+        // One byte past the cap is kept, so the caller's length check fails;
+        // returning false makes curl stop with CURLE_WRITE_ERROR. With a write
+        // callback, cpr leaves Response::text empty.
+        const std::uint64_t limit = *request.max_body_bytes;
+        session.SetWriteCallback(cpr::WriteCallback{
+            [capped, limit](std::string_view data, intptr_t) {
+                const std::uint64_t room = limit + 1 - capped->data.size();
+                capped->data.append(data.substr(0, static_cast<std::size_t>(
+                                                       std::min<std::uint64_t>(room, data.size()))));
+                capped->cut = capped->data.size() > limit;
+                return !capped->cut;
+            },
+            0});
+    }
     if (has_ca_file) {
         allow_unknown_revocation_status(session);
     }
@@ -413,8 +436,31 @@ HttpResponse HttpClient::send(const HttpRequest& request)
 
     for (int attempt = 1;; ++attempt) {
         const auto start = options_.now();
-        const cpr::Response response = perform(request, ssl, options_.ca_file.has_value());
+        std::optional<CappedBody> capped;
+        if (request.max_body_bytes) {
+            capped.emplace();
+        }
+        const cpr::Response response =
+            perform(request, ssl, options_.ca_file.has_value(), capped ? &*capped : nullptr);
         const auto elapsed = std::chrono::duration_cast<milliseconds>(options_.now() - start);
+
+        // A body cut at the cap is final: the caller checks its length, and
+        // another attempt would read just as much.
+        if (capped && capped->cut) {
+            const int status = static_cast<int>(response.status_code);
+            if (logger && logger->should_log(spdlog::level::debug)) {
+                logger->debug("{}", redact(target + " attempt " + std::to_string(attempt) + "/" +
+                                           std::to_string(request.max_attempts) + ": HTTP " +
+                                           std::to_string(status) + ", body cut at " +
+                                           std::to_string(capped->data.size()) + " bytes in " +
+                                           std::to_string(elapsed.count()) + " ms"));
+            }
+            HttpResponse out;
+            out.status = status;
+            out.headers.insert(response.header.begin(), response.header.end());
+            out.body = std::move(capped->data);
+            return out;
+        }
 
         const TransportError error = detail::classify(response.error.code);
         const AttemptOutcome outcome{error, error == TransportError::none
@@ -452,7 +498,7 @@ HttpResponse HttpClient::send(const HttpRequest& request)
             HttpResponse out;
             out.status = outcome.status;
             out.headers.insert(response.header.begin(), response.header.end());
-            out.body = response.text;
+            out.body = capped ? std::move(capped->data) : response.text;
             return out;
         }
         // With max_attempts 1 the caller counts its own attempts: no count here.

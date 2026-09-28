@@ -521,8 +521,7 @@ def test_the_plan_matches_the_committed_fixtures():
     assert {e.file_name: e.expected for e in entries} == EXPECTED_FILES
     for entry in entries:
         path = committed / entry.file_name
-        if not path.exists():
-            continue
+        assert path.is_file(), f"planned fixture {entry.file_name} is not committed in {committed}"
         rec = json.loads(path.read_text(encoding="utf-8"))
         assert rec["status"] == entry.expected, entry.file_name
         assert rec["request"] == entry.request, entry.file_name

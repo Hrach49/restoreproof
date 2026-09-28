@@ -170,10 +170,13 @@ public:
     //    <grant>; see docs/security/graph-permissions.md", the path without
     //    its query. A 403 without it (a TLS-inspecting proxy's page) is a
     //    GraphError that says something on the way may have refused it.
-    //  - 404 with Graph's JSON error: a NotFoundError (a 404 without it, from
-    //    a proxy or a wrong path, is a GraphError); but a mailbox Graph can't
-    //    read (MailboxNotEnabledForRESTAPI, MailboxNotSupportedForRESTAPI) is
-    //    a plain GraphError, whatever the status.
+    //  - 404 with Graph's JSON error: a NotFoundError: what get() addresses
+    //    must be there (the test mailbox, site or drive), so its absence means
+    //    the run can't test (status `error`); an item a restore should have
+    //    put there is looked up with find(). A 404 without Graph's JSON, from
+    //    a proxy or a wrong path, is a GraphError; so is a mailbox Graph can't
+    //    read (MailboxNotEnabledForRESTAPI, MailboxNotSupportedForRESTAPI),
+    //    whatever the status.
     //  - 429, 5xx and a lost connection or a timeout (connect, handshake,
     //    dropped, timeout; a GET changes nothing) share kMaxHttpAttempts
     //    attempts, waiting rp::retry_delay() and at least a Retry-After on a
@@ -192,6 +195,18 @@ public:
     // get(), and the body as a JSON object: a 3xx, or a body that isn't a
     // JSON object, is a GraphError (the body is never quoted).
     nlohmann::json get_json(std::string_view path_or_url, const Grant& grant);
+
+    // get() for an item a restore should have put there (W2.2's
+    // verification): nullopt when Graph answers 404 with its JSON error, the
+    // one answer that means the item is missing (a `fail`, not an `error`).
+    // Everything else as get(): a 404 whose code says the mailbox or user
+    // doesn't exist (ErrorInvalidUser, ErrorNonExistentMailbox,
+    // Request_ResourceNotFound) is still a NotFoundError. SharePoint and
+    // OneDrive say itemNotFound for a missing drive as for a missing item, so
+    // the caller checks the drive with get() first.
+    std::optional<HttpResponse> find(std::string_view path_or_url, const Grant& grant);
+    // find(), and the body as a JSON object, as get_json().
+    std::optional<nlohmann::json> find_json(std::string_view path_or_url, const Grant& grant);
 
 private:
     struct Token {
@@ -222,6 +237,12 @@ private:
     // a stored token clears it.
     void fetch_token_locked(std::chrono::milliseconds& waited);
     void store_token_locked(const HttpResponse& response);
+    // get() and find(): with `item_lookup`, a 404 Graph explains that
+    // doesn't name a missing mailbox or user is nullopt.
+    std::optional<HttpResponse> send_get(std::string_view path_or_url, const Grant& grant,
+                                         bool item_lookup);
+    // The body of a response get() or find() returned, as a JSON object.
+    static nlohmann::json json_body(std::string_view path_or_url, const HttpResponse& response);
     // One GET of `url` with `token`, one attempt.
     HttpRequest api_request(const std::string& url, const std::string& token) const;
     // One token request with a new assertion.

@@ -60,7 +60,8 @@ std::filesystem::path write_live_config(const rp::test::TempDir& dir)
 
 } // namespace
 
-TEST_CASE("live: rpworker graph list prints the three restore targets", "[graph_command][live]")
+TEST_CASE("live: rpworker graph list prints the three restore targets",
+          "[graph][graph_command][live]")
 {
     if (!live_enabled()) {
         SKIP("set RP_LIVE=1 to run against the lab tenant's Graph");

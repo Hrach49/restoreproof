@@ -46,7 +46,7 @@ those files are held to 100% line instead. See `docs/decisions.md`.
 Tests tagged `[live]` call the lab's real services and are skipped unless `RP_LIVE=1` is set;
 they are read-only. `RP_LIVE=1 ctest --preset dev` runs them with the rest, or run them alone
 with `build\dev\rptests.exe "[live]"` (which also prints what they found). Three are Veeam's
-and three Graph's; once `RP_LIVE=1` is set, each needs its variables below and fails, rather than
+and four Graph's; once `RP_LIVE=1` is set, each needs its variables below and fails, rather than
 skips, without them.
 
 The three Veeam ones
@@ -103,10 +103,22 @@ Run it alone, with its output shown (ctest names tests by case and hides output 
 .\worker\build\dev\rptests.exe "[targets][live]"
 ```
 
+The fourth Graph one (W2.3, `worker/tests/graph_command_live_test.cpp`, tag
+`[graph][graph_command][live]`) is the Done-when of issue #28: it runs `rpworker graph list`
+(`rp::run_graph_command` with `default_graph_command_env()`, the real clocks and the Worker's
+secrets from the environment, on a temp config written from the variables above), once without
+and once with `--hash`, prints each run's tables, and checks exit code 0, an empty stderr, the
+three headings and the summary line. Whoever runs it compares the tables with the tenant. Run it
+alone:
+
+```powershell
+.\worker\build\dev\rptests.exe "[graph_command][live]"
+```
+
 Set the passwords for one shell only, and never on a command line that ends up in history or
 a transcript: read them from Windows Credential Manager or `Read-Host -AsSecureString`.
 
-To run the three Graph ones on the dev laptop (the PFX and its Credential Manager entry come from
+To run the four Graph ones on the dev laptop (the PFX and its Credential Manager entry come from
 `lab/entra/new-worker-app.ps1`, `lab/README.md`):
 
 1. Open a VS 2022 Developer PowerShell: Start menu, type `Developer PowerShell for VS 2022`,
@@ -138,7 +150,8 @@ To run the three Graph ones on the dev laptop (the PFX and its Credential Manage
    Expected: a line `inbox of restoretest@…: N message(s) on the first page`, two lines
    `denied as expected: Graph denied GET …` (the Mail grant, then `Sites.Selected`), the
    restore targets' listing (one line per item, then `mail total: N`, `onedrive total: N`,
-   `sharepoint total: N`), and `All tests passed` for 3 test cases. To run them with everything else instead, run
+   `sharepoint total: N`), the same targets twice as `rpworker graph list` tables (without and
+   with `--hash`), and `All tests passed` for 4 test cases. To run them with everything else instead, run
    `ctest --preset dev` from `C:\restoreproof\worker` (the Veeam live tests then need their
    variables too).
 5. Remove the variables again, or close the window:

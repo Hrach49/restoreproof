@@ -65,9 +65,10 @@ struct Listing {
     std::vector<FoundItem> onedrive;
 };
 
+// Graph's text as a cell; "-" when it's missing or empty.
 std::string cell_or_dash(const std::optional<std::string>& text)
 {
-    return text ? table_cell(*text) : std::string{"-"};
+    return text && !text->empty() ? table_cell(*text) : std::string{"-"};
 }
 
 // One location: its heading, then, if it holds anything, its column header
@@ -152,13 +153,18 @@ int run_graph_command(std::span<const std::string_view> args, std::ostream& out,
         return exit_code::usage;
     }
 
-    const std::shared_ptr<spdlog::logger>& logger = env.client_options.logger;
+    // Never spdlog's default logger, which writes to stdout, where the tables are.
+    graph::GraphClientOptions client_options = env.client_options;
+    if (!client_options.logger) {
+        client_options.logger = make_command_logger();
+    }
+    const std::shared_ptr<spdlog::logger>& logger = client_options.logger;
     Config config;
     std::optional<graph::ClientCertificate> certificate;
     try {
         config = load_config(command_config_path(config_arg, env.default_config_path));
-        const auto wall_now = env.client_options.wall_now ? env.client_options.wall_now()
-                                                          : std::chrono::system_clock::now();
+        const auto wall_now = client_options.wall_now ? client_options.wall_now()
+                                                      : std::chrono::system_clock::now();
         // A CertificateError is a ConfigError: an unset or unusable certificate
         // is found here, before any request.
         certificate = graph::certificate_from_secrets(env.load_secrets(), wall_now, logger);
@@ -182,7 +188,7 @@ int run_graph_command(std::span<const std::string_view> args, std::ostream& out,
             throw std::logic_error("no HTTP client");
         }
         graph::GraphClient client(*http, config.graph_tenant_id, config.graph_client_id,
-                                  std::move(*certificate), env.client_options);
+                                  std::move(*certificate), client_options);
         graph::TargetReaderOptions options;
         options.logger = logger;
         options.hash_files = hash;

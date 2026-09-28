@@ -1,8 +1,8 @@
 # Worker configuration
 
 How the Worker is configured: the settings file, the secrets, and how to check both with
-`rpworker config check`, then how `rpworker veeam list` uses them, and the exit codes of every
-`rpworker` command. The contract is in `worker/include/rp/config.hpp` and
+`rpworker config check`, then how `rpworker veeam list` and `rpworker graph list` use them,
+and the exit codes of every `rpworker` command. The contract is in `worker/include/rp/config.hpp` and
 `worker/include/rp/secrets.hpp`; where this page and the code disagree, the code wins.
 
 ## Where the file lives
@@ -427,6 +427,68 @@ veeam error: Veeam POST /v8/token: HTTP 401: The server has rejected the client 
 Veeam's messages never contain the password or a token: they are redacted before they are
 shown. Debug lines are not shown.
 
+## `rpworker graph list`
+
+```
+rpworker graph list [--hash] [--config <path>]
+```
+
+Shows what is in the three restore targets right now: the test mailbox's Inbox
+(`test_mailbox`), the RestoreTarget library (`test_library_id`) and the test OneDrive's
+RestoreTarget folder (`test_onedrive_drive_id`, `test_onedrive_folder_id`). It is the check to
+run before and after a restore. It signs in to Graph as the Worker's app (`graph_tenant_id`,
+`graph_client_id`, and the certificate in `RP_GRAPH_CERT_PFX_BASE64` and
+`RP_GRAPH_CERT_PASSWORD`, see "Secrets"), reads, and changes nothing. Before listing each file
+target it checks that the drive or folder really is a RestoreTarget where the config says (the
+guard, `docs/decisions.md` 2026-09-28, W2.2); the canaries' RestoreTest library and folder are
+never read. The flags may come in either order. The code is `rp::run_graph_command` in
+`worker/include/rp/graph_command.hpp`.
+
+With one item in each target (the recorded responses in `worker/tests/fixtures/graph/`):
+
+```
+Mail (restoretest@RestoreProofLab.onmicrosoft.com, Inbox): 1 item(s)
+  RECEIVED              SENDER                                              SUBJECT                          ID
+  2026-09-28T18:06:26Z  HrachyaHarutyunyan@RestoreProofLab.onmicrosoft.com  RestoreProof W2.2 one-item 7f3k  AAkALgAAAAAAHYQDEapmEc2byACqAC-EWg0Apy-rvAUfAU_pqKwuzmFBWgAAAqwo8wAA
+
+SharePoint (RestoreTarget library): 1 item(s)
+  NAME                            SIZE  ID
+  rp-w22-sharepoint-4h8x.txt.txt  26    01BLWRTHOARNGB63IOOBG3RYUK4JVLHRQL
+
+OneDrive (RestoreTarget folder): 1 item(s)
+  NAME                          SIZE  ID
+  rp-w22-onedrive-6k1p.txt.txt  24    01ZK75LGGUS62ZZ5SJURBKYYUXNGNUDVT2
+
+3 item(s) in the three restore targets
+```
+
+- **Three tables, always in this order.** An empty target prints its heading with
+  `0 item(s)` and no rows; with all three empty the summary reads
+  `0 item(s) in the three restore targets`. Items are in Graph's order.
+- **Mail:** `RECEIVED` is Graph's `receivedDateTime`, `SENDER` the sender's address, `ID` the
+  message's immutable ID. A missing or empty field shows as `-`, a missing or empty
+  subject as `(no subject)`.
+- **Files:** `SIZE` is in bytes, `ID` the driveItem ID. Subfolders and items that aren't files
+  are skipped (restores land files in the root) and don't count.
+- **`--hash`** downloads each file (without the Graph token, from the test tenant's SharePoint
+  only) and adds `SHA256` and `RULE` to every table: `text-v1` for mail (the hash of the
+  body's text, `lab/README.md`), `bytes` for files. `SIZE` is then the bytes downloaded, which
+  for a docx or xlsx SharePoint rewrote may differ from Graph's size. Without `--hash` nothing
+  is downloaded and `SIZE` is Graph's.
+- **Everything is read before anything is printed.** If any call fails, stdout stays empty.
+- **The output is UTF-8**, padded by character, as for `rpworker veeam list` (see there for
+  the console's code page). Control characters in subjects, senders, names and IDs from Graph
+  are shown as spaces, so a restored item can't forge or hide a line.
+
+An error is one line on stderr, and nothing is printed on stdout:
+
+```
+graph error: Graph denied GET /drives/b!XQgI_nDr6EKVpkcBib2Y65nzyk4OzJVNs_7NCRoJ5omdBuz_5GU6TJ2irAhs-dr6 (403 accessDenied): the Worker app relies on Sites.Selected read on the test site; see docs/security/graph-permissions.md
+```
+
+Graph's messages never contain a token, the certificate or a download link. Debug lines are
+not shown.
+
 ## Exit codes
 
 The same for every `rpworker` command (`rp::exit_code` in `worker/include/rp/cli.hpp`):
@@ -434,14 +496,14 @@ The same for every `rpworker` command (`rp::exit_code` in `worker/include/rp/cli
 | Exit code | Meaning | stderr |
 |---|---|---|
 | 0 | Success. | (nothing) |
-| 1 | The config or a secret is missing or invalid, or something unexpected failed (an error no command handles ends here too, never in an `abort()`, whose exit code would be 3). | `config error: <path>: <message>`, `config error: the --config path is not valid UTF-8`, `config error: cannot find the ProgramData folder`, `config error: environment variable <name> is not valid Unicode`, `config error: RP_VEEAM_USERNAME is not set` (then `RP_VEEAM_PASSWORD`), `config error: unexpected failure` or `error: unexpected failure`; an unexpected failure's own message is never shown |
-| 2 | Veeam refused the sign-in, the account's role or the token. | `veeam error: <message>` |
-| 3 | Veeam couldn't be reached: no connection, a timeout, a TLS handshake that broke off, or a 502, 503 or 504 after the retries. | `veeam error: <message>` |
-| 4 | Any other Veeam error (an unknown organisation, a bad request, an unexpected answer), or no organisation named `veeam_org_name`. Also Veeam's certificate failing verification, which a retry won't fix: `veeam_ca_file` doesn't hold Veeam's certificate or its CA, or Veeam's certificate was renewed and no longer matches `veeam_cert_sha256` (see "Veeam's default certificate"). | `veeam error: <message>` (`... TLS failure: ...` for a certificate), or `veeam error: organisation <name> (veeam_org_name) not found in Veeam` |
+| 1 | The config or a secret is missing or invalid, or something unexpected failed (an error no command handles ends here too, never in an `abort()`, whose exit code would be 3). For `graph list` this includes the certificate: `RP_GRAPH_CERT_PFX_BASE64` unset, a PFX that doesn't open with `RP_GRAPH_CERT_PASSWORD`, or a certificate that isn't valid now, all found before any request. | `config error: <path>: <message>`, `config error: the --config path is not valid UTF-8`, `config error: cannot find the ProgramData folder`, `config error: environment variable <name> is not valid Unicode`, `config error: RP_VEEAM_USERNAME is not set` (then `RP_VEEAM_PASSWORD`), `config error: RP_GRAPH_CERT_PFX_BASE64 is not set` (or another message naming the certificate's variables), `config error: unexpected failure` or `error: unexpected failure`; an unexpected failure's own message is never shown |
+| 2 | The service refused the sign-in, the account's role, the token or a permission: Veeam's credentials or role; Entra refusing the Worker app's sign-in; Graph refusing the token, or denying a call for want of a grant (the message names the grant, see `docs/security/graph-permissions.md`). | `veeam error: <message>` or `graph error: <message>` |
+| 3 | The service couldn't be reached or asked to try later: no connection, a timeout, a TLS handshake that broke off, or a 502, 503 or 504 (for Graph also a 429 or another 5xx) after the retries. | `veeam error: <message>` or `graph error: <message>` |
+| 4 | Any other error from the service. Veeam: an unknown organisation, a bad request, an unexpected answer, or no organisation named `veeam_org_name`; also Veeam's certificate failing verification, which a retry won't fix: `veeam_ca_file` doesn't hold Veeam's certificate or its CA, or Veeam's certificate was renewed and no longer matches `veeam_cert_sha256` (see "Veeam's default certificate"). Graph: the mailbox, drive or folder not found, a drive or folder the guard refuses (not the RestoreTarget the config says), a download that failed, an unexpected answer. | `veeam error: <message>` (`... TLS failure: ...` for a certificate), `veeam error: organisation <name> (veeam_org_name) not found in Veeam`, or `graph error: <message>` |
 | 64 | The command line isn't understood. | the usage line |
 
 The usage line is:
 
 ```
-usage: rpworker --version | rpworker config check [--config <path>] | rpworker veeam list [--config <path>]
+usage: rpworker --version | rpworker config check [--config <path>] | rpworker veeam list [--config <path>] | rpworker graph list [--hash] [--config <path>]
 ```

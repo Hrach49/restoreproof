@@ -38,9 +38,12 @@ struct GraphCommandEnv {
     // rp::graph::make_download_http_client. Created on every run; sent through
     // only with --hash.
     std::function<std::unique_ptr<IHttpClient>()> make_download_http;
-    // Passed to GraphClient as they are. `logger` also goes to the
-    // certificate's loading, the reader and its downloads; `wall_now` (null:
-    // system_clock::now) is also the time the certificate must be valid at.
+    // Passed to GraphClient as they are, but a null `logger` is replaced by
+    // make_command_logger()'s (warnings and worse, to stderr), never spdlog's
+    // default logger, which writes to stdout. The logger also goes to the Graph
+    // HTTP client, the certificate's loading, the reader and its downloads;
+    // `wall_now` (null: system_clock::now) is also the time the certificate
+    // must be valid at.
     graph::GraphClientOptions client_options;
 };
 
@@ -60,7 +63,8 @@ GraphCommandEnv default_graph_command_env();
 // to `out`, as UTF-8, three tables in that order: each a heading line with the
 // location and its count ("Mail (<test_mailbox>, Inbox): 2 item(s)"), then, if
 // it holds anything, a column header and one row per item in Graph's order.
-// Mail: RECEIVED, SENDER, SUBJECT, ID; files: NAME, SIZE, ID. With --hash each
+// Mail: RECEIVED, SENDER, SUBJECT, ID; files: NAME, SIZE, ID ("-" for a
+// missing or empty value, "(no subject)" for a missing or empty subject). With --hash each
 // file is downloaded (without the token) and both kinds get SHA256 and RULE
 // ("text-v1" for mail, "bytes" for files); without it nothing is downloaded
 // and SIZE is Graph's. A blank line after each table, then a summary line.

@@ -677,7 +677,8 @@ TEST_CASE("rpworker graph list shows a missing mail field as - and an empty subj
 {
     json value = messages_of("mail-list-200-one-item");
     value[0].erase("receivedDateTime");
-    value[0]["from"] = json::object();
+    // No address, or an empty one.
+    value[0]["from"] = GENERATE(json::object(), json{{"emailAddress", {{"address", ""}}}});
     value[0]["subject"] = GENERATE(json(""), json(nullptr));
     Harness lab;
     lab.serve_empty();
@@ -750,6 +751,38 @@ TEST_CASE("rpworker graph list never prints or logs a token, the PFX password or
         CAPTURE(secret);
         CHECK(everything.find(secret) == std::string::npos);
     }
+}
+
+TEST_CASE("rpworker graph list without a logger logs to stderr, never spdlog's default logger",
+          "[graph_command]")
+{
+    // spdlog's default logger writes to stdout, where the tables are.
+    std::ostringstream captured;
+    const std::shared_ptr<spdlog::logger> saved = spdlog::default_logger();
+    auto spy = std::make_shared<spdlog::logger>(
+        "graph_command_default_spy", std::make_shared<spdlog::sinks::ostream_sink_mt>(captured));
+    spy->set_level(spdlog::level::trace);
+    spdlog::set_default_logger(spy);
+    Harness lab;
+    lab.serve_one_each();
+    rp::GraphCommandEnv env = lab.env();
+    env.client_options.logger = nullptr;
+    std::ostringstream out;
+    std::ostringstream err;
+    const std::string path_arg = utf8(lab.config_path);
+
+    const int code =
+        rp::run_graph_command(Args{"list", "--hash", "--config", path_arg}, out, err, env);
+
+    spdlog::set_default_logger(saved);
+    spy->flush();
+    CHECK(code == rp::exit_code::ok);
+    CHECK(captured.str().empty());
+    CHECK(err.str().empty());
+    // The Graph HTTP client got the command's own logger, not null.
+    REQUIRE(lab.graph_http_logger != nullptr);
+    CHECK(lab.graph_http_logger != spy);
+    CHECK(lab.graph_http_logger->level() == spdlog::level::warn);
 }
 
 // --- The real environment ----------------------------------------------------------

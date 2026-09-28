@@ -1,30 +1,30 @@
 {
-  "source": "hand-written: stand-in until the one-item state is recorded (W2.2): GET the restoretest inbox as the Worker lists it, one mail, its body as text",
+  "source": "live 2026-09-28: GET the restoretest inbox as the Worker lists it, one mail, its body as text",
   "request": "GET /v1.0/users/restoretest@RestoreProofLab.onmicrosoft.com/mailFolders/inbox/messages?$select=id,subject,from,receivedDateTime,internetMessageId,body&$top=100",
   "status": 200,
   "headers": {
     "Content-Type": "application/json; odata.metadata=minimal; odata.streaming=true; IEEE754Compatible=false; charset=utf-8",
-    "request-id": "00000000-0000-4000-8000-000000000080",
-    "client-request-id": "00000000-0000-4000-8000-000000000080"
+    "request-id": "82e5a3db-1d49-43db-976e-4c0dde09b908",
+    "client-request-id": "82e5a3db-1d49-43db-976e-4c0dde09b908"
   },
   "body": {
     "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#users('restoretest%40RestoreProofLab.onmicrosoft.com')/mailFolders('inbox')/messages(id,subject,from,receivedDateTime,internetMessageId,body)",
     "value": [
       {
-        "@odata.etag": "W/\"CQAAABYAAABStandInChangeKey000000001\"",
-        "id": "AAkALgAAAAAAHYQDEapmEc2byACqAC-EWg0AStandInMessage00000000001AAA=",
-        "receivedDateTime": "2026-09-28T12:00:00Z",
-        "internetMessageId": "<w2.2-stand-in-1@RestoreProofLab.onmicrosoft.com>",
-        "subject": "RestoreProof W2.2 stand-in",
-        "from": {
-          "emailAddress": {
-            "name": "Alice",
-            "address": "alice@RestoreProofLab.onmicrosoft.com"
-          }
-        },
+        "@odata.etag": "W/\"CQAAABYAAACnL+u8BR8BT6morC7OYUFaAAACqaFh\"",
+        "id": "AAkALgAAAAAAHYQDEapmEc2byACqAC-EWg0Apy-rvAUfAU_pqKwuzmFBWgAAAqwo8wAA",
+        "receivedDateTime": "2026-09-28T18:06:26Z",
+        "internetMessageId": "<WA1P291MB02781BED3144253B0C5B5F2C8B8D2@WA1P291MB0278.POLP291.PROD.OUTLOOK.COM>",
+        "subject": "RestoreProof W2.2 one-item 7f3k",
         "body": {
           "contentType": "text",
-          "content": "RestoreProof W2.2 stand-in\r\n"
+          "content": "RestoreProof W2.2 body text 9q2m\r\n"
+        },
+        "from": {
+          "emailAddress": {
+            "name": "Hrachya Harutyunyan",
+            "address": "HrachyaHarutyunyan@RestoreProofLab.onmicrosoft.com"
+          }
         }
       }
     ]

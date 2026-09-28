@@ -1,0 +1,9 @@
+{
+  "source": "hand-written: a redirect from the token endpoint (a captive portal or a misrouted proxy); Entra itself never redirects a token POST",
+  "request": "POST /bcd6bd1a-ea42-489d-aa28-2c19a44ad146/oauth2/v2.0/token",
+  "status": 302,
+  "headers": {
+    "Location": "https://login.example.test/captive?next=token"
+  },
+  "body": null
+}

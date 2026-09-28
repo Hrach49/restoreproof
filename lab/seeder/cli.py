@@ -1,4 +1,4 @@
-"""`python -m seeder {generate,hash,seed,verify,check-worker-app}`."""
+"""`python -m seeder {generate,hash,seed,verify,check-worker-app,record-graph-fixtures}`."""
 
 import argparse
 import sys
@@ -8,6 +8,7 @@ from seeder import CANARY_DIR, MANIFEST_PATH, tenant
 from seeder.auth import MODES, AuthError, SignIn, resolve_client_id
 from seeder.generate import run_generate
 from seeder.graph import GraphError
+from seeder.graph_fixtures import DEFAULT_OUT_DIR, FixtureError, run_record
 from seeder.http import TransportError
 from seeder.manifest import ManifestError, run_hash
 from seeder.seed import run_seed
@@ -19,10 +20,13 @@ from seeder.worker_app import default_pfx_path, read_generic_credential, resolve
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m seeder",
-        description="Seed and check the RestoreProof canary set (L1.2) and the Worker app (L1.5). See lab/README.md.",
+        description=(
+            "Seed and check the RestoreProof canary set (L1.2) and the Worker app (L1.5), and record the "
+            "Worker's Graph fixtures (W2.1). See lab/README.md."
+        ),
     )
     sub = parser.add_subparsers(
-        dest="command", required=True, metavar="{generate,hash,seed,verify,check-worker-app}"
+        dest="command", required=True, metavar="{generate,hash,seed,verify,check-worker-app,record-graph-fixtures}"
     )
 
     def paths(p: argparse.ArgumentParser, *, manifest: bool = True, canary: bool = True) -> None:
@@ -56,6 +60,14 @@ def _parser() -> argparse.ArgumentParser:
         "--seeder-client-id", help="seeder app client ID, to sign in as alice (else RP_LAB_CLIENT_ID, else tenant.py)"
     )
     worker.add_argument("--auth", choices=MODES, default="browser", help="alice's sign-in flow (default: browser)")
+    fixtures = sub.add_parser(
+        "record-graph-fixtures", help="record the Worker's Graph and Entra fixtures as the Worker app (live, W2.1)"
+    )
+    fixtures.add_argument("--out", type=Path, default=DEFAULT_OUT_DIR, help=f"default: {DEFAULT_OUT_DIR}")
+    fixtures.add_argument(
+        "--client-id", help="Worker app client ID (else RP_LAB_WORKER_CLIENT_ID, else tenant.py)"
+    )
+    fixtures.add_argument("--pfx", type=Path, help=f"the app's certificate (default: {default_pfx_path()})")
     return parser
 
 
@@ -68,6 +80,15 @@ def _run(args: argparse.Namespace) -> int:
         return run_generate(args.canary_dir)
     if args.command == "hash":
         return run_hash(args.manifest, args.canary_dir)
+    if args.command == "record-graph-fixtures":
+        return run_record(
+            client_id=resolve_worker_client_id(args.client_id),
+            tenant_id=tenant.TENANT_ID,
+            pfx_path=args.pfx or default_pfx_path(),
+            read_password=read_generic_credential,
+            transport=RequestsTransport(),
+            out_dir=args.out,
+        )
     if args.command == "check-worker-app":
         return run_check(
             client_id=resolve_worker_client_id(args.client_id),
@@ -100,7 +121,7 @@ def main(argv: list[str] | None = None) -> int:
         return exc.code if isinstance(exc.code, int) else 2
     try:
         return _run(args)
-    except (AuthError, GraphError, TransportError) as exc:
+    except (AuthError, GraphError, TransportError, FixtureError) as exc:
         _err(f"error: {exc}")
         return 2
     except ManifestError as exc:

@@ -45,7 +45,11 @@ those files are held to 100% line instead. See `docs/decisions.md`.
 
 Tests tagged `[live]` call the lab's real services and are skipped unless `RP_LIVE=1` is set;
 they are read-only. `RP_LIVE=1 ctest --preset dev` runs them with the rest, or run them alone
-with `build\dev\rptests.exe "[live]"` (which also prints what they found). The three Veeam ones
+with `build\dev\rptests.exe "[live]"` (which also prints what they found). Three are Veeam's
+and two Graph's; once `RP_LIVE=1` is set, each needs its variables below and fails, rather than
+skips, without them.
+
+The three Veeam ones
 (`worker/tests/veeam_client_live_test.cpp`) each sign in, list organisations and restore
 points, and log out: W1.5's through `VeeamClient`, W1.6's through `rpworker veeam list`
 (`rp::run_veeam_command` with a temp config written from these variables, expecting the lab
@@ -60,8 +64,67 @@ organisation by name. They read:
 | `RP_LIVE_VEEAM_CERT_SHA256` | its SHA-256; default: the lab's |
 | `RP_LIVE_VEEAM_URL` | default `https://localhost:4443` |
 
-Set the password for one shell only, and never on a command line that ends up in history or
-a transcript: read it from Windows Credential Manager or `Read-Host -AsSecureString`.
+The two Graph ones (W2.1, `worker/tests/graph_client_live_test.cpp`) sign in to the lab
+tenant's Entra with the Worker app's certificate through `GraphClient`, then make GETs only:
+one reads the first message ID in the `restoretest` inbox and expects a `PermissionError`
+naming the Mail grant for a mailbox outside the Exchange management scope; the other expects
+one naming `Sites.Selected` for a site the app has no grant on. They read:
+
+| Variable | Value |
+|---|---|
+| `RP_GRAPH_CERT_PFX_BASE64`, `RP_GRAPH_CERT_PASSWORD` | the Worker app's certificate, as the Worker reads them (`rp/secrets.hpp`); set them for one session with `. .\lab\entra\set-worker-env.ps1` (`docs/worker-config.md`, "Microsoft Graph app") (required) |
+| `RP_LIVE_GRAPH_TENANT_ID` | default: the lab tenant |
+| `RP_LIVE_GRAPH_CLIENT_ID` | default: "RestoreProof Worker" |
+| `RP_LIVE_GRAPH_MAILBOX` | default: `restoretest@`, inside the Mail scope |
+| `RP_LIVE_GRAPH_DENIED_MAILBOX` | default: `alice@`, outside it |
+| `RP_LIVE_GRAPH_DENIED_SITE` | default: the tenant's root site (no `Sites.Selected` grant) |
+
+Set the passwords for one shell only, and never on a command line that ends up in history or
+a transcript: read them from Windows Credential Manager or `Read-Host -AsSecureString`.
+
+To run the two Graph ones on the dev laptop (the PFX and its Credential Manager entry come from
+`lab/entra/new-worker-app.ps1`, `lab/README.md`):
+
+1. Open a VS 2022 Developer PowerShell: Start menu, type `Developer PowerShell for VS 2022`,
+   press Enter (or run `Launch-VsDevShell.ps1` as in `docs/environment.md`, "Terminal
+   setup"). Only a build needs it; to build first, also set `$env:VCPKG_ROOT = 'C:\vcpkg'`
+   and run `cmake --build --preset dev` from `C:\restoreproof\worker`.
+2. Go to the repo root:
+
+   ```powershell
+   cd C:\restoreproof
+   ```
+
+3. Put the certificate into this session. Type the leading dot and space:
+
+   ```powershell
+   . .\lab\entra\set-worker-env.ps1
+   ```
+
+   It prints `set RP_GRAPH_CERT_PFX_BASE64 and RP_GRAPH_CERT_PASSWORD for this session` and
+   nothing else. A red error names what is missing (the PFX file or the Credential Manager
+   entry) and sets nothing.
+4. Turn the live tests on for this session and run the Graph ones:
+
+   ```powershell
+   $env:RP_LIVE = '1'
+   .\worker\build\dev\rptests.exe "[graph][live]"
+   ```
+
+   Expected: a line `inbox of restoretest@…: N message(s) on the first page`, two lines
+   `denied as expected: Graph denied GET …` (the Mail grant, then `Sites.Selected`), and
+   `All tests passed` for 2 test cases. To run them with everything else instead, run
+   `ctest --preset dev` from `C:\restoreproof\worker` (the Veeam live tests then need their
+   variables too).
+5. Remove the variables again, or close the window:
+
+   ```powershell
+   Remove-Item Env:RP_LIVE
+   . .\lab\entra\set-worker-env.ps1 -Clear
+   ```
+
+Nothing is written to disk, and PowerShell's history holds only the commands above, never a
+value: the script reads the PFX and the password itself.
 
 ### Running the gates locally
 

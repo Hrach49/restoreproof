@@ -1,0 +1,20 @@
+{
+  "source": "live 2026-09-28: assertion valid only from an hour ahead (clock skew)",
+  "request": "POST /bcd6bd1a-ea42-489d-aa28-2c19a44ad146/oauth2/v2.0/token",
+  "status": 401,
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8",
+    "x-ms-request-id": "308db2e3-99d7-4fb8-b004-f5fc537e0d00"
+  },
+  "body": {
+    "error": "invalid_client",
+    "error_description": "AADSTS700024: Client assertion is not within its valid time range. Current time: 2026-09-27T22:22:42.6674712Z, assertion valid from 2026-09-27T23:24:09.0000000Z, expiry time of assertion 2026-09-27T23:29:09.0000000Z. Review the documentation at https://learn.microsoft.com/entra/identity-platform/certificate-credentials . Trace ID: 308db2e3-99d7-4fb8-b004-f5fc537e0d00 Correlation ID: 83770d69-e1d0-459b-8abe-184ad62edf1f Timestamp: 2026-09-27 22:22:42Z",
+    "error_codes": [
+      700024
+    ],
+    "timestamp": "2026-09-27 22:22:42Z",
+    "trace_id": "308db2e3-99d7-4fb8-b004-f5fc537e0d00",
+    "correlation_id": "83770d69-e1d0-459b-8abe-184ad62edf1f",
+    "error_uri": "https://login.microsoftonline.com/error?code=700024"
+  }
+}

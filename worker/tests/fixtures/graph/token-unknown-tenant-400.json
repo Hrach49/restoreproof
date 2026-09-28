@@ -1,0 +1,20 @@
+{
+  "source": "live 2026-09-28: tenant ID of no tenant",
+  "request": "POST /<random GUID>/oauth2/v2.0/token",
+  "status": 400,
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8",
+    "x-ms-request-id": "267b8744-87c0-4286-ba4e-aa80b38fb900"
+  },
+  "body": {
+    "error": "invalid_request",
+    "error_description": "AADSTS90002: Tenant '8a67c3ea-acde-40ac-aea0-0543e53bb029' not found. Check to make sure you have the correct tenant ID and are signing into the correct cloud. Check with your subscription administrator, this may happen if there are no active subscriptions for the tenant. Trace ID: 267b8744-87c0-4286-ba4e-aa80b38fb900 Correlation ID: c6e7226d-0368-45f8-8a93-e53e4ac02428 Timestamp: 2026-09-27 22:22:41Z",
+    "error_codes": [
+      90002
+    ],
+    "timestamp": "2026-09-27 22:22:41Z",
+    "trace_id": "267b8744-87c0-4286-ba4e-aa80b38fb900",
+    "correlation_id": "c6e7226d-0368-45f8-8a93-e53e4ac02428",
+    "error_uri": "https://login.microsoftonline.com/error?code=90002"
+  }
+}

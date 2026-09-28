@@ -28,7 +28,7 @@ struct SecretKey {
     bool colon_form;
 };
 
-constexpr std::array<SecretKey, 9> kSecretKeys{{
+constexpr std::array<SecretKey, 11> kSecretKeys{{
     {"client_secret", false, true},
     {"password", false, true},
     {"refresh_token", false, true},
@@ -41,9 +41,30 @@ constexpr std::array<SecretKey, 9> kSecretKeys{{
     {"sig", false, false},
     {"client_assertion", false, false},
     {"id_token", false, false},
+    // The Graph certificate (W2.1): its Base64 PFX, under any name ending in
+    // pfx or pfx_base64 (RP_GRAPH_CERT_PFX_BASE64=...). "pfx: ..." is too
+    // likely in prose to take the colon form.
+    {"pfx", false, false},
+    {"pfx_base64", false, true},
 }};
 
 constexpr std::string_view kSchemeSeparator = "://";
+
+// A JWT's compact form (RFC 7519) starts with the base64url of '{"', its
+// header's opening. Case matters.
+constexpr std::string_view kJwtStart = "eyJ";
+
+// The HTTP authentication scheme whose token follows it after blanks
+// (RFC 6750), in any case.
+constexpr std::string_view kBearer = "bearer";
+
+// The auth-params a Bearer challenge starts with (RFC 6750, RFC 9728, Entra's
+// and Graph's WWW-Authenticate), in any case. Only these, followed by '=', are
+// taken for a challenge rather than a token.
+constexpr std::array<std::string_view, 13> kAuthParams{
+    "realm",       "scope",           "error",       "error_description", "error_uri",
+    "claims",      "client_id",       "resource",    "authorization_uri", "resource_id",
+    "token_types", "trusted_issuers", "resource_metadata"};
 
 // ASCII only: a byte of a multi-byte UTF-8 sequence is never a letter here,
 // so non-ASCII text can't match a name or be changed by case folding.
@@ -55,6 +76,12 @@ constexpr char ascii_lower(char c) noexcept
 constexpr bool is_alnum(char c) noexcept
 {
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9');
+}
+
+// A character of a JWT part (RFC 4648 section 5).
+constexpr bool is_base64url(char c) noexcept
+{
+    return is_alnum(c) || c == '-' || c == '_';
 }
 
 constexpr bool is_blank(char c) noexcept
@@ -340,16 +367,12 @@ std::optional<Replacement> match_userinfo(std::string_view text, std::size_t pos
     return Replacement{from, at, kRedacted};
 }
 
-// The secret at `pos`, if one starts there: URL userinfo after "://", or a
-// secret name not run into a preceding letter or digit, then a header colon,
-// '=', a key's colon or a JSON key's quote. A name after '_', '-', '.' or any
-// other non-alphanumeric byte still counts, so "new_password" is as secret as
-// "password".
-std::optional<Replacement> match_at(std::string_view text, std::size_t pos)
+// A secret header or secret key at `pos`, the name not run into a preceding
+// letter or digit: a header colon, '=', a key's colon or a JSON key's quote
+// after it. A name after '_', '-', '.' or any other non-alphanumeric byte
+// still counts, so "new_password" is as secret as "password".
+std::optional<Replacement> match_key_at(std::string_view text, std::size_t pos)
 {
-    if (starts_with_name(text, pos, kSchemeSeparator)) {
-        return match_userinfo(text, pos);
-    }
     if (pos > 0 && is_alnum(text[pos - 1])) {
         return std::nullopt;
     }
@@ -376,6 +399,129 @@ std::optional<Replacement> match_at(std::string_view text, std::size_t pos)
         }
     }
     return std::nullopt;
+}
+
+// Where the first secret header or key in text[from, to) starts whose value
+// goes on past `to`: a token rule ending at `to` would leave that value in the
+// clear, so it stops before the key and leaves it to the key rules.
+std::optional<std::size_t> key_reaching_past(std::string_view text, std::size_t from,
+                                             std::size_t to)
+{
+    for (std::size_t p = from; p < to; ++p) {
+        if (const auto r = match_key_at(text, p); r && r->to > to) {
+            return p;
+        }
+    }
+    return std::nullopt;
+}
+
+// A raw JWT starting at `pos`: "eyJ" not run into a preceding base64url
+// character, base64url characters, '.', at least one more, then any number of
+// further '.'-separated parts, empty ones included. That covers a signed JWT
+// (three parts), an unsigned one ("header.claims." or "header.claims") and an
+// encrypted one (five parts). It ends before a part holding a secret key
+// whose value goes on past it ("eyJ...def.password=x"), and is no JWT if that
+// leaves fewer than two parts.
+std::optional<Replacement> match_jwt(std::string_view text, std::size_t pos)
+{
+    if (text.substr(pos, kJwtStart.size()) != kJwtStart ||
+        (pos > 0 && is_base64url(text[pos - 1]))) {
+        return std::nullopt;
+    }
+    const auto skip_part = [text](std::size_t p) {
+        while (p < text.size() && is_base64url(text[p])) {
+            ++p;
+        }
+        return p;
+    };
+    const std::size_t dot = skip_part(pos + kJwtStart.size());
+    if (dot == text.size() || text[dot] != '.') {
+        return std::nullopt;
+    }
+    std::size_t to = skip_part(dot + 1);
+    if (to == dot + 1) {
+        return std::nullopt;
+    }
+    while (to < text.size() && text[to] == '.') {
+        to = skip_part(to + 1);
+    }
+    if (const auto key = key_reaching_past(text, pos, to)) {
+        // The '.' before the part the key starts in.
+        const std::size_t cut = text.substr(0, *key).find_last_of('.');
+        if (cut == std::string_view::npos || cut <= dot) {
+            return std::nullopt;
+        }
+        to = cut;
+    }
+    return Replacement{pos, to, kRedacted};
+}
+
+bool is_auth_param(std::string_view name) noexcept
+{
+    for (const std::string_view param : kAuthParams) {
+        if (name.size() == param.size() && starts_with_name(name, 0, param)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// "Bearer <token>", the scheme name ending at `name_end`: one or more blanks,
+// then the token up to whitespace, a quote or ','. A known auth-param name
+// followed by '=' (WWW-Authenticate's `Bearer realm="", error="invalid_token"`)
+// is a challenge, not a token, and is left alone. Anything else after the
+// blanks goes, even characters a token can't hold: over-redacting is preferred
+// to leaking. But a secret key in it whose value goes on past it ("Bearer
+// password = x", "Bearer refresh_token: x") is left to the key rules: only
+// what comes before the key goes here.
+std::optional<Replacement> match_bearer(std::string_view text, std::size_t name_end)
+{
+    if (name_end == text.size() || !is_blank(text[name_end])) {
+        return std::nullopt;
+    }
+    const std::size_t from = skip_blanks(text, name_end);
+    std::size_t name_to = from;
+    while (name_to < text.size() &&
+           (is_alnum(text[name_to]) || text[name_to] == '_' || text[name_to] == '-')) {
+        ++name_to;
+    }
+    if (name_to < text.size() && text[name_to] == '=' &&
+        is_auth_param(text.substr(from, name_to - from))) {
+        return std::nullopt;
+    }
+    std::size_t to = from;
+    while (to < text.size() && !is_json_space(text[to]) && text[to] != '"' && text[to] != '\'' &&
+           text[to] != ',') {
+        ++to;
+    }
+    if (const auto key = key_reaching_past(text, from, to)) {
+        to = *key;
+    }
+    if (to == from) {
+        return std::nullopt;
+    }
+    return Replacement{from, to, kRedacted};
+}
+
+// The secret at `pos`, if one starts there: URL userinfo after "://", a raw
+// JWT, a bearer token, or a secret header or key (match_key_at).
+std::optional<Replacement> match_at(std::string_view text, std::size_t pos)
+{
+    if (starts_with_name(text, pos, kSchemeSeparator)) {
+        return match_userinfo(text, pos);
+    }
+    if (auto r = match_jwt(text, pos)) {
+        return r;
+    }
+    if (pos > 0 && is_alnum(text[pos - 1])) {
+        return std::nullopt;
+    }
+    if (starts_with_name(text, pos, kBearer)) {
+        if (auto r = match_bearer(text, pos + kBearer.size())) {
+            return r;
+        }
+    }
+    return match_key_at(text, pos);
 }
 
 } // namespace

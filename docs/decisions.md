@@ -7,6 +7,138 @@ Format: date, decision, reason, alternatives rejected.
 
 ---
 
+## 2026-09-28 — W2.1: Graph sign-in with a certificate client assertion; Graph errors, retries and where the token goes
+
+**Decision.** `rp::graph::GraphClient` (`worker/include/rp/graph_client.hpp`) gets app-only
+tokens from Entra with a signed client assertion and makes Graph GETs with them. Supersedes,
+in the L1.5 entry below ("The Worker's Graph app"), the future-tense secret names of point 1
+and the "reconsider CNG in W2.1" alternative, and, in the 2026-09-24 config entry, the
+secret `RP_GRAPH_CLIENT_SECRET` and its list of secret-key markers.
+
+1. **Signing with OpenSSL** (`rp/client_assertion.hpp`; no OpenSSL type in the header):
+   `PKCS12_parse` once, then `EVP_DigestSign`. Only the key and certificate objects are
+   kept; the decoded PFX bytes and the password copy are cleansed on every path.
+   - The assertion is always **PS256** (SHA-256, MGF1-SHA-256, salt 32) with an
+     **`x5t#S256`** header (base64url SHA-256 of the certificate's DER). A live probe on
+     2026-09-28 showed Entra accepts PS256/RS256 with `x5t`, `x5t#S256` or both; one form is
+     hard-wired.
+   - Claims: `aud` the exact token URL
+     `https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token`, `iss` = `sub` = the
+     client ID, a fresh `jti` (UUID v4 from `RAND_bytes`) on every token attempt, `nbf` =
+     `iat` = wall-clock now, `exp` = `nbf` + 300 s. An assertion is never reused.
+2. **Secrets.** `RP_GRAPH_CERT_PFX_BASE64` (the PFX, one line of Base64) and
+   `RP_GRAPH_CERT_PASSWORD` replace `RP_GRAPH_CLIENT_SECRET` (`rp/secrets.hpp`,
+   `docs/worker-config.md`, "Microsoft Graph app"). `certificate_from_secrets` checks the
+   PFX before any network call and throws `rp::graph::CertificateError` naming the
+   variable, never its value: unset, not strict Base64, not a PFX, no MAC, wrong password,
+   a legacy cipher (re-export with AES256_SHA256), no key or no certificate, a key that
+   doesn't match, not RSA of at least 2048 bits, expired or not yet valid. A certificate
+   expiring within 30 days logs a warning. An empty password is accepted only if the PFX
+   really has none. `config check` stays offline and does not open the PFX. `config.json`'s
+   secret-key markers gain `pfx` and `passphrase` (`cert` deliberately not: it would reject
+   `veeam_cert_sha256`).
+   - **Known gap until the vault (W4.5):** the PFX and its password sit in environment
+     variables, and the key lives in process memory for the Worker's lifetime.
+3. **Errors** (`rp/graph_errors.hpp`): `GraphError` (base; `what()` always through
+   `rp::redact`), `AuthError`, `PermissionError`, `NotFoundError`, `TransientError` (with
+   Retry-After). They keep Graph's code, inner code, request ID and a short redacted
+   message, never the body. `CertificateError` (an unusable certificate, found when it is
+   loaded) is an `rp::ConfigError`, not a `GraphError` (review of W2.1): a command's
+   `catch (const GraphError&)` can't take it for a failed call. OpenSSL failing to make a
+   jti or to sign at run time is a plain `GraphError`.
+   - Entra's refusals map on the AADSTS code (first of `error_codes`, else the number in
+     `error_description`), then on `error`, never on the status alone; each `AuthError` says
+     what to check (the table is `token_failure` in `worker/src/graph_client.cpp`):
+     700016 the client and tenant IDs; 90002, 900023, 50059 the tenant ID; 700027, 7000274,
+     50012, 700030 "is the certificate with SHA-1 thumbprint <X> uploaded to app <client
+     ID>?"; 700024, 50027 clock skew, with this machine's UTC time; 53003 Conditional Access;
+     70001, 7000112, 500014, 1000031 the app is disabled, deleted or not in the tenant; any
+     other 4xx an `AuthError` with its code. 5xx, 429, `temporarily_unavailable` and 90006,
+     90033, 90090, 50033, 90055 are `TransientError`s and retried.
+   - A reply that isn't JSON is a `TransientError` on 5xx, else a `GraphError`.
+     `NotFoundError` is only a 404 Graph explains in its JSON error; a mailbox Graph can't
+     read (`MailboxNotEnabledForRESTAPI`, `MailboxNotSupportedForRESTAPI`) and a 404 without
+     Graph's JSON (a proxy, a wrong path) are plain `GraphError`s.
+   - Every Graph error means run status `error`, never `fail`. So `get` is for what must
+     be there (the test mailbox, site or drive): its 404 is a `NotFoundError`. An item a
+     restore should have put there is looked up with `find`/`find_json`, which answer a 404
+     Graph explains with `nullopt` (the item is missing: W3's `fail`), except the codes that
+     say the mailbox or user doesn't exist (`ErrorInvalidUser`, `ErrorNonExistentMailbox`,
+     `Request_ResourceNotFound`), still a `NotFoundError`. SharePoint and OneDrive answer
+     `itemNotFound` for a missing drive as for a missing item, so W2.2 checks the drive with
+     `get` first (review of W2.1: one `NotFoundError` for both would have made either a
+     misconfigured mailbox a `fail` or a failed restore an `error`).
+   - **Exit codes are unchanged in W2.1**: no command calls Graph yet. `rpworker graph list`
+     (W2.3) is the first to map these errors. Recommended there: `AuthError` and
+     `PermissionError` 2, `TransientError` 3, other `GraphError`s 4; a `CertificateError`
+     exits 1 with the other `ConfigError`s.
+4. **Permissions.** Every call names a `Grant` (W2.1: Mail through Exchange RBAC, Sites
+   through `Sites.Selected`). A 403 with Graph's JSON error is a `PermissionError` "Graph
+   denied GET <path without query> (403 <code>): the Worker app relies on <grant>; see
+   docs/security/graph-permissions.md"; a 401 that persists after a fresh token names it too.
+   A 403 without Graph's JSON (a TLS-inspecting proxy's block page) is a plain `GraphError`
+   pointing at the network, as a 404 without it is (review of W2.1).
+5. **Retries.** GraphClient makes every attempt itself (`max_attempts` 1, status retries
+   off, as VeeamClient): 5 attempts per call, shared by transport failures, 5xx and 429.
+   A Retry-After (delta-seconds or IMF-fixdate) on 429 or 503 raises the wait to it; each
+   wait is capped at 120 s and one call's waits at 300 s **in all, the waits of a token
+   renewal made inside that call included**; over a cap is a `TransientError` at once.
+   - The **token POST is resent after any transport failure** (connect, handshake, dropped,
+     timeout) with a new assertion, unlike VeeamClient's token request: a client-credentials
+     request changes nothing on Entra's side. Also on 5xx, 429 and Entra's retryable codes;
+     never on another 400/401; every retry waits at least 5 s.
+   - A 401 from Graph: one fresh token and a resend; another 401 is an `AuthError` (at most
+     3 resends when other calls keep replacing the token). A 401 asking for
+     `insufficient_claims` is an `AuthError` at once.
+   - Tokens: `token_type` Bearer, a non-empty `access_token`, integer `expires_in` above 0
+     (a day at most counts); renewed 60 s before expiry, or at half a lifetime of 120 s or
+     less; single-flight under a renewal lock with a generation counter, and callers waiting
+     behind a failed renewal share its failure. The token itself sits under a second, brief
+     lock: a call whose token is still good never waits for a renewal in flight, and a call
+     that does wait for one has that time counted toward its 300 s (review of W2.1).
+6. **Where the token goes.** Only to a URL that starts with exactly
+   `https://graph.microsoft.com/v1.0/` (a text compare, plus no whitespace, control
+   character (the UTF-8 ones of `control_chars.hpp` included), backslash, `#`, dot segment,
+   encoded `/` or `\` or double-encoded dot or separator); a path starting with `/` is
+   taken relative to it, any other absolute URL is a `GraphError` before anything is sent. Redirects are never
+   followed (`HttpClient` turns them off): `get` returns a 3xx to its caller, and the token
+   request treats one as a `GraphError` without sending anything to its `Location`. The
+   download that must follow Graph's redirect, without the token, is W2.2's. Every request carries `User-Agent: ISV|RestoreProof|RestoreProofWorker/<version>`.
+   `rp::redact` also masks a raw JWT and `Bearer <token>`.
+7. **TLS.** The Graph and Entra HTTP client (`make_graph_http_client`) trusts the Windows
+   certificate store alone: no CA file, no pin.
+8. `graph_tenant_id` and `graph_client_id` must be GUIDs (`rp::is_uuid`), in `config.json`
+   and in the GraphClient constructor: both go into URLs and the assertion, and a domain
+   name, `common` or `organizations` would sign in somewhere else than meant.
+
+**Reason.**
+
+- **OpenSSL, not CNG.** W2.4 has to put the PFX bytes in Veeam's restore body anyway
+  (`docs/api/veeam-feasibility.md` §5.4), so a non-exportable CNG key would not remove the
+  PFX from the machine, and OpenSSL is already linked into rpcore.
+- **PS256 and `x5t#S256`:** SHA-256 throughout rather than SHA-1 thumbprints and PKCS#1
+  v1.5; the probe showed Entra takes it on the lab tenant.
+- **One budget per call:** a caller (W2.2's verification) must be able to bound how long one
+  GET can block; a separate budget for a token renewal made inside it would double that.
+- **Resending the token POST after a lost reply** is safe where VeeamClient's is not:
+  Entra's client-credentials grant has no side effect a duplicate could repeat.
+- **A grant in every 403 message:** Graph's 403 doesn't say which permission is missing,
+  and the Worker's are split across Entra, SharePoint, OneDrive and Exchange RBAC. The
+  wording is generic, so a customer never sees lab names.
+- **A text compare for the token's URL:** parsing the URL could read it differently from
+  curl; an exact prefix leaves no room for that, and makes `@odata.nextLink` safe to follow.
+
+**Alternatives rejected.**
+
+- *CNG with a key in `Cert:\CurrentUser\My`:* see above; reconsider with the vault (W4.5)
+  if Veeam's restore body stops needing the PFX.
+- *A client secret:* rejected in L1.5.
+- *Following Graph's redirects with the token:* the token would reach whatever host the
+  redirect names. W2.2's downloads follow theirs without it.
+- *A separate retry budget for token renewals:* see "One budget per call".
+
+---
+
 ## 2026-09-27 — W1.7: the connector interface; clients by name, neutral types and errors, targets only from Config
 
 **Decision.**
@@ -147,6 +279,7 @@ one source of truth, and leaves no code path that builds free-form targets.
    - When the Worker's Graph code lands (W2.1), `RP_GRAPH_CLIENT_SECRET` is replaced by
      `RP_GRAPH_CERT_PFX_BASE64` (the PFX, Base64) and `RP_GRAPH_CERT_PASSWORD`. That is the
      same form Veeam's restore body takes, and the vault (W4.5) will hold it.
+     *(Done in W2.1: see the 2026-09-28 entry.)*
 2. **No `Files.Read.All`.** SharePoint access is `Sites.Selected` `read` on the RestoreTest
    site. OneDrive access is `Files.SelectedOperations.Selected` `read` on alice's
    `/RestoreTarget` folder: not `Sites.Selected` on her OneDrive.
@@ -198,7 +331,8 @@ one source of truth, and leaves no code path that builds free-form targets.
   the PFX Veeam needs.
 - *A non-exportable key in `Cert:\CurrentUser\My`:* see above. Reconsider when the Worker
   signs its own assertions in C++ (W2.1): CNG can sign with a key it never exports. Veeam's
-  PFX would still be needed.
+  PFX would still be needed. *(Reconsidered in W2.1 and kept rejected: see the 2026-09-28
+  entry.)*
 - *`Files.Read.All` or `Sites.Read.All`:* tenant-wide.
 - *`Sites.Selected` on alice's OneDrive:* her whole OneDrive for one folder.
 - *An Application Access Policy on top of Entra `Mail.Read`:* legacy, replaced by RBAC for
@@ -958,7 +1092,9 @@ may want the body kept (never logged) to say why.
 
 - Secrets never go in `config.json`. Until the DPAPI vault arrives in W4.5 (#48), they come
   from `RP_VEEAM_USERNAME`, `RP_VEEAM_PASSWORD` and `RP_GRAPH_CLIENT_SECRET`, whose names are
-  defined once in `worker/include/rp/secrets.hpp`. An unset one is not an error, because
+  defined once in `worker/include/rp/secrets.hpp`. *(W2.1 replaced `RP_GRAPH_CLIENT_SECRET`
+  with `RP_GRAPH_CERT_PFX_BASE64` and `RP_GRAPH_CERT_PASSWORD`, and added `pfx` and
+  `passphrase` to the markers below: see the 2026-09-28 entry.)* An unset one is not an error, because
   which ones a run needs depends on the Veeam auth mode W1.0 picks.
 - A top-level key whose lowercased name contains `password`, `passwd`, `pwd`, `secret`,
   `token`, `api_key`, `apikey`, `credential`, `private_key`, `access_key`, `signing_key` or

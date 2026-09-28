@@ -2,6 +2,7 @@
 
 #include <rp/config.hpp>
 #include <rp/redact.hpp>
+#include <rp/sha256.hpp>
 #include <rp/text_v1.hpp>
 
 #include "text_util.hpp"
@@ -365,9 +366,51 @@ void TargetReader::check_onedrive_folder()
 
 std::vector<FoundItem> TargetReader::list_files(const FileTarget& target)
 {
+    const std::string& location = target.location;
     const std::vector<json> pages =
-        list_pages(graph_, target.children_path, *target.grant, {}, target.location);
+        list_pages(graph_, target.children_path, *target.grant, {}, location);
     std::vector<FoundItem> items;
+    for (const json& page : pages) {
+        for (const json& entry : page.at("value")) {
+            const std::string id = graph_id(entry, "an item in " + location);
+            // Restores land files in the root (docs/decisions.md 2026-09-28, W2.2).
+            if (entry.contains("folder")) {
+                log(spdlog::level::info, "skipped a folder in " + location + ": " + id +
+                                             " (restores land files in the root; subfolders "
+                                             "aren't read)");
+                continue;
+            }
+            if (!entry.contains("file")) {
+                log(spdlog::level::warn,
+                    "skipped an item that is not a file in " + location + ": " + id);
+                continue;
+            }
+            const std::string* name = string_at(entry, "name");
+            if (name == nullptr) {
+                throw GraphError("Graph's reply listing " + location + " has a file without a name");
+            }
+            const auto size = entry.find("size");
+            if (size == entry.end() || !size->is_number_unsigned()) {
+                throw GraphError("Graph's reply listing " + location +
+                                 " has a file without a size: " + id);
+            }
+            const auto size_bytes = size->get<std::uint64_t>();
+            const std::string bytes =
+                download_item(graph_, download_, *target.grant, tenant_host_, target.drive_id, id,
+                              size_bytes, location + " item " + id, options_.download);
+            FoundItem item;
+            item.type = target.type;
+            item.id = id;
+            item.name = *name;
+            item.sha256 = sha256_hex(bytes);
+            item.sha256_rule = "bytes";
+            item.size_bytes = size_bytes;
+            if (options_.on_file) {
+                options_.on_file(item, bytes);
+            }
+            items.push_back(std::move(item));
+        }
+    }
     log(spdlog::level::info,
         "listed " + std::to_string(items.size()) + " item(s) in " + target.location);
     return items;

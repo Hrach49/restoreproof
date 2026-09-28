@@ -16,6 +16,8 @@
 #include <rp/graph_errors.hpp>
 #include <rp/graph_targets.hpp>
 #include <rp/http_client.hpp>
+#include <rp/redact.hpp>
+#include <rp/sha256.hpp>
 #include <rp/text_v1.hpp>
 
 #include <nlohmann/json.hpp>
@@ -37,6 +39,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 using namespace std::chrono_literals;
@@ -523,6 +526,22 @@ TEST_CASE("the OneDrive guard takes the root in both of Graph's path forms", "[g
     CHECK(lab.reader().list_onedrive().empty());
 }
 
+TEST_CASE("the SharePoint guard reads the library's URL name, not its spelling",
+          "[graph][targets]")
+{
+    const std::string tail = GENERATE(as<std::string>{}, "/RestoreTarget/", "/restoretarget",
+                                      "/Restore%54arget", "/Restore%54arget?web=1");
+    CAPTURE(tail);
+    Lab lab;
+    json fixture = load_fixture_json("graph", "restoretarget-drive-200");
+    const std::string url = fixture["body"]["webUrl"].get<std::string>();
+    fixture["body"]["webUrl"] = url.substr(0, url.rfind('/')) + tail;
+    lab.serve(drive_url(), fixture);
+    lab.serve_file(library_children_url(), "restoretarget-children-200-empty");
+
+    CHECK(lab.reader().list_sharepoint().empty());
+}
+
 TEST_CASE("a missing drive or folder is a NotFoundError, never an empty listing",
           "[graph][targets]")
 {
@@ -806,7 +825,8 @@ TEST_CASE("bad listing replies are errors", "[graph][targets]")
             kGraph + "/users/alice@" + domain + "/messages?$skip=1",
             kGraph + "/users/alice@" + domain + "/mailFolders/inbox/messages?$skip=1",
             kGraph + "/users/" + lab_values().mailbox + "/mailFolders/sentitems/messages?$skip=1",
-            kGraph + "/users('alice%40" + domain + "')/mailFolders('Inbox')/messages?$skip=1");
+            kGraph + "/users('alice%40" + domain + "')/mailFolders('Inbox')/messages?$skip=1",
+            kGraph + "/users/" + lab_values().mailbox + "/mailFolders/inbox/messages%zz?$skip=1");
         CAPTURE(link);
         Lab lab;
         lab.graph_http.on(HttpMethod::get, first, {page_of(json::array(), link)});
@@ -900,7 +920,8 @@ TEST_CASE("a nextLink in Graph's other form names the same resource", "[graph][t
     const std::string link = GENERATE_COPY(
         kGraph + "/users('restoretest%40" + domain + "')/mailFolders('Inbox')/messages?%24skip=1",
         kGraph + "/users(restoretest@" + domain + ")/mailFolders(Inbox)/messages?%24skip=1",
-        kGraph + "/Users/RESTORETEST%40" + domain + "/MailFolders/Inbox/Messages?$skip=1");
+        kGraph + "/Users/RESTORETEST%40" + domain + "/MailFolders/Inbox/Messages?$skip=1",
+        kGraph + "/users/restoretest%40" + domain + "/mailFolders/I%6Ebox/%6D%65ssages?$skip=1");
     CAPTURE(link);
     Lab lab;
     lab.graph_http.on(HttpMethod::get, mail_list_url(), {page_of(json::array(), link)});
@@ -1022,5 +1043,345 @@ TEST_CASE("empty locations list as empty vectors, and list_all too", "[graph][ta
     CHECK(gets[0].headers.at("Prefer") == kPrefer);
     for (std::size_t i = 1; i < gets.size(); ++i) {
         CHECK_FALSE(gets[i].headers.contains("Prefer"));
+    }
+}
+
+// ---- the RestoreTarget library and the OneDrive folder -------------------------------------
+
+namespace {
+
+// The download link's credential in the sentinel test: in no message, no log line.
+const std::string kTempauth = "v1.SENTINEL-targets-tempauth";
+
+// One file location as the tests serve it: its guard, listing and content fixtures.
+struct FileLocation {
+    std::string name; // "sharepoint" or "onedrive"
+    ItemType type;
+    std::string drive;
+    std::string guard_url;
+    std::string guard_fixture;
+    std::string children_url;
+    std::string one_item_fixture;
+    std::string content_fixture;
+    std::string location; // as in messages
+    const rp::graph::Grant* grant;
+};
+
+FileLocation sharepoint_location()
+{
+    return {"sharepoint",
+            ItemType::sharepoint,
+            lab_values().library_id,
+            drive_url(),
+            "restoretarget-drive-200",
+            library_children_url(),
+            "restoretarget-children-200-one-item",
+            "restoretarget-content-302",
+            "the RestoreTarget library",
+            &rp::graph::kSitesReadGrant};
+}
+
+FileLocation onedrive_location()
+{
+    return {"onedrive",
+            ItemType::onedrive,
+            lab_values().onedrive_drive_id,
+            folder_url(),
+            "onedrive-folder-200",
+            folder_children_url(),
+            "onedrive-children-200-one-item",
+            "onedrive-content-302",
+            "the test OneDrive folder",
+            &rp::graph::kOneDriveReadGrant};
+}
+
+std::string content_url(const FileLocation& at, const std::string& id)
+{
+    return kGraph + "/drives/" + at.drive + "/items/" + id + "/content";
+}
+
+json file_of(const FileLocation& at)
+{
+    return load_fixture_json("graph", at.one_item_fixture).at("body").at("value").at(0);
+}
+
+std::string location_of(const FileLocation& at)
+{
+    return load_fixture_json("graph", at.content_fixture).at("headers").at("Location").get<std::string>();
+}
+
+// The file's bytes, as many as the listing says.
+std::string bytes_of(const FileLocation& at)
+{
+    return std::string(file_of(at).at("size").get<std::size_t>(), 'r');
+}
+
+std::vector<FoundItem> list(TargetReader& reader, const FileLocation& at)
+{
+    return at.type == ItemType::sharepoint ? reader.list_sharepoint() : reader.list_onedrive();
+}
+
+// Serves the location's guard, `children` as its listing and, for its one
+// file, the recorded 302 and a download of the listed size.
+void serve_location(Lab& lab, const FileLocation& at, const HttpResponse& children)
+{
+    lab.serve_file(at.guard_url, at.guard_fixture);
+    lab.graph_http.on(HttpMethod::get, at.children_url, {children});
+    const std::string id = file_of(at).at("id").get<std::string>();
+    lab.serve_file(content_url(at, id), at.content_fixture);
+    lab.dl_http.on(HttpMethod::get, location_of(at),
+                   {make_response(200, bytes_of(at), "application/octet-stream")});
+}
+
+void serve_location(Lab& lab, const FileLocation& at)
+{
+    serve_location(lab, at, load_fixture("graph", at.one_item_fixture));
+}
+
+} // namespace
+
+TEST_CASE("bad driveItems in a listing are errors", "[graph][targets]")
+{
+    const FileLocation at = GENERATE(sharepoint_location(), onedrive_location());
+    CAPTURE(at.name);
+    using Edit = std::function<void(json&)>;
+    struct Row {
+        std::string name;
+        Edit edit;
+        std::string message; // after "Graph returned " / "Graph's reply listing <location> "
+    };
+    const Row row = GENERATE(
+        Row{"an item ID with '/'", [](json& f) { f["id"] = "01A/B"; }, "id"},
+        Row{"an item without an ID", [](json& f) { f.erase("id"); }, "id"},
+        Row{"a file without a name", [](json& f) { f.erase("name"); }, "name"},
+        Row{"a file whose name isn't a string", [](json& f) { f["name"] = 1; }, "name"},
+        Row{"a file without a size", [](json& f) { f.erase("size"); }, "size"},
+        Row{"a negative size", [](json& f) { f["size"] = -1; }, "size"},
+        Row{"a fractional size", [](json& f) { f["size"] = 1.5; }, "size"},
+        Row{"a size as text", [](json& f) { f["size"] = "27"; }, "size"});
+    CAPTURE(row.name);
+    json file = file_of(at);
+    const std::string id = file.at("id").get<std::string>();
+    row.edit(file);
+    Lab lab;
+    serve_location(lab, at, page_of(json::array({file})));
+    TargetReader reader = lab.reader();
+
+    const Caught caught = catch_error([&] { list(reader, at); });
+
+    CHECK(caught.kind == "GraphError");
+    if (row.message == "id") {
+        CHECK(caught.what == "Graph returned an item in " + at.location +
+                                 " with an ID the Worker won't put in a URL");
+    } else if (row.message == "name") {
+        CHECK(caught.what == "Graph's reply listing " + at.location + " has a file without a name");
+    } else {
+        CHECK(caught.what ==
+              "Graph's reply listing " + at.location + " has a file without a size: " + id);
+    }
+    CHECK(lab.dl_http.requests().empty());
+}
+
+TEST_CASE("a failed download fails the whole listing, no item is dropped", "[graph][targets]")
+{
+    const FileLocation at = GENERATE(sharepoint_location(), onedrive_location());
+    CAPTURE(at.name);
+    const json file = file_of(at);
+    const std::string id = file.at("id").get<std::string>();
+    // A second file after the one that fails: never downloaded, never listed.
+    json second = file;
+    second["id"] = id.substr(0, id.size() - 1) + "Z";
+    Lab lab;
+    serve_location(lab, at, page_of(json::array({file, second})));
+    lab.dl_http.on(HttpMethod::get, location_of(at), {make_response(403)});
+    TargetReader reader = lab.reader();
+    std::optional<std::vector<FoundItem>> result;
+
+    const Caught caught = catch_error([&] { result = list(reader, at); });
+
+    CHECK(caught.kind == "GraphError");
+    CHECK(caught.what == "SharePoint refused the download of " + at.location + " item " + id +
+                             " (403); the link Graph gave may have expired");
+    CHECK_FALSE(result);
+    CHECK(lab.dl_http.requests().size() == 1);
+    CHECK(lab.gets(content_url(at, second.at("id").get<std::string>())) == 0);
+}
+
+TEST_CASE("a size mismatch fails the listing", "[graph][targets]")
+{
+    const FileLocation at = GENERATE(sharepoint_location(), onedrive_location());
+    CAPTURE(at.name);
+    Lab lab;
+    serve_location(lab, at);
+    lab.dl_http.on(HttpMethod::get, location_of(at),
+                   {make_response(200, bytes_of(at) + "x", "application/octet-stream")});
+    TargetReader reader = lab.reader();
+
+    const Caught caught = catch_error([&] { list(reader, at); });
+
+    CHECK(caught.kind == "GraphError");
+    CHECK_THAT(caught.what, ContainsSubstring("SharePoint sent more than the"));
+}
+
+TEST_CASE("on_file's exception propagates", "[graph][targets]")
+{
+    Lab lab;
+    const FileLocation at = sharepoint_location();
+    serve_location(lab, at);
+    TargetReaderOptions options = lab.reader_options();
+    options.on_file = [](const FoundItem&, std::string_view) {
+        throw std::runtime_error("office-v1 failed");
+    };
+    TargetReader reader(*lab.graph, lab.dl_http,
+                        rp::connector::RestoreTargets::from_config(lab_config()), options);
+
+    const Caught caught = catch_error([&] { reader.list_sharepoint(); });
+
+    CHECK(caught.kind == "other");
+    CHECK(caught.what == "office-v1 failed");
+}
+
+TEST_CASE("one file in each file location lists as one FoundItem", "[graph][targets]")
+{
+    const FileLocation at = GENERATE(sharepoint_location(), onedrive_location());
+    CAPTURE(at.name);
+    Lab lab;
+    serve_location(lab, at);
+    TargetReaderOptions options = lab.reader_options();
+    std::vector<std::pair<FoundItem, std::string>> seen;
+    options.on_file = [&seen](const FoundItem& item, std::string_view bytes) {
+        seen.emplace_back(item, std::string{bytes});
+    };
+    TargetReader reader(*lab.graph, lab.dl_http,
+                        rp::connector::RestoreTargets::from_config(lab_config()), options);
+
+    const std::vector<FoundItem> items = list(reader, at);
+
+    const json file = file_of(at);
+    const std::string bytes = bytes_of(at);
+    FoundItem expected;
+    expected.type = at.type;
+    expected.id = file.at("id").get<std::string>();
+    expected.name = file.at("name").get<std::string>();
+    expected.sha256 = rp::sha256_hex(bytes);
+    expected.sha256_rule = "bytes";
+    expected.size_bytes = file.at("size").get<std::uint64_t>();
+    REQUIRE(items.size() == 1);
+    CHECK(items[0] == expected);
+    CHECK_FALSE(items[0].subject);
+    CHECK_FALSE(items[0].sender);
+    REQUIRE(seen.size() == 1);
+    CHECK(seen[0].first == expected);
+    CHECK(seen[0].second == bytes);
+    // The content GET carried the token and the right grant's call; the
+    // download went to the Location without it.
+    CHECK(lab.gets(content_url(at, expected.id)) == 1);
+    REQUIRE(lab.dl_http.requests().size() == 1);
+    const HttpRequest download = lab.dl_http.requests()[0];
+    CHECK(download.url == location_of(at));
+    CHECK_FALSE(download.headers.contains("Authorization"));
+    CHECK(download.max_body_bytes == expected.size_bytes);
+    CHECK_THAT(lab.log(), ContainsSubstring("info listed 1 item(s) in " + at.location));
+}
+
+TEST_CASE("folders and non-file items are skipped and logged", "[graph][targets]")
+{
+    const FileLocation at = GENERATE(sharepoint_location(), onedrive_location());
+    CAPTURE(at.name);
+    json folder = file_of(at);
+    folder.erase("file");
+    folder["folder"] = {{"childCount", 0}};
+    folder["id"] = "01FOLDER";
+    json package = file_of(at);
+    package.erase("file");
+    package["package"] = {{"type", "oneNote"}};
+    package["id"] = "01PACKAGE";
+    Lab lab;
+    serve_location(lab, at, page_of(json::array({folder, package})));
+
+    const std::vector<FoundItem> items = [&] {
+        TargetReader reader = lab.reader();
+        return list(reader, at);
+    }();
+
+    CHECK(items.empty());
+    CHECK(lab.dl_http.requests().empty());
+    const std::string log = lab.log();
+    CHECK_THAT(log, ContainsSubstring("info skipped a folder in " + at.location +
+                                      ": 01FOLDER (restores land files in the root; subfolders "
+                                      "aren't read)"));
+    CHECK_THAT(log, ContainsSubstring("warning skipped an item that is not a file in " +
+                                      at.location + ": 01PACKAGE"));
+    CHECK_THAT(log, ContainsSubstring("info listed 0 item(s) in " + at.location));
+}
+
+TEST_CASE("list_all returns mail, then SharePoint, then OneDrive", "[graph][targets]")
+{
+    Lab lab;
+    lab.serve_file(mail_list_url(), "mail-list-200-one-item");
+    const std::string mail_id =
+        messages_of("mail-list-200-one-item").at(0).at("id").get<std::string>();
+    lab.serve_file(mail_body_url(mail_id), "mail-body-200");
+    serve_location(lab, sharepoint_location());
+    serve_location(lab, onedrive_location());
+
+    const std::vector<FoundItem> items = lab.reader().list_all();
+
+    REQUIRE(items.size() == 3);
+    CHECK(items[0].type == ItemType::mail);
+    CHECK(items[1].type == ItemType::sharepoint);
+    CHECK(items[2].type == ItemType::onedrive);
+}
+
+TEST_CASE("no credential, body, subject or file name reaches the log", "[graph][targets]")
+{
+    Lab lab;
+    lab.logger->set_level(spdlog::level::trace);
+    lab.serve_file(mail_list_url(), "mail-list-200-one-item");
+    const json message = messages_of("mail-list-200-one-item").at(0);
+    lab.serve_file(mail_body_url(message.at("id").get<std::string>()), "mail-body-200");
+    serve_location(lab, sharepoint_location());
+    serve_location(lab, onedrive_location());
+    REQUIRE(lab.reader().list_all().size() == 3);
+
+    // A failed download whose Location holds a credential.
+    Lab failing;
+    failing.logger->set_level(spdlog::level::trace);
+    const FileLocation at = sharepoint_location();
+    const std::string id = file_of(at).at("id").get<std::string>();
+    const std::string location = "https://" + host_of(location_of(at)) +
+                                 "/sites/s/_layouts/15/download.aspx?UniqueId=u&tempauth=" +
+                                 kTempauth + "&ApiVersion=2.0";
+    failing.serve_file(at.guard_url, at.guard_fixture);
+    failing.serve_file(at.children_url, at.one_item_fixture);
+    HttpResponse redirect = make_response(302);
+    redirect.headers["Location"] = location;
+    failing.graph_http.on(HttpMethod::get, content_url(at, id), {redirect});
+    failing.dl_http.on(HttpMethod::get, location, {make_response(403)});
+    const Caught caught = catch_error([&] { failing.reader().list_sharepoint(); });
+    REQUIRE(caught.kind == "GraphError");
+
+    const std::string log = lab.log() + failing.log();
+    CHECK_THAT(log, ContainsSubstring("following Graph's redirect to"));
+    const std::vector<std::string> secrets{
+        kTempauth,
+        "tempauth=v1",
+        "Bearer",
+        "token-",
+        load_fixture_json("graph", "mail-body-200").at("body").at("body").at("content").get<std::string>(),
+        message.at("subject").get<std::string>(),
+        file_of(sharepoint_location()).at("name").get<std::string>(),
+        file_of(onedrive_location()).at("name").get<std::string>(),
+        "download.aspx",
+    };
+    for (const std::string& secret : secrets) {
+        CAPTURE(secret);
+        CHECK(log.find(secret) == std::string::npos);
+    }
+    CHECK(caught.what.find(kTempauth) == std::string::npos);
+    std::istringstream lines(log);
+    for (std::string line; std::getline(lines, line);) {
+        CAPTURE(line);
+        CHECK(rp::redact(line) == line);
     }
 }

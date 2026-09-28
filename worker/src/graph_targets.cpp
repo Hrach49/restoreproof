@@ -2,6 +2,7 @@
 
 #include <rp/config.hpp>
 #include <rp/redact.hpp>
+#include <rp/text_v1.hpp>
 
 #include "text_util.hpp"
 #include "uuid.hpp"
@@ -11,6 +12,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstddef>
+#include <iterator>
 #include <set>
 #include <utility>
 
@@ -190,6 +192,23 @@ const std::string* string_at(const json& object, std::string_view key)
     return it != object.end() && it->is_string() ? it->get_ptr<const std::string*>() : nullptr;
 }
 
+std::optional<std::string> optional_string(const json& object, std::string_view key)
+{
+    const std::string* value = string_at(object, key);
+    return value ? std::optional<std::string>{*value} : std::nullopt;
+}
+
+// The "id" of an entry Graph listed, if it may go in a URL path (Exchange's
+// IDs end in '=').
+std::string graph_id(const json& entry, const std::string& what)
+{
+    const std::string* id = string_at(entry, "id");
+    if (id == nullptr || !is_id(*id, "!-_=", 512)) {
+        throw GraphError("Graph returned " + what + " with an ID the Worker won't put in a URL");
+    }
+    return *id;
+}
+
 std::string quoted_name(const json& object)
 {
     const std::string* name = string_at(object, "name");
@@ -351,6 +370,72 @@ std::vector<FoundItem> TargetReader::list_files(const FileTarget& target)
     std::vector<FoundItem> items;
     log(spdlog::level::info,
         "listed " + std::to_string(items.size()) + " item(s) in " + target.location);
+    return items;
+}
+
+std::vector<FoundItem> TargetReader::list_mail()
+{
+    const std::string& mailbox = targets_.mailbox();
+    const std::string location = "the test mailbox's Inbox";
+    const HttpHeaders prefer{{"Prefer", std::string{kMailPrefer}}};
+    const std::vector<json> pages =
+        list_pages(graph_,
+                   "/users/" + mailbox + "/mailFolders/inbox/messages" +
+                       "?$select=id,subject,from,receivedDateTime,internetMessageId&$top=100",
+                   kMailReadGrant, prefer, location);
+    std::vector<FoundItem> items;
+    for (const json& page : pages) {
+        for (const json& message : page.at("value")) {
+            FoundItem item;
+            item.type = ItemType::mail;
+            item.id = graph_id(message, "a message in " + location);
+            const json reply = graph_.get_json(
+                "/users/" + mailbox + "/messages/" + item.id + "?$select=body", kMailReadGrant,
+                prefer);
+            const auto found = reply.find("body");
+            const json none;
+            const json& body = found == reply.end() ? none : *found;
+            const std::string* type = string_at(body, "contentType");
+            if (type == nullptr || !iequals(*type, "text")) {
+                throw GraphError("Graph returned the body of a message in the test mailbox as \"" +
+                                 (type ? one_line(*type, 20) : std::string{"(none)"}) +
+                                 "\", not text, although the Worker asked for text; its text-v1 "
+                                 "hash would be wrong");
+            }
+            const std::string* content = string_at(body, "content");
+            if (content == nullptr) {
+                throw GraphError(
+                    "Graph's reply for a message body in the test mailbox has no body.content");
+            }
+            item.subject = optional_string(message, "subject");
+            const auto from = message.find("from");
+            if (from != message.end() && from->is_object()) {
+                const auto address = from->find("emailAddress");
+                if (address != from->end()) {
+                    item.sender = optional_string(*address, "address");
+                }
+            }
+            item.received_at = optional_string(message, "receivedDateTime");
+            item.internet_message_id = optional_string(message, "internetMessageId");
+            item.sha256 = text_v1_sha256(*content);
+            item.sha256_rule = std::string{kTextV1};
+            items.push_back(std::move(item));
+        }
+    }
+    log(spdlog::level::info,
+        "listed " + std::to_string(items.size()) + " item(s) in " + location);
+    return items;
+}
+
+std::vector<FoundItem> TargetReader::list_all()
+{
+    std::vector<FoundItem> items = list_mail();
+    const auto append = [&items](std::vector<FoundItem> more) {
+        items.insert(items.end(), std::make_move_iterator(more.begin()),
+                     std::make_move_iterator(more.end()));
+    };
+    append(list_sharepoint());
+    append(list_onedrive());
     return items;
 }
 

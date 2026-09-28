@@ -96,8 +96,11 @@ public:
     TargetReader(GraphClient& graph, IHttpClient& download, connector::RestoreTargets targets,
                  TargetReaderOptions options = {});
 
+    std::vector<FoundItem> list_mail();       // the test mailbox's Inbox
     std::vector<FoundItem> list_sharepoint(); // the RestoreTarget library's root
     std::vector<FoundItem> list_onedrive();   // the test OneDrive's /RestoreTarget folder
+    // Mail, then SharePoint, then OneDrive; the first error ends it.
+    std::vector<FoundItem> list_all();
 
 private:
     struct FileTarget {

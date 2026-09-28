@@ -16,6 +16,7 @@
 #include <rp/graph_errors.hpp>
 #include <rp/graph_targets.hpp>
 #include <rp/http_client.hpp>
+#include <rp/text_v1.hpp>
 
 #include <nlohmann/json.hpp>
 
@@ -628,4 +629,398 @@ TEST_CASE("empty file locations list as empty vectors", "[graph][targets]")
     CHECK(lab.dl_http.requests().empty());
     CHECK_THAT(lab.log(), ContainsSubstring("info listed 0 item(s) in the RestoreTarget library"));
     CHECK_THAT(lab.log(), ContainsSubstring("info listed 0 item(s) in the test OneDrive folder"));
+}
+
+// ---- mail and paging -----------------------------------------------------------------------
+
+namespace {
+
+std::string mail_list_url()
+{
+    return kGraph + "/users/" + lab_values().mailbox + "/mailFolders/inbox/messages" +
+           kMailSelect + "&$top=100";
+}
+
+std::string mail_body_url(const std::string& id)
+{
+    return kGraph + "/users/" + lab_values().mailbox + "/messages/" + id + "?$select=body";
+}
+
+// The messages of a recorded listing.
+json messages_of(const std::string& name)
+{
+    return load_fixture_json("graph", name).at("body").at("value");
+}
+
+// A listing page holding `value`, with `next_link` if given.
+HttpResponse page_of(const json& value, const std::optional<std::string>& next_link = std::nullopt)
+{
+    json body = {{"value", value}};
+    if (next_link) {
+        body["@odata.nextLink"] = *next_link;
+    }
+    return make_response(200, body.dump());
+}
+
+const std::string kPrefer = std::string{rp::graph::kMailPrefer};
+
+} // namespace
+
+TEST_CASE("the mail Prefer header is the seeder's", "[graph][targets]")
+{
+    // lab/seeder/graph.py MAIL_PREFER
+    CHECK(rp::graph::kMailPrefer == "outlook.body-content-type=\"text\", IdType=\"ImmutableId\"");
+    CHECK(rp::graph::kRestoreTargetName == "RestoreTarget");
+    CHECK(rp::graph::kMaxListPages == 100);
+}
+
+TEST_CASE("the mailbox's errors keep their W2.1 type", "[graph][targets]")
+{
+    struct Row {
+        std::string fixture;
+        std::string kind;
+        std::string grant;
+    };
+    const Row row = GENERATE(
+        Row{"messages-403-exchange", "PermissionError",
+            std::string{rp::graph::kMailReadGrant.description}},
+        Row{"messages-404-unknown-user", "NotFoundError", ""},
+        Row{"messages-404-mailbox-not-enabled", "GraphError", ""});
+    CAPTURE(row.fixture);
+    Lab lab;
+    lab.serve_file(mail_list_url(), row.fixture);
+    TargetReader reader = lab.reader();
+
+    const Caught caught = catch_error([&] { reader.list_mail(); });
+
+    CHECK(caught.kind == row.kind);
+    CHECK(caught.grant == row.grant);
+    CHECK(lab.graph_gets().size() == 1);
+}
+
+TEST_CASE("a mail body that isn't text is an error", "[graph][targets]")
+{
+    const std::string not_text_prefix =
+        "Graph returned the body of a message in the test mailbox as ";
+    const std::string not_text_suffix =
+        ", not text, although the Worker asked for text; its text-v1 hash would be wrong";
+    const std::string no_content =
+        "Graph's reply for a message body in the test mailbox has no body.content";
+    using Edit = std::function<void(json&)>;
+    struct Row {
+        std::string name;
+        Edit edit;
+        std::string message;
+    };
+    const Row row = GENERATE_COPY(
+        Row{"html", [](json& b) { b["body"]["contentType"] = "html"; },
+            not_text_prefix + "\"html\"" + not_text_suffix},
+        Row{"a long, multi-line contentType",
+            [](json& b) { b["body"]["contentType"] = "html\nX: 1234567890123456789"; },
+            not_text_prefix + "\"html X: 123456789012...\"" + not_text_suffix},
+        Row{"contentType missing", [](json& b) { b["body"].erase("contentType"); },
+            not_text_prefix + "\"(none)\"" + not_text_suffix},
+        Row{"body missing", [](json& b) { b.erase("body"); },
+            not_text_prefix + "\"(none)\"" + not_text_suffix},
+        Row{"content removed", [](json& b) { b["body"].erase("content"); }, no_content},
+        Row{"content not a string", [](json& b) { b["body"]["content"] = 1; }, no_content});
+    CAPTURE(row.name);
+    Lab lab;
+    lab.serve_file(mail_list_url(), "mail-list-200-one-item");
+    json body = load_fixture_json("graph", "mail-body-200");
+    row.edit(body["body"]);
+    const std::string id = messages_of("mail-list-200-one-item").at(0).at("id").get<std::string>();
+    lab.serve(mail_body_url(id), body);
+    TargetReader reader = lab.reader();
+
+    const Caught caught = catch_error([&] { reader.list_mail(); });
+
+    CHECK(caught.kind == "GraphError");
+    CHECK(caught.what == row.message);
+}
+
+TEST_CASE("the body's contentType is compared in any case", "[graph][targets]")
+{
+    Lab lab;
+    lab.serve_file(mail_list_url(), "mail-list-200-one-item");
+    json body = load_fixture_json("graph", "mail-body-200");
+    body["body"]["contentType"] = "Text";
+    const std::string id = messages_of("mail-list-200-one-item").at(0).at("id").get<std::string>();
+    lab.serve(mail_body_url(id), body);
+
+    CHECK(lab.reader().list_mail().size() == 1);
+}
+
+TEST_CASE("bad listing replies are errors", "[graph][targets]")
+{
+    const std::string bad_link =
+        "Graph's reply listing the test mailbox's Inbox has a bad @odata.nextLink";
+    const std::string first = mail_list_url();
+    const json one = messages_of("mail-list-200-one-item");
+    const std::string domain = lab_values().mailbox.substr(lab_values().mailbox.find('@') + 1);
+
+    SECTION("no value array")
+    {
+        const std::string body = GENERATE(as<std::string>{}, R"({"x":[]})", R"({"value":{}})",
+                                          R"({"value":"a"})");
+        CAPTURE(body);
+        Lab lab;
+        lab.graph_http.on(HttpMethod::get, first, {make_response(200, body)});
+
+        const Caught caught = catch_error([&] { lab.reader().list_mail(); });
+
+        CHECK(caught.kind == "GraphError");
+        CHECK(caught.what ==
+              "Graph's reply listing the test mailbox's Inbox has no \"value\" array");
+    }
+    SECTION("a nextLink that is empty, not a string, or the URL just fetched")
+    {
+        const json link = GENERATE_COPY(json(""), json(7), json(nullptr), json(first));
+        CAPTURE(link.dump());
+        Lab lab;
+        const json body = {{"value", json::array()}, {"@odata.nextLink", link}};
+        lab.graph_http.on(HttpMethod::get, first, {make_response(200, body.dump())});
+
+        const Caught caught = catch_error([&] { lab.reader().list_mail(); });
+
+        CHECK(caught.kind == "GraphError");
+        CHECK(caught.what == bad_link);
+        CHECK(lab.gets(first) == 1);
+        CHECK(lab.graph_gets().size() == 1);
+    }
+    SECTION("an A-B cycle ends when B links back to A, after two GETs")
+    {
+        Lab lab;
+        const std::string b = first + "&$skiptoken=b";
+        lab.graph_http.on(HttpMethod::get, first, {page_of(json::array(), b)});
+        lab.graph_http.on(HttpMethod::get, b, {page_of(json::array(), first)});
+
+        const Caught caught = catch_error([&] { lab.reader().list_mail(); });
+
+        CHECK(caught.what == bad_link);
+        CHECK(lab.graph_gets().size() == 2);
+    }
+    SECTION("a nextLink to another resource")
+    {
+        const std::string link = GENERATE_COPY(
+            kGraph + "/users/alice@" + domain + "/messages?$skip=1",
+            kGraph + "/users/alice@" + domain + "/mailFolders/inbox/messages?$skip=1",
+            kGraph + "/users/" + lab_values().mailbox + "/mailFolders/sentitems/messages?$skip=1",
+            kGraph + "/users('alice%40" + domain + "')/mailFolders('Inbox')/messages?$skip=1");
+        CAPTURE(link);
+        Lab lab;
+        lab.graph_http.on(HttpMethod::get, first, {page_of(json::array(), link)});
+
+        const Caught caught = catch_error([&] { lab.reader().list_mail(); });
+
+        CHECK(caught.what == bad_link);
+        CHECK(lab.graph_gets().size() == 1);
+    }
+    SECTION("a nextLink to another drive")
+    {
+        std::string other = lab_values().library_id;
+        other.back() = other.back() == 'A' ? 'B' : 'A';
+        Lab lab;
+        lab.serve_file(drive_url(), "restoretarget-drive-200");
+        lab.graph_http.on(
+            HttpMethod::get, library_children_url(),
+            {page_of(json::array(), kGraph + "/drives/" + other + "/root/children?$skiptoken=x")});
+
+        const Caught caught = catch_error([&] { lab.reader().list_sharepoint(); });
+
+        CHECK(caught.what ==
+              "Graph's reply listing the RestoreTarget library has a bad @odata.nextLink");
+        CHECK(lab.graph_gets().size() == 2);
+    }
+    SECTION("a nextLink to another host is GraphClient's own refusal")
+    {
+        const std::string link = GENERATE_COPY(
+            "https://evil.example/v1.0/users/" + lab_values().mailbox +
+                "/mailFolders/inbox/messages?$skip=1",
+            "https://graph.microsoft.com/beta/users/" + lab_values().mailbox +
+                "/mailFolders/inbox/messages?$skip=1");
+        CAPTURE(link);
+        Lab lab;
+        lab.graph_http.on(HttpMethod::get, first, {page_of(json::array(), link)});
+
+        const Caught caught = catch_error([&] { lab.reader().list_mail(); });
+
+        CHECK(caught.kind == "GraphError");
+        CHECK_THAT(caught.what, ContainsSubstring("a URL outside Graph's v1.0"));
+        CHECK(lab.graph_gets().size() == 1);
+    }
+    SECTION("the page cap: the error comes after exactly 100 GETs")
+    {
+        Lab lab;
+        for (int i = 0; i <= rp::graph::kMaxListPages; ++i) {
+            const std::string url = i == 0 ? first : first + "&$skiptoken=" + std::to_string(i);
+            lab.graph_http.on(
+                HttpMethod::get, url,
+                {page_of(json::array(), first + "&$skiptoken=" + std::to_string(i + 1))});
+        }
+
+        const Caught caught = catch_error([&] { lab.reader().list_mail(); });
+
+        CHECK(caught.kind == "GraphError");
+        CHECK(caught.what ==
+              "listing the test mailbox's Inbox went past 100 pages; the Worker stops there");
+        CHECK(lab.graph_gets().size() == 100);
+    }
+    SECTION("a message ID the Worker won't put in a URL")
+    {
+        const json id = GENERATE(json("a/b"), json("a?b"), json("a%2e"), json(""), json(5),
+                                 json(std::string(513, 'a')), json(nullptr));
+        CAPTURE(id.dump());
+        json value = one;
+        value[0]["id"] = id;
+        Lab lab;
+        lab.graph_http.on(HttpMethod::get, first, {page_of(value)});
+
+        const Caught caught = catch_error([&] { lab.reader().list_mail(); });
+
+        CHECK(caught.kind == "GraphError");
+        CHECK(caught.what == "Graph returned a message in the test mailbox's Inbox with an ID "
+                             "the Worker won't put in a URL");
+        CHECK(lab.graph_gets().size() == 1);
+    }
+    SECTION("a message that isn't an object")
+    {
+        Lab lab;
+        lab.graph_http.on(HttpMethod::get, first, {page_of(json::array({"x"}))});
+
+        const Caught caught = catch_error([&] { lab.reader().list_mail(); });
+
+        CHECK_THAT(caught.what, ContainsSubstring("with an ID the Worker won't put in a URL"));
+    }
+}
+
+TEST_CASE("a nextLink in Graph's other form names the same resource", "[graph][targets]")
+{
+    const std::string domain = lab_values().mailbox.substr(lab_values().mailbox.find('@') + 1);
+    const std::string link = GENERATE_COPY(
+        kGraph + "/users('restoretest%40" + domain + "')/mailFolders('Inbox')/messages?%24skip=1",
+        kGraph + "/users(restoretest@" + domain + ")/mailFolders(Inbox)/messages?%24skip=1",
+        kGraph + "/Users/RESTORETEST%40" + domain + "/MailFolders/Inbox/Messages?$skip=1");
+    CAPTURE(link);
+    Lab lab;
+    lab.graph_http.on(HttpMethod::get, mail_list_url(), {page_of(json::array(), link)});
+    lab.graph_http.on(HttpMethod::get, link, {page_of(json::array())});
+
+    CHECK(lab.reader().list_mail().empty());
+    CHECK(lab.gets(link) == 1);
+}
+
+TEST_CASE("an empty Inbox lists as an empty vector", "[graph][targets]")
+{
+    Lab lab;
+    lab.serve_file(mail_list_url(), "mail-list-200-empty");
+
+    CHECK(lab.reader().list_mail().empty());
+
+    REQUIRE(lab.graph_gets().size() == 1);
+    CHECK(lab.graph_gets()[0].headers.at("Prefer") == kPrefer);
+    CHECK_THAT(lab.log(), ContainsSubstring("info listed 0 item(s) in the test mailbox's Inbox"));
+}
+
+TEST_CASE("one mail lists as one FoundItem hashed by text-v1", "[graph][targets]")
+{
+    Lab lab;
+    lab.serve_file(mail_list_url(), "mail-list-200-one-item");
+    const json message = messages_of("mail-list-200-one-item").at(0);
+    const std::string id = message.at("id").get<std::string>();
+    const json body = load_fixture_json("graph", "mail-body-200");
+    lab.serve(mail_body_url(id), body);
+
+    const std::vector<FoundItem> items = lab.reader().list_mail();
+
+    FoundItem expected;
+    expected.type = ItemType::mail;
+    expected.id = id;
+    expected.subject = message.at("subject").get<std::string>();
+    expected.sender = message.at("from").at("emailAddress").at("address").get<std::string>();
+    expected.received_at = message.at("receivedDateTime").get<std::string>();
+    expected.internet_message_id = message.at("internetMessageId").get<std::string>();
+    expected.sha256 =
+        rp::text_v1_sha256(body.at("body").at("body").at("content").get<std::string>());
+    expected.sha256_rule = "text-v1";
+    REQUIRE(items.size() == 1);
+    CHECK(items[0] == expected);
+    CHECK_FALSE(items[0].name);
+    CHECK_FALSE(items[0].size_bytes);
+    REQUIRE(lab.graph_gets().size() == 2);
+    for (const HttpRequest& request : lab.graph_gets()) {
+        CHECK(request.headers.at("Prefer") == kPrefer);
+        CHECK(request.headers.at("Authorization") == "Bearer token-1");
+    }
+    CHECK_THAT(lab.log(), ContainsSubstring("info listed 1 item(s) in the test mailbox's Inbox"));
+}
+
+TEST_CASE("a message without the optional fields keeps them empty", "[graph][targets]")
+{
+    json value = messages_of("mail-list-200-one-item");
+    const std::string id = value.at(0).at("id").get<std::string>();
+    value[0].erase("receivedDateTime");
+    value[0].erase("internetMessageId");
+    value[0]["subject"] = "";
+    value[0]["from"] = json::object();
+    Lab lab;
+    lab.graph_http.on(HttpMethod::get, mail_list_url(), {page_of(value)});
+    lab.serve_file(mail_body_url(id), "mail-body-200");
+
+    const std::vector<FoundItem> items = lab.reader().list_mail();
+
+    REQUIRE(items.size() == 1);
+    CHECK(items[0].subject == std::optional<std::string>{""});
+    CHECK_FALSE(items[0].sender);
+    CHECK_FALSE(items[0].received_at);
+    CHECK_FALSE(items[0].internet_message_id);
+}
+
+TEST_CASE("mail follows @odata.nextLink", "[graph][targets]")
+{
+    Lab lab;
+    const json page1 = load_fixture_json("graph", "mail-list-200-page1");
+    const std::string link = page1.at("body").at("@odata.nextLink").get<std::string>();
+    lab.serve(mail_list_url(), page1);
+    lab.serve_file(link, "mail-list-200-page2");
+    const std::string first_id = page1.at("body").at("value").at(0).at("id").get<std::string>();
+    const std::string second_id =
+        messages_of("mail-list-200-page2").at(0).at("id").get<std::string>();
+    lab.serve_file(mail_body_url(first_id), "mail-body-200");
+    lab.serve_file(mail_body_url(second_id), "mail-body-200");
+
+    const std::vector<FoundItem> items = lab.reader().list_mail();
+
+    REQUIRE(items.size() == 2);
+    CHECK(items[0].id == first_id);
+    CHECK(items[1].id == second_id);
+    REQUIRE(lab.graph_gets().size() == 4);
+    CHECK(lab.graph_gets()[1].url == link);
+    for (const HttpRequest& request : lab.graph_gets()) {
+        CHECK(request.headers.at("Prefer") == kPrefer);
+    }
+}
+
+TEST_CASE("empty locations list as empty vectors, and list_all too", "[graph][targets]")
+{
+    Lab lab;
+    lab.serve_file(mail_list_url(), "mail-list-200-empty");
+    lab.serve_file(drive_url(), "restoretarget-drive-200");
+    lab.serve_file(library_children_url(), "restoretarget-children-200-empty");
+    lab.serve_file(folder_url(), "onedrive-folder-200");
+    lab.serve_file(folder_children_url(), "onedrive-children-200-empty");
+
+    CHECK(lab.reader().list_all().empty());
+
+    const std::vector<HttpRequest> gets = lab.graph_gets();
+    REQUIRE(gets.size() == 5);
+    CHECK(gets[0].url == mail_list_url());
+    CHECK(gets[1].url == drive_url());
+    CHECK(gets[2].url == library_children_url());
+    CHECK(gets[3].url == folder_url());
+    CHECK(gets[4].url == folder_children_url());
+    CHECK(gets[0].headers.at("Prefer") == kPrefer);
+    for (std::size_t i = 1; i < gets.size(); ++i) {
+        CHECK_FALSE(gets[i].headers.contains("Prefer"));
+    }
 }

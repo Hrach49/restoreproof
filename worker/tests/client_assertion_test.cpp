@@ -123,9 +123,13 @@ TEST_CASE("A PFX variable that isn't strict Base64 is refused", "[graph][certifi
     for (char& c : url_safe) {
         c = c == '+' ? '-' : c == '/' ? '_' : c;
     }
-    const std::string bad = GENERATE_COPY(std::string("not base64!"), pfx + "\n",
-                                          pfx.substr(0, 40) + "\r\n" + pfx.substr(40),
-                                          " " + pfx, pfx.substr(0, pfx.size() - 1));
+    // Whitespace whose length keeps the text a multiple of four long too, so
+    // only the alphabet check can refuse it.
+    const std::string bad = GENERATE_COPY(
+        std::string("not base64!"), pfx + "\n", pfx.substr(0, 40) + "\r\n" + pfx.substr(40),
+        " " + pfx, pfx.substr(0, pfx.size() - 1),
+        pfx.substr(0, 40) + "\r\n" + pfx.substr(40, 40) + "\r\n" + pfx.substr(80),
+        "  " + pfx + "  ", pfx + "\r\n\r\n");
     CHECK(load_error(bad) ==
           "RP_GRAPH_CERT_PFX_BASE64 is not valid Base64 (one line of A-Z, a-z, 0-9, + and /, "
           "padded with =)");

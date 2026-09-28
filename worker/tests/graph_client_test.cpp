@@ -162,7 +162,7 @@ Caught catch_graph(const std::function<void()>& call)
     } catch (const rp::graph::NotFoundError& e) {
         return fill("NotFoundError", e);
     } catch (const rp::graph::CertificateError& e) {
-        return fill("CertificateError", e);
+        return Caught{"CertificateError", e.what()};
     } catch (const rp::graph::GraphError& e) {
         return fill("GraphError", e);
     } catch (const std::exception& e) {

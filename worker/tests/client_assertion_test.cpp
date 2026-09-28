@@ -91,7 +91,6 @@ std::string load_error(const std::string& pfx_base64, const std::string& passwor
         if (pfx_base64.size() >= 8) {
             CHECK(what.find(pfx_base64.substr(0, 8)) == std::string::npos);
         }
-        CHECK(error.status() == 0);
         return what;
     }
     FAIL("load_client_certificate did not throw CertificateError");

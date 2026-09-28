@@ -41,8 +41,11 @@ secret `RP_GRAPH_CLIENT_SECRET` and its list of secret-key markers.
      variables, and the key lives in process memory for the Worker's lifetime.
 3. **Errors** (`rp/graph_errors.hpp`): `GraphError` (base; `what()` always through
    `rp::redact`), `AuthError`, `PermissionError`, `NotFoundError`, `TransientError` (with
-   Retry-After), `CertificateError`. They keep Graph's code, inner code, request ID and a
-   short redacted message, never the body.
+   Retry-After). They keep Graph's code, inner code, request ID and a short redacted
+   message, never the body. `CertificateError` (an unusable certificate, found when it is
+   loaded) is an `rp::ConfigError`, not a `GraphError` (review of W2.1): a command's
+   `catch (const GraphError&)` can't take it for a failed call. OpenSSL failing to make a
+   jti or to sign at run time is a plain `GraphError`.
    - Entra's refusals map on the AADSTS code (first of `error_codes`, else the number in
      `error_description`), then on `error`, never on the status alone; each `AuthError` says
      what to check (the table is `token_failure` in `worker/src/graph_client.cpp`):
@@ -67,9 +70,8 @@ secret `RP_GRAPH_CLIENT_SECRET` and its list of secret-key markers.
      misconfigured mailbox a `fail` or a failed restore an `error`).
    - **Exit codes are unchanged in W2.1**: no command calls Graph yet. `rpworker graph list`
      (W2.3) is the first to map these errors. Recommended there: `AuthError` and
-     `PermissionError` 2, `TransientError` 3, other `GraphError`s 4, and `CertificateError`
-     caught before `GraphError` so a certificate problem exits 1 like any other
-     configuration error.
+     `PermissionError` 2, `TransientError` 3, other `GraphError`s 4; a `CertificateError`
+     exits 1 with the other `ConfigError`s.
 4. **Permissions.** Every call names a `Grant` (W2.1: Mail through Exchange RBAC, Sites
    through `Sites.Selected`). A 403 with Graph's JSON error is a `PermissionError` "Graph
    denied GET <path without query> (403 <code>): the Worker app relies on <grant>; see

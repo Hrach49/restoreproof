@@ -348,7 +348,7 @@ std::string random_uuid_v4()
 {
     std::array<unsigned char, 16> bytes{};
     if (RAND_bytes(bytes.data(), static_cast<int>(bytes.size())) != 1) {
-        throw CertificateError("could not make a random ID for the client assertion");
+        throw GraphError("could not make a random ID for the client assertion");
     }
     bytes[6] = static_cast<unsigned char>((bytes[6] & 0x0F) | 0x40); // version 4
     bytes[8] = static_cast<unsigned char>((bytes[8] & 0x3F) | 0x80); // RFC variant
@@ -382,7 +382,7 @@ std::vector<unsigned char> sign_ps256(EVP_PKEY* key, std::string_view input)
                        EVP_DigestSign(ctx.get(), nullptr, &size, data, input.size()) == 1;
     std::vector<unsigned char> signature(ready ? size : 0);
     if (!ready || EVP_DigestSign(ctx.get(), signature.data(), &size, data, input.size()) != 1) {
-        throw CertificateError("could not sign the client assertion with the certificate's key");
+        throw GraphError("could not sign the client assertion with the certificate's key");
     }
     signature.resize(size);
     return signature;

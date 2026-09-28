@@ -29,6 +29,7 @@ add_library(rpcore STATIC
     src/connector.cpp
     src/connector_registry.cpp
     src/graph_client.cpp
+    src/graph_command.cpp
     src/graph_download.cpp
     src/graph_errors.cpp
     src/graph_targets.cpp
@@ -37,6 +38,7 @@ add_library(rpcore STATIC
     src/retry_policy.cpp
     src/secrets.cpp
     src/sha256.cpp
+    src/text_table.cpp
     src/text_v1.cpp
     src/utf16.cpp
     src/veeam_client.cpp
@@ -81,6 +83,8 @@ add_executable(rptests
     tests/deps_test.cpp
     tests/graph_client_live_test.cpp
     tests/graph_client_test.cpp
+    tests/graph_command_live_test.cpp
+    tests/graph_command_test.cpp
     tests/graph_download_test.cpp
     tests/graph_errors_test.cpp
     tests/graph_targets_live_test.cpp
@@ -92,6 +96,7 @@ add_executable(rptests
     tests/secrets_test.cpp
     tests/sha256_test.cpp
     tests/smoke.cpp
+    tests/text_table_test.cpp
     tests/text_util_test.cpp
     tests/text_v1_test.cpp
     tests/veeam_client_live_test.cpp
@@ -134,7 +139,7 @@ endfunction()
 
 rp_add_exe_test("rpworker --version prints the project version"
     ARGS --version EXIT_CODE 0 STDOUT ${PROJECT_VERSION} STDERR "")
-set(RP_USAGE "usage: rpworker --version | rpworker config check [--config <path>] | rpworker veeam list [--config <path>]")
+set(RP_USAGE "usage: rpworker --version | rpworker config check [--config <path>] | rpworker veeam list [--config <path>] | rpworker graph list [--hash] [--config <path>]")
 rp_add_exe_test("rpworker rejects unknown arguments"
     ARGS --no-such-option EXIT_CODE 64 STDOUT "" STDERR "${RP_USAGE}")
 rp_add_exe_test("rpworker config without a subcommand prints usage"
@@ -172,6 +177,24 @@ set_tests_properties(
     "rpworker veeam list needs RP_VEEAM_USERNAME"
     "rpworker veeam list needs RP_VEEAM_PASSWORD"
     PROPERTIES ENVIRONMENT "RP_VEEAM_USERNAME=set-by-ctest;RP_VEEAM_PASSWORD=set-by-ctest")
+
+# graph list stops before any request in each of these too: the certificate is
+# loaded before the first one. ctest sets both variables; the last test removes
+# them.
+rp_add_exe_test("rpworker graph without a subcommand prints usage"
+    ARGS graph EXIT_CODE 64 STDOUT "" STDERR "${RP_USAGE}")
+rp_add_exe_test("rpworker graph list rejects an unknown flag"
+    ARGS graph list --hashes EXIT_CODE 64 STDOUT "" STDERR "${RP_USAGE}")
+rp_add_exe_test("rpworker graph list reports a missing config file"
+    ARGS graph list --config no-such-config.json EXIT_CODE 1 STDOUT ""
+    STDERR "config error: no-such-config.json: cannot read config file")
+rp_add_exe_test("rpworker graph list needs RP_GRAPH_CERT_PFX_BASE64"
+    ARGS graph list --hash --config ${CMAKE_CURRENT_SOURCE_DIR}/config.example.json
+    UNSET_ENV RP_GRAPH_CERT_PFX_BASE64 RP_GRAPH_CERT_PASSWORD
+    EXIT_CODE 1 STDOUT "" STDERR "config error: RP_GRAPH_CERT_PFX_BASE64 is not set")
+set_tests_properties(
+    "rpworker graph list needs RP_GRAPH_CERT_PFX_BASE64"
+    PROPERTIES ENVIRONMENT "RP_GRAPH_CERT_PFX_BASE64=set-by-ctest;RP_GRAPH_CERT_PASSWORD=set-by-ctest")
 
 # The checker itself must fail on a wrong exit code or wrong output, or the two
 # tests above would prove nothing.

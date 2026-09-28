@@ -379,17 +379,22 @@ std::vector<FoundItem> TargetReader::list_files(const FileTarget& target)
                 throw GraphError("Graph's reply listing " + location +
                                  " has a file without a size: " + id);
             }
+            FoundItem item;
+            item.type = target.type;
+            item.id = id;
+            item.name = *name;
+            item.size_bytes = size->get<std::uint64_t>();
+            if (!options_.hash_files) {
+                items.push_back(std::move(item));
+                continue;
+            }
             // SharePoint rewrites docx and xlsx, so their bytes may differ from
             // the size listed (office-v1; review of W2.2).
             const bool office = ascii_ends_with_i(*name, ".docx") || ascii_ends_with_i(*name, ".xlsx");
             const std::string bytes = download_item(
                 graph_, download_, *target.grant, tenant_host_, target.drive_id, id,
-                size->get<std::uint64_t>(), office ? SizeCheck::up_to_limit : SizeCheck::exact,
+                *item.size_bytes, office ? SizeCheck::up_to_limit : SizeCheck::exact,
                 location + " item " + id, options_.download);
-            FoundItem item;
-            item.type = target.type;
-            item.id = id;
-            item.name = *name;
             item.sha256 = sha256_hex(bytes);
             item.sha256_rule = "bytes";
             item.size_bytes = bytes.size();

@@ -25,7 +25,8 @@ using Args = std::vector<std::string_view>;
 namespace {
 
 const std::string kUsage = "usage: rpworker --version | rpworker config check [--config <path>] | "
-                           "rpworker veeam list [--config <path>]\n";
+                           "rpworker veeam list [--config <path>] | "
+                           "rpworker graph list [--hash] [--config <path>]\n";
 
 // Every key set; sample_od left out to show its default.
 const std::string kConfigJson = R"({

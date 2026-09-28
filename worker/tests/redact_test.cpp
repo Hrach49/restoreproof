@@ -633,6 +633,13 @@ TEST_CASE("redact replaces the token after a Bearer scheme", "[redact][jwt]")
         {"Bearer abc==", "Bearer [REDACTED]"},
         {R"("Bearer abc")", R"("Bearer [REDACTED]")"},
         {"Bearer eyJhbGciOiJQUzI1NiJ9.e30.sig", "Bearer [REDACTED]"},
+        // Padding, or a character no auth-param name holds, then a quote:
+        // a token, not `name="value"`.
+        {R"({"hdr":"Bearer dGVzdHRva2Vu=="})", R"({"hdr":"Bearer [REDACTED]"})"},
+        {R"(sent "Bearer abcd==" ok)", R"(sent "Bearer [REDACTED]" ok)"},
+        {R"("Bearer ab/c=")", R"("Bearer [REDACTED]")"},
+        {R"("Bearer a+b.c=")", R"("Bearer [REDACTED]")"},
+        {"Bearer abc==def", "Bearer [REDACTED]"},
         // A token of characters outside token68 still goes up to whitespace or
         // a quote: over-redacting is preferred to leaking.
         {"Bearer abc!def ok", "Bearer [REDACTED] ok"},

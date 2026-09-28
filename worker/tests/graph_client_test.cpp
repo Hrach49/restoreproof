@@ -2405,3 +2405,30 @@ TEST_CASE("the refusals of a caller header come before the URL is sent, for ever
     CHECK_THAT(caught.what, ContainsSubstring("refused the header \"Authorization\""));
     CHECK(lab.http.requests().empty());
 }
+
+TEST_CASE("every grant's text is generic: it names no lab value", "[graph][client]")
+{
+    struct Row {
+        rp::graph::Grant grant;
+        std::string text;
+    };
+    const Row row = GENERATE(values<Row>({
+        {rp::graph::kMailReadGrant,
+         "Exchange RBAC \"Application Mail.Read\" in a management scope covering the test "
+         "mailbox"},
+        {rp::graph::kSitesReadGrant, "Sites.Selected read on the test site"},
+        {rp::graph::kOneDriveReadGrant,
+         "Files.SelectedOperations.Selected read on the test OneDrive folder"},
+    }));
+    CAPTURE(row.text);
+
+    CHECK(row.grant.description == row.text);
+    std::string lower{row.grant.description};
+    std::transform(lower.begin(), lower.end(), lower.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    for (const std::string lab_value : {"restoreproof", "restoretest", "restoretarget", "alice",
+                                        "onmicrosoft", "sharepoint.com", "b!"}) {
+        CAPTURE(lab_value);
+        CHECK(lower.find(lab_value) == std::string::npos);
+    }
+}

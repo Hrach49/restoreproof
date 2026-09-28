@@ -98,9 +98,10 @@ generic, so a customer never sees the lab's names:
 |---|---|---|
 | `kMailReadGrant` | `Exchange RBAC "Application Mail.Read" in a management scope covering the test mailbox` | #3 |
 | `kSitesReadGrant` | `Sites.Selected read on the test site` | #1 |
+| `kOneDriveReadGrant` | `Files.SelectedOperations.Selected read on the test OneDrive folder` | #2 |
 
-The OneDrive grant (#2) gets its text with W2.2, which reads the folder. Whatever the grant, a
-refusal makes the run's status `error`, never `fail` (`docs/verification.md`).
+The OneDrive grant came with W2.2, which reads the folder; a test checks that no grant text
+names a lab value. Whatever the grant, a refusal makes the run's status `error`, never `fail` (`docs/verification.md`).
 
 ## What is deliberately not granted
 

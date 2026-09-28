@@ -43,6 +43,9 @@ inline constexpr Grant kMailReadGrant{
     "Exchange RBAC \"Application Mail.Read\" in a management scope covering the test mailbox"};
 // Reading the test site's RestoreTarget library.
 inline constexpr Grant kSitesReadGrant{"Sites.Selected read on the test site"};
+// Reading the test OneDrive folder (a grant on that folder only).
+inline constexpr Grant kOneDriveReadGrant{
+    "Files.SelectedOperations.Selected read on the test OneDrive folder"};
 
 // The only headers a caller may add (any case). Everything else, Authorization
 // included, is the client's own.

@@ -148,7 +148,11 @@ bool uses_legacy_pbe(const PKCS12* p12)
     for (int i = 0; i < sk_PKCS7_num(safes); ++i) {
         PKCS7* safe = sk_PKCS7_value(safes, i);
         if (PKCS7_type_is_encrypted(safe)) {
-            legacy = legacy || is_legacy_pbe(safe->d.encrypted->enc_data->algorithm);
+            // The content is optional in the ASN.1, so a hostile file can
+            // leave it out (CVE-2024-0727): nothing to diagnose then.
+            if (safe->d.encrypted != nullptr && safe->d.encrypted->enc_data != nullptr) {
+                legacy = legacy || is_legacy_pbe(safe->d.encrypted->enc_data->algorithm);
+            }
             continue;
         }
         STACK_OF(PKCS12_SAFEBAG)* bags = PKCS12_unpack_p7data(safe);

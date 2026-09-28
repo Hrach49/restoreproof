@@ -295,6 +295,10 @@ enum class PfxCipher {
     // before decrypting anything, which is what the test needs. The key is
     // 3DES and the MAC (SHA-1) is real, so the password still checks out.
     legacy_rc2,
+    // A hostile file: the certificate's place taken by an encryptedData safe
+    // with no content at all (the CVE-2024-0727 shape), the key under AES and
+    // a real SHA-256 MAC, so the password checks out and PKCS12_parse fails.
+    empty_encrypted,
 };
 
 struct PfxOptions {
@@ -335,6 +339,18 @@ inline PKCS7* make_fake_rc2_safe()
     return p7.release();
 }
 
+// An authsafe that says pkcs7-encryptedData and carries no [0] content, which
+// OpenSSL's template allows, so it decodes with d.encrypted null
+// (PfxCipher::empty_encrypted).
+inline PKCS7* make_empty_encrypted_safe()
+{
+    std::unique_ptr<PKCS7, decltype(&PKCS7_free)> p7(PKCS7_new(), &PKCS7_free);
+    REQUIRE(p7);
+    p7->type = OBJ_nid2obj(NID_pkcs7_encrypted);
+    p7->d.encrypted = nullptr;
+    return p7.release();
+}
+
 // A PFX (PKCS#12) holding `key` and `cert` under `password`; either may be
 // null. Built from bags and safes the way PKCS12_create builds one (the
 // certificate in an encrypted safe, the key in a shrouded key bag in a plain
@@ -344,8 +360,9 @@ inline PKCS7* make_fake_rc2_safe()
 inline std::vector<unsigned char> make_pfx(EVP_PKEY* key, X509* cert, const char* password,
                                            const PfxOptions& options = {})
 {
-    const int pbe = options.cipher == PfxCipher::aes256 ? NID_aes_256_cbc
-                                                         : NID_pbe_WithSHA1And3_Key_TripleDES_CBC;
+    const bool modern =
+        options.cipher == PfxCipher::aes256 || options.cipher == PfxCipher::empty_encrypted;
+    const int pbe = modern ? NID_aes_256_cbc : NID_pbe_WithSHA1And3_Key_TripleDES_CBC;
     unsigned char key_id[SHA_DIGEST_LENGTH];
     unsigned int key_id_length = 0;
     if (cert) {
@@ -363,6 +380,10 @@ inline std::vector<unsigned char> make_pfx(EVP_PKEY* key, X509* cert, const char
         safes.stack = sk_PKCS7_new_null();
         REQUIRE(safes.stack != nullptr);
         REQUIRE(sk_PKCS7_push(safes.stack, make_fake_rc2_safe()) > 0);
+    } else if (cert && options.cipher == PfxCipher::empty_encrypted) {
+        safes.stack = sk_PKCS7_new_null();
+        REQUIRE(safes.stack != nullptr);
+        REQUIRE(sk_PKCS7_push(safes.stack, make_empty_encrypted_safe()) > 0);
     } else if (cert) {
         Bags bags;
         PKCS12_SAFEBAG* bag = PKCS12_add_cert(&bags.stack, cert);
@@ -386,7 +407,7 @@ inline std::vector<unsigned char> make_pfx(EVP_PKEY* key, X509* cert, const char
                                                         &PKCS12_free);
     REQUIRE(p12);
     if (options.mac) {
-        const EVP_MD* md = options.cipher == PfxCipher::aes256 ? EVP_sha256() : EVP_sha1();
+        const EVP_MD* md = modern ? EVP_sha256() : EVP_sha1();
         REQUIRE(PKCS12_set_mac(p12.get(), password, -1, nullptr, 0, PKCS12_DEFAULT_ITER, md) ==
                 1);
     }

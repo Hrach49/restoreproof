@@ -205,6 +205,17 @@ TEST_CASE("A PFX with a cipher OpenSSL 3 no longer reads asks for a re-export",
           "can't read; re-export it with AES256_SHA256");
 }
 
+TEST_CASE("A PFX whose encrypted safe has no content is refused without a crash",
+          "[graph][certificate]")
+{
+    // The MAC is real, so this gets past the password check to PKCS12_parse,
+    // which fails, and then to the legacy-cipher diagnosis (CVE-2024-0727).
+    const std::string pfx = to_base64(
+        make_pfx(good_cert(), kPassword, PfxOptions{.cipher = PfxCipher::empty_encrypted}));
+    CHECK(load_error(pfx) == "RP_GRAPH_CERT_PASSWORD does not open the PFX in "
+                             "RP_GRAPH_CERT_PFX_BASE64");
+}
+
 TEST_CASE("A PFX must hold a private key and its certificate", "[graph][certificate]")
 {
     const Cert cert = good_cert();

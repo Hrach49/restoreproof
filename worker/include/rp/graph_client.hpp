@@ -147,9 +147,12 @@ public:
     //  - Where: a path starting with '/' is taken relative to kGraphBaseUrl
     //    ("/users/x/messages?$top=1"); an absolute URL (an @odata.nextLink)
     //    must start with exactly "https://graph.microsoft.com/v1.0/". Either
-    //    way the URL may hold no whitespace, control character, backslash or
-    //    '#', and its path no dot segment ("/../", "%2e") or empty one
-    //    ("//", a protocol-relative URL passed as a path). Anything else is a
+    //    way the URL may hold no whitespace, control character (those of
+    //    control_chars.hpp, the UTF-8 ones included), backslash or '#', and
+    //    its path no dot segment ("/../", "%2e"), encoded separator ("%2f",
+    //    "%5c"), double-encoded one ("%252e", "%252f", "%255c") or empty
+    //    segment ("//", a protocol-relative URL passed as a path). Anything
+    //    else is a
     //    GraphError before anything is sent, the token request included: the
     //    token goes to Graph's v1.0 and nowhere else (a text compare, so the
     //    client can't read a URL differently from curl).
@@ -160,9 +163,11 @@ public:
     //    token); another 401 is an AuthError naming `grant`. A 401 asking for
     //    more claims (WWW-Authenticate error="insufficient_claims") is an
     //    AuthError at once.
-    //  - 403: a PermissionError naming `grant`: "Graph denied GET <path>
-    //    (403 <code>): the Worker app relies on <grant>; see
-    //    docs/security/graph-permissions.md", the path without its query.
+    //  - 403 with Graph's JSON error: a PermissionError naming `grant`:
+    //    "Graph denied GET <path> (403 <code>): the Worker app relies on
+    //    <grant>; see docs/security/graph-permissions.md", the path without
+    //    its query. A 403 without it (a TLS-inspecting proxy's page) is a
+    //    GraphError that says something on the way may have refused it.
     //  - 404 with Graph's JSON error: a NotFoundError (a 404 without it, from
     //    a proxy or a wrong path, is a GraphError); but a mailbox Graph can't
     //    read (MailboxNotEnabledForRESTAPI, MailboxNotSupportedForRESTAPI) is
@@ -174,7 +179,8 @@ public:
     //    all, the waits of a token renewal inside the call included; then a
     //    TransientError (carrying the Retry-After). The token is checked
     //    before every attempt. A TLS failure or a malformed URL is a
-    //    GraphError after one.
+    //    GraphError after one. Their messages hold the path, never the
+    //    query.
     //  - Any other status is a GraphError with Graph's code and message.
     // Errors keep Graph's code, inner code and request ID, never the body.
     // Whatever the token renewal throws is thrown as it is.

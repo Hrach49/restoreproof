@@ -78,7 +78,7 @@ replies the Worker's tests replay (`lab/README.md`).
 ### What a refusal says
 
 Graph's 403 doesn't say which permission is missing. So every Graph call the Worker makes
-names the grant it relies on, and any 403 (`ErrorAccessDenied` from Exchange,
+names the grant it relies on, and any 403 Graph explains (`ErrorAccessDenied` from Exchange,
 `accessDenied` from SharePoint and OneDrive, `Authorization_RequestDenied` from the directory,
 or another code) becomes a `PermissionError` whose message names it:
 
@@ -86,7 +86,11 @@ or another code) becomes a `PermissionError` whose message names it:
 Graph denied GET /v1.0/users/restoretest@contoso.onmicrosoft.com/mailFolders/inbox/messages (403 ErrorAccessDenied): the Worker app relies on Exchange RBAC "Application Mail.Read" in a management scope covering the test mailbox; see docs/security/graph-permissions.md
 ```
 
-The path is shown without its query. A 401 that persists after a fresh token names the grant
+The path is shown without its query. A 403 without Graph's JSON error is no verdict on
+the app's permissions (a TLS-inspecting proxy answers a blocked request with its own page), so
+it is a plain `GraphError` that points at the network instead. Neither is a mailbox Graph
+can't read (`MailboxNotEnabledForRESTAPI`, `MailboxNotSupportedForRESTAPI`), which is a
+`GraphError` about the mailbox whatever its status. A 401 that persists after a fresh token names the grant
 too, since Graph also answers 401 when the app has no role at all. The grant texts are
 generic, so a customer never sees the lab's names:
 

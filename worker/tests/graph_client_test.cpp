@@ -901,6 +901,14 @@ TEST_CASE("get() sends the token nowhere but https://graph.microsoft.com/v1.0/",
         "/users/x\r\nHost: evil.example", "/users/x\ny", std::string("/users/x\0y", 10),
         "/users/x\x7f", "/users/x\x1b[0m", "/users\\x", "https://graph.microsoft.com/v1.0/users\\x",
         "/users/x#y", "/users/x?$top=1#y",
+        // The UTF-8 control characters of control_chars.hpp as well (review
+        // of W2.1): NEL, a line separator, a right-to-left override.
+        "/users/x\xC2\x85y", "/users/x\xE2\x80\xA8y", "/users/\xE2\x80\xAEx",
+        "https://graph.microsoft.com/v1.0/users/x\xE2\x81\xA6y",
+        // An encoded slash or backslash, or a double-encoded dot or separator,
+        // which a server decoding first would read as a dot segment.
+        "/users/x/..%2f..%2fbeta/me", "/users/x/..%2F..%2Fbeta/me", "/users/..%5c..%5cbeta",
+        "/users/%252e%252e/beta", "/users/%252E%252e/beta", "/users/x%252fy", "/users/x%255cy",
         // Dot segments, plain or encoded, which curl would resolve out of v1.0.
         "/../beta/users", "/users/../../beta/users", "/users/./x", "/users/..", "/users/.",
         "https://graph.microsoft.com/v1.0/../beta/users", "/users/%2e%2e/x", "/users/%2E%2e/x",
@@ -922,6 +930,8 @@ TEST_CASE("get() sends the token nowhere but https://graph.microsoft.com/v1.0/",
     // Quoted on one line at most: no control character reaches a log.
     CHECK(std::none_of(by_get.what.begin(), by_get.what.end(),
                        [](char c) { return static_cast<unsigned char>(c) < 0x20 || c == 0x7F; }));
+    CHECK_THAT(by_get.what, !ContainsSubstring("\xC2\x85") && !ContainsSubstring("\xE2\x80\xA8") &&
+                                !ContainsSubstring("\xE2\x80\xAE"));
     CHECK(lab.http.requests().empty());
 }
 
@@ -1124,23 +1134,31 @@ TEST_CASE("a 403 is a PermissionError naming the grant the call relies on",
     CHECK(lab.waits().empty());
 }
 
-TEST_CASE("a 403 without Graph's JSON is still a PermissionError", "[graph][client][get]")
+// Review of W2.1: a TLS-inspecting proxy answers a blocked request with its
+// own 403 page inside the tunnel. Like a 404 without Graph's JSON, that is no
+// verdict of Graph's on the app's permissions.
+TEST_CASE("a 403 without Graph's JSON is a GraphError that points at the network, not a "
+          "PermissionError",
+          "[graph][client][get]")
 {
+    const HttpResponse response = GENERATE(
+        make_response(403, "<html>Forbidden ECHOED-BODY</html>", "text/html"),
+        make_response(403, "ECHOED-BODY", "text/plain"),
+        make_response(403, R"({"error":"ECHOED-BODY"})"));
     Lab lab;
-    lab.http.on(HttpMethod::get, kMessagesUrl,
-                {make_response(403, "<html>Forbidden</html>", "text/html")});
-    auto client = lab.make_client();
+    lab.http.on(HttpMethod::get, kMessagesUrl, {response});
 
-    try {
-        client->get(kMessagesPath, rp::graph::kSitesReadGrant);
-        FAIL("get() returned after a 403");
-    } catch (const rp::graph::PermissionError& e) {
-        CHECK(std::string{e.what()} ==
-              "Graph denied GET /v1.0/users/restoretest@RestoreProofLab.onmicrosoft.com/"
-              "mailFolders/inbox/messages (403): the Worker app relies on Sites.Selected read on "
-              "the test site; see docs/security/graph-permissions.md");
-        CHECK(e.code().empty());
-    }
+    const Caught caught = get_once(lab);
+
+    CHECK(caught.kind == "GraphError");
+    CHECK(caught.status == 403);
+    CHECK(caught.code.empty());
+    CHECK(caught.what ==
+          "Graph GET /v1.0/users/restoretest@RestoreProofLab.onmicrosoft.com/mailFolders/inbox/"
+          "messages: HTTP 403 without Graph's error in the reply: something between this machine "
+          "and graph.microsoft.com (a proxy, a firewall) may have refused it");
+    CHECK(lab.http.count(HttpMethod::get, kMessagesUrl) == 1);
+    CHECK(lab.waits().empty());
 }
 
 TEST_CASE("a 404 is a NotFoundError with Graph's explanation", "[graph][client][get]")
@@ -1510,16 +1528,51 @@ TEST_CASE("a GET that gets no response is tried five times, a TLS failure once",
     }));
     CAPTURE(row.kind, row.sent);
     Lab lab;
+    // HttpClient's message starts with the method and the whole URL.
     lab.http.on(HttpMethod::get, kMessagesUrl, [row](const HttpRequest&) -> HttpResponse {
-        throw rp::HttpError("GET " + kMessagesUrl + ": no response", row.error, 0, 1);
+        throw rp::HttpError("GET " + kMessagesUrl + ": no response: curl says why", row.error, 0,
+                            1);
     });
 
     const Caught caught = get_once(lab);
 
     CHECK(caught.kind == row.kind);
     CHECK_THAT(caught.what, ContainsSubstring("Graph GET /v1.0/users/"));
+    CHECK_THAT(caught.what, ContainsSubstring(": no response: curl says why"));
+    // Review of W2.1: the query (a $filter may name what is looked for) stays
+    // out of the message and the log, as display_path() keeps it out, and the
+    // URL isn't repeated.
+    CHECK_THAT(caught.what, !ContainsSubstring("$select") && !ContainsSubstring("https://"));
+    CHECK_THAT(lab.log(), !ContainsSubstring("$select"));
     CHECK(lab.http.count(HttpMethod::get, kMessagesUrl) == row.sent);
     CHECK(lab.waits().size() == row.sent - 1);
+}
+
+TEST_CASE("a transport failure without HttpClient's prefix is described by its kind",
+          "[graph][client][get]")
+{
+    struct Row {
+        rp::TransportError error;
+        std::string text;
+    };
+    const Row row = GENERATE(values<Row>({
+        {rp::TransportError::connect, "could not connect"},
+        {rp::TransportError::handshake, "the TLS handshake broke off"},
+        {rp::TransportError::dropped, "the connection dropped"},
+        {rp::TransportError::timeout, "timed out"},
+        {rp::TransportError::tls, "TLS failed"},
+        {rp::TransportError::other, "the request failed"},
+    }));
+    CAPTURE(row.text);
+    Lab lab;
+    lab.http.on(HttpMethod::get, kMessagesUrl, [row](const HttpRequest&) -> HttpResponse {
+        throw rp::HttpError("something else " + kMessagesUrl, row.error, 0, 1);
+    });
+
+    const Caught caught = get_once(lab);
+
+    CHECK_THAT(caught.what, ContainsSubstring("/messages: " + row.text));
+    CHECK_THAT(caught.what, !ContainsSubstring("$select"));
 }
 
 TEST_CASE("a GET that gets no response once is sent again", "[graph][client][get]")

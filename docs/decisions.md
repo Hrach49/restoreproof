@@ -80,9 +80,11 @@ hashed with `rp/text_v1.hpp`, bytes with `rp/sha256.hpp`. This resolves the open
 11. **Paging:** `@odata.nextLink` is followed for at most `kMaxListPages` (100) pages. A link
     fetched before (any cycle), empty or not a string, or naming another resource than the
     first request (`resource_path`: the path after `/v1.0`, percent-decoded, `seg('x')` as
-    `seg/x`, lower-cased) is a `GraphError`, never a silently shortened listing. A link
-    outside `https://graph.microsoft.com/v1.0/` skips the resource check and is refused by
-    `GraphClient` itself. The mail rule has not been widened; the `paged` recording confirms
+    `seg/x`, lower-cased) is a `GraphError`, never a silently shortened listing. So is any
+    link that doesn't start with `https://graph.microsoft.com/v1.0/`, a relative one too:
+    Graph sends absolute links, and `GraphClient` would put its v1.0 root in front of a
+    relative path and send it with the token, so leaving it to `GraphClient` would let a
+    reply point the listing at another drive (review of W2.2). The mail rule has not been widened; the `paged` recording confirms
     whether it holds (if it has to be widened, it is logged here).
 12. **Fixture states:** `record-graph-fixtures --state {auth,empty,one-item,paged}`
     (`lab/README.md`). Hand-written stand-ins are committed until a state is recorded (the lab

@@ -5,6 +5,7 @@
 
 #include "control_chars.hpp"
 #include "path_utf8.hpp"
+#include "text_util.hpp"
 #include "uuid.hpp"
 
 #include <nlohmann/json.hpp>
@@ -30,7 +31,16 @@ namespace {
 
 using nlohmann::json;
 
-enum class StringRule { non_empty, https_url, guid, restore_mailbox, log_level };
+enum class StringRule {
+    non_empty,
+    https_url,
+    guid,
+    restore_mailbox,
+    graph_site_id,
+    graph_drive_id,
+    graph_item_id,
+    log_level
+};
 
 struct StringField {
     std::string_view key;
@@ -56,10 +66,10 @@ constexpr std::array<StringField, 10> kRequiredStrings{{
     {"graph_tenant_id", &Config::graph_tenant_id, true, StringRule::guid},
     {"graph_client_id", &Config::graph_client_id, true, StringRule::guid},
     {"test_mailbox", &Config::test_mailbox, true, StringRule::restore_mailbox},
-    {"test_site_id", &Config::test_site_id, true, StringRule::non_empty},
-    {"test_library_id", &Config::test_library_id, true, StringRule::non_empty},
-    {"test_onedrive_drive_id", &Config::test_onedrive_drive_id, true, StringRule::non_empty},
-    {"test_onedrive_folder_id", &Config::test_onedrive_folder_id, true, StringRule::non_empty},
+    {"test_site_id", &Config::test_site_id, true, StringRule::graph_site_id},
+    {"test_library_id", &Config::test_library_id, true, StringRule::graph_drive_id},
+    {"test_onedrive_drive_id", &Config::test_onedrive_drive_id, true, StringRule::graph_drive_id},
+    {"test_onedrive_folder_id", &Config::test_onedrive_folder_id, true, StringRule::graph_item_id},
 }};
 
 constexpr std::string_view kIntervalRange = "must be an integer from 1 to 86400 (seconds)";
@@ -216,6 +226,21 @@ std::optional<std::string_view> rule_problem(StringRule rule, std::string_view v
             return std::nullopt;
         }
         return "must be restoretest@<domain>: restores only ever go to the restoretest mailbox";
+    case StringRule::graph_site_id:
+        if (parse_graph_site_id(value)) {
+            return std::nullopt;
+        }
+        return kGraphSiteIdRule;
+    case StringRule::graph_drive_id:
+        if (is_graph_drive_id(value)) {
+            return std::nullopt;
+        }
+        return kGraphDriveIdRule;
+    case StringRule::graph_item_id:
+        if (is_graph_item_id(value)) {
+            return std::nullopt;
+        }
+        return kGraphItemIdRule;
     case StringRule::log_level:
         if (std::find(kLogLevels.begin(), kLogLevels.end(), value) != kLogLevels.end()) {
             return std::nullopt;
@@ -329,7 +354,46 @@ void read_int(const json& doc, const IntField& field, Config& config)
     config.*field.member = it->get<int>();
 }
 
+// 1..max_size of ASCII letters, digits and the characters in `extra`.
+bool is_ascii_id(std::string_view text, std::string_view extra, std::size_t max_size)
+{
+    return !text.empty() && text.size() <= max_size &&
+           std::all_of(text.begin(), text.end(), [extra](char c) {
+               return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+                      extra.find(c) != std::string_view::npos;
+           });
+}
+
 } // namespace
+
+std::optional<GraphSiteId> parse_graph_site_id(std::string_view value)
+{
+    const std::size_t first = value.find(',');
+    const std::size_t second =
+        first == std::string_view::npos ? first : value.find(',', first + 1);
+    if (second == std::string_view::npos) {
+        return std::nullopt;
+    }
+    const std::string host = ascii_lower(value.substr(0, first));
+    const std::string_view site = value.substr(first + 1, second - first - 1);
+    const std::string_view web = value.substr(second + 1);
+    if (!host.ends_with(kSharePointSuffix) || !is_uuid(site) || !is_uuid(web) ||
+        !is_ascii_id(std::string_view{host}.substr(0, host.size() - kSharePointSuffix.size()), "-",
+                     63)) {
+        return std::nullopt;
+    }
+    return GraphSiteId{host, std::string{site}, std::string{web}};
+}
+
+bool is_graph_drive_id(std::string_view value)
+{
+    return value.starts_with("b!") && is_ascii_id(value.substr(2), "-_", 200);
+}
+
+bool is_graph_item_id(std::string_view value)
+{
+    return is_ascii_id(value, "!-_", 200);
+}
 
 bool is_restore_mailbox(std::string_view value)
 {

@@ -93,10 +93,8 @@ struct TargetReaderOptions {
 // at a time.
 class TargetReader {
 public:
-    // Throws rp::ConfigError (its key named) at once if a configured ID can't
-    // be a Graph ID: test_site_id "<tenant>.sharepoint.com,<site GUID>,<web
-    // GUID>", test_library_id and test_onedrive_drive_id "b!" and a drive ID,
-    // test_onedrive_folder_id an item ID. Sends nothing.
+    // Sends nothing. The IDs' shapes were checked by RestoreTargets::from_config
+    // (rp/config.hpp: kGraphSiteIdRule and the others).
     TargetReader(GraphClient& graph, IHttpClient& download, connector::RestoreTargets targets,
                  TargetReaderOptions options = {});
 

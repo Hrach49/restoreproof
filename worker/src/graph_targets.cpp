@@ -35,44 +35,6 @@ bool is_id(std::string_view text, std::string_view extra, std::size_t max_size)
            });
 }
 
-bool is_drive_id(std::string_view id)
-{
-    return id.starts_with("b!") && is_id(id.substr(2), "-_", 200);
-}
-
-bool is_item_id(std::string_view id)
-{
-    return is_id(id, "!-_", 200);
-}
-
-struct SiteId {
-    std::string host; // lower case
-    std::string site;
-    std::string web;
-};
-
-// "<tenant>.sharepoint.com,<site GUID>,<web GUID>", the tenant one DNS label.
-std::optional<SiteId> parse_site_id(std::string_view id)
-{
-    const std::size_t first = id.find(',');
-    const std::size_t second = first == std::string_view::npos ? first : id.find(',', first + 1);
-    if (second == std::string_view::npos) {
-        return std::nullopt;
-    }
-    const std::string host = ascii_lower(id.substr(0, first));
-    const std::string_view site = id.substr(first + 1, second - first - 1);
-    const std::string_view web = id.substr(second + 1);
-    if (!host.ends_with(kSharePointSuffix) || !is_uuid(site) || !is_uuid(web)) {
-        return std::nullopt;
-    }
-    const std::string_view label =
-        std::string_view{host}.substr(0, host.size() - kSharePointSuffix.size());
-    if (!is_id(label, "-", 63)) {
-        return std::nullopt;
-    }
-    return SiteId{host, std::string{site}, std::string{web}};
-}
-
 std::string percent_decode(std::string_view text)
 {
     const auto hex = [](char c) -> int {
@@ -245,7 +207,7 @@ bool is_library_root_path(const std::vector<std::string>& path, const std::strin
 {
     const bool drive_ok = path.size() >= 4 && path[0] == "drives" && path[1] == ascii_lower(drive);
     return drive_ok && ((path.size() == 4 && path[2] == "root" && path[3] == "children") ||
-                        (path.size() == 5 && path[2] == "items" && is_item_id(path[3]) &&
+                        (path.size() == 5 && path[2] == "items" && is_graph_item_id(path[3]) &&
                          path[4] == "children"));
 }
 
@@ -276,27 +238,11 @@ TargetReader::TargetReader(GraphClient& graph, IHttpClient& download,
                            connector::RestoreTargets targets, TargetReaderOptions options)
     : graph_(graph), download_(download), targets_(std::move(targets)), options_(std::move(options))
 {
-    const std::optional<SiteId> site = parse_site_id(targets_.site_id());
-    if (!site) {
-        throw ConfigError("test_site_id", "test_site_id is not a Graph site ID "
-                                          "(\"<tenant>.sharepoint.com,<site GUID>,<web GUID>\")");
-    }
-    const std::string drive_rule = "is not a Graph drive ID (\"b!\" then letters, digits, '-' "
-                                   "and '_')";
-    if (!is_drive_id(targets_.library_id())) {
-        throw ConfigError("test_library_id", "test_library_id " + drive_rule);
-    }
-    if (!is_drive_id(targets_.onedrive_drive_id())) {
-        throw ConfigError("test_onedrive_drive_id", "test_onedrive_drive_id " + drive_rule);
-    }
-    if (!is_item_id(targets_.onedrive_folder_id())) {
-        throw ConfigError("test_onedrive_folder_id",
-                          "test_onedrive_folder_id is not a Graph item ID (letters, digits, '!', "
-                          "'-' and '_')");
-    }
-    tenant_host_ = site->host;
-    site_guid_ = site->site;
-    web_guid_ = site->web;
+    // RestoreTargets::from_config checked every ID's shape, the site ID's too.
+    const GraphSiteId site = parse_graph_site_id(targets_.site_id()).value();
+    tenant_host_ = site.host;
+    site_guid_ = site.site;
+    web_guid_ = site.web;
 }
 
 void TargetReader::log(spdlog::level::level_enum level, const std::string& line) const

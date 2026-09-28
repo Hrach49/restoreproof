@@ -120,9 +120,9 @@ TEST_CASE("live: rpworker veeam list prints the lab organisation's two restore p
         {"graph_tenant_id", "00000000-0000-0000-0000-000000000000"},
         {"graph_client_id", "00000000-0000-0000-0000-000000000000"},
         {"test_mailbox", "restoretest@RestoreProofLab.onmicrosoft.com"},
-        {"test_site_id", "unused"},
-        {"test_library_id", "unused"},
-        {"test_onedrive_drive_id", "unused"},
+        {"test_site_id", "example.sharepoint.com,00000000-0000-4000-8000-000000000001,00000000-0000-4000-8000-000000000002"},
+        {"test_library_id", "b!unused"},
+        {"test_onedrive_drive_id", "b!unused"},
         {"test_onedrive_folder_id", "unused"},
         {"veeam_ca_file", *ca_file},
         {"veeam_cert_sha256", env_or("RP_LIVE_VEEAM_CERT_SHA256", kLabCertSha256)}};

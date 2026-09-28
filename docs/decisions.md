@@ -45,6 +45,11 @@ Format: date, decision, reason, alternatives rejected.
 5. **A failed write to stdout is a failure**: after printing, the command flushes `out` and
    checks its state; a full disk or a closed pipe gives `error: unexpected failure`, exit 1,
    never exit 0 with a short listing (exceptions are off on `std::cout`, so nothing throws).
+6. **The download client is made only with `--hash`**: without it the reader gets a stand-in
+   that throws if ever sent through, so a download client that can't be made never fails a
+   listing that downloads nothing. A malformed Graph reply stays exit 4: the reader checks
+   Graph's JSON itself and throws `GraphError`, so no JSON library exception reaches the
+   command's exit-1 catch-all (a command test pins this).
 
 **Reason.** The operator needs to see the targets before and after a restore (W2.8, W3.4)
 without waiting for every file to download; `--hash` is there when the content matters. An

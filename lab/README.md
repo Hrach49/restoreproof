@@ -277,7 +277,7 @@ be in that state first; the recorder checks, and if they aren't, the line says
 | State | The targets must hold | Files (in the order sent) |
 |---|---|---|
 | `empty` | nothing: no mail in the Inbox, no file or folder in either root (after L1.4's cleanup) | `mail-list-200-empty.json`, `restoretarget-drive-200.json`, `restoretarget-children-200-empty.json`, `onedrive-folder-200.json`, `onedrive-children-200-empty.json`, `onedrive-folder-404-itemnotfound.json`, `drive-404-itemnotfound.json` |
-| `one-item` | exactly one mail in the Inbox, one file in the RestoreTarget library's root and one in alice's `/RestoreTarget` | `mail-list-200-one-item.json`, `mail-body-200.json`, `restoretarget-children-200-one-item.json`, `restoretarget-content-302.json`, `onedrive-children-200-one-item.json`, `onedrive-content-302.json` |
+| `one-item` | exactly one mail in the Inbox, one file in the RestoreTarget library's root and one in alice's `/RestoreTarget` | `mail-list-200-one-item.json`, `restoretarget-children-200-one-item.json`, `restoretarget-content-302.json`, `onedrive-children-200-one-item.json`, `onedrive-content-302.json` |
 | `paged` | exactly two mails in the Inbox (the files don't matter) | `mail-list-200-page1.json` (`$top=1`), `mail-list-200-page2.json` (page 1's `@odata.nextLink`) |
 
 What each request is and what is checked:
@@ -285,8 +285,8 @@ What each request is and what is checked:
 - The mail requests carry `Prefer: outlook.body-content-type="text", IdType="ImmutableId"`, as
   the seeder's and the Worker's do (`MAIL_PREFER` in `seeder/graph.py`); no other request
   carries anything but `Authorization`. The list is the Worker's
-  (`$select=id,subject,from,receivedDateTime,internetMessageId&$top=100`); the body is
-  `messages/<id>?$select=body` and must come back as `text`.
+  (`$select=id,subject,from,receivedDateTime,internetMessageId,body&$top=100`): the bodies
+  come in the listing, and each must come back as `text`.
 - `restoretarget-drive-200.json` is the Worker's guard read of the library's drive
   (`$select=id,name,driveType,webUrl,sharePointIds`): it must be named `RestoreTarget`, its
   `webUrl` must end `/RestoreTarget`, and it must have `sharePointIds.siteId` and `.webId`.
@@ -305,14 +305,16 @@ What each request is and what is checked:
   with an error (exit 2) before the request is sent.
 - The two `/content` requests are sent **without following the redirect**, so the 302 is
   recorded and nothing is downloaded. Request lines show the IDs a reply gave as
-  `<message id>`, `<item id>` and `<@odata.nextLink of mail-list-200-page1.json>`, and the
+  `<item id>` and `<@odata.nextLink of mail-list-200-page1.json>`, and the
   random ones as `<random item ID>` and `<random drive ID>`.
 
 Download links are scrubbed before the safety check: a `Location` keeps its scheme, host and
 path and only the values of `UniqueId`, `Translate` and `ApiVersion`; every other query value
 (`tempauth`, the pre-authenticated credential, and anything new) becomes `SCRUBBED`, and a
-fragment is dropped. `@microsoft.graph.downloadUrl` is removed from every body, and a
-`tempauth=` value in any body string becomes `SCRUBBED`. The safety check then also refuses a
+fragment is dropped. `@microsoft.graph.downloadUrl` is removed from every body, a
+`tempauth=` value in any body string becomes `SCRUBBED`, and a `download.aspx` link in any body
+string (a 302's HTML "Object moved" page too, whose `&` is written `&amp;`) has its query
+scrubbed as a `Location`'s is. The safety check then also refuses a
 file holding a `tempauth` whose value isn't `SCRUBBED` (as `tempauth=`, `tempauth%3D` or a JSON
 key) or a `download.aspx` URL with another query value that isn't `SCRUBBED`.
 

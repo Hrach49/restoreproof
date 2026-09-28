@@ -7,6 +7,80 @@ Format: date, decision, reason, alternatives rejected.
 
 ---
 
+## 2026-09-28 — W2.2 review: fixes to reading the restore targets
+
+**Decision.** A code review of W2.2 (`/code-review`, xhigh) found thirteen problems; this entry
+records what changed. It supersedes the parts of the W2.2 entry below that it names (§2, §4,
+§6, §10, §11, §13); the rest stands.
+
+1. **The OneDrive guard also requires `parentReference.driveType` `business`** (supersedes part
+   of §2). Without it, `test_onedrive_drive_id` set to a site library's drive (the canaries'
+   RestoreTest library) with a `RestoreTarget` folder at its root passed every check. Missing,
+   not a string, or any other value (`documentLibrary`, `personal`, another case) is a
+   `WrongTargetError`. The recorded `onedrive-folder-200.json` shows Graph returns it.
+2. **Only a 2xx body is held to `max_body_bytes`** (supersedes part of §4). The cap is the
+   file's size, so a SharePoint 503 whose error page was longer than a small file was cut,
+   returned at once and never retried: whether it counted as transient depended on the file's
+   size. Any other status's body is now held to `kMaxErrorBodyBytes` (64 KiB) and handled as
+   its status says; a 5xx is retried as without a cap. A 5xx the download client returns all
+   the same is a `TransientError`, like one retried to the end.
+3. **A docx or xlsx is read up to the download limit, whatever its size** (`SizeCheck`,
+   supersedes part of §4). SharePoint rewrites Office files (`lab/README.md`, `office-v1`), so
+   their bytes may differ from the `size` Graph lists; one such file failed the whole listing.
+   `FoundItem::size_bytes` is what came. Every other file must still be exactly Graph's size.
+   Not seen live yet: the one-item recording has no Office file.
+4. **A 200 straight from Graph's `/content` is held to the same cap** (supersedes part of §6):
+   `GraphClient::get` takes an optional `max_body_bytes`, which goes with every attempt.
+5. **Download errors are classified by `is_retryable()`**, not a copy of it, and their
+   messages no longer blame a refused connection (that is `connect`, retried) for a `tls` or
+   `other` failure.
+6. **Mail bodies come in the Inbox listing** (supersedes part of §10): `body` is in the
+   listing's `$select` under the same `Prefer`, instead of one GET per mail (N+1 calls).
+   `mail-body-200.json` is gone; the recorder checks every listed body is text.
+7. **A nextLink is checked by a rule per target, not an exact path** (supersedes part of §11).
+   Graph documents `@odata.nextLink` as opaque, so a link naming the mailbox by object ID, or
+   the library's root by item ID, was refused. The rules, on `resource_path()`'s segments:
+   the Inbox `users/{mailbox or a GUID}/mailfolders/inbox/messages`; the library
+   `drives/{test_library_id}/root/children` or `drives/{test_library_id}/items/{an item ID}/children`;
+   the OneDrive folder `drives/{test_onedrive_drive_id}/items/{test_onedrive_folder_id}/children`
+   only, never another item of that drive, since alice's canary folder shares it. A link to
+   another mailbox by GUID would be refused by Exchange RBAC (a `PermissionError`, status
+   `error`). The absolute-v1.0, no-refetch and page-cap rules stand. Still to be confirmed by
+   the `paged` recording.
+8. **The ID shapes are config rules** (supersedes part of §13): `parse_config` applies
+   `kGraphSiteIdRule`, `kGraphDriveIdRule` and `kGraphItemIdRule` (`rp/config.hpp`), so
+   `rpworker config check` refuses a list GUID in `test_library_id` instead of the first run;
+   `RestoreTargets::from_config` applies them again for a `Config` built in code, as it does
+   the mailbox rule. `TargetReader` only splits the site ID.
+9. **ASCII-only folding** (`ascii_lower`, `ascii_iequals`, `ascii_ends_with_i` in
+   `src/text_util.hpp`) replaces the locale-dependent copies in the Graph code;
+   `kSharePointSuffix` is declared once, in `rp/config.hpp`.
+10. **The recorder scrubs a download link anywhere in a body**, an HTML "Object moved" page
+    included, as it scrubs a `Location`, and reads `&amp;` as a separator in the scrub and the
+    safety check alike. Before, such a 302 made the one-item state unrecordable.
+11. **The live test prints Graph's text through `one_line()`** (`tests/found_item_line.hpp`),
+    so a restored subject or name can't forge or reorder the lines it prints.
+
+**Reason.** Each was a way to report an infrastructure problem as something else, to read
+outside the restore targets, or to fail on replies Graph may really send.
+
+**Alternatives rejected.**
+- *Accepting any nextLink under v1.0* (Graph's advice): a link could then list alice's
+  canary folder with the token. *Checking each page's items instead of the link* (their
+  `parentReference`): more calls and fields, and it still can't tell the mailbox.
+- *An exact size for Office files with a retry:* the rewrite is SharePoint's, not a race.
+- *Dropping a 200 from `/content`:* Graph may serve one; it is capped instead.
+
+**Consequences.**
+- `mail-list-200-empty.json` was recorded with the old `$select`, so the lab's plan test fails
+  on it until the empty state is recorded again (read-only). The one-item and paged states
+  are still hand-written stand-ins; recording them confirms items 3 and 7 against real
+  replies.
+- W3.2 hashes docx and xlsx with `office-v1` through `on_file`, so their byte counts no longer
+  matter for verification.
+
+---
+
 ## 2026-09-28 — W2.2: reading the three restore targets through Graph
 
 **Decision.** `rp::graph::TargetReader` (`worker/include/rp/graph_targets.hpp`) lists what is

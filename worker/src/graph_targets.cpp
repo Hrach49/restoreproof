@@ -111,7 +111,7 @@ std::string percent_decode(std::string_view text)
 }
 
 // The resource a listing URL names, to compare a nextLink with the first
-// request: the path after Graph's v1.0 root (the whole text if relative), up
+// request: the path after Graph's v1.0 root (list_pages passes only such URLs), up
 // to the query, percent-decoded, "seg('v')" and "seg(v)" as "seg/v", lower case.
 std::string resource_path(std::string_view url)
 {
@@ -170,8 +170,10 @@ std::vector<json> list_pages(GraphClient& graph, const std::string& first, const
             return pages;
         }
         const std::string next = next_link->is_string() ? next_link->get<std::string>() : "";
-        if (next.empty() || fetched.contains(next) ||
-            (next.starts_with(prefix) && resource_path(next) != first_resource)) {
+        // Graph sends absolute links. Anything else is refused here, a relative one
+        // too: GraphClient would put its v1.0 root in front of it and send it.
+        if (!next.starts_with(prefix) || fetched.contains(next) ||
+            resource_path(next) != first_resource) {
             throw GraphError("Graph's reply listing " + what + " has a bad @odata.nextLink");
         }
         if (pages.size() >= static_cast<std::size_t>(kMaxListPages)) {

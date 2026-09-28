@@ -324,7 +324,10 @@ test keeps the README's file table and the folder in step. To record a state:
    `uv run python -m seeder record-graph-fixtures --state empty`.
 2. **one-item**: send one mail to `restoretest@RestoreProofLab.onmicrosoft.com` and wait until
    it is in the Inbox; upload one small file to the root of the RestoreTarget library (site
-   RestoreTest, library RestoreTarget) and one to alice's OneDrive `/RestoreTarget`. Then
+   RestoreTest, library RestoreTarget) and one to alice's OneDrive `/RestoreTarget`. Give the
+   mail's subject, its body and both file names distinctive text of at least 12 characters,
+   e.g. `RestoreProof W2.2 one-item 7f3k`: the Worker's log sentinel test checks none of them
+   reaches the log, and fails on an empty or short value, which could match by chance. Then
    `--state one-item`.
 3. **paged**: send a second mail to restoretest and wait for it. Then `--state paged`.
 4. Delete the two mails and the two files by hand (L1.4's cleanup), so the targets are empty

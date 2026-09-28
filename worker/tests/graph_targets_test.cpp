@@ -826,7 +826,11 @@ TEST_CASE("bad listing replies are errors", "[graph][targets]")
             kGraph + "/users/alice@" + domain + "/mailFolders/inbox/messages?$skip=1",
             kGraph + "/users/" + lab_values().mailbox + "/mailFolders/sentitems/messages?$skip=1",
             kGraph + "/users('alice%40" + domain + "')/mailFolders('Inbox')/messages?$skip=1",
-            kGraph + "/users/" + lab_values().mailbox + "/mailFolders/inbox/messages%zz?$skip=1");
+            kGraph + "/users/" + lab_values().mailbox + "/mailFolders/inbox/messages%zz?$skip=1",
+            // Relative links: GraphClient would put its v1.0 root in front and send them.
+            "/users/alice@" + domain + "/mailFolders/inbox/messages?$skip=1",
+            "/users/" + lab_values().mailbox + "/mailFolders/inbox/messages?$skip=1",
+            "users/" + lab_values().mailbox + "/mailFolders/inbox/messages?$skip=1");
         CAPTURE(link);
         Lab lab;
         lab.graph_http.on(HttpMethod::get, first, {page_of(json::array(), link)});
@@ -840,11 +844,14 @@ TEST_CASE("bad listing replies are errors", "[graph][targets]")
     {
         std::string other = lab_values().library_id;
         other.back() = other.back() == 'A' ? 'B' : 'A';
+        const std::string link =
+            GENERATE_COPY(kGraph + "/drives/" + other + "/root/children?$skiptoken=x",
+                          "/drives/" + other + "/root/children?$skiptoken=x");
+        CAPTURE(link);
         Lab lab;
         lab.serve_file(drive_url(), "restoretarget-drive-200");
-        lab.graph_http.on(
-            HttpMethod::get, library_children_url(),
-            {page_of(json::array(), kGraph + "/drives/" + other + "/root/children?$skiptoken=x")});
+        lab.graph_http.on(HttpMethod::get, library_children_url(),
+                          {page_of(json::array(), link)});
 
         const Caught caught = catch_error([&] { lab.reader().list_sharepoint(); });
 
@@ -852,7 +859,7 @@ TEST_CASE("bad listing replies are errors", "[graph][targets]")
               "Graph's reply listing the RestoreTarget library has a bad @odata.nextLink");
         CHECK(lab.graph_gets().size() == 2);
     }
-    SECTION("a nextLink to another host is GraphClient's own refusal")
+    SECTION("a nextLink outside Graph's v1.0 root is the listing's own refusal")
     {
         const std::string link = GENERATE_COPY(
             "https://evil.example/v1.0/users/" + lab_values().mailbox +
@@ -866,7 +873,7 @@ TEST_CASE("bad listing replies are errors", "[graph][targets]")
         const Caught caught = catch_error([&] { lab.reader().list_mail(); });
 
         CHECK(caught.kind == "GraphError");
-        CHECK_THAT(caught.what, ContainsSubstring("a URL outside Graph's v1.0"));
+        CHECK(caught.what == bad_link);
         CHECK(lab.graph_gets().size() == 1);
     }
     SECTION("the page cap: the error comes after exactly 100 GETs")
@@ -1363,17 +1370,26 @@ TEST_CASE("no credential, body, subject or file name reaches the log", "[graph][
 
     const std::string log = lab.log() + failing.log();
     CHECK_THAT(log, ContainsSubstring("following Graph's redirect to"));
-    const std::vector<std::string> secrets{
-        kTempauth,
-        "tempauth=v1",
-        "Bearer",
-        "token-",
+    // What a one-item recording holds (lab/README.md asks for distinctive values):
+    // an empty or short one could match the log by chance, so it fails here first.
+    const std::vector<std::string> recorded{
         load_fixture_json("graph", "mail-body-200").at("body").at("body").at("content").get<std::string>(),
         message.at("subject").get<std::string>(),
         file_of(sharepoint_location()).at("name").get<std::string>(),
         file_of(onedrive_location()).at("name").get<std::string>(),
+    };
+    for (const std::string& value : recorded) {
+        CAPTURE(value);
+        REQUIRE(value.size() >= 12);
+    }
+    std::vector<std::string> secrets{
+        kTempauth,
+        "tempauth=v1",
+        "Bearer",
+        "token-",
         "download.aspx",
     };
+    secrets.insert(secrets.end(), recorded.begin(), recorded.end());
     for (const std::string& secret : secrets) {
         CAPTURE(secret);
         CHECK(log.find(secret) == std::string::npos);

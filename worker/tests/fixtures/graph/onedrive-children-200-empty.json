@@ -1,11 +1,11 @@
 {
-  "source": "hand-written: stand-in until the empty state is recorded (W2.2): GET the children of alice's /RestoreTarget, empty",
+  "source": "live 2026-09-28: GET the children of alice's /RestoreTarget, empty",
   "request": "GET /v1.0/drives/b!wA9gbfhlEUitGAluxbfoNBr_z5gEtDhErm5pJ6bMwyXfZJ8a_dkCQ696RX0r7_U3/items/01ZK75LGDGB6QOO3MGNFGYOY6C6VBDG5OH/children?$select=id,name,size,file,folder&$top=200",
   "status": 200,
   "headers": {
     "Content-Type": "application/json; odata.metadata=minimal; odata.streaming=true; IEEE754Compatible=false; charset=utf-8",
-    "request-id": "00000000-0000-4000-8000-000000000078",
-    "client-request-id": "00000000-0000-4000-8000-000000000078"
+    "request-id": "0a8f1b12-7a10-4610-8086-aee3d7ce557c",
+    "client-request-id": "0a8f1b12-7a10-4610-8086-aee3d7ce557c"
   },
   "body": {
     "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#Collection(driveItem)",

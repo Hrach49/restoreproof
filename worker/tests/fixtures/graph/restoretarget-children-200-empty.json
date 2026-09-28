@@ -1,11 +1,11 @@
 {
-  "source": "hand-written: stand-in until the empty state is recorded (W2.2): GET the RestoreTarget library's root children, empty",
+  "source": "live 2026-09-28: GET the RestoreTarget library's root children, empty",
   "request": "GET /v1.0/drives/b!XQgI_nDr6EKVpkcBib2Y65nzyk4OzJVNs_7NCRoJ5omdBuz_5GU6TJ2irAhs-dr6/root/children?$select=id,name,size,file,folder&$top=200",
   "status": 200,
   "headers": {
     "Content-Type": "application/json; odata.metadata=minimal; odata.streaming=true; IEEE754Compatible=false; charset=utf-8",
-    "request-id": "00000000-0000-4000-8000-000000000076",
-    "client-request-id": "00000000-0000-4000-8000-000000000076"
+    "request-id": "651a39c0-9c95-47f5-93b1-972c6c71a71a",
+    "client-request-id": "651a39c0-9c95-47f5-93b1-972c6c71a71a"
   },
   "body": {
     "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#Collection(driveItem)",

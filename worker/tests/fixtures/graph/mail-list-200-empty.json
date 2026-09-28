@@ -1,11 +1,11 @@
 {
-  "source": "hand-written: stand-in until the empty state is recorded (W2.2): GET the restoretest inbox as the Worker lists it, empty",
+  "source": "live 2026-09-28: GET the restoretest inbox as the Worker lists it, empty",
   "request": "GET /v1.0/users/restoretest@RestoreProofLab.onmicrosoft.com/mailFolders/inbox/messages?$select=id,subject,from,receivedDateTime,internetMessageId&$top=100",
   "status": 200,
   "headers": {
     "Content-Type": "application/json; odata.metadata=minimal; odata.streaming=true; IEEE754Compatible=false; charset=utf-8",
-    "request-id": "00000000-0000-4000-8000-000000000074",
-    "client-request-id": "00000000-0000-4000-8000-000000000074"
+    "request-id": "34737af7-2aba-4200-bfc9-52ea77886a6c",
+    "client-request-id": "34737af7-2aba-4200-bfc9-52ea77886a6c"
   },
   "body": {
     "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#users('restoretest%40RestoreProofLab.onmicrosoft.com')/mailFolders('inbox')/messages(id,subject,from,receivedDateTime,internetMessageId)",

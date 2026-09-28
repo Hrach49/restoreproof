@@ -4,10 +4,7 @@
 #include <rp/config.hpp>
 
 #include "command_config.hpp"
-#include "control_chars.hpp"
-
-#include <spdlog/sinks/stdout_sinks.h>
-#include <spdlog/spdlog.h>
+#include "text_table.hpp"
 
 #include <algorithm>
 #include <array>
@@ -74,91 +71,37 @@ bool org_less(const Organization& a, const Organization& b)
            std::forward_as_tuple(ascii_lower(b.name), b.id);
 }
 
-// Text from Veeam as a table cell: a control character (control_chars.hpp),
-// which could forge, hide or reorder a line, becomes a space.
-std::string cell(std::string_view text)
-{
-    std::string out;
-    out.reserve(text.size());
-    for (std::size_t i = 0; i < text.size();) {
-        if (const std::size_t length = control_character_length(text, i); length != 0) {
-            out += ' ';
-            i += length;
-        } else {
-            out += text[i];
-            ++i;
-        }
-    }
-    return out;
-}
-
-// The width of UTF-8 text in code points: every byte that isn't a
-// continuation byte starts one.
-std::size_t width(std::string_view text) noexcept
-{
-    return static_cast<std::size_t>(std::ranges::count_if(
-        text, [](char c) { return (static_cast<unsigned char>(c) & 0xC0) != 0x80; }));
-}
-
 constexpr std::array<std::string_view, 8> kColumns{
     "ORGANIZATION", "BACKUP TIME", "EX", "SP", "OD", "TM", "LONG-TERM", "RESTORE POINT ID"};
-
-struct Row {
-    bool marked = false;
-    std::array<std::string, kColumns.size()> cells;
-};
 
 std::string flag(bool set)
 {
     return set ? "x" : "-";
 }
 
-// The table, then a blank line and the summary. Columns are left-aligned,
-// padded to their widest cell and two spaces apart; no line ends in a space.
+// The table, then a blank line and the summary (text_table.hpp). Veeam's
+// text goes through table_cell(): a control character becomes a space.
 std::string format_listing(const std::vector<OrgListing>& listing)
 {
-    std::vector<Row> rows;
-    Row header;
-    std::ranges::copy(kColumns, header.cells.begin());
-    rows.push_back(std::move(header));
+    const auto prefix = [](bool marked) { return std::string{marked ? "* " : "  "}; };
+    std::vector<TableRow> rows;
+    rows.push_back({prefix(false), {kColumns.begin(), kColumns.end()}});
     std::size_t point_count = 0;
     for (const OrgListing& entry : listing) {
-        const std::string name = cell(entry.org.name);
+        const std::string name = table_cell(entry.org.name);
         if (entry.points.empty()) {
-            rows.push_back({entry.configured, {name, "(no restore points)"}});
+            rows.push_back({prefix(entry.configured), {name, "(no restore points)"}});
         }
         for (const RestorePoint& point : entry.points) {
-            rows.push_back({entry.configured,
-                            {name, cell(point.backup_time), flag(point.is_exchange),
+            rows.push_back({prefix(entry.configured),
+                            {name, table_cell(point.backup_time), flag(point.is_exchange),
                              flag(point.is_sharepoint), flag(point.is_onedrive),
                              flag(point.is_teams), point.is_long_term_copy ? "yes" : "no",
-                             cell(point.id)}});
+                             table_cell(point.id)}});
         }
         point_count += entry.points.size();
     }
-
-    std::string text;
-    if (listing.empty()) {
-        text = "no organisations in Veeam\n";
-    } else {
-        std::array<std::size_t, kColumns.size()> widths{};
-        for (const Row& row : rows) {
-            for (std::size_t i = 0; i < widths.size(); ++i) {
-                widths[i] = std::max(widths[i], width(row.cells[i]));
-            }
-        }
-        for (const Row& row : rows) {
-            std::string line = row.marked ? "* " : "  ";
-            for (std::size_t i = 0; i < widths.size(); ++i) {
-                line += row.cells[i];
-                if (i + 1 < widths.size()) {
-                    line.append(widths[i] - width(row.cells[i]) + 2, ' ');
-                }
-            }
-            line.erase(line.find_last_not_of(' ') + 1);
-            text += line + '\n';
-        }
-    }
+    std::string text = listing.empty() ? "no organisations in Veeam\n" : format_table(rows);
     text += std::format("\n{} organisation(s), {} restore point(s); * = veeam_org_name\n",
                         listing.size(), point_count);
     return text;
@@ -174,12 +117,7 @@ VeeamCommandEnv default_veeam_command_env()
     env.make_http = [](const HttpClientOptions& options) -> std::unique_ptr<IHttpClient> {
         return std::make_unique<HttpClient>(options);
     };
-    // Not registered with spdlog, and not the default logger, which writes to
-    // stdout.
-    auto logger = std::make_shared<spdlog::logger>(
-        "rpworker", std::make_shared<spdlog::sinks::stderr_sink_mt>());
-    logger->set_level(spdlog::level::warn);
-    env.client_options.logger = std::move(logger);
+    env.client_options.logger = make_command_logger();
     return env;
 }
 
@@ -250,14 +188,14 @@ int run_veeam_command(std::span<const std::string_view> args, std::ostream& out,
         if (std::ranges::none_of(listing, &OrgListing::configured)) {
             err << "veeam error: organisation " << config.veeam_org_name
                 << " (veeam_org_name) not found in Veeam\n";
-            code = exit_code::veeam;
+            code = exit_code::service;
         }
     } catch (const AuthError& e) {
         code = report_veeam_error(err, e, exit_code::auth);
     } catch (const TransientError& e) {
         code = report_veeam_error(err, e, exit_code::transient);
     } catch (const VeeamError& e) {
-        code = report_veeam_error(err, e, exit_code::veeam);
+        code = report_veeam_error(err, e, exit_code::service);
     } catch (...) {
         // Its message, if it has one, may not be safe to show.
         err << "error: unexpected failure\n";

@@ -7,6 +7,7 @@
 
 #include "fake_http_client.hpp"
 #include "found_item_line.hpp"
+#include "graph_lab.hpp"
 #include "test_certs.hpp"
 
 #include <rp/client_assertion.hpp>
@@ -64,109 +65,14 @@ using rp::test::load_fixture_json;
 using rp::test::make_response;
 using rp::test::to_response;
 using Clock = std::chrono::system_clock;
+using namespace rp::test::graph_lab;
 
-const std::string kTenant = "bcd6bd1a-ea42-489d-aa28-2c19a44ad146";
-const std::string kClient = "737da5ef-baf2-4198-b009-e160d8ca77c9";
-const std::string kTokenUrl =
-    "https://login.microsoftonline.com/" + kTenant + "/oauth2/v2.0/token";
-const std::string kGraph = "https://graph.microsoft.com/v1.0";
-
-const Clock::time_point kNow = std::chrono::sys_days{std::chrono::year{2026} / 9 / 28} + 12h;
-constexpr const char* kPfxPassword = "Sentinel-Targets-PFX-Password-3b9d";
 // Made up, never a lab value.
 const std::string kMadeUpGuid = "0a1b2c3d-0000-4000-8000-00000000abcd";
 
-const std::string kMailSelect =
-    "?$select=id,subject,from,receivedDateTime,internetMessageId,body";
-const std::string kChildrenQuery = "/children?$select=id,name,size,file,folder&$top=200";
-
-const std::string& pfx_base64()
-{
-    static const std::string pfx = rp::test::to_base64(rp::test::make_pfx(
-        rp::test::make_client_cert("RestoreProof Worker",
-                                   rp::test::ClientCertOptions{.now = Clock::to_time_t(kNow)}),
-        kPfxPassword));
-    return pfx;
-}
-
-HttpResponse token_response()
-{
-    json fixture = load_fixture_json("graph", "token-200");
-    fixture["body"]["access_token"] = "token-1";
-    return to_response(fixture);
-}
-
-// "https://<host>/..." -> host
-std::string host_of(const std::string& url)
-{
-    const std::size_t start = url.find("://") + 3;
-    return url.substr(start, url.find('/', start) - start);
-}
-
-// The lab's restore targets, as the recorded replies show them.
-struct Lab_values {
-    std::string mailbox;
-    std::string site_id;
-    std::string library_id;
-    std::string onedrive_drive_id;
-    std::string folder_id;
-};
-
-const Lab_values& lab_values()
-{
-    static const Lab_values values = [] {
-        Lab_values out;
-        const json drive = load_fixture_json("graph", "restoretarget-drive-200").at("body");
-        out.site_id = host_of(drive.at("webUrl").get<std::string>()) + "," +
-                      drive.at("sharePointIds").at("siteId").get<std::string>() + "," +
-                      drive.at("sharePointIds").at("webId").get<std::string>();
-        out.library_id = drive.at("id").get<std::string>();
-        const json folder = load_fixture_json("graph", "onedrive-folder-200").at("body");
-        out.onedrive_drive_id = folder.at("parentReference").at("driveId").get<std::string>();
-        out.folder_id = folder.at("id").get<std::string>();
-        const std::string request =
-            load_fixture_json("graph", "mail-list-200-empty").at("request").get<std::string>();
-        const std::size_t start = request.find("/users/") + 7;
-        out.mailbox = request.substr(start, request.find("/mailFolders") - start);
-        return out;
-    }();
-    return values;
-}
-
-rp::Config lab_config()
-{
-    const Lab_values& v = lab_values();
-    rp::Config config;
-    config.test_mailbox = v.mailbox;
-    config.test_site_id = v.site_id;
-    config.test_library_id = v.library_id;
-    config.test_onedrive_drive_id = v.onedrive_drive_id;
-    config.test_onedrive_folder_id = v.folder_id;
-    return config;
-}
-
-std::string drive_url()
-{
-    return kGraph + "/drives/" + lab_values().library_id +
-           "?$select=id,name,driveType,webUrl,sharePointIds";
-}
-std::string library_children_url()
-{
-    return kGraph + "/drives/" + lab_values().library_id + "/root" + kChildrenQuery;
-}
-std::string folder_url()
-{
-    return kGraph + "/drives/" + lab_values().onedrive_drive_id + "/items/" +
-           lab_values().folder_id + "?$select=id,name,folder,parentReference";
-}
-std::string folder_children_url()
-{
-    return kGraph + "/drives/" + lab_values().onedrive_drive_id + "/items/" +
-           lab_values().folder_id + kChildrenQuery;
-}
-
 // Graph (with its token route) and the download host as a test sees them.
-// Waits are recorded, never slept; every log line goes to a string.
+// Waits are recorded, never slept; every log line goes to a string. The lab's
+// values, URLs and fixtures helpers are graph_lab.hpp's.
 struct Lab {
     Lab()
     {
@@ -604,34 +510,6 @@ TEST_CASE("empty file locations list as empty vectors", "[graph][targets]")
 }
 
 // ---- mail and paging -----------------------------------------------------------------------
-
-namespace {
-
-std::string mail_list_url()
-{
-    return kGraph + "/users/" + lab_values().mailbox + "/mailFolders/inbox/messages" +
-           kMailSelect + "&$top=100";
-}
-
-// The messages of a recorded listing.
-json messages_of(const std::string& name)
-{
-    return load_fixture_json("graph", name).at("body").at("value");
-}
-
-// A listing page holding `value`, with `next_link` if given.
-HttpResponse page_of(const json& value, const std::optional<std::string>& next_link = std::nullopt)
-{
-    json body = {{"value", value}};
-    if (next_link) {
-        body["@odata.nextLink"] = *next_link;
-    }
-    return make_response(200, body.dump());
-}
-
-const std::string kPrefer = std::string{rp::graph::kMailPrefer};
-
-} // namespace
 
 TEST_CASE("the mail Prefer header is the seeder's", "[graph][targets]")
 {
@@ -1097,89 +975,20 @@ namespace {
 // The download link's credential in the sentinel test: in no message, no log line.
 const std::string kTempauth = "v1.SENTINEL-targets-tempauth";
 
-// One file location as the tests serve it: its guard, listing and content fixtures.
-struct FileLocation {
-    std::string name; // "sharepoint" or "onedrive"
-    ItemType type;
-    std::string drive;
-    std::string guard_url;
-    std::string guard_fixture;
-    std::string children_url;
-    std::string one_item_fixture;
-    std::string content_fixture;
-    std::string location; // as in messages
-    const rp::graph::Grant* grant;
-};
-
-FileLocation sharepoint_location()
-{
-    return {"sharepoint",
-            ItemType::sharepoint,
-            lab_values().library_id,
-            drive_url(),
-            "restoretarget-drive-200",
-            library_children_url(),
-            "restoretarget-children-200-one-item",
-            "restoretarget-content-302",
-            "the RestoreTarget library",
-            &rp::graph::kSitesReadGrant};
-}
-
-FileLocation onedrive_location()
-{
-    return {"onedrive",
-            ItemType::onedrive,
-            lab_values().onedrive_drive_id,
-            folder_url(),
-            "onedrive-folder-200",
-            folder_children_url(),
-            "onedrive-children-200-one-item",
-            "onedrive-content-302",
-            "the test OneDrive folder",
-            &rp::graph::kOneDriveReadGrant};
-}
-
-std::string content_url(const FileLocation& at, const std::string& id)
-{
-    return kGraph + "/drives/" + at.drive + "/items/" + id + "/content";
-}
-
-json file_of(const FileLocation& at)
-{
-    return load_fixture_json("graph", at.one_item_fixture).at("body").at("value").at(0);
-}
-
-std::string location_of(const FileLocation& at)
-{
-    return load_fixture_json("graph", at.content_fixture).at("headers").at("Location").get<std::string>();
-}
-
-// The file's bytes, as many as the listing says.
-std::string bytes_of(const FileLocation& at)
-{
-    return std::string(file_of(at).at("size").get<std::size_t>(), 'r');
-}
-
 std::vector<FoundItem> list(TargetReader& reader, const FileLocation& at)
 {
     return at.type == ItemType::sharepoint ? reader.list_sharepoint() : reader.list_onedrive();
 }
 
-// Serves the location's guard, `children` as its listing and, for its one
-// file, the recorded 302 and a download of the listed size.
+// graph_lab.hpp's serve_location on the lab's two clients.
 void serve_location(Lab& lab, const FileLocation& at, const HttpResponse& children)
 {
-    lab.serve_file(at.guard_url, at.guard_fixture);
-    lab.graph_http.on(HttpMethod::get, at.children_url, {children});
-    const std::string id = file_of(at).at("id").get<std::string>();
-    lab.serve_file(content_url(at, id), at.content_fixture);
-    lab.dl_http.on(HttpMethod::get, location_of(at),
-                   {make_response(200, bytes_of(at), "application/octet-stream")});
+    rp::test::graph_lab::serve_location(lab.graph_http, lab.dl_http, at, children);
 }
 
 void serve_location(Lab& lab, const FileLocation& at)
 {
-    serve_location(lab, at, load_fixture("graph", at.one_item_fixture));
+    rp::test::graph_lab::serve_location(lab.graph_http, lab.dl_http, at);
 }
 
 } // namespace
@@ -1380,6 +1189,97 @@ TEST_CASE("one file in each file location lists as one FoundItem", "[graph][targ
     CHECK_FALSE(download.headers.contains("Authorization"));
     CHECK(download.max_body_bytes == expected.size_bytes);
     CHECK_THAT(lab.log(), ContainsSubstring("info listed 1 item(s) in " + at.location));
+}
+
+// ---- without hash_files (W2.3: `rpworker graph list` without --hash) ---------------------
+
+TEST_CASE("files are hashed unless hash_files says not to", "[graph][targets]")
+{
+    CHECK(TargetReaderOptions{}.hash_files);
+}
+
+TEST_CASE("without hash_files no file is downloaded and each keeps Graph's size",
+          "[graph][targets]")
+{
+    const FileLocation at = GENERATE(sharepoint_location(), onedrive_location());
+    CAPTURE(at.name);
+    // A docx too: SharePoint may rewrite it, but nothing is read to find out.
+    const std::string name = GENERATE(as<std::string>{}, "", "rewritten.docx");
+    CAPTURE(name);
+    json file = file_of(at);
+    if (!name.empty()) {
+        file["name"] = name;
+    }
+    Lab lab;
+    serve_location(lab, at, page_of(json::array({file})));
+    TargetReaderOptions options = lab.reader_options();
+    options.hash_files = false;
+    int on_file_calls = 0;
+    options.on_file = [&on_file_calls](const FoundItem&, std::string_view) { ++on_file_calls; };
+    TargetReader reader(*lab.graph, lab.dl_http,
+                        rp::connector::RestoreTargets::from_config(lab_config()), options);
+
+    const std::vector<FoundItem> items = list(reader, at);
+
+    FoundItem expected;
+    expected.type = at.type;
+    expected.id = file.at("id").get<std::string>();
+    expected.name = file.at("name").get<std::string>();
+    expected.size_bytes = file.at("size").get<std::uint64_t>();
+    REQUIRE(items.size() == 1);
+    CHECK(items[0] == expected);
+    CHECK(items[0].sha256.empty());
+    CHECK(items[0].sha256_rule.empty());
+    CHECK(on_file_calls == 0);
+    // The guard and the listing, no /content GET, and nothing for the download client.
+    const std::vector<HttpRequest> gets = lab.graph_gets();
+    REQUIRE(gets.size() == 2);
+    CHECK(gets[0].url == at.guard_url);
+    CHECK(gets[1].url == at.children_url);
+    CHECK(lab.gets(content_url(at, expected.id)) == 0);
+    CHECK(lab.dl_http.requests().empty());
+    CHECK_THAT(lab.log(), ContainsSubstring("info listed 1 item(s) in " + at.location));
+}
+
+TEST_CASE("without hash_files the guards still refuse a wrong drive or folder",
+          "[graph][targets]")
+{
+    const FileLocation at = GENERATE(sharepoint_location(), onedrive_location());
+    CAPTURE(at.name);
+    Lab lab;
+    json guard = load_fixture_json("graph", at.guard_fixture);
+    guard["body"]["name"] = "RestoreTest";
+    lab.serve(at.guard_url, guard);
+    lab.serve_file(at.children_url, at.one_item_fixture);
+    TargetReaderOptions options = lab.reader_options();
+    options.hash_files = false;
+    TargetReader reader(*lab.graph, lab.dl_http,
+                        rp::connector::RestoreTargets::from_config(lab_config()), options);
+
+    const Caught caught = catch_error([&] { list(reader, at); });
+
+    CHECK(caught.kind == "WrongTargetError");
+    CHECK_THAT(caught.what, ContainsSubstring("\"RestoreTest\", not \"RestoreTarget\""));
+    CHECK(lab.gets(at.children_url) == 0);
+    CHECK(lab.dl_http.requests().empty());
+}
+
+TEST_CASE("without hash_files mail is still hashed by text-v1", "[graph][targets]")
+{
+    Lab lab;
+    lab.serve_file(mail_list_url(), "mail-list-200-one-item");
+    const json message = messages_of("mail-list-200-one-item").at(0);
+    TargetReaderOptions options = lab.reader_options();
+    options.hash_files = false;
+    TargetReader reader(*lab.graph, lab.dl_http,
+                        rp::connector::RestoreTargets::from_config(lab_config()), options);
+
+    const std::vector<FoundItem> items = reader.list_mail();
+
+    REQUIRE(items.size() == 1);
+    CHECK(items[0].sha256 ==
+          rp::text_v1_sha256(message.at("body").at("content").get<std::string>()));
+    CHECK(items[0].sha256_rule == "text-v1");
 }
 
 TEST_CASE("folders and non-file items are skipped and logged", "[graph][targets]")

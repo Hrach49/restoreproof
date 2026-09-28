@@ -341,6 +341,14 @@ void TargetReader::check_onedrive_folder()
         throw WrongTargetError("the OneDrive folder test_onedrive_folder_id names is not in the "
                                "drive test_onedrive_drive_id names; nothing was listed");
     }
+    // A site library's drive (the RestoreTest library's, say) is "documentLibrary":
+    // a RestoreTarget folder at its root would pass every other check.
+    const std::string* drive_type = string_at(reference, "driveType");
+    if (drive_type == nullptr || *drive_type != "business") {
+        throw WrongTargetError("the drive test_onedrive_drive_id names is not a OneDrive (Graph's "
+                               "driveType is not \"business\"): a site library's folder is never "
+                               "read as the test OneDrive's; nothing was listed");
+    }
     const std::string* path = string_at(reference, "path");
     if (path == nullptr) {
         throw WrongTargetError("Graph's reply for the OneDrive folder test_onedrive_folder_id "

@@ -34,6 +34,7 @@ add_library(rpcore STATIC
     src/redact.cpp
     src/retry_policy.cpp
     src/secrets.cpp
+    src/sha256.cpp
     src/utf16.cpp
     src/veeam_client.cpp
     src/veeam_command.cpp
@@ -83,6 +84,7 @@ add_executable(rptests
     tests/redact_test.cpp
     tests/retry_policy_test.cpp
     tests/secrets_test.cpp
+    tests/sha256_test.cpp
     tests/smoke.cpp
     tests/text_util_test.cpp
     tests/veeam_client_live_test.cpp

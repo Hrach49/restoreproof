@@ -2289,3 +2289,119 @@ TEST_CASE("concurrent calls share one token request", "[graph][client]")
         CHECK(bearer == "Bearer token-1");
     }
 }
+
+// W2.2: the Prefer header the mail listing needs, and nothing else.
+
+TEST_CASE("get refuses a caller header other than Prefer before sending anything",
+          "[graph][client][headers]")
+{
+    const std::string name = GENERATE(as<std::string>{}, "Authorization", "authorization",
+                                       "Proxy-Authorization", "Host", "Cookie", "X-Anything");
+    CAPTURE(name);
+    Lab lab;
+    auto client = lab.make_client();
+
+    const Caught caught = catch_graph(
+        [&] { client->get(kMessagesPath, rp::graph::kMailReadGrant, {{name, "x"}}); });
+
+    CHECK(caught.kind == "GraphError");
+    CHECK(caught.what == "Graph GET: refused the header \"" + name +
+                             "\" since a caller may add only Prefer; the token and the other headers "
+                             "are the client's");
+    CHECK(lab.token_requests == 0);
+    CHECK(lab.http.requests().empty());
+}
+
+TEST_CASE("get refuses a Prefer value with a control character or an empty one",
+          "[graph][client][headers]")
+{
+    const std::string value =
+        GENERATE(as<std::string>{}, "a\r\nX-Evil: 1", "a\nb", "a\x01", "", "a\xC2\x85");
+    CAPTURE(value);
+    Lab lab;
+    auto client = lab.make_client();
+
+    const Caught caught = catch_graph(
+        [&] { client->get(kMessagesPath, rp::graph::kMailReadGrant, {{"Prefer", value}}); });
+
+    CHECK(caught.kind == "GraphError");
+    CHECK(caught.what == "Graph GET: refused the value of the header \"Prefer\": it is empty or "
+                         "holds a control character");
+    CHECK(lab.token_requests == 0);
+    CHECK(lab.http.requests().empty());
+}
+
+TEST_CASE("a Prefer header goes with every attempt, after a 401 resend and a 503 retry, and "
+          "never replaces the token",
+          "[graph][client][headers]")
+{
+    const std::string prefer = R"(outlook.body-content-type="text", IdType="ImmutableId")";
+    Lab lab;
+    lab.http.on(HttpMethod::get, kMessagesUrl,
+                {load_fixture("graph", "api-invalid-token-401"), make_response(503, ""),
+                 load_fixture("graph", "messages-200")});
+    auto client = lab.make_client();
+
+    // Any case of the name is the one allowed header.
+    const HttpResponse response =
+        client->get(kMessagesPath, rp::graph::kMailReadGrant, {{"prefer", prefer}});
+
+    CHECK(response.status == 200);
+    CHECK(lab.bearers() ==
+          std::vector<std::string>{"Bearer token-1", "Bearer token-2", "Bearer token-2"});
+    std::size_t gets = 0;
+    for (const HttpRequest& request : lab.http.requests()) {
+        if (request.method == HttpMethod::get) {
+            ++gets;
+            CHECK(header(request, "Prefer") == prefer);
+            CHECK(header(request, "Accept") == "application/json");
+        }
+    }
+    CHECK(gets == 3);
+}
+
+TEST_CASE("get_json, find and find_json pass the headers through", "[graph][client][headers]")
+{
+    const std::string call = GENERATE(as<std::string>{}, "get_json", "find", "find_json");
+    CAPTURE(call);
+    Lab lab;
+    auto client = lab.make_client();
+    const rp::HttpHeaders headers{{"Prefer", "x=1"}};
+
+    if (call == "get_json") {
+        client->get_json(kMessagesPath, rp::graph::kMailReadGrant, headers);
+    } else if (call == "find") {
+        CHECK(client->find(kMessagesPath, rp::graph::kMailReadGrant, headers).has_value());
+    } else {
+        CHECK(client->find_json(kMessagesPath, rp::graph::kMailReadGrant, headers).has_value());
+    }
+
+    const std::vector<HttpRequest> sent = lab.http.requests();
+    REQUIRE(sent.size() == 2);
+    CHECK(header(sent[1], "Prefer") == "x=1");
+    CHECK(header(sent[1], "Authorization") == "Bearer token-1");
+}
+
+TEST_CASE("the refusals of a caller header come before the URL is sent, for every call",
+          "[graph][client][headers]")
+{
+    const std::string call = GENERATE(as<std::string>{}, "get_json", "find", "find_json");
+    CAPTURE(call);
+    Lab lab;
+    auto client = lab.make_client();
+    const rp::HttpHeaders headers{{"Authorization", "Bearer mine"}};
+
+    const Caught caught = catch_graph([&] {
+        if (call == "get_json") {
+            client->get_json(kMessagesPath, rp::graph::kMailReadGrant, headers);
+        } else if (call == "find") {
+            client->find(kMessagesPath, rp::graph::kMailReadGrant, headers);
+        } else {
+            client->find_json(kMessagesPath, rp::graph::kMailReadGrant, headers);
+        }
+    });
+
+    CHECK(caught.kind == "GraphError");
+    CHECK_THAT(caught.what, ContainsSubstring("refused the header \"Authorization\""));
+    CHECK(lab.http.requests().empty());
+}

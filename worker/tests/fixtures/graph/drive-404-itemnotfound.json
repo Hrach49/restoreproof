@@ -1,0 +1,21 @@
+{
+  "source": "hand-written: stand-in until the empty state is recorded (W2.2): GET a drive ID of no drive (the RestoreTarget drive's list GUID random)",
+  "request": "GET /v1.0/drives/<random drive ID>?$select=id,name,driveType,webUrl,sharePointIds",
+  "status": 404,
+  "headers": {
+    "Content-Type": "application/json",
+    "request-id": "00000000-0000-4000-8000-000000000079",
+    "client-request-id": "00000000-0000-4000-8000-000000000079"
+  },
+  "body": {
+    "error": {
+      "code": "itemNotFound",
+      "message": "Item not found",
+      "innerError": {
+        "date": "2026-09-28T00:00:00",
+        "request-id": "00000000-0000-4000-8000-000000000079",
+        "client-request-id": "00000000-0000-4000-8000-000000000079"
+      }
+    }
+  }
+}

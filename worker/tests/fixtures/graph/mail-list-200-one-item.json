@@ -1,6 +1,6 @@
 {
-  "source": "hand-written: stand-in until the one-item state is recorded (W2.2): GET the restoretest inbox as the Worker lists it, one mail",
-  "request": "GET /v1.0/users/restoretest@RestoreProofLab.onmicrosoft.com/mailFolders/inbox/messages?$select=id,subject,from,receivedDateTime,internetMessageId&$top=100",
+  "source": "hand-written: stand-in until the one-item state is recorded (W2.2): GET the restoretest inbox as the Worker lists it, one mail, its body as text",
+  "request": "GET /v1.0/users/restoretest@RestoreProofLab.onmicrosoft.com/mailFolders/inbox/messages?$select=id,subject,from,receivedDateTime,internetMessageId,body&$top=100",
   "status": 200,
   "headers": {
     "Content-Type": "application/json; odata.metadata=minimal; odata.streaming=true; IEEE754Compatible=false; charset=utf-8",
@@ -8,7 +8,7 @@
     "client-request-id": "00000000-0000-4000-8000-000000000080"
   },
   "body": {
-    "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#users('restoretest%40RestoreProofLab.onmicrosoft.com')/mailFolders('inbox')/messages(id,subject,from,receivedDateTime,internetMessageId)",
+    "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#users('restoretest%40RestoreProofLab.onmicrosoft.com')/mailFolders('inbox')/messages(id,subject,from,receivedDateTime,internetMessageId,body)",
     "value": [
       {
         "@odata.etag": "W/\"CQAAABYAAABStandInChangeKey000000001\"",
@@ -21,6 +21,10 @@
             "name": "Alice",
             "address": "alice@RestoreProofLab.onmicrosoft.com"
           }
+        },
+        "body": {
+          "contentType": "text",
+          "content": "RestoreProof W2.2 stand-in\r\n"
         }
       }
     ]

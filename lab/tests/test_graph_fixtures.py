@@ -78,7 +78,6 @@ EXPECTED_FILES = {
     },
     "one-item": {
         "mail-list-200-one-item.json": 200,
-        "mail-body-200.json": 200,
         "restoretarget-children-200-one-item.json": 200,
         "restoretarget-content-302.json": 302,
         "onedrive-children-200-one-item.json": 200,
@@ -93,7 +92,7 @@ RT = tenant.RESTORE_TARGET_DRIVE_ID
 OD = tenant.ONEDRIVE_DRIVE_ID
 FOLDER = tenant.ONEDRIVE_TARGET_FOLDER_ID
 UPN = tenant.RESTORETEST_UPN
-MAIL_SELECT = "$select=id,subject,from,receivedDateTime,internetMessageId"
+MAIL_SELECT = "$select=id,subject,from,receivedDateTime,internetMessageId,body"
 CHILD_SELECT = "$select=id,name,size,file,folder&$top=200"
 TEMPAUTH_SENTINEL = "v1.eyJ0eXAiOiJKV1QiLCJhbGciOiJub25lIn0AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 CONTENT_LOCATION = (
@@ -293,18 +292,19 @@ class FakeCloud:
         query = {unquote(k): v[0] for k, v in parse_qs(urlsplit(req.url).query).items()}
         if path == f"/users/{tenant.RESTORETEST_UPN}/mailFolders/inbox/messages":
             top, skip = int(query.get("$top", "10")), int(query.get("$skip", "0"))
-            page: dict = {"@odata.context": "ctx", "value": self.inbox[skip : skip + top]}
+            value = self.inbox[skip : skip + top]
+            if "body" in query.get("$select", "").split(","):
+                body = {"contentType": self.body_content_type, "content": "hello\r\n"}
+                value = [dict(m, body=body) if isinstance(m, dict) else m for m in value]
+            page: dict = {"@odata.context": "ctx", "value": value}
             if skip + top < len(self.inbox):
+                # As Graph does: the request's $select again, encoded.
+                select = query.get("$select", "").replace(",", "%2c")
                 page["@odata.nextLink"] = (
                     f"{GRAPH}/users/{UPN}/mailFolders/inbox/messages"
-                    f"?%24select=id%2csubject&%24top={top}&%24skip={skip + top}"
+                    f"?%24select={select}&%24top={top}&%24skip={skip + top}"
                 )
             return json_response(200, page, {"request-id": "req-graph"})
-        if path.startswith(f"/users/{UPN}/messages/"):
-            if any(path.endswith("/" + m["id"]) for m in self.inbox):
-                body = {"contentType": self.body_content_type, "content": "hello\r\n"}
-                return json_response(200, {"@odata.context": "ctx", "id": "x", "body": body}, {"request-id": "req-graph"})
-            return graph_error(404, "ErrorItemNotFound", "The specified object was not found in the store.")
         if path == f"/drives/{RT}":
             return json_response(200, self.drive_reply, {"request-id": "req-graph"})
         if path == f"/drives/{RT}/root/children":
@@ -670,7 +670,9 @@ def test_one_item_state_with_no_item_writes_nothing(pfx, tmp_path, key_and_cert,
     lines: list[str] = []
     with pytest.raises(FixtureError) as info:
         record(pfx, tmp_path / "out", cloud, other_key=other_key, state="one-item", lines=lines)
-    assert str(info.value) == "mail-body-200.json: needs an item from mail-list-200-one-item.json, which had none"
+    assert str(info.value) == (
+        "restoretarget-content-302.json: needs an item from restoretarget-children-200-one-item.json, which had none"
+    )
     assert "UNEXPECTED (expected 1 item(s), got 0)" in lines[0]
     assert not (tmp_path / "out").exists()
 
@@ -680,7 +682,22 @@ def test_one_item_state_refuses_a_body_that_isnt_text(pfx, tmp_path, key_and_cer
     cloud.body_content_type = "html"
     code, lines = record(pfx, tmp_path / "out", cloud, other_key=other_key, state="one-item")
     assert code == 1
-    assert any(line.startswith("mail-body-200.json") and "UNEXPECTED (body.contentType is 'html', not text)" in line for line in lines)
+    assert any(
+        line.startswith("mail-list-200-one-item.json") and "UNEXPECTED (body.contentType is 'html', not text)" in line
+        for line in lines
+    ), lines
+
+
+# Review of W2.2: the listing carries each body, so the paged pages are checked too.
+def test_paged_state_refuses_a_body_that_isnt_text(pfx, tmp_path, key_and_cert, other_key):
+    cloud = a_cloud(key_and_cert, "paged")
+    cloud.body_content_type = "html"
+    code, lines = record(pfx, tmp_path / "out", cloud, other_key=other_key, state="paged")
+    assert code == 1
+    assert any(
+        line.startswith("mail-list-200-page1.json") and "UNEXPECTED (body.contentType is 'html', not text)" in line
+        for line in lines
+    ), lines
 
 
 def test_one_item_state_refuses_a_folder_where_a_file_should_be(pfx, tmp_path, key_and_cert, other_key):
@@ -705,11 +722,13 @@ def test_a_content_reply_without_location_is_unexpected(pfx, tmp_path, key_and_c
 @pytest.mark.parametrize("bad_id", ["../../users/alice", "a?b", "a b", "", 7])
 def test_an_id_that_cant_go_in_a_url_is_refused(pfx, tmp_path, key_and_cert, other_key, bad_id):
     cloud = a_cloud(key_and_cert, "one-item")
-    cloud.inbox[0]["id"] = bad_id
+    cloud.rt_children[0]["id"] = bad_id
     with pytest.raises(FixtureError) as info:
         record(pfx, tmp_path / "out", cloud, other_key=other_key, state="one-item")
-    assert str(info.value) == "mail-body-200.json: the ID from mail-list-200-one-item.json can't go in a URL"
-    assert len(graph_requests(cloud)) == 1
+    assert str(info.value) == (
+        "restoretarget-content-302.json: the ID from restoretarget-children-200-one-item.json can't go in a URL"
+    )
+    assert len(graph_requests(cloud)) == 2
 
 
 def test_paged_state_without_a_next_link_writes_nothing(pfx, tmp_path, key_and_cert, other_key):
@@ -818,7 +837,6 @@ def test_the_request_lines_of_the_w2_2_states():
         ),
         "drive-404-itemnotfound.json": "GET /v1.0/drives/<random drive ID>?$select=id,name,driveType,webUrl,sharePointIds",
         "mail-list-200-one-item.json": f"{mail}&$top=100",
-        "mail-body-200.json": f"GET /v1.0/users/{UPN}/messages/<message id>?$select=body",
         "restoretarget-children-200-one-item.json": f"GET /v1.0/drives/{RT}/root/children?{CHILD_SELECT}",
         "restoretarget-content-302.json": f"GET /v1.0/drives/{RT}/items/<item id>/content",
         "onedrive-children-200-one-item.json": f"GET /v1.0/drives/{OD}/items/{FOLDER}/children?{CHILD_SELECT}",
@@ -832,13 +850,14 @@ def test_the_dependent_requests_use_the_ids_and_link_from_the_replies(pfx, tmp_p
     cloud = a_cloud(key_and_cert, "one-item")
     record(pfx, tmp_path / "out", cloud, other_key=other_key, state="one-item")
     urls = [r.url for r in graph_requests(cloud)]
-    assert f"{GRAPH}/users/{UPN}/messages/{a_message(1)['id']}?$select=body" in urls
+    assert not any("/messages/" in url for url in urls)
     assert f"{GRAPH}/drives/{RT}/items/{a_file(1)['id']}/content" in urls
     assert f"{GRAPH}/drives/{OD}/items/{a_file(2)['id']}/content" in urls
     paged = a_cloud(key_and_cert, "paged")
     record(pfx, tmp_path / "out2", paged, other_key=other_key, state="paged")
     second = graph_requests(paged)[1]
-    assert second.url == f"{GRAPH}/users/{UPN}/mailFolders/inbox/messages?%24select=id%2csubject&%24top=1&%24skip=1"
+    select = MAIL_SELECT.removeprefix("$select=").replace(",", "%2c")
+    assert second.url == f"{GRAPH}/users/{UPN}/mailFolders/inbox/messages?%24select={select}&%24top=1&%24skip=1"
 
 
 def test_the_folder_and_drive_lines_print_the_facts_the_worker_needs(pfx, tmp_path, key_and_cert, other_key):

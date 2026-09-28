@@ -24,9 +24,12 @@
 #>
 [CmdletBinding()]
 param(
-    [switch]$Clear,
-    [string]$PfxPath = '',
-    [string]$CredentialTarget = ''
+    # Dot-sourced, these bind in the caller's scope, so their variables have names no caller
+    # uses: a caller's own $PfxPath or $Clear is neither taken over nor removed. The parameters
+    # keep their short names through the aliases.
+    [Alias('Clear')][switch]$RpWorkerEnvClear,
+    [Alias('PfxPath')][string]$RpWorkerEnvPfxPath = '',
+    [Alias('CredentialTarget')][string]$RpWorkerEnvCredentialTarget = ''
 )
 
 if ($MyInvocation.InvocationName -ne '.') {
@@ -36,7 +39,9 @@ if ($MyInvocation.InvocationName -ne '.') {
 }
 
 # A child scope: none of the script's own variables (the password above all) are left behind in
-# the dot-sourcing session. Only the two environment variables, which are process-wide, remain.
+# the dot-sourcing session. Only the two environment variables, which are process-wide, remain,
+# and the parameters' variables go in `finally`, on a failure too.
+try {
 & {
     param([bool]$Clear, [string]$PfxPath, [string]$CredentialTarget)
     $ErrorActionPreference = 'Stop'
@@ -57,6 +62,9 @@ if ($MyInvocation.InvocationName -ne '.') {
     if (-not (Test-Path -LiteralPath $PfxPath -PathType Leaf)) {
         throw "No certificate file at $PfxPath. Create it with $SetupScript (lab/README.md)."
     }
+    # A relative path, or ~, as PowerShell reads it: [IO.File] would resolve it against the
+    # process's directory, which Set-Location doesn't move.
+    $PfxPath = (Resolve-Path -LiteralPath $PfxPath).ProviderPath
 
     if (-not ('RpWorkerEnvCredential' -as [type])) {
         Add-Type -TypeDefinition @"
@@ -97,14 +105,20 @@ public static class RpWorkerEnvCredential {
             $bytes, $secret, [Security.Cryptography.X509Certificates.X509KeyStorageFlags]::EphemeralKeySet)
         $hasKey = $x509.HasPrivateKey
         $x509.Dispose()
-    } catch {
-        throw "$PfxPath can't be opened with the password in Credential Manager ('$CredentialTarget'). The file and the password must come from the same $SetupScript run."
+    } catch [Security.Cryptography.CryptographicException] {
+        # ERROR_INVALID_PASSWORD (0x80070056): a PFX, and the password doesn't open it. Anything
+        # else is the file's fault, not the password's.
+        if ($_.Exception.HResult -eq -2147024810) {
+            throw "$PfxPath can't be opened with the password in Credential Manager ('$CredentialTarget'). The file and the password must come from the same $SetupScript run."
+        }
+        throw "$PfxPath can't be read as a PFX ($($_.Exception.Message.Trim())). Re-create it with $SetupScript."
     }
     if (-not $hasKey) { throw "$PfxPath holds no private key. Re-create it with $SetupScript." }
 
     $env:RP_GRAPH_CERT_PFX_BASE64 = [Convert]::ToBase64String($bytes)
     $env:RP_GRAPH_CERT_PASSWORD = $secret
     Write-Host 'set RP_GRAPH_CERT_PFX_BASE64 and RP_GRAPH_CERT_PASSWORD for this session'
-} $Clear.IsPresent $PfxPath $CredentialTarget
-
-Remove-Variable Clear, PfxPath, CredentialTarget -ErrorAction SilentlyContinue
+} $RpWorkerEnvClear.IsPresent $RpWorkerEnvPfxPath $RpWorkerEnvCredentialTarget
+} finally {
+    Remove-Variable RpWorkerEnvClear, RpWorkerEnvPfxPath, RpWorkerEnvCredentialTarget -ErrorAction SilentlyContinue
+}

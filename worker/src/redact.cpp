@@ -397,10 +397,10 @@ std::optional<Replacement> match_jwt(std::string_view text, std::size_t pos) noe
 }
 
 // "Bearer <token>", the scheme name ending at `name_end`: one or more blanks,
-// then the token up to whitespace, a quote or ','. A token68 run followed by
-// '=' and then a quote or another token character is an auth-param
-// (WWW-Authenticate's `Bearer realm="", error="invalid_token"`), not a
-// token, and is left alone. Anything else after the blanks goes, even
+// then the token up to whitespace, a quote or ','. A name (letters, digits,
+// '_', '-') followed by one '=' and then a quote or a token character is an
+// auth-param (WWW-Authenticate's `Bearer realm="", error="invalid_token"`),
+// not a token, and is left alone. Anything else after the blanks goes, even
 // characters a token can't hold: over-redacting is preferred to leaking.
 std::optional<Replacement> match_bearer(std::string_view text, std::size_t name_end) noexcept
 {
@@ -416,7 +416,16 @@ std::optional<Replacement> match_bearer(std::string_view text, std::size_t name_
     while (to < text.size() && text[to] == '=') {
         ++to;
     }
-    if (to > equals && to < text.size() && (text[to] == '"' || is_token68(text[to]))) {
+    // An auth-param name is letters, digits, '_' and '-', and one '=' follows
+    // it; token68 padding is often "==", and a token may hold '/', '+', '.'
+    // or '~'. A plain token with a single '=' before a quote looks just like
+    // `name="` and is left alone with it.
+    bool name_like = equals > from;
+    for (std::size_t p = from; p < equals && name_like; ++p) {
+        name_like = is_alnum(text[p]) || text[p] == '_' || text[p] == '-';
+    }
+    if (name_like && to == equals + 1 && to < text.size() &&
+        (text[to] == '"' || is_token68(text[to]))) {
         return std::nullopt;
     }
     while (to < text.size() && !is_json_space(text[to]) && text[to] != '"' && text[to] != '\'' &&

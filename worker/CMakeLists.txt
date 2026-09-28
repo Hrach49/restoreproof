@@ -31,6 +31,7 @@ add_library(rpcore STATIC
     src/graph_client.cpp
     src/graph_download.cpp
     src/graph_errors.cpp
+    src/graph_targets.cpp
     src/http_client.cpp
     src/redact.cpp
     src/retry_policy.cpp
@@ -82,6 +83,7 @@ add_executable(rptests
     tests/graph_client_test.cpp
     tests/graph_download_test.cpp
     tests/graph_errors_test.cpp
+    tests/graph_targets_test.cpp
     tests/http_client_test.cpp
     tests/http_client_tls_test.cpp
     tests/redact_test.cpp

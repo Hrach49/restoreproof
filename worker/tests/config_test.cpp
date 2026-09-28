@@ -17,6 +17,7 @@
 #include <fstream>
 #include <limits>
 #include <string>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -35,9 +36,9 @@ json valid_doc()
         {"graph_tenant_id", "00000000-0000-0000-0000-000000000001"},
         {"graph_client_id", "00000000-0000-0000-0000-000000000002"},
         {"test_mailbox", "restoretest@example.onmicrosoft.com"},
-        {"test_site_id", "site-id"},
-        {"test_library_id", "library-id"},
-        {"test_onedrive_drive_id", "drive-id"},
+        {"test_site_id", "example.sharepoint.com,00000000-0000-4000-8000-000000000001,00000000-0000-4000-8000-000000000002"},
+        {"test_library_id", "b!library-id"},
+        {"test_onedrive_drive_id", "b!drive-id"},
         {"test_onedrive_folder_id", "folder-id"},
         {"poll_interval_s", 60},
         {"heartbeat_interval_s", 120},
@@ -388,6 +389,13 @@ TEST_CASE("parse_config rejects invalid values without echoing them", "[config]"
         "not a name";
     const std::string mailbox =
         "must be restoretest@<domain>: restores only ever go to the restoretest mailbox";
+    // Review of W2.2: the ID shapes are checked here, so `config check` catches them.
+    const std::string site_rule =
+        "must be a Graph site ID (\"<tenant>.sharepoint.com,<site GUID>,<web GUID>\")";
+    const std::string drive_rule =
+        "must be a Graph drive ID (\"b!\" then letters, digits, '-' and '_'), not a list ID";
+    const std::string item_rule = "must be a Graph item ID (letters, digits, '!', '-' and '_')";
+    const std::string g = "0a1b2c3d-0000-4000-8000-00000000abcd";
     const std::string absolute =
         "must be an absolute path, such as C:\\ProgramData\\RestoreProof\\veeam-ca.pem or "
         "\\\\server\\share\\veeam-ca.pem";
@@ -455,6 +463,28 @@ TEST_CASE("parse_config rejects invalid values without echoing them", "[config]"
         {"cloud_url", json("https://z\xC3\xBC" "rich.example.invalid"), url},
         {"cloud_url", json("https://\xC2\xA0" "cloud.example.invalid"), url},
         {"veeam_url", json("https://veeam example.invalid"), url},
+        {"test_library_id", json("x/children"), drive_rule},
+        {"test_library_id", json("b!a?b"), drive_rule},
+        {"test_library_id", json("b!a%2e"), drive_rule},
+        {"test_library_id", json("b!"), drive_rule},
+        {"test_library_id", json(g), drive_rule},
+        {"test_library_id", json("b!" + std::string(201, 'a')), drive_rule},
+        {"test_library_id", json("b!\xC3\xA9"), drive_rule},
+        {"test_onedrive_drive_id", json("a/b"), drive_rule},
+        {"test_onedrive_drive_id", json("b!a b"), drive_rule},
+        {"test_onedrive_folder_id", json("a/b"), item_rule},
+        {"test_onedrive_folder_id", json("a?b"), item_rule},
+        {"test_onedrive_folder_id", json(std::string(201, 'a')), item_rule},
+        {"test_site_id", json("host"), site_rule},
+        {"test_site_id", json("h,notaguid,alsonot"), site_rule},
+        {"test_site_id", json("evil.com," + g + "," + g), site_rule},
+        {"test_site_id", json("a.b.sharepoint.com," + g + "," + g), site_rule},
+        {"test_site_id", json(".sharepoint.com," + g + "," + g), site_rule},
+        {"test_site_id", json("t.sharepoint.com," + g), site_rule},
+        {"test_site_id", json("t.sharepoint.com," + g + "," + g + "," + g), site_rule},
+        {"test_site_id", json("t.sharepoint.com," + g + ",x"), site_rule},
+        {"test_site_id", json("t_x.sharepoint.com," + g + "," + g), site_rule},
+        {"test_site_id", json(std::string(64, 't') + ".sharepoint.com," + g + "," + g), site_rule},
         {"test_mailbox", json("restoretest"), mailbox},
         {"test_mailbox", json("@example.invalid"), mailbox},
         {"test_mailbox", json("restoretest@"), mailbox},
@@ -789,9 +819,9 @@ TEST_CASE("parse_config reads every key", "[config]")
     REQUIRE(config.graph_tenant_id == "00000000-0000-0000-0000-000000000001");
     REQUIRE(config.graph_client_id == "00000000-0000-0000-0000-000000000002");
     REQUIRE(config.test_mailbox == "restoretest@example.onmicrosoft.com");
-    REQUIRE(config.test_site_id == "site-id");
-    REQUIRE(config.test_library_id == "library-id");
-    REQUIRE(config.test_onedrive_drive_id == "drive-id");
+    REQUIRE(config.test_site_id == "example.sharepoint.com,00000000-0000-4000-8000-000000000001,00000000-0000-4000-8000-000000000002");
+    REQUIRE(config.test_library_id == "b!library-id");
+    REQUIRE(config.test_onedrive_drive_id == "b!drive-id");
     REQUIRE(config.test_onedrive_folder_id == "folder-id");
     REQUIRE(config.poll_interval_s == 60);
     REQUIRE(config.heartbeat_interval_s == 120);
@@ -1050,4 +1080,30 @@ TEST_CASE("config.example.json sets every key but veeam_ca_file and veeam_cert_s
     REQUIRE(doc.size() == 16);
     REQUIRE_FALSE(doc.contains("veeam_ca_file"));
     REQUIRE_FALSE(doc.contains("veeam_cert_sha256"));
+}
+
+TEST_CASE("parse_config takes Graph IDs of every allowed shape", "[config]")
+{
+    const std::string g = "0A1B2C3D-0000-4000-8000-00000000ABCD";
+    json doc = valid_doc();
+    doc["test_site_id"] = GENERATE_COPY(as<std::string>{}, "T-1.SharePoint.COM," + g + "," + g,
+                                        std::string(63, 't') + ".sharepoint.com," + g + "," + g);
+    doc["test_library_id"] = "b!" + std::string(200, 'a');
+    doc["test_onedrive_drive_id"] = "b!Az09-_";
+    doc["test_onedrive_folder_id"] = "a!b-c_" + std::string(194, 'd');
+
+    const rp::Config config = rp::parse_config(doc.dump());
+
+    CHECK(config.test_site_id == doc["test_site_id"].get<std::string>());
+}
+
+TEST_CASE("parse_graph_site_id splits a site ID, the host in lower case", "[config]")
+{
+    const std::optional<rp::GraphSiteId> site = rp::parse_graph_site_id(
+        "T-1.SharePoint.COM,0a1b2c3d-0000-4000-8000-00000000abcd,0a1b2c3d-0000-4000-8000-00000000abce");
+    REQUIRE(site);
+    CHECK(site->host == "t-1.sharepoint.com");
+    CHECK(site->site == "0a1b2c3d-0000-4000-8000-00000000abcd");
+    CHECK(site->web == "0a1b2c3d-0000-4000-8000-00000000abce");
+    CHECK_FALSE(rp::parse_graph_site_id("host"));
 }

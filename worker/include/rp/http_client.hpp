@@ -10,6 +10,7 @@
 #include <spdlog/logger.h>
 
 #include <chrono>
+#include <cstdint>
 #include <functional>
 #include <map>
 #include <memory>
@@ -77,7 +78,18 @@ struct HttpRequest {
     // (VeeamClient) gets every failure after one attempt, and the HttpError
     // message carries no attempt count.
     int max_attempts = kMaxHttpAttempts;
+    // The most body bytes to read of a 2xx reply. A longer one is cut after
+    // max_body_bytes + 1 bytes and returned as it is (status and headers
+    // intact), never retried, so the caller's own length check sees it is too
+    // long. Any other status's body (an error page) is held to
+    // kMaxErrorBodyBytes instead, cut after one byte more, and handled as its
+    // status says: a 5xx is retried as without a cap. nullopt: no limit.
+    std::optional<std::uint64_t> max_body_bytes;
 };
+
+// With max_body_bytes set, the most bytes kept of a body whose status isn't
+// 2xx: an error page, whatever the size of the file asked for.
+inline constexpr std::uint64_t kMaxErrorBodyBytes = 64 * 1024;
 
 // Per-call extras for the IHttpClient helpers.
 struct RequestOptions {

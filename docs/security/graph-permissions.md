@@ -98,9 +98,19 @@ generic, so a customer never sees the lab's names:
 |---|---|---|
 | `kMailReadGrant` | `Exchange RBAC "Application Mail.Read" in a management scope covering the test mailbox` | #3 |
 | `kSitesReadGrant` | `Sites.Selected read on the test site` | #1 |
+| `kOneDriveReadGrant` | `Files.SelectedOperations.Selected read on the test OneDrive folder` | #2 |
 
-The OneDrive grant (#2) gets its text with W2.2, which reads the folder. Whatever the grant, a
-refusal makes the run's status `error`, never `fail` (`docs/verification.md`).
+The OneDrive grant came with W2.2, which reads the folder; a test checks that no grant text
+names a lab value. Whatever the grant, a refusal makes the run's status `error`, never `fail` (`docs/verification.md`).
+
+How the OneDrive grant's (#2) refusal is verified differs from the other two: it can't be
+provoked read-only. SharePoint answers 404 `itemNotFound`, not 403, for an item the app may not
+read (the canary-folder probes below), so live, a missing or dropped grant shows up as a
+`NotFoundError` on the folder, and `rp::graph::TargetReader` adds to its message that the
+Worker app may lack `Files.SelectedOperations.Selected read on the test OneDrive folder`. The
+`PermissionError` path for #2 is tested only from the hand-written fixture
+`worker/tests/fixtures/graph/onedrive-folder-403-accessdenied.json`. Both give status `error`
+(`docs/decisions.md` 2026-09-28, W2.2).
 
 ## What is deliberately not granted
 
@@ -191,8 +201,8 @@ A sentinel test greps every output for the PFX password, the token and the priva
   Even a global admin can't manage another user's OneDrive without that. `lab/README.md` says
   how to set it, and how to remove it afterwards.
 - **Deleting and re-creating `/RestoreTarget`** gives it a new item ID and drops the grant.
-  The Worker then gets 403, which it must report as `error`, not `fail`
-  (`docs/verification.md`). Run the script again after updating the ID.
+  The Worker then gets 404 on the old ID (SharePoint's mask; a 403 where Graph says so),
+  which it reports as `error`, not `fail` (`docs/verification.md`). Run the script again after updating the ID.
 
 ## Open items
 

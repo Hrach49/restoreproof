@@ -12,7 +12,7 @@ import json
 import re
 import uuid
 from pathlib import Path
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 import pytest
 from cryptography import x509
@@ -24,9 +24,11 @@ from cryptography.x509.oid import NameOID
 
 from seeder import REPO_DIR, cli, graph_fixtures, tenant
 from seeder.auth import AuthError
+from seeder.graph import MAIL_PREFER
 from seeder.graph_fixtures import (
     DEFAULT_OUT_DIR,
     FAKE_ACCESS_TOKEN,
+    STATES,
     FixtureError,
     client_assertion,
     fixture_text,
@@ -46,7 +48,7 @@ NOW = dt.datetime(2026, 9, 28, 12, 0, 0, tzinfo=dt.timezone.utc).timestamp()
 LOGIN = "https://login.microsoftonline.com"
 GRAPH = "https://graph.microsoft.com/v1.0"
 
-EXPECTED_FILES = {
+AUTH_FILES = {
     "token-200.json": 200,
     "token-bad-signature-401.json": 401,
     "token-unknown-thumbprint-401.json": 401,
@@ -62,6 +64,62 @@ EXPECTED_FILES = {
     "api-no-token-401.json": 401,
     "messages-404-unknown-user.json": 404,
 }
+# Per state, in the order recorded.
+EXPECTED_FILES = {
+    "auth": AUTH_FILES,
+    "empty": {
+        "mail-list-200-empty.json": 200,
+        "restoretarget-drive-200.json": 200,
+        "restoretarget-children-200-empty.json": 200,
+        "onedrive-folder-200.json": 200,
+        "onedrive-children-200-empty.json": 200,
+        "onedrive-folder-404-itemnotfound.json": 404,
+        "drive-404-itemnotfound.json": 404,
+    },
+    "one-item": {
+        "mail-list-200-one-item.json": 200,
+        "restoretarget-children-200-one-item.json": 200,
+        "restoretarget-content-302.json": 302,
+        "onedrive-children-200-one-item.json": 200,
+        "onedrive-content-302.json": 302,
+    },
+    "paged": {
+        "mail-list-200-page1.json": 200,
+        "mail-list-200-page2.json": 200,
+        "mail-list-200-page3.json": 200,
+    },
+}
+RT = tenant.RESTORE_TARGET_DRIVE_ID
+OD = tenant.ONEDRIVE_DRIVE_ID
+FOLDER = tenant.ONEDRIVE_TARGET_FOLDER_ID
+UPN = tenant.RESTORETEST_UPN
+MAIL_SELECT = "$select=id,subject,from,receivedDateTime,internetMessageId,body"
+CHILD_SELECT = "$select=id,name,size,file,folder&$top=200"
+TEMPAUTH_SENTINEL = "v1.eyJ0eXAiOiJKV1QiLCJhbGciOiJub25lIn0AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+CONTENT_LOCATION = (
+    "https://restoreprooflab.sharepoint.com/sites/RestoreTest/_layouts/15/download.aspx"
+    f"?UniqueId=u&tempauth={TEMPAUTH_SENTINEL}&Extra=secret&ApiVersion=2.0"
+)
+
+
+def a_message(n: int) -> dict:
+    return {
+        "id": f"AAMkAG{n}xyz_-A=",
+        "subject": f"subject {n}",
+        "from": {"emailAddress": {"name": "a", "address": "a@x.example"}},
+        "receivedDateTime": "2026-09-28T10:00:00Z",
+        "internetMessageId": f"<m{n}@x.example>",
+    }
+
+
+def a_file(n: int) -> dict:
+    return {
+        "@microsoft.graph.downloadUrl": CONTENT_LOCATION,
+        "id": f"01FILE{n}ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+        "name": f"file{n}.txt",
+        "size": 12,
+        "file": {"mimeType": "text/plain"},
+    }
 
 
 # ---- fixtures ------------------------------------------------------------------------------
@@ -141,6 +199,25 @@ class FakeCloud:
         self.x5t256 = b64url(cert.fingerprint(hashes.SHA256()))
         self.token = token or make_app_token(CLIENT_ID, signature=TOKEN_SENTINEL)
         self.overrides = overrides or {}  # path (no query) -> response, for Graph
+        self.inbox: list[dict] = []  # the restoretest inbox, as Graph lists it
+        self.rt_children: list[dict] = []  # the RestoreTarget library's root
+        self.od_children: list[dict] = []  # alice's /RestoreTarget
+        self.drive_reply = {
+            "@odata.context": "ctx",
+            "id": RT,
+            "driveType": "documentLibrary",
+            "name": "RestoreTarget",
+            "webUrl": "https://restoreprooflab.sharepoint.com/sites/RestoreTest/RestoreTarget",
+            "sharePointIds": {"listId": tenant.RESTORE_TARGET_LIST_ID, "siteId": "s", "webId": "w"},
+        }
+        self.folder_reply = {
+            "@odata.context": "ctx",
+            "id": FOLDER,
+            "name": "RestoreTarget",
+            "parentReference": {"driveType": "business", "driveId": OD, "id": "01ROOT", "path": "/drive/root:"},
+            "folder": {"childCount": 0},
+        }
+        self.body_content_type = "text"
         self.assertions: list[tuple[dict, dict]] = []
         self.problems: list[str] = []  # never assert on the handler's thread; collect instead
         self.transport = FakeTransport(handler=self.handle)
@@ -213,8 +290,35 @@ class FakeCloud:
             return graph_error(401, "InvalidAuthenticationToken", "NoAppIdInToken", {"www-authenticate": 'Bearer realm=""'})
         if path in self.overrides:
             return self.overrides[path]
+        query = {unquote(k): v[0] for k, v in parse_qs(urlsplit(req.url).query).items()}
         if path == f"/users/{tenant.RESTORETEST_UPN}/mailFolders/inbox/messages":
-            return json_response(200, {"@odata.context": "ctx", "value": []}, {"request-id": "req-graph"})
+            top, skip = int(query.get("$top", "10")), int(query.get("$skip", "0"))
+            value = self.inbox[skip : skip + top]
+            if "body" in query.get("$select", "").split(","):
+                body = {"contentType": self.body_content_type, "content": "hello\r\n"}
+                value = [dict(m, body=body) if isinstance(m, dict) else m for m in value]
+            page: dict = {"@odata.context": "ctx", "value": value}
+            if len(value) == top:
+                # As Exchange does: a full page has a link, even the last one (the next is
+                # then empty); the request's $select again, encoded.
+                select = query.get("$select", "").replace(",", "%2c")
+                page["@odata.nextLink"] = (
+                    f"{GRAPH}/users/{UPN}/mailFolders/inbox/messages"
+                    f"?%24select={select}&%24top={top}&%24skip={skip + top}"
+                )
+            return json_response(200, page, {"request-id": "req-graph"})
+        if path == f"/drives/{RT}":
+            return json_response(200, self.drive_reply, {"request-id": "req-graph"})
+        if path == f"/drives/{RT}/root/children":
+            return json_response(200, {"@odata.context": "ctx", "value": self.rt_children}, {"request-id": "req-graph"})
+        if path == f"/drives/{OD}/items/{FOLDER}":
+            return json_response(200, self.folder_reply, {"request-id": "req-graph"})
+        if path == f"/drives/{OD}/items/{FOLDER}/children":
+            return json_response(200, {"@odata.context": "ctx", "value": self.od_children}, {"request-id": "req-graph"})
+        if re.fullmatch(r"/drives/[^/]+/items/[^/]+/content", path):
+            return HttpResponse(302, b"", {"location": CONTENT_LOCATION, "request-id": "req-graph"})
+        if re.fullmatch(r"/drives/[^/]+(/items/[^/]+)?", path):
+            return graph_error(404, "itemNotFound", "The resource could not be found.")
         if path == f"/users/{tenant.ALICE_UPN}/mailFolders/inbox/messages":
             return graph_error(403, "ErrorAccessDenied", "Access is denied. Check credentials and try again.")
         if path == f"/sites/{tenant.SHAREPOINT_HOST}":
@@ -238,8 +342,8 @@ def password_store(value: str | None = PASSWORD_SENTINEL):
     return read
 
 
-def record(pfx_path, out_dir, cloud, *, other_key, read_password=None, transport=None):
-    lines: list[str] = []
+def record(pfx_path, out_dir, cloud, *, other_key, read_password=None, transport=None, state="auth", lines=None):
+    lines = [] if lines is None else lines
     code = run_record(
         client_id=CLIENT_ID,
         tenant_id=tenant.TENANT_ID,
@@ -250,6 +354,7 @@ def record(pfx_path, out_dir, cloud, *, other_key, read_password=None, transport
         out=lines.append,
         clock=lambda: NOW,
         other_key=other_key,
+        state=state,
     )
     return code, lines
 
@@ -366,6 +471,501 @@ def test_a_transport_error_propagates_and_nothing_is_written(pfx, tmp_path, key_
     assert not (tmp_path / "out").exists()
 
 
+# ---- download links (W2.2) -----------------------------------------------------------------
+
+FAKE_TEMPAUTH = "v1.eyJ0eXAiOiJKV1QiLCJhbGciOiJub25lIn0AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+DOWNLOAD_LOCATION = (
+    "https://restoreprooflab.sharepoint.com/sites/RestoreTest/_layouts/15/download.aspx"
+    f"?UniqueId=u&tempauth={FAKE_TEMPAUTH}&Extra=secret&ApiVersion=2.0"
+)
+
+
+def test_scrub_keeps_only_the_allowed_query_values_of_a_location():
+    reply = HttpResponse(302, b"", {"location": DOWNLOAD_LOCATION + "&translate=false&TEMPAUTH%3D=x&bare"})
+    scrubbed = graph_fixtures._scrubbed(reply)
+    assert scrubbed.headers["location"] == (
+        "https://restoreprooflab.sharepoint.com/sites/RestoreTest/_layouts/15/download.aspx"
+        "?UniqueId=u&tempauth=SCRUBBED&Extra=SCRUBBED&ApiVersion=2.0&translate=false&TEMPAUTH%3D=SCRUBBED&bare=SCRUBBED"
+    )
+    assert scrubbed.status == 302
+
+
+def test_scrub_drops_a_fragment_of_a_location():
+    reply = HttpResponse(302, b"", {"location": "https://t.sharepoint.com/x?UniqueId=u#tempauth-ish"})
+    assert graph_fixtures._scrubbed(reply).headers["location"] == "https://t.sharepoint.com/x?UniqueId=u"
+
+
+def test_scrub_drops_download_urls_and_masks_tempauth_in_body_strings():
+    body = {
+        "value": [
+            {
+                "id": "1",
+                "name": "a.txt",
+                "@microsoft.graph.downloadUrl": DOWNLOAD_LOCATION,
+                "nested": {"@microsoft.graph.downloadUrl": "x", "note": f"see ?tempauth={FAKE_TEMPAUTH}&b=1"},
+            }
+        ],
+        "other": f"TempAuth%3D{FAKE_TEMPAUTH} end",
+    }
+    scrubbed = graph_fixtures._scrubbed(json_response(200, body))
+    assert scrubbed.json() == {
+        "value": [{"id": "1", "name": "a.txt", "nested": {"note": "see ?tempauth=SCRUBBED&b=1"}}],
+        "other": "TempAuth%3DSCRUBBED end",
+    }
+
+
+def test_scrub_leaves_a_reply_without_links_as_it_was():
+    reply = json_response(200, {"value": [{"id": "1", "size": 3}]}, {"request-id": "r"})
+    assert graph_fixtures._scrubbed(reply) == reply
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        pytest.param(f'"Location": "{DOWNLOAD_LOCATION}"', id="header"),
+        pytest.param('{"note": "download.aspx?UniqueId=u&tempauth=abc123"}', id="json"),
+        pytest.param(f"tempauth={FAKE_TEMPAUTH}", id="v1.eyJ"),
+        pytest.param("x?TEMPAUTH%3Dabc", id="encoded"),
+        pytest.param('{"tempauth": "abc"}', id="json key"),
+    ],
+)
+def test_check_safe_refuses_an_unscrubbed_tempauth(text):
+    with pytest.raises(FixtureError) as info:
+        graph_fixtures.check_safe("f.json", text, secrets=[])
+    assert str(info.value) == "f.json: refused to write it: it holds a tempauth download credential"
+
+
+@pytest.mark.parametrize(
+    "query",
+    ["UniqueId=u&Extra=secret", "sig=abc&ApiVersion=2.0", "UniqueId=u&token"],
+)
+def test_check_safe_refuses_an_unknown_download_query_value(query):
+    text = f'"Location": "https://t.sharepoint.com/_layouts/15/download.aspx?{query}"'
+    with pytest.raises(FixtureError) as info:
+        graph_fixtures.check_safe("f.json", text, secrets=[])
+    assert str(info.value) == "f.json: refused to write it: a download URL holds an unknown query value"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "https://restoreprooflab.sharepoint.com/sites/RestoreTest/_layouts/15/download.aspx"
+        "?UniqueId=SCRUBBED&Translate=false&tempauth=SCRUBBED&ApiVersion=2.0",
+        '{"Location": "https://t-my.sharepoint.com/_layouts/15/download.aspx?uniqueid=u&tempauth=SCRUBBED"}',
+        '{"tempauth": "SCRUBBED"}',
+    ],
+)
+def test_check_safe_accepts_a_scrubbed_download_link(text):
+    graph_fixtures.check_safe("f.json", text, secrets=[])
+
+
+# Review of W2.2: a 302 may repeat its Location in an HTML "Object moved" body, its
+# '&' written "&amp;". That link must be scrubbed as the header is, or check_safe
+# refuses the reply and the one-item state can never be recorded.
+def html_moved(location: str) -> bytes:
+    href = location.replace("&", "&amp;")
+    return f'<html><head><title>Object moved</title></head><body><h2>Object moved to <a href="{href}">here</a>.</h2></body></html>'.encode()
+
+
+def test_scrub_rewrites_a_download_link_in_an_html_body():
+    reply = HttpResponse(302, html_moved(DOWNLOAD_LOCATION + "&Translate=false"), {"location": DOWNLOAD_LOCATION})
+    scrubbed = graph_fixtures._scrubbed(reply)
+    text = scrubbed.body.decode()
+    assert "?UniqueId=u&amp;tempauth=SCRUBBED&amp;Extra=SCRUBBED&amp;ApiVersion=2.0&amp;Translate=false" in text
+    assert FAKE_TEMPAUTH not in text and "secret" not in text
+    graph_fixtures.check_safe("f.json", fixture_text("live x: y", "GET /v1.0/z", scrubbed), secrets=[])
+
+
+def test_scrub_rewrites_a_download_link_in_a_json_string():
+    reply = json_response(200, {"note": f"see {DOWNLOAD_LOCATION} now"})
+    assert graph_fixtures._scrubbed(reply).json() == {
+        "note": "see https://restoreprooflab.sharepoint.com/sites/RestoreTest/_layouts/15/download.aspx"
+        "?UniqueId=u&tempauth=SCRUBBED&Extra=SCRUBBED&ApiVersion=2.0 now"
+    }
+
+
+@pytest.mark.parametrize("query", ["UniqueId=u&amp;Extra=secret", "sig=abc&amp;ApiVersion=2.0"])
+def test_check_safe_refuses_an_unknown_value_after_an_html_ampersand(query):
+    text = f'"body": "<a href=\\"https://t.sharepoint.com/_layouts/15/download.aspx?{query}\\">"'
+    with pytest.raises(FixtureError) as info:
+        graph_fixtures.check_safe("f.json", text, secrets=[])
+    assert str(info.value) == "f.json: refused to write it: a download URL holds an unknown query value"
+
+
+def test_one_item_state_records_a_302_whose_body_repeats_the_link(pfx, tmp_path, key_and_cert, other_key):
+    cloud = a_cloud(key_and_cert, "one-item")
+    cloud.overrides[f"/drives/{RT}/items/{a_file(1)['id']}/content"] = HttpResponse(
+        302, html_moved(CONTENT_LOCATION), {"location": CONTENT_LOCATION, "content-type": "text/html", "request-id": "r"}
+    )
+    code, lines = record(pfx, tmp_path / "out", cloud, other_key=other_key, state="one-item")
+    assert code == 0, lines
+    rec = written(tmp_path / "out")["restoretarget-content-302.json"]
+    assert isinstance(rec["body"], str) and "tempauth=SCRUBBED&amp;Extra=SCRUBBED" in rec["body"]
+    assert TEMPAUTH_SENTINEL not in json.dumps(rec) and "secret" not in json.dumps(rec)
+
+
+def test_a_scrubbed_location_passes_check_safe():
+    text = fixture_text("live x: y", "GET /v1.0/z", graph_fixtures._scrubbed(HttpResponse(302, b"", {"location": DOWNLOAD_LOCATION})))
+    graph_fixtures.check_safe("f.json", text, secrets=[])
+    assert FAKE_TEMPAUTH not in text and "secret" not in text
+
+
+# ---- the restore-target states (W2.2) ------------------------------------------------------
+
+
+def a_cloud(key_and_cert, state: str) -> "FakeCloud":
+    """A fake tenant whose restore targets are in `state`."""
+    cloud = FakeCloud(key_and_cert[1])
+    if state in ("one-item", "paged"):
+        cloud.inbox = [a_message(1)] if state == "one-item" else [a_message(1), a_message(2)]
+        cloud.rt_children = [a_file(1)]
+        cloud.od_children = [a_file(2)]
+    return cloud
+
+
+def graph_requests(cloud: "FakeCloud") -> list[RecordedRequest]:
+    return [r for r in cloud.requests if r.url.startswith(GRAPH)]
+
+
+def test_plan_refuses_an_unknown_state():
+    with pytest.raises(ValueError, match="unknown state 'full'"):
+        plan(tenant.TENANT_ID, "full")
+
+
+def test_auth_state_is_unchanged():
+    assert STATES == ("auth", "empty", "one-item", "paged")
+    assert plan(tenant.TENANT_ID) == plan(tenant.TENANT_ID, "auth")
+    assert [e.file_name for e in plan(tenant.TENANT_ID)] == list(AUTH_FILES)
+    assert all(e.state == "auth" and e.headers == () and e.follow_redirects for e in plan(tenant.TENANT_ID))
+
+
+def test_every_w2_2_entry_names_its_state():
+    for state in STATES:
+        assert {e.state for e in plan(tenant.TENANT_ID, state)} == {state}
+
+
+def test_empty_state_with_an_item_writes_nothing(pfx, tmp_path, key_and_cert, other_key):
+    cloud = a_cloud(key_and_cert, "empty")
+    cloud.inbox = [a_message(1)]
+    code, lines = record(pfx, tmp_path / "out", cloud, other_key=other_key, state="empty")
+    assert code == 1
+    assert not (tmp_path / "out").exists()
+    assert re.fullmatch(r"mail-list-200-empty\.json +200  -  UNEXPECTED \(expected 0 item\(s\), got 1\)", lines[0])
+    assert lines[-1] == "nothing written: 1 reply was not as expected"
+
+
+@pytest.mark.parametrize(
+    "edit, problem",
+    [
+        (lambda c: c.drive_reply.update(name="RestoreTest"), "restoretarget-drive-200.json"),
+        (lambda c: c.drive_reply.update(webUrl="https://t.sharepoint.com/sites/RestoreTest/RestoreTest"), "restoretarget-drive-200.json"),
+        (lambda c: c.drive_reply.pop("webUrl"), "restoretarget-drive-200.json"),
+        (lambda c: c.drive_reply.pop("sharePointIds"), "restoretarget-drive-200.json"),
+        (lambda c: c.drive_reply["sharePointIds"].pop("webId"), "restoretarget-drive-200.json"),
+        (lambda c: c.folder_reply.update(name="RestoreTest"), "onedrive-folder-200.json"),
+        (lambda c: c.folder_reply.pop("folder"), "onedrive-folder-200.json"),
+        (lambda c: c.folder_reply["parentReference"].update(driveId="b!other"), "onedrive-folder-200.json"),
+        (lambda c: c.folder_reply.pop("parentReference"), "onedrive-folder-200.json"),
+        (lambda c: c.rt_children.append(a_file(1)), "restoretarget-children-200-empty.json"),
+        (lambda c: c.od_children.append(a_file(1)), "onedrive-children-200-empty.json"),
+    ],
+    ids=[
+        "drive name",
+        "drive url",
+        "drive no url",
+        "drive sharePointIds",
+        "drive webId",
+        "folder name",
+        "folder facet",
+        "folder drive",
+        "folder parent",
+        "library item",
+        "folder item",
+    ],
+)
+def test_empty_state_refuses_a_target_that_isnt_as_expected(pfx, tmp_path, key_and_cert, other_key, edit, problem):
+    cloud = a_cloud(key_and_cert, "empty")
+    edit(cloud)
+    code, lines = record(pfx, tmp_path / "out", cloud, other_key=other_key, state="empty")
+    assert code == 1
+    assert not (tmp_path / "out").exists()
+    bad = [line for line in lines if "UNEXPECTED" in line]
+    assert len(bad) == 1 and bad[0].startswith(problem), lines
+
+
+def test_a_not_found_case_with_another_error_code_is_unexpected(pfx, tmp_path, key_and_cert, other_key):
+    cloud = a_cloud(key_and_cert, "empty")
+    real = cloud.graph
+
+    def graph(req):  # the random drive ID answered with another code
+        path = urlsplit(req.url).path.removeprefix("/v1.0")
+        if re.fullmatch(r"/drives/[^/]+", path) and path != f"/drives/{RT}":
+            return graph_error(404, "ErrorItemNotFound", "gone")
+        return real(req)
+
+    cloud.graph = graph
+    code, lines = record(pfx, tmp_path / "out", cloud, other_key=other_key, state="empty")
+    assert code == 1
+    assert any(
+        line.startswith("drive-404-itemnotfound.json") and "UNEXPECTED (error code 'ErrorItemNotFound', not 'itemNotFound')" in line
+        for line in lines
+    ), lines
+
+
+def test_one_item_state_with_no_item_writes_nothing(pfx, tmp_path, key_and_cert, other_key):
+    cloud = a_cloud(key_and_cert, "empty")
+    lines: list[str] = []
+    with pytest.raises(FixtureError) as info:
+        record(pfx, tmp_path / "out", cloud, other_key=other_key, state="one-item", lines=lines)
+    assert str(info.value) == (
+        "restoretarget-content-302.json: needs an item from restoretarget-children-200-one-item.json, which had none"
+    )
+    assert "UNEXPECTED (expected 1 item(s), got 0)" in lines[0]
+    assert not (tmp_path / "out").exists()
+
+
+def test_one_item_state_refuses_a_body_that_isnt_text(pfx, tmp_path, key_and_cert, other_key):
+    cloud = a_cloud(key_and_cert, "one-item")
+    cloud.body_content_type = "html"
+    code, lines = record(pfx, tmp_path / "out", cloud, other_key=other_key, state="one-item")
+    assert code == 1
+    assert any(
+        line.startswith("mail-list-200-one-item.json") and "UNEXPECTED (body.contentType is 'html', not text)" in line
+        for line in lines
+    ), lines
+
+
+# Review of W2.2: the listing carries each body, so the paged pages are checked too.
+def test_paged_state_refuses_a_body_that_isnt_text(pfx, tmp_path, key_and_cert, other_key):
+    cloud = a_cloud(key_and_cert, "paged")
+    cloud.body_content_type = "html"
+    code, lines = record(pfx, tmp_path / "out", cloud, other_key=other_key, state="paged")
+    assert code == 1
+    assert any(
+        line.startswith("mail-list-200-page1.json") and "UNEXPECTED (body.contentType is 'html', not text)" in line
+        for line in lines
+    ), lines
+
+
+def test_one_item_state_refuses_a_folder_where_a_file_should_be(pfx, tmp_path, key_and_cert, other_key):
+    cloud = a_cloud(key_and_cert, "one-item")
+    cloud.rt_children = [{"id": "01FOLDER", "name": "f", "size": 0, "folder": {"childCount": 0}}]
+    code, lines = record(pfx, tmp_path / "out", cloud, other_key=other_key, state="one-item")
+    assert code == 1
+    assert any(
+        line.startswith("restoretarget-children-200-one-item.json") and "UNEXPECTED (the item is not a file)" in line
+        for line in lines
+    )
+
+
+def test_a_content_reply_without_location_is_unexpected(pfx, tmp_path, key_and_cert, other_key):
+    cloud = a_cloud(key_and_cert, "one-item")
+    cloud.overrides[f"/drives/{RT}/items/{a_file(1)['id']}/content"] = HttpResponse(302, b"", {"request-id": "r"})
+    code, lines = record(pfx, tmp_path / "out", cloud, other_key=other_key, state="one-item")
+    assert code == 1
+    assert any(line.startswith("restoretarget-content-302.json") and "UNEXPECTED (no Location header)" in line for line in lines)
+
+
+@pytest.mark.parametrize("bad_id", ["../../users/alice", "a?b", "a b", "", 7])
+def test_an_id_that_cant_go_in_a_url_is_refused(pfx, tmp_path, key_and_cert, other_key, bad_id):
+    cloud = a_cloud(key_and_cert, "one-item")
+    cloud.rt_children[0]["id"] = bad_id
+    with pytest.raises(FixtureError) as info:
+        record(pfx, tmp_path / "out", cloud, other_key=other_key, state="one-item")
+    assert str(info.value) == (
+        "restoretarget-content-302.json: the ID from restoretarget-children-200-one-item.json can't go in a URL"
+    )
+    assert len(graph_requests(cloud)) == 2
+
+
+def test_paged_state_without_a_next_link_writes_nothing(pfx, tmp_path, key_and_cert, other_key):
+    cloud = a_cloud(key_and_cert, "empty")  # no mail: page 1 isn't full, so no link
+    lines: list[str] = []
+    with pytest.raises(FixtureError) as info:
+        record(pfx, tmp_path / "out", cloud, other_key=other_key, state="paged", lines=lines)
+    assert str(info.value) == "mail-list-200-page2.json: needs a nextLink from mail-list-200-page1.json, which had none"
+    assert "UNEXPECTED (expected 1 item(s), got 0)" in lines[0]
+    assert not (tmp_path / "out").exists()
+
+
+@pytest.mark.parametrize(
+    "link",
+    [
+        "https://evil.example/v1.0/users/x/messages?$skip=1",
+        "https://graph.microsoft.com/beta/users/x/messages?$skip=1",
+        "http://graph.microsoft.com/v1.0/users/x/messages?$skip=1",
+        "https://graph.microsoft.com/v1.0.evil.example/x",
+    ],
+)
+def test_a_next_link_off_graph_v1_is_refused(pfx, tmp_path, key_and_cert, other_key, link):
+    cloud = a_cloud(key_and_cert, "paged")
+    page = {"value": [a_message(1)], "@odata.nextLink": link}
+    cloud.overrides[f"/users/{UPN}/mailFolders/inbox/messages"] = json_response(200, page)
+    with pytest.raises(FixtureError) as info:
+        record(pfx, tmp_path / "out", cloud, other_key=other_key, state="paged")
+    assert str(info.value) == "refused to send a request that is not on https://graph.microsoft.com/v1.0/"
+    assert len(graph_requests(cloud)) == 1
+    assert all(r.url.startswith((GRAPH + "/", LOGIN + "/")) for r in cloud.requests)
+    assert not (tmp_path / "out").exists()
+
+
+def test_get_refuses_an_authorization_in_extra_headers(key_and_cert, other_key):
+    transport = FakeTransport([])
+    recorder = graph_fixtures._Recorder(transport, CLIENT_ID, tenant.TENANT_ID, key_and_cert[0], "x5t", int(NOW), other_key)
+    for name in ("Authorization", "authorization"):
+        with pytest.raises(ValueError, match="Authorization"):
+            recorder._get("/users", headers=((name, "Bearer x"),))
+    assert transport.requests == []
+
+
+def test_content_is_requested_without_following_redirects(pfx, tmp_path, key_and_cert, other_key):
+    cloud = a_cloud(key_and_cert, "one-item")
+    code, _ = record(pfx, tmp_path / "out", cloud, other_key=other_key, state="one-item")
+    assert code == 0, cloud.problems
+    for req in graph_requests(cloud):
+        assert req.follow_redirects is (not req.url.endswith("/content")), req.url
+    assert sum(req.url.endswith("/content") for req in cloud.requests) == 2
+    assert not any("sharepoint.com" in req.url for req in cloud.requests)
+
+
+@pytest.mark.parametrize("state", ["empty", "one-item", "paged"])
+def test_prefer_is_sent_on_mail_requests_only(pfx, tmp_path, key_and_cert, other_key, state):
+    cloud = a_cloud(key_and_cert, state)
+    code, _ = record(pfx, tmp_path / "out", cloud, other_key=other_key, state=state)
+    assert code == 0, cloud.problems
+    for req in graph_requests(cloud):
+        is_mail = f"/users/{UPN}/" in req.url
+        assert req.headers.get("Prefer") == (MAIL_PREFER if is_mail else None), req.url
+        assert req.headers["Authorization"] == f"Bearer {cloud.token}"
+
+
+def test_the_not_found_cases_use_random_ids_of_the_right_shape(pfx, tmp_path, key_and_cert, other_key):
+    cloud = a_cloud(key_and_cert, "empty")
+    record(pfx, tmp_path / "out", cloud, other_key=other_key, state="empty")
+    paths = [urlsplit(r.url).path for r in graph_requests(cloud)]
+    folder = [p for p in paths if p.startswith(f"/v1.0/drives/{OD}/items/") and FOLDER not in p]
+    assert len(folder) == 1 and re.fullmatch(r"/v1\.0/drives/[^/]+/items/01[A-Z2-7]{32}", folder[0])
+    other = [p.removeprefix("/v1.0/drives/") for p in paths if re.fullmatch(r"/v1\.0/drives/[^/]+", p) and p != f"/v1.0/drives/{RT}"]
+    assert len(other) == 1 and other[0].startswith("b!") and other[0] != RT
+    raw, rt_raw = unb64url(other[0][2:]), unb64url(RT[2:])
+    assert len(raw) == len(rt_raw) and raw[:-16] == rt_raw[:-16] and raw[-16:] != rt_raw[-16:]
+
+
+@pytest.mark.parametrize("state", STATES)
+def test_records_every_fixture_of_each_state(pfx, tmp_path, key_and_cert, other_key, state):
+    cloud = a_cloud(key_and_cert, state)
+    code, lines = record(pfx, tmp_path / "out", cloud, other_key=other_key, state=state)
+    assert code == 0, (lines, cloud.problems)
+    assert cloud.problems == []
+    files = written(tmp_path / "out")
+    assert list(files) == sorted(EXPECTED_FILES[state])
+    assert [line.split()[0] for line in lines[:-1]] == list(EXPECTED_FILES[state])
+    for name, rec in files.items():
+        assert list(rec) == ["source", "request", "status", "headers", "body"], name
+        assert rec["source"].startswith("live 2026-09-28: "), name
+        assert rec["status"] == EXPECTED_FILES[state][name], name
+        assert re.search(rf"-{rec['status']}(-|\.json$)", name), name
+    requests = {e.file_name: e.request for e in plan(tenant.TENANT_ID, state)}
+    assert {name: rec["request"] for name, rec in files.items()} == requests
+    assert lines[-1] == f"wrote {len(EXPECTED_FILES[state])} fixtures to {tmp_path / 'out'}"
+
+
+def test_the_request_lines_of_the_w2_2_states():
+    requests = {e.file_name: e.request for s in STATES[1:] for e in plan(tenant.TENANT_ID, s)}
+    mail = f"GET /v1.0/users/{UPN}/mailFolders/inbox/messages?{MAIL_SELECT}"
+    assert requests == {
+        "mail-list-200-empty.json": f"{mail}&$top=100",
+        "restoretarget-drive-200.json": f"GET /v1.0/drives/{RT}?$select=id,name,driveType,webUrl,sharePointIds",
+        "restoretarget-children-200-empty.json": f"GET /v1.0/drives/{RT}/root/children?{CHILD_SELECT}",
+        "onedrive-folder-200.json": f"GET /v1.0/drives/{OD}/items/{FOLDER}?$select=id,name,folder,parentReference",
+        "onedrive-children-200-empty.json": f"GET /v1.0/drives/{OD}/items/{FOLDER}/children?{CHILD_SELECT}",
+        "onedrive-folder-404-itemnotfound.json": (
+            f"GET /v1.0/drives/{OD}/items/<random item ID>?$select=id,name,folder,parentReference"
+        ),
+        "drive-404-itemnotfound.json": "GET /v1.0/drives/<random drive ID>?$select=id,name,driveType,webUrl,sharePointIds",
+        "mail-list-200-one-item.json": f"{mail}&$top=100",
+        "restoretarget-children-200-one-item.json": f"GET /v1.0/drives/{RT}/root/children?{CHILD_SELECT}",
+        "restoretarget-content-302.json": f"GET /v1.0/drives/{RT}/items/<item id>/content",
+        "onedrive-children-200-one-item.json": f"GET /v1.0/drives/{OD}/items/{FOLDER}/children?{CHILD_SELECT}",
+        "onedrive-content-302.json": f"GET /v1.0/drives/{OD}/items/<item id>/content",
+        "mail-list-200-page1.json": f"{mail}&$top=1",
+        "mail-list-200-page2.json": "GET <@odata.nextLink of mail-list-200-page1.json>",
+        "mail-list-200-page3.json": "GET <@odata.nextLink of mail-list-200-page2.json>",
+    }
+
+
+def test_the_dependent_requests_use_the_ids_and_link_from_the_replies(pfx, tmp_path, key_and_cert, other_key):
+    cloud = a_cloud(key_and_cert, "one-item")
+    record(pfx, tmp_path / "out", cloud, other_key=other_key, state="one-item")
+    urls = [r.url for r in graph_requests(cloud)]
+    assert not any("/messages/" in url for url in urls)
+    assert f"{GRAPH}/drives/{RT}/items/{a_file(1)['id']}/content" in urls
+    assert f"{GRAPH}/drives/{OD}/items/{a_file(2)['id']}/content" in urls
+    paged = a_cloud(key_and_cert, "paged")
+    record(pfx, tmp_path / "out2", paged, other_key=other_key, state="paged")
+    second = graph_requests(paged)[1]
+    select = MAIL_SELECT.removeprefix("$select=").replace(",", "%2c")
+    assert second.url == f"{GRAPH}/users/{UPN}/mailFolders/inbox/messages?%24select={select}&%24top=1&%24skip=1"
+
+
+def test_the_folder_and_drive_lines_print_the_facts_the_worker_needs(pfx, tmp_path, key_and_cert, other_key):
+    cloud = a_cloud(key_and_cert, "empty")
+    _, lines = record(pfx, tmp_path / "out", cloud, other_key=other_key, state="empty")
+    folder = next(line for line in lines if line.startswith("onedrive-folder-200.json"))
+    assert folder.endswith("ok  parentReference.path=/drive/root:  parentReference.id=present")
+    drive = next(line for line in lines if line.startswith("restoretarget-drive-200.json"))
+    assert drive.endswith("ok  webUrl last segment=RestoreTarget  sharePointIds=present")
+    del cloud.folder_reply["parentReference"]["path"], cloud.folder_reply["parentReference"]["id"]
+    _, lines = record(pfx, tmp_path / "out2", cloud, other_key=other_key, state="empty")
+    folder = next(line for line in lines if line.startswith("onedrive-folder-200.json"))
+    assert folder.endswith("ok  parentReference.path=(absent)  parentReference.id=absent")
+
+
+def test_a_tempauth_in_a_location_is_scrubbed_before_writing(pfx, tmp_path, key_and_cert, other_key):
+    cloud = a_cloud(key_and_cert, "one-item")
+    code, _ = record(pfx, tmp_path / "out", cloud, other_key=other_key, state="one-item")
+    assert code == 0
+    files = written(tmp_path / "out")
+    for name in ("restoretarget-content-302.json", "onedrive-content-302.json"):
+        assert files[name]["headers"]["Location"] == (
+            "https://restoreprooflab.sharepoint.com/sites/RestoreTest/_layouts/15/download.aspx"
+            "?UniqueId=u&tempauth=SCRUBBED&Extra=SCRUBBED&ApiVersion=2.0"
+        )
+    everything = "".join(p.read_text(encoding="utf-8") for p in (tmp_path / "out").iterdir())
+    assert TEMPAUTH_SENTINEL not in everything and "secret" not in everything
+
+
+def test_a_download_url_in_a_body_is_dropped(pfx, tmp_path, key_and_cert, other_key):
+    cloud = a_cloud(key_and_cert, "one-item")
+    record(pfx, tmp_path / "out", cloud, other_key=other_key, state="one-item")
+    files = written(tmp_path / "out")
+    for name in ("restoretarget-children-200-one-item.json", "onedrive-children-200-one-item.json"):
+        (item,) = files[name]["body"]["value"]
+        assert "@microsoft.graph.downloadUrl" not in item
+        assert item["file"] == {"mimeType": "text/plain"}
+
+
+def test_the_w2_2_states_only_read_and_send_no_token_off_graph(pfx, tmp_path, key_and_cert, other_key):
+    for state in STATES[1:]:
+        cloud = a_cloud(key_and_cert, state)
+        record(pfx, tmp_path / state, cloud, other_key=other_key, state=state)
+        assert len([r for r in cloud.requests if r.method == "POST"]) == 1  # the sign-in only
+        assert all(r.method == "GET" for r in graph_requests(cloud))
+        assert all(r.url.startswith((GRAPH + "/", LOGIN + "/")) for r in cloud.requests)
+
+
+def test_the_cli_passes_the_state(monkeypatch, pfx, tmp_path, key_and_cert, other_key, capsys):
+    cloud = a_cloud(key_and_cert, "empty")
+    monkeypatch.setattr(cli, "read_generic_credential", password_store())
+    monkeypatch.setattr(cli, "RequestsTransport", lambda: cloud.transport)
+    monkeypatch.setattr(graph_fixtures, "_clock", lambda: NOW)
+    out = tmp_path / "out"
+    args = ["record-graph-fixtures", "--state", "empty", "--client-id", CLIENT_ID, "--pfx", str(pfx), "--out", str(out)]
+    assert cli.main(args) == 0, capsys.readouterr().err
+    assert list(written(out)) == sorted(EXPECTED_FILES["empty"])
+    assert cli.main(["record-graph-fixtures", "--state", "full"]) == 2
+
+
 # ---- the assertions ------------------------------------------------------------------------
 
 
@@ -419,12 +1019,12 @@ def test_records_every_fixture_under_its_name_with_the_expected_status(pfx, tmp_
     code, lines = record(pfx, tmp_path / "out", cloud, other_key=other_key)
     assert code == 0
     files = written(tmp_path / "out")
-    assert {name: rec["status"] for name, rec in files.items()} == EXPECTED_FILES
+    assert {name: rec["status"] for name, rec in files.items()} == AUTH_FILES
     for name, rec in files.items():
         assert list(rec) == ["source", "request", "status", "headers", "body"], name
         assert rec["source"].startswith("live 2026-09-28: "), name
         assert re.search(rf"-{rec['status']}(-|\.json$)", name), name
-    assert lines[-1] == f"wrote {len(EXPECTED_FILES)} fixtures to {tmp_path / 'out'}"
+    assert lines[-1] == f"wrote {len(AUTH_FILES)} fixtures to {tmp_path / 'out'}"
 
 
 def test_the_token_is_replaced_by_the_fake_unsigned_jwt(pfx, tmp_path, key_and_cert, other_key):
@@ -511,21 +1111,64 @@ def test_no_output_line_holds_a_secret(pfx, tmp_path, key_and_cert, other_key):
     assert any(line.startswith("messages-403-exchange.json") and "ErrorAccessDenied" in line for line in lines)
 
 
-def test_the_plan_matches_the_committed_fixtures():
+STAND_IN = "hand-written: stand-in"
+
+
+@pytest.mark.parametrize("state", STATES)
+def test_the_plan_of_each_state_names_the_expected_files(state):
+    assert {e.file_name: e.expected for e in plan(tenant.TENANT_ID, state)} == EXPECTED_FILES[state]
+
+
+@pytest.mark.parametrize(
+    "state, entry",
+    [(s, e) for s in STATES for e in plan(tenant.TENANT_ID, s)],
+    ids=[f"{s}:{e.file_name}" for s in STATES for e in plan(tenant.TENANT_ID, s)],
+)
+def test_the_plan_matches_the_committed_fixtures(state, entry):
     """The file names, statuses and request lines agree with worker/tests/fixtures/graph/,
-    so a re-recording replaces those files rather than adding new ones."""
+    so a re-recording replaces those files rather than adding new ones. A hand-written
+    stand-in, committed until its state is recorded, is skipped; a missing file fails."""
     committed = DEFAULT_OUT_DIR
     if not committed.is_dir():
         pytest.skip("worker/tests/fixtures/graph/ not present")
-    entries = plan(tenant.TENANT_ID)
-    assert {e.file_name: e.expected for e in entries} == EXPECTED_FILES
-    for entry in entries:
-        path = committed / entry.file_name
-        assert path.is_file(), f"planned fixture {entry.file_name} is not committed in {committed}"
-        rec = json.loads(path.read_text(encoding="utf-8"))
-        assert rec["status"] == entry.expected, entry.file_name
-        assert rec["request"] == entry.request, entry.file_name
-        assert rec["source"].split(": ", 1)[1] == entry.what, entry.file_name
+    path = committed / entry.file_name
+    assert path.is_file(), f"planned fixture {entry.file_name} is not committed in {committed}"
+    rec = json.loads(path.read_text(encoding="utf-8"))
+    if rec["source"].startswith(STAND_IN):
+        pytest.skip(f"{entry.file_name}: stand-in until the {state} state is recorded")
+    assert rec["status"] == entry.expected, entry.file_name
+    assert rec["request"] == entry.request, entry.file_name
+    assert rec["source"].split(": ", 1)[1] == entry.what, entry.file_name
+
+
+_README_ROW = re.compile(r"^\| `([^`]+\.json)` \| ([^|]*?) \|")
+
+
+def readme_rows(text: str) -> list[tuple[str, str]]:
+    """(file, Source column) of every row of the README's "Files" table."""
+    return [(m.group(1), m.group(2)) for line in text.splitlines() if (m := _README_ROW.match(line))]
+
+
+def test_readme_rows_parse():
+    text = "| Fixture | Source | For |\n|---|---|---|\n| `a.json` | live: x `y` | z |\n| `b.json` | hand-written: stand-in q | r |\nno"
+    assert readme_rows(text) == [("a.json", "live: x `y`"), ("b.json", "hand-written: stand-in q")]
+
+
+def test_the_fixture_readme_lists_every_file():
+    if not DEFAULT_OUT_DIR.is_dir():
+        pytest.skip("worker/tests/fixtures/graph/ not present")
+    rows = readme_rows((DEFAULT_OUT_DIR / "README.md").read_text(encoding="utf-8"))
+    names = [name for name, _ in rows]
+    files = sorted(p.name for p in DEFAULT_OUT_DIR.glob("*.json"))
+    assert sorted(set(names)) == sorted(names), "a file has more than one README row"
+    assert [n for n in names if not (DEFAULT_OUT_DIR / n).is_file()] == [], "README rows naming no committed file"
+    assert [f for f in files if f not in names] == [], "committed fixtures without a README row"
+    for name, source in rows:
+        rec = json.loads((DEFAULT_OUT_DIR / name).read_text(encoding="utf-8"))
+        kind = rec["source"].split(" ", 1)[0].rstrip(":")
+        assert source.split(" ", 1)[0].rstrip(":") == kind, f"{name}: README says {source!r}, the file {kind!r}"
+        if rec["source"].startswith(STAND_IN):
+            assert source.startswith(STAND_IN), f"{name} is a stand-in; its README row must say so"
 
 
 def test_the_committed_live_fixtures_pass_the_scrub_check():
@@ -554,7 +1197,7 @@ def test_cli_records_into_out(monkeypatch, pfx, tmp_path, key_and_cert, other_ke
     captured = capsys.readouterr()
     assert code == 0, captured.err
     assert read.reads == [CREDENTIAL_TARGET]
-    assert set(written(out)) == set(EXPECTED_FILES)
+    assert set(written(out)) == set(AUTH_FILES)
     assert PASSWORD_SENTINEL not in captured.out + captured.err
     assert TOKEN_SENTINEL not in captured.out + captured.err
 

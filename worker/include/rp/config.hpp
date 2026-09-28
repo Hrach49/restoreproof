@@ -115,6 +115,36 @@ private:
 // Config built in code.
 bool is_restore_mailbox(std::string_view value);
 
+// The end of every SharePoint Online host name.
+inline constexpr std::string_view kSharePointSuffix = ".sharepoint.com";
+
+// The shapes of the Graph IDs of the restore targets, which go into Graph URL
+// paths (graph_url() doesn't police '?' or '/' inside an ID). parse_config
+// applies them to test_site_id, test_library_id, test_onedrive_drive_id and
+// test_onedrive_folder_id, so `rpworker config check` catches a wrong one, and
+// connector::RestoreTargets::from_config again, for a Config built in code
+// (docs/decisions.md 2026-09-28, W2.2). Each rule's text follows the key name.
+inline constexpr std::string_view kGraphSiteIdRule =
+    "must be a Graph site ID (\"<tenant>.sharepoint.com,<site GUID>,<web GUID>\")";
+inline constexpr std::string_view kGraphDriveIdRule =
+    "must be a Graph drive ID (\"b!\" then letters, digits, '-' and '_'), not a list ID";
+inline constexpr std::string_view kGraphItemIdRule =
+    "must be a Graph item ID (letters, digits, '!', '-' and '_')";
+
+struct GraphSiteId {
+    std::string host; // "<tenant>.sharepoint.com", lower case
+    std::string site; // the site collection GUID
+    std::string web;  // the web GUID
+};
+
+// Exactly "<tenant>.sharepoint.com,<site GUID>,<web GUID>", the tenant one DNS
+// label (1 to 63 ASCII letters, digits and '-', any case), split; else nullopt.
+std::optional<GraphSiteId> parse_graph_site_id(std::string_view value);
+// "b!" then 1 to 200 ASCII letters, digits, '-' and '_'.
+bool is_graph_drive_id(std::string_view value);
+// 1 to 200 ASCII letters, digits, '!', '-' and '_'.
+bool is_graph_item_id(std::string_view value);
+
 // Parses and validates config.json's text. Stops at the first error and
 // throws ConfigError.
 Config parse_config(std::string_view json_text);

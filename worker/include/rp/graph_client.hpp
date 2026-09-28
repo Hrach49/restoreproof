@@ -43,6 +43,13 @@ inline constexpr Grant kMailReadGrant{
     "Exchange RBAC \"Application Mail.Read\" in a management scope covering the test mailbox"};
 // Reading the test site's RestoreTarget library.
 inline constexpr Grant kSitesReadGrant{"Sites.Selected read on the test site"};
+// Reading the test OneDrive folder (a grant on that folder only).
+inline constexpr Grant kOneDriveReadGrant{
+    "Files.SelectedOperations.Selected read on the test OneDrive folder"};
+
+// The only headers a caller may add (any case). Everything else, Authorization
+// included, is the client's own.
+inline constexpr std::string_view kCallerHeaders[] = {"Prefer"};
 
 // Graph's v1.0 root; every token-bearing URL starts with it and a '/'.
 inline constexpr std::string_view kGraphBaseUrl = "https://graph.microsoft.com/v1.0";
@@ -190,11 +197,26 @@ public:
     //  - Any other status is a GraphError with Graph's code and message.
     // Errors keep Graph's code, inner code and request ID, never the body.
     // Whatever the token renewal throws is thrown as it is.
-    HttpResponse get(std::string_view path_or_url, const Grant& grant);
+    //
+    // `headers` go with every attempt, resends after a 401 and retries
+    // included, next to the client's own (Accept, User-Agent, Authorization).
+    // Only the names in kCallerHeaders are allowed (any case), each with a
+    // value that isn't empty and holds no control character (those of
+    // control_chars.hpp, CR and LF included); anything else is a GraphError
+    // before anything is sent, the token request included, so a caller can
+    // never replace the token or split a header line.
+    //
+    // `max_body_bytes` goes with every attempt as HttpRequest::max_body_bytes:
+    // a 2xx body longer than it comes back cut one byte past it, for the
+    // caller to check (W2.2's downloads). nullopt: no limit.
+    HttpResponse get(std::string_view path_or_url, const Grant& grant,
+                     const HttpHeaders& headers = {},
+                     std::optional<std::uint64_t> max_body_bytes = std::nullopt);
 
     // get(), and the body as a JSON object: a 3xx, or a body that isn't a
     // JSON object, is a GraphError (the body is never quoted).
-    nlohmann::json get_json(std::string_view path_or_url, const Grant& grant);
+    nlohmann::json get_json(std::string_view path_or_url, const Grant& grant,
+                            const HttpHeaders& headers = {});
 
     // get() for an item a restore should have put there (W2.2's
     // verification): nullopt when Graph answers 404 with its JSON error, the
@@ -204,9 +226,11 @@ public:
     // Request_ResourceNotFound) is still a NotFoundError. SharePoint and
     // OneDrive say itemNotFound for a missing drive as for a missing item, so
     // the caller checks the drive with get() first.
-    std::optional<HttpResponse> find(std::string_view path_or_url, const Grant& grant);
+    std::optional<HttpResponse> find(std::string_view path_or_url, const Grant& grant,
+                                     const HttpHeaders& headers = {});
     // find(), and the body as a JSON object, as get_json().
-    std::optional<nlohmann::json> find_json(std::string_view path_or_url, const Grant& grant);
+    std::optional<nlohmann::json> find_json(std::string_view path_or_url, const Grant& grant,
+                                            const HttpHeaders& headers = {});
 
 private:
     struct Token {
@@ -240,11 +264,14 @@ private:
     // get() and find(): with `item_lookup`, a 404 Graph explains that
     // doesn't name a missing mailbox or user is nullopt.
     std::optional<HttpResponse> send_get(std::string_view path_or_url, const Grant& grant,
-                                         bool item_lookup);
+                                         bool item_lookup, const HttpHeaders& headers,
+                                         std::optional<std::uint64_t> max_body_bytes);
     // The body of a response get() or find() returned, as a JSON object.
     static nlohmann::json json_body(std::string_view path_or_url, const HttpResponse& response);
-    // One GET of `url` with `token`, one attempt.
-    HttpRequest api_request(const std::string& url, const std::string& token) const;
+    // One GET of `url` with `token` and the caller's `headers`, one attempt.
+    HttpRequest api_request(const std::string& url, const std::string& token,
+                            const HttpHeaders& headers,
+                            std::optional<std::uint64_t> max_body_bytes) const;
     // One token request with a new assertion.
     HttpRequest token_request() const;
     void log_debug(const std::string& line) const;

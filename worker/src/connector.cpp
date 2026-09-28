@@ -31,6 +31,19 @@ RestoreTargets RestoreTargets::from_config(const Config& config)
     targets.onedrive_drive_id_ = require_set(config.test_onedrive_drive_id, "test_onedrive_drive_id");
     targets.onedrive_folder_id_ =
         require_set(config.test_onedrive_folder_id, "test_onedrive_folder_id");
+    // The shapes parse_config applies: the IDs go into Graph URL paths.
+    const auto check = [](bool ok, std::string_view key, std::string_view rule) {
+        if (!ok) {
+            throw std::invalid_argument("restore target " + std::string{key} + " " +
+                                        std::string{rule});
+        }
+    };
+    check(parse_graph_site_id(targets.site_id_).has_value(), "test_site_id", kGraphSiteIdRule);
+    check(is_graph_drive_id(targets.library_id_), "test_library_id", kGraphDriveIdRule);
+    check(is_graph_drive_id(targets.onedrive_drive_id_), "test_onedrive_drive_id",
+          kGraphDriveIdRule);
+    check(is_graph_item_id(targets.onedrive_folder_id_), "test_onedrive_folder_id",
+          kGraphItemIdRule);
     return targets;
 }
 

@@ -1,0 +1,28 @@
+{
+  "source": "live 2026-09-28: GET the children of alice's /RestoreTarget, one file",
+  "request": "GET /v1.0/drives/b!wA9gbfhlEUitGAluxbfoNBr_z5gEtDhErm5pJ6bMwyXfZJ8a_dkCQ696RX0r7_U3/items/01ZK75LGDGB6QOO3MGNFGYOY6C6VBDG5OH/children?$select=id,name,size,file,folder&$top=200",
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/json; odata.metadata=minimal; odata.streaming=true; IEEE754Compatible=false; charset=utf-8",
+    "request-id": "0f4c2901-77aa-42f3-804c-71bf15bed6b3",
+    "client-request-id": "0f4c2901-77aa-42f3-804c-71bf15bed6b3"
+  },
+  "body": {
+    "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#Collection(driveItem)",
+    "value": [
+      {
+        "@odata.etag": "\"{9CB597D4-49F6-42A4-AC62-97699B41D67A},1\"",
+        "id": "01ZK75LGGUS62ZZ5SJURBKYYUXNGNUDVT2",
+        "name": "rp-w22-onedrive-6k1p.txt.txt",
+        "file": {
+          "fileExtension": ".txt",
+          "hashes": {
+            "quickXorHash": "04V1U60s4/m22u3vPgMZ5JAGO5Q="
+          },
+          "mimeType": "text/plain"
+        },
+        "size": 24
+      }
+    ]
+  }
+}

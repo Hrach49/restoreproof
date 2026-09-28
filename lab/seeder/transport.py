@@ -14,7 +14,7 @@ _TEMPAUTH = re.compile(r"(?i)tempauth[\W_]*[^\s'\"()<>]*")
 
 
 class RequestsTransport:
-    """Follows redirects. A file download answers with a 302 to a pre-authenticated URL on
+    """Follows redirects unless asked not to. A file download answers with a 302 to a pre-authenticated URL on
     another host; requests drops the Authorization header on a cross-host redirect, so the
     Graph token never reaches that host."""
 
@@ -28,6 +28,8 @@ class RequestsTransport:
         url: str,
         headers: Mapping[str, str],
         body: bytes | None = None,
+        *,
+        follow_redirects: bool = True,
     ) -> HttpResponse:
         try:
             r = self.session.request(
@@ -36,7 +38,7 @@ class RequestsTransport:
                 headers=dict(headers),
                 data=body,
                 timeout=self.timeout,
-                allow_redirects=True,
+                allow_redirects=follow_redirects,
             )
         except requests.RequestException as exc:
             # Only the method, URL and exception text: requests' messages carry no headers, but

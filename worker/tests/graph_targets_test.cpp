@@ -75,7 +75,8 @@ constexpr const char* kPfxPassword = "Sentinel-Targets-PFX-Password-3b9d";
 // Made up, never a lab value.
 const std::string kMadeUpGuid = "0a1b2c3d-0000-4000-8000-00000000abcd";
 
-const std::string kMailSelect = "?$select=id,subject,from,receivedDateTime,internetMessageId";
+const std::string kMailSelect =
+    "?$select=id,subject,from,receivedDateTime,internetMessageId,body";
 const std::string kChildrenQuery = "/children?$select=id,name,size,file,folder&$top=200";
 
 const std::string& pfx_base64()
@@ -676,11 +677,6 @@ std::string mail_list_url()
            kMailSelect + "&$top=100";
 }
 
-std::string mail_body_url(const std::string& id)
-{
-    return kGraph + "/users/" + lab_values().mailbox + "/messages/" + id + "?$select=body";
-}
-
 // The messages of a recorded listing.
 json messages_of(const std::string& name)
 {
@@ -740,7 +736,7 @@ TEST_CASE("a mail body that isn't text is an error", "[graph][targets]")
     const std::string not_text_suffix =
         ", not text, although the Worker asked for text; its text-v1 hash would be wrong";
     const std::string no_content =
-        "Graph's reply for a message body in the test mailbox has no body.content";
+        "Graph's reply listing the test mailbox's Inbox has a message without body.content";
     using Edit = std::function<void(json&)>;
     struct Row {
         std::string name;
@@ -760,12 +756,10 @@ TEST_CASE("a mail body that isn't text is an error", "[graph][targets]")
         Row{"content removed", [](json& b) { b["body"].erase("content"); }, no_content},
         Row{"content not a string", [](json& b) { b["body"]["content"] = 1; }, no_content});
     CAPTURE(row.name);
+    json value = messages_of("mail-list-200-one-item");
+    row.edit(value[0]);
     Lab lab;
-    lab.serve_file(mail_list_url(), "mail-list-200-one-item");
-    json body = load_fixture_json("graph", "mail-body-200");
-    row.edit(body["body"]);
-    const std::string id = messages_of("mail-list-200-one-item").at(0).at("id").get<std::string>();
-    lab.serve(mail_body_url(id), body);
+    lab.graph_http.on(HttpMethod::get, mail_list_url(), {page_of(value)});
     TargetReader reader = lab.reader();
 
     const Caught caught = catch_error([&] { reader.list_mail(); });
@@ -776,12 +770,10 @@ TEST_CASE("a mail body that isn't text is an error", "[graph][targets]")
 
 TEST_CASE("the body's contentType is compared in any case", "[graph][targets]")
 {
+    json value = messages_of("mail-list-200-one-item");
+    value[0]["body"]["contentType"] = "Text";
     Lab lab;
-    lab.serve_file(mail_list_url(), "mail-list-200-one-item");
-    json body = load_fixture_json("graph", "mail-body-200");
-    body["body"]["contentType"] = "Text";
-    const std::string id = messages_of("mail-list-200-one-item").at(0).at("id").get<std::string>();
-    lab.serve(mail_body_url(id), body);
+    lab.graph_http.on(HttpMethod::get, mail_list_url(), {page_of(value)});
 
     CHECK(lab.reader().list_mail().size() == 1);
 }
@@ -1067,8 +1059,6 @@ TEST_CASE("one mail lists as one FoundItem hashed by text-v1", "[graph][targets]
     lab.serve_file(mail_list_url(), "mail-list-200-one-item");
     const json message = messages_of("mail-list-200-one-item").at(0);
     const std::string id = message.at("id").get<std::string>();
-    const json body = load_fixture_json("graph", "mail-body-200");
-    lab.serve(mail_body_url(id), body);
 
     const std::vector<FoundItem> items = lab.reader().list_mail();
 
@@ -1079,14 +1069,14 @@ TEST_CASE("one mail lists as one FoundItem hashed by text-v1", "[graph][targets]
     expected.sender = message.at("from").at("emailAddress").at("address").get<std::string>();
     expected.received_at = message.at("receivedDateTime").get<std::string>();
     expected.internet_message_id = message.at("internetMessageId").get<std::string>();
-    expected.sha256 =
-        rp::text_v1_sha256(body.at("body").at("body").at("content").get<std::string>());
+    expected.sha256 = rp::text_v1_sha256(message.at("body").at("content").get<std::string>());
     expected.sha256_rule = "text-v1";
     REQUIRE(items.size() == 1);
     CHECK(items[0] == expected);
     CHECK_FALSE(items[0].name);
     CHECK_FALSE(items[0].size_bytes);
-    REQUIRE(lab.graph_gets().size() == 2);
+    // The bodies come in the listing: one GET for the page, none per mail.
+    REQUIRE(lab.graph_gets().size() == 1);
     for (const HttpRequest& request : lab.graph_gets()) {
         CHECK(request.headers.at("Prefer") == kPrefer);
         CHECK(request.headers.at("Authorization") == "Bearer token-1");
@@ -1097,14 +1087,12 @@ TEST_CASE("one mail lists as one FoundItem hashed by text-v1", "[graph][targets]
 TEST_CASE("a message without the optional fields keeps them empty", "[graph][targets]")
 {
     json value = messages_of("mail-list-200-one-item");
-    const std::string id = value.at(0).at("id").get<std::string>();
     value[0].erase("receivedDateTime");
     value[0].erase("internetMessageId");
     value[0]["subject"] = "";
     value[0]["from"] = json::object();
     Lab lab;
     lab.graph_http.on(HttpMethod::get, mail_list_url(), {page_of(value)});
-    lab.serve_file(mail_body_url(id), "mail-body-200");
 
     const std::vector<FoundItem> items = lab.reader().list_mail();
 
@@ -1125,15 +1113,13 @@ TEST_CASE("mail follows @odata.nextLink", "[graph][targets]")
     const std::string first_id = page1.at("body").at("value").at(0).at("id").get<std::string>();
     const std::string second_id =
         messages_of("mail-list-200-page2").at(0).at("id").get<std::string>();
-    lab.serve_file(mail_body_url(first_id), "mail-body-200");
-    lab.serve_file(mail_body_url(second_id), "mail-body-200");
 
     const std::vector<FoundItem> items = lab.reader().list_mail();
 
     REQUIRE(items.size() == 2);
     CHECK(items[0].id == first_id);
     CHECK(items[1].id == second_id);
-    REQUIRE(lab.graph_gets().size() == 4);
+    REQUIRE(lab.graph_gets().size() == 2);
     CHECK(lab.graph_gets()[1].url == link);
     for (const HttpRequest& request : lab.graph_gets()) {
         CHECK(request.headers.at("Prefer") == kPrefer);
@@ -1491,9 +1477,6 @@ TEST_CASE("list_all returns mail, then SharePoint, then OneDrive", "[graph][targ
 {
     Lab lab;
     lab.serve_file(mail_list_url(), "mail-list-200-one-item");
-    const std::string mail_id =
-        messages_of("mail-list-200-one-item").at(0).at("id").get<std::string>();
-    lab.serve_file(mail_body_url(mail_id), "mail-body-200");
     serve_location(lab, sharepoint_location());
     serve_location(lab, onedrive_location());
 
@@ -1511,7 +1494,6 @@ TEST_CASE("no credential, body, subject or file name reaches the log", "[graph][
     lab.logger->set_level(spdlog::level::trace);
     lab.serve_file(mail_list_url(), "mail-list-200-one-item");
     const json message = messages_of("mail-list-200-one-item").at(0);
-    lab.serve_file(mail_body_url(message.at("id").get<std::string>()), "mail-body-200");
     serve_location(lab, sharepoint_location());
     serve_location(lab, onedrive_location());
     REQUIRE(lab.reader().list_all().size() == 3);
@@ -1538,7 +1520,7 @@ TEST_CASE("no credential, body, subject or file name reaches the log", "[graph][
     // What a one-item recording holds (lab/README.md asks for distinctive values):
     // an empty or short one could match the log by chance, so it fails here first.
     const std::vector<std::string> recorded{
-        load_fixture_json("graph", "mail-body-200").at("body").at("body").at("content").get<std::string>(),
+        message.at("body").at("content").get<std::string>(),
         message.at("subject").get<std::string>(),
         file_of(sharepoint_location()).at("name").get<std::string>(),
         file_of(onedrive_location()).at("name").get<std::string>(),

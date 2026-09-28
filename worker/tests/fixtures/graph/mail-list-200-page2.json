@@ -8,7 +8,7 @@
     "client-request-id": "00000000-0000-4000-8000-000000000083"
   },
   "body": {
-    "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#users('restoretest%40RestoreProofLab.onmicrosoft.com')/mailFolders('inbox')/messages(id,subject,from,receivedDateTime,internetMessageId)",
+    "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#users('restoretest%40RestoreProofLab.onmicrosoft.com')/mailFolders('inbox')/messages(id,subject,from,receivedDateTime,internetMessageId,body)",
     "value": [
       {
         "@odata.etag": "W/\"CQAAABYAAABStandInChangeKey000000001\"",
@@ -21,6 +21,10 @@
             "name": "Alice",
             "address": "alice@RestoreProofLab.onmicrosoft.com"
           }
+        },
+        "body": {
+          "contentType": "text",
+          "content": "RestoreProof W2.2 stand-in, first\r\n"
         }
       }
     ]

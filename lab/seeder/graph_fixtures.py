@@ -274,7 +274,8 @@ NOBODY_SHOWN = f"nobody-…@{tenant.TENANT_DOMAIN}"
 # ---- the restore targets, read as the Worker's TargetReader reads them (W2.2) --------------
 
 RESTORE_TARGET = "RestoreTarget"
-MAIL_SELECT = "$select=id,subject,from,receivedDateTime,internetMessageId"
+# With the body, so one call lists and hashes a page (review of W2.2: no GET per mail).
+MAIL_SELECT = "$select=id,subject,from,receivedDateTime,internetMessageId,body"
 DRIVE_SELECT = "$select=id,name,driveType,webUrl,sharePointIds"
 FOLDER_SELECT = "$select=id,name,folder,parentReference"
 CHILDREN_QUERY = "$select=id,name,size,file,folder&$top=200"
@@ -283,7 +284,6 @@ PREFER = (("Prefer", MAIL_PREFER),)
 _SAFE_ID = re.compile(r"[A-Za-z0-9!_=-]{1,512}")
 _ITEM_ID_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
 # In the request lines: the IDs a reply gave, or random ones.
-MESSAGE_ID_SHOWN = "<message id>"
 ITEM_ID_SHOWN = "<item id>"
 
 
@@ -305,10 +305,6 @@ def _library_children() -> str:
 
 def _folder_children() -> str:
     return f"/drives/{tenant.ONEDRIVE_DRIVE_ID}/items/{tenant.ONEDRIVE_TARGET_FOLDER_ID}/children?{CHILDREN_QUERY}"
-
-
-def _message_body(message_id: str) -> str:
-    return f"/users/{tenant.RESTORETEST_UPN}/messages/{message_id}?$select=body"
 
 
 def _content(drive_id: str, item_id: str) -> str:
@@ -405,12 +401,23 @@ def _has_location(response: HttpResponse) -> str | None:
     return None if response.headers.get("location") else "no Location header"
 
 
-def _text_body(response: HttpResponse) -> str | None:
-    body = _json_object(response).get("body")
-    content_type = body.get("contentType") if isinstance(body, dict) else None
-    if isinstance(content_type, str) and content_type.lower() == "text" and isinstance(body.get("content"), str):
-        return None
-    return f"body.contentType is {content_type!r}, not text"
+def _text_bodies(response: HttpResponse) -> str | None:
+    """Every message listed has its body as text (the Worker hashes it with text-v1)."""
+    value = _json_object(response).get("value")
+    for message in value if isinstance(value, list) else []:
+        body = message.get("body") if isinstance(message, dict) else None
+        content_type = body.get("contentType") if isinstance(body, dict) else None
+        if not (
+            isinstance(content_type, str) and content_type.lower() == "text" and isinstance(body.get("content"), str)
+        ):
+            return f"body.contentType is {content_type!r}, not text"
+    return None
+
+
+def _mail(n: int, *, next_link: bool = False) -> Check:
+    """_items(n, next_link=...), and every body as text."""
+    items = _items(n, next_link=next_link)
+    return lambda response: items(response) or _text_bodies(response)
 
 
 def _library_facts(response: HttpResponse) -> str:
@@ -444,7 +451,7 @@ def _target_plan(state: str) -> list[Entry]:
         return [
             entry(
                 "mail-list-200-empty.json", 200, "GET the restoretest inbox as the Worker lists it, empty",
-                _mail_list(100), headers=PREFER, check=_items(0),
+                _mail_list(100), headers=PREFER, check=_mail(0),
             ),
             entry(
                 "restoretarget-drive-200.json", 200, "GET the RestoreTarget library's drive, as the Worker's guard reads it",
@@ -474,12 +481,9 @@ def _target_plan(state: str) -> list[Entry]:
     if state == "one-item":
         return [
             entry(
-                "mail-list-200-one-item.json", 200, "GET the restoretest inbox as the Worker lists it, one mail",
-                _mail_list(100), headers=PREFER, check=_items(1),
-            ),
-            entry(
-                "mail-body-200.json", 200, "GET that mail's body as text",
-                _message_body(MESSAGE_ID_SHOWN), headers=PREFER, check=_text_body,
+                "mail-list-200-one-item.json", 200,
+                "GET the restoretest inbox as the Worker lists it, one mail, its body as text",
+                _mail_list(100), headers=PREFER, check=_mail(1),
             ),
             entry(
                 "restoretarget-children-200-one-item.json", 200, "GET the RestoreTarget library's root children, one file",
@@ -501,11 +505,11 @@ def _target_plan(state: str) -> list[Entry]:
     return [
         entry(
             "mail-list-200-page1.json", 200, "GET the restoretest inbox with $top=1, two mails: page 1",
-            _mail_list(1), headers=PREFER, check=_items(1, next_link=True),
+            _mail_list(1), headers=PREFER, check=_mail(1, next_link=True),
         ),
         entry(
             "mail-list-200-page2.json", 200, "GET page 1's @odata.nextLink: page 2",
-            "GET <@odata.nextLink of mail-list-200-page1.json>", headers=PREFER, check=_items(1),
+            "GET <@odata.nextLink of mail-list-200-page1.json>", headers=PREFER, check=_mail(1),
         ),
     ]
 
@@ -672,7 +676,6 @@ class _Recorder:
             "onedrive-folder-404-itemnotfound.json": lambda: get(_folder(_random_item_id())),
             "drive-404-itemnotfound.json": lambda: get(_drive(_random_drive_id())),
             "mail-list-200-one-item.json": lambda: get(_mail_list(100)),
-            "mail-body-200.json": lambda: get(_message_body(first_id("mail-list-200-one-item.json"))),
             "restoretarget-children-200-one-item.json": lambda: get(_library_children()),
             "restoretarget-content-302.json": lambda: get(_content(rt, first_id("restoretarget-children-200-one-item.json"))),
             "onedrive-children-200-one-item.json": lambda: get(_folder_children()),

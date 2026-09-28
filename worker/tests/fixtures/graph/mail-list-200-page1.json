@@ -1,6 +1,6 @@
 {
   "source": "hand-written: stand-in until the paged state is recorded (W2.2): GET the restoretest inbox with $top=1, two mails: page 1",
-  "request": "GET /v1.0/users/restoretest@RestoreProofLab.onmicrosoft.com/mailFolders/inbox/messages?$select=id,subject,from,receivedDateTime,internetMessageId&$top=1",
+  "request": "GET /v1.0/users/restoretest@RestoreProofLab.onmicrosoft.com/mailFolders/inbox/messages?$select=id,subject,from,receivedDateTime,internetMessageId,body&$top=1",
   "status": 200,
   "headers": {
     "Content-Type": "application/json; odata.metadata=minimal; odata.streaming=true; IEEE754Compatible=false; charset=utf-8",
@@ -8,7 +8,7 @@
     "client-request-id": "00000000-0000-4000-8000-000000000082"
   },
   "body": {
-    "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#users('restoretest%40RestoreProofLab.onmicrosoft.com')/mailFolders('inbox')/messages(id,subject,from,receivedDateTime,internetMessageId)",
+    "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#users('restoretest%40RestoreProofLab.onmicrosoft.com')/mailFolders('inbox')/messages(id,subject,from,receivedDateTime,internetMessageId,body)",
     "value": [
       {
         "@odata.etag": "W/\"CQAAABYAAABStandInChangeKey000000002\"",
@@ -21,9 +21,13 @@
             "name": "Alice",
             "address": "alice@RestoreProofLab.onmicrosoft.com"
           }
+        },
+        "body": {
+          "contentType": "text",
+          "content": "RestoreProof W2.2 stand-in, second\r\n"
         }
       }
     ],
-    "@odata.nextLink": "https://graph.microsoft.com/v1.0/users/restoretest@RestoreProofLab.onmicrosoft.com/mailFolders/inbox/messages?%24select=id%2csubject%2cfrom%2creceivedDateTime%2cinternetMessageId&%24top=1&%24skip=1"
+    "@odata.nextLink": "https://graph.microsoft.com/v1.0/users/restoretest@RestoreProofLab.onmicrosoft.com/mailFolders/inbox/messages?%24select=id%2csubject%2cfrom%2creceivedDateTime%2cinternetMessageId%2cbody&%24top=1&%24skip=1"
   }
 }

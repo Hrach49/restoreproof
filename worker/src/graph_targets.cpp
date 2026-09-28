@@ -466,7 +466,7 @@ std::vector<FoundItem> TargetReader::list_mail()
     const std::vector<json> pages =
         list_pages(graph_,
                    "/users/" + mailbox + "/mailFolders/inbox/messages" +
-                       "?$select=id,subject,from,receivedDateTime,internetMessageId&$top=100",
+                       "?$select=id,subject,from,receivedDateTime,internetMessageId,body&$top=100",
                    kMailReadGrant, prefer, location, [&mailbox](const std::vector<std::string>& path) {
                        return is_inbox_path(path, mailbox);
                    });
@@ -476,12 +476,10 @@ std::vector<FoundItem> TargetReader::list_mail()
             FoundItem item;
             item.type = ItemType::mail;
             item.id = graph_id(message, "a message in " + location);
-            const json reply = graph_.get_json(
-                "/users/" + mailbox + "/messages/" + item.id + "?$select=body", kMailReadGrant,
-                prefer);
-            const auto found = reply.find("body");
+            // The body comes in the listing (Prefer asks for text): no GET per mail.
+            const auto found = message.find("body");
             const json none;
-            const json& body = found == reply.end() ? none : *found;
+            const json& body = found == message.end() ? none : *found;
             const std::string* type = string_at(body, "contentType");
             if (type == nullptr || !ascii_iequals(*type, "text")) {
                 throw GraphError("Graph returned the body of a message in the test mailbox as \"" +
@@ -491,8 +489,8 @@ std::vector<FoundItem> TargetReader::list_mail()
             }
             const std::string* content = string_at(body, "content");
             if (content == nullptr) {
-                throw GraphError(
-                    "Graph's reply for a message body in the test mailbox has no body.content");
+                throw GraphError("Graph's reply listing " + location +
+                                 " has a message without body.content");
             }
             item.subject = optional_string(message, "subject");
             const auto from = message.find("from");

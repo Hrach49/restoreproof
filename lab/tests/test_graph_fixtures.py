@@ -366,6 +366,100 @@ def test_a_transport_error_propagates_and_nothing_is_written(pfx, tmp_path, key_
     assert not (tmp_path / "out").exists()
 
 
+# ---- download links (W2.2) -----------------------------------------------------------------
+
+FAKE_TEMPAUTH = "v1.eyJ0eXAiOiJKV1QiLCJhbGciOiJub25lIn0AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+DOWNLOAD_LOCATION = (
+    "https://restoreprooflab.sharepoint.com/sites/RestoreTest/_layouts/15/download.aspx"
+    f"?UniqueId=u&tempauth={FAKE_TEMPAUTH}&Extra=secret&ApiVersion=2.0"
+)
+
+
+def test_scrub_keeps_only_the_allowed_query_values_of_a_location():
+    reply = HttpResponse(302, b"", {"location": DOWNLOAD_LOCATION + "&translate=false&TEMPAUTH%3D=x&bare"})
+    scrubbed = graph_fixtures._scrubbed(reply)
+    assert scrubbed.headers["location"] == (
+        "https://restoreprooflab.sharepoint.com/sites/RestoreTest/_layouts/15/download.aspx"
+        "?UniqueId=u&tempauth=SCRUBBED&Extra=SCRUBBED&ApiVersion=2.0&translate=false&TEMPAUTH%3D=SCRUBBED&bare=SCRUBBED"
+    )
+    assert scrubbed.status == 302
+
+
+def test_scrub_drops_a_fragment_of_a_location():
+    reply = HttpResponse(302, b"", {"location": "https://t.sharepoint.com/x?UniqueId=u#tempauth-ish"})
+    assert graph_fixtures._scrubbed(reply).headers["location"] == "https://t.sharepoint.com/x?UniqueId=u"
+
+
+def test_scrub_drops_download_urls_and_masks_tempauth_in_body_strings():
+    body = {
+        "value": [
+            {
+                "id": "1",
+                "name": "a.txt",
+                "@microsoft.graph.downloadUrl": DOWNLOAD_LOCATION,
+                "nested": {"@microsoft.graph.downloadUrl": "x", "note": f"see ?tempauth={FAKE_TEMPAUTH}&b=1"},
+            }
+        ],
+        "other": f"TempAuth%3D{FAKE_TEMPAUTH} end",
+    }
+    scrubbed = graph_fixtures._scrubbed(json_response(200, body))
+    assert scrubbed.json() == {
+        "value": [{"id": "1", "name": "a.txt", "nested": {"note": "see ?tempauth=SCRUBBED&b=1"}}],
+        "other": "TempAuth%3DSCRUBBED end",
+    }
+
+
+def test_scrub_leaves_a_reply_without_links_as_it_was():
+    reply = json_response(200, {"value": [{"id": "1", "size": 3}]}, {"request-id": "r"})
+    assert graph_fixtures._scrubbed(reply) == reply
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        pytest.param(f'"Location": "{DOWNLOAD_LOCATION}"', id="header"),
+        pytest.param('{"note": "download.aspx?UniqueId=u&tempauth=abc123"}', id="json"),
+        pytest.param(f"tempauth={FAKE_TEMPAUTH}", id="v1.eyJ"),
+        pytest.param("x?TEMPAUTH%3Dabc", id="encoded"),
+        pytest.param('{"tempauth": "abc"}', id="json key"),
+    ],
+)
+def test_check_safe_refuses_an_unscrubbed_tempauth(text):
+    with pytest.raises(FixtureError) as info:
+        graph_fixtures.check_safe("f.json", text, secrets=[])
+    assert str(info.value) == "f.json: refused to write it: it holds a tempauth download credential"
+
+
+@pytest.mark.parametrize(
+    "query",
+    ["UniqueId=u&Extra=secret", "sig=abc&ApiVersion=2.0", "UniqueId=u&token"],
+)
+def test_check_safe_refuses_an_unknown_download_query_value(query):
+    text = f'"Location": "https://t.sharepoint.com/_layouts/15/download.aspx?{query}"'
+    with pytest.raises(FixtureError) as info:
+        graph_fixtures.check_safe("f.json", text, secrets=[])
+    assert str(info.value) == "f.json: refused to write it: a download URL holds an unknown query value"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "https://restoreprooflab.sharepoint.com/sites/RestoreTest/_layouts/15/download.aspx"
+        "?UniqueId=SCRUBBED&Translate=false&tempauth=SCRUBBED&ApiVersion=2.0",
+        '{"Location": "https://t-my.sharepoint.com/_layouts/15/download.aspx?uniqueid=u&tempauth=SCRUBBED"}',
+        '{"tempauth": "SCRUBBED"}',
+    ],
+)
+def test_check_safe_accepts_a_scrubbed_download_link(text):
+    graph_fixtures.check_safe("f.json", text, secrets=[])
+
+
+def test_a_scrubbed_location_passes_check_safe():
+    text = fixture_text("live x: y", "GET /v1.0/z", graph_fixtures._scrubbed(HttpResponse(302, b"", {"location": DOWNLOAD_LOCATION})))
+    graph_fixtures.check_safe("f.json", text, secrets=[])
+    assert FAKE_TEMPAUTH not in text and "secret" not in text
+
+
 # ---- the assertions ------------------------------------------------------------------------
 
 

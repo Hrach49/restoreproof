@@ -954,6 +954,101 @@ TEST_CASE("a nextLink in Graph's other form names the same resource", "[graph][t
     CHECK(lab.gets(link) == 1);
 }
 
+// Review of W2.2: Graph may name the mailbox by its object ID, or the library's
+// root by its item ID, in a nextLink. Both still name the guarded target.
+TEST_CASE("a nextLink naming the mailbox by object ID is followed", "[graph][targets]")
+{
+    const std::string link = GENERATE_COPY(
+        kGraph + "/users/" + kMadeUpGuid + "/mailFolders/inbox/messages?$skip=1",
+        kGraph + "/users('" + kMadeUpGuid + "')/mailFolders('inbox')/messages?%24skip=1");
+    CAPTURE(link);
+    Lab lab;
+    lab.graph_http.on(HttpMethod::get, mail_list_url(), {page_of(json::array(), link)});
+    lab.graph_http.on(HttpMethod::get, link, {page_of(json::array())});
+
+    CHECK(lab.reader().list_mail().empty());
+    CHECK(lab.gets(link) == 1);
+}
+
+TEST_CASE("a library nextLink naming the root by item ID is followed", "[graph][targets]")
+{
+    const std::string link = GENERATE_COPY(
+        kGraph + "/drives/" + lab_values().library_id + "/items/01ROOTITEMID00000000000000000000/children?$skiptoken=x",
+        kGraph + "/drives('" + lab_values().library_id + "')/root/children?$skiptoken=y");
+    CAPTURE(link);
+    Lab lab;
+    lab.serve_file(drive_url(), "restoretarget-drive-200");
+    lab.graph_http.on(HttpMethod::get, library_children_url(), {page_of(json::array(), link)});
+    lab.graph_http.on(HttpMethod::get, link, {page_of(json::array())});
+
+    CHECK(lab.reader().list_sharepoint().empty());
+    CHECK(lab.gets(link) == 1);
+}
+
+TEST_CASE("a nextLink the target's rule doesn't take is refused", "[graph][targets]")
+{
+    const Lab_values& v = lab_values();
+    const std::string domain = v.mailbox.substr(v.mailbox.find('@') + 1);
+    std::string other_item = v.folder_id;
+    other_item.back() = other_item.back() == 'A' ? 'B' : 'A';
+    struct Row {
+        std::string name;
+        std::string target; // mail, sharepoint, onedrive
+        std::string link;
+    };
+    const Row row = GENERATE_COPY(
+        Row{"a user that is neither the mailbox nor a GUID", "mail",
+            kGraph + "/users/alice@" + domain + "/mailFolders/inbox/messages?$skip=1"},
+        Row{"a GUID with the wrong shape", "mail",
+            kGraph + "/users/0a1b2c3d-0000-4000-8000-00000000abc/mailFolders/inbox/messages"},
+        Row{"the mailbox's Sent Items by GUID", "mail",
+            kGraph + "/users/" + kMadeUpGuid + "/mailFolders/sentitems/messages?$skip=1"},
+        Row{"the whole mailbox by GUID", "mail", kGraph + "/users/" + kMadeUpGuid + "/messages"},
+        Row{"a child folder of the Inbox", "mail",
+            kGraph + "/users/" + v.mailbox + "/mailFolders/inbox/childFolders/x/messages"},
+        Row{"the library's items without children", "sharepoint",
+            kGraph + "/drives/" + v.library_id + "/items/01X"},
+        Row{"a nested path in the library", "sharepoint",
+            kGraph + "/drives/" + v.library_id + "/items/01X/children/01Y/children"},
+        Row{"the library by a root path", "sharepoint",
+            kGraph + "/drives/" + v.library_id + "/root:/RestoreTest:/children"},
+        // alice's canary folder is in the same drive as the test OneDrive folder.
+        Row{"another folder in the test OneDrive", "onedrive",
+            kGraph + "/drives/" + v.onedrive_drive_id + "/items/" + other_item + "/children"},
+        Row{"the test OneDrive's root", "onedrive",
+            kGraph + "/drives/" + v.onedrive_drive_id + "/root/children?$skiptoken=x"},
+        Row{"the folder in the library's drive", "onedrive",
+            kGraph + "/drives/" + v.library_id + "/items/" + v.folder_id + "/children"});
+    CAPTURE(row.name);
+    Lab lab;
+    std::function<void()> call;
+    std::string location;
+    if (row.target == "mail") {
+        lab.graph_http.on(HttpMethod::get, mail_list_url(), {page_of(json::array(), row.link)});
+        call = [&lab] { lab.reader().list_mail(); };
+        location = "the test mailbox's Inbox";
+    } else if (row.target == "sharepoint") {
+        lab.serve_file(drive_url(), "restoretarget-drive-200");
+        lab.graph_http.on(HttpMethod::get, library_children_url(),
+                          {page_of(json::array(), row.link)});
+        call = [&lab] { lab.reader().list_sharepoint(); };
+        location = "the RestoreTarget library";
+    } else {
+        lab.serve_file(folder_url(), "onedrive-folder-200");
+        lab.graph_http.on(HttpMethod::get, folder_children_url(),
+                          {page_of(json::array(), row.link)});
+        call = [&lab] { lab.reader().list_onedrive(); };
+        location = "the test OneDrive folder";
+    }
+    lab.graph_http.on(HttpMethod::get, row.link, {page_of(json::array())});
+
+    const Caught caught = catch_error(call);
+
+    CHECK(caught.kind == "GraphError");
+    CHECK(caught.what == "Graph's reply listing " + location + " has a bad @odata.nextLink");
+    CHECK(lab.gets(row.link) == 0);
+}
+
 TEST_CASE("an empty Inbox lists as an empty vector", "[graph][targets]")
 {
     Lab lab;

@@ -70,6 +70,9 @@ public:
     using GraphError::GraphError;
 };
 
+// Whether a nextLink's path (lower case, split at '/') names the target listed.
+using NextLinkRule = std::function<bool(const std::vector<std::string>& path)>;
+
 struct TargetReaderOptions {
     // The reader's own lines (counts, skipped items); null: spdlog::default_logger().
     std::shared_ptr<spdlog::logger> logger;
@@ -110,6 +113,7 @@ private:
         std::string drive_id;
         std::string children_path;
         std::string location; // "the RestoreTarget library", "the test OneDrive folder"
+        NextLinkRule next_rule;
     };
 
     void check_library();

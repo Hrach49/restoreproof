@@ -98,10 +98,11 @@ std::string percent_decode(std::string_view text)
     return out;
 }
 
-// The resource a listing URL names, to compare a nextLink with the first
-// request: the path after Graph's v1.0 root (list_pages passes only such URLs), up
-// to the query, percent-decoded, "seg('v')" and "seg(v)" as "seg/v", lower case.
-std::string resource_path(std::string_view url)
+// The resource a listing URL names, to check a nextLink against its target's
+// rule: the path after Graph's v1.0 root (list_pages passes only such URLs), up
+// to the query, percent-decoded, "seg('v')" and "seg(v)" as "seg/v", lower
+// case, split at '/'.
+std::vector<std::string> resource_path(std::string_view url)
 {
     if (url.starts_with(kGraphBaseUrl)) {
         url.remove_prefix(kGraphBaseUrl.size());
@@ -129,15 +130,26 @@ std::string resource_path(std::string_view url)
         out += '/';
         start = end + 1;
     }
-    return ascii_lower(out);
+    // The path after the root starts with '/': no empty first segment.
+    const std::string folded = ascii_lower(std::string_view{out}.substr(1));
+    std::vector<std::string> segments;
+    for (std::size_t at = 0;;) {
+        const std::size_t slash = folded.find('/', at);
+        segments.push_back(folded.substr(at, slash == std::string::npos ? slash : slash - at));
+        if (slash == std::string::npos) {
+            return segments;
+        }
+        at = slash + 1;
+    }
 }
 
-// Every page of a listing that starts at `first`, following @odata.nextLink.
+// Every page of a listing that starts at `first`, following @odata.nextLink
+// while `next_rule` takes the resource_path() of each link.
 std::vector<json> list_pages(GraphClient& graph, const std::string& first, const Grant& grant,
-                             const HttpHeaders& headers, const std::string& what)
+                             const HttpHeaders& headers, const std::string& what,
+                             const NextLinkRule& next_rule)
 {
     const std::string first_url = std::string{kGraphBaseUrl} + first;
-    const std::string first_resource = resource_path(first_url);
     const std::string prefix = std::string{kGraphBaseUrl} + "/";
     std::set<std::string> fetched{first_url};
     std::vector<json> pages;
@@ -160,8 +172,7 @@ std::vector<json> list_pages(GraphClient& graph, const std::string& first, const
         const std::string next = next_link->is_string() ? next_link->get<std::string>() : "";
         // Graph sends absolute links. Anything else is refused here, a relative one
         // too: GraphClient would put its v1.0 root in front of it and send it.
-        if (!next.starts_with(prefix) || fetched.contains(next) ||
-            resource_path(next) != first_resource) {
+        if (!next.starts_with(prefix) || fetched.contains(next) || !next_rule(resource_path(next))) {
             throw GraphError("Graph's reply listing " + what + " has a bad @odata.nextLink");
         }
         if (pages.size() >= static_cast<std::size_t>(kMaxListPages)) {
@@ -214,6 +225,36 @@ std::string last_segment(std::string_view url)
         url.remove_suffix(1);
     }
     return percent_decode(url.substr(url.rfind('/') + 1));
+}
+
+// A nextLink's path may name the same target in another form than the first
+// request did (review of W2.2): Graph documents the link as opaque. These take
+// the forms that still name the guarded target, and nothing that could reach
+// another folder of the same drive (alice's canaries share hers).
+
+// users/{the mailbox, or an object ID}/mailfolders/inbox/messages
+bool is_inbox_path(const std::vector<std::string>& path, const std::string& mailbox)
+{
+    return path.size() == 5 && path[0] == "users" &&
+           (path[1] == ascii_lower(mailbox) || is_uuid(path[1])) && path[2] == "mailfolders" &&
+           path[3] == "inbox" && path[4] == "messages";
+}
+
+// drives/{drive}/root/children, or drives/{drive}/items/{an item ID}/children
+bool is_library_root_path(const std::vector<std::string>& path, const std::string& drive)
+{
+    const bool drive_ok = path.size() >= 4 && path[0] == "drives" && path[1] == ascii_lower(drive);
+    return drive_ok && ((path.size() == 4 && path[2] == "root" && path[3] == "children") ||
+                        (path.size() == 5 && path[2] == "items" && is_item_id(path[3]) &&
+                         path[4] == "children"));
+}
+
+// drives/{drive}/items/{folder}/children: that folder only.
+bool is_folder_path(const std::vector<std::string>& path, const std::string& drive,
+                    const std::string& folder)
+{
+    return path.size() == 5 && path[0] == "drives" && path[1] == ascii_lower(drive) &&
+           path[2] == "items" && path[3] == ascii_lower(folder) && path[4] == "children";
 }
 
 } // namespace
@@ -366,7 +407,7 @@ std::vector<FoundItem> TargetReader::list_files(const FileTarget& target)
 {
     const std::string& location = target.location;
     const std::vector<json> pages =
-        list_pages(graph_, target.children_path, *target.grant, {}, location);
+        list_pages(graph_, target.children_path, *target.grant, {}, location, target.next_rule);
     std::vector<FoundItem> items;
     for (const json& page : pages) {
         for (const json& entry : page.at("value")) {
@@ -426,7 +467,9 @@ std::vector<FoundItem> TargetReader::list_mail()
         list_pages(graph_,
                    "/users/" + mailbox + "/mailFolders/inbox/messages" +
                        "?$select=id,subject,from,receivedDateTime,internetMessageId&$top=100",
-                   kMailReadGrant, prefer, location);
+                   kMailReadGrant, prefer, location, [&mailbox](const std::vector<std::string>& path) {
+                       return is_inbox_path(path, mailbox);
+                   });
     std::vector<FoundItem> items;
     for (const json& page : pages) {
         for (const json& message : page.at("value")) {
@@ -489,17 +532,24 @@ std::vector<FoundItem> TargetReader::list_sharepoint()
     const std::string& drive = targets_.library_id();
     return list_files({ItemType::sharepoint, &kSitesReadGrant, drive,
                        "/drives/" + drive + "/root/children" + std::string{kChildrenQuery},
-                       "the RestoreTarget library"});
+                       "the RestoreTarget library",
+                       [&drive](const std::vector<std::string>& path) {
+                           return is_library_root_path(path, drive);
+                       }});
 }
 
 std::vector<FoundItem> TargetReader::list_onedrive()
 {
     check_onedrive_folder();
     const std::string& drive = targets_.onedrive_drive_id();
+    const std::string& folder = targets_.onedrive_folder_id();
     return list_files({ItemType::onedrive, &kOneDriveReadGrant, drive,
-                       "/drives/" + drive + "/items/" + targets_.onedrive_folder_id() +
-                           "/children" + std::string{kChildrenQuery},
-                       "the test OneDrive folder"});
+                       "/drives/" + drive + "/items/" + folder + "/children" +
+                           std::string{kChildrenQuery},
+                       "the test OneDrive folder",
+                       [&drive, &folder](const std::vector<std::string>& path) {
+                           return is_folder_path(path, drive, folder);
+                       }});
 }
 
 } // namespace rp::graph

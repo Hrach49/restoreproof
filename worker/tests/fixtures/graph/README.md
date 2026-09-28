@@ -64,6 +64,10 @@ real lab values.
 | `messages-404-mailbox-not-enabled.json` | hand-written: `MailboxNotEnabledForRESTAPI`, what Graph says for a mailbox without an Exchange Online licence, inactive or on-premises | 404 → a plain `GraphError`, not `NotFoundError` |
 | `messages-429-throttled.json` | hand-written: Graph throttling a mailbox (`ApplicationThrottled`, `Retry-After: 3`) | 429 → retried after the Retry-After, then `TransientError` |
 | `messages-503-unavailable.json` | hand-written: Graph briefly unavailable (`serviceNotAvailable`, `Retry-After: 10`) | 503 → retried after the Retry-After, then `TransientError` |
+| `onedrive-folder-403-accessdenied.json` | hand-written: a 403 on the OneDrive folder in the recorded `site-403-accessdenied.json` shape; SharePoint masks an ungranted item as 404 (L1.5), so the lab can't provoke one read-only | 403 `accessDenied` → `PermissionError` naming the OneDrive grant (W2.2) |
+| `onedrive-folder-404-itemnotfound.json` | hand-written: stand-in until the empty state is recorded (W2.2): an item ID of no item in alice's OneDrive | 404 `itemNotFound` → `NotFoundError` (W2.2) |
+| `restoretarget-content-302.json` | hand-written: stand-in until the one-item state is recorded (W2.2): a file's `/content` in the RestoreTarget library, redirect not followed, `Location` scrubbed | 302 → the download follows `Location` without the token (W2.2) |
+| `onedrive-content-302.json` | hand-written: stand-in until the one-item state is recorded (W2.2): a file's `/content` in alice's `/RestoreTarget`, redirect not followed, `Location` scrubbed | 302 on the `-my` host → the download follows `Location` without the token (W2.2) |
 
 Entra's refusals that the lab can't provoke (Conditional Access, a disabled app, the other
 transient codes) are built in `graph_client_test.cpp` from `entra_error()`, in the recorded

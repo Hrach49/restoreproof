@@ -35,6 +35,7 @@ add_library(rpcore STATIC
     src/retry_policy.cpp
     src/secrets.cpp
     src/sha256.cpp
+    src/text_v1.cpp
     src/utf16.cpp
     src/veeam_client.cpp
     src/veeam_command.cpp
@@ -87,6 +88,7 @@ add_executable(rptests
     tests/sha256_test.cpp
     tests/smoke.cpp
     tests/text_util_test.cpp
+    tests/text_v1_test.cpp
     tests/veeam_client_live_test.cpp
     tests/veeam_client_test.cpp
     tests/veeam_command_test.cpp
@@ -105,6 +107,8 @@ target_compile_definitions(rptests PRIVATE RP_SOURCE_DIR="${CMAKE_CURRENT_SOURCE
 target_compile_definitions(rptests PRIVATE RP_CONFIG_EXAMPLE="${CMAKE_CURRENT_SOURCE_DIR}/config.example.json")
 # Recorded service responses (tests/fixtures/<service>/), served by FakeHttpClient.
 target_compile_definitions(rptests PRIVATE RP_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")
+# The test vectors shared with the lab and the Cloud (shared/testdata/), e.g. text-v1.
+target_compile_definitions(rptests PRIVATE RP_SHARED_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../shared")
 
 include(Catch)
 catch_discover_tests(rptests)

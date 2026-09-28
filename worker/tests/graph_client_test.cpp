@@ -32,6 +32,10 @@
 #include <chrono>
 #include <cstdint>
 #include <functional>
+#include <iterator>
+#include <cctype>
+#include <fstream>
+#include <filesystem>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -292,7 +296,111 @@ std::string thumbprint()
     return certificate().sha1_thumbprint();
 }
 
+// The request ID a recorded Graph reply carries, as GraphError reads it:
+// innerError's request-id, else the request-id header. A re-recording
+// (record-graph-fixtures) changes it, so tests read it rather than spell it out.
+std::string recorded_request_id(const std::string& fixture)
+{
+    const json doc = load_fixture_json("graph", fixture);
+    const json& body = doc.at("body");
+    if (body.is_object() && body.contains("error") && body.at("error").is_object()) {
+        for (const auto& [key, inner] : body.at("error").items()) {
+            std::string lower = key;
+            std::transform(lower.begin(), lower.end(), lower.begin(),
+                           [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            if (lower == "innererror" && inner.is_object() && inner.contains("request-id")) {
+                return inner.at("request-id").get<std::string>();
+            }
+        }
+    }
+    return doc.at("headers").at("request-id").get<std::string>();
+}
+
+// The user of messages-404-unknown-user: a random name the recorder draws on
+// every run, which Graph quotes in its message ('nobody-...@domain').
+std::string recorded_unknown_user()
+{
+    const std::string message = load_fixture_json("graph", "messages-404-unknown-user")
+                                    .at("body")
+                                    .at("error")
+                                    .at("message")
+                                    .get<std::string>();
+    const std::size_t open = message.find('\'');
+    const std::size_t close = message.find('\'', open + 1);
+    REQUIRE(open != std::string::npos);
+    REQUIRE(close != std::string::npos);
+    return message.substr(open + 1, close - open - 1);
+}
+
 } // namespace
+
+// Review of W2.1: lab/README.md tells people to re-run record-graph-fixtures,
+// which rewrites every live fixture with new request IDs, trace IDs and a new
+// random user. A test that spells one of those out turns red on the next
+// recording: this scan finds any in the Worker's test sources.
+TEST_CASE("no test spells out a value a live re-recording changes", "[graph][client]")
+{
+    const std::filesystem::path tests_dir = std::filesystem::path{RP_SOURCE_DIR} / "tests";
+    // GUIDs a re-recording keeps: the lab's tenant and app, Graph's own app.
+    const std::set<std::string> stable{kTenant, kClient, "00000003-0000-0000-c000-000000000000"};
+    const auto is_hex = [](char c) {
+        return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+    };
+    // Every GUID (8-4-4-4-12 hex digits) and "nobody-<8 hex>" in `text`.
+    const auto volatile_values = [&](const std::string& text) {
+        std::set<std::string> out;
+        constexpr std::string_view shape = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx";
+        for (std::size_t at = 0; at + shape.size() <= text.size(); ++at) {
+            bool guid = at == 0 || !is_hex(text[at - 1]);
+            for (std::size_t i = 0; guid && i < shape.size(); ++i) {
+                guid = shape[i] == '-' ? text[at + i] == '-' : is_hex(text[at + i]);
+            }
+            if (guid && (at + shape.size() == text.size() || !is_hex(text[at + shape.size()]))) {
+                out.insert(text.substr(at, shape.size()));
+            }
+        }
+        for (std::size_t at = text.find("nobody-"); at != std::string::npos;
+             at = text.find("nobody-", at + 1)) {
+            const std::string name = text.substr(at, 15);
+            if (name.size() == 15 && std::all_of(name.begin() + 7, name.end(), is_hex)) {
+                out.insert(name);
+            }
+        }
+        return out;
+    };
+    const auto read = [](const std::filesystem::path& path) {
+        std::ifstream in(path, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(in), {});
+    };
+
+    std::set<std::string> recorded;
+    for (const auto& entry : std::filesystem::directory_iterator(tests_dir / "fixtures" / "graph")) {
+        if (entry.path().extension() != ".json") {
+            continue;
+        }
+        const std::string text = read(entry.path());
+        if (json::parse(text).value("source", "").starts_with("live")) {
+            for (const std::string& value : volatile_values(text)) {
+                if (!stable.contains(value)) {
+                    recorded.insert(value);
+                }
+            }
+        }
+    }
+    REQUIRE_FALSE(recorded.empty());
+
+    for (const auto& entry : std::filesystem::directory_iterator(tests_dir)) {
+        const std::string ext = entry.path().extension().string();
+        if (ext != ".cpp" && ext != ".hpp") {
+            continue;
+        }
+        const std::string source = read(entry.path());
+        for (const std::string& value : recorded) {
+            CAPTURE(entry.path().filename().string(), value);
+            CHECK(source.find(value) == std::string::npos);
+        }
+    }
+}
 
 // --- Failure paths ----------------------------------------------------------
 
@@ -943,10 +1051,9 @@ TEST_CASE("a 401 after a fresh token is an AuthError that names the grant", "[gr
         std::string fixture;
         std::string request_id;
     };
-    const Row row = GENERATE(values<Row>({
-        {"api-invalid-token-401", "8d99e65f-8a32-4f9e-8e3f-6373ee609d8f"},
-        {"api-no-token-401", "aab1166d-fbde-4b5d-9e9d-8b3c4f51bb5a"},
-    }));
+    const std::string fixture = GENERATE(as<std::string>{}, "api-invalid-token-401",
+                                         "api-no-token-401");
+    const Row row{fixture, recorded_request_id(fixture)};
     CAPTURE(row.fixture);
     Lab lab;
     lab.http.on(HttpMethod::get, kMessagesUrl, {load_fixture("graph", row.fixture)});
@@ -1099,15 +1206,16 @@ TEST_CASE("a 403 is a PermissionError naming the grant the call relies on",
         std::string code;
         std::string request_id;
     };
-    const Row row = GENERATE(values<Row>({
+    Row row = GENERATE(values<Row>({
         {"messages-403-exchange",
          "/users/alice@RestoreProofLab.onmicrosoft.com/mailFolders/inbox/messages?$top=1&$select=id",
-         rp::graph::kMailReadGrant, "ErrorAccessDenied", "a6273daa-7ac8-44a8-bda9-b9d8e07d0a45"},
+         rp::graph::kMailReadGrant, "ErrorAccessDenied", ""},
         {"site-403-accessdenied", "/sites/restoreprooflab.sharepoint.com",
-         rp::graph::kSitesReadGrant, "accessDenied", "fc57d2c2-4ef3-48fe-ac0b-bd0c465230fa"},
+         rp::graph::kSitesReadGrant, "accessDenied", ""},
         {"users-403-requestdenied", "/users?$top=1&$select=id", rp::graph::kMailReadGrant,
-         "Authorization_RequestDenied", "198f38e0-bd47-43ee-a692-a321529ce5d2"},
+         "Authorization_RequestDenied", ""},
     }));
+    row.request_id = recorded_request_id(row.fixture);
     CAPTURE(row.fixture);
     const std::string url = std::string{rp::graph::kGraphBaseUrl} + row.path;
     Lab lab;
@@ -1163,8 +1271,8 @@ TEST_CASE("a 403 without Graph's JSON is a GraphError that points at the network
 
 TEST_CASE("a 404 is a NotFoundError with Graph's explanation", "[graph][client][get]")
 {
-    const std::string path =
-        "/users/nobody-670f8a55@RestoreProofLab.onmicrosoft.com/mailFolders/inbox/messages?$top=1";
+    const std::string user = recorded_unknown_user();
+    const std::string path = "/users/" + user + "/mailFolders/inbox/messages?$top=1";
     const std::string url = std::string{rp::graph::kGraphBaseUrl} + path;
     Lab lab;
     lab.http.on(HttpMethod::get, url, {load_fixture("graph", "messages-404-unknown-user")});
@@ -1175,11 +1283,11 @@ TEST_CASE("a 404 is a NotFoundError with Graph's explanation", "[graph][client][
     CHECK(caught.kind == "NotFoundError");
     CHECK(caught.status == 404);
     CHECK(caught.code == "ErrorInvalidUser");
-    CHECK(caught.what ==
-          "Graph GET /v1.0/users/nobody-670f8a55@RestoreProofLab.onmicrosoft.com/mailFolders/"
-          "inbox/messages: HTTP 404 (ErrorInvalidUser): The requested user "
-          "'nobody-670f8a55@RestoreProofLab.onmicrosoft.com' is invalid. (request ID "
-          "6491e50f-2c2f-4d02-9cf2-e700351b1c3d)");
+    CHECK(caught.what == "Graph GET /v1.0/users/" + user +
+                             "/mailFolders/inbox/messages: HTTP 404 (ErrorInvalidUser): The "
+                             "requested user '" +
+                             user + "' is invalid. (request ID " +
+                             recorded_request_id("messages-404-unknown-user") + ")");
     CHECK(lab.http.count(HttpMethod::get, url) == 1);
 }
 
@@ -1329,7 +1437,7 @@ TEST_CASE("a Graph error keeps innerError's code and request ID", "[graph][clien
     lower_case.headers["request-id"] = "from-header";
     const Row row = GENERATE_COPY(values<Row>({
         {load_fixture("graph", "site-403-accessdenied"), "accessDenied", "",
-         "fc57d2c2-4ef3-48fe-ac0b-bd0c465230fa"},
+         recorded_request_id("site-403-accessdenied")},
         {lower_case, "itemNotFound", "resourceNotFound", "from-body"},
         {make_response(400, R"({"error":{"code":"x","innerError":"not an object"}})"), "x", "", ""},
     }));

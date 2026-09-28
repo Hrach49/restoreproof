@@ -11,18 +11,23 @@ namespace rp {
 namespace exit_code {
 inline constexpr int ok = 0;
 // config.json missing or invalid, a --config path that isn't UTF-8, a secret
-// variable unset or unreadable, or any unexpected failure (whose message is
-// never shown), an exception no command handled included.
+// variable unset or unreadable (the Graph certificate's included: a
+// graph::CertificateError is a ConfigError), or any unexpected failure (whose
+// message is never shown), an exception no command handled included.
 inline constexpr int config = 1;
-// Veeam refused the credentials, the account's role or the token (AuthError).
+// The service refused the credentials, the account's role, the token or a
+// permission: Veeam's AuthError, Graph's AuthError and PermissionError (whose
+// message names the grant the call relies on).
 inline constexpr int auth = 2;
-// Veeam unreachable, a timeout, a TLS handshake failure, 502/503/504
-// (TransientError).
+// The service couldn't be reached or asked to try later: no connection, a
+// timeout, a TLS handshake failure, 502/503/504 (and Graph's 429 and other
+// 5xx) after the retries (Veeam's and Graph's TransientError).
 inline constexpr int transient = 3;
-// Any other Veeam error (NotFoundError included, and a certificate that fails
-// verification: TLS failures that aren't a broken-off handshake), or
-// veeam_org_name not among Veeam's organisations.
-inline constexpr int veeam = 4;
+// Any other error from the service (Veeam's or Graph's NotFoundError
+// included, a certificate that fails verification: TLS failures that aren't a
+// broken-off handshake, a failed download, and a restore target the guard
+// refuses), or veeam_org_name not among Veeam's organisations.
+inline constexpr int service = 4;
 // A command line rpworker doesn't understand.
 inline constexpr int usage = 64;
 } // namespace exit_code
@@ -31,11 +36,12 @@ inline constexpr int usage = 64;
 // doesn't understand. Every command shares it.
 inline constexpr std::string_view kCliUsage =
     "usage: rpworker --version | rpworker config check [--config <path>] | "
-    "rpworker veeam list [--config <path>]\n";
+    "rpworker veeam list [--config <path>] | rpworker graph list [--hash] [--config <path>]\n";
 
-// rpworker's command line: `--version`, `config ...` (rp/config_check.hpp) or
-// `veeam ...` (rp/veeam_command.hpp). `args` is argv without the program
-// name, in UTF-8. Normal output goes to `out`, usage and errors to `err`.
+// rpworker's command line: `--version`, `config ...` (rp/config_check.hpp),
+// `veeam ...` (rp/veeam_command.hpp) or `graph ...` (rp/graph_command.hpp).
+// `args` is argv without the program name, in UTF-8. Normal output goes to
+// `out`, usage and errors to `err`.
 // Returns the process exit code (rp::exit_code): 0 on success, 64 with
 // kCliUsage on `err` for a command line it doesn't understand, and the
 // command's own code when it fails. No exception escapes: one a command lets

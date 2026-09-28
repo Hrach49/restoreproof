@@ -1,0 +1,27 @@
+{
+  "source": "hand-written: stand-in until the one-item state is recorded (W2.2): GET the children of alice's /RestoreTarget, one file",
+  "request": "GET /v1.0/drives/b!wA9gbfhlEUitGAluxbfoNBr_z5gEtDhErm5pJ6bMwyXfZJ8a_dkCQ696RX0r7_U3/items/01ZK75LGDGB6QOO3MGNFGYOY6C6VBDG5OH/children?$select=id,name,size,file,folder&$top=200",
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/json; odata.metadata=minimal; odata.streaming=true; IEEE754Compatible=false; charset=utf-8",
+    "request-id": "00000000-0000-4000-8000-000000000085",
+    "client-request-id": "00000000-0000-4000-8000-000000000085"
+  },
+  "body": {
+    "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#Collection(driveItem)",
+    "value": [
+      {
+        "@odata.etag": "\"{00000000-0000-4000-8000-000000000002},1\"",
+        "id": "01STANDINFILE02AAAAAAAAAAAAAAAAAAAAA",
+        "name": "w2.2-stand-in-onedrive.txt",
+        "size": 28,
+        "file": {
+          "mimeType": "text/plain",
+          "hashes": {
+            "quickXorHash": "AAAAAAAAAAAAAAAAAAAAAAAAAAA="
+          }
+        }
+      }
+    ]
+  }
+}

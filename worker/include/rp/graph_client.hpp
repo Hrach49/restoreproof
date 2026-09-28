@@ -68,8 +68,9 @@ std::string user_agent();
 // ("Sun, 06 Nov 1994 08:49:37 GMT"; a date already past is 0 s). Spaces and
 // tabs around it are ignored. Anything else (a negative or fractional number,
 // the obsolete date forms, junk) is nullopt: ignored, the normal backoff
-// applies. A number too large to hold is kept as a huge wait, never wrapped,
-// so it counts as over the cap.
+// applies. A wait over 1e9 s (about 31 years), a number too large to hold or a
+// date in year 9999 included, is kept as 1e9 s, never wrapped: over the cap,
+// and safe to add to either clock's now().
 std::optional<std::chrono::seconds> parse_retry_after(
     std::string_view value, std::chrono::system_clock::time_point wall_now);
 

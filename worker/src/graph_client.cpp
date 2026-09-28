@@ -33,9 +33,10 @@ constexpr seconds kRenewMargin{60};
 // ... and a lifetime above this counts as this: Entra gives about an hour, and
 // no later arithmetic on the clock can overflow.
 constexpr seconds kMaxTokenLifetime{86400};
-// A Retry-After number above this is kept as this: far over any cap, and no
-// arithmetic on it can overflow.
-constexpr std::int64_t kHugeRetryAfter = 1'000'000'000'000;
+// A Retry-After above this (about 31 years) is kept as this: far over any cap,
+// and small enough that adding it to steady_clock's or system_clock's now()
+// can't overflow.
+constexpr std::int64_t kHugeRetryAfter = 1'000'000'000;
 // How much of Entra's error_description and Graph's message a message keeps.
 constexpr std::size_t kMaxServerText = 300;
 // How much of a request ID a message keeps: a GUID is 36 characters.
@@ -468,9 +469,12 @@ std::optional<seconds> parse_retry_after(std::string_view value,
     if (!date.ok()) {
         return std::nullopt;
     }
-    const auto at = std::chrono::sys_days{date} + std::chrono::hours{*hour} +
-                    std::chrono::minutes{*minute} + seconds{*second};
-    return std::max(std::chrono::ceil<seconds>(at - wall_now), seconds{0});
+    // In seconds from the start: MSVC's hours and minutes count in int, and
+    // a sum in minutes wraps from about year 6053.
+    const auto at = std::chrono::sys_seconds{std::chrono::sys_days{date}} +
+                    std::chrono::hours{*hour} + std::chrono::minutes{*minute} + seconds{*second};
+    return std::clamp(std::chrono::ceil<seconds>(at - wall_now), seconds{0},
+                      seconds{kHugeRetryAfter});
 }
 
 GraphClient::GraphClient(IHttpClient& http, std::string tenant_id, std::string client_id,

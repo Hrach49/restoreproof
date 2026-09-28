@@ -286,6 +286,35 @@ TEST_CASE("The certificate must be valid at the wall-clock time", "[graph][certi
     }
 }
 
+// Review of W2.1: MSVC's chrono hours and minutes count in int, so a date from
+// about year 6053 on wrapped into the past. 99991231235959Z is RFC 5280's
+// value for a certificate with no well-defined expiry.
+TEST_CASE("Validity dates far in the future are read without wrapping", "[graph][certificate]")
+{
+    const auto end_of_9999 = std::chrono::sys_seconds{std::chrono::sys_days{
+                                 std::chrono::year{9999} / 12 / 31}} +
+                             23h + 59min + 59s;
+    SECTION("a notAfter of 99991231235959Z loads")
+    {
+        const Cert cert = make_client_cert("Forever", at_now({.not_after_text = "99991231235959Z"}));
+        std::ostringstream log;
+        const ClientCertificate loaded = load_client_certificate(
+            to_base64(make_pfx(cert, kPassword)), kPassword, kNow, {}, string_logger(log));
+        CHECK(loaded.not_after() == end_of_9999);
+        CHECK(log.str().empty());
+    }
+    SECTION("a notBefore in year 6054 is not valid yet")
+    {
+        const Cert cert = make_client_cert(
+            "Later", at_now({.not_before_text = "60540101000000Z",
+                             .not_after_text = "99991231235959Z"}));
+        CHECK(load_error(to_base64(make_pfx(cert, kPassword))) ==
+              "the certificate in RP_GRAPH_CERT_PFX_BASE64 (SHA-1 thumbprint " +
+                  rp::test::cert_sha1_hex(cert) +
+                  ") is not valid until 6054-01-01T00:00:00Z; check this machine's clock");
+    }
+}
+
 TEST_CASE("A good PFX loads, and its thumbprints and validity are the certificate's",
           "[graph][certificate]")
 {

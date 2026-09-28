@@ -33,10 +33,10 @@ Ten keys are required; the other eight are optional. Six of those have defaults;
 | `graph_tenant_id` | yes | | a GUID: see below | The Microsoft 365 tenant ID, for Microsoft Graph sign-in: see "Microsoft Graph app" below. Not the tenant's domain name. |
 | `graph_client_id` | yes | | a GUID: see below | The application (client) ID of the Worker's own app registration, "RestoreProof Worker": see "Microsoft Graph app" below. |
 | `test_mailbox` | yes | | `restoretest@<domain>`: see below | The `restoretest` mailbox: the only restore target for mail. |
-| `test_site_id` | yes | | non-empty string | The SharePoint site holding the `RestoreTarget` library (the RestoreTest site in the lab). |
-| `test_library_id` | yes | | non-empty string | The `RestoreTarget` library: the only restore target for SharePoint items. Not the `RestoreTest` library, which holds the canary files. |
-| `test_onedrive_drive_id` | yes | | non-empty string | The OneDrive drive holding the `RestoreTarget` folder. |
-| `test_onedrive_folder_id` | yes | | non-empty string | The `RestoreTarget` folder: the only restore target for OneDrive items. Not `/RestoreTest`, which holds the canary files. |
+| `test_site_id` | yes | | non-empty string; Graph's site ID `<tenant>.sharepoint.com,<site GUID>,<web GUID>`: see below | The SharePoint site holding the `RestoreTarget` library (the RestoreTest site in the lab). |
+| `test_library_id` | yes | | non-empty string; a Graph **drive ID** (`b!…`): see below | Graph **drive ID** (`b!…`) of the `RestoreTarget` library; not the list ID. The only restore target for SharePoint items. Not the `RestoreTest` library, which holds the canary files. |
+| `test_onedrive_drive_id` | yes | | non-empty string; a Graph drive ID (`b!…`): see below | The OneDrive drive holding the `RestoreTarget` folder. |
+| `test_onedrive_folder_id` | yes | | non-empty string; a Graph item ID: see below | The `RestoreTarget` folder's item ID: the only restore target for OneDrive items. Not `/RestoreTest`, which holds the canary files. |
 | `poll_interval_s` | no | `300` | integer, 1 to 86400 | Seconds between the Worker's requests to the Cloud for new jobs. |
 | `heartbeat_interval_s` | no | `900` | integer, 1 to 86400 | Seconds between the Worker's reports to the Cloud that it is alive. |
 | `sample_mail` | no | `5` | integer, 0 to 100 | Mail items restored per test run. |
@@ -88,6 +88,21 @@ connection reads it. Fix the reported problem and run
   `restoretest@contoso.onmicrosoft.com`. Spaces, look-alike letters and invisible characters
   are rejected; write an internationalised domain in its `xn--` form. The Worker's
   `TargetGuard` still checks every restore; this rule stops a wrong mailbox before any run.
+- **The four target IDs are Graph's IDs, checked when the targets are listed.**
+  `rpworker config check` only requires them to be non-empty; `rp::graph::TargetReader`
+  (W2.2) checks their form before it sends anything, and refuses a wrong one as a config error
+  naming the key, because each goes into a Graph URL path:
+  - `test_site_id` is exactly `<tenant>.sharepoint.com,<site GUID>,<web GUID>`, as
+    `GET /sites/{hostname}:/sites/{name}` returns it in `id`. The host is one DNS label then
+    `.sharepoint.com`; downloads are only accepted from that tenant's SharePoint hosts.
+  - `test_library_id` and `test_onedrive_drive_id` are drive IDs: `b!` then 1 to 200 letters,
+    digits, `-` and `_` (`GET /sites/{site}/drives`, or the library's `drive` in Graph
+    Explorer). `test_library_id` is the drive ID, not the SharePoint list ID
+    (`docs/decisions.md` 2026-09-28, W2.2).
+  - `test_onedrive_folder_id` is a drive item ID: 1 to 200 letters, digits, `!`, `-` and `_`.
+  Before listing, the Worker also checks with one GET that the drive or folder really is a
+  `RestoreTarget` in that site or directly in that OneDrive's root, and refuses to list
+  anything else, the canaries' `RestoreTest` included.
 - **`graph_tenant_id` and `graph_client_id` are GUIDs.** Exactly 8-4-4-4-12 hexadecimal
   digits in any case, such as `bcd6bd1a-ea42-489d-aa28-2c19a44ad146`, with nothing around
   them: no braces, no spaces. Both go into Entra and Graph URLs, so nothing else is accepted.

@@ -1,11 +1,12 @@
 {
-  "source": "hand-written: stand-in until the one-item state is recorded (W2.2): GET that file's content, redirect not followed, Location scrubbed",
+  "source": "live 2026-09-28: GET that file's content, redirect not followed, Location scrubbed",
   "request": "GET /v1.0/drives/b!wA9gbfhlEUitGAluxbfoNBr_z5gEtDhErm5pJ6bMwyXfZJ8a_dkCQ696RX0r7_U3/items/<item id>/content",
   "status": 302,
   "headers": {
-    "Location": "https://restoreprooflab-my.sharepoint.com/personal/alice_restoreprooflab_onmicrosoft_com/_layouts/15/download.aspx?UniqueId=SCRUBBED&Translate=false&tempauth=SCRUBBED&ApiVersion=2.0",
-    "request-id": "00000000-0000-4000-8000-000000000072",
-    "client-request-id": "00000000-0000-4000-8000-000000000072"
+    "Content-Type": "application/octet-stream",
+    "Location": "https://restoreprooflab-my.sharepoint.com/personal/alice_restoreprooflab_onmicrosoft_com/_layouts/15/download.aspx?UniqueId=9cb597d4-49f6-42a4-ac62-97699b41d67a&Translate=false&tempauth=SCRUBBED&ApiVersion=2.0",
+    "request-id": "d25e363f-b237-46aa-80f7-2e0de69c3f2c",
+    "client-request-id": "d25e363f-b237-46aa-80f7-2e0de69c3f2c"
   },
   "body": null
 }

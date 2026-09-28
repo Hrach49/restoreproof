@@ -13,6 +13,7 @@ class RecordedRequest:
     url: str
     headers: dict[str, str]
     body: bytes | None
+    follow_redirects: bool = True
 
     def json(self) -> Any:
         assert self.body is not None
@@ -39,8 +40,10 @@ class FakeTransport:
         url: str,
         headers: Mapping[str, str],
         body: bytes | None = None,
+        *,
+        follow_redirects: bool = True,
     ) -> HttpResponse:
-        req = RecordedRequest(method, url, dict(headers), body)
+        req = RecordedRequest(method, url, dict(headers), body, follow_redirects)
         self.requests.append(req)
         if self._handler is not None:
             result = self._handler(req)

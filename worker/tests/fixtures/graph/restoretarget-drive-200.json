@@ -4,8 +4,8 @@
   "status": 200,
   "headers": {
     "Content-Type": "application/json;odata.metadata=minimal;odata.streaming=true;IEEE754Compatible=false;charset=utf-8",
-    "request-id": "c5d1b670-a9ab-4c53-9030-e8e4002dffda",
-    "client-request-id": "c5d1b670-a9ab-4c53-9030-e8e4002dffda"
+    "request-id": "cf394e5d-aab8-4620-82a1-bbc2879b5482",
+    "client-request-id": "cf394e5d-aab8-4620-82a1-bbc2879b5482"
   },
   "body": {
     "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#drives(id,name,driveType,webUrl,sharePointIds)/$entity",

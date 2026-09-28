@@ -4,8 +4,8 @@
   "status": 200,
   "headers": {
     "Content-Type": "application/json; odata.metadata=minimal; odata.streaming=true; IEEE754Compatible=false; charset=utf-8",
-    "request-id": "0a8f1b12-7a10-4610-8086-aee3d7ce557c",
-    "client-request-id": "0a8f1b12-7a10-4610-8086-aee3d7ce557c"
+    "request-id": "899be9a6-d591-44e4-9828-0870eff08108",
+    "client-request-id": "899be9a6-d591-44e4-9828-0870eff08108"
   },
   "body": {
     "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#Collection(driveItem)",

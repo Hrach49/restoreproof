@@ -72,8 +72,8 @@ outside the restore targets, or to fail on replies Graph may really send.
 - *Dropping a 200 from `/content`:* Graph may serve one; it is capped instead.
 
 **Consequences.**
-- `mail-list-200-empty.json` was recorded with the old `$select`, so the lab's plan test fails
-  on it until the empty state is recorded again (read-only). The one-item and paged states
+- The empty state was recorded again (2026-09-28) with the new `$select`; the recorded
+  `onedrive-folder-200.json` has `parentReference.driveType` `business`. The one-item and paged states
   are still hand-written stand-ins; recording them confirms items 3 and 7 against real
   replies.
 - W3.2 hashes docx and xlsx with `office-v1` through `on_file`, so their byte counts no longer

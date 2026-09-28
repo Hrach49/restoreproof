@@ -193,3 +193,60 @@ def test_a_missing_pfx_names_the_file_and_the_setup_script(tmp_path):
     result = run_pwsh(with_credential(PASSWORD_SENTINEL, body))
     assert f"No certificate file at {missing}" in result.stdout, result.stdout + result.stderr
     assert "new-worker-app.ps1" in result.stdout
+
+
+# ---- review of W2.1 --------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(not WINDOWS_PWSH, reason="Credential Manager, Windows only")
+def test_a_relative_pfx_path_is_read_where_powershell_is(lab_pfx):
+    # Test-Path resolves against PowerShell's location, [IO.File] against the process's
+    # directory, which Set-Location doesn't move: both must read the same file.
+    expected_b64 = base64.b64encode(lab_pfx.read_bytes()).decode("ascii")
+    body = f"""
+        Set-Location -LiteralPath '{lab_pfx.parent}'
+        . '{SCRIPT}' -PfxPath '.\\{lab_pfx.name}' -CredentialTarget $target
+        "pfx: $($env:RP_GRAPH_CERT_PFX_BASE64 -ceq '{expected_b64}')"
+    """
+    result = run_pwsh(with_credential(PASSWORD_SENTINEL, body))
+    assert "pfx: True" in result.stdout, result.stdout + result.stderr
+
+
+@pytest.mark.skipif(not WINDOWS_PWSH, reason="Credential Manager, Windows only")
+def test_the_callers_own_variables_of_the_same_names_are_kept(lab_pfx):
+    # Dot-sourced, the param block binds in the caller's scope: it must not take over (and
+    # then remove) variables the caller already had.
+    body = f"""
+        $PfxPath = 'mine'; $CredentialTarget = 'theirs'; $Clear = 'kept'
+        . '{SCRIPT}' -PfxPath '{lab_pfx}' -CredentialTarget $target
+        "after: $PfxPath $CredentialTarget $Clear"
+    """
+    result = run_pwsh(with_credential(PASSWORD_SENTINEL, body))
+    assert "after: mine theirs kept" in result.stdout, result.stdout + result.stderr
+
+
+@pytest.mark.skipif(not WINDOWS_PWSH, reason="Credential Manager, Windows only")
+def test_a_failure_leaves_no_script_variable_behind(tmp_path):
+    body = f"""
+        try {{ . '{SCRIPT}' -PfxPath '{tmp_path / "nope.pfx"}' -CredentialTarget $target }} catch {{ }}
+        "left: [$(@(Get-Variable -Name 'RpWorkerEnv*', 'PfxPath', 'CredentialTarget', 'Clear' -ErrorAction SilentlyContinue).Name)]"
+    """
+    result = run_pwsh(with_credential(PASSWORD_SENTINEL, body))
+    assert "left: []" in result.stdout, result.stdout + result.stderr
+
+
+@pytest.mark.skipif(not WINDOWS_PWSH, reason="Credential Manager, Windows only")
+def test_a_damaged_pfx_is_not_blamed_on_the_password(tmp_path):
+    damaged = tmp_path / "worker-graph.pfx"
+    damaged.write_bytes(b"this is not a PFX file at all" * 10)
+    body = f"""
+        try {{ . '{SCRIPT}' -PfxPath '{damaged}' -CredentialTarget $target; 'no error' }}
+        catch {{ "error: $($_.Exception.Message)" }}
+        "set: $(Test-Path env:RP_GRAPH_CERT_PASSWORD)"
+    """
+    result = run_pwsh(with_credential(PASSWORD_SENTINEL, body))
+    out = result.stdout
+    assert "can't be read as a PFX" in out, out + result.stderr
+    assert "can't be opened with the password" not in out
+    assert "set: False" in out
+    assert PASSWORD_SENTINEL not in out + result.stderr

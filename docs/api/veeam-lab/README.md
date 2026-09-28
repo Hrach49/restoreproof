@@ -1,9 +1,11 @@
-# Veeam REST evidence (L1.6, W1.0, W1.4)
+# Veeam REST evidence (L1.6, W1.0, W1.4, W2.4)
 
 Raw, scrubbed request/response pairs from the lab Veeam server (VB365 8.6, REST v8), recorded
 on 2026-09-25/26: L1.6 and W1.0 for `docs/api/veeam-feasibility.md`, W1.4 for
 `docs/api/veeam-notes.md` (made by the scripts in `docs/api/veeam-m365/`). W1.5 turns them into
-`worker/tests/fixtures/veeam/` fixtures (the list is in `veeam-notes.md` §9).
+`worker/tests/fixtures/veeam/` fixtures (the list is in `veeam-notes.md` §9). W2.4's restores,
+recorded on 2026-09-28 by `docs/api/veeam-m365/10-restore.ps1`, are for
+`docs/api/veeam-restore-flow.md`.
 
 ## Format
 
@@ -66,3 +68,43 @@ points), `session`, `mail`, `sp`, `od` and `sweep`. A suffix names an error case
 `docs/api/veeam-m365/audit-evidence.ps1` against every password and token value used, and for
 JWT, bearer, PFX and PEM patterns: no hits. The W1.4 run left no explore session open
 (`w1.4-sweep-list`).
+
+## W2.4 restores
+
+W2.4 files are `w2.4-<type>-<tag>-<what>.json`, one set per run of `10-restore.ps1`. `<type>` is
+`mail`, `sp` or `od`; `<tag>` is `x1` (one item) or `x5` (five items in one restore call). Four
+runs, all from the restore point of 2026-09-27T22:00:48Z, all `Success`:
+
+| Run | Items | Source → target | Restore session |
+|---|---|---|---|
+| `mail-x1` | RP-CANARY-0011 | bob's Inbox → restoretest's Inbox | [`w2.4-mail-x1-session`](w2.4-mail-x1-session.json) |
+| `sp-x1` | rp-canary-06.pdf | RestoreTest library → RestoreTarget library | [`w2.4-sp-x1-session`](w2.4-sp-x1-session.json) |
+| `od-x1` | rp-canary-16.pdf | alice's `/RestoreTest` → alice's `/RestoreTarget` | [`w2.4-od-x1-session`](w2.4-od-x1-session.json) |
+| `mail-x5` | RP-CANARY-0002 to 0006 | alice's Inbox → restoretest's Inbox | [`w2.4-mail-x5-session`](w2.4-mail-x5-session.json) |
+
+`<what>`, in the order the script makes the calls:
+
+| `<what>` | Call |
+|---|---|
+| `sweep-before` | `GET /v8/RestoreSessions?limit=200`: preflight, no rp-veeam session still `Working` |
+| `org` | `GET /v8/Organizations`: the organisation app and certificate thumbprint used as restore credential |
+| `explore` | `POST /v8/Organizations/{id}/explore` at the newest `backupTime` (`Vex`, `Vesp` or `Veod`) |
+| `mailboxes`, `folder-inbox`, `items`, `item` | mail: the source mailbox, its Inbox, the Inbox's items, the first item re-read by ID |
+| `sites`, `libraries`, `documents`, `document` | SharePoint: the RestoreTest site, its libraries, the canary library's documents, the first document re-read |
+| `onedrives`, `folders-root`, `documents`, `document` | OneDrive: alice's OneDrive, its root folders, `/RestoreTest`'s documents, the first document re-read |
+| `restore` | the restore POST (`.../items/restoreTo`, `.../Documents/restoreTo` or `.../Documents/copyTo`) and its `200 {sessionId}` |
+| `sessions-after-post` | `GET /v8/RestoreSessions?startTimeFrom=…&orderBy=CreationTime&orderAsc=false&limit=50`: the duplicate check, exactly one new session each time |
+| `session-working` | the restore session, first seen `Working` |
+| `session` | the restore session, `Stopped`, with `result` and `details` |
+| `statistics` | `GET /v8/RestoreSessions/{id}/Statistics` |
+| `events` | `GET /v8/RestoreSessions/{id}/Events?limit=100`: one `Restore` event per item |
+
+The script can also write `restore-<status>` (a restore POST that failed), `sessions-after-timeout`
+(a later duplicate check after a POST without an answer) and `statistics-409` (statistics not
+ready yet after `Stopped`); none of the four runs did.
+
+The restore bodies carry the certificate and its one-time password; both read `"[REDACTED]"` in
+the `restore` files. The script also scrubs the exported PFX's Base64. Before commit the 52 files
+were audited with `audit-evidence.ps1 -Path ..\veeam-lab\w2.4-*.json` against rp-veeam's
+password, every token and the one-time PFX passwords, and for JWT, bearer, PFX and PEM patterns:
+no hits. Each run stops its explore session in its `finally` block.

@@ -87,7 +87,16 @@ The Worker config keys `test_mailbox`, `test_site_id`, `test_library_id`,
 - the OneDrive body names the user's OneDrive (an object from the Veeam session) and the
   folder name `RestoreTarget`.
 
-Still open: W2.4/W2.7 settle how the configured IDs map to these names, and update the config doc.
+W2.4 settled the mapping (`docs/decisions.md` 2026-09-28, W2.4): the Worker resolves the
+names at run time through Graph with its read-only app (the site's `webUrl`, the library's
+drive `name`, the OneDrive's `webUrl`, the folder's `name`; the mailbox is `test_mailbox`, the
+folder `Inbox`) and finds Veeam's OneDrive object by that URL. W2.5 and W2.7 implement it (the
+OneDrive drive read and its `webUrl` form are checked in W2.5; `docs/api/veeam-restore-flow.md`
+§16). No new config keys, so `docs/worker-config.md` is unchanged.
+
+Both `RestoreTarget`s are in the backup from the 2026-09-27T22:00:48Z restore point on (W2.4;
+W1.4 saw the two earlier points without them). Anything left in a target at backup time is in
+the next point, so the sampler (W2.6) never takes items from a target.
 
 ## RestoreProof Worker app (L1.5)
 

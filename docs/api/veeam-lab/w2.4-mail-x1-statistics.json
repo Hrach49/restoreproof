@@ -1,0 +1,32 @@
+{
+  "note": "GET /v8/RestoreSessions/{restoreSessionId}/Statistics",
+  "captured_utc": "2026-09-28T21:28:04.371Z",
+  "duration_ms": 88,
+  "request": {
+    "method": "GET",
+    "path": "/v8/RestoreSessions/b6fe35ef-9633-481d-9756-3496a717d8a9/Statistics",
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "content_type": "application/json; charset=utf-8",
+    "headers": {
+      "Date": "Mon, 28 Sep 2026 21:28:03 GMT",
+      "Cache-Control": "no-store",
+      "Pragma": "no-cache",
+      "Transfer-Encoding": "chunked",
+      "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+      "X-Content-Type-Options": "nosniff",
+      "X-XSS-Protection": "1; mode=block",
+      "X-Frame-Options": "SAMEORIGIN",
+      "Content-Type": "application/json; charset=utf-8"
+    },
+    "body": {
+      "totalItemsCount": 1,
+      "restoredItemsCount": 1,
+      "failedItemsCount": 0,
+      "skippedItemsCount": 0,
+      "items": []
+    }
+  }
+}

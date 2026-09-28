@@ -225,6 +225,11 @@ A sentinel test greps every output for the PFX password, the token and the priva
    restored items. Whether that is Veeam's own backup app, or a dedicated restore app with
    narrower permissions, is still open (`docs/api/veeam-feasibility.md` §5.4, and
    `docs/decisions.md` 2026-09-26). Either way its PFX is a vault secret like this one.
+   W2.4 (`docs/decisions.md` 2026-09-28) restored in the lab with Veeam's own organisation
+   app: its certificate exported per run from `Cert:\LocalMachine\My` into memory, the
+   temporary PFX deleted at once, the PFX not stored. A dedicated app is still open, for a spike
+   before W4.5. Against a narrow one: Veeam's SharePoint restore demanded
+   `Group.ReadWrite.All` (application) on the app (L1.4, `docs/manual-restore-reference.md`).
 3. **Customer tenants.** Onboarding an MSP's client repeats these steps per tenant: the
    `restoretest` scope, the site grant, the OneDrive folder grant and the site collection
    admin requirement. How the product guides or automates that is for the onboarding tasks.
@@ -233,3 +238,10 @@ A sentinel test greps every output for the PFX password, the token and the priva
    certificate and replaces the old one on the app. Stage 1 has no renewal alert yet; the
    Worker only logs a warning once the certificate expires within 30 days (W2.1), and refuses
    an expired one.
+5. **Reading alice's OneDrive drive (W2.5).** W2.4's mapping of config IDs to Veeam's names
+   (`docs/decisions.md` 2026-09-28, W2.4, decision 3) reads
+   `GET /drives/{test_onedrive_drive_id}` for the OneDrive's `webUrl`. This app's grant,
+   `Files.SelectedOperations.Selected`, is on the `/RestoreTarget` folder only, so a
+   drive-level read may answer 403. W2.5 must check it. If it is refused, the fallback is the
+   folder's `parentReference.siteId` (the first GUID of Veeam's OneDrive `id`), read through the
+   existing folder grant: no new permission (`docs/api/veeam-restore-flow.md` §16).

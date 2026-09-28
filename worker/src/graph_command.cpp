@@ -50,6 +50,16 @@ bool parse_list_args(std::span<const std::string_view> args, bool& hash,
     return true;
 }
 
+// The download client of a listing without --hash, which downloads nothing:
+// the real one is never made, so it can't fail the listing.
+class NoDownloads final : public IHttpClient {
+public:
+    HttpResponse send(const HttpRequest&) override
+    {
+        throw std::logic_error("a download without --hash");
+    }
+};
+
 // what() is safe to print: GraphError's message went through rp::redact() and
 // never holds a token, the assertion or a download link.
 int report_graph_error(std::ostream& err, const graph::GraphError& e, int code)
@@ -183,7 +193,8 @@ int run_graph_command(std::span<const std::string_view> args, std::ostream& out,
         // Declared in this order so the reader and the client, which hold
         // references to the HTTP clients, go first.
         const std::unique_ptr<IHttpClient> http = env.make_graph_http(logger);
-        const std::unique_ptr<IHttpClient> download = env.make_download_http();
+        const std::unique_ptr<IHttpClient> download =
+            hash ? env.make_download_http() : std::make_unique<NoDownloads>();
         if (!http || !download) {
             throw std::logic_error("no HTTP client");
         }

@@ -45,6 +45,7 @@
 #include <vector>
 
 using Catch::Matchers::ContainsSubstring;
+using Catch::Matchers::EndsWith;
 using Catch::Matchers::StartsWith;
 using Args = std::vector<std::string_view>;
 
@@ -584,10 +585,11 @@ TEST_CASE("rpworker graph list reports an unexpected failure without its message
     }
     SECTION("no download client")
     {
+        // Only --hash needs one.
         Harness lab;
         lab.make_download_http = [] { return std::unique_ptr<rp::IHttpClient>{}; };
 
-        const Run result = lab.run_list();
+        const Run result = lab.run_list(true);
 
         CHECK(result.exit_code == rp::exit_code::config);
         CHECK(result.err == "error: unexpected failure\n");
@@ -632,6 +634,58 @@ TEST_CASE("rpworker graph list reports an unexpected failure without its message
         CHECK(code == rp::exit_code::config);
         CHECK(err.str() == "error: unexpected failure\n");
     }
+}
+
+TEST_CASE("rpworker graph list without --hash never makes the download client", "[graph_command]")
+{
+    // Nothing is downloaded, so a download client that can't be made can't
+    // fail the listing.
+    const bool available = GENERATE(true, false);
+    CAPTURE(available);
+    Harness lab;
+    lab.serve_one_each();
+    if (!available) {
+        lab.make_download_http = [] { return std::unique_ptr<rp::IHttpClient>{}; };
+    }
+
+    const Run result = lab.run_list();
+
+    CHECK(result.exit_code == rp::exit_code::ok);
+    CHECK_THAT(result.out, EndsWith("3 item(s) in the three restore targets\n"));
+    CHECK(result.err.empty());
+    CHECK(lab.make_download_http_calls == 0);
+}
+
+TEST_CASE("rpworker graph list --hash makes the download client once", "[graph_command]")
+{
+    Harness lab;
+    lab.serve_one_each();
+
+    const Run result = lab.run_list(true);
+
+    CHECK(result.exit_code == rp::exit_code::ok);
+    CHECK(lab.make_download_http_calls == 1);
+}
+
+TEST_CASE("rpworker graph list reports a malformed Graph reply as a Graph error, exit 4",
+          "[graph_command]")
+{
+    // The reader checks Graph's JSON itself: nothing it reads reaches the
+    // command as a JSON library exception, which would be exit 1.
+    const std::string body = GENERATE(as<std::string>{}, R"({"x":[]})", R"({"value":"a"})",
+                                      R"({"value":[{"id":"x","file":{},"name":"n"}]})",
+                                      R"({"value":[{"id":"x","file":{},"size":1}]})");
+    CAPTURE(body);
+    Harness lab;
+    lab.serve_one_each();
+    lab.serve(library_children_url(), make_response(200, body));
+
+    const Run result = lab.run_list();
+
+    CHECK(result.exit_code == rp::exit_code::service);
+    CHECK(result.out.empty());
+    CHECK_THAT(result.err,
+               StartsWith("graph error: Graph's reply listing the RestoreTarget library"));
 }
 
 // --- The tables ------------------------------------------------------------------

@@ -407,18 +407,17 @@ TEST_CASE("rpworker graph list reports a secret it can't read, and hides other f
     SECTION("a ConfigError")
     {
         Harness lab;
-        lab.load_secrets = []() -> rp::Secrets {
-            throw rp::ConfigError(std::string{rp::kEnvGraphCertPassword},
-                                  "environment variable RP_GRAPH_CERT_PASSWORD is not valid "
-                                  "Unicode");
-        };
+        const rp::ConfigError error(std::string{rp::kEnvGraphCertPassword},
+                                    "environment variable RP_GRAPH_CERT_PASSWORD is not valid "
+                                    "Unicode");
+        lab.load_secrets = [error]() -> rp::Secrets { throw error; };
 
         const Run result = lab.run_list();
 
         CHECK(result.exit_code == rp::exit_code::config);
-        CHECK_THAT(result.err, StartsWith("config error: "));
+        CHECK(result.out.empty());
+        CHECK(result.err == "config error: " + std::string{error.what()} + "\n");
         CHECK_THAT(result.err, ContainsSubstring("RP_GRAPH_CERT_PASSWORD"));
-        CHECK(line_count(result.err) == 1);
     }
     SECTION("anything else")
     {
@@ -445,6 +444,7 @@ TEST_CASE("rpworker graph list maps each Graph failure to its exit code and prin
         Setup setup;
         int exit_code;
         std::string contains; // in the one line on stderr
+        std::size_t sleeps = 0; // waits between attempts: only what may work later is retried
     };
     const auto busy = [] {
         HttpResponse response =
@@ -457,13 +457,18 @@ TEST_CASE("rpworker graph list maps each Graph failure to its exit code and prin
         fixture["body"]["name"] = "RestoreTest";
         return to_response(fixture);
     };
+    const auto wrong_folder = [] {
+        json fixture = load_fixture_json("graph", "onedrive-folder-200");
+        fixture["body"]["name"] = "RestoreTest";
+        return to_response(fixture);
+    };
     const Row row = GENERATE_COPY(
         Row{"the token refused (401)", false,
             [](Harness& lab) {
                 lab.graph_http.on(HttpMethod::post, kTokenUrl,
                                   {load_fixture("graph", "token-bad-signature-401")});
             },
-            rp::exit_code::auth, "graph error: "},
+            rp::exit_code::auth, "AADSTS700027"},
         Row{"403 on the mailbox", false,
             [](Harness& lab) {
                 lab.serve(mail_list_url(), load_fixture("graph", "messages-403-exchange"));
@@ -481,10 +486,10 @@ TEST_CASE("rpworker graph list maps each Graph failure to its exit code and prin
             [](Harness& lab) {
                 lab.serve(mail_list_url(), load_fixture("graph", "messages-404-unknown-user"));
             },
-            rp::exit_code::service, "404"},
+            rp::exit_code::service, "HTTP 404 (ErrorInvalidUser)"},
         Row{"404 on the RestoreTarget drive", false,
             [](Harness& lab) { lab.serve(drive_url(), load_fixture("graph", "drive-404-itemnotfound")); },
-            rp::exit_code::service, "404"},
+            rp::exit_code::service, "HTTP 404 (itemNotFound)"},
         Row{"404 on the OneDrive folder", false,
             [](Harness& lab) {
                 lab.serve(folder_url(), load_fixture("graph", "onedrive-folder-404-itemnotfound"));
@@ -496,9 +501,14 @@ TEST_CASE("rpworker graph list maps each Graph failure to its exit code and prin
         Row{"the guard refuses the library, with --hash", true,
             [wrong_library](Harness& lab) { lab.serve(drive_url(), wrong_library()); },
             rp::exit_code::service, "\"RestoreTest\", not \"RestoreTarget\""},
+        Row{"the guard refuses the OneDrive folder, after the others listed", false,
+            [wrong_folder](Harness& lab) { lab.serve(folder_url(), wrong_folder()); },
+            rp::exit_code::service,
+            "the OneDrive item test_onedrive_folder_id names is \"RestoreTest\", not "
+            "\"RestoreTarget\""},
         Row{"503 on the OneDrive folder's children after the retries", false,
             [busy](Harness& lab) { lab.serve(folder_children_url(), busy()); },
-            rp::exit_code::transient, "503"},
+            rp::exit_code::transient, "503", 4},
         Row{"a download SharePoint refuses, with --hash", true,
             [](Harness& lab) {
                 lab.dl_http.on(HttpMethod::get, location_of(onedrive_location()),
@@ -520,6 +530,8 @@ TEST_CASE("rpworker graph list maps each Graph failure to its exit code and prin
     CHECK_THAT(result.err, ContainsSubstring(row.contains));
     CHECK(line_count(result.err) == 1);
     CHECK(result.err.back() == '\n');
+    // The 503 was tried five times in all; nothing else was tried again.
+    CHECK(lab.sleeps.size() == row.sleeps);
 }
 
 // The exact line docs/worker-config.md shows for an error.
@@ -691,6 +703,72 @@ TEST_CASE("rpworker graph list --hash downloads each file and shows every hash a
     }
 }
 
+TEST_CASE("rpworker graph list keeps Graph's order, pads to the widest row, and skips folders",
+          "[graph_command]")
+{
+    const FileLocation at = sharepoint_location();
+    json first = file_of(at);
+    first["name"] = "a-much-longer-name-than-the-other.txt";
+    json folder = file_of(at);
+    folder.erase("file");
+    folder["folder"] = {{"childCount", 0}};
+    folder["id"] = "01FOLDER";
+    json second = file_of(at);
+    second["name"] = "b.txt";
+    second["id"] = "01SECOND";
+    second["size"] = 123456;
+    Harness lab;
+    lab.serve_empty();
+    lab.serve(library_children_url(), page_of(json::array({first, folder, second})));
+
+    const Run result = lab.run_list();
+
+    CHECK(result.exit_code == rp::exit_code::ok);
+    CHECK_THAT(result.out,
+               ContainsSubstring(
+                   "SharePoint (RestoreTarget library): 2 item(s)\n" +
+                   table({{"NAME", "SIZE", "ID"},
+                          {first.at("name").get<std::string>(),
+                           std::to_string(first.at("size").get<std::size_t>()),
+                           first.at("id").get<std::string>()},
+                          {"b.txt", "123456", "01SECOND"}}) +
+                   "\n"));
+    CHECK_THAT(result.out, ContainsSubstring("\n2 item(s) in the three restore targets\n"));
+    CHECK(result.out.find("01FOLDER") == std::string::npos);
+}
+
+TEST_CASE("rpworker graph list shows the bytes downloaded as SIZE with --hash, Graph's without",
+          "[graph_command]")
+{
+    // SharePoint rewrites a docx, so its bytes may differ from Graph's size.
+    const FileLocation at = onedrive_location();
+    json file = file_of(at);
+    file["name"] = "rewritten-by-sharepoint.docx";
+    const std::string bytes = "short";
+    const bool hash = GENERATE(false, true);
+    CAPTURE(hash);
+    Harness lab;
+    lab.serve_empty();
+    serve_location(lab.graph_http, lab.dl_http, at, page_of(json::array({file})));
+    lab.dl_http.on(HttpMethod::get, location_of(at),
+                   {make_response(200, bytes, "application/octet-stream")});
+
+    const Run result = lab.run_list(hash);
+
+    std::vector<std::string> header{"NAME", "SIZE", "ID"};
+    std::vector<std::string> row{
+        file.at("name").get<std::string>(),
+        hash ? std::to_string(bytes.size()) : std::to_string(file.at("size").get<std::size_t>()),
+        file.at("id").get<std::string>()};
+    if (hash) {
+        header.insert(header.end(), {"SHA256", "RULE"});
+        row.insert(row.end(), {rp::sha256_hex(bytes), "bytes"});
+    }
+    CHECK(result.exit_code == rp::exit_code::ok);
+    CHECK_THAT(result.out, ContainsSubstring("OneDrive (RestoreTarget folder): 1 item(s)\n" +
+                                             table({header, row}) + "\n"));
+}
+
 TEST_CASE("rpworker graph list shows a missing mail field as - and an empty subject as such",
           "[graph_command]")
 {
@@ -719,6 +797,7 @@ TEST_CASE("rpworker graph list turns control characters in Graph's text into spa
     // the screen or reorder the text.
     json value = messages_of("mail-list-200-one-item");
     value[0]["subject"] = "evil\r\nOneDrive (RestoreTarget folder): 9 item(s)";
+    value[0]["from"]["emailAddress"]["address"] = "a\r\n0 item(s)@example.com";
     json file = file_of(sharepoint_location());
     file["name"] = "x\x1b[2J\xE2\x80\xAE" "txt.exe";
     Harness lab;
@@ -732,6 +811,7 @@ TEST_CASE("rpworker graph list turns control characters in Graph's text into spa
     CHECK(result.exit_code == rp::exit_code::ok);
     CHECK_THAT(result.out, ContainsSubstring("evil  OneDrive (RestoreTarget folder): 9 item(s)"));
     CHECK_THAT(result.out, ContainsSubstring("x [2J txt.exe"));
+    CHECK_THAT(result.out, ContainsSubstring("a  0 item(s)@example.com"));
     CHECK(result.out.find('\r') == std::string::npos);
     CHECK(result.out.find('\x1b') == std::string::npos);
     CHECK(result.out.find("\xE2\x80\xAE") == std::string::npos);

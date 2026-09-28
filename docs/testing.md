@@ -106,7 +106,7 @@ Run it alone, with its output shown (ctest names tests by case and hides output 
 Set the passwords for one shell only, and never on a command line that ends up in history or
 a transcript: read them from Windows Credential Manager or `Read-Host -AsSecureString`.
 
-To run the two Graph ones on the dev laptop (the PFX and its Credential Manager entry come from
+To run the three Graph ones on the dev laptop (the PFX and its Credential Manager entry come from
 `lab/entra/new-worker-app.ps1`, `lab/README.md`):
 
 1. Open a VS 2022 Developer PowerShell: Start menu, type `Developer PowerShell for VS 2022`,

@@ -451,6 +451,10 @@ TEST_CASE("the OneDrive guard refuses a folder that isn't the configured Restore
                                      "the drive test_onedrive_drive_id names; nothing was listed";
     const std::string not_root = "the OneDrive folder test_onedrive_folder_id names is not "
                                  "directly under the drive's root; nothing was listed";
+    const std::string not_onedrive =
+        "the drive test_onedrive_drive_id names is not a OneDrive (Graph's driveType is not "
+        "\"business\"): a site library's folder is never read as the test OneDrive's; nothing "
+        "was listed";
     const std::string od = lab_values().onedrive_drive_id;
     using Edit = std::function<void(json&)>;
     struct Row {
@@ -477,6 +481,18 @@ TEST_CASE("the OneDrive guard refuses a folder that isn't the configured Restore
         Row{"parentReference.driveId removed",
             [](json& b) { b["parentReference"].erase("driveId"); }, not_in_drive},
         Row{"parentReference removed", [](json& b) { b.erase("parentReference"); }, not_in_drive},
+        // Review of W2.2: test_onedrive_drive_id set to a site library's drive,
+        // the RestoreTest library's say, with a RestoreTarget folder at its root.
+        Row{"parentReference.driveType documentLibrary",
+            [](json& b) { b["parentReference"]["driveType"] = "documentLibrary"; }, not_onedrive},
+        Row{"parentReference.driveType personal",
+            [](json& b) { b["parentReference"]["driveType"] = "personal"; }, not_onedrive},
+        Row{"parentReference.driveType in another case",
+            [](json& b) { b["parentReference"]["driveType"] = "Business"; }, not_onedrive},
+        Row{"parentReference.driveType removed",
+            [](json& b) { b["parentReference"].erase("driveType"); }, not_onedrive},
+        Row{"parentReference.driveType not a string",
+            [](json& b) { b["parentReference"]["driveType"] = 1; }, not_onedrive},
         Row{"a nested RestoreTarget (/drive/root: form)",
             [](json& b) { b["parentReference"]["path"] = "/drive/root:/RestoreTest"; }, not_root},
         Row{"a nested RestoreTarget (/drives/<id>/root: form)",

@@ -205,8 +205,13 @@ public:
     // control_chars.hpp, CR and LF included); anything else is a GraphError
     // before anything is sent, the token request included, so a caller can
     // never replace the token or split a header line.
+    //
+    // `max_body_bytes` goes with every attempt as HttpRequest::max_body_bytes:
+    // a 2xx body longer than it comes back cut one byte past it, for the
+    // caller to check (W2.2's downloads). nullopt: no limit.
     HttpResponse get(std::string_view path_or_url, const Grant& grant,
-                     const HttpHeaders& headers = {});
+                     const HttpHeaders& headers = {},
+                     std::optional<std::uint64_t> max_body_bytes = std::nullopt);
 
     // get(), and the body as a JSON object: a 3xx, or a body that isn't a
     // JSON object, is a GraphError (the body is never quoted).
@@ -259,12 +264,14 @@ private:
     // get() and find(): with `item_lookup`, a 404 Graph explains that
     // doesn't name a missing mailbox or user is nullopt.
     std::optional<HttpResponse> send_get(std::string_view path_or_url, const Grant& grant,
-                                         bool item_lookup, const HttpHeaders& headers);
+                                         bool item_lookup, const HttpHeaders& headers,
+                                         std::optional<std::uint64_t> max_body_bytes);
     // The body of a response get() or find() returned, as a JSON object.
     static nlohmann::json json_body(std::string_view path_or_url, const HttpResponse& response);
     // One GET of `url` with `token` and the caller's `headers`, one attempt.
     HttpRequest api_request(const std::string& url, const std::string& token,
-                            const HttpHeaders& headers) const;
+                            const HttpHeaders& headers,
+                            std::optional<std::uint64_t> max_body_bytes) const;
     // One token request with a new assertion.
     HttpRequest token_request() const;
     void log_debug(const std::string& line) const;

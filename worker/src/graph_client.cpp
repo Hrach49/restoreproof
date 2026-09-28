@@ -53,17 +53,6 @@ bool is_digit(char c) noexcept
     return c >= '0' && c <= '9';
 }
 
-std::string ascii_lower(std::string_view text)
-{
-    std::string out{text};
-    for (char& c : out) {
-        if (c >= 'A' && c <= 'Z') {
-            c = static_cast<char>(c - 'A' + 'a');
-        }
-    }
-    return out;
-}
-
 std::string_view trim_ows(std::string_view text) noexcept
 {
     const auto is_ows = [](char c) { return c == ' ' || c == '\t'; };
@@ -776,7 +765,8 @@ GraphClient::Token GraphClient::current_token(milliseconds& waited)
 }
 
 HttpRequest GraphClient::api_request(const std::string& url, const std::string& token,
-                                     const HttpHeaders& headers) const
+                                     const HttpHeaders& headers,
+                                     std::optional<std::uint64_t> max_body_bytes) const
 {
     HttpRequest request;
     request.method = HttpMethod::get;
@@ -792,24 +782,27 @@ HttpRequest GraphClient::api_request(const std::string& url, const std::string& 
     // This client decides what is worth another attempt and counts them.
     request.retry_on_status = false;
     request.max_attempts = 1;
+    request.max_body_bytes = max_body_bytes;
     return request;
 }
 
 HttpResponse GraphClient::get(std::string_view path_or_url, const Grant& grant,
-                              const HttpHeaders& headers)
+                              const HttpHeaders& headers,
+                              std::optional<std::uint64_t> max_body_bytes)
 {
     // Never nullopt: only an item lookup answers a 404 with it.
-    return *send_get(path_or_url, grant, false, headers);
+    return *send_get(path_or_url, grant, false, headers, max_body_bytes);
 }
 
 std::optional<HttpResponse> GraphClient::find(std::string_view path_or_url, const Grant& grant,
                                               const HttpHeaders& headers)
 {
-    return send_get(path_or_url, grant, true, headers);
+    return send_get(path_or_url, grant, true, headers, std::nullopt);
 }
 
 std::optional<HttpResponse> GraphClient::send_get(std::string_view path_or_url, const Grant& grant,
-                                                  bool item_lookup, const HttpHeaders& headers)
+                                                  bool item_lookup, const HttpHeaders& headers,
+                                                  std::optional<std::uint64_t> max_body_bytes)
 {
     // Before anything is sent, the token request included.
     const std::string url = graph_url(path_or_url);
@@ -835,7 +828,7 @@ std::optional<HttpResponse> GraphClient::send_get(std::string_view path_or_url, 
 
         HttpResponse response;
         try {
-            response = http_.send(api_request(url, token.access, headers));
+            response = http_.send(api_request(url, token.access, headers, max_body_bytes));
         } catch (const HttpError& e) {
             // A GET changes nothing, so a lost connection or a timeout is
             // sent again; a certificate failure or a malformed URL won't fix

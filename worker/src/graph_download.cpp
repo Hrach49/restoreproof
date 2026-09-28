@@ -1,8 +1,9 @@
 #include <rp/graph_download.hpp>
 
 #include <rp/redact.hpp>
+#include <rp/retry_policy.hpp>
 
-#include "control_chars.hpp"
+#include "text_util.hpp"
 
 #include <spdlog/sinks/null_sink.h>
 #include <spdlog/spdlog.h>
@@ -15,16 +16,6 @@
 namespace rp::graph {
 
 namespace {
-
-constexpr std::string_view kSharePointSuffix = ".sharepoint.com";
-
-std::string lower(std::string_view text)
-{
-    std::string out{text};
-    std::transform(out.begin(), out.end(), out.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    return out;
-}
 
 // A URI scheme: a letter, then letters, digits, '+', '-' or '.'.
 bool is_scheme(std::string_view text)
@@ -83,8 +74,18 @@ std::string checked_size(std::string body, std::uint64_t expected_size, std::str
     return body;
 }
 
+// The bytes, if no more than `limit` came; else why not.
+std::string checked_limit(std::string body, std::uint64_t limit, std::string_view what)
+{
+    if (body.size() > limit) {
+        throw GraphError("SharePoint sent more than the " + std::to_string(limit) +
+                         " byte download limit for " + std::string{what} + "; nothing was hashed");
+    }
+    return body;
+}
+
 // GET `location` through `download`, without the token; the reply's status mapped.
-HttpResponse fetch(IHttpClient& download, const std::string& location, std::uint64_t expected_size,
+HttpResponse fetch(IHttpClient& download, const std::string& location, std::uint64_t cap,
                    std::string_view what, const DownloadOptions& options)
 {
     HttpRequest request;
@@ -94,22 +95,33 @@ HttpResponse fetch(IHttpClient& download, const std::string& location, std::uint
     request.headers["Accept"] = "*/*";
     request.retry_on_status = true;
     request.timeout = options.timeout;
-    request.max_body_bytes = expected_size;
+    request.max_body_bytes = cap;
     const std::string item{what};
     HttpResponse response;
     try {
         response = download.send(request);
     } catch (const HttpError& e) {
-        // Never quoted: its message holds the URL.
-        const TransportError error = e.error();
-        if (error == TransportError::connect || error == TransportError::dropped || error == TransportError::timeout || error == TransportError::handshake || (error == TransportError::none && e.status() >= 500)) {
+        // Never quoted: its message holds the URL. HttpClient retried what
+        // is_retryable() takes, so that is what may work later.
+        if (is_retryable(AttemptOutcome{e.error(), e.status()})) {
             throw TransientError("the download of " + item + " failed after " +
                                      std::to_string(e.attempts()) + " attempt(s)",
                                  e.status());
         }
+        if (e.error() == TransportError::none) {
+            throw GraphError("SharePoint answered " + std::to_string(e.status()) +
+                                 " to the download of " + item,
+                             e.status());
+        }
+        if (e.error() == TransportError::tls) {
+            throw GraphError("the download of " + item +
+                                 " failed: SharePoint's certificate was not trusted, or TLS could "
+                                 "not be set up",
+                             e.status());
+        }
         throw GraphError("the download of " + item +
-                             " failed: the connection to SharePoint was refused or its "
-                             "certificate not trusted",
+                             " failed and was not retried: SharePoint's reply was malformed, or "
+                             "the request failed on this machine",
                          e.status());
     }
     const int status = response.status;
@@ -129,8 +141,10 @@ HttpResponse fetch(IHttpClient& download, const std::string& location, std::uint
                              " (404); it may have been removed while the Worker read it",
                          status);
     }
-    if (status == 429) {
-        throw TransientError("the download of " + item + " failed: SharePoint answered 429", status);
+    // HttpClient retries a 5xx itself; one returned all the same is as transient.
+    if (status == 429 || (status >= 500 && status <= 599)) {
+        throw TransientError("the download of " + item + " failed: SharePoint answered " + code,
+                             status);
     }
     if (status != 200) {
         throw GraphError("SharePoint answered " + code + " to the download of " + item, status);
@@ -155,7 +169,7 @@ std::optional<std::string> download_url_problem(std::string_view url, std::strin
     if (separator == std::string_view::npos || !is_scheme(url.substr(0, separator))) {
         return "not an absolute URL";
     }
-    if (lower(url.substr(0, separator)) != "https") {
+    if (ascii_lower(url.substr(0, separator)) != "https") {
         return "not https";
     }
     const std::size_t start = separator + 3;
@@ -169,8 +183,8 @@ std::optional<std::string> download_url_problem(std::string_view url, std::strin
         (colon != std::string_view::npos && authority.substr(colon + 1) != "443")) {
         return "it has user info or a port other than 443";
     }
-    const std::string host = lower(authority.substr(0, colon));
-    const std::string tenant = lower(tenant_host);
+    const std::string host = ascii_lower(authority.substr(0, colon));
+    const std::string tenant = ascii_lower(tenant_host);
     const bool tenant_ok = tenant.size() > kSharePointSuffix.size() &&
                            tenant.ends_with(kSharePointSuffix);
     const std::string onedrive =
@@ -185,7 +199,8 @@ std::optional<std::string> download_url_problem(std::string_view url, std::strin
 std::string download_item(GraphClient& graph, IHttpClient& download, const Grant& grant,
                           std::string_view tenant_host, std::string_view drive_id,
                           std::string_view item_id, std::uint64_t expected_size,
-                          std::string_view what, const DownloadOptions& options)
+                          SizeCheck size_check, std::string_view what,
+                          const DownloadOptions& options)
 {
     if (options.max_bytes == 0 || options.timeout <= std::chrono::milliseconds::zero()) {
         throw std::invalid_argument("download options: max_bytes and timeout must be above 0");
@@ -196,12 +211,15 @@ std::string download_item(GraphClient& graph, IHttpClient& download, const Grant
                          std::to_string(options.max_bytes) +
                          " byte download limit; nothing was downloaded");
     }
-    const HttpResponse content = graph.get(
-        "/drives/" + std::string{drive_id} + "/items/" + std::string{item_id} + "/content", grant);
+    const bool exact = size_check == SizeCheck::exact;
+    const std::uint64_t cap = exact ? expected_size : options.max_bytes;
+    HttpResponse content = graph.get(
+        "/drives/" + std::string{drive_id} + "/items/" + std::string{item_id} + "/content", grant,
+        {}, cap);
     const int status = content.status;
     HttpResponse response;
     if (status == 200) {
-        response = content;
+        response = std::move(content);
     } else if (status < 300) {
         throw GraphError("Graph answered " + std::to_string(status) +
                              " to the content request for " + item +
@@ -228,11 +246,16 @@ std::string download_item(GraphClient& graph, IHttpClient& download, const Grant
         }
         log_debug(options, "download of " + item + ": following Graph's redirect to " +
                                host_of(location));
-        response = fetch(download, location, expected_size, item, options);
+        response = fetch(download, location, cap, item, options);
     }
-    log_debug(options, "download of " + item + ": " + std::to_string(response.status) + ", " +
-                           std::to_string(response.body.size()) + " bytes");
-    return checked_size(std::move(response.body), expected_size, item);
+    std::string line = "download of " + item + ": " + std::to_string(response.status) + ", " +
+                       std::to_string(response.body.size()) + " bytes";
+    if (response.body.size() != expected_size) {
+        line += "; Graph lists " + std::to_string(expected_size);
+    }
+    log_debug(options, line);
+    return exact ? checked_size(std::move(response.body), expected_size, item)
+                 : checked_limit(std::move(response.body), cap, item);
 }
 
 } // namespace rp::graph

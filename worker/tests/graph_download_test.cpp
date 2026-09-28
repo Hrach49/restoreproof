@@ -52,6 +52,7 @@ using rp::TransportError;
 using rp::graph::DownloadOptions;
 using rp::graph::GraphClient;
 using rp::graph::GraphClientOptions;
+using rp::graph::SizeCheck;
 using rp::test::FakeHttpClient;
 using rp::test::load_fixture;
 using rp::test::load_fixture_json;
@@ -146,7 +147,7 @@ struct Lab {
                          const rp::graph::Grant& grant = rp::graph::kSitesReadGrant)
     {
         return rp::graph::download_item(*graph, dl_http, grant, tenant_host, drive, kItem, size,
-                                        kWhat, download_options());
+                                        SizeCheck::exact, kWhat, download_options());
     }
 
     std::string log()
@@ -314,7 +315,7 @@ TEST_CASE("bad download options are refused before any request", "[graph][downlo
 
     const Caught caught = catch_download([&] {
         rp::graph::download_item(*lab.graph, lab.dl_http, rp::graph::kSitesReadGrant, kTenantHost,
-                                 kDrive, kItem, 10, kWhat, options);
+                                 kDrive, kItem, 10, SizeCheck::exact, kWhat, options);
     });
 
     CHECK(caught.kind == "invalid_argument");
@@ -331,7 +332,7 @@ TEST_CASE("a file over the cap is refused before any request", "[graph][download
 
     const Caught caught = catch_download([&] {
         rp::graph::download_item(*lab.graph, lab.dl_http, rp::graph::kSitesReadGrant, kTenantHost,
-                                 kDrive, kItem, 101, kWhat, options);
+                                 kDrive, kItem, 101, SizeCheck::exact, kWhat, options);
     });
 
     CHECK(caught.kind == "GraphError");
@@ -350,7 +351,7 @@ TEST_CASE("the default download cap is 64 MiB", "[graph][download]")
     Lab lab;
     const Caught caught = catch_download([&] {
         rp::graph::download_item(*lab.graph, lab.dl_http, rp::graph::kSitesReadGrant, kTenantHost,
-                                 kDrive, kItem, rp::graph::kMaxDownloadBytes + 1, kWhat);
+                                 kDrive, kItem, rp::graph::kMaxDownloadBytes + 1, SizeCheck::exact, kWhat);
     });
     CHECK(caught.kind == "GraphError");
     CHECK(lab.graph_http.requests().empty());
@@ -489,8 +490,12 @@ TEST_CASE("the download's failures map to error types", "[graph][download]")
             "SharePoint answered 418 to the download of " + kWhat, 418},
         Row{"201", 201, {}, 0, 0, "GraphError",
             "SharePoint answered 201 to the download of " + kWhat, 201},
-        Row{"500 returned", 500, {}, 0, 0, "GraphError",
-            "SharePoint answered 500 to the download of " + kWhat, 500},
+        // HttpClient retries a 5xx and throws when they are used up; one returned
+        // all the same is transient too, as its retries would be.
+        Row{"500 returned", 500, {}, 0, 0, "TransientError",
+            "the download of " + kWhat + " failed: SharePoint answered 500", 500},
+        Row{"503 returned", 503, {}, 0, 0, "TransientError",
+            "the download of " + kWhat + " failed: SharePoint answered 503", 503},
         Row{"timeout", {}, TransportError::timeout, 0, 5, "TransientError",
             "the download of " + kWhat + " failed after 5 attempt(s)", 0},
         Row{"connect", {}, TransportError::connect, 0, 5, "TransientError",
@@ -502,16 +507,16 @@ TEST_CASE("the download's failures map to error types", "[graph][download]")
         Row{"5xx used up", {}, TransportError::none, 503, 5, "TransientError",
             "the download of " + kWhat + " failed after 5 attempt(s)", 503},
         Row{"4xx thrown", {}, TransportError::none, 400, 1, "GraphError",
-            "the download of " + kWhat +
-                " failed: the connection to SharePoint was refused or its certificate not trusted",
-            400},
+            "SharePoint answered 400 to the download of " + kWhat, 400},
         Row{"tls", {}, TransportError::tls, 0, 1, "GraphError",
             "the download of " + kWhat +
-                " failed: the connection to SharePoint was refused or its certificate not trusted",
+                " failed: SharePoint's certificate was not trusted, or TLS could not be set up",
             0},
+        // A refused connection is `connect`, retried above; `other` is the rest.
         Row{"other", {}, TransportError::other, 0, 1, "GraphError",
             "the download of " + kWhat +
-                " failed: the connection to SharePoint was refused or its certificate not trusted",
+                " failed and was not retried: SharePoint's reply was malformed, or the request "
+                "failed on this machine",
             0});
     CAPTURE(row.name);
     Lab lab;
@@ -671,7 +676,7 @@ TEST_CASE("a download timeout from the options goes with the request", "[graph][
     options.timeout = 7s;
 
     rp::graph::download_item(*lab.graph, lab.dl_http, rp::graph::kSitesReadGrant, kTenantHost,
-                             kDrive, kItem, 3, kWhat, options);
+                             kDrive, kItem, 3, SizeCheck::exact, kWhat, options);
 
     REQUIRE(lab.dl_http.requests().size() == 1);
     CHECK(lab.dl_http.requests().front().timeout == 7s);
@@ -685,6 +690,10 @@ TEST_CASE("a 200 from Graph's /content is the content", "[graph][download]")
 
     CHECK(lab.download(5) == "hello");
     CHECK(lab.dl_http.requests().empty());
+    // Held to the same cap as a download from SharePoint (review of W2.2).
+    const std::vector<HttpRequest> gets = lab.graph_gets();
+    REQUIRE(gets.size() == 1);
+    CHECK(gets.front().max_body_bytes == std::optional<std::uint64_t>{5});
     CHECK_THAT(lab.log(), ContainsSubstring("download of " + kWhat + ": 200, 5 bytes"));
 }
 
@@ -716,9 +725,91 @@ TEST_CASE("the download logs go to the spdlog default when no logger is given", 
     } restore{saved};
 
     rp::graph::download_item(*lab.graph, lab.dl_http, rp::graph::kSitesReadGrant, kTenantHost,
-                             kDrive, kItem, 3, kWhat);
+                             kDrive, kItem, 3, SizeCheck::exact, kWhat);
 
     capture->flush();
     CHECK_THAT(stream.str(), ContainsSubstring("download of " + kWhat + ": 200, 3 bytes"));
     CHECK_THAT(stream.str(), !ContainsSubstring(kTempauth));
+}
+
+// ---- SizeCheck::up_to_limit: a docx or xlsx SharePoint may rewrite ------------------------
+
+// Review of W2.2: SharePoint rewrites Office files (lab/README.md, office-v1), so
+// the bytes served may differ from the size Graph listed. Such a file is read up
+// to the download limit, whatever its size, and returned as it came.
+TEST_CASE("up_to_limit takes any size up to max_bytes", "[graph][download]")
+{
+    const std::string body = GENERATE(as<std::string>{}, "", "0123456", "0123456789",
+                                       "0123456789abcdef", std::string(20, 'z'));
+    CAPTURE(body.size());
+    const bool from_graph = GENERATE(false, true);
+    CAPTURE(from_graph);
+    Lab lab;
+    if (from_graph) {
+        lab.graph_http.on(HttpMethod::get, kContentUrl,
+                          {make_response(200, body, "application/octet-stream")});
+    } else {
+        lab.graph_http.on(HttpMethod::get, kContentUrl, {redirect_to(kLocation)});
+        lab.dl_http.on(HttpMethod::get, kLocation,
+                       {make_response(200, body, "application/octet-stream")});
+    }
+    DownloadOptions options = lab.download_options();
+    options.max_bytes = 20;
+
+    const std::string bytes =
+        rp::graph::download_item(*lab.graph, lab.dl_http, rp::graph::kSitesReadGrant, kTenantHost,
+                                 kDrive, kItem, 10, SizeCheck::up_to_limit, kWhat, options);
+
+    CHECK(bytes == body);
+    const HttpRequest request =
+        from_graph ? lab.graph_gets().front() : lab.dl_http.requests().front();
+    CHECK(request.max_body_bytes == std::optional<std::uint64_t>{20});
+    if (body.size() != 10) {
+        CHECK_THAT(lab.log(), ContainsSubstring("download of " + kWhat + ": 200, " +
+                                                std::to_string(body.size()) +
+                                                " bytes; Graph lists 10"));
+    }
+}
+
+TEST_CASE("up_to_limit refuses a body over max_bytes", "[graph][download]")
+{
+    const bool from_graph = GENERATE(false, true);
+    CAPTURE(from_graph);
+    Lab lab;
+    const std::string body(21, 'z');
+    if (from_graph) {
+        lab.graph_http.on(HttpMethod::get, kContentUrl,
+                          {make_response(200, body, "application/octet-stream")});
+    } else {
+        lab.graph_http.on(HttpMethod::get, kContentUrl, {redirect_to(kLocation)});
+        lab.dl_http.on(HttpMethod::get, kLocation,
+                       {make_response(200, body, "application/octet-stream")});
+    }
+    DownloadOptions options = lab.download_options();
+    options.max_bytes = 20;
+
+    const Caught caught = catch_download([&] {
+        rp::graph::download_item(*lab.graph, lab.dl_http, rp::graph::kSitesReadGrant, kTenantHost,
+                                 kDrive, kItem, 10, SizeCheck::up_to_limit, kWhat, options);
+    });
+
+    CHECK(caught.kind == "GraphError");
+    CHECK(caught.what == "SharePoint sent more than the 20 byte download limit for " + kWhat +
+                             "; nothing was hashed");
+}
+
+TEST_CASE("up_to_limit still refuses a listed size over max_bytes before any request",
+          "[graph][download]")
+{
+    Lab lab;
+    DownloadOptions options = lab.download_options();
+    options.max_bytes = 100;
+
+    const Caught caught = catch_download([&] {
+        rp::graph::download_item(*lab.graph, lab.dl_http, rp::graph::kSitesReadGrant, kTenantHost,
+                                 kDrive, kItem, 101, SizeCheck::up_to_limit, kWhat, options);
+    });
+
+    CHECK(caught.kind == "GraphError");
+    CHECK(lab.graph_http.requests().empty());
 }

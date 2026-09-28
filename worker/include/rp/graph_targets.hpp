@@ -56,7 +56,8 @@ struct FoundItem {
     std::string sha256;
     // How sha256 was computed: "text-v1" or "bytes".
     std::string sha256_rule;
-    std::optional<std::uint64_t> size_bytes; // files: bytes downloaded (== Graph's size)
+    // Files: the bytes downloaded; Graph's size, but for a docx or xlsx SharePoint rewrote.
+    std::optional<std::uint64_t> size_bytes;
 
     bool operator==(const FoundItem&) const = default;
 };

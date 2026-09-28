@@ -75,8 +75,10 @@ inline constexpr std::chrono::hours kCertificateExpiryWarning{30 * 24};
 // has no MAC, so the password can't be checked (refused); the password doesn't
 // open it (an empty password is tried both as "" and as no password, and is
 // right only if the PFX really has none); it can't be read because it uses a
-// legacy cipher (RC2 and the like, which OpenSSL 3 no longer reads: re-export
-// it with AES256_SHA256); it holds no private key, or no certificate, or a
+// legacy cipher (RC2, RC4, DES and the like, which OpenSSL 3 no longer runs;
+// 3DES it still does), or with the right password for any other reason (a
+// damaged or odd file; either way: re-export it with AES256_SHA256); it holds
+// no private key, or no certificate, or a
 // key that matches none of its certificates; the key isn't RSA of at least
 // 2048 bits; or the certificate isn't valid at `wall_now` (expired, or not
 // valid yet). Messages name the variables of `names`, never a value.

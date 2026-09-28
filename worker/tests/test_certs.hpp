@@ -309,6 +309,16 @@ enum class PfxCipher {
     // with no content at all (the CVE-2024-0727 shape), the key under AES and
     // a real SHA-256 MAC, so the password checks out and PKCS12_parse fails.
     empty_encrypted,
+    // The same, with the key under 3DES and a SHA-1 MAC: a cipher OpenSSL 3
+    // reads, in a file it can't.
+    empty_encrypted_3des,
+    // The certificate's safe as in legacy_rc2, but the key under AES and a
+    // SHA-256 MAC: only the certificate's safe says RC2.
+    rc2_cert_aes_key,
+    // The certificate's safe under PBES2 with DES-CBC (openssl pkcs12
+    // -legacy -certpbe des-cbc), random bytes for its ciphertext; the key
+    // under AES and a SHA-256 MAC.
+    des_pbes2,
 };
 
 struct PfxOptions {
@@ -328,17 +338,16 @@ inline std::vector<unsigned char> pfx_to_der(PKCS12* p12)
     return out;
 }
 
-// An encrypted safe that claims pbeWithSHA1And40BitRC2-CBC and holds random
-// bytes (PfxCipher::legacy_rc2).
-inline PKCS7* make_fake_rc2_safe()
+// An encrypted safe that claims `algorithm` (taken over) and holds random
+// bytes: pbeWithSHA1And40BitRC2-CBC for PfxCipher::legacy_rc2 and
+// rc2_cert_aes_key, PBES2 with DES-CBC for des_pbes2.
+inline PKCS7* make_fake_safe(X509_ALGOR* algorithm)
 {
+    REQUIRE(algorithm != nullptr);
     std::unique_ptr<PKCS7, decltype(&PKCS7_free)> p7(PKCS7_new(), &PKCS7_free);
     REQUIRE(p7);
     REQUIRE(PKCS7_set_type(p7.get(), NID_pkcs7_encrypted) == 1);
     PKCS7_ENC_CONTENT* content = p7->d.encrypted->enc_data;
-    X509_ALGOR* algorithm =
-        PKCS5_pbe_set(NID_pbe_WithSHA1And40BitRC2_CBC, PKCS12_DEFAULT_ITER, nullptr, 8);
-    REQUIRE(algorithm != nullptr);
     X509_ALGOR_free(content->algorithm);
     content->algorithm = algorithm;
     unsigned char junk[64];
@@ -361,6 +370,30 @@ inline PKCS7* make_empty_encrypted_safe()
     return p7.release();
 }
 
+// PBES2 (PBKDF2-HMAC-SHA256) with DES-CBC as its cipher, built by hand: the
+// default provider can't run DES, so PKCS5_pbe2_set_iv refuses it.
+inline X509_ALGOR* make_pbes2_des_algorithm()
+{
+    std::unique_ptr<PBE2PARAM, decltype(&PBE2PARAM_free)> pbe2(PBE2PARAM_new(), &PBE2PARAM_free);
+    REQUIRE(pbe2);
+    unsigned char iv[8];
+    REQUIRE(RAND_bytes(iv, sizeof(iv)) == 1);
+    ASN1_OCTET_STRING* iv_param = ASN1_OCTET_STRING_new();
+    REQUIRE(iv_param != nullptr);
+    REQUIRE(ASN1_OCTET_STRING_set(iv_param, iv, sizeof(iv)) == 1);
+    REQUIRE(X509_ALGOR_set0(pbe2->encryption, OBJ_nid2obj(NID_des_cbc), V_ASN1_OCTET_STRING,
+                            iv_param) == 1);
+    X509_ALGOR_free(pbe2->keyfunc);
+    pbe2->keyfunc = PKCS5_pbkdf2_set(PKCS12_DEFAULT_ITER, nullptr, 8, NID_hmacWithSHA256, 8);
+    REQUIRE(pbe2->keyfunc != nullptr);
+    ASN1_STRING* packed = ASN1_item_pack(pbe2.get(), ASN1_ITEM_rptr(PBE2PARAM), nullptr);
+    REQUIRE(packed != nullptr);
+    X509_ALGOR* algorithm = X509_ALGOR_new();
+    REQUIRE(algorithm != nullptr);
+    REQUIRE(X509_ALGOR_set0(algorithm, OBJ_nid2obj(NID_pbes2), V_ASN1_SEQUENCE, packed) == 1);
+    return algorithm;
+}
+
 // A PFX (PKCS#12) holding `key` and `cert` under `password`; either may be
 // null. Built from bags and safes the way PKCS12_create builds one (the
 // certificate in an encrypted safe, the key in a shrouded key bag in a plain
@@ -370,8 +403,9 @@ inline PKCS7* make_empty_encrypted_safe()
 inline std::vector<unsigned char> make_pfx(EVP_PKEY* key, X509* cert, const char* password,
                                            const PfxOptions& options = {})
 {
-    const bool modern =
-        options.cipher == PfxCipher::aes256 || options.cipher == PfxCipher::empty_encrypted;
+    const bool modern = options.cipher != PfxCipher::legacy_3des &&
+                        options.cipher != PfxCipher::legacy_rc2 &&
+                        options.cipher != PfxCipher::empty_encrypted_3des;
     const int pbe = modern ? NID_aes_256_cbc : NID_pbe_WithSHA1And3_Key_TripleDES_CBC;
     unsigned char key_id[SHA_DIGEST_LENGTH];
     unsigned int key_id_length = 0;
@@ -386,11 +420,21 @@ inline std::vector<unsigned char> make_pfx(EVP_PKEY* key, X509* cert, const char
         STACK_OF(PKCS12_SAFEBAG)* stack = nullptr;
         ~Bags() { sk_PKCS12_SAFEBAG_pop_free(stack, PKCS12_SAFEBAG_free); }
     };
-    if (cert && options.cipher == PfxCipher::legacy_rc2) {
+    if (cert && (options.cipher == PfxCipher::legacy_rc2 ||
+                 options.cipher == PfxCipher::rc2_cert_aes_key)) {
         safes.stack = sk_PKCS7_new_null();
         REQUIRE(safes.stack != nullptr);
-        REQUIRE(sk_PKCS7_push(safes.stack, make_fake_rc2_safe()) > 0);
-    } else if (cert && options.cipher == PfxCipher::empty_encrypted) {
+        REQUIRE(sk_PKCS7_push(safes.stack,
+                              make_fake_safe(PKCS5_pbe_set(NID_pbe_WithSHA1And40BitRC2_CBC,
+                                                           PKCS12_DEFAULT_ITER, nullptr, 8))) >
+                0);
+    } else if (cert && options.cipher == PfxCipher::des_pbes2) {
+        safes.stack = sk_PKCS7_new_null();
+        REQUIRE(safes.stack != nullptr);
+        REQUIRE(sk_PKCS7_push(safes.stack,
+                              make_fake_safe(make_pbes2_des_algorithm())) > 0);
+    } else if (cert && (options.cipher == PfxCipher::empty_encrypted ||
+                        options.cipher == PfxCipher::empty_encrypted_3des)) {
         safes.stack = sk_PKCS7_new_null();
         REQUIRE(safes.stack != nullptr);
         REQUIRE(sk_PKCS7_push(safes.stack, make_empty_encrypted_safe()) > 0);

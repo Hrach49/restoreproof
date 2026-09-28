@@ -133,28 +133,59 @@ std::string format_utc(Clock::time_point time)
     return std::format("{:%FT%TZ}", std::chrono::floor<std::chrono::seconds>(time));
 }
 
-// Whether `algorithm` is one of PKCS#12's own password-based ciphers (RC2,
-// RC4, DES, 3DES under SHA-1 or MD5) rather than PBES2 (AES and PBKDF2).
-bool is_legacy_pbe(const X509_ALGOR* algorithm)
+// Whether this OpenSSL can run the cipher `nid` names: the default provider
+// has no RC2, RC4, DES or Blowfish, but does have 3DES and AES.
+bool can_run_cipher(int nid)
 {
-    const ASN1_OBJECT* oid = nullptr;
-    X509_ALGOR_get0(&oid, nullptr, nullptr, algorithm);
-    return OBJ_obj2nid(oid) != NID_pbes2;
+    const char* name = OBJ_nid2sn(nid);
+    if (name == nullptr) {
+        return false;
+    }
+    EVP_CIPHER* cipher = EVP_CIPHER_fetch(nullptr, name, nullptr);
+    EVP_CIPHER_free(cipher);
+    return cipher != nullptr;
 }
 
-// Whether any encrypted part of `p12` uses a legacy cipher: asked only once
-// PKCS12_parse has failed with the right password, to say why.
-bool uses_legacy_pbe(const PKCS12* p12)
+// Whether `algorithm` names a cipher this OpenSSL can't run: one of PKCS#12's
+// own password-based ciphers (RC2, RC4, DES, 3DES under SHA-1 or MD5), or
+// PBES2 with such a cipher. An algorithm it can't make out isn't blamed.
+bool is_unrunnable_pbe(const X509_ALGOR* algorithm)
+{
+    const ASN1_OBJECT* oid = nullptr;
+    int parameter_type = 0;
+    const void* parameter = nullptr;
+    X509_ALGOR_get0(&oid, &parameter_type, &parameter, algorithm);
+    const int nid = OBJ_obj2nid(oid);
+    if (nid == NID_pbes2) {
+        if (parameter_type != V_ASN1_SEQUENCE || parameter == nullptr) {
+            return false;
+        }
+        const auto* sequence = static_cast<const ASN1_STRING*>(parameter);
+        const unsigned char* cursor = ASN1_STRING_get0_data(sequence);
+        const std::unique_ptr<PBE2PARAM, decltype(&PBE2PARAM_free)> pbe2(
+            d2i_PBE2PARAM(nullptr, &cursor, ASN1_STRING_length(sequence)), &PBE2PARAM_free);
+        return pbe2 && pbe2->encryption != nullptr &&
+               !can_run_cipher(OBJ_obj2nid(pbe2->encryption->algorithm));
+    }
+    int cipher_nid = NID_undef;
+    return EVP_PBE_find(EVP_PBE_TYPE_OUTER, nid, &cipher_nid, nullptr, nullptr) == 1 &&
+           cipher_nid != NID_undef && !can_run_cipher(cipher_nid);
+}
+
+// Whether any encrypted part of `p12` uses a cipher this OpenSSL can't run:
+// asked only once PKCS12_parse has failed with the right password, to say why.
+bool uses_unrunnable_pbe(const PKCS12* p12)
 {
     STACK_OF(PKCS7)* safes = PKCS12_unpack_authsafes(p12);
-    bool legacy = false;
+    bool unrunnable = false;
     for (int i = 0; i < sk_PKCS7_num(safes); ++i) {
         PKCS7* safe = sk_PKCS7_value(safes, i);
         if (PKCS7_type_is_encrypted(safe)) {
             // The content is optional in the ASN.1, so a hostile file can
             // leave it out (CVE-2024-0727): nothing to diagnose then.
             if (safe->d.encrypted != nullptr && safe->d.encrypted->enc_data != nullptr) {
-                legacy = legacy || is_legacy_pbe(safe->d.encrypted->enc_data->algorithm);
+                unrunnable =
+                    unrunnable || is_unrunnable_pbe(safe->d.encrypted->enc_data->algorithm);
             }
             continue;
         }
@@ -164,13 +195,13 @@ bool uses_legacy_pbe(const PKCS12* p12)
             if (PKCS12_SAFEBAG_get_nid(bag) == NID_pkcs8ShroudedKeyBag) {
                 const X509_ALGOR* algorithm = nullptr;
                 X509_SIG_get0(PKCS12_SAFEBAG_get0_pkcs8(bag), &algorithm, nullptr);
-                legacy = legacy || is_legacy_pbe(algorithm);
+                unrunnable = unrunnable || is_unrunnable_pbe(algorithm);
             }
         }
         sk_PKCS12_SAFEBAG_pop_free(bags, PKCS12_SAFEBAG_free);
     }
     sk_PKCS7_pop_free(safes, PKCS7_free);
-    return legacy;
+    return unrunnable;
 }
 
 void log_warning(const std::shared_ptr<spdlog::logger>& given, const std::string& message)
@@ -240,13 +271,13 @@ ClientCertificate load_client_certificate(std::string_view pfx_base64, std::stri
     sk_X509_pop_free(others, X509_free);
     if (!parsed) {
         // The MAC checked out, so the password is right: what's left is a
-        // cipher this OpenSSL can't run, or a damaged file.
+        // cipher this OpenSSL can't run, or a damaged or odd file.
         throw CertificateError(
-            uses_legacy_pbe(p12.get())
-                ? "the PFX in " + pfx_name +
-                      " uses a legacy cipher (RC2 or similar) the Worker can't read; re-export "
-                      "it with AES256_SHA256"
-                : password_name + " does not open the PFX in " + pfx_name);
+            "the PFX in " + pfx_name +
+            (uses_unrunnable_pbe(p12.get())
+                 ? " uses a legacy cipher (RC2 or similar) the Worker can't read"
+                 : " can't be read: it is damaged, or built in a way the Worker can't read") +
+            "; re-export it with AES256_SHA256");
     }
     if (!impl->key) {
         throw CertificateError("the PFX in " + pfx_name + " holds no private key");

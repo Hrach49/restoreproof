@@ -77,16 +77,17 @@ collection admin of it. The Worker uses app-only permissions (L1.5), which this 
 
 The Worker config keys `test_mailbox`, `test_site_id`, `test_library_id`,
 `test_onedrive_drive_id` and `test_onedrive_folder_id` (`docs/worker-config.md`) take the
-"Restore targets" values. Open point: the library has both a list ID and a drive ID, and `test_library_id` does not
-yet say which one it holds. Graph reads files by drive ID. W1.0 found that the Veeam restore
-body takes none of these IDs (`docs/api/veeam-feasibility.md` §5.5):
+"Restore targets" values. `test_library_id` holds the RestoreTarget library's **drive ID**
+(`b!…`), not its list ID, since Graph reads files by drive (W2.2, `docs/decisions.md`
+2026-09-28). W1.0 found that the Veeam restore body takes none of these IDs
+(`docs/api/veeam-feasibility.md` §5.5):
 
 - the mail body names the mailbox address and a folder name;
 - the SharePoint body names the site URL and the library's display name `RestoreTarget`;
 - the OneDrive body names the user's OneDrive (an object from the Veeam session) and the
   folder name `RestoreTarget`.
 
-W2.4/W2.7 settle how the configured IDs map to these names, and update the config doc.
+Still open: W2.4/W2.7 settle how the configured IDs map to these names, and update the config doc.
 
 ## RestoreProof Worker app (L1.5)
 

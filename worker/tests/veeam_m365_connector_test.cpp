@@ -111,9 +111,10 @@ rp::Config lab_config()
     config.graph_tenant_id = "00000000-0000-0000-0000-000000000001";
     config.graph_client_id = "00000000-0000-0000-0000-000000000002";
     config.test_mailbox = "restoretest@example.onmicrosoft.com";
-    config.test_site_id = "site";
-    config.test_library_id = "library";
-    config.test_onedrive_drive_id = "drive";
+    config.test_site_id =
+        "example.sharepoint.com,00000000-0000-4000-8000-000000000001,00000000-0000-4000-8000-000000000002";
+    config.test_library_id = "b!library";
+    config.test_onedrive_drive_id = "b!drive";
     config.test_onedrive_folder_id = "folder";
     return config;
 }

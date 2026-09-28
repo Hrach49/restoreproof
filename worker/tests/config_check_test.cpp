@@ -35,9 +35,9 @@ const std::string kConfigJson = R"({
     "graph_tenant_id": "00000000-0000-0000-0000-000000000001",
     "graph_client_id": "00000000-0000-0000-0000-000000000002",
     "test_mailbox": "restoretest@example.onmicrosoft.com",
-    "test_site_id": "site-id",
-    "test_library_id": "library-id",
-    "test_onedrive_drive_id": "drive-id",
+    "test_site_id": "example.sharepoint.com,00000000-0000-4000-8000-000000000001,00000000-0000-4000-8000-000000000002",
+    "test_library_id": "b!library-id",
+    "test_onedrive_drive_id": "b!drive-id",
     "test_onedrive_folder_id": "folder-id",
     "poll_interval_s": 60,
     "heartbeat_interval_s": 120,
@@ -76,9 +76,9 @@ std::string expected_output(const std::filesystem::path& path, const SecretMasks
            "graph_tenant_id           00000000-0000-0000-0000-000000000001\n"
            "graph_client_id           00000000-0000-0000-0000-000000000002\n"
            "test_mailbox              restoretest@example.onmicrosoft.com\n"
-           "test_site_id              site-id\n"
-           "test_library_id           library-id\n"
-           "test_onedrive_drive_id    drive-id\n"
+           "test_site_id              example.sharepoint.com,00000000-0000-4000-8000-000000000001,00000000-0000-4000-8000-000000000002\n"
+           "test_library_id           b!library-id\n"
+           "test_onedrive_drive_id    b!drive-id\n"
            "test_onedrive_folder_id   folder-id\n"
            "poll_interval_s           60\n"
            "heartbeat_interval_s      120\n"

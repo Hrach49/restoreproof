@@ -1,5 +1,6 @@
 #include <rp/graph_download.hpp>
 
+#include <rp/config.hpp>
 #include <rp/redact.hpp>
 #include <rp/retry_policy.hpp>
 

@@ -26,9 +26,6 @@ namespace rp::graph {
 // The largest file the Worker downloads (whole, in memory). The canaries are < 30 KB.
 inline constexpr std::uint64_t kMaxDownloadBytes = 64ull * 1024 * 1024;
 
-// The end of every SharePoint Online host name.
-inline constexpr std::string_view kSharePointSuffix = ".sharepoint.com";
-
 // How the bytes are held to the size Graph lists for the file.
 enum class SizeCheck {
     // Exactly that many bytes; the body is cut one byte past it.

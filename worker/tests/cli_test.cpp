@@ -26,9 +26,9 @@ const std::string kConfigJson = R"({
     "graph_tenant_id": "00000000-0000-0000-0000-000000000001",
     "graph_client_id": "00000000-0000-0000-0000-000000000002",
     "test_mailbox": "restoretest@example.onmicrosoft.com",
-    "test_site_id": "site",
-    "test_library_id": "library",
-    "test_onedrive_drive_id": "drive",
+    "test_site_id": "example.sharepoint.com,00000000-0000-4000-8000-000000000001,00000000-0000-4000-8000-000000000002",
+    "test_library_id": "b!library",
+    "test_onedrive_drive_id": "b!drive",
     "test_onedrive_folder_id": "folder"
 })";
 

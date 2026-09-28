@@ -22,7 +22,7 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit, urlunsplit
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
@@ -59,6 +59,17 @@ KEPT_HEADERS = {
 }
 # A JWT (or any long base64url run starting like one), even without its dots.
 _JWT = re.compile(r"eyJ[A-Za-z0-9_-]{37,}")
+# What a scrubbed secret reads as in a fixture.
+SCRUB_MARK = "SCRUBBED"
+# The query keys of a SharePoint download link whose values are kept (case-insensitive). Every
+# other value (tempauth, its encoded forms, anything new) becomes SCRUB_MARK.
+DOWNLOAD_QUERY_KEPT = frozenset({"uniqueid", "translate", "apiversion"})
+# A driveItem's pre-authenticated download link: dropped from bodies.
+DOWNLOAD_URL_KEY = "@microsoft.graph.downloadUrl"
+_TEMPAUTH_VALUE = re.compile(r"(?i)(tempauth(?:=|%3D))[^&\s\"]+")
+# A tempauth whose value is anything but SCRUB_MARK: as a query value, encoded, or a JSON key.
+_UNSCRUBBED_TEMPAUTH = re.compile(rf'(?i)tempauth(?:=|%3D|"\s*:\s*")(?!{SCRUB_MARK}(?:[&\s"]|$))')
+_DOWNLOAD_QUERY = re.compile(r"(?i)download\.aspx\?([^\s\"'<>]*)")
 
 
 class FixtureError(Exception):
@@ -146,7 +157,15 @@ def fixture_text(source: str, request: str, response: HttpResponse) -> str:
 
 def check_safe(name: str, text: str, secrets: list[str]) -> None:
     """Raises FixtureError if the text holds a JWT, an assertion or a known secret. The message
-    says which kind, never the text itself."""
+    says which kind, never the text itself. A tempauth is checked before the JWT rule, so an
+    unscrubbed "tempauth=v1.eyJ…" is reported as what it is."""
+    if _UNSCRUBBED_TEMPAUTH.search(text):
+        raise FixtureError(f"{name}: refused to write it: it holds a tempauth download credential")
+    for match in _DOWNLOAD_QUERY.finditer(text):
+        for pair in match.group(1).split("&"):
+            key, _, value = pair.partition("=")
+            if key.lower() not in DOWNLOAD_QUERY_KEPT and value != SCRUB_MARK:
+                raise FixtureError(f"{name}: refused to write it: a download URL holds an unknown query value")
     if _JWT.search(text):
         raise FixtureError(f"{name}: refused to write it: it holds what looks like a JWT")
     if "client_assertion" in text:
@@ -155,13 +174,47 @@ def check_safe(name: str, text: str, secrets: list[str]) -> None:
         raise FixtureError(f"{name}: refused to write it: it holds the password, the token or an assertion")
 
 
+def _scrubbed_location(url: str) -> str:
+    """A download link with its scheme, host and path, and only the allowed query values."""
+    parts = urlsplit(url)
+    query = "&".join(
+        pair if key.lower() in DOWNLOAD_QUERY_KEPT and sep else f"{key}={SCRUB_MARK}"
+        for pair in parts.query.split("&")
+        if pair
+        for key, sep, _ in [pair.partition("=")]
+    )
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, query, ""))
+
+
+def _scrubbed_value(value: Any) -> Any:
+    """Every download link key dropped, every tempauth value in a string masked, recursively."""
+    if isinstance(value, dict):
+        return {k: _scrubbed_value(v) for k, v in value.items() if k != DOWNLOAD_URL_KEY}
+    if isinstance(value, list):
+        return [_scrubbed_value(v) for v in value]
+    if isinstance(value, str):
+        return _TEMPAUTH_VALUE.sub(lambda m: m.group(1) + SCRUB_MARK, value)
+    return value
+
+
 def _scrubbed(response: HttpResponse) -> HttpResponse:
-    """The token reply with its access token replaced by FAKE_ACCESS_TOKEN."""
+    """The reply as a fixture may keep it: a token reply's access token replaced by
+    FAKE_ACCESS_TOKEN, a Location's query cut to the allowed values, download links dropped
+    from the body and tempauth values masked. A reply with none of these is returned as is."""
+    headers = dict(response.headers)
+    if "location" in headers:
+        headers["location"] = _scrubbed_location(headers["location"])
     body = _body(response)
-    if not (isinstance(body, dict) and "access_token" in body):
+    new_body = _scrubbed_value(body)
+    if isinstance(new_body, dict) and "access_token" in new_body:
+        new_body["access_token"] = FAKE_ACCESS_TOKEN
+    if new_body == body and headers == dict(response.headers):
         return response
-    body["access_token"] = FAKE_ACCESS_TOKEN
-    return HttpResponse(response.status, json.dumps(body).encode("utf-8"), response.headers)
+    if isinstance(new_body, str):
+        data = new_body.encode("utf-8")
+    else:
+        data = b"" if new_body is None else json.dumps(new_body, ensure_ascii=False).encode("utf-8")
+    return HttpResponse(response.status, data, headers)
 
 
 def _error_code(response: HttpResponse) -> str:

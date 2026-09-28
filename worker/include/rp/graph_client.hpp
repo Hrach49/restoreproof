@@ -108,7 +108,9 @@ std::unique_ptr<IHttpClient> make_graph_http_client(
 
 // Every public member may be called from several threads at once, if the
 // IHttpClient's send() may (HttpClient's can). The client holds one token;
-// renewals happen one at a time under a lock. Callers that waited for the
+// renewals happen one at a time under a lock. A call whose token is still good
+// never waits for a renewal in flight; one that needs a new token waits, and
+// that wait counts toward its kMaxRetryWaitPerCall. Callers that waited for the
 // lock while a renewal failed, and still need a token when they get it (none
 // has been fetched since), get that failure instead of trying again one after
 // another; the next call tries again.
@@ -176,7 +178,8 @@ public:
     //    dropped, timeout; a GET changes nothing) share kMaxHttpAttempts
     //    attempts, waiting rp::retry_delay() and at least a Retry-After on a
     //    429 or 503, within kMaxRetryWait each and kMaxRetryWaitPerCall in
-    //    all, the waits of a token renewal inside the call included; then a
+    //    all, the waits of a token renewal inside the call and the wait for
+    //    another call's renewal included; then a
     //    TransientError (carrying the Retry-After). The token is checked
     //    before every attempt. A TLS failure or a malformed URL is a
     //    GraphError after one. Their messages hold the path, never the
@@ -198,17 +201,25 @@ private:
         std::uint64_t failures_seen = 0;
     };
 
-    // The token to call with, renewed first if due. `waited` is the calling
-    // get()'s wait so far: a renewal's waits add to it, within
-    // kMaxRetryWaitPerCall in all.
+    // The token to call with, renewed first if due. A good token is taken at
+    // once, even while another call renews. `waited` is the calling get()'s
+    // wait so far: the time spent waiting for another call's renewal and a
+    // renewal's own waits add to it, within kMaxRetryWaitPerCall in all.
     Token current_token(std::chrono::milliseconds& waited);
+    // Whether there is no token or it is due; the token held now.
+    bool token_due();
+    Token token_now();
+    // renew_mutex_, the time spent waiting for it (on options.now) added to
+    // `waited`.
+    std::unique_lock<std::mutex> lock_renewal(std::chrono::milliseconds& waited);
+    // These expect renew_mutex_ held.
     // Renews the token if there is none or it is due, rethrowing a renewal
     // failure that happened since the caller read `failures_seen` (before
     // waiting for the lock) instead of trying again. True if it fetched one.
     bool renew_if_due_locked(std::uint64_t failures_seen, std::chrono::milliseconds& waited);
     void rethrow_failure_since_locked(std::uint64_t failures_seen) const;
-    // These expect mutex_ held. fetch_token_locked records its failure for
-    // rethrow_failure_since_locked; a stored token clears it.
+    // fetch_token_locked records its failure for rethrow_failure_since_locked;
+    // a stored token clears it.
     void fetch_token_locked(std::chrono::milliseconds& waited);
     void store_token_locked(const HttpResponse& response);
     // One GET of `url` with `token`, one attempt.
@@ -224,16 +235,21 @@ private:
     ClientCertificate certificate_;
     GraphClientOptions options_;
 
-    std::mutex mutex_; // guards everything below
+    // Held by the one call renewing the token, across its sends and waits.
+    // Guards last_renewal_failure_. Taken before mutex_, never while holding it.
+    std::mutex renew_mutex_;
+    std::exception_ptr last_renewal_failure_;
+
+    // Guards the token below, briefly: never held across a send or a wait.
+    std::mutex mutex_;
     std::string access_token_;
     // When the token is renewed: its expiry less the margin.
     std::chrono::steady_clock::time_point renew_at_{};
     std::uint64_t generation_ = 0; // bumped whenever the token changes
     // Counts failed renewals; atomic so a caller can read it before taking
-    // the lock. The last failure is kept for callers that waited on it, until
-    // a renewal succeeds.
+    // a lock. The last failure is kept for callers that waited on it, until a
+    // renewal succeeds.
     std::atomic<std::uint64_t> renewal_failures_ = 0;
-    std::exception_ptr last_renewal_failure_;
 };
 
 } // namespace rp::graph

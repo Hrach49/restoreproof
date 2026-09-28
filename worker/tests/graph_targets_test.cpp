@@ -6,6 +6,7 @@
 // the canaries' own IDs, which appear nowhere in the Worker.
 
 #include "fake_http_client.hpp"
+#include "found_item_line.hpp"
 #include "test_certs.hpp"
 
 #include <rp/client_assertion.hpp>
@@ -1482,4 +1483,26 @@ TEST_CASE("no credential, body, subject or file name reaches the log", "[graph][
         CAPTURE(line);
         CHECK(rp::redact(line) == line);
     }
+}
+
+// ---- the live test's output line ----------------------------------------------------------
+
+TEST_CASE("the live test's line replaces control characters in Graph's text", "[graph][targets]")
+{
+    FoundItem mail;
+    mail.type = ItemType::mail;
+    mail.id = "AAk=";
+    mail.subject = "a\rb\nc\xE2\x80\xAE" "d";
+    mail.sha256 = "ab";
+    mail.sha256_rule = "text-v1";
+    CHECK(rp::test::found_item_line(mail) == "mail  AAk=  a b c d  -  ab (text-v1)");
+
+    FoundItem file;
+    file.type = ItemType::onedrive;
+    file.id = "01X";
+    file.name = "x\x1b[2J.txt";
+    file.size_bytes = 12;
+    file.sha256 = "cd";
+    file.sha256_rule = "bytes";
+    CHECK(rp::test::found_item_line(file) == "onedrive  01X  x [2J.txt  12  cd (bytes)");
 }

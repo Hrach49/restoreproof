@@ -45,18 +45,28 @@ TEST_CASE("base64_decode refuses anything but strict padded standard Base64", "[
         "Zm=v",
         "=Zm9",
         "Zg==\n",
-        // Whitespace anywhere.
+        // Whitespace anywhere. The rows above are refused for their length
+        // alone; these are a multiple of four long, so only the alphabet check
+        // refuses them (review of W2.1): a decoder that skipped whitespace
+        // would pass the others.
         " Zm9v",
         "Zm9v ",
         "Zm9v\nYmFy",
         "Zm9v\r\n",
         "Zm\t9v",
+        "Zm 9",
+        "Zm\t9",
+        "\nZm9",
+        "Zm9v\r\nYm",
+        "  Zm9vYmFy  ",
+        "Zm9v\r\nYmFy\r\nZg==",
         // Characters outside the standard alphabet: base64url, and others.
         "Zm-v",
         "Zm_v",
         "Zm9v!A==",
         "Zm9v.A==",
         "\xC3\xA9Zm9",
+        "\xC3\xA9Zm",
         std::string_view("Zm\0v", 4),
         // Non-canonical: unused bits after the last character not zero.
         "Zh==",

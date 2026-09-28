@@ -289,6 +289,10 @@ registration, **RestoreProof Worker** (L1.5). What it may read and why is in
   a warning in the log. `rpworker config check` doesn't do any of this: it stays offline and
   only says whether each variable is set.
 
+  The Worker then signs every token request with a new client assertion made with the key
+  (`docs/glossary.md`); the key itself is never sent. How it signs in and what a refusal says
+  are in `docs/security/graph-permissions.md`, "How the Worker signs in".
+
   In the lab the PFX is `%LOCALAPPDATA%\RestoreProof\lab\worker-graph.pfx` and its password
   is the Credential Manager generic credential `RestoreProof Lab - Worker Graph app PFX`.
   Neither ever goes into `config.json`, which rejects key names containing `pfx`,

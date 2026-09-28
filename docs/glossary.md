@@ -101,7 +101,7 @@ says so.
 
 ## Tokens
 
-Three different secrets, often confused:
+Three different secrets, often confused, then the words for the Worker's Graph sign-in:
 
 **Install token.** A one-time, 7-day, single-use enrolment secret (32 random bytes,
 base64url) created by `manage.py create-worker-token` and printed once. The MSP types it into
@@ -112,6 +112,26 @@ deletes the install token. The Cloud stores only its SHA-256 hash.
 issued at registration and kept in the vault. The Cloud stores only its SHA-256 hash and
 compares in constant time; setting `revoked_at` blocks the worker immediately. Never logged.
 
-**Veeam / Graph tokens.** Access and refresh tokens for the systems under test, also vault-
-only. Distinct from both of the above: they let the Worker read and restore; the API token
-lets it report.
+**Veeam / Graph tokens.** Access tokens (and, for Veeam, refresh tokens) for the systems
+under test. Distinct from both of the above: they let the Worker read and restore; the API
+token lets it report. They are never stored: the Worker keeps them in memory and gets new
+ones by signing in again. What they are got with is a secret: Veeam's account password, and
+for Graph the Worker app's certificate.
+
+**Client assertion.** How the Worker signs in to Entra for its Graph token without a client
+secret (W2.1): a short-lived JWT (5 minutes) that says "I am the Worker app, asking this
+tenant's token endpoint", signed with the private key of the app's certificate. Entra checks
+the signature against the public certificate uploaded to the app. A new one, with a new
+`jti`, goes with every token request and is never reused; while valid it is a credential, so
+it is never logged. Signed with PS256 (RSA-PSS, SHA-256). See `docs/decisions.md`,
+2026-09-28.
+
+**`x5t#S256`.** The client assertion's header field naming the certificate that signed it:
+the base64url SHA-256 of the certificate's DER encoding. Entra finds the app's key by it.
+Not the thumbprint Windows and the Entra portal show, which is the SHA-1 in hex (`x5t` is its
+base64url form); the Worker's error messages name the certificate by that SHA-1.
+
+**Grant (in Worker messages).** A permission a Graph call relies on, in words a customer can
+act on, such as `Sites.Selected read on the test site`. Graph's 403 doesn't say what is
+missing, so every call the Worker makes names its grant, and a refusal's message quotes it
+(`docs/security/graph-permissions.md`, "What a refusal says"). Not a Graph term.

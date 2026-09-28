@@ -474,8 +474,10 @@ OneDrive (RestoreTarget folder): 1 item(s)
   only) and adds `SHA256` and `RULE` to every table: `text-v1` for mail (the hash of the
   body's text, `lab/README.md`), `bytes` for files. `SIZE` is then the bytes downloaded, which
   for a docx or xlsx SharePoint rewrote may differ from Graph's size. Without `--hash` nothing
-  is downloaded and `SIZE` is Graph's.
-- **Everything is read before anything is printed.** If any call fails, stdout stays empty.
+  is downloaded, no mail body is read, and `SIZE` is Graph's.
+- **Everything is read before anything is printed.** If any call fails, stdout stays empty. If
+  writing to stdout fails (a full disk, a closed pipe), the command exits 1 with
+  `error: unexpected failure`.
 - **The output is UTF-8**, padded by character, as for `rpworker veeam list` (see there for
   the console's code page). Control characters in subjects, senders, names and IDs from Graph
   are shown as spaces, so a restored item can't forge or hide a line.

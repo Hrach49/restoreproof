@@ -80,8 +80,8 @@ GraphCommandEnv default_graph_command_env();
 //    that doesn't open, a certificate that isn't valid), "config error:
 //    unexpected failure" for any other exception while loading the config,
 //    secrets and certificate, and "error: unexpected failure" for one that
-//    isn't a graph::GraphError afterwards (one while writing the tables
-//    included); neither ever shows the exception's message;
+//    isn't a graph::GraphError afterwards (a failed write or flush of `out`
+//    included, exceptions on or off); neither ever shows the exception's message;
 //  - 2: "graph error: <what()>" for a graph::AuthError or PermissionError
 //    (whose message names the grant the call relies on);
 //  - 3: the same for a graph::TransientError;

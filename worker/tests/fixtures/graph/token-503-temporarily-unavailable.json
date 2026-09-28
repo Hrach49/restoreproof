@@ -1,0 +1,20 @@
+{
+  "source": "hand-written: Entra's reply shape (token-bad-signature-401.json) with the transient error AADSTS90033 of https://learn.microsoft.com/en-us/entra/identity-platform/reference-error-codes; can't be provoked in the lab",
+  "request": "POST /bcd6bd1a-ea42-489d-aa28-2c19a44ad146/oauth2/v2.0/token",
+  "status": 503,
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8",
+    "x-ms-request-id": "5e2d9b47-1c3a-4f86-b0d2-7a9e4c1f6b30"
+  },
+  "body": {
+    "error": "temporarily_unavailable",
+    "error_description": "AADSTS90033: A transient error has occurred. Please try again. Trace ID: 5e2d9b47-1c3a-4f86-b0d2-7a9e4c1f6b30 Correlation ID: 9c1f4e2a-6b7d-4a38-8e05-d2c7f1a9b346 Timestamp: 2026-09-28 10:00:00Z",
+    "error_codes": [
+      90033
+    ],
+    "timestamp": "2026-09-28 10:00:00Z",
+    "trace_id": "5e2d9b47-1c3a-4f86-b0d2-7a9e4c1f6b30",
+    "correlation_id": "9c1f4e2a-6b7d-4a38-8e05-d2c7f1a9b346",
+    "error_uri": "https://login.microsoftonline.com/error?code=90033"
+  }
+}

@@ -557,3 +557,143 @@ TEST_CASE("is_secret_header names Authorization and Proxy-Authorization in any c
     CAPTURE(name);
     CHECK(rp::is_secret_header(name) == secret);
 }
+
+// W2.1: Graph access tokens and client assertions are JWTs; one can turn up
+// in a log line without a key in front of it (a URL, a copied header, an
+// error message). Failure paths first: text that looks a little like one.
+TEST_CASE("redact leaves text that only resembles a JWT or a bearer token unchanged",
+          "[redact][jwt]")
+{
+    const std::string_view text = GENERATE(values<std::string_view>({
+        // Not starting with eyJ, or eyJ run into a preceding token character.
+        "abc.def.ghi",
+        "xeyJhbGciOiJQUzI1NiJ9.e30.sig",
+        "_eyJhbGciOiJQUzI1NiJ9.e30.sig",
+        "-eyJhbGciOiJQUzI1NiJ9.e30.sig",
+        // Case matters: base64 of '{"' is eyJ.
+        "EYJhbGciOiJQUzI1NiJ9.e30.sig",
+        // Only one part, or nothing after the first dot.
+        "eyJhbGciOiJQUzI1NiJ9",
+        "eyJhbGciOiJQUzI1NiJ9.",
+        "eyJhbGciOiJQUzI1NiJ9. next",
+        "eyJ",
+        // A bearer scheme without a token, or with auth-params (WWW-Authenticate).
+        "Bearer",
+        "Bearer ",
+        R"({"token_type":"Bearer","expires_in":3599})",
+        R"(WWW-Authenticate: Bearer realm="", authorization_uri="https://login.microsoftonline.com/common/oauth2/authorize", client_id="00000003-0000-0000-c000-000000000000")",
+        R"(Bearer error="insufficient_claims", claims="e30=")",
+        "Bearer error=invalid_token",
+        // The known auth-param names only, in any case.
+        R"(Bearer Realm="x")",
+        R"(Bearer scope="Mail.Read")",
+        R"(Bearer resource_metadata="https://h/x")",
+        // "bearer" run into a word.
+        "nobearer abc",
+        "Bearers abc",
+        // Names that start with pfx but go on, or end in it without a separator.
+        "pfxfile=x",
+        "mypfx=x",
+        "RP_GRAPH_CERT_PFX_BASE64 is not set",
+        "the pfx does not open",
+    }));
+    CAPTURE(text);
+    CHECK(rp::redact(text) == text);
+}
+
+TEST_CASE("redact replaces a raw JWT, signed or unsigned, wherever it stands", "[redact][jwt]")
+{
+    check_row(GENERATE(values<Row>({
+        // Signed (three parts).
+        {"eyJhbGciOiJQUzI1NiJ9.eyJhdWQiOiJ4In0.c2lnbmF0dXJl", "[REDACTED]"},
+        {"token eyJhbGciOiJQUzI1NiJ9.eyJhdWQiOiJ4In0.c2ln-_x end",
+         "token [REDACTED] end"},
+        // Unsigned: an empty third part, or only two parts.
+        {"eyJhbGciOiJub25lIn0.e30.", "[REDACTED]"},
+        {"eyJhbGciOiJub25lIn0.e30. next", "[REDACTED] next"},
+        {"eyJhbGciOiJub25lIn0.e30", "[REDACTED]"},
+        // Five parts (JWE): every part goes.
+        {"eyJhbGciOiJSU0EifQ.a.b.c.d rest", "[REDACTED] rest"},
+        // In a URL without a secret key name, in quotes, after punctuation.
+        {"https://h/cb?token=eyJhbGciOiJQUzI1NiJ9.e30.sig&state=1",
+         "https://h/cb?token=[REDACTED]&state=1"},
+        {R"({"assertion_hint":"eyJhbGciOiJQUzI1NiJ9.e30.sig"})",
+         R"({"assertion_hint":"[REDACTED]"})"},
+        {"(eyJhbGciOiJQUzI1NiJ9.e30.sig)", "([REDACTED])"},
+        {"a.eyJhbGciOiJQUzI1NiJ9.e30.sig", "a.[REDACTED]"},
+        // Two in one text.
+        {"eyJa.eyJb.c and eyJd.e", "[REDACTED] and [REDACTED]"},
+    })));
+}
+
+TEST_CASE("redact replaces the token after a Bearer scheme", "[redact][jwt]")
+{
+    check_row(GENERATE(values<Row>({
+        {"Bearer abc123", "Bearer [REDACTED]"},
+        {"bearer abc123 next", "bearer [REDACTED] next"},
+        {"BEARER   a-b.c_d~e+f/g==", "BEARER   [REDACTED]"},
+        {"Bearer\tabc", "Bearer\t[REDACTED]"},
+        {"sent Bearer abc, then", "sent Bearer [REDACTED], then"},
+        {"Bearer abc==", "Bearer [REDACTED]"},
+        {R"("Bearer abc")", R"("Bearer [REDACTED]")"},
+        {"Bearer eyJhbGciOiJQUzI1NiJ9.e30.sig", "Bearer [REDACTED]"},
+        // Padding, or a character no auth-param name holds, then a quote:
+        // a token, not `name="value"`.
+        {R"({"hdr":"Bearer dGVzdHRva2Vu=="})", R"({"hdr":"Bearer [REDACTED]"})"},
+        {R"(sent "Bearer abcd==" ok)", R"(sent "Bearer [REDACTED]" ok)"},
+        {R"("Bearer ab/c=")", R"("Bearer [REDACTED]")"},
+        {R"("Bearer a+b.c=")", R"("Bearer [REDACTED]")"},
+        {"Bearer abc==def", "Bearer [REDACTED]"},
+        // A token of characters outside token68 still goes up to whitespace or
+        // a quote: over-redacting is preferred to leaking.
+        {"Bearer abc!def ok", "Bearer [REDACTED] ok"},
+        // A name followed by one '=' is an auth-param only if it is a known
+        // one: an opaque token padded with one '=' goes, before a quote too.
+        {R"({"auth":"Bearer dGVzdHM="})", R"({"auth":"Bearer [REDACTED]"})"},
+        {R"(sent "Bearer q83vEjRWeJCrze8SNFZ4kKvN7xI0VniQq83vEjRWeJA=" to x)",
+         R"(sent "Bearer [REDACTED]" to x)"},
+        {"Bearer token=abc", "Bearer [REDACTED]"},
+        {"Bearer dGVzdHM=abc", "Bearer [REDACTED]"},
+        // A secret key name inside the token whose value stays inside it: the
+        // whole token goes.
+        {"Bearer abc.sig=def", "Bearer [REDACTED]"},
+        {"Bearer password=hunter2", "Bearer [REDACTED]"},
+    })));
+}
+
+// Review of W2.1: the Bearer and JWT rules ran before the key rules, took a
+// following secret key's name as (part of) the token, and left its value in
+// the clear, where main's key rules had hidden it. A key whose value reaches
+// past the token is the key rules' to redact.
+TEST_CASE("redact leaves a secret key after Bearer or a JWT to the key rules", "[redact][jwt]")
+{
+    check_row(GENERATE(values<Row>({
+        {"Bearer password = hunter2", "Bearer password = [REDACTED]"},
+        {"token_type: Bearer refresh_token: 0.AXYZsecretvalue",
+         "token_type: Bearer refresh_token: [REDACTED]"},
+        {"x Bearer client_secret: s3cr3t", "x Bearer client_secret: [REDACTED]"},
+        {"Bearer access_token: tok123 more", "Bearer access_token: [REDACTED]"},
+        {"Bearer Authorization: Basic dXNlcjpwYXNz", "Bearer Authorization: [REDACTED]"},
+        // What comes before the key in the token still goes.
+        {"Bearer tok.password = hunter2", "Bearer [REDACTED]password = [REDACTED]"},
+        // A JWT ends before the part the key starts in.
+        {"eyJabc.def.password=hunter2", "[REDACTED].password=[REDACTED]"},
+        {"eyJabc.def.x_password: s3cr3t", "[REDACTED].x_password: [REDACTED]"},
+        // Fewer than two parts left: no JWT, the key rule still hides the value.
+        {"eyJabc.password=hunter2", "eyJabc.password=[REDACTED]"},
+        // A key inside a JWT part whose value stays inside the JWT: all of it goes.
+        {"eyJabc.def.sig", "[REDACTED]"},
+    })));
+}
+
+TEST_CASE("redact treats pfx and pfx_base64 as secret key names", "[redact][jwt]")
+{
+    check_row(GENERATE(values<Row>({
+        {"pfx=MIIKsecret&a=1", "pfx=[REDACTED]&a=1"},
+        {"cert_pfx=MIIK", "cert_pfx=[REDACTED]"},
+        {"RP_GRAPH_CERT_PFX_BASE64=MIIKsecret", "RP_GRAPH_CERT_PFX_BASE64=[REDACTED]"},
+        {R"({"pfx":"MIIK"})", R"({"pfx":"[REDACTED]"})"},
+        {R"({"graph_cert_pfx_base64":"MIIK"})", R"({"graph_cert_pfx_base64":"[REDACTED]"})"},
+        {"pfx_base64: MIIK", "pfx_base64: [REDACTED]"},
+    })));
+}

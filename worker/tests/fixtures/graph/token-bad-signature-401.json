@@ -1,0 +1,20 @@
+{
+  "source": "live 2026-09-28: assertion signed by a key Entra doesn't know",
+  "request": "POST /bcd6bd1a-ea42-489d-aa28-2c19a44ad146/oauth2/v2.0/token",
+  "status": 401,
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8",
+    "x-ms-request-id": "7195f331-41a8-493e-8bf5-063c3b433800"
+  },
+  "body": {
+    "error": "invalid_client",
+    "error_description": "AADSTS700027: Key was found, but use of the key to verify the signature failed. [Reason - Key was found, but use of the key to verify the signature failed., Found key 'Start=09/27/2026 15:02:16, End=09/27/2027 15:12:16', Please visit the Azure Portal, Graph Explorer or directly use MS Graph to see configured keys for app Id '737da5ef-baf2-4198-b009-e160d8ca77c9'. Review the documentation at https://docs.microsoft.com/en-us/graph/deployments to determine the corresponding service endpoint and https://docs.microsoft.com/en-us/graph/api/application-get?view=graph-rest-1.0&tabs=http to build a query request URL, such as 'https://graph.microsoft.com/beta/applications/737da5ef-baf2-4198-b009-e160d8ca77c9']. Trace ID: 7195f331-41a8-493e-8bf5-063c3b433800 Correlation ID: cfb80edc-ec21-4b71-8c1c-4a15cb078b3d Timestamp: 2026-09-27 22:22:39Z",
+    "error_codes": [
+      700027
+    ],
+    "timestamp": "2026-09-27 22:22:39Z",
+    "trace_id": "7195f331-41a8-493e-8bf5-063c3b433800",
+    "correlation_id": "cfb80edc-ec21-4b71-8c1c-4a15cb078b3d",
+    "error_uri": "https://login.microsoftonline.com/error?code=700027"
+  }
+}

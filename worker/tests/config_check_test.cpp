@@ -52,11 +52,20 @@ std::string utf8(const std::filesystem::path& path)
     return {text.begin(), text.end()};
 }
 
-// The output of a successful check of kConfigJson at `path`, with the three
+// The masks `config check` prints for each secret variable.
+struct SecretMasks {
+    std::string_view user;
+    std::string_view password;
+    std::string_view pfx;
+    std::string_view pfx_password;
+};
+
+constexpr SecretMasks kNoSecrets{"(not set)", "(not set)", "(not set)", "(not set)"};
+
+// The output of a successful check of kConfigJson at `path`, with the four
 // secret lines given and, when `ca_file` and `cert_sha256` are set,
 // veeam_ca_file and veeam_cert_sha256 added.
-std::string expected_output(const std::filesystem::path& path, std::string_view user,
-                            std::string_view password, std::string_view graph,
+std::string expected_output(const std::filesystem::path& path, const SecretMasks& secrets,
                             std::string_view ca_file = "(not set)",
                             std::string_view cert_sha256 = "(not set)")
 {
@@ -82,8 +91,10 @@ std::string expected_output(const std::filesystem::path& path, std::string_view 
            "veeam_cert_sha256         " + std::string{cert_sha256} + "\n" +
            "secrets (environment variables; values are never shown):\n"
            "RP_VEEAM_USERNAME         " +
-           std::string{user} + "\n" + "RP_VEEAM_PASSWORD         " + std::string{password} +
-           "\n" + "RP_GRAPH_CLIENT_SECRET    " + std::string{graph} + "\n";
+           std::string{secrets.user} + "\n" + "RP_VEEAM_PASSWORD         " +
+           std::string{secrets.password} + "\n" + "RP_GRAPH_CERT_PFX_BASE64  " +
+           std::string{secrets.pfx} + "\n" + "RP_GRAPH_CERT_PASSWORD    " +
+           std::string{secrets.pfx_password} + "\n";
 }
 
 struct Run {
@@ -185,12 +196,14 @@ TEST_CASE("rpworker config check prints every setting and masks the secrets", "[
     const std::string path_arg = utf8(path);
     const rp::test::ScopedEnv user(rp::kEnvVeeamUsername, "user-0c41");
     const rp::test::ScopedEnv password(rp::kEnvVeeamPassword, "password-0c41");
-    const rp::test::ScopedEnv graph(rp::kEnvGraphClientSecret, std::nullopt);
+    const rp::test::ScopedEnv pfx(rp::kEnvGraphCertPfxBase64, std::nullopt);
+    const rp::test::ScopedEnv pfx_password(rp::kEnvGraphCertPassword, std::nullopt);
 
     PathSpy spy;
     const Run result = run(Args{"check", "--config", path_arg}, spy.provider());
     REQUIRE(result.err.empty());
-    REQUIRE(result.out == expected_output(path, "**** (set)", "**** (set)", "(not set)"));
+    REQUIRE(result.out ==
+            expected_output(path, {"**** (set)", "**** (set)", "(not set)", "(not set)"}));
     REQUIRE(result.exit_code == 0);
 }
 
@@ -200,11 +213,15 @@ TEST_CASE("rpworker config check reads the default path without --config", "[con
     const auto path = dir.write("config.json", kConfigJson);
     const rp::test::ScopedEnv user(rp::kEnvVeeamUsername, std::nullopt);
     const rp::test::ScopedEnv password(rp::kEnvVeeamPassword, std::nullopt);
-    const rp::test::ScopedEnv graph(rp::kEnvGraphClientSecret, "graph-0c41");
+    // Not a PFX, nor even Base64: config check stays offline and never opens
+    // the certificate, it only says whether the variable is set.
+    const rp::test::ScopedEnv pfx(rp::kEnvGraphCertPfxBase64, "pfx-0c41");
+    const rp::test::ScopedEnv pfx_password(rp::kEnvGraphCertPassword, "pfx-password-0c41");
 
     const Run result = run(Args{"check"}, path);
     REQUIRE(result.err.empty());
-    REQUIRE(result.out == expected_output(path, "(not set)", "(not set)", "**** (set)"));
+    REQUIRE(result.out ==
+            expected_output(path, {"(not set)", "(not set)", "**** (set)", "**** (set)"}));
     REQUIRE(result.exit_code == 0);
 }
 
@@ -214,7 +231,8 @@ TEST_CASE("rpworker config check never prints a secret's value", "[config_check]
     const auto path = dir.write("config.json", kConfigJson);
     const rp::test::ScopedEnv user(rp::kEnvVeeamUsername, "SENTINEL-USER-91e7");
     const rp::test::ScopedEnv password(rp::kEnvVeeamPassword, "SENTINEL-PASSWORD-91e7");
-    const rp::test::ScopedEnv graph(rp::kEnvGraphClientSecret, "SENTINEL-GRAPH-91e7");
+    const rp::test::ScopedEnv pfx(rp::kEnvGraphCertPfxBase64, "SENTINEL-PFX-91e7");
+    const rp::test::ScopedEnv pfx_password(rp::kEnvGraphCertPassword, "SENTINEL-PFX-PASSWORD-91e7");
 
     const Run result = run(Args{"check"}, path);
     REQUIRE(result.exit_code == 0);
@@ -223,7 +241,8 @@ TEST_CASE("rpworker config check never prints a secret's value", "[config_check]
     REQUIRE_THAT(all, !ContainsSubstring("91e7"));
     REQUIRE_THAT(all, ContainsSubstring("RP_VEEAM_USERNAME         **** (set)\n"));
     REQUIRE_THAT(all, ContainsSubstring("RP_VEEAM_PASSWORD         **** (set)\n"));
-    REQUIRE_THAT(all, ContainsSubstring("RP_GRAPH_CLIENT_SECRET    **** (set)\n"));
+    REQUIRE_THAT(all, ContainsSubstring("RP_GRAPH_CERT_PFX_BASE64  **** (set)\n"));
+    REQUIRE_THAT(all, ContainsSubstring("RP_GRAPH_CERT_PASSWORD    **** (set)\n"));
 }
 
 TEST_CASE("rpworker config check never prints a password in a URL", "[config_check]")
@@ -250,12 +269,13 @@ TEST_CASE("rpworker config check --config reads a UTF-8 path outside the ANSI co
     const std::string path_arg = utf8(path);
     const rp::test::ScopedEnv user(rp::kEnvVeeamUsername, std::nullopt);
     const rp::test::ScopedEnv password(rp::kEnvVeeamPassword, std::nullopt);
-    const rp::test::ScopedEnv graph(rp::kEnvGraphClientSecret, std::nullopt);
+    const rp::test::ScopedEnv pfx(rp::kEnvGraphCertPfxBase64, std::nullopt);
+    const rp::test::ScopedEnv pfx_password(rp::kEnvGraphCertPassword, std::nullopt);
 
     PathSpy spy;
     const Run result = run(Args{"check", "--config", path_arg}, spy.provider());
     REQUIRE(result.err.empty());
-    REQUIRE(result.out == expected_output(path, "(not set)", "(not set)", "(not set)"));
+    REQUIRE(result.out == expected_output(path, kNoSecrets));
     REQUIRE(result.exit_code == 0);
 }
 
@@ -289,11 +309,12 @@ TEST_CASE("rpworker config check prints veeam_ca_file, outside the ANSI code pag
     const auto path = dir.write("config.json", text);
     const rp::test::ScopedEnv user(rp::kEnvVeeamUsername, std::nullopt);
     const rp::test::ScopedEnv password(rp::kEnvVeeamPassword, std::nullopt);
-    const rp::test::ScopedEnv graph(rp::kEnvGraphClientSecret, std::nullopt);
+    const rp::test::ScopedEnv pfx(rp::kEnvGraphCertPfxBase64, std::nullopt);
+    const rp::test::ScopedEnv pfx_password(rp::kEnvGraphCertPassword, std::nullopt);
 
     const Run result = run(Args{"check"}, path);
     REQUIRE(result.err.empty());
-    REQUIRE(result.out == expected_output(path, "(not set)", "(not set)", "(not set)", ca_arg));
+    REQUIRE(result.out == expected_output(path, kNoSecrets, ca_arg));
     REQUIRE(result.exit_code == 0);
 }
 
@@ -310,12 +331,13 @@ TEST_CASE("rpworker config check prints veeam_cert_sha256 after veeam_ca_file", 
     const auto path = dir.write("config.json", text);
     const rp::test::ScopedEnv user(rp::kEnvVeeamUsername, std::nullopt);
     const rp::test::ScopedEnv password(rp::kEnvVeeamPassword, std::nullopt);
-    const rp::test::ScopedEnv graph(rp::kEnvGraphClientSecret, std::nullopt);
+    const rp::test::ScopedEnv pfx(rp::kEnvGraphCertPfxBase64, std::nullopt);
+    const rp::test::ScopedEnv pfx_password(rp::kEnvGraphCertPassword, std::nullopt);
 
     const Run result = run(Args{"check"}, path);
     REQUIRE(result.err.empty());
     REQUIRE(result.out ==
-            expected_output(path, "(not set)", "(not set)", "(not set)", ca_arg, sha256));
+            expected_output(path, kNoSecrets, ca_arg, sha256));
     REQUIRE(result.exit_code == 0);
 }
 
@@ -439,7 +461,8 @@ TEST_CASE("rpworker config check prints no secret on any error path", "[config_c
     const auto path = dir.write("config.json", text);
     const rp::test::ScopedEnv user(rp::kEnvVeeamUsername, "SENTINEL-ENV-USER-7a64");
     const rp::test::ScopedEnv password(rp::kEnvVeeamPassword, "SENTINEL-ENV-PASSWORD-7a64");
-    const rp::test::ScopedEnv graph(rp::kEnvGraphClientSecret, "SENTINEL-ENV-GRAPH-7a64");
+    const rp::test::ScopedEnv pfx(rp::kEnvGraphCertPfxBase64, "SENTINEL-ENV-PFX-7a64");
+    const rp::test::ScopedEnv pfx_password(rp::kEnvGraphCertPassword, "SENTINEL-ENV-PFXPW-7a64");
 
     const Run result = run(Args{"check"}, path);
     REQUIRE(result.exit_code == 1);

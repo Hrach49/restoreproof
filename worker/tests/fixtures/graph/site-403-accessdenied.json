@@ -1,0 +1,21 @@
+{
+  "source": "live 2026-09-28: GET the tenant root site (no Sites.Selected grant)",
+  "request": "GET /v1.0/sites/restoreprooflab.sharepoint.com",
+  "status": 403,
+  "headers": {
+    "Content-Type": "application/json",
+    "request-id": "fc57d2c2-4ef3-48fe-ac0b-bd0c465230fa",
+    "client-request-id": "fc57d2c2-4ef3-48fe-ac0b-bd0c465230fa"
+  },
+  "body": {
+    "error": {
+      "code": "accessDenied",
+      "message": "Access denied",
+      "innerError": {
+        "date": "2026-09-27T22:22:44",
+        "request-id": "fc57d2c2-4ef3-48fe-ac0b-bd0c465230fa",
+        "client-request-id": "fc57d2c2-4ef3-48fe-ac0b-bd0c465230fa"
+      }
+    }
+  }
+}

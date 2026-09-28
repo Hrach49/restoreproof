@@ -82,7 +82,10 @@ int run_config_command(std::span<const std::string_view> args, std::ostream& out
     out << "secrets (environment variables; values are never shown):\n";
     print_setting(out, kEnvVeeamUsername, mask_secret(secrets.veeam_username));
     print_setting(out, kEnvVeeamPassword, mask_secret(secrets.veeam_password));
-    print_setting(out, kEnvGraphClientSecret, mask_secret(secrets.graph_client_secret));
+    // Only whether each is set: config check stays offline and never opens the
+    // PFX (rp::graph::certificate_from_secrets does, before any Graph call).
+    print_setting(out, kEnvGraphCertPfxBase64, mask_secret(secrets.graph_cert_pfx_base64));
+    print_setting(out, kEnvGraphCertPassword, mask_secret(secrets.graph_cert_password));
     return exit_code::ok;
 }
 

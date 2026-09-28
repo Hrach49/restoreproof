@@ -30,8 +30,8 @@ Ten keys are required; the other eight are optional. Six of those have defaults;
 | `cloud_url` | yes | | `https://` URL, printable ASCII only, no user name, password, query or fragment | The RestoreProof Cloud the Worker gets jobs from and uploads results to. |
 | `veeam_url` | yes | | `https://` URL, printable ASCII only, no user name, password, query or fragment | The Veeam Backup for Microsoft 365 REST API, e.g. `https://veeam.example.invalid:4443`. |
 | `veeam_org_name` | yes | | non-empty string | The Microsoft 365 organisation as Veeam names it, e.g. `example.onmicrosoft.com`. |
-| `graph_tenant_id` | yes | | non-empty string | The Microsoft 365 tenant ID (a GUID), for Microsoft Graph sign-in: see "Microsoft Graph app" below. |
-| `graph_client_id` | yes | | non-empty string | The application (client) ID of the Worker's own app registration, "RestoreProof Worker": see "Microsoft Graph app" below. |
+| `graph_tenant_id` | yes | | a GUID: see below | The Microsoft 365 tenant ID, for Microsoft Graph sign-in: see "Microsoft Graph app" below. Not the tenant's domain name. |
+| `graph_client_id` | yes | | a GUID: see below | The application (client) ID of the Worker's own app registration, "RestoreProof Worker": see "Microsoft Graph app" below. |
 | `test_mailbox` | yes | | `restoretest@<domain>`: see below | The `restoretest` mailbox: the only restore target for mail. |
 | `test_site_id` | yes | | non-empty string | The SharePoint site holding the `RestoreTarget` library (the RestoreTest site in the lab). |
 | `test_library_id` | yes | | non-empty string | The `RestoreTarget` library: the only restore target for SharePoint items. Not the `RestoreTest` library, which holds the canary files. |
@@ -88,6 +88,12 @@ connection reads it. Fix the reported problem and run
   `restoretest@contoso.onmicrosoft.com`. Spaces, look-alike letters and invisible characters
   are rejected; write an internationalised domain in its `xn--` form. The Worker's
   `TargetGuard` still checks every restore; this rule stops a wrong mailbox before any run.
+- **`graph_tenant_id` and `graph_client_id` are GUIDs.** Exactly 8-4-4-4-12 hexadecimal
+  digits in any case, such as `bcd6bd1a-ea42-489d-aa28-2c19a44ad146`, with nothing around
+  them: no braces, no spaces. Both go into Entra and Graph URLs, so nothing else is accepted.
+  A tenant's domain name (`contoso.onmicrosoft.com`), `common` or `organizations` would also
+  sign in, but is refused: copy the Tenant ID from the tenant's Overview page and the
+  Application (client) ID from the app's Overview page in the Entra admin center.
 - **`veeam_ca_file` only chooses what to trust.** The Veeam REST API often has a self-signed
   certificate; point `veeam_ca_file` at a PEM file holding that certificate, or the CA
   certificate(s) that issued it, and the Worker trusts it for `veeam_url` instead of the
@@ -201,8 +207,11 @@ by default.
 
 `config.json` must not contain secrets. Any top-level key whose name, in any case, contains
 `password`, `passwd`, `pwd`, `secret`, `token`, `api_key`, `apikey`, `credential`,
-`private_key`, `access_key`, `signing_key` or `connection_string` is rejected, and checked
-before anything else so that the secret is removed first. None of the 18 settings matches.
+`private_key`, `access_key`, `signing_key`, `connection_string`, `pfx` or `passphrase` is
+rejected, and checked before anything else so that the secret is removed first. None of the
+18 settings matches. `cert` is not on the list: a certificate's hash or path is public, and
+`veeam_cert_sha256` is a setting. A key such as `graph_cert_thumbprint` is refused only as
+unknown.
 
 Until the DPAPI vault (`%ProgramData%\RestoreProof\vault.bin`) arrives in W4.5 (issue #48),
 secrets are read from these environment variables, whose names are defined once in
@@ -212,14 +221,17 @@ secrets are read from these environment variables, whose names are defined once 
 |---|---|
 | `RP_VEEAM_USERNAME` | The account the Worker signs in to the Veeam REST API with. |
 | `RP_VEEAM_PASSWORD` | That account's password. |
-| `RP_GRAPH_CLIENT_SECRET` | Planned to be replaced (W2.1): the app named by `graph_client_id` has a certificate, not a client secret. See "Microsoft Graph app" below. |
+| `RP_GRAPH_CERT_PFX_BASE64` | The Worker app's certificate with its private key: the PFX file as one line of standard Base64. See "Microsoft Graph app" below. |
+| `RP_GRAPH_CERT_PASSWORD` | The PFX's password. Unset only if the PFX has none. |
 
 Any of them may be unset for now. W1.0 chose admin mode (`docs/decisions.md`, 2026-09-26):
 
 - `RP_VEEAM_USERNAME` and `RP_VEEAM_PASSWORD` are the local Veeam account (`rp-veeam` in the
   lab);
+- `RP_GRAPH_CERT_PFX_BASE64` and `RP_GRAPH_CERT_PASSWORD` are the certificate of the
+  Worker's own Graph app (W2.1);
 - the Entra application certificate that restore requests must carry gets its own secret with
-  W1.5/W2.4.
+  W2.4.
 
 A variable set to an empty string counts as unset.
 
@@ -233,8 +245,13 @@ To set them for the current PowerShell session:
 ```powershell
 $env:RP_VEEAM_USERNAME = '...'
 $env:RP_VEEAM_PASSWORD = '...'
-$env:RP_GRAPH_CLIENT_SECRET = '...'
+$env:RP_GRAPH_CERT_PFX_BASE64 = [Convert]::ToBase64String([IO.File]::ReadAllBytes('C:\path\to\worker-graph.pfx'))
+$env:RP_GRAPH_CERT_PASSWORD = '...'
 ```
+
+In the lab, dot-source `lab/entra/set-worker-env.ps1` (`. .\lab\entra\set-worker-env.ps1`)
+instead: it sets the two Graph variables from the lab's PFX and Credential Manager without
+printing either, and `-Clear` removes them.
 
 A Windows service does not see a user's session variables. Until the vault lands, a Worker
 running as a service would need them set at machine level, where any local administrator can
@@ -252,18 +269,35 @@ registration, **RestoreProof Worker** (L1.5). What it may read and why is in
 - **`graph_client_id`** is the Application (client) ID of "RestoreProof Worker" (the lab's
   value is in `lab/tenant.md`, "RestoreProof Worker app"). It is printed at the end of
   `lab/entra/new-worker-app.ps1`. Not the seeder's app, nor Veeam's.
-- **The credential is a certificate, not a secret** (`docs/decisions.md`, 2026-09-27). The
-  Worker doesn't sign in to Graph yet. When it does (W2.1), two variables replace
-  `RP_GRAPH_CLIENT_SECRET` until the vault arrives:
+- **The credential is a certificate, not a client secret** (`docs/decisions.md`,
+  2026-09-27). Until the vault arrives it comes from two variables (W2.1):
 
-  | Variable (planned) | What it is for |
+  | Variable | What it is for |
   |---|---|
-  | `RP_GRAPH_CERT_PFX_BASE64` | The app's certificate with its private key: the PFX file, Base64. |
-  | `RP_GRAPH_CERT_PASSWORD` | The PFX's password. |
+  | `RP_GRAPH_CERT_PFX_BASE64` | The app's certificate with its private key: the PFX file as one line of standard Base64 (`A-Z`, `a-z`, `0-9`, `+`, `/`, padded with `=`; no line breaks, no base64url). |
+  | `RP_GRAPH_CERT_PASSWORD` | The PFX's password. Leave it unset only for a PFX that has none. |
+
+  Before its first Graph call the Worker opens the PFX once and checks it, stopping with a
+  message that names the variable, never its value: the PFX variable is not set; it isn't
+  strict Base64; it doesn't hold a PFX; the PFX has no integrity check (MAC), so its password
+  can't be checked; the password doesn't open it (`RP_GRAPH_CERT_PASSWORD is not set, and the
+  PFX in RP_GRAPH_CERT_PFX_BASE64 needs a password` when it is unset); it uses a legacy cipher
+  that OpenSSL 3 no longer reads (RC2, RC4, DES), or the password is right and it still can't
+  be read (a damaged file), in both cases re-export it with `AES256_SHA256`, as
+  `lab/entra/new-worker-app.ps1` does; it holds no private key, no certificate, or a key
+  that matches no certificate in it; the key isn't RSA of at least 2048 bits; the certificate
+  has expired or isn't valid yet. A certificate that expires within 30 days still loads, with
+  a warning in the log. `rpworker config check` doesn't do any of this: it stays offline and
+  only says whether each variable is set.
+
+  The Worker then signs every token request with a new client assertion made with the key
+  (`docs/glossary.md`); the key itself is never sent. How it signs in and what a refusal says
+  are in `docs/security/graph-permissions.md`, "How the Worker signs in".
 
   In the lab the PFX is `%LOCALAPPDATA%\RestoreProof\lab\worker-graph.pfx` and its password
   is the Credential Manager generic credential `RestoreProof Lab - Worker Graph app PFX`.
-  Neither ever goes into `config.json`, which rejects key names like `private_key`.
+  Neither ever goes into `config.json`, which rejects key names containing `pfx`,
+  `passphrase`, `password` or `private_key`.
 
 ## `rpworker config check`
 
@@ -306,7 +340,8 @@ veeam_cert_sha256         9FB19E0E604C9BE49F83D8E508EFA8EA0986A952377C783E5035CE
 secrets (environment variables; values are never shown):
 RP_VEEAM_USERNAME         **** (set)
 RP_VEEAM_PASSWORD         **** (set)
-RP_GRAPH_CLIENT_SECRET    (not set)
+RP_GRAPH_CERT_PFX_BASE64  **** (set)
+RP_GRAPH_CERT_PASSWORD    **** (set)
 ```
 
 Without `veeam_ca_file` its line reads `veeam_ca_file             (not set)`, and likewise

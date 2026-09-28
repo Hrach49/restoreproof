@@ -1,0 +1,22 @@
+{
+  "source": "hand-written: Graph briefly unavailable, shape as documented in 'Microsoft Graph error responses' (serviceNotAvailable, Retry-After in seconds); the lab can't provoke it",
+  "request": "GET /v1.0/users/restoretest@RestoreProofLab.onmicrosoft.com/mailFolders/inbox/messages?$top=1&$select=id",
+  "status": 503,
+  "headers": {
+    "Content-Type": "application/json",
+    "Retry-After": "10",
+    "request-id": "9c4e1a72-6b3d-4f58-a0e2-7d1b5c8f3a96",
+    "client-request-id": "9c4e1a72-6b3d-4f58-a0e2-7d1b5c8f3a96"
+  },
+  "body": {
+    "error": {
+      "code": "serviceNotAvailable",
+      "message": "The service is temporarily unavailable. Please retry later.",
+      "innerError": {
+        "date": "2026-09-28T10:00:00",
+        "request-id": "9c4e1a72-6b3d-4f58-a0e2-7d1b5c8f3a96",
+        "client-request-id": "9c4e1a72-6b3d-4f58-a0e2-7d1b5c8f3a96"
+      }
+    }
+  }
+}

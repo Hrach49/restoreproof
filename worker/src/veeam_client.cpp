@@ -3,7 +3,7 @@
 #include <rp/redact.hpp>
 #include <rp/retry_policy.hpp>
 
-#include "control_chars.hpp"
+#include "text_util.hpp"
 #include "uuid.hpp"
 
 #include <spdlog/spdlog.h>
@@ -31,9 +31,6 @@ constexpr std::chrono::seconds kRefreshMargin{60};
 // A token lifetime above this is taken as this: Veeam gives 3600 s, and no
 // later arithmetic on the clock can overflow.
 constexpr std::chrono::seconds kMaxTokenLifetime{86400};
-// Veeam's messages are a sentence; anything longer is cut, so a strange
-// response can't flood a log line.
-constexpr std::size_t kMaxMessageChars = 500;
 constexpr int kMaxPageSize = 10000;
 // A 401 with an empty body is followed by at most this many resends: with a
 // newer token another caller brought, then with one fresh sign-in.
@@ -43,63 +40,10 @@ constexpr int kMaxUnauthorizedResends = 3;
 // but a server that ignores offset repeats a page for ever.
 constexpr int kMaxStalePages = 3;
 
-// Percent-encoding for an application/x-www-form-urlencoded value: every byte
-// but ASCII letters, digits and -._~ becomes %XX, so a password may hold any
-// character.
-std::string form_encode(std::string_view text)
-{
-    static constexpr std::string_view hex = "0123456789ABCDEF";
-    std::string out;
-    out.reserve(text.size() * 3);
-    for (const char c : text) {
-        const auto byte = static_cast<unsigned char>(c);
-        if ((byte >= 'A' && byte <= 'Z') || (byte >= 'a' && byte <= 'z') ||
-            (byte >= '0' && byte <= '9') || byte == '-' || byte == '.' || byte == '_' ||
-            byte == '~') {
-            out += c;
-        } else {
-            out += '%';
-            out += hex[byte >> 4];
-            out += hex[byte & 0x0F];
-        }
-    }
-    return out;
-}
-
 bool is_blank(std::string_view text) noexcept
 {
     return std::all_of(text.begin(), text.end(),
                        [](char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n'; });
-}
-
-// Text from a response, made fit for one log line: each control character
-// (control_chars.hpp: the multi-byte ones that forge or reorder lines too)
-// becomes a space, and it is cut at kMaxMessageChars bytes, back to the start
-// of a UTF-8 character so none is split.
-std::string one_line(std::string_view text)
-{
-    std::size_t cut = std::min(text.size(), kMaxMessageChars);
-    if (cut < text.size()) {
-        while (cut > 0 && (static_cast<unsigned char>(text[cut]) & 0xC0) == 0x80) {
-            --cut;
-        }
-    }
-    const std::string_view kept = text.substr(0, cut);
-    std::string out;
-    out.reserve(kept.size());
-    for (std::size_t i = 0; i < kept.size();) {
-        if (const std::size_t length = control_character_length(kept, i); length != 0) {
-            out += ' ';
-            i += length;
-        } else {
-            out += kept[i];
-            ++i;
-        }
-    }
-    if (text.size() > kMaxMessageChars) {
-        out += "...";
-    }
-    return out;
 }
 
 // What an error response says. Veeam's own shape is {"message", "errorCode"?};

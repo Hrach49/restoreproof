@@ -1,0 +1,14 @@
+{
+  "source": "live 2026-09-28: GET restoretest inbox messages ($top=1, $select=id)",
+  "request": "GET /v1.0/users/restoretest@RestoreProofLab.onmicrosoft.com/mailFolders/inbox/messages?$top=1&$select=id",
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/json; odata.metadata=minimal; odata.streaming=true; IEEE754Compatible=false; charset=utf-8",
+    "request-id": "1c749959-da8a-4438-871b-a33976af5e7a",
+    "client-request-id": "1c749959-da8a-4438-871b-a33976af5e7a"
+  },
+  "body": {
+    "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#users('restoretest%40RestoreProofLab.onmicrosoft.com')/mailFolders('inbox')/messages(id)",
+    "value": []
+  }
+}

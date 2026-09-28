@@ -170,7 +170,11 @@ TEST_CASE("parse_config rejects secret-looking keys without echoing the value", 
                                      "Graph_Client_Secret", "pwd", "veeam_pwd", "credential",
                                      "Credentials", "private_key", "tls_private_key",
                                      "access_key", "AWS_ACCESS_KEY_ID", "signing_key",
-                                     "connection_string", "Db_Connection_String");
+                                     "connection_string", "Db_Connection_String",
+                                     // The Graph certificate's PFX and its password (W2.1).
+                                     "pfx", "graph_cert_pfx", "PFX_Base64",
+                                     "rp_graph_cert_pfx_base64", "passphrase",
+                                     "pfx_passphrase", "Key_Passphrase");
     CAPTURE(key);
     json doc = valid_doc();
     doc[key] = "SENTINEL-8d2e";
@@ -180,8 +184,9 @@ TEST_CASE("parse_config rejects secret-looking keys without echoing the value", 
     REQUIRE(std::string{e.what()} ==
             "config key \"" + key +
                 "\" looks like a secret; secrets don't belong in config.json. Set "
-                "RP_VEEAM_USERNAME, RP_VEEAM_PASSWORD or RP_GRAPH_CLIENT_SECRET in the "
-                "environment instead (they move to the DPAPI vault in W4.5)");
+                "RP_VEEAM_USERNAME, RP_VEEAM_PASSWORD, RP_GRAPH_CERT_PFX_BASE64 or "
+                "RP_GRAPH_CERT_PASSWORD in the environment instead (they move to the DPAPI "
+                "vault in W4.5)");
     REQUIRE_THAT(e.what(), !ContainsSubstring("SENTINEL"));
 }
 
@@ -194,6 +199,21 @@ TEST_CASE("none of the 18 known keys looks like a secret", "[config]")
     doc["veeam_cert_sha256"] = kCertSha256;
     REQUIRE(doc.size() == 18);
     REQUIRE_NOTHROW(rp::parse_config(doc.dump()));
+}
+
+TEST_CASE("a key naming a certificate is not taken for a secret", "[config]")
+{
+    // "cert" is not a secret marker: veeam_cert_sha256 is a setting, and a
+    // certificate's thumbprint or path is public. Such keys are only unknown.
+    const std::string key = GENERATE("graph_cert_thumbprint", "graph_cert_file", "cert",
+                                     "Veeam_Cert_Path");
+    CAPTURE(key);
+    json doc = valid_doc();
+    doc[key] = "value";
+
+    const rp::ConfigError e = parse_error(doc.dump());
+    REQUIRE(e.key() == key);
+    REQUIRE(std::string{e.what()} == "config key \"" + key + "\" is not a known setting");
 }
 
 TEST_CASE("parse_config reports a secret-looking key before a missing required key", "[config]")
@@ -296,8 +316,9 @@ TEST_CASE("parse_config rejects a secret-looking key without printing an unsafe 
     REQUIRE(e.key().empty());
     REQUIRE(std::string{e.what()} ==
             "config has a key that looks like a secret; secrets don't belong in config.json. Set "
-            "RP_VEEAM_USERNAME, RP_VEEAM_PASSWORD or RP_GRAPH_CLIENT_SECRET in the environment "
-            "instead (they move to the DPAPI vault in W4.5)");
+            "RP_VEEAM_USERNAME, RP_VEEAM_PASSWORD, RP_GRAPH_CERT_PFX_BASE64 or "
+            "RP_GRAPH_CERT_PASSWORD in the environment instead (they move to the DPAPI vault in "
+            "W4.5)");
 }
 
 TEST_CASE("parse_config prints a secret-looking key of 64 safe characters", "[config]")
@@ -362,6 +383,9 @@ TEST_CASE("parse_config rejects invalid values without echoing them", "[config]"
     const std::string sample = "must be an integer from 0 to 100";
     const std::string url = "must be an https:// URL with no user name, password, query or fragment";
     const std::string control = "must not contain control characters";
+    const std::string guid =
+        "must be a GUID (8-4-4-4-12 hexadecimal digits, as the Entra admin center shows it), "
+        "not a name";
     const std::string mailbox =
         "must be restoretest@<domain>: restores only ever go to the restoretest mailbox";
     const std::string absolute =
@@ -383,7 +407,7 @@ TEST_CASE("parse_config rejects invalid values without echoing them", "[config]"
         {"veeam_url", json("https://veeam.example.invalid\r"), control},
         {"veeam_org_name", json("example\tonmicrosoft.com"), control},
         {"graph_tenant_id", json("\x1b[2J"), control},
-        {"graph_client_id", json("client\x7f"), control},
+        {"graph_client_id", json("00000000-0000-0000-0000-000000000002\x7f"), control},
         {"test_mailbox", json("restoretest@example.invalid\n"), control},
         {"test_site_id", json(std::string("site\0id", 7)), control},
         {"test_library_id", json("\x01"), control},
@@ -396,10 +420,10 @@ TEST_CASE("parse_config rejects invalid values without echoing them", "[config]"
         // (U+061C). Each row pins a boundary.
         {"veeam_org_name", json("example\xC2\x80"), control},
         {"veeam_org_name", json("example\xC2\x9F"), control},
-        {"graph_tenant_id", json("tenant\xE2\x80\xA8"), control},
-        {"graph_tenant_id", json("tenant\xE2\x80\xA9"), control},
-        {"graph_client_id", json("client\xE2\x80\x8E"), control},
-        {"graph_client_id", json("client\xE2\x80\x8F"), control},
+        {"graph_tenant_id", json("00000000-0000-0000-0000-000000000001\xE2\x80\xA8"), control},
+        {"graph_tenant_id", json("00000000-0000-0000-0000-000000000001\xE2\x80\xA9"), control},
+        {"graph_client_id", json("00000000-0000-0000-0000-000000000002\xE2\x80\x8E"), control},
+        {"graph_client_id", json("\xE2\x80\x8F" "00000000-0000-0000-0000-000000000002"), control},
         {"test_site_id", json("site\xE2\x80\xAA"), control},
         {"test_site_id", json("site\xE2\x80\xAE"), control},
         {"test_library_id", json("library\xE2\x81\xA6"), control},
@@ -476,6 +500,26 @@ TEST_CASE("parse_config rejects invalid values without echoing them", "[config]"
         {"sample_od", json(-1), sample},
         {"sample_od", json(101), sample},
         {"sample_od", json(std::numeric_limits<std::uint64_t>::max()), sample},
+        // The IDs go into Entra and Graph URLs: a GUID, nothing else. A domain
+        // name would sign in too, so it is refused plainly.
+        {"graph_tenant_id", json("example.onmicrosoft.com"), guid},
+        {"graph_tenant_id", json("tenant"), guid},
+        {"graph_tenant_id", json("common"), guid},
+        {"graph_tenant_id", json("organizations"), guid},
+        {"graph_tenant_id", json("{00000000-0000-0000-0000-000000000001}"), guid},
+        {"graph_tenant_id", json(" 00000000-0000-0000-0000-000000000001"), guid},
+        {"graph_tenant_id", json("00000000-0000-0000-0000-000000000001 "), guid},
+        {"graph_tenant_id", json("00000000000000000000000000000000"), guid},
+        {"graph_tenant_id", json("00000000-0000-0000-0000-00000000001"), guid},
+        {"graph_tenant_id", json("00000000-0000-0000-0000-0000000000011"), guid},
+        {"graph_tenant_id", json("00000000-0000-0000-0000-00000000000g"), guid},
+        {"graph_tenant_id", json("00000000-0000-0000-0000-000000000001/x"), guid},
+        {"graph_client_id", json("client"), guid},
+        {"graph_client_id", json("RestoreProof Worker"), guid},
+        {"graph_client_id", json("00000000_0000_0000_0000_000000000002"), guid},
+        {"graph_client_id", json("0000000-00000-0000-0000-000000000002"), guid},
+        // A fullwidth digit zero (U+FF10) looks like a 0.
+        {"graph_client_id", json("\xEF\xBC\x90" "0000000-0000-0000-0000-000000000002"), guid},
         {"log_level", json("INFO"), "must be one of trace, debug, info, warn, error, critical, off"},
         {"log_level", json("warning"), "must be one of trace, debug, info, warn, error, critical, off"},
         {"log_level", json("info "), "must be one of trace, debug, info, warn, error, critical, off"},
@@ -698,6 +742,22 @@ TEST_CASE("parse_config accepts boundary and edge values", "[config]")
         {"veeam_ca_file", config.veeam_ca_file.value_or("(not set)")},
     };
     REQUIRE(parsed.at(key) == value);
+}
+
+TEST_CASE("parse_config accepts graph_tenant_id and graph_client_id as GUIDs in any case",
+          "[config]")
+{
+    const std::string key = GENERATE("graph_tenant_id", "graph_client_id");
+    const std::string value =
+        GENERATE("bcd6bd1a-ea42-489d-aa28-2c19a44ad146", "BCD6BD1A-EA42-489D-AA28-2C19A44AD146",
+                 "Bcd6bd1A-eA42-489d-AA28-2c19a44aD146", "00000000-0000-0000-0000-000000000000",
+                 "ffffffff-ffff-ffff-ffff-ffffffffffff");
+    CAPTURE(key, value);
+    json doc = valid_doc();
+    doc[key] = value;
+
+    const rp::Config config = rp::parse_config(doc.dump());
+    REQUIRE((key == "graph_tenant_id" ? config.graph_tenant_id : config.graph_client_id) == value);
 }
 
 TEST_CASE("parse_config accepts veeam_cert_sha256 in any case, with veeam_ca_file",

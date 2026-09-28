@@ -1,0 +1,16 @@
+{
+  "source": "live 2026-09-28: GET the mailbox of a user who doesn't exist",
+  "request": "GET /v1.0/users/nobody-…@RestoreProofLab.onmicrosoft.com/mailFolders/inbox/messages?$top=1",
+  "status": 404,
+  "headers": {
+    "Content-Type": "application/json; odata.metadata=minimal; odata.streaming=true; IEEE754Compatible=false; charset=utf-8",
+    "request-id": "6491e50f-2c2f-4d02-9cf2-e700351b1c3d",
+    "client-request-id": "6491e50f-2c2f-4d02-9cf2-e700351b1c3d"
+  },
+  "body": {
+    "error": {
+      "code": "ErrorInvalidUser",
+      "message": "The requested user 'nobody-670f8a55@RestoreProofLab.onmicrosoft.com' is invalid."
+    }
+  }
+}

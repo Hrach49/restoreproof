@@ -1,0 +1,21 @@
+{
+  "source": "live 2026-09-28: GET /users (no directory role)",
+  "request": "GET /v1.0/users?$top=1&$select=id",
+  "status": 403,
+  "headers": {
+    "Content-Type": "application/json",
+    "request-id": "198f38e0-bd47-43ee-a692-a321529ce5d2",
+    "client-request-id": "198f38e0-bd47-43ee-a692-a321529ce5d2"
+  },
+  "body": {
+    "error": {
+      "code": "Authorization_RequestDenied",
+      "message": "Insufficient privileges to complete the operation.",
+      "innerError": {
+        "date": "2026-09-27T22:22:44",
+        "request-id": "198f38e0-bd47-43ee-a692-a321529ce5d2",
+        "client-request-id": "198f38e0-bd47-43ee-a692-a321529ce5d2"
+      }
+    }
+  }
+}

@@ -4,6 +4,7 @@
 #include <rp/retry_policy.hpp>
 #include <rp/version.hpp>
 
+#include "control_chars.hpp"
 #include "text_util.hpp"
 #include "uuid.hpp"
 
@@ -366,24 +367,60 @@ std::string graph_url(std::string_view path_or_url)
         refuse(path_or_url.front() == '/' ? "not a path under v1.0"
                                           : "a URL outside Graph's v1.0");
     }
-    for (const char c : url) {
-        const auto byte = static_cast<unsigned char>(c);
-        if (byte <= 0x20 || byte == 0x7F || c == '\\' || c == '#') {
+    // The control characters of control_chars.hpp, the UTF-8 ones included
+    // (NEL, U+2028, a bidi override): they could forge or reorder a log line.
+    for (std::size_t i = 0; i < url.size(); ++i) {
+        const char c = url[i];
+        if (c == ' ' || c == '\\' || c == '#' || control_character_length(url, i) != 0) {
             refuse("it holds whitespace, a control character, a backslash or a '#'");
         }
     }
     // curl resolves dot segments ("/v1.0/../beta"), and a server may decode
-    // "%2e" first; "//" is what a protocol-relative URL ("//host/...") passed
-    // as a path looks like. None has any use in a Graph path. The query is
-    // Graph's (a $skiptoken is opaque).
+    // "%2e" first, or an encoded '/' or '\' ("..%2f"), or decode twice
+    // ("%252e"); "//" is what a protocol-relative URL ("//host/...") passed as
+    // a path looks like. None has any use in a Graph path (no name holds '/'
+    // or '\'). The query is Graph's (a $skiptoken is opaque).
     const std::string_view rest = std::string_view{url}.substr(prefix.size() - 1);
     const std::string path = ascii_lower(rest.substr(0, rest.find('?')));
-    if (path.find("%2e") != std::string::npos || path.find("/./") != std::string::npos ||
-        path.find("/../") != std::string::npos || path.ends_with("/.") ||
-        path.ends_with("/..") || path.find("//") != std::string::npos) {
-        refuse("its path has a dot segment or an empty one");
+    constexpr std::array<std::string_view, 9> kRefused{
+        "%2e", "%2f", "%5c", "%252e", "%252f", "%255c", "/./", "/../", "//"};
+    if (std::any_of(kRefused.begin(), kRefused.end(),
+                    [&path](std::string_view part) {
+                        return path.find(part) != std::string::npos;
+                    }) ||
+        path.ends_with("/.") || path.ends_with("/..")) {
+        refuse("its path has a dot segment, an encoded separator or an empty segment");
     }
     return url;
+}
+
+// What went wrong with a request that got no response, for a message and the
+// log: HttpClient's text after its "<METHOD> <URL>: " (the URL holds the
+// query, which display_path() keeps out), else what kind of failure it was.
+std::string transport_summary(const HttpError& error, std::string_view method,
+                              std::string_view url)
+{
+    const std::string prefix = std::string{method} + " " + std::string{url} + ": ";
+    const std::string_view text = error.what();
+    if (text.starts_with(prefix) && text.size() > prefix.size()) {
+        return one_line(text.substr(prefix.size()), kMaxServerText);
+    }
+    switch (error.error()) {
+    case TransportError::connect:
+        return "could not connect";
+    case TransportError::handshake:
+        return "the TLS handshake broke off";
+    case TransportError::dropped:
+        return "the connection dropped";
+    case TransportError::timeout:
+        return "timed out";
+    case TransportError::tls:
+        return "TLS failed";
+    case TransportError::none:
+    case TransportError::other:
+        break;
+    }
+    return "the request failed";
 }
 
 // "/v1.0/users/x/messages" for a URL graph_url() gave: the path without the
@@ -609,7 +646,7 @@ void GraphClient::fetch_token_locked(milliseconds& waited)
                                        error == TransportError::none
                                    ? Kind::transient
                                    : Kind::graph;
-                failure.summary = e.what();
+                failure.summary = transport_summary(e, "POST", token_url_);
                 failure.status = e.status();
             }
             if (failure.kind != Kind::transient || attempt >= kMaxHttpAttempts) {
@@ -719,10 +756,10 @@ HttpResponse GraphClient::get(std::string_view path_or_url, const Grant& grant)
             // A GET changes nothing, so a lost connection or a timeout is
             // sent again; a certificate failure or a malformed URL won't fix
             // itself.
+            retry.summary = transport_summary(e, "GET", url);
             if (!is_retryable(AttemptOutcome{e.error(), 0})) {
-                throw GraphError(what + ": " + e.what(), e.status());
+                throw GraphError(what + ": " + retry.summary, e.status());
             }
-            retry.summary = e.what();
             retry.status = e.status();
         }
 
@@ -785,6 +822,17 @@ HttpResponse GraphClient::get(std::string_view path_or_url, const Grant& grant)
                                          "on-premises" +
                                          rid,
                                      status, reply.code, reply.inner_code, reply.request_id);
+                }
+                // Only a 403 Graph explains is about the app's permissions: a
+                // TLS-inspecting proxy answers a blocked request with its own
+                // page inside the tunnel.
+                if (status == 403 && reply.code.empty()) {
+                    throw GraphError(head +
+                                         " without Graph's error in the reply: something "
+                                         "between this machine and graph.microsoft.com (a "
+                                         "proxy, a firewall) may have refused it" +
+                                         rid,
+                                     status, {}, {}, reply.request_id);
                 }
                 if (status == 403) {
                     throw PermissionError("Graph denied GET " + path + " (403" +

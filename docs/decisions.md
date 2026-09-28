@@ -63,9 +63,11 @@ secret `RP_GRAPH_CLIENT_SECRET` and its list of secret-key markers.
      caught before `GraphError` so a certificate problem exits 1 like any other
      configuration error.
 4. **Permissions.** Every call names a `Grant` (W2.1: Mail through Exchange RBAC, Sites
-   through `Sites.Selected`). A 403 is a `PermissionError` "Graph denied GET <path without
-   query> (403 <code>): the Worker app relies on <grant>; see
+   through `Sites.Selected`). A 403 with Graph's JSON error is a `PermissionError` "Graph
+   denied GET <path without query> (403 <code>): the Worker app relies on <grant>; see
    docs/security/graph-permissions.md"; a 401 that persists after a fresh token names it too.
+   A 403 without Graph's JSON (a TLS-inspecting proxy's block page) is a plain `GraphError`
+   pointing at the network, as a 404 without it is (review of W2.1).
 5. **Retries.** GraphClient makes every attempt itself (`max_attempts` 1, status retries
    off, as VeeamClient): 5 attempts per call, shared by transport failures, 5xx and 429.
    A Retry-After (delta-seconds or IMF-fixdate) on 429 or 503 raises the wait to it; each
@@ -84,8 +86,9 @@ secret `RP_GRAPH_CLIENT_SECRET` and its list of secret-key markers.
      behind a failed renewal share its failure.
 6. **Where the token goes.** Only to a URL that starts with exactly
    `https://graph.microsoft.com/v1.0/` (a text compare, plus no whitespace, control
-   character, backslash, `#` or dot segment); a path starting with `/` is taken relative to
-   it, any other absolute URL is a `GraphError` before anything is sent. Redirects are never
+   character (the UTF-8 ones of `control_chars.hpp` included), backslash, `#`, dot segment,
+   encoded `/` or `\` or double-encoded dot or separator); a path starting with `/` is
+   taken relative to it, any other absolute URL is a `GraphError` before anything is sent. Redirects are never
    followed (`HttpClient` turns them off): `get` returns a 3xx to its caller, and the token
    request treats one as a `GraphError` without sending anything to its `Location`. The
    download that must follow Graph's redirect, without the token, is W2.2's. Every request carries `User-Agent: ISV|RestoreProof|RestoreProofWorker/<version>`.

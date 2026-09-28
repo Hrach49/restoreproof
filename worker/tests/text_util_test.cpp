@@ -5,6 +5,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
 
+#include <clocale>
 #include <string>
 #include <string_view>
 
@@ -66,4 +67,21 @@ TEST_CASE("one_line takes a smaller limit", "[text_util]")
     CHECK(rp::one_line("\xE2\x82\xAC\xE2\x82\xAC", 4) == "\xE2\x82\xAC...");
     CHECK(rp::one_line("abc", 0) == "...");
     CHECK(rp::one_line("", 0).empty());
+}
+
+// Review of W2.2: std::tolower follows the C locale, which under a Western code
+// page folds bytes above 0x7F, the parts of UTF-8 characters included.
+TEST_CASE("ascii_lower and ascii_iequals fold A-Z only, whatever the locale", "[text_util]")
+{
+    const std::string saved = std::setlocale(LC_ALL, nullptr);
+    std::setlocale(LC_ALL, ".1252");
+    CHECK(rp::ascii_lower("RestoreTarget.DOCX") == "restoretarget.docx");
+    CHECK(rp::ascii_lower("\xC9\xC3\x89@[`{") == "\xC9\xC3\x89@[`{");
+    CHECK(rp::ascii_lower("").empty());
+    CHECK(rp::ascii_iequals("RestoreTarget", "restoretarget"));
+    CHECK_FALSE(rp::ascii_iequals("\xC9", "\xE9"));
+    CHECK_FALSE(rp::ascii_iequals("abc", "abcd"));
+    CHECK(rp::ascii_ends_with_i("report.DocX", ".docx"));
+    CHECK_FALSE(rp::ascii_ends_with_i("docx", ".docx"));
+    std::setlocale(LC_ALL, saved.c_str());
 }

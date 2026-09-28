@@ -1230,6 +1230,60 @@ TEST_CASE("a size mismatch fails the listing", "[graph][targets]")
     CHECK_THAT(caught.what, ContainsSubstring("SharePoint sent more than the"));
 }
 
+// Review of W2.2: SharePoint rewrites docx and xlsx (lab/README.md, office-v1),
+// so their bytes may differ from the size Graph lists; W3.2 compares them by
+// content. They are read up to the download limit and kept as they came.
+TEST_CASE("a docx or xlsx whose bytes differ from Graph's size lists as downloaded",
+          "[graph][targets]")
+{
+    const FileLocation at = GENERATE(sharepoint_location(), onedrive_location());
+    CAPTURE(at.name);
+    const std::string name = GENERATE(as<std::string>{}, "rewritten.docx", "Rewritten.XLSX");
+    CAPTURE(name);
+    const std::string served = GENERATE(as<std::string>{}, "longer", "");
+    json file = file_of(at);
+    file["name"] = name;
+    const std::string bytes = served.empty() ? std::string{"short"} : bytes_of(at) + served;
+    Lab lab;
+    serve_location(lab, at, page_of(json::array({file})));
+    lab.dl_http.on(HttpMethod::get, location_of(at),
+                   {make_response(200, bytes, "application/octet-stream")});
+    TargetReader reader = lab.reader();
+
+    const std::vector<FoundItem> items = list(reader, at);
+
+    REQUIRE(items.size() == 1);
+    CHECK(items[0].name == name);
+    CHECK(items[0].sha256 == rp::sha256_hex(bytes));
+    CHECK(items[0].size_bytes == std::optional<std::uint64_t>{bytes.size()});
+    REQUIRE(lab.dl_http.requests().size() == 1);
+    CHECK(lab.dl_http.requests()[0].max_body_bytes ==
+          std::optional<std::uint64_t>{rp::graph::kMaxDownloadBytes});
+}
+
+TEST_CASE("a file that isn't a docx or xlsx must be exactly Graph's size", "[graph][targets]")
+{
+    const FileLocation at = GENERATE(sharepoint_location(), onedrive_location());
+    CAPTURE(at.name);
+    const std::string name =
+        GENERATE(as<std::string>{}, "notes.txt", "scan.pdf", "docx", "a.docx.txt", "a.pptx");
+    CAPTURE(name);
+    json file = file_of(at);
+    file["name"] = name;
+    Lab lab;
+    serve_location(lab, at, page_of(json::array({file})));
+    lab.dl_http.on(HttpMethod::get, location_of(at),
+                   {make_response(200, bytes_of(at) + "x", "application/octet-stream")});
+    TargetReader reader = lab.reader();
+
+    const Caught caught = catch_error([&] { list(reader, at); });
+
+    CHECK(caught.kind == "GraphError");
+    CHECK_THAT(caught.what, ContainsSubstring("SharePoint sent more than the"));
+    REQUIRE(lab.dl_http.requests().size() == 1);
+    CHECK(lab.dl_http.requests()[0].max_body_bytes == file.at("size").get<std::uint64_t>());
+}
+
 TEST_CASE("on_file's exception propagates", "[graph][targets]")
 {
     Lab lab;

@@ -23,21 +23,7 @@ namespace {
 
 using nlohmann::json;
 
-constexpr std::string_view kSharePointSuffix = ".sharepoint.com";
 constexpr std::string_view kChildrenQuery = "?$select=id,name,size,file,folder&$top=200";
-
-std::string lower(std::string_view text)
-{
-    std::string out{text};
-    std::transform(out.begin(), out.end(), out.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    return out;
-}
-
-bool iequals(std::string_view a, std::string_view b)
-{
-    return lower(a) == lower(b);
-}
 
 // 1..max_size of ASCII letters, digits and the characters in `extra`.
 bool is_id(std::string_view text, std::string_view extra, std::size_t max_size)
@@ -73,7 +59,7 @@ std::optional<SiteId> parse_site_id(std::string_view id)
     if (second == std::string_view::npos) {
         return std::nullopt;
     }
-    const std::string host = lower(id.substr(0, first));
+    const std::string host = ascii_lower(id.substr(0, first));
     const std::string_view site = id.substr(first + 1, second - first - 1);
     const std::string_view web = id.substr(second + 1);
     if (!host.ends_with(kSharePointSuffix) || !is_uuid(site) || !is_uuid(web)) {
@@ -93,8 +79,10 @@ std::string percent_decode(std::string_view text)
         if (c >= '0' && c <= '9') {
             return c - '0';
         }
-        const char l = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-        return l >= 'a' && l <= 'f' ? l - 'a' + 10 : -1;
+        if (c >= 'a' && c <= 'f') {
+            return c - 'a' + 10;
+        }
+        return c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
     };
     std::string out;
     out.reserve(text.size());
@@ -141,7 +129,7 @@ std::string resource_path(std::string_view url)
         out += '/';
         start = end + 1;
     }
-    return lower(out);
+    return ascii_lower(out);
 }
 
 // Every page of a listing that starts at `first`, following @odata.nextLink.
@@ -292,7 +280,7 @@ void TargetReader::check_library()
                                ", not \"RestoreTarget\"" + refused);
     }
     const std::string* web_url = string_at(drive, "webUrl");
-    if (web_url == nullptr || !iequals(last_segment(*web_url), kRestoreTargetName)) {
+    if (web_url == nullptr || !ascii_iequals(last_segment(*web_url), kRestoreTargetName)) {
         throw WrongTargetError("the drive test_library_id names has the address of another "
                                "library (not .../RestoreTarget)" + refused);
     }
@@ -309,7 +297,7 @@ void TargetReader::check_library()
                                "sharePointIds; the Worker can't check it is in the test site; "
                                "nothing was listed");
     }
-    if (!iequals(*site, site_guid_) || !iequals(*web, web_guid_)) {
+    if (!ascii_iequals(*site, site_guid_) || !ascii_iequals(*web, web_guid_)) {
         throw WrongTargetError("the drive test_library_id names is not in the site test_site_id "
                                "names; nothing was listed");
     }
@@ -396,17 +384,20 @@ std::vector<FoundItem> TargetReader::list_files(const FileTarget& target)
                 throw GraphError("Graph's reply listing " + location +
                                  " has a file without a size: " + id);
             }
-            const auto size_bytes = size->get<std::uint64_t>();
-            const std::string bytes =
-                download_item(graph_, download_, *target.grant, tenant_host_, target.drive_id, id,
-                              size_bytes, location + " item " + id, options_.download);
+            // SharePoint rewrites docx and xlsx, so their bytes may differ from
+            // the size listed (office-v1; review of W2.2).
+            const bool office = ascii_ends_with_i(*name, ".docx") || ascii_ends_with_i(*name, ".xlsx");
+            const std::string bytes = download_item(
+                graph_, download_, *target.grant, tenant_host_, target.drive_id, id,
+                size->get<std::uint64_t>(), office ? SizeCheck::up_to_limit : SizeCheck::exact,
+                location + " item " + id, options_.download);
             FoundItem item;
             item.type = target.type;
             item.id = id;
             item.name = *name;
             item.sha256 = sha256_hex(bytes);
             item.sha256_rule = "bytes";
-            item.size_bytes = size_bytes;
+            item.size_bytes = bytes.size();
             if (options_.on_file) {
                 options_.on_file(item, bytes);
             }
@@ -441,7 +432,7 @@ std::vector<FoundItem> TargetReader::list_mail()
             const json none;
             const json& body = found == reply.end() ? none : *found;
             const std::string* type = string_at(body, "contentType");
-            if (type == nullptr || !iequals(*type, "text")) {
+            if (type == nullptr || !ascii_iequals(*type, "text")) {
                 throw GraphError("Graph returned the body of a message in the test mailbox as \"" +
                                  (type ? one_line(*type, 20) : std::string{"(none)"}) +
                                  "\", not text, although the Worker asked for text; its text-v1 "

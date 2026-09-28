@@ -17,6 +17,33 @@ namespace rp {
 // log line.
 inline constexpr std::size_t kOneLineMaxBytes = 500;
 
+// `text` with A-Z folded to a-z and every other byte kept. Not std::tolower:
+// it follows the C locale, which under a Western code page folds bytes above
+// 0x7F, the parts of UTF-8 characters included.
+inline std::string ascii_lower(std::string_view text)
+{
+    std::string out{text};
+    for (char& c : out) {
+        if (c >= 'A' && c <= 'Z') {
+            c = static_cast<char>(c - 'A' + 'a');
+        }
+    }
+    return out;
+}
+
+// Equal but for the case of A-Z.
+inline bool ascii_iequals(std::string_view a, std::string_view b)
+{
+    return ascii_lower(a) == ascii_lower(b);
+}
+
+// Whether `text` ends with `suffix` but for the case of A-Z, and is longer.
+inline bool ascii_ends_with_i(std::string_view text, std::string_view suffix)
+{
+    return text.size() > suffix.size() &&
+           ascii_iequals(text.substr(text.size() - suffix.size()), suffix);
+}
+
 // Percent-encoding for an application/x-www-form-urlencoded value: every byte
 // but ASCII letters, digits and -._~ becomes %XX, so a password may hold any
 // character.

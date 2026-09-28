@@ -52,6 +52,52 @@ Until the vault (W4.5), the Worker reads the same two values from environment va
 which replaced `RP_GRAPH_CLIENT_SECRET` in W2.1; see `docs/worker-config.md`, "Microsoft Graph
 app". It has no client secret.
 
+### How the Worker signs in
+
+Since W2.1 the Worker signs in itself, in C++ (`rp::graph::GraphClient` in
+`worker/include/rp/graph_client.hpp`; decisions in `docs/decisions.md`, 2026-09-28):
+
+- **The certificate is checked first.** Before any network call the Worker opens the PFX
+  once (OpenSSL) and refuses one that is unusable: no MAC, wrong password, a legacy cipher, no
+  key, a key that doesn't match, not RSA of at least 2048 bits, expired or not yet valid.
+  After that it keeps only the key and certificate objects.
+- **Each token request carries a new client assertion:** a JWT signed with the private key,
+  PS256, with the certificate's `x5t#S256` in its header so Entra can find the key. Its
+  audience is the tenant's token URL, its issuer and subject the Worker app's client ID; it is
+  valid for 5 minutes and never reused. The request is the client-credentials grant with scope
+  `https://graph.microsoft.com/.default`, so the token carries the two roles above and nothing
+  else.
+- **The token stays in memory** and goes only to URLs under
+  `https://graph.microsoft.com/v1.0/`. Redirects are never followed with it.
+- **What is left until the vault (W4.5):** the PFX and its password sit in environment
+  variables, and the key lives in the Worker's memory while it runs.
+
+The same sign-in, from Python, is how `python -m seeder record-graph-fixtures` records the
+replies the Worker's tests replay (`lab/README.md`).
+
+### What a refusal says
+
+Graph's 403 doesn't say which permission is missing. So every Graph call the Worker makes
+names the grant it relies on, and any 403 (`ErrorAccessDenied` from Exchange,
+`accessDenied` from SharePoint and OneDrive, `Authorization_RequestDenied` from the directory,
+or another code) becomes a `PermissionError` whose message names it:
+
+```text
+Graph denied GET /v1.0/users/restoretest@contoso.onmicrosoft.com/mailFolders/inbox/messages (403 ErrorAccessDenied): the Worker app relies on Exchange RBAC "Application Mail.Read" in a management scope covering the test mailbox; see docs/security/graph-permissions.md
+```
+
+The path is shown without its query. A 401 that persists after a fresh token names the grant
+too, since Graph also answers 401 when the app has no role at all. The grant texts are
+generic, so a customer never sees the lab's names:
+
+| Grant (`rp::graph`) | Text in the message | Permission above |
+|---|---|---|
+| `kMailReadGrant` | `Exchange RBAC "Application Mail.Read" in a management scope covering the test mailbox` | #3 |
+| `kSitesReadGrant` | `Sites.Selected read on the test site` | #1 |
+
+The OneDrive grant (#2) gets its text with W2.2, which reads the folder. Whatever the grant, a
+refusal makes the run's status `error`, never `fail` (`docs/verification.md`).
+
 ## What is deliberately not granted
 
 | Left out | Why |
@@ -170,4 +216,6 @@ A sentinel test greps every output for the PFX password, the token and the priva
    admin requirement. How the product guides or automates that is for the onboarding tasks.
 4. **Certificate expiry.** The lab certificate expires one year after it was made (date in
    `lab/tenant.md`). To renew it, delete the PFX and run the script again: it makes a new
-   certificate and replaces the old one on the app. Stage 1 has no renewal alert yet.
+   certificate and replaces the old one on the app. Stage 1 has no renewal alert yet; the
+   Worker only logs a warning once the certificate expires within 30 days (W2.1), and refuses
+   an expired one.

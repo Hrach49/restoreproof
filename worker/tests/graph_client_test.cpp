@@ -342,7 +342,11 @@ TEST_CASE("no test spells out a value a live re-recording changes", "[graph][cli
 {
     const std::filesystem::path tests_dir = std::filesystem::path{RP_SOURCE_DIR} / "tests";
     // GUIDs a re-recording keeps: the lab's tenant and app, Graph's own app.
-    const std::set<std::string> stable{kTenant, kClient, "00000003-0000-0000-c000-000000000000"};
+    const std::set<std::string> stable{
+        kTenant, kClient, "00000003-0000-0000-c000-000000000000",
+        // the lab's RestoreTest site and web and its RestoreTarget list (sharePointIds in restoretarget-drive-200.json): fixed since L1.4
+        "fe08085d-eb70-42e8-95a6-470189bd98eb", "4ecaf399-cc0e-4d95-b3fe-cd091a09e689",
+        "ffec069d-65e4-4c3a-9da2-ac086cf9dafa"};
     const auto is_hex = [](char c) {
         return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
     };

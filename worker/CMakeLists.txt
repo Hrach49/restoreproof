@@ -83,6 +83,7 @@ add_executable(rptests
     tests/graph_client_test.cpp
     tests/graph_download_test.cpp
     tests/graph_errors_test.cpp
+    tests/graph_targets_live_test.cpp
     tests/graph_targets_test.cpp
     tests/http_client_test.cpp
     tests/http_client_tls_test.cpp

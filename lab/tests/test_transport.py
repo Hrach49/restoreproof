@@ -123,6 +123,16 @@ def test_passes_method_url_headers_body_timeout_and_follows_redirects():
     assert dict(resp.headers) == {"content-type": "application/json", "etag": "x"}
 
 
+def test_can_leave_a_redirect_unfollowed():
+    session = FakeSession(FakeResponse(302, b"", {"Location": "https://t.sharepoint.com/x"}))
+    transport = RequestsTransport(session=session)
+    resp = transport.request("GET", "https://graph.microsoft.com/v1.0/drives/d/items/i/content", {}, follow_redirects=False)
+    (_, kwargs), = session.calls
+    assert kwargs["allow_redirects"] is False
+    assert resp.status == 302
+    assert resp.headers["location"] == "https://t.sharepoint.com/x"
+
+
 def test_error_statuses_are_returned_not_raised():
     transport = RequestsTransport(session=FakeSession(FakeResponse(503, b"busy", {"Retry-After": "3"})))
     resp = transport.request("GET", "https://graph.microsoft.com/v1.0/me", {})
@@ -133,3 +143,13 @@ def test_default_timeout_is_60_and_default_session_is_requests():
     transport = RequestsTransport()
     assert transport.timeout == 60
     assert isinstance(transport.session, requests.Session)
+
+
+def test_the_fake_transport_records_follow_redirects():
+    from seeder.http import HttpResponse
+    from tests.fake_transport import FakeTransport
+
+    fake = FakeTransport([HttpResponse(200), HttpResponse(302)])
+    fake.request("GET", "https://a/", {})
+    fake.request("GET", "https://b/", {}, follow_redirects=False)
+    assert [r.follow_redirects for r in fake.requests] == [True, False]

@@ -483,7 +483,7 @@ OneDrive (RestoreTarget folder): 1 item(s)
 An error is one line on stderr, and nothing is printed on stdout:
 
 ```
-graph error: Graph denied GET /drives/b!XQgI_nDr6EKVpkcBib2Y65nzyk4OzJVNs_7NCRoJ5omdBuz_5GU6TJ2irAhs-dr6 (403 accessDenied): the Worker app relies on Sites.Selected read on the test site; see docs/security/graph-permissions.md
+graph error: Graph denied GET /v1.0/drives/b!XQgI_nDr6EKVpkcBib2Y65nzyk4OzJVNs_7NCRoJ5omdBuz_5GU6TJ2irAhs-dr6 (403 accessDenied): the Worker app relies on Sites.Selected read on the test site; see docs/security/graph-permissions.md (request ID fc57d2c2-4ef3-48fe-ac0b-bd0c465230fa)
 ```
 
 Graph's messages never contain a token, the certificate or a download link. Debug lines are

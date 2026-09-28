@@ -47,9 +47,10 @@ In the lab it is a self-signed RSA 2048 certificate, valid for one year, subject
 - **The script never prints either one.** It deletes the certificate-store copy once the PFX
   is written, and uploads only the public certificate to the app.
 
-Until the vault (W4.5), the Worker will take the same two values from environment variables,
-`RP_GRAPH_CERT_PFX_BASE64` and `RP_GRAPH_CERT_PASSWORD`, which replace
-`RP_GRAPH_CLIENT_SECRET` (`docs/worker-config.md`). The code change is W2.1's.
+Until the vault (W4.5), the Worker reads the same two values from environment variables,
+`RP_GRAPH_CERT_PFX_BASE64` (the PFX as one line of Base64) and `RP_GRAPH_CERT_PASSWORD`,
+which replaced `RP_GRAPH_CLIENT_SECRET` in W2.1; see `docs/worker-config.md`, "Microsoft Graph
+app". It has no client secret.
 
 ## What is deliberately not granted
 

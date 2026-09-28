@@ -437,6 +437,12 @@ TEST_CASE("redact replaces tokens that travel in URLs", "[redact]")
          "https://t.sharepoint.com/_layouts/15/download.aspx?UniqueId=1&tempauth=[REDACTED]&ApiVersion=2.0"},
         {R"({"@microsoft.graph.downloadUrl":"https://h/d.aspx?tempauth=eyJ&x=1"})",
          R"({"@microsoft.graph.downloadUrl":"https://h/d.aspx?tempauth=[REDACTED]&x=1"})"},
+        // The Location of a /content 302 (W2.2), and HttpClient's debug line
+        // for the GET that follows it.
+        {"Location: https://t-my.sharepoint.com/personal/a_t_com/_layouts/15/download.aspx?UniqueId=x&Translate=false&tempauth=v1.eyJ0eXAi.eyJhdWQi.abc&ApiVersion=2.0",
+         "Location: https://t-my.sharepoint.com/personal/a_t_com/_layouts/15/download.aspx?UniqueId=x&Translate=false&tempauth=[REDACTED]&ApiVersion=2.0"},
+        {"GET https://t.sharepoint.com/sites/s/_layouts/15/download.aspx?tempauth=v1.abc attempt 1/5: HTTP 403 in 12 ms",
+         "GET https://t.sharepoint.com/sites/s/_layouts/15/download.aspx?tempauth=[REDACTED] attempt 1/5: HTTP 403 in 12 ms"},
         // Azure SAS.
         {"https://a.blob.core.windows.net/c/b?sv=2021-08-06&sr=b&sig=abc%2Fdef%3D&se=2026",
          "https://a.blob.core.windows.net/c/b?sv=2021-08-06&sr=b&sig=[REDACTED]&se=2026"},

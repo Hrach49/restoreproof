@@ -522,9 +522,15 @@ def _target_plan(state: str) -> list[Entry]:
             "mail-list-200-page1.json", 200, "GET the restoretest inbox with $top=1, two mails: page 1",
             _mail_list(1), headers=PREFER, check=_mail(1, next_link=True),
         ),
+        # Exchange links a full page even when it is the last: page 2 has a link too, and
+        # page 3 is empty without one.
         entry(
-            "mail-list-200-page2.json", 200, "GET page 1's @odata.nextLink: page 2",
-            "GET <@odata.nextLink of mail-list-200-page1.json>", headers=PREFER, check=_mail(1),
+            "mail-list-200-page2.json", 200, "GET page 1's @odata.nextLink: page 2, full, so linked",
+            "GET <@odata.nextLink of mail-list-200-page1.json>", headers=PREFER, check=_mail(1, next_link=True),
+        ),
+        entry(
+            "mail-list-200-page3.json", 200, "GET page 2's @odata.nextLink: page 3, empty, the last",
+            "GET <@odata.nextLink of mail-list-200-page2.json>", headers=PREFER, check=_mail(0),
         ),
     ]
 
@@ -697,6 +703,7 @@ class _Recorder:
             "onedrive-content-302.json": lambda: get(_content(od, first_id("onedrive-children-200-one-item.json"))),
             "mail-list-200-page1.json": lambda: get(_mail_list(1)),
             "mail-list-200-page2.json": lambda: get(_next_link(entry.file_name, "mail-list-200-page1.json", replies)),
+            "mail-list-200-page3.json": lambda: get(_next_link(entry.file_name, "mail-list-200-page2.json", replies)),
         }
         return senders[entry.file_name]()
 

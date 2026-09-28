@@ -1,0 +1,14 @@
+{
+  "source": "live 2026-09-28: GET page 2's @odata.nextLink: page 3, empty, the last",
+  "request": "GET <@odata.nextLink of mail-list-200-page2.json>",
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/json; odata.metadata=minimal; odata.streaming=true; IEEE754Compatible=false; charset=utf-8",
+    "request-id": "486186d6-acbe-46a8-bf0f-28486ff84e25",
+    "client-request-id": "486186d6-acbe-46a8-bf0f-28486ff84e25"
+  },
+  "body": {
+    "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#users('restoretest%40RestoreProofLab.onmicrosoft.com')/mailFolders('inbox')/messages(id,subject,from,receivedDateTime,internetMessageId,body)",
+    "value": []
+  }
+}

@@ -52,7 +52,7 @@ rows to `live: …`. `onedrive-folder-403-accessdenied.json` stays hand-written:
 answers 404 for an item the app may not read, so the lab can't provoke that 403 read-only.
 
 - **Request lines** are documentation. IDs a reply gave are written as placeholders
-  (`<message id>`, `<item id>`, `<@odata.nextLink of mail-list-200-page1.json>`), and the
+  (`<message id>`, `<item id>`, `<@odata.nextLink of mail-list-200-page1.json>`, …), and the
   not-found cases' random IDs as `<random item ID>` and `<random drive ID>`. No canary ID
   appears in any file here, nor anywhere under `worker/`.
 - **Download links are scrubbed.** A `/content` 302's `Location` carries a pre-authenticated
@@ -94,8 +94,9 @@ answers 404 for an item the app may not read, so the lab can't provoke that 403 
 | `onedrive-folder-403-accessdenied.json` | hand-written: a 403 on the OneDrive folder in the recorded `site-403-accessdenied.json` shape; SharePoint masks an ungranted item as 404 (L1.5), so the lab can't provoke one read-only | 403 `accessDenied` → `PermissionError` naming the OneDrive grant (W2.2) |
 | `mail-list-200-empty.json` | live: the restoretest inbox as the Worker lists it, empty | an empty Inbox lists as an empty vector; the tests read the mailbox from its request line (W2.2) |
 | `mail-list-200-one-item.json` | live: the restoretest inbox as the Worker lists it, one mail, its body as text (`Prefer`) | one mail lists as one `FoundItem` (subject, sender, received, internetMessageId and the text-v1 hash of `body.content` read from it); its edits are the not-text refusals (W2.2) |
-| `mail-list-200-page1.json` | hand-written: stand-in until the paged state is recorded (W2.2): the restoretest inbox with `$top=1`, two mails: page 1, with `@odata.nextLink` | mail follows `@odata.nextLink`; the link's shape is what the Inbox's nextLink rule must take (W2.2 review) |
-| `mail-list-200-page2.json` | hand-written: stand-in until the paged state is recorded (W2.2): page 1's `@odata.nextLink`, the last page | the second page, no `@odata.nextLink` (W2.2) |
+| `mail-list-200-page1.json` | live: the restoretest inbox with `$top=1`, two mails: page 1, with `@odata.nextLink` | mail follows `@odata.nextLink`; the link's shape is what the Inbox's nextLink rule must take (W2.2 review) |
+| `mail-list-200-page2.json` | live: page 1's `@odata.nextLink`: the second mail, and a link again, since Exchange links every full page | the second page (W2.2) |
+| `mail-list-200-page3.json` | live: page 2's `@odata.nextLink`: empty, no link | the last page is an empty one: the listing ends on it with two mails (W2.2) |
 | `restoretarget-drive-200.json` | live: the RestoreTarget library's drive, as the guard reads it | the SharePoint guard: name, `webUrl`, `driveType` and `sharePointIds` of the RestoreTarget library; its edits are the refusals (W2.2) |
 | `restoretarget-children-200-empty.json` | live: the RestoreTarget library's root children, empty | an empty library lists as an empty vector (W2.2) |
 | `restoretarget-children-200-one-item.json` | live: the RestoreTarget library's root children, one file | one file lists as one `FoundItem` (name, size and the bytes' SHA-256); its edits are the bad-driveItem, folder and package rows (W2.2) |

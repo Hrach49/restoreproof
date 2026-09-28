@@ -1,32 +1,33 @@
 {
-  "source": "hand-written: stand-in until the paged state is recorded (W2.2): GET page 1's @odata.nextLink: page 2",
+  "source": "live 2026-09-28: GET page 1's @odata.nextLink: page 2, full, so linked",
   "request": "GET <@odata.nextLink of mail-list-200-page1.json>",
   "status": 200,
   "headers": {
     "Content-Type": "application/json; odata.metadata=minimal; odata.streaming=true; IEEE754Compatible=false; charset=utf-8",
-    "request-id": "00000000-0000-4000-8000-000000000083",
-    "client-request-id": "00000000-0000-4000-8000-000000000083"
+    "request-id": "908383c8-75fa-4f0b-bc16-8dcd71e77d37",
+    "client-request-id": "908383c8-75fa-4f0b-bc16-8dcd71e77d37"
   },
   "body": {
     "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#users('restoretest%40RestoreProofLab.onmicrosoft.com')/mailFolders('inbox')/messages(id,subject,from,receivedDateTime,internetMessageId,body)",
     "value": [
       {
-        "@odata.etag": "W/\"CQAAABYAAABStandInChangeKey000000001\"",
-        "id": "AAkALgAAAAAAHYQDEapmEc2byACqAC-EWg0AStandInMessage00000000001AAA=",
-        "receivedDateTime": "2026-09-28T12:00:00Z",
-        "internetMessageId": "<w2.2-stand-in-1@RestoreProofLab.onmicrosoft.com>",
-        "subject": "RestoreProof W2.2 stand-in",
-        "from": {
-          "emailAddress": {
-            "name": "Alice",
-            "address": "alice@RestoreProofLab.onmicrosoft.com"
-          }
-        },
+        "@odata.etag": "W/\"CQAAABYAAACnL+u8BR8BT6morC7OYUFaAAACqaFh\"",
+        "id": "AAkALgAAAAAAHYQDEapmEc2byACqAC-EWg0Apy-rvAUfAU_pqKwuzmFBWgAAAqwo8wAA",
+        "receivedDateTime": "2026-09-28T18:06:26Z",
+        "internetMessageId": "<WA1P291MB02781BED3144253B0C5B5F2C8B8D2@WA1P291MB0278.POLP291.PROD.OUTLOOK.COM>",
+        "subject": "RestoreProof W2.2 one-item 7f3k",
         "body": {
           "contentType": "text",
-          "content": "RestoreProof W2.2 stand-in, first\r\n"
+          "content": "RestoreProof W2.2 body text 9q2m\r\n"
+        },
+        "from": {
+          "emailAddress": {
+            "name": "Hrachya Harutyunyan",
+            "address": "HrachyaHarutyunyan@RestoreProofLab.onmicrosoft.com"
+          }
         }
       }
-    ]
+    ],
+    "@odata.nextLink": "https://graph.microsoft.com/v1.0/users/restoretest@RestoreProofLab.onmicrosoft.com/mailFolders('inbox')/messages?%24select=id%2csubject%2cfrom%2creceivedDateTime%2cinternetMessageId%2cbody&%24top=1&%24skip=2"
   }
 }

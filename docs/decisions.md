@@ -45,8 +45,9 @@ records what changed. It supersedes the parts of the W2.2 entry below that it na
    the OneDrive folder `drives/{test_onedrive_drive_id}/items/{test_onedrive_folder_id}/children`
    only, never another item of that drive, since alice's canary folder shares it. A link to
    another mailbox by GUID would be refused by Exchange RBAC (a `PermissionError`, status
-   `error`). The absolute-v1.0, no-refetch and page-cap rules stand. Still to be confirmed by
-   the `paged` recording.
+   `error`). The absolute-v1.0, no-refetch and page-cap rules stand. The `paged` recording
+   (2026-09-28) confirms the mail rule: Exchange's links name `mailFolders('inbox')`, which
+   the rule reads as the same resource.
 8. **The ID shapes are config rules** (supersedes part of §13): `parse_config` applies
    `kGraphSiteIdRule`, `kGraphDriveIdRule` and `kGraphItemIdRule` (`rp/config.hpp`), so
    `rpworker config check` refuses a list GUID in `test_library_id` instead of the first run;
@@ -73,9 +74,11 @@ outside the restore targets, or to fail on replies Graph may really send.
 
 **Consequences.**
 - The empty state was recorded again (2026-09-28) with the new `$select`; the recorded
-  `onedrive-folder-200.json` has `parentReference.driveType` `business`. The one-item and paged states
-  are still hand-written stand-ins; recording them confirms items 3 and 7 against real
-  replies.
+  `onedrive-folder-200.json` has `parentReference.driveType` `business`. The one-item and paged states were recorded the same day, after one mail and
+  two files (then a second mail) were put in the targets by hand, and confirm items 3 and 7
+  against real replies. Exchange puts an `@odata.nextLink` on every full page, the last one
+  included: with two mails and `$top=1`, page 2 has a link and page 3 is empty, so the
+  recorder takes three pages and the listing ends on an empty one.
 - W3.2 hashes docx and xlsx with `office-v1` through `on_file`, so their byte counts no longer
   matter for verification.
 
@@ -158,12 +161,11 @@ hashed with `rp/text_v1.hpp`, bytes with `rp/sha256.hpp`. This resolves the open
     link that doesn't start with `https://graph.microsoft.com/v1.0/`, a relative one too:
     Graph sends absolute links, and `GraphClient` would put its v1.0 root in front of a
     relative path and send it with the token, so leaving it to `GraphClient` would let a
-    reply point the listing at another drive (review of W2.2). The mail rule has not been widened; the `paged` recording confirms
-    whether it holds (if it has to be widened, it is logged here).
+    reply point the listing at another drive (review of W2.2). The mail rule did not have to be widened: the `paged` recording follows two real links.
 12. **Fixture states:** `record-graph-fixtures --state {auth,empty,one-item,paged}`
     (`lab/README.md`). Hand-written stand-ins are committed until a state is recorded (the lab
-    plan test skips them; a README test keeps rows and files in step). The paged reply is
-    recorded with two mails and `$top=1`. The OneDrive 403 is hand-written: the lab can't
+    plan test skips them; a README test keeps rows and files in step). The paged state is
+    recorded with two mails and `$top=1`: three pages, the last one empty. The OneDrive 403 is hand-written: the lab can't
     provoke it read-only. The `Location` query is scrubbed to `UniqueId`, `Translate` and
     `ApiVersion`, `@microsoft.graph.downloadUrl` is dropped, and the recorder never follows the
     redirect.

@@ -1045,18 +1045,22 @@ TEST_CASE("mail follows @odata.nextLink", "[graph][targets]")
     const json page1 = load_fixture_json("graph", "mail-list-200-page1");
     const std::string link = page1.at("body").at("@odata.nextLink").get<std::string>();
     lab.serve(mail_list_url(), page1);
-    lab.serve_file(link, "mail-list-200-page2");
+    // Exchange links every full page, the last one too: page 2 has a link, page 3 is empty.
+    const json page2 = load_fixture_json("graph", "mail-list-200-page2");
+    const std::string link2 = page2.at("body").at("@odata.nextLink").get<std::string>();
+    lab.serve(link, page2);
+    lab.serve_file(link2, "mail-list-200-page3");
     const std::string first_id = page1.at("body").at("value").at(0).at("id").get<std::string>();
-    const std::string second_id =
-        messages_of("mail-list-200-page2").at(0).at("id").get<std::string>();
+    const std::string second_id = page2.at("body").at("value").at(0).at("id").get<std::string>();
 
     const std::vector<FoundItem> items = lab.reader().list_mail();
 
     REQUIRE(items.size() == 2);
     CHECK(items[0].id == first_id);
     CHECK(items[1].id == second_id);
-    REQUIRE(lab.graph_gets().size() == 2);
+    REQUIRE(lab.graph_gets().size() == 3);
     CHECK(lab.graph_gets()[1].url == link);
+    CHECK(lab.graph_gets()[2].url == link2);
     for (const HttpRequest& request : lab.graph_gets()) {
         CHECK(request.headers.at("Prefer") == kPrefer);
     }

@@ -162,15 +162,17 @@ public:
     //  - 403: a PermissionError naming `grant`: "Graph denied GET <path>
     //    (403 <code>): the Worker app relies on <grant>; see
     //    docs/security/graph-permissions.md", the path without its query.
-    //  - 404: a NotFoundError; but a mailbox Graph can't read
-    //    (MailboxNotEnabledForRESTAPI, MailboxNotSupportedForRESTAPI) is a
-    //    plain GraphError, whatever the status.
+    //  - 404 with Graph's JSON error: a NotFoundError (a 404 without it, from
+    //    a proxy or a wrong path, is a GraphError); but a mailbox Graph can't
+    //    read (MailboxNotEnabledForRESTAPI, MailboxNotSupportedForRESTAPI) is
+    //    a plain GraphError, whatever the status.
     //  - 429, 5xx and a lost connection or a timeout (connect, handshake,
     //    dropped, timeout; a GET changes nothing) share kMaxHttpAttempts
     //    attempts, waiting rp::retry_delay() and at least a Retry-After on a
     //    429 or 503, within kMaxRetryWait each and kMaxRetryWaitPerCall in
-    //    all; then a TransientError (carrying the Retry-After). The token is
-    //    checked before every attempt. A TLS failure or a malformed URL is a
+    //    all, the waits of a token renewal inside the call included; then a
+    //    TransientError (carrying the Retry-After). The token is checked
+    //    before every attempt. A TLS failure or a malformed URL is a
     //    GraphError after one.
     //  - Any other status is a GraphError with Graph's code and message.
     // Errors keep Graph's code, inner code and request ID, never the body.
@@ -189,16 +191,18 @@ private:
         std::uint64_t failures_seen = 0;
     };
 
-    // The token to call with, renewed first if due.
-    Token current_token();
+    // The token to call with, renewed first if due. `waited` is the calling
+    // get()'s wait so far: a renewal's waits add to it, within
+    // kMaxRetryWaitPerCall in all.
+    Token current_token(std::chrono::milliseconds& waited);
     // Renews the token if there is none or it is due, rethrowing a renewal
     // failure that happened since the caller read `failures_seen` (before
-    // waiting for the lock) instead of trying again.
-    void renew_if_due_locked(std::uint64_t failures_seen);
+    // waiting for the lock) instead of trying again. True if it fetched one.
+    bool renew_if_due_locked(std::uint64_t failures_seen, std::chrono::milliseconds& waited);
     void rethrow_failure_since_locked(std::uint64_t failures_seen) const;
     // These expect mutex_ held. fetch_token_locked records its failure for
     // rethrow_failure_since_locked; a stored token clears it.
-    void fetch_token_locked();
+    void fetch_token_locked(std::chrono::milliseconds& waited);
     void store_token_locked(const HttpResponse& response);
     // One GET of `url` with `token`, one attempt.
     HttpRequest api_request(const std::string& url, const std::string& token) const;

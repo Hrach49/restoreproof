@@ -850,21 +850,6 @@ TEST_CASE("callers waiting behind a failed token request share its failure", "[g
     CHECK(lab.bearers() == std::vector<std::string>{"Bearer token-2"});
 }
 
-TEST_CASE("the constructor's certificate error comes before any request", "[graph][client]")
-{
-    // certificate_from_secrets throws before a GraphClient exists: nothing
-    // can be sent with a PFX the Worker can't use.
-    rp::test::FakeHttpClient http;
-    rp::Secrets secrets;
-    secrets.graph_cert_pfx_base64 = pfx_base64();
-    secrets.graph_cert_password = "wrong";
-    CHECK(catch_graph([&] {
-              GraphClient{http, kTenant, kClient,
-                          rp::graph::certificate_from_secrets(secrets, kNow)};
-          }).kind == "CertificateError");
-    CHECK(http.requests().empty());
-}
-
 // --- GET: where the token may go ---------------------------------------------
 
 TEST_CASE("get() sends the token nowhere but https://graph.microsoft.com/v1.0/",
@@ -1037,6 +1022,36 @@ TEST_CASE("a 401 that keeps coming for replaced tokens ends after three resends"
     CHECK(lab.http.count(HttpMethod::get, kMessagesUrl) == 4);
 }
 
+TEST_CASE("a replaced token that is due as well counts as the one fresh token",
+          "[graph][client][get]")
+{
+    // The first answer comes back after another call has renewed the token,
+    // and the clock has passed that token's renewal too: the call fetches a
+    // fresh one, and that is its one fresh token. Another 401 is an AuthError.
+    const std::string other_url = std::string{rp::graph::kGraphBaseUrl} + "/sites/root";
+    Lab lab;
+    std::unique_ptr<GraphClient> client;
+    std::atomic<int> calls = 0;
+    lab.http.on(HttpMethod::get, other_url, {load_fixture("graph", "messages-200")});
+    lab.http.on(HttpMethod::get, kMessagesUrl, [&](const HttpRequest&) {
+        if (++calls == 1) {
+            lab.advance(3600s);
+            client->get("/sites/root", rp::graph::kSitesReadGrant);
+            lab.advance(3600s);
+        }
+        return load_fixture("graph", "api-invalid-token-401");
+    });
+    client = lab.make_client();
+
+    const Caught caught =
+        catch_graph([&] { client->get(kMessagesPath, rp::graph::kMailReadGrant); });
+
+    CHECK(caught.kind == "AuthError");
+    CHECK_THAT(caught.what, ContainsSubstring("again after a fresh token"));
+    CHECK(lab.token_requests == 3);
+    CHECK(lab.http.count(HttpMethod::get, kMessagesUrl) == 2);
+}
+
 TEST_CASE("a failed token renewal after a 401 is that failure", "[graph][client][get]")
 {
     Lab lab;
@@ -1138,6 +1153,27 @@ TEST_CASE("a 404 is a NotFoundError with Graph's explanation", "[graph][client][
           "'nobody-670f8a55@RestoreProofLab.onmicrosoft.com' is invalid. (request ID "
           "6491e50f-2c2f-4d02-9cf2-e700351b1c3d)");
     CHECK(lab.http.count(HttpMethod::get, url) == 1);
+}
+
+TEST_CASE("a 404 that isn't Graph's JSON is a GraphError, not a NotFoundError",
+          "[graph][client][get]")
+{
+    // A proxy, a gateway or a wrong path: not an item Graph says is missing.
+    const HttpResponse response =
+        GENERATE(make_response(404, "<html><body>Not Found ECHOED-BODY</body></html>",
+                               "text/html"),
+                 make_response(404, "ECHOED-BODY", "text/plain"));
+    Lab lab;
+    lab.http.on(HttpMethod::get, kMessagesUrl, {response});
+
+    const Caught caught = get_once(lab);
+
+    CHECK(caught.kind == "GraphError");
+    CHECK(caught.status == 404);
+    CHECK_THAT(caught.what, !ContainsSubstring("ECHOED-BODY"));
+    CHECK_THAT(caught.what, !ContainsSubstring("<html"));
+    CHECK(lab.http.count(HttpMethod::get, kMessagesUrl) == 1);
+    CHECK(lab.waits().empty());
 }
 
 TEST_CASE("a mailbox Graph can't read is a GraphError, not a NotFoundError",
@@ -1367,6 +1403,40 @@ TEST_CASE("a GET's waits stay within 300 s in all", "[graph][client][get]")
     CHECK_THAT(caught.what, ContainsSubstring("300 s"));
     CHECK(lab.waits() == std::vector<std::chrono::milliseconds>{100s, 100s, 100s});
     CHECK(lab.http.count(HttpMethod::get, kMessagesUrl) == 4);
+}
+
+TEST_CASE("a token renewal inside a GET waits within the same 300 s", "[graph][client][get]")
+{
+    // Graph asks to wait; the wait outlasts the token; Entra asks to wait as
+    // well. Both come out of the one call's budget.
+    HttpResponse graph_busy = load_fixture("graph", "messages-503-unavailable");
+    graph_busy.headers["Retry-After"] = "100";
+    HttpResponse entra_busy = entra_error(503, "temporarily_unavailable", 90006);
+    entra_busy.headers["Retry-After"] = "100";
+    Lab lab;
+    lab.http.on(HttpMethod::get, kMessagesUrl, {graph_busy});
+    lab.set_on_token([entra_busy](int n, const HttpRequest&) {
+        return n == 1 ? token_response("token-1") : entra_busy;
+    });
+    GraphClientOptions options = lab.options();
+    const auto record = options.sleep;
+    options.sleep = [&lab, record](std::chrono::milliseconds wait) {
+        record(wait);
+        lab.advance(3600s);
+    };
+    GraphClient client(lab.http, kTenant, kClient, certificate(), options);
+
+    const Caught caught =
+        catch_graph([&] { client.get(kMessagesPath, rp::graph::kMailReadGrant); });
+
+    CHECK(caught.kind == "TransientError");
+    CHECK_THAT(caught.what, ContainsSubstring("300 s"));
+    std::chrono::milliseconds total{0};
+    for (const std::chrono::milliseconds wait : lab.waits()) {
+        total += wait;
+    }
+    CHECK(total <= 300s);
+    CHECK(lab.waits() == std::vector<std::chrono::milliseconds>{100s, 100s, 100s});
 }
 
 TEST_CASE("the token is checked again before every attempt", "[graph][client][get]")

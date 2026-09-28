@@ -582,10 +582,9 @@ void GraphClient::store_token_locked(const HttpResponse& response)
               std::to_string(lifetime.count()) + " s");
 }
 
-void GraphClient::fetch_token_locked()
+void GraphClient::fetch_token_locked(milliseconds& waited)
 {
     try {
-        milliseconds waited{0};
         for (int attempt = 1;; ++attempt) {
             Failure failure;
             try {
@@ -652,22 +651,23 @@ void GraphClient::rethrow_failure_since_locked(std::uint64_t failures_seen) cons
     }
 }
 
-void GraphClient::renew_if_due_locked(std::uint64_t failures_seen)
+bool GraphClient::renew_if_due_locked(std::uint64_t failures_seen, milliseconds& waited)
 {
     if (!access_token_.empty() && options_.now() < renew_at_) {
-        return;
+        return false;
     }
     // Only a caller that has to renew shares a failure: one that finds a
     // good token (another caller's success) uses it.
     rethrow_failure_since_locked(failures_seen);
-    fetch_token_locked();
+    fetch_token_locked(waited);
+    return true;
 }
 
-GraphClient::Token GraphClient::current_token()
+GraphClient::Token GraphClient::current_token(milliseconds& waited)
 {
     const std::uint64_t failures_seen = renewal_failures_.load();
     const std::lock_guard lock(mutex_);
-    renew_if_due_locked(failures_seen);
+    renew_if_due_locked(failures_seen, waited);
     return {access_token_, generation_, renewal_failures_.load()};
 }
 
@@ -692,10 +692,11 @@ HttpResponse GraphClient::get(std::string_view path_or_url, const Grant& grant)
     const std::string path = display_path(url);
     const std::string what = "Graph GET " + path;
 
-    Token token = current_token();
+    // Every wait of this call, its token renewals' included.
+    milliseconds waited{0};
+    Token token = current_token(waited);
     bool renewed = false; // this call fetched a fresh token after a 401
     int unauthorized = 0;
-    milliseconds waited{0};
     for (int attempt = 1;;) {
         // What went wrong with an attempt worth another.
         struct Retry {
@@ -754,13 +755,14 @@ HttpResponse GraphClient::get(std::string_view path_or_url, const Grant& grant)
                         // (its failure is thrown as it is).
                         log_debug(head + "; getting a fresh token");
                         rethrow_failure_since_locked(token.failures_seen);
-                        fetch_token_locked();
+                        fetch_token_locked(waited);
                         renewed = true;
                     } else {
                         // Another call replaced the token meanwhile: the
-                        // current one is newer.
+                        // current one is newer. If that one is due as well,
+                        // the token fetched here is this call's fresh one.
                         log_debug(head + " for a replaced token; resending with the current one");
-                        renew_if_due_locked(token.failures_seen);
+                        renewed = renew_if_due_locked(token.failures_seen, waited) || renewed;
                     }
                     token = {access_token_, generation_, renewal_failures_.load()};
                 }
@@ -789,7 +791,9 @@ HttpResponse GraphClient::get(std::string_view path_or_url, const Grant& grant)
                 }
                 const std::string message =
                     head + (reply.message.empty() ? "" : ": " + reply.message) + rid;
-                if (status == 404) {
+                // Only a 404 Graph explains: a proxy's, a gateway's or a
+                // wrong path's is no item missing from a restore.
+                if (status == 404 && !reply.code.empty()) {
                     throw NotFoundError(message, status, reply.code, reply.inner_code,
                                         reply.request_id);
                 }
@@ -843,7 +847,7 @@ HttpResponse GraphClient::get(std::string_view path_or_url, const Grant& grant)
         waited += wait;
         ++attempt;
         // A long wait can outlast the token.
-        token = current_token();
+        token = current_token(waited);
     }
 }
 

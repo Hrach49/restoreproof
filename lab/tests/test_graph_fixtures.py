@@ -1044,21 +1044,64 @@ def test_no_output_line_holds_a_secret(pfx, tmp_path, key_and_cert, other_key):
     assert any(line.startswith("messages-403-exchange.json") and "ErrorAccessDenied" in line for line in lines)
 
 
-def test_the_plan_matches_the_committed_fixtures():
+STAND_IN = "hand-written: stand-in"
+
+
+@pytest.mark.parametrize("state", STATES)
+def test_the_plan_of_each_state_names_the_expected_files(state):
+    assert {e.file_name: e.expected for e in plan(tenant.TENANT_ID, state)} == EXPECTED_FILES[state]
+
+
+@pytest.mark.parametrize(
+    "state, entry",
+    [(s, e) for s in STATES for e in plan(tenant.TENANT_ID, s)],
+    ids=[f"{s}:{e.file_name}" for s in STATES for e in plan(tenant.TENANT_ID, s)],
+)
+def test_the_plan_matches_the_committed_fixtures(state, entry):
     """The file names, statuses and request lines agree with worker/tests/fixtures/graph/,
-    so a re-recording replaces those files rather than adding new ones."""
+    so a re-recording replaces those files rather than adding new ones. A hand-written
+    stand-in, committed until its state is recorded, is skipped; a missing file fails."""
     committed = DEFAULT_OUT_DIR
     if not committed.is_dir():
         pytest.skip("worker/tests/fixtures/graph/ not present")
-    entries = plan(tenant.TENANT_ID)
-    assert {e.file_name: e.expected for e in entries} == AUTH_FILES
-    for entry in entries:
-        path = committed / entry.file_name
-        assert path.is_file(), f"planned fixture {entry.file_name} is not committed in {committed}"
-        rec = json.loads(path.read_text(encoding="utf-8"))
-        assert rec["status"] == entry.expected, entry.file_name
-        assert rec["request"] == entry.request, entry.file_name
-        assert rec["source"].split(": ", 1)[1] == entry.what, entry.file_name
+    path = committed / entry.file_name
+    assert path.is_file(), f"planned fixture {entry.file_name} is not committed in {committed}"
+    rec = json.loads(path.read_text(encoding="utf-8"))
+    if rec["source"].startswith(STAND_IN):
+        pytest.skip(f"{entry.file_name}: stand-in until the {state} state is recorded")
+    assert rec["status"] == entry.expected, entry.file_name
+    assert rec["request"] == entry.request, entry.file_name
+    assert rec["source"].split(": ", 1)[1] == entry.what, entry.file_name
+
+
+_README_ROW = re.compile(r"^\| `([^`]+\.json)` \| ([^|]*?) \|")
+
+
+def readme_rows(text: str) -> list[tuple[str, str]]:
+    """(file, Source column) of every row of the README's "Files" table."""
+    return [(m.group(1), m.group(2)) for line in text.splitlines() if (m := _README_ROW.match(line))]
+
+
+def test_readme_rows_parse():
+    text = "| Fixture | Source | For |\n|---|---|---|\n| `a.json` | live: x `y` | z |\n| `b.json` | hand-written: stand-in q | r |\nno"
+    assert readme_rows(text) == [("a.json", "live: x `y`"), ("b.json", "hand-written: stand-in q")]
+
+
+def test_the_fixture_readme_lists_every_file():
+    if not DEFAULT_OUT_DIR.is_dir():
+        pytest.skip("worker/tests/fixtures/graph/ not present")
+    rows = readme_rows((DEFAULT_OUT_DIR / "README.md").read_text(encoding="utf-8"))
+    names = [name for name, _ in rows]
+    files = sorted(p.name for p in DEFAULT_OUT_DIR.glob("*.json"))
+    assert sorted(set(names)) == sorted(names), "a file has more than one README row"
+    assert [n for n in names if not (DEFAULT_OUT_DIR / n).is_file()] == [], "README rows naming no committed file"
+    assert [f for f in files if f not in names] == [], "committed fixtures without a README row"
+    for name, source in rows:
+        rec = json.loads((DEFAULT_OUT_DIR / name).read_text(encoding="utf-8"))
+        kind = rec["source"].split(" ", 1)[0].rstrip(":")
+        assert source.split(" ", 1)[0].rstrip(":") == kind, f"{name}: README says {source!r}, the file {kind!r}"
+        if rec["source"].startswith(STAND_IN):
+            assert source.startswith(STAND_IN), f"{name} is a stand-in; its README row must say so"
 
 
 def test_the_committed_live_fixtures_pass_the_scrub_check():

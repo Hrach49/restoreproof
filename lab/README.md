@@ -278,7 +278,7 @@ be in that state first; the recorder checks, and if they aren't, the line says
 |---|---|---|
 | `empty` | nothing: no mail in the Inbox, no file or folder in either root (after L1.4's cleanup) | `mail-list-200-empty.json`, `restoretarget-drive-200.json`, `restoretarget-children-200-empty.json`, `onedrive-folder-200.json`, `onedrive-children-200-empty.json`, `onedrive-folder-404-itemnotfound.json`, `drive-404-itemnotfound.json` |
 | `one-item` | exactly one mail in the Inbox, one file in the RestoreTarget library's root and one in alice's `/RestoreTarget` | `mail-list-200-one-item.json`, `restoretarget-children-200-one-item.json`, `restoretarget-content-302.json`, `onedrive-children-200-one-item.json`, `onedrive-content-302.json` |
-| `paged` | exactly two mails in the Inbox (the files don't matter) | `mail-list-200-page1.json` (`$top=1`), `mail-list-200-page2.json` (page 1's `@odata.nextLink`) |
+| `paged` | exactly two mails in the Inbox (the files don't matter) | `mail-list-200-page1.json` (`$top=1`), `mail-list-200-page2.json` (page 1's `@odata.nextLink`), `mail-list-200-page3.json` (page 2's). Exchange puts a link on every full page, the last one included, so page 2 has one and page 3 is empty without one |
 
 What each request is and what is checked:
 
@@ -305,7 +305,7 @@ What each request is and what is checked:
   with an error (exit 2) before the request is sent.
 - The two `/content` requests are sent **without following the redirect**, so the 302 is
   recorded and nothing is downloaded. Request lines show the IDs a reply gave as
-  `<item id>` and `<@odata.nextLink of mail-list-200-page1.json>`, and the
+  `<item id>` and `<@odata.nextLink of mail-list-200-page1.json>` (or `page2`), and the
   random ones as `<random item ID>` and `<random drive ID>`.
 
 Download links are scrubbed before the safety check: a `Location` keeps its scheme, host and

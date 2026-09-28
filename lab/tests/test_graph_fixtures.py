@@ -86,6 +86,7 @@ EXPECTED_FILES = {
     "paged": {
         "mail-list-200-page1.json": 200,
         "mail-list-200-page2.json": 200,
+        "mail-list-200-page3.json": 200,
     },
 }
 RT = tenant.RESTORE_TARGET_DRIVE_ID
@@ -297,8 +298,9 @@ class FakeCloud:
                 body = {"contentType": self.body_content_type, "content": "hello\r\n"}
                 value = [dict(m, body=body) if isinstance(m, dict) else m for m in value]
             page: dict = {"@odata.context": "ctx", "value": value}
-            if skip + top < len(self.inbox):
-                # As Graph does: the request's $select again, encoded.
+            if len(value) == top:
+                # As Exchange does: a full page has a link, even the last one (the next is
+                # then empty); the request's $select again, encoded.
                 select = query.get("$select", "").replace(",", "%2c")
                 page["@odata.nextLink"] = (
                     f"{GRAPH}/users/{UPN}/mailFolders/inbox/messages"
@@ -777,12 +779,12 @@ def test_an_id_that_cant_go_in_a_url_is_refused(pfx, tmp_path, key_and_cert, oth
 
 
 def test_paged_state_without_a_next_link_writes_nothing(pfx, tmp_path, key_and_cert, other_key):
-    cloud = a_cloud(key_and_cert, "one-item")  # one mail only: no second page
+    cloud = a_cloud(key_and_cert, "empty")  # no mail: page 1 isn't full, so no link
     lines: list[str] = []
     with pytest.raises(FixtureError) as info:
         record(pfx, tmp_path / "out", cloud, other_key=other_key, state="paged", lines=lines)
     assert str(info.value) == "mail-list-200-page2.json: needs a nextLink from mail-list-200-page1.json, which had none"
-    assert "UNEXPECTED (expected an @odata.nextLink on https://graph.microsoft.com/v1.0/)" in lines[0]
+    assert "UNEXPECTED (expected 1 item(s), got 0)" in lines[0]
     assert not (tmp_path / "out").exists()
 
 
@@ -888,6 +890,7 @@ def test_the_request_lines_of_the_w2_2_states():
         "onedrive-content-302.json": f"GET /v1.0/drives/{OD}/items/<item id>/content",
         "mail-list-200-page1.json": f"{mail}&$top=1",
         "mail-list-200-page2.json": "GET <@odata.nextLink of mail-list-200-page1.json>",
+        "mail-list-200-page3.json": "GET <@odata.nextLink of mail-list-200-page2.json>",
     }
 
 

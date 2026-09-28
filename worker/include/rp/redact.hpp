@@ -36,9 +36,13 @@ bool is_secret_header(std::string_view name) noexcept;
 //    non-empty ones; the whole token, unsigned ("header.claims." or
 //    "header.claims") and five-part forms included;
 //  - "Bearer <token>", Bearer in any case and not run into a preceding letter
-//    or digit, then blanks: the token up to whitespace, a quote or ','. An
-//    auth-param after the scheme (WWW-Authenticate's `Bearer realm=""`,
-//    `error="..."`) is not a token and stays.
+//    or digit, then blanks: the token up to whitespace, a quote or ','. A
+//    known auth-param and '=' after the scheme (WWW-Authenticate's
+//    `Bearer realm=""`, `error="..."`, scope, claims, client_id, ...) is not
+//    a token and stays; any other name=value is.
+// A JWT or bearer token ends before a secret key inside it whose value goes
+// on past it ("Bearer password = x", "eyJ...def.password=x"): that value is
+// the key rules' to replace.
 // A key that ends in one of the names after a non-alphanumeric byte
 // ("new_password", "db.password", "x_sig") counts as the name; a name run
 // into a letter or digit ("xpassword", "signature") doesn't. A quoted value

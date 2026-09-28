@@ -584,6 +584,10 @@ TEST_CASE("redact leaves text that only resembles a JWT or a bearer token unchan
         R"(WWW-Authenticate: Bearer realm="", authorization_uri="https://login.microsoftonline.com/common/oauth2/authorize", client_id="00000003-0000-0000-c000-000000000000")",
         R"(Bearer error="insufficient_claims", claims="e30=")",
         "Bearer error=invalid_token",
+        // The known auth-param names only, in any case.
+        R"(Bearer Realm="x")",
+        R"(Bearer scope="Mail.Read")",
+        R"(Bearer resource_metadata="https://h/x")",
         // "bearer" run into a word.
         "nobearer abc",
         "Bearers abc",
@@ -643,6 +647,42 @@ TEST_CASE("redact replaces the token after a Bearer scheme", "[redact][jwt]")
         // A token of characters outside token68 still goes up to whitespace or
         // a quote: over-redacting is preferred to leaking.
         {"Bearer abc!def ok", "Bearer [REDACTED] ok"},
+        // A name followed by one '=' is an auth-param only if it is a known
+        // one: an opaque token padded with one '=' goes, before a quote too.
+        {R"({"auth":"Bearer dGVzdHM="})", R"({"auth":"Bearer [REDACTED]"})"},
+        {R"(sent "Bearer q83vEjRWeJCrze8SNFZ4kKvN7xI0VniQq83vEjRWeJA=" to x)",
+         R"(sent "Bearer [REDACTED]" to x)"},
+        {"Bearer token=abc", "Bearer [REDACTED]"},
+        {"Bearer dGVzdHM=abc", "Bearer [REDACTED]"},
+        // A secret key name inside the token whose value stays inside it: the
+        // whole token goes.
+        {"Bearer abc.sig=def", "Bearer [REDACTED]"},
+        {"Bearer password=hunter2", "Bearer [REDACTED]"},
+    })));
+}
+
+// Review of W2.1: the Bearer and JWT rules ran before the key rules, took a
+// following secret key's name as (part of) the token, and left its value in
+// the clear, where main's key rules had hidden it. A key whose value reaches
+// past the token is the key rules' to redact.
+TEST_CASE("redact leaves a secret key after Bearer or a JWT to the key rules", "[redact][jwt]")
+{
+    check_row(GENERATE(values<Row>({
+        {"Bearer password = hunter2", "Bearer password = [REDACTED]"},
+        {"token_type: Bearer refresh_token: 0.AXYZsecretvalue",
+         "token_type: Bearer refresh_token: [REDACTED]"},
+        {"x Bearer client_secret: s3cr3t", "x Bearer client_secret: [REDACTED]"},
+        {"Bearer access_token: tok123 more", "Bearer access_token: [REDACTED]"},
+        {"Bearer Authorization: Basic dXNlcjpwYXNz", "Bearer Authorization: [REDACTED]"},
+        // What comes before the key in the token still goes.
+        {"Bearer tok.password = hunter2", "Bearer [REDACTED]password = [REDACTED]"},
+        // A JWT ends before the part the key starts in.
+        {"eyJabc.def.password=hunter2", "[REDACTED].password=[REDACTED]"},
+        {"eyJabc.def.x_password: s3cr3t", "[REDACTED].x_password: [REDACTED]"},
+        // Fewer than two parts left: no JWT, the key rule still hides the value.
+        {"eyJabc.password=hunter2", "eyJabc.password=[REDACTED]"},
+        // A key inside a JWT part whose value stays inside the JWT: all of it goes.
+        {"eyJabc.def.sig", "[REDACTED]"},
     })));
 }
 

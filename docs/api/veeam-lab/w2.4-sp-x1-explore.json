@@ -1,0 +1,56 @@
+{
+  "note": "POST /v8/Organizations/{organizationId}/explore {type: Vesp} at the latest backupTime",
+  "captured_utc": "2026-09-28T21:28:26.907Z",
+  "duration_ms": 330,
+  "request": {
+    "method": "POST",
+    "path": "/v8/Organizations/ff96d072-29e2-4cb4-a155-2590f5473176/explore",
+    "body": {
+      "dateTime": "2026-09-27T22:00:48.1447833Z",
+      "type": "Vesp",
+      "showDeleted": false,
+      "showAllVersions": false
+    }
+  },
+  "response": {
+    "status": 201,
+    "content_type": "application/json; charset=utf-8",
+    "headers": {
+      "Date": "Mon, 28 Sep 2026 21:28:27 GMT",
+      "Cache-Control": "no-store",
+      "Location": "/v8/restoresessions/9aa65291-c162-4769-acb0-ccc39eead76e",
+      "Pragma": "no-cache",
+      "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+      "X-Content-Type-Options": "nosniff",
+      "X-XSS-Protection": "1; mode=block",
+      "X-Frame-Options": "SAMEORIGIN",
+      "Content-Length": "690",
+      "Content-Type": "application/json; charset=utf-8"
+    },
+    "body": {
+      "id": "9aa65291-c162-4769-acb0-ccc39eead76e",
+      "name": "SharePoint restore (Entire organization - 9/27/2026 10:00:48 PM)",
+      "organization": "RestoreProofLab.onmicrosoft.com",
+      "type": "Vesp",
+      "creationTime": "2026-09-28T21:28:27.0057204Z",
+      "endTime": "9999-12-31T23:59:59.9999999",
+      "state": "Working",
+      "result": "Success",
+      "initiatedBy": "rp-veeam",
+      "scopeName": "",
+      "clientHost": "localhost:4443 (via: [::ffff:127.0.0.1])",
+      "eTag": 1,
+      "_links": {
+        "self": {
+          "href": "/v8/restoresessions/9aa65291-c162-4769-acb0-ccc39eead76e"
+        },
+        "organization": {
+          "href": "/v8/restoresessions/9aa65291-c162-4769-acb0-ccc39eead76e/organization"
+        },
+        "restoreSessionEvents": {
+          "href": "/v8/restoresessions/9aa65291-c162-4769-acb0-ccc39eead76e/events"
+        }
+      }
+    }
+  }
+}

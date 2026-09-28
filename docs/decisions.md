@@ -7,6 +7,118 @@ Format: date, decision, reason, alternatives rejected.
 
 ---
 
+## 2026-09-28 — W2.4: the Veeam restore flow
+
+**Decision.** W2.4 restored canaries into the three restore targets through the REST API
+with [`10-restore.ps1`](api/veeam-m365/10-restore.ps1): one mail, one SharePoint file, one
+OneDrive file, then five mails in one call, all from the restore point of
+2026-09-27T22:00:48Z. Veeam reported each one restored, and `rpworker graph list --hash`
+found all 8 items in the targets with the manifest's SHA-256. The flow, the bodies and the
+evidence are in `docs/api/veeam-restore-flow.md`; the exchanges are
+`docs/api/veeam-lab/w2.4-*.json`. The owner decided:
+
+1. **The restore credential is Veeam's own organisation app, per run, in the lab.** The script
+   exports its certificate (`Cert:\LocalMachine\My`, so an elevated shell) to a temporary PFX
+   in `%TEMP%` with a random 32-byte one-time password, reads it into memory and deletes the
+   file at once in a `finally`. The PFX is not stored. With `RP_LAB_SECRET_DIR` set, as in the
+   documented run, the one-time password (not the PFX) also gets a DPAPI copy in that folder,
+   outside the repo, for `audit-evidence.ps1`; the folder is deleted after the audit. Before that it checks the app ID and
+   thumbprint against what `GET /v8/Organizations` reports
+   (`exchangeOnlineSettings`, `sharePointOnlineSettings`;
+   [`w2.4-mail-x1-org`](api/veeam-lab/w2.4-mail-x1-org.json)). The body carries
+   `applicationId`, `applicationCertificate` and `applicationCertificatePassword`.
+2. **One restore call per source container** (a mailbox, a site, a OneDrive) with every
+   sampled item from it. Tested with five mails in one call
+   ([`w2.4-mail-x5-restore`](api/veeam-lab/w2.4-mail-x5-restore.json)): statistics `5/5`, one
+   `Restore` event per item named by subject, not in the order sent
+   ([`w2.4-mail-x5-events`](api/veeam-lab/w2.4-mail-x5-events.json)).
+3. **The configured target IDs are mapped to Veeam's names at run time through Graph**, with
+   the Worker's read-only app: the site's `webUrl` from `test_site_id`; the library's display
+   name from `GET /drives/{test_library_id}` `name`; the OneDrive's URL from the drive's
+   `webUrl`; the folder name from `GET /drives/{d}/items/{test_onedrive_folder_id}`; the
+   mailbox is `test_mailbox` and the folder is always `Inbox`. The OneDrive object in the body
+   is Veeam's, matched by that URL in the explore session. `TargetGuard` checks the body
+   against both the names derived from the configured IDs and what Veeam returned. No new
+   config keys. W2.5 and W2.7 build this.
+
+**The restore POST is sent at most once.** It is never resent by the HTTP layer (the open
+point of the 2026-09-24 HTTP client entry and of the 2026-09-26 VeeamClient review entry).
+After a transport error, a 5xx or a 200 without `sessionId`, the script looks for the session
+it may have started: `GET /v8/RestoreSessions?startTimeFrom=<POST time − 60 s>&orderBy=CreationTime&orderAsc=false&limit=50`,
+kept only if `initiatedBy` is `rp-veeam`, the type is `Vex`/`Vesp`/`Veod` for the item type,
+the ID is not one of our explore sessions and `creationTime` is no earlier than 5 s before
+the POST. Exactly one match is adopted. While it finds none, it looks up to three more times,
+10 s apart; still none, or several at any look, is "no verdict, not resent" (exit 3). The same check ran after every successful POST and found
+exactly one new session, the one returned
+([`w2.4-sp-x1-sessions-after-post`](api/veeam-lab/w2.4-sp-x1-sessions-after-post.json)).
+`VeeamClient` (W2.5) does the same.
+
+**The restore targets are in the backup.** The 2026-09-27T22:00:48Z restore point holds the
+RestoreTarget library and alice's `/RestoreTarget` folder
+([`w2.4-sp-x1-libraries`](api/veeam-lab/w2.4-sp-x1-libraries.json),
+[`w2.4-od-x1-folders-root`](api/veeam-lab/w2.4-od-x1-folders-root.json)). W1.4 recorded them as
+absent (`docs/api/veeam-notes.md` §5.2, §5.3) because they were made on 2026-09-25, after the
+first two points. A restore not cleaned up before the nightly backup would put its copies in
+the next point. So sampling (W2.6) takes items only from the canary sources (the RestoreTest
+library by list ID, `/RestoreTest` by folder, the source mailboxes' Inbox) and the real data,
+never from a target. The script prints a note when it sees a target in the point; it doesn't
+refuse.
+
+**Veeam's result maps to a restore status** as proposed in `docs/api/veeam-restore-flow.md`,
+for W2.5's `RestoreStatus` and W3.3's table in `docs/verification.md`. "Veeam says restored"
+(stopped, `Success`, every item reported) is `succeeded`; Graph read-back then decides `pass`
+or `fail` per item. Anything infrastructure (auth, certificate, app permissions, a session
+not found, statistics or events unreadable, still running after 20 minutes, a guard refusal)
+is `error`; when unsure, `error`.
+
+**Reason.**
+
+- **Credential.** Veeam's app already holds the certificate Veeam trusts for this
+  organisation and is the one W1.0 and L1.4 restored with. A dedicated app would need its own
+  consent and roles, and a narrow one may not be possible: Veeam's SharePoint restore
+  demanded `Group.ReadWrite.All` on the app (L1.4, `docs/manual-restore-reference.md`).
+  Exporting per run keeps the PFX out of any file that outlives the run.
+- **One call per container.** Fewer sessions to wait for, and the per-item result is still
+  there: SharePoint and OneDrive statistics list items by name, mail events name each item.
+- **Graph for the names.** The IDs are stable and the Worker already reads them; a display
+  name or URL in config would be a second copy that can drift, and a renamed target would be
+  found by the guard, not missed.
+- **At most once.** A resent restore can write a second copy, which the checker would count
+  and the Cleaner would have to find. A missing verdict costs one run; a duplicate costs trust
+  in every later one.
+
+**Alternatives rejected.**
+
+- *The Worker's own app in the body:* read-only (L1.5), and Veeam writes the items.
+- *A PFX of Veeam's app copied to disk for the lab:* one more copy of a broad credential.
+- *One call per item:* N sessions of 30 to 50 s each (one item each here) for the same result.
+- *New config keys for the site URL, library name and OneDrive URL:* see above.
+- *Resending after a timeout when no session is found:* the session list may lag; "no verdict"
+  is safe, a second restore is not.
+
+**Open.**
+
+- **The Worker's long-term restore credential** stays open for a spike before W4.5: a vault
+  copy of Veeam's app PFX; a run-time export by the thumbprint Veeam reports, when the Worker
+  runs on the Veeam server; or a dedicated, narrower app. The 2026-09-26 rule stands: it is to
+  be tested before the Worker stores any certificate.
+- **Veeam's per-restore log** (`C:\ProgramData\Veeam\Backup365\Logs\RestoreREST\restore_<local time>_<session ID without dashes>_<org ID without dashes>.log`)
+  was 0 bytes when listed right after the sp, od and mail x5 sessions stopped (the mail x1 run
+  printed no log line); 18–22 KB when listed later, and last written before each session's
+  `endTime`. When Veeam flushes it is not established; its contents weren't read. Not committed.
+- **Cleanup** is the owner's, by hand, until the Cleaner (W3.4). The owner removed the eight
+  restored items; `rpworker graph list` then found 0 items in each target (about 21:38Z).
+- **The OneDrive drive read.** Decision 3 reads `GET /drives/{test_onedrive_drive_id}` for the
+  OneDrive's `webUrl`. The Worker app's grant (`Files.SelectedOperations.Selected`) is on the
+  `/RestoreTarget` folder only, so that read may answer 403, and a drive's `webUrl` may end in
+  `/Documents`. W2.5 checks both. If the drive can't be read, the fallback is the folder's
+  `parentReference.siteId` (the first GUID of Veeam's OneDrive `id`), with no new permission
+  (`docs/api/veeam-restore-flow.md` §16, `docs/security/graph-permissions.md`).
+- **A canary missing from the restore point** is proposed as `fail`, not `error`
+  (`docs/api/veeam-restore-flow.md` §15); W3.3 settles it.
+
+---
+
 ## 2026-09-28 — W2.3: `rpworker graph list`; a hash-less listing; service-neutral exit codes
 
 **Decision.**
@@ -762,6 +874,9 @@ for the CA file:* the only way to agree with curl exactly is to call what curl c
 **Open.** A restore POST (W2.x) gets the same at-most-once rule as a token request from
 `send_with_retries`; whether a timed-out restore started is still to be found in
 `GET /v8/RestoreSessions` before any resend (veeam-notes §6).
+*(W2.4, 2026-09-28: the restore POST is sent at most once, with a duplicate check in
+`GET /v8/RestoreSessions` instead of a resend; see the 2026-09-28 W2.4 entry. `VeeamClient`
+implements it in W2.5.)*
 
 ---
 
@@ -823,7 +938,9 @@ W2.x must send it unchanged. *Trusting `.expires`:* it is the server's clock.
 a connection dropped after a POST went out is still retried by `HttpClient`, so a restore
 POST could still run twice. W2.x must add an at-most-once mode (no retry once the request
 may have been sent) or find its own session in `GET /v8/RestoreSessions` before resending
-(veeam-notes §6). `logout()` holds the lock while it sends, so a hanging logout delays
+(veeam-notes §6). *(W2.4, 2026-09-28: the restore POST is sent at most once, with a duplicate check in
+`GET /v8/RestoreSessions` instead of a resend; see the 2026-09-28 W2.4 entry. `VeeamClient`
+implements it in W2.5.)* `logout()` holds the lock while it sends, so a hanging logout delays
 other calls; it runs at the end of a job. Veeam's "cannot manage selected object" 500
 (an operator outside its scope, veeam-notes §8) maps to `VeeamError`, not `AuthError`;
 operator mode is out of Stage 1.
@@ -980,6 +1097,9 @@ W1.0 picks the default". The evidence is in `docs/api/veeam-feasibility.md`.
   narrower permissions (Exchange application RBAC scoped to `restoretest`, SharePoint
   `Sites.Selected`) is to be tested before the Worker stores any certificate. Either way the
   PFX and its password are vault secrets, and `worker/include/rp/secrets.hpp` changes with W1.5.
+  *(W2.4, 2026-09-28: the lab restores used Veeam's organisation app, its certificate exported
+  per run, the PFX never stored. Which certificate the Worker holds stays open until a spike before
+  W4.5; see the 2026-09-28 W2.4 entry.)*
 - **TLS** (W1.5): Veeam's default REST certificate has no SAN, so no host name verifies and
   `veeam_ca_file` alone can't reach a default install. The options are to require a
   certificate with the server's DNS name (`Set-VBORestAPISettings`) or to add a pinned-leaf

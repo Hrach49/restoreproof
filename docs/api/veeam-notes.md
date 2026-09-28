@@ -578,6 +578,9 @@ Library and document (trimmed):
 - **The `RestoreTarget` library is not in the backup** (it doesn't appear in `Libraries`). A
   restore target doesn't have to be: the `restoreTo` body names the target site by URL and the
   library by display name (feasibility §2c). Only the *source* must be in the backup.
+  *(W2.4, 2026-09-28: true of the two 2026-09-25 points only. The library was created later
+  that day and is in the backup from the 2026-09-27T22:00:48Z point on; see
+  [`veeam-restore-flow.md`](veeam-restore-flow.md) §4.4.)*
 - The document `id` embeds site + web + list + item GUIDs. The last 36 characters are the
   SharePoint list item's unique ID, and that bare GUID is what the restore `Statistics`
   report as `items[].id` (`w1.0-c-sp-cert-statistics`).
@@ -610,7 +613,9 @@ Library and document (trimmed):
   display name, not unique). The `copyTo` body needs this object `{id, name, url}` as its
   target `onedrive` (feasibility §2c).
 - **alice's `/RestoreTarget` folder is not in the backup either.** The `copyTo` body names the
-  target folder by name only.
+  target folder by name only. *(W2.4, 2026-09-28: true of the two 2026-09-25 points only. The
+  folder was created later that day and is in the backup from the 2026-09-27T22:00:48Z point
+  on; see [`veeam-restore-flow.md`](veeam-restore-flow.md) §4.4.)*
 
 ### 5.4 Search (instead of listing)
 
@@ -868,6 +873,9 @@ the composite-ID handling.
   sidesteps it by always sending an exact `backupTime`.
 - **Retry classification of 5xx** (§8): decided in W1.5, as proposed there
   (`docs/decisions.md` 2026-09-26, "VeeamClient: status retries off per request"). A restore
-  POST running twice after a timeout is still open for W2.x.
+  POST running twice after a timeout is still open for W2.x. *(W2.4, 2026-09-28: answered. The
+  restore POST is sent at most once, with a duplicate check in `GET /v8/RestoreSessions`
+  instead of a resend; see [`veeam-restore-flow.md`](veeam-restore-flow.md) §8. The Worker
+  implements it in W2.5.)*
 - **A new user and Veeam's cache** (§2.4): observed in W1.0, not re-tested (it needs a tenant
   change).

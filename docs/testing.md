@@ -53,7 +53,7 @@ The three Veeam ones
 (`worker/tests/veeam_client_live_test.cpp`) each sign in, list organisations and restore
 points, and log out: W1.5's through `VeeamClient`, W1.6's through `rpworker veeam list`
 (`rp::run_veeam_command` with a temp config written from these variables, expecting the lab
-organisation's two restore points), and W1.7's through the `veeam_m365` connector from
+organisation's two L1.3 restore points, found by `backupTime` among any later nightly ones), and W1.7's through the `veeam_m365` connector from
 `rp::connector::default_connector_registry()`, held as an `IConnector&` and asked for the lab
 organisation by name. They read:
 

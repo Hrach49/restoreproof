@@ -1,0 +1,61 @@
+{
+  "note": "POST .../restoreTo (5 item(s) -> restoretest@RestoreProofLab.onmicrosoft.com Inbox), Veeam org app certificate",
+  "captured_utc": "2026-09-28T21:30:20.281Z",
+  "duration_ms": 228,
+  "request": {
+    "method": "POST",
+    "path": "/v8/RestoreSessions/e64a4f87-6d08-4e57-a117-dd3de2d2bc02/organization/mailboxes/e00393b0-a896-4487-ad04-0e1be36468fb/items/restoreTo",
+    "body": {
+      "mailbox": "restoretest@RestoreProofLab.onmicrosoft.com",
+      "folder": "Inbox",
+      "items": [
+        {
+          "id": "LgAAAEYAAAAWAAAAAAAAAJQ40Ee3vkxBk1fd6-4CAU4BAP0LwXmScMJMnrn-sNESuJ8AAAAAAQwAAAAAAACUONBHt75MQZNX3evuAgFOBwD9C8F5knDCTJ65_rDRErifAAAAAAEMAAD9C8F5knDCTJ65_rDRErifAAAAAFuOAAD9C8F5knDCTJ65_rDRErifAAAAACnR"
+        },
+        {
+          "id": "LgAAAEYAAAAWAAAAAAAAAJQ40Ee3vkxBk1fd6-4CAU4BAP0LwXmScMJMnrn-sNESuJ8AAAAAAQwAAAAAAACUONBHt75MQZNX3evuAgFOBwD9C8F5knDCTJ65_rDRErifAAAAAAEMAAD9C8F5knDCTJ65_rDRErifAAAAAFuNAAD9C8F5knDCTJ65_rDRErifAAAAADsB"
+        },
+        {
+          "id": "LgAAAEYAAAAWAAAAAAAAAJQ40Ee3vkxBk1fd6-4CAU4BAP0LwXmScMJMnrn-sNESuJ8AAAAAAQwAAAAAAACUONBHt75MQZNX3evuAgFOBwD9C8F5knDCTJ65_rDRErifAAAAAAEMAAD9C8F5knDCTJ65_rDRErifAAAAAFuPAAD9C8F5knDCTJ65_rDRErifAAAAADsD"
+        },
+        {
+          "id": "LgAAAEYAAAAWAAAAAAAAAJQ40Ee3vkxBk1fd6-4CAU4BAP0LwXmScMJMnrn-sNESuJ8AAAAAAQwAAAAAAACUONBHt75MQZNX3evuAgFOBwD9C8F5knDCTJ65_rDRErifAAAAAAEMAAD9C8F5knDCTJ65_rDRErifAAAAAFuLAAD9C8F5knDCTJ65_rDRErifAAAAADr9"
+        },
+        {
+          "id": "LgAAAEYAAAAWAAAAAAAAAJQ40Ee3vkxBk1fd6-4CAU4BAP0LwXmScMJMnrn-sNESuJ8AAAAAAQwAAAAAAACUONBHt75MQZNX3evuAgFOBwD9C8F5knDCTJ65_rDRErifAAAAAAEMAAD9C8F5knDCTJ65_rDRErifAAAAAFuQAAD9C8F5knDCTJ65_rDRErifAAAAACnZ"
+        }
+      ],
+      "changedItems": true,
+      "deletedItems": true,
+      "markRestoredAsUnread": false,
+      "excludeDrafts": false,
+      "excludeDeletedItems": false,
+      "excludeInPlaceHoldItems": true,
+      "excludeLitigationHoldItems": true,
+      "officeRegion": "Worldwide",
+      "officeOrganizationName": "RestoreProofLab.onmicrosoft.com",
+      "applicationId": "1fd2609d-1242-43fe-94b5-d58688a90bd6",
+      "applicationCertificate": "[REDACTED]",
+      "applicationCertificatePassword": "[REDACTED]",
+      "impersonationAccountName": "restoretest@RestoreProofLab.onmicrosoft.com"
+    }
+  },
+  "response": {
+    "status": 200,
+    "content_type": "application/json; charset=utf-8",
+    "headers": {
+      "Date": "Mon, 28 Sep 2026 21:30:20 GMT",
+      "Cache-Control": "no-store",
+      "Pragma": "no-cache",
+      "Transfer-Encoding": "chunked",
+      "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+      "X-Content-Type-Options": "nosniff",
+      "X-XSS-Protection": "1; mode=block",
+      "X-Frame-Options": "SAMEORIGIN",
+      "Content-Type": "application/json; charset=utf-8"
+    },
+    "body": {
+      "sessionId": "a9fb8fe0-caf9-49b3-9374-0ee3bea58b0f"
+    }
+  }
+}

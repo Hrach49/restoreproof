@@ -1,12 +1,13 @@
 # Audit scrubbed evidence before a commit: no secret value and nothing secret-shaped may be in it.
-#   pwsh -File audit-evidence.ps1 [-Path ..\veeam-lab\w1.4-*.json]
+#   pwsh -File audit-evidence.ps1 [-Path ..\veeam-lab\w2.4-*.json]
+# Without -Path it audits every w1.4-*.json and w2.4-*.json in ..\veeam-lab.
 # Checks every file against:
 #   - the literal value of rp-veeam's password (read from Credential Manager) and of every token the
 #     scripts registered in $env:RP_LAB_SECRET_DIR (DPAPI copies; see VeeamLab.ps1);
 #   - JWT-shaped strings, bearer values, PFX/DER Base64 (MII...), PEM blocks;
 #   - secret-named JSON keys or form fields whose value is not "[REDACTED]".
 # Exits 1 and names the file and the rule on any hit; prints only the rule, never the matched value.
-param([string[]]$Path = @("$PSScriptRoot\..\veeam-lab\w1.4-*.json"))
+param([string[]]$Path = @("$PSScriptRoot\..\veeam-lab\w1.4-*.json", "$PSScriptRoot\..\veeam-lab\w2.4-*.json"))
 . "$PSScriptRoot\VeeamLab.ps1"
 
 $literals = [System.Collections.Generic.List[string]]::new()

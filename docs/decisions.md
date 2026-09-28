@@ -82,8 +82,10 @@ secret `RP_GRAPH_CLIENT_SECRET` and its list of secret-key markers.
      `insufficient_claims` is an `AuthError` at once.
    - Tokens: `token_type` Bearer, a non-empty `access_token`, integer `expires_in` above 0
      (a day at most counts); renewed 60 s before expiry, or at half a lifetime of 120 s or
-     less; single-flight under one mutex with a generation counter, and callers waiting
-     behind a failed renewal share its failure.
+     less; single-flight under a renewal lock with a generation counter, and callers waiting
+     behind a failed renewal share its failure. The token itself sits under a second, brief
+     lock: a call whose token is still good never waits for a renewal in flight, and a call
+     that does wait for one has that time counted toward its 300 s (review of W2.1).
 6. **Where the token goes.** Only to a URL that starts with exactly
    `https://graph.microsoft.com/v1.0/` (a text compare, plus no whitespace, control
    character (the UTF-8 ones of `control_chars.hpp` included), backslash, `#`, dot segment,

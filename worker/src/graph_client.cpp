@@ -614,9 +614,12 @@ void GraphClient::store_token_locked(const HttpResponse& response)
     std::string token = access->get<std::string>();
     // Counted from now, on the local clock.
     const auto renew_at = options_.now() + lifetime - margin;
-    access_token_.swap(token);
-    renew_at_ = renew_at;
-    ++generation_;
+    {
+        const std::lock_guard lock(mutex_);
+        access_token_.swap(token);
+        renew_at_ = renew_at;
+        ++generation_;
+    }
     // A token now works: an earlier failure is no answer for anyone.
     last_renewal_failure_ = nullptr;
     log_debug("Graph: signed in to Entra as app " + client_id_ + "; the token expires in " +
@@ -692,9 +695,29 @@ void GraphClient::rethrow_failure_since_locked(std::uint64_t failures_seen) cons
     }
 }
 
+bool GraphClient::token_due()
+{
+    const std::lock_guard lock(mutex_);
+    return access_token_.empty() || options_.now() >= renew_at_;
+}
+
+GraphClient::Token GraphClient::token_now()
+{
+    const std::lock_guard lock(mutex_);
+    return {access_token_, generation_, renewal_failures_.load()};
+}
+
+std::unique_lock<std::mutex> GraphClient::lock_renewal(milliseconds& waited)
+{
+    const auto start = options_.now();
+    std::unique_lock lock(renew_mutex_);
+    waited += std::chrono::ceil<milliseconds>(options_.now() - start);
+    return lock;
+}
+
 bool GraphClient::renew_if_due_locked(std::uint64_t failures_seen, milliseconds& waited)
 {
-    if (!access_token_.empty() && options_.now() < renew_at_) {
+    if (!token_due()) {
         return false;
     }
     // Only a caller that has to renew shares a failure: one that finds a
@@ -707,9 +730,13 @@ bool GraphClient::renew_if_due_locked(std::uint64_t failures_seen, milliseconds&
 GraphClient::Token GraphClient::current_token(milliseconds& waited)
 {
     const std::uint64_t failures_seen = renewal_failures_.load();
-    const std::lock_guard lock(mutex_);
+    // A good token is used as it is, even while another call renews.
+    if (!token_due()) {
+        return token_now();
+    }
+    const std::unique_lock renewing = lock_renewal(waited);
     renew_if_due_locked(failures_seen, waited);
-    return {access_token_, generation_, renewal_failures_.load()};
+    return token_now();
 }
 
 HttpRequest GraphClient::api_request(const std::string& url, const std::string& token) const
@@ -790,8 +817,8 @@ HttpResponse GraphClient::get(std::string_view path_or_url, const Grant& grant)
                                     status, reply.code, reply.inner_code, reply.request_id);
                 }
                 {
-                    const std::lock_guard lock(mutex_);
-                    if (generation_ == token.generation) {
+                    const std::unique_lock renewing = lock_renewal(waited);
+                    if (token_now().generation == token.generation) {
                         // Graph no longer takes the token: a fresh one, once
                         // (its failure is thrown as it is).
                         log_debug(head + "; getting a fresh token");
@@ -805,7 +832,7 @@ HttpResponse GraphClient::get(std::string_view path_or_url, const Grant& grant)
                         log_debug(head + " for a replaced token; resending with the current one");
                         renewed = renew_if_due_locked(token.failures_seen, waited) || renewed;
                     }
-                    token = {access_token_, generation_, renewal_failures_.load()};
+                    token = token_now();
                 }
                 ++unauthorized;
                 continue;

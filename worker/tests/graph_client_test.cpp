@@ -1467,6 +1467,110 @@ TEST_CASE("a token renewal inside a GET waits within the same 300 s", "[graph][c
     CHECK(lab.waits() == std::vector<std::chrono::milliseconds>{100s, 100s, 100s});
 }
 
+// Review of W2.1: a renewal held the one lock across Entra's sends and retry
+// waits, so every call blocked behind it, even one whose token was still good,
+// and the time it blocked counted against no budget.
+TEST_CASE("a call with a good token doesn't wait behind another call's token renewal",
+          "[graph][client][get]")
+{
+    const std::string other_url = std::string{rp::graph::kGraphBaseUrl} + "/sites/root";
+    Lab lab;
+    std::atomic<bool> release = false;
+    lab.set_on_token([&release](int n, const HttpRequest&) {
+        if (n == 2) {
+            // Held until the test lets go, 5 s at most, so a regression fails
+            // rather than hangs.
+            const auto until = std::chrono::steady_clock::now() + 5s;
+            while (!release && std::chrono::steady_clock::now() < until) {
+                std::this_thread::sleep_for(1ms);
+            }
+        }
+        return token_response("token-" + std::to_string(n));
+    });
+    // /sites/root answers 401 once: its caller renews while token-1 is good.
+    std::atomic<int> site_calls = 0;
+    lab.http.on(HttpMethod::get, other_url, [&site_calls](const HttpRequest&) {
+        return ++site_calls == 1 ? load_fixture("graph", "api-invalid-token-401")
+                                 : load_fixture("graph", "messages-200");
+    });
+    auto client = lab.make_client();
+    REQUIRE(client->get(kMessagesPath, rp::graph::kMailReadGrant).status == 200);
+
+    std::jthread renewer([&client] {
+        try {
+            client->get("/sites/root", rp::graph::kSitesReadGrant);
+        } catch (...) {
+            // Checked through the requests after the join.
+        }
+    });
+    while (lab.token_requests < 2) {
+        std::this_thread::yield();
+    }
+    const auto start = std::chrono::steady_clock::now();
+    const int status = client->get(kMessagesPath, rp::graph::kMailReadGrant).status;
+    const auto elapsed = std::chrono::steady_clock::now() - start;
+    release = true;
+    renewer.join();
+
+    CHECK(status == 200);
+    CHECK(elapsed < 3s);
+    CHECK(lab.bearers() == std::vector<std::string>{"Bearer token-1", "Bearer token-1",
+                                                    "Bearer token-1", "Bearer token-2"});
+}
+
+TEST_CASE("time spent waiting for another call's token renewal counts toward a call's 300 s",
+          "[graph][client][get]")
+{
+    const std::string other_url = std::string{rp::graph::kGraphBaseUrl} + "/sites/root";
+    HttpResponse graph_busy = load_fixture("graph", "messages-503-unavailable");
+    graph_busy.headers["Retry-After"] = "20";
+    Lab lab;
+    lab.http.on(HttpMethod::get, kMessagesUrl, {graph_busy});
+    lab.http.on(HttpMethod::get, other_url, {load_fixture("graph", "messages-200")});
+    std::atomic<bool> waiter_started = false;
+    lab.set_on_token([&lab, &waiter_started](int n, const HttpRequest&) {
+        if (n == 2) {
+            // The other call has started and is waiting for this renewal,
+            // which takes 290 s by the client's clock.
+            const auto until = std::chrono::steady_clock::now() + 5s;
+            while (!waiter_started && std::chrono::steady_clock::now() < until) {
+                std::this_thread::yield();
+            }
+            std::this_thread::sleep_for(200ms);
+            lab.advance(290s);
+        }
+        return token_response("token-" + std::to_string(n));
+    });
+    auto client = lab.make_client();
+    REQUIRE(client->get("/sites/root", rp::graph::kSitesReadGrant).status == 200);
+    lab.advance(3600s); // token-1 is due
+
+    std::jthread renewer([&client] {
+        try {
+            client->get("/sites/root", rp::graph::kSitesReadGrant);
+        } catch (...) {
+            // Checked through the token count after the join.
+        }
+    });
+    while (lab.token_requests < 2) {
+        std::this_thread::yield();
+    }
+    Caught caught;
+    {
+        std::jthread waiter([&] {
+            waiter_started = true;
+            caught = catch_graph([&] { client->get(kMessagesPath, rp::graph::kMailReadGrant); });
+        });
+    }
+    renewer.join();
+
+    // 290 s waited for the renewal, and Graph asks for 20 more: over 300 s.
+    CHECK(caught.kind == "TransientError");
+    CHECK_THAT(caught.what, ContainsSubstring("300 s"));
+    CHECK(lab.waits().empty());
+    CHECK(lab.token_requests == 2);
+}
+
 TEST_CASE("the token is checked again before every attempt", "[graph][client][get]")
 {
     // A long wait can outlast the token: the retry goes out with a new one.

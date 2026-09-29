@@ -40,6 +40,7 @@ add_library(rpcore STATIC
     src/sha256.cpp
     src/target_guard.cpp
     src/target_guard_graph.cpp
+    src/target_guard_veeam.cpp
     src/text_table.cpp
     src/text_v1.cpp
     src/utf16.cpp
@@ -99,6 +100,7 @@ add_executable(rptests
     tests/sha256_test.cpp
     tests/smoke.cpp
     tests/target_guard_test.cpp
+    tests/target_guard_veeam_test.cpp
     tests/text_table_test.cpp
     tests/text_util_test.cpp
     tests/text_v1_test.cpp

@@ -1,8 +1,10 @@
 #include <rp/veeam_client.hpp>
 
+#include <rp/cert_export.hpp>
 #include <rp/redact.hpp>
 #include <rp/retry_policy.hpp>
 
+#include "json_fields.hpp"
 #include "text_util.hpp"
 #include "uuid.hpp"
 
@@ -39,6 +41,8 @@ constexpr int kMaxUnauthorizedResends = 3;
 // added in front while the list is read repeats the last one on the next page,
 // but a server that ignores offset repeats a page for ever.
 constexpr int kMaxStalePages = 3;
+// What an API request with a JSON body says it carries.
+constexpr std::string_view kJsonContentType = "application/json; charset=utf-8";
 
 bool is_blank(std::string_view text) noexcept
 {
@@ -231,6 +235,30 @@ std::string optional_string(const json& item, const char* key)
     return it->get<std::string>();
 }
 
+// An organisation's exchangeOnlineSettings or sharePointOnlineSettings app:
+// set only with both strings there and not empty.
+std::optional<OrganizationApp> optional_app(const json& item, const char* key)
+{
+    const auto it = item.find(key);
+    if (it == item.end() || it->is_null()) {
+        return std::nullopt;
+    }
+    if (!it->is_object()) {
+        throw ShapeError(std::string{"\""} + key + "\" isn't an object");
+    }
+    OrganizationApp app;
+    try {
+        app.application_id = optional_string(*it, "applicationId");
+        app.certificate_thumbprint = optional_string(*it, "applicationCertificateThumbprint");
+    } catch (const ShapeError& e) {
+        throw ShapeError(std::string{key} + ": " + e.what());
+    }
+    if (app.application_id.empty() || app.certificate_thumbprint.empty()) {
+        return std::nullopt;
+    }
+    return app;
+}
+
 bool optional_bool(const json& item, const char* key)
 {
     const auto it = item.find(key);
@@ -306,6 +334,26 @@ std::optional<TimeKey> parse_backup_time(std::string_view text)
         }
     }
     return TimeKey{*year, *month, *day, *hour, *minute, *second, ticks};
+}
+
+// Whether `path` is one of the API's own ("/v8/..."): the client puts
+// base_url_ in front, so anything else would leave it.
+void check_api_path(const std::string& path)
+{
+    if (!path.starts_with("/v8/")) {
+        throw std::invalid_argument("a Veeam API path must start with /v8/");
+    }
+}
+
+// The body of a 2xx as JSON, or a VeeamError naming the call.
+template <typename Json>
+Json parse_json_body(const HttpResponse& response, const std::string& what)
+{
+    Json doc = Json::parse(response.body, nullptr, false);
+    if (doc.is_discarded()) {
+        throw VeeamError(what + ": unexpected response: not JSON", response.status);
+    }
+    return doc;
 }
 
 std::function<double()> default_jitter()
@@ -669,23 +717,36 @@ void VeeamClient::logout() noexcept
     }
 }
 
-HttpResponse VeeamClient::send_get(const std::string& path_and_query, const std::string& token,
-                                   const std::string& what, int& attempts)
+HttpResponse VeeamClient::send_call(HttpMethod method, const std::string& path_and_query,
+                                    const std::string& json_body, bool idempotent,
+                                    const std::string& token, const std::string& what,
+                                    int& attempts)
 {
     HttpRequest request;
-    request.method = HttpMethod::get;
+    request.method = method;
     request.url = base_url_ + path_and_query;
     request.headers["Authorization"] = "Bearer " + token;
     request.headers["Accept"] = "application/json";
-    return send_with_retries(std::move(request), what, true, kMaxHttpAttempts, attempts);
+    if (!json_body.empty()) {
+        request.body = json_body;
+        request.content_type = std::string{kJsonContentType};
+    }
+    return send_with_retries(std::move(request), what, idempotent, kMaxHttpAttempts, attempts);
 }
 
 HttpResponse VeeamClient::get(const std::string& path_and_query)
 {
-    const std::string what = "Veeam GET " + path_and_query;
+    return call(HttpMethod::get, path_and_query, {}, true);
+}
+
+HttpResponse VeeamClient::call(HttpMethod method, const std::string& path_and_query,
+                               const std::string& json_body, bool idempotent)
+{
+    const std::string what = "Veeam " + std::string{to_string(method)} + " " + path_and_query;
     Token token = current_token();
     int attempts = 0;
-    HttpResponse response = send_get(path_and_query, token.access, what, attempts);
+    HttpResponse response =
+        send_call(method, path_and_query, json_body, idempotent, token.access, what, attempts);
 
     // An empty 401 is a token Veeam no longer accepts: expired, revoked by a
     // refresh or logout, or killed by a REST service restart (veeam-notes
@@ -719,7 +780,8 @@ HttpResponse VeeamClient::get(const std::string& path_and_query)
             }
             token = {access_token_, generation_, renewal_failures_.load()};
         }
-        response = send_get(path_and_query, token.access, what, attempts);
+        response =
+            send_call(method, path_and_query, json_body, idempotent, token.access, what, attempts);
     }
 
     if (response.status >= 200 && response.status <= 299) {
@@ -806,6 +868,8 @@ std::vector<Organization> VeeamClient::list_organizations()
             org.msid = optional_string(item, "msid");
             org.region = optional_string(item, "region");
             org.office_name = optional_string(item, "officeName");
+            org.exchange_app = optional_app(item, "exchangeOnlineSettings");
+            org.sharepoint_app = optional_app(item, "sharePointOnlineSettings");
             out.push_back(std::move(org));
         }
     } catch (const ShapeError& e) {
@@ -866,6 +930,142 @@ std::vector<RestorePoint> VeeamClient::list_restore_points(const std::string& or
         out.push_back(std::move(point));
     }
     return out;
+}
+
+json VeeamClient::get_json(const std::string& path)
+{
+    check_api_path(path);
+    return parse_json_body<json>(get(path), "Veeam GET " + path);
+}
+
+nlohmann::ordered_json VeeamClient::get_ordered_json(const std::string& path)
+{
+    check_api_path(path);
+    return parse_json_body<nlohmann::ordered_json>(get(path), "Veeam GET " + path);
+}
+
+std::vector<json> VeeamClient::get_all(const std::string& path)
+{
+    check_api_path(path);
+    return get_all_pages(path);
+}
+
+std::string VeeamClient::open_explore_session(const std::string& organization_id,
+                                              const std::string& backup_time,
+                                              std::string_view type)
+{
+    if (!is_uuid(organization_id)) {
+        throw std::invalid_argument("organisation ID must be a UUID");
+    }
+    if (!parse_backup_time(backup_time)) {
+        // Veeam answers 500 to any other form, and one earlier than the
+        // point (truncated) opens the point before it (veeam-notes §4.2).
+        throw std::invalid_argument(
+            "an explore session's backup time must be a UTC time such as "
+            "2026-09-25T19:37:15.2145203Z");
+    }
+    if (type != "Vex" && type != "Vesp" && type != "Veod") {
+        throw std::invalid_argument("an explore session's type must be Vex, Vesp or Veod");
+    }
+    const std::string path = "/v8/Organizations/" + organization_id + "/explore";
+    // Both strings were checked above: nothing in them needs escaping.
+    const std::string body = R"({"dateTime":")" + backup_time + R"(","type":")" +
+                             std::string{type} +
+                             R"(","showDeleted":false,"showAllVersions":false})";
+    const HttpResponse response = call(HttpMethod::post, path, body, false);
+    const std::string what = "Veeam POST " + path;
+    const json doc = parse_json_body<json>(response, what);
+    const std::string* id = doc.is_object() ? string_at(doc, "id") : nullptr;
+    if (id == nullptr || !is_uuid(*id)) {
+        throw VeeamError(what + ": unexpected response: no session \"id\"", response.status);
+    }
+    log_debug(what + ": explore session " + *id + " opened");
+    return *id;
+}
+
+VeeamClient::RestorePostOutcome VeeamClient::post_restore_once(const std::string& path,
+                                                               const std::string& body,
+                                                               std::chrono::milliseconds timeout)
+{
+    check_api_path(path);
+    if (timeout <= milliseconds::zero()) {
+        throw std::invalid_argument("a restore POST's timeout must be above 0 ms");
+    }
+    const std::string what = "Veeam POST " + path;
+    // Taken before the send: a failure here has sent nothing, and is thrown.
+    const Token token = current_token();
+
+    HttpRequest request;
+    request.method = HttpMethod::post;
+    request.url = base_url_ + path;
+    request.headers["Authorization"] = "Bearer " + token.access;
+    request.headers["Accept"] = "application/json";
+    request.body = body;
+    request.content_type = std::string{kJsonContentType};
+    request.timeout = timeout;
+    // One send and no more, whatever comes back: the restore must not run
+    // twice (docs/decisions.md 2026-09-28 W2.4, 2026-09-30 W2.5).
+    request.retry_on_status = false;
+    request.max_attempts = 1;
+
+    RestorePostOutcome out;
+    HttpResponse response;
+    try {
+        response = http_.send(request);
+    } catch (const HttpError& e) {
+        out.kind = RestorePostOutcome::Kind::no_answer;
+        out.status = e.status();
+        out.message = redact(one_line(what + ": no answer (" + e.what() + ")"));
+    } catch (const std::exception&) {
+        // Not ours, so its message may not be safe to show; and the request
+        // may have gone out.
+        out.kind = RestorePostOutcome::Kind::no_answer;
+        out.message = redact(one_line(what + ": no answer (the send failed)"));
+    }
+    // The request held the certificate: gone before anything else happens.
+    secure_wipe(request.body);
+    if (!out.message.empty()) {
+        log_debug(out.message);
+        return out;
+    }
+
+    out.status = response.status;
+    const ErrorBody error = parse_error_body(response.body);
+    out.error_code = error.error_code;
+    if (response.status >= 200 && response.status <= 299) {
+        const json doc = json::parse(response.body, nullptr, false);
+        const std::string* id =
+            !doc.is_discarded() && doc.is_object() ? string_at(doc, "sessionId") : nullptr;
+        if (id != nullptr && is_uuid(*id)) {
+            out.kind = RestorePostOutcome::Kind::accepted;
+            out.session_id = *id;
+            out.message = what + ": HTTP " + std::to_string(response.status) +
+                          ", restore session " + *id;
+        } else {
+            out.kind = RestorePostOutcome::Kind::no_answer;
+            out.message = what + ": HTTP " + std::to_string(response.status) +
+                          " without a restore session ID";
+        }
+    } else if (response.status >= 400 && response.status <= 499) {
+        out.kind = RestorePostOutcome::Kind::refused;
+        out.message = what + ": " + describe(response.status, error);
+    } else {
+        out.kind = RestorePostOutcome::Kind::no_answer;
+        out.message = what + ": " + describe(response.status, error);
+    }
+    out.message = redact(one_line(out.message));
+    log_debug(out.message);
+    return out;
+}
+
+void VeeamClient::stop_session(const std::string& session_id)
+{
+    if (!is_uuid(session_id)) {
+        throw std::invalid_argument("a restore session ID must be a UUID");
+    }
+    const std::string path = "/v8/RestoreSessions/" + session_id + "/Stop";
+    call(HttpMethod::post, path, {}, false);
+    log_debug("Veeam POST " + path + ": session stopped");
 }
 
 } // namespace rp

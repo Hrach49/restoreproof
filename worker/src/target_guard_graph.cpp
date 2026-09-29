@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <optional>
 
 namespace rp::graph {
 
@@ -83,7 +84,8 @@ ResolvedLibrary check_restore_library(GraphClient& graph, const connector::Resto
                                "or site URL in sharePointIds; the Worker can't tell the library "
                                "apart" + outcome);
     }
-    return {*name, targets.library_id(), *list_id, *site, *web, *site_url};
+    ResolvedLibrary library{*name, targets.library_id(), *list_id, *site, *web, *site_url};
+    return library;
 }
 
 ResolvedOneDriveFolder check_restore_onedrive_folder(GraphClient& graph,
@@ -92,18 +94,22 @@ ResolvedOneDriveFolder check_restore_onedrive_folder(GraphClient& graph,
 {
     const std::string& drive_id = targets.onedrive_drive_id();
     json folder;
+    std::optional<NotFoundError> missing;
     try {
         folder = graph.get_json("/drives/" + drive_id + "/items/" + targets.onedrive_folder_id() +
                                     "?$select=id,name,folder,parentReference",
                                 kOneDriveReadGrant);
     } catch (const NotFoundError& e) {
         // SharePoint answers 404, not 403, for an item the app may not read.
-        throw NotFoundError(std::string{e.what()} +
-                                "; if the folder test_onedrive_folder_id names does exist, the "
-                                "Worker app may lack the grant \"" +
-                                std::string{kOneDriveReadGrant.description} +
-                                "\" (SharePoint answers 404 for an item the app may not read)",
-                            e.status(), e.code(), e.inner_code(), e.request_id());
+        missing.emplace(std::string{e.what()} +
+                            "; if the folder test_onedrive_folder_id names does exist, the "
+                            "Worker app may lack the grant \"" +
+                            std::string{kOneDriveReadGrant.description} +
+                            "\" (SharePoint answers 404 for an item the app may not read)",
+                        e.status(), e.code(), e.inner_code(), e.request_id());
+    }
+    if (missing) {
+        throw *missing;
     }
     const std::string outcome = "; " + std::string{wording.outcome};
     const std::string* name = string_at(folder, "name");
@@ -151,7 +157,8 @@ ResolvedOneDriveFolder check_restore_onedrive_folder(GraphClient& graph,
                                "names has no parentReference.siteId; the Worker can't tell the "
                                "OneDrive apart" + outcome);
     }
-    return {*name, drive_id, targets.onedrive_folder_id(), *site};
+    ResolvedOneDriveFolder resolved{*name, drive_id, targets.onedrive_folder_id(), *site};
+    return resolved;
 }
 
 } // namespace rp::graph

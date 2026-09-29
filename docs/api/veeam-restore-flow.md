@@ -92,6 +92,7 @@ The four runs, back to back, all against the restore point above:
 | sp x1 | `rp-canary-06.pdf` | RestoreTest library | `9aa65291-…d76e` | `f7e9e6a8-62f3-4abd-a62c-84554981a6da` | Success | 1 item processed (1 success) | 464 ms | 46 s |
 | od x1 | `rp-canary-16.pdf` | alice, `/RestoreTest` | `21ebe03d-…2e89` | `15c3f986-9569-4efb-955f-ea54ad46edb4` | Success | 1 item processed (1 success) | 294 ms | 34 s |
 | mail x5 | `RP-CANARY-0002`…`0006` | alice, Inbox | `e64a4f87-…bc02` | `a9fb8fe0-caf9-49b3-9374-0ee3bea58b0f` | Success | 5 items processed (5 successes) | 228 ms | 81 s |
+| mail r1 (2026-09-29, committed script, point `2026-09-28T22:00:53.2665624Z`) | `RP-CANARY-0011` | bob, Inbox | `0642691c-…88b0` | `b115035e-e66b-4908-9a2a-09acd31115aa` | Success | 1 item processed (1 success) | 159 ms | 22 s |
 
 Evidence per run: `w2.4-<run>-sweep-before`, `-org`, `-explore`, the browse files (§4), `-restore`,
 `-sessions-after-post`, `-session-working`, `-session`, `-statistics`, `-events`. For example
@@ -110,8 +111,14 @@ happens on a timeout (§9), how file results are matched and what a malformed an
 replayed offline against all four recordings, with the HTTP layer answering from the evidence
 files (the same four verdicts, exit 0, and the failure paths of §8, §9 and §12), and run live
 with `-WhatIf` on 2026-09-29 against the 2026-09-28T22:00:53Z point (guard passed, explore
-session stopped, 204). It has not made a real restore yet. The console lines this document
-quotes from the runs (the self-test count, the log sizes) are the earlier revision's.
+session stopped, 204). Then it made one real restore, **mail r1** in the table above
+(2026-09-29, 14:45–14:46 UTC, `w2.4-mail-r1-*.json`, 13 files; `audit-evidence.ps1`: 0 hits
+over all 65 `w2.4-*` files). It printed "guard self-test: 12 mutations refused by the guard",
+"duplicate check: 1 new session(s) of ours; exactly this one: True" and "VERDICT: Veeam says
+restored", exit 0. `rpworker graph list --hash` then found `RP-CANARY-0011` in `restoretest`'s
+Inbox with the manifest's `text-v1` `body_sha256` (`dfef80f3…7989`), and nothing in the other
+two targets. The other console lines this document quotes from the runs are the earlier
+revision's.
 
 **Graph read-back** (`rpworker graph list --hash`, a config outside the repo with the
 `lab/tenant.md` values, after `. .\lab\entra\set-worker-env.ps1`):
@@ -636,9 +643,12 @@ restore_2026_09_28_23_28_38_f7e9e6a862f34abda62c84554981a6da_ff96d07229e24cb4a15
   Those readings don't show a late flush: each file was last written before its session's
   `endTime` (sp x1: last written 21:29:14Z, `endTime` 21:29:15.95Z), and the mail x1 file was
   complete before that run's events call (§1). A size read from a directory listing can lag for
-  a file another process still holds open. Replayed offline, the committed revision finds all
-  four at 18–22 KB. So no flush delay is established; the Worker reads the file only after the
-  session is `Stopped` and treats 0 bytes as "not yet".
+  a file another process still holds open. The committed revision's real run (mail r1, §1)
+  shows it: the script printed **0 bytes**, yet the file, looked at a minute later, held
+  18,586 bytes last written at 14:46:26.128Z, 47 ms before the session's `endTime`
+  (14:46:26.175Z), and before the script listed it. So the file is complete when the session
+  stops, and the listed size is what lags. The Worker opens and reads the file after `Stopped`
+  and never trusts a size from a directory listing.
 - They are referenced, not committed. W1.0 found the AADSTS codes behind "Cannot connect to
   Microsoft 365" only there (feasibility §5.7).
 
@@ -904,21 +914,19 @@ Missing, to make by hand or record later: a `Warning` session and a partial rest
   may still be running alone, and the explore session it came from too (§9);
   `08-sweep-sessions.ps1` stops nothing while one may be running. W2.5 needs to know whether Stop
   cancels a restore and what it reports.
-- **A real restore with the committed script.** Replayed offline and run live with `-WhatIf`
-  (§1), not yet for a restore. The next run with `-SaveEvidence` (another `-Tag`) closes it.
 - **A localised Inbox.** The source folder is found by `name=Inbox`, and the body's `folder` is
   `Inbox`. In a tenant in another language the Inbox may have another name. The folder object
   has `"category": "Inbox"` ([`w2.4-mail-x1-folder-inbox`](veeam-lab/w2.4-mail-x1-folder-inbox.json)),
   a better key for the source. What `"folder": "Inbox"` does in a localised target mailbox is
   unknown.
-- **Veeam's log** (§10.3): each file was complete before its session's `endTime`; the earlier
-  revision's 0-byte readings don't show a late flush. Its contents weren't read in W2.4. If the
-  Worker attaches it to the evidence bundle, it reads it after `Stopped`, treats 0 bytes as "not
-  yet", and scrubs it.
+- **Veeam's log** (§10.3): each file was complete before its session's `endTime`; the 0-byte
+  readings came from the directory listing's size, not from a late flush. Its contents weren't
+  read in W2.4. If the Worker attaches it to the evidence bundle, it opens and reads it after
+  `Stopped`, and scrubs it.
 - **Clock agreement** for the duplicate check (§8) when the Worker and Veeam run on different
   machines.
 - **Two restore calls from one explore session** (for mails from two mailboxes): not tried.
-- **Cleanup.** The owner removed the 8 restored items by hand (§1). W3.4 needs write
+- **Cleanup.** The owner removed the 8 restored items by hand (§1), and the one from mail r1. W3.4 needs write
   permissions the Worker app doesn't have (`docs/security/graph-permissions.md`).
 - **Canary missing from the restore point** (§4, §15): zero matches for a canary the manifest
   dates before `backupTime` is proposed as `fail`, not `error`. W3.3 settles it.

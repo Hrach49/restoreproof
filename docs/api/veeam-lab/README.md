@@ -72,8 +72,10 @@ JWT, bearer, PFX and PEM patterns: no hits. The W1.4 run left no explore session
 ## W2.4 restores
 
 W2.4 files are `w2.4-<type>-<tag>-<what>.json`, one set per run of `10-restore.ps1`. `<type>` is
-`mail`, `sp` or `od`; `<tag>` is `x1` (one item) or `x5` (five items in one restore call). Four
-runs, all from the restore point of 2026-09-27T22:00:48Z, all `Success`:
+`mail`, `sp` or `od`; `<tag>` is `x1` (one item), `x5` (five items in one restore call) or `r1`
+(one item, the committed script after the W2.4 review). The first four runs, from the restore
+point of 2026-09-27T22:00:48Z, were made with an earlier revision of the script; `mail-r1`, from
+the point of 2026-09-28T22:00:53Z, with the committed one. All `Success`:
 
 | Run | Items | Source → target | Restore session |
 |---|---|---|---|
@@ -81,6 +83,7 @@ runs, all from the restore point of 2026-09-27T22:00:48Z, all `Success`:
 | `sp-x1` | rp-canary-06.pdf | RestoreTest library → RestoreTarget library | [`w2.4-sp-x1-session`](w2.4-sp-x1-session.json) |
 | `od-x1` | rp-canary-16.pdf | alice's `/RestoreTest` → alice's `/RestoreTarget` | [`w2.4-od-x1-session`](w2.4-od-x1-session.json) |
 | `mail-x5` | RP-CANARY-0002 to 0006 | alice's Inbox → restoretest's Inbox | [`w2.4-mail-x5-session`](w2.4-mail-x5-session.json) |
+| `mail-r1` | RP-CANARY-0011 | bob's Inbox → restoretest's Inbox | [`w2.4-mail-r1-session`](w2.4-mail-r1-session.json) |
 
 `<what>`, in the order the script makes the calls:
 

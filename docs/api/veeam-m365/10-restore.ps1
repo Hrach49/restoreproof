@@ -8,15 +8,21 @@
 # The restore credential is Veeam's own organisation app (docs/decisions.md, W2.4): its certificate is
 # exported from Cert:\LocalMachine\My (elevated shell) to a temporary PFX in %TEMP% with a random
 # one-time password, read into memory and deleted at once. Nothing of it reaches disk in the repo.
-# -WhatIf browses, builds the body and runs the guard, but exports nothing, posts nothing, saves nothing.
-# Exit codes: 0 Veeam says restored; 1 restore finished, not a success; 2 refused before any POST
-# (guard, preflight, resolve, or a 4xx on the POST: nothing started); 3 no verdict (timeout, POST
-# without an answer, statistics or events unreadable); 64 usage (also: not elevated without -WhatIf).
+# -WhatIf sends no restore POST and exports nothing: it still signs in, opens (and stops) an explore
+# session, browses, builds the body and runs the guard. It saves no evidence and exits 0 if the guard passed.
+# Exit codes: 0 Veeam says restored (or -WhatIf: guard passed); 1 restore finished, not a success;
+# 2 refused before any POST (guard, preflight, resolve, or a 4xx on the POST: nothing started);
+# 3 no verdict (timeout, POST without an answer, a duplicate check that doesn't confirm exactly the
+# returned session, statistics or events unreadable or of an unexpected shape); 64 usage (also: not
+# elevated without -WhatIf). PowerShell's own parameter-binding errors exit 1 before the script runs.
+# A restore that may still be running when the script gives up (exit 3 after the POST) is left alone,
+# and so is the explore session it came from: see the message it prints.
+[CmdletBinding(PositionalBinding = $false)]
 param(
     [Parameter(Mandatory)][ValidateSet('mail', 'sp', 'od')][string]$Type,
     [Parameter(Mandatory)][string[]]$Item,
     [string]$Tag,
-    [int]$TimeoutMinutes = 20,
+    [ValidateRange(1, 45)][int]$TimeoutMinutes = 20,   # below the access token's 3600 s: nothing refreshes it
     [switch]$WhatIf,
     [switch]$SaveEvidence
 )
@@ -32,7 +38,7 @@ $TargetOneDriveUrl    = 'https://restoreprooflab-my.sharepoint.com/personal/alic
 $TargetOneDriveFolder = 'RestoreTarget'   # alice's /RestoreTarget, item 01ZK75LGDGB6QOO3MGNFGYOY6C6VBDG5OH
 # The canary SOURCES (never a target) and names a target must never take.
 $CanaryListId   = '7eb0f08a-f57b-418c-8ca6-f2ab81297666'   # RestoreTest library
-$TargetListId   = 'ffec069d-65e4-4c3a-9da2-ac086cf9dafa'   # RestoreTarget library: never a source (in the backup since the 2026-09-27 point)
+$TargetListId   = 'ffec069d-65e4-4c3a-9da2-ac086cf9dafa'   # RestoreTarget library: never a source (it is in the backup too)
 $CanaryOdFolder = 'RestoreTest'                            # alice's /RestoreTest
 $Forbidden      = @('RestoreTest', 'Documents', 'Shared Documents')
 # Veeam's organisation app (docs/environment.md), cross-checked against GET /v8/Organizations.
@@ -67,6 +73,18 @@ function Step($r, [string]$What, [string]$Note) {
     if ($What) { Save-Evidence "w2.4-$Type-$Tag-$What" $r $Note | Out-Host }
     if ($r.Status -ge 400) { Refuse "$What answered $($r.Status)" }
 }
+# A field the verdict reads must be there and of the expected JSON kind (String, Number or Array);
+# anything else is no verdict (exit 3), never "NOT restored". An Array is returned unrolled: wrap in @().
+function Field($Node, [string]$Key, [string]$Kind, [string]$What) {
+    $v = $null   # not "$v = if ...": an if statement's output would unroll a JsonArray
+    if ($Node -is [System.Text.Json.Nodes.JsonObject]) { $v = $Node[$Key] }
+    if ($Kind -eq 'Array') {
+        if ($v -isnot [System.Text.Json.Nodes.JsonArray]) { throw "$What has no '$Key' array: no verdict" }
+        return $v
+    }
+    if ($v -isnot [System.Text.Json.Nodes.JsonValue] -or $v.GetValueKind() -ne $Kind) { throw "$What has no '$Key' ($Kind): no verdict" }
+    if ($Kind -eq 'Number') { $v.GetValue[long]() } else { $v.GetValue[string]() }
+}
 function Format-Utc([datetime]$t) { $t.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ', [Globalization.CultureInfo]::InvariantCulture) }
 
 # ---- The hand-written target guard (W2.7 replaces it). Parses the exact text that will be sent. ----
@@ -75,6 +93,15 @@ function Format-Utc([datetime]$t) { $t.ToUniversalTime().ToString('yyyy-MM-ddTHH
 $GuidRx = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
 function Same([string]$a, [string]$b) { [string]::Equals($a, $b, [StringComparison]::Ordinal) }
 function In([string]$s, $list) { [Array]::IndexOf([string[]]@($list), $s) -ge 0 }   # Array.IndexOf: ordinal
+function InIgnoreCase([string]$s, $list) { @($list | Where-Object { [string]::Equals($_, $s, [StringComparison]::OrdinalIgnoreCase) }).Count -gt 0 }
+# JsonNode.Parse accepts a duplicate key and throws only when that object is first read, so every
+# object of the body is enumerated here, once, and a duplicate becomes a guard refusal.
+function Assert-NoDuplicateKeys($n) {
+    if ($n -is [System.Text.Json.Nodes.JsonObject]) {
+        try { $kids = @($n | ForEach-Object Value) } catch { throw 'GUARD: the body has a duplicate key' }
+        foreach ($k in $kids) { Assert-NoDuplicateKeys $k }
+    } elseif ($n -is [System.Text.Json.Nodes.JsonArray]) { foreach ($k in $n) { Assert-NoDuplicateKeys $k } }
+}
 function Join-Sorted($list) { [string[]]$a = @($list); [Array]::Sort($a, [StringComparer]::Ordinal); $a -join "`n" }
 # A value the guard checks must be a JSON string of printable ASCII (a [string] cast would join an array).
 function Str($n, [string]$What) {
@@ -88,7 +115,8 @@ function Bool($n, [string]$What) {
     $n.GetValue[bool]()
 }
 function Assert-RestoreTarget([string]$Path, [string]$Text, $Ctx) {
-    $b = [System.Text.Json.Nodes.JsonNode]::Parse($Text).AsObject()   # a duplicate key throws here
+    $b = [System.Text.Json.Nodes.JsonNode]::Parse($Text).AsObject()
+    Assert-NoDuplicateKeys $b
     if ($Ctx.ExploreId -cnotmatch "^$GuidRx\z" -or -not (In $Ctx.ExploreId $script:Opened)) { throw 'GUARD: the explore session is not one this run opened' }
     if ($Ctx.ContainerId -cnotmatch "^(?:$GuidRx)+\z") { throw 'GUARD: the container id is not GUIDs' }
     $u = [uri]"https://veeam.invalid$Path"
@@ -167,30 +195,36 @@ function Test-GuardRefuses([string]$Path, [string]$Text, $Ctx) {
         'extra key'                   = { param($b) $b['restoreToOriginalLocation'] = $true }
         'other app'                   = { param($b) $b['applicationId'] = '00000000-0000-0000-0000-000000000000' }
         'look-alike target'           = { param($b) switch ($Type) { 'mail' { $b['folder'] = "In$([char]0xAD)box" } 'sp' { $b['list'] = "Restore$([char]0xAD)Target" } 'od' { $b['folder'] = "Restore$([char]0xAD)Target" } } }
-        'array value'                 = { param($b) $k = @{ mail = 'mailbox'; sp = 'siteURL'; od = 'folder' }[$Type]; $v = $b[$k].GetValue[string](); $a = [System.Text.Json.Nodes.JsonArray]::new(); $a.Add($v); $b[$k] = $a }
+        # JsonValue.Create: a bare $a.Add($v) binds to the generic Add<T>, whose node can't be serialised
+        'array value'                 = { param($b) $k = @{ mail = 'mailbox'; sp = 'siteURL'; od = 'folder' }[$Type]; $v = $b[$k].GetValue[string](); $a = [System.Text.Json.Nodes.JsonArray]::new(); $a.Add([System.Text.Json.Nodes.JsonValue]::Create([string]$v)); $b[$k] = $a }
         'duplicated item'             = { param($b) $a = $b[$(if ($Type -eq 'mail') { 'items' } else { 'documents' })].AsArray(); $c = $a[0].DeepClone(); if ($a.Count -gt 1) { $a.RemoveAt($a.Count - 1) }; $a.Add($c) }
         'extra item'                  = { param($b) $a = $b[$(if ($Type -eq 'mail') { 'items' } else { 'documents' })].AsArray(); $a.Add($a[0].DeepClone()) }
     }
-    foreach ($k in $cases.Keys) {
-        $b = [System.Text.Json.Nodes.JsonNode]::Parse($Text).AsObject()
-        & $cases[$k] $b
-        $refused = $false
-        try { Assert-RestoreTarget $Path $b.ToJsonString($JsonOpts) $Ctx } catch { $refused = $true }
-        if (-not $refused) { Refuse "guard self-test: '$k' was accepted" }
+    # A mutation counts as refused only if the guard itself refused it ("GUARD: ..."). Any other
+    # exception means the case never reached the guard, and the self-test fails.
+    function Test-One([string]$Name, [string]$P, [scriptblock]$MakeText) {
+        try { $t = & $MakeText } catch { Refuse "guard self-test: '$Name' could not be built: $($_.Exception.Message)" }
+        try { Assert-RestoreTarget $P $t $Ctx } catch {
+            if ($_.Exception.Message.StartsWith('GUARD:', [StringComparison]::Ordinal)) { return }
+            Refuse "guard self-test: '$Name' failed outside the guard: $($_.Exception.Message)"
+        }
+        Refuse "guard self-test: '$Name' was accepted"
     }
-    $refused = $false
-    try { Assert-RestoreTarget ($Path -replace '/(restoreTo|copyTo)$', '/restore') $Text $Ctx } catch { $refused = $true }
-    if (-not $refused) { Refuse 'guard self-test: an original-location path was accepted' }
-    $refused = $false
-    try { Assert-RestoreTarget "$Path/../../restore" $Text $Ctx } catch { $refused = $true }
-    if (-not $refused) { Refuse 'guard self-test: a dot-segment path was accepted' }
-    "  guard self-test: $($cases.Count + 2) mutations refused" | Out-Host
+    foreach ($k in $cases.Keys) {
+        Test-One $k $Path { $b = [System.Text.Json.Nodes.JsonNode]::Parse($Text).AsObject(); & $cases[$k] $b; $b.ToJsonString($JsonOpts) }
+    }
+    $first = @(Get-Keys ([System.Text.Json.Nodes.JsonNode]::Parse($Text)))[0]
+    Test-One 'duplicate key' $Path { '{"' + $first + '":"x",' + $Text.Substring(1) }
+    Test-One 'original-location path' ($Path -replace '/(restoreTo|copyTo)$', '/restore') { $Text }
+    Test-One 'dot-segment path' "$Path/../../restore" { $Text }
+    "  guard self-test: $($cases.Count + 3) mutations refused by the guard" | Out-Host
 }
 
 # ---- Resolving canaries in the explore session (docs/api/veeam-notes.md §5): list, match exactly, re-read. ----
 function Resolve-Mail($base, $entries) {
     $src = @($entries | ForEach-Object { $_.location.mailbox } | Sort-Object -Unique)
     if ($src.Count -ne 1) { Refuse 'mail items of one call must share one source mailbox' }
+    if ([string]::Equals([string]$src[0], $TargetMailbox, [StringComparison]::OrdinalIgnoreCase)) { Refuse 'the source mailbox is the target mailbox' }
     $r = Invoke-Veeam -Path "$base/mailboxes?limit=1000"
     Step $r 'mailboxes' 'GET .../organization/mailboxes?limit=1000'
     $mb = @(Get-Results $r | Where-Object { [string]::Equals([string]$_['email'], $src[0], [StringComparison]::OrdinalIgnoreCase) })
@@ -329,7 +363,9 @@ function Get-RestoreCredential {
     [pscustomobject]@{ Pfx = $b64; Password = $pw }
 }
 
-# Our restore sessions created since $Since, other than the explore sessions this run opened.
+# Our restore sessions created since $Since, other than every session this run already knows (the
+# explore sessions it opened and any restore session a POST returned or the check adopted).
+$script:Restores = [System.Collections.Generic.List[string]]::new()
 function Find-NewRestoreSessions([datetime]$Since, [string]$What) {
     $from = Format-Utc $Since.AddSeconds(-60)
     $r = Invoke-Veeam -Path "/v8/RestoreSessions?startTimeFrom=$from&orderBy=CreationTime&orderAsc=false&limit=50"
@@ -338,8 +374,8 @@ function Find-NewRestoreSessions([datetime]$Since, [string]$What) {
     if ($r.Status -ne 200) { throw "the duplicate check answered $($r.Status): no verdict" }
     $me = @($script:VeeamUser, ($script:VeeamUser -split '\\')[-1])
     @(Get-Results $r | Where-Object {
-        (In ([string]$_['initiatedBy']) $me) -and (Same ([string]$_['type']) $SessionType) -and
-        -not (In ([string]$_['id']) $script:Opened) -and ([string]$_['id']) -cmatch "^$GuidRx\z" -and
+        (InIgnoreCase ([string]$_['initiatedBy']) $me) -and (Same ([string]$_['type']) $SessionType) -and
+        -not (In ([string]$_['id']) $script:Opened) -and -not (In ([string]$_['id']) $script:Restores) -and ([string]$_['id']) -cmatch "^$GuidRx\z" -and
         [DateTimeOffset]::Parse([string]$_['creationTime'], [Globalization.CultureInfo]::InvariantCulture) -ge [DateTimeOffset]$Since.AddSeconds(-5)
     } | ForEach-Object { [string]$_['id'] })
 }
@@ -351,6 +387,9 @@ if ($Item.Count -lt 1 -or $Item.Count -gt 5 -or @($Item | Sort-Object -Unique).C
     "usage: 1 to 5 distinct manifest ids"; exit 64
 }
 if (-not $Tag) { $Tag = "x$($Item.Count)" }
+if ($SaveEvidence -and @(Get-ChildItem $script:EvidenceDir -Filter "w2.4-$Type-$Tag-*.json").Count) {
+    "usage: evidence of an earlier $Type $Tag run exists (w2.4-$Type-$Tag-*.json): delete it or pass another -Tag"; exit 64
+}
 $kind = @{ mail = 'mail'; sp = 'sharepoint_file'; od = 'onedrive_file' }[$Type]
 try { $all = @((Get-Content -Raw $Manifest | ConvertFrom-Json).entries) } catch { "usage: cannot read lab/seed-manifest.json: $($_.Exception.Message)"; exit 64 }
 $entries = @(foreach ($id in $Item) {
@@ -363,14 +402,14 @@ if (-not $WhatIf -and -not ([Security.Principal.WindowsPrincipal][Security.Princ
         [Security.Principal.WindowsBuiltInRole]::Administrator)) { "run elevated: the certificate export needs it (or use -WhatIf)"; exit 64 }
 "W2.4 restore: $Type, $($Item -join ', ')$(if ($WhatIf) { ' (WhatIf: nothing is exported or posted)' })"
 
-$script:Posted = $false
+$script:Posted = $false; $script:RestoreOpen = $false
 function Invoke-Restore {
     # 1. Preflight: no session of ours still Working (the duplicate check relies on it), and the org's app.
     $r = Invoke-Veeam -Path '/v8/RestoreSessions?limit=200'
     Step $r 'sweep-before' 'GET /v8/RestoreSessions?limit=200 (preflight: none of ours Working)'
     $me = @($script:VeeamUser, ($script:VeeamUser -split '\\')[-1])
-    $busy = @(Get-Results $r | Where-Object { (Same ([string]$_['state']) 'Working') -and (In ([string]$_['initiatedBy']) $me) })
-    if ($busy.Count) { Refuse "$($busy.Count) rp-veeam session(s) still Working: run 08-sweep-sessions.ps1 first" }
+    $busy = @(Get-Results $r | Where-Object { (Same ([string]$_['state']) 'Working') -and (InIgnoreCase ([string]$_['initiatedBy']) $me) })
+    if ($busy.Count) { Refuse "$($busy.Count) rp-veeam session(s) still Working: if a restore is among them, wait until it stops; then run 08-sweep-sessions.ps1" }
     $r = Invoke-Veeam -Path '/v8/Organizations'
     Step $r 'org' 'GET /v8/Organizations (the org app used as restore credential)'
     $org = @(Get-Results $r | Where-Object { (Same ([string]$_['id']) $LabOrgId) -and (Same ([string]$_['name']) $LabOrgName) })
@@ -391,6 +430,8 @@ function Invoke-Restore {
 
     # 3. Resolve the canaries, build the body, guard it (and prove the guard refuses mutations).
     $res = switch ($Type) { 'mail' { Resolve-Mail $base $entries } 'sp' { Resolve-Sp $base $entries } 'od' { Resolve-Od $base $entries } }
+    # Results name the items (events by name only), so no two items of one call may share a name.
+    if (@($res.Names | Sort-Object -Unique -CaseSensitive).Count -ne @($res.Names).Count) { Refuse 'two items of one call share a name' }
     $ctx = [pscustomobject]@{ ExploreId = $exploreId; ContainerId = $res.ContainerId; ItemIds = $res.ItemIds; Names = $res.Names }
     $body = New-RestoreBody $res
     $draft = $body.ToJsonString($JsonOpts)
@@ -408,57 +449,69 @@ function Invoke-Restore {
     $body['applicationCertificatePassword'] = $cred.Password
     $bodyText = $body.ToJsonString($JsonOpts)
     Assert-RestoreTarget $res.Path $bodyText $ctx
-    $posted = [DateTime]::UtcNow; $script:Posted = $true
-    $restoreId = $null; $cause = $null
-    try {
-        $p = Invoke-Veeam -Method POST -Path $res.Path -Json $bodyText -TimeoutSeconds 60
+    $posted = [DateTime]::UtcNow; $script:Posted = $true; $script:RestoreOpen = $true
+    $restoreId = $null; $cause = $null; $p = $null
+    try { $p = Invoke-Veeam -Method POST -Path $res.Path -Json $bodyText -TimeoutSeconds 60 }
+    catch { $cause = "no answer ($($_.Exception.GetType().Name))" }
+    finally { $body['applicationCertificate'] = $null; $body['applicationCertificatePassword'] = $null; $bodyText = $null; $cred = $null }
+    if ($p) {
         # Not Show-Call: it scrubs only literal secrets, and an echoed error body could hold them JSON-escaped.
         $msg = if ($p.Status -ge 400) { try { ': ' + (Protect-Text ([string](Get-Node $p)['message'])) } catch { ': (body not shown)' } }
         "POST $(Format-PathTemplate $p.Path) -> $($p.Status) ($($p.Ms) ms)$msg"
+        # Any 2xx may carry the session; a 4xx started nothing; anything else (1xx, 3xx, 5xx): look for it.
+        if ($p.Status -ge 200 -and $p.Status -lt 300) {
+            $m = [regex]::Match($p.Body, '"sessionId"\s*:\s*"([0-9a-f-]{36})"')
+            if ($m.Success) { $restoreId = $m.Groups[1].Value; "restore session: $restoreId" }
+            else { $cause = "a $($p.Status) without a sessionId" }
+        } elseif ($p.Status -lt 400 -or $p.Status -ge 500) { $cause = "a $($p.Status)" }
+        # The evidence is written only once the session ID is known: a failed write loses nothing.
         $what = if ($p.Status -eq 200) { 'restore' } else { "restore-$($p.Status)" }
         $verb = if ($Type -eq 'od') { 'copyTo' } else { 'restoreTo' }
         $target = @{ mail = "$TargetMailbox $TargetMailFolder"; sp = "$TargetSiteUrl list $TargetLibrary"; od = "alice's OneDrive /$TargetOneDriveFolder" }[$Type]
-        Save-Evidence "w2.4-$Type-$Tag-$what" $p "POST .../$verb ($($res.ItemIds.Count) item(s) -> $target), Veeam org app certificate"
-        if ($p.Status -eq 200) {
-            $m = [regex]::Match($p.Body, '"sessionId"\s*:\s*"([0-9a-f-]{36})"')
-            if ($m.Success) { $restoreId = $m.Groups[1].Value } else { $cause = 'a 200 without a sessionId' }
-        } elseif ($p.Status -ge 500) { $cause = "a $($p.Status)" }
-        else { $script:Exit = 2; Refuse "the restore POST answered $($p.Status): nothing started" }
-    } catch {
-        if ($_.Exception.Message.StartsWith('REFUSED:')) { throw }
-        $cause = "no answer ($($_.Exception.GetType().Name))"
+        try { Save-Evidence "w2.4-$Type-$Tag-$what" $p "POST .../$verb ($($res.ItemIds.Count) item(s) -> $target), Veeam org app certificate" }
+        catch { "  the POST's evidence was not saved: $($_.Exception.Message)" }
+        if ($p.Status -ge 400 -and $p.Status -lt 500) { $script:RestoreOpen = $false; $script:Exit = 2; Refuse "the restore POST answered $($p.Status): nothing started" }
     }
-    finally { $body['applicationCertificate'] = $null; $body['applicationCertificatePassword'] = $null; $bodyText = $null; $cred = $null }
 
     # 5. The duplicate check, run on every POST so its query is proven: exactly the one new session.
-    $found = @(Find-NewRestoreSessions $posted 'sessions-after-post')
+    $checked = $false
     if ($restoreId) {
-        "restore session: $restoreId (new sessions of ours since the POST: $($found.Count); this one listed: $($restoreId -in $found))"
+        # The returned session is known, so a failing check must not lose it: it is polled either way,
+        # but only a check that lists exactly this one new session lets the run end with exit 0.
+        try {
+            $found = @(Find-NewRestoreSessions $posted 'sessions-after-post')
+            $checked = $found.Count -eq 1 -and (Same $found[0] $restoreId)
+            "  duplicate check: $($found.Count) new session(s) of ours; exactly this one: $checked$(if (-not $checked) { ' (no verdict at the end)' })"
+        } catch { "  duplicate check failed: $($_.Exception.Message); polling the returned session anyway (no verdict at the end)" }
+        $script:Restores.Add($restoreId)
     } else {
         "the POST gave no session id ($cause): looking for it instead of resending"
+        $found = @(Find-NewRestoreSessions $posted 'sessions-after-post')
         for ($i = 0; $found.Count -eq 0 -and $i -lt 3; $i++) { Start-Sleep -Seconds 10; $found = @(Find-NewRestoreSessions $posted 'sessions-after-timeout') }
         if ($found.Count -ne 1) { "  $($found.Count) candidate session(s): no verdict, not resent"; $script:Exit = 3; return }
-        $restoreId = $found[0]; "  adopted restore session $restoreId after $cause"
+        $restoreId = $found[0]; $script:Restores.Add($restoreId); $checked = $true
+        "  adopted restore session $restoreId after $cause"
     }
 
     # 6. Poll every 5 s until Stopped (docs/api/veeam-notes.md §7), then statistics and events.
     $deadline = [DateTime]::UtcNow.AddMinutes($TimeoutMinutes); $fails = 0; $sawWorking = $false; $s = $null
+    $leave = "wait until GET /v8/RestoreSessions/$restoreId reads Stopped, then run 08-sweep-sessions.ps1"
     while ($true) {
         try { $r = Invoke-Veeam -Path "/v8/RestoreSessions/$restoreId" }
         catch { $r = [pscustomobject]@{ Status = 0; Method = 'GET'; Path = "/v8/RestoreSessions/$restoreId"; Ms = 0; Body = $_.Exception.Message } }
         if ($r.Status -eq 200) {
             $fails = 0; $s = Get-Node $r
-            if ([string]$s['state'] -ceq 'Stopped') { break }
+            if ([string]$s['state'] -ceq 'Stopped') { $script:RestoreOpen = $false; break }
             if (-not $sawWorking) { $sawWorking = $true; Save-Evidence "w2.4-$Type-$Tag-session-working" $r 'GET /v8/RestoreSessions/{restoreSessionId} (the restore session, Working)' }
-        } elseif ($r.Status -eq 404) { Show-Call $r; $script:Exit = 3; return }
-        elseif (++$fails -ge 6) { Show-Call $r; $script:Exit = 3; return }
-        if ([DateTime]::UtcNow -gt $deadline) { "timeout: restore session $restoreId still $(if ($s) { $s['state'] }) after $TimeoutMinutes min; left to 08-sweep-sessions.ps1"; $script:Exit = 3; return }
+        } elseif ($r.Status -eq 404) { Show-Call $r; "restore session $restoreId not found: no verdict; $leave"; $script:Exit = 3; return }
+        elseif (++$fails -ge 6) { Show-Call $r; "6 polls in a row failed: no verdict; $leave"; $script:Exit = 3; return }
+        if ([DateTime]::UtcNow -gt $deadline) { "timeout: restore session $restoreId still $(if ($s) { $s['state'] }) after $TimeoutMinutes min: no verdict; $leave"; $script:Exit = 3; return }
         Start-Sleep -Seconds 5
     }
     Save-Evidence "w2.4-$Type-$Tag-session" $r 'GET /v8/RestoreSessions/{restoreSessionId} (the restore session, Stopped)'
-    $took = [DateTimeOffset]::Parse([string]$s['endTime'], [Globalization.CultureInfo]::InvariantCulture) - [DateTimeOffset]::Parse([string]$s['creationTime'], [Globalization.CultureInfo]::InvariantCulture)
-    "restore session $restoreId : state=$($s['state']) result=$($s['result']) details=`"$($s['details'])`" ($([int]$took.TotalSeconds) s)"
-    $st = $null
+    $result = Field $s 'result' 'String' 'the session'
+    $took = [DateTimeOffset]::Parse((Field $s 'endTime' 'String' 'the session'), [Globalization.CultureInfo]::InvariantCulture) - [DateTimeOffset]::Parse((Field $s 'creationTime' 'String' 'the session'), [Globalization.CultureInfo]::InvariantCulture)
+    "restore session $restoreId : state=$($s['state']) result=$result details=`"$($s['details'])`" ($([int]$took.TotalSeconds) s)"
     for ($i = 0; $i -lt 6; $i++) {
         $r = Invoke-Veeam -Path "/v8/RestoreSessions/$restoreId/Statistics"
         if ($r.Status -ne 409) { break }
@@ -469,30 +522,39 @@ function Invoke-Restore {
     Save-Evidence "w2.4-$Type-$Tag-statistics" $r 'GET /v8/RestoreSessions/{restoreSessionId}/Statistics'
     if ($r.Status -ne 200) { "statistics answered $($r.Status): no verdict"; $script:Exit = 3; return }
     $st = Get-Node $r
-    if ($true) {
-        "  statistics: total=$($st['totalItemsCount']) restored=$($st['restoredItemsCount']) failed=$($st['failedItemsCount']) skipped=$($st['skippedItemsCount'])"
-        foreach ($i in @($st['items'].AsArray())) { "    $($i['name']): $($i['status'])" }
-    }
+    $restored = Field $st 'restoredItemsCount' 'Number' 'the statistics'
+    $statItems = @(Field $st 'items' 'Array' 'the statistics')
+    "  statistics: total=$($st['totalItemsCount']) restored=$restored failed=$($st['failedItemsCount']) skipped=$($st['skippedItemsCount'])"
+    foreach ($i in $statItems) { "    $($i['name']) [$($i['id'])]: $($i['status'])" }
     $r = Invoke-Veeam -Path "/v8/RestoreSessions/$restoreId/Events?limit=100"
     Show-Call $r
     Save-Evidence "w2.4-$Type-$Tag-events" $r 'GET /v8/RestoreSessions/{restoreSessionId}/Events?limit=100'
     if ($r.Status -ne 200) { "events answered $($r.Status): no verdict"; $script:Exit = 3; return }
-    $events = @(Get-Results $r)
+    $events = @(Field (Get-Node $r) 'results' 'Array' 'the events')
     foreach ($e in $events) {
         if ([string]$e['type'] -ceq 'Restore' -or [string]$e['status'] -cne 'Success') { "  event $($e['type'])/$($e['status']): $($e['message'])" }
     }
 
-    # 7. The verdict "Veeam says restored" (docs/api/veeam-restore-flow.md): Graph decides after that.
+    # 7. The verdict "Veeam says restored" (docs/api/veeam-restore-flow.md §12): Graph decides after that.
     $n = $res.ItemIds.Count
-    $ok = [string]$s['result'] -ceq 'Success' -and $st -and [int]([string]$st['restoredItemsCount']) -eq $n
-    $okNames = @($events | Where-Object { [string]$_['type'] -ceq 'Restore' -and [string]$_['status'] -ceq 'Success' } | ForEach-Object { [string]$_['itemName'] })
+    $ok = (Same $result 'Success') -and $restored -eq $n
+    # Events carry only the item's name; names are unique within the call (checked before the POST).
+    $okNames = @($events | Where-Object { (Same ([string]$_['type']) 'Restore') -and (Same ([string]$_['status']) 'Success') } | ForEach-Object { [string]$_['itemName'] })
     foreach ($name in $res.Names) { if (-not (In $name $okNames)) { $ok = $false; "  no successful Restore event for $name" } }
-    if ($Type -ne 'mail' -and $st) {
-        $okStat = @($st['items'].AsArray() | Where-Object { [string]$_['status'] -ceq 'Success' } | ForEach-Object { [string]$_['name'] })
-        foreach ($name in $res.Names) { if (-not (In $name $okStat)) { $ok = $false; "  statistics show no success for $name" } }
+    if ($Type -ne 'mail') {
+        # File statistics carry an id: the OneDrive document ID, or the list item GUID that ends the SharePoint document ID.
+        $okIds = @($statItems | Where-Object { (Same ([string]$_['status']) 'Success') -and ([string]$_['id']) -cmatch "^$GuidRx\z" } | ForEach-Object { [string]$_['id'] })
+        foreach ($id in $res.ItemIds) {
+            if (@($okIds | Where-Object { $id.EndsWith($_, [StringComparison]::Ordinal) }).Count -ne 1) { $ok = $false; "  statistics show no success for $id" }
+        }
     }
-    "VERDICT: $(if ($ok) { 'Veeam says restored' } else { 'NOT restored' }) ($n item(s), restore session $restoreId)"
-    if (-not $ok) { $script:Exit = 1 }
+    if ($ok -and -not $checked) {
+        "VERDICT: none. Veeam reports the restore, but the duplicate check didn't confirm it as the only new session ($n item(s), restore session $restoreId)"
+        $script:Exit = 3
+    } else {
+        "VERDICT: $(if ($ok) { 'Veeam says restored' } else { 'NOT restored' }) ($n item(s), restore session $restoreId)"
+        if (-not $ok) { $script:Exit = 1 }
+    }
     $log = Get-ChildItem $RestoreLogDir -Filter "restore_*_$($restoreId -replace '-', '')_*.log" -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($log) { "  Veeam's log: $($log.FullName) ($($log.Length) bytes; not committed)" }
 }
@@ -503,7 +565,9 @@ catch {
     "$($_.Exception.Message)"
     if (-not $script:Exit) { $script:Exit = if ($script:Posted) { 3 } else { 2 } }
 } finally {
-    Stop-OpenedSessions
+    # A restore that may still be running keeps its explore session: stopping it under the restore is untested.
+    if ($script:RestoreOpen) { "explore session(s) left open under a restore that may still be running: $($script:Opened -join ', ')" }
+    else { Stop-OpenedSessions }
     Disconnect-VeeamAdmin
 }
 exit $script:Exit

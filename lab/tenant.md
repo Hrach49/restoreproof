@@ -92,10 +92,12 @@ names at run time through Graph with its read-only app (the site's `webUrl`, the
 drive `name`, the OneDrive's `webUrl`, the folder's `name`; the mailbox is `test_mailbox`, the
 folder `Inbox`) and finds Veeam's OneDrive object by that URL. W2.5 and W2.7 implement it (the
 OneDrive drive read and its `webUrl` form are checked in W2.5; `docs/api/veeam-restore-flow.md`
-§16). No new config keys, so `docs/worker-config.md` is unchanged.
+§16). No new config keys. `docs/worker-config.md` says the restore credential has no variable
+yet: it stays open until a spike before W4.5.
 
-Both `RestoreTarget`s are in the backup from the 2026-09-27T22:00:48Z restore point on (W2.4;
-W1.4 saw the two earlier points without them). Anything left in a target at backup time is in
+Both `RestoreTarget`s were made on 2026-09-25, so every later restore point holds them: the
+first is 2026-09-27T11:23:13Z, and W2.4 saw them in the 2026-09-27T22:00:48Z point (W1.4 saw
+the two earlier points without them). Anything left in a target at backup time is in
 the next point, so the sampler (W2.6) never takes items from a target.
 
 ## RestoreProof Worker app (L1.5)

@@ -672,7 +672,9 @@ How the query behaves:
    RestoreTest library, alice's `/RestoreTest` folder. Never search organisation-wide.
 2. Treat a hit only as a candidate. Keep results whose `subject`/`name` is **exactly** equal
    (ordinal) to the manifest's, and expect exactly one; zero or several → `error` (the sample
-   can't be located). This is not `fail`, because the backup wasn't tested.
+   can't be located). This is not `fail`, because the backup wasn't tested. *(W2.4 proposes one
+   exception for W3.3: zero matches for a canary the manifest dates before the point's
+   `backupTime` is `fail`, the backup lacking it; `docs/api/veeam-restore-flow.md` §15.)*
 3. Then re-read the item with `GET …/{id}` and send that object in the restore body.
 
 For the 10+10+10+10 canaries, listing the container once (`limit=1000`) and matching locally

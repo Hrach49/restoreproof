@@ -13,10 +13,10 @@ fixtures). It covers the same ground as the guide's step 7, recorded against the
   `ff96d072-29e2-4cb4-a155-2590f5473176`.
 - **Restore point.** `c2f0f2e7-…02e377858499-919b-4609-9b15-5b7fb33b5004`, `backupTime`
   `2026-09-27T22:00:48.1447833Z`: the nightly job's point, newer than the two W1.4 used.
-- **Recorded.** 2026-09-28, 21:27–21:31 UTC, with
-  [`10-restore.ps1`](veeam-m365/10-restore.ps1). Every exchange is saved, scrubbed, in
-  [`veeam-lab/`](veeam-lab/README.md) as `w2.4-*.json` (52 files; `audit-evidence.ps1` found
-  no secret in them).
+- **Recorded.** 2026-09-28, 21:27–21:31 UTC, with an earlier, uncommitted revision of
+  [`10-restore.ps1`](veeam-m365/10-restore.ps1) (§1, "Which revision"). Every exchange is saved,
+  scrubbed, in [`veeam-lab/`](veeam-lab/README.md) as `w2.4-*.json` (52 files;
+  `audit-evidence.ps1` found no secret in them).
 - **Scope.** Four real restores into the restore targets: one mail, one SharePoint file, one
   OneDrive file, then five mails in one call. Read back through Graph with
   `rpworker graph list --hash`. The login, paging, IDs and browsing calls are in
@@ -44,7 +44,7 @@ GET  /v8/RestoreSessions?startTimeFrom=…&orderBy=CreationTime&orderAsc=false&l
 GET  /v8/RestoreSessions/{sessionId}     every 5 s               until state == Stopped (§9)
 GET  /v8/RestoreSessions/{sessionId}/Statistics                 counts; per-file items (§10)
 GET  /v8/RestoreSessions/{sessionId}/Events?limit=100           one Restore event per item (§10)
-POST /v8/RestoreSessions/{exploreSessionId}/Stop                → 204, in a finally (§11)
+POST /v8/RestoreSessions/{exploreSessionId}/Stop                → 204, in a finally, unless a restore from it may still run (§11)
 POST /v8/token/logout                                           → 204
 ```
 
@@ -68,13 +68,21 @@ pwsh -File 10-restore.ps1 -Type mail|sp|od -Item <manifest id>[,<id>...] [-Tag x
 - The three targets are constants in the script (`lab/tenant.md`, "Restore targets"). A
   hand-written guard checks the exact body before the POST (§6), until W2.7's `TargetGuard`
   replaces it.
-- `-WhatIf` runs the preflight, browses, builds the body and runs the guard and its self-test.
-  It exports no certificate, posts nothing and saves no evidence.
+- `-WhatIf` sends no restore POST, exports no certificate and saves no evidence. It still signs
+  in, runs the preflight, opens an explore session, browses, builds the body, runs the guard
+  and its self-test, stops the explore session, and exits 0 if the guard passed. A real run
+  that loses its POST's answer at the same time could take that explore session for its restore
+  (§8), so run it alone.
+- `-SaveEvidence` refuses (exit 64) while evidence of the same type and `-Tag` exists, so a
+  re-run never mixes its files with an earlier run's.
 - It needs an elevated shell (the certificate export, §7), except with `-WhatIf`.
-- Exit codes: 0 Veeam says restored; 1 the restore finished, not a success; 2 refused before any
-  POST (guard, preflight, resolving an item), or a 4xx on the POST (nothing started); 3 no
-  verdict (timeout, a POST without an answer, statistics or events unreadable); 64 usage (also:
-  not elevated without `-WhatIf`).
+- Exit codes: 0 Veeam says restored (or `-WhatIf`: the guard passed); 1 the restore finished,
+  not a success; 2 refused before any POST (guard, preflight, resolving an item), or a 4xx on the
+  POST (nothing started); 3 no verdict (timeout, a POST without an answer, a duplicate check
+  that doesn't confirm exactly the returned session, statistics or events unreadable or of an
+  unexpected shape); 64 usage (also: not elevated without `-WhatIf`). Arguments bind by name
+  only, and `-TimeoutMinutes` is 1 to 45; PowerShell's own parameter errors exit 1 before the
+  script runs.
 
 The four runs, back to back, all against the restore point above:
 
@@ -90,6 +98,20 @@ Evidence per run: `w2.4-<run>-sweep-before`, `-org`, `-explore`, the browse file
 [`w2.4-mail-x5-restore`](veeam-lab/w2.4-mail-x5-restore.json),
 [`w2.4-mail-x5-session`](veeam-lab/w2.4-mail-x5-session.json),
 [`w2.4-mail-x5-events`](veeam-lab/w2.4-mail-x5-events.json). The console output isn't committed.
+
+**Which revision.** The four runs were made with a revision of the script that was never
+committed; the committed one is the result of the W2.4 review (`docs/decisions.md` 2026-09-29).
+The recordings show it: the mail x1 run's Veeam log was complete (created 21:27:37.98Z, last
+written 21:27:58Z) before that run's events call (21:28:04Z), so the committed log lookup would
+have printed a line where that run printed none. The calls and bodies are the same. What
+changed: the self-test (§6), the POST's status handling and the duplicate check (§8), what
+happens on a timeout (§9), how file results are matched and what a malformed answer means
+(§12), and the positional arguments and time-out range (above). The committed revision was
+replayed offline against all four recordings, with the HTTP layer answering from the evidence
+files (the same four verdicts, exit 0, and the failure paths of §8, §9 and §12), and run live
+with `-WhatIf` on 2026-09-29 against the 2026-09-28T22:00:53Z point (guard passed, explore
+session stopped, 204). It has not made a real restore yet. The console lines this document
+quotes from the runs (the self-test count, the log sizes) are the earlier revision's.
 
 **Graph read-back** (`rpworker graph list --hash`, a config outside the repo with the
 `lab/tenant.md` values, after `. .\lab\entra\set-worker-env.ps1`):
@@ -172,7 +194,7 @@ All paths below start with `/v8/RestoreSessions/{exploreSessionId}/`. Mail is un
 
 | Step | Call | Match | Evidence |
 |---|---|---|---|
-| Source mailbox | `GET organization/mailboxes?limit=1000` | `email` equal to the manifest's `location.mailbox`, ignoring case (the script uses `-ieq`, which is culture-sensitive; W2.5 compares ordinal, ignoring case); exactly one. All items of one call must share it | [`w2.4-mail-x5-mailboxes`](veeam-lab/w2.4-mail-x5-mailboxes.json) |
+| Source mailbox | `GET organization/mailboxes?limit=1000` | `email` equal to the manifest's `location.mailbox`, ordinal ignoring case; exactly one. All items of one call must share it, and it must not be the target mailbox | [`w2.4-mail-x5-mailboxes`](veeam-lab/w2.4-mail-x5-mailboxes.json) |
 | Source folder | `GET organization/mailboxes/{mailboxId}/folders?name=Inbox` | `name` ordinal `Inbox`; exactly one | [`w2.4-mail-x5-folder-inbox`](veeam-lab/w2.4-mail-x5-folder-inbox.json) |
 | Items | `GET organization/mailboxes/{mailboxId}/items?parentId={folderId}&limit=1000` | `subject` ordinal equal to the manifest's; exactly one; `received` to the second equal to the manifest's `received_at` | [`w2.4-mail-x5-items`](veeam-lab/w2.4-mail-x5-items.json) (10 items) |
 | Re-read | `GET organization/mailboxes/{mailboxId}/items/{itemId}` | `subject` unchanged | [`w2.4-mail-x5-item`](veeam-lab/w2.4-mail-x5-item.json) (the first item only) |
@@ -212,8 +234,9 @@ The body's target `onedrive` is `{id, name, url}` taken from the OneDrives listi
 ### 4.4 The restore targets are now in the backup
 
 W1.4 saw neither the RestoreTarget library nor alice's `/RestoreTarget` in the backup
-(veeam-notes §5.2, §5.3). Both were created on 2026-09-25, after W1.4's two points. The
-2026-09-27 point has both: the library `…ffec069d-65e4-4c3a-9da2-ac086cf9dafa` in
+(veeam-notes §5.2, §5.3). Both were created on 2026-09-25, after W1.4's two points, so every
+later point holds them; the first is 2026-09-27T11:23:13Z (listed on 2026-09-29, not explored).
+The 2026-09-27T22:00:48Z point used here has both: the library `…ffec069d-65e4-4c3a-9da2-ac086cf9dafa` in
 [`w2.4-sp-x1-libraries`](veeam-lab/w2.4-sp-x1-libraries.json), and the folder `RestoreTarget`
 (created 2026-09-25T19:57:20Z) in [`w2.4-od-x1-folders-root`](veeam-lab/w2.4-od-x1-folders-root.json).
 The script prints a note and goes on. It never takes a source from them.
@@ -324,8 +347,9 @@ OneDrive has no `restoreTo`; it is `copyTo` (feasibility §1).
 
 ## 6. The target guard
 
-`Assert-RestoreTarget` in the script parses the **exact text** that will be sent (a duplicate
-key fails the parse) and the exact path. It runs twice: on the draft, with placeholder
+`Assert-RestoreTarget` in the script parses the **exact text** that will be sent and the exact
+path. `JsonNode.Parse` accepts a duplicate key and throws only when that object is first read,
+so the guard reads every object of the body once and refuses a duplicate key anywhere in it. It runs twice: on the draft, with placeholder
 credentials, and again on the final text just before the POST. It checks:
 
 - **The path.** The explore session ID is GUID-shaped and one this run opened. The container ID
@@ -341,8 +365,9 @@ credentials, and again on the final text just before the POST. It checks:
 - **SharePoint.** `siteURL` is the RestoreTest site. `list` is `RestoreTarget` and not one of the
   forbidden names (`RestoreTest`, `Documents`, `Shared Documents`). `organizationName` and the
   version options are fixed; `sendSharedLinksNotification` is false. Each document's `id` starts
-  with the site ID plus the **canary** list ID, its `siteId` is the site, its `id` and `name` are
-  in the resolved set, and it isn't a folder.
+  with the site ID plus the **canary** list ID (this script's rule: it restores canaries only;
+  see "For W2.7"), its `siteId` is the site, its `id` and `name` are in the resolved set, and it
+  isn't a folder.
 - **OneDrive.** `onedrive` has exactly `id`, `name`, `url`; `url` is alice's OneDrive and `id`
   the OneDrive in this session. `folder` is `RestoreTarget` and not a forbidden name. Each
   document's `oneDriveId` is that OneDrive; `id` and `name` are resolved; not a folder.
@@ -350,8 +375,18 @@ credentials, and again on the final text just before the POST. It checks:
   none twice.
 
 **The self-test.** Before any credential is exported, the script mutates the real body and path
-11 ways and runs the guard on each. If the guard accepts any, the run stops (exit 2). All four
-runs printed "guard self-test: 11 mutations refused".
+12 ways and runs the guard on each. A mutation counts only if the guard itself refused it (a
+`GUARD:` message). If the guard accepts one, or a case fails anywhere else, the run stops
+(exit 2).
+
+The four recorded runs printed "guard self-test: 11 mutations refused", but with the earlier
+revision (§1) one of the 11 never reached the guard. It built the array case with
+`JsonArray.Add($string)`, which PowerShell binds to the generic `Add<T>`, and serialising that
+node throws ("JsonSerializerOptions instance must specify a TypeInfoResolver"). The case's
+catch-all counted that throw as a refusal. The guard did refuse arrays; the self-test didn't show
+it. The committed revision builds the element with `JsonValue.Create`, adds a duplicate-key case,
+and prints "12 mutations refused by the guard" (offline against the four recorded bodies, and
+live with `-WhatIf`).
 
 | # | Mutation | Mail | SharePoint | OneDrive |
 |---|---|---|---|---|
@@ -364,8 +399,9 @@ runs printed "guard self-test: 11 mutations refused".
 | 7 | Array instead of a string | `mailbox` = `["restoretest@…"]` | `siteURL` = `[…]` | `folder` = `[…]` |
 | 8 | Duplicated item | the first item twice (same count with 2+ items) | same | same |
 | 9 | Extra item | one more copy of the first | same | same |
-| 10 | Original-location path | `…/restore` instead of `restoreTo`/`copyTo` | same | same |
-| 11 | Dot-segment path | `…/restoreTo/../../restore` | same | same |
+| 10 | Duplicate key | the first key once more, with `"x"`, in the text | same | same |
+| 11 | Original-location path | `…/restore` instead of `restoreTo`/`copyTo` | same | same |
+| 12 | Dot-segment path | `…/restoreTo/../../restore` | same | same |
 
 **The comparison pitfall.** PowerShell's `-ceq`, `-cne` and `-in` compare by culture, and
 culture comparison ignores characters such as U+00AD (soft hyphen) and U+200B (zero-width
@@ -375,16 +411,25 @@ the guard had both holes (found in review). The script now compares with
 `[string]::Equals(…, Ordinal)` and `Array.IndexOf`, requires JSON string kinds, and accepts only
 printable ASCII in every checked value.
 
-**For W2.7.** `std::string ==` is already ordinal. Keep the 11 mutations as `TargetGuard`
-tests, the look-alike and array cases included, and check value kinds, not just values. The
-printable-ASCII rule works because the three target names are ASCII by setup. CLAUDE.md asks
-for the guard before any Veeam call. The check of the configured targets (§16) can run before
-any call. The body check needs the browse results, so it runs after browsing (read-only) and
-before the restore POST.
+**For W2.7.** `std::string ==` is already ordinal. Keep the 12 mutations as `TargetGuard`
+tests, the look-alike, array and duplicate-key cases included, check value kinds, not just
+values, and let a test pass only on the guard's own refusal. The printable-ASCII rule works
+because the three target names are ASCII by setup.
 
-In the lab the source and the target share the site (RestoreTest) and the OneDrive (alice's),
-so the script requires `onedrive.id` to equal the source OneDrive. W2.7 should compare the
-target against the configured target, not against the source.
+**When the guard runs.** The rule stays as CLAUDE.md and the 2026-09-22 decision put it:
+`TargetGuard` is checked per item inside `RestoreSample`, before any Veeam call. `restore_sample`
+receives its items and the configured targets in the `RestoreSpec`, so it resolves the targets
+and checks every item's target (§16, check 1) before its first Veeam call. The body check of
+this section is a second layer, not a replacement: it needs the browse results, so it runs after
+browsing (read-only) and immediately before the restore POST, on the exact text (§16, check 2).
+
+**Lab-only rules.** In the lab the source and the target share the site (RestoreTest) and the
+OneDrive (alice's), so the script requires `onedrive.id` to equal the source OneDrive; W2.7
+compares the target against the configured target, not against the source. And the canary
+list-ID prefix on SharePoint document IDs holds because the script restores canaries only.
+W2.6 also samples real data outside the canary locations, so W2.7 checks a document's `siteId`
+and `id` against the sampled item, not against the canary list; a real-data item would
+otherwise be refused as a guard violation on every run.
 
 ## 7. The restore credential
 
@@ -434,8 +479,9 @@ It keeps a listed session only if all of these hold:
 
 - `initiatedBy` is our account (Veeam lists the bare name, `rp-veeam`);
 - `type` is this run's type (`Vex`, `Vesp`, `Veod`);
-- `id` is GUID-shaped and **not** an explore session this run opened (the explore session has the
-  same `type` and is listed too);
+- `id` is GUID-shaped and **not** a session this run already knows: an explore session it
+  opened (same `type`, listed too) or a restore session an earlier POST of the run returned or
+  the check adopted;
 - `creationTime` ≥ POST time − 5 s.
 
 Every run found exactly one, the session the POST returned
@@ -447,11 +493,24 @@ mail x5 run it also listed the previous od run's two `Veod` sessions, restore `1
 explore `21ebe03d-…`, both `Stopped` (dropped by type and by `creationTime`;
 [`w2.4-mail-x5-sessions-after-post`](veeam-lab/w2.4-mail-x5-sessions-after-post.json)).
 
-The POST itself waits at most **60 s** for an answer (`-TimeoutSeconds 60`). No answer by then
-counts as "no session ID" below.
+The script sends one POST per run, but the Worker sends one per source container (§13), so
+several of one type in a run. Excluding only the explore sessions would let a later POST that
+got no answer adopt the session of an earlier one, and judge its items by the wrong session. So
+every known session ID is excluded.
 
-**When the POST gives no session ID** (a transport error, a timeout, a 5xx, or a 200 without
-`sessionId`), the script doesn't resend. It runs the same check, and while it finds none, looks
+**With a session ID from the POST**, the check must list exactly that one new session. If it
+lists another, none, or fails itself (a 5xx, a transport error), the script still polls the
+returned session, so it isn't lost, but ends with no verdict (exit 3). The earlier revision
+(§1) only printed the check's result, and a failing check aborted the run before the returned
+session was polled or even printed.
+
+The POST itself waits at most **60 s** for an answer (`-TimeoutSeconds 60`). No answer by then
+counts as "no session ID" below. Any 2xx with a `sessionId` counts as the 200 does. The POST's
+evidence is written only after the session ID is parsed, and a failed write is reported without
+losing it.
+
+**When the POST gives no session ID** (a transport error, a timeout, a 5xx, any other status
+that is neither 2xx nor 4xx, or a 2xx without `sessionId`), the script doesn't resend. It runs the same check, and while it finds none, looks
 up to 3 more times, 10 s apart. Exactly one candidate: it adopts it and polls it. Several
 candidates: exit 3 at once. Still none after the last look: exit 3. Both are "no verdict, not
 resent". A 4xx means nothing started: exit 2. None of these cases happened in W2.4.
@@ -468,9 +527,16 @@ lab). The preflight (§2.1) makes "a new session of ours" unambiguous.
 - A 200 resets the failure count. **6 consecutive failures** (non-200 answers or transport
   errors) → no verdict (exit 3).
 - A **404** → no verdict at once (the session is gone).
-- **20 minutes** (`-TimeoutMinutes`) with the session still `Working` → no verdict. The script
-  leaves the restore session to `08-sweep-sessions.ps1` and doesn't stop it (what Stop does to a
-  running restore is untested, §18).
+- **20 minutes** (`-TimeoutMinutes`, 1 to 45: the script signs in once and nothing refreshes the
+  3600 s token) with the session still `Working` → no verdict.
+- In all three cases the restore may still be running. The script then leaves the restore
+  session **and the explore session it came from** alone (what Stop does to either while the
+  restore runs is untested, §18), prints the explore session's ID, and says to wait until
+  `GET /v8/RestoreSessions/{sessionId}` reads `Stopped` before running `08-sweep-sessions.ps1`.
+  The earlier revision (§1) stopped the explore session in its `finally`, under the running
+  restore. `08-sweep-sessions.ps1` can't tell a restore session from an explore session in the
+  list (same `type`, same account), so it stops nothing while two of ours of one type are
+  `Working`, unless given `-Force`.
 
 The stopped session ([`w2.4-mail-x5-session`](veeam-lab/w2.4-mail-x5-session.json)), trimmed
 (`organization`, `scopeName` and `_links` left out):
@@ -565,11 +631,14 @@ restore_2026_09_28_23_28_38_f7e9e6a862f34abda62c84554981a6da_ff96d07229e24cb4a15
 - The session and organisation IDs have **no dashes**. Search for the ID with the dashes removed.
 - The timestamp is the server's **local** time (UTC+2 here), and it isn't the session's
   `creationTime`: 6 s to 60 s after it in these runs (the name is to the second).
-- The script lists the file right after the session is `Stopped` and prints its size. It
-  printed **0 bytes** for sp, od and mail x5; the mail x1 run printed no log line. Listed again
-  later on 2026-09-28, all four files have 18–22 KB, and each was last written before its
-  session's `endTime` (for example sp x1: last written 21:29:14Z, `endTime` 21:29:15.95Z).
-  When Veeam flushes the file, and why the script saw 0 bytes, is not established.
+- The script lists the file after reading the statistics and events and prints its size. The
+  earlier revision (§1) printed **0 bytes** for sp, od and mail x5 and no line for mail x1.
+  Those readings don't show a late flush: each file was last written before its session's
+  `endTime` (sp x1: last written 21:29:14Z, `endTime` 21:29:15.95Z), and the mail x1 file was
+  complete before that run's events call (§1). A size read from a directory listing can lag for
+  a file another process still holds open. Replayed offline, the committed revision finds all
+  four at 18–22 KB. So no flush delay is established; the Worker reads the file only after the
+  session is `Stopped` and treats 0 bytes as "not yet".
 - They are referenced, not committed. W1.0 found the AADSTS codes behind "Cannot connect to
   Microsoft 365" only there (feasibility §5.7).
 
@@ -577,7 +646,9 @@ restore_2026_09_28_23_28_38_f7e9e6a862f34abda62c84554981a6da_ff96d07229e24cb4a15
 
 The script's `finally` stops every explore session it opened: it reads the session and, if it is
 still `Working`, sends `POST /v8/RestoreSessions/{exploreSessionId}/Stop` → **204** (all four
-runs), then logs out → 204. The restore session stops by itself.
+runs), then logs out → 204. The restore session stops by itself. The one exception: while a
+restore made from it may still be running (the POST went out and its session wasn't seen
+`Stopped`, §9), the explore session is left open and named.
 
 After the stop, an explore session's `details` counts the restores made from it: the OneDrive
 explore session `21ebe03d-…` reads `Stopped`, "1 item processed (1 success)" in
@@ -626,8 +697,19 @@ These were infrastructure failures (sign-in), so `error`, not `fail`.
 2. `Statistics.restoredItemsCount` equal to the number of items sent;
 3. a `Restore` event with `status == Success` and `itemName` equal to each sent item's name
    (all types);
-4. for SharePoint and OneDrive, a `Statistics.items[]` entry with `status == Success` and that
-   `name`.
+4. for SharePoint and OneDrive, a `Statistics.items[]` entry with `status == Success` whose `id`
+   is the item's: for OneDrive the document ID, for SharePoint the list item GUID that ends the
+   document ID (§10.1). The earlier revision (§1) matched this rule by name.
+
+Events carry only a name, so no two items of one call may share one: the script refuses such a
+call, and W2.5 splits same-named items (two `Document.docx` from different folders of one
+OneDrive) into separate calls. It must anyway: `restoreTo` and `copyTo` drop the source path, so
+both would land on one target path, and neither the events nor the Graph read-back could tell
+them apart.
+
+Every field the verdict reads (`result`, `restoredItemsCount`, `items`, the events' `results`)
+must be there and of the expected JSON kind. Otherwise there is no verdict (exit 3), never
+"NOT restored": a format change is not a failed restore.
 
 Only then does the Graph read-back decide `pass` or `fail` per item. W1.7's contract
 (`RestoreStatus::succeeded` in `rp/connector.hpp`) asks for 1 and 2. Rules 3 and 4 are a proposal
@@ -697,15 +779,31 @@ Infrastructure problems are `error`, never `fail` (CLAUDE.md). When unsure, `err
 | POST 5xx, timeout, transport error: the check (§8) finds exactly one session | continue with it | as the session decides | no |
 | … finds none or several | exception, not resent | `error` | no |
 | `Stopped`, `Success`, `restoredItemsCount` = N, every item's event (and file statistics entry) `Success` | `succeeded` | Graph decides `pass`/`fail` per item | all four runs |
-| `Warning`, or `Success` with `restoredItemsCount` < N, or some items `Failed` beside restored ones | `partial` | restored items → Graph; a failed item is `fail` only when its message is about the item or the backup (item missing, item-level failure), `error` when it is infrastructure (connection, throttling, auth) | no |
-| `Failed` and nothing restored | `failed` | classify by the event messages: item-level → `fail`; infrastructure or auth ("Cannot connect to Microsoft 365", "Failed to open mailbox", "missing the required application permissions", AADSTS in Veeam's log) → `error` | W1.0 user credentials (`error`) |
+| 0 restored in total, and an event message is infrastructure or auth ("Cannot connect to Microsoft 365", "Failed to open mailbox", "missing the required application permissions", AADSTS in Veeam's log) | exception (`AuthError` or `Error`), not a status | `error` | W1.0 user credentials |
+| 0 restored in total otherwise, whatever `result` says (`Failed`; `Warning` or `Success` with 0) | `failed` | `fail` | no |
+| `Warning`, or `Success` with 0 < `restoredItemsCount` < N, or some items `Failed` beside restored ones | `partial` | restored items → Graph; a failed item is `fail` when its message is about the item or the backup, `error` when it is infrastructure (proposal, see below) | no |
 | Still `Working` after 20 min | exception; record the session ID; not resent | `error` | no |
 | Session 404, or 6 polls in a row failing | exception | `error` | no |
 | Statistics or events unreadable | exception | `error` | no |
 
-W1.7's contract already says "a failure to run at all … is an exception, never a status", and
-orders `not_run`, `failed`, `succeeded`, `partial`. This table fits it. The per-item conditions in
-the `succeeded` row are the proposal of §12.
+How this fits W1.7's contract (`rp/connector.hpp`, `docs/decisions.md` 2026-09-27):
+
+- **Kept.** The order `not_run`, `failed`, `succeeded`, `partial`, first fit wins: 0 restored in
+  total is `failed` whatever `result` says, so `Success` or `Warning` with 0 is `failed`, never
+  `partial`. "A failure to run at all … is an exception, never a status", and `failed` → `fail`.
+- **How the infrastructure case fits.** A session that restored nothing because Microsoft 365
+  refused the sign-in (W1.0) is a failure to run, not a failed restore. W2.5 raises it as an
+  exception after reading the events, so it never reaches `failed`, and `failed` → `fail` stays
+  true.
+- **Changed, a proposal.** The contract's "`partial` → fail unless every item verifies" would
+  report an infrastructure failure of some items as `fail`, which CLAUDE.md forbids. The
+  proposal: a failed item whose message is infrastructure makes the run `error`. This needs a
+  per-item outcome in `RestoreResult` (§13). W3.3 settles it and amends the contract's comment.
+- **Changed, a proposal.** veeam-notes §5.4 says zero or several matches for a sampled item is
+  `error`. The zero-match row above keeps that for everything except a canary the manifest dates
+  before `backupTime`. W3.3 settles it.
+
+The per-item conditions in the `succeeded` row are the proposal of §12.
 
 ## 16. Mapping the configured IDs to Veeam's names (owner decision 3; details for W2.5, W2.7)
 
@@ -738,8 +836,35 @@ folder, `docs/security/graph-permissions.md`), and whether that drive's `webUrl`
 personal-site URL. W2.5 checks both. If the drive can't be read, the folder's
 `parentReference.siteId` is the fallback key.
 
-`TargetGuard` checks both sides: the names derived from the configured IDs, and the values in
-Veeam's body, which must equal them. The fixed forbidden names (§6) stay.
+`TargetGuard` makes two checks, and the first doesn't trust configuration. The 2026-09-22
+decision rejected "trusting configuration: a typo in an MSP's config would be a data-loss
+incident", and the 2026-09-24 config entry says "`TargetGuard` must resolve them and check they
+are the `RestoreTest` library or folder" (`RestoreTarget` since 2026-09-25).
+
+1. **The resolved targets are the dedicated restore targets**, before any Veeam call of
+   `restore_sample`. A configured ID proves nothing by itself: the drive ID of a live library
+   passes `parse_config`'s shape rules and resolves to a real name. This tenant's default
+   library is `Dokumenty`, which no English forbidden-name list catches. So the resolved names
+   must be the fixed target names, as `test_mailbox` must be `restoretest@<domain>`.
+   W2.2's `TargetReader` already checks this when it reads the targets (`rp/graph_targets.hpp`,
+   `kRestoreTargetName`, `WrongTargetError`; `docs/decisions.md` 2026-09-28, W2.2 and its
+   review):
+   - the library's drive `name` is exactly `RestoreTarget`, its `webUrl` ends in
+     `RestoreTarget`, its `driveType` is `documentLibrary`, and its `sharePointIds` put it in the
+     configured site;
+   - the OneDrive folder's `name` is exactly `RestoreTarget`, it is a folder directly under the
+     root of the configured drive, and that drive's `driveType` is `business`;
+   - the mail target is `Inbox` of `restoretest@<domain>` (`parse_config`,
+     `RestoreTargets::from_config`).
+   W2.7 runs the same checks, or calls the same code, before a restore, and adds one:
+   neither target is a canary location (the library's list ID isn't the canary library's). A
+   target that fails any of them is a guard violation (`error`). Onboarding a customer creates
+   the two `RestoreTarget`s under that name.
+2. **Veeam's body names exactly those targets** (§6), checked on the exact text immediately
+   before the POST.
+
+The fixed forbidden names (§6) stay as an extra check. They are not what keeps a live library
+out.
 
 ## 17. Fixtures for W2.5 and Q2.1 (`worker/tests/fixtures/veeam/`)
 
@@ -775,17 +900,21 @@ Missing, to make by hand or record later: a `Warning` session and a partial rest
 - **Partial failure.** No `Warning` or mixed result was seen. Its statistics and events shape is
   unknown until one is recorded. §15's `partial` row is a proposal until then.
 - **Stopping mid-restore.** Untested: Ctrl+C during the poll, and stopping the explore session or
-  the restore session while the restore session is `Working`. The script leaves a running restore
-  session alone. W2.5 needs to know whether Stop cancels a restore and what it reports.
+  the restore session while the restore session is `Working`. The script leaves a restore that
+  may still be running alone, and the explore session it came from too (§9);
+  `08-sweep-sessions.ps1` stops nothing while one may be running. W2.5 needs to know whether Stop
+  cancels a restore and what it reports.
+- **A real restore with the committed script.** Replayed offline and run live with `-WhatIf`
+  (§1), not yet for a restore. The next run with `-SaveEvidence` (another `-Tag`) closes it.
 - **A localised Inbox.** The source folder is found by `name=Inbox`, and the body's `folder` is
   `Inbox`. In a tenant in another language the Inbox may have another name. The folder object
   has `"category": "Inbox"` ([`w2.4-mail-x1-folder-inbox`](veeam-lab/w2.4-mail-x1-folder-inbox.json)),
   a better key for the source. What `"folder": "Inbox"` does in a localised target mailbox is
   unknown.
-- **Veeam's log** (§10.3): 0 bytes when listed right after the sp, od and mail x5 sessions
-  stopped; 18–22 KB when listed later, and last written before each session's `endTime`. When it
-  is flushed is not established, and its contents weren't read in W2.4. If the Worker attaches it
-  to the evidence bundle, it must know when the file is complete, and scrub it.
+- **Veeam's log** (§10.3): each file was complete before its session's `endTime`; the earlier
+  revision's 0-byte readings don't show a late flush. Its contents weren't read in W2.4. If the
+  Worker attaches it to the evidence bundle, it reads it after `Stopped`, treats 0 bytes as "not
+  yet", and scrubs it.
 - **Clock agreement** for the duplicate check (§8) when the Worker and Veeam run on different
   machines.
 - **Two restore calls from one explore session** (for mails from two mailboxes): not tried.

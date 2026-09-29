@@ -7,6 +7,104 @@ Format: date, decision, reason, alternatives rejected.
 
 ---
 
+## 2026-09-30 — W2.5: how `restore_sample` restores (proposed; recorded before the build)
+
+Recorded before any of it was built, as #30 asks for the credential export. Proposed: the owner
+confirms it in the W2.5 review, or supersedes it.
+
+**Decision.**
+
+1. **The restore credential is exported in memory through CryptoAPI** (the 2026-09-28 W2.4
+   entry: Veeam's own organisation app; the 2026-09-29 "The Worker runs on the Veeam server"
+   entry). A neutral interface, `rp::CertificateExporter` (`rp/cert_export.hpp`: export by
+   SHA-1 thumbprint, returning a Base64 PFX and its one-time password), keeps `rpcore`'s restore
+   logic testable without a certificate store. The Windows one, `LocalMachineCertExporter`:
+   `CertOpenStore` on `LocalMachine\My` (read-only), `CertFindCertificateInStore` by
+   `CERT_FIND_SHA1_HASH` with the thumbprint Veeam reports in `GET /v8/Organizations`; refuses a
+   certificate that has expired or has no private key (`CryptAcquireCertificatePrivateKey`,
+   silent, no UI); copies it into a memory store and exports it with `PFXExportCertStoreEx`
+   (`EXPORT_PRIVATE_KEYS | REPORT_NOT_ABLE_TO_EXPORT_PRIVATE_KEY | REPORT_NO_PRIVATE_KEY`)
+   under a password of 32 random bytes from `BCryptGenRandom`, in Base64. No file is written at
+   any point (the PowerShell script's `%TEMP%` file goes away). Buffers are wiped with
+   `SecureZeroMemory` once the body is sent. It needs what the script needed: an elevated
+   process (or LocalSystem) and an exportable key; W4.12 (#135) decides the service account. A
+   failure is `connector::Error` ("the Veeam organisation app's certificate ...: run elevated
+   ..."), before any restore POST.
+2. **The organisation app is cross-checked first.** `rp::Organization` also parses
+   `exchangeOnlineSettings` and `sharePointOnlineSettings` (`applicationId`,
+   `applicationCertificateThumbprint`); both must be present and equal, or `connector::Error`
+   before any explore session. The body's `applicationId` and the exported thumbprint are that
+   pair; `officeRegion` is the organisation's `region`, `organizationName` /
+   `officeOrganizationName` its `officeName`.
+3. **Selectors gain what the manifest already has**, so no source needs a Graph read the Worker
+   app isn't granted (it reads the targets only): `MailSelector::received_at` (optional; when
+   set, Veeam's `received` truncated to the second must equal it), `SharePointSelector::list_id`
+   (required: Veeam's library ID is the site's two GUIDs, from `site_id`, followed by it; never a
+   name, which is localised) and `size` (optional, the manifest's `stored_size`, checked on the
+   re-read), `OneDriveSelector::size` (the same). The source OneDrive is Veeam's `OneDrives`
+   entry whose `url` is `https://<tenant>-my.sharepoint.com/personal/<user, lower case, '@' and
+   '.' as '_'>` (ASCII case-insensitive, exactly one), `<tenant>` from `test_site_id`'s host; a
+   folder path is walked segment by segment through `Folders?parentId=` (`root` first).
+   SharePoint folder paths other than `/` are walked the same way from the library.
+4. **Browsing as 10-restore.ps1 does**, one explore session per type (`dateTime` the restore
+   point's `backup_time` byte for byte), every list with `limit=1000` and paged; exactly one
+   match per item, re-read by ID; the re-read document goes into the body minus `_links` and
+   `_actions`. Zero or several matches, or a container not found, is `connector::NotFoundError`
+   or `connector::Error` (`error`): the zero-match `fail` for a canary is W3.3's to settle, so
+   W2.5 doesn't guess it.
+5. **One restore call per source container; same-named items in one container go into separate
+   calls** (events name items only by `itemName`). The explore session is reused for the next
+   container of the same type (untried, restore-flow §18; the first live run shows it).
+6. **The POST goes out at most once.** A preflight first (`GET /v8/RestoreSessions?limit=200`: no
+   session of ours `Working`, else `connector::Error` before any explore). The POST is sent with
+   one attempt, no retry of any kind, a 60 s timeout, and the exact text layer 2 checked. A 4xx:
+   nothing started, `connector::Error` (401/403 `connector::AuthError`). No session ID (a
+   transport error, a timeout, a 5xx, a 2xx without `sessionId`): the duplicate check of
+   restore-flow §8, up to 3 more looks 10 s apart; exactly one candidate is adopted, else
+   `connector::Error`, never a resend. With a session ID, the check must list exactly it, or the
+   session is still polled but the call ends in `connector::Error` (no verdict).
+7. **Waiting and reading** as restore-flow §9-§12: poll every 5 s; `Stopped` ends it; a 404 or 6
+   failed polls in a row is `connector::Error`; still `Working` after 20 minutes is
+   `connector::TransientError`. Statistics (409 retried, 6 attempts 5 s apart) and events are
+   required, of the expected JSON kinds, else `connector::Error`. Start and end times are the
+   session's `creationTime` and `endTime` as Veeam wrote them.
+8. **Sessions are closed in a finally path, except under a restore that may still run.** Every
+   explore session the call opened is read and, while `Working`, stopped (`POST .../Stop`, best
+   effort). After a timeout, a 404 or failing polls, or a POST whose session couldn't be pinned
+   down, the explore sessions are left open and named in the error (the 2026-09-29 W2.4 review:
+   what Stop does under a running restore is untested). This narrows #30's "close sessions in a
+   finally path even on error" by that one case.
+9. **Status and per-item results.** `RestoreResult` gains `items_sent`, one
+   `RestoreSessionResult` per restore session (ID, kind, Veeam's `result` and `details`, start
+   and end, items sent and restored) and one `ItemRestoreResult` per item (kind, name,
+   `restored` / `failed` / `unknown`, Veeam's message, and whether that message reads as
+   infrastructure). The status is the W1.7 order with restore-flow §12's stricter `succeeded`
+   (every session `Success`, its `restoredItemsCount` equal to the items sent, a
+   `Restore`/`Success` event per item name, and for files a `Statistics.items[]` `Success` entry
+   per ID). A session that restored nothing and whose events or errors read as infrastructure
+   ("Cannot connect to Microsoft 365", "Failed to open mailbox", "missing the required
+   application permissions", `AADSTS`) is `connector::Error`, never `failed`. `log` is the
+   events' `status itemName: message` lines per session, through `rp::redact`. Veeam's own log
+   file on disk is not read (the evidence bundle decides that, W3.x).
+10. **The registry's factory makes the Graph client**, from `RP_GRAPH_CERT_PFX_BASE64` and
+    `RP_GRAPH_CERT_PASSWORD` through `graph::certificate_from_secrets` (`ConfigError` if unset),
+    with `Config::graph_tenant_id` and `graph_client_id`, on `graph::make_graph_http_client`
+    (or `ConnectorOptions::make_graph_http`). Every logger it hands out (Veeam, Graph, the
+    guard) is `ConnectorOptions::logger` or else the command logger (stderr), never spdlog's
+    default. `ConnectorOptions` gains `now`, `wall_now`, `make_graph_http` and `cert_exporter`.
+    `rp::redact` also masks `applicationCertificate` and `applicationCertificatePassword`.
+
+**Reason.** It is 10-restore.ps1's proven flow (W2.4, mail r1) in C++, with the W2.4, W2.4
+review and W2.7 decisions as they stand. The in-memory export removes the script's one file on
+disk. Selectors carrying the manifest's IDs keep the Worker app's grants as they are.
+
+**Alternatives rejected.** Exporting through a temporary file as the script does (a PFX on
+disk, however briefly); `NCryptExportKey` of the key alone (Veeam wants a PFX); a vault copy of
+the PFX (W4.12 decides; the 2026-09-28 entry keeps "never stored"); Graph reads of the source
+site, drive or user (not granted); decoding Graph's `b!` drive IDs into GUIDs (works in the lab,
+undocumented); resending a POST with no answer (could restore twice); stopping an explore
+session under a running restore (untested).
+
 ## 2026-09-30 — W2.7 review: the guard resolves the mailbox and the OneDrive's address, and runs first in `restore_sample`
 
 Supersedes parts of the 2026-09-29 W2.7 entry below (points 1, 2 and 3, and its opening

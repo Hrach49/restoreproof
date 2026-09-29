@@ -61,8 +61,11 @@ struct RestoreRequestContext {
 //    /v8/RestoreSessions/{e}/Organization/Sites/{c}/Documents/restoreTo or
 //    /v8/RestoreSessions/{e}/Organization/OneDrives/{c}/Documents/copyTo for
 //    ctx.kind, with c = ctx.container_id;
-//  - the body: valid UTF-8 JSON, an object at the top, no object anywhere with
-//    a key twice, and exactly the kind's key set (restore-flow §5);
+//  - the body: valid UTF-8 JSON, an object at the top, every key at any depth
+//    printable ASCII, no object anywhere with a key twice or two keys that
+//    differ only in ASCII case (Veeam's .NET binder may match either), and
+//    exactly the kind's key set (restore-flow §5); a document may carry other
+//    keys (Veeam's browse fields), never a case variant of a checked one;
 //  - values: JSON kinds as sent (strings, booleans, arrays, objects); each
 //    value compared with a target or fixed name printable ASCII (0x20-0x7E);
 //    every comparison ordinal unless said otherwise; officeRegion and
@@ -77,8 +80,9 @@ struct RestoreRequestContext {
 //    "Last", documentLastVersionAction "Merge", sendSharedLinksNotification
 //    false; each document an object with string id and name, siteId equal to
 //    container_id, isFolder false, an id that starts with container_id and not
-//    with the RestoreTarget library's site, web and list GUIDs (a restore
-//    target is never a source);
+//    with the RestoreTarget library's site, web and list GUIDs (ASCII
+//    case-insensitive: a restore target is never a source); container_id is
+//    the source site and need not be the RestoreTarget library's;
 //  - OneDrive: onedrive an object of exactly string id, name and url, equal to
 //    the context's target_onedrive_*; its id's first GUID the RestoreTarget
 //    folder's parentReference.siteId (ASCII case-insensitive); its url on

@@ -869,7 +869,9 @@ are the `RestoreTest` library or folder" (`RestoreTarget` since 2026-09-25).
    - the mail target is `Inbox` of `restoretest@<domain>` (`parse_config`,
      `RestoreTargets::from_config`).
    W2.7 runs the same checks, or calls the same code, before a restore, and adds one:
-   neither target is a canary location (the library's list ID isn't the canary library's). A
+   neither target is a canary location. *(As built in W2.7: the exact name `RestoreTarget` and
+   the `webUrl` rule keep the canary library and folder out, both being `RestoreTest`; no list
+   ID is compared with the canary library's, since the config carries no canary ID.)* A
    target that fails any of them is a guard violation (`error`). Onboarding a customer creates
    the two `RestoreTarget`s under that name.
 2. **Veeam's body names exactly those targets** (§6), checked on the exact text immediately

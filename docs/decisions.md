@@ -22,8 +22,12 @@ exact body again before the POST.
    OneDrive item not from a path whose first folder is `RestoreTarget` (any case; empty and `.`
    segments skipped, a `..` segment refused); an item naming no source is refused too. Then,
    once per type the spec uses, the targets through Graph (GETs only; mail needs none): the
-   library and the OneDrive folder must be the dedicated `RestoreTarget`s. An empty spec calls
-   nothing. It returns `CheckedTargets`, which only `TargetGuard` can make.
+   library and the OneDrive folder must be the dedicated `RestoreTarget`s. The canary
+   locations are kept out by those exact names (the canary library and folder are both
+   `RestoreTest`) and the `webUrl` rule; no list ID is compared with the canary library's, since
+   the config carries no canary ID (restore-flow §16's "the library's list ID isn't the canary
+   library's", and the W2.4 review's "not a canary location", are met this way). An empty spec
+   calls nothing. It returns `CheckedTargets`, which only `TargetGuard` can make.
 2. **The Graph checks are one unit, shared with W2.2's reader** (`rp/target_guard_graph.hpp`:
    `check_restore_library`, `check_restore_onedrive_folder`, `ResolvedLibrary`,
    `ResolvedOneDriveFolder`). `TargetReader` calls them; its messages and `WrongTargetError`
@@ -38,10 +42,14 @@ exact body again before the POST.
    restore POST, on the exact path and text. It ports `Assert-RestoreTarget` of `10-restore.ps1`:
    the path is exactly the kind's restore-to-another-location call with an explore session this
    run opened and no query, fragment, `%`, `\`, `//` or dot segment; the body is valid UTF-8
-   JSON, an object, with no key twice in any object (a parser callback; nlohmann would keep the
-   last) and exactly the kind's key set; values are checked by JSON kind; every value compared
-   with a target or fixed name must be printable ASCII; comparisons are ordinal (`std::string`
-   `==`) except the OneDrive host and first GUID; the item set is exactly the context's, none
+   JSON, an object, every key at any depth printable ASCII, with no key twice in any object and
+   no two keys of one object that differ only in ASCII case (a parser callback; nlohmann would
+   keep the last, and Veeam's .NET binder may match names ignoring case, so an `Id` beside the
+   checked `id` of a document could be what it restores), and exactly the kind's key set;
+   documents may carry Veeam's other browse fields; values are checked by JSON kind; every value
+   compared with a target or fixed name must be printable ASCII; comparisons are ordinal
+   (`std::string` `==`) except the OneDrive host and first GUID and the RestoreTarget-library
+   prefix of SharePoint document IDs (ignoring case there only refuses more); the item set is exactly the context's, none
    missing, added or twice. It takes `CheckedTargets`, so it can't run without layer 1. Not
    ported (restore-flow §6, "Lab-only rules"): `onedrive.id` equal to the source OneDrive, and
    the canary list-ID prefix on SharePoint document IDs. Added: a SharePoint document whose ID

@@ -164,6 +164,72 @@ TEST_CASE("the guard accepts every restore request W2.4 recorded", "[target_guar
     CHECK(lab.log().empty());
 }
 
+TEST_CASE("the guard accepts a file restore from a site or OneDrive other than the target's",
+          "[target_guard][veeam]")
+{
+    // The path names the source: W2.6 samples real data from any site or
+    // OneDrive, while siteURL/list and onedrive/folder keep the destination the
+    // RestoreTarget library or folder (docs/decisions.md 2026-09-29, W2.7,
+    // deviation 1). The recorded SharePoint source is the target's own site.
+    const std::string fixture = GENERATE(as<std::string>{}, "restore-sp-200", "restore-od-200");
+    CAPTURE(fixture);
+    const std::string other =
+        "0a1b2c3d-0000-4000-8000-0000000000010a1b2c3d-0000-4000-8000-000000000002";
+    GuardLab lab;
+    Request r = recorded(fixture);
+    const std::string old = r.ctx.container_id;
+    r.path.replace(r.path.find(old), old.size(), other);
+    r.ctx.container_id = other;
+    json& document = r.body.at("documents").at(0);
+    if (r.ctx.kind == RestoreKind::sharepoint) {
+        const std::string id = other + document.at("id").get<std::string>().substr(old.size());
+        document.at("id") = id;
+        document.at("siteId") = other;
+        r.ctx.items.at(0).id = id;
+    } else {
+        document.at("oneDriveId") = other;
+    }
+
+    const Thrown thrown = check(lab, r);
+
+    CHECK(thrown.kind == "none");
+    CHECK(thrown.what.empty());
+    CHECK(lab.log().empty());
+}
+
+TEST_CASE("the guard accepts item and OneDrive names outside ASCII", "[target_guard][veeam]")
+{
+    // They identify and name no target, so they are compared byte for byte
+    // (docs/decisions.md 2026-09-29, W2.7, deviation 3): a real file with an
+    // accent in its name is no guard violation.
+    struct Row {
+        std::string fixture;
+        std::string what;
+    };
+    const Row row = GENERATE(values<Row>({
+        {"restore-sp-200", "documents[0].name"},
+        {"restore-od-200", "documents[0].name"},
+        {"restore-od-200", "onedrive.name"},
+    }));
+    CAPTURE(row.fixture, row.what);
+    const std::string name = "Caf\xC3\xA9 \xE2\x80\x94 R\xC3\xA9sum\xC3\xA9.pdf";
+    GuardLab lab;
+    Request r = recorded(row.fixture);
+    if (row.what == "onedrive.name") {
+        r.body.at("onedrive").at("name") = name;
+        r.ctx.target_onedrive_name = name;
+    } else {
+        r.body.at("documents").at(0).at("name") = name;
+        r.ctx.items.at(0).name = name;
+    }
+
+    const Thrown thrown = check(lab, r);
+
+    CHECK(thrown.kind == "none");
+    CHECK(thrown.what.empty());
+    CHECK(lab.log().empty());
+}
+
 // ---- the 12 mutations of restore-flow §6, per type -----------------------------------------
 
 TEST_CASE("the guard refuses each of restore-flow's 12 mutations, for each type",
@@ -595,6 +661,67 @@ TEST_CASE("the guard refuses a duplicate key at any depth", "[target_guard][veea
     const Thrown thrown = check(r);
 
     CHECK(thrown.what == guard_message("the body has a key twice in one object"));
+}
+
+TEST_CASE("the guard refuses two keys of one object that differ only in ASCII case",
+          "[target_guard][veeam]")
+{
+    // Veeam's REST server is .NET, whose JSON binders match names ignoring
+    // case and keep the last: a stray "Id" beside the checked "id" could be the
+    // item Veeam restores, "IsFolder" the folder flag it reads.
+    struct Row {
+        std::string fixture;
+        std::string pointer; // the case variant added beside the checked key
+        json value;
+    };
+    const std::string elsewhere = "0a1b2c3d-0000-4000-8000-00000000abcd";
+    const Row row = GENERATE_COPY(values<Row>({
+        {"restore-sp-200", "/documents/0/Id", elsewhere},
+        {"restore-sp-200", "/documents/0/SiteId", elsewhere},
+        {"restore-sp-200", "/documents/0/IsFolder", true},
+        {"restore-sp-200", "/documents/0/NAME", "other.pdf"},
+        {"restore-od-200", "/documents/0/OneDriveId", elsewhere},
+        {"restore-od-200", "/documents/0/ID", elsewhere},
+        {"restore-od-200", "/onedrive/URL", "https://restoreprooflab-my.sharepoint.com/personal/bob"},
+        {"restore-mail-200", "/items/0/ID", elsewhere},
+        {"restore-mail-200", "/Mailbox", "alice@RestoreProofLab.onmicrosoft.com"},
+    }));
+    CAPTURE(row.fixture, row.pointer);
+    Request r = recorded(row.fixture);
+    r.body[json::json_pointer(row.pointer)] = row.value;
+
+    const Thrown thrown = check(r);
+
+    CHECK(thrown.kind == "SafetyViolation");
+    CHECK(thrown.what ==
+          guard_message("the body has two keys in one object that differ only in ASCII case"));
+}
+
+TEST_CASE("the guard refuses a key with a character outside printable ASCII",
+          "[target_guard][veeam]")
+{
+    // .NET's case-insensitive match folds some non-ASCII letters to ASCII
+    // (U+017F, long s, to 'S'): such a key could stand for a checked one.
+    struct Row {
+        std::string fixture;
+        std::string pointer;
+    };
+    const Row row = GENERATE(values<Row>({
+        {"restore-sp-200", "/documents/0/\xC5\xBFiteId"},
+        {"restore-od-200", "/documents/0/i\xE2\x80\x8B" "d"},
+        {"restore-mail-200", "/folder\xC2\xAD"},
+        {"restore-mail-200", "/items/0/\x7F"},
+        {"restore-sp-200", "/documents/0/tab\tkey"},
+    }));
+    CAPTURE(row.fixture, row.pointer);
+    Request r = recorded(row.fixture);
+    r.body[json::json_pointer(row.pointer)] = "x";
+
+    const Thrown thrown = check(r);
+
+    CHECK(thrown.kind == "SafetyViolation");
+    CHECK(thrown.what ==
+          guard_message("the body has a key with a character outside printable ASCII"));
 }
 
 TEST_CASE("the guard refuses a body that isn't one JSON object", "[target_guard][veeam]")

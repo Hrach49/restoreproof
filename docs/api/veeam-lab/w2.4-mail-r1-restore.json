@@ -1,0 +1,49 @@
+{
+  "note": "POST .../restoreTo (1 item(s) -> restoretest@RestoreProofLab.onmicrosoft.com Inbox), Veeam org app certificate",
+  "captured_utc": "2026-09-29T14:46:03.995Z",
+  "duration_ms": 159,
+  "request": {
+    "method": "POST",
+    "path": "/v8/RestoreSessions/0642691c-abf6-4682-ad91-fe5f2db888b0/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/items/restoreTo",
+    "body": {
+      "mailbox": "restoretest@RestoreProofLab.onmicrosoft.com",
+      "folder": "Inbox",
+      "items": [
+        {
+          "id": "LgAAAEYAAAAWAAAAAAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAQwAAAAAAACxxv9HtdajQ4pXXA5mCVQzBwBAxtTKFTWxToQtH-hG0poXAAAAAAEMAABAxtTKFTWxToQtH-hG0poXAAAAADwfAABAxtTKFTWxToQtH-hG0poXAAAAABBN"
+        }
+      ],
+      "changedItems": true,
+      "deletedItems": true,
+      "markRestoredAsUnread": false,
+      "excludeDrafts": false,
+      "excludeDeletedItems": false,
+      "excludeInPlaceHoldItems": true,
+      "excludeLitigationHoldItems": true,
+      "officeRegion": "Worldwide",
+      "officeOrganizationName": "RestoreProofLab.onmicrosoft.com",
+      "applicationId": "1fd2609d-1242-43fe-94b5-d58688a90bd6",
+      "applicationCertificate": "[REDACTED]",
+      "applicationCertificatePassword": "[REDACTED]",
+      "impersonationAccountName": "restoretest@RestoreProofLab.onmicrosoft.com"
+    }
+  },
+  "response": {
+    "status": 200,
+    "content_type": "application/json; charset=utf-8",
+    "headers": {
+      "Date": "Tue, 29 Sep 2026 14:46:03 GMT",
+      "Cache-Control": "no-store",
+      "Pragma": "no-cache",
+      "Transfer-Encoding": "chunked",
+      "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+      "X-Content-Type-Options": "nosniff",
+      "X-XSS-Protection": "1; mode=block",
+      "X-Frame-Options": "SAMEORIGIN",
+      "Content-Type": "application/json; charset=utf-8"
+    },
+    "body": {
+      "sessionId": "b115035e-e66b-4908-9a2a-09acd31115aa"
+    }
+  }
+}

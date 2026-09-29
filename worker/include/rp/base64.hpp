@@ -2,6 +2,7 @@
 
 // Base64 for the Graph sign-in (W2.1): the PFX arrives in an environment
 // variable as standard Base64, and a JWT's parts are base64url (RFC 7515).
+// And for the restore credential (W2.5): an exported PFX goes out in Base64.
 
 #include <optional>
 #include <span>
@@ -21,6 +22,11 @@ namespace rp {
 // the result is allocated once at its final size, so a secret's bytes aren't
 // left behind in a freed buffer.
 std::optional<std::vector<unsigned char>> base64_decode(std::string_view text);
+
+// `bytes` in standard Base64 (RFC 4648 section 4), padded with '=', on one
+// line: how a restore body carries a PFX (W2.5), the form base64_decode reads.
+// The result is allocated once at its final size.
+std::string base64_encode(std::span<const unsigned char> bytes);
 
 // `bytes` in base64url (RFC 4648 section 5) without padding, as a JWT's
 // header, claims and signature are written.

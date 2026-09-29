@@ -4,6 +4,7 @@
 #include <catch2/generators/catch_generators.hpp>
 
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -144,4 +145,28 @@ TEST_CASE("base64url_encode takes bytes as well as text", "[base64]")
     const std::vector<unsigned char> bytes{0x00, 0xFB, 0xFF};
     CHECK(rp::base64url_encode(bytes) == "APv_");
     CHECK(rp::base64url_encode(std::vector<unsigned char>{}).empty());
+}
+
+TEST_CASE("base64_encode uses + and / and pads with =", "[base64]")
+{
+    const Row row = GENERATE(values<Row>({
+        {"", ""},
+        {"f", "Zg=="},
+        {"fo", "Zm8="},
+        {"foo", "Zm9v"},
+        {"foob", "Zm9vYg=="},
+        {"fooba", "Zm9vYmE="},
+        {"foobar", "Zm9vYmFy"},
+        {"\xFB\xFF\xBF", "+/+/"},
+        {"\xFB\xFF", "+/8="},
+        {"\xFF", "/w=="},
+    }));
+    CAPTURE(row.plain);
+    const std::span bytes{reinterpret_cast<const unsigned char*>(row.plain.data()),
+                          row.plain.size()};
+    CHECK(rp::base64_encode(bytes) == row.encoded);
+    // And base64_decode reads it back.
+    const auto decoded = rp::base64_decode(row.encoded);
+    REQUIRE(decoded.has_value());
+    CHECK(std::string(decoded->begin(), decoded->end()) == row.plain);
 }

@@ -161,10 +161,12 @@ that it names; the rest stands. `docs/api/veeam-restore-flow.md` and
    earlier run's files.
 8. **The recordings came from an earlier, uncommitted revision of the script.** They stay the
    W2.4 evidence: the calls and bodies are unchanged. The committed revision was replayed
-   offline against all four recordings, and run live with `-WhatIf` on 2026-09-29. A real
-   restore with it is open. The 0-byte Veeam logs came from that revision too, and show no late
-   flush: each log was complete before its session ended (supersedes the W2.4 open point on
-   Veeam's log).
+   offline against all four recordings, run live with `-WhatIf`, and made one real restore on
+   2026-09-29 (`RP-CANARY-0011`, exit 0, read back by `graph list --hash` with the manifest's
+   hash; `w2.4-mail-r1-*.json`). Veeam's log shows no late flush (supersedes the W2.4 open
+   point on it): that run also printed 0 bytes, yet the file was complete 47 ms before the
+   session's `endTime`. The size in a directory listing lags for a file Veeam holds open, so the
+   Worker reads the file itself after `Stopped`.
 
 **Reason.** A guard that only compares the body with the configuration protects against Veeam
 changing the body, not against the configuration naming live data, which is the failure the
@@ -180,8 +182,7 @@ establish, or stop what it didn't know was safe to stop, into "no verdict".
 - *Treating a failed duplicate check as fatal once a session ID is known:* the session would go
   unmonitored, which is worse than polling it and withholding the verdict.
 
-**Open.** A real restore with the committed script (restore-flow §18). What Stop does to a
-running restore.
+**Open.** What Stop does to a running restore (restore-flow §18).
 
 ---
 

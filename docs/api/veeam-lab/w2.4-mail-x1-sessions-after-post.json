@@ -1,0 +1,190 @@
+{
+  "note": "GET /v8/RestoreSessions?startTimeFrom={post time - 60 s}&orderBy=CreationTime&orderAsc=false&limit=50 (the duplicate check)",
+  "captured_utc": "2026-09-28T21:27:28.774Z",
+  "duration_ms": 72,
+  "request": {
+    "method": "GET",
+    "path": "/v8/RestoreSessions?startTimeFrom=2026-09-28T21:26:28Z&orderBy=CreationTime&orderAsc=false&limit=50",
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "content_type": "application/json; charset=utf-8",
+    "headers": {
+      "Date": "Mon, 28 Sep 2026 21:27:28 GMT",
+      "Cache-Control": "no-store",
+      "Pragma": "no-cache",
+      "Transfer-Encoding": "chunked",
+      "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+      "X-Content-Type-Options": "nosniff",
+      "X-XSS-Protection": "1; mode=block",
+      "X-Frame-Options": "SAMEORIGIN",
+      "Content-Type": "application/json; charset=utf-8"
+    },
+    "body": {
+      "offset": 0,
+      "limit": 50,
+      "_links": {
+        "self": {
+          "href": "/v8/RestoreSessions?starttimefrom=2026-09-28T21%3A26%3A28Z&orderby=CreationTime&orderasc=false&offset=0&limit=50"
+        }
+      },
+      "results": [
+        {
+          "id": "b6fe35ef-9633-481d-9756-3496a717d8a9",
+          "name": "Exchange restore (Entire organization - 9/27/2026 10:00:48 PM)",
+          "organization": "RestoreProofLab.onmicrosoft.com",
+          "type": "Vex",
+          "creationTime": "2026-09-28T21:27:28.3281642Z",
+          "endTime": "9999-12-31T23:59:59.9999999",
+          "state": "Working",
+          "result": "Success",
+          "initiatedBy": "rp-veeam",
+          "scopeName": "",
+          "clientHost": "[::ffff:127.0.0.1]",
+          "eTag": 1,
+          "_links": {
+            "self": {
+              "href": "/v8/restoresessions/b6fe35ef-9633-481d-9756-3496a717d8a9"
+            },
+            "organization": {
+              "href": "/v8/restoresessions/b6fe35ef-9633-481d-9756-3496a717d8a9/organization"
+            },
+            "restoreSessionEvents": {
+              "href": "/v8/restoresessions/b6fe35ef-9633-481d-9756-3496a717d8a9/events"
+            }
+          }
+        },
+        {
+          "id": "171ea3e1-1f41-420c-94f7-140b57470d4a",
+          "name": "Exchange restore (Entire organization - 9/27/2026 10:00:48 PM)",
+          "organization": "RestoreProofLab.onmicrosoft.com",
+          "type": "Vex",
+          "creationTime": "2026-09-28T21:27:26.8946372Z",
+          "endTime": "9999-12-31T23:59:59.9999999",
+          "state": "Working",
+          "result": "Success",
+          "initiatedBy": "rp-veeam",
+          "scopeName": "",
+          "clientHost": "localhost:4443 (via: [::ffff:127.0.0.1])",
+          "eTag": 1,
+          "_links": {
+            "self": {
+              "href": "/v8/restoresessions/171ea3e1-1f41-420c-94f7-140b57470d4a"
+            },
+            "organization": {
+              "href": "/v8/restoresessions/171ea3e1-1f41-420c-94f7-140b57470d4a/organization"
+            },
+            "restoreSessionEvents": {
+              "href": "/v8/restoresessions/171ea3e1-1f41-420c-94f7-140b57470d4a/events"
+            }
+          }
+        },
+        {
+          "id": "7172252b-fef3-43d3-b2f5-562f175c897f",
+          "name": "Exchange restore (Entire organization - 9/27/2026 10:00:48 PM)",
+          "organization": "RestoreProofLab.onmicrosoft.com",
+          "type": "Vex",
+          "creationTime": "2026-09-28T21:27:07.1332832Z",
+          "endTime": "2026-09-28T21:27:08.2908851Z",
+          "state": "Stopped",
+          "result": "Success",
+          "initiatedBy": "rp-veeam",
+          "details": "0 items processed",
+          "scopeName": "",
+          "clientHost": "localhost:4443 (via: [::ffff:127.0.0.1])",
+          "eTag": 2,
+          "_links": {
+            "self": {
+              "href": "/v8/restoresessions/7172252b-fef3-43d3-b2f5-562f175c897f"
+            },
+            "organization": {
+              "href": "/v8/restoresessions/7172252b-fef3-43d3-b2f5-562f175c897f/organization"
+            },
+            "restoreSessionEvents": {
+              "href": "/v8/restoresessions/7172252b-fef3-43d3-b2f5-562f175c897f/events"
+            }
+          }
+        },
+        {
+          "id": "c53d87ee-b1c4-43b8-bf95-c324dbc4dacc",
+          "name": "OneDrive restore (Entire organization - 9/27/2026 10:00:48 PM)",
+          "organization": "RestoreProofLab.onmicrosoft.com",
+          "type": "Veod",
+          "creationTime": "2026-09-28T21:27:03.3365032Z",
+          "endTime": "2026-09-28T21:27:04.8142505Z",
+          "state": "Stopped",
+          "result": "Success",
+          "initiatedBy": "rp-veeam",
+          "details": "0 items processed",
+          "scopeName": "",
+          "clientHost": "localhost:4443 (via: [::ffff:127.0.0.1])",
+          "eTag": 2,
+          "_links": {
+            "self": {
+              "href": "/v8/restoresessions/c53d87ee-b1c4-43b8-bf95-c324dbc4dacc"
+            },
+            "organization": {
+              "href": "/v8/restoresessions/c53d87ee-b1c4-43b8-bf95-c324dbc4dacc/organization"
+            },
+            "restoreSessionEvents": {
+              "href": "/v8/restoresessions/c53d87ee-b1c4-43b8-bf95-c324dbc4dacc/events"
+            }
+          }
+        },
+        {
+          "id": "9bed051f-d416-4820-a7ba-b782b9ba4d21",
+          "name": "SharePoint restore (Entire organization - 9/27/2026 10:00:48 PM)",
+          "organization": "RestoreProofLab.onmicrosoft.com",
+          "type": "Vesp",
+          "creationTime": "2026-09-28T21:26:56.5606761Z",
+          "endTime": "2026-09-28T21:26:58.2732438Z",
+          "state": "Stopped",
+          "result": "Success",
+          "initiatedBy": "rp-veeam",
+          "details": "0 items processed",
+          "scopeName": "",
+          "clientHost": "localhost:4443 (via: [::ffff:127.0.0.1])",
+          "eTag": 2,
+          "_links": {
+            "self": {
+              "href": "/v8/restoresessions/9bed051f-d416-4820-a7ba-b782b9ba4d21"
+            },
+            "organization": {
+              "href": "/v8/restoresessions/9bed051f-d416-4820-a7ba-b782b9ba4d21/organization"
+            },
+            "restoreSessionEvents": {
+              "href": "/v8/restoresessions/9bed051f-d416-4820-a7ba-b782b9ba4d21/events"
+            }
+          }
+        },
+        {
+          "id": "4dc513a4-be5c-48b2-be90-93ea5dce30e8",
+          "name": "Exchange restore (Entire organization - 9/27/2026 10:00:48 PM)",
+          "organization": "RestoreProofLab.onmicrosoft.com",
+          "type": "Vex",
+          "creationTime": "2026-09-28T21:26:53.2712093Z",
+          "endTime": "2026-09-28T21:26:54.3863571Z",
+          "state": "Stopped",
+          "result": "Success",
+          "initiatedBy": "rp-veeam",
+          "details": "0 items processed",
+          "scopeName": "",
+          "clientHost": "localhost:4443 (via: [::ffff:127.0.0.1])",
+          "eTag": 2,
+          "_links": {
+            "self": {
+              "href": "/v8/restoresessions/4dc513a4-be5c-48b2-be90-93ea5dce30e8"
+            },
+            "organization": {
+              "href": "/v8/restoresessions/4dc513a4-be5c-48b2-be90-93ea5dce30e8/organization"
+            },
+            "restoreSessionEvents": {
+              "href": "/v8/restoresessions/4dc513a4-be5c-48b2-be90-93ea5dce30e8/events"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

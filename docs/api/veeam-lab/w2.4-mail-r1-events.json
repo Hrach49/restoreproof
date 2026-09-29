@@ -1,0 +1,103 @@
+{
+  "note": "GET /v8/RestoreSessions/{restoreSessionId}/Events?limit=100",
+  "captured_utc": "2026-09-29T14:46:29.657Z",
+  "duration_ms": 20,
+  "request": {
+    "method": "GET",
+    "path": "/v8/RestoreSessions/b115035e-e66b-4908-9a2a-09acd31115aa/Events?limit=100",
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "content_type": "application/json; charset=utf-8",
+    "headers": {
+      "Date": "Tue, 29 Sep 2026 14:46:28 GMT",
+      "Cache-Control": "no-store",
+      "Pragma": "no-cache",
+      "Transfer-Encoding": "chunked",
+      "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+      "X-Content-Type-Options": "nosniff",
+      "X-XSS-Protection": "1; mode=block",
+      "X-Frame-Options": "SAMEORIGIN",
+      "Content-Type": "application/json; charset=utf-8"
+    },
+    "body": {
+      "offset": 0,
+      "limit": 100,
+      "_links": {
+        "self": {
+          "href": "/v8/RestoreSessions/b115035e-e66b-4908-9a2a-09acd31115aa/Events?offset=0&limit=100"
+        }
+      },
+      "results": [
+        {
+          "itemSizeBytes": 0,
+          "id": "b48dd26b-1ff2-4076-9bfc-1c12dc190d40",
+          "type": "None",
+          "status": "Success",
+          "startTime": "2026-09-29T14:46:04.0457753Z",
+          "endTime": "2026-09-29T14:46:04.0457753Z",
+          "duration": "00:00:00",
+          "title": "Restore session started",
+          "message": "Restore session started",
+          "order": 0,
+          "_links": {
+            "self": {
+              "href": "/v8/restoresessions/b115035e-e66b-4908-9a2a-09acd31115aa/events/b48dd26b-1ff2-4076-9bfc-1c12dc190d40"
+            },
+            "restoreSession": {
+              "href": "/v8/restoresessions/b115035e-e66b-4908-9a2a-09acd31115aa"
+            }
+          }
+        },
+        {
+          "itemName": "RP-CANARY-0011",
+          "itemType": "IPM.Note",
+          "itemSizeBytes": 29700,
+          "source": "Bob Test\\Inbox",
+          "target": "restoretest@RestoreProofLab.onmicrosoft.com\\<null>\\Inbox",
+          "id": "a2d830a0-b8da-b256-7dd8-ac1b668e8c3f",
+          "type": "Restore",
+          "status": "Success",
+          "startTime": "2026-09-29T14:46:16.0480087Z",
+          "endTime": "2026-09-29T14:46:16.1093462Z",
+          "duration": "00:00:00.0613375",
+          "title": "Folder successfully restored",
+          "message": "Item RP-CANARY-0011 was restored successfully (type: IPM.Note; source: Bob Test\\Inbox; target: restoretest@RestoreProofLab.onmicrosoft.com\\<null>\\Inbox)",
+          "order": 1,
+          "organizationId": "ff96d072-29e2-4cb4-a155-2590f5473176",
+          "backedUpOrganizationId": "RestoreProofLab.onmicrosoft.com:00000000-0000-0000-0000-000000000000:00000000-0000-0000-0000-000000000000",
+          "userId": "RestoreProofLab.onmicrosoft.com:00000000-0000-0000-0000-000000000000:00000000-0000-0000-0000-000000000000:057d796c-1706-4ad4-80bc-cdff314e66d0:00000000-0000-0000-0000-000000000000",
+          "_links": {
+            "self": {
+              "href": "/v8/restoresessions/b115035e-e66b-4908-9a2a-09acd31115aa/events/a2d830a0-b8da-b256-7dd8-ac1b668e8c3f"
+            },
+            "restoreSession": {
+              "href": "/v8/restoresessions/b115035e-e66b-4908-9a2a-09acd31115aa"
+            }
+          }
+        },
+        {
+          "itemSizeBytes": 0,
+          "id": "49899994-b9c2-4b6a-bfe0-e878196ce7b6",
+          "type": "None",
+          "status": "Success",
+          "startTime": "2026-09-29T14:46:26.1829966Z",
+          "endTime": "2026-09-29T14:46:26.1829966Z",
+          "duration": "00:00:00",
+          "title": "Restore session completed",
+          "message": "Restore session completed",
+          "order": 2,
+          "_links": {
+            "self": {
+              "href": "/v8/restoresessions/b115035e-e66b-4908-9a2a-09acd31115aa/events/49899994-b9c2-4b6a-bfe0-e878196ce7b6"
+            },
+            "restoreSession": {
+              "href": "/v8/restoresessions/b115035e-e66b-4908-9a2a-09acd31115aa"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

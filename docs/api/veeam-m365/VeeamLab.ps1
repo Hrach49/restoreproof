@@ -229,7 +229,11 @@ function New-ExploreSession([string]$Type, [string]$DateTime, [string]$RawJson) 
     $json = if ($RawJson) { $RawJson } else {
         [ordered]@{ dateTime = $DateTime; type = $Type; showDeleted = $false; showAllVersions = $false } | ConvertTo-Json }
     $r = Invoke-Veeam -Method POST -Path "/v8/Organizations/$LabOrgId/explore" -Json $json
-    if ($r.Status -eq 201) { $script:Opened.Add(([regex]::Match($r.Body, '"id"\s*:\s*"([0-9a-f-]{36})"')).Groups[1].Value) }
+    # Veeam answers 201; any 2xx with an id is remembered too, so no session it reports can leak.
+    if ($r.Status -ge 200 -and $r.Status -lt 300) {
+        $m = [regex]::Match([string]$r.Body, '"id"\s*:\s*"([0-9a-f-]{36})"')
+        if ($m.Success) { $script:Opened.Add($m.Groups[1].Value) }
+    }
     $r
 }
 function Stop-OpenedSessions { foreach ($id in $script:Opened) { Stop-ExploreSession $id } }
@@ -238,8 +242,11 @@ function Stop-OpenedSessions { foreach ($id in $script:Opened) { Stop-ExploreSes
 function Stop-ExploreSession([string]$SessionId) {
     if (-not $SessionId) { return }
     try {
-        $s = Get-Body (Invoke-Veeam -Path "/v8/RestoreSessions/$SessionId")
-        if ($s -and $s.state -eq 'Working') {
+        $g = Invoke-Veeam -Path "/v8/RestoreSessions/$SessionId"
+        $s = if ($g.Status -eq 200) { Get-Body $g }
+        # StrictMode 3 throws on a property of $null, so an unreadable session is reported, not dereferenced.
+        if (-not $s) { "could not read session ${SessionId}: $(Show-Call $g)"; return }
+        if ($s.state -eq 'Working') {
             $r = Invoke-Veeam -Method POST -Path "/v8/RestoreSessions/$SessionId/Stop"
             "stopped session $SessionId -> $($r.Status)"
         } else { "session $SessionId already $($s.state)" }

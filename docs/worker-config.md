@@ -245,8 +245,10 @@ Any of them may be unset for now. W1.0 chose admin mode (`docs/decisions.md`, 20
   lab);
 - `RP_GRAPH_CERT_PFX_BASE64` and `RP_GRAPH_CERT_PASSWORD` are the certificate of the
   Worker's own Graph app (W2.1);
-- the Entra application certificate that restore requests must carry gets its own secret with
-  W2.4.
+- the Entra application certificate that restore requests must carry has no variable yet. W2.4
+  used Veeam's own organisation app in the lab, exporting its certificate per run; which
+  credential the Worker carries, and how it is stored, is open until a spike before W4.5
+  (`docs/decisions.md` 2026-09-28, W2.4). Nothing is to be stored before that spike.
 
 A variable set to an empty string counts as unset.
 

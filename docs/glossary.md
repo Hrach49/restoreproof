@@ -45,6 +45,26 @@ past the interface sees the product's own types or errors.
 `partial`, `failed` or `not_run` (`rp::connector::RestoreStatus`). Not a run outcome: `pass`,
 `fail` and `error` are decided afterwards from it and the Graph comparison (W3.3).
 
+**Explore session.** A Veeam session that opens one restore point for browsing
+(`POST /v8/Organizations/{id}/explore` with the point's exact `backupTime`, one per item
+type; `docs/api/veeam-notes.md`): the Worker lists mailboxes,
+sites, OneDrives and items in it and sends restores from it. It writes nothing and is stopped
+when the run is done.
+
+**Restore session.** The Veeam session a restore POST starts, whose ID comes back as
+`sessionId`. The restore runs in it asynchronously; its state, result, statistics and events
+say how the restore went (`docs/api/veeam-restore-flow.md`). Not the explore session it was
+started from.
+
+**Veeam says restored.** A restore session that stopped with result `Success` and reported
+every sent item as restored. Veeam's word only: it maps to restore status `succeeded`, and
+whether the item is really there and matches is decided by reading it back through Graph.
+
+**Duplicate-restore check.** After a restore POST whose answer is lost (transport error,
+5xx, no `sessionId`), looking in `GET /v8/RestoreSessions` for the session it may have
+started, instead of sending it again. Exactly one match is adopted; none or several gives no
+verdict (`error`), and the POST is not resent (`docs/decisions.md` 2026-09-28, W2.4).
+
 ## Verification levels
 
 How deeply a backup has been verified. RestoreProof's own ladder, used in reports so the

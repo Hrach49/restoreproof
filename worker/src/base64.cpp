@@ -75,18 +75,21 @@ std::optional<std::vector<unsigned char>> base64_decode(std::string_view text)
     return out;
 }
 
-std::string base64url_encode(std::span<const unsigned char> bytes)
+namespace {
+
+// `bytes` in `alphabet`, with '=' padding to a multiple of four when `pad`.
+std::string encode(std::span<const unsigned char> bytes, std::string_view alphabet, bool pad)
 {
     std::string out;
-    out.reserve((bytes.size() * 4 + 2) / 3);
+    out.reserve((bytes.size() + 2) / 3 * 4);
     std::size_t i = 0;
     for (; i + 3 <= bytes.size(); i += 3) {
         const std::uint32_t group = (std::uint32_t{bytes[i]} << 16) |
                                     (std::uint32_t{bytes[i + 1]} << 8) | bytes[i + 2];
-        out += kUrl[(group >> 18) & 0x3F];
-        out += kUrl[(group >> 12) & 0x3F];
-        out += kUrl[(group >> 6) & 0x3F];
-        out += kUrl[group & 0x3F];
+        out += alphabet[(group >> 18) & 0x3F];
+        out += alphabet[(group >> 12) & 0x3F];
+        out += alphabet[(group >> 6) & 0x3F];
+        out += alphabet[group & 0x3F];
     }
     const std::size_t rest = bytes.size() - i;
     if (rest != 0) {
@@ -94,13 +97,28 @@ std::string base64url_encode(std::span<const unsigned char> bytes)
         if (rest == 2) {
             group |= std::uint32_t{bytes[i + 1]} << 8;
         }
-        out += kUrl[(group >> 18) & 0x3F];
-        out += kUrl[(group >> 12) & 0x3F];
+        out += alphabet[(group >> 18) & 0x3F];
+        out += alphabet[(group >> 12) & 0x3F];
         if (rest == 2) {
-            out += kUrl[(group >> 6) & 0x3F];
+            out += alphabet[(group >> 6) & 0x3F];
+        }
+        if (pad) {
+            out.append(3 - rest, '=');
         }
     }
     return out;
+}
+
+} // namespace
+
+std::string base64_encode(std::span<const unsigned char> bytes)
+{
+    return encode(bytes, kStandard, true);
+}
+
+std::string base64url_encode(std::span<const unsigned char> bytes)
+{
+    return encode(bytes, kUrl, false);
 }
 
 std::string base64url_encode(std::string_view bytes)

@@ -119,16 +119,17 @@ class Reader {
 public:
     explicit Reader(const TargetGuardOptions& options) : options_(options) {}
 
-    [[noreturn]] void refuse(const std::string& why) const
+    // What a check throws: `throw reader.refusal(...)`.
+    connector::SafetyViolation refusal(const std::string& why) const
     {
-        refuse_restore(options_, "target guard: " + why + "; the restore was not sent");
+        return rp::refusal(options_, "target guard: " + why + "; the restore was not sent");
     }
 
     const json& member(const json& object, const std::string& key, const std::string& what) const
     {
         const auto it = object.find(key);
         if (it == object.end()) {
-            refuse(what + " is missing");
+            throw refusal(what + " is missing");
         }
         return *it;
     }
@@ -136,7 +137,7 @@ public:
     const std::string& string(const json& value, const std::string& what) const
     {
         if (!value.is_string()) {
-            refuse(what + " is not a JSON string");
+            throw refusal(what + " is not a JSON string");
         }
         return value.get_ref<const std::string&>();
     }
@@ -146,7 +147,7 @@ public:
     {
         const std::string& text = string(value, what);
         if (!is_printable_ascii(text)) {
-            refuse(what + " has a character outside printable ASCII");
+            throw refusal(what + " has a character outside printable ASCII");
         }
         return text;
     }
@@ -154,7 +155,7 @@ public:
     bool boolean(const json& value, const std::string& what) const
     {
         if (!value.is_boolean()) {
-            refuse(what + " is not a JSON boolean");
+            throw refusal(what + " is not a JSON boolean");
         }
         return value.get<bool>();
     }
@@ -162,7 +163,7 @@ public:
     const json& array(const json& value, const std::string& what) const
     {
         if (!value.is_array()) {
-            refuse(what + " is not a JSON array");
+            throw refusal(what + " is not a JSON array");
         }
         return value;
     }
@@ -171,30 +172,35 @@ public:
     // with a key twice (nlohmann keeps the last one silently).
     json parse(std::string_view body) const
     {
+        // The keys of each object being read, innermost last.
         std::vector<std::set<std::string>> open;
         bool twice = false;
+        const auto watch = [&](int, json::parse_event_t event, json& parsed) {
+            if (event == json::parse_event_t::object_start) {
+                open.emplace_back();
+            } else if (event == json::parse_event_t::key) {
+                twice |= !open.back().insert(parsed.get<std::string>()).second;
+            } else if (event == json::parse_event_t::object_end) {
+                open.pop_back();
+            }
+            return true;
+        };
         json doc;
+        bool valid = true;
         try {
-            doc = json::parse(body.begin(), body.end(),
-                              [&](int, json::parse_event_t event, json& parsed) {
-                                  if (event == json::parse_event_t::object_start) {
-                                      open.emplace_back();
-                                  } else if (event == json::parse_event_t::key) {
-                                      twice |= !open.back().insert(parsed.get<std::string>()).second;
-                                  } else if (event == json::parse_event_t::object_end) {
-                                      open.pop_back();
-                                  }
-                                  return true;
-                              });
+            doc = json::parse(body.begin(), body.end(), watch);
         } catch (const json::exception&) {
             // Its message quotes the text around the error: never passed on.
-            refuse("the body is not valid JSON");
+            valid = false;
+        }
+        if (!valid) {
+            throw refusal("the body is not valid JSON");
         }
         if (twice) {
-            refuse("the body has a key twice in one object");
+            throw refusal("the body has a key twice in one object");
         }
         if (!doc.is_object()) {
-            refuse("the body is not a JSON object");
+            throw refusal("the body is not a JSON object");
         }
         return doc;
     }
@@ -207,20 +213,20 @@ void check_context(const Reader& reader, const CheckedTargets& targets,
                    const RestoreRequestContext& ctx)
 {
     if (ctx.items.empty()) {
-        reader.refuse("bad context: no items to restore");
+        throw reader.refusal("bad context: no items to restore");
     }
     std::set<std::string> ids;
     for (const GuardedItem& item : ctx.items) {
         if (!ids.insert(item.id).second) {
-            reader.refuse("bad context: an item ID appears twice");
+            throw reader.refusal("bad context: an item ID appears twice");
         }
     }
     if (!is_guids(ctx.container_id)) {
-        reader.refuse("bad context: the container ID is not one or more lower-case GUIDs");
+        throw reader.refusal("bad context: the container ID is not one or more lower-case GUIDs");
     }
     if (ctx.kind == RestoreKind::sharepoint && !targets.library()) {
-        reader.refuse("bad context: the RestoreTarget library was not checked (the spec had no "
-                      "SharePoint item)");
+        throw reader.refusal("bad context: the RestoreTarget library was not checked (the spec "
+                             "had no SharePoint item)");
     }
     std::vector<std::pair<std::string_view, const std::string*>> values = {
         {"application_id", &ctx.application_id},
@@ -229,16 +235,16 @@ void check_context(const Reader& reader, const CheckedTargets& targets,
     // OneDrive's, and a kind outside the enum's (rules_for).
     if (ctx.kind != RestoreKind::mail && ctx.kind != RestoreKind::sharepoint) {
         if (!targets.onedrive_folder()) {
-            reader.refuse("bad context: the RestoreTarget folder was not checked (the spec had "
-                          "no OneDrive item)");
+            throw reader.refusal("bad context: the RestoreTarget folder was not checked (the "
+                                 "spec had no OneDrive item)");
         }
         values.emplace_back("target_onedrive_id", &ctx.target_onedrive_id);
         values.emplace_back("target_onedrive_url", &ctx.target_onedrive_url);
     }
     for (const auto& [name, value] : values) {
         if (value->empty() || !is_printable_ascii(*value)) {
-            reader.refuse("bad context: " + std::string{name} +
-                          " is empty or not printable ASCII");
+            throw reader.refusal("bad context: " + std::string{name} +
+                                 " is empty or not printable ASCII");
         }
     }
 }
@@ -255,7 +261,7 @@ void check_path(const Reader& reader, const RestoreRequestContext& ctx, const Ki
                          }) ||
                      path.ends_with("/.") || path.ends_with("/..");
     if (odd) {
-        reader.refuse("the path has a query, fragment, escape or dot segment");
+        throw reader.refusal("the path has a query, fragment, escape or dot segment");
     }
     const std::string_view explore = path.starts_with(kPathPrefix)
                                          ? path.substr(kPathPrefix.size(), kGuidSize)
@@ -263,15 +269,25 @@ void check_path(const Reader& reader, const RestoreRequestContext& ctx, const Ki
     const auto& opened = ctx.opened_explore_sessions;
     if (!is_lower_guid(explore) ||
         std::find(opened.begin(), opened.end(), std::string{explore}) == opened.end()) {
-        reader.refuse("the explore session in the path is not one this run opened");
+        throw reader.refusal("the explore session in the path is not one this run opened");
     }
     const std::string expected = std::string{kPathPrefix} + std::string{explore} +
                                  std::string{rules.container} + ctx.container_id +
                                  std::string{rules.action};
     if (path != expected) {
-        reader.refuse("the path is not the " + std::string{rules.name} +
-                      " restore-to-another-location call");
+        throw reader.refusal("the path is not the " + std::string{rules.name} +
+                             " restore-to-another-location call");
     }
+}
+
+// Which keys `keys` has too many and too few of the kind's set.
+std::string key_difference(const KindRules& rules, const std::set<std::string>& keys)
+{
+    std::vector<std::string> extra;
+    std::vector<std::string> missing;
+    std::ranges::set_difference(keys, rules.keys, std::back_inserter(extra));
+    std::ranges::set_difference(rules.keys, keys, std::back_inserter(missing));
+    return "extra: " + joined(extra) + "; missing: " + joined(missing);
 }
 
 void check_keys(const Reader& reader, const KindRules& rules, const json& body)
@@ -281,13 +297,9 @@ void check_keys(const Reader& reader, const KindRules& rules, const json& body)
         keys.insert(key);
     }
     if (keys != rules.keys) {
-        std::vector<std::string> extra;
-        std::vector<std::string> missing;
-        std::ranges::set_difference(keys, rules.keys, std::back_inserter(extra));
-        std::ranges::set_difference(rules.keys, keys, std::back_inserter(missing));
-        reader.refuse("the " + std::string{rules.name} +
-                      " body's keys are not exactly the expected set (extra: " + joined(extra) +
-                      "; missing: " + joined(missing) + ")");
+        throw reader.refusal("the " + std::string{rules.name} +
+                             " body's keys are not exactly the expected set (" +
+                             key_difference(rules, keys) + ")");
     }
 }
 
@@ -306,10 +318,10 @@ public:
     void common() const
     {
         if (ascii("officeRegion") != ctx_.office_region) {
-            reader_.refuse("officeRegion is not the organisation's region");
+            throw reader_.refusal("officeRegion is not the organisation's region");
         }
         if (ascii("applicationId") != ctx_.application_id) {
-            reader_.refuse("applicationId is not the organisation's app");
+            throw reader_.refusal("applicationId is not the organisation's app");
         }
         // Kinds only: a credential's value is never compared, quoted or logged.
         reader_.string(body_.at("applicationCertificate"), "applicationCertificate");
@@ -321,16 +333,16 @@ public:
     {
         const std::string& mailbox = targets_.mailbox();
         if (ascii("mailbox") != mailbox) {
-            reader_.refuse("mailbox is not the test mailbox");
+            throw reader_.refusal("mailbox is not the test mailbox");
         }
         if (ascii("impersonationAccountName") != mailbox) {
-            reader_.refuse("impersonationAccountName is not the test mailbox");
+            throw reader_.refusal("impersonationAccountName is not the test mailbox");
         }
         if (ascii("folder") != "Inbox") {
-            reader_.refuse("folder is not Inbox");
+            throw reader_.refusal("folder is not Inbox");
         }
         if (ascii("officeOrganizationName") != ctx_.organization_name) {
-            reader_.refuse("officeOrganizationName is not the organisation's");
+            throw reader_.refusal("officeOrganizationName is not the organisation's");
         }
         for (const char* flag : {"changedItems", "deletedItems", "markRestoredAsUnread",
                                  "excludeDrafts", "excludeDeletedItems", "excludeInPlaceHoldItems",
@@ -343,7 +355,7 @@ public:
             const std::string what = "items[" + std::to_string(i) + "]";
             const json& item = list[i];
             if (!item.is_object() || item.size() != 1 || !item.contains("id")) {
-                reader_.refuse(what + " is not an object holding only an id");
+                throw reader_.refusal(what + " is not an object holding only an id");
             }
             items.emplace_back(reader_.string(item.at("id"), what + ".id"), "");
         }
@@ -354,27 +366,27 @@ public:
     {
         const graph::ResolvedLibrary& library = *targets_.library();
         if (ascii("siteURL") != library.site_url) {
-            reader_.refuse("siteURL is not the RestoreTarget library's site");
+            throw reader_.refusal("siteURL is not the RestoreTarget library's site");
         }
         const std::string& list = ascii("list");
         if (list != library.name || is_forbidden(list)) {
-            reader_.refuse("list is not the RestoreTarget library");
+            throw reader_.refusal("list is not the RestoreTarget library");
         }
         file_options();
         if (reader_.boolean(body_.at("sendSharedLinksNotification"),
                             "sendSharedLinksNotification")) {
-            reader_.refuse("sendSharedLinksNotification is not false");
+            throw reader_.refusal("sendSharedLinksNotification is not false");
         }
         // Veeam's document IDs are the site, web and list GUIDs, then the item's.
         const std::string target_list =
             ascii_lower(library.site_id + library.web_id + library.list_id);
         return documents("siteId", "site", [&](const std::string& what, const std::string& id) {
             if (!id.starts_with(ctx_.container_id)) {
-                reader_.refuse(what + ".id is not in the site in the path");
+                throw reader_.refusal(what + ".id is not in the site in the path");
             }
             if (ascii_lower(id).starts_with(target_list)) {
-                reader_.refuse(what + " is sampled from the RestoreTarget library: a restore "
-                                      "target is never a source");
+                throw reader_.refusal(what + " is sampled from the RestoreTarget library: a "
+                                            "restore target is never a source");
             }
         });
     }
@@ -385,12 +397,12 @@ public:
         const json& target = body_.at("onedrive");
         if (!target.is_object() || target.size() != 3 || !target.contains("id") ||
             !target.contains("name") || !target.contains("url")) {
-            reader_.refuse("onedrive is not an object of exactly id, name and url");
+            throw reader_.refusal("onedrive is not an object of exactly id, name and url");
         }
         const std::string& id = reader_.ascii(target.at("id"), "onedrive.id");
         if (id != ctx_.target_onedrive_id ||
             !ascii_iequals(id.substr(0, kGuidSize), folder.site_id)) {
-            reader_.refuse("onedrive.id is not the test OneDrive");
+            throw reader_.refusal("onedrive.id is not the test OneDrive");
         }
         // The test OneDrive is on the tenant's -my host; test_site_id names the tenant.
         const std::string host = parse_graph_site_id(targets_.configured().site_id()).value().host;
@@ -399,14 +411,14 @@ public:
         const std::string& url = reader_.ascii(target.at("url"), "onedrive.url");
         if (url != ctx_.target_onedrive_url || !ascii_lower(url).starts_with(root) ||
             url.find_first_of("?#") != std::string::npos) {
-            reader_.refuse("onedrive.url is not the test OneDrive's address");
+            throw reader_.refusal("onedrive.url is not the test OneDrive's address");
         }
         if (reader_.string(target.at("name"), "onedrive.name") != ctx_.target_onedrive_name) {
-            reader_.refuse("onedrive.name is not the test OneDrive's");
+            throw reader_.refusal("onedrive.name is not the test OneDrive's");
         }
         const std::string& name = ascii("folder");
         if (name != folder.name || is_forbidden(name)) {
-            reader_.refuse("folder is not the RestoreTarget folder");
+            throw reader_.refusal("folder is not the RestoreTarget folder");
         }
         file_options();
         reader_.boolean(body_.at("changedItems"), "changedItems");
@@ -426,13 +438,13 @@ private:
     void file_options() const
     {
         if (ascii("organizationName") != ctx_.organization_name) {
-            reader_.refuse("organizationName is not the organisation's");
+            throw reader_.refusal("organizationName is not the organisation's");
         }
         if (ascii("documentVersion") != "Last") {
-            reader_.refuse("documentVersion is not Last");
+            throw reader_.refusal("documentVersion is not Last");
         }
         if (ascii("documentLastVersionAction") != "Merge") {
-            reader_.refuse("documentLastVersionAction is not Merge");
+            throw reader_.refusal("documentLastVersionAction is not Merge");
         }
     }
 
@@ -449,18 +461,18 @@ private:
             const std::string what = "documents[" + std::to_string(i) + "]";
             const json& document = list[i];
             if (!document.is_object()) {
-                reader_.refuse(what + " is not a JSON object");
+                throw reader_.refusal(what + " is not a JSON object");
             }
             const std::string& id = field(document, what, "id");
             const std::string& name = field(document, what, "name");
             const std::string owner_what = what + "." + owner_key;
             if (reader_.ascii(reader_.member(document, owner_key, owner_what), owner_what) !=
                 ctx_.container_id) {
-                reader_.refuse(owner_what + " is not the " + owner + " in the path");
+                throw reader_.refusal(owner_what + " is not the " + owner + " in the path");
             }
             const std::string folder_what = what + ".isFolder";
             if (reader_.boolean(reader_.member(document, "isFolder", folder_what), folder_what)) {
-                reader_.refuse(what + " is a folder");
+                throw reader_.refusal(what + " is a folder");
             }
             check_id(what, id);
             items.emplace_back(id, name);
@@ -507,7 +519,7 @@ void check_restore_request(const CheckedTargets& targets, const RestoreRequestCo
     std::ranges::sort(found);
     std::ranges::sort(wanted);
     if (found != wanted) {
-        reader.refuse("the body's items are not exactly the ones resolved");
+        throw reader.refusal("the body's items are not exactly the ones resolved");
     }
 }
 

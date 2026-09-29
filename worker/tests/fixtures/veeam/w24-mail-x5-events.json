@@ -1,0 +1,194 @@
+{
+  "source": "docs/api/veeam-lab/w2.4-mail-x5-events.json",
+  "request": "GET /v8/RestoreSessions/a9fb8fe0-caf9-49b3-9374-0ee3bea58b0f/Events?limit=100",
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8"
+  },
+  "body": {
+    "offset": 0,
+    "limit": 100,
+    "_links": {
+      "self": {
+        "href": "/v8/RestoreSessions/a9fb8fe0-caf9-49b3-9374-0ee3bea58b0f/Events?offset=0&limit=100"
+      }
+    },
+    "results": [
+      {
+        "itemSizeBytes": 0,
+        "id": "941810aa-9c04-4169-83c6-7b8721b273bd",
+        "type": "None",
+        "status": "Success",
+        "startTime": "2026-09-28T21:30:20.3398643Z",
+        "endTime": "2026-09-28T21:30:20.3398643Z",
+        "duration": "00:00:00",
+        "title": "Restore session started",
+        "message": "Restore session started",
+        "order": 0,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/a9fb8fe0-caf9-49b3-9374-0ee3bea58b0f/events/941810aa-9c04-4169-83c6-7b8721b273bd"
+          },
+          "restoreSession": {
+            "href": "/v8/restoresessions/a9fb8fe0-caf9-49b3-9374-0ee3bea58b0f"
+          }
+        }
+      },
+      {
+        "itemName": "RP-CANARY-0003",
+        "itemType": "IPM.Note",
+        "itemSizeBytes": 41111,
+        "source": "Alice Test\\Inbox",
+        "target": "restoretest@RestoreProofLab.onmicrosoft.com\\<null>\\Inbox",
+        "id": "39c306b1-4f7c-cec0-4da4-12fb1758b82c",
+        "type": "Restore",
+        "status": "Success",
+        "startTime": "2026-09-28T21:31:31.1837977Z",
+        "endTime": "2026-09-28T21:31:31.2729114Z",
+        "duration": "00:00:00.0891137",
+        "title": "Message successfully restored",
+        "message": "Item RP-CANARY-0003 was restored successfully (type: IPM.Note; source: Alice Test\\Inbox; target: restoretest@RestoreProofLab.onmicrosoft.com\\<null>\\Inbox)",
+        "order": 1,
+        "organizationId": "ff96d072-29e2-4cb4-a155-2590f5473176",
+        "backedUpOrganizationId": "RestoreProofLab.onmicrosoft.com:00000000-0000-0000-0000-000000000000:00000000-0000-0000-0000-000000000000",
+        "userId": "RestoreProofLab.onmicrosoft.com:00000000-0000-0000-0000-000000000000:00000000-0000-0000-0000-000000000000:b8712372-d84b-4c0c-8d78-5ab08331da42:00000000-0000-0000-0000-000000000000",
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/a9fb8fe0-caf9-49b3-9374-0ee3bea58b0f/events/39c306b1-4f7c-cec0-4da4-12fb1758b82c"
+          },
+          "restoreSession": {
+            "href": "/v8/restoresessions/a9fb8fe0-caf9-49b3-9374-0ee3bea58b0f"
+          }
+        }
+      },
+      {
+        "itemName": "RP-CANARY-0004",
+        "itemType": "IPM.Note",
+        "itemSizeBytes": 41291,
+        "source": "Alice Test\\Inbox",
+        "target": "restoretest@RestoreProofLab.onmicrosoft.com\\<null>\\Inbox",
+        "id": "40b728c0-4e66-1797-3e1a-25a32056e80c",
+        "type": "Restore",
+        "status": "Success",
+        "startTime": "2026-09-28T21:31:31.3024569Z",
+        "endTime": "2026-09-28T21:31:31.3495108Z",
+        "duration": "00:00:00.0470539",
+        "title": "Message successfully restored",
+        "message": "Item RP-CANARY-0004 was restored successfully (type: IPM.Note; source: Alice Test\\Inbox; target: restoretest@RestoreProofLab.onmicrosoft.com\\<null>\\Inbox)",
+        "order": 2,
+        "organizationId": "ff96d072-29e2-4cb4-a155-2590f5473176",
+        "backedUpOrganizationId": "RestoreProofLab.onmicrosoft.com:00000000-0000-0000-0000-000000000000:00000000-0000-0000-0000-000000000000",
+        "userId": "RestoreProofLab.onmicrosoft.com:00000000-0000-0000-0000-000000000000:00000000-0000-0000-0000-000000000000:b8712372-d84b-4c0c-8d78-5ab08331da42:00000000-0000-0000-0000-000000000000",
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/a9fb8fe0-caf9-49b3-9374-0ee3bea58b0f/events/40b728c0-4e66-1797-3e1a-25a32056e80c"
+          },
+          "restoreSession": {
+            "href": "/v8/restoresessions/a9fb8fe0-caf9-49b3-9374-0ee3bea58b0f"
+          }
+        }
+      },
+      {
+        "itemName": "RP-CANARY-0005",
+        "itemType": "IPM.Note",
+        "itemSizeBytes": 42111,
+        "source": "Alice Test\\Inbox",
+        "target": "restoretest@RestoreProofLab.onmicrosoft.com\\<null>\\Inbox",
+        "id": "f2974928-0c7a-df8b-4fb2-46163d691e36",
+        "type": "Restore",
+        "status": "Success",
+        "startTime": "2026-09-28T21:31:31.3725669Z",
+        "endTime": "2026-09-28T21:31:31.4094468Z",
+        "duration": "00:00:00.0368799",
+        "title": "Message successfully restored",
+        "message": "Item RP-CANARY-0005 was restored successfully (type: IPM.Note; source: Alice Test\\Inbox; target: restoretest@RestoreProofLab.onmicrosoft.com\\<null>\\Inbox)",
+        "order": 3,
+        "organizationId": "ff96d072-29e2-4cb4-a155-2590f5473176",
+        "backedUpOrganizationId": "RestoreProofLab.onmicrosoft.com:00000000-0000-0000-0000-000000000000:00000000-0000-0000-0000-000000000000",
+        "userId": "RestoreProofLab.onmicrosoft.com:00000000-0000-0000-0000-000000000000:00000000-0000-0000-0000-000000000000:b8712372-d84b-4c0c-8d78-5ab08331da42:00000000-0000-0000-0000-000000000000",
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/a9fb8fe0-caf9-49b3-9374-0ee3bea58b0f/events/f2974928-0c7a-df8b-4fb2-46163d691e36"
+          },
+          "restoreSession": {
+            "href": "/v8/restoresessions/a9fb8fe0-caf9-49b3-9374-0ee3bea58b0f"
+          }
+        }
+      },
+      {
+        "itemName": "RP-CANARY-0002",
+        "itemType": "IPM.Note",
+        "itemSizeBytes": 40224,
+        "source": "Alice Test\\Inbox",
+        "target": "restoretest@RestoreProofLab.onmicrosoft.com\\<null>\\Inbox",
+        "id": "89bb9917-210b-6a0a-41aa-1f0f4b0e37da",
+        "type": "Restore",
+        "status": "Success",
+        "startTime": "2026-09-28T21:31:31.4486167Z",
+        "endTime": "2026-09-28T21:31:31.4651611Z",
+        "duration": "00:00:00.0165444",
+        "title": "Message successfully restored",
+        "message": "Item RP-CANARY-0002 was restored successfully (type: IPM.Note; source: Alice Test\\Inbox; target: restoretest@RestoreProofLab.onmicrosoft.com\\<null>\\Inbox)",
+        "order": 4,
+        "organizationId": "ff96d072-29e2-4cb4-a155-2590f5473176",
+        "backedUpOrganizationId": "RestoreProofLab.onmicrosoft.com:00000000-0000-0000-0000-000000000000:00000000-0000-0000-0000-000000000000",
+        "userId": "RestoreProofLab.onmicrosoft.com:00000000-0000-0000-0000-000000000000:00000000-0000-0000-0000-000000000000:b8712372-d84b-4c0c-8d78-5ab08331da42:00000000-0000-0000-0000-000000000000",
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/a9fb8fe0-caf9-49b3-9374-0ee3bea58b0f/events/89bb9917-210b-6a0a-41aa-1f0f4b0e37da"
+          },
+          "restoreSession": {
+            "href": "/v8/restoresessions/a9fb8fe0-caf9-49b3-9374-0ee3bea58b0f"
+          }
+        }
+      },
+      {
+        "itemName": "RP-CANARY-0006",
+        "itemType": "IPM.Note",
+        "itemSizeBytes": 41991,
+        "source": "Alice Test\\Inbox",
+        "target": "restoretest@RestoreProofLab.onmicrosoft.com\\<null>\\Inbox",
+        "id": "95a8d2b2-8528-885e-0603-86fa46e32a55",
+        "type": "Restore",
+        "status": "Success",
+        "startTime": "2026-09-28T21:31:31.4840129Z",
+        "endTime": "2026-09-28T21:31:31.5159925Z",
+        "duration": "00:00:00.0319796",
+        "title": "Folder successfully restored",
+        "message": "Item RP-CANARY-0006 was restored successfully (type: IPM.Note; source: Alice Test\\Inbox; target: restoretest@RestoreProofLab.onmicrosoft.com\\<null>\\Inbox)",
+        "order": 5,
+        "organizationId": "ff96d072-29e2-4cb4-a155-2590f5473176",
+        "backedUpOrganizationId": "RestoreProofLab.onmicrosoft.com:00000000-0000-0000-0000-000000000000:00000000-0000-0000-0000-000000000000",
+        "userId": "RestoreProofLab.onmicrosoft.com:00000000-0000-0000-0000-000000000000:00000000-0000-0000-0000-000000000000:b8712372-d84b-4c0c-8d78-5ab08331da42:00000000-0000-0000-0000-000000000000",
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/a9fb8fe0-caf9-49b3-9374-0ee3bea58b0f/events/95a8d2b2-8528-885e-0603-86fa46e32a55"
+          },
+          "restoreSession": {
+            "href": "/v8/restoresessions/a9fb8fe0-caf9-49b3-9374-0ee3bea58b0f"
+          }
+        }
+      },
+      {
+        "itemSizeBytes": 0,
+        "id": "45a157f0-f96d-4aa0-b74d-8dcd024dfcc6",
+        "type": "None",
+        "status": "Success",
+        "startTime": "2026-09-28T21:31:41.6111357Z",
+        "endTime": "2026-09-28T21:31:41.6111357Z",
+        "duration": "00:00:00",
+        "title": "Restore session completed",
+        "message": "Restore session completed",
+        "order": 6,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/a9fb8fe0-caf9-49b3-9374-0ee3bea58b0f/events/45a157f0-f96d-4aa0-b74d-8dcd024dfcc6"
+          },
+          "restoreSession": {
+            "href": "/v8/restoresessions/a9fb8fe0-caf9-49b3-9374-0ee3bea58b0f"
+          }
+        }
+      }
+    ]
+  }
+}

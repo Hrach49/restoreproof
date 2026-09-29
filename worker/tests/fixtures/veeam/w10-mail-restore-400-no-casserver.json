@@ -1,0 +1,32 @@
+{
+  "source": "docs/api/veeam-lab/w1.0-c-mail-user-restore-no-casserver-400.json",
+  "request": "POST /v8/RestoreSessions/a8d3da45-30ff-4f4b-9247-86e6fd1a59a4/organization/mailboxes/e00393b0-a896-4487-ad04-0e1be36468fb/items/restoreTo",
+  "request_body": {
+    "mailbox": "restoretest@RestoreProofLab.onmicrosoft.com",
+    "folder": "Inbox",
+    "items": [
+      {
+        "id": "LgAAAEYAAAAWAAAAAAAAAJQ40Ee3vkxBk1fd6-4CAU4BAP0LwXmScMJMnrn-sNESuJ8AAAAAAQwAAAAAAACUONBHt75MQZNX3evuAgFOBwD9C8F5knDCTJ65_rDRErifAAAAAAEMAAD9C8F5knDCTJ65_rDRErifAAAAAFuMAAD9C8F5knDCTJ65_rDRErifAAAAADr_"
+      }
+    ],
+    "changedItems": true,
+    "deletedItems": true,
+    "markRestoredAsUnread": false,
+    "excludeDrafts": false,
+    "excludeDeletedItems": false,
+    "excludeInPlaceHoldItems": true,
+    "excludeLitigationHoldItems": true,
+    "officeRegion": "Worldwide",
+    "officeOrganizationName": "RestoreProofLab.onmicrosoft.com",
+    "userName": "HrachyaHarutyunyan@RestoreProofLab.onmicrosoft.com",
+    "userPassword": "[REDACTED]"
+  },
+  "status": 400,
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8"
+  },
+  "body": {
+    "message": "Missing mandatory parameters: CasServer.",
+    "errorCode": "ParameterValidationFailure"
+  }
+}

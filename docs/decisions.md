@@ -7,6 +7,107 @@ Format: date, decision, reason, alternatives rejected.
 
 ---
 
+## 2026-09-29 — The Worker runs on the Veeam server (proposed)
+
+**Status: proposed.** The owner accepted the recommendation; spike #135 (W4.12) confirms or
+supersedes it before W4.5.
+
+**Decision.** In Stage 1 the Worker is installed on the Veeam Backup for Microsoft 365 server,
+next to its REST API. The restore credential is Veeam's own organisation app (as in W2.4
+decision 1): for each run the Worker reads the app ID and certificate thumbprint from
+`GET /v8/Organizations`, finds that certificate in `Cert:\LocalMachine\My`, checks the app ID,
+and exports it in memory only. No copy of the PFX is stored, in the vault or anywhere else.
+This picks the second option of the W2.4 entry's open point ("a run-time export by the
+thumbprint Veeam reports, when the Worker runs on the Veeam server"). The 2026-09-26 rule
+stands: it is tested (#135) before the Worker relies on it. That spike also picks the service
+account: LocalSystem, or a virtual account with read access to the certificate's private key.
+
+Follow-ups, as comments on the issues: W4.5 (#48) holds no restore PFX; W7.1 (#80) installs on
+the Veeam server; W7.2 (#81) checks the REST API is local and each organisation's certificate
+exists, is exportable and isn't within 30 days of expiry; Q7.2 (#85) and Q7.3 (#86) state the
+requirement and that the Worker has Veeam admin rights over every organisation on that server.
+
+**Reason.**
+
+- Veeam's certificate never leaves the server it already lives on, and no file outlives a run.
+- Nothing to rotate on our side: when Veeam renews its app certificate, the next run finds the
+  new thumbprint.
+- It is the path W1.0, L1.4 and W2.4 already proved in the lab.
+
+**Cost.** Stage 1 can't serve customers whose Veeam REST API runs on a separate machine, who
+won't install software on their backup server, or who use Veeam Data Cloud (Veeam's SaaS, no
+self-hosted REST API). Sales material says so.
+
+**Alternatives rejected.**
+
+- *A vault copy of Veeam's organisation PFX:* a long-lived copy of a broad credential, and it
+  must be renewed by hand when Veeam renews the certificate. Kept as the fallback if #135
+  fails, or for a Worker on another machine (Stage 2).
+- *A dedicated, narrower restore app:* Veeam's SharePoint restore needed
+  `Group.ReadWrite.All` on the app (L1.4), so it may not be narrower, and it adds consent and
+  roles in every client tenant.
+
+---
+
+## 2026-09-29 — Clients live in the Cloud; the Worker checks every job (proposed)
+
+**Status: proposed.** The owner accepted the recommendation; tasks W4.10 (#133), W4.11 (#134)
+and C5.13 (#136) build it.
+
+**Decision.**
+
+1. **A client is one Microsoft 365 tenant, which is one Veeam organisation.** A Worker serves
+   one Veeam server and runs jobs for any number of clients on it, one at a time. In-house IT
+   is the one-client case, not a separate mode.
+2. **The Cloud is where clients' details live.** `connector.config_json` (C5.2) holds a
+   `client-profile.v1`: `veeam_org_name`, `graph_tenant_id`, `graph_client_id`,
+   `test_mailbox` and the four target IDs, with today's key names. IDs only: no names, URLs
+   or secrets (W2.4 decision 3 stands). Each job (`job.v1`, C5.6) carries it.
+3. **`RestoreTargets::from_profile` is the only factory;** `from_config` wraps it.
+   `config.json`'s client keys become an optional local profile, all or nothing, read only by
+   the CLI diagnostics. The service loop (W4.8) never reads it.
+4. **Before any restore call, the Worker checks the job** (W4.11): the job and profile are
+   valid (`job_invalid`), the connector is registered (`connector_unknown`), and the Veeam
+   organisation named by `veeam_org_name` has `type == Office365`,
+   `msid == graph_tenant_id` and `region == Worldwide` (`client_mismatch`). The Graph token is
+   requested for the job's tenant, `TargetReader`'s checks pass, and only then does
+   `TargetGuard` run per item. Every failure is `error`, never `fail`.
+5. **The Cloud refuses mix-ups** (C5.13): a tenant is unique per MSP, a connector is unique
+   per (worker, client), a profile must name its client's tenant, every connector change is an
+   `audit_log` row, and a bundle for a different client or tenant than dispatched gets 409.
+6. **The signed result names the client** (W4.1): tenant, Veeam organisation, target IDs,
+   the names and URLs they resolved to at run time, and `scope: "same_tenant"`.
+7. **Jobs run one at a time per Veeam server,** because the W2.4 duplicate check matches
+   restore sessions by `initiatedBy`, not by organisation.
+
+**Reason.**
+
+- An MSP has many clients, and the job format already carries per-client locations; one
+  `config.json` per client on the Worker would drift from the Cloud.
+- The Worker doesn't trust the Cloud blindly: Veeam (`msid`) and Microsoft (a token bound to
+  the tenant, grants on the test locations only) must agree with the job. A bug or a typo in
+  the Cloud ends as `error` with nothing restored, so no approval step is needed on the
+  Worker host, which locked-down MSP servers would struggle with.
+- The same model serves an MSP with many organisations on one Veeam server, a Veeam server per
+  customer, and in-house IT.
+
+**Alternatives rejected.**
+
+- *A client file per client on the Worker:* a second copy that drifts, and it repeats the
+  W1.7 entry's reasoning against a `connector` key in `config.json` ("the wrong place once
+  jobs carry the type").
+- *Trusting a job's targets as sent:* see the 2026-09-29 W2.4 review entry, decision 1.
+- *A person approving each client's targets on the Worker:* deferred; the checks above rest on
+  facts Veeam and Microsoft report.
+- *Finding the Veeam organisation by `msid` instead of by name:* deferred; the name plus the
+  `msid` cross-check is enough for Stage 1.
+
+**Deferred to Stage 2.** An organisation inventory in the heartbeat, bulk import of clients,
+more than one Worker per Veeam server or more than one server per Worker, restores into
+another tenant.
+
+---
+
 ## 2026-09-29 — W2.4 review: the target guard trusts no configured ID; the restore script's no-verdict paths
 
 **Decision.** A code review of W2.4 (`/code-review`, max) found fifteen problems plus ten

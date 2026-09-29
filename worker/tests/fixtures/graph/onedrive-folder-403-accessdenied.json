@@ -1,6 +1,6 @@
 {
   "source": "hand-written: a 403 on the OneDrive folder, in the recorded site-403-accessdenied.json shape; SharePoint masks an ungranted item as 404 (L1.5), so the lab can't provoke one read-only. A folder re-created after the grant (docs/security/graph-permissions.md) is the case it stands for",
-  "request": "GET /v1.0/drives/b!wA9gbfhlEUitGAluxbfoNBr_z5gEtDhErm5pJ6bMwyXfZJ8a_dkCQ696RX0r7_U3/items/01ZK75LGDGB6QOO3MGNFGYOY6C6VBDG5OH?$select=id,name,folder,parentReference",
+  "request": "GET /v1.0/drives/b!wA9gbfhlEUitGAluxbfoNBr_z5gEtDhErm5pJ6bMwyXfZJ8a_dkCQ696RX0r7_U3/items/01ZK75LGDGB6QOO3MGNFGYOY6C6VBDG5OH?$select=id,name,folder,parentReference,sharepointIds",
   "status": 403,
   "headers": {
     "Content-Type": "application/json",

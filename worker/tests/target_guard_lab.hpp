@@ -1,8 +1,9 @@
 #pragma once
 
 // The restore-target guard (W2.7) as its tests see it: Graph served by a
-// FakeHttpClient with W2.2's recorded replies for the RestoreTarget library and
-// the test OneDrive folder (graph_lab.hpp), every log line in a string, and
+// FakeHttpClient with the recorded replies for the test mailbox's Inbox, the
+// RestoreTarget library and the test OneDrive folder (graph_lab.hpp), every
+// log line in a string, and
 // specs whose selectors name made-up sources outside the restore targets. No
 // Catch2 assertions in here: FakeHttpClient's handlers may call these on the
 // client's threads.
@@ -86,6 +87,7 @@ struct GuardLab {
         logger = string_logger("target_guard_test", log_stream);
         graph_logger = string_logger("target_guard_graph", graph_log_stream);
         graph_http.on(HttpMethod::post, kTokenUrl, {token_response()});
+        serve(inbox_url(), load_fixture_json("graph", "mailbox-inbox-200"));
         serve(drive_url(), load_fixture_json("graph", "restoretarget-drive-200"));
         serve(folder_url(), load_fixture_json("graph", "onedrive-folder-200"));
         rp::graph::GraphClientOptions options;
@@ -94,7 +96,7 @@ struct GuardLab {
         options.wall_now = [] { return kNow; };
         options.sleep = [](std::chrono::milliseconds) {};
         options.jitter = [] { return 0.0; };
-        graph = std::make_unique<rp::graph::GraphClient>(
+        graph = std::make_shared<rp::graph::GraphClient>(
             graph_http, kTenant, kClient,
             rp::graph::load_client_certificate(pfx_base64(), kPfxPassword, kNow), options);
     }
@@ -103,7 +105,7 @@ struct GuardLab {
 
     rp::TargetGuard guard() { return rp::TargetGuard(*graph, options()); }
 
-    // The drive's or folder's recorded reply, edited by `edit` (on its body).
+    // A target's recorded reply, edited by `edit` (on its body).
     void serve_edited(const std::string& url, const std::string& fixture,
                       const std::function<void(nlohmann::json&)>& edit)
     {
@@ -141,7 +143,7 @@ struct GuardLab {
     std::ostringstream graph_log_stream;
     std::shared_ptr<spdlog::logger> graph_logger;
     FakeHttpClient graph_http;
-    std::unique_ptr<rp::graph::GraphClient> graph;
+    std::shared_ptr<rp::graph::GraphClient> graph;
 };
 
 // What a call threw: its kind and message.

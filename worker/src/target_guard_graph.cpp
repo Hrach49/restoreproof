@@ -97,7 +97,7 @@ ResolvedOneDriveFolder check_restore_onedrive_folder(GraphClient& graph,
     std::optional<NotFoundError> missing;
     try {
         folder = graph.get_json("/drives/" + drive_id + "/items/" + targets.onedrive_folder_id() +
-                                    "?$select=id,name,folder,parentReference",
+                                    "?$select=id,name,folder,parentReference,sharepointIds",
                                 kOneDriveReadGrant);
     } catch (const NotFoundError& e) {
         // SharePoint answers 404, not 403, for an item the app may not read.
@@ -157,7 +157,51 @@ ResolvedOneDriveFolder check_restore_onedrive_folder(GraphClient& graph,
                                "names has no parentReference.siteId; the Worker can't tell the "
                                "OneDrive apart" + outcome);
     }
-    ResolvedOneDriveFolder resolved{*name, drive_id, targets.onedrive_folder_id(), *site};
+    // W2.7: a OneDrive restore names the OneDrive by its site URL; Veeam's
+    // OneDrive ID is the site and web GUIDs (restore-flow §16).
+    const auto ids = folder.find("sharepointIds");
+    const json& sharepoint_ids = ids == folder.end() ? none : *ids;
+    const std::string* ids_site = string_at(sharepoint_ids, "siteId");
+    const std::string* web = string_at(sharepoint_ids, "webId");
+    const std::string* site_url = string_at(sharepoint_ids, "siteUrl");
+    if (ids_site == nullptr || !ascii_iequals(*ids_site, *site) || web == nullptr ||
+        !is_uuid(*web) || site_url == nullptr) {
+        throw WrongTargetError("Graph's reply for the OneDrive folder test_onedrive_folder_id "
+                               "names has no sharepointIds with its site, web and site URL; the "
+                               "Worker can't tell the OneDrive apart" + outcome);
+    }
+    ResolvedOneDriveFolder resolved{*name,          drive_id, targets.onedrive_folder_id(),
+                                    *site,          *web,     *site_url};
+    return resolved;
+}
+
+ResolvedMailbox check_restore_mailbox(GraphClient& graph, const connector::RestoreTargets& targets,
+                                      const TargetCheckWording& wording)
+{
+    const std::string& mailbox = targets.mailbox();
+    const std::string outcome = "; " + std::string{wording.outcome};
+    json inbox;
+    bool refused = false;
+    try {
+        inbox = graph.get_json("/users/" + mailbox + "/mailFolders/inbox?$select=id",
+                               kMailReadGrant);
+    } catch (const PermissionError&) {
+        refused = true;
+    }
+    if (refused) {
+        throw WrongTargetError(
+            "Graph refused the Worker app the Inbox of the mailbox test_mailbox names (403): the "
+            "app's Exchange scope covers the restoretest mailbox alone, so the address is another "
+            "mailbox, or the grant \"" + std::string{kMailReadGrant.description} +
+            "\" is missing: the Worker " + std::string{wording.only} +
+            " the restoretest mailbox" + outcome);
+    }
+    const std::string* id = string_at(inbox, "id");
+    if (id == nullptr || id->empty()) {
+        throw WrongTargetError("Graph's reply for the Inbox of the mailbox test_mailbox names has "
+                               "no id; the Worker can't tell the mailbox is there" + outcome);
+    }
+    ResolvedMailbox resolved{mailbox, *id};
     return resolved;
 }
 

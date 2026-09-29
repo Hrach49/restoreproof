@@ -114,11 +114,15 @@ CheckedTargets TargetGuard::check_spec(const connector::RestoreSpec& spec)
             throw refused(which, " is sampled from a restore target (a RestoreTarget folder)");
         }
     }
-    // Then each file target the spec uses, once, through Graph; mail needs no
-    // call (RestoreTargets::from_config allows restoretest@<domain> only).
+    // Then each target the spec uses, once, through Graph: a configured value
+    // proves nothing by itself, restoretest@<domain> included (it may be a live
+    // mailbox's alias).
     CheckedTargets checked(spec.targets);
     std::optional<std::string> wrong;
     try {
+        if (!spec.mail.empty()) {
+            checked.mailbox_ = graph::check_restore_mailbox(graph_, spec.targets, kGuardWording);
+        }
         if (!spec.sharepoint.empty()) {
             checked.library_ = graph::check_restore_library(graph_, spec.targets, kGuardWording);
         }

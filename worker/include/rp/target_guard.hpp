@@ -39,9 +39,9 @@ class CheckedTargets {
 public:
     // The configured targets, as the spec carried them.
     const connector::RestoreTargets& configured() const noexcept { return configured_; }
-    // The mail target: the configured restoretest@<domain>, as configured
-    // (RestoreTargets::from_config allows no other); its folder is Inbox.
-    const std::string& mailbox() const noexcept { return configured_.mailbox(); }
+    // The test mailbox, resolved through Graph (its folder is Inbox); set only
+    // when the spec had mail items.
+    const std::optional<graph::ResolvedMailbox>& mailbox() const noexcept { return mailbox_; }
     // The RestoreTarget library; set only when the spec had SharePoint items.
     const std::optional<graph::ResolvedLibrary>& library() const noexcept { return library_; }
     // The test OneDrive's RestoreTarget folder; set only when the spec had
@@ -56,6 +56,7 @@ private:
     explicit CheckedTargets(connector::RestoreTargets configured);
 
     connector::RestoreTargets configured_;
+    std::optional<graph::ResolvedMailbox> mailbox_;
     std::optional<graph::ResolvedLibrary> library_;
     std::optional<graph::ResolvedOneDriveFolder> onedrive_folder_;
 };
@@ -78,8 +79,8 @@ public:
     //    case-insensitive, empty and "." segments skipped). The owner can't be
     //    tied to the test OneDrive without a call W2.5 makes anyway, so this
     //    rule is by path.
-    // Then, once per type the spec uses, the target through Graph (GETs only;
-    // mail needs none): check_restore_library and
+    // Then, once per type the spec uses, the target through Graph (GETs only):
+    // check_restore_mailbox, check_restore_library and
     // check_restore_onedrive_folder, whose WrongTargetError becomes a
     // SafetyViolation with the same text. Graph's other errors pass through
     // with their own types (AuthError, PermissionError, NotFoundError,

@@ -1,0 +1,16 @@
+{
+  "source": "live 2026-09-29: GET alice's inbox folder (outside the Exchange RBAC scope)",
+  "request": "GET /v1.0/users/alice@RestoreProofLab.onmicrosoft.com/mailFolders/inbox?$select=id",
+  "status": 403,
+  "headers": {
+    "Content-Type": "application/json; odata.metadata=minimal; odata.streaming=true; IEEE754Compatible=false; charset=utf-8",
+    "request-id": "8818673a-c06c-4117-a64c-125fead2c506",
+    "client-request-id": "8818673a-c06c-4117-a64c-125fead2c506"
+  },
+  "body": {
+    "error": {
+      "code": "ErrorAccessDenied",
+      "message": "Access is denied. Check credentials and try again."
+    }
+  }
+}

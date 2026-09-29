@@ -108,6 +108,7 @@ add_executable(rptests
     tests/veeam_client_test.cpp
     tests/veeam_command_test.cpp
     tests/veeam_m365_connector_test.cpp
+    tests/veeam_m365_restore_guard_test.cpp
     tests/version_test.cpp
 )
 # deps_test.cpp uses cpr and OpenSSL directly, so it links them itself.

@@ -1,0 +1,14 @@
+{
+  "source": "live 2026-09-29: GET the restoretest inbox folder, as the Worker's guard reads it",
+  "request": "GET /v1.0/users/restoretest@RestoreProofLab.onmicrosoft.com/mailFolders/inbox?$select=id",
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/json; odata.metadata=minimal; odata.streaming=true; IEEE754Compatible=false; charset=utf-8",
+    "request-id": "790e2814-5b57-42a5-8815-1f865105bd61",
+    "client-request-id": "790e2814-5b57-42a5-8815-1f865105bd61"
+  },
+  "body": {
+    "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#users('restoretest%40RestoreProofLab.onmicrosoft.com')/mailFolders(id)/$entity",
+    "id": "AAMkADYyNGRlZDhkLTM1MmEtNGI1NS05Y2I5LTM4OTliNzZhMTRjOAAuAAAAAADjrcyzRbMCTbaiTPZo3n0vAQCnL_u8BR8BT6morC7OYUFaAAAAAAEMAAA="
+  }
+}

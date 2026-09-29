@@ -7,6 +7,54 @@ Format: date, decision, reason, alternatives rejected.
 
 ---
 
+## 2026-09-30 — W2.7 review: the guard resolves the mailbox and the OneDrive's address, and runs first in `restore_sample`
+
+Supersedes parts of the 2026-09-29 W2.7 entry below (points 1, 2 and 3, and its opening
+paragraph), after the max-effort review of PR #138.
+
+**Decision.**
+
+1. **The mail target is resolved through Graph too.** Layer 1 reads
+   `GET /users/{test_mailbox}/mailFolders/inbox?$select=id` once when the spec has mail items
+   (`rp::graph::check_restore_mailbox`, `ResolvedMailbox`, `CheckedTargets::mailbox()` now an
+   optional that is set only then). The Worker app reads mail only through Exchange RBAC
+   `Application Mail.Read` in a management scope of the restoretest mailbox's primary address
+   (`docs/security/graph-permissions.md`, #3), so a 200 shows the configured
+   `restoretest@<domain>` reaches that mailbox and not a live mailbox holding the name as an
+   alias (or a group). Exchange's 403 is a refusal (`SafetyViolation`: another mailbox, or the
+   scope is missing); a 404 stays Graph's `NotFoundError`. No new permission. Layer 2 now
+   requires the mailbox resolved for a mail request (`bad context: the test mailbox was not
+   checked`), and a `restoretest` address there.
+2. **Layer 2 ties `onedrive.url` and `onedrive.id` to the RestoreTarget folder's OneDrive.**
+   The folder GET now selects `sharepointIds` (`$select=id,name,folder,parentReference,
+   sharepointIds`, read through the existing folder grant): its `siteUrl` is exactly the URL
+   Veeam's copyTo names (recorded live 2026-09-29), and its `siteId` and `webId` run together
+   are Veeam's OneDrive ID. `onedrive.url` must equal that `siteUrl` and `onedrive.id` those two
+   GUIDs (ASCII case-insensitive), besides equalling W2.5's context; before, a URL on the
+   tenant's `-my` host that the context agreed with passed, so another user's OneDrive could
+   too. `ResolvedOneDriveFolder` gains `web_id` and `site_url`; the shared check (also
+   `TargetReader`'s) requires `sharepointIds` with the folder's `siteId`, a GUID `webId` and a
+   string `siteUrl`.
+3. **`restore_sample` runs layer 1 first.** `VeeamM365Connector` takes an optional Graph
+   client and `TargetGuardOptions`; `restore_sample` refuses without a Graph client
+   (`connector::Error`, no request), runs `TargetGuard::check_spec` before any Veeam request,
+   maps Graph's errors to connector ones (`AuthError` and `PermissionError` to `AuthError`,
+   `TransientError`, `NotFoundError`, the rest `connector::Error`), and only then throws
+   `NotImplementedError` until W2.5. `veeam_m365_restore_guard_test.cpp` pins that a refusal
+   and a passing guard both leave Veeam without a request. The registry's factory makes no
+   Graph client yet; W2.5 adds it. Layer 2 stays W2.5's to call before each POST (the TODO in
+   `restore_sample`).
+
+**Reason.** A configured value proves nothing by itself, the mailbox included (the W2.4
+review's rule, which the first W2.7 cut applied to the file targets only), and W2.5's context is
+built by the same code the guard is meant to check, so agreeing with it proves nothing either.
+#32's Done-when is "the guard is the first line of every restore call".
+
+**Alternatives rejected.** `GET /users/{mailbox}?$select=id,mail` (needs `User.Read.All`, which
+the app deliberately lacks); the OneDrive drive's `webUrl` (a drive-level read the folder grant
+may not cover, and it ends in `/Documents`); keeping #32 open until W2.5 (the wiring and its test
+cost little now, and W2.5 then can't skip the guard without breaking a test).
+
 ## 2026-09-29 — W2.7: the restore-target guard in two layers; `SafetyViolation`, exit code 4
 
 **Decision.** `TargetGuard` exists as two standalone units with the API W2.5 will call;

@@ -1,6 +1,7 @@
 // W2.7: the restore-target guard, layer 1 (rp/target_guard.hpp). Graph is
-// served by a FakeHttpClient with W2.2's recorded replies for the RestoreTarget
-// library and the test OneDrive folder; the refusals are edits of those replies
+// served by a FakeHttpClient with the recorded replies for the test mailbox's
+// Inbox, the RestoreTarget library and the test OneDrive folder; the refusals
+// are edits of those replies, other recorded replies
 // or specs whose items come from a restore target. A test passes only on the
 // guard's own refusal: a SafetyViolation whose message starts with
 // "target guard: " and says why. The canaries' own IDs appear nowhere here.
@@ -79,8 +80,46 @@ std::size_t lines_of(const std::string& text)
 
 // ---- the acceptance test: alice's inbox can't be a target ---------------------------------
 
-TEST_CASE("a spec can't point restores at alice's inbox: no RestoreTargets names it",
+TEST_CASE("the guard refuses a test_mailbox that reaches another mailbox than restoretest",
           "[target_guard]")
+{
+    // restoretest@<domain> has the right shape, but may be an alias of alice's
+    // live mailbox: Exchange then refuses the Worker app, whose scope is the
+    // restoretest mailbox alone (the recorded 403 is alice's Inbox).
+    const std::string alias = "restoretest@client.example";
+    rp::Config config = lab_config();
+    config.test_mailbox = alias;
+    GuardLab lab;
+    lab.serve(inbox_url(alias), load_fixture_json("graph", "mailbox-inbox-403-exchange"));
+
+    const Thrown thrown =
+        thrown_by([&] { lab.guard().check_spec(make_spec({mail_source()}, {}, {}, config)); });
+
+    CHECK(thrown.kind == "SafetyViolation");
+    CHECK(thrown.what ==
+          "target guard: Graph refused the Worker app the Inbox of the mailbox test_mailbox names "
+          "(403): the app's Exchange scope covers the restoretest mailbox alone, so the address is "
+          "another mailbox, or the grant \"" +
+              std::string{rp::graph::kMailReadGrant.description} +
+              "\" is missing: the Worker restores only into the restoretest mailbox" + kRestored);
+    CHECK(lab.gets(inbox_url(alias)) == 1);
+    CHECK(lab.log() == "critical SECURITY: " + thrown.what + "\n");
+}
+
+TEST_CASE("the guard refuses an Inbox reply without an id", "[target_guard]")
+{
+    GuardLab lab;
+    lab.serve_edited(inbox_url(), "mailbox-inbox-200", [](json& b) { b.erase("id"); });
+
+    const Thrown thrown = thrown_by([&] { lab.guard().check_spec(full_spec()); });
+
+    CHECK(thrown.kind == "SafetyViolation");
+    CHECK(thrown.what == "target guard: Graph's reply for the Inbox of the mailbox test_mailbox "
+                         "names has no id; the Worker can't tell the mailbox is there" + kRestored);
+    CHECK(lab.gets(drive_url()) == 0);
+}
+
+TEST_CASE("no RestoreTargets names alice's inbox", "[target_guard]")
 {
     // RestoreTargets has no default and comes only from a Config, which takes
     // restoretest@<domain> alone, so no spec can carry alice's inbox as its target.
@@ -278,6 +317,10 @@ TEST_CASE("the guard refuses a configured OneDrive folder that isn't the Restore
     const std::string no_site = "target guard: Graph's reply for the OneDrive folder "
                                 "test_onedrive_folder_id names has no parentReference.siteId; the "
                                 "Worker can't tell the OneDrive apart" + kRestored;
+    const std::string no_ids = "target guard: Graph's reply for the OneDrive folder "
+                               "test_onedrive_folder_id names has no sharepointIds with its site, "
+                               "web and site URL; the Worker can't tell the OneDrive apart" +
+                               kRestored;
     struct Row {
         std::string name;
         std::function<void(json&)> edit;
@@ -315,7 +358,17 @@ TEST_CASE("the guard refuses a configured OneDrive folder that isn't the Restore
                 kRestored},
         Row{"siteId removed", [](json& b) { b["parentReference"].erase("siteId"); }, no_site},
         Row{"siteId not a GUID", [](json& b) { b["parentReference"]["siteId"] = "alice"; },
-            no_site});
+            no_site},
+        Row{"sharepointIds removed", [](json& b) { b.erase("sharepointIds"); }, no_ids},
+        Row{"siteUrl removed", [](json& b) { b["sharepointIds"].erase("siteUrl"); }, no_ids},
+        Row{"siteUrl not a string", [](json& b) { b["sharepointIds"]["siteUrl"] = 1; }, no_ids},
+        Row{"webId not a GUID", [](json& b) { b["sharepointIds"]["webId"] = "alice"; }, no_ids},
+        Row{"sharepointIds of another site",
+            [](json& b) {
+                b["sharepointIds"]["siteId"] =
+                    other_guid(b["sharepointIds"]["siteId"].get<std::string>());
+            },
+            no_ids});
     CAPTURE(row.name);
     GuardLab lab;
     lab.serve_edited(folder_url(), "onedrive-folder-200", row.edit);
@@ -340,6 +393,9 @@ TEST_CASE("Graph's own errors pass the guard with their types", "[target_guard]"
         {"a 403 on the library", drive_url(), "site-403-accessdenied", "PermissionError"},
         {"a 404 on the folder", folder_url(), "onedrive-folder-404-itemnotfound", "NotFoundError"},
         {"a 503 on the library", drive_url(), "messages-503-unavailable", "TransientError"},
+        {"a 404 on the Inbox: no such mailbox", inbox_url(), "messages-404-unknown-user",
+         "NotFoundError"},
+        {"a 503 on the Inbox", inbox_url(), "messages-503-unavailable", "TransientError"},
     }));
     CAPTURE(row.name);
     GuardLab lab;
@@ -376,19 +432,24 @@ TEST_CASE("an empty spec checks nothing and calls nothing", "[target_guard]")
     CHECK(lab.graph_http.requests().empty());
     CHECK_FALSE(checked.library().has_value());
     CHECK_FALSE(checked.onedrive_folder().has_value());
-    CHECK(checked.mailbox() == lab_values().mailbox);
+    CHECK_FALSE(checked.mailbox().has_value());
     CHECK(lab.log().empty());
 }
 
-TEST_CASE("a mail-only spec makes no Graph call", "[target_guard]")
+TEST_CASE("a mail-only spec reads the test mailbox's Inbox once and nothing else",
+          "[target_guard]")
 {
     GuardLab lab;
+    const json inbox = load_fixture_json("graph", "mailbox-inbox-200").at("body");
 
     const rp::CheckedTargets checked =
         lab.guard().check_spec(make_spec({mail_source(1), mail_source(2)}));
 
-    CHECK(lab.graph_http.requests().empty());
-    CHECK(checked.mailbox() == lab_values().mailbox);
+    CHECK(lab.gets(inbox_url()) == 1);
+    CHECK(lab.graph_gets() == 1);
+    REQUIRE(checked.mailbox().has_value());
+    CHECK(checked.mailbox()->address == lab_values().mailbox);
+    CHECK(checked.mailbox()->inbox_id == inbox.at("id").get<std::string>());
     CHECK(checked.configured().mailbox() == lab_values().mailbox);
     CHECK_FALSE(checked.library().has_value());
     CHECK_FALSE(checked.onedrive_folder().has_value());
@@ -405,9 +466,12 @@ TEST_CASE("the guard resolves each file target once, whatever the number of item
         make_spec({mail_source()}, {sharepoint_source(1), sharepoint_source(2), sharepoint_source(3)},
                   {onedrive_source(1), onedrive_source(2)}));
 
+    CHECK(lab.gets(inbox_url()) == 1);
     CHECK(lab.gets(drive_url()) == 1);
     CHECK(lab.gets(folder_url()) == 1);
-    CHECK(lab.graph_gets() == 2);
+    CHECK(lab.graph_gets() == 3);
+    REQUIRE(checked.mailbox().has_value());
+    CHECK(checked.mailbox()->address == lab_values().mailbox);
     REQUIRE(checked.library().has_value());
     const rp::graph::ResolvedLibrary& library = *checked.library();
     CHECK(library.name == "RestoreTarget");
@@ -422,6 +486,8 @@ TEST_CASE("the guard resolves each file target once, whatever the number of item
     CHECK(od.drive_id == lab_values().onedrive_drive_id);
     CHECK(od.folder_id == lab_values().folder_id);
     CHECK(od.site_id == folder.at("parentReference").at("siteId").get<std::string>());
+    CHECK(od.web_id == folder.at("sharepointIds").at("webId").get<std::string>());
+    CHECK(od.site_url == folder.at("sharepointIds").at("siteUrl").get<std::string>());
     CHECK(lab.log().find("SECURITY") == std::string::npos);
 }
 

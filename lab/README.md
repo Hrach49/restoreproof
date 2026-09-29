@@ -290,8 +290,11 @@ What each request is and what is checked:
 - `restoretarget-drive-200.json` is the Worker's guard read of the library's drive
   (`$select=id,name,driveType,webUrl,sharePointIds`): it must be named `RestoreTarget`, its
   `webUrl` must end `/RestoreTarget`, and it must have `sharePointIds.siteId` and `.webId`.
-  `onedrive-folder-200.json` (`$select=id,name,folder,parentReference`) must be named
-  `RestoreTarget`, be a folder and sit in alice's OneDrive. Both lines also print the facts the
+  `onedrive-folder-200.json` (`$select=id,name,folder,parentReference,sharepointIds`) must be
+  named `RestoreTarget`, be a folder, sit in alice's OneDrive and have her OneDrive's
+  `sharepointIds.siteUrl` (W2.7). `mailbox-inbox-200.json` is the guard's read of the restoretest
+  Inbox (`$select=id`), which must have an `id`; `mailbox-inbox-403-exchange.json` is alice's,
+  outside the Exchange scope. The drive and folder lines also print the facts the
   Worker's guard depends on: `webUrl last segment=… sharePointIds=present|absent` and
   `parentReference.path=<value or (absent)> parentReference.id=present|absent`.
 - The children lists use `$select=id,name,size,file,folder&$top=200`. In `one-item` the one

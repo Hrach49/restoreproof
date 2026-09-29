@@ -244,4 +244,9 @@ A sentinel test greps every output for the PFX password, the token and the priva
    `Files.SelectedOperations.Selected`, is on the `/RestoreTarget` folder only, so a
    drive-level read may answer 403. W2.5 must check it. If it is refused, the fallback is the
    folder's `parentReference.siteId` (the first GUID of Veeam's OneDrive `id`), read through the
-   existing folder grant: no new permission (`docs/api/veeam-restore-flow.md` §16).
+   existing folder grant: no new permission (`docs/api/veeam-restore-flow.md` §16). Settled in
+   W2.7's review (2026-09-30): the folder's own `sharepointIds` (`siteUrl`, `siteId`, `webId`)
+   give Veeam's OneDrive URL and ID through the folder grant, so the Worker never reads the
+   drive. The guard also reads the restoretest Inbox (`GET /users/{mailbox}/mailFolders/inbox`)
+   through #3: a 403 there means the configured address isn't the scoped mailbox, and the guard
+   refuses it.

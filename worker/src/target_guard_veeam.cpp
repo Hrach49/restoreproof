@@ -240,6 +240,12 @@ void check_context(const Reader& reader, const CheckedTargets& targets,
     if (!is_guids(ctx.container_id)) {
         throw reader.refusal("bad context: the container ID is not one or more lower-case GUIDs");
     }
+    // An empty address can't pass: CheckedTargets moved from leaves one.
+    if (ctx.kind == RestoreKind::mail &&
+        (!targets.mailbox() || !is_restore_mailbox(targets.mailbox()->address))) {
+        throw reader.refusal("bad context: the test mailbox was not checked (the spec had no "
+                             "mail item)");
+    }
     if (ctx.kind == RestoreKind::sharepoint && !targets.library()) {
         throw reader.refusal("bad context: the RestoreTarget library was not checked (the spec "
                              "had no SharePoint item)");
@@ -347,7 +353,7 @@ public:
 
     Items mail() const
     {
-        const std::string& mailbox = targets_.mailbox();
+        const std::string& mailbox = targets_.mailbox()->address;
         if (ascii("mailbox") != mailbox) {
             throw reader_.refusal("mailbox is not the test mailbox");
         }
@@ -415,18 +421,21 @@ public:
             !target.contains("name") || !target.contains("url")) {
             throw reader_.refusal("onedrive is not an object of exactly id, name and url");
         }
+        // Veeam's OneDrive ID is its site's and web's GUIDs, as Graph resolved
+        // them for the RestoreTarget folder.
         const std::string& id = reader_.ascii(target.at("id"), "onedrive.id");
-        if (id != ctx_.target_onedrive_id ||
-            !ascii_iequals(id.substr(0, kGuidSize), folder.site_id)) {
+        if (id != ctx_.target_onedrive_id || !ascii_iequals(id, folder.site_id + folder.web_id)) {
             throw reader_.refusal("onedrive.id is not the test OneDrive");
         }
-        // The test OneDrive is on the tenant's -my host; test_site_id names the tenant.
+        // The address Veeam copies to: the RestoreTarget folder's OneDrive, as
+        // Graph wrote its site URL, on the tenant's -my host (test_site_id names
+        // the tenant). W2.5's context agreeing proves nothing by itself.
         const std::string host = parse_graph_site_id(targets_.configured().site_id()).value().host;
         const std::string root = "https://" + host.substr(0, host.find('.')) + "-my" +
                                  std::string{kSharePointSuffix} + "/";
         const std::string& url = reader_.ascii(target.at("url"), "onedrive.url");
-        if (url != ctx_.target_onedrive_url || !ascii_lower(url).starts_with(root) ||
-            url.find_first_of("?#") != std::string::npos) {
+        if (url != ctx_.target_onedrive_url || !ascii_iequals(url, folder.site_url) ||
+            !ascii_lower(url).starts_with(root) || url.find_first_of("?#") != std::string::npos) {
             throw reader_.refusal("onedrive.url is not the test OneDrive's address");
         }
         if (reader_.string(target.at("name"), "onedrive.name") != ctx_.target_onedrive_name) {

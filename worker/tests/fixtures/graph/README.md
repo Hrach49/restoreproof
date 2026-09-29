@@ -100,7 +100,9 @@ answers 404 for an item the app may not read, so the lab can't provoke that 403 
 | `restoretarget-drive-200.json` | live: the RestoreTarget library's drive, as the guard reads it | the SharePoint guard: name, `webUrl`, `driveType` and `sharePointIds` of the RestoreTarget library; its edits are the refusals (W2.2) |
 | `restoretarget-children-200-empty.json` | live: the RestoreTarget library's root children, empty | an empty library lists as an empty vector (W2.2) |
 | `restoretarget-children-200-one-item.json` | live: the RestoreTarget library's root children, one file | one file lists as one `FoundItem` (name, size and the bytes' SHA-256); its edits are the bad-driveItem, folder and package rows (W2.2) |
-| `onedrive-folder-200.json` | live: alice's OneDrive `/RestoreTarget` folder, as the guard reads it | the OneDrive guard: name, folder facet, `parentReference.driveId`, `.driveType` and `.path`; its edits are the refusals (W2.2) |
+| `onedrive-folder-200.json` | live: alice's OneDrive `/RestoreTarget` folder, as the guard reads it | the OneDrive guard: name, folder facet, `parentReference.driveId`, `.driveType`, `.path` and `.siteId`, and `sharepointIds` (`$select` has it since W2.7: `.siteUrl` is the OneDrive a restore names); its edits are the refusals (W2.2) |
+| `mailbox-inbox-200.json` | live: the restoretest Inbox folder, as the guard reads it | the mailbox guard (W2.7): a 200 means the Worker app's Exchange RBAC scope, restoretest's alone, covers the address |
+| `mailbox-inbox-403-exchange.json` | live: alice's Inbox folder, outside the Exchange RBAC scope | 403 `ErrorAccessDenied`: the guard refuses the address as not the test mailbox (W2.7) |
 | `onedrive-children-200-empty.json` | live: the children of alice's `/RestoreTarget`, empty | an empty folder lists as an empty vector (W2.2) |
 | `onedrive-children-200-one-item.json` | live: the children of alice's `/RestoreTarget`, one file | one file lists as one `FoundItem`, downloaded from the `-my` host (W2.2) |
 | `drive-404-itemnotfound.json` | live: a drive ID of no drive | 404 `itemNotFound` on the drive → `NotFoundError`, never an empty listing (W2.2) |

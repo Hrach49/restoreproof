@@ -1,5 +1,7 @@
 #include <rp/veeam_m365_connector.hpp>
 
+#include <rp/graph_errors.hpp>
+
 #include "control_chars.hpp"
 #include "uuid.hpp"
 
@@ -65,8 +67,10 @@ bool is_set(const std::optional<std::string>& secret) noexcept
 
 VeeamM365Connector::VeeamM365Connector(std::unique_ptr<IHttpClient> http, std::string base_url,
                                        std::string username, std::string password,
-                                       VeeamClientOptions options)
-    : http_(std::move(http))
+                                       VeeamClientOptions options,
+                                       std::shared_ptr<graph::GraphClient> graph,
+                                       TargetGuardOptions guard_options)
+    : http_(std::move(http)), graph_(std::move(graph)), guard_options_(std::move(guard_options))
 {
     if (!http_) {
         throw std::invalid_argument("veeam_m365: no HTTP client");
@@ -128,19 +132,36 @@ std::vector<connector::RestorePoint> VeeamM365Connector::list_restore_points(
     }
 }
 
-connector::RestoreResult VeeamM365Connector::restore_sample(const connector::RestoreSpec&)
+connector::RestoreResult VeeamM365Connector::restore_sample(const connector::RestoreSpec& spec)
 {
-    // TODO(W2.5): the guard (W2.7) is ready; restore_sample must call it, in
-    // this order:
-    //  1. rp::TargetGuard(graph).check_spec(spec) before any Veeam call
-    //     (rp/target_guard.hpp; an empty spec returns not_run);
+    // The guard is the first line (W2.7, #32): nothing reaches Veeam before
+    // layer 1 passed. Its SafetyViolation passes out as it is: status `error`,
+    // exit code 4, never `fail`.
+    if (!graph_) {
+        throw connector::Error(
+            "veeam_m365: no Graph client, so the target guard can't run; nothing was restored");
+    }
+    std::optional<CheckedTargets> checked;
+    try {
+        checked.emplace(TargetGuard(*graph_, guard_options_).check_spec(spec));
+    } catch (const graph::AuthError& e) {
+        throw connector::AuthError(e.what());
+    } catch (const graph::PermissionError& e) {
+        throw connector::AuthError(e.what());
+    } catch (const graph::TransientError& e) {
+        throw connector::TransientError(e.what());
+    } catch (const graph::NotFoundError& e) {
+        throw connector::NotFoundError(e.what());
+    } catch (const graph::GraphError& e) {
+        throw connector::Error(e.what());
+    }
+    // TODO(W2.5), with `checked`:
+    //  1. an empty spec returns not_run;
     //  2. browse (read-only calls) and build a veeam::RestoreRequestContext
     //     per source container (docs/api/veeam-restore-flow.md §4, §16);
-    //  3. veeam::check_restore_request(checked, ctx, path, body) on the exact
-    //     path and text, immediately before each restore POST
-    //     (rp/target_guard_veeam.hpp).
-    // A connector::SafetyViolation from either passes out as it is: status
-    // `error`, exit code 4, never `fail`.
+    //  3. veeam::check_restore_request(*checked, ctx, path, body,
+    //     guard_options_) on the exact path and text, immediately before each
+    //     restore POST (rp/target_guard_veeam.hpp).
     throw connector::NotImplementedError(
         "veeam_m365: restore_sample is not implemented yet (W2.5)");
 }

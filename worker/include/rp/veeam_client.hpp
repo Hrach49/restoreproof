@@ -18,6 +18,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -81,6 +82,15 @@ public:
     using VeeamError::VeeamError;
 };
 
+// The Entra app Veeam signs in to one Microsoft 365 service with, as an
+// organisation's settings name it. W2.5 restores with it: the body's
+// applicationId, and the certificate (by thumbprint, in LocalMachine\My)
+// exported per restore (docs/decisions.md 2026-09-28 W2.4, 2026-09-30 W2.5).
+struct OrganizationApp {
+    std::string application_id;         // applicationId, as Veeam sent it
+    std::string certificate_thumbprint; // applicationCertificateThumbprint (SHA-1 hex)
+};
+
 // A Microsoft 365 organisation Veeam backs up (GET /v8/Organizations).
 struct Organization {
     std::string id;          // Veeam's organisation ID, a UUID: every later call takes it
@@ -88,6 +98,13 @@ struct Organization {
     std::string msid;        // the Entra tenant ID; empty if Veeam sent none
     std::string region;      // e.g. Worldwide; empty if none
     std::string office_name; // officeName; empty if none
+    // exchangeOnlineSettings.{applicationId, applicationCertificateThumbprint}
+    // and sharePointOnlineSettings' two. Set only when both strings are there
+    // and not empty; nullopt when the settings object is missing or null, or
+    // either field is missing, null or empty. A value of another JSON kind is
+    // an "unexpected response" VeeamError.
+    std::optional<OrganizationApp> exchange_app;
+    std::optional<OrganizationApp> sharepoint_app;
 };
 
 // A restore point (GET /v8/RestorePoints). There is no "isModified": the guide
@@ -194,6 +211,73 @@ public:
     // NotFoundError.
     std::vector<RestorePoint> list_restore_points(const std::string& organization_id);
 
+    // --- W2.5: browsing, restoring and reading restore sessions ---
+    // Every `path` below starts with "/v8/" (std::invalid_argument otherwise,
+    // before any request) and holds the query too; the client puts base_url
+    // in front. Callers percent-encode what they put in it.
+
+    // One GET, as list_* send theirs: retried after a transport failure or a
+    // transient 5xx (five attempts in all), one fresh sign-in after an empty
+    // 401, and the same errors (AuthError, NotFoundError, TransientError,
+    // VeeamError). A 2xx that isn't JSON is a VeeamError.
+    nlohmann::json get_json(const std::string& path);
+    // get_json with the objects' keys in the order Veeam sent them: a
+    // document Veeam listed goes back into a restore body as it was.
+    nlohmann::ordered_json get_ordered_json(const std::string& path);
+    // Every entry of a paged list ({"results": [{"id", ...}]}), each ID once,
+    // as list_* read theirs: "limit=<page_size>&offset=<n>" is appended.
+    std::vector<nlohmann::json> get_all(const std::string& path);
+
+    // POST /v8/Organizations/{organization_id}/explore with exactly
+    // {"dateTime":"<backup_time>","type":"<type>","showDeleted":false,"showAllVersions":false}
+    // (veeam-notes §4.1): `backup_time` byte for byte as the restore point
+    // gave it, `type` one of Vex, Vesp, Veod. Returns the session's ID from
+    // the answer (201, or any 2xx) with a UUID "id"; any other 2xx is a
+    // VeeamError. The organisation ID must be a UUID and the time in Veeam's
+    // UTC form ("2026-09-25T19:37:15.2145203Z"), the type one of the three
+    // (std::invalid_argument, before any request). It opens a session, so it
+    // is sent again only when it never went out (no connection, no
+    // handshake), or after an empty 401 (Veeam did nothing) with a newer
+    // token or one fresh sign-in; a 5xx or a timeout is thrown, never resent.
+    std::string open_explore_session(const std::string& organization_id,
+                                     const std::string& backup_time, std::string_view type);
+
+    // What a restore POST's single send came to.
+    struct RestorePostOutcome {
+        enum class Kind {
+            accepted,  // a 2xx with a UUID "sessionId": the restore session's ID
+            refused,   // a 4xx (401 and 403 too): Veeam started nothing
+            no_answer, // no response, a timeout, a 1xx, 3xx or 5xx, or a 2xx
+                       // without a UUID sessionId: a restore may be running
+        };
+        Kind kind = Kind::no_answer;
+        std::string session_id; // accepted only
+        int status = 0;         // the HTTP status; 0 without a response
+        std::string error_code; // Veeam's errorCode, if the answer had one
+        // One line, through rp::redact: what happened. Never the request body.
+        std::string message;
+    };
+
+    // Sends `body` to POST `path` exactly once: one IHttpClient::send, with
+    // max_attempts 1, retry_on_status off and `timeout` (above 0),
+    // Content-Type "application/json; charset=utf-8", and a token taken
+    // first. No resend of any kind, after a 401 neither: a restore sent twice
+    // restores twice (docs/decisions.md 2026-09-28 W2.4). Never throws for
+    // what the send brings (see RestorePostOutcome); throws
+    // std::invalid_argument for a path that doesn't start with "/v8/" or a
+    // timeout of 0 or less, and whatever getting the token throws
+    // (AuthError, TransientError, ...), with nothing sent then. `body` holds
+    // the organisation app's certificate: it is never logged, kept, or quoted
+    // in the outcome.
+    RestorePostOutcome post_restore_once(const std::string& path, const std::string& body,
+                                         std::chrono::milliseconds timeout);
+
+    // POST /v8/RestoreSessions/{session_id}/Stop. A 2xx is done; anything
+    // else throws as get_json does. Sent again only when it never went out,
+    // or after an empty 401. `session_id` must be a UUID
+    // (std::invalid_argument, before any request).
+    void stop_session(const std::string& session_id);
+
 private:
     struct Token {
         std::string access;
@@ -236,9 +320,16 @@ private:
     // recovery, retries, and the status mapping. Returns a 2xx response;
     // throws VeeamError (or a subclass) for anything else.
     HttpResponse get(const std::string& path_and_query);
-    // One GET with `token`, through send_with_retries.
-    HttpResponse send_get(const std::string& path_and_query, const std::string& token,
-                          const std::string& what, int& attempts);
+    // `method` base_url_ + `path_and_query` as get() sends a GET (a POST with
+    // `json_body`, which may be empty): the 401 recovery and the status
+    // mapping, and the retries only when `idempotent` (a request that isn't
+    // is sent again only when it never went out, or after an empty 401).
+    HttpResponse call(HttpMethod method, const std::string& path_and_query,
+                      const std::string& json_body, bool idempotent);
+    // One request with `token`, through send_with_retries.
+    HttpResponse send_call(HttpMethod method, const std::string& path_and_query,
+                           const std::string& json_body, bool idempotent,
+                           const std::string& token, const std::string& what, int& attempts);
     // Every entry of a paged list, each `id` once, in the order received.
     std::vector<nlohmann::json> get_all_pages(const std::string& path_and_query);
     void log_debug(const std::string& line) const;

@@ -1643,3 +1643,535 @@ TEST_CASE("nothing secret reaches the log or an error message", "[veeam]")
     CHECK(count_of(log, "signing in again") >= 1);
     CHECK(count_of(log, "logged out") == 1);
 }
+
+// --- W2.5: the organisation app, browsing, explore, restore POST, Stop -------
+
+namespace {
+
+const std::string kSessionId = "6ee50a66-c46f-4200-b793-c03f8bcbbb8b";
+const std::string kBackupTime = "2026-09-25T19:37:15.2145203Z";
+const std::string kExploreUrl = kBase + "/v8/Organizations/" + kOrgId + "/explore";
+const std::string kRestorePath =
+    "/v8/RestoreSessions/171ea3e1-1f41-420c-94f7-140b57470d4a/organization/mailboxes/"
+    "12af7578-24c6-48e4-a3a5-3174bda4f4d4/items/restoreTo";
+// A restore body as W2.5 sends it, but for its secrets: they must never show
+// up in an outcome, an error or the log.
+const std::string kRestoreBody =
+    R"({"mailbox":"restoretest@RestoreProofLab.onmicrosoft.com","folder":"Inbox",)"
+    R"("applicationId":"1fd2609d-1242-43fe-94b5-d58688a90bd6",)"
+    R"("applicationCertificate":"SENTINEL-PFX-MIIK","applicationCertificatePassword":"SENTINEL-PW"})";
+
+// One organisation entry with `settings` under `key` ("absent": no key).
+HttpResponse org_with_settings(const std::string& key, const std::string& settings)
+{
+    json org = {{"id", kOrgId}, {"name", "RestoreProofLab.onmicrosoft.com"}};
+    if (settings != "absent") {
+        org[key] = json::parse(settings);
+    }
+    return make_response(200,
+                         json{{"offset", 0}, {"limit", 1000}, {"results", json::array({org})}}
+                             .dump());
+}
+
+std::optional<rp::OrganizationApp> app_of(const rp::Organization& org, const std::string& key)
+{
+    return key == "exchangeOnlineSettings" ? org.exchange_app : org.sharepoint_app;
+}
+
+// Throws the transport failure `error`, as HttpClient does.
+[[noreturn]] void throw_transport(const HttpRequest& request, rp::TransportError error)
+{
+    throw rp::HttpError("POST " + request.url + ": no response", error, 0, 1);
+}
+
+using Answer = std::function<HttpResponse(const HttpRequest&)>;
+
+Answer transport(rp::TransportError error)
+{
+    return [error](const HttpRequest& request) -> HttpResponse { throw_transport(request, error); };
+}
+
+Answer respond(HttpResponse response)
+{
+    return [response](const HttpRequest&) { return response; };
+}
+
+} // namespace
+
+TEST_CASE("an organisation app field of the wrong JSON kind is a VeeamError", "[veeam][w2.5]")
+{
+    const std::string key = GENERATE("exchangeOnlineSettings", "sharePointOnlineSettings");
+    const std::string settings = GENERATE(
+        R"("x")", "[]", "5", "true",
+        R"({"applicationId":5,"applicationCertificateThumbprint":"T"})",
+        R"({"applicationId":"A","applicationCertificateThumbprint":true})",
+        R"({"applicationId":{},"applicationCertificateThumbprint":"T"})");
+    CAPTURE(key, settings);
+    Lab lab;
+    lab.http.on(HttpMethod::get, orgs_url(), {org_with_settings(key, settings)});
+    auto client = lab.make_client();
+
+    std::string what;
+    CHECK(thrown_kind([&] {
+              try {
+                  client->list_organizations();
+              } catch (const rp::VeeamError& e) {
+                  what = e.what();
+                  throw;
+              }
+          }) == "VeeamError");
+    CHECK(what.starts_with("Veeam GET /v8/Organizations: unexpected response: "));
+}
+
+TEST_CASE("an organisation app is set only with both strings there and not empty",
+          "[veeam][w2.5]")
+{
+    struct Row {
+        std::string settings;
+        bool set;
+    };
+    const std::string key = GENERATE("exchangeOnlineSettings", "sharePointOnlineSettings");
+    const Row row = GENERATE(values<Row>({
+        {"absent", false},
+        {"null", false},
+        {"{}", false},
+        {R"({"applicationId":"A"})", false},
+        {R"({"applicationCertificateThumbprint":"T"})", false},
+        {R"({"applicationId":"A","applicationCertificateThumbprint":""})", false},
+        {R"({"applicationId":"","applicationCertificateThumbprint":"T"})", false},
+        {R"({"applicationId":null,"applicationCertificateThumbprint":"T"})", false},
+        {R"({"applicationId":"A","applicationCertificateThumbprint":null})", false},
+        {R"({"applicationId":"A","applicationCertificateThumbprint":"T","account":7})", true},
+    }));
+    CAPTURE(key, row.settings);
+    Lab lab;
+    lab.http.on(HttpMethod::get, orgs_url(), {org_with_settings(key, row.settings)});
+    auto client = lab.make_client();
+
+    const std::vector<rp::Organization> orgs = client->list_organizations();
+
+    REQUIRE(orgs.size() == 1);
+    const auto app = app_of(orgs[0], key);
+    CHECK(app.has_value() == row.set);
+    if (app) {
+        CHECK(app->application_id == "A");
+        CHECK(app->certificate_thumbprint == "T");
+    }
+    // The other one was never sent.
+    CHECK_FALSE(app_of(orgs[0], key == "exchangeOnlineSettings" ? "sharePointOnlineSettings"
+                                                                 : "exchangeOnlineSettings"));
+}
+
+TEST_CASE("list_organizations reads the Exchange and SharePoint apps as Veeam sent them",
+          "[veeam][w2.5]")
+{
+    Lab lab;
+    lab.http.on(HttpMethod::get, orgs_url(), {load_fixture("veeam", "organizations-200")});
+    auto client = lab.make_client();
+
+    const std::vector<rp::Organization> orgs = client->list_organizations();
+
+    REQUIRE(orgs.size() == 1);
+    for (const auto& app : {orgs[0].exchange_app, orgs[0].sharepoint_app}) {
+        REQUIRE(app.has_value());
+        CHECK(app->application_id == "1fd2609d-1242-43fe-94b5-d58688a90bd6");
+        CHECK(app->certificate_thumbprint == "AC3220B58A2B4C438DA13816C2DD1E25D1F783A7");
+    }
+}
+
+TEST_CASE("a path outside /v8/ is refused before any request", "[veeam][w2.5]")
+{
+    const std::string path = GENERATE("", "v8/RestoreSessions", "/v9/RestoreSessions",
+                                      "/V8/RestoreSessions", "https://elsewhere.test/v8/x",
+                                      "//elsewhere.test/v8/x", "/v8");
+    CAPTURE(path);
+    Lab lab;
+    auto client = lab.make_client();
+
+    CHECK_THROWS_AS(client->get_json(path), std::invalid_argument);
+    CHECK_THROWS_AS(client->get_ordered_json(path), std::invalid_argument);
+    CHECK_THROWS_AS(client->get_all(path), std::invalid_argument);
+    CHECK_THROWS_AS(client->post_restore_once(path, kRestoreBody, 60s), std::invalid_argument);
+    CHECK(lab.http.requests().empty());
+}
+
+TEST_CASE("get_json maps Veeam's answers as the list calls do", "[veeam][w2.5]")
+{
+    struct Row {
+        HttpResponse response;
+        std::string kind;
+        std::size_t sends;
+    };
+    const Row row = GENERATE(values<Row>({
+        {load_fixture("veeam", "organization-404"), "NotFoundError", 1},
+        {load_fixture("veeam", "statistics-409"), "VeeamError", 1},
+        {load_fixture("veeam", "explore-500-not-utc"), "VeeamError", 1},
+        {make_response(503), "TransientError", 5},
+        {make_response(403, R"({"message":"no role"})"), "AuthError", 1},
+        {make_response(200, "not json"), "VeeamError", 1},
+        {make_response(200, ""), "VeeamError", 1},
+    }));
+    CAPTURE(row.response.status, row.kind);
+    Lab lab;
+    const std::string path = "/v8/RestoreSessions/" + kSessionId + "/Statistics";
+    lab.http.on(HttpMethod::get, kBase + path, {row.response});
+    auto client = lab.make_client();
+
+    CHECK(thrown_kind([&] { client->get_json(path); }) == row.kind);
+    CHECK(lab.http.count(HttpMethod::get, kBase + path) == row.sends);
+}
+
+TEST_CASE("get_json signs in afresh after an empty 401 and returns the JSON", "[veeam][w2.5]")
+{
+    Lab lab;
+    const std::string url = kBase + "/v8/RestoreSessions/" + kSessionId;
+    lab.http.on(HttpMethod::get, url,
+                {load_fixture("veeam", "api-expired-token-401"),
+                 load_fixture("veeam", "session-working")});
+    auto client = lab.make_client();
+
+    const json doc = client->get_json("/v8/RestoreSessions/" + kSessionId);
+
+    CHECK(doc.at("state") == "Working");
+    CHECK(lab.logins == 2);
+    const std::vector<HttpRequest> sent = lab.http.requests();
+    REQUIRE(sent.size() == 4);
+    CHECK(bearer(sent[3]) == "Bearer access-login-2");
+    CHECK(sent[3].method == HttpMethod::get);
+    CHECK(sent[3].timeout == 45s);
+}
+
+TEST_CASE("get_ordered_json keeps the keys in Veeam's order", "[veeam][w2.5]")
+{
+    Lab lab;
+    const std::string body =
+        R"({"name":"a.docx","id":"x","_links":{"self":{"href":"/v8"}},"sizeBytes":5})";
+    lab.http.on(HttpMethod::get, kBase + "/v8/RestoreSessions/" + kSessionId,
+                {make_response(200, body)});
+    auto client = lab.make_client();
+
+    CHECK(client->get_ordered_json("/v8/RestoreSessions/" + kSessionId).dump() == body);
+    CHECK(thrown_kind([&] {
+              lab.http.on(HttpMethod::get, kBase + "/v8/RestoreSessions/" + kSessionId,
+                          {make_response(200, "{")});
+              client->get_ordered_json("/v8/RestoreSessions/" + kSessionId);
+          }) == "VeeamError");
+}
+
+TEST_CASE("get_all pages a browse list after its own query", "[veeam][w2.5]")
+{
+    Lab lab;
+    const std::string path = "/v8/RestoreSessions/" + kSessionId + "/organization/mailboxes";
+    lab.http.on(HttpMethod::get, kBase + path + "?limit=2&offset=0",
+                {make_response(200, R"({"results":[{"id":"m1"},{"id":"m2"}]})")});
+    lab.http.on(HttpMethod::get, kBase + path + "?limit=2&offset=2",
+                {make_response(200, R"({"results":[{"id":"m3","email":"x@y"}]})")});
+    const std::string with_query = path + "/m1/folders?name=Inbox";
+    lab.http.on(HttpMethod::get, kBase + with_query + "&limit=2&offset=0",
+                {make_response(200, R"({"results":[{"id":"f1"}]})")});
+    auto client = lab.make_client(2);
+
+    const std::vector<json> mailboxes = client->get_all(path);
+    REQUIRE(mailboxes.size() == 3);
+    CHECK(mailboxes[2].at("email") == "x@y");
+    CHECK(client->get_all(with_query).size() == 1);
+}
+
+TEST_CASE("an explore session needs a UUID, a UTC time and a type before any request",
+          "[veeam][w2.5]")
+{
+    struct Row {
+        std::string org;
+        std::string time;
+        std::string type;
+    };
+    const Row row = GENERATE(values<Row>({
+        {"not-a-uuid", kBackupTime, "Vex"},
+        {kOrgId + "/x", kBackupTime, "Vex"},
+        {kOrgId, "2026-09-25T19:37:15.2145203+00:00", "Vex"},
+        {kOrgId, "2026-09-25T19:37:15", "Vesp"},
+        {kOrgId, "", "Veod"},
+        {kOrgId, R"(2026-09-25T19:37:15Z","type":"Vesp)", "Vex"},
+        {kOrgId, kBackupTime, "vex"},
+        {kOrgId, kBackupTime, "Mail"},
+        {kOrgId, kBackupTime, ""},
+        {kOrgId, kBackupTime, R"(Vex","showDeleted":true,"x":")"},
+    }));
+    CAPTURE(row.org, row.time, row.type);
+    Lab lab;
+    auto client = lab.make_client();
+
+    CHECK_THROWS_AS(client->open_explore_session(row.org, row.time, row.type),
+                    std::invalid_argument);
+    CHECK(lab.http.requests().empty());
+}
+
+TEST_CASE("an explore session is opened with exactly the recorded body", "[veeam][w2.5]")
+{
+    const std::string type = GENERATE("Vex", "Vesp", "Veod");
+    const std::string time = GENERATE(as<std::string>{}, "2026-09-25T19:37:15.2145203Z",
+                                      "2026-09-27T22:00:48Z");
+    CAPTURE(type, time);
+    Lab lab;
+    lab.http.on(HttpMethod::post, kExploreUrl, {load_fixture("veeam", "explore-201")});
+    auto client = lab.make_client();
+
+    CHECK(client->open_explore_session(kOrgId, time, type) == kSessionId);
+
+    const std::vector<HttpRequest> sent = lab.http.requests();
+    REQUIRE(sent.size() == 2);
+    CHECK(sent[1].method == HttpMethod::post);
+    CHECK(sent[1].url == kExploreUrl);
+    CHECK(sent[1].body == R"({"dateTime":")" + time + R"(","type":")" + type +
+                              R"(","showDeleted":false,"showAllVersions":false})");
+    CHECK(sent[1].content_type == "application/json; charset=utf-8");
+    CHECK(bearer(sent[1]) == "Bearer access-login-1");
+    CHECK(sent[1].max_attempts == 1);
+    CHECK_FALSE(sent[1].retry_on_status);
+    CHECK(sent[1].timeout == 45s);
+}
+
+TEST_CASE("an explore answer without a session UUID is a VeeamError", "[veeam][w2.5]")
+{
+    const std::string body =
+        GENERATE("", "not json", "[]", "{}", R"({"id":5})", R"({"id":"6ee50a66"})",
+                 R"({"sessionId":"6ee50a66-c46f-4200-b793-c03f8bcbbb8b"})");
+    CAPTURE(body);
+    Lab lab;
+    lab.http.on(HttpMethod::post, kExploreUrl, {make_response(201, body)});
+    auto client = lab.make_client();
+
+    CHECK(thrown_kind([&] { client->open_explore_session(kOrgId, kBackupTime, "Vex"); }) ==
+          "VeeamError");
+    CHECK(lab.http.count(HttpMethod::post, kExploreUrl) == 1);
+}
+
+TEST_CASE("an explore POST is resent only when it never went out, or after an empty 401",
+          "[veeam][w2.5]")
+{
+    struct Row {
+        std::string name;
+        Answer first;        // then explore-201
+        std::string outcome; // "none" or the exception kind
+        std::size_t sends;
+        int logins;
+    };
+    const Row row = GENERATE(values<Row>({
+        {"connect", transport(rp::TransportError::connect), "none", 2, 1},
+        {"handshake", transport(rp::TransportError::handshake), "none", 2, 1},
+        {"dropped", transport(rp::TransportError::dropped), "TransientError", 1, 1},
+        {"timeout", transport(rp::TransportError::timeout), "TransientError", 1, 1},
+        {"503", respond(make_response(503)), "TransientError", 1, 1},
+        {"500 with a message", respond(load_fixture("veeam", "explore-500-not-utc")),
+         "VeeamError", 1, 1},
+        {"empty 401", respond(load_fixture("veeam", "api-invalid-token-401")), "none", 2, 2},
+        {"401 with a message", respond(make_response(401, R"({"message":"no"})")), "AuthError",
+         1, 1},
+    }));
+    CAPTURE(row.name);
+    Lab lab;
+    auto calls = std::make_shared<std::atomic<int>>(0);
+    lab.http.on(HttpMethod::post, kExploreUrl, [calls, first = row.first](const HttpRequest& r) {
+        return ++*calls == 1 ? first(r) : load_fixture("veeam", "explore-201");
+    });
+    auto client = lab.make_client();
+
+    std::string id;
+    CHECK(thrown_kind([&] { id = client->open_explore_session(kOrgId, kBackupTime, "Vex"); }) ==
+          row.outcome);
+    CHECK(id == (row.outcome == "none" ? kSessionId : ""));
+    CHECK(lab.http.count(HttpMethod::post, kExploreUrl) == row.sends);
+    CHECK(lab.logins == row.logins);
+}
+
+TEST_CASE("a restore POST goes out exactly once, whatever comes back", "[veeam][w2.5]")
+{
+    using Kind = rp::VeeamClient::RestorePostOutcome::Kind;
+    struct Row {
+        std::string name;
+        Answer answer;
+        Kind kind;
+        int status;
+        std::string error_code;
+        std::string session_id;
+        std::string message; // a part of the outcome's message
+    };
+    const Row row = GENERATE(values<Row>({
+        {"dropped", transport(rp::TransportError::dropped), Kind::no_answer, 0, "", "",
+         ": no answer ("},
+        {"timeout", transport(rp::TransportError::timeout), Kind::no_answer, 0, "", "",
+         ": no answer ("},
+        {"connect", transport(rp::TransportError::connect), Kind::no_answer, 0, "", "",
+         ": no answer ("},
+        {"handshake", transport(rp::TransportError::handshake), Kind::no_answer, 0, "", "",
+         ": no answer ("},
+        {"not an HttpError",
+         [](const HttpRequest&) -> HttpResponse { throw std::runtime_error("SENTINEL-PW"); },
+         Kind::no_answer, 0, "", "", ": no answer (the send failed)"},
+        {"500",
+         respond(make_response(500,
+                               R"({"message":"Restore failed.","errorCode":"InternalError"})")),
+         Kind::no_answer, 500, "InternalError", "", ": HTTP 500 (InternalError): Restore failed."},
+        {"502", respond(make_response(502)), Kind::no_answer, 502, "", "", ": HTTP 502"},
+        {"302", respond(make_response(302)), Kind::no_answer, 302, "", "", ": HTTP 302"},
+        {"101", respond(make_response(101)), Kind::no_answer, 101, "", "", ": HTTP 101"},
+        {"400",
+         respond(make_response(
+             400,
+             R"({"message":"Folder not found.","errorCode":"ParameterValidationFailure"})")),
+         Kind::refused, 400, "ParameterValidationFailure", "",
+         ": HTTP 400 (ParameterValidationFailure): Folder not found."},
+        {"400 quoting the body",
+         respond(make_response(400, json{{"message", "Bad body: " + kRestoreBody}}.dump())),
+         Kind::refused, 400, "", "", "\"applicationCertificatePassword\":\"[REDACTED]\""},
+        {"401", respond(load_fixture("veeam", "api-expired-token-401")), Kind::refused, 401, "",
+         "", ": HTTP 401"},
+        {"403",
+         respond(make_response(
+             403, R"({"message":"Access denied.","errorCode":"ResourceAccessDenied"})")),
+         Kind::refused, 403, "ResourceAccessDenied", "", ": HTTP 403"},
+        {"200 without a sessionId", respond(make_response(200, "{}")), Kind::no_answer, 200, "",
+         "", ": HTTP 200 without a restore session ID"},
+        {"200 not JSON", respond(make_response(200, "ok")), Kind::no_answer, 200, "", "",
+         ": HTTP 200 without a restore session ID"},
+        {"200 with a sessionId that isn't a UUID",
+         respond(make_response(200, R"({"sessionId":"b6fe35ef"})")), Kind::no_answer, 200, "",
+         "", ": HTTP 200 without a restore session ID"},
+        {"200 with a sessionId that isn't a string",
+         respond(make_response(200, R"({"sessionId":7})")), Kind::no_answer, 200, "", "",
+         ": HTTP 200 without a restore session ID"},
+        {"200 as recorded", respond(load_fixture("veeam", "restore-mail-200")), Kind::accepted,
+         200, "", "b6fe35ef-9633-481d-9756-3496a717d8a9",
+         ": HTTP 200, restore session b6fe35ef-9633-481d-9756-3496a717d8a9"},
+        {"201 with a sessionId",
+         respond(make_response(201, R"({"sessionId":"15c3f986-0000-4000-8000-000000000001"})")),
+         Kind::accepted, 201, "", "15c3f986-0000-4000-8000-000000000001",
+         ": HTTP 201, restore session"},
+    }));
+    CAPTURE(row.name);
+    Lab lab;
+    const std::string url = kBase + kRestorePath;
+    lab.http.on(HttpMethod::post, url, row.answer);
+    auto client = lab.make_client();
+
+    const rp::VeeamClient::RestorePostOutcome out =
+        client->post_restore_once(kRestorePath, kRestoreBody, 60s);
+
+    CHECK(out.kind == row.kind);
+    CHECK(out.status == row.status);
+    CHECK(out.error_code == row.error_code);
+    CHECK(out.session_id == row.session_id);
+    CHECK(out.message.starts_with("Veeam POST " + kRestorePath));
+    CHECK(out.message.find(row.message) != std::string::npos);
+    CHECK(out.message.find('\n') == std::string::npos);
+    // One send, and nothing but the sign-in before it: no resend, and no
+    // fresh sign-in after a 401.
+    const std::vector<HttpRequest> sent = lab.http.requests();
+    REQUIRE(sent.size() == 2);
+    CHECK(sent[0].url == kTokenUrl);
+    const HttpRequest& post = sent[1];
+    CHECK(post.method == HttpMethod::post);
+    CHECK(post.url == url);
+    CHECK(post.body == kRestoreBody);
+    CHECK(post.content_type == "application/json; charset=utf-8");
+    CHECK(post.max_attempts == 1);
+    CHECK_FALSE(post.retry_on_status);
+    CHECK(post.timeout == 60s);
+    CHECK(bearer(post) == "Bearer access-login-1");
+    CHECK(post.headers.at("Accept") == "application/json");
+    CHECK(lab.logins == 1);
+    // The certificate and its password never leave the request.
+    const std::string log = lab.log();
+    for (const std::string secret : {"SENTINEL-PFX", "SENTINEL-PW"}) {
+        CHECK(out.message.find(secret) == std::string::npos);
+        CHECK(log.find(secret) == std::string::npos);
+    }
+}
+
+TEST_CASE("a restore POST takes its own timeout and refuses one of 0 or less", "[veeam][w2.5]")
+{
+    Lab lab;
+    lab.http.on(HttpMethod::post, kBase + kRestorePath,
+                {load_fixture("veeam", "restore-mail-200")});
+    auto client = lab.make_client();
+
+    CHECK_THROWS_AS(client->post_restore_once(kRestorePath, kRestoreBody, 0ms),
+                    std::invalid_argument);
+    CHECK_THROWS_AS(client->post_restore_once(kRestorePath, kRestoreBody, -1ms),
+                    std::invalid_argument);
+    CHECK(lab.http.requests().empty());
+
+    client->post_restore_once(kRestorePath, kRestoreBody, 1234ms);
+    CHECK(lab.http.requests().back().timeout == 1234ms);
+}
+
+TEST_CASE("a restore POST whose token can't be had throws and sends nothing", "[veeam][w2.5]")
+{
+    Lab lab;
+    lab.on_login = [](int) { return load_fixture("veeam", "token-rejected-401"); };
+    lab.http.on(HttpMethod::post, kBase + kRestorePath,
+                {load_fixture("veeam", "restore-mail-200")});
+    auto client = lab.make_client();
+
+    CHECK(thrown_kind([&] { client->post_restore_once(kRestorePath, kRestoreBody, 60s); }) ==
+          "AuthError");
+    CHECK(lab.http.count(HttpMethod::post, kBase + kRestorePath) == 0);
+}
+
+TEST_CASE("a restore POST with a token due for renewal renews it first", "[veeam][w2.5]")
+{
+    Lab lab;
+    lab.http.on(HttpMethod::post, kBase + kRestorePath,
+                {load_fixture("veeam", "restore-mail-200")});
+    auto client = lab.make_client();
+    client->ensure_token();
+    lab.advance(3541s);
+
+    client->post_restore_once(kRestorePath, kRestoreBody, 60s);
+
+    CHECK(lab.grants() == std::vector<std::string>{"password", "refresh_token"});
+    CHECK(bearer(lab.http.requests().back()) == "Bearer access-refresh-1");
+}
+
+TEST_CASE("stop_session refuses an ID that isn't a UUID before any request", "[veeam][w2.5]")
+{
+    const std::string id = GENERATE(as<std::string>{}, "", "x", kSessionId + "/Stop",
+                                    "6ee50a66-c46f-4200-b793-c03f8bcbbb8");
+    CAPTURE(id);
+    Lab lab;
+    auto client = lab.make_client();
+
+    CHECK_THROWS_AS(client->stop_session(id), std::invalid_argument);
+    CHECK(lab.http.requests().empty());
+}
+
+TEST_CASE("stop_session posts Stop once and maps a failure as get_json does", "[veeam][w2.5]")
+{
+    struct Row {
+        HttpResponse response;
+        std::string kind;
+    };
+    const Row row = GENERATE(values<Row>({
+        {load_fixture("veeam", "stop-204"), "none"},
+        {make_response(200, "{}"), "none"},
+        {make_response(404,
+                       R"({"message":"Session not found.","errorCode":"ResourceNotFound"})"),
+         "NotFoundError"},
+        {make_response(500, R"({"message":"Cannot stop."})"), "VeeamError"},
+        {make_response(503), "TransientError"},
+        {make_response(403, R"({"message":"no"})"), "AuthError"},
+    }));
+    CAPTURE(row.response.status);
+    Lab lab;
+    const std::string url = kBase + "/v8/RestoreSessions/" + kSessionId + "/Stop";
+    lab.http.on(HttpMethod::post, url, {row.response});
+    auto client = lab.make_client();
+
+    CHECK(thrown_kind([&] { client->stop_session(kSessionId); }) == row.kind);
+    // Not resent after a 5xx: a Stop that went out may have been acted on.
+    REQUIRE(lab.http.count(HttpMethod::post, url) == 1);
+    const HttpRequest post = lab.http.requests().back();
+    CHECK(post.body.empty());
+    CHECK(post.content_type.empty());
+    CHECK(bearer(post) == "Bearer access-login-1");
+}

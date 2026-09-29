@@ -1,0 +1,77 @@
+{
+  "note": "GET .../organization/mailboxes/{mailboxId}/items/{itemId} (the re-read)",
+  "captured_utc": "2026-09-28T21:27:27.745Z",
+  "duration_ms": 4,
+  "request": {
+    "method": "GET",
+    "path": "/v8/RestoreSessions/171ea3e1-1f41-420c-94f7-140b57470d4a/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/items/LgAAAEYAAAAWAAAAAAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAQwAAAAAAACxxv9HtdajQ4pXXA5mCVQzBwBAxtTKFTWxToQtH-hG0poXAAAAAAEMAABAxtTKFTWxToQtH-hG0poXAAAAADwfAABAxtTKFTWxToQtH-hG0poXAAAAABBN",
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "content_type": "application/json; charset=utf-8",
+    "headers": {
+      "Date": "Mon, 28 Sep 2026 21:27:27 GMT",
+      "Cache-Control": "no-store",
+      "Pragma": "no-cache",
+      "Transfer-Encoding": "chunked",
+      "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+      "X-Content-Type-Options": "nosniff",
+      "X-XSS-Protection": "1; mode=block",
+      "X-Frame-Options": "SAMEORIGIN",
+      "Content-Type": "application/json; charset=utf-8"
+    },
+    "body": {
+      "mailboxId": "12af7578-24c6-48e4-a3a5-3174bda4f4d4",
+      "attachments": [],
+      "subject": "RP-CANARY-0011",
+      "itemClass": "IPM.Note",
+      "_links": {
+        "self": {
+          "href": "/v8/restoresessions/171ea3e1-1f41-420c-94f7-140b57470d4a/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/items/LgAAAEYAAAAWAAAAAAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAQwAAAAAAACxxv9HtdajQ4pXXA5mCVQzBwBAxtTKFTWxToQtH-hG0poXAAAAAAEMAABAxtTKFTWxToQtH-hG0poXAAAAADwfAABAxtTKFTWxToQtH-hG0poXAAAAABBN"
+        },
+        "parent": {
+          "href": "/v8/restoresessions/171ea3e1-1f41-420c-94f7-140b57470d4a/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders/AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAQwAAA"
+        },
+        "mailbox": {
+          "href": "/v8/restoresessions/171ea3e1-1f41-420c-94f7-140b57470d4a/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4"
+        }
+      },
+      "_actions": {
+        "restoreToOriginalLocation": {
+          "uri": "/v8/restoresessions/171ea3e1-1f41-420c-94f7-140b57470d4a/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/items/LgAAAEYAAAAWAAAAAAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAQwAAAAAAACxxv9HtdajQ4pXXA5mCVQzBwBAxtTKFTWxToQtH-hG0poXAAAAAAEMAABAxtTKFTWxToQtH-hG0poXAAAAADwfAABAxtTKFTWxToQtH-hG0poXAAAAABBN/restore",
+          "method": "POST"
+        },
+        "restoreTo": {
+          "uri": "/v8/restoresessions/171ea3e1-1f41-420c-94f7-140b57470d4a/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/items/LgAAAEYAAAAWAAAAAAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAQwAAAAAAACxxv9HtdajQ4pXXA5mCVQzBwBAxtTKFTWxToQtH-hG0poXAAAAAAEMAABAxtTKFTWxToQtH-hG0poXAAAAADwfAABAxtTKFTWxToQtH-hG0poXAAAAABBN/restoreTo",
+          "method": "POST"
+        },
+        "exportToPst": {
+          "uri": "/v8/restoresessions/171ea3e1-1f41-420c-94f7-140b57470d4a/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/items/LgAAAEYAAAAWAAAAAAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAQwAAAAAAACxxv9HtdajQ4pXXA5mCVQzBwBAxtTKFTWxToQtH-hG0poXAAAAAAEMAABAxtTKFTWxToQtH-hG0poXAAAAADwfAABAxtTKFTWxToQtH-hG0poXAAAAABBN/exportToPst",
+          "method": "POST"
+        },
+        "saveToMsg": {
+          "uri": "/v8/restoresessions/171ea3e1-1f41-420c-94f7-140b57470d4a/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/items/LgAAAEYAAAAWAAAAAAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAQwAAAAAAACxxv9HtdajQ4pXXA5mCVQzBwBAxtTKFTWxToQtH-hG0poXAAAAAAEMAABAxtTKFTWxToQtH-hG0poXAAAAADwfAABAxtTKFTWxToQtH-hG0poXAAAAABBN/Save",
+          "method": "POST"
+        },
+        "sendToDefaultAddress": {
+          "uri": "/v8/restoresessions/171ea3e1-1f41-420c-94f7-140b57470d4a/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/items/LgAAAEYAAAAWAAAAAAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAQwAAAAAAACxxv9HtdajQ4pXXA5mCVQzBwBAxtTKFTWxToQtH-hG0poXAAAAAAEMAABAxtTKFTWxToQtH-hG0poXAAAAADwfAABAxtTKFTWxToQtH-hG0poXAAAAABBN/sendToDefaultAddress",
+          "method": "POST"
+        },
+        "sendToDifferentAddress": {
+          "uri": "/v8/restoresessions/171ea3e1-1f41-420c-94f7-140b57470d4a/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/items/LgAAAEYAAAAWAAAAAAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAQwAAAAAAACxxv9HtdajQ4pXXA5mCVQzBwBAxtTKFTWxToQtH-hG0poXAAAAAAEMAABAxtTKFTWxToQtH-hG0poXAAAAADwfAABAxtTKFTWxToQtH-hG0poXAAAAABBN/sendToDifferentAddress",
+          "method": "POST"
+        }
+      },
+      "id": "LgAAAEYAAAAWAAAAAAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAQwAAAAAAACxxv9HtdajQ4pXXA5mCVQzBwBAxtTKFTWxToQtH-hG0poXAAAAAAEMAABAxtTKFTWxToQtH-hG0poXAAAAADwfAABAxtTKFTWxToQtH-hG0poXAAAAABBN",
+      "from": "Hrachya Harutyunyan",
+      "importance": "Normal",
+      "cc": "",
+      "bcc": "",
+      "to": "Bob Test",
+      "sent": "2026-09-24T22:14:41Z",
+      "received": "2026-09-24T22:14:46.2732495Z",
+      "reminder": false
+    }
+  }
+}

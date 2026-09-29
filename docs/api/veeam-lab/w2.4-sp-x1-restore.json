@@ -1,0 +1,54 @@
+{
+  "note": "POST .../restoreTo (1 item(s) -> https://restoreprooflab.sharepoint.com/sites/RestoreTest list RestoreTarget), Veeam org app certificate",
+  "captured_utc": "2026-09-28T21:28:29.320Z",
+  "duration_ms": 464,
+  "request": {
+    "method": "POST",
+    "path": "/v8/RestoreSessions/9aa65291-c162-4769-acb0-ccc39eead76e/Organization/Sites/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689/Documents/restoreTo",
+    "body": {
+      "documents": [
+        {
+          "siteId": "fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689",
+          "sizeBytes": 925,
+          "version": "1.0",
+          "versionId": 1,
+          "id": "fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e6897eb0f08a-f57b-418c-8ca6-f2ab812976665ac127fb-0646-464e-a89a-76e93e62feb8",
+          "name": "rp-canary-06.pdf",
+          "createdBy": "Hrachya Harutyunyan",
+          "creationTime": "2026-09-24T22:14:47Z",
+          "modifiedBy": "Hrachya Harutyunyan",
+          "modificationTime": "2026-09-24T22:14:47Z",
+          "isFolder": false
+        }
+      ],
+      "siteURL": "https://restoreprooflab.sharepoint.com/sites/RestoreTest",
+      "list": "RestoreTarget",
+      "sendSharedLinksNotification": false,
+      "documentVersion": "Last",
+      "documentLastVersionAction": "Merge",
+      "officeRegion": "Worldwide",
+      "organizationName": "RestoreProofLab.onmicrosoft.com",
+      "applicationId": "1fd2609d-1242-43fe-94b5-d58688a90bd6",
+      "applicationCertificate": "[REDACTED]",
+      "applicationCertificatePassword": "[REDACTED]"
+    }
+  },
+  "response": {
+    "status": 200,
+    "content_type": "application/json; charset=utf-8",
+    "headers": {
+      "Date": "Mon, 28 Sep 2026 21:28:29 GMT",
+      "Cache-Control": "no-store",
+      "Pragma": "no-cache",
+      "Transfer-Encoding": "chunked",
+      "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+      "X-Content-Type-Options": "nosniff",
+      "X-XSS-Protection": "1; mode=block",
+      "X-Frame-Options": "SAMEORIGIN",
+      "Content-Type": "application/json; charset=utf-8"
+    },
+    "body": {
+      "sessionId": "f7e9e6a8-62f3-4abd-a62c-84554981a6da"
+    }
+  }
+}

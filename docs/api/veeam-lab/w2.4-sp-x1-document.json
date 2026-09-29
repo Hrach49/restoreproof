@@ -1,0 +1,49 @@
+{
+  "note": "GET .../Sites/{siteId}/Documents/{documentId} (the re-read, sent in the body)",
+  "captured_utc": "2026-09-28T21:28:28.535Z",
+  "duration_ms": 153,
+  "request": {
+    "method": "GET",
+    "path": "/v8/RestoreSessions/9aa65291-c162-4769-acb0-ccc39eead76e/Organization/Sites/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689/Documents/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e6897eb0f08a-f57b-418c-8ca6-f2ab812976665ac127fb-0646-464e-a89a-76e93e62feb8",
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "content_type": "application/json; charset=utf-8",
+    "headers": {
+      "Date": "Mon, 28 Sep 2026 21:28:28 GMT",
+      "Cache-Control": "no-store",
+      "Pragma": "no-cache",
+      "Transfer-Encoding": "chunked",
+      "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+      "X-Content-Type-Options": "nosniff",
+      "X-XSS-Protection": "1; mode=block",
+      "X-Frame-Options": "SAMEORIGIN",
+      "Content-Type": "application/json; charset=utf-8"
+    },
+    "body": {
+      "siteId": "fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689",
+      "sizeBytes": 925,
+      "version": "1.0",
+      "versionId": 1,
+      "id": "fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e6897eb0f08a-f57b-418c-8ca6-f2ab812976665ac127fb-0646-464e-a89a-76e93e62feb8",
+      "name": "rp-canary-06.pdf",
+      "createdBy": "Hrachya Harutyunyan",
+      "creationTime": "2026-09-24T22:14:47Z",
+      "modifiedBy": "Hrachya Harutyunyan",
+      "modificationTime": "2026-09-24T22:14:47Z",
+      "isFolder": false,
+      "_links": {
+        "self": {
+          "href": "/v8/restoresessions/9aa65291-c162-4769-acb0-ccc39eead76e/organization/sites/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689/documents/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e6897eb0f08a-f57b-418c-8ca6-f2ab812976665ac127fb-0646-464e-a89a-76e93e62feb8"
+        },
+        "library": {
+          "href": "/v8/restoresessions/9aa65291-c162-4769-acb0-ccc39eead76e/organization/sites/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689/libraries/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e6897eb0f08a-f57b-418c-8ca6-f2ab81297666"
+        },
+        "versions": {
+          "href": "/v8/restoresessions/9aa65291-c162-4769-acb0-ccc39eead76e/organization/sites/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689/documents/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e6897eb0f08a-f57b-418c-8ca6-f2ab812976665ac127fb-0646-464e-a89a-76e93e62feb8/versions"
+        }
+      }
+    }
+  }
+}

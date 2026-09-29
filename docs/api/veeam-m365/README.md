@@ -1,10 +1,11 @@
-# Veeam REST call collection (W1.4)
+# Veeam REST call collection (W1.4, W2.4)
 
 PowerShell 7 scripts that make, step by step, the calls described in
-[`../veeam-notes.md`](../veeam-notes.md), against the lab's Veeam Backup for Microsoft 365
-REST API (v8). They replace the Bruno collection the guide asked for (`docs/decisions.md`,
-2026-09-26). The responses they record are in [`../veeam-lab/`](../veeam-lab/README.md)
-(`w1.4-*.json`).
+[`../veeam-notes.md`](../veeam-notes.md) (W1.4) and the restore flow in
+[`../veeam-restore-flow.md`](../veeam-restore-flow.md) (W2.4), against the lab's Veeam Backup
+for Microsoft 365 REST API (v8). They replace the Bruno collection the guide asked for
+(`docs/decisions.md`, 2026-09-26). The responses they record are in
+[`../veeam-lab/`](../veeam-lab/README.md) (`w1.4-*.json` and `w2.4-*.json`).
 
 | Script | Notes section | What it does |
 |---|---|---|
@@ -16,14 +17,31 @@ REST API (v8). They replace the Bruno collection the guide asked for (`docs/deci
 | `05-mail.ps1` | §5.1, §5.4 | Mailboxes → folders → items; the four mail searches |
 | `06-sharepoint.ps1` | §5.2, §5.4 | Sites → libraries → documents; SharePoint searches |
 | `07-onedrive.ps1` | §5.3, §5.4 | OneDrives → folders → documents; OneDrive searches |
-| `08-sweep-sessions.ps1` | §4.4 | Lists sessions and stops rp-veeam's `Working` ones (`-WhatIf` only lists) |
+| `08-sweep-sessions.ps1` | §4.4 | Lists sessions and stops rp-veeam's `Working` ones (`-WhatIf` only lists). Stops nothing while two of ours of one type are `Working` (a restore may be running; `-Force` overrides) |
 | `09-token-expiry.ps1` | §1.5 | `-Start` grants a token; `-Probe` asks whether it is still accepted; `-Check` (after 60 min) records what the expired token and its refresh token answer |
+| `10-restore.ps1` | restore flow | Restores 1 to 5 canary items of one type (`mail`, `sp`, `od`) from the newest restore point into their restore target, in one restore call; waits for the restore session and reads its statistics and events (`-WhatIf` stops before the certificate export and the POST, but still opens, browses and stops an explore session) |
 | `audit-evidence.ps1` | — | Checks evidence files for secrets before a commit |
 
-Everything here is **read-only** on the Microsoft 365 side. The scripts sign in, list, search,
-and open and stop explore sessions; none restores anything. Every explore session a script
-opens is stopped in its `finally` block, and `08-sweep-sessions.ps1` catches anything left
-over.
+Every script except `10-restore.ps1` is **read-only** on the Microsoft 365 side: it signs in,
+lists, searches, and opens and stops explore sessions. Every explore session a script opens is
+stopped in its `finally` block, and `08-sweep-sessions.ps1` catches anything left over.
+
+`10-restore.ps1` **writes to the test tenant**, and only to the three restore targets
+(`lab/tenant.md`, "Restore targets"): restoretest's Inbox, the `RestoreTarget` library in the
+RestoreTest site, and alice's OneDrive `/RestoreTarget` folder. The targets are fixed in the
+script. A hand-written guard (until W2.7's `TargetGuard`) parses the exact body text and
+asserts path, key set, mailbox, site, library, OneDrive, folder, application ID and item IDs
+before the single POST, and a self-test first checks that the guard itself refuses 12 wrong
+bodies or paths (9 body mutations, a duplicate key, 2 path mutations). The
+POST is never resent: without an answer the script looks for the session it may have started
+and adopts exactly one, or exits 3. When it gives up on a restore that may still be running
+(exit 3 after the POST), it leaves that restore session and its explore session alone and says
+so: wait until the restore session reads `Stopped`, then run `08-sweep-sessions.ps1`. The restore credential is Veeam's own organisation app: its
+certificate is exported from `Cert:\LocalMachine\My` to a temporary PFX in `%TEMP%` with a
+random one-time password, read into memory and deleted at once, so the script needs an
+**elevated** shell (`docs/decisions.md`, W2.4). `-WhatIf` sends no restore POST, exports nothing and
+saves nothing, and runs unelevated; it still signs in and opens, browses and stops an explore
+session, so run it only while no real run is going.
 
 ## Before you run them
 
@@ -97,6 +115,29 @@ pwsh -File docs\api\veeam-m365\audit-evidence.ps1                   # must print
 Remove-Item -Recurse -Force $env:RP_LAB_SECRET_DIR; Remove-Item Env:RP_LAB_SECRET_DIR
 ```
 
+A restore (elevated PowerShell 7, repo root), first as a dry run:
+
+```powershell
+pwsh -File docs\api\veeam-m365\10-restore.ps1 -Type mail -Item RP-CANARY-0011 -WhatIf
+$env:RP_LAB_SECRET_DIR = "$env:TEMP\rp-lab-secrets"
+pwsh -File docs\api\veeam-m365\10-restore.ps1 -Type mail -Item RP-CANARY-0011 -SaveEvidence
+pwsh -File docs\api\veeam-m365\audit-evidence.ps1 -Path docs\api\veeam-lab\w2.4-*.json   # must print "0 hit(s)"
+Remove-Item -Recurse -Force $env:RP_LAB_SECRET_DIR; Remove-Item Env:RP_LAB_SECRET_DIR
+```
+
+`-SaveEvidence` writes `docs\api\veeam-lab\w2.4-<type>-<tag>-*.json`. It refuses (exit 64) while
+files of that type and tag exist, so a re-run never mixes its files with an earlier run's:
+delete them first, or pass another `-Tag`.
+
+`-Item` takes 1 to 5 distinct IDs from `lab/seed-manifest.json`, all of the `-Type`'s kind (mail
+items also from one source mailbox). `-Tag` names the run in the evidence files (default
+`x<count>`); arguments bind by name only. Exit codes: 0 Veeam says restored (or `-WhatIf`: the
+guard passed), 1 the restore finished but not as a success, 2 refused before any POST or the POST
+answered 4xx (nothing started), 3 no verdict (timeout, no answer, a duplicate check that doesn't
+confirm exactly the returned session, statistics or events unreadable or of an unexpected
+shape), 64 usage (also: not elevated without `-WhatIf`). PowerShell's own parameter errors (an
+unknown or extra argument, `-TimeoutMinutes` outside 1–45) exit 1 before the script runs.
+
 The expiry check takes an hour:
 
 ```powershell
@@ -117,4 +158,21 @@ pwsh -File docs\api\veeam-m365\09-token-expiry.ps1 -Check -StateDir "$env:TEMP\r
 - **Scrub before writing.** `Save-Evidence` replaces every known secret value, token-shaped
   JSON/form values, bearer values and JWTs. It refuses to write a file in which a known secret
   survived, and it drops `Set-Cookie` and `Authorization` headers.
-- **Audit before committing** (`audit-evidence.ps1`), as W1.0 did.
+- **Audit before committing** (`audit-evidence.ps1`), as W1.0 did. Its default covers
+  `w1.4-*.json` and `w2.4-*.json`; `-Path ..\veeam-lab\w2.4-*.json` (relative to this folder)
+  audits one task's files.
+
+For `10-restore.ps1` also:
+
+- **Targets empty before a run.** Check with `rpworker graph list` that the three targets hold
+  nothing, so what is there afterwards came from this restore.
+- **Clean up by hand after it.** The script deletes nothing it restored. Empty the targets
+  before the nightly backup: the targets were made on 2026-09-25, so every later restore point
+  holds the `RestoreTarget` library and alice's `/RestoreTarget` folder, so restored copies left there would be backed up.
+- **Only canary sources.** Items are taken from the RestoreTest library, alice's `/RestoreTest`
+  folder and the source mailboxes' Inbox, never from a target (the script prints a note when a
+  target is in the restore point).
+- **Secrets outside the repo.** Set `RP_LAB_SECRET_DIR` to a folder outside the repo (e.g.
+  `$env:TEMP\rp-lab-secrets`) for the run and the audit, then delete it. The one-time PFX
+  password is kept there as a DPAPI file for the audit; the PFX itself is not, and the audit's
+  PFX/DER Base64 pattern catches it instead.

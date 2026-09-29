@@ -56,7 +56,8 @@ public:
     std::vector<connector::RestorePoint> list_restore_points(const std::string& client_ref) override;
 
     // Throws connector::NotImplementedError, before any request: the restore
-    // comes with W2.5, and TargetGuard (W2.7) with it.
+    // comes with W2.5, which calls TargetGuard (W2.7, rp/target_guard.hpp and
+    // rp/target_guard_veeam.hpp) first.
     connector::RestoreResult restore_sample(const connector::RestoreSpec& spec) override;
 
 private:

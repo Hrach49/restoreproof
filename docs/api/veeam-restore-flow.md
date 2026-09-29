@@ -421,7 +421,9 @@ printable ASCII in every checked value.
 **For W2.7.** `std::string ==` is already ordinal. Keep the 12 mutations as `TargetGuard`
 tests, the look-alike, array and duplicate-key cases included, check value kinds, not just
 values, and let a test pass only on the guard's own refusal. The printable-ASCII rule works
-because the three target names are ASCII by setup.
+because the three target names are ASCII by setup. *(Done in W2.7: `rp::veeam::check_restore_request` in
+`worker/include/rp/target_guard_veeam.hpp`, tested in `worker/tests/target_guard_veeam_test.cpp`;
+`docs/decisions.md` 2026-09-29, W2.7.)*
 
 **When the guard runs.** The rule stays as CLAUDE.md and the 2026-09-22 decision put it:
 `TargetGuard` is checked per item inside `RestoreSample`, before any Veeam call. `restore_sample`
@@ -875,6 +877,10 @@ are the `RestoreTest` library or folder" (`RestoreTarget` since 2026-09-25).
 
 The fixed forbidden names (§6) stay as an extra check. They are not what keeps a live library
 out.
+
+*(W2.7: check 1 is `rp::TargetGuard::check_spec` in `worker/include/rp/target_guard.hpp`, on the
+checks `TargetReader` shares from `rp/target_guard_graph.hpp`; check 2 is
+`rp::veeam::check_restore_request`.)*
 
 ## 17. Fixtures for W2.5 and Q2.1 (`worker/tests/fixtures/veeam/`)
 

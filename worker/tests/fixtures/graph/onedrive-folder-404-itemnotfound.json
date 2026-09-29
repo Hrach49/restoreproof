@@ -1,11 +1,11 @@
 {
-  "source": "live 2026-09-28: GET an item ID of no item in alice's OneDrive",
-  "request": "GET /v1.0/drives/b!wA9gbfhlEUitGAluxbfoNBr_z5gEtDhErm5pJ6bMwyXfZJ8a_dkCQ696RX0r7_U3/items/<random item ID>?$select=id,name,folder,parentReference",
+  "source": "live 2026-09-29: GET an item ID of no item in alice's OneDrive",
+  "request": "GET /v1.0/drives/b!wA9gbfhlEUitGAluxbfoNBr_z5gEtDhErm5pJ6bMwyXfZJ8a_dkCQ696RX0r7_U3/items/<random item ID>?$select=id,name,folder,parentReference,sharepointIds",
   "status": 404,
   "headers": {
     "Content-Type": "application/json; odata.metadata=minimal; odata.streaming=true; IEEE754Compatible=false; charset=utf-8",
-    "request-id": "bd2aa788-5f4e-4e5a-a5ed-bdec7b97d161",
-    "client-request-id": "bd2aa788-5f4e-4e5a-a5ed-bdec7b97d161"
+    "request-id": "171997f3-c554-455d-a836-bfebe4010053",
+    "client-request-id": "171997f3-c554-455d-a836-bfebe4010053"
   },
   "body": {
     "error": {

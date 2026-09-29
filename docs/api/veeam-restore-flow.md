@@ -841,6 +841,10 @@ What the recorded Graph replies already show
 - its `sharePointIds.listId` is the list ID at the end of Veeam's library ID;
 - the folder's `parentReference.siteId` (`6d600fc0-…e834`) is the first GUID of Veeam's OneDrive
   `id`. That is a second check besides the URL.
+- W2.7 review (2026-09-30): the folder GET with `sharepointIds` selected answers the OneDrive's
+  `sharepointIds.siteUrl`, which equals Veeam's `onedrive.url` exactly, and `siteId` + `webId`,
+  which run together are Veeam's OneDrive `id`. The guard's layer 2 requires both
+  (`docs/decisions.md` 2026-09-30), so no drive-level read is needed.
 
 Not tried in W2.4: whether the Worker app may read the OneDrive **drive** (its grant is on the
 folder, `docs/security/graph-permissions.md`), and whether that drive's `webUrl` needs trimming

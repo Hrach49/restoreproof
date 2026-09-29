@@ -72,6 +72,8 @@ EXPECTED_FILES = {
         "restoretarget-drive-200.json": 200,
         "restoretarget-children-200-empty.json": 200,
         "onedrive-folder-200.json": 200,
+        "mailbox-inbox-200.json": 200,
+        "mailbox-inbox-403-exchange.json": 403,
         "onedrive-children-200-empty.json": 200,
         "onedrive-folder-404-itemnotfound.json": 404,
         "drive-404-itemnotfound.json": 404,
@@ -216,6 +218,7 @@ class FakeCloud:
             "name": "RestoreTarget",
             "parentReference": {"driveType": "business", "driveId": OD, "id": "01ROOT", "path": "/drive/root:"},
             "folder": {"childCount": 0},
+            "sharepointIds": {"siteUrl": f"https://restoreprooflab-my.sharepoint.com{tenant.ALICE_ONEDRIVE_SITE_PATH}"},
         }
         self.body_content_type = "text"
         self.assertions: list[tuple[dict, dict]] = []
@@ -319,6 +322,10 @@ class FakeCloud:
             return HttpResponse(302, b"", {"location": CONTENT_LOCATION, "request-id": "req-graph"})
         if re.fullmatch(r"/drives/[^/]+(/items/[^/]+)?", path):
             return graph_error(404, "itemNotFound", "The resource could not be found.")
+        if path == f"/users/{UPN}/mailFolders/inbox":
+            return json_response(200, {"@odata.context": "ctx", "id": "AAMkAGinbox="}, {"request-id": "req-graph"})
+        if path == f"/users/{tenant.ALICE_UPN}/mailFolders/inbox":
+            return graph_error(403, "ErrorAccessDenied", "Access is denied. Check credentials and try again.")
         if path == f"/users/{tenant.ALICE_UPN}/mailFolders/inbox/messages":
             return graph_error(403, "ErrorAccessDenied", "Access is denied. Check credentials and try again.")
         if path == f"/sites/{tenant.SHAREPOINT_HOST}":
@@ -666,6 +673,8 @@ def test_empty_state_with_an_item_writes_nothing(pfx, tmp_path, key_and_cert, ot
         (lambda c: c.folder_reply.pop("folder"), "onedrive-folder-200.json"),
         (lambda c: c.folder_reply["parentReference"].update(driveId="b!other"), "onedrive-folder-200.json"),
         (lambda c: c.folder_reply.pop("parentReference"), "onedrive-folder-200.json"),
+        (lambda c: c.folder_reply.pop("sharepointIds"), "onedrive-folder-200.json"),
+        (lambda c: c.folder_reply["sharepointIds"].update(siteUrl="https://t-my.sharepoint.com/personal/bob_x"), "onedrive-folder-200.json"),
         (lambda c: c.rt_children.append(a_file(1)), "restoretarget-children-200-empty.json"),
         (lambda c: c.od_children.append(a_file(1)), "onedrive-children-200-empty.json"),
     ],
@@ -679,6 +688,8 @@ def test_empty_state_with_an_item_writes_nothing(pfx, tmp_path, key_and_cert, ot
         "folder facet",
         "folder drive",
         "folder parent",
+        "folder sharepointIds",
+        "folder another OneDrive",
         "library item",
         "folder item",
     ],
@@ -834,7 +845,7 @@ def test_prefer_is_sent_on_mail_requests_only(pfx, tmp_path, key_and_cert, other
     code, _ = record(pfx, tmp_path / "out", cloud, other_key=other_key, state=state)
     assert code == 0, cloud.problems
     for req in graph_requests(cloud):
-        is_mail = f"/users/{UPN}/" in req.url
+        is_mail = f"/users/{UPN}/mailFolders/inbox/messages" in req.url
         assert req.headers.get("Prefer") == (MAIL_PREFER if is_mail else None), req.url
         assert req.headers["Authorization"] == f"Bearer {cloud.token}"
 
@@ -877,10 +888,12 @@ def test_the_request_lines_of_the_w2_2_states():
         "mail-list-200-empty.json": f"{mail}&$top=100",
         "restoretarget-drive-200.json": f"GET /v1.0/drives/{RT}?$select=id,name,driveType,webUrl,sharePointIds",
         "restoretarget-children-200-empty.json": f"GET /v1.0/drives/{RT}/root/children?{CHILD_SELECT}",
-        "onedrive-folder-200.json": f"GET /v1.0/drives/{OD}/items/{FOLDER}?$select=id,name,folder,parentReference",
+        "onedrive-folder-200.json": f"GET /v1.0/drives/{OD}/items/{FOLDER}?$select=id,name,folder,parentReference,sharepointIds",
+        "mailbox-inbox-200.json": f"GET /v1.0/users/{UPN}/mailFolders/inbox?$select=id",
+        "mailbox-inbox-403-exchange.json": f"GET /v1.0/users/{tenant.ALICE_UPN}/mailFolders/inbox?$select=id",
         "onedrive-children-200-empty.json": f"GET /v1.0/drives/{OD}/items/{FOLDER}/children?{CHILD_SELECT}",
         "onedrive-folder-404-itemnotfound.json": (
-            f"GET /v1.0/drives/{OD}/items/<random item ID>?$select=id,name,folder,parentReference"
+            f"GET /v1.0/drives/{OD}/items/<random item ID>?$select=id,name,folder,parentReference,sharepointIds"
         ),
         "drive-404-itemnotfound.json": "GET /v1.0/drives/<random drive ID>?$select=id,name,driveType,webUrl,sharePointIds",
         "mail-list-200-one-item.json": f"{mail}&$top=100",

@@ -573,9 +573,7 @@ TEST_CASE("the guard refuses a OneDrive that isn't the RestoreTarget folder's",
     };
     const Row row = GENERATE(values<Row>({
         // Even when W2.5's context agrees with the body.
-        {"another site's OneDrive",
-         "0a1b2c3d-0000-4000-8000-00000000abcd98cfff1a-b404-4438-ae6e-6927a6ccc325", "",
-         "onedrive.id is not the test OneDrive"},
+        {"another site's OneDrive", "<other site>", "", "onedrive.id is not the test OneDrive"},
         {"another tenant's host", "",
          "https://evil-my.sharepoint.com/personal/alice_restoreprooflab_onmicrosoft_com",
          "onedrive.url is not the test OneDrive's address"},
@@ -591,12 +589,31 @@ TEST_CASE("the guard refuses a OneDrive that isn't the RestoreTarget folder's",
         {"a fragment", "",
          "https://restoreprooflab-my.sharepoint.com/personal/alice_restoreprooflab_onmicrosoft_com#x",
          "onedrive.url is not the test OneDrive's address"},
+        // Another user's OneDrive on the tenant's own -my host: only Graph's
+        // site URL for the RestoreTarget folder tells it apart.
+        {"bob's OneDrive", "",
+         "https://restoreprooflab-my.sharepoint.com/personal/bob_restoreprooflab_onmicrosoft_com",
+         "onedrive.url is not the test OneDrive's address"},
+        {"a prefix of the test OneDrive's address", "",
+         "https://restoreprooflab-my.sharepoint.com/personal/alice",
+         "onedrive.url is not the test OneDrive's address"},
+        {"a trailing slash", "",
+         "https://restoreprooflab-my.sharepoint.com/personal/alice_restoreprooflab_onmicrosoft_com/",
+         "onedrive.url is not the test OneDrive's address"},
+        // The right site GUID, another web.
+        {"another web of the test OneDrive's site", "<other web>", "",
+         "onedrive.id is not the test OneDrive"},
     }));
     CAPTURE(row.name);
     Request r = recorded("restore-od-200");
     if (!row.id.empty()) {
-        r.body.at("onedrive").at("id") = row.id;
-        r.ctx.target_onedrive_id = row.id;
+        // One of the recorded ID's two GUIDs replaced (built, not spelled out).
+        const std::string& recorded_id = r.ctx.target_onedrive_id;
+        const std::string id = row.id == "<other site>"
+                                   ? kOtherExplore + recorded_id.substr(36)
+                                   : recorded_id.substr(0, 36) + kOtherExplore;
+        r.body.at("onedrive").at("id") = id;
+        r.ctx.target_onedrive_id = id;
     }
     if (!row.url.empty()) {
         r.body.at("onedrive").at("url") = row.url;
@@ -618,14 +635,15 @@ TEST_CASE("the guard refuses a OneDrive other than the one W2.5 matched", "[targ
     CHECK(check(r).what == guard_message("onedrive.id is not the test OneDrive"));
 }
 
-TEST_CASE("the OneDrive's host and first GUID are compared ignoring case",
+TEST_CASE("the OneDrive's ID and address are compared with Graph's ignoring case",
           "[target_guard][veeam]")
 {
     Request r = recorded("restore-od-200");
     std::string id = r.ctx.target_onedrive_id;
-    std::transform(id.begin(), id.begin() + 36, id.begin(),
+    std::transform(id.begin(), id.end(), id.begin(),
                    [](char c) { return c >= 'a' && c <= 'f' ? static_cast<char>(c - 32) : c; });
-    const std::string url = "https://RestoreProofLab-my.SharePoint.com/personal/alice";
+    const std::string url =
+        "https://RestoreProofLab-my.SharePoint.com/personal/ALICE_restoreprooflab_onmicrosoft_com";
     r.body.at("onedrive").at("id") = id;
     r.body.at("onedrive").at("url") = url;
     r.ctx.target_onedrive_id = id;
@@ -923,26 +941,30 @@ TEST_CASE("the guard refuses a context it can't check against", "[target_guard][
     CHECK(check(r).what == guard_message(row.why));
 }
 
-TEST_CASE("layer 2 can't check a file restore that layer 1 didn't resolve",
+TEST_CASE("layer 2 can't check a restore whose target layer 1 didn't resolve",
           "[target_guard][veeam]")
 {
     struct Row {
         std::string fixture;
+        bool mail_spec;
         std::string why;
     };
     const Row row = GENERATE(values<Row>({
-        {"restore-sp-200",
+        {"restore-sp-200", true,
          "bad context: the RestoreTarget library was not checked (the spec had no SharePoint item)"},
-        {"restore-od-200",
+        {"restore-od-200", true,
          "bad context: the RestoreTarget folder was not checked (the spec had no OneDrive item)"},
+        {"restore-mail-200", false,
+         "bad context: the test mailbox was not checked (the spec had no mail item)"},
     }));
     CAPTURE(row.fixture);
     GuardLab lab;
-    const rp::CheckedTargets mail_only = lab.guard().check_spec(make_spec({mail_source()}));
+    const rp::CheckedTargets other = lab.guard().check_spec(
+        row.mail_spec ? make_spec({mail_source()}) : make_spec({}, {sharepoint_source()}));
     const Request r = recorded(row.fixture);
 
     const Thrown thrown = thrown_by([&] {
-        rp::veeam::check_restore_request(mail_only, r.ctx, r.path, r.text(), lab.options());
+        rp::veeam::check_restore_request(other, r.ctx, r.path, r.text(), lab.options());
     });
 
     CHECK(thrown.what == guard_message(row.why));

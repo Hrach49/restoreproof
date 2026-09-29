@@ -56,6 +56,15 @@ struct ResolvedOneDriveFolder {
     std::string drive_id;  // test_onedrive_drive_id (parentReference.driveId)
     std::string folder_id; // test_onedrive_folder_id
     std::string site_id;   // parentReference.siteId, a GUID: the OneDrive's site
+    std::string web_id;    // sharepointIds.webId, a GUID: the OneDrive's web
+    std::string site_url;  // sharepointIds.siteUrl, as Graph wrote it: the OneDrive's address
+};
+
+// What the mailbox check established: Graph let the Worker app read the Inbox
+// of the address test_mailbox names.
+struct ResolvedMailbox {
+    std::string address;  // test_mailbox, as configured
+    std::string inbox_id; // the Inbox folder's ID, as Graph wrote it
 };
 
 // GET /drives/{test_library_id}?$select=id,name,driveType,webUrl,sharePointIds.
@@ -69,16 +78,29 @@ ResolvedLibrary check_restore_library(GraphClient& graph, const connector::Resto
                                       const TargetCheckWording& wording = {});
 
 // GET /drives/{test_onedrive_drive_id}/items/{test_onedrive_folder_id}
-// ?$select=id,name,folder,parentReference. Throws WrongTargetError unless the
+// ?$select=id,name,folder,parentReference,sharepointIds. Throws WrongTargetError unless the
 // item is named exactly "RestoreTarget", is a folder, sits in the drive
 // test_onedrive_drive_id names, whose driveType is "business" (a site
 // library's drive is "documentLibrary"), directly under its root
-// (parentReference.path "/drive/root:" or "/drives/{drive}/root:"), and
-// parentReference.siteId is a GUID. A 404 is a NotFoundError that adds that
+// (parentReference.path "/drive/root:" or "/drives/{drive}/root:"),
+// parentReference.siteId is a GUID, and sharepointIds has that siteId (ASCII
+// case-insensitive), a GUID webId and a string siteUrl: the address a OneDrive
+// restore names (W2.7). A 404 is a NotFoundError that adds that
 // the Worker app may lack kOneDriveReadGrant: SharePoint answers 404, not 403,
 // for an item the app may not read.
 ResolvedOneDriveFolder check_restore_onedrive_folder(GraphClient& graph,
                                                      const connector::RestoreTargets& targets,
                                                      const TargetCheckWording& wording = {});
+
+// GET /users/{test_mailbox}/mailFolders/inbox?$select=id (W2.7). The Worker app
+// reads mail only through Exchange RBAC "Application Mail.Read" in a management
+// scope of the restoretest mailbox's primary address alone
+// (docs/security/graph-permissions.md, #3), so a 200 shows the configured
+// address reaches that mailbox, not a live mailbox holding the name as an
+// alias. Graph's 403 for it is a WrongTargetError (another mailbox, or the
+// scope is missing); so is a reply without a string id. Graph's other errors
+// keep their W2.1 types (a 404: no such mailbox).
+ResolvedMailbox check_restore_mailbox(GraphClient& graph, const connector::RestoreTargets& targets,
+                                      const TargetCheckWording& wording = {});
 
 } // namespace rp::graph

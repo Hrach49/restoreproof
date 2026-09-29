@@ -53,8 +53,9 @@ struct RestoreRequestContext {
 // was not sent"), logged as layer 1 logs it, unless all of these hold:
 //  - the context: items non-empty with no ID twice; container_id one or more
 //    lower-case GUIDs; application_id, organization_name, office_region (and
-//    for OneDrive target_onedrive_id and _url) non-empty printable ASCII; for
-//    SharePoint and OneDrive, `targets` has the library or folder resolved;
+//    for OneDrive target_onedrive_id and _url) non-empty printable ASCII;
+//    `targets` has the kind's target resolved: for mail a restoretest
+//    mailbox, for SharePoint and OneDrive the library or folder;
 //  - the path: no '?', '#', '%', '\\', "//" or dot segment; the explore
 //    session a lower-case GUID this run opened; then exactly
 //    /v8/RestoreSessions/{e}/organization/mailboxes/{c}/items/restoreTo,
@@ -71,7 +72,8 @@ struct RestoreRequestContext {
 //    every comparison ordinal unless said otherwise; officeRegion and
 //    applicationId the context's; both credential fields JSON strings, never
 //    read further;
-//  - mail: mailbox and impersonationAccountName the test mailbox, folder
+//  - mail: mailbox and impersonationAccountName the test mailbox layer 1
+//    resolved, folder
 //    "Inbox", officeOrganizationName the organisation's, the seven flags
 //    booleans, each item an object holding only a string "id";
 //  - SharePoint: siteURL the library's sharePointIds.siteUrl, list the
@@ -84,8 +86,9 @@ struct RestoreRequestContext {
 //    case-insensitive: a restore target is never a source); container_id is
 //    the source site and need not be the RestoreTarget library's;
 //  - OneDrive: onedrive an object of exactly string id, name and url, equal to
-//    the context's target_onedrive_*; its id's first GUID the RestoreTarget
-//    folder's parentReference.siteId (ASCII case-insensitive); its url on
+//    the context's target_onedrive_*; its id the RestoreTarget folder's site
+//    and web GUIDs run together, and its url the folder's
+//    sharepointIds.siteUrl (both ASCII case-insensitive), on
 //    https://<tenant>-my.sharepoint.com/ for test_site_id's tenant, with no
 //    query or fragment; folder the folder's name ("RestoreTarget") and not a
 //    forbidden name; organizationName and the version options as SharePoint;

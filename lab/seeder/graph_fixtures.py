@@ -292,7 +292,10 @@ RESTORE_TARGET = "RestoreTarget"
 # With the body, so one call lists and hashes a page (review of W2.2: no GET per mail).
 MAIL_SELECT = "$select=id,subject,from,receivedDateTime,internetMessageId,body"
 DRIVE_SELECT = "$select=id,name,driveType,webUrl,sharePointIds"
-FOLDER_SELECT = "$select=id,name,folder,parentReference"
+# sharepointIds: the OneDrive's site URL and IDs, which a OneDrive restore names (W2.7).
+FOLDER_SELECT = "$select=id,name,folder,parentReference,sharepointIds"
+# The guard's mailbox check (W2.7): a 200 only inside the Exchange RBAC scope.
+INBOX_SELECT = "$select=id"
 CHILDREN_QUERY = "$select=id,name,size,file,folder&$top=200"
 PREFER = (("Prefer", MAIL_PREFER),)
 # An ID from a reply may go in a URL path only if it is made of these (Exchange IDs end in "=").
@@ -304,6 +307,10 @@ ITEM_ID_SHOWN = "<item id>"
 
 def _mail_list(top: int) -> str:
     return _messages(tenant.RESTORETEST_UPN, f"{MAIL_SELECT}&$top={top}")
+
+
+def _inbox(upn: str) -> str:
+    return f"/users/{upn}/mailFolders/inbox?{INBOX_SELECT}"
 
 
 def _drive(drive_id: str) -> str:
@@ -401,6 +408,10 @@ def _restore_target_folder(response: HttpResponse) -> str | None:
         return "not a folder"
     if drive_id != tenant.ONEDRIVE_DRIVE_ID:
         return "parentReference.driveId is not alice's OneDrive"
+    ids = body.get("sharepointIds")
+    site_url = ids.get("siteUrl") if isinstance(ids, dict) else None
+    if not isinstance(site_url, str) or not site_url.lower().endswith(tenant.ALICE_ONEDRIVE_SITE_PATH):
+        return "sharepointIds.siteUrl is not alice's OneDrive"
     return None
 
 
@@ -410,6 +421,11 @@ def _graph_error(code: str) -> Check:
         return None if actual == code else f"error code {actual!r}, not {code!r}"
 
     return check
+
+
+def _has_id(response: HttpResponse) -> str | None:
+    identifier = _json_object(response).get("id")
+    return None if isinstance(identifier, str) and identifier else "no id"
 
 
 def _has_location(response: HttpResponse) -> str | None:
@@ -479,6 +495,14 @@ def _target_plan(state: str) -> list[Entry]:
             entry(
                 "onedrive-folder-200.json", 200, "GET alice's OneDrive /RestoreTarget folder, as the Worker's guard reads it",
                 _folder(target_folder), check=_restore_target_folder, facts=_folder_facts,
+            ),
+            entry(
+                "mailbox-inbox-200.json", 200, "GET the restoretest inbox folder, as the Worker's guard reads it",
+                _inbox(tenant.RESTORETEST_UPN), check=_has_id,
+            ),
+            entry(
+                "mailbox-inbox-403-exchange.json", 403, "GET alice's inbox folder (outside the Exchange RBAC scope)",
+                _inbox(tenant.ALICE_UPN), check=_graph_error("ErrorAccessDenied"),
             ),
             entry(
                 "onedrive-children-200-empty.json", 200, "GET the children of alice's /RestoreTarget, empty",
@@ -693,6 +717,8 @@ class _Recorder:
             "restoretarget-drive-200.json": lambda: get(_drive(rt)),
             "restoretarget-children-200-empty.json": lambda: get(_library_children()),
             "onedrive-folder-200.json": lambda: get(_folder(tenant.ONEDRIVE_TARGET_FOLDER_ID)),
+            "mailbox-inbox-200.json": lambda: get(_inbox(tenant.RESTORETEST_UPN)),
+            "mailbox-inbox-403-exchange.json": lambda: get(_inbox(tenant.ALICE_UPN)),
             "onedrive-children-200-empty.json": lambda: get(_folder_children()),
             "onedrive-folder-404-itemnotfound.json": lambda: get(_folder(_random_item_id())),
             "drive-404-itemnotfound.json": lambda: get(_drive(_random_drive_id())),

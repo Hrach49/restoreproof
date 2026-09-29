@@ -7,6 +7,143 @@ Format: date, decision, reason, alternatives rejected.
 
 ---
 
+## 2026-09-30 — W2.7 review: the guard resolves the mailbox and the OneDrive's address, and runs first in `restore_sample`
+
+Supersedes parts of the 2026-09-29 W2.7 entry below (points 1, 2 and 3, and its opening
+paragraph), after the max-effort review of PR #138.
+
+**Decision.**
+
+1. **The mail target is resolved through Graph too.** Layer 1 reads
+   `GET /users/{test_mailbox}/mailFolders/inbox?$select=id` once when the spec has mail items
+   (`rp::graph::check_restore_mailbox`, `ResolvedMailbox`, `CheckedTargets::mailbox()` now an
+   optional that is set only then). The Worker app reads mail only through Exchange RBAC
+   `Application Mail.Read` in a management scope of the restoretest mailbox's primary address
+   (`docs/security/graph-permissions.md`, #3), so a 200 shows the configured
+   `restoretest@<domain>` reaches that mailbox and not a live mailbox holding the name as an
+   alias (or a group). Exchange's 403 is a refusal (`SafetyViolation`: another mailbox, or the
+   scope is missing); a 404 stays Graph's `NotFoundError`. No new permission. Layer 2 now
+   requires the mailbox resolved for a mail request (`bad context: the test mailbox was not
+   checked`), and a `restoretest` address there.
+2. **Layer 2 ties `onedrive.url` and `onedrive.id` to the RestoreTarget folder's OneDrive.**
+   The folder GET now selects `sharepointIds` (`$select=id,name,folder,parentReference,
+   sharepointIds`, read through the existing folder grant): its `siteUrl` is exactly the URL
+   Veeam's copyTo names (recorded live 2026-09-29), and its `siteId` and `webId` run together
+   are Veeam's OneDrive ID. `onedrive.url` must equal that `siteUrl` and `onedrive.id` those two
+   GUIDs (ASCII case-insensitive), besides equalling W2.5's context; before, a URL on the
+   tenant's `-my` host that the context agreed with passed, so another user's OneDrive could
+   too. `ResolvedOneDriveFolder` gains `web_id` and `site_url`; the shared check (also
+   `TargetReader`'s) requires `sharepointIds` with the folder's `siteId`, a GUID `webId` and a
+   string `siteUrl`.
+3. **`restore_sample` runs layer 1 first.** `VeeamM365Connector` takes an optional Graph
+   client and `TargetGuardOptions`; `restore_sample` refuses without a Graph client
+   (`connector::Error`, no request), runs `TargetGuard::check_spec` before any Veeam request,
+   maps Graph's errors to connector ones (`AuthError` and `PermissionError` to `AuthError`,
+   `TransientError`, `NotFoundError`, the rest `connector::Error`), and only then throws
+   `NotImplementedError` until W2.5. `veeam_m365_restore_guard_test.cpp` pins that a refusal
+   and a passing guard both leave Veeam without a request. The registry's factory makes no
+   Graph client yet; W2.5 adds it. Layer 2 stays W2.5's to call before each POST (the TODO in
+   `restore_sample`).
+
+**Reason.** A configured value proves nothing by itself, the mailbox included (the W2.4
+review's rule, which the first W2.7 cut applied to the file targets only), and W2.5's context is
+built by the same code the guard is meant to check, so agreeing with it proves nothing either.
+#32's Done-when is "the guard is the first line of every restore call".
+
+**Alternatives rejected.** `GET /users/{mailbox}?$select=id,mail` (needs `User.Read.All`, which
+the app deliberately lacks); the OneDrive drive's `webUrl` (a drive-level read the folder grant
+may not cover, and it ends in `/Documents`); keeping #32 open until W2.5 (the wiring and its test
+cost little now, and W2.5 then can't skip the guard without breaking a test).
+
+## 2026-09-29 — W2.7: the restore-target guard in two layers; `SafetyViolation`, exit code 4
+
+**Decision.** `TargetGuard` exists as two standalone units with the API W2.5 will call;
+`VeeamM365Connector::restore_sample` still throws `NotImplementedError` and carries a TODO
+naming the calls. It builds what the 2026-09-29 W2.4 review entry decided: the guard trusts no
+configured ID, runs per item inside `restore_sample` before any Veeam call, and checks the
+exact body again before the POST.
+
+1. **Layer 1, `rp::TargetGuard::check_spec(const RestoreSpec&)`** (`rp/target_guard.hpp`), before
+   any call to the backup product. First every item, in the spec's order, with no call: a mail
+   item may not come from a `restoretest` mailbox (`is_restore_mailbox`, any case, the test
+   mailbox included), a SharePoint item not from `test_library_id` (ASCII case-insensitive), a
+   OneDrive item not from a path whose first folder is `RestoreTarget` (any case; empty and `.`
+   segments skipped, a `..` segment refused); an item naming no source is refused too. Then,
+   once per type the spec uses, the targets through Graph (GETs only; mail needs none): the
+   library and the OneDrive folder must be the dedicated `RestoreTarget`s. The canary
+   locations are kept out by those exact names (the canary library and folder are both
+   `RestoreTest`) and the `webUrl` rule; no list ID is compared with the canary library's, since
+   the config carries no canary ID (restore-flow §16's "the library's list ID isn't the canary
+   library's", and the W2.4 review's "not a canary location", are met this way). An empty spec
+   calls nothing. It returns `CheckedTargets`, which only `TargetGuard` can make.
+2. **The Graph checks are one unit, shared with W2.2's reader** (`rp/target_guard_graph.hpp`:
+   `check_restore_library`, `check_restore_onedrive_folder`, `ResolvedLibrary`,
+   `ResolvedOneDriveFolder`). `TargetReader` calls them; its messages and `WrongTargetError`
+   are unchanged (the ending comes from `TargetCheckWording`). Two checks are new, for both
+   callers: `sharePointIds.listId` must be a GUID and `.siteUrl` a string, and the folder's
+   `parentReference.siteId` a GUID, since layer 2 compares the body with them. The names stay
+   exact (`Dokumenty`, `Documents`, `RestoreTest`, `restoretarget` and look-alikes with U+00AD
+   or U+200B are all refused by the name rule); the forbidden-name list is only layer 2's extra
+   check.
+3. **Layer 2, `rp::veeam::check_restore_request(const CheckedTargets&, const
+   RestoreRequestContext&, path, body)`** (`rp/target_guard_veeam.hpp`), immediately before the
+   restore POST, on the exact path and text. It ports `Assert-RestoreTarget` of `10-restore.ps1`:
+   the path is exactly the kind's restore-to-another-location call with an explore session this
+   run opened and no query, fragment, `%`, `\`, `//` or dot segment; the body is valid UTF-8
+   JSON, an object, every key at any depth printable ASCII, with no key twice in any object and
+   no two keys of one object that differ only in ASCII case (a parser callback; nlohmann would
+   keep the last, and Veeam's .NET binder may match names ignoring case, so an `Id` beside the
+   checked `id` of a document could be what it restores), and exactly the kind's key set;
+   documents may carry Veeam's other browse fields; values are checked by JSON kind; every value
+   compared with a target or fixed name must be printable ASCII; comparisons are ordinal
+   (`std::string` `==`) except the OneDrive host and first GUID and the RestoreTarget-library
+   prefix of SharePoint document IDs (ignoring case there only refuses more); the item set is exactly the context's, none
+   missing, added or twice. It takes `CheckedTargets`, so it can't run without layer 1. Not
+   ported (restore-flow §6, "Lab-only rules"): `onedrive.id` equal to the source OneDrive, and
+   the canary list-ID prefix on SharePoint document IDs. Added: a SharePoint document whose ID
+   starts with the RestoreTarget library's site, web and list GUIDs is refused (a restore target
+   is never a source; the targets are in every restore point), and `onedrive.url` must be on
+   `https://<tenant>-my.sharepoint.com/` for `test_site_id`'s tenant.
+4. **The error is `rp::connector::SafetyViolation`** (a `connector::Error`, `rp/connector.hpp`):
+   status `error`, never `fail`; rpworker's exit code 4 (`exit_code::service`, documented in
+   `rp/cli.hpp`; no command restores yet, so nothing maps it in code). Its message starts with
+   `target guard: `, ends with `nothing was restored` (layer 1) or `the restore was not sent`
+   (layer 2), names the field or the item by type and index, and never quotes a credential:
+   the two credential fields are checked for kind only, and nlohmann's parse message, which
+   quotes the text, is never passed on. A layer-1 refusal from Graph is the `WrongTargetError`'s
+   text with the prefix. Graph's other errors pass through with their own types. Each refusal
+   logs exactly one line, `SECURITY: <message>`, at critical level through `rp::redact`, on the
+   options' logger or spdlog's default one.
+5. **Fixtures.** W2.4's five restore POSTs are `worker/tests/fixtures/veeam/restore-{mail,sp,od,
+   mail-x5,mail-r1}-200.json` (restore-flow §17 names, plus r1), with `request_body` holding the
+   body as sent. The tests run restore-flow §6's 12 mutations on each type and accept all five
+   recorded requests unchanged.
+
+**Reason.** The guard is what keeps a restore out of live data when a configured ID, a Cloud
+job or a bug names the wrong place; W2.5 must only have to call it. Splitting it by what each
+layer knows (the spec before any call; the exact request after browsing) keeps layer 1 free of
+Veeam, as `connector.hpp` is.
+
+**Deviations from the W2.7 design notes.**
+- *The path's container is not required to be the target site* (the design had SharePoint's
+  `container_id` equal to the RestoreTarget library's site). The path names the **source**
+  site; W2.6 samples real data from other sites too, which that rule would refuse on every run.
+  The target is fixed by `siteURL` and `list`, which are checked; the "never from the target
+  library" rule covers the lab's shared site.
+- *A mail source is refused if it is any `restoretest` mailbox*, not only the configured one.
+- *Item IDs and names, and `onedrive.name`, may be any UTF-8*: they are compared byte for byte
+  with the context and name no target; a real file name with an accent would otherwise be a
+  guard violation.
+
+**Alternatives rejected.**
+- *One guard class that also parses Veeam bodies:* it would put Veeam in the neutral layer.
+- *Parsing the body into a DOM and checking keys afterwards:* the DOM has already dropped the
+  duplicate.
+- *Quoting the refused value in the message:* useful, but a value next to a credential field
+  could leak through a mistake; the field name is enough to find it in the evidence.
+
+---
+
 ## 2026-09-29 — The Worker runs on the Veeam server (proposed)
 
 **Status: proposed.** The owner accepted the recommendation; spike #135 (W4.12) confirms or

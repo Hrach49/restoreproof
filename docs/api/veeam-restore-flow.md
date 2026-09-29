@@ -421,7 +421,9 @@ printable ASCII in every checked value.
 **For W2.7.** `std::string ==` is already ordinal. Keep the 12 mutations as `TargetGuard`
 tests, the look-alike, array and duplicate-key cases included, check value kinds, not just
 values, and let a test pass only on the guard's own refusal. The printable-ASCII rule works
-because the three target names are ASCII by setup.
+because the three target names are ASCII by setup. *(Done in W2.7: `rp::veeam::check_restore_request` in
+`worker/include/rp/target_guard_veeam.hpp`, tested in `worker/tests/target_guard_veeam_test.cpp`;
+`docs/decisions.md` 2026-09-29, W2.7.)*
 
 **When the guard runs.** The rule stays as CLAUDE.md and the 2026-09-22 decision put it:
 `TargetGuard` is checked per item inside `RestoreSample`, before any Veeam call. `restore_sample`
@@ -839,6 +841,10 @@ What the recorded Graph replies already show
 - its `sharePointIds.listId` is the list ID at the end of Veeam's library ID;
 - the folder's `parentReference.siteId` (`6d600fc0-…e834`) is the first GUID of Veeam's OneDrive
   `id`. That is a second check besides the URL.
+- W2.7 review (2026-09-30): the folder GET with `sharepointIds` selected answers the OneDrive's
+  `sharepointIds.siteUrl`, which equals Veeam's `onedrive.url` exactly, and `siteId` + `webId`,
+  which run together are Veeam's OneDrive `id`. The guard's layer 2 requires both
+  (`docs/decisions.md` 2026-09-30), so no drive-level read is needed.
 
 Not tried in W2.4: whether the Worker app may read the OneDrive **drive** (its grant is on the
 folder, `docs/security/graph-permissions.md`), and whether that drive's `webUrl` needs trimming
@@ -867,7 +873,9 @@ are the `RestoreTest` library or folder" (`RestoreTarget` since 2026-09-25).
    - the mail target is `Inbox` of `restoretest@<domain>` (`parse_config`,
      `RestoreTargets::from_config`).
    W2.7 runs the same checks, or calls the same code, before a restore, and adds one:
-   neither target is a canary location (the library's list ID isn't the canary library's). A
+   neither target is a canary location. *(As built in W2.7: the exact name `RestoreTarget` and
+   the `webUrl` rule keep the canary library and folder out, both being `RestoreTest`; no list
+   ID is compared with the canary library's, since the config carries no canary ID.)* A
    target that fails any of them is a guard violation (`error`). Onboarding a customer creates
    the two `RestoreTarget`s under that name.
 2. **Veeam's body names exactly those targets** (§6), checked on the exact text immediately
@@ -875,6 +883,10 @@ are the `RestoreTest` library or folder" (`RestoreTarget` since 2026-09-25).
 
 The fixed forbidden names (§6) stay as an extra check. They are not what keeps a live library
 out.
+
+*(W2.7: check 1 is `rp::TargetGuard::check_spec` in `worker/include/rp/target_guard.hpp`, on the
+checks `TargetReader` shares from `rp/target_guard_graph.hpp`; check 2 is
+`rp::veeam::check_restore_request`.)*
 
 ## 17. Fixtures for W2.5 and Q2.1 (`worker/tests/fixtures/veeam/`)
 

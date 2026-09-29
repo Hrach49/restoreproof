@@ -9,8 +9,10 @@
 #include <rp/config.hpp>
 #include <rp/connector.hpp>
 #include <rp/connector_registry.hpp>
+#include <rp/graph_client.hpp>
 #include <rp/http_client.hpp>
 #include <rp/secrets.hpp>
+#include <rp/target_guard.hpp>
 #include <rp/veeam_client.hpp>
 
 #include <memory>
@@ -28,10 +30,14 @@ public:
     // Owns `http` and the VeeamClient on it. The other arguments are
     // VeeamClient's, and so are the std::invalid_argument it throws (a URL
     // that isn't https://, an empty username or password, ...). A null `http`
-    // is std::invalid_argument too. Makes no request.
+    // is std::invalid_argument too. `graph` is the Worker app's Graph client
+    // the target guard reads through (restore_sample); null until W2.5 makes
+    // one, and then restore_sample refuses to run. Makes no request.
     VeeamM365Connector(std::unique_ptr<IHttpClient> http, std::string base_url,
                        std::string username, std::string password,
-                       VeeamClientOptions options = {});
+                       VeeamClientOptions options = {},
+                       std::shared_ptr<graph::GraphClient> graph = nullptr,
+                       TargetGuardOptions guard_options = {});
 
     // Logs out of Veeam if a call signed in (best effort, never throws).
     ~VeeamM365Connector() override;
@@ -55,13 +61,22 @@ public:
     // `client_ref` is std::invalid_argument, before any request.
     std::vector<connector::RestorePoint> list_restore_points(const std::string& client_ref) override;
 
-    // Throws connector::NotImplementedError, before any request: the restore
-    // comes with W2.5, and TargetGuard (W2.7) with it.
+    // The target guard's layer 1 (W2.7, rp/target_guard.hpp) is its first
+    // line: before any Veeam request, every item is checked and each target
+    // the spec uses is resolved through Graph. A refusal is the guard's
+    // connector::SafetyViolation; Graph's errors become connector errors
+    // (AuthError and PermissionError connector::AuthError, TransientError
+    // connector::TransientError, NotFoundError connector::NotFoundError, any
+    // other connector::Error). Without a Graph client: connector::Error, no
+    // request. When the guard passes: connector::NotImplementedError until
+    // W2.5, still without a Veeam request.
     connector::RestoreResult restore_sample(const connector::RestoreSpec& spec) override;
 
 private:
     std::unique_ptr<IHttpClient> http_;
     std::unique_ptr<VeeamClient> client_;
+    std::shared_ptr<graph::GraphClient> graph_;
+    TargetGuardOptions guard_options_;
 };
 
 // The registry's factory for "veeam_m365": a VeeamM365Connector on

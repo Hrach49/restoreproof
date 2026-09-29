@@ -26,7 +26,9 @@ inline constexpr int transient = 3;
 // Any other error from the service (Veeam's or Graph's NotFoundError
 // included, a certificate that fails verification: TLS failures that aren't a
 // broken-off handshake, a failed download, and a restore target the guard
-// refuses), or veeam_org_name not among Veeam's organisations.
+// refuses: Graph's WrongTargetError, and the restore-target guard's
+// connector::SafetyViolation, rp/target_guard.hpp, for the command that will
+// restore), or veeam_org_name not among Veeam's organisations.
 inline constexpr int service = 4;
 // A command line rpworker doesn't understand.
 inline constexpr int usage = 64;

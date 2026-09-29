@@ -225,16 +225,19 @@ connector::RestoreSpec one_mail_spec(const rp::Config& config)
 
 // --- Failure paths ---------------------------------------------------------------
 
-TEST_CASE("veeam_m365: restore_sample isn't implemented until Sprint 2 and calls nothing",
+TEST_CASE("veeam_m365: the registry's connector has no Graph client yet, so restore_sample "
+          "refuses and calls nothing",
           "[veeam_m365]")
 {
+    // The guard runs first and reads through Graph (W2.7); W2.5 gives the
+    // factory a Graph client. The guard itself: veeam_m365_restore_guard_test.cpp.
     Harness lab;
     const std::unique_ptr<connector::IConnector> made = lab.make();
     connector::IConnector& source = *made;
 
-    REQUIRE_THROWS_MATCHES(source.restore_sample(one_mail_spec(lab.config)),
-                           connector::NotImplementedError,
-                           Message("veeam_m365: restore_sample is not implemented yet (W2.5)"));
+    REQUIRE_THROWS_MATCHES(
+        source.restore_sample(one_mail_spec(lab.config)), connector::Error,
+        Message("veeam_m365: no Graph client, so the target guard can't run; nothing was restored"));
     REQUIRE(lab.http.requests().empty());
 }
 

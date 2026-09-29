@@ -272,6 +272,9 @@ sent, and then the Graph read-back decides `pass`/`fail` (`docs/verification.md`
    targets, and the rest of the RestoreTest site), so it can't be the app in Veeam's restore
    body, since Veeam writes the restored items. Its credential is already a certificate kept as a PFX plus password
    (`docs/decisions.md` 2026-09-27), the form this body takes.
+   *After W2.4:* the lab restores with Veeam's own organisation app, its certificate exported
+   per run and never stored; the Worker's restore credential stays open until a spike before
+   W4.5 (`docs/decisions.md` 2026-09-28, W2.4).
 5. **Addressing (W2.4, W2.7).**
    - Mail targets a mailbox **address** plus a folder **name**.
    - SharePoint targets a site URL plus a library **display name** (`RestoreTarget`).

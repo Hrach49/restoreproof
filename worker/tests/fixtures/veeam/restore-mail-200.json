@@ -1,0 +1,33 @@
+{
+  "source": "docs/api/veeam-lab/w2.4-mail-x1-restore.json",
+  "request": "POST /v8/RestoreSessions/171ea3e1-1f41-420c-94f7-140b57470d4a/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/items/restoreTo",
+  "request_body": {
+    "mailbox": "restoretest@RestoreProofLab.onmicrosoft.com",
+    "folder": "Inbox",
+    "items": [
+      {
+        "id": "LgAAAEYAAAAWAAAAAAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAQwAAAAAAACxxv9HtdajQ4pXXA5mCVQzBwBAxtTKFTWxToQtH-hG0poXAAAAAAEMAABAxtTKFTWxToQtH-hG0poXAAAAADwfAABAxtTKFTWxToQtH-hG0poXAAAAABBN"
+      }
+    ],
+    "changedItems": true,
+    "deletedItems": true,
+    "markRestoredAsUnread": false,
+    "excludeDrafts": false,
+    "excludeDeletedItems": false,
+    "excludeInPlaceHoldItems": true,
+    "excludeLitigationHoldItems": true,
+    "officeRegion": "Worldwide",
+    "officeOrganizationName": "RestoreProofLab.onmicrosoft.com",
+    "applicationId": "1fd2609d-1242-43fe-94b5-d58688a90bd6",
+    "applicationCertificate": "[REDACTED]",
+    "applicationCertificatePassword": "[REDACTED]",
+    "impersonationAccountName": "restoretest@RestoreProofLab.onmicrosoft.com"
+  },
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8"
+  },
+  "body": {
+    "sessionId": "b6fe35ef-9633-481d-9756-3496a717d8a9"
+  }
+}

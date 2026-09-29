@@ -1,0 +1,45 @@
+{
+  "source": "docs/api/veeam-lab/w2.4-mail-x5-restore.json",
+  "request": "POST /v8/RestoreSessions/e64a4f87-6d08-4e57-a117-dd3de2d2bc02/organization/mailboxes/e00393b0-a896-4487-ad04-0e1be36468fb/items/restoreTo",
+  "request_body": {
+    "mailbox": "restoretest@RestoreProofLab.onmicrosoft.com",
+    "folder": "Inbox",
+    "items": [
+      {
+        "id": "LgAAAEYAAAAWAAAAAAAAAJQ40Ee3vkxBk1fd6-4CAU4BAP0LwXmScMJMnrn-sNESuJ8AAAAAAQwAAAAAAACUONBHt75MQZNX3evuAgFOBwD9C8F5knDCTJ65_rDRErifAAAAAAEMAAD9C8F5knDCTJ65_rDRErifAAAAAFuOAAD9C8F5knDCTJ65_rDRErifAAAAACnR"
+      },
+      {
+        "id": "LgAAAEYAAAAWAAAAAAAAAJQ40Ee3vkxBk1fd6-4CAU4BAP0LwXmScMJMnrn-sNESuJ8AAAAAAQwAAAAAAACUONBHt75MQZNX3evuAgFOBwD9C8F5knDCTJ65_rDRErifAAAAAAEMAAD9C8F5knDCTJ65_rDRErifAAAAAFuNAAD9C8F5knDCTJ65_rDRErifAAAAADsB"
+      },
+      {
+        "id": "LgAAAEYAAAAWAAAAAAAAAJQ40Ee3vkxBk1fd6-4CAU4BAP0LwXmScMJMnrn-sNESuJ8AAAAAAQwAAAAAAACUONBHt75MQZNX3evuAgFOBwD9C8F5knDCTJ65_rDRErifAAAAAAEMAAD9C8F5knDCTJ65_rDRErifAAAAAFuPAAD9C8F5knDCTJ65_rDRErifAAAAADsD"
+      },
+      {
+        "id": "LgAAAEYAAAAWAAAAAAAAAJQ40Ee3vkxBk1fd6-4CAU4BAP0LwXmScMJMnrn-sNESuJ8AAAAAAQwAAAAAAACUONBHt75MQZNX3evuAgFOBwD9C8F5knDCTJ65_rDRErifAAAAAAEMAAD9C8F5knDCTJ65_rDRErifAAAAAFuLAAD9C8F5knDCTJ65_rDRErifAAAAADr9"
+      },
+      {
+        "id": "LgAAAEYAAAAWAAAAAAAAAJQ40Ee3vkxBk1fd6-4CAU4BAP0LwXmScMJMnrn-sNESuJ8AAAAAAQwAAAAAAACUONBHt75MQZNX3evuAgFOBwD9C8F5knDCTJ65_rDRErifAAAAAAEMAAD9C8F5knDCTJ65_rDRErifAAAAAFuQAAD9C8F5knDCTJ65_rDRErifAAAAACnZ"
+      }
+    ],
+    "changedItems": true,
+    "deletedItems": true,
+    "markRestoredAsUnread": false,
+    "excludeDrafts": false,
+    "excludeDeletedItems": false,
+    "excludeInPlaceHoldItems": true,
+    "excludeLitigationHoldItems": true,
+    "officeRegion": "Worldwide",
+    "officeOrganizationName": "RestoreProofLab.onmicrosoft.com",
+    "applicationId": "1fd2609d-1242-43fe-94b5-d58688a90bd6",
+    "applicationCertificate": "[REDACTED]",
+    "applicationCertificatePassword": "[REDACTED]",
+    "impersonationAccountName": "restoretest@RestoreProofLab.onmicrosoft.com"
+  },
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8"
+  },
+  "body": {
+    "sessionId": "a9fb8fe0-caf9-49b3-9374-0ee3bea58b0f"
+  }
+}

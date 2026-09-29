@@ -34,6 +34,21 @@ TEST_CASE("form_encode percent-encodes every byte but letters, digits and -._~",
     CHECK(rp::form_encode(row.input) == row.expected);
 }
 
+TEST_CASE("percent_decode turns each %XX into its byte and keeps a stray '%'", "[text_util]")
+{
+    const Row row = GENERATE(values<Row>({
+        {"", ""},
+        {"Restore%54arget", "RestoreTarget"},
+        {"%2f%2F%c3%A9", "/\x2F\xC3\xA9"},
+        {"100%", "100%"},
+        {"%4", "%4"},
+        {"%zz%4g", "%zz%4g"},
+        {"a%20b", "a b"},
+    }));
+    CAPTURE(row.input);
+    CHECK(rp::percent_decode(row.input) == row.expected);
+}
+
 TEST_CASE("one_line replaces control characters with a space", "[text_util]")
 {
     const Row row = GENERATE(values<Row>({

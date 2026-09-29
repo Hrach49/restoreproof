@@ -124,7 +124,12 @@ inline std::string library_children_url()
 inline std::string folder_url()
 {
     return kGraph + "/drives/" + lab_values().onedrive_drive_id + "/items/" +
-           lab_values().folder_id + "?$select=id,name,folder,parentReference";
+           lab_values().folder_id + "?$select=id,name,folder,parentReference,sharepointIds";
+}
+// The guard's mailbox check (W2.7).
+inline std::string inbox_url(const std::string& mailbox = lab_values().mailbox)
+{
+    return kGraph + "/users/" + mailbox + "/mailFolders/inbox?$select=id";
 }
 inline std::string folder_children_url()
 {

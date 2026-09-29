@@ -1,7 +1,8 @@
 #pragma once
 
 // Text helpers shared by the service clients (VeeamClient, GraphClient):
-// encoding a form value and making a server's text fit one log line.
+// encoding a form value, decoding a URL's path and making a server's text fit
+// one log line.
 
 #include "control_chars.hpp"
 
@@ -62,6 +63,33 @@ inline std::string form_encode(std::string_view text)
             out += '%';
             out += hex[byte >> 4];
             out += hex[byte & 0x0F];
+        }
+    }
+    return out;
+}
+
+// `text` with each "%XX" (two hex digits, either case) turned into its byte;
+// a '%' not followed by two hex digits is kept as it is.
+inline std::string percent_decode(std::string_view text)
+{
+    const auto hex = [](char c) -> int {
+        if (c >= '0' && c <= '9') {
+            return c - '0';
+        }
+        if (c >= 'a' && c <= 'f') {
+            return c - 'a' + 10;
+        }
+        return c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
+    };
+    std::string out;
+    out.reserve(text.size());
+    for (std::size_t i = 0; i < text.size(); ++i) {
+        if (text[i] == '%' && i + 2 < text.size() && hex(text[i + 1]) >= 0 &&
+            hex(text[i + 2]) >= 0) {
+            out += static_cast<char>(hex(text[i + 1]) * 16 + hex(text[i + 2]));
+            i += 2;
+        } else {
+            out += text[i];
         }
     }
     return out;

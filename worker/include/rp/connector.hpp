@@ -168,6 +168,17 @@ public:
     using Error::Error;
 };
 
+// The restore-target guard (W2.7, rp/target_guard.hpp) refused the restore: an
+// item sampled from a restore target, a configured target that isn't a
+// dedicated RestoreTarget, or a restore request that names anything else.
+// Nothing was restored. The run's status is `error`, never `fail`
+// (docs/verification.md); rpworker's exit code is 4 (exit_code::service).
+// what() starts with "target guard: " and never quotes a credential.
+class SafetyViolation : public Error {
+public:
+    using Error::Error;
+};
+
 // A backup product as the pipeline sees it. One instance talks to one backup
 // server with one set of credentials; each call names the client (an MSP's
 // customer: one Microsoft 365 tenant) it is about.
@@ -186,7 +197,9 @@ public:
 
     // Restores `spec`'s items from its restore point into its targets and
     // reports how that went. Checks each item's target with TargetGuard
-    // (W2.7) before any call for it.
+    // (W2.7, rp/target_guard.hpp) before any call to the backup product, and
+    // each restore request again just before it is sent; a refusal is a
+    // SafetyViolation.
     virtual RestoreResult restore_sample(const RestoreSpec& spec) = 0;
 
 protected:

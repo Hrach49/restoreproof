@@ -1,7 +1,7 @@
 # Veeam REST fixtures
 
 Recorded responses from the Veeam Backup for Microsoft 365 REST API (v8), taken from the
-W1.4 and L1.6 lab evidence in `docs/api/veeam-lab/`. The evidence was already scrubbed
+W1.4, L1.6 and W2.4 lab evidence in `docs/api/veeam-lab/`. The evidence was already scrubbed
 before it was committed. `FakeHttpClient` serves these files in the VeeamClient tests (W1.5
 and later). The mapping and what each call does are in `docs/api/veeam-notes.md` §9.
 
@@ -26,6 +26,9 @@ One JSON object per file:
   `{}` when it had neither.
 - `body`: `null` means an empty body. A string is raw text. An object or array is JSON;
   the fake sends it compactly serialised.
+- `request_body` (the `restore-*` files only): the body the recorded POST sent, unchanged
+  from the evidence's `request.body`, credentials `[REDACTED]`. Documentation for the fake;
+  the target guard's tests (W2.7) and W2.5's check the exact body against it.
 
 Tokens are `[REDACTED]`, as in the evidence. Tests substitute their own values where they
 need a token. Organisation, restore point and session IDs, names and times are real lab
@@ -64,6 +67,11 @@ values and are kept as recorded: they exercise the composite-ID handling.
 | `statistics-409.json` | `w1.4-session-statistics-working-409.json` | W2.x: 409 = keep polling |
 | `sessions-list.json` | `w1.4-sweep-list.json` | W2.x: the sweep picks only `Working` + own `initiatedBy` |
 | `route-404-empty.json` | `w1.4-rp-guide-path-404.json` | a route that doesn't exist: empty 404 → `VeeamError` |
+| `restore-mail-200.json` | `w2.4-mail-x1-restore.json` | W2.7/W2.5: mail `restoreTo`, one item; the guard accepts the path and body as sent |
+| `restore-sp-200.json` | `w2.4-sp-x1-restore.json` | W2.7/W2.5: SharePoint `restoreTo`, one file |
+| `restore-od-200.json` | `w2.4-od-x1-restore.json` | W2.7/W2.5: OneDrive `copyTo`, one file |
+| `restore-mail-x5-200.json` | `w2.4-mail-x5-restore.json` | W2.7/W2.5: five items in one call; a duplicated item with the count unchanged |
+| `restore-mail-r1-200.json` | `w2.4-mail-r1-restore.json` | W2.7: the body of the committed `10-restore.ps1` (W2.4 review) |
 
 `rest-certificate.pem` is not a response: it is the lab's Veeam REST certificate (public, as
 every TLS client sees it; no private key), exported on the Veeam server with

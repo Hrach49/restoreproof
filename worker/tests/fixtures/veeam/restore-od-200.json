@@ -1,0 +1,44 @@
+{
+  "source": "docs/api/veeam-lab/w2.4-od-x1-restore.json",
+  "request": "POST /v8/RestoreSessions/21ebe03d-76de-426b-b829-b46ae9bd2e89/Organization/OneDrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/Documents/copyTo",
+  "request_body": {
+    "documents": [
+      {
+        "oneDriveId": "6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325",
+        "sizeBytes": 925,
+        "inheritedPermissions": true,
+        "version": "1.0",
+        "id": "14ad2a26-a9d6-4307-a1b0-7f15d8b7debb",
+        "versionId": 1,
+        "name": "rp-canary-16.pdf",
+        "createdBy": "Alice Test",
+        "creationTime": "2026-09-24T22:11:28Z",
+        "modifiedBy": "Alice Test",
+        "modificationTime": "2026-09-24T22:11:28Z",
+        "isFolder": false
+      }
+    ],
+    "onedrive": {
+      "id": "6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325",
+      "name": "Alice Test",
+      "url": "https://restoreprooflab-my.sharepoint.com/personal/alice_restoreprooflab_onmicrosoft_com"
+    },
+    "folder": "RestoreTarget",
+    "changedItems": true,
+    "deletedItems": true,
+    "documentVersion": "Last",
+    "documentLastVersionAction": "Merge",
+    "officeRegion": "Worldwide",
+    "organizationName": "RestoreProofLab.onmicrosoft.com",
+    "applicationId": "1fd2609d-1242-43fe-94b5-d58688a90bd6",
+    "applicationCertificate": "[REDACTED]",
+    "applicationCertificatePassword": "[REDACTED]"
+  },
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8"
+  },
+  "body": {
+    "sessionId": "15c3f986-9569-4efb-955f-ea54ad46edb4"
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "source": "docs/api/veeam-lab/w2.4-od-x1-document.json",
+  "request": "GET /v8/RestoreSessions/21ebe03d-76de-426b-b829-b46ae9bd2e89/Organization/OneDrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/Documents/14ad2a26-a9d6-4307-a1b0-7f15d8b7debb",
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8"
+  },
+  "body": {
+    "oneDriveId": "6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325",
+    "sizeBytes": 925,
+    "inheritedPermissions": true,
+    "version": "1.0",
+    "id": "14ad2a26-a9d6-4307-a1b0-7f15d8b7debb",
+    "versionId": 1,
+    "name": "rp-canary-16.pdf",
+    "createdBy": "Alice Test",
+    "creationTime": "2026-09-24T22:11:28Z",
+    "modifiedBy": "Alice Test",
+    "modificationTime": "2026-09-24T22:11:28Z",
+    "isFolder": false,
+    "_links": {
+      "self": {
+        "href": "/v8/restoresessions/21ebe03d-76de-426b-b829-b46ae9bd2e89/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/documents/14ad2a26-a9d6-4307-a1b0-7f15d8b7debb"
+      },
+      "onedrive": {
+        "href": "/v8/restoresessions/21ebe03d-76de-426b-b829-b46ae9bd2e89/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325"
+      },
+      "parent": {
+        "href": "/v8/restoresessions/21ebe03d-76de-426b-b829-b46ae9bd2e89/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/folders/8bc02bbf-9d4e-4c61-865f-d8a1495fe45c"
+      },
+      "versions": {
+        "href": "/v8/restoresessions/21ebe03d-76de-426b-b829-b46ae9bd2e89/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/documents/14ad2a26-a9d6-4307-a1b0-7f15d8b7debb/versions"
+      }
+    }
+  }
+}

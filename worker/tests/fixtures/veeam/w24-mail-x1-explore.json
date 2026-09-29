@@ -1,0 +1,33 @@
+{
+  "source": "docs/api/veeam-lab/w2.4-mail-x1-explore.json",
+  "request": "POST /v8/Organizations/ff96d072-29e2-4cb4-a155-2590f5473176/explore",
+  "status": 201,
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8"
+  },
+  "body": {
+    "id": "171ea3e1-1f41-420c-94f7-140b57470d4a",
+    "name": "Exchange restore (Entire organization - 9/27/2026 10:00:48 PM)",
+    "organization": "RestoreProofLab.onmicrosoft.com",
+    "type": "Vex",
+    "creationTime": "2026-09-28T21:27:26.8946372Z",
+    "endTime": "9999-12-31T23:59:59.9999999",
+    "state": "Working",
+    "result": "Success",
+    "initiatedBy": "rp-veeam",
+    "scopeName": "",
+    "clientHost": "localhost:4443 (via: [::ffff:127.0.0.1])",
+    "eTag": 1,
+    "_links": {
+      "self": {
+        "href": "/v8/restoresessions/171ea3e1-1f41-420c-94f7-140b57470d4a"
+      },
+      "organization": {
+        "href": "/v8/restoresessions/171ea3e1-1f41-420c-94f7-140b57470d4a/organization"
+      },
+      "restoreSessionEvents": {
+        "href": "/v8/restoresessions/171ea3e1-1f41-420c-94f7-140b57470d4a/events"
+      }
+    }
+  }
+}

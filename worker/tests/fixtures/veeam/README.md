@@ -79,6 +79,64 @@ values and are kept as recorded: they exercise the composite-ID handling.
 | `restore-mail-x5-200.json` | `w2.4-mail-x5-restore.json` | W2.7/W2.5: five items in one call; a duplicated item with the count unchanged |
 | `restore-mail-r1-200.json` | `w2.4-mail-r1-restore.json` | W2.7: the body of the committed `10-restore.ps1` (W2.4 review) |
 
+### W2.5: the recorded restore runs (`restore_sample`)
+
+Every call W2.4's `10-restore.ps1` made around the four restore POSTs above, one fixture per
+step, so W2.5's tests can replay a whole run: `w24-<run>-<step>.json` from
+`w2.4-<run>-<step>.json`, for the runs `mail-x5` (five mails, one call), `mail-x1`, `sp-x1` and
+`od-x1` (one item each). The restore POST of each run is the `restore-*-200.json` above
+(`mail-x5` → `restore-mail-x5-200`, `mail-x1` → `restore-mail-200`, `sp-x1` →
+`restore-sp-200`, `od-x1` → `restore-od-200`). Each run's `request` is the path as recorded,
+query included; the IDs in it are that run's own explore and restore sessions.
+
+| Step | Request (per run) | Runs |
+|---|---|---|
+| `org` | `GET /v8/Organizations` (both org apps, thumbprint only) | all |
+| `sweep-before` | `GET /v8/RestoreSessions?limit=200` (the preflight) | all |
+| `explore` | `POST /v8/Organizations/{org}/explore` → 201, the explore session | all |
+| `mailboxes` | `GET .../organization/mailboxes?limit=1000` | mail |
+| `folder-inbox` | `GET .../mailboxes/{m}/folders?name=Inbox` | mail |
+| `items` | `GET .../mailboxes/{m}/items?parentId={folder}&limit=1000` | mail |
+| `item` | `GET .../mailboxes/{m}/items/{item}` (the re-read) | mail |
+| `sites` | `GET .../Organization/Sites?parentId=root&limit=1000` | sp |
+| `libraries` | `GET .../Organization/Sites/{site}/Libraries` | sp |
+| `onedrives` | `GET .../Organization/OneDrives?limit=1000` | od |
+| `folders-root` | `GET .../OneDrives/{od}/Folders?parentId=root` | od |
+| `documents` | `GET .../{Sites/{site}\|OneDrives/{od}}/Documents?parentId={parent}&limit=1000` | sp, od |
+| `document` | `GET .../Documents/{doc}` (the re-read) | sp, od |
+| `sessions-after-post` | `GET /v8/RestoreSessions?startTimeFrom=...&orderBy=CreationTime&orderAsc=false&limit=50` (the duplicate check) | all |
+| `session-working` | `GET /v8/RestoreSessions/{r}`, `state` `Working` | all |
+| `session` | `GET /v8/RestoreSessions/{r}`, `state` `Stopped`, `result` `Success` | all |
+| `statistics` | `GET /v8/RestoreSessions/{r}/Statistics` | all |
+| `events` | `GET /v8/RestoreSessions/{r}/Events?limit=100` | all |
+
+The script's paging (`limit=1000`) and its browse calls differ from W2.5's in places (no
+`GET .../Sites/{site}` or `Folders?parentId=` below the root was recorded, and the SharePoint
+document sat in the library root); tests route by path and serve these bodies where the shape
+matches.
+
+Failure sets from W1.0 (`w1.0-c-*`, a restore with the user's credentials that Veeam
+accepted and then failed; see `docs/api/veeam-feasibility.md`), for the verdict and the
+infrastructure classification:
+
+| Fixture | Source (`docs/api/veeam-lab/`) | For |
+|---|---|---|
+| `w10-mail-user-session.json` | `w1.0-c-mail-user-session.json` | `Stopped`, `result` `Failed`, `0 items processed` |
+| `w10-mail-user-statistics.json` | `w1.0-c-mail-user-statistics.json` | 0 restored; `errors[]` "Failed to open mailbox" → infrastructure |
+| `w10-mail-user-events.json` | `w1.0-c-mail-user-events.json` | `Failed` events, "Failed to open mailbox" |
+| `w10-sp-user-session.json` | `w1.0-c-sp-user-session.json` | `Stopped`, `Failed` |
+| `w10-sp-user-statistics.json` | `w1.0-c-sp-user-statistics.json` | 0 restored; `errors[]` "Cannot connect to Microsoft 365" |
+| `w10-sp-user-events.json` | `w1.0-c-sp-user-events.json` | `Failed` events, "Cannot connect to Microsoft 365" |
+| `w10-od-user-session.json` | `w1.0-c-od-user-session.json` | `Stopped`, `Failed` |
+| `w10-od-user-statistics.json` | `w1.0-c-od-user-statistics.json` | 0 restored, no `errors[]`: the reason is only in the events |
+| `w10-od-user-events.json` | `w1.0-c-od-user-events.json` | `Failed` event, "Cannot connect to Microsoft 365" |
+| `w10-mail-restore-400-no-folder.json` | `w1.0-c-mail-cert-restore-no-folder-400.json` | restore POST refused: 400 `ParameterValidationFailure` (no `folder`) → nothing started |
+| `w10-mail-restore-400-no-casserver.json` | `w1.0-c-mail-user-restore-no-casserver-400.json` | restore POST refused: 400 `ParameterValidationFailure` (`CasServer`) |
+
+The two `w10-mail-restore-400-*` fixtures also carry `request_body` (the refused POST's body,
+credentials `[REDACTED]`), as documentation only: they are not restore bodies the guard should
+accept (one has no `folder`, the other uses the user-credential fields).
+
 `rest-certificate.pem` is not a response: it is the lab's Veeam REST certificate (public, as
 every TLS client sees it; no private key), exported on the Veeam server with
 `ExportCertificatePem()`. `cert_pin_test.cpp` checks `rp::public_key_pin` against the two

@@ -1,0 +1,18 @@
+{
+  "source": "docs/api/veeam-lab/w1.0-c-sp-user-statistics.json",
+  "request": "GET /v8/RestoreSessions/c2c3f764-2952-4bd6-9a49-c7c8bc349122/Statistics",
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8"
+  },
+  "body": {
+    "totalItemsCount": 0,
+    "restoredItemsCount": 0,
+    "failedItemsCount": 0,
+    "skippedItemsCount": 0,
+    "errors": [
+      "Restore operation failed with error: Cannot connect to Microsoft 365. Failed to connect to https://restoreprooflab-admin.sharepoint.com/.."
+    ],
+    "items": []
+  }
+}

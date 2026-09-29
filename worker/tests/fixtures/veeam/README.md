@@ -20,15 +20,21 @@ One JSON object per file:
 ```
 
 - `source`: the evidence file the response was copied from.
-- `request`: method and path (with query string) of the recorded call. Documentation only.
+- `request`: method and path (with query string) of the recorded call. Documentation only,
+  except in the five restore fixtures named below: there it is exactly `POST <path>` as sent,
+  and the W2.7 guard tests take the path they check from it (the text after `POST `), with
+  the restore kind, explore session and container read from its segments. Re-record them
+  with that form, or every guard test built on them fails on the path.
 - `status`: the HTTP status Veeam returned.
 - `headers`: only `Content-Type` and `WWW-Authenticate`, when the response had them.
   `{}` when it had neither.
 - `body`: `null` means an empty body. A string is raw text. An object or array is JSON;
   the fake sends it compactly serialised.
-- `request_body` (the `restore-*` files only): the body the recorded POST sent, unchanged
-  from the evidence's `request.body`, credentials `[REDACTED]`. Documentation for the fake;
-  the target guard's tests (W2.7) and W2.5's check the exact body against it.
+- `request_body` (only `restore-mail-200`, `restore-sp-200`, `restore-od-200`,
+  `restore-mail-x5-200` and `restore-mail-r1-200`, W2.4's restore POSTs): the body the
+  recorded POST sent, unchanged from the evidence's `request.body`, credentials `[REDACTED]`.
+  Documentation for the fake; the target guard's tests (W2.7) and W2.5's check the exact
+  body against it.
 
 Tokens are `[REDACTED]`, as in the evidence. Tests substitute their own values where they
 need a token. Organisation, restore point and session IDs, names and times are real lab

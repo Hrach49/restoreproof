@@ -169,17 +169,27 @@ public:
     }
 
     // The exact text as JSON: an object at the top, and no object at any depth
-    // with a key twice (nlohmann keeps the last one silently).
+    // with a key twice (nlohmann keeps the last one silently), two keys that
+    // differ only in ASCII case, or a key outside printable ASCII. Veeam's REST
+    // server is .NET, whose binders match names ignoring case (some non-ASCII
+    // letters fold to ASCII ones) and keep the last: "Id" beside the checked
+    // "id" could be the item it restores.
     json parse(std::string_view body) const
     {
-        // The keys of each object being read, innermost last.
-        std::vector<std::set<std::string>> open;
+        // The keys of each object being read, innermost last: as sent, and in
+        // lower case.
+        std::vector<std::pair<std::set<std::string>, std::set<std::string>>> open;
         bool twice = false;
+        bool case_twice = false;
+        bool not_ascii = false;
         const auto watch = [&](int, json::parse_event_t event, json& parsed) {
             if (event == json::parse_event_t::object_start) {
                 open.emplace_back();
             } else if (event == json::parse_event_t::key) {
-                twice |= !open.back().insert(parsed.get<std::string>()).second;
+                const std::string& key = parsed.get_ref<const std::string&>();
+                not_ascii |= !is_printable_ascii(key);
+                twice |= !open.back().first.insert(key).second;
+                case_twice |= !open.back().second.insert(ascii_lower(key)).second;
             } else if (event == json::parse_event_t::object_end) {
                 open.pop_back();
             }
@@ -196,8 +206,14 @@ public:
         if (!valid) {
             throw refusal("the body is not valid JSON");
         }
+        if (not_ascii) {
+            throw refusal("the body has a key with a character outside printable ASCII");
+        }
         if (twice) {
             throw refusal("the body has a key twice in one object");
+        }
+        if (case_twice) {
+            throw refusal("the body has two keys in one object that differ only in ASCII case");
         }
         if (!doc.is_object()) {
             throw refusal("the body is not a JSON object");

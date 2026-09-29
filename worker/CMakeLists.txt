@@ -38,6 +38,8 @@ add_library(rpcore STATIC
     src/retry_policy.cpp
     src/secrets.cpp
     src/sha256.cpp
+    src/target_guard.cpp
+    src/target_guard_graph.cpp
     src/text_table.cpp
     src/text_v1.cpp
     src/utf16.cpp
@@ -96,6 +98,7 @@ add_executable(rptests
     tests/secrets_test.cpp
     tests/sha256_test.cpp
     tests/smoke.cpp
+    tests/target_guard_test.cpp
     tests/text_table_test.cpp
     tests/text_util_test.cpp
     tests/text_v1_test.cpp

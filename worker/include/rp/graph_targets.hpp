@@ -7,13 +7,15 @@
 // never the canaries: before listing a file target one GET checks that the
 // drive or folder is a RestoreTarget where the config says, since the Worker
 // app's grants alone can't keep it out of the RestoreTest library
-// (docs/decisions.md 2026-09-25 and 2026-09-28, W2.2).
+// (docs/decisions.md 2026-09-25 and 2026-09-28, W2.2). Those checks are
+// rp/target_guard_graph.hpp's, which the restore-target guard runs too (W2.7).
 
 #include <rp/connector.hpp>
 #include <rp/graph_client.hpp>
 #include <rp/graph_download.hpp>
 #include <rp/graph_errors.hpp>
 #include <rp/http_client.hpp>
+#include <rp/target_guard_graph.hpp>
 
 #include <nlohmann/json.hpp>
 
@@ -33,8 +35,6 @@ namespace rp::graph {
 // "text-v1"): bodies as text, IDs that survive a move.
 inline constexpr std::string_view kMailPrefer =
     "outlook.body-content-type=\"text\", IdType=\"ImmutableId\"";
-// The name both file targets must have (docs/decisions.md 2026-09-25).
-inline constexpr std::string_view kRestoreTargetName = "RestoreTarget";
 // A listing follows @odata.nextLink at most this many pages.
 inline constexpr int kMaxListPages = 100;
 
@@ -62,14 +62,6 @@ struct FoundItem {
     std::optional<std::uint64_t> size_bytes;
 
     bool operator==(const FoundItem&) const = default;
-};
-
-// A guard refusal: the configured drive or folder is not a RestoreTarget of
-// the test site or OneDrive, the canaries' RestoreTest included. Nothing was
-// listed; the run's status is `error`.
-class WrongTargetError : public GraphError {
-public:
-    using GraphError::GraphError;
 };
 
 // Whether a nextLink's path (lower case, split at '/') names the target listed.
@@ -124,8 +116,6 @@ private:
         NextLinkRule next_rule;
     };
 
-    void check_library();
-    void check_onedrive_folder();
     std::vector<FoundItem> list_files(const FileTarget& target);
     void log(spdlog::level::level_enum level, const std::string& line) const;
 
@@ -134,8 +124,6 @@ private:
     connector::RestoreTargets targets_;
     TargetReaderOptions options_;
     std::string tenant_host_; // test_site_id's host, lower case
-    std::string site_guid_;   // test_site_id's site collection GUID
-    std::string web_guid_;    // test_site_id's web GUID
 };
 
 } // namespace rp::graph

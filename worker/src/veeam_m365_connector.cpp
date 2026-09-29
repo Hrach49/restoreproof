@@ -130,6 +130,17 @@ std::vector<connector::RestorePoint> VeeamM365Connector::list_restore_points(
 
 connector::RestoreResult VeeamM365Connector::restore_sample(const connector::RestoreSpec&)
 {
+    // TODO(W2.5): the guard (W2.7) is ready; restore_sample must call it, in
+    // this order:
+    //  1. rp::TargetGuard(graph).check_spec(spec) before any Veeam call
+    //     (rp/target_guard.hpp; an empty spec returns not_run);
+    //  2. browse (read-only calls) and build a veeam::RestoreRequestContext
+    //     per source container (docs/api/veeam-restore-flow.md §4, §16);
+    //  3. veeam::check_restore_request(checked, ctx, path, body) on the exact
+    //     path and text, immediately before each restore POST
+    //     (rp/target_guard_veeam.hpp).
+    // A connector::SafetyViolation from either passes out as it is: status
+    // `error`, exit code 4, never `fail`.
     throw connector::NotImplementedError(
         "veeam_m365: restore_sample is not implemented yet (W2.5)");
 }

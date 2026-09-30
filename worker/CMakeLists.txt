@@ -20,6 +20,7 @@ enable_testing()
 # rptests both link it; coverage is measured on its sources (src/, include/).
 add_library(rpcore STATIC
     src/base64.cpp
+    src/canary_manifest.cpp
     src/cert_export.cpp
     src/cert_pin.cpp
     src/cli.cpp
@@ -33,10 +34,14 @@ add_library(rpcore STATIC
     src/graph_command.cpp
     src/graph_download.cpp
     src/graph_errors.cpp
+    src/graph_ids.cpp
     src/graph_targets.cpp
     src/http_client.cpp
+    src/name_key.cpp
     src/redact.cpp
     src/retry_policy.cpp
+    src/sample_rng.cpp
+    src/sample_selector.cpp
     src/secrets.cpp
     src/sha256.cpp
     src/target_guard.cpp
@@ -45,8 +50,11 @@ add_library(rpcore STATIC
     src/text_table.cpp
     src/text_v1.cpp
     src/utf16.cpp
+    src/veeam_browse.cpp
+    src/veeam_candidates.cpp
     src/veeam_client.cpp
     src/veeam_command.cpp
+    src/veeam_explore.cpp
     src/veeam_m365_connector.cpp
     src/veeam_restore.cpp
     src/veeam_time.cpp
@@ -81,6 +89,7 @@ target_link_libraries(rpworker PRIVATE rpcore)
 
 add_executable(rptests
     tests/base64_test.cpp
+    tests/canary_manifest_test.cpp
     tests/cert_export_test.cpp
     tests/cert_pin_test.cpp
     tests/client_assertion_test.cpp
@@ -96,12 +105,17 @@ add_executable(rptests
     tests/graph_command_test.cpp
     tests/graph_download_test.cpp
     tests/graph_errors_test.cpp
+    tests/graph_ids_test.cpp
     tests/graph_targets_live_test.cpp
     tests/graph_targets_test.cpp
     tests/http_client_test.cpp
     tests/http_client_tls_test.cpp
+    tests/name_key_test.cpp
     tests/redact_test.cpp
     tests/retry_policy_test.cpp
+    tests/sample_rng_test.cpp
+    tests/sample_selector_live_test.cpp
+    tests/sample_selector_test.cpp
     tests/secrets_test.cpp
     tests/sha256_test.cpp
     tests/smoke.cpp
@@ -110,9 +124,11 @@ add_executable(rptests
     tests/text_table_test.cpp
     tests/text_util_test.cpp
     tests/text_v1_test.cpp
+    tests/veeam_browse_test.cpp
     tests/veeam_client_live_test.cpp
     tests/veeam_client_test.cpp
     tests/veeam_command_test.cpp
+    tests/veeam_m365_candidates_test.cpp
     tests/veeam_m365_connector_test.cpp
     tests/veeam_m365_restore_guard_test.cpp
     tests/veeam_m365_restore_live_test.cpp

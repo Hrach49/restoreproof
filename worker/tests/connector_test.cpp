@@ -422,6 +422,37 @@ TEST_CASE("the selectors' optional fields start unset", "[connector]")
     CHECK(od.size == -1);
 }
 
+TEST_CASE("a connector that can't list candidates says so by name", "[connector]")
+{
+    FakeConnector fake;
+    const connector::CandidateQuery query{
+        .client_ref = "Contoso",
+        .restore_point = {},
+        .targets = connector::RestoreTargets::from_config(config_with_targets()),
+        .mail = true};
+    REQUIRE_THROWS_MATCHES(fake.list_candidates(query), connector::NotImplementedError,
+                           Catch::Matchers::Message("fake: listing candidates isn't implemented"));
+}
+
+TEST_CASE("candidate limits and records start at the documented values", "[connector]")
+{
+    const connector::CandidateLimits limits;
+    CHECK(limits.containers_wanted == 2);
+    CHECK(limits.containers_tried == 8);
+    CHECK(limits.folders_per_container == 3);
+    CHECK(limits.walk_depth == 2);
+    CHECK(limits.walk_calls == 20);
+    CHECK(limits.max_file_bytes == 64ll * 1024 * 1024);
+    const connector::BrowseRecord record;
+    CHECK(record.containers_eligible == 0);
+    CHECK(record.containers_listed.empty());
+    CHECK(record.containers_unresolved == 0);
+    CHECK(record.folders_listed == 0);
+    CHECK_FALSE(record.short_of_containers);
+    CHECK(connector::SharePointCandidate{}.size_bytes == -1);
+    CHECK(connector::OneDriveCandidate{}.size_bytes == -1);
+}
+
 TEST_CASE("a restore spec counts its items across the three types", "[connector]")
 {
     const connector::RestoreTargets targets =

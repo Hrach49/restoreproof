@@ -346,7 +346,10 @@ TEST_CASE("no test spells out a value a live re-recording changes", "[graph][cli
         kTenant, kClient, "00000003-0000-0000-c000-000000000000",
         // the lab's RestoreTest site and web and its RestoreTarget list (sharePointIds in restoretarget-drive-200.json): fixed since L1.4
         "fe08085d-eb70-42e8-95a6-470189bd98eb", "4ecaf399-cc0e-4d95-b3fe-cd091a09e689",
-        "ffec069d-65e4-4c3a-9da2-ac086cf9dafa"};
+        "ffec069d-65e4-4c3a-9da2-ac086cf9dafa",
+        // alice's OneDrive as a site: its site, web and Documents list (sharepointIds in onedrive-folder-200.json), fixed while her OneDrive exists; graph_ids_test.cpp derives its drive ID from them
+        "6d600fc0-65f8-4811-ad18-096ec5b7e834", "98cfff1a-b404-4438-ae6e-6927a6ccc325",
+        "1a9f64df-d9fd-4302-af7a-457d2beff537"};
     const auto is_hex = [](char c) {
         return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
     };

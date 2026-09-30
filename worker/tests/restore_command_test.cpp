@@ -1202,7 +1202,10 @@ TEST_CASE("restore through veeam_m365: the target guard refuses a wrong target, 
     const Run run = real.run({"--run-id", kRunId, "--mail", "0", "--sp", "1", "--od", "0"});
 
     CHECK(run.exit_code == rp::exit_code::service);
-    CHECK_THAT(run.err, StartsWith("restore error: target guard: the drive test_library_id"));
+    // docs/worker-config.md's error example.
+    CHECK(run.err == "restore error: target guard: the drive test_library_id names is "
+                     "\"Dokumenty\", not \"RestoreTarget\": the Worker restores only into the "
+                     "RestoreTarget library; nothing was restored\n");
     // The header was out; nothing was sent to restore.
     CHECK_THAT(run.out,
                StartsWith("restore point " + vrl::kBackupTime + "  " + vrl::kRestorePointId));
@@ -1225,11 +1228,27 @@ TEST_CASE("restore through veeam_m365: a canary restored on the recorded run, ex
     INFO(run.err);
     CHECK(run.exit_code == rp::exit_code::ok);
     CHECK(run.err.empty());
-    CHECK_THAT(run.out, StartsWith("restore point " + vrl::kBackupTime + "  " +
-                                   vrl::kRestorePointId + "  (veeam_org_name " + vrl::kOrgName +
-                                   ")\n"));
-    CHECK_THAT(run.out, ContainsSubstring("\n  mail  canary  RP-CANARY-0011  restored  "));
-    CHECK_THAT(run.out, ContainsSubstring("\nstatus succeeded: 1 of 1 item(s) restored in "));
+    // docs/worker-config.md's example ("rpworker restore"): keep them in step.
+    CHECK(run.out ==
+          "restore point 2026-09-27T22:00:48.1447833Z  "
+          "c2f0f2e7-177f-48ac-992b-93a50cf702e35e1c0a24-0000-4000-8000-000000000924  "
+          "(veeam_org_name RestoreProofLab.onmicrosoft.com)\n"
+          "run run-0001  seed " + seed_of(kRunId) + "  canary cursor 10,0,0 -> 11,0,0\n"
+          "  KIND        REQUESTED  CANARIES  RANDOM  NOTE\n"
+          "  mail        1          1 of 1    0 of 0\n"
+          "  sharepoint  0          0 of 0    0 of 0\n"
+          "  onedrive    0          0 of 0    0 of 0\n"
+          "restoring 1 item(s) ...\n"
+          "\n"
+          "  KIND  SOURCE  NAME            OUTCOME   SESSION                               ELAPSED  MESSAGE\n"
+          "  mail  canary  RP-CANARY-0011  restored  b6fe35ef-9633-481d-9756-3496a717d8a9  0:00:32  "
+          "Item RP-CANARY-0011 was restored successfully (type: IPM.Note; source: Bob Test\\Inbox; "
+          "target: restoretest@RestoreProofLab.onmicrosoft.com\\<null>\\Inbox)\n"
+          "\n"
+          "  SESSION                               KIND  RESULT   RESTORED  STARTED                       ENDED                         ELAPSED\n"
+          "  b6fe35ef-9633-481d-9756-3496a717d8a9  mail  Success  1 of 1    2026-09-28T21:27:28.3281642Z  2026-09-28T21:28:00.6973119Z  0:00:32\n"
+          "\n"
+          "status succeeded: 1 of 1 item(s) restored in 0:00:05\n");
     CHECK(real.rig.restore_posts().size() == 1);
     CHECK(real.rig.exporter->calls == 1);
     CHECK_THAT(run.out, !ContainsSubstring(vrl::kPassword));

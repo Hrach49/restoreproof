@@ -19,6 +19,7 @@
 #include <chrono>
 #include <functional>
 #include <memory>
+#include <set>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -171,6 +172,8 @@ public:
     //     from a restore target or a canary location;
     //  3. every explore session stopped; one that couldn't be is
     //     connector::Error, as restore_sample's preflight would then refuse.
+    // Each explore session opened is remembered, even when the call throws,
+    // and restore_sample's duplicate check never counts one of them.
     // A random SharePoint item's drive_id is derived from Veeam's GUIDs
     // (src/graph_ids.hpp), so no Graph read is made. Veeam's errors map as
     // restore_sample maps them (a 404 is connector::Error); never
@@ -193,6 +196,11 @@ private:
     std::function<void(std::chrono::milliseconds)> sleep_;
     std::shared_ptr<spdlog::logger> logger_;
     std::string account_; // the username as Veeam lists it in initiatedBy
+    // Every explore session list_candidates opened (or adopted), stopped or
+    // not: Veeam lists them in /v8/RestoreSessions with a restore's type, so
+    // restore_sample's duplicate check knows them and never takes one for a
+    // second restore (docs/decisions.md 2026-09-30, W2.6 point 11).
+    std::set<std::string> candidate_sessions_;
 };
 
 // The registry's factory for "veeam_m365": a VeeamM365Connector on

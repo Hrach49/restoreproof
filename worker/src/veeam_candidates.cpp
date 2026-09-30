@@ -25,6 +25,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -180,6 +181,8 @@ public:
         const std::function<std::chrono::system_clock::time_point()>& wall_now;
         const std::shared_ptr<spdlog::logger>& logger;
         const std::string& account;
+        // Where every explore session opened or adopted is remembered.
+        std::set<std::string>& opened;
     };
 
     explicit CandidateLister(Context context)
@@ -188,9 +191,13 @@ public:
     {
     }
 
+    // run_checked, remembering every explore session it opened or adopted,
+    // whether it returns or throws.
     connector::CandidatePool run();
 
 private:
+    connector::CandidatePool run_checked();
+    void remember_sessions() { c_.opened.insert(sessions_.opened().begin(), sessions_.opened().end()); }
     void browse_mail(connector::CandidatePool& pool);
     void browse_sharepoint(connector::CandidatePool& pool);
     void browse_onedrive(connector::CandidatePool& pool, const std::vector<std::string>& owners);
@@ -507,6 +514,16 @@ void CandidateLister::browse_onedrive(connector::CandidatePool& pool,
 
 connector::CandidatePool CandidateLister::run()
 {
+    try {
+        return run_checked();
+    } catch (...) {
+        remember_sessions();
+        throw;
+    }
+}
+
+connector::CandidatePool CandidateLister::run_checked()
+{
     const connector::CandidateQuery& q = c_.query;
     Organization org;
     try {
@@ -541,6 +558,7 @@ connector::CandidatePool CandidateLister::run()
         browse_onedrive(pool, owners);
     }
 
+    remember_sessions(); // close_checked forgets them
     const std::vector<std::string> failed = sessions_.close_checked();
     if (!failed.empty()) {
         std::string ids;
@@ -577,7 +595,7 @@ connector::CandidatePool VeeamM365Connector::list_candidates(const connector::Ca
         throw std::invalid_argument("veeam_m365: a candidate limit is negative");
     }
 
-    CandidateLister lister({*client_, query, wall_now_, logger_, account_});
+    CandidateLister lister({*client_, query, wall_now_, logger_, account_, candidate_sessions_});
     // Veeam's errors as restore_sample maps them: nothing is sampled yet, so
     // Veeam's own 404 is connector::Error, never connector::NotFoundError.
     try {

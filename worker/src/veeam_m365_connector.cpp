@@ -1,9 +1,11 @@
 #include <rp/veeam_m365_connector.hpp>
 
+#include <rp/client_assertion.hpp>
 #include <rp/graph_errors.hpp>
 #include <rp/redact.hpp>
 #include <rp/target_guard_veeam.hpp>
 
+#include "command_config.hpp"
 #include "control_chars.hpp"
 #include "json_fields.hpp"
 #include "text_util.hpp"
@@ -16,6 +18,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <iterator>
 #include <limits>
 #include <map>
@@ -1048,11 +1051,31 @@ std::unique_ptr<connector::IConnector> make_veeam_m365_connector(
         throw ConfigError(std::string{kEnvVeeamPassword},
                           std::string{kEnvVeeamPassword} + " is not set");
     }
+    // Never spdlog's default logger, which writes to stdout.
+    const std::shared_ptr<spdlog::logger> logger =
+        options.logger ? options.logger : make_command_logger();
+    const auto wall_now = options.wall_now
+                              ? options.wall_now
+                              : std::function<std::chrono::system_clock::time_point()>{[] {
+                                    return std::chrono::system_clock::now();
+                                }};
+    // The Worker app's certificate and IDs, before any client is made: a
+    // CertificateError (a ConfigError, keyed by the variable when one is
+    // unset) or a Graph ID that isn't a GUID stops here.
+    graph::ClientCertificate certificate =
+        graph::certificate_from_secrets(secrets, wall_now(), logger);
+    if (!is_uuid(config.graph_tenant_id)) {
+        throw ConfigError("graph_tenant_id", "graph_tenant_id is not a GUID");
+    }
+    if (!is_uuid(config.graph_client_id)) {
+        throw ConfigError("graph_client_id", "graph_client_id is not a GUID");
+    }
+
     HttpClientOptions http_options;
     // TLS is never off: the CA file and the pin only choose what to trust.
     http_options.ca_file = config.veeam_ca_file;
     http_options.pinned_cert_sha256 = config.veeam_cert_sha256;
-    http_options.logger = options.logger;
+    http_options.logger = logger;
     http_options.sleep = options.sleep;
     http_options.jitter = options.jitter;
     std::unique_ptr<IHttpClient> http = options.make_http
@@ -1060,7 +1083,29 @@ std::unique_ptr<connector::IConnector> make_veeam_m365_connector(
                                             : std::make_unique<HttpClient>(http_options);
 
     VeeamM365ConnectorOptions connector_options;
-    connector_options.client.logger = options.logger;
+    connector_options.graph_http = options.make_graph_http
+                                       ? options.make_graph_http(logger)
+                                       : graph::make_graph_http_client(logger);
+    if (!connector_options.graph_http) {
+        throw std::invalid_argument("veeam_m365: no Graph HTTP client");
+    }
+    graph::GraphClientOptions graph_options;
+    graph_options.logger = logger;
+    graph_options.now = options.now;
+    graph_options.wall_now = wall_now;
+    graph_options.sleep = options.sleep;
+    graph_options.jitter = options.jitter;
+    // The connector keeps graph_http alive as long as the client on it.
+    connector_options.graph = std::make_shared<graph::GraphClient>(
+        *connector_options.graph_http, config.graph_tenant_id, config.graph_client_id,
+        std::move(certificate), std::move(graph_options));
+    connector_options.guard.logger = logger;
+    connector_options.cert_exporter = options.cert_exporter
+                                          ? options.cert_exporter
+                                          : make_local_machine_cert_exporter(wall_now);
+    connector_options.wall_now = wall_now;
+    connector_options.client.logger = logger;
+    connector_options.client.now = options.now;
     connector_options.client.sleep = options.sleep;
     connector_options.client.jitter = options.jitter;
     return std::make_unique<VeeamM365Connector>(std::move(http), config.veeam_url,

@@ -55,7 +55,9 @@ points, and log out: W1.5's through `VeeamClient`, W1.6's through `rpworker veea
 (`rp::run_veeam_command` with a temp config written from these variables, expecting the lab
 organisation's two L1.3 restore points, found by `backupTime` among any later nightly ones), and W1.7's through the `veeam_m365` connector from
 `rp::connector::default_connector_registry()`, held as an `IConnector&` and asked for the lab
-organisation by name. They read:
+organisation by name (since W2.5 the factory also loads the Worker app's certificate for the
+target guard, so that one needs the Graph certificate variables below too; it makes no Graph
+call). They read:
 
 | Variable | Value |
 |---|---|
@@ -163,6 +165,74 @@ To run the four Graph ones on the dev laptop (the PFX and its Credential Manager
 
 Nothing is written to disk, and PowerShell's history holds only the commands above, never a
 value: the script reads the PFX and the password itself.
+
+### Live restore (writes to the lab tenant)
+
+**This test writes.** It is the only live test that changes anything: it restores real items
+into the three restore targets. It is skipped unless **both** `RP_LIVE=1` and
+`RP_LIVE_RESTORE=1` are set, so a normal `RP_LIVE=1` run stays read-only.
+
+`worker/tests/veeam_m365_restore_live_test.cpp` (W2.5, tag `[live][writes]`, ctest name
+`live restore: restore_sample restores 10 canaries into the lab's restore targets`) makes the
+`veeam_m365` connector through `default_connector_registry()` with the real secrets and
+`make_local_machine_cert_exporter()`. It lists the lab organisation's restore points and takes
+the newest. It then builds one spec from `lab/seed-manifest.json`:
+
+- 5 mails from one source mailbox's Inbox, by subject and `received_at`;
+- 3 SharePoint files and 2 OneDrive files, by name and `stored_size`. pdf and txt files are
+  chosen first, never docx or xlsx, and each type is taken in ID order.
+
+It calls `restore_sample` once and prints the status, each restore session (start, end, result,
+details), each item's outcome and the log. It passes only with status `succeeded` and 10 items
+restored. It needs the variables of the Veeam and Graph live tests above, plus:
+
+| Variable | Value |
+|---|---|
+| `RP_LIVE_RESTORE` | `1` (required, besides `RP_LIVE=1`) |
+| `RP_LIVE_EVIDENCE_FILE` | optional: a path where the `RestoreResult` is written as JSON (no secrets in it) |
+
+Before running it:
+
+1. **Use an elevated shell.** The restore credential is Veeam's organisation app certificate,
+   exported from `LocalMachine\My` in memory for each restore call, and reading its private key
+   needs administrator rights. Start `Developer PowerShell for VS 2022` with right-click, **Run
+   as administrator**. Without elevation the test fails at the first restore call with a
+   certificate export error, before anything is restored.
+2. **Make sure the restore targets are empty.** Run `rpworker graph list` (above, and
+   `docs/worker-config.md`) and check that the `restoretest` Inbox, the RestoreTarget library and
+   alice's `/RestoreTarget` folder show no items. The verification that W3.2 adds compares what
+   is there with the manifest, and leftovers from an earlier run would get in the way.
+3. **Make sure no restore session of the Veeam account is still running.** The connector refuses
+   to start if one is (`docs/api/veeam-m365/08-sweep-sessions.ps1` stops them).
+
+Run it from `C:\restoreproof\worker`, with the certificate variables set as in the Graph steps
+above:
+
+```powershell
+$env:RP_LIVE = '1'
+$env:RP_LIVE_RESTORE = '1'
+$env:RP_LIVE_EVIDENCE_FILE = "$env:TEMP\w2.5-live-restore.json"   # optional
+ctest --preset dev -R "live restore" -V
+```
+
+(or `.\build\dev\rptests.exe "[live][writes]"`). Then read the targets back with their hashes
+and compare them with the manifest:
+
+```powershell
+.\build\dev\rpworker.exe graph list --hash --config <your config.json>
+```
+
+(`--config` can be left out when the config is in its default place, `docs/worker-config.md`.)
+
+**Clean up by hand afterwards.** Until W3.4's cleanup exists, delete the restored mails from the
+`restoretest` Inbox and the files from the RestoreTarget library and alice's `/RestoreTarget`
+folder in the Microsoft 365 web apps, then run `rpworker graph list` again to check that they
+are empty. Remove the variables when done:
+
+```powershell
+Remove-Item Env:RP_LIVE, Env:RP_LIVE_RESTORE, Env:RP_LIVE_EVIDENCE_FILE -ErrorAction SilentlyContinue
+. ..\lab\entra\set-worker-env.ps1 -Clear
+```
 
 ### Running the gates locally
 

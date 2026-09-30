@@ -4,10 +4,14 @@
 // docs/decisions.md.
 
 #include "fake_http_client.hpp"
+#include "graph_lab.hpp"
+#include "target_guard_lab.hpp"
+#include "veeam_restore_lab.hpp"
 
 #include <rp/config.hpp>
 #include <rp/connector.hpp>
 #include <rp/connector_registry.hpp>
+#include <rp/graph_errors.hpp>
 #include <rp/http_client.hpp>
 #include <rp/secrets.hpp>
 #include <rp/veeam_m365_connector.hpp>
@@ -16,6 +20,7 @@
 
 #include <spdlog/logger.h>
 #include <spdlog/sinks/ostream_sink.h>
+#include <spdlog/spdlog.h>
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
@@ -102,26 +107,31 @@ HttpResponse orgs_response(const std::function<void(json&)>& edit = {},
     return to_response(fixture);
 }
 
+// The lab's restore targets as the recorded Graph replies show them, and the
+// Worker app's IDs, so the guard the factory builds can resolve them.
 rp::Config lab_config()
 {
-    rp::Config config;
+    rp::Config config = rp::test::graph_lab::lab_config();
     config.cloud_url = "https://cloud.example.invalid";
     config.veeam_url = kBase;
     config.veeam_org_name = kOrgName;
-    config.graph_tenant_id = "00000000-0000-0000-0000-000000000001";
-    config.graph_client_id = "00000000-0000-0000-0000-000000000002";
-    config.test_mailbox = "restoretest@example.onmicrosoft.com";
-    config.test_site_id =
-        "example.sharepoint.com,00000000-0000-4000-8000-000000000001,00000000-0000-4000-8000-000000000002";
-    config.test_library_id = "b!library";
-    config.test_onedrive_drive_id = "b!drive";
-    config.test_onedrive_folder_id = "folder";
+    config.graph_tenant_id = rp::test::graph_lab::kTenant;
+    config.graph_client_id = rp::test::graph_lab::kClient;
     return config;
 }
 
+// The four secrets: Veeam's, and the Worker app's certificate (graph_lab.hpp).
+rp::Secrets lab_secrets()
+{
+    return {kUsername, kPassword, rp::test::graph_lab::pfx_base64(),
+            std::string{rp::test::graph_lab::kPfxPassword}};
+}
+
 // A connector on a FakeHttpClient serving the lab's recorded answers, made
-// through the default registry as the pipeline will make it. Waits are
-// recorded, never slept; every log line lands in a string.
+// through the default registry as the pipeline will make it; its Graph client
+// talks to the guard lab's FakeHttpClient (the recorded replies for the three
+// restore targets). Waits are recorded, never slept; every log line lands in a
+// string.
 struct Harness {
     Harness()
     {
@@ -146,9 +156,17 @@ struct Harness {
             }
             return std::make_unique<rp::test::ForwardingHttpClient>(http);
         };
+        o.make_graph_http =
+            [this](std::shared_ptr<spdlog::logger> given) -> std::unique_ptr<rp::IHttpClient> {
+            ++make_graph_http_calls;
+            graph_http_logger = std::move(given);
+            return std::make_unique<rp::test::ForwardingHttpClient>(guard_lab.graph_http);
+        };
         o.logger = logger;
         o.sleep = [this](std::chrono::milliseconds wait) { sleeps.push_back(wait); };
         o.jitter = [] { return 0.0; };
+        o.now = [] { return std::chrono::steady_clock::time_point{}; };
+        o.wall_now = [] { return rp::test::graph_lab::kNow; };
         return o;
     }
 
@@ -165,10 +183,13 @@ struct Harness {
     }
 
     rp::test::FakeHttpClient http;
+    rp::test::target_guard_lab::GuardLab guard_lab;
     rp::Config config = lab_config();
-    rp::Secrets secrets{kUsername, kPassword, std::nullopt};
+    rp::Secrets secrets = lab_secrets();
     bool give_http = true;
     int make_http_calls = 0;
+    int make_graph_http_calls = 0;
+    std::shared_ptr<spdlog::logger> graph_http_logger;
     std::optional<rp::HttpClientOptions> http_options;
     std::vector<std::chrono::milliseconds> sleeps;
     std::ostringstream log_stream;
@@ -225,20 +246,40 @@ connector::RestoreSpec one_mail_spec(const rp::Config& config)
 
 // --- Failure paths ---------------------------------------------------------------
 
-TEST_CASE("veeam_m365: the registry's connector has no Graph client yet, so restore_sample "
-          "refuses and calls nothing",
-          "[veeam_m365]")
+TEST_CASE("veeam_m365: the registry's connector runs the target guard through its own Graph "
+          "client, before any Veeam request",
+          "[veeam_m365][target_guard]")
 {
-    // The guard runs first and reads through Graph (W2.7); W2.5 gives the
-    // factory a Graph client. The guard itself: veeam_m365_restore_guard_test.cpp.
     Harness lab;
     const std::unique_ptr<connector::IConnector> made = lab.make();
     connector::IConnector& source = *made;
+    // A mail item sampled from the test mailbox itself: refused before Graph.
+    connector::RestoreSpec spec = one_mail_spec(lab.config);
+    spec.mail.front().mailbox = lab.config.test_mailbox;
 
-    REQUIRE_THROWS_MATCHES(
-        source.restore_sample(one_mail_spec(lab.config)), connector::Error,
-        Message("veeam_m365: no Graph client, so the target guard can't run; nothing was restored"));
-    REQUIRE(lab.http.requests().empty());
+    REQUIRE_THROWS_AS(source.restore_sample(spec), connector::SafetyViolation);
+    CHECK(lab.http.requests().empty());
+    CHECK(lab.guard_lab.graph_gets() == 0);
+    // The refusal's SECURITY line went to the logger the factory was given,
+    // not to stdout.
+    CHECK_THAT(lab.log(), ContainsSubstring("SECURITY: target guard: mail item 0 is sampled from a "
+                                            "restore target"));
+}
+
+TEST_CASE("veeam_m365: the registry's connector refuses a target Graph shows is wrong",
+          "[veeam_m365][target_guard]")
+{
+    Harness lab;
+    lab.guard_lab.serve_edited(rp::test::graph_lab::drive_url(), "restoretarget-drive-200",
+                               [](json& body) { body["name"] = "Dokumenty"; });
+    const std::unique_ptr<connector::IConnector> made = lab.make();
+
+    REQUIRE_THROWS_AS(made->restore_sample(rp::test::target_guard_lab::full_spec()),
+                      connector::SafetyViolation);
+    CHECK(lab.guard_lab.gets(rp::test::graph_lab::drive_url()) == 1);
+    CHECK(lab.http.requests().empty());
+    CHECK_THAT(lab.log(), ContainsSubstring("SECURITY: target guard: the drive test_library_id"));
+    CHECK(lab.graph_http_logger == lab.logger);
 }
 
 TEST_CASE("veeam_m365: each Veeam failure is the matching connector error", "[veeam_m365]")
@@ -404,7 +445,12 @@ TEST_CASE("veeam_m365: the factory needs both Veeam secrets", "[veeam_m365]")
             {kUsername, std::string{}, "RP_VEEAM_PASSWORD is not set"},
         }));
     Harness lab;
-    lab.secrets = rp::Secrets{username, password, std::nullopt};
+    lab.secrets.veeam_username = username;
+    lab.secrets.veeam_password = password;
+    // The Veeam secrets are reported first, whatever the Graph ones are.
+    if (GENERATE(false, true)) {
+        lab.secrets.graph_cert_pfx_base64.reset();
+    }
 
     try {
         (void)lab.make();
@@ -414,6 +460,121 @@ TEST_CASE("veeam_m365: the factory needs both Veeam secrets", "[veeam_m365]")
         REQUIRE(e.key() == message.substr(0, message.find(' ')));
     }
     REQUIRE(lab.make_http_calls == 0);
+    REQUIRE(lab.make_graph_http_calls == 0);
+}
+
+TEST_CASE("veeam_m365: the factory needs the Worker app's certificate, before any HTTP client",
+          "[veeam_m365]")
+{
+    const std::string pfx_needs_password =
+        "RP_GRAPH_CERT_PASSWORD is not set, and the PFX in RP_GRAPH_CERT_PFX_BASE64 needs a "
+        "password";
+    const std::string password{rp::test::graph_lab::kPfxPassword};
+    const auto [pfx, given_password, message] =
+        GENERATE_COPY(table<std::optional<std::string>, std::optional<std::string>, std::string>({
+            {std::nullopt, password, "RP_GRAPH_CERT_PFX_BASE64 is not set"},
+            {std::string{}, password, "RP_GRAPH_CERT_PFX_BASE64 is not set"},
+            {std::nullopt, std::nullopt, "RP_GRAPH_CERT_PFX_BASE64 is not set"},
+            {rp::test::graph_lab::pfx_base64(), std::nullopt, pfx_needs_password},
+            {rp::test::graph_lab::pfx_base64(), std::string{}, pfx_needs_password},
+        }));
+    Harness lab;
+    lab.secrets.graph_cert_pfx_base64 = pfx;
+    lab.secrets.graph_cert_password = given_password;
+
+    try {
+        (void)lab.make();
+        FAIL("no exception");
+    } catch (const rp::ConfigError& e) {
+        REQUIRE(std::string{e.what()} == message);
+        REQUIRE(e.key() == message.substr(0, message.find(' ')));
+    }
+    REQUIRE(lab.make_http_calls == 0);
+    REQUIRE(lab.make_graph_http_calls == 0);
+}
+
+TEST_CASE("veeam_m365: the certificate must be valid at the options' wall clock", "[veeam_m365]")
+{
+    Harness lab;
+    connector::ConnectorOptions options = lab.options();
+    // The lab certificate is valid for a year from kNow.
+    options.wall_now = [] { return rp::test::graph_lab::kNow + std::chrono::hours{24 * 400}; };
+
+    REQUIRE_THROWS_AS(connector::default_connector_registry().create(
+                          connector::kVeeamM365, lab.config, lab.secrets, options),
+                      rp::graph::CertificateError);
+    REQUIRE(lab.make_http_calls == 0);
+    REQUIRE(lab.make_graph_http_calls == 0);
+}
+
+TEST_CASE("veeam_m365: the factory refuses Graph IDs that aren't GUIDs, before any HTTP client",
+          "[veeam_m365]")
+{
+    const std::string key = GENERATE(std::string{"graph_tenant_id"}, std::string{"graph_client_id"});
+    Harness lab;
+    (key == "graph_tenant_id" ? lab.config.graph_tenant_id : lab.config.graph_client_id) =
+        "not-a-guid";
+
+    try {
+        (void)lab.make();
+        FAIL("no exception");
+    } catch (const rp::ConfigError& e) {
+        REQUIRE(std::string{e.what()} == key + " is not a GUID");
+        REQUIRE(e.key() == key);
+    }
+    REQUIRE(lab.make_http_calls == 0);
+    REQUIRE(lab.make_graph_http_calls == 0);
+}
+
+TEST_CASE("veeam_m365: a factory whose Graph HTTP client is missing is refused", "[veeam_m365]")
+{
+    Harness lab;
+    connector::ConnectorOptions options = lab.options();
+    options.make_graph_http = [](std::shared_ptr<spdlog::logger>) {
+        return std::unique_ptr<rp::IHttpClient>{};
+    };
+    REQUIRE_THROWS_MATCHES(connector::default_connector_registry().create(
+                               connector::kVeeamM365, lab.config, lab.secrets, options),
+                           std::invalid_argument, Message("veeam_m365: no Graph HTTP client"));
+}
+
+TEST_CASE("veeam_m365: without a logger the factory never logs to spdlog's default logger",
+          "[veeam_m365][target_guard]")
+{
+    // spdlog's default logger writes to stdout, where a command's table goes.
+    // Swapped for one writing to a string for this test, then put back.
+    std::ostringstream stdout_stand_in;
+    const std::shared_ptr<spdlog::logger> previous = spdlog::default_logger();
+    spdlog::set_default_logger(std::make_shared<spdlog::logger>(
+        "stdout_stand_in", std::make_shared<spdlog::sinks::ostream_sink_mt>(stdout_stand_in)));
+    spdlog::default_logger()->set_level(spdlog::level::trace);
+    std::string default_log;
+    bool refused = false;
+    bool own_logger = false;
+    {
+        Harness lab;
+        connector::ConnectorOptions options = lab.options();
+        options.logger = nullptr;
+        const std::unique_ptr<connector::IConnector> made =
+            connector::default_connector_registry().create(connector::kVeeamM365, lab.config,
+                                                           lab.secrets, options);
+        connector::RestoreSpec spec = one_mail_spec(lab.config);
+        spec.mail.front().mailbox = lab.config.test_mailbox;
+        try {
+            made->restore_sample(spec);
+        } catch (const connector::SafetyViolation&) {
+            refused = true;
+        }
+        own_logger = lab.graph_http_logger != nullptr &&
+                     lab.graph_http_logger != spdlog::default_logger() &&
+                     lab.http_options && lab.http_options->logger == lab.graph_http_logger;
+        spdlog::default_logger()->flush();
+        default_log = stdout_stand_in.str();
+    }
+    spdlog::set_default_logger(previous);
+    CHECK(refused);
+    CHECK(own_logger);
+    CHECK(default_log.empty());
 }
 
 TEST_CASE("veeam_m365: a factory with no HTTP client, or a URL that isn't https, is refused",
@@ -582,11 +743,15 @@ TEST_CASE("veeam_m365: without make_http the factory uses the real HTTP client, 
     Harness lab;
     connector::ConnectorOptions options = lab.options();
     options.make_http = nullptr;
+    // And the real Graph HTTP client and certificate exporter: made, not used.
+    options.make_graph_http = nullptr;
+    options.cert_exporter = nullptr;
 
     const std::unique_ptr<connector::IConnector> made = connector::default_connector_registry()
         .create(connector::kVeeamM365, lab.config, lab.secrets, options);
     REQUIRE(made->describe().name == "veeam_m365");
     REQUIRE(lab.make_http_calls == 0);
+    REQUIRE(lab.make_graph_http_calls == 0);
 }
 
 TEST_CASE("the default registry knows veeam_m365 and nothing else", "[veeam_m365]")
@@ -626,4 +791,54 @@ TEST_CASE("veeam_m365: a connector can be made directly on an HTTP client it own
     REQUIRE(http.count(HttpMethod::post, kLogoutUrl) == 1);
     REQUIRE_THROWS_MATCHES(rp::VeeamM365Connector(nullptr, kBase, kUsername, kPassword),
                            std::invalid_argument, Message("veeam_m365: no HTTP client"));
+}
+
+TEST_CASE("veeam_m365: the registry's connector restores through the clients it was given",
+          "[veeam_m365][w2.5]")
+{
+    namespace vrl = rp::test::veeam_restore_lab;
+    vrl::RestoreRig rig;
+    rig.serve(vrl::mail_x1());
+    rp::Config config = rp::test::graph_lab::lab_config();
+    config.veeam_url = vrl::kBase;
+    config.veeam_org_name = vrl::kOrgName;
+    config.graph_tenant_id = rp::test::graph_lab::kTenant;
+    config.graph_client_id = rp::test::graph_lab::kClient;
+    const rp::Secrets secrets{vrl::kUsername, vrl::kPassword, rp::test::graph_lab::pfx_base64(),
+                              std::string{rp::test::graph_lab::kPfxPassword}};
+    connector::ConnectorOptions options;
+    options.make_http = [&rig](const rp::HttpClientOptions&) -> std::unique_ptr<rp::IHttpClient> {
+        return std::make_unique<rp::test::ForwardingHttpClient>(rig.veeam);
+    };
+    options.make_graph_http =
+        [&rig](std::shared_ptr<spdlog::logger>) -> std::unique_ptr<rp::IHttpClient> {
+        return std::make_unique<rp::test::ForwardingHttpClient>(rig.lab.graph_http);
+    };
+    options.logger = rig.logger;
+    options.now = [&rig] { return rig.clock.now(); };
+    options.sleep = [&rig](std::chrono::milliseconds wait) { rig.clock.sleep(wait); };
+    options.jitter = [] { return 0.0; };
+    options.wall_now = [&rig] { return rig.next_post_time(); };
+    options.cert_exporter = rig.exporter;
+
+    connector::RestoreResult result;
+    {
+        const std::unique_ptr<connector::IConnector> made =
+            connector::default_connector_registry().create(connector::kVeeamM365, config, secrets,
+                                                           options);
+        result = made->restore_sample(vrl::restore_spec({vrl::mail_x1_item()}));
+    }
+
+    CHECK(result.status == connector::RestoreStatus::succeeded);
+    CHECK(result.items_restored == 1);
+    CHECK(rig.exporter->calls == 1);
+    CHECK(rig.restore_posts().size() == 1);
+    // The guard read the test mailbox through the Graph HTTP client given.
+    CHECK(rig.lab.gets(rp::test::graph_lab::inbox_url()) == 1);
+    // The clock given drove the polls: the recorded run was Working once.
+    CHECK(rig.clock.count(std::chrono::seconds{5}) >= 1);
+    CHECK(rig.stops(vrl::mail_x1().explore()) == 1);
+    const std::string log = rig.log();
+    CHECK_THAT(log, !ContainsSubstring(vrl::kFakePfxPassword));
+    CHECK_THAT(log, !ContainsSubstring(vrl::kPassword));
 }

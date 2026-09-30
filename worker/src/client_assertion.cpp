@@ -223,7 +223,7 @@ ClientCertificate load_client_certificate(std::string_view pfx_base64, std::stri
     const std::string pfx_name(names.pfx_base64);
     const std::string password_name(names.password);
     if (pfx_base64.empty()) {
-        throw CertificateError(pfx_name + " is not set");
+        throw CertificateError(pfx_name + " is not set", pfx_name);
     }
     std::optional<std::vector<unsigned char>> der = base64_decode(pfx_base64);
     if (!der) {
@@ -254,10 +254,12 @@ ClientCertificate load_client_certificate(std::string_view pfx_base64, std::stri
                                     : PKCS12_verify_mac(p12.get(), pass.c_str(),
                                                         static_cast<int>(pass.size())) == 1;
     if (!opens) {
-        throw CertificateError(pass.empty() ? password_name + " is not set, and the PFX in " +
-                                                  pfx_name + " needs a password"
-                                            : password_name + " does not open the PFX in " +
-                                                  pfx_name);
+        if (pass.empty()) {
+            throw CertificateError(password_name + " is not set, and the PFX in " + pfx_name +
+                                       " needs a password",
+                                   password_name);
+        }
+        throw CertificateError(password_name + " does not open the PFX in " + pfx_name);
     }
 
     EVP_PKEY* raw_key = nullptr;

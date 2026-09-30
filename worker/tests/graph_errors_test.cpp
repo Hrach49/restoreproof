@@ -85,11 +85,16 @@ TEST_CASE("TransientError carries Retry-After when there was one", "[graph][erro
     CHECK(error.code() == "TooManyRequests");
 }
 
-TEST_CASE("CertificateError keeps its message and names no key", "[graph][errors]")
+TEST_CASE("CertificateError keeps its message and names no key unless given one",
+          "[graph][errors]")
 {
-    const CertificateError error("RP_GRAPH_CERT_PFX_BASE64 is not set");
-    CHECK(std::string(error.what()) == "RP_GRAPH_CERT_PFX_BASE64 is not set");
+    const CertificateError error("the PFX in RP_GRAPH_CERT_PFX_BASE64 has expired");
+    CHECK(std::string(error.what()) == "the PFX in RP_GRAPH_CERT_PFX_BASE64 has expired");
     CHECK(error.key().empty());
+    const CertificateError keyed("RP_GRAPH_CERT_PFX_BASE64 is not set",
+                                 "RP_GRAPH_CERT_PFX_BASE64");
+    CHECK(std::string(keyed.what()) == "RP_GRAPH_CERT_PFX_BASE64 is not set");
+    CHECK(keyed.key() == "RP_GRAPH_CERT_PFX_BASE64");
 }
 
 // Review of W2.1: CertificateError derived from GraphError, so a natural

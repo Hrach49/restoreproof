@@ -428,6 +428,36 @@ TEST_CASE("The certificate's messages name the variables of rp/secrets.hpp",
     CHECK(names.password == rp::kEnvGraphCertPassword);
 }
 
+// W2.5: the connector factory's callers report a ConfigError by its key, so
+// an unset secret names its variable there too; any other reason names none.
+TEST_CASE("certificate_from_secrets keys only an unset secret by its variable",
+          "[graph][certificate]")
+{
+    const std::string pfx = to_base64(make_pfx(good_cert(), kPassword));
+    const auto key_of = [](const rp::Secrets& secrets) {
+        try {
+            certificate_from_secrets(secrets, kNow);
+        } catch (const CertificateError& error) {
+            return error.key();
+        }
+        return std::string{"(no error)"};
+    };
+    const auto [pfx_value, password, key] =
+        GENERATE_COPY(Catch::Generators::table<std::optional<std::string>, std::optional<std::string>,
+                                                std::string>({
+            {std::nullopt, std::string{kPassword}, "RP_GRAPH_CERT_PFX_BASE64"},
+            {std::string{}, std::string{kPassword}, "RP_GRAPH_CERT_PFX_BASE64"},
+            {pfx, std::nullopt, "RP_GRAPH_CERT_PASSWORD"},
+            {pfx, std::string{}, "RP_GRAPH_CERT_PASSWORD"},
+            {pfx, std::string{"Sentinel-Wrong-3f0d"}, ""},
+            {std::string{"not base64!"}, std::string{kPassword}, ""},
+        }));
+    rp::Secrets secrets;
+    secrets.graph_cert_pfx_base64 = pfx_value;
+    secrets.graph_cert_password = password;
+    CHECK(key_of(secrets) == key);
+}
+
 TEST_CASE("certificate_from_secrets reports an unset or wrong secret by its variable",
           "[graph][certificate]")
 {

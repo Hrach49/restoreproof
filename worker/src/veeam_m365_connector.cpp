@@ -6,6 +6,7 @@
 
 #include "command_config.hpp"
 #include "json_fields.hpp"
+#include "name_key.hpp"
 #include "text_util.hpp"
 #include "uuid.hpp"
 #include "veeam_browse.hpp"
@@ -977,10 +978,12 @@ connector::RestoreResult VeeamM365Connector::restore_sample(const connector::Res
     // restoreTo and copyTo drop the source path (restore-flow §12): two files
     // of one name, from any folders or sources, land on one target file, the
     // second a new version of the first, and the read-back sees only it.
+    // SharePoint and OneDrive ignore the case of every letter, not only A-Z
+    // (src/name_key.hpp, which the sampler's same-name skip uses too).
     const auto one_name_each = [](std::string_view kind, const auto& selectors) {
         for (std::size_t later = 1; later < selectors.size(); ++later) {
             for (std::size_t earlier = 0; earlier < later; ++earlier) {
-                if (ascii_iequals(selectors[earlier].name, selectors[later].name)) {
+                if (same_name(selectors[earlier].name, selectors[later].name)) {
                     throw connector::Error(
                         "veeam_m365: " + std::string{kind} + " items " + std::to_string(earlier) +
                         " and " + std::to_string(later) + " are both named " +

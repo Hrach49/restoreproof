@@ -94,8 +94,9 @@ public:
     //    received_at]; SharePoint [site_id lower case, list_id lower case,
     //    folder_path, name]; OneDrive [user lower case, folder_path, name]),
     //    by a Shuffle on the type's items stream. A pick whose subject or name
-    //    (ASCII case-insensitive) is already taken is skipped, its draw used
-    //    up. Too few candidates is a shortfall, recorded and not filled.
+    //    is already taken, the case of any letter aside (src/name_key.hpp,
+    //    Unicode), is skipped, its draw used up. Too few candidates is a
+    //    shortfall, recorded and not filled.
     // Throws std::invalid_argument for a bad run ID, a size outside 0..100 or
     // a cursor out of range; ManifestError for a canary in a restore target;
     // std::logic_error ("sampler: the connector offered ...") when the pool

@@ -37,6 +37,7 @@ add_library(rpcore STATIC
     src/graph_ids.cpp
     src/graph_targets.cpp
     src/http_client.cpp
+    src/name_key.cpp
     src/redact.cpp
     src/retry_policy.cpp
     src/sample_rng.cpp
@@ -109,6 +110,7 @@ add_executable(rptests
     tests/graph_targets_test.cpp
     tests/http_client_test.cpp
     tests/http_client_tls_test.cpp
+    tests/name_key_test.cpp
     tests/redact_test.cpp
     tests/retry_policy_test.cpp
     tests/sample_rng_test.cpp

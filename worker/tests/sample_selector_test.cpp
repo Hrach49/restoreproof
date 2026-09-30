@@ -552,6 +552,36 @@ TEST_CASE("two mails of one subject, but for case, are never both taken", "[samp
     }
 }
 
+TEST_CASE("two files whose names differ only in the case of a non-ASCII letter are never both "
+          "taken",
+          "[sample-selector]")
+{
+    // SharePoint and OneDrive fold every letter's case, and restoreTo and
+    // copyTo drop the source path: both would land on one file in the target.
+    const std::string upper = "\xC5\xB9r\xC3\xB3" "d\xC5\x82" "a.docx"; // Zrodla with Z-acute, o-acute, l-stroke
+    const std::string lower = "\xC5\xBAr\xC3\xB3" "d\xC5\x82" "a.docx"; // the same, z-acute in lower case
+    connector::CandidatePool pool;
+    pool.sharepoint = {sp_candidate(1, "/a"), sp_candidate(2, "/b")};
+    pool.sharepoint[0].selector.name = upper;
+    pool.sharepoint[1].selector.name = lower;
+    pool.onedrive = {od_candidate(1, "/a"), od_candidate(2, "/b")};
+    pool.onedrive[0].selector.name = lower;
+    pool.onedrive[1].selector.name = upper;
+    for (const std::string run_id : {"run-0001", "run-0002", "run-0003", "run-0004"}) {
+        CAPTURE(run_id);
+        const Selection s = select({0, 4, 4}, pool, {}, run_id);
+        for (const rp::sampling::KindRecord* k : {&s.record.sharepoint, &s.record.onedrive}) {
+            CHECK(k->random_wanted == 2);
+            CHECK(k->random_taken == 1);
+            CHECK(k->pool_size == 2);
+        }
+        REQUIRE(s.sharepoint.size() == 3);
+        REQUIRE(s.onedrive.size() == 3);
+        CHECK((s.sharepoint[2].name == upper || s.sharepoint[2].name == lower));
+        CHECK((s.onedrive[2].name == upper || s.onedrive[2].name == lower));
+    }
+}
+
 // 8. A shortfall is recorded, not filled.
 TEST_CASE("a pool smaller than the random half: all of it taken, the shortfall recorded",
           "[sample-selector]")

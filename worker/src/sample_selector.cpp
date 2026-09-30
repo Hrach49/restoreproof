@@ -3,6 +3,7 @@
 #include <rp/sha256.hpp>
 #include <rp/target_guard_graph.hpp>
 
+#include "name_key.hpp"
 #include "text_util.hpp"
 #include "uuid.hpp"
 
@@ -310,7 +311,7 @@ void select_kind(ItemKind kind, int size, const std::vector<Canary>& canaries, s
         const Canary& canary = canaries[(cursor + static_cast<std::size_t>(j)) % m];
         out.push_back(to_selector(canary));
         record.canary_ids.push_back(canary.id);
-        taken.insert(ascii_lower(shown_name(out.back())));
+        taken.insert(name_key(shown_name(out.back())));
     }
 
     // Sorted by key and then every field, one per key: the listing's order
@@ -344,8 +345,9 @@ void select_kind(ItemKind kind, int size, const std::vector<Canary>& canaries, s
             break;
         }
         Selector picked = candidates[*i];
-        // Skipped, its draw used up: two of one name can't both be restored.
-        if (!taken.insert(ascii_lower(shown_name(picked))).second) {
+        // Skipped, its draw used up: two of one name (the case of any letter
+        // aside, as SharePoint and OneDrive compare) can't both be restored.
+        if (!taken.insert(name_key(shown_name(picked))).second) {
             continue;
         }
         record.random_keys.push_back(key_of(picked));

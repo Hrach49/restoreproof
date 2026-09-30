@@ -75,8 +75,10 @@ supersedes it.
    (`std::logic_error`, nothing sampled) if a forbidden candidate gets through.
 7. **Same names and duplicates are skipped, deterministically.** Candidates are sorted by key and
    deduplicated. Canary names and subjects are unique (the loader checks) and never in the pool. A
-   random pick whose subject or name (ASCII case-insensitive) is already taken for its type is
-   skipped and the next draw is used; the skipped draw still counts, so the sequence stays fixed.
+   random pick whose subject or name is already taken for its type, the case of any letter aside
+   (case-insensitive, Unicode, invariant upper case: `src/name_key.hpp`, which `restore_sample`'s
+   same-name refusal uses too; SharePoint and OneDrive fold more than A-Z), is skipped and the
+   next draw is used; the skipped draw still counts, so the sequence stays fixed.
    So `restore_sample`'s refusals (two SharePoint or two OneDrive files of one name, one item
    twice) can't fire, and no two mails of one subject are restored (the read-back couldn't tell
    them apart).
@@ -225,8 +227,9 @@ them.
    anyway (the exporter needs it exportable). "Buffers are wiped once the body is sent" means the
    list above.
 2. **Point 3, two files of one name are refused.** `restoreTo` and `copyTo` drop the source
-   path, so two SharePoint files, or two OneDrive files, of one name (ASCII case-insensitive; from
-   two folders or two sources) land on one target file, the second a new version of the first,
+   path, so two SharePoint files, or two OneDrive files, of one name (case-insensitive, Unicode,
+   invariant upper case, as the W2.6 review made it; from two folders or two sources) land on one
+   target file, the second a new version of the first,
    and the read-back would fail the first although its backup was fine. `restore_sample` refuses
    such a spec with `connector::Error` before any Veeam request; the sampler (W2.6) must not pick
    them. Two selectors that resolve to one backup item (same container and ID) are refused after

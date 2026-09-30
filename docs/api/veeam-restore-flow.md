@@ -728,8 +728,9 @@ call, and W2.5 splits same-named mails of one mailbox into separate calls. Separ
 help files: `restoreTo` and `copyTo` drop the source path, so two `Document.docx` (from two
 folders of one OneDrive, or from two sources) land on one target file, the second a new version
 of the first (`documentLastVersionAction: Merge`), and the Graph read-back sees only the second.
-So W2.5 refuses a sample with two SharePoint files, or two OneDrive files, of one name (ASCII
-case-insensitive), before any Veeam request (the W2.5 review entry in `docs/decisions.md`); the
+So W2.5 refuses a sample with two SharePoint files, or two OneDrive files, of one name
+(case-insensitive, as SharePoint and OneDrive compare: Unicode, Windows' invariant upper case,
+`src/name_key.hpp`), before any Veeam request (the W2.5 review entry in `docs/decisions.md`); the
 sampler (W2.6) must not pick two of one name. Two selectors that resolve to one backup item are
 refused too, before any restore POST.
 

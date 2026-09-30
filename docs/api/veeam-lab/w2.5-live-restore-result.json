@@ -1,0 +1,129 @@
+{
+  "items": [
+    {
+      "infrastructure": false,
+      "kind": "mail",
+      "message": "Item RP-CANARY-0001 was restored successfully (type: IPM.Note; source: Alice Test\\Inbox; target: restoretest@RestoreProofLab.onmicrosoft.com\\<null>\\Inbox)",
+      "name": "RP-CANARY-0001",
+      "outcome": "restored",
+      "session_id": "6cd07acf-3a1e-4f10-881e-bcb3494960ab"
+    },
+    {
+      "infrastructure": false,
+      "kind": "mail",
+      "message": "Item RP-CANARY-0002 was restored successfully (type: IPM.Note; source: Alice Test\\Inbox; target: restoretest@RestoreProofLab.onmicrosoft.com\\<null>\\Inbox)",
+      "name": "RP-CANARY-0002",
+      "outcome": "restored",
+      "session_id": "6cd07acf-3a1e-4f10-881e-bcb3494960ab"
+    },
+    {
+      "infrastructure": false,
+      "kind": "mail",
+      "message": "Item RP-CANARY-0003 was restored successfully (type: IPM.Note; source: Alice Test\\Inbox; target: restoretest@RestoreProofLab.onmicrosoft.com\\<null>\\Inbox)",
+      "name": "RP-CANARY-0003",
+      "outcome": "restored",
+      "session_id": "6cd07acf-3a1e-4f10-881e-bcb3494960ab"
+    },
+    {
+      "infrastructure": false,
+      "kind": "mail",
+      "message": "Item RP-CANARY-0004 was restored successfully (type: IPM.Note; source: Alice Test\\Inbox; target: restoretest@RestoreProofLab.onmicrosoft.com\\<null>\\Inbox)",
+      "name": "RP-CANARY-0004",
+      "outcome": "restored",
+      "session_id": "6cd07acf-3a1e-4f10-881e-bcb3494960ab"
+    },
+    {
+      "infrastructure": false,
+      "kind": "mail",
+      "message": "Item RP-CANARY-0005 was restored successfully (type: IPM.Note; source: Alice Test\\Inbox; target: restoretest@RestoreProofLab.onmicrosoft.com\\<null>\\Inbox)",
+      "name": "RP-CANARY-0005",
+      "outcome": "restored",
+      "session_id": "6cd07acf-3a1e-4f10-881e-bcb3494960ab"
+    },
+    {
+      "infrastructure": false,
+      "kind": "sharepoint",
+      "message": "Item rp-canary-01.pdf was restored successfully (type: File; source: /sites/RestoreTest/RestoreTest/rp-canary-01.pdf; target: https://restoreprooflab.sharepoint.com/sites/RestoreTest)",
+      "name": "rp-canary-01.pdf",
+      "outcome": "restored",
+      "session_id": "2ab2e15d-81ab-4f5f-a28e-6909b608333c"
+    },
+    {
+      "infrastructure": false,
+      "kind": "sharepoint",
+      "message": "Item rp-canary-04.txt was restored successfully (type: File; source: /sites/RestoreTest/RestoreTest/rp-canary-04.txt; target: https://restoreprooflab.sharepoint.com/sites/RestoreTest)",
+      "name": "rp-canary-04.txt",
+      "outcome": "restored",
+      "session_id": "2ab2e15d-81ab-4f5f-a28e-6909b608333c"
+    },
+    {
+      "infrastructure": false,
+      "kind": "sharepoint",
+      "message": "Item rp-canary-06.pdf was restored successfully (type: File; source: /sites/RestoreTest/RestoreTest/rp-canary-06.pdf; target: https://restoreprooflab.sharepoint.com/sites/RestoreTest)",
+      "name": "rp-canary-06.pdf",
+      "outcome": "restored",
+      "session_id": "2ab2e15d-81ab-4f5f-a28e-6909b608333c"
+    },
+    {
+      "infrastructure": false,
+      "kind": "onedrive",
+      "message": "Item rp-canary-11.pdf was restored successfully (type: File; source: personal/alice_restoreprooflab_onmicrosoft_com/Documents/RestoreTarget/rp-canary-11.pdf; target: https://restoreprooflab-my.sharepoint.com/personal/alice_restoreprooflab_onmicrosoft_com)",
+      "name": "rp-canary-11.pdf",
+      "outcome": "restored",
+      "session_id": "0819da9f-df0f-4cc6-b8eb-f0e889f878f4"
+    },
+    {
+      "infrastructure": false,
+      "kind": "onedrive",
+      "message": "Item rp-canary-14.txt was restored successfully (type: File; source: personal/alice_restoreprooflab_onmicrosoft_com/Documents/RestoreTarget/rp-canary-14.txt; target: https://restoreprooflab-my.sharepoint.com/personal/alice_restoreprooflab_onmicrosoft_com)",
+      "name": "rp-canary-14.txt",
+      "outcome": "restored",
+      "session_id": "0819da9f-df0f-4cc6-b8eb-f0e889f878f4"
+    }
+  ],
+  "items_restored": 10,
+  "items_sent": 10,
+  "log": "session 6cd07acf-3a1e-4f10-881e-bcb3494960ab (mail): Success, 5 items processed (5 successes)\nSuccess RP-CANARY-0003: Item RP-CANARY-0003 was restored successfully (type: IPM.Note; source: Alice Test\\Inbox; target: restoretest@RestoreProofLab.onmicrosoft.com\\<null>\\Inbox)\nSuccess RP-CANARY-0004: Item RP-CANARY-0004 was restored successfully (type: IPM.Note; source: Alice Test\\Inbox; target: restoretest@RestoreProofLab.onmicrosoft.com\\<null>\\Inbox)\nSuccess RP-CANARY-0005: Item RP-CANARY-0005 was restored successfully (type: IPM.Note; source: Alice Test\\Inbox; target: restoretest@RestoreProofLab.onmicrosoft.com\\<null>\\Inbox)\nSuccess RP-CANARY-0001: Item RP-CANARY-0001 was restored successfully (type: IPM.Note; source: Alice Test\\Inbox; target: restoretest@RestoreProofLab.onmicrosoft.com\\<null>\\Inbox)\nSuccess RP-CANARY-0002: Item RP-CANARY-0002 was restored successfully (type: IPM.Note; source: Alice Test\\Inbox; target: restoretest@RestoreProofLab.onmicrosoft.com\\<null>\\Inbox)\nsession 2ab2e15d-81ab-4f5f-a28e-6909b608333c (sharepoint): Success, 3 items processed (3 successes)\nSuccess rp-canary-01.pdf: Item rp-canary-01.pdf was restored successfully (type: File; source: /sites/RestoreTest/RestoreTest/rp-canary-01.pdf; target: https://restoreprooflab.sharepoint.com/sites/RestoreTest)\nSuccess rp-canary-04.txt: Item rp-canary-04.txt was restored successfully (type: File; source: /sites/RestoreTest/RestoreTest/rp-canary-04.txt; target: https://restoreprooflab.sharepoint.com/sites/RestoreTest)\nSuccess rp-canary-06.pdf: Item rp-canary-06.pdf was restored successfully (type: File; source: /sites/RestoreTest/RestoreTest/rp-canary-06.pdf; target: https://restoreprooflab.sharepoint.com/sites/RestoreTest)\nsession 0819da9f-df0f-4cc6-b8eb-f0e889f878f4 (onedrive): Success, 2 items processed (2 successes)\nSuccess rp-canary-11.pdf: Item rp-canary-11.pdf was restored successfully (type: File; source: personal/alice_restoreprooflab_onmicrosoft_com/Documents/RestoreTarget/rp-canary-11.pdf; target: https://restoreprooflab-my.sharepoint.com/personal/alice_restoreprooflab_onmicrosoft_com)\nSuccess rp-canary-14.txt: Item rp-canary-14.txt was restored successfully (type: File; source: personal/alice_restoreprooflab_onmicrosoft_com/Documents/RestoreTarget/rp-canary-14.txt; target: https://restoreprooflab-my.sharepoint.com/personal/alice_restoreprooflab_onmicrosoft_com)\n",
+  "restore_point": {
+    "backup_time": "2026-09-29T22:00:45.6603083Z",
+    "id": "c2f0f2e7-177f-48ac-992b-93a50cf702e395c23640-eb99-4bad-ae72-f5f9cf21aac1"
+  },
+  "session_ids": [
+    "6cd07acf-3a1e-4f10-881e-bcb3494960ab",
+    "2ab2e15d-81ab-4f5f-a28e-6909b608333c",
+    "0819da9f-df0f-4cc6-b8eb-f0e889f878f4"
+  ],
+  "sessions": [
+    {
+      "details": "5 items processed (5 successes)",
+      "ended_at": "2026-09-30T07:36:09.3475087Z",
+      "id": "6cd07acf-3a1e-4f10-881e-bcb3494960ab",
+      "items_restored": 5,
+      "items_sent": 5,
+      "kind": "mail",
+      "result": "Success",
+      "started_at": "2026-09-30T07:35:30.003677Z"
+    },
+    {
+      "details": "3 items processed (3 successes)",
+      "ended_at": "2026-09-30T07:36:54.8460752Z",
+      "id": "2ab2e15d-81ab-4f5f-a28e-6909b608333c",
+      "items_restored": 3,
+      "items_sent": 3,
+      "kind": "sharepoint",
+      "result": "Success",
+      "started_at": "2026-09-30T07:36:11.7290927Z"
+    },
+    {
+      "details": "2 items processed (2 successes)",
+      "ended_at": "2026-09-30T07:37:35.1125461Z",
+      "id": "0819da9f-df0f-4cc6-b8eb-f0e889f878f4",
+      "items_restored": 2,
+      "items_sent": 2,
+      "kind": "onedrive",
+      "result": "Success",
+      "started_at": "2026-09-30T07:36:57.7517519Z"
+    }
+  ],
+  "status": "succeeded"
+}

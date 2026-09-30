@@ -5,6 +5,7 @@
 // each client's connector type). No Veeam header here either: the registry
 // hands out IConnector.
 
+#include <rp/cert_export.hpp>
 #include <rp/config.hpp>
 #include <rp/connector.hpp>
 #include <rp/http_client.hpp>
@@ -33,13 +34,29 @@ struct ConnectorOptions {
     // The connector fills the options (its CA file and pin among them) and
     // owns the client.
     std::function<std::unique_ptr<IHttpClient>(const HttpClientOptions&)> make_http;
-    // Where the connector's HTTP and client debug lines go; null = spdlog's
-    // default logger at the time of the call. Every line is redacted.
+    // Where every line of the connector and the clients it makes goes (HTTP,
+    // sign-ins, the target guard's refusals); null = make_command_logger()'s
+    // logger (warnings and worse, to stderr), never spdlog's default one,
+    // which writes to stdout. Every line is redacted.
     std::shared_ptr<spdlog::logger> logger;
-    // The wait between retries; null = std::this_thread::sleep_for.
+    // The wait between retries (and a restore's polls); null =
+    // std::this_thread::sleep_for.
     std::function<void(std::chrono::milliseconds)> sleep;
     // Jitter for the retry delay, in [0, 1); null = uniform random.
     std::function<double()> jitter;
+    // The steady clock tokens expire and a restore's deadline passes by; null
+    // = steady_clock::now.
+    std::function<std::chrono::steady_clock::time_point()> now;
+    // The wall clock: when a certificate must be valid, Graph's client
+    // assertions, a restore's duplicate check; null = system_clock::now.
+    std::function<std::chrono::system_clock::time_point()> wall_now;
+    // Makes the HTTP client Microsoft Graph is read through (the target
+    // guard), given the connector's logger; null = graph::make_graph_http_client.
+    // The connector owns the client.
+    std::function<std::unique_ptr<IHttpClient>(std::shared_ptr<spdlog::logger>)> make_graph_http;
+    // Exports the backup product's restore credential (W2.5); null =
+    // make_local_machine_cert_exporter(wall_now).
+    std::shared_ptr<CertificateExporter> cert_exporter;
 };
 
 // Makes one connector. Throws ConfigError for config or secrets it can't work

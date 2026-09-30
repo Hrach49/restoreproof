@@ -62,4 +62,30 @@ std::string_view to_string(RestoreStatus status) noexcept
     return "not_run";
 }
 
+std::string_view to_string(ItemKind kind) noexcept
+{
+    switch (kind) {
+    case ItemKind::sharepoint:
+        return "sharepoint";
+    case ItemKind::onedrive:
+        return "onedrive";
+    case ItemKind::mail:
+        break;
+    }
+    return "mail";
+}
+
+std::string_view to_string(ItemOutcome outcome) noexcept
+{
+    switch (outcome) {
+    case ItemOutcome::restored:
+        return "restored";
+    case ItemOutcome::failed:
+        return "failed";
+    case ItemOutcome::unknown:
+        break;
+    }
+    return "unknown";
+}
+
 } // namespace rp::connector

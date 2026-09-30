@@ -97,10 +97,12 @@ private:
 // call. A configuration error, not a GraphError: a command catching
 // ConfigError reports it as one (exit 1), and a `catch (const GraphError&)`
 // doesn't take it for a failed call. what() names the variable, never its
-// value, and went through rp::redact(); key() is empty.
+// value, and went through rp::redact(). key() is the variable that is unset
+// ("RP_GRAPH_CERT_PFX_BASE64 is not set", "RP_GRAPH_CERT_PASSWORD is not set,
+// and ..."), empty for every other reason.
 class CertificateError : public ConfigError {
 public:
-    explicit CertificateError(std::string_view message);
+    explicit CertificateError(std::string_view message, std::string key = {});
 };
 
 } // namespace rp::graph

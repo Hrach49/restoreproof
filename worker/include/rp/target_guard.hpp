@@ -72,19 +72,22 @@ public:
     //  - mail: a source mailbox and folder are named, and the mailbox is no
     //    restoretest mailbox (rp::is_restore_mailbox, any case), the test
     //    mailbox included;
-    //  - SharePoint: a source drive and file are named, and the drive is not
-    //    test_library_id (ASCII case-insensitive);
+    //  - SharePoint: a source drive and file are named, the drive is not
+    //    test_library_id (ASCII case-insensitive), and list_id is a GUID;
     //  - OneDrive: an owner and file are named, and the folder path has no
     //    ".." segment and doesn't start with a RestoreTarget folder (ASCII
     //    case-insensitive, empty and "." segments skipped). The owner can't be
-    //    tied to the test OneDrive without a call W2.5 makes anyway, so this
-    //    rule is by path.
+    //    tied to the test OneDrive without the Veeam OneDrives list that
+    //    restore_sample reads anyway (and layer 2 checks), so this rule is by
+    //    path.
     // Then, once per type the spec uses, the target through Graph (GETs only):
     // check_restore_mailbox, check_restore_library and
     // check_restore_onedrive_folder, whose WrongTargetError becomes a
     // SafetyViolation with the same text. Graph's other errors pass through
     // with their own types (AuthError, PermissionError, NotFoundError,
-    // TransientError: `error` all the same). An empty spec checks nothing and
+    // TransientError: `error` all the same). Then no SharePoint item's list_id
+    // may be the RestoreTarget library's (ASCII case-insensitive): that library
+    // is in every backup. An empty spec checks nothing and
     // resolves nothing (restore_sample reports not_run).
     CheckedTargets check_spec(const connector::RestoreSpec& spec);
 

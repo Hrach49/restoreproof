@@ -150,8 +150,10 @@ TEST_CASE("the guard refuses an item sampled from a restore target before any Gr
     const auto mail_from = [](std::string mailbox, std::string folder = "Inbox") {
         return MailSelector{std::move(mailbox), std::move(folder), "s"};
     };
-    const auto sp_from = [](std::string drive, std::string name = "f.pdf") {
-        return SharePointSelector{lab_values().site_id, std::move(drive), "/", std::move(name)};
+    const auto sp_from = [](std::string drive, std::string name = "f.pdf",
+                            std::string list = kMadeUpListId) {
+        return SharePointSelector{lab_values().site_id, std::move(drive), "/", std::move(name),
+                                  std::move(list)};
     };
     const auto od_from = [](std::string path, std::string user = "alice@x.example") {
         return OneDriveSelector{std::move(user), std::move(path), "f.pdf"};
@@ -184,6 +186,12 @@ TEST_CASE("the guard refuses an item sampled from a restore target before any Gr
             "target guard: sharepoint item 0 names no source library or file" + kRestored},
         Row{"a SharePoint item with no name", make_spec({}, {sp_from("b!x", "")}),
             "target guard: sharepoint item 0 names no source library or file" + kRestored},
+        Row{"a SharePoint item with no list ID",
+            make_spec({}, {sharepoint_source(), sp_from("b!x", "f.pdf", "")}),
+            "target guard: sharepoint item 1's list_id isn't a GUID" + kRestored},
+        Row{"a SharePoint item whose list ID isn't a GUID",
+            make_spec({}, {sp_from("b!x", "f.pdf", "RestoreTarget")}),
+            "target guard: sharepoint item 0's list_id isn't a GUID" + kRestored},
         Row{"a file from /RestoreTarget",
             make_spec({}, {}, {onedrive_source(), od_from("/RestoreTarget")}), od_target},
         Row{"a file from /restoretarget/",
@@ -210,6 +218,42 @@ TEST_CASE("the guard refuses an item sampled from a restore target before any Gr
     CHECK(thrown.kind == "SafetyViolation");
     CHECK(thrown.what == row.message);
     CHECK(lab.graph_gets() == 0);
+}
+
+TEST_CASE("the guard refuses a SharePoint item from the RestoreTarget library's list",
+          "[target_guard]")
+{
+    // The library is found by its list ID (W2.5), and the RestoreTarget
+    // library is in every backup: its list is never a source, whatever drive
+    // ID the item names. Known only once Graph resolved the library.
+    const std::string target_list = load_fixture_json("graph", "restoretarget-drive-200")
+                                         .at("body")
+                                         .at("sharePointIds")
+                                         .at("listId")
+                                         .get<std::string>();
+    const std::string list = GENERATE_COPY(target_list, rp::ascii_lower(target_list),
+                                           [&] {
+                                               std::string upper = target_list;
+                                               for (char& c : upper) {
+                                                   c = c >= 'a' && c <= 'f'
+                                                           ? static_cast<char>(c - 'a' + 'A')
+                                                           : c;
+                                               }
+                                               return upper;
+                                           }());
+    CAPTURE(list);
+    GuardLab lab;
+    SharePointSelector from_target = sharepoint_source(2);
+    from_target.list_id = list;
+
+    const Thrown thrown = thrown_by(
+        [&] { lab.guard().check_spec(make_spec({}, {sharepoint_source(), from_target})); });
+
+    CHECK(thrown.kind == "SafetyViolation");
+    CHECK(thrown.what == "target guard: sharepoint item 1 is sampled from a restore target (the "
+                         "RestoreTarget library's list)" + kRestored);
+    CHECK(lab.gets(drive_url()) == 1);
+    CHECK_THAT(lab.log(), StartsWith("critical SECURITY: target guard: sharepoint item 1"));
 }
 
 TEST_CASE("the guard checks every item before it resolves any target", "[target_guard]")

@@ -1,0 +1,33 @@
+{
+  "source": "docs/api/veeam-lab/w2.4-od-x1-explore.json",
+  "request": "POST /v8/Organizations/ff96d072-29e2-4cb4-a155-2590f5473176/explore",
+  "status": 201,
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8"
+  },
+  "body": {
+    "id": "21ebe03d-76de-426b-b829-b46ae9bd2e89",
+    "name": "OneDrive restore (Entire organization - 9/27/2026 10:00:48 PM)",
+    "organization": "RestoreProofLab.onmicrosoft.com",
+    "type": "Veod",
+    "creationTime": "2026-09-28T21:29:30.7807302Z",
+    "endTime": "9999-12-31T23:59:59.9999999",
+    "state": "Working",
+    "result": "Success",
+    "initiatedBy": "rp-veeam",
+    "scopeName": "",
+    "clientHost": "localhost:4443 (via: [::ffff:127.0.0.1])",
+    "eTag": 1,
+    "_links": {
+      "self": {
+        "href": "/v8/restoresessions/21ebe03d-76de-426b-b829-b46ae9bd2e89"
+      },
+      "organization": {
+        "href": "/v8/restoresessions/21ebe03d-76de-426b-b829-b46ae9bd2e89/organization"
+      },
+      "restoreSessionEvents": {
+        "href": "/v8/restoresessions/21ebe03d-76de-426b-b829-b46ae9bd2e89/events"
+      }
+    }
+  }
+}

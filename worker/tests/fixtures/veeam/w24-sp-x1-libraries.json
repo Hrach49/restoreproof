@@ -1,0 +1,173 @@
+{
+  "source": "docs/api/veeam-lab/w2.4-sp-x1-libraries.json",
+  "request": "GET /v8/RestoreSessions/9aa65291-c162-4769-acb0-ccc39eead76e/Organization/Sites/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689/Libraries",
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8"
+  },
+  "body": {
+    "offset": 0,
+    "limit": 30,
+    "_links": {
+      "self": {
+        "href": "/v8/RestoreSessions/9aa65291-c162-4769-acb0-ccc39eead76e/Organization/Sites/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689/Libraries?offset=0&limit=30"
+      }
+    },
+    "results": [
+      {
+        "id": "fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689a8c50592-c7e0-4e2b-81b8-b15e97977a63",
+        "name": "Strony witryny",
+        "url": "sites/RestoreTest/SitePages",
+        "description": "",
+        "creationTime": "0001-01-01T00:00:00Z",
+        "siteId": "fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689",
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/9aa65291-c162-4769-acb0-ccc39eead76e/organization/sites/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689/libraries/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689a8c50592-c7e0-4e2b-81b8-b15e97977a63"
+          },
+          "parent": {
+            "href": "/v8/restoresessions/9aa65291-c162-4769-acb0-ccc39eead76e/organization/sites/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689"
+          },
+          "folders": {
+            "href": "/v8/restoresessions/9aa65291-c162-4769-acb0-ccc39eead76e/organization/sites/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689/folders?parentId=fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689a8c50592-c7e0-4e2b-81b8-b15e97977a63"
+          },
+          "documents": {
+            "href": "/v8/restoresessions/9aa65291-c162-4769-acb0-ccc39eead76e/organization/sites/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689/documents?parentId=fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689a8c50592-c7e0-4e2b-81b8-b15e97977a63"
+          }
+        }
+      },
+      {
+        "id": "fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689ffec069d-65e4-4c3a-9da2-ac086cf9dafa",
+        "name": "RestoreTarget",
+        "url": "sites/RestoreTest/RestoreTarget",
+        "description": "",
+        "creationTime": "0001-01-01T00:00:00Z",
+        "siteId": "fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689",
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/9aa65291-c162-4769-acb0-ccc39eead76e/organization/sites/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689/libraries/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689ffec069d-65e4-4c3a-9da2-ac086cf9dafa"
+          },
+          "parent": {
+            "href": "/v8/restoresessions/9aa65291-c162-4769-acb0-ccc39eead76e/organization/sites/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689"
+          },
+          "folders": {
+            "href": "/v8/restoresessions/9aa65291-c162-4769-acb0-ccc39eead76e/organization/sites/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689/folders?parentId=fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689ffec069d-65e4-4c3a-9da2-ac086cf9dafa"
+          },
+          "documents": {
+            "href": "/v8/restoresessions/9aa65291-c162-4769-acb0-ccc39eead76e/organization/sites/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689/documents?parentId=fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689ffec069d-65e4-4c3a-9da2-ac086cf9dafa"
+          }
+        }
+      },
+      {
+        "id": "fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e6897eb0f08a-f57b-418c-8ca6-f2ab81297666",
+        "name": "RestoreTest",
+        "url": "sites/RestoreTest/RestoreTest",
+        "description": "",
+        "creationTime": "0001-01-01T00:00:00Z",
+        "siteId": "fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689",
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/9aa65291-c162-4769-acb0-ccc39eead76e/organization/sites/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689/libraries/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e6897eb0f08a-f57b-418c-8ca6-f2ab81297666"
+          },
+          "parent": {
+            "href": "/v8/restoresessions/9aa65291-c162-4769-acb0-ccc39eead76e/organization/sites/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689"
+          },
+          "folders": {
+            "href": "/v8/restoresessions/9aa65291-c162-4769-acb0-ccc39eead76e/organization/sites/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689/folders?parentId=fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e6897eb0f08a-f57b-418c-8ca6-f2ab81297666"
+          },
+          "documents": {
+            "href": "/v8/restoresessions/9aa65291-c162-4769-acb0-ccc39eead76e/organization/sites/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689/documents?parentId=fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e6897eb0f08a-f57b-418c-8ca6-f2ab81297666"
+          }
+        }
+      },
+      {
+        "id": "fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e68997690dc7-54ae-4063-a72a-fa652d0dd15a",
+        "name": "Szablony formularzy",
+        "url": "sites/RestoreTest/FormServerTemplates",
+        "description": "Ta biblioteka zawiera szablony formularzy zatwierdzone przez administratora, które zostały aktywowane w tym zbiorze witryn.",
+        "creationTime": "0001-01-01T00:00:00Z",
+        "siteId": "fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689",
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/9aa65291-c162-4769-acb0-ccc39eead76e/organization/sites/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689/libraries/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e68997690dc7-54ae-4063-a72a-fa652d0dd15a"
+          },
+          "parent": {
+            "href": "/v8/restoresessions/9aa65291-c162-4769-acb0-ccc39eead76e/organization/sites/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689"
+          },
+          "folders": {
+            "href": "/v8/restoresessions/9aa65291-c162-4769-acb0-ccc39eead76e/organization/sites/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689/folders?parentId=fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e68997690dc7-54ae-4063-a72a-fa652d0dd15a"
+          },
+          "documents": {
+            "href": "/v8/restoresessions/9aa65291-c162-4769-acb0-ccc39eead76e/organization/sites/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689/documents?parentId=fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e68997690dc7-54ae-4063-a72a-fa652d0dd15a"
+          }
+        }
+      },
+      {
+        "id": "fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e6897ce76907-31fb-45fe-ad8f-960264f0313b",
+        "name": "Dokumenty",
+        "url": "sites/RestoreTest/Shared Documents",
+        "description": "",
+        "creationTime": "0001-01-01T00:00:00Z",
+        "siteId": "fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689",
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/9aa65291-c162-4769-acb0-ccc39eead76e/organization/sites/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689/libraries/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e6897ce76907-31fb-45fe-ad8f-960264f0313b"
+          },
+          "parent": {
+            "href": "/v8/restoresessions/9aa65291-c162-4769-acb0-ccc39eead76e/organization/sites/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689"
+          },
+          "folders": {
+            "href": "/v8/restoresessions/9aa65291-c162-4769-acb0-ccc39eead76e/organization/sites/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689/folders?parentId=fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e6897ce76907-31fb-45fe-ad8f-960264f0313b"
+          },
+          "documents": {
+            "href": "/v8/restoresessions/9aa65291-c162-4769-acb0-ccc39eead76e/organization/sites/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689/documents?parentId=fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e6897ce76907-31fb-45fe-ad8f-960264f0313b"
+          }
+        }
+      },
+      {
+        "id": "fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e6894efad907-3409-4c0b-bd44-01354185319b",
+        "name": "Elementy zawartości witryny",
+        "url": "sites/RestoreTest/SiteAssets",
+        "description": "Ta biblioteka umożliwia przechowywanie plików dołączonych do stron w tej witrynie, na przykład obrazów dla stron typu wiki.",
+        "creationTime": "0001-01-01T00:00:00Z",
+        "siteId": "fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689",
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/9aa65291-c162-4769-acb0-ccc39eead76e/organization/sites/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689/libraries/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e6894efad907-3409-4c0b-bd44-01354185319b"
+          },
+          "parent": {
+            "href": "/v8/restoresessions/9aa65291-c162-4769-acb0-ccc39eead76e/organization/sites/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689"
+          },
+          "folders": {
+            "href": "/v8/restoresessions/9aa65291-c162-4769-acb0-ccc39eead76e/organization/sites/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689/folders?parentId=fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e6894efad907-3409-4c0b-bd44-01354185319b"
+          },
+          "documents": {
+            "href": "/v8/restoresessions/9aa65291-c162-4769-acb0-ccc39eead76e/organization/sites/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689/documents?parentId=fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e6894efad907-3409-4c0b-bd44-01354185319b"
+          }
+        }
+      },
+      {
+        "id": "fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e68979e64f8c-eb79-4d07-ad98-47353d301c24",
+        "name": "Biblioteka stylów",
+        "url": "sites/RestoreTest/Style Library",
+        "description": "Biblioteka stylów umożliwia przechowywanie arkuszy stylów (na przykład plików CSS czy XSL). Arkusze stylów w tej galerii są dostępne do użytku przez tę witrynę i jej podwitryny.",
+        "creationTime": "0001-01-01T00:00:00Z",
+        "siteId": "fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689",
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/9aa65291-c162-4769-acb0-ccc39eead76e/organization/sites/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689/libraries/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e68979e64f8c-eb79-4d07-ad98-47353d301c24"
+          },
+          "parent": {
+            "href": "/v8/restoresessions/9aa65291-c162-4769-acb0-ccc39eead76e/organization/sites/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689"
+          },
+          "folders": {
+            "href": "/v8/restoresessions/9aa65291-c162-4769-acb0-ccc39eead76e/organization/sites/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689/folders?parentId=fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e68979e64f8c-eb79-4d07-ad98-47353d301c24"
+          },
+          "documents": {
+            "href": "/v8/restoresessions/9aa65291-c162-4769-acb0-ccc39eead76e/organization/sites/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689/documents?parentId=fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e68979e64f8c-eb79-4d07-ad98-47353d301c24"
+          }
+        }
+      }
+    ]
+  }
+}

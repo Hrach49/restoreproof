@@ -58,8 +58,8 @@ const std::optional<std::chrono::seconds>& TransientError::retry_after() const n
     return retry_after_;
 }
 
-CertificateError::CertificateError(std::string_view message)
-    : ConfigError({}, redact(message))
+CertificateError::CertificateError(std::string_view message, std::string key)
+    : ConfigError(std::move(key), redact(message))
 {
 }
 

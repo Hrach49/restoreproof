@@ -1,0 +1,33 @@
+{
+  "source": "docs/api/veeam-lab/w1.0-c-mail-cert-restore-no-folder-400.json",
+  "request": "POST /v8/RestoreSessions/4f9fa4a6-b728-4552-83b3-1bd9e2a88235/organization/mailboxes/e00393b0-a896-4487-ad04-0e1be36468fb/items/restoreTo",
+  "request_body": {
+    "mailbox": "restoretest@RestoreProofLab.onmicrosoft.com",
+    "items": [
+      {
+        "id": "LgAAAEYAAAAWAAAAAAAAAJQ40Ee3vkxBk1fd6-4CAU4BAP0LwXmScMJMnrn-sNESuJ8AAAAAAQwAAAAAAACUONBHt75MQZNX3evuAgFOBwD9C8F5knDCTJ65_rDRErifAAAAAAEMAAD9C8F5knDCTJ65_rDRErifAAAAAFuMAAD9C8F5knDCTJ65_rDRErifAAAAADr_"
+      }
+    ],
+    "changedItems": true,
+    "deletedItems": true,
+    "markRestoredAsUnread": false,
+    "excludeDrafts": false,
+    "excludeDeletedItems": false,
+    "excludeInPlaceHoldItems": true,
+    "excludeLitigationHoldItems": true,
+    "officeRegion": "Worldwide",
+    "officeOrganizationName": "RestoreProofLab.onmicrosoft.com",
+    "applicationId": "1fd2609d-1242-43fe-94b5-d58688a90bd6",
+    "applicationCertificate": "[REDACTED]",
+    "applicationCertificatePassword": "[REDACTED]",
+    "impersonationAccountName": "restoretest@RestoreProofLab.onmicrosoft.com"
+  },
+  "status": 400,
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8"
+  },
+  "body": {
+    "message": "Missing mandatory parameters: Folder.",
+    "errorCode": "ParameterValidationFailure"
+  }
+}

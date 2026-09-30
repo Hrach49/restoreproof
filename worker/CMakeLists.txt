@@ -20,6 +20,7 @@ enable_testing()
 # rptests both link it; coverage is measured on its sources (src/, include/).
 add_library(rpcore STATIC
     src/base64.cpp
+    src/cert_export.cpp
     src/cert_pin.cpp
     src/cli.cpp
     src/client_assertion.cpp
@@ -47,6 +48,8 @@ add_library(rpcore STATIC
     src/veeam_client.cpp
     src/veeam_command.cpp
     src/veeam_m365_connector.cpp
+    src/veeam_restore.cpp
+    src/veeam_time.cpp
     src/version.cpp
 )
 target_include_directories(rpcore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -64,7 +67,9 @@ target_link_libraries(rpcore
 target_compile_options(rpcore PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/we4062>)
 # program_data_dir() calls SHGetKnownFolderPath (shell32) and CoTaskMemFree (ole32);
 # public_key_pin() reads the CA file with CryptQueryObject (crypt32), as curl does.
-target_link_libraries(rpcore PRIVATE shell32 ole32 crypt32)
+# The restore credential's export (W2.5, cert_export.cpp) also reads the store
+# and exports a PFX (crypt32) and makes its password (bcrypt).
+target_link_libraries(rpcore PRIVATE shell32 ole32 crypt32 bcrypt)
 
 # rpworker: the Worker exe. main() lives in app/ and only hands argv to
 # rp::run_cli; all parsing is in rpcore, where rptests can reach it
@@ -76,6 +81,7 @@ target_link_libraries(rpworker PRIVATE rpcore)
 
 add_executable(rptests
     tests/base64_test.cpp
+    tests/cert_export_test.cpp
     tests/cert_pin_test.cpp
     tests/client_assertion_test.cpp
     tests/cli_test.cpp
@@ -109,10 +115,15 @@ add_executable(rptests
     tests/veeam_command_test.cpp
     tests/veeam_m365_connector_test.cpp
     tests/veeam_m365_restore_guard_test.cpp
+    tests/veeam_m365_restore_live_test.cpp
+    tests/veeam_m365_restore_test.cpp
+    tests/veeam_restore_test.cpp
     tests/version_test.cpp
 )
 # deps_test.cpp uses cpr and OpenSSL directly, so it links them itself.
 target_link_libraries(rptests PRIVATE rpcore cpr::cpr OpenSSL::Crypto Catch2::Catch2WithMain)
+# cert_export_test.cpp deletes the CNG key file it makes (ncrypt).
+target_link_libraries(rptests PRIVATE ncrypt)
 # httplib is test-only: the HTTP client tests run a server on 127.0.0.1.
 # http_client_test.cpp also reads rpcore's internal src/http_client_detail.hpp.
 target_link_libraries(rptests PRIVATE httplib::httplib)

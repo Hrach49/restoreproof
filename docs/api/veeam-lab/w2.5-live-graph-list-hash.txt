@@ -1,0 +1,20 @@
+Mail (restoretest@RestoreProofLab.onmicrosoft.com, Inbox): 5 item(s)
+  RECEIVED              SENDER                                              SUBJECT         ID                                                                    SHA256                                                            RULE
+  2026-09-24T22:14:44Z  HrachyaHarutyunyan@RestoreProofLab.onmicrosoft.com  RP-CANARY-0004  AAkALgAAAAAAHYQDEapmEc2byACqAC-EWg0Apy-rvAUfAU_pqKwuzmFBWgAAA1JcNgAA  775c6af18f76882ed89379f75eea29acd032a08bae41bc8a0d624a6dabc99c91  text-v1
+  2026-09-24T22:14:43Z  HrachyaHarutyunyan@RestoreProofLab.onmicrosoft.com  RP-CANARY-0002  AAkALgAAAAAAHYQDEapmEc2byACqAC-EWg0Apy-rvAUfAU_pqKwuzmFBWgAAA1JcPAAA  6a6a8a3f0f0b712ae7949e6a83dd4a2290a9098769a4a58f261cd0c12e784678  text-v1
+  2026-09-24T22:14:43Z  HrachyaHarutyunyan@RestoreProofLab.onmicrosoft.com  RP-CANARY-0003  AAkALgAAAAAAHYQDEapmEc2byACqAC-EWg0Apy-rvAUfAU_pqKwuzmFBWgAAA1JYTAAA  fbf18a490608f300ecdb9b99c22568fbda5b62f4e11e72284d9d8b5c50cad040  text-v1
+  2026-09-24T22:14:43Z  HrachyaHarutyunyan@RestoreProofLab.onmicrosoft.com  RP-CANARY-0001  AAkALgAAAAAAHYQDEapmEc2byACqAC-EWg0Apy-rvAUfAU_pqKwuzmFBWgAAA1JcOgAA  4e1a958631216825c0e67faadfe1d56b787cb6470a891f0860c21cc7bad19bbe  text-v1
+  2026-09-24T22:14:43Z  HrachyaHarutyunyan@RestoreProofLab.onmicrosoft.com  RP-CANARY-0005  AAkALgAAAAAAHYQDEapmEc2byACqAC-EWg0Apy-rvAUfAU_pqKwuzmFBWgAAA1JcOAAA  ea2086718770ad4155d550b97960c3a93762c0a62c42861e7e1b0d3b7b38b730  text-v1
+
+SharePoint (RestoreTarget library): 3 item(s)
+  NAME              SIZE  ID                                  SHA256                                                            RULE
+  rp-canary-01.pdf  925   01BLWRTHJH2SI7K7T6BJAYDTTFOHFPQSEQ  9c79923653e6c2890199e4973b83924eb44b9cf1a2d7f484ef87037ac169a886  bytes
+  rp-canary-04.txt  164   01BLWRTHK6Q4XQE7J4SFEJB26GCAUB6SCM  f2d6976ab80e2022c0d7e17f4085e57471d47d25df9e021f2fa3bdcfdab392d8  bytes
+  rp-canary-06.pdf  925   01BLWRTHJAJSIXUWUJI5HZS3ZXRCN3JHOF  a3524bb7840cbb1d0c12c6e59a78640e512689d771ea065e7391be171e5a4f1e  bytes
+
+OneDrive (RestoreTarget folder): 2 item(s)
+  NAME              SIZE  ID                                  SHA256                                                            RULE
+  rp-canary-11.pdf  925   01ZK75LGAW2UPY4ZMVTBEI3MM4MNWCQ54Y  8cb6004f5024ef81530f08da82dd9a949807d62af1eb71095a8b80e5b5923a2e  bytes
+  rp-canary-14.txt  164   01ZK75LGC3A2C43M4UBBAYKSUSE3GHCN6T  bdd6b7a140ca9c9554f687888357c7a83d896a64f4f22f06f0977119a05c32bf  bytes
+
+10 item(s) in the three restore targets

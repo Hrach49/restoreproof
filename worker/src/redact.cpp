@@ -28,7 +28,7 @@ struct SecretKey {
     bool colon_form;
 };
 
-constexpr std::array<SecretKey, 11> kSecretKeys{{
+constexpr std::array<SecretKey, 13> kSecretKeys{{
     {"client_secret", false, true},
     {"password", false, true},
     {"refresh_token", false, true},
@@ -46,6 +46,12 @@ constexpr std::array<SecretKey, 11> kSecretKeys{{
     // likely in prose to take the colon form.
     {"pfx", false, false},
     {"pfx_base64", false, true},
+    // A Veeam restore body (W2.5): the organisation app's certificate as a
+    // Base64 PFX, and its one-time password, which runs into its name without
+    // a separator ("applicationCertificatePassword") so "password" misses it.
+    // "applicationCertificateThumbprint" goes on past the name: not a match.
+    {"applicationcertificate", false, true},
+    {"applicationcertificatepassword", false, true},
 }};
 
 constexpr std::string_view kSchemeSeparator = "://";

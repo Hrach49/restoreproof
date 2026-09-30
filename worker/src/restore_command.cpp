@@ -128,49 +128,41 @@ bool valid_run_id(std::string_view text)
 // its value, every value well-formed.
 bool parse_args(std::span<const std::string_view> args, RestoreArgs& parsed)
 {
-    for (std::size_t i = 0; i < args.size(); i += 2) {
-        if (i + 1 >= args.size()) {
-            return false;
-        }
-        const std::string_view name = args[i];
-        const std::string_view value = args[i + 1];
-        const auto size_option = [&](std::optional<int>& target) {
-            if (target) {
-                return false;
-            }
-            target = parse_size(value);
+    const std::optional<CommandOptions> options =
+        parse_options(args, {"--mail", "--sp", "--od", "--point", "--run-id", "--canary-cursor",
+                             "--manifest", "--config", "--record"});
+    if (!options) {
+        return false;
+    }
+    const auto size_option = [&](std::string_view name, std::optional<int>& target) {
+        if (const std::optional<std::string_view> value = options->value(name)) {
+            target = parse_size(*value);
             return target.has_value();
-        };
-        bool ok = false;
-        if (name == "--mail") {
-            ok = size_option(parsed.mail);
-        } else if (name == "--sp") {
-            ok = size_option(parsed.sharepoint);
-        } else if (name == "--od") {
-            ok = size_option(parsed.onedrive);
-        } else if (name == "--point" && !parsed.point) {
-            ok = is_point_id(value); // `latest`, in any case, is one too
-            parsed.point = value;
-        } else if (name == "--run-id" && !parsed.run_id) {
-            ok = valid_run_id(value);
-            parsed.run_id = value;
-        } else if (name == "--canary-cursor" && !parsed.cursor) {
-            parsed.cursor = parse_cursor(value);
-            ok = parsed.cursor.has_value();
-        } else if (name == "--manifest" && !parsed.manifest) {
-            parsed.manifest = value;
-            ok = true;
-        } else if (name == "--config" && !parsed.config) {
-            parsed.config = value;
-            ok = true;
-        } else if (name == "--record" && !parsed.record) {
-            parsed.record = value;
-            ok = true;
         }
-        if (!ok) {
+        return true;
+    };
+    if (!size_option("--mail", parsed.mail) || !size_option("--sp", parsed.sharepoint) ||
+        !size_option("--od", parsed.onedrive)) {
+        return false;
+    }
+    parsed.point = options->value("--point");
+    // `latest`, in any case, is a point ID too.
+    if (parsed.point && !is_point_id(*parsed.point)) {
+        return false;
+    }
+    parsed.run_id = options->value("--run-id");
+    if (parsed.run_id && !valid_run_id(*parsed.run_id)) {
+        return false;
+    }
+    if (const std::optional<std::string_view> cursor = options->value("--canary-cursor")) {
+        parsed.cursor = parse_cursor(*cursor);
+        if (!parsed.cursor) {
             return false;
         }
     }
+    parsed.manifest = options->value("--manifest");
+    parsed.config = options->value("--config");
+    parsed.record = options->value("--record");
     return true;
 }
 
@@ -513,7 +505,6 @@ int run_restore(std::span<const std::string_view> args, std::ostream& out, std::
         // restore_sample opens it only after the sample is chosen, which
         // browses Veeam. An unset password is none, as for `graph list`.
         check_graph_certificate(secrets, env.connector_options);
-        recorder = open_recording(parsed.record, "restore", secrets);
     } catch (const ConfigError& e) {
         return report(err, "config error: ", e, exit_code::config);
     } catch (...) {
@@ -560,6 +551,9 @@ int run_restore(std::span<const std::string_view> args, std::ostream& out, std::
             err << "usage error: --canary-cursor: " << *problem << '\n';
             return exit_code::usage;
         }
+        // Only now, the last check before the connector: a run stopped by
+        // the checks above makes no folder and prints no recording line.
+        recorder = open_recording(parsed.record, "restore", secrets);
 
         connector::ConnectorOptions options = recorder
                                                   ? record_connector(env.connector_options, recorder)

@@ -8,23 +8,45 @@
 
 #include <spdlog/sinks/stdout_sinks.h>
 
+#include <algorithm>
 #include <ostream>
 #include <utility>
 #include <vector>
 
 namespace rp {
 
-bool parse_config_option(std::span<const std::string_view> args,
-                         std::optional<std::string_view>& config_arg)
+std::optional<std::string_view> CommandOptions::value(std::string_view name) const
 {
-    if (args.empty()) {
-        return true;
+    const auto it = values.find(name);
+    return it == values.end() ? std::nullopt : std::optional{it->second};
+}
+
+bool CommandOptions::has_flag(std::string_view name) const
+{
+    return flags.contains(name);
+}
+
+std::optional<CommandOptions> parse_options(std::span<const std::string_view> args,
+                                            std::initializer_list<std::string_view> value_names,
+                                            std::initializer_list<std::string_view> flag_names)
+{
+    CommandOptions options;
+    for (std::size_t i = 0; i < args.size(); ++i) {
+        const std::string_view name = args[i];
+        if (std::ranges::find(flag_names, name) != flag_names.end()) {
+            if (!options.flags.insert(name).second) {
+                return std::nullopt;
+            }
+        } else if (std::ranges::find(value_names, name) != value_names.end() &&
+                   i + 1 < args.size()) {
+            if (!options.values.emplace(name, args[++i]).second) {
+                return std::nullopt;
+            }
+        } else {
+            return std::nullopt;
+        }
     }
-    if (args.size() == 2 && args[0] == "--config") {
-        config_arg = args[1];
-        return true;
-    }
-    return false;
+    return options;
 }
 
 std::filesystem::path command_config_path(std::optional<std::string_view> config_arg,

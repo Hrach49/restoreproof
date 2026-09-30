@@ -1,8 +1,8 @@
 #pragma once
 
-// What the commands share: the `[--config <path>]` tail of their command
-// lines and the path it chooses (docs/worker-config.md), the logger of the
-// commands that call a service, and their `--record <dir>` (Q2.1).
+// What the commands share: parsing their options, the path `--config`
+// chooses (docs/worker-config.md), the logger of the commands that call a
+// service, and their `--record <dir>` (Q2.1).
 
 #include <rp/http_client.hpp>
 #include <rp/recording_http_client.hpp>
@@ -12,19 +12,35 @@
 
 #include <filesystem>
 #include <functional>
+#include <initializer_list>
 #include <iosfwd>
+#include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <span>
 #include <string>
 #include <string_view>
 
 namespace rp {
 
-// Whether `args` is nothing or `--config <path>`; for the latter, sets
-// `config_arg` to the path as given, in UTF-8.
-bool parse_config_option(std::span<const std::string_view> args,
-                         std::optional<std::string_view>& config_arg);
+// A command's options as parse_options found them, each as given (UTF-8).
+struct CommandOptions {
+    std::map<std::string_view, std::string_view, std::less<>> values;
+    std::set<std::string_view, std::less<>> flags;
+
+    // The value given for `name`, or nullopt.
+    std::optional<std::string_view> value(std::string_view name) const;
+    bool has_flag(std::string_view name) const;
+};
+
+// `args` (the words after the command's name) as options in any order, each
+// at most once: a name in `value_names` takes the word after it as its value,
+// whatever that word is; a name in `flag_names` stands alone. nullopt for
+// anything else: another word, an option twice, a value missing.
+std::optional<CommandOptions> parse_options(std::span<const std::string_view> args,
+                                            std::initializer_list<std::string_view> value_names,
+                                            std::initializer_list<std::string_view> flag_names = {});
 
 // The config file to read: `config_arg` as a path, or, without one,
 // `default_path()`, which is called only then (so --config never looks up

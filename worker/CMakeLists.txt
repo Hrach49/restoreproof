@@ -97,6 +97,7 @@ add_executable(rptests
     tests/cert_pin_test.cpp
     tests/client_assertion_test.cpp
     tests/cli_test.cpp
+    tests/command_config_test.cpp
     tests/config_check_test.cpp
     tests/config_test.cpp
     tests/connector_registry_test.cpp

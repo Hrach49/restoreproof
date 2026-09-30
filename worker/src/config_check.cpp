@@ -17,12 +17,13 @@ namespace rp {
 
 namespace {
 
-// Whether `args` are `check` or `check --config <path>`; for the latter,
-// sets `config_arg` to the path as given, in UTF-8.
-bool parse_check_args(std::span<const std::string_view> args,
-                      std::optional<std::string_view>& config_arg)
+// `check [--config <path>]`'s options; nullopt for any other command line.
+std::optional<CommandOptions> parse_check_args(std::span<const std::string_view> args)
 {
-    return !args.empty() && args[0] == "check" && parse_config_option(args.subspan(1), config_arg);
+    if (args.empty() || args[0] != "check") {
+        return std::nullopt;
+    }
+    return parse_options(args.subspan(1), {"--config"});
 }
 
 template <typename Value>
@@ -36,11 +37,12 @@ void print_setting(std::ostream& out, std::string_view label, const Value& value
 int run_config_command(std::span<const std::string_view> args, std::ostream& out, std::ostream& err,
                        const std::function<std::filesystem::path()>& default_path)
 {
-    std::optional<std::string_view> config_arg;
-    if (!parse_check_args(args, config_arg)) {
+    const std::optional<CommandOptions> options = parse_check_args(args);
+    if (!options) {
         err << kCliUsage;
         return exit_code::usage;
     }
+    const std::optional<std::string_view> config_arg = options->value("--config");
 
     // default_path() is called only here, so usage errors and --config never
     // look up ProgramData. Nothing thrown here may escape to main().

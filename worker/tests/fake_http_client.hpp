@@ -13,6 +13,7 @@
 // ... --record <dir>` writes the same format (rp/recording_http_client.hpp).
 
 #include <rp/http_client.hpp>
+#include <rp/recording_http_client.hpp>
 
 #include <nlohmann/json.hpp>
 
@@ -24,6 +25,7 @@
 #include <fstream>
 #include <functional>
 #include <iterator>
+#include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -89,16 +91,17 @@ inline HttpResponse make_response(int status, std::string body = {},
     return response;
 }
 
-// The URL's path and query, without scheme, host and fragment ("/" when it
-// has no path): what a recorded request line holds after the method.
-inline std::string url_path(std::string_view url)
+// The number a recorded file's name starts with ("1000-get-....json"); the
+// largest number there is for a name that starts with none.
+inline std::size_t recorded_file_number(const std::filesystem::path& file)
 {
-    const std::size_t scheme = url.find("://");
-    if (scheme != std::string_view::npos) {
-        const std::size_t path = url.find_first_of("/?#", scheme + 3);
-        url = path == std::string_view::npos ? std::string_view{"/"} : url.substr(path);
+    const std::string name = file.filename().string();
+    std::size_t n = 0;
+    std::size_t digits = 0;
+    for (; digits < name.size() && name[digits] >= '0' && name[digits] <= '9'; ++digits) {
+        n = n * 10 + static_cast<std::size_t>(name[digits] - '0');
     }
-    return std::string{url.substr(0, url.find('#'))};
+    return digits == 0 ? std::numeric_limits<std::size_t>::max() : n;
 }
 
 // Whether `path` matches `pattern`, in which '*' stands for any run of
@@ -140,7 +143,7 @@ public:
         on(method, std::move(url), in_turn(std::move(responses)));
     }
 
-    // Answers `method` and any URL whose path and query (url_path) match
+    // Answers `method` and any URL whose path and query (rp::request_path) match
     // `pattern` (path_matches), when no route of `on` or serve_recording
     // does. The first pattern added that matches wins.
     void on_path(HttpMethod method, std::string pattern, Handler handler)
@@ -157,9 +160,10 @@ public:
 
     // Serves every *.json in `dir`, a recording's service folder (`rpworker
     // ... --record <dir>` writes <dir>/<service>/): each by the method and the
-    // path and query of its "request" line, whatever the URL's host. The files
-    // of one request answer in turn in name order (their numbers), the last
-    // one repeating. A file holding only its body's digest throws when it is
+    // path and query of its "request" line, whatever the URL's host
+    // (rp::request_path, the recorder's own rule). The files of one request
+    // answer in turn in the order of their numbers (1000 after 999, whatever
+    // the names' order), the last one repeating. A file holding only its body's digest throws when it is
     // served (to_response). Returns how many files it loaded. Throws for a
     // folder that can't be read, a file that isn't JSON, and
     // std::runtime_error for a request line without a method it knows and a
@@ -172,7 +176,9 @@ public:
                 files.push_back(entry.path());
             }
         }
-        std::ranges::sort(files);
+        std::ranges::sort(files, {}, [](const std::filesystem::path& file) {
+            return std::pair{recorded_file_number(file), file};
+        });
         std::map<std::pair<HttpMethod, std::string>, std::vector<nlohmann::ordered_json>>
             by_request;
         for (const std::filesystem::path& path : files) {
@@ -281,7 +287,7 @@ private:
         if (const auto it = routes_.find({request.method, request.url}); it != routes_.end()) {
             return it->second;
         }
-        const std::string path = url_path(request.url);
+        const std::string path{request_path(request.url)};
         if (const auto it = path_routes_.find({request.method, path}); it != path_routes_.end()) {
             return it->second;
         }

@@ -103,12 +103,40 @@ TEST_CASE("the canary manifest refuses text that isn't a JSON object", "[canary-
     CHECK(refusal_of(text) == message);
 }
 
+TEST_CASE("the canary manifest refuses a number too large for a double, without quoting it",
+          "[canary-manifest]")
+{
+    // nlohmann throws out_of_range 406, not parse_error, and its message
+    // quotes the number: it must still be a ManifestError that doesn't.
+    const std::string number = GENERATE(as<std::string>{}, "1e400", "-1e400", "1e99999");
+    CAPTURE(number);
+    const std::string text = manifest_text();
+    REQUIRE(text.starts_with("{"));
+    const std::string edited = "{\"unused\": " + number + ", " + text.substr(1);
+
+    const std::string message = refusal_of(edited);
+
+    CHECK(message == "canary manifest: isn't valid JSON (a number is out of range)");
+    CHECK(message.find(number) == std::string::npos);
+}
+
+TEST_CASE("the canary manifest takes a received_at at the edges of a real date and time",
+          "[canary-manifest]")
+{
+    const std::string value = GENERATE(as<std::string>{}, "2028-02-29T00:00:00Z",
+                                       "2026-12-31T23:59:59Z", "2000-02-29T12:00:00Z");
+    CAPTURE(value);
+    CHECK(refusal_of_edit([&](json& m) { m["entries"][0]["received_at"] = value; }) ==
+          "(accepted)");
+}
+
 TEST_CASE("the canary manifest refuses an entry or field that breaks its rule",
           "[canary-manifest]")
 {
     const std::string schema = "canary manifest: /schema: must be \"seed-manifest.v1\"";
     const std::string tenant = "canary manifest: /tenant_id: must be a GUID";
-    const std::string received = at(0, "/received_at: must be \"YYYY-MM-DDTHH:MM:SSZ\"");
+    const std::string received =
+        at(0, "/received_at: must be \"YYYY-MM-DDTHH:MM:SSZ\", a real date and time in UTC");
     const std::string stored_size = at(kFirstSharePoint, "/stored_size: must be an integer of 0 or more");
     const std::string folder_path =
         at(kFirstSharePoint, "/location/folder_path: must start with \"/\" and have no \"..\" segment");
@@ -143,6 +171,15 @@ TEST_CASE("the canary manifest refuses an entry or field that breaks its rule",
         {"received_at with an offset", [](json& m) { m["entries"][0]["received_at"] = "2026-09-24T22:14:43+00:00"; }, received},
         {"received_at with a space", [](json& m) { m["entries"][0]["received_at"] = "2026-09-24 22:14:43Z"; }, received},
         {"received_at a non-digit", [](json& m) { m["entries"][0]["received_at"] = "2026-09-2xT22:14:43Z"; }, received},
+        // The shape holds, the date or time doesn't.
+        {"received_at month 13, hour 99", [](json& m) { m["entries"][0]["received_at"] = "2026-13-45T99:99:99Z"; }, received},
+        {"received_at month 0", [](json& m) { m["entries"][0]["received_at"] = "2026-00-10T22:14:43Z"; }, received},
+        {"received_at day 0", [](json& m) { m["entries"][0]["received_at"] = "2026-09-00T22:14:43Z"; }, received},
+        {"received_at 31 September", [](json& m) { m["entries"][0]["received_at"] = "2026-09-31T22:14:43Z"; }, received},
+        {"received_at 29 February of a common year", [](json& m) { m["entries"][0]["received_at"] = "2026-02-29T22:14:43Z"; }, received},
+        {"received_at hour 24", [](json& m) { m["entries"][0]["received_at"] = "2026-09-24T24:00:00Z"; }, received},
+        {"received_at minute 60", [](json& m) { m["entries"][0]["received_at"] = "2026-09-24T22:60:43Z"; }, received},
+        {"received_at second 60", [](json& m) { m["entries"][0]["received_at"] = "2026-09-24T22:14:60Z"; }, received},
         {"no location", [](json& m) { m["entries"][0].erase("location"); }, at(0, "/location: must be an object")},
         {"location a string", [](json& m) { m["entries"][0]["location"] = "Inbox"; }, at(0, "/location: must be an object")},
         {"no mailbox", [](json& m) { m["entries"][0]["location"].erase("mailbox"); },

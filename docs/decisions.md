@@ -7,6 +7,117 @@ Format: date, decision, reason, alternatives rejected.
 
 ---
 
+## 2026-09-30 — W2.6: how the sample is chosen (proposed; recorded before the build)
+
+Recorded before any of it was built. Proposed: the owner confirms it in the W2.6 review, or
+supersedes it.
+
+**Decision.**
+
+1. **The selector is pure; one new connector call lists the candidates.**
+   `rp::sampling::SampleSelector::select(plan, manifest, cursor, targets, pool, run_id)`
+   (`rp/sample_selector.hpp`) does no I/O and reads no clock. The random half's pool comes from
+   a new `IConnector::list_candidates(CandidateQuery)` (`rp/connector.hpp`, no Veeam name in it;
+   read-only for Microsoft 365; its default throws `NotImplementedError`, so another connector
+   needn't have it), and `choose_sample` calls it only when a random half is above 0.
+   `restore_sample` and both guard layers are unchanged: the guard still checks every item the
+   sampler chose.
+2. **Halves.** Per type, with N = `sample_mail`/`sample_sp`/`sample_od` and M the manifest's
+   canaries of that type (today 20 mails, 10 SharePoint files, 10 OneDrive files, not 20 of each):
+   c = min(ceil(N/2), M) canaries and floor(N/2) random items. Canaries left over when
+   ceil(N/2) > M are not moved to the random half.
+3. **Canaries rotate by a cursor, and the cursor is the rotation's only state.** A type's
+   canaries, in manifest order, are taken from positions cursor … cursor+c−1 (mod M), and the next
+   cursor is (cursor+c) mod M. Windows follow each other without a gap, so every canary is taken
+   within ceil(M/c) ≤ ceil(20/(N/2)) runs. The Worker keeps no state: the cursor is an input and
+   the result carries it and the next one. It belongs with the client in the Cloud (the
+   `client-profile.v1` job of 2026-09-29, W4.10/C5.13), which hands the next run the last run's
+   `cursor_next`; until then tests and the CLI pass it (`0,0,0` by default).
+4. **The seed comes from the run ID; the draws are portable.** seed = the first 4 bytes,
+   big-endian, of SHA-256("restoreproof/sample-v1\n" + run_id). Each type has two streams, browse
+   and items, seeded the same way from the seed, the type and the stream, so changing
+   `sample_mail` never moves a OneDrive pick. The generator is `std::mt19937` seeded with one
+   value; `below(n)` rejects outputs at or above 2^32 − (2^32 mod n); a pick is a lazy
+   Fisher–Yates over a sorted list. No `<random>` distribution, `std::shuffle` or `std::sample` is
+   used: their algorithms differ between standard libraries, and an auditor must be able to
+   repeat a draw anywhere.
+5. **Reproducible from the seed and the manifest, with the cursor and the restore point.** The
+   seed and the manifest alone don't fix a selection: the cursor says where the rotation is, and
+   the random half depends on what the restore point holds. The result records all four (run ID
+   and seed, the manifest's SHA-256, the cursor, the restore point's ID and `backupTime`), plus
+   each pool's size and SHA-256, so a replay can show it drew from the same pool. A restore point
+   doesn't change while retention keeps it.
+6. **The random half is drawn in two levels, from real data only.** Eligible containers
+   (mailboxes, sites, OneDrives) are sorted and drawn one at a time; in each, up to 3 folders are
+   drawn and listed, until 2 containers have given a candidate or 8 have been tried (a few dozen
+   Veeam calls, whatever the tenant's size). Every listing is the one `restore_sample` makes later,
+   and an item is a candidate only if that call will find it exactly once: its subject, file name
+   or folder name is unique in the whole listing, not only among candidates. Never a candidate:
+   - a restore target: a `restoretest` mailbox, the RestoreTarget library (by its derived drive ID,
+     point 8, and by its `url`), a top-level `RestoreTarget` folder in any OneDrive;
+   - a canary location or copy: the canary libraries (by list ID), a top-level `RestoreTest` folder
+     in any OneDrive, a subject or name starting with `rp-canary-` or equal to a canary's (ASCII
+     case-insensitive; this catches the Sent Items copies);
+   - an archive, public or `DiscoverySearchMailbox` mailbox; a personal or other-host site; the
+     `SitePages`, `SiteAssets`, `Style Library` and `FormServerTemplates` libraries; a non-mail
+     folder (`type` other than `None`) or the Deleted, PermanentlyDeletedItems, Drafts and Outbox
+     folders; an item class other than `IPM.Note`; a file above the 64 MiB download cap.
+   Mail comes from top-level folders only (whether `folders?name=`, which `restore_sample` uses,
+   finds nested folders is unrecorded). `select` checks the pool again and refuses all of it
+   (`std::logic_error`, nothing sampled) if a forbidden candidate gets through.
+7. **Same names and duplicates are skipped, deterministically.** Candidates are sorted by key and
+   deduplicated. Canary names and subjects are unique (the loader checks) and never in the pool. A
+   random pick whose subject or name (ASCII case-insensitive) is already taken for its type is
+   skipped and the next draw is used; the skipped draw still counts, so the sequence stays fixed.
+   So `restore_sample`'s refusals (two SharePoint or two OneDrive files of one name, one item
+   twice) can't fire, and no two mails of one subject are restored (the read-back couldn't tell
+   them apart).
+8. **The SharePoint drive ID is derived, not read.** A random SharePoint item's `drive_id` is
+   "b!" plus the base64url, without padding, of the site, web and list GUIDs' little-endian bytes.
+   This reproduces the canary library's, the RestoreTarget library's (`test_library_id`) and
+   alice's OneDrive's drive IDs from `lab/tenant.md`, so guard layer 1 needs no change and still
+   refuses the target. The Worker app can't read a source through Graph.
+9. **Office files may be picked.** A canary's `size` is its `stored_size` for `bytes` files and −1
+   for `office-v1` files (SharePoint rewrites docx and xlsx, so their stored size is evidence only;
+   W3.2 compares their content with office-v1). A random item's `size` is −1; Veeam's `sizeBytes`
+   stays in the pool for W3.
+10. **A small pool is a shortfall, recorded, not filled.** With fewer eligible candidates than
+    floor(N/2), all of them are taken and the result says how many were wanted and taken, and
+    whether fewer than 2 containers gave any. W3.3 decides what a shortfall does to the status;
+    the proposal is that it never turns `pass` into `fail`, and the report says how many real
+    items were tested. The lab has almost no real data today, so its random half is mostly empty
+    until some is seeded (open point).
+11. **Explore sessions.** `list_candidates` opens one explore session per type and stops each one
+    before it returns; one it can't stop is `connector::Error`, since `restore_sample`'s preflight
+    would then refuse. The session bookkeeping moves out of `restore_sample` into
+    `src/veeam_explore.*`, with no change in behaviour.
+
+**Reason.** Canaries rotate so each one is tested within the bound the task sets; a seeded offset
+couldn't promise that. The random half must be real data outside the targets and the canary
+locations (2026-09-25), and a restore target is in every backup (W2.4). Listing a whole tenant is
+too slow, while a two-level draw costs a few dozen calls. Portable draws let an auditor repeat a
+selection on any platform. Deriving the drive ID avoids a Graph read the Worker app isn't granted
+and a change to the strict guard.
+
+**Alternatives rejected.** *`std::uniform_int_distribution` or `std::shuffle`:* their output
+depends on the standard library. *Random or date-based rotation:* no coverage bound. *A cursor
+file on the Worker:* one Worker serves many clients (2026-09-29, "Clients live in the Cloud"), and
+a lost file would silently restart the rotation. *Deriving the rotation from a run counter:* it is
+the same state under another name. *Listing every container:* too costly. *Veeam's search:* not
+uniform, and veeam-notes §5.4 keeps it for later. *Filling a shortfall with canaries:* the report
+would overstate the real-data share. *Relaxing guard layer 1 to accept an empty `drive_id`:* it
+weakens a strict check. *A Graph read of each source:* the Worker app reads the targets only.
+
+**Open.** Where the run ID and cursor come from before the Cloud (proposed: `--run-id` and
+`--canary-cursor` on S2's `rpworker restore`); real data in the lab for the random half (a new L
+task: a few non-canary mails in alice's and bob's mailboxes, files in another library of the
+RestoreTest site and in bob's OneDrive, then a backup); what a random item is verified against
+(W3.1: the glossary says a live Graph read, which the grants rule out, so the proposal is Veeam's
+own listing: presence, name or subject, received time, size for non-Office files); whether group
+mailboxes such as `allcompany` are sampled (proposed: yes).
+
+---
+
 ## 2026-09-30 — W2.5 second review: restore point, errors, infrastructure, paging
 
 Amends points 2, 4, 6, 8, 9 and 10 of the W2.5 entry below and point 5 of its first review,

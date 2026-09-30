@@ -2001,10 +2001,11 @@ TEST_CASE("a restore POST goes out exactly once, whatever comes back", "[veeam][
          ": no answer ("},
         {"timeout", transport(rp::TransportError::timeout), Kind::no_answer, 0, "", "",
          ": no answer ("},
-        {"connect", transport(rp::TransportError::connect), Kind::no_answer, 0, "", "",
-         ": no answer ("},
-        {"handshake", transport(rp::TransportError::handshake), Kind::no_answer, 0, "", "",
-         ": no answer ("},
+        // No connection or no handshake: the request never went out.
+        {"connect", transport(rp::TransportError::connect), Kind::not_sent, 0, "", "",
+         ": not sent ("},
+        {"handshake", transport(rp::TransportError::handshake), Kind::not_sent, 0, "", "",
+         ": not sent ("},
         {"not an HttpError",
          [](const HttpRequest&) -> HttpResponse { throw std::runtime_error("SENTINEL-PW"); },
          Kind::no_answer, 0, "", "", ": no answer (the send failed)"},
@@ -2047,6 +2048,11 @@ TEST_CASE("a restore POST goes out exactly once, whatever comes back", "[veeam][
          respond(make_response(201, R"({"sessionId":"15c3f986-0000-4000-8000-000000000001"})")),
          Kind::accepted, 201, "", "15c3f986-0000-4000-8000-000000000001",
          ": HTTP 201, restore session"},
+        // Lower case, as GET /v8/RestoreSessions lists it for the duplicate check.
+        {"200 with a sessionId in upper case",
+         respond(make_response(200, R"({"sessionId":"15C3F986-0000-4000-8000-00000000000A"})")),
+         Kind::accepted, 200, "", "15c3f986-0000-4000-8000-00000000000a",
+         ": HTTP 200, restore session 15c3f986-0000-4000-8000-00000000000a"},
     }));
     CAPTURE(row.name);
     Lab lab;

@@ -17,8 +17,11 @@
 #include <rp/veeam_client.hpp>
 
 #include <chrono>
+#include <cstddef>
 #include <functional>
+#include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -151,6 +154,45 @@ public:
     // before any Veeam request).
     connector::RestoreResult restore_sample(const connector::RestoreSpec& spec) override;
 
+    // Lists the random half's candidates in `query`'s restore point (W2.6;
+    // docs/decisions.md 2026-09-30, W2.6 point 6). With no type asked for it
+    // returns an empty pool without a request; an empty client_ref or a
+    // backup_time that isn't Veeam's UTC form (or a negative limit) is
+    // std::invalid_argument, before any request. Then, in order:
+    //  1. the organisation, as list_restore_points finds it (none is
+    //     connector::Error here), the restore point (one of its points, the
+    //     backup_time byte for byte) and the preflight (no session of this
+    //     account Working), each connector::Error, before any explore session;
+    //  2. for each type asked for (mail, SharePoint, OneDrive) one explore
+    //     session, and a two-level draw from sampling::stream_seed(query.seed,
+    //     type, Stream::browse): the eligible containers (mailboxes, sites,
+    //     OneDrives) sorted and drawn one at a time, in each the eligible
+    //     folders sorted and up to limits.folders_per_container drawn and
+    //     listed, until limits.containers_wanted containers gave a candidate or
+    //     limits.containers_tried were looked into. The eligible OneDrives come
+    //     from the explore session alone; a drawn one that no single user of
+    //     GET /v8/Organizations/{id}/Users (today's users) owns is walked and
+    //     drawn as the others, so the draw doesn't change, but nothing in it
+    //     is listed (BrowseRecord::containers_unresolved). An item is a candidate only
+    //     if restore_sample's own listing will find it exactly once, and never
+    //     from a restore target or a canary location;
+    //  3. every explore session stopped; one that couldn't be is
+    //     connector::Error, as restore_sample's preflight would then refuse.
+    // Each explore session opened is remembered, even when the call throws,
+    // and restore_sample's duplicate check never counts one of them. Each
+    // call first forgets those remembered more than 60 s before
+    // (veeam_restore::kDuplicateWindow): the check only counts sessions made
+    // 5 s before its POST or later, so the service's memory doesn't grow.
+    // A random SharePoint item's drive_id is derived from Veeam's GUIDs
+    // (src/graph_ids.hpp), so no Graph read is made. Veeam's errors map as
+    // restore_sample maps them (a 404 is connector::Error); never
+    // connector::NotFoundError. Sends no POST but the sign-in's, the explore
+    // sessions' and their Stop.
+    connector::CandidatePool list_candidates(const connector::CandidateQuery& query) override;
+
+    // How many explore sessions list_candidates remembers (for tests).
+    std::size_t candidate_sessions_remembered() const noexcept { return candidate_sessions_.size(); }
+
 private:
     // Destroyed in reverse: the Graph client before its HTTP client, and the
     // VeeamClient before its.
@@ -166,6 +208,12 @@ private:
     std::function<void(std::chrono::milliseconds)> sleep_;
     std::shared_ptr<spdlog::logger> logger_;
     std::string account_; // the username as Veeam lists it in initiatedBy
+    // Every explore session list_candidates opened (or adopted), stopped or
+    // not, with when it was remembered (wall clock): Veeam lists them in
+    // /v8/RestoreSessions with a restore's type, so restore_sample's
+    // duplicate check knows them and never takes one for a second restore
+    // (docs/decisions.md 2026-09-30, W2.6 point 11).
+    std::map<std::string, std::chrono::system_clock::time_point> candidate_sessions_;
 };
 
 // The registry's factory for "veeam_m365": a VeeamM365Connector on

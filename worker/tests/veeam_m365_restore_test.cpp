@@ -24,6 +24,7 @@
 #include <cstddef>
 #include <functional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 using Catch::Matchers::ContainsSubstring;
@@ -817,6 +818,65 @@ TEST_CASE("restore_sample: two files of one name are refused before any Veeam re
                              "\" (ignoring case), and would be restored onto one file in the "
                              "restore target; restore them in separate runs; nothing was "
                              "restored");
+    CHECK(rig.veeam.requests().empty());
+}
+
+TEST_CASE("restore_sample: among several files, the first repeat is named with the first item "
+          "of its name",
+          "[veeam_m365][w2.5]")
+{
+    RestoreRig rig;
+    const auto named = [](std::string_view name, std::string_view folder) {
+        connector::SharePointSelector item = sp_x1_item();
+        item.name = std::string{name};
+        item.folder_path = std::string{folder};
+        return item;
+    };
+
+    const Caught thrown = caught_by([&] {
+        rig.restore(restore_spec({}, {named("a.pdf", "/A"), named("b.pdf", "/A"),
+                                      named("c.pdf", "/A"), named("B.PDF", "/B"),
+                                      named("A.pdf", "/B")}));
+    });
+
+    CHECK(thrown.kind == "Error");
+    CHECK_THAT(thrown.what, StartsWith("veeam_m365: sharepoint items 1 and 3 are both named "
+                                       "\"b.pdf\" (ignoring case)"));
+    CHECK(rig.veeam.requests().empty());
+}
+
+TEST_CASE("restore_sample: two files whose names differ in the case of a non-ASCII letter are "
+          "refused",
+          "[veeam_m365][w2.5]")
+{
+    // SharePoint and OneDrive fold the case of every letter, not only A-Z.
+    const std::string upper = "\xC5\xB9r\xC3\xB3" "d\xC5\x82" "a.pdf"; // Zrodla with Z-acute, o-acute, l-stroke
+    const std::string lower = "\xC5\xBAr\xC3\xB3" "d\xC5\x82" "a.pdf"; // the same, z-acute in lower case
+    RestoreRig rig;
+    connector::SharePointSelector first = sp_x1_item();
+    first.name = upper;
+    connector::SharePointSelector second = sp_x1_item();
+    second.folder_path = "/Other";
+    second.name = lower;
+    connector::OneDriveSelector mine = od_x1_item();
+    mine.name = lower;
+    connector::OneDriveSelector bobs = od_x1_item();
+    bobs.user = kBob;
+    bobs.name = upper;
+    const bool sharepoint = GENERATE(true, false);
+    CAPTURE(sharepoint);
+
+    const Caught thrown = caught_by([&] {
+        rig.restore(sharepoint ? restore_spec({}, {first, second})
+                               : restore_spec({}, {}, {mine, bobs}));
+    });
+
+    CHECK(thrown.kind == "Error");
+    CHECK_THAT(thrown.what, StartsWith(std::string{"veeam_m365: "} +
+                                       (sharepoint ? "sharepoint" : "onedrive") +
+                                       " items 0 and 1 are both named "));
+    CHECK_THAT(thrown.what, ContainsSubstring("(ignoring case), and would be restored onto one "
+                                              "file in the restore target"));
     CHECK(rig.veeam.requests().empty());
 }
 

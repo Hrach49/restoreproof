@@ -24,6 +24,22 @@ std::string quoted_name(const json& object)
     return "\"" + (name ? one_line(*name, 80) : std::string{"(none)"}) + "\"";
 }
 
+// Whether `url` is https on `host` (ASCII case-insensitive): "https://<host>"
+// alone or followed by '/', with no query, fragment, whitespace or control
+// character. A restore names its target by this address (restore-flow §16),
+// so it must be the test tenant's, whatever Graph wrote.
+bool is_https_on(std::string_view url, std::string_view host)
+{
+    if (std::ranges::any_of(url, [](char c) {
+            return static_cast<unsigned char>(c) <= 0x20 || c == 0x7F || c == '?' || c == '#';
+        })) {
+        return false;
+    }
+    const std::string lower = ascii_lower(url);
+    const std::string root = "https://" + ascii_lower(host);
+    return lower == root || lower.starts_with(root + "/");
+}
+
 // The last segment of a URL's path, percent-decoded ("" when it has none).
 std::string last_segment(std::string_view url)
 {
@@ -83,6 +99,11 @@ ResolvedLibrary check_restore_library(GraphClient& graph, const connector::Resto
         throw WrongTargetError("Graph's reply for the drive test_library_id names has no list ID "
                                "or site URL in sharePointIds; the Worker can't tell the library "
                                "apart" + outcome);
+    }
+    if (!is_https_on(*site_url, site_id.host)) {
+        throw WrongTargetError("Graph's reply for the drive test_library_id names has a site URL "
+                               "that isn't https on the test site's host (with no query, fragment "
+                               "or whitespace)" + outcome);
     }
     ResolvedLibrary library{*name, targets.library_id(), *list_id, *site, *web, *site_url};
     return library;
@@ -169,6 +190,14 @@ ResolvedOneDriveFolder check_restore_onedrive_folder(GraphClient& graph,
         throw WrongTargetError("Graph's reply for the OneDrive folder test_onedrive_folder_id "
                                "names has no sharepointIds with its site, web and site URL; the "
                                "Worker can't tell the OneDrive apart" + outcome);
+    }
+    // RestoreTargets checked the site ID's shape, so its tenant has a -my host.
+    const std::string onedrive =
+        onedrive_host(parse_graph_site_id(targets.site_id()).value().host).value();
+    if (!is_https_on(*site_url, onedrive)) {
+        throw WrongTargetError("Graph's reply for the OneDrive folder test_onedrive_folder_id "
+                               "names has a site URL that isn't https on the test tenant's "
+                               "OneDrive host (with no query, fragment or whitespace)" + outcome);
     }
     ResolvedOneDriveFolder resolved{*name,          drive_id, targets.onedrive_folder_id(),
                                     *site,          *web,     *site_url};

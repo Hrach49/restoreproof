@@ -69,13 +69,17 @@ public:
 
     // Layer 1. First each item, in the spec's order (mail, SharePoint,
     // OneDrive), without a call:
-    //  - mail: a source mailbox and folder are named, and the mailbox is no
+    //  - mail: a source mailbox and folder are named, the mailbox holds no
+    //    whitespace or control character (no address does) and is no
     //    restoretest mailbox (rp::is_restore_mailbox, any case), the test
-    //    mailbox included;
-    //  - SharePoint: a source drive and file are named, the drive is not
-    //    test_library_id (ASCII case-insensitive), and list_id is a GUID;
+    //    mailbox included. Layer 2 checks the source again as Veeam lists it,
+    //    which an alias or an object ID can't hide;
+    //  - SharePoint: a source drive and file are named, the drive is neither
+    //    test_library_id nor test_onedrive_drive_id (ASCII case-insensitive),
+    //    and list_id is a GUID;
     //  - OneDrive: an owner and file are named, and the folder path has no
-    //    ".." segment and doesn't start with a RestoreTarget folder (ASCII
+    //    ".." segment, backslash or colon (src/folder_path.hpp) and doesn't
+    //    start with a RestoreTarget folder (ASCII
     //    case-insensitive, empty and "." segments skipped). The owner can't be
     //    tied to the test OneDrive without the Veeam OneDrives list that
     //    restore_sample reads anyway (and layer 2 checks), so this rule is by

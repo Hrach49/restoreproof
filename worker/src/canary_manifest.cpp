@@ -140,6 +140,12 @@ CanaryMail read_mail(const json& entry, const std::string& pointer)
     mail.received_at = received->get<std::string>();
     const json& location = location_of(entry, pointer);
     mail.mailbox = text_at(location, "mailbox", pointer + "/location");
+    // The target guard's rule: no address holds either.
+    if (std::ranges::any_of(mail.mailbox, [](char c) {
+            return static_cast<unsigned char>(c) <= 0x20 || c == 0x7F;
+        })) {
+        refuse(pointer + "/location/mailbox", "holds whitespace or a control character");
+    }
     if (is_restore_mailbox(mail.mailbox)) {
         refuse(pointer + "/location/mailbox", "is a restore target (a restoretest mailbox)");
     }
@@ -167,7 +173,7 @@ CanaryFile read_file(const json& entry, const std::string& pointer, bool sharepo
     const auto folder_path = location.find("folder_path");
     if (folder_path == location.end() || !folder_path->is_string() ||
         !is_manifest_folder_path(folder_path->get_ref<const std::string&>())) {
-        refuse(where + "/folder_path", "must start with \"/\" and have no \"..\" segment");
+        refuse(where + "/folder_path", "must start with \"/\" and have no \"..\" segment, backslash or colon");
     }
     file.folder_path = folder_path->get<std::string>();
     if (sharepoint) {

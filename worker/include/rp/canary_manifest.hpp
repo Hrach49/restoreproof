@@ -69,11 +69,12 @@ public:
 // JSON object (a number too large for a double included); a schema other than "seed-manifest.v1"; a tenant_id that isn't
 // a GUID; entries that aren't an array of objects of kind mail,
 // sharepoint_file or onedrive_file; an id missing, empty or repeated; a mail
-// without subject, mailbox or folder, from a restoretest mailbox, or with a
+// without subject, mailbox or folder, from a restoretest mailbox or one whose
+// address holds whitespace or a control character, or with a
 // received_at that isn't "YYYY-MM-DDTHH:MM:SSZ" or not a real date and time
 // (month 13, 31 September, hour 24, second 60); a file without name, with another
 // file_type or content_rule, a stored_size below 0, or a folder_path not
-// starting with "/" or with a ".." segment; a SharePoint file whose site_id,
+// starting with "/" or with a ".." segment, a backslash or a colon; a SharePoint file whose site_id,
 // drive_id or list_id isn't a Graph site ID, a Graph drive ID or a GUID; a
 // OneDrive file without user; two subjects equal but for ASCII case; two
 // names of one kind equal but for the case of any letter (src/name_key.hpp:

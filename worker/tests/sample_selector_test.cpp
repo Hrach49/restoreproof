@@ -582,7 +582,42 @@ TEST_CASE("two files whose names differ only in the case of a non-ASCII letter a
     }
 }
 
-// 8. A shortfall is recorded, not filled.
+TEST_CASE("mail and OneDrive random picks and pool hashes are the pinned ones", "[sample-selector]")
+{
+    // Worked out apart from this code (Python: std::mt19937 by its
+    // definition, stream_seed(8b26e36a, type, items), the keys sorted, a lazy
+    // Fisher-Yates; the pool hash is SHA-256 of the keys as compact JSON,
+    // json.dumps(keys, separators=(",", ":"), ensure_ascii=False)), so a
+    // swapped stream or type, or another index-to-candidate mapping, fails.
+    connector::CandidatePool pool;
+    for (int i = 5; i >= 0; --i) {
+        pool.mail.push_back(mail_candidate(i));
+    }
+    for (int i = 4; i >= 0; --i) {
+        pool.onedrive.push_back(od_candidate(i));
+    }
+
+    const Selection s = select({4, 0, 6}, pool);
+
+    REQUIRE(s.mail.size() == 4);
+    CHECK(s.mail[2].subject == "real mail 00");
+    CHECK(s.mail[3].subject == "real mail 03");
+    CHECK(s.record.mail.pool_sha256 ==
+          "22c5530de8b34cabbcb8d81bdf190d093c0dd672bfcaeb000179e97e51b2f130");
+    REQUIRE(s.onedrive.size() == 6);
+    CHECK(s.onedrive[3].name == "notes-03.txt");
+    CHECK(s.onedrive[4].name == "notes-04.txt");
+    CHECK(s.onedrive[5].name == "notes-01.txt");
+    CHECK(s.record.onedrive.pool_sha256 ==
+          "c87be9ae7bd84f8deb66739cd1de2893f31ad5de873a3e5aec1e8862f6228452");
+    CHECK(s.record.onedrive.random_keys ==
+          std::vector<std::vector<std::string>>{
+              {"carol@restoreprooflab.onmicrosoft.com", "/Projects", "notes-03.txt"},
+              {"carol@restoreprooflab.onmicrosoft.com", "/Projects", "notes-04.txt"},
+              {"carol@restoreprooflab.onmicrosoft.com", "/Projects", "notes-01.txt"}});
+}
+
+
 TEST_CASE("a pool smaller than the random half: all of it taken, the shortfall recorded",
           "[sample-selector]")
 {

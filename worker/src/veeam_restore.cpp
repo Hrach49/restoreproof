@@ -20,6 +20,10 @@ namespace {
 using nlohmann::json;
 using nlohmann::ordered_json;
 
+// The years parse_veeam_time accepts.
+constexpr int kFirstYear = 1678;
+constexpr int kLastYear = 2261;
+
 constexpr std::array<std::string_view, 4> kInfrastructureTexts = {
     "cannot connect to microsoft 365",
     "failed to open mailbox",
@@ -39,6 +43,21 @@ std::string optional_text(const json& object, std::string_view key)
         throw ShapeError("\"" + std::string{key} + "\" isn't a string");
     }
     return it->get<std::string>();
+}
+
+// `text` with each `name` in it replaced by a unit separator, which no
+// infrastructure text holds: cutting a name out never makes one.
+std::string without_name(std::string_view text, std::string_view name)
+{
+    std::string out{text};
+    if (name.empty()) {
+        return out;
+    }
+    for (std::size_t at = out.find(name); at != std::string::npos;
+         at = out.find(name, at + 1)) {
+        out.replace(at, name.size(), "\x1F");
+    }
+    return out;
 }
 
 // The "results" array of a list reply.
@@ -166,7 +185,10 @@ std::optional<UtcTime> parse_veeam_time(std::string_view text)
     const std::chrono::year_month_day date{std::chrono::year{number(year)},
                                            std::chrono::month{static_cast<unsigned>(number(month))},
                                            std::chrono::day{static_cast<unsigned>(number(day))}};
-    if (!date.ok() || number(hour) > 23 || number(minute) > 59 || number(second) > 59) {
+    // A time in nanoseconds holds 1677-09-21 to 2262-04-11: whole years
+    // inside that, so no date overflows it (Veeam's 9999 "never" among them).
+    if (!date.ok() || number(year) < kFirstYear || number(year) > kLastYear || number(hour) > 23 ||
+        number(minute) > 59 || number(second) > 59) {
         return std::nullopt;
     }
     std::int64_t nanos = 0;
@@ -463,20 +485,28 @@ SessionVerdict judge(connector::ItemKind kind, const std::string& session_id,
     // failing session-level event, else its first statistics error.
     std::string infrastructure;
     std::string session_failure;
-    const auto note = [&](const std::string& text) {
-        if (infrastructure.empty() && is_infrastructure_text(text)) {
+    // Only Veeam's own words count: an item's name (a sampled mail's subject,
+    // a file's name) is the tenant's text, so it is cut out first, and an
+    // item Veeam restored says nothing about infrastructure.
+    const auto note = [&](const std::string& text, std::string_view name) {
+        if (infrastructure.empty() && is_infrastructure_text(without_name(text, name))) {
             infrastructure = text;
         }
     };
     for (const Event& event : events) {
-        note(event.title);
-        note(event.message);
-        if (session_failure.empty() && event.type != "Restore" && event.status != "Success") {
-            session_failure = !event.message.empty() ? event.message : event.title;
+        if (event.type != "Restore") {
+            note(event.title, {});
+            note(event.message, {});
+            if (session_failure.empty() && event.status != "Success") {
+                session_failure = !event.message.empty() ? event.message : event.title;
+            }
+        } else if (event.status != "Success") {
+            note(event.title, event.item_name);
+            note(event.message, event.item_name);
         }
     }
     for (const std::string& error : statistics.errors) {
-        note(error);
+        note(error, {});
     }
     if (session_failure.empty() && !statistics.errors.empty()) {
         session_failure = statistics.errors.front();
@@ -521,7 +551,8 @@ SessionVerdict judge(connector::ItemKind kind, const std::string& session_id,
             message = session_failure;
         }
         result.message = log_line(message);
-        result.infrastructure = is_infrastructure_text(message);
+        result.infrastructure = result.outcome != connector::ItemOutcome::restored &&
+                                is_infrastructure_text(without_name(message, item.name));
         all_restored = all_restored && result.outcome == connector::ItemOutcome::restored;
         out.items.push_back(std::move(result));
     }

@@ -48,6 +48,7 @@ add_library(rpcore STATIC
     src/veeam_client.cpp
     src/veeam_command.cpp
     src/veeam_m365_connector.cpp
+    src/veeam_restore.cpp
     src/version.cpp
 )
 target_include_directories(rpcore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -113,6 +114,8 @@ add_executable(rptests
     tests/veeam_command_test.cpp
     tests/veeam_m365_connector_test.cpp
     tests/veeam_m365_restore_guard_test.cpp
+    tests/veeam_m365_restore_test.cpp
+    tests/veeam_restore_test.cpp
     tests/version_test.cpp
 )
 # deps_test.cpp uses cpr and OpenSSL directly, so it links them itself.

@@ -36,6 +36,9 @@ namespace rp::test::target_guard_lab {
 
 using namespace rp::test::graph_lab;
 
+// A source library's list ID. Made up.
+inline const std::string kMadeUpListId = "0b5e1d2c-0000-4000-8000-00000000c0de";
+
 // Sources a sample may take, never a restore target. Made up, never a lab value.
 inline rp::connector::MailSelector mail_source(int n = 1)
 {
@@ -44,7 +47,7 @@ inline rp::connector::MailSelector mail_source(int n = 1)
 inline rp::connector::SharePointSelector sharepoint_source(int n = 1)
 {
     return {lab_values().site_id, "b!madeUpSourceLibraryDrive", "/",
-            "file-" + std::to_string(n) + ".pdf"};
+            "file-" + std::to_string(n) + ".pdf", kMadeUpListId};
 }
 inline rp::connector::OneDriveSelector onedrive_source(int n = 1)
 {

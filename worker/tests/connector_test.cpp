@@ -384,6 +384,42 @@ TEST_CASE("a new restore result has not run", "[connector]")
     REQUIRE(result.session_ids.empty());
     REQUIRE(result.log.empty());
     REQUIRE(result.items_restored == 0);
+    REQUIRE(result.items_sent == 0);
+    REQUIRE(result.sessions.empty());
+    REQUIRE(result.items.empty());
+    const connector::ItemRestoreResult item;
+    REQUIRE(item.outcome == connector::ItemOutcome::unknown);
+    REQUIRE_FALSE(item.infrastructure);
+    const connector::RestoreSessionResult session;
+    REQUIRE(session.items_sent == 0);
+    REQUIRE(session.items_restored == 0);
+}
+
+TEST_CASE("item kinds and outcomes have stable names", "[connector]")
+{
+    const auto [kind, kind_name] = GENERATE(table<connector::ItemKind, std::string>({
+        {connector::ItemKind::mail, "mail"},
+        {connector::ItemKind::sharepoint, "sharepoint"},
+        {connector::ItemKind::onedrive, "onedrive"},
+    }));
+    CHECK(connector::to_string(kind) == kind_name);
+    const auto [outcome, outcome_name] = GENERATE(table<connector::ItemOutcome, std::string>({
+        {connector::ItemOutcome::unknown, "unknown"},
+        {connector::ItemOutcome::restored, "restored"},
+        {connector::ItemOutcome::failed, "failed"},
+    }));
+    CHECK(connector::to_string(outcome) == outcome_name);
+}
+
+TEST_CASE("the selectors' optional fields start unset", "[connector]")
+{
+    const connector::MailSelector mail{"alice@x", "Inbox", "s"};
+    CHECK(mail.received_at.empty());
+    const connector::SharePointSelector sp{"site", "drive", "/", "f.pdf"};
+    CHECK(sp.list_id.empty());
+    CHECK(sp.size == -1);
+    const connector::OneDriveSelector od{"alice@x", "/RestoreTest", "f.pdf"};
+    CHECK(od.size == -1);
 }
 
 TEST_CASE("a restore spec counts its items across the three types", "[connector]")

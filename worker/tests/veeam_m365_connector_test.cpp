@@ -616,11 +616,11 @@ TEST_CASE("veeam_m365: a connector can be made directly on an HTTP client it own
     http.on(HttpMethod::get, orgs_url(), {orgs_response()});
     http.on(HttpMethod::get, points_url(), {load_fixture("veeam", "restore-points-200")});
     http.on(HttpMethod::post, kLogoutUrl, {load_fixture("veeam", "logout-204")});
-    rp::VeeamClientOptions options;
-    options.sleep = [](std::chrono::milliseconds) {};
+    rp::VeeamM365ConnectorOptions options;
+    options.client.sleep = [](std::chrono::milliseconds) {};
     {
         rp::VeeamM365Connector made(std::make_unique<rp::test::ForwardingHttpClient>(http), kBase,
-                                    kUsername, kPassword, options);
+                                    kUsername, kPassword, std::move(options));
         REQUIRE(made.list_restore_points(kOrgName).size() == 2);
     }
     REQUIRE(http.count(HttpMethod::post, kLogoutUrl) == 1);

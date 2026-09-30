@@ -24,12 +24,28 @@ namespace rp {
 
 namespace {
 
-// Whether `args` are `list` or `list --config <path>`; for the latter, sets
-// `config_arg` to the path as given, in UTF-8.
+// Whether `args` are `list` followed by `--config <path>` and `--record
+// <dir>` in any order, each at most once; sets the ones given, in UTF-8.
 bool parse_list_args(std::span<const std::string_view> args,
-                     std::optional<std::string_view>& config_arg)
+                     std::optional<std::string_view>& config_arg,
+                     std::optional<std::string_view>& record_arg)
 {
-    return !args.empty() && args[0] == "list" && parse_config_option(args.subspan(1), config_arg);
+    if (args.empty() || args[0] != "list") {
+        return false;
+    }
+    for (std::size_t i = 1; i < args.size(); i += 2) {
+        if (i + 1 >= args.size()) {
+            return false;
+        }
+        if (args[i] == "--config" && !config_arg) {
+            config_arg = args[i + 1];
+        } else if (args[i] == "--record" && !record_arg) {
+            record_arg = args[i + 1];
+        } else {
+            return false;
+        }
+    }
+    return true;
 }
 
 // what() is safe to print: VeeamError's message went through rp::redact().
@@ -116,11 +132,16 @@ VeeamCommandEnv default_veeam_command_env()
     return env;
 }
 
-int run_veeam_command(std::span<const std::string_view> args, std::ostream& out,
-                      std::ostream& err, const VeeamCommandEnv& env)
+namespace {
+
+// The command but for what --record wrote, which run_veeam_command prints
+// last: `recorder` is set once the recording is open.
+int run_list(std::span<const std::string_view> args, std::ostream& out, std::ostream& err,
+             const VeeamCommandEnv& env, std::shared_ptr<FixtureRecorder>& recorder)
 {
     std::optional<std::string_view> config_arg;
-    if (!parse_list_args(args, config_arg)) {
+    std::optional<std::string_view> record_arg;
+    if (!parse_list_args(args, config_arg, record_arg)) {
         err << kCliUsage;
         return exit_code::usage;
     }
@@ -140,8 +161,13 @@ int run_veeam_command(std::span<const std::string_view> args, std::ostream& out,
     }
     try {
         require_veeam_secrets(secrets);
+        recorder = open_recording(record_arg, "veeam list", secrets);
     } catch (const ConfigError& e) {
         err << "config error: " << e.what() << '\n';
+        return exit_code::config;
+    } catch (...) {
+        // Not a ConfigError, so its message may not be safe to show.
+        err << "config error: unexpected failure\n";
         return exit_code::config;
     }
     HttpClientOptions http_options;
@@ -160,7 +186,7 @@ int run_veeam_command(std::span<const std::string_view> args, std::ostream& out,
     // Everything that can throw is in here, the table's formatting and
     // printing included, so no exception escapes.
     try {
-        http = env.make_http(http_options);
+        http = recorded(env.make_http(http_options), recorder, "veeam");
         if (!http) {
             throw std::logic_error("no HTTP client");
         }
@@ -198,6 +224,16 @@ int run_veeam_command(std::span<const std::string_view> args, std::ostream& out,
         client->logout();
     }
     return code;
+}
+
+} // namespace
+
+int run_veeam_command(std::span<const std::string_view> args, std::ostream& out,
+                      std::ostream& err, const VeeamCommandEnv& env)
+{
+    std::shared_ptr<FixtureRecorder> recorder;
+    const int code = run_list(args, out, err, env, recorder);
+    return finish_recording(recorder.get(), out, err, code);
 }
 
 } // namespace rp

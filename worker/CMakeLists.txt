@@ -38,6 +38,7 @@ add_library(rpcore STATIC
     src/graph_targets.cpp
     src/http_client.cpp
     src/name_key.cpp
+    src/recording_http_client.cpp
     src/redact.cpp
     src/restore_command.cpp
     src/retry_policy.cpp
@@ -77,8 +78,9 @@ target_compile_options(rpcore PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/we4062>)
 # program_data_dir() calls SHGetKnownFolderPath (shell32) and CoTaskMemFree (ole32);
 # public_key_pin() reads the CA file with CryptQueryObject (crypt32), as curl does.
 # The restore credential's export (W2.5, cert_export.cpp) also reads the store
-# and exports a PFX (crypt32) and makes its password (bcrypt).
-target_link_libraries(rpcore PRIVATE shell32 ole32 crypt32 bcrypt)
+# and exports a PFX (crypt32) and makes its password (bcrypt). The tests'
+# network guard (Q2.1, http_client.cpp) opens the sockets it allows (ws2_32).
+target_link_libraries(rpcore PRIVATE shell32 ole32 crypt32 bcrypt ws2_32)
 
 # rpworker: the Worker exe. main() lives in app/ and only hands argv to
 # rp::run_cli; all parsing is in rpcore, where rptests can reach it
@@ -112,6 +114,7 @@ add_executable(rptests
     tests/http_client_test.cpp
     tests/http_client_tls_test.cpp
     tests/name_key_test.cpp
+    tests/recording_http_client_test.cpp
     tests/redact_test.cpp
     tests/restore_command_test.cpp
     tests/retry_policy_test.cpp
@@ -123,6 +126,7 @@ add_executable(rptests
     tests/smoke.cpp
     tests/target_guard_test.cpp
     tests/target_guard_veeam_test.cpp
+    tests/test_main.cpp
     tests/text_table_test.cpp
     tests/text_util_test.cpp
     tests/text_v1_test.cpp
@@ -139,7 +143,8 @@ add_executable(rptests
     tests/version_test.cpp
 )
 # deps_test.cpp uses cpr and OpenSSL directly, so it links them itself.
-target_link_libraries(rptests PRIVATE rpcore cpr::cpr OpenSSL::Crypto Catch2::Catch2WithMain)
+# tests/test_main.cpp is rptests' main: Catch2's, inside the network guard (Q2.1).
+target_link_libraries(rptests PRIVATE rpcore cpr::cpr OpenSSL::Crypto Catch2::Catch2)
 # cert_export_test.cpp deletes the CNG key file it makes (ncrypt).
 target_link_libraries(rptests PRIVATE ncrypt)
 # httplib is test-only: the HTTP client tests run a server on 127.0.0.1.
@@ -174,7 +179,7 @@ endfunction()
 
 rp_add_exe_test("rpworker --version prints the project version"
     ARGS --version EXIT_CODE 0 STDOUT ${PROJECT_VERSION} STDERR "")
-set(RP_USAGE "usage: rpworker --version | rpworker config check [--config <path>] | rpworker veeam list [--config <path>] | rpworker graph list [--hash] [--config <path>] | rpworker restore [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>]")
+set(RP_USAGE "usage: rpworker --version | rpworker config check [--config <path>] | rpworker veeam list [--config <path>] [--record <dir>] | rpworker graph list [--hash] [--config <path>] [--record <dir>] | rpworker restore [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--record <dir>]")
 rp_add_exe_test("rpworker rejects unknown arguments"
     ARGS --no-such-option EXIT_CODE 64 STDOUT "" STDERR "${RP_USAGE}")
 rp_add_exe_test("rpworker config without a subcommand prints usage"
@@ -208,9 +213,19 @@ rp_add_exe_test("rpworker veeam list needs RP_VEEAM_PASSWORD"
     ARGS veeam list --config ${CMAKE_CURRENT_SOURCE_DIR}/config.example.json
     UNSET_ENV RP_VEEAM_PASSWORD
     EXIT_CODE 1 STDOUT "" STDERR "config error: RP_VEEAM_PASSWORD is not set")
+# --record (Q2.1) refuses a folder that isn't empty (this source folder) after
+# the secrets and before any request.
+rp_add_exe_test("rpworker veeam list --record needs a folder"
+    ARGS veeam list --record EXIT_CODE 64 STDOUT "" STDERR "${RP_USAGE}")
+rp_add_exe_test("rpworker veeam list --record refuses a folder that isn't empty"
+    ARGS veeam list --config ${CMAKE_CURRENT_SOURCE_DIR}/config.example.json
+    --record ${CMAKE_CURRENT_SOURCE_DIR}
+    EXIT_CODE 1 STDOUT ""
+    STDERR "config error: ${CMAKE_CURRENT_SOURCE_DIR}: the --record folder is not empty")
 set_tests_properties(
     "rpworker veeam list needs RP_VEEAM_USERNAME"
     "rpworker veeam list needs RP_VEEAM_PASSWORD"
+    "rpworker veeam list --record refuses a folder that isn't empty"
     PROPERTIES ENVIRONMENT "RP_VEEAM_USERNAME=set-by-ctest;RP_VEEAM_PASSWORD=set-by-ctest")
 
 # graph list stops before any request in each of these too: the certificate is

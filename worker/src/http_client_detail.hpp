@@ -8,9 +8,12 @@
 #include <cpr/error.h>
 #include <cpr/ssl_options.h>
 
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
+
+struct sockaddr; // winsock2.h's
 
 namespace rp::detail {
 
@@ -38,5 +41,29 @@ std::string_view describe(cpr::ErrorCode code) noexcept;
 // curl's message, or "curl error <code name>" when it is empty, as it often is
 // for Schannel failures.
 std::string error_text(const cpr::Error& error);
+
+// Q2.1's network guard, for the unit tests only (tests/test_main.cpp turns it
+// on unless RP_LIVE=1; the Worker never does). While it is on, HttpClient
+// connects to the loopback range alone (127.0.0.0/8 and ::1): a URL whose host
+// isn't "localhost", an IPv4 literal starting 127. or "[::1]" is refused
+// before anything is looked up or sent (HttpError, TransportError::connect,
+// attempts() 0), and any other address curl would open a socket to is
+// refused before the socket exists (curl's connect error). Each refusal is
+// counted. Process-wide; returns the previous setting.
+bool set_loopback_only(bool on) noexcept;
+
+// The refusals counted since the last call, and the count back to 0.
+std::uint64_t take_refused_connections() noexcept;
+
+// Whether the URL's host is one set_loopback_only lets through by name:
+// "localhost" in any case, an IPv4 literal whose first part is 127, or
+// "[::1]". Userinfo and port are ignored. An IPv6 host without its closing
+// ']' is let through too: curl refuses that URL before any lookup.
+bool is_loopback_url(std::string_view url) noexcept;
+
+// Whether a socket address curl would connect to is one set_loopback_only
+// lets through: IPv4 127.0.0.0/8 or IPv6 ::1. Anything else, an IPv4-mapped
+// IPv6 address included, isn't.
+bool is_loopback_sockaddr(const ::sockaddr* address) noexcept;
 
 } // namespace rp::detail

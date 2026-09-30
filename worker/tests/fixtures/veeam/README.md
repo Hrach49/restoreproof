@@ -40,6 +40,21 @@ Tokens are `[REDACTED]`, as in the evidence. Tests substitute their own values w
 need a token. Organisation, restore point and session IDs, names and times are real lab
 values and are kept as recorded: they exercise the composite-ID handling.
 
+## Recorded by the Worker (`--record`, Q2.1)
+
+`rpworker veeam list`, `graph list` and `restore` with `--record <dir>` write the same format
+from the Worker's own calls, one file per exchange, `<nnn>-<method>-<path>.json`
+(`docs/testing.md`, "Recording fixtures"). Their `source` is `rpworker <version> <command>
+--record`; `request` is exactly the method and the path and query sent, which
+`FakeHttpClient::serve_recording` routes by; `headers` holds only `Content-Type`,
+`Retry-After`, `WWW-Authenticate` and `Location`; `request_body` is written for a JSON request
+body only; a body that isn't UTF-8 (and every download) is `null` with `body_size` and
+`body_sha256` instead. A recording goes in a subfolder of its own here, and its files are
+served together:
+
+| Recording | Command | For |
+|---|---|---|
+
 ## Files
 
 | Fixture | Source (`docs/api/veeam-lab/`) | For |

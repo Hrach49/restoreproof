@@ -381,6 +381,7 @@ nlohmann::json kind_json(const KindRecord& k)
           {"keys", k.random_keys},
           {"containers_eligible", k.browse.containers_eligible},
           {"containers_listed", k.browse.containers_listed},
+          {"containers_unresolved", k.browse.containers_unresolved},
           {"folders_listed", k.browse.folders_listed},
           {"short_of_containers", k.browse.short_of_containers}}},
     };

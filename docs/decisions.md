@@ -46,7 +46,15 @@ supersedes it.
    the random half depends on what the restore point holds. The result records all four (run ID
    and seed, the manifest's SHA-256, the cursor, the restore point's ID and `backupTime`), plus
    each pool's size and SHA-256, so a replay can show it drew from the same pool. A restore point
-   doesn't change while retention keeps it.
+   doesn't change while retention keeps it. One input isn't the restore point's: a OneDrive's
+   owner (`restore_sample` finds a OneDrive by its owner's UPN) comes from
+   `GET /v8/Organizations/{org}/Users`, Veeam's cache of the tenant's users today. So which
+   OneDrives are eligible, and the order they are drawn in, come from the restore point alone
+   (every OneDrive with a well-formed ID and a `url` no other shares); a drawn OneDrive that no
+   single user owns now (deleted, renamed, not yet in the cache) is walked and its folders drawn
+   as usual, so the draw goes on unchanged, but nothing in it is listed. The result counts those
+   (`containers_unresolved`) and lists them by `url`, so a replay after a user change shows why
+   its OneDrive pool differs.
 6. **The random half is drawn in two levels, from real data only.** Eligible containers
    (mailboxes, sites, OneDrives) are sorted and drawn one at a time; in each, up to 3 folders are
    drawn and listed, until 2 containers have given a candidate or 8 have been tried (a few dozen
@@ -90,7 +98,12 @@ supersedes it.
 11. **Explore sessions.** `list_candidates` opens one explore session per type and stops each one
     before it returns; one it can't stop is `connector::Error`, since `restore_sample`'s preflight
     would then refuse. The session bookkeeping moves out of `restore_sample` into
-    `src/veeam_explore.*`, with no change in behaviour.
+    `src/veeam_explore.*`, with no change in behaviour. Veeam lists explore sessions in
+    `/v8/RestoreSessions` with the restore's type (restore-flow §12), so a lister's session,
+    stopped seconds before the restore POST, would pass `restore_sample`'s duplicate check (ours,
+    that type, new since the POST less 5 s) and leave the run without a verdict. The connector
+    remembers every explore session `list_candidates` opened or adopted, also when it throws, and
+    they join the duplicate check's known set.
 
 **Reason.** Canaries rotate so each one is tested within the bound the task sets; a seeded offset
 couldn't promise that. The random half must be real data outside the targets and the canary

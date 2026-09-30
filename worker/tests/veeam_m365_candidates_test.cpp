@@ -1130,6 +1130,99 @@ TEST_CASE("list_candidates: real items outside the targets and canaries, as rest
     CHECK(rig.rig.lab.graph_gets() == 0);
 }
 
+namespace {
+
+// Another OneDrive in the restore point, owned by <owner>@RestoreProofLab.onmicrosoft.com,
+// with a file at its root and two folders.
+void add_onedrive(Tenant& tenant, const std::string& id, const std::string& owner)
+{
+    json entry = tenant.onedrives.at(0);
+    entry["id"] = id;
+    entry["url"] = "https://restoreprooflab-my.sharepoint.com/personal/" + owner +
+                   "_restoreprooflab_onmicrosoft_com";
+    entry["name"] = owner;
+    tenant.onedrives.push_back(entry);
+    Tenant::add(tenant.od_documents, {id, "root"},
+                file(false, id.substr(0, 36), owner + ".txt"));
+    for (const std::string name : {"Photos", "Work"}) {
+        Tenant::add(tenant.od_folders, {id, "root"}, folder(owner + "-" + name, name));
+    }
+}
+
+void add_user(Tenant& tenant, const std::string& owner)
+{
+    json entry = tenant.users.at(0);
+    entry["id"] = "user-" + owner;
+    entry["name"] = owner + "@RestoreProofLab.onmicrosoft.com";
+    tenant.users.push_back(entry);
+}
+
+} // namespace
+
+TEST_CASE("list_candidates: which OneDrives are eligible and drawn depends on the restore point "
+          "alone, not on today's users",
+          "[veeam_m365][w2.6]")
+{
+    // /v8/Organizations/{org}/Users answers from Veeam's cache of the tenant's
+    // current users, not from the restore point: a user deleted or renamed
+    // since must not change which OneDrives are eligible or the order they
+    // are drawn in, only whether the drawn one gives candidates.
+    const auto tenant_with = [](bool carol_resolves) {
+        Tenant tenant;
+        fill(tenant);
+        add_onedrive(tenant,
+                     "0d0d0d0d-0000-4000-8000-0000000000c1"
+                     "0d0d0d0d-0000-4000-8000-0000000000c2",
+                     "carol");
+        add_onedrive(tenant,
+                     "0d0d0d0d-0000-4000-8000-0000000000d1"
+                     "0d0d0d0d-0000-4000-8000-0000000000d2",
+                     "dave");
+        add_user(tenant, "dave");
+        if (carol_resolves) {
+            add_user(tenant, "carol");
+        }
+        return tenant;
+    };
+    CandidateRig today;
+    today.tenant = tenant_with(true);
+    today.serve();
+    CandidateRig later;
+    later.tenant = tenant_with(false);
+    later.serve();
+
+    const connector::CandidatePool a = today.list(query(false, false, true));
+    const connector::CandidatePool b = later.list(query(false, false, true));
+
+    const std::string carol = "carol@RestoreProofLab.onmicrosoft.com";
+    const std::string carol_url =
+        "https://restoreprooflab-my.sharepoint.com/personal/carol_restoreprooflab_onmicrosoft_com";
+    CHECK(a.onedrive_browse.containers_eligible == 4);
+    CHECK(b.onedrive_browse.containers_eligible == 4);
+    // The same draw: carol's OneDrive is listed by its address when no user owns it.
+    std::vector<std::string> expected = a.onedrive_browse.containers_listed;
+    REQUIRE(std::ranges::count(expected, carol) == 1);
+    std::ranges::replace(expected, carol, carol_url);
+    CHECK(b.onedrive_browse.containers_listed == expected);
+    CHECK(a.onedrive_browse.containers_unresolved == 0);
+    CHECK(b.onedrive_browse.containers_unresolved == 1);
+    // Carol's files are candidates only while she resolves; nothing of hers
+    // is listed otherwise, though her folders are still drawn.
+    std::vector<std::string> without_carol;
+    for (const std::string& entry : found(a)) {
+        if (entry.find(carol) == std::string::npos) {
+            without_carol.push_back(entry);
+        }
+    }
+    CHECK(without_carol.size() + 1 == found(a).size());
+    CHECK(found(b) == without_carol);
+    const std::string carol_drive = "0d0d0d0d-0000-4000-8000-0000000000c1";
+    CHECK(later.gets_with(carol_drive + "0d0d0d0d-0000-4000-8000-0000000000c2/Documents") == 0);
+    CHECK(later.gets_with(carol_drive + "0d0d0d0d-0000-4000-8000-0000000000c2/Folders") ==
+          today.gets_with(carol_drive + "0d0d0d0d-0000-4000-8000-0000000000c2/Folders"));
+    CHECK(b.onedrive_browse.folders_listed + 3 == a.onedrive_browse.folders_listed);
+}
+
 // ---- list_candidates, then restore_sample -------------------------------------------------------
 
 TEST_CASE("list_candidates then restore_sample: the lister's stopped explore session is never "

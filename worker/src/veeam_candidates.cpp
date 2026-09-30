@@ -111,6 +111,11 @@ struct Container {
     std::string key;     // what the draw sorts by
     std::string address; // mailbox address, Graph site ID or OneDrive owner
     std::string id;      // Veeam's ID, lower case
+    // A OneDrive no single organisation user owns today: drawn and walked
+    // like the others, so the draw stays the restore point's, but nothing
+    // in it is listed (restore_sample couldn't address it). `address` is
+    // then its url.
+    bool unresolved = false;
 };
 
 // A folder whose items are listed.
@@ -245,6 +250,7 @@ void CandidateLister::draw(ItemKind kind, std::vector<Container> containers,
         ++tried;
         const Container& container = containers[*at];
         record.containers_listed.push_back(container.address);
+        record.containers_unresolved += container.unresolved ? 1 : 0;
         std::vector<Unit> units = units_of(container);
         std::ranges::sort(units, unit_before);
         sampling::Shuffle folders(rng, units.size());
@@ -254,8 +260,12 @@ void CandidateLister::draw(ItemKind kind, std::vector<Container> containers,
             if (!unit) {
                 break;
             }
-            ++record.folders_listed;
-            found = list(container, units[*unit]) || found;
+            // Drawn either way, so the rng's sequence doesn't depend on
+            // whether an owner resolves; listed only when one does.
+            if (!container.unresolved) {
+                ++record.folders_listed;
+                found = list(container, units[*unit]) || found;
+            }
         }
         productive += found ? 1 : 0;
     }
@@ -466,6 +476,9 @@ void CandidateLister::browse_onedrive(connector::CandidatePool& pool,
         }
         return out;
     }();
+    // Eligible by the restore point alone: the organisation's users (Veeam's
+    // cache of today's tenant, not the restore point's) only decide whether
+    // a drawn OneDrive can give candidates, never which are drawn.
     std::vector<Container> containers;
     for (const json& entry : onedrives) {
         const std::string id = ascii_lower(id_of(entry));
@@ -482,9 +495,9 @@ void CandidateLister::browse_onedrive(connector::CandidatePool& pool,
                 owned_by.push_back(&owner);
             }
         }
-        if (owned_by.size() == 1) {
-            containers.push_back({ascii_lower(*url), *owned_by.front(), id});
-        }
+        const bool resolved = owned_by.size() == 1;
+        containers.push_back(
+            {ascii_lower(*url), resolved ? *owned_by.front() : *url, id, !resolved});
     }
 
     const auto units_of = [&](const Container& onedrive) {

@@ -266,6 +266,10 @@ struct CandidateExclusions {
     std::vector<std::string> subjects;         // canary mails, their Sent Items copies too
     std::vector<std::string> sharepoint_names; // canary SharePoint file names
     std::vector<std::string> onedrive_names;   // canary OneDrive file names
+    // The top-level folders the OneDrive canaries are in (the first segment of
+    // each folder_path; none for one at the root): never looked into, in any
+    // OneDrive, besides RestoreTarget and RestoreTest, which never are.
+    std::vector<std::string> onedrive_folders;
 };
 
 // One list_candidates call. RestoreTargets has no default, so neither has this.

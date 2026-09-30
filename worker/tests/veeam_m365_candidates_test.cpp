@@ -1355,6 +1355,24 @@ TEST_CASE("list_candidates: which OneDrives are eligible and drawn depends on th
     CHECK(b.onedrive_browse.folders_listed + 3 == a.onedrive_browse.folders_listed);
 }
 
+TEST_CASE("list_candidates: a top-level folder the manifest's OneDrive canaries are in is never "
+          "looked into, in any OneDrive",
+          "[veeam_m365][w2.6]")
+{
+    CandidateRig rig;
+    fill(rig.tenant);
+    rig.serve();
+    connector::CandidateQuery q = query(false, false, true);
+    q.exclude.onedrive_folders = {"PROJECTS"};
+
+    const connector::CandidatePool pool = rig.list(q);
+
+    const std::string alice = "alice@RestoreProofLab.onmicrosoft.com";
+    CHECK(found(pool) == std::vector<std::string>{"onedrive|" + kHrachya + "|/|CV.docx|-1|1000",
+                                                  "onedrive|" + alice + "|/|Notes.txt|-1|1000"});
+    CHECK(rig.gets_with("00000000-0000-4000-8000-0000000000f1") == 0);
+}
+
 // ---- list_candidates, then restore_sample -------------------------------------------------------
 
 TEST_CASE("list_candidates then restore_sample: the lister's stopped explore session is never "

@@ -133,6 +133,7 @@ struct Forbidden {
     std::set<std::string> sharepoint_names;
     std::set<std::string> onedrive_names;
     std::set<std::string> list_ids;
+    std::set<std::string> onedrive_folders; // top-level folders of the OneDrive canaries
 
     explicit Forbidden(const CanaryManifest& manifest)
     {
@@ -145,6 +146,9 @@ struct Forbidden {
         }
         for (const CanaryFile& file : manifest.onedrive) {
             onedrive_names.insert(ascii_lower(file.name));
+            if (const auto folder = first_folder(file.folder_path); folder && !folder->empty()) {
+                onedrive_folders.insert(ascii_lower(*folder));
+            }
         }
     }
 };
@@ -235,6 +239,9 @@ std::optional<std::string> forbidden(const connector::OneDriveSelector& file, co
     }
     if (ascii_iequals(*folder, kCanaryFolderName)) {
         return "in a canary location (a RestoreTest folder)";
+    }
+    if (f.onedrive_folders.contains(ascii_lower(*folder))) {
+        return "in a canary location (a folder the manifest's OneDrive canaries are in)";
     }
     return canary_text(file.name, f.onedrive_names, "name");
 }
@@ -501,6 +508,7 @@ Selection choose_sample(connector::IConnector& connector, const std::string& cli
             .limits = limits,
         };
         std::vector<std::string> list_ids;
+        std::vector<std::string> onedrive_folders;
         for (const CanaryMail& mail : manifest.mail) {
             query.exclude.subjects.push_back(mail.subject);
         }
@@ -510,8 +518,13 @@ Selection choose_sample(connector::IConnector& connector, const std::string& cli
         }
         for (const CanaryFile& file : manifest.onedrive) {
             query.exclude.onedrive_names.push_back(file.name);
+            // check_canaries refused a ".." path above.
+            if (const std::string_view folder = *first_folder(file.folder_path); !folder.empty()) {
+                onedrive_folders.emplace_back(folder);
+            }
         }
         query.exclude.list_ids = unique_folded(std::move(list_ids));
+        query.exclude.onedrive_folders = unique_folded(std::move(onedrive_folders));
         pool = connector.list_candidates(query);
     }
     return SampleSelector::select(plan, manifest, cursor, targets, pool, run_id);

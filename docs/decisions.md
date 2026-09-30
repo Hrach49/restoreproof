@@ -64,8 +64,10 @@ supersedes it.
    - a restore target: a `restoretest` mailbox, the RestoreTarget library (by its derived drive ID,
      point 8, and by its `url`), a top-level `RestoreTarget` folder in any OneDrive;
    - a canary location or copy: the canary libraries (by list ID), a top-level `RestoreTest` folder
-     in any OneDrive, a subject or name starting with `rp-canary-` or equal to a canary's (ASCII
-     case-insensitive; this catches the Sent Items copies);
+     in any OneDrive and any other top-level folder the manifest's OneDrive canaries are in
+     (`CandidateExclusions::onedrive_folders`, by name in any OneDrive, as `RestoreTest`), a
+     subject or name starting with `rp-canary-` or equal to a canary's (ASCII case-insensitive;
+     this catches the Sent Items copies);
    - an archive, public or `DiscoverySearchMailbox` mailbox; a personal or other-host site; the
      `SitePages`, `SiteAssets`, `Style Library` and `FormServerTemplates` libraries; a non-mail
      folder (`type` other than `None`) or the Deleted, PermanentlyDeletedItems, Drafts and Outbox

@@ -33,6 +33,7 @@ add_library(rpcore STATIC
     src/graph_command.cpp
     src/graph_download.cpp
     src/graph_errors.cpp
+    src/graph_ids.cpp
     src/graph_targets.cpp
     src/http_client.cpp
     src/redact.cpp
@@ -97,6 +98,7 @@ add_executable(rptests
     tests/graph_command_test.cpp
     tests/graph_download_test.cpp
     tests/graph_errors_test.cpp
+    tests/graph_ids_test.cpp
     tests/graph_targets_live_test.cpp
     tests/graph_targets_test.cpp
     tests/http_client_test.cpp

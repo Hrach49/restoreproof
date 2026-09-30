@@ -13,6 +13,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 
 #include "../src/http_client_detail.hpp"
 
@@ -873,9 +874,14 @@ constexpr std::array<std::string_view, 2> kMustBeTrue{"verify_peer", "verify_hos
 //    pinned, for Veeam's SAN-less certificate (W1.5, docs/decisions.md
 //    2026-09-26). make_ssl_options sets the pin only together with a CA file,
 //    so the chain is still verified.
-constexpr std::array<std::string_view, 3> kAllowedTlsStatements{
+//  - The unit tests' network guard (Q2.1): a socket callback that refuses
+//    any address outside the loopback range. Nothing to do with TLS, but a
+//    raw curl call all the same.
+constexpr std::array<std::string_view, 4> kAllowedTlsStatements{
     "curl_easy_setopt(session.GetCurlHolder()->handle,CURLOPT_SSL_OPTIONS,CURLSSLOPT_NATIVE_CA|"
     "CURLSSLOPT_REVOKE_BEST_EFFORT);",
+    "curl_easy_setopt(session.GetCurlHolder()->handle,CURLOPT_OPENSOCKETFUNCTION,&open_loopback_"
+    "socket);",
     "options.pinned_public_key=\"sha256//\"+*public_key_pin;",
     "options.verify_host=options.pinned_public_key.empty();",
 };
@@ -1269,4 +1275,126 @@ TEST_CASE("without max_body_bytes a body is read whole", "[http][max-body]")
     request.url = server.url("/file");
 
     CHECK(t.client->send(request).body == std::string(100, 'y'));
+}
+
+// --- Q2.1: the unit tests' network guard (src/http_client_detail.hpp) ---------
+
+namespace {
+
+// Turns the guard on for one test and back to what it was.
+struct GuardOn {
+    GuardOn() : previous(rp::detail::set_loopback_only(true)) {}
+    ~GuardOn() { rp::detail::set_loopback_only(previous); }
+    GuardOn(const GuardOn&) = delete;
+    GuardOn& operator=(const GuardOn&) = delete;
+    bool previous;
+};
+
+sockaddr_storage socket_address(int family, const char* text)
+{
+    sockaddr_storage storage{};
+    if (family == AF_INET) {
+        auto* in = reinterpret_cast<sockaddr_in*>(&storage);
+        in->sin_family = AF_INET;
+        REQUIRE(inet_pton(AF_INET, text, &in->sin_addr) == 1);
+    } else {
+        auto* in6 = reinterpret_cast<sockaddr_in6*>(&storage);
+        in6->sin6_family = AF_INET6;
+        REQUIRE(inet_pton(AF_INET6, text, &in6->sin6_addr) == 1);
+    }
+    return storage;
+}
+
+} // namespace
+
+TEST_CASE("the network guard is on in the unit tests unless RP_LIVE=1", "[http][guard]")
+{
+    const bool live = rp::test::get_env("RP_LIVE") == std::optional<std::string>{"1"};
+    const bool on = rp::detail::set_loopback_only(true);
+    rp::detail::set_loopback_only(on);
+    CHECK(on == !live);
+}
+
+TEST_CASE("the network guard refuses a host outside the loopback range before sending",
+          "[http][guard]")
+{
+    const GuardOn guard;
+    rp::detail::take_refused_connections();
+    // TEST-NET-1 (RFC 5737) and a real name: neither is looked up nor sent to.
+    const std::string url = GENERATE(std::string{"http://192.0.2.1:9/x"},
+                                     std::string{"https://graph.microsoft.com/v1.0/me"},
+                                     std::string{"http://127.0.0.1.example.invalid/"});
+    CAPTURE(url);
+    TestClient t;
+    try {
+        t.client->get(url);
+        FAIL("the request went out");
+    } catch (const rp::HttpError& e) {
+        CHECK(e.error() == rp::TransportError::connect);
+        CHECK(e.attempts() == 0);
+        CHECK_THAT(e.what(), Catch::Matchers::ContainsSubstring("network guard"));
+    }
+    CHECK(rp::detail::take_refused_connections() == 1);
+}
+
+TEST_CASE("the network guard lets the loopback range through", "[http][guard]")
+{
+    const GuardOn guard;
+    rp::detail::take_refused_connections();
+    rp::test::LocalHttpServer server;
+    server.server().Get("/ok", [](const httplib::Request&, httplib::Response& res) {
+        res.set_content("ok", "text/plain");
+    });
+    TestClient t;
+    CHECK(t.client->get(server.url("/ok")).body == "ok");
+    CHECK(t.client->get("http://localhost:" + std::to_string(server.port()) + "/ok").body == "ok");
+    CHECK(rp::detail::take_refused_connections() == 0);
+}
+
+TEST_CASE("the network guard knows loopback hosts by name", "[http][guard]")
+{
+    const auto [url, loopback] = GENERATE(table<std::string, bool>({
+        {"http://127.0.0.1:8080/x", true},
+        {"https://127.255.0.9/", true},
+        {"http://LocalHost/", true},
+        {"http://localhost", true},
+        {"http://user:pw@127.0.0.1/", true},
+        {"http://[::1]:443/", true},
+        {"http://[::2]/", false},
+        // Malformed: left to curl, which refuses it without a lookup.
+        {"http://[::1/", true},
+        {"http://128.0.0.1/", false},
+        {"http://127.0.0/", false},
+        {"http://127.0.0.1.2/", false},
+        {"http://127..0.1/", false},
+        {"http://127.0.0.1./", false},
+        {"http://1270.0.0.1/", false},
+        {"http://localhost.example/", false},
+        {"http://localhos/", false},
+        {"http://127.0.0.1@example.com/", false},
+        {"127.0.0.1/", false},
+        {"http://127.0.0.12345678901/", false},
+    }));
+    CAPTURE(url);
+    CHECK(rp::detail::is_loopback_url(url) == loopback);
+}
+
+TEST_CASE("the network guard knows loopback socket addresses", "[http][guard]")
+{
+    const auto [family, text, loopback] = GENERATE(table<int, std::string, bool>({
+        {AF_INET, "127.0.0.1", true},
+        {AF_INET, "127.1.2.3", true},
+        {AF_INET, "10.0.0.1", false},
+        {AF_INET, "192.0.2.1", false},
+        {AF_INET, "126.255.255.255", false},
+        {AF_INET6, "::1", true},
+        {AF_INET6, "::ffff:127.0.0.1", false},
+        {AF_INET6, "2001:db8::1", false},
+    }));
+    CAPTURE(text);
+    const sockaddr_storage address = socket_address(family, text.c_str());
+    CHECK(rp::detail::is_loopback_sockaddr(reinterpret_cast<const sockaddr*>(&address)) == loopback);
+    sockaddr_storage other{};
+    other.ss_family = AF_UNIX;
+    CHECK_FALSE(rp::detail::is_loopback_sockaddr(reinterpret_cast<const sockaddr*>(&other)));
 }

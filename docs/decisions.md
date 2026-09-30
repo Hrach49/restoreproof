@@ -7,6 +7,86 @@ Format: date, decision, reason, alternatives rejected.
 
 ---
 
+## 2026-10-01 — Q2.1: `--record <dir>`, what a recorded fixture keeps, and the unit tests' network guard (proposed)
+
+With the owner's answers of 2026-10-01: `restore` may record, and `--record` takes a folder
+that must be new or empty. Proposed: the owner confirms it in the Q2.1 review, or supersedes it.
+
+**Decision.**
+
+1. **`--record <dir>` on `veeam list`, `graph list [--hash]` and `restore`.** Each wraps the
+   HTTP clients it makes in `rp::RecordingHttpClient` (`rp/recording_http_client.hpp`), which
+   passes every request to the real client unchanged and hands each response it returns to
+   one `rp::FixtureRecorder`. A request that throws (no connection, a timeout) isn't recorded
+   and its exception goes on unchanged. Recording never changes what a command sends or sees;
+   a file refused or not written is a line on stderr, never an exception inside the command,
+   so a restore's at-most-once POST can't be mistaken for a POST that got no answer.
+2. **Where it goes.** `<dir>` must not exist or be an empty folder (otherwise exit 1,
+   `config error: <dir>: the --record folder is not empty`, before any request), so a
+   recording never overwrites committed fixtures: the developer looks the files over and copies
+   the ones wanted into `worker/tests/fixtures/<service>/`. One subfolder per service: `veeam`
+   (the Veeam client and the connector), `graph` (Entra's token endpoint and Graph, the target
+   guard's included) and `download` (`graph list --hash`'s downloads). One file per exchange,
+   `<nnn>-<method>-<path slug>.json`, numbered per service from 001 in the order sent; a
+   refused exchange keeps its number, so the gap shows. After the command:
+   `recorded <n> exchange(s) in <dir>` on stdout, one `record error: <service>/<file>: <why>` per
+   exchange not written on stderr, and exit 1 if the command had succeeded (a command that
+   failed keeps its code).
+3. **The file format is the fixtures' own** (`worker/tests/fixtures/veeam/README.md`):
+   `source` (`rpworker <version> <command> --record`), `request` (`<METHOD> <path>?<query>`, no
+   scheme or host), `status`, `headers`, `body`; `FakeHttpClient::serve_recording(dir)` serves
+   a service folder by method and path, the files of one request in number order, the last
+   repeating, whatever the host. Key order is kept as received.
+4. **What a fixture keeps, and never keeps.**
+   - Request headers: none, ever. Response headers: only `Content-Type`, `Retry-After`,
+     `WWW-Authenticate` and `Location`, the last with every query value `SCRUBBED`.
+   - Request bodies: only a JSON one (a restore's), as `request_body`. A form body (the Veeam
+     password grant, Entra's client assertion) and a multipart one are never written.
+   - Response bodies: JSON as JSON, with every `@microsoft.graph.downloadUrl` and
+     `@content.downloadUrl` dropped; other UTF-8 text as a string; a body that isn't UTF-8,
+     and every `download` body (file contents), only as `body_size` and `body_sha256`, never a
+     byte. A download's request line has every query value `SCRUBBED` (the link is a
+     credential).
+   - All of it goes through `rp::redact()`, so tokens, the client assertion, passwords, the
+     PFX, `applicationCertificate*` and `Authorization` read `[REDACTED]`; a token reply's
+     `access_token` and `refresh_token` become that placeholder, which the Veeam and Graph
+     clients accept on replay.
+5. **Refused if a secret survives** (mirroring `Save-Evidence`, the PowerShell collection's
+   evidence writer): the recorder is given the Veeam password, the Graph PFX and its password,
+   and learns, before scrubbing, every secret an exchange carries (the `Authorization` value
+   and its bearer token, the values of the keys `redact()` treats as secret in a form, JSON
+   body or query, a `Location`'s included); values under 6 characters and the placeholders are
+   left out. A file whose text still holds one (as written or JSON-escaped), anything
+   JWT-shaped (`eyJ` and 37 or more base64url characters), a `tempauth` value other than a
+   placeholder, or the word `client_assertion` is not written.
+6. **The unit tests' network guard.** `rptests` has its own `main` (`tests/test_main.cpp`):
+   unless `RP_LIVE=1`, it turns on `rp::detail::set_loopback_only`, under which `rp::HttpClient`
+   refuses any URL whose host isn't `localhost`, `127.x.x.x` or `[::1]` before any lookup, and
+   any socket curl would open to an address outside 127.0.0.0/8 and ::1 (a
+   `CURLOPT_OPENSOCKETFUNCTION` callback, the TLS scan's one new reviewed statement). A
+   listener counts the refusals per test case; a case with any is named on stderr and the run
+   exits 1 even if the test passed. `rpworker.exe`'s ctest runs all stop before any request
+   (their comments in `worker/CMakeLists.txt` say so). The manual proof is one `ctest --preset
+   dev` with the network adapter disabled (`docs/testing.md`, "The network-off run").
+
+**Reason.** Sprint 3 needs new fixtures (W3.2's deleted messages, W3.4's empty folders after
+cleanup), and recording them from the Worker's own C++ calls is safer than writing them by hand
+or from the PowerShell collection. A folder that must be empty keeps a recording from ever
+landing on committed fixtures unreviewed. Refusing, rather than scrubbing harder, keeps the
+rule simple: a file with a secret in it is never written at all. The guard turns "the unit
+suite never touches the network" from a convention into something every CI run checks.
+
+**Alternatives rejected.** Recording straight into `worker/tests/fixtures/` (overwrites
+hand-edited fixtures); recording only the read-only commands (W3.x needs whole restore runs,
+and recording only watches); keeping request headers or form bodies with their secrets
+redacted (nothing needs them, and redaction is the only thing between them and the repo);
+recording download bytes (canary files are in `lab/canary/` already, and a restored file could
+be anything); a proxy variable pointing curl at a dead address (a test expecting a connection
+error would still pass, and nothing would name it); a firewall rule or container in CI (heavy,
+and not what runs on a developer's machine).
+
+---
+
 ## 2026-10-01 — W2.8 second review: the certificate and the manifest checked before Veeam, and what a restore that failed partway says (proposed)
 
 Amends the 2026-09-30 W2.8 entry (points 3, 4 and 5) after the second W2.8 review (PR #142).

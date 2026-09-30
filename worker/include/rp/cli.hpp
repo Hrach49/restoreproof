@@ -14,8 +14,11 @@ inline constexpr int ok = 0;
 // variable unset or unreadable (the Graph certificate's included: a
 // graph::CertificateError is a ConfigError), for `rpworker restore` also a
 // canary manifest that doesn't load or isn't graph_tenant_id's and an unknown
-// connector, or any unexpected failure (whose message is never shown), an
-// exception no command handled included.
+// connector, a --record folder that isn't new or empty (or can't be made),
+// a command that ran but whose --record recording isn't complete (an exchange
+// refused or not written; a command that failed keeps its own code), or any
+// unexpected failure (whose message is never shown), an exception no command
+// handled included.
 inline constexpr int config = 1;
 // The service refused the credentials, the account's role, the token or a
 // permission: Veeam's AuthError, Graph's AuthError and PermissionError (whose
@@ -51,9 +54,10 @@ inline constexpr int usage = 64;
 // doesn't understand. Every command shares it.
 inline constexpr std::string_view kCliUsage =
     "usage: rpworker --version | rpworker config check [--config <path>] | "
-    "rpworker veeam list [--config <path>] | rpworker graph list [--hash] [--config <path>] | "
+    "rpworker veeam list [--config <path>] [--record <dir>] | "
+    "rpworker graph list [--hash] [--config <path>] [--record <dir>] | "
     "rpworker restore [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] "
-    "[--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>]\n";
+    "[--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--record <dir>]\n";
 
 // rpworker's command line: `--version`, `config ...` (rp/config_check.hpp),
 // `veeam ...` (rp/veeam_command.hpp), `graph ...` (rp/graph_command.hpp) or

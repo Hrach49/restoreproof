@@ -151,6 +151,33 @@ public:
     // before any Veeam request).
     connector::RestoreResult restore_sample(const connector::RestoreSpec& spec) override;
 
+    // Lists the random half's candidates in `query`'s restore point (W2.6;
+    // docs/decisions.md 2026-09-30, W2.6 point 6). With no type asked for it
+    // returns an empty pool without a request; an empty client_ref or a
+    // backup_time that isn't Veeam's UTC form (or a negative limit) is
+    // std::invalid_argument, before any request. Then, in order:
+    //  1. the organisation, as list_restore_points finds it (none is
+    //     connector::Error here), the restore point (one of its points, the
+    //     backup_time byte for byte) and the preflight (no session of this
+    //     account Working), each connector::Error, before any explore session;
+    //  2. for each type asked for (mail, SharePoint, OneDrive) one explore
+    //     session, and a two-level draw from sampling::stream_seed(query.seed,
+    //     type, Stream::browse): the eligible containers (mailboxes, sites,
+    //     OneDrives) sorted and drawn one at a time, in each the eligible
+    //     folders sorted and up to limits.folders_per_container drawn and
+    //     listed, until limits.containers_wanted containers gave a candidate or
+    //     limits.containers_tried were looked into. An item is a candidate only
+    //     if restore_sample's own listing will find it exactly once, and never
+    //     from a restore target or a canary location;
+    //  3. every explore session stopped; one that couldn't be is
+    //     connector::Error, as restore_sample's preflight would then refuse.
+    // A random SharePoint item's drive_id is derived from Veeam's GUIDs
+    // (src/graph_ids.hpp), so no Graph read is made. Veeam's errors map as
+    // restore_sample maps them (a 404 is connector::Error); never
+    // connector::NotFoundError. Sends no POST but the sign-in's, the explore
+    // sessions' and their Stop.
+    connector::CandidatePool list_candidates(const connector::CandidateQuery& query) override;
+
 private:
     // Destroyed in reverse: the Graph client before its HTTP client, and the
     // VeeamClient before its.

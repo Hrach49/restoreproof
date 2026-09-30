@@ -70,7 +70,8 @@ std::string bare_account(std::string_view username);
 std::string format_utc_seconds(std::chrono::system_clock::time_point time);
 
 // Veeam's UTC form, "YYYY-MM-DDTHH:MM:SS" with 0 to 7 fractional digits and
-// "Z", as a time; nullopt for any other text or an impossible date.
+// "Z", as a time; nullopt for any other text, an impossible date, or a year
+// outside 1678-2261 (what a time in nanoseconds holds).
 std::optional<UtcTime> parse_veeam_time(std::string_view text);
 
 // A Veeam time cut (not rounded) to "YYYY-MM-DDTHH:MM:SSZ"; nullopt when it
@@ -206,8 +207,10 @@ struct SessionVerdict {
     // One per sent item, in their order; kind, name, session_id, outcome,
     // message and infrastructure set.
     std::vector<connector::ItemRestoreResult> items;
-    // Any event's title or message, or a statistics error, reads as
-    // infrastructure; `infrastructure_text` is the first such, one line.
+    // A session-level event's title or message, a statistics error, or a
+    // failing item event's title or message with the item's name cut out,
+    // reads as infrastructure; `infrastructure_text` is the first such, one
+    // line. An item name is the tenant's text and never counts.
     bool infrastructure = false;
     std::string infrastructure_text;
     // result Success, restoredItemsCount equal to the items sent, every item restored.

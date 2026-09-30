@@ -131,6 +131,12 @@ TEST_CASE("Veeam's times are read with up to seven fractional digits and Z", "[v
         {"2026-09-28T21:30:60Z", false, 0},
         {"2026-09-2xT21:30:20Z", false, 0},
         {"2026-09-28T21:30:20,1Z", false, 0},
+        // Outside what a time in nanoseconds holds (1677-09-21 to 2262-04-11):
+        // refused, never overflowed.
+        {"9999-12-31T23:59:59.9999999Z", false, 0},
+        {"2262-04-12T00:00:00Z", false, 0},
+        {"0001-01-01T00:00:00Z", false, 0},
+        {"1677-09-21T00:12:44Z", false, 0},
         {"", false, 0},
     }));
     CAPTURE(text);
@@ -687,6 +693,50 @@ TEST_CASE("W1.0's failed restores read as infrastructure", "[veeam_restore]")
     CHECK(v.items[0].outcome == ItemOutcome::unknown);
     CHECK(v.items[0].infrastructure);
     CHECK_THAT(v.items[0].message, ContainsSubstring(row.text));
+}
+
+TEST_CASE("an item's name never makes its session or itself infrastructure", "[veeam_restore]")
+{
+    // A sampled real mail's subject (or a file's name) is the tenant's text:
+    // Veeam puts it into the item's event, and only what Veeam says about the
+    // item may read as infrastructure.
+    struct Row {
+        std::string name;
+        std::string subject;
+        bool fails;
+        std::string failure; // the item event's message after the subject
+        bool infrastructure;
+    };
+    const Row row = GENERATE(values<Row>({
+        {"restored, AADSTS in the subject", "AADSTS50076 sign-in error", false, "", false},
+        {"restored, a marker in the subject", "Failed to open mailbox - ticket 4411", false, "",
+         false},
+        {"failed for itself, a marker in the subject", "Failed to open mailbox - ticket 4411",
+         true, ": the item is corrupt", false},
+        {"failed for lack of Microsoft 365", "Quarterly report", true,
+         ": AADSTS700016: Application not found", true},
+    }));
+    CAPTURE(row.name);
+    const vr::SessionVerdict v = verdict(
+        ItemKind::mail, "w24-mail-x1", {{row.subject, "i"}}, [&](json& s, json& st, json& e) {
+            json& item = e["results"][1];
+            item["itemName"] = row.subject;
+            item["title"] = row.subject;
+            if (row.fails) {
+                s["result"] = "Failed";
+                st["restoredItemsCount"] = 0;
+                item["status"] = "Failed";
+                item["message"] = "Failed to restore item " + row.subject + row.failure;
+            } else {
+                item["message"] = "Item " + row.subject + " was restored successfully";
+            }
+        });
+    CHECK(v.infrastructure == row.infrastructure);
+    REQUIRE(v.items.size() == 1);
+    CHECK(v.items[0].outcome == (row.fails ? ItemOutcome::failed : ItemOutcome::restored));
+    CHECK(v.items[0].infrastructure == row.infrastructure);
+    CHECK(v.succeeded == !row.fails);
+    CHECK_THAT(v.items[0].message, ContainsSubstring(row.subject));
 }
 
 TEST_CASE("an item's message falls back to the statistics' error", "[veeam_restore]")

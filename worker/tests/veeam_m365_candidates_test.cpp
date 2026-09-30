@@ -1129,3 +1129,61 @@ TEST_CASE("list_candidates: real items outside the targets and canaries, as rest
     CHECK(rig.other_posts().empty());
     CHECK(rig.rig.lab.graph_gets() == 0);
 }
+
+// ---- list_candidates, then restore_sample -------------------------------------------------------
+
+TEST_CASE("list_candidates then restore_sample: the lister's stopped explore session is never "
+          "taken for a duplicate restore",
+          "[veeam_m365][w2.6]")
+{
+    // Veeam lists explore sessions in /v8/RestoreSessions with the type of
+    // the restore (restore-flow §12). The lister's Vex session, stopped
+    // seconds before the restore POST, is ours, of the type and new since
+    // the POST less 5 s: unless restore_sample knows it, the duplicate check
+    // takes it for a second restore and the run gets no verdict.
+    const bool answered = GENERATE(true, false);
+    // The lister threw after its mail session: it is remembered all the same.
+    const bool lister_threw = GENERATE(false, true);
+    CAPTURE(answered, lister_threw);
+    CandidateRig rig;
+    keep_good_candidates(rig.tenant);
+    rig.serve();
+    const std::string lister = mail_x5().explore();
+    if (lister_threw) {
+        rig.rig.veeam.on(HttpMethod::get, url(paged(sites_base() + "?parentId=root")),
+                         {make_response(503)});
+        CHECK(caught_by([&] { rig.list(query(true, true, false)); }).kind == "TransientError");
+    } else {
+        rig.list(query(true, false, false));
+    }
+    REQUIRE(rig.rig.stops(lister) == 1);
+
+    const Run run = mail_x1();
+    rig.rig.serve(run);
+    REQUIRE(run.explore() != lister);
+    rig.rig.veeam.on(HttpMethod::get, run.duplicate_url(),
+                     {fixture(run.file("sessions-after-post"), [&](json& b) {
+                         json stopped = b["results"][2]; // a Stopped Vex session of rp-veeam
+                         stopped["id"] = lister;
+                         stopped["creationTime"] = "2026-09-28T21:27:25.0000000Z";
+                         stopped["endTime"] = "2026-09-28T21:27:26.0000000Z";
+                         b["results"].push_back(stopped);
+                     })});
+    if (!answered) {
+        rig.rig.veeam.on(HttpMethod::post, url(run.post_path()),
+                         [](const HttpRequest& request) -> HttpResponse {
+                             throw rp::HttpError("POST " + request.url + ": connection dropped",
+                                                 rp::TransportError::dropped, 0, 1);
+                         });
+    }
+
+    const connector::RestoreResult result =
+        rig.rig.restore(restore_spec({mail_x1_item()}));
+
+    CHECK(result.status == connector::RestoreStatus::succeeded);
+    CHECK(result.session_ids == std::vector<std::string>{run.restore()});
+    CHECK(rig.rig.posts(run.post_path()) == 1);
+    CHECK(rig.rig.stops(run.explore()) == 1);
+    CHECK(rig.rig.stops(lister) == 1);
+    CHECK_THAT(rig.rig.log(), !ContainsSubstring("didn't list restore session"));
+}

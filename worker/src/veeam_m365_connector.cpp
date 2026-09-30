@@ -169,12 +169,17 @@ public:
         const std::function<void(std::chrono::milliseconds)>& sleep;
         const std::shared_ptr<spdlog::logger>& logger;
         const std::string& account;
+        // Explore sessions list_candidates opened: never a duplicate restore.
+        const std::set<std::string>& candidate_sessions;
     };
 
     explicit RestoreRun(Context context)
         : c_(context), sessions_({context.client, context.wall_now, context.logger,
                                   context.account, context.spec.restore_point.backup_time})
     {
+        for (const std::string& id : context.candidate_sessions) {
+            sessions_.know(id);
+        }
     }
     RestoreRun(const RestoreRun&) = delete;
     RestoreRun& operator=(const RestoreRun&) = delete;
@@ -990,7 +995,7 @@ connector::RestoreResult VeeamM365Connector::restore_sample(const connector::Res
     one_name_each("onedrive", spec.onedrive);
 
     RestoreRun run({*client_, spec, *checked, guard_options_, cert_exporter_.get(), wall_now_,
-                    now_, sleep_, logger_, account_});
+                    now_, sleep_, logger_, account_, candidate_sessions_});
     // Veeam's errors as list_restore_points maps them but for a 404, naming
     // what was left open if a restore may still be running. In restore_sample
     // connector::NotFoundError means a sampled item isn't in the restore point

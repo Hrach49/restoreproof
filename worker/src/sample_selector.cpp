@@ -484,6 +484,9 @@ Selection choose_sample(connector::IConnector& connector, const std::string& cli
     if (!ascii_iequals(manifest.tenant_id, graph_tenant_id)) {
         throw ManifestError("canary manifest: /tenant_id: isn't the client's tenant (graph_tenant_id)");
     }
+    // Pure: said before the connector is asked, so an unreachable backup
+    // server can't hide a manifest that names a restore target.
+    check_canaries(manifest, targets);
     connector::CandidatePool pool;
     if (plan.mail / 2 > 0 || plan.sharepoint / 2 > 0 || plan.onedrive / 2 > 0) {
         connector::CandidateQuery query{

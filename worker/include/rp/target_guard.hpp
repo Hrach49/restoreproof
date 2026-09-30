@@ -77,8 +77,9 @@ public:
     //  - OneDrive: an owner and file are named, and the folder path has no
     //    ".." segment and doesn't start with a RestoreTarget folder (ASCII
     //    case-insensitive, empty and "." segments skipped). The owner can't be
-    //    tied to the test OneDrive without a call W2.5 makes anyway, so this
-    //    rule is by path.
+    //    tied to the test OneDrive without the Veeam OneDrives list that
+    //    restore_sample reads anyway (and layer 2 checks), so this rule is by
+    //    path.
     // Then, once per type the spec uses, the target through Graph (GETs only):
     // check_restore_mailbox, check_restore_library and
     // check_restore_onedrive_folder, whose WrongTargetError becomes a

@@ -143,9 +143,18 @@ private:
 // The registry's factory for "veeam_m365": a VeeamM365Connector on
 // Config::veeam_url with the Veeam secrets, through an HTTP client from
 // `options.make_http` (rp::HttpClient when null) whose CA file and pin are
-// Config::veeam_ca_file and veeam_cert_sha256 (TLS is never off). Throws
-// ConfigError "RP_VEEAM_USERNAME is not set" (then RP_VEEAM_PASSWORD), keyed
-// by the variable, for a missing or empty secret, before making anything.
+// Config::veeam_ca_file and veeam_cert_sha256 (TLS is never off); a Graph
+// client for the target guard, on the Worker app's certificate
+// (graph::certificate_from_secrets at options.wall_now) and
+// Config::graph_tenant_id and graph_client_id, through an HTTP client from
+// `options.make_graph_http` (graph::make_graph_http_client when null); and
+// `options.cert_exporter` (make_local_machine_cert_exporter when null). Every
+// part logs to options.logger (make_command_logger()'s when null). Checks,
+// in order and before making any HTTP client: ConfigError "RP_VEEAM_USERNAME
+// is not set" (then RP_VEEAM_PASSWORD), keyed by the variable, for a missing
+// or empty secret; the certificate's CertificateError (keyed by the variable
+// when one is unset); ConfigError for a Graph ID that isn't a GUID. Sends
+// nothing.
 std::unique_ptr<connector::IConnector> make_veeam_m365_connector(
     const Config& config, const Secrets& secrets, const connector::ConnectorOptions& options);
 

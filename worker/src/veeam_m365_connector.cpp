@@ -70,6 +70,8 @@ bool is_set(const std::optional<std::string>& secret) noexcept
 struct Resolved {
     std::size_t index = 0;    // in its kind's selectors
     std::string container;    // the source mailbox, site or OneDrive, lower case
+    std::string source;       // mail: the source mailbox's address, as Veeam lists it
+    std::string top_folder;   // OneDrive: the top-level folder walked, as Veeam lists it
     std::string id;           // Veeam's item or document ID
     std::string name;         // the subject or file name
     ordered_json document;    // files: the body's document
@@ -290,6 +292,7 @@ TypeWork RestoreRun::resolve_mail()
         add_text(work.tenant_texts, mailbox, "name");
         add_text(work.tenant_texts, mailbox, "email");
         work.tenant_texts.push_back(sel.folder);
+        const std::string& source = *text_at(mailbox, "email"); // exactly_one matched on it
         const std::string mailbox_id = ascii_lower(id_of(mailbox));
         if (!is_uuid(mailbox_id)) {
             throw vr::ShapeError("a mailbox ID that isn't a UUID");
@@ -333,7 +336,7 @@ TypeWork RestoreRun::resolve_mail()
             throw connector::Error("veeam_m365: " + item +
                                    ": the message read again has another subject");
         }
-        work.items.push_back({i, mailbox_id, id, sel.subject, {}});
+        work.items.push_back({i, mailbox_id, source, {}, id, sel.subject, {}});
     }
     return work;
 }
@@ -382,7 +385,8 @@ Resolved resolve_document(VeeamClient& client, const std::string& container_path
 // Walks `segments` from `parent` through `container_path`/Folders?parentId=.
 std::string walk_folders(VeeamClient& client, const std::string& container_path, std::string parent,
                          const std::vector<std::string>& segments,
-                         std::map<std::string, std::vector<json>>& cache, const std::string& item)
+                         std::map<std::string, std::vector<json>>& cache, const std::string& item,
+                         std::string* top_folder = nullptr)
 {
     for (const std::string& segment : segments) {
         std::vector<json>& listed = cache[container_path + "\n" + parent];
@@ -395,6 +399,9 @@ std::string walk_folders(VeeamClient& client, const std::string& container_path,
                 const std::string* name = text_at(e, "name");
                 return name != nullptr && *name == segment;
             });
+        if (top_folder != nullptr && &segment == &segments.front()) {
+            *top_folder = *text_at(folder, "name");
+        }
         parent = id_of(folder);
     }
     return parent;
@@ -506,11 +513,14 @@ TypeWork RestoreRun::resolve_onedrive()
         const std::string od_path = base + "/" + onedrive;
         const std::vector<std::string> segments = vr::path_segments(sel.folder_path);
         work.tenant_texts.insert(work.tenant_texts.end(), segments.begin(), segments.end());
-        const std::string parent = walk_folders(c_.client, od_path, "root", segments, folders, item);
+        std::string top_folder;
+        const std::string parent =
+            walk_folders(c_.client, od_path, "root", segments, folders, item, &top_folder);
         Resolved found = resolve_document(c_.client, od_path, parent, documents, item, sel.name,
                                           sel.size);
         found.index = i;
         found.container = onedrive;
+        found.top_folder = std::move(top_folder);
         work.items.push_back(std::move(found));
     }
     return work;
@@ -627,6 +637,7 @@ void RestoreRun::restore_call(const TypeWork& work, const std::vector<std::size_
     ctx.kind = guard_kind(work.kind);
     ctx.opened_explore_sessions = sessions_.opened();
     ctx.container_id = container;
+    ctx.source_mailbox = work.items[call.front()].source;
     ctx.application_id = facts_.application_id;
     ctx.organization_name = facts_.organization_name;
     ctx.office_region = facts_.office_region;
@@ -650,7 +661,7 @@ void RestoreRun::restore_call(const TypeWork& work, const std::vector<std::size_
         std::vector<ordered_json> documents;
         for (const std::size_t i : call) {
             documents.push_back(work.items[i].document);
-            ctx.items.push_back({work.items[i].id, work.items[i].name});
+            ctx.items.push_back({work.items[i].id, work.items[i].name, work.items[i].top_folder});
             sent.push_back({work.items[i].name, work.items[i].id});
         }
         if (work.kind == ItemKind::sharepoint) {

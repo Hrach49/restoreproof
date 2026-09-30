@@ -72,7 +72,8 @@ struct ResolvedMailbox {
 // "RestoreTarget", the last segment of its webUrl is RestoreTarget (ignoring
 // case, query, fragment and percent-encoding: a UI rename keeps the URL),
 // driveType is "documentLibrary", sharePointIds.siteId and .webId are the
-// GUIDs in test_site_id, sharePointIds.listId is a GUID and .siteUrl a string.
+// GUIDs in test_site_id, sharePointIds.listId is a GUID and .siteUrl https on
+// test_site_id's host (no query, fragment or whitespace).
 // Every missing field fails closed. Graph's own errors keep their W2.1 types.
 ResolvedLibrary check_restore_library(GraphClient& graph, const connector::RestoreTargets& targets,
                                       const TargetCheckWording& wording = {});
@@ -84,8 +85,9 @@ ResolvedLibrary check_restore_library(GraphClient& graph, const connector::Resto
 // library's drive is "documentLibrary"), directly under its root
 // (parentReference.path "/drive/root:" or "/drives/{drive}/root:"),
 // parentReference.siteId is a GUID, and sharepointIds has that siteId (ASCII
-// case-insensitive), a GUID webId and a string siteUrl: the address a OneDrive
-// restore names (W2.7). A 404 is a NotFoundError that adds that
+// case-insensitive), a GUID webId and a siteUrl https on the tenant's OneDrive
+// host (rp::onedrive_host of test_site_id's, no query, fragment or
+// whitespace): the address a OneDrive restore names (W2.7). A 404 is a NotFoundError that adds that
 // the Worker app may lack kOneDriveReadGrant: SharePoint answers 404, not 403,
 // for an item the app may not read.
 ResolvedOneDriveFolder check_restore_onedrive_folder(GraphClient& graph,

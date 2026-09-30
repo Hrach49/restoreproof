@@ -203,6 +203,11 @@ struct RestoreResult {
 // Every error a connector throws. what() is safe to print and log: it never
 // holds a credential, a token, a header or a body. The subclasses line up with
 // rpworker's exit codes (rp/cli.hpp): AuthError 2, TransientError 3, the rest 4.
+// One exception: a connector may let an rp::ConfigError out of the call that
+// first needs a configured secret (VeeamM365Connector's restore_sample, for
+// the Worker app's certificate), so a broken configuration keeps exit code 1;
+// a caller that maps connector errors to a status maps ConfigError too
+// (`error`, never `fail`).
 class Error : public std::runtime_error {
 public:
     using std::runtime_error::runtime_error;

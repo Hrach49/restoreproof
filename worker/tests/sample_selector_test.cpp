@@ -294,6 +294,10 @@ TEST_CASE("select refuses a manifest with a canary in a restore target", "[sampl
          [](CanaryManifest& m) { m.sharepoint[0].drive_id = rp::ascii_lower(targets().library_id()); },
          "canary manifest: /entries/20/location/drive_id: is a restore target (the library "
          "test_library_id names)"},
+        {"the test OneDrive's drive",
+         [](CanaryManifest& m) { m.sharepoint[3].drive_id = targets().onedrive_drive_id(); },
+         "canary manifest: /entries/23/location/drive_id: is a restore target (the OneDrive "
+         "test_onedrive_drive_id names)"},
         {"a RestoreTarget folder",
          [](CanaryManifest& m) { m.onedrive[0].folder_path = "/RestoreTarget"; },
          "canary manifest: /entries/30/location/folder_path: is in a restore target (a "
@@ -305,7 +309,7 @@ TEST_CASE("select refuses a manifest with a canary in a restore target", "[sampl
         {"a path with ..",
          [](CanaryManifest& m) { m.onedrive[1].folder_path = "/RestoreTest/../RestoreTarget"; },
          "canary manifest: /entries/31/location/folder_path: must start with \"/\" and have no "
-         "\"..\" segment"},
+         "\"..\" segment, backslash or colon"},
     }));
     CAPTURE(row.what);
     CanaryManifest manifest = lab_manifest();
@@ -406,7 +410,9 @@ TEST_CASE("select refuses a pool with a restore target, a canary or a canary loc
          [](auto& p) { p.sharepoint[1].selector.list_id = rp::ascii_lower(lab_manifest().sharepoint[0].list_id); },
          offered("sharepoint", "from a canary library")},
         {"a folder path with ..", [](auto& p) { p.sharepoint[1].selector.folder_path = "/Projects/../x"; },
-         offered("sharepoint", "in a folder path with a \"..\" segment")},
+         offered("sharepoint", "in a folder path with a \"..\" segment, a backslash or a colon")},
+        {"a folder path with a colon", [](auto& p) { p.sharepoint[1].selector.folder_path = "/a:b"; },
+         offered("sharepoint", "in a folder path with a \"..\" segment, a backslash or a colon")},
         {"a canary name", [](auto& p) { p.sharepoint[1].selector.name = "RP-CANARY-06.PDF"; },
          offered("sharepoint", "a canary (its name starts with rp-canary-)")},
         {"a canary's name in another case", [](auto& p) { p.sharepoint[1].selector.name = "budget.XLSX"; },
@@ -426,7 +432,11 @@ TEST_CASE("select refuses a pool with a restore target, a canary or a canary loc
          offered("onedrive", "in a canary location (a folder the manifest's OneDrive canaries are in)"),
          [](CanaryManifest& m) { m.onedrive[3].folder_path = "//Canaries/today"; }},
         {"a folder path with ..", [](auto& p) { p.onedrive[1].selector.folder_path = "/Projects/.."; },
-         offered("onedrive", "in a folder path with a \"..\" segment")},
+         offered("onedrive", "in a folder path with a \"..\" segment, a backslash or a colon")},
+        {"a folder path with a backslash", [](auto& p) { p.onedrive[1].selector.folder_path = "\\RestoreTarget"; },
+         offered("onedrive", "in a folder path with a \"..\" segment, a backslash or a colon")},
+        {"a folder path with a colon", [](auto& p) { p.onedrive[1].selector.folder_path = "/drive/root:/RestoreTarget"; },
+         offered("onedrive", "in a folder path with a \"..\" segment, a backslash or a colon")},
         {"no owner", [](auto& p) { p.onedrive[1].selector.user.clear(); },
          offered("onedrive", "incomplete (no owner or file name)")},
         {"no file name", [](auto& p) { p.onedrive[1].selector.name.clear(); },

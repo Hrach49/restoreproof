@@ -186,12 +186,8 @@ std::optional<std::string> download_url_problem(std::string_view url, std::strin
     }
     const std::string host = ascii_lower(authority.substr(0, colon));
     const std::string tenant = ascii_lower(tenant_host);
-    const bool tenant_ok = tenant.size() > kSharePointSuffix.size() &&
-                           tenant.ends_with(kSharePointSuffix);
-    const std::string onedrive =
-        tenant.substr(0, tenant.size() - std::min(tenant.size(), kSharePointSuffix.size())) +
-        "-my" + std::string{kSharePointSuffix};
-    if (!tenant_ok || (host != tenant && host != onedrive)) {
+    const std::optional<std::string> onedrive = onedrive_host(tenant);
+    if (!onedrive || (host != tenant && host != *onedrive)) {
         return "its host is not the test tenant's SharePoint";
     }
     return std::nullopt;

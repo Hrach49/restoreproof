@@ -998,6 +998,18 @@ TEST_CASE("list_candidates: never a restore target, a canary or an item restore_
                                 file(false, id + "-doc", "In " + name + ".pdf"));
                 }
             }},
+        // No SharePoint or OneDrive name holds a backslash or a colon: a folder
+        // listed so is never walked, as the guard refuses such a path
+        // (src/folder_path.hpp).
+        Row{"a folder whose name holds a backslash or a colon",
+            [](Tenant& t, auto&) {
+                for (const std::string name : {"a\\b", "root:"}) {
+                    const std::string id = "folder-" + name;
+                    Tenant::add(t.od_folders, {kHrachyaOneDrive, "root"}, folder(id, name));
+                    Tenant::add(t.od_documents, {kHrachyaOneDrive, id},
+                                file(false, id + "-doc", "Odd.pdf"));
+                }
+            }},
         Row{"a OneDrive no user owns",
             [=](Tenant& t, auto&) {
                 new_onedrive(t,

@@ -139,9 +139,9 @@ TEST_CASE("the canary manifest refuses an entry or field that breaks its rule",
         at(0, "/received_at: must be \"YYYY-MM-DDTHH:MM:SSZ\", a real date and time in UTC");
     const std::string stored_size = at(kFirstSharePoint, "/stored_size: must be an integer of 0 or more");
     const std::string folder_path =
-        at(kFirstSharePoint, "/location/folder_path: must start with \"/\" and have no \"..\" segment");
+        at(kFirstSharePoint, "/location/folder_path: must start with \"/\" and have no \"..\" segment, backslash or colon");
     const std::string od_folder_path =
-        at(kFirstOneDrive, "/location/folder_path: must start with \"/\" and have no \"..\" segment");
+        at(kFirstOneDrive, "/location/folder_path: must start with \"/\" and have no \"..\" segment, backslash or colon");
     const Row row = GENERATE_COPY(values<Row>({
         {"no schema", [](json& m) { m.erase("schema"); }, schema},
         {"schema v2", [](json& m) { m["schema"] = "seed-manifest.v2"; }, schema},
@@ -186,6 +186,8 @@ TEST_CASE("the canary manifest refuses an entry or field that breaks its rule",
          at(0, "/location/mailbox: must be a non-empty string")},
         {"a restoretest mailbox", [](json& m) { m["entries"][0]["location"]["mailbox"] = "RestoreTest@RestoreProofLab.onmicrosoft.com"; },
          at(0, "/location/mailbox: is a restore target (a restoretest mailbox)")},
+        {"a mailbox with a space", [](json& m) { m["entries"][0]["location"]["mailbox"] = "alice @RestoreProofLab.onmicrosoft.com"; },
+         at(0, "/location/mailbox: holds whitespace or a control character")},
         {"no folder", [](json& m) { m["entries"][0]["location"]["folder"] = ""; },
          at(0, "/location/folder: must be a non-empty string")},
         {"a subject repeated but for case", [](json& m) { m["entries"][7]["subject"] = "rp-canary-0002"; },
@@ -206,6 +208,8 @@ TEST_CASE("the canary manifest refuses an entry or field that breaks its rule",
         {"a relative folder_path", [](json& m) { m["entries"][kFirstSharePoint]["location"]["folder_path"] = "RestoreTest"; }, folder_path},
         {"an empty folder_path", [](json& m) { m["entries"][kFirstSharePoint]["location"]["folder_path"] = ""; }, folder_path},
         {"a folder_path with ..", [](json& m) { m["entries"][kFirstOneDrive]["location"]["folder_path"] = "/RestoreTest/../RestoreTarget"; }, od_folder_path},
+        {"a folder_path with a backslash", [](json& m) { m["entries"][kFirstOneDrive]["location"]["folder_path"] = "/Restore\\Test"; }, od_folder_path},
+        {"a folder_path with a colon", [](json& m) { m["entries"][kFirstSharePoint]["location"]["folder_path"] = "/drive/root:/RestoreTest"; }, folder_path},
         {"a folder_path ending in ..", [](json& m) { m["entries"][kFirstOneDrive]["location"]["folder_path"] = "/RestoreTest/.."; }, od_folder_path},
         {"no file location", [](json& m) { m["entries"][kFirstOneDrive].erase("location"); },
          at(kFirstOneDrive, "/location: must be an object")},

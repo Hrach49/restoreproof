@@ -7,6 +7,7 @@
 // type, and a test passes only on the guard's own refusal: a SafetyViolation
 // whose message starts with "target guard: " and says why.
 
+#include "../src/text_util.hpp"
 #include "fake_http_client.hpp"
 #include "graph_lab.hpp"
 #include "target_guard_lab.hpp"
@@ -46,6 +47,10 @@ using namespace rp::test::target_guard_lab;
 const std::string kOtherExplore = "0a1b2c3d-0000-4000-8000-00000000abcd";
 const std::string kNotSent = "; the restore was not sent";
 const std::string kSentinel = "Sentinel-Guard-Credential-7c41";
+// The recorded mail restores' source, as Veeam lists its address.
+const std::string kSourceMailbox = "alice@RestoreProofLab.onmicrosoft.com";
+// Where the recorded OneDrive restore's canary is: alice's /RestoreTest.
+const std::string kSourceTopFolder = "RestoreTest";
 
 // A recorded restore request and its context, as a test may edit them.
 struct Request {
@@ -94,10 +99,12 @@ Request recorded(const std::string& fixture)
             ctx.items.push_back({item.at("id").get<std::string>(), ""});
         }
         ctx.organization_name = r.body.at("officeOrganizationName").get<std::string>();
+        ctx.source_mailbox = kSourceMailbox;
     } else {
         for (const json& document : r.body.at("documents")) {
-            ctx.items.push_back(
-                {document.at("id").get<std::string>(), document.at("name").get<std::string>()});
+            ctx.items.push_back({document.at("id").get<std::string>(),
+                                 document.at("name").get<std::string>(),
+                                 ctx.kind == RestoreKind::onedrive ? kSourceTopFolder : ""});
         }
         ctx.organization_name = r.body.at("organizationName").get<std::string>();
     }
@@ -562,6 +569,69 @@ TEST_CASE("the guard refuses a restore whose source is the RestoreTarget library
                                        "a restore target is never a source"));
 }
 
+TEST_CASE("the guard refuses a mail restore whose source is a restoretest mailbox",
+          "[target_guard][veeam]")
+{
+    // The source as Veeam lists it, not as the sample spelled it: an alias,
+    // an object ID or stray whitespace in the sample can't hide it.
+    const std::string source = GENERATE_COPY(
+        lab_values().mailbox, rp::ascii_lower(lab_values().mailbox),
+        std::string{"RESTORETEST@RestoreProofLab.onmicrosoft.com"},
+        std::string{"restoretest@other.example"});
+    CAPTURE(source);
+    const std::string fixture = GENERATE(as<std::string>{}, "restore-mail-200", "restore-mail-x5-200");
+    CAPTURE(fixture);
+    Request r = recorded(fixture);
+    r.ctx.source_mailbox = source;
+
+    const Thrown thrown = check(r);
+
+    CHECK(thrown.kind == "SafetyViolation");
+    CHECK(thrown.what == guard_message("the source mailbox is a restore target (a restoretest "
+                                       "mailbox): a restore target is never a source"));
+}
+
+TEST_CASE("the guard refuses a OneDrive restore of an item browsing found in a RestoreTarget "
+          "folder",
+          "[target_guard][veeam]")
+{
+    // Veeam's OneDrive document IDs don't name their folder: the folder is
+    // the one browsing walked through, as Veeam listed it, in any OneDrive.
+    const std::string folder = GENERATE(as<std::string>{}, "RestoreTarget", "restoretarget",
+                                        "RESTORETARGET");
+    const bool other_onedrive = GENERATE(false, true);
+    CAPTURE(folder, other_onedrive);
+    Request r = recorded("restore-od-200");
+    if (other_onedrive) {
+        const std::string other =
+            "0a1b2c3d-0000-4000-8000-0000000000010a1b2c3d-0000-4000-8000-000000000002";
+        const std::string old = r.ctx.container_id;
+        r.path.replace(r.path.find(old), old.size(), other);
+        r.ctx.container_id = other;
+        r.body.at("documents").at(0).at("oneDriveId") = other;
+    }
+    r.ctx.items.at(0).top_folder = folder;
+
+    const Thrown thrown = check(r);
+
+    CHECK(thrown.kind == "SafetyViolation");
+    CHECK(thrown.what == guard_message("item " + r.ctx.items.at(0).id +
+                                       " is in a RestoreTarget folder: a restore target is never "
+                                       "a source"));
+}
+
+TEST_CASE("the guard takes a OneDrive item from the root or another top folder",
+          "[target_guard][veeam]")
+{
+    const std::string folder = GENERATE(as<std::string>{}, "", "RestoreTargets", "Documents",
+                                        "RestoreTest");
+    CAPTURE(folder);
+    Request r = recorded("restore-od-200");
+    r.ctx.items.at(0).top_folder = folder;
+
+    CHECK(check(r).kind == "none");
+}
+
 TEST_CASE("the guard refuses a OneDrive that isn't the RestoreTarget folder's",
           "[target_guard][veeam]")
 {
@@ -874,6 +944,7 @@ TEST_CASE("the guard refuses a path of another kind than the context's", "[targe
     r.ctx.kind = row.kind;
     r.ctx.target_onedrive_id = "x";
     r.ctx.target_onedrive_url = "x";
+    r.ctx.source_mailbox = kSourceMailbox;
 
     CHECK(check(r).what == guard_message(row.why));
 }
@@ -918,6 +989,15 @@ TEST_CASE("the guard refuses a context it can't check against", "[target_guard][
         {"container a GUID and a half", "restore-sp-200",
          [](RestoreRequestContext& c) { c.container_id.resize(54); },
          "bad context: the container ID is not one or more lower-case GUIDs"},
+        {"no source mailbox", "restore-mail-200",
+         [](RestoreRequestContext& c) { c.source_mailbox.clear(); },
+         "bad context: source_mailbox is empty, not printable ASCII or holds a space"},
+        {"a source mailbox with a space", "restore-mail-x5-200",
+         [](RestoreRequestContext& c) { c.source_mailbox = " " + kSourceMailbox; },
+         "bad context: source_mailbox is empty, not printable ASCII or holds a space"},
+        {"a source mailbox with a line break", "restore-mail-200",
+         [](RestoreRequestContext& c) { c.source_mailbox += "\n"; },
+         "bad context: source_mailbox is empty, not printable ASCII or holds a space"},
         {"no application ID", "restore-mail-200",
          [](RestoreRequestContext& c) { c.application_id.clear(); },
          "bad context: application_id is empty or not printable ASCII"},

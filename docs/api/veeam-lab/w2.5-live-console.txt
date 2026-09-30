@@ -39,7 +39,7 @@ Success rp-canary-06.pdf: Item rp-canary-06.pdf was restored successfully (type:
 session 0819da9f-df0f-4cc6-b8eb-f0e889f878f4 (onedrive): Success, 2 items processed (2 successes)
 Success rp-canary-11.pdf: Item rp-canary-11.pdf was restored successfully (type: File; source: personal/alice_restoreprooflab_onmicrosoft_com/Documents/RestoreTarget/rp-canary-11.pdf; target: https://restoreprooflab-my.sharepoint.com/personal/alice_restoreprooflab_onmicrosoft_com)
 Success rp-canary-14.txt: Item rp-canary-14.txt was restored successfully (type: File; source: personal/alice_restoreprooflab_onmicrosoft_com/Documents/RestoreTarget/rp-canary-14.txt; target: https://restoreprooflab-my.sharepoint.com/personal/alice_restoreprooflab_onmicrosoft_com)
-evidence written to C:\Users\minas\AppData\Local\Temp\claude\C--restoreproof\d1bba97f-a516-409a-8687-4467a9e7b444\scratchpad\w2.5-live-restore.json
+evidence written to %TEMP%\w2.5-live-restore.json
 ===============================================================================
 All tests passed (24 assertions in 1 test case)
 

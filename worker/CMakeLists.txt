@@ -49,6 +49,7 @@ add_library(rpcore STATIC
     src/veeam_command.cpp
     src/veeam_m365_connector.cpp
     src/veeam_restore.cpp
+    src/veeam_time.cpp
     src/version.cpp
 )
 target_include_directories(rpcore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)

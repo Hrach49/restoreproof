@@ -11,7 +11,6 @@
 //   RP_LIVE_VEEAM_CERT_SHA256              its SHA-256; default: the lab's
 //   RP_LIVE_VEEAM_URL                      default: https://localhost:4443
 
-#include "graph_live_lab.hpp"
 #include "test_support.hpp"
 
 #include <rp/config.hpp>
@@ -164,11 +163,8 @@ TEST_CASE("live: rpworker veeam list prints the lab organisation's two restore p
 
 // W1.7: the default registry's "veeam_m365" connector, through IConnector&
 // only, lists the lab organisation's restore points by its name. The same
-// environment as above, plus the Worker app's certificate
-// (RP_GRAPH_CERT_PFX_BASE64, RP_GRAPH_CERT_PASSWORD), which the factory loads
-// for the target guard since W2.5 (it makes no Graph call here); the real
-// rp::HttpClient. Read-only, like the tests above: the connector signs in,
-// lists, and logs out when it goes.
+// environment as above; the real rp::HttpClient. Read-only, like the tests
+// above: the connector signs in, lists, and logs out when it goes.
 TEST_CASE("live: the veeam_m365 connector lists the lab's restore points as an IConnector&",
           "[veeam][live]")
 {
@@ -177,8 +173,7 @@ TEST_CASE("live: the veeam_m365 connector lists the lab's restore points as an I
     }
     const std::optional<std::string> ca_file = rp::test::get_env("RP_LIVE_VEEAM_CA_FILE");
     REQUIRE(ca_file);
-    // The Graph tenant, app and restore targets the factory needs (graph_live_lab.hpp).
-    rp::Config config = rp::test::graph_live::live_config();
+    rp::Config config;
     config.veeam_url = env_or("RP_LIVE_VEEAM_URL", "https://localhost:4443");
     config.veeam_ca_file = ca_file;
     config.veeam_cert_sha256 = env_or("RP_LIVE_VEEAM_CERT_SHA256", kLabCertSha256);

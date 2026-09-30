@@ -200,9 +200,38 @@ TEST_CASE("restore_sample: the thumbprints may differ in case only", "[veeam_m36
                                            "ac3220b58a2b4c438da13816c2dd1e25d1f783a7"});
 }
 
-TEST_CASE("restore_sample: an unknown client is NotFoundError, before any explore",
+TEST_CASE("restore_sample: an explore session ID Veeam sends in upper case is used in lower case",
           "[veeam_m365][w2.5]")
 {
+    // The W2.5 review: layer 2 and the duplicate check's known IDs are lower
+    // case; an upper-case explore ID would be refused, or taken for another
+    // restore.
+    RestoreRig rig;
+    const Run run = mail_x1();
+    rig.serve(run);
+    {
+        const std::lock_guard lock(rig.mutex);
+        json body = load_fixture_json("veeam", run.file("explore")).at("body");
+        std::string upper = body.at("id").get<std::string>();
+        std::ranges::transform(upper, upper.begin(),
+                               [](char c) { return c >= 'a' && c <= 'z' ? char(c - 'a' + 'A') : c; });
+        body["id"] = upper;
+        rig.explores[run.type] = make_response(201, body.dump());
+    }
+
+    const connector::RestoreResult result = rig.restore(restore_spec({mail_x1_item()}));
+
+    CHECK(result.status == connector::RestoreStatus::succeeded);
+    CHECK(rig.restore_posts().size() == 1);
+    CHECK(rig.stops(run.explore()) == 1);
+}
+
+TEST_CASE("restore_sample: an unknown client is an Error, never NotFoundError, before any "
+          "explore",
+          "[veeam_m365][w2.5]")
+{
+    // In restore_sample NotFoundError is a sampled item missing from the
+    // backup (a `fail` to be); a client Veeam doesn't know is the run's error.
     RestoreRig rig;
     rig.serve(mail_x1());
     connector::RestoreSpec spec = restore_spec({mail_x1_item()});
@@ -210,8 +239,83 @@ TEST_CASE("restore_sample: an unknown client is NotFoundError, before any explor
 
     const Caught thrown = caught_by([&] { rig.restore(spec); });
 
-    CHECK(thrown.kind == "NotFoundError");
+    CHECK(thrown.kind == "Error");
+    CHECK(thrown.what ==
+          "veeam_m365: client other.onmicrosoft.com not found in Veeam; nothing was restored");
     CHECK(rig.explores_opened() == 0);
+}
+
+TEST_CASE("restore_sample: organisation settings of an unexpected shape are refused, before any "
+          "explore",
+          "[veeam_m365][w2.5]")
+{
+    RestoreRig rig;
+    rig.serve(mail_x1());
+    rig.get("/v8/Organizations?limit=1000&offset=0", fixture("w24-mail-x1-org", [](json& b) {
+                b["results"][0]["exchangeOnlineSettings"]["applicationId"] = 5;
+            }));
+
+    const Caught thrown = caught_by([&] { rig.restore(restore_spec({mail_x1_item()})); });
+
+    CHECK(thrown.kind == "Error");
+    CHECK(thrown.what ==
+          "veeam_m365: client RestoreProofLab.onmicrosoft.com: Veeam's organisation settings are of "
+          "an unexpected shape (exchangeOnlineSettings: \"applicationId\" isn't a string); nothing "
+          "was restored");
+    CHECK(rig.explores_opened() == 0);
+    CHECK(rig.exporter->calls == 0);
+}
+
+TEST_CASE("restore_sample: the restore point must be the organisation's, its time byte for byte",
+          "[veeam_m365][w2.5]")
+{
+    // Veeam explores whatever point is at or before an explore's dateTime: a
+    // point that isn't the client's, or a time that isn't the point's, would
+    // restore other data than the result names.
+    struct Row {
+        std::string name;
+        std::function<void(connector::RestoreSpec&)> edit;
+        std::string message;
+    };
+    const std::string id = kRestorePointId;
+    const Row row = GENERATE_COPY(
+        Row{"another organisation's point",
+            [](connector::RestoreSpec& s) {
+                s.restore_point.id = "c2f0f2e7-177f-48ac-992b-93a50cf702e3"
+                                     "0b000000-0000-4000-8000-000000000001";
+            },
+            "veeam_m365: restore point c2f0f2e7-177f-48ac-992b-93a50cf702e30b000000-0000-4000-8000-"
+            "000000000001 isn't one of client RestoreProofLab.onmicrosoft.com's restore points in "
+            "Veeam; nothing was restored"},
+        Row{"a time that isn't the point's",
+            [](connector::RestoreSpec& s) {
+                s.restore_point.backup_time = "2026-09-28T22:00:48.1447833Z";
+            },
+            "veeam_m365: restore point " + id +
+                " of client RestoreProofLab.onmicrosoft.com has backup time "
+                "2026-09-27T22:00:48.1447833Z in Veeam, not 2026-09-28T22:00:48.1447833Z; nothing "
+                "was restored"},
+        Row{"the time rounded",
+            [](connector::RestoreSpec& s) {
+                s.restore_point.backup_time = "2026-09-27T22:00:48.144783Z";
+            },
+            "veeam_m365: restore point " + id +
+                " of client RestoreProofLab.onmicrosoft.com has backup time "
+                "2026-09-27T22:00:48.1447833Z in Veeam, not 2026-09-27T22:00:48.144783Z; nothing "
+                "was restored"});
+    CAPTURE(row.name);
+    RestoreRig rig;
+    rig.serve(mail_x1());
+    connector::RestoreSpec spec = restore_spec({mail_x1_item()});
+    row.edit(spec);
+
+    const Caught thrown = caught_by([&] { rig.restore(spec); });
+
+    CHECK(thrown.kind == "Error");
+    CHECK(thrown.what == row.message);
+    CHECK(rig.explores_opened() == 0);
+    CHECK(rig.exporter->calls == 0);
+    CHECK(rig.veeam.count(HttpMethod::get, restore_points_url()) == 1);
 }
 
 TEST_CASE("restore_sample: a session of ours still Working stops it before any explore",
@@ -418,10 +522,11 @@ TEST_CASE("restore_sample: a file browsing can't pin down is refused, and the ex
                                 "https://restoreprooflab-my.sharepoint.com/personal/someone_else";
                         }));
             },
-            "NotFoundError",
+            "Error",
             "veeam_m365: the restore target: the test OneDrive "
             "\"https://restoreprooflab-my.sharepoint.com/personal/"
-            "alice_restoreprooflab_onmicrosoft_com\" not found in the restore point"},
+            "alice_restoreprooflab_onmicrosoft_com\" isn't in the restore point (is it backed "
+            "up?); nothing was restored"},
         Row{"no source folder of that name", false,
             [=](RestoreRig& rig) {
                 rig.get(paged(onedrives + "/" + od.container() + "/Folders?parentId=root"),
@@ -451,6 +556,56 @@ TEST_CASE("restore_sample: a file browsing can't pin down is refused, and the ex
     CHECK(thrown.what == row.message);
     CHECK(rig.restore_posts().empty());
     CHECK(rig.stops(run.explore()) == 1);
+}
+
+TEST_CASE("restore_sample: a user's archive mailbox is never taken for the mailbox",
+          "[veeam_m365][w2.5]")
+{
+    // Veeam lists an in-place archive as a second entry with the same email
+    // and isArchive true (the W2.5 review).
+    const Run run = mail_x1();
+    const std::string mailboxes =
+        paged("/v8/RestoreSessions/" + run.explore() + "/organization/mailboxes");
+    const auto with_archive = [&](const json& is_archive) {
+        return fixture(run.file("mailboxes"), [&](json& b) {
+            for (const json& m : b["results"]) {
+                if (m["email"] == kBob) {
+                    json archive = m;
+                    archive["id"] = "0a000000-0000-4000-8000-00000000a4c1";
+                    archive["name"] = "In-Place Archive - Bob Test";
+                    archive["isArchive"] = is_archive;
+                    b["results"].push_back(archive);
+                    break;
+                }
+            }
+        });
+    };
+    SECTION("the primary mailbox is restored from")
+    {
+        RestoreRig rig;
+        rig.serve(run);
+        rig.get(mailboxes, with_archive(true));
+
+        const connector::RestoreResult result = rig.restore(restore_spec({mail_x1_item()}));
+
+        CHECK(result.status == connector::RestoreStatus::succeeded);
+        const std::vector<HttpRequest> posts = rig.restore_posts();
+        REQUIRE(posts.size() == 1);
+        CHECK(posts[0].url == restore_url(run));
+    }
+    SECTION("an isArchive of another kind")
+    {
+        RestoreRig rig;
+        rig.serve(run);
+        rig.get(mailboxes, with_archive("yes"));
+
+        const Caught thrown = caught_by([&] { rig.restore(restore_spec({mail_x1_item()})); });
+
+        CHECK(thrown.kind == "Error");
+        CHECK(thrown.what ==
+              "veeam_m365: unexpected response from Veeam: \"isArchive\" isn't a boolean");
+        CHECK(rig.restore_posts().empty());
+    }
 }
 
 TEST_CASE("restore_sample: a OneDrive owner Veeam doesn't list", "[veeam_m365][w2.5]")
@@ -496,16 +651,23 @@ TEST_CASE("restore_sample: an explore POST that fails after Veeam may have opene
     const Run run = mail_x1();
     rig.serve(run);
     rig.veeam.on(HttpMethod::post, url("/v8/Organizations/" + kOrgId + "/explore"), row.answer);
-    // Veeam lists a Working explore session of ours, made at the POST.
+    // Veeam lists a Working explore session of ours, made at the POST: the
+    // recorded one, renamed, and no restore session (none was posted).
     const std::string orphan = "e0000000-0000-4000-8000-000000000003";
     const std::string restore = run.restore();
+    const std::string explore = run.explore();
     rig.veeam.on(HttpMethod::get, run.duplicate_url(),
                  {fixture(run.file("sessions-after-post"), [&](json& b) {
+                     json kept = json::array();
                      for (json& s : b["results"]) {
-                         if (s["id"] == restore) {
+                         if (s["id"] == explore) {
                              s["id"] = orphan;
                          }
+                         if (s["id"] != restore) {
+                             kept.push_back(s);
+                         }
                      }
+                     b["results"] = kept;
                  })});
     rig.get("/v8/RestoreSessions/" + orphan,
             make_response(200, json{{"id", orphan}, {"state", "Working"}}.dump()));
@@ -520,6 +682,61 @@ TEST_CASE("restore_sample: an explore POST that fails after Veeam may have opene
     CHECK(rig.stops(orphan) == 1);
     CHECK(rig.restore_posts().empty());
     CHECK_THAT(rig.log(), ContainsSubstring("explore session " + orphan));
+}
+
+TEST_CASE("restore_sample: a failed explore POST adopts only one Working session of ours and "
+          "the organisation's",
+          "[veeam_m365][w2.5]")
+{
+    // The W2.5 review: the same account may run another restore from another
+    // process; a session that can't be told apart from its work is never
+    // stopped by this run.
+    struct Row {
+        std::string name;
+        std::function<void(json&)> edit; // on the renamed orphan's list
+        std::string log;
+    };
+    const Row row = GENERATE(values<Row>({
+        {"two new Working sessions",
+         [](json& b) {
+             json copy = b["results"][0];
+             copy["id"] = "e0000000-0000-4000-8000-000000000004";
+             b["results"].push_back(copy);
+         },
+         "Veeam lists 2 new Working sessions of ours"},
+        {"a new session that stopped", [](json& b) { b["results"][0]["state"] = "Stopped"; }, ""},
+        {"another organisation's",
+         [](json& b) { b["results"][0]["organization"] = "Other.onmicrosoft.com"; }, ""},
+    }));
+    CAPTURE(row.name);
+    RestoreRig rig;
+    const Run run = mail_x1();
+    rig.serve(run);
+    rig.veeam.on(HttpMethod::post, url("/v8/Organizations/" + kOrgId + "/explore"), dropped);
+    const std::string orphan = "e0000000-0000-4000-8000-000000000003";
+    const std::string explore = run.explore();
+    rig.veeam.on(HttpMethod::get, run.duplicate_url(),
+                 {fixture(run.file("sessions-after-post"), [&](json& b) {
+                     json kept = json::array();
+                     for (json& s : b["results"]) {
+                         if (s["id"] == explore) {
+                             s["id"] = orphan;
+                             kept.push_back(s);
+                         }
+                     }
+                     b["results"] = kept;
+                     row.edit(b);
+                 })});
+
+    const Caught thrown = caught_by([&] { rig.restore(restore_spec({mail_x1_item()})); });
+
+    CHECK(thrown.kind == "TransientError");
+    CHECK(rig.stops(orphan) == 0);
+    CHECK(rig.stops("e0000000-0000-4000-8000-000000000004") == 0);
+    CHECK(rig.gets("/v8/RestoreSessions/" + orphan) == 0);
+    if (!row.log.empty()) {
+        CHECK_THAT(rig.log(), ContainsSubstring(row.log));
+    }
 }
 
 TEST_CASE("restore_sample: a failed explore POST with nothing to find, or a failed look, keeps "
@@ -635,13 +852,25 @@ TEST_CASE("restore_sample: Veeam unreachable or refusing the sign-in maps to con
                              {load_fixture("veeam", "api-expired-token-401")});
             },
             "AuthError", 1, 1, "HTTP 401"},
+        // A restore may be running: no verdict, never "try again" (the W2.5
+        // review), whatever the lookup's own error.
         Row{"no answer, then the duplicate check unreachable",
             [=](RestoreRig& rig) {
                 rig.veeam.on(HttpMethod::post, restore_url(run), dropped);
                 rig.veeam.on(HttpMethod::get, run.duplicate_url(), {make_response(503)});
             },
-            "TransientError", 1, 0,
-            "; left open, as a restore may still be running: explore session(s) " +
+            "Error", 1, 0,
+            "and the duplicate check failed (Veeam GET " + run.duplicate_url().substr(kBase.size()) +
+                ": HTTP 503 after 5 attempts); it was not sent again; no verdict; left open, as a "
+                "restore may still be running: explore session(s) " + run.explore()},
+        Row{"no answer, then the duplicate check's session gone",
+            [=](RestoreRig& rig) {
+                rig.veeam.on(HttpMethod::post, restore_url(run), dropped);
+                rig.veeam.on(HttpMethod::get, run.duplicate_url(),
+                             {veeam_error(404, "Organization does not exist", "ResourceNotFound")});
+            },
+            "Error", 1, 0,
+            "; no verdict; left open, as a restore may still be running: explore session(s) " +
                 run.explore()});
     CAPTURE(row.name);
     RestoreRig rig;
@@ -938,12 +1167,17 @@ TEST_CASE("restore_sample: a session ID the duplicate check doesn't list alone g
     CHECK(thrown.kind == "Error");
     CHECK(thrown.what == "veeam_m365: restore session " + run.restore() +
                              " (mail) ran, but the duplicate check didn't list it alone, so "
-                             "another restore can't be ruled out; no verdict");
-    // Polled to the end and read, then closed: the restore had stopped.
+                             "another restore can't be ruled out; no verdict; left open, as a "
+                             "restore may still be running: explore session(s) " +
+                             run.explore());
+    // Ours polled to the end and read; the explore session left open, as the
+    // other candidate (or one the check couldn't see) may still run under it.
     CHECK(rig.veeam.count(HttpMethod::get, run.session_url(run.restore())) == 2);
-    CHECK(rig.gets("/v8/RestoreSessions/" + run.restore() + "/Events?limit=100") == 1);
+    CHECK(rig.gets("/v8/RestoreSessions/" + run.restore() + "/Events?limit=1000&offset=0") == 1);
     CHECK(rig.posts(run.post_path()) == 1);
-    CHECK(rig.stops(run.explore()) == 1);
+    CHECK(rig.stops(run.explore()) == 0);
+    CHECK(rig.gets("/v8/RestoreSessions/" + run.explore()) == 0);
+    CHECK_THAT(rig.log(), ContainsSubstring("explore session(s) left open"));
 }
 
 // ---- polling -----------------------------------------------------------------------------
@@ -1103,7 +1337,7 @@ TEST_CASE("restore_sample: statistics or events Veeam garbles get no verdict",
 {
     const Run run = mail_x1();
     const std::string statistics = "/v8/RestoreSessions/" + run.restore() + "/Statistics";
-    const std::string events = "/v8/RestoreSessions/" + run.restore() + "/Events?limit=100";
+    const std::string events = "/v8/RestoreSessions/" + run.restore() + "/Events?limit=1000&offset=0";
     struct Row {
         std::string name;
         std::string path;
@@ -1139,8 +1373,11 @@ TEST_CASE("restore_sample: statistics or events Veeam garbles get no verdict",
         Row{"an event of the wrong kind", events,
             fixture(run.file("events"), [](json& b) { b["results"][1]["itemName"] = 1; }),
             "Error", "veeam_m365: unexpected response from Veeam: \"itemName\" isn't a string"},
+        // VeeamClient's paging reads the list: its shape error is a VeeamError.
         Row{"events that aren't a list", events, make_response(200, R"({"results":3})"), "Error",
-            "veeam_m365: unexpected response from Veeam: no \"results\" list"});
+            "veeam_m365: restore session " + run.restore() +
+                " stopped, but its events couldn't be read: Veeam GET " + events +
+                ": unexpected response: no \"results\" list; no verdict"});
     CAPTURE(row.name);
     RestoreRig rig;
     rig.serve(run);
@@ -1173,24 +1410,34 @@ TEST_CASE("restore_sample: a stopped session without a result gets no verdict, a
     CHECK(rig.stops(run.explore()) == 1);
 }
 
-TEST_CASE("restore_sample: a full page of events is followed by the next", "[veeam_m365][w2.5]")
+TEST_CASE("restore_sample: a page of events Veeam caps below the limit is followed by the next",
+          "[veeam_m365][w2.5]")
 {
+    // VeeamClient's paging (the W2.5 review): Veeam echoes the limit it
+    // applied, and a full page of that size isn't the last.
     RestoreRig rig;
     const Run run = mail_x1();
     rig.serve(run);
-    const std::string events = "/v8/RestoreSessions/" + run.restore() + "/Events?limit=100";
-    json first = load_fixture_json("veeam", run.file("events")).at("body");
-    const json filler = first["results"][0];
-    while (first["results"].size() < 100) {
-        first["results"].push_back(filler);
+    const std::string events = "/v8/RestoreSessions/" + run.restore() + "/Events";
+    json all = load_fixture_json("veeam", run.file("events")).at("body");
+    json first = all;
+    first["limit"] = 2;
+    first["results"] = json::array({all["results"][0], all["results"][1]});
+    json second = all;
+    second["offset"] = 2;
+    second["limit"] = 2;
+    second["results"] = json::array();
+    for (std::size_t i = 2; i < all["results"].size(); ++i) {
+        second["results"].push_back(all["results"][i]);
     }
-    rig.get(events, make_response(200, first.dump()));
-    rig.get(events + "&offset=100", make_response(200, R"({"results":[]})"));
+    REQUIRE(second["results"].size() < 2);
+    rig.get(events + "?limit=1000&offset=0", make_response(200, first.dump()));
+    rig.get(events + "?limit=1000&offset=2", make_response(200, second.dump()));
 
     const connector::RestoreResult result = rig.restore(restore_spec({mail_x1_item()}));
 
     CHECK(result.status == connector::RestoreStatus::succeeded);
-    CHECK(rig.gets(events + "&offset=100") == 1);
+    CHECK(rig.gets(events + "?limit=1000&offset=2") == 1);
 }
 
 // ---- verdicts ----------------------------------------------------------------------------
@@ -1205,7 +1452,7 @@ TEST_CASE("restore_sample: a session that restored nothing for lack of Microsoft
     const std::string r = "/v8/RestoreSessions/" + run.restore();
     rig.veeam.on(HttpMethod::get, run.session_url(run.restore()), {fixture("w10-od-user-session")});
     rig.get(r + "/Statistics", fixture("w10-od-user-statistics"));
-    rig.get(r + "/Events?limit=100", fixture("w10-od-user-events"));
+    rig.get(r + "/Events?limit=1000&offset=0", fixture("w10-od-user-events"));
 
     const Caught thrown = caught_by([&] { rig.restore(restore_spec({}, {}, {od_x1_item()})); });
 
@@ -1234,7 +1481,7 @@ TEST_CASE("restore_sample: a session that restored nothing for another reason is
                 b["failedItemsCount"] = 1;
                 b["items"][0]["status"] = "Failed";
             }));
-    rig.get(r + "/Events?limit=100", fixture(run.file("events"), [](json& b) {
+    rig.get(r + "/Events?limit=1000&offset=0", fixture(run.file("events"), [](json& b) {
                 b["results"][1]["status"] = "Failed";
                 b["results"][1]["message"] = "Item rp-canary-16.pdf: the file is locked";
             }));
@@ -1266,7 +1513,7 @@ TEST_CASE("restore_sample: a Warning session with fewer restored is partial", "[
                  })});
     rig.get(r + "/Statistics",
             fixture(run.file("statistics"), [](json& b) { b["restoredItemsCount"] = 4; }));
-    rig.get(r + "/Events?limit=100", fixture(run.file("events"), [](json& b) {
+    rig.get(r + "/Events?limit=1000&offset=0", fixture(run.file("events"), [](json& b) {
                 for (json& e : b["results"]) {
                     if (e.value("itemName", "") == "RP-CANARY-0005") {
                         e["status"] = "Warning";
@@ -1465,7 +1712,7 @@ TEST_CASE("restore_sample sends same-named mails of one mailbox in separate call
     rig.veeam.on(HttpMethod::get, run.session_url(second),
                  {fixture(run.file("session"), [&](json& b) { b["id"] = second; })});
     rig.get("/v8/RestoreSessions/" + second + "/Statistics", fixture(run.file("statistics")));
-    rig.get("/v8/RestoreSessions/" + second + "/Events?limit=100", fixture(run.file("events")));
+    rig.get("/v8/RestoreSessions/" + second + "/Events?limit=1000&offset=0", fixture(run.file("events")));
     connector::MailSelector archived = mail_x1_item();
     archived.folder = "Archive";
 

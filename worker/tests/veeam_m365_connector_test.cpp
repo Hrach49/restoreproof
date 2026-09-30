@@ -463,7 +463,24 @@ TEST_CASE("veeam_m365: the factory needs both Veeam secrets", "[veeam_m365]")
     REQUIRE(lab.make_graph_http_calls == 0);
 }
 
-TEST_CASE("veeam_m365: the factory needs the Worker app's certificate, before any HTTP client",
+TEST_CASE("veeam_m365: listing restore points needs nothing of Graph", "[veeam_m365]")
+{
+    // The W2.5 review: picking a restore point must work without the Worker
+    // app's certificate, which only the target guard's Graph client needs.
+    Harness lab;
+    lab.secrets.graph_cert_pfx_base64.reset();
+    lab.secrets.graph_cert_password.reset();
+    lab.config.graph_tenant_id = "not-a-guid";
+    const std::unique_ptr<connector::IConnector> made = lab.make();
+
+    const std::vector<connector::RestorePoint> points = made->list_restore_points(kOrgName);
+
+    CHECK_FALSE(points.empty());
+    CHECK(lab.make_graph_http_calls == 0);
+}
+
+TEST_CASE("veeam_m365: restore_sample needs the Worker app's certificate, before any HTTP client "
+          "or request",
           "[veeam_m365]")
 {
     const std::string pfx_needs_password =
@@ -481,16 +498,22 @@ TEST_CASE("veeam_m365: the factory needs the Worker app's certificate, before an
     Harness lab;
     lab.secrets.graph_cert_pfx_base64 = pfx;
     lab.secrets.graph_cert_password = given_password;
+    const std::unique_ptr<connector::IConnector> made = lab.make();
+    const connector::RestoreSpec spec = one_mail_spec(lab.config);
 
-    try {
-        (void)lab.make();
-        FAIL("no exception");
-    } catch (const rp::ConfigError& e) {
-        REQUIRE(std::string{e.what()} == message);
-        REQUIRE(e.key() == message.substr(0, message.find(' ')));
+    // Tried again on each call: the same answer, nothing sent.
+    for (int call = 0; call < 2; ++call) {
+        try {
+            (void)made->restore_sample(spec);
+            FAIL("no exception");
+        } catch (const rp::ConfigError& e) {
+            REQUIRE(std::string{e.what()} == message);
+            REQUIRE(e.key() == message.substr(0, message.find(' ')));
+        }
     }
-    REQUIRE(lab.make_http_calls == 0);
     REQUIRE(lab.make_graph_http_calls == 0);
+    REQUIRE(lab.http.requests().empty());
+    REQUIRE(lab.guard_lab.graph_http.requests().empty());
 }
 
 TEST_CASE("veeam_m365: the certificate must be valid at the options' wall clock", "[veeam_m365]")
@@ -499,31 +522,33 @@ TEST_CASE("veeam_m365: the certificate must be valid at the options' wall clock"
     connector::ConnectorOptions options = lab.options();
     // The lab certificate is valid for a year from kNow.
     options.wall_now = [] { return rp::test::graph_lab::kNow + std::chrono::hours{24 * 400}; };
+    const std::unique_ptr<connector::IConnector> made = connector::default_connector_registry().create(
+        connector::kVeeamM365, lab.config, lab.secrets, options);
 
-    REQUIRE_THROWS_AS(connector::default_connector_registry().create(
-                          connector::kVeeamM365, lab.config, lab.secrets, options),
-                      rp::graph::CertificateError);
-    REQUIRE(lab.make_http_calls == 0);
+    REQUIRE_THROWS_AS(made->restore_sample(one_mail_spec(lab.config)), rp::graph::CertificateError);
     REQUIRE(lab.make_graph_http_calls == 0);
+    REQUIRE(lab.http.requests().empty());
 }
 
-TEST_CASE("veeam_m365: the factory refuses Graph IDs that aren't GUIDs, before any HTTP client",
+TEST_CASE("veeam_m365: restore_sample refuses Graph IDs that aren't GUIDs, before any HTTP "
+          "client",
           "[veeam_m365]")
 {
     const std::string key = GENERATE(std::string{"graph_tenant_id"}, std::string{"graph_client_id"});
     Harness lab;
     (key == "graph_tenant_id" ? lab.config.graph_tenant_id : lab.config.graph_client_id) =
         "not-a-guid";
+    const std::unique_ptr<connector::IConnector> made = lab.make();
 
     try {
-        (void)lab.make();
+        (void)made->restore_sample(one_mail_spec(lab.config));
         FAIL("no exception");
     } catch (const rp::ConfigError& e) {
         REQUIRE(std::string{e.what()} == key + " is not a GUID");
         REQUIRE(e.key() == key);
     }
-    REQUIRE(lab.make_http_calls == 0);
     REQUIRE(lab.make_graph_http_calls == 0);
+    REQUIRE(lab.http.requests().empty());
 }
 
 TEST_CASE("veeam_m365: a factory whose Graph HTTP client is missing is refused", "[veeam_m365]")
@@ -533,9 +558,11 @@ TEST_CASE("veeam_m365: a factory whose Graph HTTP client is missing is refused",
     options.make_graph_http = [](std::shared_ptr<spdlog::logger>) {
         return std::unique_ptr<rp::IHttpClient>{};
     };
-    REQUIRE_THROWS_MATCHES(connector::default_connector_registry().create(
-                               connector::kVeeamM365, lab.config, lab.secrets, options),
-                           std::invalid_argument, Message("veeam_m365: no Graph HTTP client"));
+    const std::unique_ptr<connector::IConnector> made = connector::default_connector_registry().create(
+        connector::kVeeamM365, lab.config, lab.secrets, options);
+    REQUIRE_THROWS_MATCHES(made->restore_sample(one_mail_spec(lab.config)), std::invalid_argument,
+                           Message("veeam_m365: no Graph HTTP client"));
+    REQUIRE(lab.http.requests().empty());
 }
 
 TEST_CASE("veeam_m365: without a logger the factory never logs to spdlog's default logger",

@@ -25,9 +25,16 @@
 
 namespace rp {
 
+// The Graph client the target guard reads through, and the HTTP client it
+// sends on when the connector is to own that.
+struct VeeamM365GraphParts {
+    std::unique_ptr<IHttpClient> http;
+    std::shared_ptr<graph::GraphClient> client;
+};
+
 // What a VeeamM365Connector takes besides Veeam's address and account.
-// Every field may be left empty; restore_sample needs `graph` and
-// `cert_exporter`.
+// Every field may be left empty; restore_sample needs `graph` (or
+// `make_graph`) and `cert_exporter`.
 struct VeeamM365ConnectorOptions {
     // VeeamClient's: logger, the steady clock (tokens, and restore_sample's
     // 20-minute deadline), the wait (retries, and restore_sample's polls),
@@ -36,9 +43,15 @@ struct VeeamM365ConnectorOptions {
     // The Worker app's Graph client the target guard reads through; null:
     // restore_sample refuses to run.
     std::shared_ptr<graph::GraphClient> graph;
-    // The HTTP client `graph` sends through, when the connector is to own it
-    // (the registry's factory); kept alive as long as `graph`.
+    // The HTTP client `graph` sends through, when the connector is to own it;
+    // kept alive as long as `graph`.
     std::unique_ptr<IHttpClient> graph_http;
+    // With `graph` null: makes both on the first restore_sample (the
+    // registry's factory), so listing restore points needs nothing of Graph.
+    // What it throws (a CertificateError, a ConfigError) passes out of
+    // restore_sample as it is, before any request; it is tried again next
+    // time.
+    std::function<VeeamM365GraphParts()> make_graph;
     // Where the guard logs a refusal.
     TargetGuardOptions guard;
     // Exports Veeam's organisation app certificate for each restore POST;
@@ -89,39 +102,53 @@ public:
     // W2.5 entry in docs/decisions.md). In order:
     //  1. the target guard's layer 1 (W2.7, rp/target_guard.hpp), before any
     //     Veeam request: every item checked, each target the spec uses
-    //     resolved through Graph; a refusal is its connector::SafetyViolation,
-    //     Graph's errors connector ones (AuthError and PermissionError
-    //     connector::AuthError, TransientError, NotFoundError, the rest
-    //     connector::Error); without a Graph client connector::Error, no
-    //     request. An empty spec then returns not_run, still without one;
-    //  2. the organisation, as list_restore_points finds it, whose Exchange
-    //     and SharePoint apps must be set and the same (connector::Error);
-    //     without a certificate exporter connector::Error;
+    //     resolved through Graph (made by options.make_graph if need be); a
+    //     refusal is its connector::SafetyViolation, Graph's errors connector
+    //     ones (AuthError and PermissionError connector::AuthError,
+    //     TransientError, the rest, NotFoundError included, connector::Error);
+    //     without a Graph client connector::Error, no request. An empty spec
+    //     then returns not_run, still without one;
+    //  2. the organisation, as list_restore_points finds it (none is
+    //     connector::Error here), whose settings must be of the expected
+    //     shape and whose Exchange and SharePoint apps must be set and the
+    //     same (connector::Error); without a certificate exporter
+    //     connector::Error. The spec's restore point must be one of the
+    //     organisation's (by ID), with its backup_time byte for byte
+    //     (connector::Error): Veeam would otherwise explore whatever point is
+    //     at or before that time;
     //  3. a preflight: no restore session of this account Working in Veeam
     //     (connector::Error, stop them with 08-sweep-sessions.ps1);
     //  4. for each type with items (mail, SharePoint, OneDrive) an explore
     //     session on the restore point, every item found in it by listing
     //     (exactly one match each: none is connector::NotFoundError, several
-    //     connector::Error) and re-read;
+    //     connector::Error; a mailbox is a primary one, never an archive) and
+    //     re-read. The test OneDrive missing from the point is
+    //     connector::Error;
     //  5. one restore call per source container, same-named items in separate
     //     calls: the body built, the certificate exported, layer 2
     //     (rp/target_guard_veeam.hpp) on the exact path and text, then one
     //     POST, never resent. A 4xx: connector::AuthError (401, 403) or
     //     connector::Error. No session ID: the duplicate check, up to three
-    //     more looks 10 s apart; exactly one candidate is polled, else
-    //     connector::Error. A session ID the check doesn't list alone is
-    //     polled, then connector::Error (no verdict);
+    //     more looks 10 s apart; exactly one candidate is polled, else (or if
+    //     the check fails) connector::Error. A session ID the check doesn't
+    //     list alone (or a check that failed) is polled, then connector::Error
+    //     (no verdict), with the explore sessions left open, as another
+    //     candidate may still run;
     //  6. each restore session polled every 5 s until Stopped; a 404 or six
     //     failed polls in a row connector::Error, still Working after 20
     //     minutes connector::TransientError; then its statistics and events
     //     (connector::Error if unreadable), and its verdict. A session that
-    //     restored nothing for an infrastructure reason is connector::Error.
+    //     restored nothing for an infrastructure reason, or without a word
+    //     about any item, is connector::Error.
     // Every explore session opened is stopped at the end if still Working,
     // unless a restore may still be running (no verdict on the POST, a
     // timeout, a 404, failing polls): then they are left open and named in the
-    // error. Veeam's errors map as list_restore_points maps them. The spec's
-    // client_ref must be set and its backup_time Veeam's UTC form
-    // (std::invalid_argument, before any Veeam request).
+    // error. Veeam's errors map as list_restore_points maps them, but for
+    // NotFoundError, which is connector::Error: here connector::NotFoundError
+    // only ever means a sampled item (or its source mailbox, folder, site,
+    // library or OneDrive) isn't in the restore point. The spec's client_ref
+    // must be set and its backup_time Veeam's UTC form (std::invalid_argument,
+    // before any Veeam request).
     connector::RestoreResult restore_sample(const connector::RestoreSpec& spec) override;
 
 private:
@@ -131,6 +158,7 @@ private:
     std::unique_ptr<IHttpClient> graph_http_;
     std::unique_ptr<VeeamClient> client_;
     std::shared_ptr<graph::GraphClient> graph_;
+    std::function<VeeamM365GraphParts()> make_graph_;
     TargetGuardOptions guard_options_;
     std::shared_ptr<CertificateExporter> cert_exporter_;
     std::function<std::chrono::system_clock::time_point()> wall_now_;
@@ -143,18 +171,20 @@ private:
 // The registry's factory for "veeam_m365": a VeeamM365Connector on
 // Config::veeam_url with the Veeam secrets, through an HTTP client from
 // `options.make_http` (rp::HttpClient when null) whose CA file and pin are
-// Config::veeam_ca_file and veeam_cert_sha256 (TLS is never off); a Graph
-// client for the target guard, on the Worker app's certificate
-// (graph::certificate_from_secrets at options.wall_now) and
-// Config::graph_tenant_id and graph_client_id, through an HTTP client from
-// `options.make_graph_http` (graph::make_graph_http_client when null); and
-// `options.cert_exporter` (make_local_machine_cert_exporter when null). Every
-// part logs to options.logger (make_command_logger()'s when null). Checks,
-// in order and before making any HTTP client: ConfigError "RP_VEEAM_USERNAME
+// Config::veeam_ca_file and veeam_cert_sha256 (TLS is never off); and
+// `options.cert_exporter` (make_local_machine_cert_exporter when null).
+// Checks first, before making any HTTP client: ConfigError "RP_VEEAM_USERNAME
 // is not set" (then RP_VEEAM_PASSWORD), keyed by the variable, for a missing
-// or empty secret; the certificate's CertificateError (keyed by the variable
-// when one is unset); ConfigError for a Graph ID that isn't a GUID. Sends
-// nothing.
+// or empty secret. The Graph client for the target guard is made on the first
+// restore_sample (make_graph), so listing restore points needs nothing of
+// Graph: on the Worker app's certificate (graph::certificate_from_secrets at
+// options.wall_now) and Config::graph_tenant_id and graph_client_id, through
+// an HTTP client from `options.make_graph_http` (graph::make_graph_http_client
+// when null). There, before any HTTP client and any request, the
+// certificate's CertificateError (keyed by the variable when one is unset)
+// and a ConfigError for a Graph ID that isn't a GUID pass out of
+// restore_sample. Every part logs to options.logger (make_command_logger()'s
+// when null). Sends nothing.
 std::unique_ptr<connector::IConnector> make_veeam_m365_connector(
     const Config& config, const Secrets& secrets, const connector::ConnectorOptions& options);
 

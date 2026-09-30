@@ -52,6 +52,10 @@ inline const std::string kOrgName = "RestoreProofLab.onmicrosoft.com";
 inline const std::string kThumbprint = "AC3220B58A2B4C438DA13816C2DD1E25D1F783A7";
 // The W2.4 restore point, byte for byte as the recorded explore POSTs sent it.
 inline const std::string kBackupTime = "2026-09-27T22:00:48.1447833Z";
+// Its ID: the lab repository's ID (restore-points-200) and a made-up point ID;
+// the W2.4 recordings don't list the restore points.
+inline const std::string kRestorePointId =
+    "c2f0f2e7-177f-48ac-992b-93a50cf702e3" "5e1c0a24-0000-4000-8000-000000000924";
 inline const std::string kUsername = "DESKTOP-P55CDUM\\rp-veeam";
 // Never in an error, a log line or the result.
 inline const std::string kPassword = "Sentinel-Veeam-Password-5e1c";
@@ -130,6 +134,26 @@ inline json results_of(const std::string& name)
 inline std::string paged(const std::string& path)
 {
     return path + (path.find('?') == std::string::npos ? "?" : "&") + "limit=1000&offset=0";
+}
+
+// The organisation's restore points: the recorded list with the W2.4 point
+// (kRestorePointId, kBackupTime) first, `edit` applied to that entry if given.
+inline HttpResponse restore_points(const std::function<void(json&)>& edit = {})
+{
+    return fixture("restore-points-200", [&](json& body) {
+        json point = body.at("results").at(0);
+        point["id"] = kRestorePointId;
+        point["backupTime"] = kBackupTime;
+        if (edit) {
+            edit(point);
+        }
+        body["results"].insert(body["results"].begin(), point);
+    });
+}
+
+inline std::string restore_points_url()
+{
+    return url(paged("/v8/RestorePoints?organizationId=" + kOrgId));
 }
 
 // One of W2.4's recorded runs.
@@ -226,7 +250,7 @@ inline rp::connector::RestoreSpec restore_spec(std::vector<rp::connector::MailSe
 {
     rp::connector::RestoreSpec spec = make_spec(std::move(mail), std::move(sp), std::move(od));
     spec.client_ref = kOrgName;
-    spec.restore_point.id = "made-up-restore-point";
+    spec.restore_point.id = kRestorePointId;
     spec.restore_point.backup_time = kBackupTime;
     return spec;
 }
@@ -294,6 +318,7 @@ struct RestoreRig {
         veeam.on(HttpMethod::post, url("/v8/token/logout"), {load_fixture("veeam", "logout-204")});
         veeam.on(HttpMethod::get, url("/v8/Organizations?limit=1000&offset=0"),
                  {fixture("w24-mail-x5-org")});
+        veeam.on(HttpMethod::get, restore_points_url(), {restore_points()});
         veeam.on(HttpMethod::get, url("/v8/RestoreSessions?limit=200"),
                  {fixture("w24-mail-x5-sweep-before")});
         veeam.on(HttpMethod::post, url("/v8/Organizations/" + kOrgId + "/explore"),
@@ -421,7 +446,7 @@ struct RestoreRig {
         veeam.on(HttpMethod::get, run.session_url(r),
                  {fixture(run.file("session-working")), fixture(run.file("session"))});
         get("/v8/RestoreSessions/" + r + "/Statistics", fixture(run.file("statistics")));
-        get("/v8/RestoreSessions/" + r + "/Events?limit=100", fixture(run.file("events")));
+        get(paged("/v8/RestoreSessions/" + r + "/Events"), fixture(run.file("events")));
         // The finally path: the explore session is still Working, then stopped.
         get(session, make_response(200, load_fixture_json("veeam", run.file("explore"))
                                             .at("body")

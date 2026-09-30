@@ -7,6 +7,75 @@ Format: date, decision, reason, alternatives rejected.
 
 ---
 
+## 2026-09-30 — W2.5 second review: restore point, errors, infrastructure, paging
+
+Amends points 2, 4, 6, 8, 9 and 10 of the W2.5 entry below and point 5 of its first review,
+after the second review of the W2.5 branch (14 findings on PR #139). Proposed with them: the
+owner confirms in the W2.5 review, or supersedes.
+
+**Decision.**
+
+1. **The restore point is checked.** After the organisation, `restore_sample` lists its restore
+   points (`list_restore_points`); the spec's `restore_point.id` must be one of them and its
+   `backup_time` equal byte for byte, else `connector::Error` before any explore session.
+   Veeam explores the newest data at or before an explore's `dateTime` (veeam-notes §4.2), so
+   a stale or another client's time would restore other data than the result names.
+2. **`connector::NotFoundError` means one thing in `restore_sample`:** a sampled item (or its
+   source mailbox, folder, site, library or OneDrive) isn't in the restore point, the case
+   W3.3 may call `fail`. Everything else that is "not found" is `connector::Error`: a client
+   Veeam doesn't know, the test OneDrive missing from the point, a restore target Graph can't
+   find (the guard's `graph::NotFoundError`), and Veeam's own 404 `ResourceNotFound` mid-run
+   (an expired session). `list_restore_points` keeps its W1.7 mapping.
+3. **Mailboxes are the primary ones.** An entry with `isArchive` true (a user's in-place
+   archive, listed with the same email) is never a sample's source mailbox.
+4. **What reads as infrastructure (amends point 9 and review point 6).** The marker list grows
+   from W1.0's four texts to the usual words of a failed service call ("Failed to access
+   mailbox", connect / connection, access denied, unauthorized, forbidden, (401), (403), (429),
+   too many requests, throttl-, (503), service unavailable, server busy, timed out, timeout,
+   proxy, could not be resolved, certificate, token): broad on purpose, since a doubt must be
+   `error`, never `fail`. They are matched in Veeam's own words only (`veeam_words`): every
+   item name, the run's tenant texts (the source containers' names and addresses, folder
+   names, the targets' names and URLs), Veeam's `source: …;` and `target: …)` fields, quoted
+   parts and every word holding `@`, `/` or `\` are cut out first. And a session that
+   restored nothing and whose events name no item (Veeam never reached them) is infrastructure
+   whatever its words: nothing is known about the backup.
+5. **An unpinned restore keeps the explore sessions open (amends point 8).** When the POST was
+   accepted but the duplicate check didn't list its session alone (or failed), our session is
+   still polled and read, but the explore sessions stay open and are named in the error: the
+   other candidate may be running under them. In the no-answer branch a failed duplicate check
+   is `connector::Error` (no verdict), never the lookup's own `TransientError` or
+   `NotFoundError`.
+6. **An orphaned explore session is adopted only when it is certainly ours (amends review
+   point 5).** After a failed explore POST, the duplicate check's filter also requires the
+   session `Working` and of this organisation (`organization`), and exactly one must match; with
+   several, none is stopped and the sweep script is named. The duplicate check after a restore
+   POST also filters by organisation (an entry without the field is kept, so it can only add a
+   candidate).
+7. **Smaller ones.** Events are read through `VeeamClient::get_all` (paged, each ID once, a page
+   Veeam caps below the limit asked for isn't taken for the last). `open_explore_session`
+   returns the ID in lower case, as `post_restore_once` does. One organisation's settings of an
+   unexpected shape no longer fail `list_organizations` for all: `Organization::settings_problem`
+   says why its app is unset, and `restore_sample` refuses that organisation with it.
+   `parse_veeam_time` (`src/veeam_time.*`) is the one reader of Veeam's time form, for
+   `VeeamClient` too.
+8. **The registry's factory makes the Graph client on the first `restore_sample` (amends point
+   10),** through `VeeamM365ConnectorOptions::make_graph`: listing restore points needs neither
+   `RP_GRAPH_CERT_*` nor the Graph IDs. Their `CertificateError` / `ConfigError` now pass out
+   of `restore_sample`, before any HTTP client and any request, and are tried again next time.
+
+**Reason.** Each closes a case the review found: an explore session stopped under a restore that
+may still run, a result attributed to a point it didn't restore from, every mail of a user with
+an archive an error, a retryable error while a restore may run, infrastructure failures (and
+tenant text) turning into `fail`, a config problem read as a missing item, events cut short, a
+case mismatch refusing every restore, one odd organisation breaking `veeam list`, another
+process's session stopped, and listing restore points needing a certificate it never uses.
+
+**Alternatives rejected.** An allow-list of item-level failures instead of the marker list
+(Veeam's texts for a bad item are not documented; the no-item rule and the markers err towards
+`error`); matching the restore point by time alone (two points can share a second); keeping
+the explore sessions open only when the check listed another candidate (a failed check can't
+rule one out either).
+
 ## 2026-09-30 — W2.5 review: what `restore_sample` refuses, closes and wipes
 
 Amends points 1, 3, 5, 6, 7, 8 and 9 of the W2.5 entry below (proposed), after the review of

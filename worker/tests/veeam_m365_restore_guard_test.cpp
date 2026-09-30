@@ -178,7 +178,9 @@ TEST_CASE("restore_sample turns the guard's Graph errors into connector errors",
     const Row row = GENERATE(values<Row>({
         {"a 403 on the library", drive_url(), "site-403-accessdenied", "AuthError"},
         {"a 503 on the Inbox", inbox_url(), "messages-503-unavailable", "TransientError"},
-        {"a 404 on the folder", folder_url(), "onedrive-folder-404-itemnotfound", "NotFoundError"},
+        // A restore target Graph can't find is the run's error, never
+        // NotFoundError (in restore_sample, a sampled item missing: `fail`).
+        {"a 404 on the folder", folder_url(), "onedrive-folder-404-itemnotfound", "Error"},
         {"a 404 on the Inbox", inbox_url(), "messages-404-mailbox-not-enabled", "Error"},
     }));
     CAPTURE(row.name);

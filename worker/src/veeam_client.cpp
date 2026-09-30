@@ -7,11 +7,11 @@
 #include "json_fields.hpp"
 #include "text_util.hpp"
 #include "uuid.hpp"
+#include "veeam_time.hpp"
 
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
-#include <array>
 #include <mutex>
 #include <optional>
 #include <random>
@@ -236,22 +236,27 @@ std::string optional_string(const json& item, const char* key)
 }
 
 // An organisation's exchangeOnlineSettings or sharePointOnlineSettings app:
-// set only with both strings there and not empty.
-std::optional<OrganizationApp> optional_app(const json& item, const char* key)
+// set only with both strings there and not empty. A value of another JSON
+// kind leaves it unset and says why in `problem` (the first such).
+std::optional<OrganizationApp> optional_app(const json& item, const char* key,
+                                            std::string& problem)
 {
     const auto it = item.find(key);
     if (it == item.end() || it->is_null()) {
         return std::nullopt;
     }
-    if (!it->is_object()) {
-        throw ShapeError(std::string{"\""} + key + "\" isn't an object");
-    }
     OrganizationApp app;
     try {
+        if (!it->is_object()) {
+            throw ShapeError("it isn't an object");
+        }
         app.application_id = optional_string(*it, "applicationId");
         app.certificate_thumbprint = optional_string(*it, "applicationCertificateThumbprint");
     } catch (const ShapeError& e) {
-        throw ShapeError(std::string{key} + ": " + e.what());
+        if (problem.empty()) {
+            problem = std::string{key} + ": " + e.what();
+        }
+        return std::nullopt;
     }
     if (app.application_id.empty() || app.certificate_thumbprint.empty()) {
         return std::nullopt;
@@ -269,71 +274,6 @@ bool optional_bool(const json& item, const char* key)
         throw ShapeError(std::string{"\""} + key + "\" isn't true or false");
     }
     return it->get<bool>();
-}
-
-// A backupTime as a sortable value: year, month, day, hour, minute, second,
-// then the fraction in 100 ns ticks. Veeam writes UTC as
-// "2026-09-25T19:37:15.2145203Z", dropping trailing zeros of the fraction
-// (and the '.' with them), so the text alone doesn't sort. Anything else
-// (an offset, no zone, more than 7 digits) is refused: explore sessions are
-// opened by this exact string, and Veeam answers 500 to any other form.
-using TimeKey = std::array<int, 7>;
-
-std::optional<TimeKey> parse_backup_time(std::string_view text)
-{
-    const auto digits = [text](std::size_t at, std::size_t count) -> std::optional<int> {
-        if (at + count > text.size()) {
-            return std::nullopt;
-        }
-        int value = 0;
-        for (std::size_t i = at; i < at + count; ++i) {
-            if (text[i] < '0' || text[i] > '9') {
-                return std::nullopt;
-            }
-            value = value * 10 + (text[i] - '0');
-        }
-        return value;
-    };
-    // YYYY-MM-DDTHH:MM:SS
-    constexpr std::array<std::pair<std::size_t, char>, 5> separators{
-        {{4, '-'}, {7, '-'}, {10, 'T'}, {13, ':'}, {16, ':'}}};
-    if (text.size() < 20 || text.back() != 'Z') {
-        return std::nullopt;
-    }
-    for (const auto& [at, c] : separators) {
-        if (text[at] != c) {
-            return std::nullopt;
-        }
-    }
-    const auto year = digits(0, 4);
-    const auto month = digits(5, 2);
-    const auto day = digits(8, 2);
-    const auto hour = digits(11, 2);
-    const auto minute = digits(14, 2);
-    const auto second = digits(17, 2);
-    if (!year || !month || !day || !hour || !minute || !second || *month < 1 || *month > 12 ||
-        *day < 1 || *day > 31 || *hour > 23 || *minute > 59 || *second > 59) {
-        return std::nullopt;
-    }
-    // Between the seconds and 'Z': nothing, or '.' and 1 to 7 digits. With
-    // nothing, text[19] is the 'Z' checked above. The count is checked before
-    // the digits are read, so a long fraction can't overflow an int.
-    int ticks = 0;
-    if (const std::size_t rest = text.size() - 20; rest > 0) {
-        const std::size_t count = rest - 1;
-        if (text[19] != '.' || count < 1 || count > 7) {
-            return std::nullopt;
-        }
-        const auto fraction = digits(20, count);
-        if (!fraction) {
-            return std::nullopt;
-        }
-        ticks = *fraction;
-        for (std::size_t i = count; i < 7; ++i) {
-            ticks *= 10;
-        }
-    }
-    return TimeKey{*year, *month, *day, *hour, *minute, *second, ticks};
 }
 
 // Whether `path` is one of the API's own ("/v8/..."): the client puts
@@ -868,8 +808,9 @@ std::vector<Organization> VeeamClient::list_organizations()
             org.msid = optional_string(item, "msid");
             org.region = optional_string(item, "region");
             org.office_name = optional_string(item, "officeName");
-            org.exchange_app = optional_app(item, "exchangeOnlineSettings");
-            org.sharepoint_app = optional_app(item, "sharePointOnlineSettings");
+            org.exchange_app = optional_app(item, "exchangeOnlineSettings", org.settings_problem);
+            org.sharepoint_app =
+                optional_app(item, "sharePointOnlineSettings", org.settings_problem);
             out.push_back(std::move(org));
         }
     } catch (const ShapeError& e) {
@@ -888,14 +829,16 @@ std::vector<RestorePoint> VeeamClient::list_restore_points(const std::string& or
     const std::string path = "/v8/RestorePoints?organizationId=" + organization_id;
     const std::vector<json> items = get_all_pages(path);
 
-    std::vector<std::pair<TimeKey, RestorePoint>> keyed;
+    std::vector<std::pair<VeeamTime, RestorePoint>> keyed;
     keyed.reserve(items.size());
     try {
         for (const json& item : items) {
             RestorePoint point;
             point.id = required_string(item, "id");
             point.backup_time = optional_string(item, "backupTime");
-            const std::optional<TimeKey> key = parse_backup_time(point.backup_time);
+            // Veeam writes UTC as "2026-09-25T19:37:15.2145203Z", dropping
+            // trailing zeros of the fraction, so the text alone doesn't sort.
+            const std::optional<VeeamTime> key = parse_veeam_time(point.backup_time);
             if (!key) {
                 throw VeeamError("Veeam GET " + path + ": restore point " + one_line(point.id) +
                                      " has a backupTime that isn't a UTC time such as "
@@ -957,7 +900,7 @@ std::string VeeamClient::open_explore_session(const std::string& organization_id
     if (!is_uuid(organization_id)) {
         throw std::invalid_argument("organisation ID must be a UUID");
     }
-    if (!parse_backup_time(backup_time)) {
+    if (!parse_veeam_time(backup_time)) {
         // Veeam answers 500 to any other form, and one earlier than the
         // point (truncated) opens the point before it (veeam-notes §4.2).
         throw std::invalid_argument(
@@ -979,8 +922,11 @@ std::string VeeamClient::open_explore_session(const std::string& organization_id
     if (id == nullptr || !is_uuid(*id)) {
         throw VeeamError(what + ": unexpected response: no session \"id\"", response.status);
     }
-    log_debug(what + ": explore session " + *id + " opened");
-    return *id;
+    // As GET /v8/RestoreSessions lists it, as post_restore_once keeps a
+    // restore session's: the duplicate check and layer 2 compare in lower case.
+    const std::string session = ascii_lower(*id);
+    log_debug(what + ": explore session " + session + " opened");
+    return session;
 }
 
 VeeamClient::RestorePostOutcome VeeamClient::post_restore_once(const std::string& path,

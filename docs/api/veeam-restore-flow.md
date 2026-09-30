@@ -43,7 +43,7 @@ POST …/items/restoreTo | …/Documents/restoreTo | …/Documents/copyTo   ONCE
 GET  /v8/RestoreSessions?startTimeFrom=…&orderBy=CreationTime&orderAsc=false&limit=50   exactly one new session (§8)
 GET  /v8/RestoreSessions/{sessionId}     every 5 s               until state == Stopped (§9)
 GET  /v8/RestoreSessions/{sessionId}/Statistics                 counts; per-file items (§10)
-GET  /v8/RestoreSessions/{sessionId}/Events?limit=100           one Restore event per item (§10)
+GET  /v8/RestoreSessions/{sessionId}/Events?limit=1000&offset=0 one Restore event per item (§10; the Worker pages it)
 POST /v8/RestoreSessions/{exploreSessionId}/Stop                → 204, in a finally, unless a restore from it may still run (§11)
 POST /v8/token/logout                                           → 204
 ```
@@ -805,7 +805,7 @@ Infrastructure problems are `error`, never `fail` (CLAUDE.md). When unsure, `err
 | POST 5xx, timeout, transport error: the check (§8) finds exactly one session | continue with it | as the session decides | no |
 | … finds none or several | exception, not resent | `error` | no |
 | `Stopped`, `Success`, `restoredItemsCount` = N, every item's event (and file statistics entry) `Success` | `succeeded` | Graph decides `pass`/`fail` per item | all four runs |
-| 0 restored in total, and an event message is infrastructure or auth ("Cannot connect to Microsoft 365", "Failed to open mailbox", "missing the required application permissions", AADSTS in Veeam's log) | exception (`AuthError` or `Error`), not a status | `error` | W1.0 user credentials |
+| 0 restored in total, and an event message is infrastructure or auth ("Cannot connect to Microsoft 365", "Failed to open mailbox", "missing the required application permissions", AADSTS in Veeam's log; since the W2.5 second review also connect, access denied, 401/403/429/503, throttling, timeouts, proxy, name resolution, certificate, token, matched in Veeam's own words with the tenant's text cut out), or no event names any item | exception (`AuthError` or `Error`), not a status | `error` | W1.0 user credentials |
 | 0 restored in total otherwise, whatever `result` says (`Failed`; `Warning` or `Success` with 0) | `failed` | `fail` | no |
 | `Warning`, or `Success` with 0 < `restoredItemsCount` < N, or some items `Failed` beside restored ones | `partial` | restored items → Graph; a failed item is `fail` when its message is about the item or the backup, `error` when it is infrastructure (proposal, see below) | no |
 | Still `Working` after 20 min | exception; record the session ID; not resent | `error` | no |

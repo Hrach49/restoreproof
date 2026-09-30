@@ -272,6 +272,14 @@ TEST_CASE("select refuses a bad run ID, a size outside 0..100 or a cursor out of
     CHECK(chosen.kind == "invalid_argument");
     CHECK(chosen.what == row.message);
     CHECK(c.queries.empty());
+
+    // The one cursor rule, as `rpworker restore` says it before any Veeam call.
+    const std::optional<std::string> problem = rp::sampling::cursor_problem(manifest, row.cursor);
+    if (row.message.find(" cursor must be ") != std::string::npos) {
+        CHECK(problem == row.message.substr(std::string_view{"sampler: "}.size()));
+    } else {
+        CHECK_FALSE(problem);
+    }
 }
 
 // 2. A manifest (built in code, or loaded for other targets) with a canary in a restore target.
@@ -329,6 +337,12 @@ TEST_CASE("select refuses a manifest with a canary in a restore target", "[sampl
     CHECK(chosen.kind == "ManifestError");
     CHECK(chosen.what == row.message);
     CHECK(c.queries.empty());
+
+    // check_manifest, which `rpworker restore` runs before it makes the connector.
+    const Thrown checked = thrown_by(
+        [&] { rp::sampling::check_manifest(manifest, targets(), manifest.tenant_id); });
+    CHECK(checked.kind == "ManifestError");
+    CHECK(checked.what == row.message);
 }
 
 // 3. A pool holding what list_candidates must never offer: all of it is refused.
@@ -882,6 +896,15 @@ TEST_CASE("choose_sample refuses a manifest from another tenant before any listi
     CHECK(thrown.kind == "ManifestError");
     CHECK(thrown.what == "canary manifest: /tenant_id: isn't the client's tenant (graph_tenant_id)");
     CHECK(c.queries.empty());
+
+    const Thrown checked = thrown_by([&] {
+        rp::sampling::check_manifest(lab_manifest(), targets(),
+                                     "00000000-0000-4000-8000-000000000001");
+    });
+    CHECK(checked.kind == "ManifestError");
+    CHECK(checked.what == thrown.what);
+    CHECK_NOTHROW(
+        rp::sampling::check_manifest(lab_manifest(), targets(), lab_manifest().tenant_id));
 }
 
 TEST_CASE("choose_sample passes a connector's NotImplementedError out", "[sample-selector]")

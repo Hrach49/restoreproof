@@ -36,26 +36,25 @@ std::string kind_name(ItemKind kind)
     return std::string{connector::to_string(kind)};
 }
 
-struct KindInputs {
-    ItemKind kind;
-    int size;
-    std::size_t canaries;
-    std::uint32_t cursor;
-};
-
-void check_kind(const KindInputs& in)
+// Why one type's cursor is out of the manifest's range, or nullopt.
+std::optional<std::string> kind_cursor_problem(ItemKind kind, std::uint32_t cursor,
+                                               std::size_t canaries)
 {
-    if (in.size < 0 || in.size > 100) {
-        throw std::invalid_argument("sampler: the " + kind_name(in.kind) +
-                                    " sample size must be from 0 to 100");
+    if (canaries == 0 ? cursor == 0 : cursor < canaries) {
+        return std::nullopt;
     }
-    if (in.canaries == 0 ? in.cursor != 0 : in.cursor >= in.canaries) {
-        throw std::invalid_argument(
-            "sampler: the " + kind_name(in.kind) + " cursor must be " +
-            (in.canaries == 0 ? std::string{"0: the manifest has no "} + kind_name(in.kind) +
-                                    " canaries"
-                              : "below " + std::to_string(in.canaries) + ", the manifest's " +
-                                    kind_name(in.kind) + " canaries"));
+    const std::string k = kind_name(kind);
+    return "the " + k + " cursor must be " +
+           (canaries == 0 ? "0: the manifest has no " + k + " canaries"
+                          : "below " + std::to_string(canaries) + ", the manifest's " + k +
+                                " canaries");
+}
+
+void check_size(ItemKind kind, int size)
+{
+    if (size < 0 || size > 100) {
+        throw std::invalid_argument("sampler: the " + kind_name(kind) +
+                                    " sample size must be from 0 to 100");
     }
 }
 
@@ -63,9 +62,12 @@ void check_inputs(const SamplePlan& plan, const CanaryManifest& manifest, const 
                   std::string_view run_id)
 {
     check_run_id(run_id);
-    check_kind({ItemKind::mail, plan.mail, manifest.mail.size(), cursor.mail});
-    check_kind({ItemKind::sharepoint, plan.sharepoint, manifest.sharepoint.size(), cursor.sharepoint});
-    check_kind({ItemKind::onedrive, plan.onedrive, manifest.onedrive.size(), cursor.onedrive});
+    check_size(ItemKind::mail, plan.mail);
+    check_size(ItemKind::sharepoint, plan.sharepoint);
+    check_size(ItemKind::onedrive, plan.onedrive);
+    if (const std::optional<std::string> problem = cursor_problem(manifest, cursor)) {
+        throw std::invalid_argument("sampler: " + *problem);
+    }
 }
 
 [[noreturn]] void refuse_canary(std::size_t entry, std::string_view field, std::string_view rule)
@@ -426,6 +428,28 @@ std::vector<std::string> unique_folded(std::vector<std::string> values)
 
 } // namespace
 
+std::optional<std::string> cursor_problem(const CanaryManifest& manifest,
+                                          const CanaryCursor& cursor)
+{
+    if (auto problem = kind_cursor_problem(ItemKind::mail, cursor.mail, manifest.mail.size())) {
+        return problem;
+    }
+    if (auto problem = kind_cursor_problem(ItemKind::sharepoint, cursor.sharepoint,
+                                           manifest.sharepoint.size())) {
+        return problem;
+    }
+    return kind_cursor_problem(ItemKind::onedrive, cursor.onedrive, manifest.onedrive.size());
+}
+
+void check_manifest(const CanaryManifest& manifest, const connector::RestoreTargets& targets,
+                    const std::string& graph_tenant_id)
+{
+    if (!ascii_iequals(manifest.tenant_id, graph_tenant_id)) {
+        throw ManifestError("canary manifest: /tenant_id: isn't the client's tenant (graph_tenant_id)");
+    }
+    check_canaries(manifest, targets);
+}
+
 SamplePlan SamplePlan::from_config(const Config& config)
 {
     return {config.sample_mail, config.sample_sp, config.sample_od};
@@ -477,12 +501,9 @@ Selection choose_sample(connector::IConnector& connector, const std::string& cli
                         std::string_view run_id, const connector::CandidateLimits& limits)
 {
     check_inputs(plan, manifest, cursor, run_id);
-    if (!ascii_iequals(manifest.tenant_id, graph_tenant_id)) {
-        throw ManifestError("canary manifest: /tenant_id: isn't the client's tenant (graph_tenant_id)");
-    }
     // Pure: said before the connector is asked, so an unreachable backup
     // server can't hide a manifest that names a restore target.
-    check_canaries(manifest, targets);
+    check_manifest(manifest, targets, graph_tenant_id);
     connector::CandidatePool pool;
     if (plan.mail / 2 > 0 || plan.sharepoint / 2 > 0 || plan.onedrive / 2 > 0) {
         connector::CandidateQuery query{

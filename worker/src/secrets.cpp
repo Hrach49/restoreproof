@@ -4,6 +4,9 @@
 
 #include "utf16.hpp"
 
+#include <string>
+#include <utility>
+
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
@@ -45,6 +48,16 @@ Secrets load_secrets_from_env()
 {
     return {read_env(kEnvVeeamUsername), read_env(kEnvVeeamPassword),
             read_env(kEnvGraphCertPfxBase64), read_env(kEnvGraphCertPassword)};
+}
+
+void require_veeam_secrets(const Secrets& secrets)
+{
+    for (const auto& [secret, name] : {std::pair{&secrets.veeam_username, kEnvVeeamUsername},
+                                       std::pair{&secrets.veeam_password, kEnvVeeamPassword}}) {
+        if (!secret->has_value() || (*secret)->empty()) {
+            throw ConfigError(std::string{name}, std::string{name} + " is not set");
+        }
+    }
 }
 
 std::string_view mask_secret(const std::optional<std::string>& secret) noexcept

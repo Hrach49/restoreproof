@@ -130,3 +130,27 @@ in the call format above:
 
 No credential reaches any of them (the `RestoreResult` holds none). Before commit the three
 files were audited with `audit-evidence.ps1`: no hits.
+
+## W2.8 live restore (`rpworker restore`)
+
+W2.8's "Done when", 2026-09-30 21:42:43Z–21:45:22Z: `rpworker restore --mail 5 --sp 5 --od 5`
+(`docs/testing.md`, "Restore by hand", from an elevated PowerShell 7) chose run
+`rp-20260930T214243Z-6138257d` (seed `59bd6f19`, canary cursor `0,0,0` -> `3,3,3`) on the restore
+point of 2026-09-29T22:00:45.6603083Z: 3 canaries of each type and 2 random mails from real
+data; the SharePoint and OneDrive random halves were short (no non-canary files in the lab), as
+recorded in the header. It restored 11 of 11 items in four restore sessions, all `Success`, status
+`succeeded`, exit 0, in 2:28. The read-back right after showed exactly these 11 items in the three
+targets, so nothing else was there. Against `lab/seed-manifest.json`: the three canary mails'
+`text-v1` hashes equal `body_sha256`; both PDFs and the OneDrive docx and xlsx equal
+`stored_sha256` byte for byte; the SharePoint docx and xlsx differ in bytes, as SharePoint
+rewrites Office files (their check is `office-v1`, W3.2). The OneDrive events' `source` names
+the destination path (`…/Documents/RestoreTarget/…`), as W2.4 recorded
+(`docs/api/veeam-restore-flow.md`).
+
+| File | What it is |
+|---|---|
+| [`w2.8-live-restore.txt`](w2.8-live-restore.txt) | the command's output and exit code, as the console showed them |
+| [`w2.8-live-graph-list-hash.txt`](w2.8-live-graph-list-hash.txt) | `rpworker graph list --hash` right after it: the 11 items with their SHA-256 |
+
+Neither holds a credential: the command prints none. The copies stay in the targets until
+removed by hand (W3.4).

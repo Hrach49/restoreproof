@@ -7,6 +7,53 @@ Format: date, decision, reason, alternatives rejected.
 
 ---
 
+## 2026-09-30 — W2.7 second review: a restore target is never a source, by what Veeam lists
+
+Supersedes parts of the 2026-09-30 W2.7 review entry below (point 1's layer-1 mail rule and
+point 2's `siteUrl` rule), after a `/code-review high` of PR #138 run on 2026-09-30, once W2.5
+and W2.6 were merged.
+
+**Decision.**
+
+1. **Layer 2 checks the source as browsing found it.** Veeam's OneDrive document IDs don't name
+   their folder and a mail restore's body doesn't name its source mailbox, so layer 2 could
+   only trust layer 1's reading of the sample. `restore_sample` now passes what Veeam listed:
+   `GuardedItem::top_folder` (the top-level folder walked to a OneDrive item) and
+   `RestoreRequestContext::source_mailbox` (the source mailbox's `email`). Layer 2 refuses an
+   item whose top folder is a RestoreTarget folder (any OneDrive) and a source mailbox that is a
+   restoretest mailbox or the test mailbox, so an alias, an object ID or a stray space in the
+   sample can't hide the test mailbox. `source_mailbox` is required for mail (`bad context`).
+2. **One path rule, stricter.** `src/folder_path.hpp`'s `first_folder` (the guard's layer 1,
+   the sampler and the manifest loader) also refuses a path holding a backslash or a colon: no
+   SharePoint or OneDrive name holds either, so such a path is another spelling of a folder
+   (`\RestoreTarget`, Graph's `/drive/root:/RestoreTarget`), never one of the backup. The lister
+   skips folders so named. A `/Documents/RestoreTarget` subfolder stays a source, as before.
+3. **Layer 1 refuses a mailbox with whitespace or a control character** (and the manifest
+   loader such a canary mailbox), and **a SharePoint item on the test OneDrive's drive**
+   (`test_onedrive_drive_id`; the sampler already refused it, and now its canary check too).
+4. **`siteUrl` is checked where Graph gives it.** The library's must be https on
+   `test_site_id`'s host, the OneDrive folder's https on that tenant's `-my` host, neither with
+   a query, fragment or whitespace; before, any string (even an empty one) passed layer 1 and
+   became layer 2's only reference for `siteURL`.
+5. **One derivation of the OneDrive host**: `rp::onedrive_host` (`rp/config.hpp`), used by the
+   download allow-list, `veeam_restore::onedrive_url`, layer 2 and point 4.
+6. The lab's fixture recorder requires alice's OneDrive `siteUrl` exactly, host included.
+
+**Kept as they were.** (a) Exchange's 403 on the mailbox check stays a `SafetyViolation` (the
+W2.7 review's point 1): the guard can't tell another mailbox from a missing scope, and treating
+an unverified target as a refusal fails safe; the message names both causes. (b) A bad Worker
+certificate still leaves `restore_sample` as `rp::ConfigError` (exit code 1, as documented on
+`VeeamM365ConnectorOptions::make_graph`); `connector.hpp` now says connectors may let it out.
+
+**Reason.** Each layer should refuse on data it can check itself: the sample's text is the
+input under suspicion, and Veeam's listing and Graph's reply are what the restore acts on.
+
+**Alternatives rejected.** Refusing every path with a RestoreTarget segment anywhere (would
+refuse real data such as `/Documents/RestoreTarget`, and the lister and sampler would have to
+follow); mapping the mailbox 403 to `PermissionError` (reports a possibly wrong target as a
+grant problem); converting `ConfigError` to `connector::Error` (a broken certificate would exit 4
+instead of 1).
+
 ## 2026-09-30 — W2.6: how the sample is chosen (proposed; recorded before the build)
 
 Recorded before any of it was built. Proposed: the owner confirms it in the W2.6 review, or

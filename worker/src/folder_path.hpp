@@ -15,9 +15,14 @@ namespace rp {
 
 // The first folder of a path split on '/', empty and "." segments skipped
 // ("" for the root); nullopt when the path has a ".." segment, which no check
-// here follows.
+// here follows, or a backslash or a colon: no SharePoint or OneDrive name
+// holds either, so such a path is another spelling ("\RestoreTarget",
+// Graph's "/drive/root:/RestoreTarget"), never a folder of the backup.
 inline std::optional<std::string_view> first_folder(std::string_view path)
 {
+    if (path.find_first_of("\\:") != std::string_view::npos) {
+        return std::nullopt;
+    }
     std::optional<std::string_view> first;
     std::size_t at = 0;
     while (at <= path.size()) {
@@ -34,7 +39,7 @@ inline std::optional<std::string_view> first_folder(std::string_view path)
     return first.value_or(std::string_view{});
 }
 
-// Whether the path has a ".." segment.
+// Whether the path has a ".." segment, a backslash or a colon.
 inline bool has_dot_dot_segment(std::string_view path)
 {
     return !first_folder(path).has_value();

@@ -25,6 +25,10 @@ enum class RestoreKind { mail, sharepoint, onedrive };
 struct GuardedItem {
     std::string id;
     std::string name;
+    // OneDrive: the top-level folder browsing walked through to the item, as
+    // Veeam listed it ("" at the root). Veeam's OneDrive document IDs don't
+    // name their folder, so this is how layer 2 knows the item's place.
+    std::string top_folder;
 };
 
 // What W2.5 established with read-only calls before the POST.
@@ -35,6 +39,9 @@ struct RestoreRequestContext {
     // The source mailbox's, site's or OneDrive's Veeam ID, as in the path: one
     // or more lower-case GUIDs run together.
     std::string container_id;
+    // Mail: the source mailbox's address as Veeam lists it (its entry's
+    // email), not as the sample spelled it.
+    std::string source_mailbox;
     // The items to restore, from the sample: at least one, no ID twice.
     std::vector<GuardedItem> items;
     // Veeam's organisation app (GET /v8/Organizations).
@@ -52,8 +59,9 @@ struct RestoreRequestContext {
 // Layer 2. Throws connector::SafetyViolation ("target guard: ...; the restore
 // was not sent"), logged as layer 1 logs it, unless all of these hold:
 //  - the context: items non-empty with no ID twice; container_id one or more
-//    lower-case GUIDs; application_id, organization_name, office_region (and
-//    for OneDrive target_onedrive_id and _url) non-empty printable ASCII;
+//    lower-case GUIDs; application_id, organization_name, office_region (for
+//    OneDrive target_onedrive_id and _url too) non-empty printable ASCII; for
+//    mail source_mailbox so too, without a space;
 //    `targets` has the kind's target resolved: for mail a restoretest
 //    mailbox, for SharePoint and OneDrive the library or folder;
 //  - the path: no '?', '#', '%', '\\', "//" or dot segment; the explore
@@ -72,8 +80,10 @@ struct RestoreRequestContext {
 //    every comparison ordinal unless said otherwise; officeRegion and
 //    applicationId the context's; both credential fields JSON strings, never
 //    read further;
-//  - mail: mailbox and impersonationAccountName the test mailbox layer 1
-//    resolved, folder
+//  - mail: the source mailbox no restoretest mailbox (rp::is_restore_mailbox)
+//    and not the test mailbox (ASCII case-insensitive): a restore target is
+//    never a source; mailbox and impersonationAccountName the test mailbox
+//    layer 1 resolved, folder
 //    "Inbox", officeOrganizationName the organisation's, the seven flags
 //    booleans, each item an object holding only a string "id";
 //  - SharePoint: siteURL the library's sharePointIds.siteUrl, list the
@@ -93,7 +103,9 @@ struct RestoreRequestContext {
 //    query or fragment; folder the folder's name ("RestoreTarget") and not a
 //    forbidden name; organizationName and the version options as SharePoint;
 //    changedItems and deletedItems booleans; each document an object with
-//    string id and name, oneDriveId equal to container_id, isFolder false;
+//    string id and name, oneDriveId equal to container_id, isFolder false; no
+//    item's top_folder a RestoreTarget folder (ASCII case-insensitive), in any
+//    OneDrive;
 //  - the items: the body's (id, name) pairs are exactly ctx.items, none
 //    missing, added or twice.
 // Item IDs and names, and onedrive.name, are compared byte for byte with the

@@ -118,6 +118,13 @@ bool is_restore_mailbox(std::string_view value);
 // The end of every SharePoint Online host name.
 inline constexpr std::string_view kSharePointSuffix = ".sharepoint.com";
 
+// The tenant's OneDrive host for its SharePoint host: "<tenant>-my.sharepoint.com"
+// for "<tenant>.sharepoint.com" (ASCII case-insensitive, the tenant one DNS
+// label of ASCII letters, digits and '-'), in lower case; nullopt for any other
+// host. The one derivation of that host: the download allow-list, a OneDrive's
+// address and the target guard all use it.
+std::optional<std::string> onedrive_host(std::string_view sharepoint_host);
+
 // The shapes of the Graph IDs of the restore targets, which go into Graph URL
 // paths (graph_url() doesn't police '?' or '/' inside an ID). parse_config
 // applies them to test_site_id, test_library_id, test_onedrive_drive_id and

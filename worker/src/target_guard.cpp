@@ -63,6 +63,11 @@ CheckedTargets TargetGuard::check_spec(const connector::RestoreSpec& spec)
         if (item.mailbox.empty() || item.folder.empty()) {
             throw refused(which, " names no source mailbox or folder");
         }
+        if (std::ranges::any_of(item.mailbox, [](char c) {
+                return static_cast<unsigned char>(c) <= 0x20 || c == 0x7F;
+            })) {
+            throw refused(which, "'s mailbox holds whitespace or a control character");
+        }
         // Every restoretest mailbox is a restore target, the configured one
         // (which RestoreTargets allows no other than) in any case included.
         if (is_restore_mailbox(item.mailbox)) {
@@ -79,6 +84,12 @@ CheckedTargets TargetGuard::check_spec(const connector::RestoreSpec& spec)
             throw refused(which,
                           " is sampled from a restore target (the library test_library_id names)");
         }
+        // A OneDrive is a SharePoint site too: the test OneDrive's drive is
+        // never a source, whichever type the item claims.
+        if (ascii_iequals(item.drive_id, spec.targets.onedrive_drive_id())) {
+            throw refused(which, " is sampled from a restore target (the OneDrive "
+                                 "test_onedrive_drive_id names)");
+        }
         // W2.5 finds the source library by its list ID: it must be one.
         if (!is_uuid(item.list_id)) {
             throw refused(which, "'s list_id isn't a GUID");
@@ -93,7 +104,7 @@ CheckedTargets TargetGuard::check_spec(const connector::RestoreSpec& spec)
         // By path: the owner can't be tied to the test OneDrive without a call.
         const std::optional<std::string_view> folder = first_folder(item.folder_path);
         if (!folder) {
-            throw refused(which, "'s folder path has a \"..\" segment");
+            throw refused(which, "'s folder path has a \"..\" segment, a backslash or a colon");
         }
         if (ascii_iequals(*folder, graph::kRestoreTargetName)) {
             throw refused(which, " is sampled from a restore target (a RestoreTarget folder)");

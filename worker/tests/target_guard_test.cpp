@@ -173,6 +173,19 @@ TEST_CASE("the guard refuses an item sampled from a restore target before any Gr
             mail_target},
         Row{"mail from another tenant's restoretest",
             make_spec({mail_source(), mail_from("restoretest@other.example")}), mail_target},
+        // No address holds whitespace or a control character: such a
+        // spelling of the test mailbox would otherwise pass as another.
+        Row{"mail from the test mailbox with a leading space",
+            make_spec({mail_from(" " + lab_values().mailbox)}),
+            "target guard: mail item 0's mailbox holds whitespace or a control character" +
+                kRestored},
+        Row{"mail from the test mailbox with a trailing tab",
+            make_spec({mail_source(), mail_from(lab_values().mailbox + "	")}),
+            "target guard: mail item 1's mailbox holds whitespace or a control character" +
+                kRestored},
+        Row{"mail from a mailbox with a DEL", make_spec({mail_from("alice@x.example")}),
+            "target guard: mail item 0's mailbox holds whitespace or a control character" +
+                kRestored},
         Row{"mail with no mailbox", make_spec({mail_from("")}),
             "target guard: mail item 0 names no source mailbox or folder" + kRestored},
         Row{"mail with no folder", make_spec({mail_from("alice@x.example", "")}),
@@ -182,6 +195,15 @@ TEST_CASE("the guard refuses an item sampled from a restore target before any Gr
         Row{"a file from the RestoreTarget library, drive ID in another case",
             make_spec({}, {sharepoint_source(), sp_from(rp::ascii_lower(library))}),
             sp_target},
+        // A OneDrive is a SharePoint site too: its drive is never a source.
+        Row{"a file from the test OneDrive's drive",
+            make_spec({}, {sharepoint_source(), sp_from(lab_values().onedrive_drive_id)}),
+            "target guard: sharepoint item 1 is sampled from a restore target (the OneDrive "
+            "test_onedrive_drive_id names)" + kRestored},
+        Row{"a file from the test OneDrive's drive, in another case",
+            make_spec({}, {sp_from(rp::ascii_lower(lab_values().onedrive_drive_id))}),
+            "target guard: sharepoint item 0 is sampled from a restore target (the OneDrive "
+            "test_onedrive_drive_id names)" + kRestored},
         Row{"a SharePoint item with no drive", make_spec({}, {sp_from("")}),
             "target guard: sharepoint item 0 names no source library or file" + kRestored},
         Row{"a SharePoint item with no name", make_spec({}, {sp_from("b!x", "")}),
@@ -204,7 +226,21 @@ TEST_CASE("the guard refuses an item sampled from a restore target before any Gr
             make_spec({}, {}, {onedrive_source(), od_from("//./RestoreTarget")}), od_target},
         Row{"a file from a path with ..",
             make_spec({}, {}, {od_from("/RestoreTest/../RestoreTarget")}),
-            "target guard: onedrive item 0's folder path has a \"..\" segment" + kRestored},
+            "target guard: onedrive item 0's folder path has a \"..\" segment, a backslash or a colon" + kRestored},
+        // Paths no OneDrive folder can have (no name holds a backslash or a colon):
+        // other spellings of the RestoreTarget folder among them.
+        Row{"a file from \\RestoreTarget",
+            make_spec({}, {}, {od_from("\\RestoreTarget")}),
+            "target guard: onedrive item 0's folder path has a \"..\" segment, a backslash or a colon" + kRestored},
+        Row{"a file from Graph's /drive/root:/RestoreTarget",
+            make_spec({}, {}, {od_from("/drive/root:/RestoreTarget")}),
+            "target guard: onedrive item 0's folder path has a \"..\" segment, a backslash or a colon" + kRestored},
+        Row{"a file from Graph's /drives/{id}/root:/RestoreTarget",
+            make_spec({}, {}, {od_from("/drives/b!x/root:/RestoreTarget")}),
+            "target guard: onedrive item 0's folder path has a \"..\" segment, a backslash or a colon" + kRestored},
+        Row{"a file from /Projects\\2026",
+            make_spec({}, {}, {od_from("/Projects\\2026")}),
+            "target guard: onedrive item 0's folder path has a \"..\" segment, a backslash or a colon" + kRestored},
         Row{"a OneDrive item with no owner", make_spec({}, {}, {od_from("/RestoreTest", "")}),
             "target guard: onedrive item 0 names no owner or file" + kRestored},
         Row{"a OneDrive item with no name",
@@ -288,6 +324,12 @@ TEST_CASE("the guard refuses a configured library that isn't the test site's Res
     const auto rename = [](std::string name) {
         return [name](json& b) { b["name"] = name; };
     };
+    const auto site_url = [](std::string url) {
+        return [url](json& b) { b["sharePointIds"]["siteUrl"] = url; };
+    };
+    const std::string wrong_url = "target guard: Graph's reply for the drive test_library_id "
+                                  "names has a site URL that isn't https on the test site's host"
+                                  " (with no query, fragment or whitespace)" + kRestored;
     struct Row {
         std::string name;
         std::function<void(json&)> edit;
@@ -341,7 +383,22 @@ TEST_CASE("the guard refuses a configured library that isn't the test site's Res
         Row{"listId not a GUID", [](json& b) { b["sharePointIds"]["listId"] = "RestoreTarget"; },
             no_ids},
         Row{"siteUrl removed", [](json& b) { b["sharePointIds"].erase("siteUrl"); }, no_ids},
-        Row{"siteUrl not a string", [](json& b) { b["sharePointIds"]["siteUrl"] = 1; }, no_ids});
+        Row{"siteUrl not a string", [](json& b) { b["sharePointIds"]["siteUrl"] = 1; }, no_ids},
+        // The address a SharePoint restore names: https on the test site's host.
+        Row{"siteUrl empty", site_url(""), wrong_url},
+        Row{"siteUrl on http", site_url("http://restoreprooflab.sharepoint.com/sites/RestoreTest"),
+            wrong_url},
+        Row{"siteUrl on another host", site_url("https://evil.example/sites/RestoreTest"),
+            wrong_url},
+        Row{"siteUrl on a host that only starts like the tenant's",
+            site_url("https://restoreprooflab.sharepoint.com.evil.example/sites/RestoreTest"),
+            wrong_url},
+        Row{"siteUrl on the tenant's OneDrive host",
+            site_url("https://restoreprooflab-my.sharepoint.com/personal/alice"), wrong_url},
+        Row{"siteUrl with a query", site_url("https://restoreprooflab.sharepoint.com/sites/RestoreTest?x=1"),
+            wrong_url},
+        Row{"siteUrl with a space", site_url("https://restoreprooflab.sharepoint.com/sites/Restore Test"),
+            wrong_url});
     CAPTURE(row.name);
     GuardLab lab;
     lab.serve_edited(drive_url(), "restoretarget-drive-200", row.edit);
@@ -365,6 +422,10 @@ TEST_CASE("the guard refuses a configured OneDrive folder that isn't the Restore
                                "test_onedrive_folder_id names has no sharepointIds with its site, "
                                "web and site URL; the Worker can't tell the OneDrive apart" +
                                kRestored;
+    const std::string wrong_url = "target guard: Graph's reply for the OneDrive folder "
+                                  "test_onedrive_folder_id names has a site URL that isn't https "
+                                  "on the test tenant's OneDrive host (with no query, fragment "
+                                  "or whitespace)" + kRestored;
     struct Row {
         std::string name;
         std::function<void(json&)> edit;
@@ -412,7 +473,27 @@ TEST_CASE("the guard refuses a configured OneDrive folder that isn't the Restore
                 b["sharepointIds"]["siteId"] =
                     other_guid(b["sharepointIds"]["siteId"].get<std::string>());
             },
-            no_ids});
+            no_ids},
+        // The address a OneDrive restore names: https on the tenant's -my host.
+        Row{"siteUrl empty", [](json& b) { b["sharepointIds"]["siteUrl"] = ""; }, wrong_url},
+        Row{"siteUrl on the tenant's SharePoint host",
+            [](json& b) {
+                b["sharepointIds"]["siteUrl"] =
+                    "https://restoreprooflab.sharepoint.com/personal/alice_restoreprooflab_onmicrosoft_com";
+            },
+            wrong_url},
+        Row{"siteUrl on another tenant's OneDrive host",
+            [](json& b) {
+                b["sharepointIds"]["siteUrl"] =
+                    "https://other-my.sharepoint.com/personal/alice_restoreprooflab_onmicrosoft_com";
+            },
+            wrong_url},
+        Row{"siteUrl with a fragment",
+            [](json& b) {
+                b["sharepointIds"]["siteUrl"] =
+                    "https://restoreprooflab-my.sharepoint.com/personal/alice#x";
+            },
+            wrong_url});
     CAPTURE(row.name);
     GuardLab lab;
     lab.serve_edited(folder_url(), "onedrive-folder-200", row.edit);

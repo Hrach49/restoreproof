@@ -385,6 +385,20 @@ std::optional<GraphSiteId> parse_graph_site_id(std::string_view value)
     return GraphSiteId{host, std::string{site}, std::string{web}};
 }
 
+std::optional<std::string> onedrive_host(std::string_view sharepoint_host)
+{
+    const std::string host = ascii_lower(sharepoint_host);
+    if (!host.ends_with(kSharePointSuffix)) {
+        return std::nullopt;
+    }
+    const std::string_view tenant =
+        std::string_view{host}.substr(0, host.size() - kSharePointSuffix.size());
+    if (!is_ascii_id(tenant, "-", 63)) {
+        return std::nullopt;
+    }
+    return std::string{tenant} + "-my" + std::string{kSharePointSuffix};
+}
+
 bool is_graph_drive_id(std::string_view value)
 {
     return value.starts_with("b!") && is_ascii_id(value.substr(2), "-_", 200);

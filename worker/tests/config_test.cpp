@@ -1097,6 +1097,21 @@ TEST_CASE("parse_config takes Graph IDs of every allowed shape", "[config]")
     CHECK(config.test_site_id == doc["test_site_id"].get<std::string>());
 }
 
+TEST_CASE("onedrive_host: a tenant's SharePoint host gives its -my host, in lower case",
+          "[config]")
+{
+    CHECK(rp::onedrive_host("restoreprooflab.sharepoint.com") ==
+          "restoreprooflab-my.sharepoint.com");
+    CHECK(rp::onedrive_host("T-1.SharePoint.COM") == "t-1-my.sharepoint.com");
+    // Only "<tenant>.sharepoint.com", the tenant one DNS label.
+    const std::string bad = GENERATE(as<std::string>{}, "", ".sharepoint.com", "sharepoint.com",
+                                     "a.b.sharepoint.com", "evil.example",
+                                     "restoreprooflab.sharepoint.com.evil.example",
+                                     "restore_prooflab.sharepoint.com", "restoreprooflab.sharepoint.co");
+    CAPTURE(bad);
+    CHECK_FALSE(rp::onedrive_host(bad));
+}
+
 TEST_CASE("parse_graph_site_id splits a site ID, the host in lower case", "[config]")
 {
     const std::optional<rp::GraphSiteId> site = rp::parse_graph_site_id(

@@ -255,6 +255,14 @@ void check_context(const Reader& reader, const CheckedTargets& targets,
         {"application_id", &ctx.application_id},
         {"organization_name", &ctx.organization_name},
         {"office_region", &ctx.office_region}};
+    // An address never holds a space: " restoretest@..." would pass
+    // is_restore_mailbox by.
+    if (ctx.kind == RestoreKind::mail &&
+        (ctx.source_mailbox.empty() || !is_printable_ascii(ctx.source_mailbox) ||
+         ctx.source_mailbox.find(' ') != std::string::npos)) {
+        throw reader.refusal(
+            "bad context: source_mailbox is empty, not printable ASCII or holds a space");
+    }
     // OneDrive's, and a kind outside the enum's (rules_for).
     if (ctx.kind != RestoreKind::mail && ctx.kind != RestoreKind::sharepoint) {
         if (!targets.onedrive_folder()) {
@@ -355,6 +363,12 @@ public:
     Items mail() const
     {
         const std::string& mailbox = targets_.mailbox()->address;
+        // The source as Veeam lists it: a restore target is never a source.
+        if (is_restore_mailbox(ctx_.source_mailbox) ||
+            ascii_iequals(ctx_.source_mailbox, mailbox)) {
+            throw reader_.refusal("the source mailbox is a restore target (a restoretest "
+                                  "mailbox): a restore target is never a source");
+        }
         if (ascii("mailbox") != mailbox) {
             throw reader_.refusal("mailbox is not the test mailbox");
         }
@@ -432,8 +446,7 @@ public:
         // Graph wrote its site URL, on the tenant's -my host (test_site_id names
         // the tenant). W2.5's context agreeing proves nothing by itself.
         const std::string host = parse_graph_site_id(targets_.configured().site_id()).value().host;
-        const std::string root = "https://" + host.substr(0, host.find('.')) + "-my" +
-                                 std::string{kSharePointSuffix} + "/";
+        const std::string root = "https://" + onedrive_host(host).value() + "/";
         const std::string& url = reader_.ascii(target.at("url"), "onedrive.url");
         if (url != ctx_.target_onedrive_url || !ascii_iequals(url, folder.site_url) ||
             !ascii_lower(url).starts_with(root) || url.find_first_of("?#") != std::string::npos) {
@@ -445,6 +458,15 @@ public:
         const std::string& name = ascii("folder");
         if (name != folder.name || is_forbidden(name)) {
             throw reader_.refusal("folder is not the RestoreTarget folder");
+        }
+        // Where browsing found each item: never in a RestoreTarget folder, of
+        // any OneDrive (the document IDs don't say).
+        for (const GuardedItem& item : ctx_.items) {
+            if (ascii_iequals(item.top_folder, graph::kRestoreTargetName)) {
+                throw reader_.refusal("item " + item.id +
+                                      " is in a RestoreTarget folder: a restore target is never "
+                                      "a source");
+            }
         }
         file_options();
         reader_.boolean(body_.at("changedItems"), "changedItems");

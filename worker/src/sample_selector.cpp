@@ -3,6 +3,7 @@
 #include <rp/sha256.hpp>
 #include <rp/target_guard_graph.hpp>
 
+#include "graph_ids.hpp"
 #include "name_key.hpp"
 #include "text_util.hpp"
 #include "uuid.hpp"
@@ -180,11 +181,36 @@ std::optional<std::string> forbidden(const connector::SharePointSelector& file,
     if (file.site_id.empty() || file.drive_id.empty() || file.name.empty()) {
         return "incomplete (no site, drive or file name)";
     }
+    constexpr std::string_view library = "from a restore target (the library test_library_id names)";
+    constexpr std::string_view onedrive =
+        "from a restore target (the OneDrive test_onedrive_drive_id names)";
     if (ascii_iequals(file.drive_id, targets.library_id())) {
-        return "from a restore target (the library test_library_id names)";
+        return std::string{library};
+    }
+    // A OneDrive is a SharePoint site too, on the -my host.
+    if (ascii_iequals(file.drive_id, targets.onedrive_drive_id())) {
+        return std::string{onedrive};
     }
     if (!is_uuid(file.list_id)) {
         return "from a library whose list ID isn't a GUID";
+    }
+    const std::optional<GraphSiteId> site = parse_graph_site_id(file.site_id);
+    if (!site) {
+        return "from a site whose ID isn't a Graph site ID";
+    }
+    // By the library's own GUIDs too, whatever drive ID the candidate carries.
+    if (const std::optional<std::string> derived = graph_drive_id(site->site, site->web, file.list_id)) {
+        if (ascii_iequals(*derived, targets.library_id())) {
+            return std::string{library};
+        }
+        if (ascii_iequals(*derived, targets.onedrive_drive_id())) {
+            return std::string{onedrive};
+        }
+    }
+    // RestoreTargets checked the site ID's shape. A personal site (-my) or
+    // another tenant's is never a source.
+    if (!ascii_iequals(site->host, parse_graph_site_id(targets.site_id())->host)) {
+        return "from a personal or other-host site";
     }
     if (f.list_ids.contains(ascii_lower(file.list_id))) {
         return "from a canary library";

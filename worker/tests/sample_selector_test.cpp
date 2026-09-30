@@ -5,6 +5,7 @@
 
 #include "target_guard_lab.hpp"
 
+#include "../src/graph_ids.hpp"
 #include "../src/text_util.hpp"
 
 #include <rp/canary_manifest.hpp>
@@ -45,6 +46,15 @@ using rp::sampling::Selection;
 constexpr std::string_view kRunId = "run-0001";
 // A source outside the restore targets and the canary locations. Made up.
 const std::string kCarol = "carol@RestoreProofLab.onmicrosoft.com";
+// alice's OneDrive's site and web GUIDs (Veeam's OneDrive ID) with the
+// tenant's SharePoint host, and its Documents list; their drive ID is
+// test_onedrive_drive_id (graph_ids_test.cpp).
+const std::string kAliceOneDriveOnTenantHost =
+    "restoreprooflab.sharepoint.com,6d600fc0-65f8-4811-ad18-096ec5b7e834,"
+    "98cfff1a-b404-4438-ae6e-6927a6ccc325";
+const std::string kAliceOneDriveList = "1a9f64df-d9fd-4302-af7a-457d2beff537";
+// The RestoreTarget library's list (lab/tenant.md), in the RestoreTest site.
+const std::string kRestoreTargetList = "ffec069d-65e4-4c3a-9da2-ac086cf9dafa";
 
 const CanaryManifest& lab_manifest()
 {
@@ -342,6 +352,37 @@ TEST_CASE("select refuses a pool with a restore target, a canary or a canary loc
         // SharePoint.
         {"the RestoreTarget library", [](auto& p) { p.sharepoint[1].selector.drive_id = targets().library_id(); },
          offered("sharepoint", "from a restore target (the library test_library_id names)")},
+        // alice's OneDrive is a SharePoint site too (Veeam lists it among the
+        // sites; its GUIDs give its drive ID): the lister leaves it out by
+        // host, and select refuses it by drive ID, by its GUIDs and by host.
+        {"the test OneDrive, by its drive ID",
+         [](auto& p) { p.sharepoint[1].selector.drive_id = targets().onedrive_drive_id(); },
+         offered("sharepoint", "from a restore target (the OneDrive test_onedrive_drive_id names)")},
+        {"the test OneDrive, by its GUIDs on the tenant's host",
+         [](auto& p) {
+             p.sharepoint[1].selector.site_id = kAliceOneDriveOnTenantHost;
+             p.sharepoint[1].selector.list_id = kAliceOneDriveList;
+         },
+         offered("sharepoint", "from a restore target (the OneDrive test_onedrive_drive_id names)")},
+        {"the RestoreTarget library, by its GUIDs",
+         [](auto& p) { p.sharepoint[1].selector.list_id = kRestoreTargetList; },
+         offered("sharepoint", "from a restore target (the library test_library_id names)")},
+        {"a personal site",
+         [](auto& p) {
+             p.sharepoint[1].selector.site_id =
+                 "restoreprooflab-my.sharepoint.com,6d600fc0-65f8-4811-ad18-096ec5b7e834,"
+                 "98cfff1a-b404-4438-ae6e-6927a6ccc325";
+         },
+         offered("sharepoint", "from a personal or other-host site")},
+        {"another tenant's site",
+         [](auto& p) {
+             p.sharepoint[1].selector.site_id =
+                 "contoso.sharepoint.com,fe08085d-eb70-42e8-95a6-470189bd98eb,"
+                 "4ecaf399-cc0e-4d95-b3fe-cd091a09e689";
+         },
+         offered("sharepoint", "from a personal or other-host site")},
+        {"a site ID that isn't Graph's", [](auto& p) { p.sharepoint[1].selector.site_id = "RestoreTest"; },
+         offered("sharepoint", "from a site whose ID isn't a Graph site ID")},
         {"no drive ID", [](auto& p) { p.sharepoint[1].selector.drive_id.clear(); },
          offered("sharepoint", "incomplete (no site, drive or file name)")},
         {"no site", [](auto& p) { p.sharepoint[1].selector.site_id.clear(); },
@@ -394,6 +435,19 @@ TEST_CASE("select refuses a pool with a restore target, a canary or a canary loc
     const Thrown thrown = thrown_by([&] { select({1, 1, 1}, pool, {}, kRunId, manifest); });
     CHECK(thrown.kind == "logic_error");
     CHECK(thrown.what == row.message);
+}
+
+TEST_CASE("the lab's GUIDs the refusals above use give the configured targets' drive IDs",
+          "[sample-selector]")
+{
+    const std::optional<rp::GraphSiteId> alice = rp::parse_graph_site_id(kAliceOneDriveOnTenantHost);
+    const std::optional<rp::GraphSiteId> site = rp::parse_graph_site_id(targets().site_id());
+    REQUIRE(alice.has_value());
+    REQUIRE(site.has_value());
+    CHECK(rp::graph_drive_id(alice->site, alice->web, kAliceOneDriveList) ==
+          std::optional<std::string>{targets().onedrive_drive_id()});
+    CHECK(rp::graph_drive_id(site->site, site->web, kRestoreTargetList) ==
+          std::optional<std::string>{targets().library_id()});
 }
 
 // 4. The halves: c = min(ceil(N/2), M) canaries, floor(N/2) random items.

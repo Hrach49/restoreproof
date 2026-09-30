@@ -72,7 +72,12 @@ supersedes it.
      folders; an item class other than `IPM.Note`; a file above the 64 MiB download cap.
    Mail comes from top-level folders only (whether `folders?name=`, which `restore_sample` uses,
    finds nested folders is unrecorded). `select` checks the pool again and refuses all of it
-   (`std::logic_error`, nothing sampled) if a forbidden candidate gets through.
+   (`std::logic_error`, nothing sampled) if a forbidden candidate gets through: on the selectors'
+   own fields, so for SharePoint the RestoreTarget library and the test OneDrive (alice's
+   OneDrive is a SharePoint site too) by drive ID and by the drive ID the site, web and list
+   GUIDs give, and a site on a host other than `test_site_id`'s (a personal site, another
+   tenant). What selectors don't carry (a mailbox's kind, a library's url, an item class, a
+   size) only the lister can check.
 7. **Same names and duplicates are skipped, deterministically.** Candidates are sorted by key and
    deduplicated. Canary names and subjects are unique (the loader checks) and never in the pool. A
    random pick whose subject or name is already taken for its type, the case of any letter aside

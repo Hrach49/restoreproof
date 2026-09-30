@@ -31,7 +31,7 @@ changes a mail body, the manifest records the changed bytes and also says that t
 | `entra/new-worker-app.ps1` | Creates or updates the RestoreProof Worker app registration and its grants (L1.5), below |
 | `entra/set-worker-env.ps1` | Puts the Worker app's certificate into `RP_GRAPH_CERT_PFX_BASE64` and `RP_GRAPH_CERT_PASSWORD` for one PowerShell session (W2.1), below |
 | `canary/` | The 20 generated files, committed |
-| `seed-manifest.json` | Written by a live `seed` run only; not committed yet, so CI skips the `hash` check with a warning until it is |
+| `seed-manifest.json` | Written by a live `seed` run; committed, so CI runs the `hash` check on it, and the Worker's sampler (W2.6) reads it (`worker/include/rp/canary_manifest.hpp`) |
 | `tenant.md` | Tenant, user and restore-target IDs |
 
 Shared with the Worker, outside `lab/`:
@@ -498,10 +498,18 @@ File entry (`kind` `"sharepoint_file"` or `"onedrive_file"`):
 | `uploaded_by` | The UPN that uploaded it, from the catalog |
 | `last_modified_at` | The driveItem's `lastModifiedDateTime` after the upload |
 | `local_sha256`, `local_size` | The committed file in `canary/` |
-| `stored_sha256`, `stored_size` | The bytes downloaded back through Graph at seed time. Evidence only: SharePoint may have rewritten an Office file since |
+| `stored_sha256`, `stored_size` | The bytes downloaded back through Graph at seed time. Evidence only: SharePoint may have rewritten an Office file since, so the Worker checks `stored_size` for `bytes` files only and leaves an `office-v1` canary's size unchecked |
 | `stored_matches_local` | `true` if the stored bytes equal the local file |
 | `content_rule` | `"office-v1"` for docx and xlsx, `"bytes"` for pdf, txt and png |
 | `content_sha256` | The expected value by `content_rule`, from the stored bytes. For `bytes` it equals `stored_sha256`; for `office-v1` it also equals the committed file's content hash, which `hash` checks. **The Worker compares with this** |
+
+The Worker's sampler (W2.6, `rp::sampling::load_canary_manifest`) reads the manifest to take
+its canary half: per type, in manifest order, a window that starts at a rotation cursor
+(`docs/decisions.md` 2026-09-30, W2.6). It uses `tenant_id`, each entry's `id`, `kind`,
+`location`, a mail's `subject` and `received_at`, and a file's `name`, `file_type`,
+`content_rule` and `stored_size`; it ignores the other fields and refuses a manifest that
+breaks one of its rules (a canary in a restore target among them). It records the manifest
+file's SHA-256 in the result.
 
 ## Rules
 

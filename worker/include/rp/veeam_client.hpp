@@ -247,11 +247,14 @@ public:
         enum class Kind {
             accepted,  // a 2xx with a UUID "sessionId": the restore session's ID
             refused,   // a 4xx (401 and 403 too): Veeam started nothing
-            no_answer, // no response, a timeout, a 1xx, 3xx or 5xx, or a 2xx
-                       // without a UUID sessionId: a restore may be running
+            not_sent,  // no connection or no TLS handshake: the request never
+                       // went out, so Veeam started nothing
+            no_answer, // a dropped connection, a timeout, a 1xx, 3xx or 5xx,
+                       // or a 2xx without a UUID sessionId: a restore may be
+                       // running
         };
         Kind kind = Kind::no_answer;
-        std::string session_id; // accepted only
+        std::string session_id; // accepted only, lower case
         int status = 0;         // the HTTP status; 0 without a response
         std::string error_code; // Veeam's errorCode, if the answer had one
         // One line, through rp::redact: what happened. Never the request body.

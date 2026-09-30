@@ -549,6 +549,30 @@ TEST_CASE("restore_sample: a refused POST started nothing and is never resent",
     check_no_secrets(rig, thrown.what);
 }
 
+TEST_CASE("restore_sample: a POST that never went out started nothing: explore session closed",
+          "[veeam_m365][w2.5]")
+{
+    const rp::TransportError error =
+        GENERATE(rp::TransportError::connect, rp::TransportError::handshake);
+    RestoreRig rig;
+    const Run run = mail_x1();
+    rig.serve(run);
+    rig.veeam.on(HttpMethod::post, restore_url(run), [error](const HttpRequest& r) -> HttpResponse {
+        throw rp::HttpError("POST " + r.url + ": no connection", error, 0, 1);
+    });
+
+    const Caught thrown = caught_by([&] { rig.restore(restore_spec({mail_x1_item()})); });
+
+    CHECK(thrown.kind == "TransientError");
+    CHECK_THAT(thrown.what, StartsWith("veeam_m365: Veeam POST " + run.post_path() + ": not sent ("));
+    CHECK_THAT(thrown.what, ContainsSubstring("; the restore was not sent"));
+    CHECK_THAT(thrown.what, !ContainsSubstring("left open"));
+    CHECK(rig.posts(run.post_path()) == 1);
+    CHECK(rig.veeam.count(HttpMethod::get, run.duplicate_url()) == 0);
+    CHECK(rig.stops(run.explore()) == 1);
+    check_no_secrets(rig, thrown.what);
+}
+
 TEST_CASE("restore_sample: no answer to the POST: the duplicate check adopts the one session",
           "[veeam_m365][w2.5]")
 {

@@ -789,6 +789,10 @@ void RestoreRun::restore_call(const TypeWork& work, const std::vector<std::size_
                                        "; Veeam started no restore");
         }
         throw connector::Error("veeam_m365: " + outcome.message + "; Veeam started no restore");
+    case VeeamClient::RestorePostOutcome::Kind::not_sent:
+        // Nothing went out, so nothing runs: the explore sessions are closed.
+        throw connector::TransientError("veeam_m365: " + outcome.message +
+                                        "; the restore was not sent");
     case VeeamClient::RestorePostOutcome::Kind::accepted:
         restore_may_run_ = true;
         id = outcome.session_id;

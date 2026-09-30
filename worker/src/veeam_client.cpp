@@ -1013,9 +1013,14 @@ VeeamClient::RestorePostOutcome VeeamClient::post_restore_once(const std::string
     try {
         response = http_.send(request);
     } catch (const HttpError& e) {
-        out.kind = RestorePostOutcome::Kind::no_answer;
+        // No connection or no handshake: nothing went out, as for any other
+        // request (send_with_retries). After that, Veeam may have acted.
+        const bool unsent =
+            e.error() == TransportError::connect || e.error() == TransportError::handshake;
+        out.kind = unsent ? RestorePostOutcome::Kind::not_sent : RestorePostOutcome::Kind::no_answer;
         out.status = e.status();
-        out.message = redact(one_line(what + ": no answer (" + e.what() + ")"));
+        out.message = redact(one_line(what + (unsent ? ": not sent (" : ": no answer (") +
+                                      e.what() + ")"));
     } catch (const std::exception&) {
         // Not ours, so its message may not be safe to show; and the request
         // may have gone out.
@@ -1038,9 +1043,10 @@ VeeamClient::RestorePostOutcome VeeamClient::post_restore_once(const std::string
             !doc.is_discarded() && doc.is_object() ? string_at(doc, "sessionId") : nullptr;
         if (id != nullptr && is_uuid(*id)) {
             out.kind = RestorePostOutcome::Kind::accepted;
-            out.session_id = *id;
+            // As GET /v8/RestoreSessions lists it, for the duplicate check.
+            out.session_id = ascii_lower(*id);
             out.message = what + ": HTTP " + std::to_string(response.status) +
-                          ", restore session " + *id;
+                          ", restore session " + out.session_id;
         } else {
             out.kind = RestorePostOutcome::Kind::no_answer;
             out.message = what + ": HTTP " + std::to_string(response.status) +

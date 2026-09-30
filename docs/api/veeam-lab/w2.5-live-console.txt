@@ -1,0 +1,45 @@
+Filters: [live] [writes]
+Randomness seeded to: 2175414989
+restore point 2026-09-29T22:00:45.6603083Z c2f0f2e7-177f-48ac-992b-93a50cf702e395c23640-eb99-4bad-ae72-f5f9cf21aac1
+sample mail alice@RestoreProofLab.onmicrosoft.com Inbox RP-CANARY-0001 2026-09-24T22:14:43Z
+sample mail alice@RestoreProofLab.onmicrosoft.com Inbox RP-CANARY-0002 2026-09-24T22:14:43Z
+sample mail alice@RestoreProofLab.onmicrosoft.com Inbox RP-CANARY-0003 2026-09-24T22:14:43Z
+sample mail alice@RestoreProofLab.onmicrosoft.com Inbox RP-CANARY-0004 2026-09-24T22:14:44Z
+sample mail alice@RestoreProofLab.onmicrosoft.com Inbox RP-CANARY-0005 2026-09-24T22:14:43Z
+sample sharepoint / rp-canary-01.pdf 925
+sample sharepoint / rp-canary-04.txt 164
+sample sharepoint / rp-canary-06.pdf 925
+sample onedrive alice@RestoreProofLab.onmicrosoft.com /RestoreTest rp-canary-11.pdf 925
+sample onedrive alice@RestoreProofLab.onmicrosoft.com /RestoreTest rp-canary-14.txt 164
+status succeeded: 10 of 10 item(s) restored
+session 6cd07acf-3a1e-4f10-881e-bcb3494960ab (mail) 2026-09-30T07:35:30.003677Z .. 2026-09-30T07:36:09.3475087Z: Success, 5 items processed (5 successes) (5 of 5)
+session 2ab2e15d-81ab-4f5f-a28e-6909b608333c (sharepoint) 2026-09-30T07:36:11.7290927Z .. 2026-09-30T07:36:54.8460752Z: Success, 3 items processed (3 successes) (3 of 3)
+session 0819da9f-df0f-4cc6-b8eb-f0e889f878f4 (onedrive) 2026-09-30T07:36:57.7517519Z .. 2026-09-30T07:37:35.1125461Z: Success, 2 items processed (2 successes) (2 of 2)
+item mail RP-CANARY-0001: restored (Item RP-CANARY-0001 was restored successfully (type: IPM.Note; source: Alice Test\Inbox; target: restoretest@RestoreProofLab.onmicrosoft.com\<null>\Inbox))
+item mail RP-CANARY-0002: restored (Item RP-CANARY-0002 was restored successfully (type: IPM.Note; source: Alice Test\Inbox; target: restoretest@RestoreProofLab.onmicrosoft.com\<null>\Inbox))
+item mail RP-CANARY-0003: restored (Item RP-CANARY-0003 was restored successfully (type: IPM.Note; source: Alice Test\Inbox; target: restoretest@RestoreProofLab.onmicrosoft.com\<null>\Inbox))
+item mail RP-CANARY-0004: restored (Item RP-CANARY-0004 was restored successfully (type: IPM.Note; source: Alice Test\Inbox; target: restoretest@RestoreProofLab.onmicrosoft.com\<null>\Inbox))
+item mail RP-CANARY-0005: restored (Item RP-CANARY-0005 was restored successfully (type: IPM.Note; source: Alice Test\Inbox; target: restoretest@RestoreProofLab.onmicrosoft.com\<null>\Inbox))
+item sharepoint rp-canary-01.pdf: restored (Item rp-canary-01.pdf was restored successfully (type: File; source: /sites/RestoreTest/RestoreTest/rp-canary-01.pdf; target: https://restoreprooflab.sharepoint.com/sites/RestoreTest))
+item sharepoint rp-canary-04.txt: restored (Item rp-canary-04.txt was restored successfully (type: File; source: /sites/RestoreTest/RestoreTest/rp-canary-04.txt; target: https://restoreprooflab.sharepoint.com/sites/RestoreTest))
+item sharepoint rp-canary-06.pdf: restored (Item rp-canary-06.pdf was restored successfully (type: File; source: /sites/RestoreTest/RestoreTest/rp-canary-06.pdf; target: https://restoreprooflab.sharepoint.com/sites/RestoreTest))
+item onedrive rp-canary-11.pdf: restored (Item rp-canary-11.pdf was restored successfully (type: File; source: personal/alice_restoreprooflab_onmicrosoft_com/Documents/RestoreTarget/rp-canary-11.pdf; target: https://restoreprooflab-my.sharepoint.com/personal/alice_restoreprooflab_onmicrosoft_com))
+item onedrive rp-canary-14.txt: restored (Item rp-canary-14.txt was restored successfully (type: File; source: personal/alice_restoreprooflab_onmicrosoft_com/Documents/RestoreTarget/rp-canary-14.txt; target: https://restoreprooflab-my.sharepoint.com/personal/alice_restoreprooflab_onmicrosoft_com))
+log:
+session 6cd07acf-3a1e-4f10-881e-bcb3494960ab (mail): Success, 5 items processed (5 successes)
+Success RP-CANARY-0003: Item RP-CANARY-0003 was restored successfully (type: IPM.Note; source: Alice Test\Inbox; target: restoretest@RestoreProofLab.onmicrosoft.com\<null>\Inbox)
+Success RP-CANARY-0004: Item RP-CANARY-0004 was restored successfully (type: IPM.Note; source: Alice Test\Inbox; target: restoretest@RestoreProofLab.onmicrosoft.com\<null>\Inbox)
+Success RP-CANARY-0005: Item RP-CANARY-0005 was restored successfully (type: IPM.Note; source: Alice Test\Inbox; target: restoretest@RestoreProofLab.onmicrosoft.com\<null>\Inbox)
+Success RP-CANARY-0001: Item RP-CANARY-0001 was restored successfully (type: IPM.Note; source: Alice Test\Inbox; target: restoretest@RestoreProofLab.onmicrosoft.com\<null>\Inbox)
+Success RP-CANARY-0002: Item RP-CANARY-0002 was restored successfully (type: IPM.Note; source: Alice Test\Inbox; target: restoretest@RestoreProofLab.onmicrosoft.com\<null>\Inbox)
+session 2ab2e15d-81ab-4f5f-a28e-6909b608333c (sharepoint): Success, 3 items processed (3 successes)
+Success rp-canary-01.pdf: Item rp-canary-01.pdf was restored successfully (type: File; source: /sites/RestoreTest/RestoreTest/rp-canary-01.pdf; target: https://restoreprooflab.sharepoint.com/sites/RestoreTest)
+Success rp-canary-04.txt: Item rp-canary-04.txt was restored successfully (type: File; source: /sites/RestoreTest/RestoreTest/rp-canary-04.txt; target: https://restoreprooflab.sharepoint.com/sites/RestoreTest)
+Success rp-canary-06.pdf: Item rp-canary-06.pdf was restored successfully (type: File; source: /sites/RestoreTest/RestoreTest/rp-canary-06.pdf; target: https://restoreprooflab.sharepoint.com/sites/RestoreTest)
+session 0819da9f-df0f-4cc6-b8eb-f0e889f878f4 (onedrive): Success, 2 items processed (2 successes)
+Success rp-canary-11.pdf: Item rp-canary-11.pdf was restored successfully (type: File; source: personal/alice_restoreprooflab_onmicrosoft_com/Documents/RestoreTarget/rp-canary-11.pdf; target: https://restoreprooflab-my.sharepoint.com/personal/alice_restoreprooflab_onmicrosoft_com)
+Success rp-canary-14.txt: Item rp-canary-14.txt was restored successfully (type: File; source: personal/alice_restoreprooflab_onmicrosoft_com/Documents/RestoreTarget/rp-canary-14.txt; target: https://restoreprooflab-my.sharepoint.com/personal/alice_restoreprooflab_onmicrosoft_com)
+evidence written to C:\Users\minas\AppData\Local\Temp\claude\C--restoreproof\d1bba97f-a516-409a-8687-4467a9e7b444\scratchpad\w2.5-live-restore.json
+===============================================================================
+All tests passed (24 assertions in 1 test case)
+

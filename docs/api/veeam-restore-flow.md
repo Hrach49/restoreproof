@@ -928,11 +928,17 @@ Take the `response` from each evidence file, as in veeam-notes §9. The restore 
 Missing, to make by hand or record later: a `Warning` session and a partial restore (§18), a
 5xx or timeout on the POST, a session 404 while polling.
 
+*(W2.5: made under other names, one fixture per recorded step: `w24-<run>-<step>.json` from the
+four W2.4 runs and `w10-*.json` from W1.0's failed restores, listed in
+`worker/tests/fixtures/veeam/README.md`.)*
+
 ## 18. Open points
 
 - **The Worker's restore credential** (§7): a spike before W4.5. Vault copy, run-time export by
   thumbprint, or a dedicated app (which would need at least `Group.ReadWrite.All` for
-  SharePoint).
+  SharePoint). W2.5 built the run-time export, in memory through CryptoAPI, and Veeam accepted
+  its PFX (Windows' default PFX encryption) for all three types (§19). The spike (W4.12, #135)
+  still decides the account the Worker runs as.
 - **Partial failure.** No `Warning` or mixed result was seen. Its statistics and events shape is
   unknown until one is recorded. §15's `partial` row is a proposal until then.
 - **Stopping mid-restore.** Untested: Ctrl+C during the poll, and stopping the explore session or
@@ -952,7 +958,51 @@ Missing, to make by hand or record later: a `Warning` session and a partial rest
 - **Clock agreement** for the duplicate check (§8) when the Worker and Veeam run on different
   machines.
 - **Two restore calls from one explore session** (for mails from two mailboxes): not tried.
+  W2.5's live run (§19) had one source container per type, so it didn't try it either.
 - **Cleanup.** The owner removed the 8 restored items by hand (§1), and the one from mail r1. W3.4 needs write
   permissions the Worker app doesn't have (`docs/security/graph-permissions.md`).
 - **Canary missing from the restore point** (§4, §15): zero matches for a canary the manifest
   dates before `backupTime` is proposed as `fail`, not `error`. W3.3 settles it.
+
+## 19. W2.5: the flow in C++, run live
+
+`restore_sample` (`rp/veeam_m365_connector.hpp`, with `src/veeam_restore.*`) is this flow in
+C++, with the changes in `docs/decisions.md`'s two 2026-09-30 W2.5 entries. Its first live run
+is the Done-when of #30: `rptests.exe "[live][writes]"`
+(`worker/tests/veeam_m365_restore_live_test.cpp`, `docs/testing.md`, "Live restore") with
+`RP_LIVE=1` and `RP_LIVE_RESTORE=1`, from an elevated shell, on 2026-09-30, 07:35:12Z–07:37:39Z.
+Before it, `rpworker graph list` showed 0 items in all three targets. Restore point: the newest,
+`backupTime` `2026-09-29T22:00:45.6603083Z`. One call to `restore_sample`, three restore
+sessions, all `Success`:
+
+| Type | Items | Source → target | Restore session | Start – end (Veeam) | `details` |
+|---|---|---|---|---|---|
+| mail | RP-CANARY-0001 to 0005 | alice's Inbox → restoretest's Inbox | `6cd07acf-3a1e-4f10-881e-bcb3494960ab` | 07:35:30.00Z – 07:36:09.35Z | 5 items processed (5 successes) |
+| SharePoint | rp-canary-01.pdf, 04.txt, 06.pdf | RestoreTest library → RestoreTarget library | `2ab2e15d-81ab-4f5f-a28e-6909b608333c` | 07:36:11.73Z – 07:36:54.85Z | 3 items processed (3 successes) |
+| OneDrive | rp-canary-11.pdf, 14.txt | alice's `/RestoreTest` → alice's `/RestoreTarget` | `0819da9f-df0f-4cc6-b8eb-f0e889f878f4` | 07:36:57.75Z – 07:37:35.11Z | 2 items processed (2 successes) |
+
+Status `succeeded`, 10 of 10 items restored, each by its own `Restore`/`Success` event. Evidence,
+as text and JSON rather than per call ([`veeam-lab/README.md`](veeam-lab/README.md), "W2.5 live
+restore"): [`w2.5-live-restore-result.json`](veeam-lab/w2.5-live-restore-result.json) (the
+`RestoreResult`), [`w2.5-live-console.txt`](veeam-lab/w2.5-live-console.txt) (the test's output).
+
+**Read-back.** `rpworker graph list --hash` then found exactly the 10 items (5 + 3 + 2), and all
+10 SHA-256 values equal `lab/seed-manifest.json`'s: `body_sha256` (`text-v1`) for the mails,
+`content_sha256` (`bytes`) for the files
+([`w2.5-live-graph-list-hash.txt`](veeam-lab/w2.5-live-graph-list-hash.txt)).
+
+**Shown live for the first time:**
+
+- the credential exported in memory through CryptoAPI (§7; W2.4 exported it to a file with
+  PowerShell): Veeam accepted the PFX, in Windows' default PFX encryption, for mail, SharePoint
+  and OneDrive;
+- one restore call per type in a run of three types, each with its own explore session;
+- the duplicate check's query (§8) with `startTimeFrom` sent with a raw `:`: each check listed
+  exactly the session its POST returned;
+- per-item outcomes from the events, matched by `itemName` (§12), for all three types.
+
+**Afterwards.** `08-sweep-sessions.ps1 -WhatIf` listed 96 sessions, none `Working`: the finally
+path (§11) stopped all three explore sessions. The 10 copies are still in the targets; the owner
+removes them by hand until W3.4's cleanup exists (§18).
+
+Still untried: two restore calls from one explore session (§18).

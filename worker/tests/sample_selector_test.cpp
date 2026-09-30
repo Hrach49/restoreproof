@@ -314,6 +314,17 @@ TEST_CASE("select refuses a manifest with a canary in a restore target", "[sampl
     const Thrown thrown = thrown_by([&] { select({1, 0, 0}, {}, {}, kRunId, manifest); });
     CHECK(thrown.kind == "ManifestError");
     CHECK(thrown.what == row.message);
+
+    // choose_sample says so before it asks the connector anything, so an
+    // unreachable backup server can't hide it.
+    SamplingConnector c;
+    const Thrown chosen = thrown_by([&] {
+        rp::sampling::choose_sample(c, "client", lab_point(), targets(), manifest.tenant_id,
+                                    {4, 4, 4}, manifest, {}, kRunId);
+    });
+    CHECK(chosen.kind == "ManifestError");
+    CHECK(chosen.what == row.message);
+    CHECK(c.queries.empty());
 }
 
 // 3. A pool holding what list_candidates must never offer: all of it is refused.

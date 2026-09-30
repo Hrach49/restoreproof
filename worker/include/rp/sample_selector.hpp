@@ -111,8 +111,9 @@ public:
 // above 0 (not called when none is), then SampleSelector::select. The query
 // excludes the manifest's canary libraries, subjects and names. Checks first,
 // before the connector is called: the run ID, the plan and cursor as select
-// does, and manifest.tenant_id against graph_tenant_id (ASCII
-// case-insensitive; else ManifestError). The connector's errors pass out.
+// does, manifest.tenant_id against graph_tenant_id (ASCII case-insensitive;
+// else ManifestError), and no canary in a restore target (ManifestError, as
+// select). The connector's errors pass out.
 Selection choose_sample(connector::IConnector& connector, const std::string& client_ref,
                         const connector::RestorePoint& point,
                         const connector::RestoreTargets& targets,

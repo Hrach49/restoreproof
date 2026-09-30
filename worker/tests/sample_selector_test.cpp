@@ -653,7 +653,11 @@ TEST_CASE("to_json writes the result's sample object", "[sample-selector]")
 {
     connector::CandidatePool pool;
     pool.mail = {mail_candidate(7)};
-    pool.mail_browse = {4, {kCarol}, 3, true};
+    pool.mail_browse = {.containers_eligible = 4,
+                        .containers_listed = {kCarol},
+                        .containers_unresolved = 1,
+                        .folders_listed = 3,
+                        .short_of_containers = true};
     const Selection s = select({2, 1, 0}, pool, {0, 9, 0});
     const json key = {rp::ascii_lower(kCarol), "Archive", "real mail 07", "2026-09-20T10:00:07Z"};
     const std::string empty_pool = rp::sha256_hex("[]");
@@ -673,6 +677,7 @@ TEST_CASE("to_json writes the result's sample object", "[sample-selector]")
             {"keys", json::array({key})},
             {"containers_eligible", 4},
             {"containers_listed", {kCarol}},
+            {"containers_unresolved", 1},
             {"folders_listed", 3},
             {"short_of_containers", true}}}}},
         {"sharepoint",
@@ -686,6 +691,7 @@ TEST_CASE("to_json writes the result's sample object", "[sample-selector]")
             {"keys", json::array()},
             {"containers_eligible", 0},
             {"containers_listed", json::array()},
+            {"containers_unresolved", 0},
             {"folders_listed", 0},
             {"short_of_containers", false}}}}},
         {"onedrive",
@@ -699,6 +705,7 @@ TEST_CASE("to_json writes the result's sample object", "[sample-selector]")
             {"keys", json::array()},
             {"containers_eligible", 0},
             {"containers_listed", json::array()},
+            {"containers_unresolved", 0},
             {"folders_listed", 0},
             {"short_of_containers", false}}}}},
     };

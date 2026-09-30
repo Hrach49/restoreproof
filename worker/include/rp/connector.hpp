@@ -297,9 +297,16 @@ struct OneDriveCandidate {
 
 // What one type's listing looked into, for the result bundle.
 struct BrowseRecord {
+    // Taken from the restore point alone, so a replay of the run finds the same.
     std::size_t containers_eligible = 0;
-    // Mailbox address, Graph site ID or OneDrive owner, in the order looked into.
+    // Mailbox address, Graph site ID or OneDrive owner, in the order looked
+    // into; a OneDrive whose owner didn't resolve by its address.
     std::vector<std::string> containers_listed;
+    // Drawn containers the backup product can't be asked to restore from
+    // today (Veeam: a OneDrive that no single organisation user owns now, the
+    // user deleted or renamed since the backup): they give no candidate, and
+    // a replay that differs here explains a different pool.
+    std::size_t containers_unresolved = 0;
     int folders_listed = 0;
     // Fewer than containers_wanted containers gave a candidate.
     bool short_of_containers = false;

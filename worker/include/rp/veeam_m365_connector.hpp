@@ -167,7 +167,11 @@ public:
     //     OneDrives) sorted and drawn one at a time, in each the eligible
     //     folders sorted and up to limits.folders_per_container drawn and
     //     listed, until limits.containers_wanted containers gave a candidate or
-    //     limits.containers_tried were looked into. An item is a candidate only
+    //     limits.containers_tried were looked into. The eligible OneDrives come
+    //     from the explore session alone; a drawn one that no single user of
+    //     GET /v8/Organizations/{id}/Users (today's users) owns is walked and
+    //     drawn as the others, so the draw doesn't change, but nothing in it
+    //     is listed (BrowseRecord::containers_unresolved). An item is a candidate only
     //     if restore_sample's own listing will find it exactly once, and never
     //     from a restore target or a canary location;
     //  3. every explore session stopped; one that couldn't be is

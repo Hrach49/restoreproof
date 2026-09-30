@@ -70,8 +70,8 @@ struct SampleRecord {
 // digits), "manifest_sha256", and per type "mail"/"sharepoint"/"onedrive":
 // {"requested", "canary": {"cursor", "cursor_next", "wanted", "ids"},
 // "random": {"wanted", "taken", "pool_size", "pool_sha256", "keys",
-// "containers_eligible", "containers_listed", "folders_listed",
-// "short_of_containers"}}}.
+// "containers_eligible", "containers_listed", "containers_unresolved",
+// "folders_listed", "short_of_containers"}}}.
 nlohmann::json to_json(const SampleRecord& record);
 
 struct Selection {

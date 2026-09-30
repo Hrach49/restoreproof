@@ -446,6 +446,7 @@ TEST_CASE("candidate limits and records start at the documented values", "[conne
     const connector::BrowseRecord record;
     CHECK(record.containers_eligible == 0);
     CHECK(record.containers_listed.empty());
+    CHECK(record.containers_unresolved == 0);
     CHECK(record.folders_listed == 0);
     CHECK_FALSE(record.short_of_containers);
     CHECK(connector::SharePointCandidate{}.size_bytes == -1);

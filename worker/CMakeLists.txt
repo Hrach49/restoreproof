@@ -47,8 +47,10 @@ add_library(rpcore STATIC
     src/text_table.cpp
     src/text_v1.cpp
     src/utf16.cpp
+    src/veeam_browse.cpp
     src/veeam_client.cpp
     src/veeam_command.cpp
+    src/veeam_explore.cpp
     src/veeam_m365_connector.cpp
     src/veeam_restore.cpp
     src/veeam_time.cpp
@@ -114,6 +116,7 @@ add_executable(rptests
     tests/text_table_test.cpp
     tests/text_util_test.cpp
     tests/text_v1_test.cpp
+    tests/veeam_browse_test.cpp
     tests/veeam_client_live_test.cpp
     tests/veeam_client_test.cpp
     tests/veeam_command_test.cpp

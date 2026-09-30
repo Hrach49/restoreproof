@@ -28,6 +28,7 @@
 #include <set>
 #include <string>
 #include <tuple>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -1117,9 +1118,11 @@ TEST_CASE("list_candidates: real items outside the targets and canaries, as rest
     CHECK(pool.mail_browse.short_of_containers);
     CHECK(pool.sharepoint_browse.containers_eligible == 4);
     CHECK(pool.onedrive_browse.containers_eligible == 2);
-    std::vector<std::string> owners = pool.onedrive_browse.containers_listed;
-    std::ranges::sort(owners);
-    CHECK(owners == std::vector<std::string>{kHrachya, alice});
+    // Everything is looked into, in the seed's order (the pinned-draw test's model).
+    CHECK(pool.mail_browse.containers_listed ==
+          std::vector<std::string>{"allcompany@RestoreProofLab.onmicrosoft.com", alice, kHrachya,
+                                   "bob@RestoreProofLab.onmicrosoft.com"});
+    CHECK(pool.onedrive_browse.containers_listed == std::vector<std::string>{kHrachya, alice});
     // Every explore session stopped once; no POST but the sign-in, the
     // explore sessions and their Stop; nothing asked of Graph.
     CHECK(rig.rig.explores_opened() == 3);
@@ -1128,6 +1131,135 @@ TEST_CASE("list_candidates: real items outside the targets and canaries, as rest
     }
     CHECK(rig.other_posts().empty());
     CHECK(rig.rig.lab.graph_gets() == 0);
+}
+
+namespace {
+
+// The mail folders listed, in order, as "<mailbox>|<folder name>", from the
+// GETs of /items?parentId=.
+std::vector<std::string> mail_folders_listed(const CandidateRig& rig)
+{
+    std::map<std::string, std::string> mailboxes;
+    for (const json& m : rig.tenant.mailboxes) {
+        mailboxes[lower(m.at("id").get<std::string>())] = m.at("email").get<std::string>();
+    }
+    std::map<std::string, std::string> folders;
+    for (const json& f : rig.tenant.mail_folders) {
+        folders[encoded(f.at("id").get<std::string>())] = f.at("name").get<std::string>();
+    }
+    std::vector<std::string> out;
+    for (const HttpRequest& request : rig.rig.veeam.requests()) {
+        const std::size_t items = request.url.find("/items?parentId=");
+        if (request.method != HttpMethod::get || items == std::string::npos) {
+            continue;
+        }
+        const std::size_t box = request.url.rfind("/mailboxes/", items) + 11;
+        const std::size_t parent = items + 16;
+        out.push_back(mailboxes.at(request.url.substr(box, items - box)) + "|" +
+                      folders.at(request.url.substr(parent, request.url.find('&', parent) - parent)));
+    }
+    return out;
+}
+
+std::vector<std::string> mail_pool(const connector::CandidatePool& pool)
+{
+    std::vector<std::string> out;
+    for (const connector::MailSelector& s : pool.mail) {
+        out.push_back(s.mailbox + "|" + s.folder + "|" + s.subject);
+    }
+    return out;
+}
+
+template <class Candidate>
+std::vector<std::string> file_pool(const std::vector<Candidate>& candidates)
+{
+    std::vector<std::string> out;
+    for (const Candidate& c : candidates) {
+        if constexpr (std::is_same_v<Candidate, connector::SharePointCandidate>) {
+            out.push_back(c.selector.site_id + "|" + c.selector.folder_path + "|" + c.selector.name);
+        } else {
+            out.push_back(c.selector.user + "|" + c.selector.folder_path + "|" + c.selector.name);
+        }
+    }
+    return out;
+}
+
+} // namespace
+
+TEST_CASE("list_candidates: a seed draws the pinned containers and folders", "[veeam_m365][w2.6]")
+{
+    // The expected values come from a separate model of decision points 4-6
+    // (Python, from the documented algorithm and std::mt19937's definition,
+    // not from this code): per type an mt19937 seeded with stream_seed(seed,
+    // type, browse); the eligible containers sorted by their key (the
+    // mailbox address or OneDrive url in lower case, the site's Veeam ID);
+    // a lazy Fisher-Yates over them; in each one drawn, its folders sorted
+    // (library list ID, then path) and a Fisher-Yates over them on the same
+    // rng, up to 3 listed; until 2 containers gave a candidate or 8 were
+    // tried. The default limits draw only part of fill()'s tenant.
+    const std::string mail_domain = "@RestoreProofLab.onmicrosoft.com";
+    const std::string alice = "alice" + mail_domain;
+    const std::string allcompany = "allcompany" + mail_domain;
+    const std::string bob = "bob" + mail_domain;
+    const std::string host = "restoreprooflab.sharepoint.com,";
+    const std::string root_site = host + "2ce7dd81-391c-4550-8a71-a69801456911,ab951931-99dc-480a-bc98-9486e09da443";
+    const std::string hub_site = host + "6f9f9513-4db4-4056-ac00-bd1e294f9d9c,4ecaf399-cc0e-4d95-b3fe-cd091a09e689";
+    const std::string all_site = host + "8940f75b-a091-4115-80e0-418447edb6e3,b0066e5e-cea1-4afd-bdc5-4907d626db31";
+    CandidateRig rig;
+    fill(rig.tenant);
+    rig.serve();
+    const connector::CandidateLimits defaults;
+
+    SECTION("seed 8b26e36a")
+    {
+        const connector::CandidatePool pool = rig.list(query(true, true, true, defaults));
+
+        CHECK(pool.mail_browse.containers_eligible == 4);
+        CHECK(pool.mail_browse.containers_listed == std::vector<std::string>{allcompany, alice});
+        CHECK(mail_folders_listed(rig) ==
+              std::vector<std::string>{allcompany + "|Archive", allcompany + "|Conversation History",
+                                       allcompany + "|Inbox", alice + "|Conversation History",
+                                       alice + "|Archive", alice + "|Inbox"});
+        CHECK(mail_pool(pool) ==
+              std::vector<std::string>{allcompany + "|Conversation History|Town hall",
+                                       alice + "|Conversation History|Quarterly plan",
+                                       alice + "|Archive|Expenses", alice + "|Archive|Travel plan"});
+        CHECK_FALSE(pool.mail_browse.short_of_containers);
+
+        CHECK(pool.sharepoint_browse.containers_listed ==
+              std::vector<std::string>{kGraphSite, root_site, hub_site, all_site});
+        CHECK(file_pool(pool.sharepoint) ==
+              std::vector<std::string>{kGraphSite + "|/|Budget.xlsx", kGraphSite + "|/|Roadmap.pptx",
+                                       kGraphSite + "|/A|Spec.pdf"});
+        CHECK(pool.sharepoint_browse.short_of_containers);
+
+        CHECK(pool.onedrive_browse.containers_listed == std::vector<std::string>{kHrachya, alice});
+        CHECK(file_pool(pool.onedrive) ==
+              std::vector<std::string>{kHrachya + "|/|CV.docx", kHrachya + "|/Projects|Holiday.png",
+                                       alice + "|/|Notes.txt"});
+    }
+    SECTION("seed 0f84a51e: another seed, another draw")
+    {
+        connector::CandidateQuery q = query(true, true, true, defaults);
+        q.seed = 0x0f84a51e;
+        const connector::CandidatePool pool = rig.list(q);
+
+        CHECK(pool.mail_browse.containers_listed ==
+              std::vector<std::string>{allcompany, bob, kHrachya});
+        CHECK(mail_folders_listed(rig) ==
+              std::vector<std::string>{allcompany + "|Inbox", allcompany + "|Conversation History",
+                                       allcompany + "|Archive", bob + "|Sent Items",
+                                       bob + "|Conversation History", bob + "|Inbox",
+                                       kHrachya + "|Conversation History", kHrachya + "|Sent Items",
+                                       kHrachya + "|Inbox"});
+        CHECK(mail_pool(pool) == std::vector<std::string>{allcompany + "|Conversation History|Town hall",
+                                                          kHrachya + "|Sent Items|Hiring"});
+        CHECK(pool.sharepoint_browse.containers_listed ==
+              std::vector<std::string>{hub_site, all_site, root_site, kGraphSite});
+        CHECK(file_pool(pool.onedrive) ==
+              std::vector<std::string>{kHrachya + "|/Projects|Holiday.png", kHrachya + "|/|CV.docx",
+                                       alice + "|/|Notes.txt"});
+    }
 }
 
 namespace {

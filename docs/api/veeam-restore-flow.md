@@ -519,7 +519,10 @@ evidence is written only after the session ID is parsed, and a failed write is r
 losing it.
 
 **When the POST gives no session ID** (a transport error, a timeout, a 5xx, any other status
-that is neither 2xx nor 4xx, or a 2xx without `sessionId`), the script doesn't resend. It runs the same check, and while it finds none, looks
+that is neither 2xx nor 4xx, or a 2xx without `sessionId`), the script doesn't resend. The
+Worker tells one transport error apart: no connection or no TLS handshake means the request
+never went out, so nothing started (`RestorePostOutcome::not_sent`, `connector::TransientError`,
+the explore sessions closed) and no check runs. It runs the same check, and while it finds none, looks
 up to 3 more times, 10 s apart. Exactly one candidate: it adopts it and polls it. Several
 candidates: exit 3 at once. Still none after the last look: exit 3. Both are "no verdict, not
 resent". A 4xx means nothing started: exit 2. None of these cases happened in W2.4.
@@ -662,6 +665,13 @@ runs), then logs out → 204. The restore session stops by itself. The one excep
 restore made from it may still be running (the POST went out and its session wasn't seen
 `Stopped`, §9), the explore session is left open and named.
 
+An explore POST that fails once it may have gone out (a timeout, a dropped connection, a 5xx, a
+2xx without an `id`) may still have opened a session: veeam-notes §4.4 saw a refused explore
+left `Working` for 36 minutes. The Worker then runs the duplicate check's query and filter (§8)
+from the explore POST's time, records every new session of ours of that type, and closes it with
+the others, so the next run's preflight isn't blocked. A failed lookup is logged with the sweep
+script (`08-sweep-sessions.ps1`).
+
 After the stop, an explore session's `details` counts the restores made from it: the OneDrive
 explore session `21ebe03d-…` reads `Stopped`, "1 item processed (1 success)" in
 [`w2.4-mail-x5-sessions-after-post`](veeam-lab/w2.4-mail-x5-sessions-after-post.json). Read
@@ -714,10 +724,14 @@ These were infrastructure failures (sign-in), so `error`, not `fail`.
    document ID (§10.1). The earlier revision (§1) matched this rule by name.
 
 Events carry only a name, so no two items of one call may share one: the script refuses such a
-call, and W2.5 splits same-named items (two `Document.docx` from different folders of one
-OneDrive) into separate calls. It must anyway: `restoreTo` and `copyTo` drop the source path, so
-both would land on one target path, and neither the events nor the Graph read-back could tell
-them apart.
+call, and W2.5 splits same-named mails of one mailbox into separate calls. Separate calls don't
+help files: `restoreTo` and `copyTo` drop the source path, so two `Document.docx` (from two
+folders of one OneDrive, or from two sources) land on one target file, the second a new version
+of the first (`documentLastVersionAction: Merge`), and the Graph read-back sees only the second.
+So W2.5 refuses a sample with two SharePoint files, or two OneDrive files, of one name (ASCII
+case-insensitive), before any Veeam request (the W2.5 review entry in `docs/decisions.md`); the
+sampler (W2.6) must not pick two of one name. Two selectors that resolve to one backup item are
+refused too, before any restore POST.
 
 Every field the verdict reads (`result`, `restoredItemsCount`, `items`, the events' `results`)
 must be there and of the expected JSON kind. Otherwise there is no verdict (exit 3), never

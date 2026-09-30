@@ -7,6 +7,71 @@ Format: date, decision, reason, alternatives rejected.
 
 ---
 
+## 2026-09-30 — W2.5 review: what `restore_sample` refuses, closes and wipes
+
+Amends points 1, 3, 5, 6, 7, 8 and 9 of the W2.5 entry below (proposed), after the review of
+the W2.5 branch. Proposed with it: the owner confirms both in the W2.5 review, or supersedes
+them.
+
+**Decision.**
+
+1. **Point 1, how the credential is exported and which copies are wiped.** The exporter adds a
+   *link* to the certificate to a memory store (`CertAddCertificateLinkToStore`), not a copy: a
+   copy loses a key that is held only in memory, which the tests' imported PFX is. The source
+   store and certificate context outlive the memory store (both are held across the export).
+   After `PFXExportCertStoreEx`, the PFX is re-imported in memory (`PFXImportCertStore` with
+   `CRYPT_EXPORTABLE | PKCS12_NO_PERSIST_KEY`), and one exported without its key is refused.
+   Wiped with `SecureZeroMemory`: the `ExportedPfx` (PFX and password), the body's text (spliced
+   into one buffer reserved up front, so growing it frees no partial copy; the JSON body itself
+   never holds the credential, and a value that would need JSON escaping is refused), the target
+   guard's parsed copy of the two values, and `VeeamClient`'s request body after the send. **Not
+   wiped, out of reach:** the copy `HttpClient` hands to cpr (`cpr::Body`, freed with the
+   session), libcurl's and Schannel's send buffers, and the JSON parser's token buffer while the
+   guard reads the text. They live only in the Worker's memory, never in a log, a file or a
+   message; anyone who can read that memory can export the same key from `LocalMachine\My`
+   anyway (the exporter needs it exportable). "Buffers are wiped once the body is sent" means the
+   list above.
+2. **Point 3, two files of one name are refused.** `restoreTo` and `copyTo` drop the source
+   path, so two SharePoint files, or two OneDrive files, of one name (ASCII case-insensitive; from
+   two folders or two sources) land on one target file, the second a new version of the first,
+   and the read-back would fail the first although its backup was fine. `restore_sample` refuses
+   such a spec with `connector::Error` before any Veeam request; the sampler (W2.6) must not pick
+   them. Two selectors that resolve to one backup item (same container and ID) are refused after
+   browsing, before any restore POST (they would restore it twice, in two calls). Point 5's split
+   of same-named items stays for mail.
+3. **Point 6, a POST that never went out.** A connection or TLS handshake failure on the restore
+   POST is `RestorePostOutcome::not_sent`: nothing went out, so `connector::TransientError`, no
+   duplicate check, and the explore sessions are closed. Only a dropped connection, a timeout, a
+   5xx or a 2xx without `sessionId` are "no answer". A refused POST with `errorCode`
+   `ResourceAccessDenied` is `connector::AuthError` whatever its status (restore-flow §15). An
+   accepted `sessionId` is kept in lower case, as the duplicate check lists it.
+4. **Point 7, statistics and events after the stop.** Any failure reading them other than a 409
+   (or a lost sign-in, `AuthError`) is `connector::Error` "... stopped, but its statistics / events
+   couldn't be read ...; no verdict": never `NotFoundError` (a missing item) or `TransientError`
+   (try again), since the restore ran.
+5. **Point 8, an explore POST that failed.** One that fails once it may have gone out (a
+   timeout, a dropped connection, a 5xx, a 2xx without an `id`; not a refused sign-in) may still
+   have opened a session (veeam-notes §4.4). The duplicate check's query and filter run from the
+   POST's time; every new `Working` session of ours of that type is recorded and closed with the
+   others, so the next run's preflight isn't blocked. A failed lookup is logged with the sweep
+   script.
+6. **Point 9, what reads as infrastructure.** Only Veeam's own words: session-level events,
+   statistics errors, and failing item events with the item's name cut out. A sampled mail's
+   subject or a file's name is the tenant's text ("AADSTS50076 sign-in error" is a plausible
+   subject) and never turns a `failed` into an error; a restored item is never flagged.
+7. `parse_veeam_time` accepts years 1678-2261 only, what a time in nanoseconds holds.
+
+**Reason.** Each closes a case the review found: a leaked explore session blocking every later
+run, a restore sent twice or onto one file, user data flipping `failed` to an error, a
+post-restore failure read as a missing item, and a decision that claimed more wiping than the
+code did.
+
+**Alternatives rejected.** Restoring same-named files in separate runs with cleanup between
+(W3.4's cleanup doesn't exist yet; the sampler avoiding them is simpler); wiping cpr's copy by
+passing the body to curl without one (cpr has no non-owning body, and libcurl and Schannel keep
+their own buffers anyway); leaving an orphaned explore session to the sweep (the Worker runs
+unattended).
+
 ## 2026-09-30 — W2.5: how `restore_sample` restores (proposed; recorded before the build)
 
 Recorded before any of it was built, as #30 asks for the credential export. Proposed: the owner

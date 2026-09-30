@@ -1,5 +1,6 @@
 #include <rp/target_guard_veeam.hpp>
 
+#include <rp/cert_export.hpp>
 #include <rp/config.hpp>
 
 #include "target_guard_refuse.hpp"
@@ -519,6 +520,22 @@ private:
     const json& body_;
 };
 
+// The parsed body's copy of the credential, wiped when the check ends,
+// refused or not (docs/decisions.md 2026-09-30 W2.5 point 1).
+struct CredentialWipe {
+    json& doc;
+
+    ~CredentialWipe()
+    {
+        for (const char* key : {"applicationCertificate", "applicationCertificatePassword"}) {
+            const auto it = doc.find(key);
+            if (it != doc.end() && it->is_string()) {
+                secure_wipe(it->get_ref<std::string&>());
+            }
+        }
+    }
+};
+
 } // namespace
 
 void check_restore_request(const CheckedTargets& targets, const RestoreRequestContext& ctx,
@@ -529,7 +546,8 @@ void check_restore_request(const CheckedTargets& targets, const RestoreRequestCo
     const KindRules& rules = rules_for(ctx.kind);
     check_context(reader, targets, ctx);
     check_path(reader, ctx, rules, path);
-    const json doc = reader.parse(body);
+    json doc = reader.parse(body);
+    const CredentialWipe wipe{doc};
     check_keys(reader, rules, doc);
     const RequestCheck check(reader, targets, ctx, doc);
     check.common();

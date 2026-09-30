@@ -725,6 +725,27 @@ TEST_CASE("restore_sample: a certificate that can't be exported sends nothing",
     CHECK(rig.stops(run.explore()) == 1);
 }
 
+TEST_CASE("restore_sample: an exported certificate that isn't Base64 is never put into a body",
+          "[veeam_m365][w2.5]")
+{
+    // The credential is spliced into the body's text unescaped: only what
+    // needs no JSON escaping can go in.
+    const std::string pfx = GENERATE(std::string{"MIIK\"quoted"}, std::string{"MIIK\\x"},
+                                     std::string{"MIIK\nline"}, std::string{"MIIK\xC3\xA9"});
+    RestoreRig rig;
+    const Run run = mail_x1();
+    rig.serve(run);
+    rig.exporter->pfx = pfx;
+
+    const Caught thrown = caught_by([&] { rig.restore(restore_spec({mail_x1_item()})); });
+
+    CHECK(thrown.kind == "Error");
+    CHECK(thrown.what == "veeam_m365: the exported certificate or its password isn't Base64; the "
+                         "restore was not sent");
+    CHECK(rig.restore_posts().empty());
+    CHECK(rig.stops(run.explore()) == 1);
+}
+
 // ---- the restore POST: refused, no answer, sent once --------------------------------------
 
 TEST_CASE("restore_sample: a refused POST started nothing and is never resent",

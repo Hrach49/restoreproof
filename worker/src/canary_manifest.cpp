@@ -3,6 +3,8 @@
 #include <rp/config.hpp>
 #include <rp/sha256.hpp>
 
+#include "folder_path.hpp"
+#include "name_key.hpp"
 #include "path_utf8.hpp"
 #include "text_util.hpp"
 #include "uuid.hpp"
@@ -94,30 +96,26 @@ bool is_whole_second_utc(std::string_view value)
     return date.ok() && number(11, 2) < 24 && number(14, 2) < 60 && number(17, 2) < 60;
 }
 
-// Starts with "/" and has no ".." segment.
+// Starts with "/" and has no ".." segment (folder_path.hpp, the guard's rule).
 bool is_manifest_folder_path(std::string_view path)
 {
-    if (!path.starts_with('/')) {
-        return false;
-    }
-    std::size_t at = 0;
-    while (at <= path.size()) {
-        const std::size_t slash = std::min(path.find('/', at), path.size());
-        if (path.substr(at, slash - at) == "..") {
-            return false;
-        }
-        at = slash + 1;
-    }
-    return true;
+    return path.starts_with('/') && !has_dot_dot_segment(path);
 }
 
-// The first entry of each ASCII-folded name or subject, per kind, so a
-// repeat names it.
+// The first entry of each folded name or subject, per kind, so a repeat
+// names it. A subject is folded A-Z only; a file name by name_key, as
+// SharePoint and OneDrive compare names and restore_sample refuses two of one
+// name (W2.6 review), so a manifest the rotation would one day turn into a
+// refused run is refused here, when it loads.
 class Seen {
 public:
+    using Fold = std::string (*)(std::string_view);
+
+    explicit Seen(Fold fold) : fold_(fold) {}
+
     void add(const std::string& value, const std::string& pointer, std::string_view field)
     {
-        const auto [it, added] = first_.emplace(ascii_lower(value), pointer);
+        const auto [it, added] = first_.emplace(fold_(value), pointer);
         if (!added) {
             refuse(pointer + "/" + std::string{field},
                    "repeats " + it->second + "/" + std::string{field} + " (ignoring case)");
@@ -125,6 +123,7 @@ public:
     }
 
 private:
+    Fold fold_;
     std::map<std::string, std::string> first_;
 };
 
@@ -229,9 +228,9 @@ CanaryManifest parse_canary_manifest(std::string_view json_text)
     manifest.tenant_id = tenant->get<std::string>();
     manifest.sha256 = sha256_hex(json_text);
     std::map<std::string, std::string> ids;
-    Seen subjects;
-    Seen sharepoint_names;
-    Seen onedrive_names;
+    Seen subjects{ascii_lower};
+    Seen sharepoint_names{name_key};
+    Seen onedrive_names{name_key};
     for (std::size_t i = 0; i < entries->size(); ++i) {
         const json& entry = entries->at(i);
         const std::string pointer = "/entries/" + std::to_string(i);

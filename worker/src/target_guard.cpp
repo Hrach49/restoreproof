@@ -3,6 +3,7 @@
 #include <rp/config.hpp>
 #include <rp/redact.hpp>
 
+#include "folder_path.hpp"
 #include "target_guard_refuse.hpp"
 #include "text_util.hpp"
 #include "uuid.hpp"
@@ -25,27 +26,6 @@ namespace {
 constexpr graph::TargetCheckWording kGuardWording{"restores only into", "nothing was restored"};
 
 constexpr std::string_view kNothingRestored = "; nothing was restored";
-
-// The first folder of a OneDrive path, empty and "." segments skipped ("" for
-// the root); nullopt when the path has a ".." segment, which this check can't
-// follow.
-std::optional<std::string_view> first_folder(std::string_view path)
-{
-    std::optional<std::string_view> first;
-    std::size_t at = 0;
-    while (at <= path.size()) {
-        const std::size_t slash = std::min(path.find('/', at), path.size());
-        const std::string_view segment = path.substr(at, slash - at);
-        if (segment == "..") {
-            return std::nullopt;
-        }
-        if (!first && !segment.empty() && segment != ".") {
-            first = segment;
-        }
-        at = slash + 1;
-    }
-    return first.value_or(std::string_view{});
-}
 
 } // namespace
 

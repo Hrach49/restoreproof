@@ -1471,6 +1471,33 @@ TEST_CASE("list_candidates: which OneDrives are eligible and drawn depends on th
     CHECK(b.onedrive_browse.folders_listed + 3 == a.onedrive_browse.folders_listed);
 }
 
+TEST_CASE("list_candidates: a OneDrive whose address two users give is listed by its address, "
+          "its files never candidates",
+          "[veeam_m365][w2.6]")
+{
+    // carol.x@ and carol_x@ both give .../personal/carol_x_restoreprooflab_...:
+    // restore_sample can't tell whose OneDrive it is, so it has no owner.
+    CandidateRig rig;
+    fill(rig.tenant);
+    add_onedrive(rig.tenant,
+                 "0d0d0d0d-0000-4000-8000-0000000000c1"
+                 "0d0d0d0d-0000-4000-8000-0000000000c2",
+                 "carol_x");
+    add_user(rig.tenant, "carol.x");
+    add_user(rig.tenant, "carol_x");
+    rig.serve();
+
+    const connector::CandidatePool pool = rig.list(query(false, false, true));
+
+    const std::string url =
+        "https://restoreprooflab-my.sharepoint.com/personal/carol_x_restoreprooflab_onmicrosoft_com";
+    CHECK(std::ranges::count(pool.onedrive_browse.containers_listed, url) == 1);
+    CHECK(pool.onedrive_browse.containers_unresolved == 1);
+    for (const std::string& entry : found(pool)) {
+        CHECK(entry.find("carol") == std::string::npos);
+    }
+}
+
 TEST_CASE("list_candidates: a top-level folder the manifest's OneDrive canaries are in is never "
           "looked into, in any OneDrive",
           "[veeam_m365][w2.6]")
@@ -1487,6 +1514,37 @@ TEST_CASE("list_candidates: a top-level folder the manifest's OneDrive canaries 
     CHECK(found(pool) == std::vector<std::string>{"onedrive|" + kHrachya + "|/|CV.docx|-1|1000",
                                                   "onedrive|" + alice + "|/|Notes.txt|-1|1000"});
     CHECK(rig.gets_with("00000000-0000-4000-8000-0000000000f1") == 0);
+}
+
+TEST_CASE("list_candidates: explore sessions remembered more than 60 s before a call are "
+          "forgotten",
+          "[veeam_m365][w2.6]")
+{
+    // The duplicate check counts only sessions made 5 s before its POST or
+    // later, so a long-running service needn't keep every one it opened.
+    CandidateRig rig;
+    fill(rig.tenant);
+    rig.serve();
+    const auto at = [&](std::chrono::seconds offset) {
+        const std::lock_guard lock(rig.rig.mutex);
+        rig.rig.post_times = {utc("2026-09-30T12:00:00Z") + offset};
+    };
+    const auto remembered = [&] { return rig.rig.connector().candidate_sessions_remembered(); };
+
+    at(std::chrono::seconds{0});
+    rig.list(query(true, false, false));
+    REQUIRE(remembered() == 1);
+    // Within the window: the mail session is still remembered.
+    at(std::chrono::seconds{60});
+    rig.list(query(false, true, false));
+    CHECK(remembered() == 2);
+    // The mail session was remembered 61 s before, the SharePoint one 1 s.
+    at(std::chrono::seconds{61});
+    rig.list(query(false, false, true));
+    CHECK(remembered() == 2);
+    at(std::chrono::seconds{200});
+    rig.list(query(true, false, false));
+    CHECK(remembered() == 1);
 }
 
 // ---- list_candidates, then restore_sample -------------------------------------------------------

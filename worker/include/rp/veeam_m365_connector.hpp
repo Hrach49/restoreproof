@@ -17,7 +17,9 @@
 #include <rp/veeam_client.hpp>
 
 #include <chrono>
+#include <cstddef>
 #include <functional>
+#include <map>
 #include <memory>
 #include <set>
 #include <string>
@@ -177,13 +179,19 @@ public:
     //  3. every explore session stopped; one that couldn't be is
     //     connector::Error, as restore_sample's preflight would then refuse.
     // Each explore session opened is remembered, even when the call throws,
-    // and restore_sample's duplicate check never counts one of them.
+    // and restore_sample's duplicate check never counts one of them. Each
+    // call first forgets those remembered more than 60 s before
+    // (veeam_restore::kDuplicateWindow): the check only counts sessions made
+    // 5 s before its POST or later, so the service's memory doesn't grow.
     // A random SharePoint item's drive_id is derived from Veeam's GUIDs
     // (src/graph_ids.hpp), so no Graph read is made. Veeam's errors map as
     // restore_sample maps them (a 404 is connector::Error); never
     // connector::NotFoundError. Sends no POST but the sign-in's, the explore
     // sessions' and their Stop.
     connector::CandidatePool list_candidates(const connector::CandidateQuery& query) override;
+
+    // How many explore sessions list_candidates remembers (for tests).
+    std::size_t candidate_sessions_remembered() const noexcept { return candidate_sessions_.size(); }
 
 private:
     // Destroyed in reverse: the Graph client before its HTTP client, and the
@@ -201,10 +209,11 @@ private:
     std::shared_ptr<spdlog::logger> logger_;
     std::string account_; // the username as Veeam lists it in initiatedBy
     // Every explore session list_candidates opened (or adopted), stopped or
-    // not: Veeam lists them in /v8/RestoreSessions with a restore's type, so
-    // restore_sample's duplicate check knows them and never takes one for a
-    // second restore (docs/decisions.md 2026-09-30, W2.6 point 11).
-    std::set<std::string> candidate_sessions_;
+    // not, with when it was remembered (wall clock): Veeam lists them in
+    // /v8/RestoreSessions with a restore's type, so restore_sample's
+    // duplicate check knows them and never takes one for a second restore
+    // (docs/decisions.md 2026-09-30, W2.6 point 11).
+    std::map<std::string, std::chrono::system_clock::time_point> candidate_sessions_;
 };
 
 // The registry's factory for "veeam_m365": a VeeamM365Connector on

@@ -101,10 +101,15 @@ struct Organization {
     // exchangeOnlineSettings.{applicationId, applicationCertificateThumbprint}
     // and sharePointOnlineSettings' two. Set only when both strings are there
     // and not empty; nullopt when the settings object is missing or null, or
-    // either field is missing, null or empty. A value of another JSON kind is
-    // an "unexpected response" VeeamError.
+    // either field is missing, null or empty, or of another JSON kind.
     std::optional<OrganizationApp> exchange_app;
     std::optional<OrganizationApp> sharepoint_app;
+    // Why an app is nullopt when its settings are of another JSON kind (e.g.
+    // "exchangeOnlineSettings: \"applicationId\" isn't a string"); empty
+    // otherwise. Only a restore needs the apps, so one organisation's odd
+    // settings never fail the list for the others: restore_sample refuses
+    // that organisation with this text.
+    std::string settings_problem;
 };
 
 // A restore point (GET /v8/RestorePoints). There is no "isModified": the guide
@@ -232,7 +237,9 @@ public:
     // {"dateTime":"<backup_time>","type":"<type>","showDeleted":false,"showAllVersions":false}
     // (veeam-notes §4.1): `backup_time` byte for byte as the restore point
     // gave it, `type` one of Vex, Vesp, Veod. Returns the session's ID from
-    // the answer (201, or any 2xx) with a UUID "id"; any other 2xx is a
+    // the answer (201, or any 2xx) with a UUID "id", in lower case (as GET
+    // /v8/RestoreSessions lists it, and as post_restore_once returns a
+    // restore session's); any other 2xx is a
     // VeeamError. The organisation ID must be a UUID and the time in Veeam's
     // UTC form ("2026-09-25T19:37:15.2145203Z"), the type one of the three
     // (std::invalid_argument, before any request). It opens a session, so it

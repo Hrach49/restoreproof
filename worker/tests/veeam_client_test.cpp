@@ -1698,29 +1698,67 @@ Answer respond(HttpResponse response)
 
 } // namespace
 
-TEST_CASE("an organisation app field of the wrong JSON kind is a VeeamError", "[veeam][w2.5]")
+TEST_CASE("an organisation app field of the wrong JSON kind leaves it unset and says why",
+          "[veeam][w2.5]")
 {
+    // Only a restore needs the apps: one organisation's odd settings must not
+    // fail the list (rpworker veeam list, list_restore_points) for all.
+    struct Row {
+        std::string settings;
+        std::string problem;
+    };
     const std::string key = GENERATE("exchangeOnlineSettings", "sharePointOnlineSettings");
-    const std::string settings = GENERATE(
-        R"("x")", "[]", "5", "true",
-        R"({"applicationId":5,"applicationCertificateThumbprint":"T"})",
-        R"({"applicationId":"A","applicationCertificateThumbprint":true})",
-        R"({"applicationId":{},"applicationCertificateThumbprint":"T"})");
-    CAPTURE(key, settings);
+    const Row row = GENERATE(values<Row>({
+        {R"("x")", "it isn't an object"},
+        {"[]", "it isn't an object"},
+        {"5", "it isn't an object"},
+        {"true", "it isn't an object"},
+        {R"({"applicationId":5,"applicationCertificateThumbprint":"T"})",
+         "\"applicationId\" isn't a string"},
+        {R"({"applicationId":"A","applicationCertificateThumbprint":true})",
+         "\"applicationCertificateThumbprint\" isn't a string"},
+        {R"({"applicationId":{},"applicationCertificateThumbprint":"T"})",
+         "\"applicationId\" isn't a string"},
+    }));
+    CAPTURE(key, row.settings);
     Lab lab;
-    lab.http.on(HttpMethod::get, orgs_url(), {org_with_settings(key, settings)});
+    lab.http.on(HttpMethod::get, orgs_url(), {org_with_settings(key, row.settings)});
     auto client = lab.make_client();
 
-    std::string what;
-    CHECK(thrown_kind([&] {
-              try {
-                  client->list_organizations();
-              } catch (const rp::VeeamError& e) {
-                  what = e.what();
-                  throw;
-              }
-          }) == "VeeamError");
-    CHECK(what.starts_with("Veeam GET /v8/Organizations: unexpected response: "));
+    const std::vector<rp::Organization> orgs = client->list_organizations();
+
+    REQUIRE(orgs.size() == 1);
+    CHECK_FALSE(app_of(orgs[0], key).has_value());
+    CHECK(orgs[0].settings_problem == key + ": " + row.problem);
+}
+
+TEST_CASE("one organisation's odd settings leave the others whole", "[veeam][w2.5]")
+{
+    json odd = {{"id", kOrgId},
+                {"name", "Odd.onmicrosoft.com"},
+                {"exchangeOnlineSettings", 7},
+                {"sharePointOnlineSettings", {{"applicationId", 5}}}};
+    json fine = {{"id", "0b6f7c52-4f3e-4a51-9d4a-5f0a3c2b1e90"},
+                 {"name", "Fine.onmicrosoft.com"},
+                 {"exchangeOnlineSettings",
+                  {{"applicationId", "A"}, {"applicationCertificateThumbprint", "T"}}}};
+    Lab lab;
+    lab.http.on(HttpMethod::get, orgs_url(),
+                {make_response(200, json{{"offset", 0}, {"limit", 1000},
+                                         {"results", json::array({odd, fine})}}
+                                        .dump())});
+    auto client = lab.make_client();
+
+    const std::vector<rp::Organization> orgs = client->list_organizations();
+
+    REQUIRE(orgs.size() == 2);
+    // The first problem is the one kept.
+    CHECK(orgs[0].settings_problem == "exchangeOnlineSettings: it isn't an object");
+    CHECK_FALSE(orgs[0].exchange_app);
+    CHECK_FALSE(orgs[0].sharepoint_app);
+    CHECK(orgs[1].settings_problem.empty());
+    REQUIRE(orgs[1].exchange_app);
+    CHECK(orgs[1].exchange_app->application_id == "A");
 }
 
 TEST_CASE("an organisation app is set only with both strings there and not empty",
@@ -1929,6 +1967,18 @@ TEST_CASE("an explore session is opened with exactly the recorded body", "[veeam
     CHECK(sent[1].max_attempts == 1);
     CHECK_FALSE(sent[1].retry_on_status);
     CHECK(sent[1].timeout == 45s);
+}
+
+TEST_CASE("an explore session's ID is returned in lower case", "[veeam][w2.5]")
+{
+    // As GET /v8/RestoreSessions lists it: the duplicate check and the guard's
+    // layer 2 compare in lower case (the W2.5 review).
+    Lab lab;
+    lab.http.on(HttpMethod::post, kExploreUrl,
+                {make_response(201, json{{"id", "6EE50A66-C46F-4200-B793-C03F8BCBBB8B"}}.dump())});
+    auto client = lab.make_client();
+
+    CHECK(client->open_explore_session(kOrgId, kBackupTime, "Vex") == kSessionId);
 }
 
 TEST_CASE("an explore answer without a session UUID is a VeeamError", "[veeam][w2.5]")

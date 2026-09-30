@@ -10,6 +10,8 @@
 
 #include <rp/connector.hpp>
 
+#include "veeam_time.hpp"
+
 #include <nlohmann/json.hpp>
 
 #include <chrono>
@@ -43,11 +45,8 @@ inline constexpr int kPreflightLimit = 200;
 inline constexpr std::chrono::seconds kDuplicateWindow{60};
 inline constexpr std::chrono::seconds kDuplicateFloor{5};
 inline constexpr int kDuplicateLimit = 50;
-// Events are read a page of this many at a time, at most kMaxEventPages pages.
-inline constexpr int kEventsPageSize = 100;
-inline constexpr int kMaxEventPages = 100;
 
-using UtcTime = std::chrono::sys_time<std::chrono::nanoseconds>;
+using UtcTime = VeeamTime;
 
 // A Veeam reply of an unexpected shape. what() names the field, never a body.
 class ShapeError : public std::runtime_error {
@@ -58,10 +57,6 @@ public:
 // Veeam's session type for the kind: Vex, Vesp, Veod.
 std::string_view session_type(connector::ItemKind kind) noexcept;
 
-// Every byte but ASCII letters, digits and -._~ as %XX: for a value put into
-// a path segment or a query.
-std::string percent_encode(std::string_view text);
-
 // The account as Veeam lists it in initiatedBy: the part after the last '\\'
 // (DESKTOP-P55CDUM\rp-veeam -> rp-veeam).
 std::string bare_account(std::string_view username);
@@ -69,10 +64,8 @@ std::string bare_account(std::string_view username);
 // "YYYY-MM-DDTHH:MM:SSZ" in UTC, cut (not rounded) to the second.
 std::string format_utc_seconds(std::chrono::system_clock::time_point time);
 
-// Veeam's UTC form, "YYYY-MM-DDTHH:MM:SS" with 0 to 7 fractional digits and
-// "Z", as a time; nullopt for any other text, an impossible date, or a year
-// outside 1678-2261 (what a time in nanoseconds holds).
-std::optional<UtcTime> parse_veeam_time(std::string_view text);
+// Veeam's UTC form as a time (veeam_time.hpp, shared with VeeamClient).
+using rp::parse_veeam_time;
 
 // A Veeam time cut (not rounded) to "YYYY-MM-DDTHH:MM:SSZ"; nullopt when it
 // isn't Veeam's UTC form.
@@ -94,10 +87,20 @@ std::vector<std::string> path_segments(std::string_view folder_path);
 // One or more UUIDs run together (any case): safe in a URL path as it is.
 bool is_uuid_run(std::string_view id) noexcept;
 
-// Whether `text` reads as Veeam failing to reach Microsoft 365 or lacking
-// permissions (ASCII case-insensitive): "Cannot connect to Microsoft 365",
-// "Failed to open mailbox", "missing the required application permissions",
-// "AADSTS".
+// `text` with the tenant's own text cut out, so only Veeam's words are left:
+// each of `tenant_texts` (whole, as it is), Veeam's "source: ...;" and
+// "target: ...)" fields, quoted parts ("..." anywhere, '...' opening a word),
+// and every word holding '@', '/' or '\' (an address, a path, a mailbox and
+// its folder). Each cut becomes one unit separator (0x1F).
+std::string veeam_words(std::string_view text, const std::vector<std::string>& tenant_texts);
+
+// Whether `text` reads as Veeam failing to reach Microsoft 365 or a target,
+// being refused, throttled or timing out (ASCII case-insensitive): W1.0's
+// "Cannot connect to Microsoft 365", "Failed to open mailbox", "Failed to
+// access mailbox", "missing the required application permissions", "AADSTS",
+// and the usual words of a failed service call (connect, access denied,
+// unauthorized, forbidden, 401, 403, 429, throttling, 503, timeouts, proxy,
+// name resolution, certificate, token). Broad on purpose: a doubt is `error`.
 bool is_infrastructure_text(std::string_view text);
 
 // The IDs of GET /v8/RestoreSessions results that are Working and were
@@ -111,13 +114,20 @@ struct DuplicateFilter {
     std::string type;             // Vex, Vesp or Veod
     std::set<std::string> known;  // every session ID this run already knows
     UtcTime floor{};              // the POST time less kDuplicateFloor
+    // The organisation's name as Veeam lists it in "organization"; empty =
+    // any. An entry without the field is kept.
+    std::string organization;
+    // Only sessions whose state is Working (an explore POST's orphan).
+    bool working_only = false;
 };
 
 // The IDs of GET /v8/RestoreSessions?startTimeFrom=... results that could be
 // the restore just posted: initiatedBy the account (ASCII case-insensitive),
-// type the call's, a lower-case UUID not already known, and a creationTime
-// (Veeam's form) no earlier than the floor. Entries missing any of these
-// aren't kept. ShapeError without a "results" list.
+// type the call's, a lower-case UUID not already known, a creationTime
+// (Veeam's form) no earlier than the floor, the organisation's (when the
+// filter and the entry name one) and, with working_only, Working. Entries
+// missing any of the first four aren't kept. ShapeError without a "results"
+// list.
 std::vector<std::string> new_restore_sessions(const nlohmann::json& list,
                                               const DuplicateFilter& filter);
 
@@ -207,10 +217,14 @@ struct SessionVerdict {
     // One per sent item, in their order; kind, name, session_id, outcome,
     // message and infrastructure set.
     std::vector<connector::ItemRestoreResult> items;
-    // A session-level event's title or message, a statistics error, or a
-    // failing item event's title or message with the item's name cut out,
-    // reads as infrastructure; `infrastructure_text` is the first such, one
-    // line. An item name is the tenant's text and never counts.
+    // Whether the session's failure is the test's, not the backup's: a
+    // session-level event's title or message, a statistics error, or a
+    // failing item event's title or message reads as infrastructure in
+    // Veeam's own words (veeam_words: item names, the run's tenant texts,
+    // addresses, paths and quoted parts cut out); or nothing was restored and
+    // no Restore event names any item (the restore never reached them).
+    // `infrastructure_text` is the first such text (or "Veeam reported on
+    // none of the items: <reason>"), one line.
     bool infrastructure = false;
     std::string infrastructure_text;
     // result Success, restoredItemsCount equal to the items sent, every item restored.
@@ -224,9 +238,13 @@ struct SessionVerdict {
 // Success has its ID (OneDrive: the document ID; SharePoint: its last 36
 // characters; ASCII case-insensitive); failed when a Restore event names it
 // with another status; else unknown, with the session's failure message.
+// `tenant_texts` are the run's other names of the tenant (the source and
+// target containers' names and addresses), cut out with the items' names
+// before any text is read as infrastructure.
 SessionVerdict judge(connector::ItemKind kind, const std::string& session_id,
                      const SessionState& session, const Statistics& statistics,
-                     const std::vector<Event>& events, const std::vector<SentItem>& sent);
+                     const std::vector<Event>& events, const std::vector<SentItem>& sent,
+                     const std::vector<std::string>& tenant_texts = {});
 
 // The W1.7 order with W2.5's stricter succeeded (rp/connector.hpp): not_run
 // without a session, failed with nothing restored, succeeded when every

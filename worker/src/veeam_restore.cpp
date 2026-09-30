@@ -3,6 +3,7 @@
 #include <rp/config.hpp>
 #include <rp/redact.hpp>
 
+#include "json_fields.hpp"
 #include "text_util.hpp"
 #include "uuid.hpp"
 
@@ -20,16 +21,44 @@ namespace {
 using nlohmann::json;
 using nlohmann::ordered_json;
 
-// The years parse_veeam_time accepts.
-constexpr int kFirstYear = 1678;
-constexpr int kLastYear = 2261;
-
-constexpr std::array<std::string_view, 4> kInfrastructureTexts = {
+// What Veeam says when it couldn't reach Microsoft 365 (or a target), was
+// refused, throttled or timed out: W1.0's recorded failures (the first five)
+// and the other ways a service call fails. Lower case; matched in Veeam's own
+// words only (veeam_words). Deliberately broad: a restore that couldn't run
+// must never be reported as `fail` (CLAUDE.md), so any doubt goes to `error`.
+constexpr std::array<std::string_view, 27> kInfrastructureTexts = {
     "cannot connect to microsoft 365",
     "failed to open mailbox",
+    "failed to access mailbox",
     "missing the required application permissions",
     "aadsts",
+    "failed to connect",
+    "unable to connect",
+    "could not connect",
+    "connection",
+    "access denied",
+    "access is denied",
+    "unauthorized",
+    "forbidden",
+    "(401)",
+    "(403)",
+    "(429)",
+    "too many requests",
+    "throttl",
+    "(503)",
+    "service unavailable",
+    "server busy",
+    "timed out",
+    "timeout",
+    "proxy",
+    "could not be resolved",
+    "certificate",
+    "token",
 };
+
+// What replaces a cut: a unit separator, which no marker holds, so a cut
+// never joins two words into a marker.
+constexpr char kCut = '\x1F';
 
 // The string at `key`, empty when it is missing or null; ShapeError for any
 // other kind.
@@ -45,19 +74,15 @@ std::string optional_text(const json& object, std::string_view key)
     return it->get<std::string>();
 }
 
-// `text` with each `name` in it replaced by a unit separator, which no
-// infrastructure text holds: cutting a name out never makes one.
-std::string without_name(std::string_view text, std::string_view name)
+bool is_space(char c) noexcept
 {
-    std::string out{text};
-    if (name.empty()) {
-        return out;
-    }
-    for (std::size_t at = out.find(name); at != std::string::npos;
-         at = out.find(name, at + 1)) {
-        out.replace(at, name.size(), "\x1F");
-    }
-    return out;
+    return c == ' ' || c == '\t' || c == '\r' || c == '\n';
+}
+
+// `out` with [from, to) replaced by one cut.
+void cut(std::string& out, std::size_t from, std::size_t to)
+{
+    out.replace(from, to - from, 1, kCut);
 }
 
 // The "results" array of a list reply.
@@ -70,33 +95,9 @@ const json& results_of(const json& list)
     return *it;
 }
 
-// The string at `key` if it is one; nullptr otherwise, whatever it is.
-const std::string* text_if_any(const json& object, std::string_view key)
-{
-    if (!object.is_object()) {
-        return nullptr;
-    }
-    const auto it = object.find(key);
-    return it != object.end() && it->is_string() ? it->get_ptr<const std::string*>() : nullptr;
-}
-
 bool is_lower_uuid(std::string_view id) noexcept
 {
     return is_uuid(id) && std::ranges::none_of(id, [](char c) { return c >= 'A' && c <= 'Z'; });
-}
-
-bool all_digits(std::string_view text) noexcept
-{
-    return !text.empty() && std::ranges::all_of(text, [](char c) { return c >= '0' && c <= '9'; });
-}
-
-int number(std::string_view digits) noexcept
-{
-    int out = 0;
-    for (const char c : digits) {
-        out = out * 10 + (c - '0');
-    }
-    return out;
 }
 
 std::string two_digits(unsigned value)
@@ -126,12 +127,6 @@ std::string_view session_type(connector::ItemKind kind) noexcept
     return "Vex";
 }
 
-std::string percent_encode(std::string_view text)
-{
-    // The same unreserved set a form value keeps: nothing else passes as it is.
-    return form_encode(text);
-}
-
 std::string bare_account(std::string_view username)
 {
     const std::size_t slash = username.rfind('\\');
@@ -152,52 +147,6 @@ std::string format_utc_seconds(std::chrono::system_clock::time_point time)
            two_digits(static_cast<unsigned>(clock.hours().count())) + ":" +
            two_digits(static_cast<unsigned>(clock.minutes().count())) + ":" +
            two_digits(static_cast<unsigned>(clock.seconds().count())) + "Z";
-}
-
-std::optional<UtcTime> parse_veeam_time(std::string_view text)
-{
-    // YYYY-MM-DDTHH:MM:SS, then .1-7 digits or nothing, then Z.
-    if (text.size() < 20 || text.back() != 'Z' || text[4] != '-' || text[7] != '-' ||
-        text[10] != 'T' || text[13] != ':' || text[16] != ':') {
-        return std::nullopt;
-    }
-    const std::string_view year = text.substr(0, 4);
-    const std::string_view month = text.substr(5, 2);
-    const std::string_view day = text.substr(8, 2);
-    const std::string_view hour = text.substr(11, 2);
-    const std::string_view minute = text.substr(14, 2);
-    const std::string_view second = text.substr(17, 2);
-    for (const std::string_view part : {year, month, day, hour, minute, second}) {
-        if (!all_digits(part)) {
-            return std::nullopt;
-        }
-    }
-    std::string_view fraction = text.substr(19, text.size() - 20);
-    if (!fraction.empty()) {
-        if (fraction.front() != '.') {
-            return std::nullopt;
-        }
-        fraction.remove_prefix(1);
-        if (fraction.size() > 7 || !all_digits(fraction)) {
-            return std::nullopt;
-        }
-    }
-    const std::chrono::year_month_day date{std::chrono::year{number(year)},
-                                           std::chrono::month{static_cast<unsigned>(number(month))},
-                                           std::chrono::day{static_cast<unsigned>(number(day))}};
-    // A time in nanoseconds holds 1677-09-21 to 2262-04-11: whole years
-    // inside that, so no date overflows it (Veeam's 9999 "never" among them).
-    if (!date.ok() || number(year) < kFirstYear || number(year) > kLastYear || number(hour) > 23 ||
-        number(minute) > 59 || number(second) > 59) {
-        return std::nullopt;
-    }
-    std::int64_t nanos = 0;
-    for (std::size_t i = 0; i < 9; ++i) {
-        nanos = nanos * 10 + (i < fraction.size() ? fraction[i] - '0' : 0);
-    }
-    return UtcTime{std::chrono::sys_days{date}} + std::chrono::hours{number(hour)} +
-           std::chrono::minutes{number(minute)} + std::chrono::seconds{number(second)} +
-           std::chrono::nanoseconds{nanos};
 }
 
 std::optional<std::string> to_whole_seconds(std::string_view text)
@@ -262,6 +211,62 @@ bool is_uuid_run(std::string_view id) noexcept
     return true;
 }
 
+std::string veeam_words(std::string_view text, const std::vector<std::string>& tenant_texts)
+{
+    std::string out{text};
+    // 1. The tenant's texts the run knows, whole, case as they are.
+    for (const std::string& name : tenant_texts) {
+        if (name.empty()) {
+            continue;
+        }
+        for (std::size_t at = out.find(name); at != std::string::npos; at = out.find(name, at + 1)) {
+            cut(out, at, at + name.size());
+        }
+    }
+    // 2. Veeam's "source: ...;" and "target: ...)" fields: a display name, a
+    //    folder, a path or an address, the tenant's all.
+    for (const std::string_view key : {std::string_view{"source:"}, std::string_view{"target:"}}) {
+        for (std::size_t at = ascii_lower(out).find(key); at != std::string::npos;
+             at = ascii_lower(out).find(key, at + 1)) {
+            cut(out, at, std::min(out.find_first_of(";)", at), out.size()));
+        }
+    }
+    // 3. Quoted parts: "..." anywhere, '...' when the quote opens a word (not
+    //    an apostrophe, as in "can't").
+    for (std::size_t at = 0; at < out.size(); ++at) {
+        const char quote = out[at];
+        const bool opens =
+            quote == '"' || (quote == '\'' && (at == 0 || is_space(out[at - 1]) ||
+                                               out[at - 1] == ':' || out[at - 1] == '('));
+        if (!opens) {
+            continue;
+        }
+        const std::size_t close = out.find(quote, at + 1);
+        if (close == std::string::npos) {
+            break;
+        }
+        cut(out, at, close + 1);
+    }
+    // 4. Words that are an address or a path: '@', '/' or '\' in them.
+    for (std::size_t start = 0; start < out.size();) {
+        if (is_space(out[start])) {
+            ++start;
+            continue;
+        }
+        std::size_t end = start;
+        while (end < out.size() && !is_space(out[end])) {
+            ++end;
+        }
+        if (std::string_view{out}.substr(start, end - start).find_first_of("@/\\") !=
+            std::string_view::npos) {
+            cut(out, start, end);
+            end = start + 1;
+        }
+        start = end;
+    }
+    return out;
+}
+
 bool is_infrastructure_text(std::string_view text)
 {
     const std::string lower = ascii_lower(text);
@@ -289,12 +294,27 @@ std::vector<std::string> new_restore_sessions(const json& list, const DuplicateF
 {
     std::vector<std::string> out;
     for (const json& session : results_of(list)) {
-        const std::string* id = text_if_any(session, "id");
-        const std::string* by = text_if_any(session, "initiatedBy");
-        const std::string* type = text_if_any(session, "type");
-        const std::string* created = text_if_any(session, "creationTime");
+        const std::string* id = string_at(session, "id");
+        const std::string* by = string_at(session, "initiatedBy");
+        const std::string* type = string_at(session, "type");
+        const std::string* created = string_at(session, "creationTime");
         if (id == nullptr || by == nullptr || type == nullptr || created == nullptr) {
             continue;
+        }
+        // Another organisation's session is never ours. Without the field it
+        // is kept: for the duplicate check a missing field only adds a
+        // candidate (no verdict), never hides one.
+        if (!filter.organization.empty() && session.contains("organization")) {
+            const std::string* organization = string_at(session, "organization");
+            if (organization == nullptr || !ascii_iequals(*organization, filter.organization)) {
+                continue;
+            }
+        }
+        if (filter.working_only) {
+            const std::string* state = string_at(session, "state");
+            if (state == nullptr || *state != "Working") {
+                continue;
+            }
         }
         const std::optional<UtcTime> at = parse_veeam_time(*created);
         if (is_lower_uuid(*id) && !filter.known.contains(*id) && ascii_iequals(*by, filter.account) &&
@@ -478,35 +498,52 @@ std::vector<Event> read_events(const json& page)
 
 SessionVerdict judge(connector::ItemKind kind, const std::string& session_id,
                      const SessionState& session, const Statistics& statistics,
-                     const std::vector<Event>& events, const std::vector<SentItem>& sent)
+                     const std::vector<Event>& events, const std::vector<SentItem>& sent,
+                     const std::vector<std::string>& tenant_texts)
 {
     SessionVerdict out;
     // The session's own failure: what reads as infrastructure, else its first
     // failing session-level event, else its first statistics error.
     std::string infrastructure;
     std::string session_failure;
-    // Only Veeam's own words count: an item's name (a sampled mail's subject,
-    // a file's name) is the tenant's text, so it is cut out first, and an
-    // item Veeam restored says nothing about infrastructure.
-    const auto note = [&](const std::string& text, std::string_view name) {
-        if (infrastructure.empty() && is_infrastructure_text(without_name(text, name))) {
+    // Only Veeam's own words count: every item's name (a sampled mail's
+    // subject, a file's name), the run's other tenant texts, and the
+    // addresses, paths and quoted parts in a message are cut out first
+    // (veeam_words), and an item Veeam restored says nothing about
+    // infrastructure.
+    std::vector<std::string> cuts = tenant_texts;
+    for (const SentItem& item : sent) {
+        cuts.push_back(item.name);
+    }
+    for (const Event& event : events) {
+        cuts.push_back(event.item_name);
+    }
+    const auto reads_as_infrastructure = [&](const std::string& text) {
+        return is_infrastructure_text(veeam_words(text, cuts));
+    };
+    const auto note = [&](const std::string& text) {
+        if (infrastructure.empty() && reads_as_infrastructure(text)) {
             infrastructure = text;
         }
     };
+    bool any_item_reported = false;
     for (const Event& event : events) {
         if (event.type != "Restore") {
-            note(event.title, {});
-            note(event.message, {});
+            note(event.title);
+            note(event.message);
             if (session_failure.empty() && event.status != "Success") {
                 session_failure = !event.message.empty() ? event.message : event.title;
             }
-        } else if (event.status != "Success") {
-            note(event.title, event.item_name);
-            note(event.message, event.item_name);
+            continue;
+        }
+        any_item_reported = true;
+        if (event.status != "Success") {
+            note(event.title);
+            note(event.message);
         }
     }
     for (const std::string& error : statistics.errors) {
-        note(error, {});
+        note(error);
     }
     if (session_failure.empty() && !statistics.errors.empty()) {
         session_failure = statistics.errors.front();
@@ -515,6 +552,15 @@ SessionVerdict judge(connector::ItemKind kind, const std::string& session_id,
         out.infrastructure = true;
         out.infrastructure_text = log_line(infrastructure);
         session_failure = infrastructure;
+    } else if (statistics.restored == 0 && !any_item_reported) {
+        // Nothing restored, and Veeam said nothing about any item: the restore
+        // never reached them, so nothing is known about the backup. Whatever
+        // the reason, it is the test that couldn't run, never `fail`.
+        out.infrastructure = true;
+        const std::string reason = !session_failure.empty()   ? session_failure
+                                   : !session.details.empty() ? session.details
+                                                              : "result " + session.result;
+        out.infrastructure_text = log_line("Veeam reported on none of the items: " + reason);
     }
 
     bool all_restored = true;
@@ -552,7 +598,7 @@ SessionVerdict judge(connector::ItemKind kind, const std::string& session_id,
         }
         result.message = log_line(message);
         result.infrastructure = result.outcome != connector::ItemOutcome::restored &&
-                                is_infrastructure_text(without_name(message, item.name));
+                                reads_as_infrastructure(message);
         all_restored = all_restored && result.outcome == connector::ItemOutcome::restored;
         out.items.push_back(std::move(result));
     }

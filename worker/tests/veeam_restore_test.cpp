@@ -4,6 +4,7 @@
 // from docs/api/veeam-restore-flow.md §8-§12 and W2.4's and W1.0's recorded
 // sessions (tests/fixtures/veeam/w24-*, w10-*).
 
+#include "../src/text_util.hpp"
 #include "../src/veeam_restore.hpp"
 #include "fake_http_client.hpp"
 
@@ -83,8 +84,10 @@ TEST_CASE("the account as Veeam lists it in initiatedBy", "[veeam_restore]")
     CHECK(vr::bare_account(username) == bare);
 }
 
-TEST_CASE("percent-encoding keeps only the unreserved characters", "[veeam_restore]")
+TEST_CASE("a name in a Veeam path or query keeps only the unreserved characters",
+          "[veeam_restore]")
 {
+    // restore_sample encodes folder names and IDs with form_encode.
     const auto [text, encoded] = GENERATE(table<std::string, std::string>({
         {"Inbox", "Inbox"},
         {"AAAAAJQ40Ee3vkxBk1fd6-4CAU4BAP0LwXmScMJMnrn-sNESuJ8AAAAAAQwAAA",
@@ -93,7 +96,7 @@ TEST_CASE("percent-encoding keeps only the unreserved characters", "[veeam_resto
         {"a/b?c&d=e#f%", "a%2Fb%3Fc%26d%3De%23f%25"},
         {"Skrzynka odbiorcza \xC5\x9B", "Skrzynka%20odbiorcza%20%C5%9B"},
     }));
-    CHECK(vr::percent_encode(text) == encoded);
+    CHECK(rp::form_encode(text) == encoded);
 }
 
 TEST_CASE("a POST time is written to the whole second, cut not rounded", "[veeam_restore]")
@@ -225,11 +228,63 @@ TEST_CASE("which texts read as infrastructure", "[veeam_restore]")
         {"Restore operation failed with error: Failed to open mailbox: restoretest@x..", true},
         {"The application is missing the required application permissions", true},
         {"AADSTS700016: Application not found", true},
+        {"Failed to restore folder: Failed to access mailbox..", true},
+        // The other ways a service call fails (the W2.5 review): throttled,
+        // timed out, unavailable, refused.
+        {"The remote server returned an error: (429) Too Many Requests.", true},
+        {"Request was throttled by Exchange Online", true},
+        {"The operation has timed out.", true},
+        {"Timeout expired", true},
+        {"The remote server returned an error: (503) Server Unavailable.", true},
+        {"Service Unavailable", true},
+        {"Access denied.", true},
+        {"Access is denied", true},
+        {"The remote server returned an error: (401) Unauthorized.", true},
+        {"The remote server returned an error: (403) Forbidden.", true},
+        {"Unable to connect to the remote server", true},
+        {"The underlying connection was closed", true},
+        {"The remote name could not be resolved", true},
+        {"The proxy server refused the connection", true},
+        {"The certificate chain was issued by an authority that is not trusted", true},
+        {"The token has expired", true},
         {"Item rp-canary-06.pdf was restored successfully", false},
-        {"Failed to restore folder: Failed to access mailbox..", false},
+        {"Restore failed: the item is locked", false},
+        {"Item is corrupted in the backup", false},
         {"", false},
     }));
     CHECK(vr::is_infrastructure_text(text) == infrastructure);
+}
+
+TEST_CASE("only Veeam's own words are left of a message", "[veeam_restore]")
+{
+    const std::string cut = "\x1F";
+    const auto [text, tenant, words] =
+        GENERATE_COPY(table<std::string, std::vector<std::string>, std::string>({
+            // A recorded success: the item, its source and target fields.
+            {"Item RP-CANARY-0005 was restored successfully (type: IPM.Note; source: Alice "
+             "Test\\Inbox; target: restoretest@RestoreProofLab.onmicrosoft.com\\<null>\\Inbox)",
+             {"RP-CANARY-0005"},
+             "Item " + cut + " was restored successfully (type: IPM.Note; " + cut + "; " + cut + ")"},
+            // W1.0's failures keep their markers.
+            {"Restore operation failed with error: Failed to open mailbox: "
+             "restoretest@RestoreProofLab.onmicrosoft.com..",
+             {},
+             "Restore operation failed with error: Failed to open mailbox: " + cut},
+            {"Cannot connect to Microsoft 365. Failed to connect to https://x.sharepoint.com/..",
+             {},
+             "Cannot connect to Microsoft 365. Failed to connect to " + cut},
+            // Quoted parts, but not an apostrophe.
+            {"Can't restore folder \"AADSTS notes\" of 'Timeout Club'", {},
+             "Can't restore folder " + cut + " of " + cut},
+            // Paths, addresses, and the run's names, whole.
+            {"Folder Projects/Access denied/2026 of bob@x.com failed for Alice Proxy", {"Alice Proxy"},
+             "Folder " + cut + " " + cut + " of " + cut + " failed for " + cut},
+            {"source: no end", {}, cut},
+            {"an \"unclosed quote", {}, "an \"unclosed quote"},
+            {"", {""}, ""},
+        }));
+    CAPTURE(text);
+    CHECK(vr::veeam_words(text, tenant) == words);
 }
 
 // ---- the preflight and the duplicate check -----------------------------------------------
@@ -323,7 +378,32 @@ TEST_CASE("the duplicate check keeps only the restore just posted", "[veeam_rest
                 json copy = l["results"][0];
                 copy["id"] = "b0000000-0000-4000-8000-000000000001";
                 l["results"].push_back(copy);
-            }, {restore, "b0000000-0000-4000-8000-000000000001"}});
+            }, {restore, "b0000000-0000-4000-8000-000000000001"}},
+        Row{"the organisation's", [](json&, vr::DuplicateFilter& f) {
+                f.organization = "restoreprooflab.ONMICROSOFT.com";
+            }, {restore}},
+        Row{"another organisation's", [](json&, vr::DuplicateFilter& f) {
+                f.organization = "Other.onmicrosoft.com";
+            }, {}},
+        Row{"no organisation named: kept", [](json& l, vr::DuplicateFilter& f) {
+                f.organization = "Other.onmicrosoft.com";
+                l["results"][0].erase("organization");
+            }, {restore}},
+        Row{"an organisation of another kind", [](json& l, vr::DuplicateFilter& f) {
+                f.organization = "RestoreProofLab.onmicrosoft.com";
+                l["results"][0]["organization"] = 7;
+            }, {}},
+        Row{"Working only, and it is", [](json&, vr::DuplicateFilter& f) {
+                f.working_only = true;
+            }, {restore}},
+        Row{"Working only, and it stopped", [](json& l, vr::DuplicateFilter& f) {
+                f.working_only = true;
+                l["results"][0]["state"] = "Stopped";
+            }, {}},
+        Row{"Working only, and no state", [](json& l, vr::DuplicateFilter& f) {
+                f.working_only = true;
+                l["results"][0].erase("state");
+            }, {}});
     CAPTURE(row.name);
     json list = recorded;
     vr::DuplicateFilter edited = filter;
@@ -542,7 +622,8 @@ namespace {
 
 // The verdict on a recorded (perhaps edited) session.
 vr::SessionVerdict verdict(ItemKind kind, const std::string& run, const std::vector<vr::SentItem>& sent,
-                           const std::function<void(json&, json&, json&)>& edit = {})
+                           const std::function<void(json&, json&, json&)>& edit = {},
+                           const std::vector<std::string>& tenant_texts = {})
 {
     json session = body_of(run + "-session");
     json stats = body_of(run + "-statistics");
@@ -551,7 +632,7 @@ vr::SessionVerdict verdict(ItemKind kind, const std::string& run, const std::vec
         edit(session, stats, events);
     }
     return vr::judge(kind, session.at("id").get<std::string>(), vr::read_session(session),
-                     vr::read_statistics(stats), vr::read_events(events), sent);
+                     vr::read_statistics(stats), vr::read_events(events), sent, tenant_texts);
 }
 
 const std::string kSpDocument =
@@ -679,7 +760,7 @@ TEST_CASE("W1.0's failed restores read as infrastructure", "[veeam_restore]")
         std::string text;
     };
     const Row row = GENERATE(values<Row>({
-        {ItemKind::mail, "w10-mail-user", "Failed to open mailbox"},
+        {ItemKind::mail, "w10-mail-user", "Failed to access mailbox"},
         {ItemKind::sharepoint, "w10-sp-user", "Cannot connect to Microsoft 365"},
         // No errors[] in the statistics: the reason is only in the events.
         {ItemKind::onedrive, "w10-od-user", "Cannot connect to Microsoft 365"},
@@ -750,18 +831,112 @@ TEST_CASE("an item's message falls back to the statistics' error", "[veeam_resto
     CHECK(v.infrastructure);
 }
 
-TEST_CASE("a failed session without an infrastructure text", "[veeam_restore]")
+TEST_CASE("an item that failed for itself isn't infrastructure", "[veeam_restore]")
 {
+    // Veeam reached the item and says what is wrong with it: a `fail` to be.
     const vr::SessionVerdict v = verdict(
         ItemKind::onedrive, "w10-od-user", {{"rp-canary-16.pdf", kOdDocument}},
         [](json&, json&, json& e) {
-            e["results"][1]["title"] = "Restore failed: the item is locked";
-            e["results"][1]["message"] = "Restore failed: the item is locked";
+            e["results"][1] = {{"type", "Restore"},
+                               {"status", "Failed"},
+                               {"itemName", "rp-canary-16.pdf"},
+                               {"title", "Restore failed: the item is locked"},
+                               {"message", "Restore failed: the item is locked"}};
         });
     CHECK_FALSE(v.infrastructure);
     CHECK(v.infrastructure_text.empty());
+    CHECK(v.items[0].outcome == ItemOutcome::failed);
     CHECK(v.items[0].message == "Restore failed: the item is locked");
     CHECK_FALSE(v.items[0].infrastructure);
+}
+
+TEST_CASE("a session that restored nothing and named no item is infrastructure",
+          "[veeam_restore]")
+{
+    // The W2.5 review: Veeam never reached the items, so nothing is known about
+    // the backup; whatever its words, the test couldn't run (never `fail`).
+    const auto [name, message, text] = GENERATE(table<std::string, std::string, std::string>({
+        {"a failure no marker names", "Restore failed: the job was cancelled",
+         "Veeam reported on none of the items: Restore failed: the job was cancelled"},
+        {"no failing event", "", "Veeam reported on none of the items: 0 items processed"},
+    }));
+    CAPTURE(name);
+    const vr::SessionVerdict v = verdict(
+        ItemKind::onedrive, "w10-od-user", {{"rp-canary-16.pdf", kOdDocument}},
+        [message = message](json&, json&, json& e) {
+            json kept = json::array();
+            if (!message.empty()) {
+                kept.push_back({{"type", "None"},
+                                {"status", "Failed"},
+                                {"title", message},
+                                {"message", message}});
+            }
+            e["results"] = kept;
+        });
+    CHECK(v.infrastructure);
+    CHECK(v.infrastructure_text == text);
+    CHECK_FALSE(v.succeeded);
+    CHECK(v.items[0].outcome == ItemOutcome::unknown);
+}
+
+TEST_CASE("a restored item keeps a session that named no failure out of infrastructure",
+          "[veeam_restore]")
+{
+    // Something was restored: the no-item rule is only for a session that
+    // restored nothing.
+    const vr::SessionVerdict v = verdict(ItemKind::mail, "w24-mail-x5", mail_x5_sent(),
+                                         [](json&, json&, json& e) {
+                                             json kept = json::array();
+                                             for (json& event : e["results"]) {
+                                                 if (event.value("type", "") != "Restore") {
+                                                     kept.push_back(event);
+                                                 }
+                                             }
+                                             e["results"] = kept;
+                                         });
+    CHECK_FALSE(v.infrastructure);
+    CHECK_FALSE(v.succeeded);
+}
+
+TEST_CASE("the tenant's text in a failing item's message never makes it infrastructure",
+          "[veeam_restore]")
+{
+    // The W2.5 review: Veeam's messages quote the mailbox's display name, its
+    // folder, site paths and addresses, all the tenant's text.
+    const auto [name, message, tenant, infrastructure] =
+        GENERATE(table<std::string, std::string, std::vector<std::string>, bool>({
+            {"a display name in the source field",
+             "Item Report was not restored: item is corrupt (type: IPM.Note; source: AADSTS "
+             "Team\\Inbox; target: restoretest@x.com\\<null>\\Inbox)",
+             {}, false},
+            {"a folder path", "Failed to restore item in Shared/Access denied/2026: item is corrupt",
+             {}, false},
+            {"a quoted folder", "Failed to restore item in folder \"Proxy Timeout\": item is corrupt",
+             {}, false},
+            {"a display name the run knows", "Failed to restore item of Token Holders: item is corrupt",
+             {"Token Holders"}, false},
+            {"a site URL", "Failed to restore https://x.sharepoint.com/sites/Timeout: item is corrupt",
+             {}, false},
+            {"Veeam's own words beside them",
+             "Failed to restore item of Token Holders: The operation has timed out.",
+             {"Token Holders"}, true},
+        }));
+    CAPTURE(name);
+    const vr::SessionVerdict v = verdict(
+        ItemKind::mail, "w24-mail-x1", {{"Report", "i"}},
+        [message = message](json& s, json& st, json& e) {
+            json& item = e["results"][1];
+            s["result"] = "Failed";
+            st["restoredItemsCount"] = 0;
+            item["itemName"] = "Report";
+            item["title"] = "Report";
+            item["status"] = "Failed";
+            item["message"] = message;
+        },
+        tenant);
+    CHECK(v.infrastructure == infrastructure);
+    CHECK(v.items[0].outcome == ItemOutcome::failed);
+    CHECK(v.items[0].infrastructure == infrastructure);
 }
 
 TEST_CASE("the session's log lines", "[veeam_restore]")

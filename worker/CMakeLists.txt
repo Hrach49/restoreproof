@@ -114,6 +114,7 @@ add_executable(rptests
     tests/redact_test.cpp
     tests/retry_policy_test.cpp
     tests/sample_rng_test.cpp
+    tests/sample_selector_live_test.cpp
     tests/sample_selector_test.cpp
     tests/secrets_test.cpp
     tests/sha256_test.cpp

@@ -45,9 +45,9 @@ those files are held to 100% line instead. See `docs/decisions.md`.
 
 Tests tagged `[live]` call the lab's real services and are skipped unless `RP_LIVE=1` is set;
 they are read-only. `RP_LIVE=1 ctest --preset dev` runs them with the rest, or run them alone
-with `build\dev\rptests.exe "[live]"` (which also prints what they found). Three are Veeam's
-and four Graph's; once `RP_LIVE=1` is set, each needs its variables below and fails, rather than
-skips, without them.
+with `build\dev\rptests.exe "[live]"` (which also prints what they found). Three are Veeam's,
+four Graph's and one the sampler's dry run, which uses both (below); once `RP_LIVE=1` is set,
+each needs its variables below and fails, rather than skips, without them.
 
 The three Veeam ones
 (`worker/tests/veeam_client_live_test.cpp`) each sign in, list organisations and restore
@@ -165,6 +165,45 @@ To run the four Graph ones on the dev laptop (the PFX and its Credential Manager
 
 Nothing is written to disk, and PowerShell's history holds only the commands above, never a
 value: the script reads the PFX and the password itself.
+
+### Live sample (dry run, read-only)
+
+`worker/tests/sample_selector_live_test.cpp` (W2.6, tag `[live][sample]`, not `[writes]`) runs
+the sampler against the lab: it makes the `veeam_m365` connector through
+`default_connector_registry()`, takes the lab organisation's newest restore point, loads
+`lab/seed-manifest.json` and calls `rp::sampling::choose_sample` **twice** with the same run ID
+and canary cursor (`SamplePlan::from_config`'s defaults, 5 of each type). It restores nothing:
+`list_candidates` opens one explore session per type with a random half and stops it again,
+as `docs/api/veeam-m365/10-restore.ps1 -WhatIf` does, and the target guard reads the restore
+targets through Graph. It checks that:
+
+- both calls chose the same items and recorded the same `sample` object;
+- `TargetGuard::check_spec` (layer 1, Graph GETs only) accepts the selection;
+- every POST was a sign-in (`/v8/token`, `/v8/token/logout`), an explore session (`/explore`)
+  or its `/Stop` (the Veeam HTTP client is wrapped in a counting forwarder through
+  `ConnectorOptions::make_http`, which records methods and URLs only);
+- afterwards `GET /v8/RestoreSessions?limit=200` lists no Working session of the account.
+
+It prints the restore point, the selection, `to_json(record)` (the result's `sample` object:
+seed, manifest SHA-256, cursors, canary IDs, pool sizes and hashes, the containers looked
+into), how many entries each OneDrive's `Documents?parentId=root` listing held, and the number
+of GETs and POSTs. It needs the Veeam and Graph variables above (`RP_VEEAM_*`,
+`RP_LIVE_VEEAM_CA_FILE`, the Worker app's certificate), no elevation, plus two optional ones:
+
+| Variable | Value |
+|---|---|
+| `RP_LIVE_RUN_ID` | the run ID the seed comes from; default `live-dry-run` (seed `49b39f4c`) |
+| `RP_LIVE_SAMPLE_CURSOR` | the canary cursor per type, `m,s,o`; default `0,0,0` |
+
+Run it alone, with its output shown:
+
+```powershell
+$env:RP_LIVE = '1'
+.\worker\build\dev\rptests.exe "[sample][live]"
+```
+
+Until the lab holds real (non-canary) data the random half is mostly a recorded shortfall
+(`docs/decisions.md` 2026-09-30, W2.6, "Open"); the canary half is always full.
 
 ### Live restore (writes to the lab tenant)
 

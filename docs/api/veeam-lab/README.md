@@ -1,11 +1,12 @@
-# Veeam REST evidence (L1.6, W1.0, W1.4, W2.4)
+# Veeam REST evidence (L1.6, W1.0, W1.4, W2.4, W2.5)
 
 Raw, scrubbed request/response pairs from the lab Veeam server (VB365 8.6, REST v8), recorded
 on 2026-09-25/26: L1.6 and W1.0 for `docs/api/veeam-feasibility.md`, W1.4 for
 `docs/api/veeam-notes.md` (made by the scripts in `docs/api/veeam-m365/`). W1.5 turns them into
 `worker/tests/fixtures/veeam/` fixtures (the list is in `veeam-notes.md` §9). W2.4's restores,
 recorded on 2026-09-28 by `docs/api/veeam-m365/10-restore.ps1`, are for
-`docs/api/veeam-restore-flow.md`.
+`docs/api/veeam-restore-flow.md`. W2.5's three files are the Worker's own live restore of
+2026-09-30 (below); they are not in the call format.
 
 ## Format
 
@@ -111,3 +112,21 @@ the `restore` files. The script also scrubs the exported PFX's Base64. Before co
 were audited with `audit-evidence.ps1 -Path ..\veeam-lab\w2.4-*.json` against rp-veeam's
 password, every token and the one-time PFX passwords, and for JWT, bearer, PFX and PEM patterns:
 no hits. Each run stops its explore session in its `finally` block.
+
+## W2.5 live restore
+
+The Worker's first live restore, 2026-09-30 07:35:12Z–07:37:39Z: `rptests.exe "[live][writes]"`
+(`worker/tests/veeam_m365_restore_live_test.cpp`, `docs/testing.md`, "Live restore") restored 5
+mails, 3 SharePoint files and 2 OneDrive files from the restore point of
+2026-09-29T22:00:45.6603083Z through `restore_sample`, in three restore sessions, all `Success`
+(`docs/api/veeam-restore-flow.md` §19). The Worker writes no per-call files, so these are not
+in the call format above:
+
+| File | What it is |
+|---|---|
+| [`w2.5-live-restore-result.json`](w2.5-live-restore-result.json) | the `RestoreResult` as JSON, written by the test through `RP_LIVE_EVIDENCE_FILE`: status, restore point, one entry per restore session and per item, the log |
+| [`w2.5-live-console.txt`](w2.5-live-console.txt) | the test's console output, text |
+| [`w2.5-live-graph-list-hash.txt`](w2.5-live-graph-list-hash.txt) | `rpworker graph list --hash` right after it, text: the 10 items in the three targets with their SHA-256 |
+
+No credential reaches any of them (the `RestoreResult` holds none). Before commit the three
+files were audited with `audit-evidence.ps1`: no hits.

@@ -170,6 +170,23 @@ site, drive or user (not granted); decoding Graph's `b!` drive IDs into GUIDs (w
 undocumented); resending a POST with no answer (could restore twice); stopping an explore
 session under a running restore (untested).
 
+**Live run.** #30's Done-when, 2026-09-30 07:35:12Z–07:37:39Z, run with the owner's go-ahead
+from an elevated shell: `rptests.exe "[live][writes]"` (`veeam_m365_restore_live_test.cpp`,
+`RP_LIVE=1`, `RP_LIVE_RESTORE=1`) restored RP-CANARY-0001 to 0005 (alice's Inbox) into
+restoretest's Inbox, rp-canary-01.pdf, 04.txt and 06.pdf into the RestoreTarget library and
+rp-canary-11.pdf and 14.txt into alice's `/RestoreTarget`, from the newest restore point
+(`backupTime` 2026-09-29T22:00:45.6603083Z), into targets `rpworker graph list` had shown empty.
+Status `succeeded`, 10 of 10, in three restore sessions, all `Success` (mail `6cd07acf-…`, 5 of
+5; SharePoint `2ab2e15d-…`, 3 of 3; OneDrive `0819da9f-…`, 2 of 2). Point 1's in-memory export
+(Windows' default PFX encryption) was accepted for all three types; point 5's one call per type
+in a run of three types, point 6's duplicate-check query and point 9's per-item events matched
+by `itemName` worked live. `rpworker graph list --hash` then found exactly the 10 items, all 10
+SHA-256 values equal to `lab/seed-manifest.json`'s, and `08-sweep-sessions.ps1 -WhatIf` found
+none of the 96 sessions `Working` (point 8's finally path stopped the three explore sessions).
+Point 5's reuse of an explore session for a second container is still untried (one container
+per type). The 10 copies stay in the targets until the owner removes them by hand (W3.4).
+Details in restore-flow §19; evidence `docs/api/veeam-lab/w2.5-live-*`.
+
 ## 2026-09-30 — W2.7 review: the guard resolves the mailbox and the OneDrive's address, and runs first in `restore_sample`
 
 Supersedes parts of the 2026-09-29 W2.7 entry below (points 1, 2 and 3, and its opening

@@ -88,4 +88,9 @@ std::string_view to_string(ItemOutcome outcome) noexcept
     return "unknown";
 }
 
+CandidatePool IConnector::list_candidates(const CandidateQuery& /*query*/)
+{
+    throw NotImplementedError(describe().name + ": listing candidates isn't implemented");
+}
+
 } // namespace rp::connector

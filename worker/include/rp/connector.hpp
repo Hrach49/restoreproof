@@ -243,6 +243,77 @@ public:
     using Error::Error;
 };
 
+// W2.6: what the random half of a sample may be drawn from (docs/decisions.md
+// 2026-09-30, W2.6). The connector lists a few containers' items, drawn with
+// the query's seed, and keeps only those restore_sample will later find exactly
+// once; the sampler (rp/sample_selector.hpp) picks from them.
+
+// How far list_candidates looks, per type.
+struct CandidateLimits {
+    int containers_wanted = 2;     // stop once this many containers gave a candidate
+    int containers_tried = 8;      // containers looked into, at most
+    int folders_per_container = 3; // folders whose items are listed, per container
+    int walk_depth = 2;            // file folder levels below a library or drive root
+    int walk_calls = 20;           // folder-list calls per container
+    // A file above this can't be read back (rp/graph_download.hpp's cap).
+    std::int64_t max_file_bytes = 64ll * 1024 * 1024;
+};
+
+// The canary locations and items, from the manifest: never a random candidate.
+// Names and subjects compare ASCII case-insensitively.
+struct CandidateExclusions {
+    std::vector<std::string> list_ids;         // the canary libraries' list GUIDs
+    std::vector<std::string> subjects;         // canary mails, their Sent Items copies too
+    std::vector<std::string> sharepoint_names; // canary SharePoint file names
+    std::vector<std::string> onedrive_names;   // canary OneDrive file names
+};
+
+// One list_candidates call. RestoreTargets has no default, so neither has this.
+struct CandidateQuery {
+    std::string client_ref;     // as list_restore_points takes it
+    RestorePoint restore_point; // as list_restore_points returned it
+    RestoreTargets targets;
+    // The types with a random half; the others are not browsed.
+    bool mail = false;
+    bool sharepoint = false;
+    bool onedrive = false;
+    // The run's seed (rp/sample_rng.hpp): which containers and folders are
+    // looked into is drawn from it, so a run's listing can be repeated.
+    std::uint32_t seed = 0;
+    CandidateExclusions exclude;
+    CandidateLimits limits;
+};
+
+// A file candidate: its selector (size -1) and the size the backup holds.
+struct SharePointCandidate {
+    SharePointSelector selector;
+    std::int64_t size_bytes = -1;
+};
+
+struct OneDriveCandidate {
+    OneDriveSelector selector;
+    std::int64_t size_bytes = -1;
+};
+
+// What one type's listing looked into, for the result bundle.
+struct BrowseRecord {
+    std::size_t containers_eligible = 0;
+    // Mailbox address, Graph site ID or OneDrive owner, in the order looked into.
+    std::vector<std::string> containers_listed;
+    int folders_listed = 0;
+    // Fewer than containers_wanted containers gave a candidate.
+    bool short_of_containers = false;
+};
+
+struct CandidatePool {
+    std::vector<MailSelector> mail;
+    std::vector<SharePointCandidate> sharepoint;
+    std::vector<OneDriveCandidate> onedrive;
+    BrowseRecord mail_browse;
+    BrowseRecord sharepoint_browse;
+    BrowseRecord onedrive_browse;
+};
+
 // A backup product as the pipeline sees it. One instance talks to one backup
 // server with one set of credentials; each call names the client (an MSP's
 // customer: one Microsoft 365 tenant) it is about.
@@ -265,6 +336,14 @@ public:
     // each restore request again just before it is sent; a refusal is a
     // SafetyViolation.
     virtual RestoreResult restore_sample(const RestoreSpec& spec) = 0;
+
+    // W2.6: the random half's candidates in `query`'s restore point, never
+    // from a restore target or a canary location. Read-only for Microsoft 365
+    // (it may open and close the product's own browsing sessions). The errors
+    // of restore_sample, but never NotFoundError: nothing is sampled yet. The
+    // default throws NotImplementedError("<describe().name>: listing
+    // candidates isn't implemented").
+    virtual CandidatePool list_candidates(const CandidateQuery& query);
 
 protected:
     IConnector() = default;

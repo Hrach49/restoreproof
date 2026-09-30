@@ -211,6 +211,21 @@ TEST_CASE("the canary manifest refuses an entry or field that breaks its rule",
          at(kFirstOneDrive, "/location: must be an object")},
         {"a name repeated but for case", [](json& m) { m["entries"][kFirstSharePoint + 4]["name"] = "RP-CANARY-01.PDF"; },
          at(kFirstSharePoint + 4, "/name: repeats /entries/20/name (ignoring case)")},
+        // Names differing only in a non-ASCII letter's case ("Źródła" and
+        // "źródła") are one name to SharePoint and OneDrive, and to
+        // restore_sample's same-name refusal (src/name_key.hpp).
+        {"a SharePoint name repeated but for a non-ASCII letter's case",
+         [](json& m) {
+             m["entries"][kFirstSharePoint]["name"] = "\xC5\xB9r\xC3\xB3" "d\xC5\x82" "a.pdf";
+             m["entries"][kFirstSharePoint + 4]["name"] = "\xC5\xBAr\xC3\xB3" "d\xC5\x82" "a.pdf";
+         },
+         at(kFirstSharePoint + 4, "/name: repeats /entries/20/name (ignoring case)")},
+        {"a OneDrive name repeated but for a non-ASCII letter's case",
+         [](json& m) {
+             m["entries"][kFirstOneDrive]["name"] = "\xC5\xB9r\xC3\xB3" "d\xC5\x82" "a.pdf";
+             m["entries"][kFirstOneDrive + 2]["name"] = "\xC5\xB9R\xC3\x93" "D\xC5\x81" "A.PDF";
+         },
+         at(kFirstOneDrive + 2, "/name: repeats /entries/30/name (ignoring case)")},
         // SharePoint.
         {"site_id a GUID", [](json& m) { m["entries"][kFirstSharePoint]["location"]["site_id"] = "fe08085d-eb70-42e8-95a6-470189bd98eb"; },
          at(kFirstSharePoint, "/location/site_id: ") + std::string{rp::kGraphSiteIdRule}},

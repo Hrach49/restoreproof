@@ -75,8 +75,9 @@ public:
 // file_type or content_rule, a stored_size below 0, or a folder_path not
 // starting with "/" or with a ".." segment; a SharePoint file whose site_id,
 // drive_id or list_id isn't a Graph site ID, a Graph drive ID or a GUID; a
-// OneDrive file without user; two names of one kind, or two subjects, equal
-// but for ASCII case.
+// OneDrive file without user; two subjects equal but for ASCII case; two
+// names of one kind equal but for the case of any letter (src/name_key.hpp:
+// restore_sample would refuse them in one run).
 CanaryManifest parse_canary_manifest(std::string_view json_text);
 
 // The file's bytes, then parse_canary_manifest. ManifestError if it can't be read.

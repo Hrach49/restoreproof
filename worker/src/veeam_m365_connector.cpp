@@ -171,15 +171,15 @@ public:
         const std::shared_ptr<spdlog::logger>& logger;
         const std::string& account;
         // Explore sessions list_candidates opened: never a duplicate restore.
-        const std::set<std::string>& candidate_sessions;
+        const std::map<std::string, std::chrono::system_clock::time_point>& candidate_sessions;
     };
 
     explicit RestoreRun(Context context)
         : c_(context), sessions_({context.client, context.wall_now, context.logger,
                                   context.account, context.spec.restore_point.backup_time})
     {
-        for (const std::string& id : context.candidate_sessions) {
-            sessions_.know(id);
+        for (const auto& entry : context.candidate_sessions) {
+            sessions_.know(entry.first);
         }
     }
     RestoreRun(const RestoreRun&) = delete;
@@ -980,17 +980,19 @@ connector::RestoreResult VeeamM365Connector::restore_sample(const connector::Res
     // second a new version of the first, and the read-back sees only it.
     // SharePoint and OneDrive ignore the case of every letter, not only A-Z
     // (src/name_key.hpp, which the sampler's same-name skip uses too).
+    // One key per item, each item checked against the first of its key.
     const auto one_name_each = [](std::string_view kind, const auto& selectors) {
-        for (std::size_t later = 1; later < selectors.size(); ++later) {
-            for (std::size_t earlier = 0; earlier < later; ++earlier) {
-                if (same_name(selectors[earlier].name, selectors[later].name)) {
-                    throw connector::Error(
-                        "veeam_m365: " + std::string{kind} + " items " + std::to_string(earlier) +
-                        " and " + std::to_string(later) + " are both named " +
-                        shown_text(selectors[earlier].name) +
-                        " (ignoring case), and would be restored onto one file in the restore "
-                        "target; restore them in separate runs; nothing was restored");
-                }
+        std::map<std::string, std::size_t> first;
+        for (std::size_t later = 0; later < selectors.size(); ++later) {
+            const auto [it, added] = first.emplace(name_key(selectors[later].name), later);
+            if (!added) {
+                const std::size_t earlier = it->second;
+                throw connector::Error(
+                    "veeam_m365: " + std::string{kind} + " items " + std::to_string(earlier) +
+                    " and " + std::to_string(later) + " are both named " +
+                    shown_text(selectors[earlier].name) +
+                    " (ignoring case), and would be restored onto one file in the restore "
+                    "target; restore them in separate runs; nothing was restored");
             }
         }
     };

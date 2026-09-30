@@ -187,8 +187,9 @@ public:
         const std::function<std::chrono::system_clock::time_point()>& wall_now;
         const std::shared_ptr<spdlog::logger>& logger;
         const std::string& account;
-        // Where every explore session opened or adopted is remembered.
-        std::set<std::string>& opened;
+        // Where every explore session opened or adopted is remembered, with
+        // when.
+        std::map<std::string, std::chrono::system_clock::time_point>& opened;
     };
 
     explicit CandidateLister(Context context)
@@ -203,7 +204,13 @@ public:
 
 private:
     connector::CandidatePool run_checked();
-    void remember_sessions() { c_.opened.insert(sessions_.opened().begin(), sessions_.opened().end()); }
+    void remember_sessions()
+    {
+        const auto now = c_.wall_now();
+        for (const std::string& id : sessions_.opened()) {
+            c_.opened.insert_or_assign(id, now);
+        }
+    }
     void browse_mail(connector::CandidatePool& pool);
     void browse_sharepoint(connector::CandidatePool& pool);
     void browse_onedrive(connector::CandidatePool& pool, const std::vector<std::string>& owners);
@@ -477,6 +484,18 @@ void CandidateLister::browse_onedrive(connector::CandidatePool& pool,
         }
         return out;
     }();
+    // Each organisation user's OneDrive address, folded A-Z, and the users
+    // that give it: built once, so a OneDrive's owner is one lookup, not a
+    // pass over every user.
+    const std::map<std::string, std::vector<const std::string*>> owners_at = [&] {
+        std::map<std::string, std::vector<const std::string*>> out;
+        for (const std::string& owner : owners) {
+            if (const std::optional<std::string> address = vr::onedrive_url(host_, owner)) {
+                out[ascii_lower(*address)].push_back(&owner);
+            }
+        }
+        return out;
+    }();
     // Eligible by the restore point alone: the organisation's users (Veeam's
     // cache of today's tenant, not the restore point's) only decide whether
     // a drawn OneDrive can give candidates, never which are drawn.
@@ -489,16 +508,10 @@ void CandidateLister::browse_onedrive(connector::CandidatePool& pool,
             continue;
         }
         // Its owner: the one organisation user whose OneDrive address it is.
-        std::vector<const std::string*> owned_by;
-        for (const std::string& owner : owners) {
-            if (const std::optional<std::string> address = vr::onedrive_url(host_, owner);
-                address && ascii_iequals(*address, *url)) {
-                owned_by.push_back(&owner);
-            }
-        }
-        const bool resolved = owned_by.size() == 1;
-        containers.push_back(
-            {ascii_lower(*url), resolved ? *owned_by.front() : *url, id, !resolved});
+        const std::string folded = ascii_lower(*url);
+        const auto owned_by = owners_at.find(folded);
+        const bool resolved = owned_by != owners_at.end() && owned_by->second.size() == 1;
+        containers.push_back({folded, resolved ? *owned_by->second.front() : *url, id, !resolved});
     }
 
     std::vector<std::string_view> skip_top{kSkippedOneDriveFolders.begin(),
@@ -612,6 +625,10 @@ connector::CandidatePool VeeamM365Connector::list_candidates(const connector::Ca
         throw std::invalid_argument("veeam_m365: a candidate limit is negative");
     }
 
+    // Those remembered before the duplicate check's window can never be
+    // counted again.
+    const auto forget_before = wall_now_() - vr::kDuplicateWindow;
+    std::erase_if(candidate_sessions_, [&](const auto& entry) { return entry.second < forget_before; });
     CandidateLister lister({*client_, query, wall_now_, logger_, account_, candidate_sessions_});
     // Veeam's errors as restore_sample maps them: nothing is sampled yet, so
     // Veeam's own 404 is connector::Error, never connector::NotFoundError.

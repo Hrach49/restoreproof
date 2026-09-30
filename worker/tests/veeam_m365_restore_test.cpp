@@ -24,6 +24,7 @@
 #include <cstddef>
 #include <functional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 using Catch::Matchers::ContainsSubstring;
@@ -817,6 +818,30 @@ TEST_CASE("restore_sample: two files of one name are refused before any Veeam re
                              "\" (ignoring case), and would be restored onto one file in the "
                              "restore target; restore them in separate runs; nothing was "
                              "restored");
+    CHECK(rig.veeam.requests().empty());
+}
+
+TEST_CASE("restore_sample: among several files, the first repeat is named with the first item "
+          "of its name",
+          "[veeam_m365][w2.5]")
+{
+    RestoreRig rig;
+    const auto named = [](std::string_view name, std::string_view folder) {
+        connector::SharePointSelector item = sp_x1_item();
+        item.name = std::string{name};
+        item.folder_path = std::string{folder};
+        return item;
+    };
+
+    const Caught thrown = caught_by([&] {
+        rig.restore(restore_spec({}, {named("a.pdf", "/A"), named("b.pdf", "/A"),
+                                      named("c.pdf", "/A"), named("B.PDF", "/B"),
+                                      named("A.pdf", "/B")}));
+    });
+
+    CHECK(thrown.kind == "Error");
+    CHECK_THAT(thrown.what, StartsWith("veeam_m365: sharepoint items 1 and 3 are both named "
+                                       "\"b.pdf\" (ignoring case)"));
     CHECK(rig.veeam.requests().empty());
 }
 

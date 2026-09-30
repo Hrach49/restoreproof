@@ -3,6 +3,7 @@
 #include <rp/sha256.hpp>
 #include <rp/target_guard_graph.hpp>
 
+#include "folder_path.hpp"
 #include "graph_ids.hpp"
 #include "name_key.hpp"
 #include "text_util.hpp"
@@ -29,32 +30,6 @@ using Key = std::vector<std::string>;
 constexpr std::string_view kCanaryPrefix = "rp-canary-";
 // The canary folder in the lab's OneDrive (docs/decisions.md 2026-09-25): never random.
 constexpr std::string_view kCanaryFolderName = "RestoreTest";
-
-// The first folder of a OneDrive path, empty and "." segments skipped ("" for
-// the root); nullopt when the path has a ".." segment. The guard's rule
-// (target_guard.cpp), so the sampler never offers what it would refuse.
-std::optional<std::string_view> first_folder(std::string_view path)
-{
-    std::optional<std::string_view> first;
-    std::size_t at = 0;
-    while (at <= path.size()) {
-        const std::size_t slash = std::min(path.find('/', at), path.size());
-        const std::string_view segment = path.substr(at, slash - at);
-        if (segment == "..") {
-            return std::nullopt;
-        }
-        if (!first && !segment.empty() && segment != ".") {
-            first = segment;
-        }
-        at = slash + 1;
-    }
-    return first.value_or(std::string_view{});
-}
-
-bool has_dot_dot(std::string_view path)
-{
-    return !first_folder(path).has_value();
-}
 
 std::string kind_name(ItemKind kind)
 {
@@ -219,7 +194,7 @@ std::optional<std::string> forbidden(const connector::SharePointSelector& file,
     if (f.list_ids.contains(ascii_lower(file.list_id))) {
         return "from a canary library";
     }
-    if (has_dot_dot(file.folder_path)) {
+    if (has_dot_dot_segment(file.folder_path)) {
         return "in a folder path with a \"..\" segment";
     }
     return canary_text(file.name, f.sharepoint_names, "name");
@@ -348,20 +323,30 @@ void select_kind(ItemKind kind, int size, const std::vector<Canary>& canaries, s
     }
 
     // Sorted by key and then every field, one per key: the listing's order
-    // doesn't matter.
-    std::sort(candidates.begin(), candidates.end(), [](const Selector& a, const Selector& b) {
-        const Key ka = key_of(a);
-        const Key kb = key_of(b);
-        return ka != kb ? ka < kb : all_of(a) < all_of(b);
+    // doesn't matter. Each candidate's key and fields are built once.
+    struct Keyed {
+        Key key;
+        Key all;
+        Selector selector;
+    };
+    std::vector<Keyed> keyed;
+    keyed.reserve(candidates.size());
+    for (Selector& candidate : candidates) {
+        Key key = key_of(candidate);
+        Key all = all_of(candidate);
+        keyed.push_back({std::move(key), std::move(all), std::move(candidate)});
+    }
+    std::sort(keyed.begin(), keyed.end(), [](const Keyed& a, const Keyed& b) {
+        return a.key != b.key ? a.key < b.key : a.all < b.all;
     });
-    candidates.erase(std::unique(candidates.begin(), candidates.end(),
-                                 [](const Selector& a, const Selector& b) {
-                                     return key_of(a) == key_of(b);
-                                 }),
-                     candidates.end());
+    keyed.erase(std::unique(keyed.begin(), keyed.end(),
+                            [](const Keyed& a, const Keyed& b) { return a.key == b.key; }),
+                keyed.end());
+    candidates.clear();
     nlohmann::json keys = nlohmann::json::array();
-    for (const Selector& candidate : candidates) {
-        keys.push_back(key_of(candidate));
+    for (Keyed& k : keyed) {
+        keys.push_back(k.key);
+        candidates.push_back(std::move(k.selector));
     }
     record.pool_size = candidates.size();
     record.pool_sha256 =

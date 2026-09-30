@@ -271,6 +271,7 @@ private:
     TypeWork resolve_sharepoint();
     TypeWork resolve_onedrive();
     std::string open_explore(ItemKind kind);
+    void adopt_orphans(ItemKind kind, std::chrono::system_clock::time_point sent) noexcept;
     void restore_call(const TypeWork& work, const std::vector<std::size_t>& call,
                       connector::RestoreResult& result);
     std::vector<std::string> duplicates(ItemKind kind,
@@ -382,12 +383,44 @@ void RestoreRun::preflight()
 
 std::string RestoreRun::open_explore(ItemKind kind)
 {
-    const std::string id = c_.client.open_explore_session(
-        organization_id_, c_.spec.restore_point.backup_time, vr::session_type(kind));
+    const auto sent = c_.wall_now();
+    std::string id;
+    try {
+        id = c_.client.open_explore_session(organization_id_, c_.spec.restore_point.backup_time,
+                                            vr::session_type(kind));
+    } catch (const AuthError&) {
+        throw; // no sign-in: Veeam did nothing
+    } catch (const VeeamError&) {
+        // Veeam may have opened the session before the answer went wrong (a
+        // timeout, a 5xx, a 2xx without an ID; veeam-notes §4.2 saw a refused
+        // explore leave one Working): found, it is closed like the others.
+        adopt_orphans(kind, sent);
+        throw;
+    }
     // Recorded at once, so the finally path can stop it.
     opened_.push_back(id);
     known_.insert(id);
     return id;
+}
+
+void RestoreRun::adopt_orphans(ItemKind kind, std::chrono::system_clock::time_point sent) noexcept
+{
+    const std::string kind_name{connector::to_string(kind)};
+    try {
+        // The duplicate check's filter: our sessions of this type, new since
+        // the POST. No restore of ours runs yet, so each is from this POST.
+        for (const std::string& orphan : duplicates(kind, sent)) {
+            warn("veeam_m365: the " + kind_name +
+                 " explore POST failed, but Veeam lists explore session " + orphan +
+                 " made by it; it is closed with the others");
+            opened_.push_back(orphan);
+            known_.insert(orphan);
+        }
+    } catch (const std::exception& e) {
+        warn("veeam_m365: couldn't look for an explore session the failed " + kind_name +
+             " explore POST may have opened (" + e.what() +
+             "); if one of ours is Working, stop it (docs/api/veeam-m365/08-sweep-sessions.ps1)");
+    }
 }
 
 TypeWork RestoreRun::resolve_mail()
@@ -674,9 +707,14 @@ json RestoreRun::statistics(const std::string& id)
     for (int attempt = 1;; ++attempt) {
         try {
             return c_.client.get_json(path);
+        } catch (const AuthError&) {
+            throw;
         } catch (const VeeamError& e) {
             if (e.status() != 409) {
-                throw;
+                // The restore ran: neither a missing item nor "try again".
+                throw connector::Error("veeam_m365: restore session " + id +
+                                       " stopped, but its statistics couldn't be read: " +
+                                       e.what() + "; no verdict");
             }
             if (attempt == vr::kStatisticsAttempts) {
                 throw connector::Error("veeam_m365: restore session " + id +
@@ -695,8 +733,19 @@ std::vector<vr::Event> RestoreRun::events(const std::string& id)
                              std::to_string(vr::kEventsPageSize);
     std::vector<vr::Event> out;
     for (int page = 0; page < vr::kMaxEventPages; ++page) {
-        const std::vector<vr::Event> got = vr::read_events(c_.client.get_json(
-            page == 0 ? path : path + "&offset=" + std::to_string(page * vr::kEventsPageSize)));
+        json reply;
+        try {
+            reply = c_.client.get_json(
+                page == 0 ? path : path + "&offset=" + std::to_string(page * vr::kEventsPageSize));
+        } catch (const AuthError&) {
+            throw;
+        } catch (const VeeamError& e) {
+            // As for the statistics: the restore ran.
+            throw connector::Error("veeam_m365: restore session " + id +
+                                   " stopped, but its events couldn't be read: " + e.what() +
+                                   "; no verdict");
+        }
+        const std::vector<vr::Event> got = vr::read_events(reply);
         out.insert(out.end(), got.begin(), got.end());
         if (got.size() < static_cast<std::size_t>(vr::kEventsPageSize)) {
             return out;
@@ -784,7 +833,9 @@ void RestoreRun::restore_call(const TypeWork& work, const std::vector<std::size_
     bool confirmed = false;
     switch (outcome.kind) {
     case VeeamClient::RestorePostOutcome::Kind::refused:
-        if (outcome.status == 401 || outcome.status == 403) {
+        // As VeeamClient classifies any other answer (restore-flow §15).
+        if (outcome.status == 401 || outcome.status == 403 ||
+            outcome.error_code == "ResourceAccessDenied") {
             throw connector::AuthError("veeam_m365: " + outcome.message +
                                        "; Veeam started no restore");
         }
@@ -890,6 +941,24 @@ connector::RestoreResult RestoreRun::run()
     }
     if (!c_.spec.onedrive.empty()) {
         work.push_back(resolve_onedrive());
+    }
+
+    // Two selectors of one item would restore it twice, in two calls.
+    for (const TypeWork& type : work) {
+        for (std::size_t later = 1; later < type.items.size(); ++later) {
+            for (std::size_t earlier = 0; earlier < later; ++earlier) {
+                const Resolved& a = type.items[earlier];
+                const Resolved& b = type.items[later];
+                if (a.container == b.container && a.id == b.id) {
+                    const std::string kind{connector::to_string(type.kind)};
+                    throw connector::Error("veeam_m365: " + kind + " item " +
+                                           std::to_string(b.index) + " " + shown_text(b.name) +
+                                           " is the same item in the restore point as " + kind +
+                                           " item " + std::to_string(a.index) +
+                                           "; nothing was restored");
+                }
+            }
+        }
     }
 
     connector::RestoreResult result;
@@ -1019,6 +1088,26 @@ connector::RestoreResult VeeamM365Connector::restore_sample(const connector::Res
             "veeam_m365: the restore point's backup time isn't Veeam's UTC form, such as "
             "2026-09-25T19:37:15.2145203Z");
     }
+
+    // restoreTo and copyTo drop the source path (restore-flow §12): two files
+    // of one name, from any folders or sources, land on one target file, the
+    // second a new version of the first, and the read-back sees only it.
+    const auto one_name_each = [](std::string_view kind, const auto& selectors) {
+        for (std::size_t later = 1; later < selectors.size(); ++later) {
+            for (std::size_t earlier = 0; earlier < later; ++earlier) {
+                if (ascii_iequals(selectors[earlier].name, selectors[later].name)) {
+                    throw connector::Error(
+                        "veeam_m365: " + std::string{kind} + " items " + std::to_string(earlier) +
+                        " and " + std::to_string(later) + " are both named " +
+                        shown_text(selectors[earlier].name) +
+                        " (ignoring case), and would be restored onto one file in the restore "
+                        "target; restore them in separate runs; nothing was restored");
+                }
+            }
+        }
+    };
+    one_name_each("sharepoint", spec.sharepoint);
+    one_name_each("onedrive", spec.onedrive);
 
     RestoreRun run({*client_, spec, *checked, guard_options_, cert_exporter_.get(), wall_now_,
                     now_, sleep_, logger_, account_});

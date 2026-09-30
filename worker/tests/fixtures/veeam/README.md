@@ -137,6 +137,23 @@ The two `w10-mail-restore-400-*` fixtures also carry `request_body` (the refused
 credentials `[REDACTED]`), as documentation only: they are not restore bodies the guard should
 accept (one has no `folder`, the other uses the user-credential fields).
 
+### W2.6: the candidate lister (`list_candidates`)
+
+`veeam_m365_candidates_test.cpp` replays the W2.4 explore sessions and containers above
+(`w24-*-explore`, `-mailboxes`, `-sites`, `-libraries`, `-onedrives`, `-folders-root`) and three
+W1.4 recordings the W2.4 runs didn't make:
+
+| Fixture | Source (`docs/api/veeam-lab/`) | For |
+|---|---|---|
+| `w26-org-users.json` | `w1.4-org-users.json` | `GET /v8/Organizations/{org}/Users`: the six users, `name` the UPN a OneDrive's owner is found by |
+| `w26-mail-folders.json` | `w1.4-mail-folders.json` | `GET .../mailboxes/{m}/folders` (no `parentId`): all 14 of alice's folders, flattened, for the folder-name uniqueness check |
+| `w26-mail-folders-root.json` | `w1.4-mail-folders-root.json` | `GET .../mailboxes/{m}/folders?parentId=root`: the 13 top-level folders, their `type` and `category` |
+
+No recording holds a real item (every mail and file in them is a canary), so the items the
+tests list are synthetic: built in the test from a recorded entry (`w24-mail-x5-items`,
+`w24-sp-x1-documents`, `w24-od-x1-documents`, `w24-od-x1-folders-root`) with the ID, name,
+subject, class, time or size changed. None of them is saved here as if recorded.
+
 `rest-certificate.pem` is not a response: it is the lab's Veeam REST certificate (public, as
 every TLS client sees it; no private key), exported on the Veeam server with
 `ExportCertificatePem()`. `cert_pin_test.cpp` checks `rp::public_key_pin` against the two

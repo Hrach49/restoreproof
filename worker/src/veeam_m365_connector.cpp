@@ -2,14 +2,14 @@
 
 #include <rp/client_assertion.hpp>
 #include <rp/graph_errors.hpp>
-#include <rp/redact.hpp>
 #include <rp/target_guard_veeam.hpp>
 
 #include "command_config.hpp"
-#include "control_chars.hpp"
 #include "json_fields.hpp"
 #include "text_util.hpp"
 #include "uuid.hpp"
+#include "veeam_browse.hpp"
+#include "veeam_explore.hpp"
 #include "veeam_restore.hpp"
 
 #include <nlohmann/json.hpp>
@@ -40,25 +40,13 @@ using nlohmann::json;
 using nlohmann::ordered_json;
 namespace vr = veeam_restore;
 using connector::ItemKind;
-
-// A client reference as error messages show it: each control character
-// (control_chars.hpp), which could forge, hide or reorder a log or stderr
-// line, becomes a space. client_ref will come from a Cloud job (C5.6).
-std::string shown(std::string_view client_ref)
-{
-    std::string out;
-    out.reserve(client_ref.size());
-    for (std::size_t i = 0; i < client_ref.size();) {
-        if (const std::size_t length = control_character_length(client_ref, i); length != 0) {
-            out += ' ';
-            i += length;
-        } else {
-            out += client_ref[i];
-            ++i;
-        }
-    }
-    return out;
-}
+using veeam_browse::exactly_one;
+using veeam_browse::id_of;
+using veeam_browse::is_file_named;
+using veeam_browse::shown_text;
+using veeam_browse::text_at;
+using veeam_explore::find_organization;
+using veeam_explore::shown;
 
 connector::RestorePoint to_connector(const RestorePoint& point)
 {
@@ -75,96 +63,6 @@ connector::RestorePoint to_connector(const RestorePoint& point)
 bool is_set(const std::optional<std::string>& secret) noexcept
 {
     return secret && !secret->empty();
-}
-
-// The organisation named `client_ref` (ASCII case-insensitive), exactly one,
-// with a UUID. Throws connector errors for the rest; Veeam's pass through.
-Organization find_organization(VeeamClient& client, const std::string& client_ref)
-{
-    std::vector<Organization> matches;
-    for (Organization& org : client.list_organizations()) {
-        if (ascii_iequals(org.name, client_ref)) {
-            matches.push_back(std::move(org));
-        }
-    }
-    if (matches.empty()) {
-        throw connector::NotFoundError("client " + shown(client_ref) + " not found in Veeam");
-    }
-    if (matches.size() > 1) {
-        throw connector::Error("client " + shown(client_ref) + " matches " +
-                               std::to_string(matches.size()) + " organisations in Veeam");
-    }
-    // VeeamClient would refuse it with std::invalid_argument; checked here
-    // so that only this case reads as Veeam's fault.
-    if (!is_uuid(matches.front().id)) {
-        throw connector::Error("Veeam returned an organisation ID for client " +
-                               shown(client_ref) + " that isn't a UUID");
-    }
-    return std::move(matches.front());
-}
-
-// A name, subject or selector value as a message shows it: one line, short.
-std::string shown_text(std::string_view text)
-{
-    return "\"" + one_line(text, 120) + "\"";
-}
-
-// The string at `key` of a Veeam object; nullptr when it is missing or null,
-// ShapeError for another kind.
-const std::string* text_at(const json& object, std::string_view key)
-{
-    if (!object.is_object()) {
-        throw vr::ShapeError("an entry that isn't an object");
-    }
-    const auto it = object.find(key);
-    if (it == object.end() || it->is_null()) {
-        return nullptr;
-    }
-    if (!it->is_string()) {
-        throw vr::ShapeError("\"" + std::string{key} + "\" isn't a string");
-    }
-    return it->get_ptr<const std::string*>();
-}
-
-// An entry's "id" (get_all made sure there is one).
-const std::string& id_of(const json& entry)
-{
-    return entry.at("id").get_ref<const std::string&>();
-}
-
-// The one entry of `list` that `match` picks; none is NotFoundError, several
-// connector::Error, both naming `item` and what was looked for.
-template <class Match>
-const json& exactly_one(const std::vector<json>& list, const std::string& item,
-                        const std::string& looked_for, Match match)
-{
-    std::vector<const json*> found;
-    for (const json& entry : list) {
-        if (match(entry)) {
-            found.push_back(&entry);
-        }
-    }
-    if (found.empty()) {
-        throw connector::NotFoundError("veeam_m365: " + item + ": " + looked_for +
-                                       " not found in the restore point");
-    }
-    if (found.size() > 1) {
-        throw connector::Error("veeam_m365: " + item + ": " + looked_for + " matches " +
-                               std::to_string(found.size()) + " entries in the restore point");
-    }
-    return *found.front();
-}
-
-// A document entry named `name` that isn't a folder.
-bool is_file_named(const json& entry, const std::string& name)
-{
-    const std::string* entry_name = text_at(entry, "name");
-    const auto folder = entry.find("isFolder");
-    if (folder != entry.end() && !folder->is_null() && !folder->is_boolean()) {
-        throw vr::ShapeError("\"isFolder\" isn't a boolean");
-    }
-    return entry_name != nullptr && *entry_name == name && folder != entry.end() &&
-           folder->is_boolean() && !folder->get<bool>();
 }
 
 // One item as browsing found it.
@@ -273,98 +171,44 @@ public:
         const std::string& account;
     };
 
-    explicit RestoreRun(Context context) : c_(context) {}
+    explicit RestoreRun(Context context)
+        : c_(context), sessions_({context.client, context.wall_now, context.logger,
+                                  context.account, context.spec.restore_point.backup_time})
+    {
+    }
     RestoreRun(const RestoreRun&) = delete;
     RestoreRun& operator=(const RestoreRun&) = delete;
-
-    // The finally path (step 13): never throws.
-    ~RestoreRun() { close_explore_sessions(); }
 
     connector::RestoreResult run();
 
     // When a restore may still be running: the sessions left open, for the
     // message of whatever ends the run.
-    std::string left_open() const
-    {
-        if (!restore_may_run_) {
-            return {};
-        }
-        std::string out = "; left open, as a restore may still be running:";
-        if (!running_session_.empty()) {
-            out += " restore session " + running_session_ + ",";
-        }
-        out += " explore session(s)";
-        for (const std::string& id : opened_) {
-            out += " " + id;
-        }
-        return out;
-    }
+    std::string left_open() const { return sessions_.left_open(); }
 
 private:
     Organization organization();
-    void check_restore_point();
-    void preflight();
     TypeWork resolve_mail();
     TypeWork resolve_sharepoint();
     TypeWork resolve_onedrive();
-    std::string open_explore(ItemKind kind);
-    void adopt_orphans(ItemKind kind, std::chrono::system_clock::time_point sent) noexcept;
     void restore_call(const TypeWork& work, const std::vector<std::size_t>& call,
                       connector::RestoreResult& result);
-    std::vector<std::string> duplicates(ItemKind kind,
-                                        std::chrono::system_clock::time_point posted,
-                                        bool working_only = false);
     std::vector<std::string> target_texts(const TypeWork& work) const;
     vr::SessionState poll(const std::string& id, ItemKind kind);
     json statistics(const std::string& id);
     std::vector<vr::Event> events(const std::string& id);
     std::string no_verdict(const std::string& why) const;
-    void warn(const std::string& line) const noexcept;
-    void close_explore_sessions() noexcept;
+    void warn(const std::string& line) const noexcept { veeam_explore::warn(c_.logger, line); }
 
     Context c_;
     vr::OrganizationFacts facts_;
     std::string thumbprint_;
     std::string organization_id_;
-    std::string organization_name_; // as Veeam names it in a session's "organization"
-    std::vector<std::string> opened_;  // explore sessions, in order
-    std::set<std::string> known_;      // every session ID this run knows
-    bool restore_may_run_ = false;
-    std::string running_session_;
     bool all_succeeded_ = true;
     std::int64_t restored_ = 0;
+    // Destroyed first: the finally path (step 13), which never throws, stops
+    // the explore sessions unless a restore may still be running.
+    veeam_explore::ExploreSessions sessions_;
 };
-
-void RestoreRun::warn(const std::string& line) const noexcept
-{
-    try {
-        const std::shared_ptr<spdlog::logger> logger =
-            c_.logger ? c_.logger : spdlog::default_logger();
-        if (logger) {
-            logger->warn("{}", redact(one_line(line)));
-        }
-    } catch (...) { // NOLINT(bugprone-empty-catch): logging is best effort
-    }
-}
-
-void RestoreRun::close_explore_sessions() noexcept
-{
-    if (restore_may_run_) {
-        warn("veeam_m365: explore session(s) left open" + left_open());
-        return;
-    }
-    for (const std::string& id : opened_) {
-        try {
-            const json session = c_.client.get_json("/v8/RestoreSessions/" + id);
-            const std::string* state = string_at(session, "state");
-            if (state != nullptr && *state == "Working") {
-                c_.client.stop_session(id);
-            }
-        } catch (const std::exception& e) {
-            warn("veeam_m365: couldn't close explore session " + id + ": " + e.what());
-        }
-    }
-}
 
 std::string RestoreRun::no_verdict(const std::string& why) const
 {
@@ -409,7 +253,7 @@ Organization RestoreRun::organization()
     }
     thumbprint_ = org.exchange_app->certificate_thumbprint;
     organization_id_ = org.id;
-    organization_name_ = org.name;
+    sessions_.set_organization(org.id, org.name);
     if (c_.exporter == nullptr) {
         throw connector::Error("veeam_m365: no certificate exporter, so the restore credential "
                                "can't be exported; nothing was restored");
@@ -417,106 +261,11 @@ Organization RestoreRun::organization()
     return org;
 }
 
-// Veeam explores the newest data at or before an explore POST's dateTime
-// (veeam-notes §4.2), whatever point that is: the spec's point must be one of
-// this organisation's, its time byte for byte, or the result would name a
-// point it didn't restore from.
-void RestoreRun::check_restore_point()
-{
-    const connector::RestorePoint& wanted = c_.spec.restore_point;
-    for (const RestorePoint& point : c_.client.list_restore_points(organization_id_)) {
-        if (point.id == wanted.id) {
-            if (point.backup_time != wanted.backup_time) {
-                throw connector::Error("veeam_m365: restore point " + one_line(wanted.id, 120) +
-                                       " of client " + shown(c_.spec.client_ref) +
-                                       " has backup time " + one_line(point.backup_time) +
-                                       " in Veeam, not " + one_line(wanted.backup_time) +
-                                       "; nothing was restored");
-            }
-            return;
-        }
-    }
-    throw connector::Error("veeam_m365: restore point " + one_line(wanted.id, 120) +
-                           " isn't one of client " + shown(c_.spec.client_ref) +
-                           "'s restore points in Veeam; nothing was restored");
-}
-
-void RestoreRun::preflight()
-{
-    const json list = c_.client.get_json("/v8/RestoreSessions?limit=" +
-                                         std::to_string(vr::kPreflightLimit));
-    const std::vector<std::string> working = vr::working_sessions(list, c_.account);
-    if (!working.empty()) {
-        std::string ids;
-        for (const std::string& id : working) {
-            ids += (ids.empty() ? "" : ", ") + id;
-        }
-        throw connector::Error("veeam_m365: Veeam has restore sessions of " + one_line(c_.account) +
-                               " still Working (" + ids +
-                               "); stop them first (docs/api/veeam-m365/08-sweep-sessions.ps1); "
-                               "nothing was restored");
-    }
-}
-
-std::string RestoreRun::open_explore(ItemKind kind)
-{
-    const auto sent = c_.wall_now();
-    std::string id;
-    try {
-        id = c_.client.open_explore_session(organization_id_, c_.spec.restore_point.backup_time,
-                                            vr::session_type(kind));
-    } catch (const AuthError&) {
-        throw; // no sign-in: Veeam did nothing
-    } catch (const VeeamError&) {
-        // Veeam may have opened the session before the answer went wrong (a
-        // timeout, a 5xx, a 2xx without an ID; veeam-notes §4.4 saw a refused
-        // explore leave one Working): found, it is closed like the others.
-        adopt_orphans(kind, sent);
-        throw;
-    }
-    // Recorded at once, so the finally path can stop it.
-    opened_.push_back(id);
-    known_.insert(id);
-    return id;
-}
-
-void RestoreRun::adopt_orphans(ItemKind kind, std::chrono::system_clock::time_point sent) noexcept
-{
-    const std::string kind_name{connector::to_string(kind)};
-    try {
-        // The duplicate check's filter, Working only: our account's sessions
-        // of this type and organisation, new since the POST. No restore of
-        // ours runs yet, so one such is this POST's. More than one can't be
-        // told apart from another process's work: none is adopted.
-        const std::vector<std::string> found = duplicates(kind, sent, true);
-        if (found.size() == 1) {
-            warn("veeam_m365: the " + kind_name +
-                 " explore POST failed, but Veeam lists explore session " + found.front() +
-                 " made by it; it is closed with the others");
-            opened_.push_back(found.front());
-            known_.insert(found.front());
-        } else if (found.size() > 1) {
-            std::string ids;
-            for (const std::string& id : found) {
-                ids += " " + id;
-            }
-            warn("veeam_m365: the " + kind_name + " explore POST failed, and Veeam lists " +
-                 std::to_string(found.size()) + " new Working sessions of ours (" + ids.substr(1) +
-                 "); none is closed, as another may not be this POST's: stop the orphan with "
-                 "docs/api/veeam-m365/08-sweep-sessions.ps1");
-        }
-    } catch (const std::exception& e) {
-        warn("veeam_m365: couldn't look for an explore session the failed " + kind_name +
-             " explore POST may have opened (" + e.what() +
-             "); if one of ours is Working, stop it (docs/api/veeam-m365/08-sweep-sessions.ps1)");
-    }
-}
-
 TypeWork RestoreRun::resolve_mail()
 {
     TypeWork work;
     work.kind = ItemKind::mail;
-    work.explore = open_explore(ItemKind::mail);
+    work.explore = sessions_.open(ItemKind::mail);
     const std::string base = "/v8/RestoreSessions/" + work.explore + "/organization/mailboxes";
     const std::vector<json> mailboxes = c_.client.get_all(base);
     std::map<std::string, std::vector<json>> folders; // by mailbox and folder name
@@ -529,12 +278,7 @@ TypeWork RestoreRun::resolve_mail()
         const json& mailbox =
             exactly_one(mailboxes, item, "mailbox " + shown_text(sel.mailbox), [&](const json& e) {
                 const std::string* email = text_at(e, "email");
-                const auto archive = e.find("isArchive");
-                if (archive != e.end() && !archive->is_null() && !archive->is_boolean()) {
-                    throw vr::ShapeError("\"isArchive\" isn't a boolean");
-                }
-                const bool is_archive = archive != e.end() && archive->is_boolean() &&
-                                        archive->get<bool>();
+                const bool is_archive = veeam_browse::bool_at(e, "isArchive");
                 return email != nullptr && ascii_iequals(*email, sel.mailbox) && !is_archive;
             });
         add_text(work.tenant_texts, mailbox, "name");
@@ -654,7 +398,7 @@ TypeWork RestoreRun::resolve_sharepoint()
 {
     TypeWork work;
     work.kind = ItemKind::sharepoint;
-    work.explore = open_explore(ItemKind::sharepoint);
+    work.explore = sessions_.open(ItemKind::sharepoint);
     const std::string base = "/v8/RestoreSessions/" + work.explore + "/Organization/Sites/";
     std::set<std::string> sites_checked;
     std::map<std::string, std::vector<json>> libraries; // by site
@@ -702,7 +446,7 @@ TypeWork RestoreRun::resolve_onedrive()
 {
     TypeWork work;
     work.kind = ItemKind::onedrive;
-    work.explore = open_explore(ItemKind::onedrive);
+    work.explore = sessions_.open(ItemKind::onedrive);
     const std::string base = "/v8/RestoreSessions/" + work.explore + "/Organization/OneDrives";
     const std::vector<json> onedrives = c_.client.get_all(base);
 
@@ -764,24 +508,6 @@ TypeWork RestoreRun::resolve_onedrive()
         work.items.push_back(std::move(found));
     }
     return work;
-}
-
-std::vector<std::string> RestoreRun::duplicates(ItemKind kind,
-                                                std::chrono::system_clock::time_point posted,
-                                                bool working_only)
-{
-    const std::string path = "/v8/RestoreSessions?startTimeFrom=" +
-                             vr::format_utc_seconds(posted - vr::kDuplicateWindow) +
-                             "&orderBy=CreationTime&orderAsc=false&limit=" +
-                             std::to_string(vr::kDuplicateLimit);
-    vr::DuplicateFilter filter;
-    filter.account = c_.account;
-    filter.type = std::string{vr::session_type(kind)};
-    filter.known = known_;
-    filter.floor = std::chrono::time_point_cast<std::chrono::nanoseconds>(posted - vr::kDuplicateFloor);
-    filter.organization = organization_name_;
-    filter.working_only = working_only;
-    return vr::new_restore_sessions(c_.client.get_json(path), filter);
 }
 
 // The targets' names as this type's messages may quote them.
@@ -893,7 +619,7 @@ void RestoreRun::restore_call(const TypeWork& work, const std::vector<std::size_
     const std::string& container = work.items[call.front()].container;
     veeam::RestoreRequestContext ctx;
     ctx.kind = guard_kind(work.kind);
-    ctx.opened_explore_sessions = opened_;
+    ctx.opened_explore_sessions = sessions_.opened();
     ctx.container_id = container;
     ctx.application_id = facts_.application_id;
     ctx.organization_name = facts_.organization_name;
@@ -976,11 +702,10 @@ void RestoreRun::restore_call(const TypeWork& work, const std::vector<std::size_
         throw connector::TransientError("veeam_m365: " + outcome.message +
                                         "; the restore was not sent");
     case VeeamClient::RestorePostOutcome::Kind::accepted:
-        restore_may_run_ = true;
         id = outcome.session_id;
-        running_session_ = id;
+        sessions_.keep_open(true, id);
         try {
-            const std::vector<std::string> found = duplicates(work.kind, posted);
+            const std::vector<std::string> found = sessions_.duplicates(work.kind, posted);
             confirmed = found.size() == 1 && found.front() == id;
         } catch (const std::exception& e) {
             warn("veeam_m365: the duplicate check after restore session " + id + " failed: " +
@@ -992,14 +717,14 @@ void RestoreRun::restore_call(const TypeWork& work, const std::vector<std::size_
         }
         break;
     case VeeamClient::RestorePostOutcome::Kind::no_answer: {
-        restore_may_run_ = true;
+        sessions_.keep_open(true);
         warn(outcome.message + "; looking for the restore session instead of sending again");
         std::vector<std::string> found;
         try {
-            found = duplicates(work.kind, posted);
+            found = sessions_.duplicates(work.kind, posted);
             for (int look = 0; found.empty() && look < vr::kDuplicateRelooks; ++look) {
                 c_.sleep(vr::kDuplicateRelookWait);
-                found = duplicates(work.kind, posted);
+                found = sessions_.duplicates(work.kind, posted);
             }
         } catch (const std::exception& e) {
             // Whatever failed (a lost sign-in, Veeam restarting, a 404), a
@@ -1015,19 +740,18 @@ void RestoreRun::restore_call(const TypeWork& work, const std::vector<std::size_
                 " candidate sessions; it was not sent again"));
         }
         id = found.front();
-        running_session_ = id;
+        sessions_.keep_open(true, id);
         confirmed = true;
         break;
     }
     }
-    known_.insert(id);
+    sessions_.know(id);
 
     const vr::SessionState session = poll(id, work.kind);
     // Stopped: ours runs no more. Only when the duplicate check listed it
     // alone does nothing else of ours run under the explore sessions; else
     // another candidate may, and they stay open (decisions point 8).
-    running_session_.clear();
-    restore_may_run_ = !confirmed;
+    sessions_.keep_open(!confirmed);
     if (session.result.empty()) {
         throw vr::ShapeError("a stopped session without a \"result\"");
     }
@@ -1075,8 +799,9 @@ void RestoreRun::restore_call(const TypeWork& work, const std::vector<std::size_
 connector::RestoreResult RestoreRun::run()
 {
     organization();
-    check_restore_point();
-    preflight();
+    veeam_explore::check_restore_point(c_.client, organization_id_, c_.spec.client_ref,
+                                       c_.spec.restore_point, "nothing was restored");
+    veeam_explore::preflight(c_.client, c_.account, "nothing was restored");
     std::vector<TypeWork> work;
     if (!c_.spec.mail.empty()) {
         work.push_back(resolve_mail());

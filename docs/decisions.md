@@ -11,7 +11,10 @@ Format: date, decision, reason, alternatives rejected.
 
 Recorded before any of it was built, with the owner's answers of 2026-09-30 (exit code 5, the
 manifest beside the config, a random-half shortfall is not a failure). Proposed: the owner confirms
-it in the W2.8 review, or supersedes it.
+it in the W2.8 review, or supersedes it. *Amended after the W2.8 review* (2026-09-30), in place,
+where marked: an empty sample and an infrastructure failure are errors (4), 5 is partial or
+failed only, the run ID is printed before the sample is chosen, `--point` takes `latest` in
+any case, and the Graph certificate's variables are checked before any Veeam call.
 
 **Decision.**
 
@@ -19,7 +22,8 @@ it in the W2.8 review, or supersedes it.
    latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config
    <path>]`, the options in any order, each at most once. `<n>` is 1 to 3 ASCII digits, 0 to 100;
    an absent flag takes config's `sample_mail`, `sample_sp` or `sample_od`, and at least one of the
-   three sizes must then be above 0. `--point` defaults to `latest`, the newest restore point of
+   three sizes must then be above 0 (exit 64, once the config is read). `--point` defaults to
+   `latest` (*amended after the W2.8 review:* in any ASCII case), the newest restore point of
    `veeam_org_name` (`list_restore_points` returns newest first); `<id>` must be 1 to 128 ASCII
    letters, digits and hyphens (safe to echo in a message) and is matched ASCII
    case-insensitively against the points' IDs. *Changed in the build:* this entry first said a
@@ -35,9 +39,9 @@ it in the W2.8 review, or supersedes it.
    cursor is `--canary-cursor m,s,o` (default `0,0,0`); nothing is stored on the Worker. The
    command prints the run ID, the seed, the cursor and the next cursor before it restores, so an
    operator can repeat the run or carry the rotation on by hand. A cursor at or above the
-   manifest's canaries of its type is a usage error (exit 64) once the manifest is read (and one
-   above 0 for a type the manifest has no canaries of); each of its three numbers is 1 to 6
-   digits, so none can overflow.
+   manifest's canaries of its type is a usage error (exit 64, once the config and the manifest
+   are read; and one above 0 for a type the manifest has no canaries of); each of its three
+   numbers is 1 to 6 digits, so none can overflow.
 3. **The manifest** is `--manifest <path>`, default `seed-manifest.json` in the config file's
    folder (`%ProgramData%\RestoreProof\`, or the `--config` file's folder). No config key: the
    manifest is a client's, and the Cloud job will carry it (2026-09-29, "Clients live in the
@@ -49,11 +53,21 @@ it in the W2.8 review, or supersedes it.
    chosen one; `choose_sample`; the header printed; `restore_sample`, whose first step is still the
    target guard's layer 1 (the command adds no restore path of its own, and has no way around the
    guard); the tables. The Graph certificate is read by the connector on the restore, so a bad one
-   is still exit 1.
+   is still exit 1. *Amended after the W2.8 review:* `RP_GRAPH_CERT_PFX_BASE64` and
+   `RP_GRAPH_CERT_PASSWORD` are checked as set right after the Veeam secrets (`config error:
+   <name> is not set`, exit 1), before any Veeam call, since the certificate is otherwise read
+   only after the sample has been chosen; the run ID is made, and its two lines printed, before
+   `choose_sample` (point 5).
 5. **The output.** The header (restore point, run ID and seed, cursor and next cursor, per type
    the canaries and random items wanted and taken, with a shortfall named) goes to stdout and is
    flushed before the restore starts, which takes minutes: a run that then fails still shows its
-   run ID. After the restore: one row per item (kind, canary or random, name, outcome, session,
+   run ID. *Amended after the W2.8 review:* the restore point line and `run <id>  seed <hex>`
+   are printed and flushed as soon as the run ID exists, before `choose_sample`, which browses
+   Veeam and can fail; the cursor line (`canary cursor <m>,<s>,<o> -> <m>,<s>,<o>`, on its own
+   line now, since it needs the sample's next cursor), the per-type table and `restoring <k>
+   item(s) ...` follow once the sample is chosen, still flushed before `restore_sample`. A
+   stdout that fails after the restore ran is `error: writing the output failed after the
+   restore ran (run <id>)`, exit 1, so the operator knows items may be in the targets. After the restore: one row per item (kind, canary or random, name, outcome, session,
    the session's elapsed time, the connector's message), one row per restore session (ID, kind,
    Veeam's result, items restored of sent, start, end, elapsed), and a status line with the
    restore's status, items restored of sent and the total elapsed time. An item's elapsed time is
@@ -62,11 +76,23 @@ it in the W2.8 review, or supersedes it.
 6. **Exit codes.** The existing codes keep their meaning for every command: 1 config (a manifest
    error and an unknown connector included), 2 auth, 3 transient, 4 service (a `SafetyViolation`,
    a restore point or item not found, any other connector error), 64 usage. New: **5
-   (`exit_code::restore`): the restore ran, but its status isn't `succeeded`** (`partial`,
-   `failed`, or `not_run`); the status line says which. 0 only for `succeeded`. A random-half
-   shortfall with every sampled item restored is `succeeded`, exit 0; the header shows it.
-   Infrastructure problems never reach 5: `restore_sample` throws for them (connector.hpp's
-   `RestoreStatus`), so they end as 2, 3 or 4, which a run reports as `error`, never `fail`.
+   (`exit_code::restore`): the restore ran and its status is `partial` or `failed`**; the
+   status line says which. 0 only for `succeeded`. A random-half shortfall with every sampled
+   item restored is `succeeded`, exit 0; the header shows it. Infrastructure problems never
+   reach 5. *Amended after the W2.8 review* (this point first said 5 for `not_run` too, and
+   that `restore_sample` throws for every infrastructure problem; it throws only when a session
+   restored nothing for one, so an item can come back `failed` or `unknown` marked
+   `infrastructure` in a partial restore):
+   - an **empty sample** (every type asked for fell short entirely) prints the header, calls no
+     `restore_sample`, and is exit 4: `restore error: the sample is empty: nothing to restore
+     (<kind>: <shortfall>; ...)`;
+   - a restore that returns **`not_run`** is exit 4 (`restore error: the restore did not run:
+     nothing was sent (status not_run)`);
+   - a restore in which **any item not restored is marked `infrastructure`** (Veeam couldn't
+     reach Microsoft 365, lacked permissions or was throttled) prints the tables and the status
+     line as usual, then is exit 4: `restore error: <n> item(s) failed for an infrastructure
+     reason (...); this is an error, not a restore failure`. A run reports all of these as
+     `error`, never `fail`.
 
 **Reason.** The issue's "exit 0/1/3 for success/failure/error" collides with codes every command
 already uses (1 is config, 3 transient); a restore that ran and failed is a result, not an error,

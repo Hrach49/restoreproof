@@ -56,10 +56,6 @@ constexpr std::array<SecretKey, 13> kSecretKeys{{
 
 constexpr std::string_view kSchemeSeparator = "://";
 
-// A JWT's compact form (RFC 7519) starts with the base64url of '{"', its
-// header's opening. Case matters.
-constexpr std::string_view kJwtStart = "eyJ";
-
 // The HTTP authentication scheme whose token follows it after blanks
 // (RFC 6750), in any case.
 constexpr std::string_view kBearer = "bearer";
@@ -82,12 +78,6 @@ constexpr char ascii_lower(char c) noexcept
 constexpr bool is_alnum(char c) noexcept
 {
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9');
-}
-
-// A character of a JWT part (RFC 4648 section 5).
-constexpr bool is_base64url(char c) noexcept
-{
-    return is_alnum(c) || c == '-' || c == '_';
 }
 
 constexpr bool is_blank(char c) noexcept

@@ -29,28 +29,14 @@ namespace {
 
 using graph::FoundItem;
 
-// Whether `args` are `list` followed by `--hash`, `--config <path>` and
-// `--record <dir>` in any order, each at most once; sets `hash` and the paths
-// given, in UTF-8.
-bool parse_list_args(std::span<const std::string_view> args, bool& hash,
-                     std::optional<std::string_view>& config_arg,
-                     std::optional<std::string_view>& record_arg)
+// `list [--hash] [--config <path>] [--record <dir>]`'s options; nullopt for
+// any other command line.
+std::optional<CommandOptions> parse_list_args(std::span<const std::string_view> args)
 {
     if (args.empty() || args[0] != "list") {
-        return false;
+        return std::nullopt;
     }
-    for (std::size_t i = 1; i < args.size(); ++i) {
-        if (args[i] == "--hash" && !hash) {
-            hash = true;
-        } else if (args[i] == "--config" && !config_arg && i + 1 < args.size()) {
-            config_arg = args[++i];
-        } else if (args[i] == "--record" && !record_arg && i + 1 < args.size()) {
-            record_arg = args[++i];
-        } else {
-            return false;
-        }
-    }
-    return true;
+    return parse_options(args.subspan(1), {"--config", "--record"}, {"--hash"});
 }
 
 // The download client of a listing without --hash, which downloads nothing:
@@ -163,13 +149,14 @@ namespace {
 int run_list(std::span<const std::string_view> args, std::ostream& out, std::ostream& err,
              const GraphCommandEnv& env, std::shared_ptr<FixtureRecorder>& recorder)
 {
-    bool hash = false;
-    std::optional<std::string_view> config_arg;
-    std::optional<std::string_view> record_arg;
-    if (!parse_list_args(args, hash, config_arg, record_arg)) {
+    const std::optional<CommandOptions> options = parse_list_args(args);
+    if (!options) {
         err << kCliUsage;
         return exit_code::usage;
     }
+    const bool hash = options->has_flag("--hash");
+    const std::optional<std::string_view> config_arg = options->value("--config");
+    const std::optional<std::string_view> record_arg = options->value("--record");
 
     // Never spdlog's default logger, which writes to stdout, where the tables are.
     graph::GraphClientOptions client_options = env.client_options;

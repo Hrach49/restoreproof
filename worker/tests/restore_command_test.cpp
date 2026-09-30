@@ -516,6 +516,31 @@ TEST_CASE("restore: a canary cursor out of the manifest's range is a usage error
     CHECK(lab.make_connector_calls == 0);
 }
 
+TEST_CASE("restore --record: a run the checks stop before Veeam makes no folder and prints no "
+          "recording line",
+          "[restore_command][record]")
+{
+    // 0: every size 0; 1: a cursor out of range; 2: a manifest that isn't there.
+    const int stop = GENERATE(0, 1, 2);
+    CAPTURE(stop);
+    Harness lab;
+    const std::filesystem::path rec = lab.dir.path() / "rec";
+    const std::string rec_arg = utf8(rec);
+    const std::string missing = utf8(lab.dir.path() / "missing.json");
+    Args args{"--record", rec_arg};
+    const std::vector<Args> stops{{"--mail", "0", "--sp", "0", "--od", "0"},
+                                  {"--canary-cursor", "20,0,0"},
+                                  {"--manifest", missing}};
+    args.insert(args.end(), stops[stop].begin(), stops[stop].end());
+
+    const Run run = lab.run(args);
+
+    CHECK(run.exit_code == (stop == 2 ? rp::exit_code::config : rp::exit_code::usage));
+    CHECK(run.out.empty());
+    CHECK_FALSE(std::filesystem::exists(rec));
+    CHECK(lab.make_connector_calls == 0);
+}
+
 TEST_CASE("restore: a cursor for a type the manifest has no canaries of must be 0",
           "[restore_command]")
 {

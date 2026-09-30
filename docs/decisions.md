@@ -7,6 +7,54 @@ Format: date, decision, reason, alternatives rejected.
 
 ---
 
+## 2026-10-01 — Q2.1 review: the restore credential never kept, recording off the lock, and the refusal rules (proposed)
+
+Amends the 2026-10-01 Q2.1 entry (points 2, 3 and 5) after the Q2.1 code review.
+
+**Decision.**
+
+1. **The restore credential is checked in its own exchange's file only.** What the recorder
+   learns (`rp::secrets_in`, now `rp::LearnedSecrets`) comes in two lists. `kept` holds the
+   `Authorization` value, tokens, form and query secrets, and a response body's secret values;
+   these are checked in every later file. `one_time` holds the secret values of a JSON request
+   body, which is a restore POST's `applicationCertificate` and its password. That credential
+   is exported for one call (2026-09-30 W2.5 point 1), so it is checked against its own file
+   and then wiped. The recorder's copies are wiped too (`secure_wipe`): both lists when they
+   go, every kept secret in `~FixtureRecorder` (held in a deque, so adding one never leaves a
+   moved copy behind), a parsed JSON body's strings and its text before redaction, the
+   JSON-escaped copy of each secret the check makes, and a refused file's text. A later file
+   that held a past restore's credential would no longer be refused by the known-secret
+   check; `redact()` still replaces it under its own keys.
+2. **Recording no longer holds up the command.** Secrets are learned before any lock. The
+   kept list sits under a shared mutex, locked exclusively only to add to it and shared while
+   files are scrubbed. The numbering and the counts have their own short lock. The scrub and
+   the disk write run outside both, so one exchange's write never delays another's send. A
+   `digest` body (a download) is not converted or scanned: nothing is learned from it, since
+   it is never written.
+3. **The refusal rules.** The JWT rule uses `redact()`'s `rp::kJwtStart` and
+   `rp::is_base64url` (now in `rp/redact.hpp`), and keeps its own length threshold (37) on
+   purpose: it catches a dotless run `redact()` would miss. `client_assertion` is now refused
+   the way `tempauth` is, and no longer as a mere mention. A value of it (the name in any case,
+   then `=`, `%3D` or `:`) other than a placeholder is refused. Entra's AADSTS7000218 text,
+   which only names the parameter, can be recorded.
+4. **Small fixes.** The `--record` folder is checked with `is_directory` after
+   `create_directories`, whose MSVC result is false for a path ending in a separator even when
+   it made the folder. `restore` opens its recording only after its pre-Veeam checks (sample
+   sizes, manifest, cursor), so a run they stop makes no folder and prints no `recorded` line.
+   `FakeHttpClient::serve_recording` orders files by their number, so file 1000 comes after 999,
+   and matches requests by `rp::request_path`, the recorder's own rule. The commands' option
+   loops are one parser, `parse_options` in `src/command_config.hpp`.
+
+**Reason.** The code review of the Q2.1 PR found these. Point 1 restores W2.5's rule that the
+exported PFX outlives its call nowhere, which `--record` had broken.
+
+**Alternatives rejected.** Keeping the credential and wiping it only when the recorder goes
+(the recorder lives for the whole restore); keeping a hash of it instead (a hash can't be
+searched for in a file); widening the file number to four digits (every committed recording's
+names would change, and 10 000 exchanges would still break it).
+
+---
+
 ## 2026-10-01 — Q2.1: `--record <dir>`, what a recorded fixture keeps, and the unit tests' network guard (proposed)
 
 With the owner's answers of 2026-10-01: `restore` may record, and `--record` takes a folder

@@ -1,5 +1,6 @@
 #include <rp/recording_http_client.hpp>
 
+#include <rp/cert_export.hpp>
 #include <rp/config.hpp>
 #include <rp/redact.hpp>
 #include <rp/sha256.hpp>
@@ -13,6 +14,7 @@
 #include <array>
 #include <format>
 #include <fstream>
+#include <optional>
 #include <system_error>
 #include <utility>
 
@@ -28,9 +30,23 @@ constexpr std::string_view kScrubbed = "SCRUBBED";
 
 constexpr std::size_t kMaxSlug = 60;
 
-// A JWT (or any long base64url run starting like one), even without its dots:
-// "eyJ" and at least this many more base64url characters.
+// The recorder's JWT rule, stricter than redact()'s on purpose: a written
+// file has already been through redact(), which needs a token's dots, so this
+// looks for a long base64url run starting like a JWT (kJwtStart), dots or
+// not: kJwtStart and at least this many more base64url characters.
 constexpr std::size_t kMinJwtTail = 37;
+
+// The names whose value a file may hold only as a placeholder, looked for in
+// any case and in forms redact() doesn't know (URL-encoded "%3D", a key
+// ending in quotes), with the refusal each gives.
+struct UnscrubbedRule {
+    std::string_view name;
+    std::string_view why;
+};
+constexpr std::array<UnscrubbedRule, 2> kUnscrubbedRules{{
+    {"tempauth", "it holds a tempauth download credential"},
+    {"client_assertion", "it holds a client assertion"},
+}};
 
 // A driveItem's pre-authenticated download link: dropped from bodies.
 constexpr std::array<std::string_view, 2> kDownloadUrlKeys{"@microsoft.graph.downloadUrl",
@@ -51,12 +67,6 @@ constexpr bool is_alnum_lower(char c) noexcept
     return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9');
 }
 
-constexpr bool is_base64url(char c) noexcept
-{
-    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' ||
-           c == '_';
-}
-
 bool iequals_prefix(std::string_view text, std::string_view prefix) noexcept
 {
     return text.size() >= prefix.size() &&
@@ -66,7 +76,7 @@ bool iequals_prefix(std::string_view text, std::string_view prefix) noexcept
 
 // The URL without "scheme://host": its path, query and fragment ("/" when
 // there is no path). A text without "://" is taken to be that already.
-std::string_view path_and_query(std::string_view url) noexcept
+std::string_view path_query_fragment(std::string_view url) noexcept
 {
     const std::size_t scheme = url.find("://");
     if (scheme == std::string_view::npos) {
@@ -109,7 +119,7 @@ std::string scrub_query_values(std::string_view path_query)
 // A Location's scheme, host and path kept, every query value kScrubbed.
 std::string scrub_location(std::string_view location)
 {
-    const std::string_view rest = path_and_query(location);
+    const std::string_view rest = path_query_fragment(location);
     return std::string{location.substr(0, location.size() - rest.size())} +
            scrub_query_values(rest);
 }
@@ -164,6 +174,26 @@ bool is_placeholder(std::string_view value) noexcept
 {
     return value == kRedacted || value == kScrubbed || value == "Bearer [REDACTED]";
 }
+
+// Every string under `value` wiped: a parsed body's copies of what it
+// carried, a restore credential among them. Keys are names, not secrets.
+void wipe_strings(ordered_json& value) noexcept
+{
+    if (value.is_string()) {
+        secure_wipe(value.get_ref<std::string&>());
+    } else if (value.is_structured()) {
+        for (ordered_json& child : value) {
+            wipe_strings(child);
+        }
+    }
+}
+
+// Wipes a parsed body's strings on the way out, exception or not.
+struct JsonWipe {
+    ordered_json& doc;
+
+    ~JsonWipe() { wipe_strings(doc); }
+};
 
 void add_secret(std::vector<std::string>& out, std::string value)
 {
@@ -230,12 +260,15 @@ std::optional<ordered_json> parse_structured(std::string_view text)
     return doc;
 }
 
-void body_secrets(std::string_view body, std::vector<std::string>& out)
+// The secrets of a JSON body into `json_out`, of a form body into `form_out`.
+void body_secrets(std::string_view body, std::vector<std::string>& json_out,
+                  std::vector<std::string>& form_out)
 {
-    if (const std::optional<ordered_json> doc = parse_structured(body)) {
-        json_secrets(*doc, out);
+    if (std::optional<ordered_json> doc = parse_structured(body)) {
+        const JsonWipe wipe{*doc};
+        json_secrets(*doc, json_out);
     } else {
-        form_secrets(body, out);
+        form_secrets(body, form_out);
     }
 }
 
@@ -259,48 +292,54 @@ std::string dump(const ordered_json& value, int indent = -1)
 }
 
 // A JSON body without its download links, redacted; still JSON if redacting
-// left it JSON, which it does unless a secret sat inside a key.
+// left it JSON, which it does unless a secret sat inside a key. The parsed
+// body and its text before redaction, which may hold a restore credential,
+// are wiped.
 ordered_json scrub_json(ordered_json doc)
 {
+    const JsonWipe wipe{doc};
     drop_download_urls(doc);
-    const std::string text = redact(dump(doc));
+    std::string raw = dump(doc);
+    std::string text = redact(raw);
+    secure_wipe(raw);
     std::optional<ordered_json> again = parse_structured(text);
-    return again ? std::move(*again) : ordered_json(text);
+    return again ? std::move(*again) : ordered_json(std::move(text));
 }
 
-// The first rule the fixture text breaks, or nullopt.
-std::optional<std::string_view> broken_rule(std::string_view text,
-                                            const std::set<std::string>& secrets)
+// Whether `text` holds `secret`, as written or JSON-escaped. The escaped copy
+// is wiped.
+bool holds_secret(std::string_view text, const std::string& secret)
 {
-    for (const std::string& secret : secrets) {
-        if (secret.size() < kMinRecordedSecret) {
-            continue;
-        }
-        const std::string escaped = dump(ordered_json(secret));
-        if (text.find(secret) != std::string_view::npos ||
-            text.find(std::string_view{escaped}.substr(1, escaped.size() - 2)) !=
-                std::string_view::npos) {
-            return "it holds a known secret";
-        }
+    if (secret.size() < kMinRecordedSecret) {
+        return false;
     }
-    for (std::size_t at = text.find("eyJ"); at != std::string_view::npos;
-         at = text.find("eyJ", at + 1)) {
-        std::size_t end = at + 3;
-        while (end < text.size() && is_base64url(text[end])) {
-            ++end;
-        }
-        if (end - at - 3 >= kMinJwtTail) {
-            return "it holds what looks like a JWT";
-        }
+    if (text.find(secret) != std::string_view::npos) {
+        return true;
     }
+    ordered_json as_json(secret);
+    std::string escaped = dump(as_json);
+    const bool found =
+        text.find(std::string_view{escaped}.substr(1, escaped.size() - 2)) != std::string_view::npos;
+    wipe_strings(as_json);
+    secure_wipe(escaped);
+    return found;
+}
+
+// Whether `text` holds a value of `name` (any case) other than a placeholder:
+// the name not run on into a longer key ("tempauthority",
+// "client_assertion_type"), perhaps a closing quote (plain, single or
+// escaped), blanks, then '=', "%3D" or ':', then the value, which must start,
+// after blanks and quotes, with kScrubbed or kRedacted.
+bool holds_unscrubbed_value(std::string_view text, std::string_view name)
+{
     for (std::size_t at = 0; at < text.size(); ++at) {
-        if (!iequals_prefix(text.substr(at), "tempauth")) {
+        if (!iequals_prefix(text.substr(at), name)) {
             continue;
         }
-        std::string_view rest = text.substr(at + 8);
+        std::string_view rest = text.substr(at + name.size());
         if (rest.starts_with("\\\"")) {
             rest.remove_prefix(2);
-        } else if (rest.starts_with("\"")) {
+        } else if (rest.starts_with("\"") || rest.starts_with("'")) {
             rest.remove_prefix(1);
         }
         const std::size_t sep = rest.find_first_not_of(" \t");
@@ -312,23 +351,109 @@ std::optional<std::string_view> broken_rule(std::string_view text,
         } else {
             continue;
         }
-        const std::size_t value = rest.find_first_not_of(" \t\"\\");
+        const std::size_t value = rest.find_first_not_of(" \t\"\\'");
         rest.remove_prefix(value == std::string_view::npos ? rest.size() : value);
         if (!rest.starts_with(kScrubbed) && !rest.starts_with(kRedacted)) {
-            return "it holds a tempauth download credential";
+            return true;
         }
     }
-    if (text.find("client_assertion") != std::string_view::npos) {
-        return "it mentions client_assertion";
+    return false;
+}
+
+// The first rule the fixture text breaks, or nullopt.
+template <typename Secrets>
+std::optional<std::string_view> broken_rule(std::string_view text, const Secrets& secrets,
+                                            const std::vector<std::string>& one_time)
+{
+    const auto held = [text](const std::string& secret) { return holds_secret(text, secret); };
+    if (std::ranges::any_of(secrets, held) || std::ranges::any_of(one_time, held)) {
+        return "it holds a known secret";
+    }
+    for (std::size_t at = text.find(kJwtStart); at != std::string_view::npos;
+         at = text.find(kJwtStart, at + 1)) {
+        std::size_t end = at + kJwtStart.size();
+        while (end < text.size() && is_base64url(text[end])) {
+            ++end;
+        }
+        if (end - at - kJwtStart.size() >= kMinJwtTail) {
+            return "it holds what looks like a JWT";
+        }
+    }
+    for (const UnscrubbedRule& rule : kUnscrubbedRules) {
+        if (holds_unscrubbed_value(text, rule.name)) {
+            return rule.why;
+        }
     }
     return std::nullopt;
 }
 
+// scrub_exchange over any list of kept secrets: the recorder's is a deque.
+template <typename Secrets>
+ScrubbedExchange scrub(std::size_t index, std::string_view source, const HttpRequest& request,
+                       const HttpResponse& response, RecordedBody body, const Secrets& secrets,
+                       const std::vector<std::string>& one_time)
+{
+    ScrubbedExchange out;
+    out.file_name = fixture_file_name(index, request.method, request.url);
+
+    // Redacted first, then (for a download) every query value scrubbed, so a
+    // tempauth reads SCRUBBED like the rest rather than [REDACTED].
+    const std::string line = redact(std::string{to_string(request.method)} + " " +
+                                    std::string{request_path(request.url)});
+    ordered_json doc;
+    doc["source"] = std::string{source};
+    doc["request"] = body == RecordedBody::digest ? scrub_query_values(line) : line;
+    doc["status"] = response.status;
+    ordered_json headers = ordered_json::object();
+    for (const std::string_view name : kKeptHeaders) {
+        if (const auto it = response.headers.find(name); it != response.headers.end()) {
+            headers[std::string{name}] = redact(it->second);
+        }
+    }
+    if (const auto it = response.headers.find(kLocation); it != response.headers.end()) {
+        headers[std::string{kLocation}] = scrub_location(redact(it->second));
+    }
+    doc["headers"] = std::move(headers);
+
+    // A digest body is never looked at beyond its size and hash.
+    if (response.body.empty()) {
+        doc["body"] = nullptr;
+    } else if (body == RecordedBody::digest || !utf8_to_utf16(response.body)) {
+        doc["body"] = nullptr;
+        doc["body_size"] = response.body.size();
+        doc["body_sha256"] = sha256_hex(response.body);
+    } else if (std::optional<ordered_json> json = parse_structured(response.body)) {
+        doc["body"] = scrub_json(std::move(*json));
+    } else {
+        doc["body"] = redact(response.body);
+    }
+    if (request.parts.empty()) {
+        if (std::optional<ordered_json> json = parse_structured(request.body)) {
+            doc["request_body"] = scrub_json(std::move(*json));
+        }
+    }
+
+    out.text = dump(doc, 2) + "\n";
+    if (const std::optional<std::string_view> rule = broken_rule(out.text, secrets, one_time)) {
+        // The refused text holds a secret: no copy of it outlives the refusal.
+        wipe_strings(doc);
+        secure_wipe(out.text);
+        throw RecordRefused(std::string{"refused: "} + std::string{*rule});
+    }
+    return out;
+}
+
 } // namespace
+
+std::string_view request_path(std::string_view url) noexcept
+{
+    const std::string_view path = path_query_fragment(url);
+    return path.substr(0, path.find('#'));
+}
 
 std::string fixture_file_name(std::size_t index, HttpMethod method, std::string_view url)
 {
-    std::string_view path = path_and_query(url);
+    std::string_view path = path_query_fragment(url);
     path = path.substr(0, path.find_first_of("?#"));
     std::string slug;
     for (const char c : path) {
@@ -350,33 +475,45 @@ std::string fixture_file_name(std::size_t index, HttpMethod method, std::string_
     return std::format("{:03}-{}-{}.json", index, verb, slug.empty() ? "root" : slug);
 }
 
-std::vector<std::string> secrets_in(const HttpRequest& request, const HttpResponse& response)
+LearnedSecrets::~LearnedSecrets()
 {
-    std::vector<std::string> out;
+    for (std::vector<std::string>* list : {&kept, &one_time}) {
+        for (std::string& secret : *list) {
+            secure_wipe(secret);
+        }
+    }
+}
+
+LearnedSecrets secrets_in(const HttpRequest& request, const HttpResponse& response,
+                          RecordedBody body)
+{
+    LearnedSecrets out;
     for (const auto& [name, value] : request.headers) {
         if (is_secret_header(name)) {
-            add_secret(out, value);
+            add_secret(out.kept, value);
             if (iequals_prefix(value, "bearer ")) {
-                add_secret(out, value.substr(7));
+                add_secret(out.kept, value.substr(7));
             }
         }
     }
-    const std::string_view path_query = path_and_query(request.url);
+    const std::string_view path_query = path_query_fragment(request.url);
     if (const std::size_t mark = path_query.find('?'); mark != std::string_view::npos) {
-        form_secrets(path_query.substr(mark + 1, path_query.find('#') - mark - 1), out);
+        form_secrets(path_query.substr(mark + 1, path_query.find('#') - mark - 1), out.kept);
     }
-    body_secrets(request.body, out);
+    body_secrets(request.body, out.one_time, out.kept);
     for (const MultipartPart& part : request.parts) {
         if (is_secret_form_key(part.name)) {
-            add_secret(out, part.content);
+            add_secret(out.kept, part.content);
         }
     }
-    body_secrets(response.body, out);
+    if (body == RecordedBody::content) {
+        body_secrets(response.body, out.kept, out.kept);
+    }
     if (const auto location = response.headers.find(kLocation);
         location != response.headers.end()) {
-        const std::string_view query = path_and_query(location->second);
+        const std::string_view query = path_query_fragment(location->second);
         if (const std::size_t mark = query.find('?'); mark != std::string_view::npos) {
-            form_secrets(query.substr(mark + 1, query.find('#') - mark - 1), out);
+            form_secrets(query.substr(mark + 1, query.find('#') - mark - 1), out.kept);
         }
     }
     return out;
@@ -384,54 +521,10 @@ std::vector<std::string> secrets_in(const HttpRequest& request, const HttpRespon
 
 ScrubbedExchange scrub_exchange(std::size_t index, std::string_view source,
                                 const HttpRequest& request, const HttpResponse& response,
-                                RecordedBody body, const std::set<std::string>& secrets)
+                                RecordedBody body, const std::vector<std::string>& secrets,
+                                const std::vector<std::string>& one_time)
 {
-    ScrubbedExchange out;
-    out.file_name = fixture_file_name(index, request.method, request.url);
-
-    // Redacted first, then (for a download) every query value scrubbed, so a
-    // tempauth reads SCRUBBED like the rest rather than [REDACTED].
-    const std::string_view path_query = path_and_query(request.url);
-    const std::string line = redact(std::string{to_string(request.method)} + " " +
-                                    std::string{path_query.substr(0, path_query.find('#'))});
-    ordered_json doc;
-    doc["source"] = std::string{source};
-    doc["request"] = body == RecordedBody::digest ? scrub_query_values(line) : line;
-    doc["status"] = response.status;
-    ordered_json headers = ordered_json::object();
-    for (const std::string_view name : kKeptHeaders) {
-        if (const auto it = response.headers.find(name); it != response.headers.end()) {
-            headers[std::string{name}] = redact(it->second);
-        }
-    }
-    if (const auto it = response.headers.find(kLocation); it != response.headers.end()) {
-        headers[std::string{kLocation}] = scrub_location(redact(it->second));
-    }
-    doc["headers"] = std::move(headers);
-
-    const bool utf8 = utf8_to_utf16(response.body).has_value();
-    if (response.body.empty()) {
-        doc["body"] = nullptr;
-    } else if (body == RecordedBody::digest || !utf8) {
-        doc["body"] = nullptr;
-        doc["body_size"] = response.body.size();
-        doc["body_sha256"] = sha256_hex(response.body);
-    } else if (std::optional<ordered_json> json = parse_structured(response.body)) {
-        doc["body"] = scrub_json(std::move(*json));
-    } else {
-        doc["body"] = redact(response.body);
-    }
-    if (request.parts.empty()) {
-        if (std::optional<ordered_json> json = parse_structured(request.body)) {
-            doc["request_body"] = scrub_json(std::move(*json));
-        }
-    }
-
-    out.text = dump(doc, 2) + "\n";
-    if (const std::optional<std::string_view> rule = broken_rule(out.text, secrets)) {
-        throw RecordRefused(std::string{"refused: "} + std::string{*rule});
-    }
-    return out;
+    return scrub(index, source, request, response, body, secrets, one_time);
 }
 
 FixtureRecorder::FixtureRecorder(std::filesystem::path dir, std::string source,
@@ -449,13 +542,26 @@ FixtureRecorder::FixtureRecorder(std::filesystem::path dir, std::string source,
             ec) {
             throw ConfigError("--record", shown + ": the --record folder is not empty");
         }
-    } else if (!std::filesystem::create_directories(dir_, ec) || ec) {
-        throw ConfigError("--record", shown + ": the --record folder can't be made");
+    } else {
+        // Not create_directories' result: MSVC's is false for a path ending in
+        // a separator even when it made the folder.
+        std::filesystem::create_directories(dir_, ec);
+        if (ec || !std::filesystem::is_directory(dir_, ec)) {
+            throw ConfigError("--record", shown + ": the --record folder can't be made");
+        }
     }
     for (const std::string& secret : known_secrets) {
-        if (secret.size() >= kMinRecordedSecret) {
-            secrets_.insert(secret);
+        if (secret.size() >= kMinRecordedSecret &&
+            std::ranges::find(secrets_, secret) == secrets_.end()) {
+            secrets_.push_back(secret);
         }
+    }
+}
+
+FixtureRecorder::~FixtureRecorder()
+{
+    for (std::string& secret : secrets_) {
+        secure_wipe(secret);
     }
 }
 
@@ -463,34 +569,53 @@ void FixtureRecorder::record(std::string_view service, const HttpRequest& reques
                              const HttpResponse& response, RecordedBody body) noexcept
 {
     try {
-        const std::lock_guard lock(mutex_);
-        for (std::string& secret : secrets_in(request, response)) {
-            secrets_.insert(std::move(secret));
+        // Learned outside every lock: scanning a large body holds up no one.
+        LearnedSecrets learned = secrets_in(request, response, body);
+        {
+            const std::unique_lock lock(secrets_mutex_);
+            for (std::string& secret : learned.kept) {
+                if (std::ranges::find(secrets_, secret) == secrets_.end()) {
+                    secrets_.push_back(std::move(secret));
+                }
+            }
         }
-        auto it = next_index_.find(service);
-        if (it == next_index_.end()) {
-            it = next_index_.emplace(std::string{service}, 1).first;
+        std::size_t index = 0;
+        {
+            const std::lock_guard lock(mutex_);
+            auto it = next_index_.find(service);
+            if (it == next_index_.end()) {
+                it = next_index_.emplace(std::string{service}, 1).first;
+            }
+            index = it->second++;
         }
-        const std::size_t index = it->second++;
-        const std::string where =
-            std::string{service} + "/" + fixture_file_name(index, request.method, request.url);
+        std::optional<std::string> problem;
         try {
-            const ScrubbedExchange file =
-                scrub_exchange(index, source_, request, response, body, secrets_);
+            ScrubbedExchange file;
+            {
+                // Other exchanges scrub at the same time; only learning waits.
+                const std::shared_lock lock(secrets_mutex_);
+                file = scrub(index, source_, request, response, body, secrets_, learned.one_time);
+            }
             const std::filesystem::path folder = dir_ / std::filesystem::path(std::string{service});
             std::filesystem::create_directories(folder);
             std::ofstream stream(folder / file.file_name, std::ios::binary | std::ios::trunc);
             stream << file.text;
             stream.close();
             if (!stream) {
-                problems_.push_back(where + ": could not be written");
-                return;
+                problem = "could not be written";
             }
-            ++written_;
         } catch (const RecordRefused& e) {
-            problems_.push_back(where + ": " + e.what());
+            problem = e.what();
         } catch (...) {
-            problems_.push_back(where + ": could not be written");
+            problem = "could not be written";
+        }
+        const std::string where =
+            std::string{service} + "/" + fixture_file_name(index, request.method, request.url);
+        const std::lock_guard lock(mutex_);
+        if (problem) {
+            problems_.push_back(where + ": " + *problem);
+        } else {
+            ++written_;
         }
     } catch (...) {
         // Out of memory: the exchange goes unrecorded, and the command on.

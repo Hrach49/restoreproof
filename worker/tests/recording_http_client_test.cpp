@@ -22,10 +22,10 @@
 #include <fstream>
 #include <iterator>
 #include <memory>
-#include <set>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <tuple>
 #include <vector>
 
@@ -86,9 +86,25 @@ ordered_json parsed(const rp::ScrubbedExchange& file)
 
 rp::ScrubbedExchange scrub(const HttpRequest& req, const HttpResponse& resp,
                            RecordedBody body = RecordedBody::content,
-                           const std::set<std::string>& secrets = {})
+                           const std::vector<std::string>& secrets = {},
+                           const std::vector<std::string>& one_time = {})
 {
-    return rp::scrub_exchange(1, kSource, req, resp, body, secrets);
+    return rp::scrub_exchange(1, kSource, req, resp, body, secrets, one_time);
+}
+
+bool has(const std::vector<std::string>& list, const std::string& value)
+{
+    return std::ranges::find(list, value) != list.end();
+}
+
+// A restore POST carrying the credential, as VeeamClient sends it.
+HttpRequest restore_request()
+{
+    return request(HttpMethod::post, kVeeam + "/v8/RestoreSessions/s/x/restoreTo",
+                   R"({"mailbox":"restoretest@x.onmicrosoft.com","folder":"Inbox",)"
+                   R"("applicationCertificate":")" + kPfx +
+                       R"(","applicationCertificatePassword":")" + kPfxPassword + R"("})",
+                   "application/json");
 }
 
 std::string read_file(const std::filesystem::path& path)
@@ -143,6 +159,18 @@ TEST_CASE("the recorder makes a missing --record folder and takes an empty one",
     rp::FixtureRecorder empty(nested, kSource, {});
     CHECK(empty.written() == 0);
     CHECK(empty.problems().empty());
+}
+
+TEST_CASE("the recorder takes a --record path that ends in a separator", "[record]")
+{
+    // MSVC's create_directories says false for such a path even when it
+    // made the folder: the first run must not report a failure.
+    rp::test::TempDir dir;
+    const std::filesystem::path trailing = dir.path() / "new" / "sub" / "";
+    REQUIRE(trailing.native().ends_with(L"\\"));
+    rp::FixtureRecorder recorder(trailing, kSource, {});
+    CHECK(std::filesystem::is_directory(dir.path() / "new" / "sub"));
+    CHECK(recorder.dir() == trailing);
 }
 
 // --- File names ----------------------------------------------------------------
@@ -330,24 +358,48 @@ TEST_CASE("Graph's download links are dropped from bodies", "[record]")
 
 TEST_CASE("a JSON request body is recorded with the restore credential redacted", "[record]")
 {
-    const std::string body = R"({"mailbox":"restoretest@x.onmicrosoft.com","folder":"Inbox",)"
-                             R"("applicationCertificate":")" + kPfx +
-                             R"(","applicationCertificatePassword":")" + kPfxPassword + R"("})";
-    const HttpRequest req = request(HttpMethod::post, kVeeam + "/v8/RestoreSessions/s/x/restoreTo",
-                                    body, "application/json");
-    const std::vector<std::string> learned = rp::secrets_in(req, make_response(200, "{}"));
-    CHECK(std::ranges::find(learned, kPfx) != learned.end());
-    CHECK(std::ranges::find(learned, kPfxPassword) != learned.end());
+    const HttpRequest req = restore_request();
+    const rp::LearnedSecrets learned = rp::secrets_in(req, make_response(200, "{}"));
+    // Checked in this exchange's file only: the credential is exported per call.
+    CHECK(has(learned.one_time, kPfx));
+    CHECK(has(learned.one_time, kPfxPassword));
+    CHECK(learned.kept.empty());
 
     const rp::ScrubbedExchange file = scrub(req, make_response(200, R"({"sessionId":"s"})"),
-                                            RecordedBody::content,
-                                            {learned.begin(), learned.end()});
+                                            RecordedBody::content, {}, learned.one_time);
     const ordered_json doc = parsed(file);
     CHECK(doc["request_body"] ==
           ordered_json::parse(R"({"mailbox":"restoretest@x.onmicrosoft.com","folder":"Inbox",)"
                               R"("applicationCertificate":"[REDACTED]",)"
                               R"("applicationCertificatePassword":"[REDACTED]"})"));
     CHECK(file.text.find("SENTINEL") == std::string::npos);
+}
+
+TEST_CASE("a restore POST whose answer echoes its credential is refused", "[record]")
+{
+    const HttpRequest req = restore_request();
+    const rp::LearnedSecrets learned = rp::secrets_in(req, make_response(200, "{}"));
+    try {
+        scrub(req, make_response(400, R"({"message":"bad certificate )" + kPfxPassword + R"("})"),
+              RecordedBody::content, {}, learned.one_time);
+        FAIL("the echoed credential was written");
+    } catch (const rp::RecordRefused& e) {
+        CHECK(std::string{e.what()} == "refused: it holds a known secret");
+    }
+}
+
+TEST_CASE("the recorder keeps no copy of a restore credential past its exchange", "[record]")
+{
+    rp::test::TempDir dir;
+    rp::FixtureRecorder recorder(dir.path() / "rec", kSource, {});
+    recorder.record("veeam", restore_request(), make_response(200, R"({"sessionId":"s"})"),
+                    RecordedBody::content);
+    // Were the credential kept, this later file would be refused for it.
+    recorder.record("veeam", request(HttpMethod::get, kVeeam + "/v8/RestoreSessions/s"),
+                    make_response(200, R"({"details":")" + kPfxPassword + R"("})"),
+                    RecordedBody::content);
+    CHECK(recorder.problems().empty());
+    CHECK(recorder.written() == 2);
 }
 
 TEST_CASE("a multipart request body is never recorded", "[record]")
@@ -366,21 +418,20 @@ TEST_CASE("the recorder learns the secrets an exchange carries", "[record]")
     req.headers["Authorization"] = "Bearer " + kAccessToken;
     HttpResponse resp = token_response();
     resp.headers["Location"] = "https://x/download.aspx?tempauth=v1.location-secret&UniqueId=u1";
-    const std::vector<std::string> learned = rp::secrets_in(req, resp);
-    const auto has = [&](const std::string& value) {
-        return std::ranges::find(learned, value) != learned.end();
-    };
+    const rp::LearnedSecrets learned = rp::secrets_in(req, resp);
+    const std::vector<std::string>& kept = learned.kept;
     // The password raw (form-encoded) and decoded, both tokens, the header.
-    CHECK(has("Sentinel%26Pa55%3Dw%C3%B6rd%2B%25"));
-    CHECK(has(kPassword));
-    CHECK(has(kAccessToken));
-    CHECK(has("Bearer " + kAccessToken));
-    CHECK(has(kRefreshToken));
-    CHECK(has("v1.location-secret"));
+    CHECK(has(kept, "Sentinel%26Pa55%3Dw%C3%B6rd%2B%25"));
+    CHECK(has(kept, kPassword));
+    CHECK(has(kept, kAccessToken));
+    CHECK(has(kept, "Bearer " + kAccessToken));
+    CHECK(has(kept, kRefreshToken));
+    CHECK(has(kept, "v1.location-secret"));
     // Not secrets: the user name, the grant type, the Location's other values.
-    CHECK_FALSE(has("rp-veeam"));
-    CHECK_FALSE(has("password"));
-    CHECK_FALSE(has("u1"));
+    CHECK_FALSE(has(kept, "rp-veeam"));
+    CHECK_FALSE(has(kept, "password"));
+    CHECK_FALSE(has(kept, "u1"));
+    CHECK(learned.one_time.empty());
 }
 
 TEST_CASE("the recorder learns a client assertion and a secret in a URL", "[record]")
@@ -390,14 +441,14 @@ TEST_CASE("the recorder learns a client assertion and a secret in a URL", "[reco
                 "client_id=c&client_assertion_type=urn%3Aietf&client_assertion=" + kJwt +
                     "&scope=https%3A%2F%2Fgraph.microsoft.com%2F.default",
                 "application/x-www-form-urlencoded");
-    const std::vector<std::string> learned = rp::secrets_in(form, make_response(400, "{}"));
-    CHECK(std::ranges::find(learned, kJwt) != learned.end());
-    CHECK(std::ranges::find(learned, std::string{"urn:ietf"}) == learned.end());
+    const rp::LearnedSecrets learned = rp::secrets_in(form, make_response(400, "{}"));
+    CHECK(has(learned.kept, kJwt));
+    CHECK_FALSE(has(learned.kept, "urn:ietf"));
 
-    const std::vector<std::string> in_url = rp::secrets_in(
+    const rp::LearnedSecrets in_url = rp::secrets_in(
         request(HttpMethod::get, "https://x/download.aspx?UniqueId=u&tempauth=v1.url-secret#f"),
         make_response(200));
-    CHECK(in_url == std::vector<std::string>{"v1.url-secret"});
+    CHECK(in_url.kept == std::vector<std::string>{"v1.url-secret"});
 }
 
 TEST_CASE("a placeholder is never learned as a secret", "[record]")
@@ -406,15 +457,31 @@ TEST_CASE("a placeholder is never learned as a secret", "[record]")
     // refuse every later file that holds a scrubbed value.
     HttpRequest req = request(HttpMethod::get, kVeeam + "/v8/x?tempauth=SCRUBBED");
     req.headers["Authorization"] = "Bearer [REDACTED]";
-    CHECK(rp::secrets_in(req, make_response(200, R"({"access_token":"[REDACTED]"})")).empty());
+    const rp::LearnedSecrets learned =
+        rp::secrets_in(req, make_response(200, R"({"access_token":"[REDACTED]"})"));
+    CHECK(learned.kept.empty());
+    CHECK(learned.one_time.empty());
 }
 
 TEST_CASE("a secret shorter than the minimum isn't learned", "[record]")
 {
-    const std::vector<std::string> learned = rp::secrets_in(
+    const rp::LearnedSecrets learned = rp::secrets_in(
         request(HttpMethod::post, kVeeam + "/v8/token", "password=abc12", "application/x-www-form-urlencoded"),
         make_response(200, R"({"access_token":"abcdef"})"));
-    CHECK(learned == std::vector<std::string>{"abcdef"});
+    CHECK(learned.kept == std::vector<std::string>{"abcdef"});
+}
+
+TEST_CASE("nothing is learned from a download's body, which is never written", "[record]")
+{
+    // A file that happens to look like a form or JSON with secret keys.
+    const HttpRequest req = request(HttpMethod::get, "https://x/download.aspx?UniqueId=u");
+    const auto body = GENERATE(std::string{"access_token=SENTINEL-DOWNLOADED-BYTES"},
+                               std::string{R"({"password":"SENTINEL-DOWNLOADED-BYTES"})"});
+    CAPTURE(body);
+    const HttpResponse resp = make_response(200, body, "application/octet-stream");
+    CHECK(rp::secrets_in(req, resp, RecordedBody::digest).kept.empty());
+    // The same body as content is looked at.
+    CHECK(has(rp::secrets_in(req, resp).kept, "SENTINEL-DOWNLOADED-BYTES"));
 }
 
 // --- Refusals ------------------------------------------------------------------------
@@ -422,7 +489,7 @@ TEST_CASE("a secret shorter than the minimum isn't learned", "[record]")
 TEST_CASE("a fixture that still holds a secret is refused, saying which rule", "[record]")
 {
     const auto [body, secrets, rule] =
-        GENERATE(table<std::string, std::set<std::string>, std::string>({
+        GENERATE(table<std::string, std::vector<std::string>, std::string>({
             // A known secret where no key names it.
             {R"({"note":"SENTINEL-KNOWN-SECRET"})", {"SENTINEL-KNOWN-SECRET"},
              "it holds a known secret"},
@@ -434,8 +501,11 @@ TEST_CASE("a fixture that still holds a secret is refused, saying which rule", "
             // A tempauth value redact() doesn't know, URL-encoded.
             {R"({"link":"https://x/download.aspx?tempauth%3Dv1.abc"})", {},
              "it holds a tempauth download credential"},
-            {R"({"error":"AADSTS700027: client_assertion contains an invalid signature"})", {},
-             "it mentions client_assertion"},
+            // A client assertion redact() doesn't know: URL-encoded, any case.
+            {R"({"link":"https://x/cb?client_assertion%3Dv1abc"})", {},
+             "it holds a client assertion"},
+            {R"({"link":"https://x/cb?Client_Assertion%3Dv1abc"})", {},
+             "it holds a client assertion"},
         }));
     CAPTURE(body);
     try {
@@ -452,9 +522,27 @@ TEST_CASE("scrubbed values pass the refusal rules", "[record]")
     // "eyJ" and 36 base64url characters: one short of the JWT rule.
     const std::string body =
         R"({"a":"tempauth=SCRUBBED","b":"tempauth=[REDACTED]","c":"\"tempauth\": \"SCRUBBED\"",)"
-        R"("d":"eyJ)" + std::string(36, '0') + R"(","e":"tempauthority=x"})";
+        R"("d":"eyJ)" + std::string(36, '0') + R"(","e":"tempauthority=x",)"
+        R"("f":"CLIENT_ASSERTION=[REDACTED]","g":"client_assertion_type=urn:x"})";
     CHECK_NOTHROW(scrub(request(HttpMethod::get, kVeeam + "/v8/x"), make_response(200, body),
                         RecordedBody::content, {"short", ""}));
+}
+
+TEST_CASE("a sign-in error that only names client_assertion is recorded", "[record]")
+{
+    // Entra's errors name the parameter without holding a value of it: the
+    // failed sign-in must be recordable.
+    const std::string description = GENERATE(
+        std::string{"AADSTS7000218: The request body must contain the following parameter: "
+                    "'client_assertion' or 'client_secret'."},
+        std::string{"AADSTS700027: Client_Assertion contains an invalid signature."});
+    CAPTURE(description);
+    const ordered_json answer{{"error", "invalid_client"}, {"error_description", description}};
+    const rp::ScrubbedExchange file =
+        scrub(request(HttpMethod::post, "https://login.microsoftonline.com/t/oauth2/v2.0/token",
+                      "client_id=c&client_assertion=" + kJwt, "application/x-www-form-urlencoded"),
+              make_response(401, answer.dump()));
+    CHECK(parsed(file)["body"] == answer);
 }
 
 TEST_CASE("the recorder ignores known secrets shorter than the minimum", "[record]")
@@ -560,6 +648,36 @@ TEST_CASE("a recording that can't be written is a problem, not an exception", "[
           std::vector<std::string>{"veeam/001-get-v8-a.json: could not be written"});
 }
 
+TEST_CASE("exchanges recorded from several threads at once are each written once", "[record]")
+{
+    rp::test::TempDir dir;
+    rp::FixtureRecorder recorder(dir.path() / "rec", kSource, {"SENTINEL-KNOWN-SECRET"});
+    constexpr int kThreads = 8;
+    constexpr int kEach = 25;
+    {
+        std::vector<std::jthread> threads;
+        for (int t = 0; t < kThreads; ++t) {
+            threads.emplace_back([&recorder, t] {
+                for (int i = 0; i < kEach; ++i) {
+                    HttpRequest req = token_request();
+                    // Each thread learns its own token as it goes.
+                    recorder.record("veeam", req,
+                                    make_response(200, R"({"access_token":"SENTINEL-T)" +
+                                                           std::to_string(t) + "-" +
+                                                           std::to_string(i) + R"("})"),
+                                    RecordedBody::content);
+                }
+            });
+        }
+    }
+    CHECK(recorder.problems().empty());
+    CHECK(recorder.written() == kThreads * kEach);
+    std::vector<std::string> names = names_in(dir.path() / "rec" / "veeam");
+    CHECK(names.size() == static_cast<std::size_t>(kThreads * kEach));
+    CHECK(names.front() == "001-post-v8-token.json");
+    CHECK(names.back() == "200-post-v8-token.json");
+}
+
 TEST_CASE("the recording client needs a client and a recorder", "[record]")
 {
     rp::test::TempDir dir;
@@ -601,6 +719,27 @@ TEST_CASE("FakeHttpClient replays a recording by method and path, in number orde
     // Another method or path has no route.
     CHECK_THROWS_AS(replay.del("https://elsewhere.test/v8/RestoreSessions/s1"), std::logic_error);
     CHECK_THROWS_AS(replay.get("https://elsewhere.test/v8/RestoreSessions/s1?x=1"), std::logic_error);
+}
+
+TEST_CASE("FakeHttpClient replays the 1000th exchange after the 999th", "[record][fake]")
+{
+    // A long poll of one session: file names sort 1000 before 998.
+    rp::test::TempDir dir;
+    for (const auto& [number, state] : std::vector<std::pair<std::string, std::string>>{
+             {"998", "Working"}, {"999", "Working"}, {"1000", "Success"}}) {
+        dir.write(number + "-get-v8-restoresessions-s1.json",
+                  ordered_json{{"request", "GET /v8/RestoreSessions/s1"},
+                               {"status", 200},
+                               {"headers", ordered_json::object()},
+                               {"body", {{"state", state}}}}
+                      .dump());
+    }
+    rp::test::FakeHttpClient replay;
+    REQUIRE(replay.serve_recording(dir.path()) == 3);
+    for (const std::string state : {"Working", "Working", "Success", "Success"}) {
+        CHECK(nlohmann::json::parse(replay.get(kVeeam + "/v8/RestoreSessions/s1").body)["state"] ==
+              state);
+    }
 }
 
 TEST_CASE("FakeHttpClient refuses a recording file it can't route", "[record][fake]")
@@ -647,7 +786,19 @@ TEST_CASE("path patterns match '*' within one segment only", "[fake]")
     }));
     CAPTURE(pattern, path);
     CHECK(rp::test::path_matches(pattern, path) == match);
-    CHECK(rp::test::url_path("https://h:1/a/b?c=d#e") == "/a/b?c=d");
-    CHECK(rp::test::url_path("https://h") == "/");
-    CHECK(rp::test::url_path("/x") == "/x");
+}
+
+TEST_CASE("a request's path is what its recorded request line holds after the method",
+          "[record][fake]")
+{
+    const auto [url, path] = GENERATE(table<std::string, std::string>({
+        {"https://h:1/a/b?c=d#e", "/a/b?c=d"},
+        {"https://h", "/"},
+        {"https://h?x=1", "?x=1"},
+        {"https://h#f", ""},
+        {"/x", "/x"},
+        {"/x#f", "/x"},
+    }));
+    CAPTURE(url);
+    CHECK(rp::request_path(url) == path);
 }

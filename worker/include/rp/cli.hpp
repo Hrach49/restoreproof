@@ -30,6 +30,11 @@ inline constexpr int transient = 3;
 // connector::SafetyViolation, rp/target_guard.hpp, for the command that will
 // restore), or veeam_org_name not among Veeam's organisations.
 inline constexpr int service = 4;
+// `rpworker restore` only: the restore ran, but its status isn't succeeded
+// (partial, failed or not_run; the status line says which). A result, not an
+// error: a restore that couldn't run at all ends as 1 to 4 (docs/decisions.md
+// 2026-09-30, W2.8).
+inline constexpr int restore = 5;
 // A command line rpworker doesn't understand.
 inline constexpr int usage = 64;
 } // namespace exit_code
@@ -38,10 +43,13 @@ inline constexpr int usage = 64;
 // doesn't understand. Every command shares it.
 inline constexpr std::string_view kCliUsage =
     "usage: rpworker --version | rpworker config check [--config <path>] | "
-    "rpworker veeam list [--config <path>] | rpworker graph list [--hash] [--config <path>]\n";
+    "rpworker veeam list [--config <path>] | rpworker graph list [--hash] [--config <path>] | "
+    "rpworker restore [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] "
+    "[--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>]\n";
 
 // rpworker's command line: `--version`, `config ...` (rp/config_check.hpp),
-// `veeam ...` (rp/veeam_command.hpp) or `graph ...` (rp/graph_command.hpp).
+// `veeam ...` (rp/veeam_command.hpp), `graph ...` (rp/graph_command.hpp) or
+// `restore ...` (rp/restore_command.hpp).
 // `args` is argv without the program name, in UTF-8. Normal output goes to
 // `out`, usage and errors to `err`.
 // Returns the process exit code (rp::exit_code): 0 on success, 64 with

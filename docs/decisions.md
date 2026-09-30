@@ -112,7 +112,11 @@ supersedes it.
     stopped seconds before the restore POST, would pass `restore_sample`'s duplicate check (ours,
     that type, new since the POST less 5 s) and leave the run without a verdict. The connector
     remembers every explore session `list_candidates` opened or adopted, also when it throws, and
-    they join the duplicate check's known set.
+    they join the duplicate check's known set. A Stop that fails as transient (timeout, dropped
+    connection, a 5xx Veeam calls transient) is followed by a re-read and, if the session is still
+    `Working`, one more Stop, at most 2 per session; auth errors and 4xx aren't retried (2026-09-30:
+    the live dry run's Stop of explore session e251a437 timed out after 30 s with the session still
+    `Working`, and a second Stop minutes later returned 204 at once).
 
 **Reason.** Canaries rotate so each one is tested within the bound the task sets; a seeded offset
 couldn't promise that. The random half must be real data outside the targets and the canary

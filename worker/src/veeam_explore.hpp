@@ -108,8 +108,13 @@ public:
 
 private:
     void adopt_orphans(connector::ItemKind kind, std::chrono::system_clock::time_point sent) noexcept;
-    // Stops `id` if it is Working; an error is logged and returns false.
+    // Stops `id` if it is Working; an error is logged and returns false. A
+    // Stop that fails with a TransientError (a timeout, a dropped connection,
+    // a 5xx Veeam calls transient) is followed by a read of the session and,
+    // if it is still Working, by one more Stop: at most 2 Stops per session.
     bool stop_if_working(const std::string& id) noexcept;
+    // Whether GET /v8/RestoreSessions/{id} says Working.
+    bool is_working(const std::string& id);
 
     Context c_;
     std::string organization_id_;

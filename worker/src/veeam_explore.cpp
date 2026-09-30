@@ -219,12 +219,31 @@ std::string ExploreSessions::left_open() const
     return out;
 }
 
+bool ExploreSessions::is_working(const std::string& id)
+{
+    const json session = c_.client.get_json("/v8/RestoreSessions/" + id);
+    const std::string* state = string_at(session, "state");
+    return state != nullptr && *state == "Working";
+}
+
 bool ExploreSessions::stop_if_working(const std::string& id) noexcept
 {
     try {
-        const json session = c_.client.get_json("/v8/RestoreSessions/" + id);
-        const std::string* state = string_at(session, "state");
-        if (state != nullptr && *state == "Working") {
+        if (!is_working(id)) {
+            return true;
+        }
+        try {
+            c_.client.stop_session(id);
+        } catch (const TransientError& e) {
+            // 2026-09-30 (veeam-notes §4.4): a Stop timed out with the session
+            // still Working, and a second Stop minutes later stopped it at
+            // once. Read it again and send one more Stop only if it is still
+            // Working; an auth error or a 4xx is not retried.
+            if (!is_working(id)) {
+                return true;
+            }
+            warn(c_.logger, "veeam_m365: stopping explore session " + id + " failed (" +
+                                e.what() + ") and it is still Working; sending Stop once more");
             c_.client.stop_session(id);
         }
         return true;

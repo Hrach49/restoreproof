@@ -487,6 +487,13 @@ What this means:
   always call it;
 - any browse call on it → **500** `{"message":"Restore session is stopped."}`
   ([`w1.4-session-browse-after-stop`](veeam-lab/w1.4-session-browse-after-stop.json)).
+- **a Stop can hang once** (2026-09-30, W2.6's live dry run): the Stop of explore session
+  e251a437-19d8-49ff-aaa3-b7171f3cbe53 timed out after the 30 s HTTP timeout with 0 bytes
+  received, the session was still `Working` minutes later, and a second Stop (the sweep) returned
+  204 at once; so the Worker, after a Stop that fails as transient (timeout, dropped connection, a
+  transient 5xx), reads the session again and sends one more Stop only if it is still `Working`,
+  at most 2 Stops per session, and never retries an auth error or a 4xx
+  (`ExploreSessions::stop_if_working`, `worker/src/veeam_explore.cpp`).
 
 **Sweep** ([`08-sweep-sessions.ps1`](veeam-m365/08-sweep-sessions.ps1)): list
 `/v8/RestoreSessions?limit=200` ([`w1.4-sweep-list`](veeam-lab/w1.4-sweep-list.json)) and stop

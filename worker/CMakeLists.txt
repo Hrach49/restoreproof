@@ -232,8 +232,9 @@ set_tests_properties(
     PROPERTIES ENVIRONMENT "RP_GRAPH_CERT_PFX_BASE64=set-by-ctest;RP_GRAPH_CERT_PASSWORD=set-by-ctest")
 
 # restore stops before any request in each of these too: the arguments, the
-# config, the Veeam secrets and the Graph certificate variables come first.
-# ctest sets the variables and the last four tests remove them.
+# config, the Veeam secrets and the Graph certificate (opened and checked) come
+# first. ctest sets the variables, the first three of the last four tests
+# remove them, and the last one's PFX isn't Base64.
 rp_add_exe_test("rpworker restore rejects an unknown flag"
     ARGS restore --mails 1 EXIT_CODE 64 STDOUT "" STDERR "${RP_USAGE}")
 rp_add_exe_test("rpworker restore rejects a sample size above 100"
@@ -253,15 +254,15 @@ rp_add_exe_test("rpworker restore needs RP_GRAPH_CERT_PFX_BASE64"
     ARGS restore --config ${CMAKE_CURRENT_SOURCE_DIR}/config.example.json
     UNSET_ENV RP_GRAPH_CERT_PFX_BASE64 RP_GRAPH_CERT_PASSWORD
     EXIT_CODE 1 STDOUT "" STDERR "config error: RP_GRAPH_CERT_PFX_BASE64 is not set")
-rp_add_exe_test("rpworker restore needs RP_GRAPH_CERT_PASSWORD"
+rp_add_exe_test("rpworker restore opens the Graph certificate before any request"
     ARGS restore --config ${CMAKE_CURRENT_SOURCE_DIR}/config.example.json
-    UNSET_ENV RP_GRAPH_CERT_PASSWORD
-    EXIT_CODE 1 STDOUT "" STDERR "config error: RP_GRAPH_CERT_PASSWORD is not set")
+    EXIT_CODE 1 STDOUT ""
+    STDERR "config error: RP_GRAPH_CERT_PFX_BASE64 is not valid Base64 (one line of A-Z, a-z, 0-9, + and /, padded with =)")
 set_tests_properties(
     "rpworker restore needs RP_VEEAM_USERNAME"
     "rpworker restore needs RP_VEEAM_PASSWORD"
     "rpworker restore needs RP_GRAPH_CERT_PFX_BASE64"
-    "rpworker restore needs RP_GRAPH_CERT_PASSWORD"
+    "rpworker restore opens the Graph certificate before any request"
     PROPERTIES ENVIRONMENT
     "RP_VEEAM_USERNAME=set-by-ctest;RP_VEEAM_PASSWORD=set-by-ctest;RP_GRAPH_CERT_PFX_BASE64=set-by-ctest;RP_GRAPH_CERT_PASSWORD=set-by-ctest")
 

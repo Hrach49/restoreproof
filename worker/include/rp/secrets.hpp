@@ -37,6 +37,12 @@ struct Secrets {
 // unpaired surrogate): it can't be converted without changing the secret.
 Secrets load_secrets_from_env();
 
+// Throws ConfigError, key() and message naming the variable ("RP_VEEAM_USERNAME
+// is not set", then RP_VEEAM_PASSWORD), unless both Veeam secrets are set and
+// not empty. The one rule every command and connector that signs in to Veeam
+// checks before any Veeam call.
+void require_veeam_secrets(const Secrets& secrets);
+
 // What may be printed about a secret: "**** (set)" or "(not set)". Never any
 // character of the value, nor its length.
 std::string_view mask_secret(const std::optional<std::string>& secret) noexcept;

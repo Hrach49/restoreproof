@@ -10,6 +10,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <fstream>
@@ -67,7 +68,8 @@ const json& location_of(const json& entry, const std::string& pointer)
     return *it;
 }
 
-// "YYYY-MM-DDTHH:MM:SSZ": digits where the digits are, nothing else.
+// "YYYY-MM-DDTHH:MM:SSZ": digits where the digits are, nothing else, and a
+// real date (leap years counted) and time (no leap second: Graph writes none).
 bool is_whole_second_utc(std::string_view value)
 {
     constexpr std::string_view shape = "dddd-dd-ddTdd:dd:ddZ";
@@ -79,7 +81,17 @@ bool is_whole_second_utc(std::string_view value)
             return false;
         }
     }
-    return true;
+    const auto number = [&](std::size_t at, std::size_t digits) {
+        int out = 0;
+        for (std::size_t i = at; i < at + digits; ++i) {
+            out = out * 10 + (value[i] - '0');
+        }
+        return out;
+    };
+    const std::chrono::year_month_day date{std::chrono::year{number(0, 4)},
+                                           std::chrono::month{static_cast<unsigned>(number(5, 2))},
+                                           std::chrono::day{static_cast<unsigned>(number(8, 2))}};
+    return date.ok() && number(11, 2) < 24 && number(14, 2) < 60 && number(17, 2) < 60;
 }
 
 // Starts with "/" and has no ".." segment.
@@ -123,7 +135,8 @@ CanaryMail read_mail(const json& entry, const std::string& pointer)
     const auto received = entry.find("received_at");
     if (received == entry.end() || !received->is_string() ||
         !is_whole_second_utc(received->get_ref<const std::string&>())) {
-        refuse(pointer + "/received_at", "must be \"YYYY-MM-DDTHH:MM:SSZ\"");
+        refuse(pointer + "/received_at",
+               "must be \"YYYY-MM-DDTHH:MM:SSZ\", a real date and time in UTC");
     }
     mail.received_at = received->get<std::string>();
     const json& location = location_of(entry, pointer);
@@ -190,6 +203,10 @@ CanaryManifest parse_canary_manifest(std::string_view json_text)
         root = json::parse(json_text);
     } catch (const json::parse_error&) {
         throw ManifestError("canary manifest: isn't valid JSON");
+    } catch (const json::exception&) {
+        // out_of_range 406: a number too large for a double. Its message
+        // quotes the number, so it is never passed on (as parse_config).
+        throw ManifestError("canary manifest: isn't valid JSON (a number is out of range)");
     }
     if (!root.is_object()) {
         throw ManifestError("canary manifest: must be a JSON object");

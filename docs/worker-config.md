@@ -1,8 +1,8 @@
 # Worker configuration
 
 How the Worker is configured: the settings file, the secrets, and how to check both with
-`rpworker config check`, then how `rpworker veeam list` and `rpworker graph list` use them,
-and the exit codes of every `rpworker` command. The contract is in `worker/include/rp/config.hpp` and
+`rpworker config check`, then how `rpworker veeam list`, `rpworker graph list` and `rpworker
+restore` use them, and the exit codes of every `rpworker` command. The contract is in `worker/include/rp/config.hpp` and
 `worker/include/rp/secrets.hpp`; where this page and the code disagree, the code wins.
 
 ## Where the file lives
@@ -514,31 +514,41 @@ it). Check the targets before and after with `rpworker graph list`. The code is
 It needs:
 
 - **an elevated shell** (Run as administrator): the restore credential, Veeam's organisation
-  app certificate, is exported per run from `LocalMachine\My`, which needs the machine's
-  private key (`docs/decisions.md` 2026-09-28, W2.4);
-- `RP_VEEAM_USERNAME` and `RP_VEEAM_PASSWORD` (checked first, as for `veeam list`), and
-  `RP_GRAPH_CERT_PFX_BASE64` and `RP_GRAPH_CERT_PASSWORD` for the guard's Graph reads (checked
-  when the restore starts; a missing or bad certificate is exit 1). See "Secrets";
+  app certificate, is exported in memory per restore call from `LocalMachine\My`, which needs
+  the machine's private key (`docs/decisions.md` 2026-09-30, W2.5, point 1). Without
+  elevation the export fails after the guard has passed and the explore sessions are open,
+  before anything is sent: `restore error: veeam_m365: <why the export failed>; the restore
+  was not sent`, exit 4;
+- `RP_VEEAM_USERNAME` and `RP_VEEAM_PASSWORD`, then `RP_GRAPH_CERT_PFX_BASE64` and
+  `RP_GRAPH_CERT_PASSWORD` for the guard's Graph reads, all four checked as set before any
+  Veeam call (`config error: <name> is not set`, exit 1). The certificate itself is opened and
+  checked when the restore starts (a bad one is exit 1 then). See "Secrets";
 - the canary manifest (`lab/seed-manifest.json`, schema `seed-manifest.v1`), whose
-  `tenant_id` must be `graph_tenant_id`.
+  `tenant_id` must be `graph_tenant_id`;
+- no restore session of the Veeam account still `Working`: the restore checks, after the
+  guard and before any explore session, and refuses with `restore error: veeam_m365: Veeam has restore sessions of <account> still
+  Working (<IDs>); stop them first (docs/api/veeam-m365/08-sweep-sessions.ps1); nothing was
+  restored`, exit 4.
 
 The flags come in any order, each at most once:
 
 | Flag | Default | Meaning |
 |---|---|---|
 | `--mail <n>`, `--sp <n>`, `--od <n>` | `sample_mail`, `sample_sp`, `sample_od` | Items to restore per type: 1 to 3 ASCII digits, 0 to 100. At least one of the three must be above 0. |
-| `--point latest\|<id>` | `latest` | The newest restore point, or the one with this ID (1 to 128 ASCII letters, digits and hyphens, ignoring case), as `rpworker veeam list` shows it. |
+| `--point latest\|<id>` | `latest` | The newest restore point (`latest` in any case), or the one with this ID (1 to 128 ASCII letters, digits and hyphens, ignoring case), as `rpworker veeam list` shows it. |
 | `--run-id <id>` | a new one | The run ID the random draw is seeded from: 1 to 128 of `A-Z a-z 0-9 . _ : -`. Without it each run makes `rp-<YYYYMMDDTHHMMSSZ>-<8 random hex digits>` (UTC). Give a recorded one to repeat a sample. |
 | `--canary-cursor <m>,<s>,<o>` | `0,0,0` | Where each type's canary rotation starts: three numbers of 1 to 6 digits, no spaces, each below that type's canaries in the manifest (0 for a type it has none of). Nothing is stored on the Worker: carry the printed next cursor to the next run by hand. |
 | `--manifest <path>` | `seed-manifest.json` beside the config file | The canary manifest: `%ProgramData%\RestoreProof\seed-manifest.json`, or in the `--config` file's folder. |
 | `--config <path>` | `%ProgramData%\RestoreProof\config.json` | As for every command. |
 
 With W2.4's recorded single-mail restore (`worker/tests/restore_command_test.cpp`, through the
-real connector; the total time there is the test's clock):
+real connector; the restore point ID is the fixtures' made-up one, and the total time there is
+the test's clock):
 
 ```
 restore point 2026-09-27T22:00:48.1447833Z  c2f0f2e7-177f-48ac-992b-93a50cf702e35e1c0a24-0000-4000-8000-000000000924  (veeam_org_name RestoreProofLab.onmicrosoft.com)
-run run-0001  seed 8b26e36a  canary cursor 10,0,0 -> 11,0,0
+run run-0001  seed 8b26e36a
+canary cursor 10,0,0 -> 11,0,0
   KIND        REQUESTED  CANARIES  RANDOM  NOTE
   mail        1          1 of 1    0 of 0
   sharepoint  0          0 of 0    0 of 0
@@ -554,21 +564,35 @@ restoring 1 item(s) ...
 status succeeded: 1 of 1 item(s) restored in 0:00:05
 ```
 
-- **The header** (up to `restoring ...`) is printed before the restore starts, which takes
-  minutes, so a run that then fails still shows its run ID, seed and cursors. `CANARIES` is
-  taken of half the size rounded up, `RANDOM` taken of half rounded down; fewer taken is a
-  shortfall, named in `NOTE` (`canary shortfall`, `random shortfall` or both) and never
-  filled. A shortfall with every sampled item restored is still `succeeded`, exit 0.
+- **The header.** Its first two lines (the restore point, the run ID and seed) are printed as
+  soon as the run ID exists, before the sample is chosen, which browses Veeam: a run that fails
+  from then on still shows its run ID. The rest (the canary cursor and the next one, the
+  per-type table, `restoring ...`) is printed before the restore starts, which takes minutes.
+  `CANARIES` is taken of half the size rounded up, `RANDOM` taken of half rounded down; fewer
+  taken is a shortfall, named in `NOTE` (`canary shortfall`, `random shortfall` or both) and
+  never filled. A shortfall with every sampled item restored is still `succeeded`, exit 0. A
+  sample with no item at all (every type asked for fell short entirely) restores nothing: no
+  `restoring ...` line, `restore error: the sample is empty: nothing to restore (<kind>:
+  <shortfall>; ...)`, exit 4.
 - **One row per item**, mail first, then SharePoint, then OneDrive, each type's canaries
   first: `SOURCE` is `canary` or `random`; `OUTCOME` is `restored`, `failed` or `unknown`
   (Veeam said nothing about it), with ` (infrastructure)` when Veeam's message reads as Veeam
-  failing to reach Microsoft 365 rather than the item being wrong; `ELAPSED` is the item's
-  restore session's; `MESSAGE` is Veeam's, `-` if none.
+  failing to reach Microsoft 365, lacking permissions or being throttled rather than the item
+  being wrong; `ELAPSED` is the item's restore session's; `MESSAGE` is Veeam's, `-` if none.
+  An item that failed for an infrastructure reason makes the run an error, not a restore
+  failure: after the status line, `restore error: <n> item(s) failed for an infrastructure
+  reason (Veeam couldn't reach Microsoft 365, lacked permissions or was throttled); this is an
+  error, not a restore failure`, exit 4.
 - **One row per restore session**: Veeam's result, items restored of sent, start and end as
   Veeam wrote them, and the time between (`-` when either doesn't read).
 - **The status line**: the restore's status (`succeeded`, `partial`, `failed` or `not_run`,
   `worker/include/rp/connector.hpp`), items restored of sent, and the time the restore took.
-  Times are `H:MM:SS`, cut to whole seconds.
+  Times are `H:MM:SS`, cut to whole seconds. `not_run` (nothing sent) is followed by `restore
+  error: the restore did not run: nothing was sent (status not_run)`, exit 4.
+- If stdout can't be written after the restore ran, the error says so, since items may now be
+  in the targets: `error: writing the output failed after the restore ran (run <run ID>)`,
+  exit 1. Before the restore, a stdout that can't be written stops the command (`error:
+  unexpected failure`, exit 1).
 - The output is UTF-8; control characters in Veeam's text are shown as spaces. Warnings go to
   stderr only.
 
@@ -588,11 +612,11 @@ The same for every `rpworker` command (`rp::exit_code` in `worker/include/rp/cli
 | Exit code | Meaning | stderr |
 |---|---|---|
 | 0 | Success. | (nothing) |
-| 1 | The config or a secret is missing or invalid, or something unexpected failed (an error no command handles ends here too, never in an `abort()`, whose exit code would be 3). For `graph list` this includes the certificate: `RP_GRAPH_CERT_PFX_BASE64` unset, a PFX that doesn't open with `RP_GRAPH_CERT_PASSWORD`, or a certificate that isn't valid now, all found before any request. For `restore`, also a manifest that doesn't load or whose `tenant_id` isn't `graph_tenant_id`, an unknown connector, and the Graph certificate (read when the restore starts). | `config error: <path>: <message>`, `config error: the --config path is not valid UTF-8`, `config error: the --manifest path is not valid UTF-8`, `config error: canary manifest: <message>`, `config error: cannot find the ProgramData folder`, `config error: environment variable <name> is not valid Unicode`, `config error: RP_VEEAM_USERNAME is not set` (then `RP_VEEAM_PASSWORD`), `config error: RP_GRAPH_CERT_PFX_BASE64 is not set` (or another message naming the certificate's variables), `config error: unexpected failure` or `error: unexpected failure`; an unexpected failure's own message is never shown |
+| 1 | The config or a secret is missing or invalid, or something unexpected failed (an error no command handles ends here too, never in an `abort()`, whose exit code would be 3). For `graph list` this includes the certificate: `RP_GRAPH_CERT_PFX_BASE64` unset, a PFX that doesn't open with `RP_GRAPH_CERT_PASSWORD`, or a certificate that isn't valid now, all found before any request. For `restore`, also a manifest that doesn't load or whose `tenant_id` isn't `graph_tenant_id`, an unknown connector, the Graph certificate's variables unset (before any Veeam call) or its certificate bad (read when the restore starts), and stdout failing after the restore ran. | `config error: <path>: <message>`, `config error: the --config path is not valid UTF-8`, `config error: the --manifest path is not valid UTF-8`, `config error: canary manifest: <message>`, `config error: cannot find the ProgramData folder`, `config error: environment variable <name> is not valid Unicode`, `config error: RP_VEEAM_USERNAME is not set` (then `RP_VEEAM_PASSWORD`), `config error: RP_GRAPH_CERT_PFX_BASE64 is not set` (then, for `restore`, `config error: RP_GRAPH_CERT_PASSWORD is not set`; or another message naming the certificate's variables), for `restore` `config error: unknown connector "<name>" (known: <names>)` and `error: writing the output failed after the restore ran (run <run ID>)`, `config error: unexpected failure` or `error: unexpected failure`; an unexpected failure's own message is never shown |
 | 2 | The service refused the sign-in, the account's role, the token or a permission: Veeam's credentials or role; Entra refusing the Worker app's sign-in; Graph refusing the token, or denying a call for want of a grant (the message names the grant, see `docs/security/graph-permissions.md`). | `veeam error: <message>`, `graph error: <message>` or `restore error: <message>` |
 | 3 | The service couldn't be reached or asked to try later: no connection, a timeout, a TLS handshake that broke off, or a 502, 503 or 504 (for Graph also a 429 or another 5xx) after the retries. | `veeam error: <message>`, `graph error: <message>` or `restore error: <message>` |
-| 4 | Any other error from the service. Veeam: an unknown organisation, a bad request, an unexpected answer, or no organisation named `veeam_org_name`; also Veeam's certificate failing verification, which a retry won't fix: `veeam_ca_file` doesn't hold Veeam's certificate or its CA, or Veeam's certificate was renewed and no longer matches `veeam_cert_sha256` (see "Veeam's default certificate"). Graph: the mailbox, drive or folder not found, a drive or folder the guard refuses (not the RestoreTarget the config says), a download that failed, an unexpected answer. `restore`: the restore-target guard refusing (nothing is restored), a sampled item or the organisation not in Veeam, no restore points, a `--point` ID that isn't one of them, any other error of the restore. | `veeam error: <message>` (`... TLS failure: ...` for a certificate), `veeam error: organisation <name> (veeam_org_name) not found in Veeam`, `graph error: <message>`, `restore error: <message>` (`restore error: target guard: ...` for the guard), `restore error: no restore points for veeam_org_name`, or `restore error: restore point <id> not found for veeam_org_name` |
-| 5 | `restore` only: the restore ran, but its status isn't `succeeded` (`partial`, `failed` or `not_run`; the status line on stdout says which). A result, not an error: a restore that couldn't run at all is 1 to 4. | (nothing) |
+| 4 | Any other error from the service. Veeam: an unknown organisation, a bad request, an unexpected answer, or no organisation named `veeam_org_name`; also Veeam's certificate failing verification, which a retry won't fix: `veeam_ca_file` doesn't hold Veeam's certificate or its CA, or Veeam's certificate was renewed and no longer matches `veeam_cert_sha256` (see "Veeam's default certificate"). Graph: the mailbox, drive or folder not found, a drive or folder the guard refuses (not the RestoreTarget the config says), a download that failed, an unexpected answer. `restore`: the restore-target guard refusing (nothing is restored), a sampled item or the organisation not in Veeam, no restore points, a `--point` ID that isn't one of them, an empty sample, a restore session of the Veeam account still `Working`, the restore credential's export failing (not elevated), a restore that returned `not_run`, an item that failed for an infrastructure reason (an error, never 5), any other error of the restore. | `veeam error: <message>` (`... TLS failure: ...` for a certificate), `veeam error: organisation <name> (veeam_org_name) not found in Veeam`, `graph error: <message>`, `restore error: <message>` (`restore error: target guard: ...` for the guard), `restore error: no restore points for veeam_org_name`, `restore error: restore point <id> not found for veeam_org_name`, `restore error: the sample is empty: nothing to restore (...)`, `restore error: <n> item(s) failed for an infrastructure reason (...); this is an error, not a restore failure`, or `restore error: the restore did not run: nothing was sent (status not_run)` |
+| 5 | `restore` only: the restore ran and its status is `partial` or `failed` (the status line on stdout says which), no item for an infrastructure reason. A result, not an error: a restore that couldn't run at all, returned `not_run` or lost an item for an infrastructure reason is 1 to 4. | (nothing) |
 | 64 | The command line isn't understood. For `restore` also, once the config or the manifest is read: every sample size 0, or a `--canary-cursor` out of the manifest's range. | the usage line; for `restore`, `usage error: every sample size is 0 (--mail, --sp, --od, or config's sample_mail, sample_sp, sample_od): nothing to restore` or `usage error: --canary-cursor: the <kind> cursor must be below <n>, the manifest's <kind> canaries` (`... must be 0: the manifest has no <kind> canaries`) |
 
 The usage line is:

@@ -7,6 +7,49 @@ Format: date, decision, reason, alternatives rejected.
 
 ---
 
+## 2026-10-01 — W2.8 second review: the certificate and the manifest checked before Veeam, and what a restore that failed partway says (proposed)
+
+Amends the 2026-09-30 W2.8 entry (points 3, 4 and 5) after the second W2.8 review (PR #142).
+Proposed: the owner confirms it in the review, or supersedes it.
+
+**Decision.**
+
+1. **The Graph certificate is opened and checked before any Veeam call**, by the same
+   `graph::certificate_from_secrets` the connector uses (not only checked as set). A wrong
+   password, a PFX that isn't Base64 or a certificate that isn't valid now is exit 1 before the
+   sampler browses Veeam. `RP_GRAPH_CERT_PASSWORD` unset is no password, as for `graph list`:
+   the W2.8 amendment that required it set refused a PFX without a password that `graph list`
+   accepts. The check logs nothing; the connector's own load still warns of a certificate about
+   to expire.
+2. **The manifest is checked in full before the connector is made**: its tenant and that no
+   canary is in a restore target, through `sampling::check_manifest`, which `choose_sample` also
+   runs, and the cursor through `sampling::cursor_problem`, which the sampler's own check also
+   uses. One rule and one message each; an unreachable Veeam can no longer turn a manifest that
+   names a restore target into exit 3.
+3. **A restore that fails after it started says items may be in the targets.** An error from
+   `restore_sample` is followed by `restore error: the restore had started: items may be in the
+   restore targets (run <id>)`, unless its message ends with `; nothing was restored`
+   (`connector::kNothingRestored`), which `IConnector::restore_sample` now documents as the
+   connector's promise that nothing was sent. The tables aren't printed: the error carries no
+   partial result (a later task may add one).
+4. **stdout failing after the restore ran** keeps the restore's exit code (5, or 4 with its
+   line) and says the status in its line; a restore that succeeded is exit 1 then, since its
+   output was lost.
+5. `rp::require_veeam_secrets` (`rp/secrets.hpp`) is the one "is not set" rule for the Veeam
+   secrets, used by `veeam list`, `restore` and the `veeam_m365` connector.
+
+**Reason.** The review found the certificate and manifest problems surfacing only after Veeam
+had been browsed (or hidden behind a Veeam error), a PFX `graph list` accepts refused by
+`restore`, and an operator left without a hint that items were restored when a later session
+failed.
+
+**Alternatives rejected.** Keeping only the presence checks (a bad certificate still wastes a
+browse per type); matching every connector message for "sent" or "not sent" (only "nothing was
+restored" is a promise about the whole call; the others speak of one POST); passing the loaded
+certificate into the connector (it makes its Graph client itself, on the first restore).
+
+---
+
 ## 2026-09-30 — W2.8: `rpworker restore`, its flags and output, and exit code 5 (proposed; recorded before the build)
 
 Recorded before any of it was built, with the owner's answers of 2026-09-30 (exit code 5, the

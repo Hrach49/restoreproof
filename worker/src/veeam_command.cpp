@@ -32,11 +32,6 @@ bool parse_list_args(std::span<const std::string_view> args,
     return !args.empty() && args[0] == "list" && parse_config_option(args.subspan(1), config_arg);
 }
 
-bool is_set(const std::optional<std::string>& secret) noexcept
-{
-    return secret && !secret->empty();
-}
-
 // what() is safe to print: VeeamError's message went through rp::redact().
 int report_veeam_error(std::ostream& err, const VeeamError& e, int code)
 {
@@ -143,12 +138,10 @@ int run_veeam_command(std::span<const std::string_view> args, std::ostream& out,
         err << "config error: unexpected failure\n";
         return exit_code::config;
     }
-    if (!is_set(secrets.veeam_username)) {
-        err << "config error: " << kEnvVeeamUsername << " is not set\n";
-        return exit_code::config;
-    }
-    if (!is_set(secrets.veeam_password)) {
-        err << "config error: " << kEnvVeeamPassword << " is not set\n";
+    try {
+        require_veeam_secrets(secrets);
+    } catch (const ConfigError& e) {
+        err << "config error: " << e.what() << '\n';
         return exit_code::config;
     }
     HttpClientOptions http_options;

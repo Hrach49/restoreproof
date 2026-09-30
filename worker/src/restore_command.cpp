@@ -2,6 +2,7 @@
 
 #include <rp/canary_manifest.hpp>
 #include <rp/cli.hpp>
+#include <rp/client_assertion.hpp>
 #include <rp/sample_rng.hpp>
 #include <rp/sample_selector.hpp>
 
@@ -10,6 +11,8 @@
 #include "text_table.hpp"
 #include "text_util.hpp"
 #include "veeam_time.hpp"
+
+#include <spdlog/logger.h>
 
 #include <algorithm>
 #include <chrono>
@@ -165,39 +168,9 @@ bool parse_args(std::span<const std::string_view> args, RestoreArgs& parsed)
     return true;
 }
 
-bool is_set(const std::optional<std::string>& secret) noexcept
-{
-    return secret && !secret->empty();
-}
-
 std::string kind_name(ItemKind kind)
 {
     return std::string{connector::to_string(kind)};
-}
-
-// The cursor's usage error for one type, if it is out of the manifest's range.
-std::optional<std::string> cursor_error(ItemKind kind, std::uint32_t cursor, std::size_t canaries)
-{
-    if (canaries == 0 ? cursor == 0 : cursor < canaries) {
-        return std::nullopt;
-    }
-    const std::string k = kind_name(kind);
-    return "usage error: --canary-cursor: the " + k + " cursor must be " +
-           (canaries == 0 ? "0: the manifest has no " + k + " canaries"
-                          : "below " + std::to_string(canaries) + ", the manifest's " + k +
-                                " canaries");
-}
-
-std::optional<std::string> cursor_error(const sampling::CanaryCursor& cursor,
-                                        const sampling::CanaryManifest& manifest)
-{
-    if (auto e = cursor_error(ItemKind::mail, cursor.mail, manifest.mail.size())) {
-        return e;
-    }
-    if (auto e = cursor_error(ItemKind::sharepoint, cursor.sharepoint, manifest.sharepoint.size())) {
-        return e;
-    }
-    return cursor_error(ItemKind::onedrive, cursor.onedrive, manifest.onedrive.size());
 }
 
 // The manifest --manifest names, or seed-manifest.json beside the config file.
@@ -362,9 +335,12 @@ std::map<ItemKind, KindCounts> kind_counts(const sampling::Selection& s)
 std::string format_result(const connector::RestoreResult& result,
                           const sampling::Selection& selection, std::chrono::nanoseconds total)
 {
-    std::map<std::string, const connector::RestoreSessionResult*> sessions;
+    // Each session's ELAPSED, worked out once: its items' rows repeat it.
+    std::vector<std::string> elapsed;
+    std::map<std::string, std::size_t> session_at;
     for (const connector::RestoreSessionResult& s : result.sessions) {
-        sessions.emplace(s.id, &s);
+        session_at.emplace(s.id, elapsed.size());
+        elapsed.push_back(session_elapsed(s));
     }
     std::string text;
     if (!result.items.empty()) {
@@ -384,12 +360,12 @@ std::string format_result(const connector::RestoreResult& result,
             if (item.infrastructure) {
                 outcome += " (infrastructure)";
             }
-            const auto session = sessions.find(item.session_id);
+            const auto session = session_at.find(item.session_id);
             rows.push_back({"  ",
                             {kind_name(item.kind), source, cell_or_dash(item.name), outcome,
                              cell_or_dash(item.session_id),
-                             session == sessions.end() ? std::string{"-"}
-                                                       : session_elapsed(*session->second),
+                             session == session_at.end() ? std::string{"-"}
+                                                         : elapsed[session->second],
                              cell_or_dash(item.message)}});
         }
         text += '\n' + format_table(rows);
@@ -397,11 +373,12 @@ std::string format_result(const connector::RestoreResult& result,
     if (!result.sessions.empty()) {
         std::vector<TableRow> rows{
             {"  ", {"SESSION", "KIND", "RESULT", "RESTORED", "STARTED", "ENDED", "ELAPSED"}}};
-        for (const connector::RestoreSessionResult& s : result.sessions) {
+        for (std::size_t i = 0; i < result.sessions.size(); ++i) {
+            const connector::RestoreSessionResult& s = result.sessions[i];
             rows.push_back({"  ",
                             {cell_or_dash(s.id), kind_name(s.kind), cell_or_dash(s.result),
                              of(s.items_restored, s.items_sent), cell_or_dash(s.started_at),
-                             cell_or_dash(s.ended_at), session_elapsed(s)}});
+                             cell_or_dash(s.ended_at), elapsed[i]}});
         }
         text += '\n' + format_table(rows);
     }
@@ -450,6 +427,17 @@ int report(std::ostream& err, std::string_view prefix, const std::exception& e, 
     return code;
 }
 
+// Opens and checks the Graph certificate as restore_sample will, so a bad one
+// is said before any Veeam call. Nothing is logged: restore_sample's own load
+// warns of a certificate about to expire.
+void check_graph_certificate(const Secrets& secrets, const connector::ConnectorOptions& options)
+{
+    const auto wall_now =
+        options.wall_now ? options.wall_now() : std::chrono::system_clock::now();
+    graph::certificate_from_secrets(secrets, wall_now,
+                                    std::make_shared<spdlog::logger>("rp-restore-certificate"));
+}
+
 } // namespace
 
 std::string make_run_id()
@@ -491,30 +479,15 @@ int run_restore_command(std::span<const std::string_view> args, std::ostream& ou
         config_path = command_config_path(parsed.config, env.default_config_path);
         config = load_config(config_path);
         secrets = env.load_secrets();
+        require_veeam_secrets(secrets);
+        // restore_sample opens it only after the sample is chosen, which
+        // browses Veeam. An unset password is none, as for `graph list`.
+        check_graph_certificate(secrets, env.connector_options);
     } catch (const ConfigError& e) {
         return report(err, "config error: ", e, exit_code::config);
     } catch (...) {
         // Not a ConfigError, so its message may not be safe to show.
         err << "config error: unexpected failure\n";
-        return exit_code::config;
-    }
-    if (!is_set(secrets.veeam_username)) {
-        err << "config error: " << kEnvVeeamUsername << " is not set\n";
-        return exit_code::config;
-    }
-    if (!is_set(secrets.veeam_password)) {
-        err << "config error: " << kEnvVeeamPassword << " is not set\n";
-        return exit_code::config;
-    }
-    // The restore reads and checks the Graph certificate itself, but only
-    // after the sample is chosen: an unset variable is said now, before any
-    // Veeam call.
-    if (!is_set(secrets.graph_cert_pfx_base64)) {
-        err << "config error: " << kEnvGraphCertPfxBase64 << " is not set\n";
-        return exit_code::config;
-    }
-    if (!is_set(secrets.graph_cert_password)) {
-        err << "config error: " << kEnvGraphCertPassword << " is not set\n";
         return exit_code::config;
     }
     const sampling::SamplePlan plan{parsed.mail.value_or(config.sample_mail),
@@ -527,18 +500,33 @@ int run_restore_command(std::span<const std::string_view> args, std::ostream& ou
     }
     const sampling::CanaryCursor cursor = parsed.cursor.value_or(sampling::CanaryCursor{});
 
+    // Set while restore_sample runs: unless its error promises nothing was
+    // sent, items may be in the targets.
+    std::optional<std::string> restoring_run;
+    const auto restore_note = [&](std::string_view message = {}) {
+        if (restoring_run && !message.ends_with(connector::kNothingRestored)) {
+            err << "restore error: the restore had started: items may be in the restore targets "
+                   "(run "
+                << *restoring_run << ")\n";
+        }
+    };
+    const auto restore_failed = [&](const connector::Error& e, int code) {
+        report(err, "restore error: ", e, code);
+        restore_note(e.what());
+        return code;
+    };
+
     // Everything that can throw is in here, the output included, so no
     // exception escapes.
     try {
         const sampling::CanaryManifest manifest =
             sampling::load_canary_manifest(manifest_path(parsed.manifest, config_path));
-        if (!ascii_iequals(manifest.tenant_id, config.graph_tenant_id)) {
-            // choose_sample's own words, said before any connector call.
-            throw sampling::ManifestError(
-                "canary manifest: /tenant_id: isn't the client's tenant (graph_tenant_id)");
-        }
-        if (const std::optional<std::string> e = cursor_error(cursor, manifest)) {
-            err << *e << '\n';
+        const connector::RestoreTargets targets = connector::RestoreTargets::from_config(config);
+        // choose_sample's own checks, said before the connector is made: an
+        // unreachable Veeam can't hide a manifest that names a restore target.
+        sampling::check_manifest(manifest, targets, config.graph_tenant_id);
+        if (const std::optional<std::string> problem = sampling::cursor_problem(manifest, cursor)) {
+            err << "usage error: --canary-cursor: " << *problem << '\n';
             return exit_code::usage;
         }
 
@@ -572,7 +560,6 @@ int run_restore_command(std::span<const std::string_view> args, std::ostream& ou
         out << format_intro(config.veeam_org_name, *point, run_id);
         flush_or_throw(out);
 
-        const connector::RestoreTargets targets = connector::RestoreTargets::from_config(config);
         const sampling::Selection selection =
             sampling::choose_sample(*source, config.veeam_org_name, *point, targets,
                                     config.graph_tenant_id, plan, manifest, cursor, run_id);
@@ -596,17 +583,24 @@ int run_restore_command(std::span<const std::string_view> args, std::ostream& ou
             return env.now ? env.now() : std::chrono::steady_clock::now();
         };
         const auto started = now();
+        restoring_run = run_id;
         const connector::RestoreResult result = source->restore_sample(spec);
+        restoring_run.reset();
         const auto total = now() - started;
 
         try {
             out << format_result(result, selection, total);
             flush_or_throw(out);
         } catch (...) {
-            // Items may be in the targets now: say so, and which run.
+            // Items may be in the targets now: say so, which run, and how it
+            // went. A restore that succeeded but whose output was lost isn't a
+            // success.
             err << "error: writing the output failed after the restore ran (run " << run_id
-                << ")\n";
-            return exit_code::config;
+                << ", status " << connector::to_string(result.status) << ": "
+                << result.items_restored << " of " << result.items_sent
+                << " item(s) restored)\n";
+            const int code = restore_exit_code(result, err);
+            return code == exit_code::ok ? exit_code::config : code;
         }
         return restore_exit_code(result, err);
     } catch (const ConfigError& e) {
@@ -616,14 +610,15 @@ int run_restore_command(std::span<const std::string_view> args, std::ostream& ou
     } catch (const connector::UnknownConnectorError& e) {
         return report(err, "config error: ", e, exit_code::config);
     } catch (const connector::AuthError& e) {
-        return report(err, "restore error: ", e, exit_code::auth);
+        return restore_failed(e, exit_code::auth);
     } catch (const connector::TransientError& e) {
-        return report(err, "restore error: ", e, exit_code::transient);
+        return restore_failed(e, exit_code::transient);
     } catch (const connector::Error& e) {
-        return report(err, "restore error: ", e, exit_code::service);
+        return restore_failed(e, exit_code::service);
     } catch (...) {
         // Its message, if it has one, may not be safe to show.
         err << "error: unexpected failure\n";
+        restore_note();
         return exit_code::config;
     }
 }

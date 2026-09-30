@@ -166,3 +166,31 @@ TEST_CASE("mask_secret reports an unset or empty secret as not set", "[secrets]"
                                                        std::optional<std::string>{""});
     REQUIRE(rp::mask_secret(secret) == "(not set)");
 }
+
+TEST_CASE("require_veeam_secrets names the first Veeam secret that is unset or empty",
+          "[secrets]")
+{
+    using Secret = std::optional<std::string>;
+    const auto [username, password, name] = GENERATE(table<Secret, Secret, std::string>({
+        {std::nullopt, "p", "RP_VEEAM_USERNAME"},
+        {std::string{}, "p", "RP_VEEAM_USERNAME"},
+        {std::nullopt, std::nullopt, "RP_VEEAM_USERNAME"},
+        {"u", std::nullopt, "RP_VEEAM_PASSWORD"},
+        {"u", std::string{}, "RP_VEEAM_PASSWORD"},
+    }));
+    const rp::Secrets secrets{username, password, std::nullopt, std::nullopt};
+
+    try {
+        rp::require_veeam_secrets(secrets);
+        FAIL("require_veeam_secrets did not throw");
+    } catch (const rp::ConfigError& e) {
+        CHECK(e.key() == name);
+        CHECK(std::string{e.what()} == name + " is not set");
+    }
+}
+
+TEST_CASE("require_veeam_secrets accepts both Veeam secrets set, whatever the Graph ones",
+          "[secrets]")
+{
+    CHECK_NOTHROW(rp::require_veeam_secrets(rp::Secrets{"u", "p", std::nullopt, std::nullopt}));
+}

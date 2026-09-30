@@ -83,10 +83,13 @@ std::string format_elapsed(std::chrono::nanoseconds elapsed);
 // commas, nothing else (default 0,0,0). --manifest defaults to
 // seed-manifest.json in the config file's folder.
 //
-// In this order: the arguments; the config, the Veeam secrets and the Graph
-// certificate variables (set, not yet read); the manifest (and its tenant
-// against graph_tenant_id, and the cursor against its canaries); the
-// connector; its restore points for veeam_org_name and the one chosen; the
+// In this order: the arguments; the config, the Veeam secrets
+// (rp::require_veeam_secrets) and the Graph certificate, opened and checked
+// as restore_sample will (graph::certificate_from_secrets at
+// connector_options.wall_now, or now: an unset RP_GRAPH_CERT_PASSWORD is no
+// password, as for `graph list`); the manifest, sampling::check_manifest
+// (its tenant, no canary in a restore target) and sampling::cursor_problem;
+// the connector; its restore points for veeam_org_name and the one chosen; the
 // run ID; the first two lines, flushed; sampling::choose_sample (it browses
 // Veeam); the rest of the header, flushed; restore_sample; the tables and the
 // status line. Prints to `out`, as UTF-8:
@@ -132,20 +135,21 @@ std::string format_elapsed(std::chrono::nanoseconds elapsed);
 //    the manifest has no <kind> canaries"), <kind> mail, sharepoint or onedrive;
 //  - 1: "config error: <message>" for a ConfigError (a config that doesn't
 //    load, a --config or --manifest path that isn't UTF-8, a secret that can't
-//    be read, "RP_VEEAM_USERNAME is not set", then RP_VEEAM_PASSWORD,
-//    RP_GRAPH_CERT_PFX_BASE64 and RP_GRAPH_CERT_PASSWORD, all before any
-//    Veeam call; and a bad Graph certificate, which restore_sample reads and
-//    checks first), a
-//    sampling::ManifestError ("canary manifest: ...", a manifest that doesn't
-//    load or whose tenant_id isn't graph_tenant_id) and an
+//    be read, "RP_VEEAM_USERNAME is not set", then RP_VEEAM_PASSWORD, and a
+//    Graph certificate that certificate_from_secrets refuses (unset, not
+//    Base64, a password that doesn't open it, expired, ...), all before any
+//    Veeam call), a sampling::ManifestError ("canary manifest: ...", a
+//    manifest that doesn't load, whose tenant_id isn't graph_tenant_id or
+//    that names a restore target, all before the connector is made) and an
 //    UnknownConnectorError; "config error: unexpected failure" for any other
 //    exception while loading the config and secrets, and "error: unexpected
 //    failure" for any other exception after (a failed write or flush of `out`
 //    before the restore included: it stops the command before choose_sample
 //    or restore_sample); neither ever shows the exception's message. A failed
 //    write or flush of `out` after restore_sample returned is "error: writing
-//    the output failed after the restore ran (run <run ID>)": items may be in
-//    the restore targets;
+//    the output failed after the restore ran (run <run ID>, status <status>:
+//    <restored> of <sent> item(s) restored)", then the restore's own exit
+//    code and line as below (1 when that is 0: its output was lost);
 //  - 2: "restore error: <what()>" for a connector::AuthError;
 //  - 3: the same for a connector::TransientError (Veeam unreachable);
 //  - 4: the same for any other connector::Error: a SafetyViolation ("restore
@@ -160,6 +164,10 @@ std::string format_elapsed(std::chrono::nanoseconds elapsed);
 //    is an error, not a restore failure" when any item not restored is marked
 //    infrastructure (whatever the status), and "restore error: the restore did
 //    not run: nothing was sent (status not_run)";
+//  - after an error restore_sample threw (2, 3, 4, or 1 for an unexpected
+//    one; not a ConfigError), unless its message ends with
+//    connector::kNothingRestored, a second line: "restore error: the restore
+//    had started: items may be in the restore targets (run <run ID>)";
 //  - 5 (exit_code::restore): the restore ran and its status is partial or
 //    failed, no item for an infrastructure reason; the tables and the status
 //    line are printed, nothing on `err`;

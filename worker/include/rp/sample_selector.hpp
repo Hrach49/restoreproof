@@ -16,6 +16,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -107,13 +108,29 @@ public:
                             const connector::CandidatePool& pool, std::string_view run_id);
 };
 
+// Why `cursor` is out of `manifest`'s range, for the first type that is (mail,
+// sharepoint, onedrive): "the <kind> cursor must be below <n>, the manifest's
+// <kind> canaries", or "the <kind> cursor must be 0: the manifest has no <kind>
+// canaries"; nullopt when every cursor is in range. The one cursor rule:
+// select throws std::invalid_argument("sampler: " + it), and `rpworker
+// restore` says it as a usage error before any Veeam call.
+std::optional<std::string> cursor_problem(const CanaryManifest& manifest,
+                                          const CanaryCursor& cursor);
+
+// The manifest against the client, pure: manifest.tenant_id is
+// graph_tenant_id (ASCII case-insensitive; else ManifestError "canary
+// manifest: /tenant_id: isn't the client's tenant (graph_tenant_id)"), and no
+// canary is in a restore target (ManifestError "canary manifest:
+// /entries/<n>/location/<field>: ..."). choose_sample runs it before the
+// connector is called; `rpworker restore` before the connector is made.
+void check_manifest(const CanaryManifest& manifest, const connector::RestoreTargets& targets,
+                    const std::string& graph_tenant_id);
+
 // A run's sample: connector.list_candidates for the types whose random half is
 // above 0 (not called when none is), then SampleSelector::select. The query
 // excludes the manifest's canary libraries, subjects and names. Checks first,
 // before the connector is called: the run ID, the plan and cursor as select
-// does, manifest.tenant_id against graph_tenant_id (ASCII case-insensitive;
-// else ManifestError), and no canary in a restore target (ManifestError, as
-// select). The connector's errors pass out.
+// does, then check_manifest. The connector's errors pass out.
 Selection choose_sample(connector::IConnector& connector, const std::string& client_ref,
                         const connector::RestorePoint& point,
                         const connector::RestoreTargets& targets,

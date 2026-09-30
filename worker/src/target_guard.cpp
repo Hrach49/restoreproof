@@ -25,7 +25,7 @@ namespace {
 // How the shared Graph checks word a refusal here.
 constexpr graph::TargetCheckWording kGuardWording{"restores only into", "nothing was restored"};
 
-constexpr std::string_view kNothingRestored = "; nothing was restored";
+using connector::kNothingRestored;
 
 } // namespace
 

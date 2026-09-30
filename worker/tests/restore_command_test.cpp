@@ -309,6 +309,8 @@ struct Harness {
             return std::make_unique<ForwardingConnector>(fake);
         };
         env.connector_options.logger = logger;
+        // The certificate is checked at the time the lab's is valid.
+        env.connector_options.wall_now = [] { return rp::test::graph_lab::kNow; };
         env.make_run_id = [this] {
             ++run_id_calls;
             return kGeneratedRunId;
@@ -363,8 +365,9 @@ struct Harness {
     std::filesystem::path manifest_path;
     FakeConnector fake;
     std::function<rp::Secrets()> load_secrets = [] {
-        return rp::Secrets{"rp-veeam", "Sentinel-Veeam-Password-9c2e", "UEZYIGJ5dGVz",
-                           "Sentinel-Pfx-Password-5d1a"};
+        return rp::Secrets{"rp-veeam", "Sentinel-Veeam-Password-9c2e",
+                           rp::test::graph_lab::pfx_base64(),
+                           std::string{rp::test::graph_lab::kPfxPassword}};
     };
     std::function<void()> connector_throw;
     bool give_connector = true;
@@ -548,25 +551,32 @@ TEST_CASE("restore: without --config it reads the default config", "[restore_com
     CHECK(lab.default_path_calls == 1);
 }
 
-TEST_CASE("restore: both Veeam secrets and both Graph certificate variables are needed, before "
-          "any Veeam call",
+TEST_CASE("restore: both Veeam secrets and the Graph certificate are needed, before any Veeam "
+          "call",
           "[restore_command]")
 {
     using Secret = std::optional<std::string>;
-    const auto [username, password, pfx, pfx_password, message] =
-        GENERATE(table<Secret, Secret, Secret, Secret, std::string>({
-            {std::nullopt, "p", "x", "x", "config error: RP_VEEAM_USERNAME is not set\n"},
-            {std::string{}, "p", "x", "x", "config error: RP_VEEAM_USERNAME is not set\n"},
-            {"u", std::nullopt, "x", "x", "config error: RP_VEEAM_PASSWORD is not set\n"},
-            {"u", std::string{}, "x", "x", "config error: RP_VEEAM_PASSWORD is not set\n"},
-            {"u", "p", std::nullopt, "x", "config error: RP_GRAPH_CERT_PFX_BASE64 is not set\n"},
+    const Secret pfx = rp::test::graph_lab::pfx_base64();
+    const Secret pfx_password = std::string{rp::test::graph_lab::kPfxPassword};
+    const auto [username, password, pfx_value, password_value, message] =
+        GENERATE_COPY(table<Secret, Secret, Secret, Secret, std::string>({
+            {std::nullopt, "p", pfx, pfx_password, "config error: RP_VEEAM_USERNAME is not set\n"},
+            {std::string{}, "p", pfx, pfx_password, "config error: RP_VEEAM_USERNAME is not set\n"},
+            {"u", std::nullopt, pfx, pfx_password, "config error: RP_VEEAM_PASSWORD is not set\n"},
+            {"u", std::string{}, pfx, pfx_password, "config error: RP_VEEAM_PASSWORD is not set\n"},
+            {"u", "p", std::nullopt, pfx_password,
+             "config error: RP_GRAPH_CERT_PFX_BASE64 is not set\n"},
             {"u", "p", std::string{}, std::nullopt,
              "config error: RP_GRAPH_CERT_PFX_BASE64 is not set\n"},
-            {"u", "p", "x", std::nullopt, "config error: RP_GRAPH_CERT_PASSWORD is not set\n"},
-            {"u", "p", "x", std::string{}, "config error: RP_GRAPH_CERT_PASSWORD is not set\n"},
+            {"u", "p", pfx, std::nullopt,
+             "config error: RP_GRAPH_CERT_PASSWORD is not set, and the PFX in "
+             "RP_GRAPH_CERT_PFX_BASE64 needs a password\n"},
+            {"u", "p", pfx, std::string{},
+             "config error: RP_GRAPH_CERT_PASSWORD is not set, and the PFX in "
+             "RP_GRAPH_CERT_PFX_BASE64 needs a password\n"},
         }));
     Harness lab;
-    lab.load_secrets = [=] { return rp::Secrets{username, password, pfx, pfx_password}; };
+    lab.load_secrets = [=] { return rp::Secrets{username, password, pfx_value, password_value}; };
 
     const Run run = lab.run({});
 
@@ -574,6 +584,70 @@ TEST_CASE("restore: both Veeam secrets and both Graph certificate variables are 
     CHECK(run.out.empty());
     CHECK(run.err == message);
     CHECK(lab.make_connector_calls == 0);
+}
+
+TEST_CASE("restore: a Graph certificate that doesn't open or isn't valid is a config error, "
+          "before any Veeam call",
+          "[restore_command]")
+{
+    namespace gl = rp::test::graph_lab;
+    const auto [what, message] = GENERATE(table<std::string, std::string>({
+        {"wrong password",
+         "config error: RP_GRAPH_CERT_PASSWORD does not open the PFX in RP_GRAPH_CERT_PFX_BASE64\n"},
+        {"not Base64", "config error: RP_GRAPH_CERT_PFX_BASE64"},
+        {"expired", "config error: "},
+    }));
+    CAPTURE(what);
+    Harness lab;
+    std::string pfx = gl::pfx_base64();
+    std::string password = gl::kPfxPassword;
+    if (what == "wrong password") {
+        password = "Sentinel-Wrong-Password-7e21";
+    } else if (what == "not Base64") {
+        pfx = "not base64 at all!";
+    } else {
+        pfx = rp::test::to_base64(rp::test::make_pfx(
+            rp::test::make_client_cert(
+                "RestoreProof Worker",
+                rp::test::ClientCertOptions{.not_before = -7200,
+                                            .not_after = -3600,
+                                            .now = std::chrono::system_clock::to_time_t(gl::kNow)}),
+            gl::kPfxPassword));
+    }
+    lab.load_secrets = [=] { return rp::Secrets{"u", "p", pfx, password}; };
+
+    const Run run = lab.run({});
+
+    CHECK(run.exit_code == rp::exit_code::config);
+    CHECK(run.out.empty());
+    if (what == "wrong password") {
+        CHECK(run.err == message);
+    } else {
+        CHECK_THAT(run.err, StartsWith(message));
+    }
+    CHECK_THAT(run.err, !ContainsSubstring(password));
+    CHECK(lab.make_connector_calls == 0);
+}
+
+TEST_CASE("restore: a PFX without a password needs no RP_GRAPH_CERT_PASSWORD, as graph list",
+          "[restore_command]")
+{
+    namespace gl = rp::test::graph_lab;
+    using Secret = std::optional<std::string>;
+    const Secret password = GENERATE(Secret{std::nullopt}, Secret{std::string{}});
+    Harness lab;
+    const std::string pfx = rp::test::to_base64(rp::test::make_pfx(
+        rp::test::make_client_cert(
+            "RestoreProof Worker",
+            rp::test::ClientCertOptions{.now = std::chrono::system_clock::to_time_t(gl::kNow)}),
+        ""));
+    lab.load_secrets = [=] { return rp::Secrets{"u", "p", pfx, password}; };
+
+    const Run run = lab.run({"--run-id", kRunId, "--mail", "1", "--sp", "0", "--od", "0"});
+
+    CHECK(run.exit_code == rp::exit_code::ok);
+    CHECK(run.err.empty());
+    CHECK(lab.fake.restore_calls == 1);
 }
 
 TEST_CASE("restore: secrets that fail to load are config errors; an unexpected one hides its "
@@ -634,6 +708,28 @@ TEST_CASE("restore: a manifest that doesn't load or isn't the tenant's is a conf
     CHECK(lab.make_connector_calls == 0);
 }
 
+TEST_CASE("restore: a manifest that names a restore target is a config error, before the "
+          "connector",
+          "[restore_command]")
+{
+    Harness lab;
+    json manifest = json::parse(lab_manifest_text());
+    // Entry 30 is the first OneDrive canary.
+    REQUIRE(manifest["entries"][30]["kind"] == "onedrive_file");
+    manifest["entries"][30]["location"]["folder_path"] = "/RestoreTarget";
+    lab.dir.write("seed-manifest.json", manifest.dump());
+    // Veeam unreachable: the manifest must be refused first, never exit 3.
+    lab.fake.points_throw = [] { throw connector::TransientError("Veeam unreachable"); };
+
+    const Run run = lab.run({});
+
+    CHECK(run.exit_code == rp::exit_code::config);
+    CHECK(run.out.empty());
+    CHECK(run.err == "config error: canary manifest: /entries/30/location/folder_path: is in a "
+                     "restore target (a RestoreTarget folder)\n");
+    CHECK(lab.make_connector_calls == 0);
+}
+
 TEST_CASE("restore: --manifest reads the file it names, not the one beside the config",
           "[restore_command]")
 {
@@ -663,9 +759,14 @@ TEST_CASE("restore: a --manifest path that isn't UTF-8 is a config error", "[res
 
 // --- Failure paths: the connector --------------------------------------------------
 
-TEST_CASE("restore: each failure of the restore has its exit code; the header is already out",
+TEST_CASE("restore: each failure of the restore has its exit code; the header is already out, "
+          "and items may be in the targets",
           "[restore_command]")
 {
+    // restore_sample may have sent a restore before it threw.
+    const std::string started =
+        "restore error: the restore had started: items may be in the restore targets (run "
+        "run-0001)\n";
     struct Case {
         std::string name;
         std::function<void()> raise;
@@ -674,22 +775,32 @@ TEST_CASE("restore: each failure of the restore has its exit code; the header is
     };
     const std::vector<Case> cases{
         {"AuthError", [] { throw connector::AuthError("Veeam refused the credentials"); },
-         rp::exit_code::auth, "restore error: Veeam refused the credentials\n"},
+         rp::exit_code::auth, "restore error: Veeam refused the credentials\n" + started},
         {"TransientError", [] { throw connector::TransientError("Veeam unreachable"); },
-         rp::exit_code::transient, "restore error: Veeam unreachable\n"},
+         rp::exit_code::transient, "restore error: Veeam unreachable\n" + started},
         {"SafetyViolation",
          [] {
              throw connector::SafetyViolation(
                  "target guard: mail item 0 is sampled from a restore target");
          },
          rp::exit_code::service,
-         "restore error: target guard: mail item 0 is sampled from a restore target\n"},
+         "restore error: target guard: mail item 0 is sampled from a restore target\n" + started},
         {"NotFoundError", [] { throw connector::NotFoundError("mail item 0 isn't in the restore point"); },
-         rp::exit_code::service, "restore error: mail item 0 isn't in the restore point\n"},
+         rp::exit_code::service, "restore error: mail item 0 isn't in the restore point\n" + started},
         {"NotImplementedError", [] { throw connector::NotImplementedError("not here"); },
-         rp::exit_code::service, "restore error: not here\n"},
+         rp::exit_code::service, "restore error: not here\n" + started},
+        // The connector's promise that no restore was sent: no note.
+        {"nothing restored",
+         [] {
+             throw connector::SafetyViolation(
+                 "target guard: mail item 0 is sampled from a restore target; nothing was "
+                 "restored");
+         },
+         rp::exit_code::service,
+         "restore error: target guard: mail item 0 is sampled from a restore target; nothing "
+         "was restored\n"},
         {"Error", [] { throw connector::Error("Veeam said no"); }, rp::exit_code::service,
-         "restore error: Veeam said no\n"},
+         "restore error: Veeam said no\n" + started},
         {"ConfigError",
          [] {
              throw rp::ConfigError("RP_GRAPH_CERT_PFX_BASE64",
@@ -697,9 +808,9 @@ TEST_CASE("restore: each failure of the restore has its exit code; the header is
          },
          rp::exit_code::config, "config error: RP_GRAPH_CERT_PFX_BASE64 is not valid Base64\n"},
         {"unexpected", [] { throw std::runtime_error("SENTINEL-UNSAFE-MESSAGE"); },
-         rp::exit_code::config, "error: unexpected failure\n"},
+         rp::exit_code::config, "error: unexpected failure\n" + started},
     };
-    const Case& c = cases[GENERATE(range(std::size_t{0}, std::size_t{8}))];
+    const Case& c = cases[GENERATE(range(std::size_t{0}, std::size_t{9}))];
     CAPTURE(c.name);
     Harness lab;
     lab.fake.pool.mail = {carol_mail(1)};
@@ -930,20 +1041,47 @@ TEST_CASE("restore: the run ID is flushed before the sample is chosen, the heade
     CHECK(lab.fake.restore_calls == 1);
 }
 
-TEST_CASE("restore: a stdout that fails after the restore ran says so, with the run ID",
+TEST_CASE("restore: a stdout that fails after the restore ran says so, with the run ID and the "
+          "restore's status and exit code",
           "[restore_command]")
 {
+    const auto [status, infrastructure, code, err] =
+        GENERATE(table<connector::RestoreStatus, bool, int, std::string>({
+            // A restore that succeeded but whose output was lost isn't a success.
+            {connector::RestoreStatus::succeeded, false, rp::exit_code::config,
+             "error: writing the output failed after the restore ran (run run-0001, status "
+             "succeeded: 3 of 3 item(s) restored)\n"},
+            {connector::RestoreStatus::partial, false, rp::exit_code::restore,
+             "error: writing the output failed after the restore ran (run run-0001, status "
+             "partial: 3 of 3 item(s) restored)\n"},
+            {connector::RestoreStatus::partial, true, rp::exit_code::service,
+             "error: writing the output failed after the restore ran (run run-0001, status "
+             "partial: 3 of 3 item(s) restored)\n"
+             "restore error: 1 item(s) failed for an infrastructure reason (Veeam couldn't "
+             "reach Microsoft 365, lacked permissions or was throttled); this is an error, not "
+             "a restore failure\n"},
+        }));
     Harness lab;
     lab.fake.pool.mail = {carol_mail(1)};
+    lab.fake.answer = [status = status, infrastructure = infrastructure](
+                          const connector::RestoreSpec& spec) {
+        connector::RestoreResult result = restored(spec);
+        result.status = status;
+        if (infrastructure) {
+            result.items.back().outcome = connector::ItemOutcome::failed;
+            result.items.back().infrastructure = true;
+        }
+        return result;
+    };
     // The header fits; the tables don't.
     RecordingStreamBuf buffer(expected_header().size() + 5);
     std::ostream out(&buffer);
 
-    const auto [code, err] =
+    const auto [exit_code, error] =
         lab.run_to({"--run-id", kRunId, "--mail", "2", "--sp", "1", "--od", "0"}, out);
 
-    CHECK(code == rp::exit_code::config);
-    CHECK(err == "error: writing the output failed after the restore ran (run run-0001)\n");
+    CHECK(exit_code == code);
+    CHECK(error == err);
     CHECK(lab.fake.restore_calls == 1);
     CHECK_THAT(buffer.text, StartsWith(expected_header()));
 }

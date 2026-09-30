@@ -39,6 +39,7 @@ add_library(rpcore STATIC
     src/http_client.cpp
     src/name_key.cpp
     src/redact.cpp
+    src/restore_command.cpp
     src/retry_policy.cpp
     src/sample_rng.cpp
     src/sample_selector.cpp
@@ -112,6 +113,7 @@ add_executable(rptests
     tests/http_client_tls_test.cpp
     tests/name_key_test.cpp
     tests/redact_test.cpp
+    tests/restore_command_test.cpp
     tests/retry_policy_test.cpp
     tests/sample_rng_test.cpp
     tests/sample_selector_live_test.cpp
@@ -172,7 +174,7 @@ endfunction()
 
 rp_add_exe_test("rpworker --version prints the project version"
     ARGS --version EXIT_CODE 0 STDOUT ${PROJECT_VERSION} STDERR "")
-set(RP_USAGE "usage: rpworker --version | rpworker config check [--config <path>] | rpworker veeam list [--config <path>] | rpworker graph list [--hash] [--config <path>]")
+set(RP_USAGE "usage: rpworker --version | rpworker config check [--config <path>] | rpworker veeam list [--config <path>] | rpworker graph list [--hash] [--config <path>] | rpworker restore [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>]")
 rp_add_exe_test("rpworker rejects unknown arguments"
     ARGS --no-such-option EXIT_CODE 64 STDOUT "" STDERR "${RP_USAGE}")
 rp_add_exe_test("rpworker config without a subcommand prints usage"
@@ -228,6 +230,29 @@ rp_add_exe_test("rpworker graph list needs RP_GRAPH_CERT_PFX_BASE64"
 set_tests_properties(
     "rpworker graph list needs RP_GRAPH_CERT_PFX_BASE64"
     PROPERTIES ENVIRONMENT "RP_GRAPH_CERT_PFX_BASE64=set-by-ctest;RP_GRAPH_CERT_PASSWORD=set-by-ctest")
+
+# restore stops before any request in each of these too: the arguments, the
+# config and the Veeam secrets come first. ctest sets both variables and the
+# last two tests remove them.
+rp_add_exe_test("rpworker restore rejects an unknown flag"
+    ARGS restore --mails 1 EXIT_CODE 64 STDOUT "" STDERR "${RP_USAGE}")
+rp_add_exe_test("rpworker restore rejects a sample size above 100"
+    ARGS restore --mail 101 EXIT_CODE 64 STDOUT "" STDERR "${RP_USAGE}")
+rp_add_exe_test("rpworker restore reports a missing config file"
+    ARGS restore --config no-such-config.json EXIT_CODE 1 STDOUT ""
+    STDERR "config error: no-such-config.json: cannot read config file")
+rp_add_exe_test("rpworker restore needs RP_VEEAM_USERNAME"
+    ARGS restore --config ${CMAKE_CURRENT_SOURCE_DIR}/config.example.json
+    UNSET_ENV RP_VEEAM_USERNAME RP_VEEAM_PASSWORD
+    EXIT_CODE 1 STDOUT "" STDERR "config error: RP_VEEAM_USERNAME is not set")
+rp_add_exe_test("rpworker restore needs RP_VEEAM_PASSWORD"
+    ARGS restore --config ${CMAKE_CURRENT_SOURCE_DIR}/config.example.json
+    UNSET_ENV RP_VEEAM_PASSWORD
+    EXIT_CODE 1 STDOUT "" STDERR "config error: RP_VEEAM_PASSWORD is not set")
+set_tests_properties(
+    "rpworker restore needs RP_VEEAM_USERNAME"
+    "rpworker restore needs RP_VEEAM_PASSWORD"
+    PROPERTIES ENVIRONMENT "RP_VEEAM_USERNAME=set-by-ctest;RP_VEEAM_PASSWORD=set-by-ctest")
 
 # The checker itself must fail on a wrong exit code or wrong output, or the two
 # tests above would prove nothing.

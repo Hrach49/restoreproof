@@ -63,7 +63,10 @@ using namespace rp::test::graph_lab;
 
 const std::string kUsage = "usage: rpworker --version | rpworker config check [--config <path>] | "
                            "rpworker veeam list [--config <path>] | "
-                           "rpworker graph list [--hash] [--config <path>]\n";
+                           "rpworker graph list [--hash] [--config <path>] | "
+                           "rpworker restore [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] "
+                           "[--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] "
+                           "[--config <path>]\n";
 
 // The download link's credential: in no output, error or log line.
 const std::string kTempauth = "v1.SENTINEL-command-tempauth";

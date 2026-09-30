@@ -18,7 +18,10 @@ namespace {
 
 const std::string kUsage = "usage: rpworker --version | rpworker config check [--config <path>] | "
                            "rpworker veeam list [--config <path>] | "
-                           "rpworker graph list [--hash] [--config <path>]\n";
+                           "rpworker graph list [--hash] [--config <path>] | "
+                           "rpworker restore [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] "
+                           "[--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] "
+                           "[--config <path>]\n";
 
 const std::string kConfigJson = R"({
     "cloud_url": "https://cloud.example.invalid",

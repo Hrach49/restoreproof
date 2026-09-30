@@ -5,6 +5,7 @@
 
 #include "target_guard_refuse.hpp"
 #include "text_util.hpp"
+#include "uuid.hpp"
 
 #include <spdlog/spdlog.h>
 
@@ -98,6 +99,10 @@ CheckedTargets TargetGuard::check_spec(const connector::RestoreSpec& spec)
             throw refused(which,
                           " is sampled from a restore target (the library test_library_id names)");
         }
+        // W2.5 finds the source library by its list ID: it must be one.
+        if (!is_uuid(item.list_id)) {
+            throw refused(which, "'s list_id isn't a GUID");
+        }
     }
     for (std::size_t i = 0; i < spec.onedrive.size(); ++i) {
         const connector::OneDriveSelector& item = spec.onedrive[i];
@@ -135,6 +140,14 @@ CheckedTargets TargetGuard::check_spec(const connector::RestoreSpec& spec)
     }
     if (wrong) {
         throw refusal(options_, "target guard: " + *wrong);
+    }
+    // The RestoreTarget library is in every backup since it was made: never a
+    // source, whatever drive ID the item names.
+    for (std::size_t i = 0; i < spec.sharepoint.size(); ++i) {
+        if (ascii_iequals(spec.sharepoint[i].list_id, checked.library_->list_id)) {
+            throw refused("sharepoint item " + std::to_string(i),
+                          " is sampled from a restore target (the RestoreTarget library's list)");
+        }
     }
     return checked;
 }

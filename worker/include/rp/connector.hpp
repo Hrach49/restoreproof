@@ -11,6 +11,7 @@
 #include <rp/config.hpp>
 
 #include <cstddef>
+#include <cstdint>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -69,25 +70,36 @@ private:
 };
 
 // The items to restore, one selector per item, shaped like the entries of
-// lab/seed-manifest.json. W2.5 and W2.6 may add fields (such as an item ID
-// from the backup's own listing).
+// lab/seed-manifest.json. W2.5 added what the manifest has and the backup
+// product needs to find an item without a Graph read of its source
+// (docs/decisions.md 2026-09-30, W2.5 point 3).
 struct MailSelector {
     std::string mailbox; // the source mailbox, e.g. alice@<domain>
     std::string folder;  // e.g. Inbox
     std::string subject;
+    // Optional: when the message was received, "YYYY-MM-DDTHH:MM:SSZ" (the
+    // manifest's received_at); set, the backup's copy must agree to the second.
+    std::string received_at;
 };
 
 struct SharePointSelector {
-    std::string site_id;     // Graph site ID
+    std::string site_id;     // Graph site ID, "<host>,<site GUID>,<web GUID>"
     std::string drive_id;    // Graph drive ID of the library
     std::string folder_path; // e.g. "/"
     std::string name;        // file name
+    // The library's list GUID (the manifest's location.list_id). Required: the
+    // library is found by it, never by its (localised) name.
+    std::string list_id;
+    // Optional: the size SharePoint stores (the manifest's stored_size); -1 = unchecked.
+    std::int64_t size = -1;
 };
 
 struct OneDriveSelector {
     std::string user;        // the drive's owner, e.g. alice@<domain>
     std::string folder_path; // e.g. "/RestoreTest"
     std::string name;        // file name
+    // Optional: the size OneDrive stores (the manifest's stored_size); -1 = unchecked.
+    std::int64_t size = -1;
 };
 
 // One restore_sample call. RestoreTargets has no default, so a spec can't be
@@ -111,19 +123,65 @@ struct RestoreSpec {
 // Decided in this order; the first that fits wins:
 //  1. not_run: nothing was sent to restore (an empty spec).
 //  2. failed: nothing was restored, whatever the sessions' results say
-//     (Veeam: every session Failed, or 0 restored in total, so a Warning or a
-//     Success with 0 restored is failed too).
-//  3. succeeded: every restore session succeeded and restored every item sent
-//     (Veeam: result Success and restoredItemsCount equal to the items sent).
+//     (Veeam: 0 restored in total, so a Warning or a Success with 0 restored
+//     is failed too).
+//  3. succeeded: every restore session succeeded and every item sent is
+//     shown restored (Veeam: result Success, restoredItemsCount equal to the
+//     items sent, a Restore event with status Success for each item's name,
+//     and for a file a Statistics entry with status Success for its ID).
 //  4. partial: anything else: something was restored, but not cleanly (Veeam:
 //     Warning; Failed beside restored items; Success with a short
-//     restoredItemsCount).
-// A failure to run at all (unreachable, refused, a guard violation) is an
-// exception, never a status.
+//     restoredItemsCount or an item without its Success event).
+// A failure to run at all (unreachable, refused, a guard violation, a session
+// that restored nothing because the product couldn't reach Microsoft 365, a
+// restore whose session couldn't be pinned down or read) is an exception,
+// never a status.
 enum class RestoreStatus { not_run, succeeded, partial, failed };
 
 // "not_run", "succeeded", "partial", "failed".
 std::string_view to_string(RestoreStatus status) noexcept;
+
+// Which kind of item: a mail, a SharePoint file, a OneDrive file.
+enum class ItemKind { mail, sharepoint, onedrive };
+
+// "mail", "sharepoint", "onedrive".
+std::string_view to_string(ItemKind kind) noexcept;
+
+// What the backup product says became of one item.
+enum class ItemOutcome {
+    unknown,  // it said nothing about the item
+    restored, // it says restored
+    failed,   // it says the item's restore failed
+};
+
+// "unknown", "restored", "failed".
+std::string_view to_string(ItemOutcome outcome) noexcept;
+
+// One item of the spec, as the backup product reported it.
+struct ItemRestoreResult {
+    ItemKind kind = ItemKind::mail;
+    std::string name;       // the mail's subject or the file's name
+    std::string session_id; // the restore session it was sent in
+    ItemOutcome outcome = ItemOutcome::unknown;
+    // The product's message about it (or, with none, about its session), one
+    // line, redacted; empty if none.
+    std::string message;
+    // Whether that message reads as the product failing to reach Microsoft
+    // 365 or lacking permissions, not as the item being wrong.
+    bool infrastructure = false;
+};
+
+// One restore session, as the backup product reported it.
+struct RestoreSessionResult {
+    std::string id;
+    ItemKind kind = ItemKind::mail;
+    std::string result;     // the product's result, e.g. Success, Warning, Failed
+    std::string details;    // e.g. "5 items processed (5 successes)"; may be empty
+    std::string started_at; // as the product wrote it (Veeam: creationTime)
+    std::string ended_at;   // as the product wrote it (Veeam: endTime)
+    int items_sent = 0;
+    int items_restored = 0; // as the product counts them
+};
 
 struct RestoreResult {
     RestoreStatus status = RestoreStatus::not_run;
@@ -134,6 +192,12 @@ struct RestoreResult {
     std::string log;
     // How many items the backup product says it restored.
     int items_restored = 0;
+    // How many items were sent to restore.
+    int items_sent = 0;
+    // One per restore session, in the order they ran.
+    std::vector<RestoreSessionResult> sessions;
+    // One per item of the spec, in its order: mail, then SharePoint, then OneDrive.
+    std::vector<ItemRestoreResult> items;
 };
 
 // Every error a connector throws. what() is safe to print and log: it never

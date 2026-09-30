@@ -2,18 +2,26 @@
 // factory, with fake factories. The registered "veeam_m365" is tested with
 // the connector in veeam_m365_connector_test.cpp.
 
+#include <rp/cert_export.hpp>
 #include <rp/config.hpp>
 #include <rp/connector.hpp>
 #include <rp/connector_registry.hpp>
+#include <rp/http_client.hpp>
 #include <rp/secrets.hpp>
+
+#include <spdlog/logger.h>
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_exception.hpp>
 
+#include <chrono>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 using Catch::Matchers::Message;
@@ -40,6 +48,14 @@ public:
 
 private:
     std::string name_;
+};
+
+// An exporter that is never asked for anything here.
+struct NoExporter final : rp::CertificateExporter {
+    rp::ExportedPfx export_pfx(std::string_view) override
+    {
+        throw rp::CertExportError("not in this fake");
+    }
 };
 
 connector::ConnectorFactory factory_for(std::string name)
@@ -138,16 +154,34 @@ TEST_CASE("a factory gets the config, the secrets and the options", "[connector_
     const rp::Secrets secrets{"user", "pass", std::nullopt};
     connector::ConnectorOptions options;
     options.jitter = [] { return 0.25; };
+    // W2.5's: the clocks, the Graph HTTP client and the certificate exporter.
+    const auto steady = std::chrono::steady_clock::time_point{} + std::chrono::seconds{7};
+    const auto wall = std::chrono::system_clock::time_point{} + std::chrono::hours{9};
+    options.now = [steady] { return steady; };
+    options.wall_now = [wall] { return wall; };
+    int graph_http_made = 0;
+    options.make_graph_http = [&](std::shared_ptr<spdlog::logger>) {
+        ++graph_http_made;
+        return std::unique_ptr<rp::IHttpClient>{};
+    };
+    options.cert_exporter = std::make_shared<NoExporter>();
 
     std::string seen_url;
     std::optional<std::string> seen_user;
     double seen_jitter = -1;
+    std::chrono::steady_clock::time_point seen_now;
+    std::chrono::system_clock::time_point seen_wall;
+    std::shared_ptr<rp::CertificateExporter> seen_exporter;
     connector::ConnectorRegistry registry;
     registry.add("probe", [&](const rp::Config& c, const rp::Secrets& s,
                               const connector::ConnectorOptions& o) {
         seen_url = c.veeam_url;
         seen_user = s.veeam_username;
         seen_jitter = o.jitter();
+        seen_now = o.now();
+        seen_wall = o.wall_now();
+        (void)o.make_graph_http(nullptr);
+        seen_exporter = o.cert_exporter;
         return std::make_unique<NamedConnector>("probe");
     });
 
@@ -155,4 +189,8 @@ TEST_CASE("a factory gets the config, the secrets and the options", "[connector_
     REQUIRE(seen_url == "https://veeam.test:4443");
     REQUIRE(seen_user == std::optional<std::string>{"user"});
     REQUIRE(seen_jitter == 0.25);
+    REQUIRE(seen_now == steady);
+    REQUIRE(seen_wall == wall);
+    REQUIRE(graph_http_made == 1);
+    REQUIRE(seen_exporter == options.cert_exporter);
 }

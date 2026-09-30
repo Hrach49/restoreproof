@@ -1,0 +1,15 @@
+{
+  "source": "docs/api/veeam-lab/w2.4-mail-x1-statistics.json",
+  "request": "GET /v8/RestoreSessions/b6fe35ef-9633-481d-9756-3496a717d8a9/Statistics",
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8"
+  },
+  "body": {
+    "totalItemsCount": 1,
+    "restoredItemsCount": 1,
+    "failedItemsCount": 0,
+    "skippedItemsCount": 0,
+    "items": []
+  }
+}

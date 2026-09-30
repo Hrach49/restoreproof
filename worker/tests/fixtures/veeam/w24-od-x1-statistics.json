@@ -1,0 +1,23 @@
+{
+  "source": "docs/api/veeam-lab/w2.4-od-x1-statistics.json",
+  "request": "GET /v8/RestoreSessions/15c3f986-9569-4efb-955f-ea54ad46edb4/Statistics",
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8"
+  },
+  "body": {
+    "totalItemsCount": 1,
+    "restoredItemsCount": 1,
+    "failedItemsCount": 0,
+    "skippedItemsCount": 0,
+    "items": [
+      {
+        "id": "14ad2a26-a9d6-4307-a1b0-7f15d8b7debb",
+        "itemRestoreDetailsType": "Item",
+        "name": "rp-canary-16.pdf",
+        "itemType": "SharePointItem",
+        "status": "Success"
+      }
+    ]
+  }
+}

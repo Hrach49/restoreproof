@@ -703,3 +703,29 @@ TEST_CASE("redact treats pfx and pfx_base64 as secret key names", "[redact][jwt]
         {"pfx_base64: MIIK", "pfx_base64: [REDACTED]"},
     })));
 }
+
+// W2.5: a restore body carries Veeam's organisation app certificate as a
+// Base64 PFX and its one-time password (docs/decisions.md 2026-09-30).
+// "applicationCertificatePassword" doesn't end in "password" after a
+// separator, so it needs a name of its own.
+TEST_CASE("redact treats applicationCertificate and its password as secret key names",
+          "[redact]")
+{
+    check_row(GENERATE(values<Row>({
+        {R"({"applicationCertificate":"MIIKsecret","applicationId":"1fd2"})",
+         R"({"applicationCertificate":"[REDACTED]","applicationId":"1fd2"})"},
+        {R"({"applicationCertificatePassword":"pw+/=","officeRegion":"Worldwide"})",
+         R"({"applicationCertificatePassword":"[REDACTED]","officeRegion":"Worldwide"})"},
+        {R"({ "ApplicationCertificate" : "MIIK" , "applicationcertificatepassword": "pw" })",
+         R"({ "ApplicationCertificate" : "[REDACTED]" , "applicationcertificatepassword": "[REDACTED]" })"},
+        {"applicationCertificate=MIIKsecret&a=1", "applicationCertificate=[REDACTED]&a=1"},
+        {"applicationCertificatePassword=pw&a=1", "applicationCertificatePassword=[REDACTED]&a=1"},
+        {"applicationCertificatePassword: pw", "applicationCertificatePassword: [REDACTED]"},
+        // Escaped inside a logged JSON string.
+        {R"("{\"applicationCertificate\":\"MIIK\"}")", R"("{\"applicationCertificate\":\"[REDACTED]\"")"},
+        // The thumbprint and the app ID stay readable.
+        {R"({"applicationCertificateThumbprint":"AC3220B5"})",
+         R"({"applicationCertificateThumbprint":"AC3220B5"})"},
+        {R"({"applicationId":"1fd2609d"})", R"({"applicationId":"1fd2609d"})"},
+    })));
+}

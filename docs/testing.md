@@ -273,6 +273,46 @@ Remove-Item Env:RP_LIVE, Env:RP_LIVE_RESTORE, Env:RP_LIVE_EVIDENCE_FILE -ErrorAc
 . ..\lab\entra\set-worker-env.ps1 -Clear
 ```
 
+### Restore by hand (`rpworker restore`, writes to the lab tenant)
+
+**This writes too.** `rpworker restore` (W2.8, `docs/worker-config.md`) chooses a sample and
+restores it into the three restore targets, like the live test above, but from the command
+line. ctest's `rpworker restore` exe tests all stop before any request (the arguments, the
+config, the secrets), so nothing writes unless you run it by hand. Before running it, check
+the same three points as for the live restore: an elevated shell, empty targets, no restore
+session still `Working`.
+
+1. Open `Developer PowerShell for VS 2022` (or PowerShell) with **Run as administrator**, and
+   go to `C:\restoreproof\worker`.
+2. Set `RP_VEEAM_USERNAME` and `RP_VEEAM_PASSWORD` (the Veeam account, as for the Veeam live
+   tests), and the Graph certificate variables with `. ..\lab\entra\set-worker-env.ps1`.
+   The command checks all four are set before it calls Veeam.
+3. Check the targets are empty:
+
+   ```powershell
+   .\build\dev\rpworker.exe graph list --config <your config.json>
+   ```
+
+4. Restore, with the lab manifest (or leave `--manifest` out when a `seed-manifest.json` is
+   beside the config):
+
+   ```powershell
+   .\build\dev\rpworker.exe restore --mail 5 --sp 5 --od 5 --config <your config.json> --manifest ..\lab\seed-manifest.json
+   ```
+
+   Note the printed run ID (`--run-id` repeats the sample) and the next canary cursor
+   (`--canary-cursor` carries the rotation on). Exit 0 is `succeeded`, 5 `partial` or `failed`,
+   4 an error such as the guard refusing or an item failed for an infrastructure reason.
+5. Read the targets back with their hashes:
+
+   ```powershell
+   .\build\dev\rpworker.exe graph list --hash --config <your config.json>
+   ```
+
+6. Clean up by hand, as after the live restore, until W3.4's cleanup exists, and check with
+   `rpworker graph list` that the targets are empty again. Remove the variables when done
+   (`. ..\lab\entra\set-worker-env.ps1 -Clear`, and the two Veeam ones).
+
 ### Running the gates locally
 
 Cloud, from `cloud/` (the same commands as CI; `make cov` runs both in WSL or Linux):

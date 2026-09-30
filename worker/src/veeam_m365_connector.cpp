@@ -61,11 +61,6 @@ connector::RestorePoint to_connector(const RestorePoint& point)
     return out;
 }
 
-bool is_set(const std::optional<std::string>& secret) noexcept
-{
-    return secret && !secret->empty();
-}
-
 // One item as browsing found it.
 struct Resolved {
     std::size_t index = 0;    // in its kind's selectors
@@ -1038,14 +1033,7 @@ connector::RestoreResult VeeamM365Connector::restore_sample(const connector::Res
 std::unique_ptr<connector::IConnector> make_veeam_m365_connector(
     const Config& config, const Secrets& secrets, const connector::ConnectorOptions& options)
 {
-    if (!is_set(secrets.veeam_username)) {
-        throw ConfigError(std::string{kEnvVeeamUsername},
-                          std::string{kEnvVeeamUsername} + " is not set");
-    }
-    if (!is_set(secrets.veeam_password)) {
-        throw ConfigError(std::string{kEnvVeeamPassword},
-                          std::string{kEnvVeeamPassword} + " is not set");
-    }
+    require_veeam_secrets(secrets);
     // Never spdlog's default logger, which writes to stdout.
     const std::shared_ptr<spdlog::logger> logger =
         options.logger ? options.logger : make_command_logger();

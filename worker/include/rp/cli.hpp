@@ -12,8 +12,10 @@ namespace exit_code {
 inline constexpr int ok = 0;
 // config.json missing or invalid, a --config path that isn't UTF-8, a secret
 // variable unset or unreadable (the Graph certificate's included: a
-// graph::CertificateError is a ConfigError), or any unexpected failure (whose
-// message is never shown), an exception no command handled included.
+// graph::CertificateError is a ConfigError), for `rpworker restore` also a
+// canary manifest that doesn't load or isn't graph_tenant_id's and an unknown
+// connector, or any unexpected failure (whose message is never shown), an
+// exception no command handled included.
 inline constexpr int config = 1;
 // The service refused the credentials, the account's role, the token or a
 // permission: Veeam's AuthError, Graph's AuthError and PermissionError (whose
@@ -27,10 +29,21 @@ inline constexpr int transient = 3;
 // included, a certificate that fails verification: TLS failures that aren't a
 // broken-off handshake, a failed download, and a restore target the guard
 // refuses: Graph's WrongTargetError, and the restore-target guard's
-// connector::SafetyViolation, rp/target_guard.hpp, for the command that will
-// restore), or veeam_org_name not among Veeam's organisations.
+// connector::SafetyViolation, rp/target_guard.hpp), or veeam_org_name not
+// among Veeam's organisations. For `rpworker restore` also: the guard
+// refusing, no restore points, a --point ID not found, an empty sample, and a
+// restore in which an item failed for an infrastructure reason (never 5).
 inline constexpr int service = 4;
-// A command line rpworker doesn't understand.
+// `rpworker restore` only: the restore ran and its status is partial or
+// failed (the status line says which), no item for an infrastructure reason.
+// A result, not an error: a restore that couldn't run at all, returned
+// not_run, or lost an item for an infrastructure reason ends as 1 to 4
+// (docs/decisions.md 2026-09-30, W2.8).
+inline constexpr int restore = 5;
+// A command line rpworker doesn't understand; for `rpworker restore` also,
+// once the config or the manifest is read, every sample size 0 or a
+// --canary-cursor out of the manifest's range ("usage error: ..." on stderr
+// instead of the usage line).
 inline constexpr int usage = 64;
 } // namespace exit_code
 
@@ -38,15 +51,19 @@ inline constexpr int usage = 64;
 // doesn't understand. Every command shares it.
 inline constexpr std::string_view kCliUsage =
     "usage: rpworker --version | rpworker config check [--config <path>] | "
-    "rpworker veeam list [--config <path>] | rpworker graph list [--hash] [--config <path>]\n";
+    "rpworker veeam list [--config <path>] | rpworker graph list [--hash] [--config <path>] | "
+    "rpworker restore [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] "
+    "[--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>]\n";
 
 // rpworker's command line: `--version`, `config ...` (rp/config_check.hpp),
-// `veeam ...` (rp/veeam_command.hpp) or `graph ...` (rp/graph_command.hpp).
+// `veeam ...` (rp/veeam_command.hpp), `graph ...` (rp/graph_command.hpp) or
+// `restore ...` (rp/restore_command.hpp).
 // `args` is argv without the program name, in UTF-8. Normal output goes to
 // `out`, usage and errors to `err`.
 // Returns the process exit code (rp::exit_code): 0 on success, 64 with
-// kCliUsage on `err` for a command line it doesn't understand, and the
-// command's own code when it fails. No exception escapes: one a command lets
+// kCliUsage on `err` for a command line it doesn't understand (or, from
+// `restore`, 64 with a "usage error: ..." line for all-zero sample sizes or a
+// canary cursor out of range), and the command's own code when it fails. No exception escapes: one a command lets
 // out is "error: unexpected failure" on `err` and exit code 1, never a crash,
 // whose abort() would exit with 3 (exit_code::transient).
 int run_cli(std::span<const std::string_view> args, std::ostream& out,

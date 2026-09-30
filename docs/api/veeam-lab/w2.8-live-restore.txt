@@ -1,0 +1,32 @@
+PS C:\restoreproof\worker> .\build\dev\rpworker.exe restore --mail 5 --sp 5 --od 5 --config $cfg --manifest ..\lab\seed-manifest.json;
+restore point 2026-09-29T22:00:45.6603083Z  c2f0f2e7-177f-48ac-992b-93a50cf702e395c23640-eb99-4bad-ae72-f5f9cf21aac1  (veeam_org_name RestoreProofLab.onmicrosoft.com)
+run rp-20260930T214243Z-6138257d  seed 59bd6f19
+canary cursor 0,0,0 -> 3,3,3
+  KIND        REQUESTED  CANARIES  RANDOM  NOTE
+  mail        5          3 of 3    2 of 2
+  sharepoint  5          3 of 3    0 of 2  random shortfall
+  onedrive    5          3 of 3    0 of 2  random shortfall
+restoring 11 item(s) ...
+
+  KIND        SOURCE  NAME                                      OUTCOME   SESSION                               ELAPSED  MESSAGE
+  mail        canary  RP-CANARY-0001                            restored  73812ee1-9c6d-4d16-b5d5-6edec1d69ee6  0:00:30  Item RP-CANARY-0001 was restored successfully (type: IPM.Note; source: Alice Test\Inbox; target: restoretest@RestoreProofLab.onmicrosoft.com\<null>\Inbox)
+  mail        canary  RP-CANARY-0002                            restored  73812ee1-9c6d-4d16-b5d5-6edec1d69ee6  0:00:30  Item RP-CANARY-0002 was restored successfully (type: IPM.Note; source: Alice Test\Inbox; target: restoretest@RestoreProofLab.onmicrosoft.com\<null>\Inbox)
+  mail        canary  RP-CANARY-0003                            restored  73812ee1-9c6d-4d16-b5d5-6edec1d69ee6  0:00:30  Item RP-CANARY-0003 was restored successfully (type: IPM.Note; source: Alice Test\Inbox; target: restoretest@RestoreProofLab.onmicrosoft.com\<null>\Inbox)
+  mail        random  Veeam website registration                restored  5335d1a4-c772-431e-afdc-c8095bc2be8e  0:00:30  Item Veeam website registration was restored successfully (type: IPM.Note; source: Hrachya Harutyunyan\Inbox; target: restoretest@RestoreProofLab.onmicrosoft.com\<null>\Inbox)
+  mail        random  Weekly digest: Microsoft service updates  restored  5335d1a4-c772-431e-afdc-c8095bc2be8e  0:00:30  Item Weekly digest: Microsoft service updates was restored successfully (type: IPM.Note; source: Hrachya Harutyunyan\Inbox; target: restoretest@RestoreProofLab.onmicrosoft.com\<null>\Inbox)
+  sharepoint  canary  rp-canary-01.pdf                          restored  38f94a69-814e-4bd9-9758-32a4c7e0f9a0  0:00:39  Item rp-canary-01.pdf was restored successfully (type: File; source: /sites/RestoreTest/RestoreTest/rp-canary-01.pdf; target: https://restoreprooflab.sharepoint.com/sites/RestoreTest)
+  sharepoint  canary  rp-canary-02.docx                         restored  38f94a69-814e-4bd9-9758-32a4c7e0f9a0  0:00:39  Item rp-canary-02.docx was restored successfully (type: File; source: /sites/RestoreTest/RestoreTest/rp-canary-02.docx; target: https://restoreprooflab.sharepoint.com/sites/RestoreTest)
+  sharepoint  canary  rp-canary-03.xlsx                         restored  38f94a69-814e-4bd9-9758-32a4c7e0f9a0  0:00:39  Item rp-canary-03.xlsx was restored successfully (type: File; source: /sites/RestoreTest/RestoreTest/rp-canary-03.xlsx; target: https://restoreprooflab.sharepoint.com/sites/RestoreTest)
+  onedrive    canary  rp-canary-11.pdf                          restored  db1c84ab-25a9-4c56-a9cc-9d128633ea55  0:00:34  Item rp-canary-11.pdf was restored successfully (type: File; source: personal/alice_restoreprooflab_onmicrosoft_com/Documents/RestoreTarget/rp-canary-11.pdf; target: https://restoreprooflab-my.sharepoint.com/personal/alice_restoreprooflab_onmicrosoft_com)
+  onedrive    canary  rp-canary-12.docx                         restored  db1c84ab-25a9-4c56-a9cc-9d128633ea55  0:00:34  Item rp-canary-12.docx was restored successfully (type: File; source: personal/alice_restoreprooflab_onmicrosoft_com/Documents/RestoreTarget/rp-canary-12.docx; target: https://restoreprooflab-my.sharepoint.com/personal/alice_restoreprooflab_onmicrosoft_com)
+  onedrive    canary  rp-canary-13.xlsx                         restored  db1c84ab-25a9-4c56-a9cc-9d128633ea55  0:00:34  Item rp-canary-13.xlsx was restored successfully (type: File; source: personal/alice_restoreprooflab_onmicrosoft_com/Documents/RestoreTarget/rp-canary-13.xlsx; target: https://restoreprooflab-my.sharepoint.com/personal/alice_restoreprooflab_onmicrosoft_com)
+
+  SESSION                               KIND        RESULT   RESTORED  STARTED                       ENDED                         ELAPSED
+  73812ee1-9c6d-4d16-b5d5-6edec1d69ee6  mail        Success  3 of 3    2026-09-30T21:43:00.7441885Z  2026-09-30T21:43:31.6459296Z  0:00:30
+  5335d1a4-c772-431e-afdc-c8095bc2be8e  mail        Success  2 of 2    2026-09-30T21:43:36.6423041Z  2026-09-30T21:44:06.9363274Z  0:00:30
+  38f94a69-814e-4bd9-9758-32a4c7e0f9a0  sharepoint  Success  3 of 3    2026-09-30T21:44:07.3077609Z  2026-09-30T21:44:47.1099876Z  0:00:39
+  db1c84ab-25a9-4c56-a9cc-9d128633ea55  onedrive    Success  3 of 3    2026-09-30T21:44:48.0927898Z  2026-09-30T21:45:22.327085Z   0:00:34
+
+status succeeded: 11 of 11 item(s) restored in 0:02:28
+PS C:\restoreproof\worker> "exit $LASTEXITCODE"
+exit 0

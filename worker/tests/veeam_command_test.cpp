@@ -54,7 +54,10 @@ using rp::test::to_response;
 
 const std::string kUsage = "usage: rpworker --version | rpworker config check [--config <path>] | "
                            "rpworker veeam list [--config <path>] | "
-                           "rpworker graph list [--hash] [--config <path>]\n";
+                           "rpworker graph list [--hash] [--config <path>] | "
+                           "rpworker restore [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] "
+                           "[--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] "
+                           "[--config <path>]\n";
 
 const std::string kBase = "https://veeam.test:4443";
 const std::string kTokenUrl = kBase + "/v8/token";

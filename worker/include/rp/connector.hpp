@@ -330,6 +330,9 @@ struct CandidatePool {
     BrowseRecord onedrive_browse;
 };
 
+// How a restore_sample error message ends when no restore was sent.
+inline constexpr std::string_view kNothingRestored = "; nothing was restored";
+
 // A backup product as the pipeline sees it. One instance talks to one backup
 // server with one set of credentials; each call names the client (an MSP's
 // customer: one Microsoft 365 tenant) it is about.
@@ -350,7 +353,10 @@ public:
     // reports how that went. Checks each item's target with TargetGuard
     // (W2.7, rp/target_guard.hpp) before any call to the backup product, and
     // each restore request again just before it is sent; a refusal is a
-    // SafetyViolation.
+    // SafetyViolation. An error it throws whose message ends with
+    // kNothingRestored promises that no restore was sent; any other may come
+    // after one was, so items may be in the targets (`rpworker restore` says
+    // so).
     virtual RestoreResult restore_sample(const RestoreSpec& spec) = 0;
 
     // W2.6: the random half's candidates in `query`'s restore point, never

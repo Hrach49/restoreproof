@@ -410,7 +410,8 @@ def _restore_target_folder(response: HttpResponse) -> str | None:
         return "parentReference.driveId is not alice's OneDrive"
     ids = body.get("sharepointIds")
     site_url = ids.get("siteUrl") if isinstance(ids, dict) else None
-    if not isinstance(site_url, str) or not site_url.lower().endswith(tenant.ALICE_ONEDRIVE_SITE_PATH):
+    alice = f"https://{tenant.ONEDRIVE_HOST}{tenant.ALICE_ONEDRIVE_SITE_PATH}"
+    if not isinstance(site_url, str) or site_url.lower() != alice:
         return "sharepointIds.siteUrl is not alice's OneDrive"
     return None
 

@@ -300,7 +300,7 @@ std::vector<Unit> CandidateLister::walk(const std::string& path, std::vector<Uni
         for (const json& child : children) {
             const std::string* name = text_at(child, "name");
             if (name == nullptr || name->empty() || *name == "." || *name == ".." ||
-                name->find('/') != std::string::npos || names.at(*name) != 1 ||
+                name->find_first_of("/\\:") != std::string::npos || names.at(*name) != 1 ||
                 (parent.depth == 0 && one_of_i(skip_top, *name))) {
                 continue;
             }

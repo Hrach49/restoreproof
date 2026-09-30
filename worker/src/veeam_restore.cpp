@@ -168,19 +168,14 @@ std::optional<std::string> veeam_site_id(std::string_view graph_site_id)
 
 std::optional<std::string> onedrive_url(std::string_view sharepoint_host, std::string_view user)
 {
-    const std::string host = ascii_lower(sharepoint_host);
-    if (user.empty() || host.size() <= kSharePointSuffix.size() ||
-        !host.ends_with(kSharePointSuffix)) {
-        return std::nullopt;
-    }
-    const std::string tenant = host.substr(0, host.size() - kSharePointSuffix.size());
-    if (tenant.find('.') != std::string::npos) {
+    const std::optional<std::string> host = onedrive_host(sharepoint_host);
+    if (user.empty() || !host) {
         return std::nullopt;
     }
     std::string personal = ascii_lower(user);
     std::ranges::replace(personal, '@', '_');
     std::ranges::replace(personal, '.', '_');
-    return "https://" + tenant + "-my" + std::string{kSharePointSuffix} + "/personal/" + personal;
+    return "https://" + *host + "/personal/" + personal;
 }
 
 std::vector<std::string> path_segments(std::string_view folder_path)

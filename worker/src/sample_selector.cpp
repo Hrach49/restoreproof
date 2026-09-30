@@ -88,12 +88,16 @@ void check_canaries(const CanaryManifest& manifest, const connector::RestoreTarg
             refuse_canary(file.entry, "drive_id",
                           "is a restore target (the library test_library_id names)");
         }
+        if (ascii_iequals(file.drive_id, targets.onedrive_drive_id())) {
+            refuse_canary(file.entry, "drive_id",
+                          "is a restore target (the OneDrive test_onedrive_drive_id names)");
+        }
     }
     for (const CanaryFile& file : manifest.onedrive) {
         const std::optional<std::string_view> folder = first_folder(file.folder_path);
         if (!folder) {
             refuse_canary(file.entry, "folder_path",
-                          "must start with \"/\" and have no \"..\" segment");
+                          "must start with \"/\" and have no \"..\" segment, backslash or colon");
         }
         if (ascii_iequals(*folder, graph::kRestoreTargetName)) {
             refuse_canary(file.entry, "folder_path", "is in a restore target (a RestoreTarget folder)");
@@ -195,7 +199,7 @@ std::optional<std::string> forbidden(const connector::SharePointSelector& file,
         return "from a canary library";
     }
     if (has_dot_dot_segment(file.folder_path)) {
-        return "in a folder path with a \"..\" segment";
+        return "in a folder path with a \"..\" segment, a backslash or a colon";
     }
     return canary_text(file.name, f.sharepoint_names, "name");
 }
@@ -207,7 +211,7 @@ std::optional<std::string> forbidden(const connector::OneDriveSelector& file, co
     }
     const std::optional<std::string_view> folder = first_folder(file.folder_path);
     if (!folder) {
-        return "in a folder path with a \"..\" segment";
+        return "in a folder path with a \"..\" segment, a backslash or a colon";
     }
     if (ascii_iequals(*folder, graph::kRestoreTargetName)) {
         return "in a restore target (a RestoreTarget folder)";

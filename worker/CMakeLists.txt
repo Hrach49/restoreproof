@@ -37,6 +37,7 @@ add_library(rpcore STATIC
     src/http_client.cpp
     src/redact.cpp
     src/retry_policy.cpp
+    src/sample_rng.cpp
     src/secrets.cpp
     src/sha256.cpp
     src/target_guard.cpp
@@ -102,6 +103,7 @@ add_executable(rptests
     tests/http_client_tls_test.cpp
     tests/redact_test.cpp
     tests/retry_policy_test.cpp
+    tests/sample_rng_test.cpp
     tests/secrets_test.cpp
     tests/sha256_test.cpp
     tests/smoke.cpp

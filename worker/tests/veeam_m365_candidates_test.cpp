@@ -20,10 +20,12 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <map>
+#include <memory>
 #include <optional>
 #include <set>
 #include <string>
@@ -634,6 +636,120 @@ TEST_CASE("list_candidates: an explore session that can't be stopped is an error
     CHECK_THAT(rig.rig.log(), ContainsSubstring("couldn't close explore session " + explore));
     CHECK(rig.rig.stops(sp_x1().explore()) == 1);
     CHECK(rig.other_posts().empty());
+}
+
+// A Stop that times out: the first `failures` Stops of a session get no
+// answer (as on 2026-09-30, "Operation timed out after 30018 milliseconds with
+// 0 bytes received"), the rest 204. No Catch2 assertion in the handler.
+rp::test::FakeHttpClient::Handler stop_timing_out(int failures)
+{
+    auto sent = std::make_shared<std::atomic<int>>(0);
+    return [sent, failures](const HttpRequest& request) -> HttpResponse {
+        if (sent->fetch_add(1) < failures) {
+            throw rp::HttpError("POST " + request.url +
+                                    ": Operation timed out after 30018 milliseconds with 0 bytes "
+                                    "received",
+                                rp::TransportError::timeout, 0, 1);
+        }
+        return load_fixture("veeam", "stop-204");
+    };
+}
+
+// The explore session as GET /v8/RestoreSessions/{id} gives it, in `state`.
+HttpResponse explore_state(const Run& run, const std::string& state)
+{
+    json body = load_fixture_json("veeam", run.file("explore")).at("body");
+    body["state"] = state;
+    return make_response(200, body.dump());
+}
+
+TEST_CASE("list_candidates: a Stop that times out while the session stays Working is sent once "
+          "more",
+          "[veeam_m365][w2.6]")
+{
+    CandidateRig rig;
+    keep_good_candidates(rig.tenant);
+    rig.serve();
+    const std::string explore = mail_x5().explore();
+    rig.rig.veeam.on(HttpMethod::post, url(session_of(mail_x5()) + "/Stop"), stop_timing_out(1));
+
+    const Caught thrown = caught_by([&] { rig.list(query(true, false, false)); });
+
+    CHECK(thrown.kind == "none");
+    CHECK(rig.rig.stops(explore) == 2);
+    // Read before the first Stop and again after it failed.
+    CHECK(rig.rig.gets(session_of(mail_x5())) == 2);
+    CHECK_THAT(rig.rig.log(), ContainsSubstring("explore session " + explore) &&
+                                  ContainsSubstring("still Working"));
+    CHECK(rig.other_posts().empty());
+}
+
+TEST_CASE("list_candidates: a Stop that times out but stopped the session isn't sent again",
+          "[veeam_m365][w2.6]")
+{
+    const std::string state = GENERATE(as<std::string>{}, "Stopped", "Success");
+    CAPTURE(state);
+    CandidateRig rig;
+    keep_good_candidates(rig.tenant);
+    rig.serve();
+    const std::string explore = mail_x5().explore();
+    rig.rig.veeam.on(HttpMethod::post, url(session_of(mail_x5()) + "/Stop"), stop_timing_out(1));
+    rig.rig.veeam.on(HttpMethod::get, url(session_of(mail_x5())),
+                     {explore_state(mail_x5(), "Working"), explore_state(mail_x5(), state)});
+
+    const Caught thrown = caught_by([&] { rig.list(query(true, false, false)); });
+
+    CHECK(thrown.kind == "none");
+    CHECK(rig.rig.stops(explore) == 1);
+    CHECK(rig.rig.gets(session_of(mail_x5())) == 2);
+    CHECK_THAT(rig.rig.log(), !ContainsSubstring("couldn't close explore session"));
+}
+
+TEST_CASE("list_candidates: two Stops that time out are the error naming the session, no third",
+          "[veeam_m365][w2.6]")
+{
+    CandidateRig rig;
+    keep_good_candidates(rig.tenant);
+    rig.serve();
+    const std::string explore = mail_x5().explore();
+    rig.rig.veeam.on(HttpMethod::post, url(session_of(mail_x5()) + "/Stop"), stop_timing_out(99));
+
+    const Caught thrown = caught_by([&] { rig.list(query(true, true, false)); });
+
+    CHECK(thrown.kind == "Error");
+    CHECK(thrown.what == "veeam_m365: explore session " + explore +
+                             " couldn't be stopped, and restore_sample's preflight would refuse "
+                             "to run; stop it with docs/api/veeam-m365/08-sweep-sessions.ps1; "
+                             "nothing was listed");
+    CHECK(rig.rig.stops(explore) == 2);
+    CHECK_THAT(rig.rig.log(), ContainsSubstring("couldn't close explore session " + explore) &&
+                                  ContainsSubstring("timed out"));
+    CHECK(rig.rig.stops(sp_x1().explore()) == 1);
+    CHECK(rig.other_posts().empty());
+}
+
+TEST_CASE("list_candidates: a Stop Veeam refuses (4xx) or fails with a 500 isn't sent again",
+          "[veeam_m365][w2.6]")
+{
+    const HttpResponse refused = GENERATE(
+        make_response(400, R"({"message":"Bad request."})"),
+        make_response(403, R"({"message":"no"})"),
+        make_response(404, R"({"message":"Session not found.","errorCode":"ResourceNotFound"})"),
+        make_response(500, R"({"message":"Internal error"})"));
+    CAPTURE(refused.status);
+    CandidateRig rig;
+    keep_good_candidates(rig.tenant);
+    rig.serve();
+    const std::string explore = mail_x5().explore();
+    rig.rig.veeam.on(HttpMethod::post, url(session_of(mail_x5()) + "/Stop"),
+                     {refused, load_fixture("veeam", "stop-204")});
+
+    const Caught thrown = caught_by([&] { rig.list(query(true, false, false)); });
+
+    CHECK(thrown.kind == "Error");
+    CHECK_THAT(thrown.what, ContainsSubstring("explore session " + explore + " couldn't be stopped"));
+    CHECK(rig.rig.stops(explore) == 1);
+    CHECK(rig.rig.gets(session_of(mail_x5())) == 1);
 }
 
 // ---- what is never a candidate -----------------------------------------------------------------

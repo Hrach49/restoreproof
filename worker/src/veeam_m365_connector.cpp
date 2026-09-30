@@ -201,25 +201,50 @@ veeam::RestoreKind guard_kind(ItemKind kind) noexcept
 struct CredentialWipe {
     ExportedPfx& pfx;
     std::string& text;
-    ordered_json& body;
 
     ~CredentialWipe()
     {
         pfx.wipe();
         secure_wipe(text);
-        wipe_body(body);
-    }
-
-    static void wipe_body(ordered_json& body) noexcept
-    {
-        for (const char* key : {"applicationCertificate", "applicationCertificatePassword"}) {
-            const auto it = body.find(key);
-            if (it != body.end() && it->is_string()) {
-                secure_wipe(it->get_ref<std::string&>());
-            }
-        }
     }
 };
+
+// The body's text with the credential in its two keys (every body has them,
+// empty, next to each other). Built in one buffer reserved up front, so
+// growing it frees no partial copy, and the body itself never holds the
+// credential: `text` is its one copy here, wiped after the send. Standard
+// Base64 needs no JSON escaping, so the values go in as they are; anything
+// else (a quote, a backslash, a control or non-ASCII byte) is refused.
+std::string with_credential(const ordered_json& body, const ExportedPfx& pfx)
+{
+    const auto plain_text = [](const std::string& value) {
+        return std::ranges::all_of(value, [](char c) {
+            return c >= 0x20 && c <= 0x7E && c != '"' && c != '\\';
+        });
+    };
+    if (!plain_text(pfx.pfx_base64) || !plain_text(pfx.password)) {
+        throw connector::Error("veeam_m365: the exported certificate or its password isn't "
+                               "Base64; the restore was not sent");
+    }
+    constexpr std::string_view certificate = R"("applicationCertificate":")";
+    constexpr std::string_view password = R"(","applicationCertificatePassword":")";
+    // Unescaped quotes: a key of the body, never text inside a value.
+    const std::string empty = std::string{certificate} + std::string{password} + "\"";
+    const std::string plain = body.dump();
+    const std::size_t at = plain.find(empty);
+    if (at == std::string::npos || plain.find(empty, at + 1) != std::string::npos) {
+        throw std::logic_error("veeam_m365: a restore body without its one pair of credential keys");
+    }
+    std::string text;
+    text.reserve(plain.size() + pfx.pfx_base64.size() + pfx.password.size());
+    text.append(plain, 0, at);
+    text += certificate;
+    text += pfx.pfx_base64;
+    text += password;
+    text += pfx.password;
+    text.append(plain, at + empty.size() - 1);
+    return text;
+}
 
 // One restore_sample call after layer 1 passed on a spec with items.
 class RestoreRun {
@@ -392,7 +417,7 @@ std::string RestoreRun::open_explore(ItemKind kind)
         throw; // no sign-in: Veeam did nothing
     } catch (const VeeamError&) {
         // Veeam may have opened the session before the answer went wrong (a
-        // timeout, a 5xx, a 2xx without an ID; veeam-notes §4.2 saw a refused
+        // timeout, a 5xx, a 2xx without an ID; veeam-notes §4.4 saw a refused
         // explore leave one Working): found, it is closed like the others.
         adopt_orphans(kind, sent);
         throw;
@@ -805,24 +830,23 @@ void RestoreRun::restore_call(const TypeWork& work, const std::vector<std::size_
     }
     }
 
-    // The credential: exported now, in the body once, checked and sent as
-    // that exact text, then wiped (docs/decisions.md 2026-09-30 W2.5 point 1).
+    // The credential: exported now, spliced into the body's text once,
+    // checked and sent as that exact text, then wiped (docs/decisions.md
+    // 2026-09-30 W2.5 point 1, and its W2.5 review entry for the copies
+    // out of reach).
     ExportedPfx pfx;
     std::string text;
     VeeamClient::RestorePostOutcome outcome;
     std::chrono::system_clock::time_point posted;
     {
-        const CredentialWipe wipe{pfx, text, body};
+        const CredentialWipe wipe{pfx, text};
         try {
             pfx = c_.exporter->export_pfx(thumbprint_);
         } catch (const CertExportError& e) {
             throw connector::Error(std::string{"veeam_m365: "} + e.what() +
                                    "; the restore was not sent");
         }
-        body["applicationCertificate"] = pfx.pfx_base64;
-        body["applicationCertificatePassword"] = pfx.password;
-        text = body.dump();
-        CredentialWipe::wipe_body(body);
+        text = with_credential(body, pfx);
         veeam::check_restore_request(c_.checked, ctx, path, text, c_.guard_options);
         posted = c_.wall_now();
         outcome = c_.client.post_restore_once(path, text, vr::kPostTimeout);

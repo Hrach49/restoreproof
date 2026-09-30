@@ -241,11 +241,12 @@ struct FakeExporter final : rp::CertificateExporter {
             throw rp::CertExportError(*fail);
         }
         rp::ExportedPfx out;
-        out.pfx_base64 = kFakePfx;
+        out.pfx_base64 = pfx;
         out.password = kFakePfxPassword;
         return out;
     }
 
+    std::string pfx = kFakePfx;
     int calls = 0;
     std::vector<std::string> thumbprints;
     std::optional<std::string> fail;

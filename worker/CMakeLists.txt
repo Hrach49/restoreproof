@@ -20,6 +20,7 @@ enable_testing()
 # rptests both link it; coverage is measured on its sources (src/, include/).
 add_library(rpcore STATIC
     src/base64.cpp
+    src/canary_manifest.cpp
     src/cert_export.cpp
     src/cert_pin.cpp
     src/cli.cpp
@@ -39,6 +40,7 @@ add_library(rpcore STATIC
     src/redact.cpp
     src/retry_policy.cpp
     src/sample_rng.cpp
+    src/sample_selector.cpp
     src/secrets.cpp
     src/sha256.cpp
     src/target_guard.cpp
@@ -83,6 +85,7 @@ target_link_libraries(rpworker PRIVATE rpcore)
 
 add_executable(rptests
     tests/base64_test.cpp
+    tests/canary_manifest_test.cpp
     tests/cert_export_test.cpp
     tests/cert_pin_test.cpp
     tests/client_assertion_test.cpp
@@ -106,6 +109,7 @@ add_executable(rptests
     tests/redact_test.cpp
     tests/retry_policy_test.cpp
     tests/sample_rng_test.cpp
+    tests/sample_selector_test.cpp
     tests/secrets_test.cpp
     tests/sha256_test.cpp
     tests/smoke.cpp

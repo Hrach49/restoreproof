@@ -20,23 +20,30 @@ it in the W2.8 review, or supersedes it.
    <path>]`, the options in any order, each at most once. `<n>` is 1 to 3 ASCII digits, 0 to 100;
    an absent flag takes config's `sample_mail`, `sample_sp` or `sample_od`, and at least one of the
    three sizes must then be above 0. `--point` defaults to `latest`, the newest restore point of
-   `veeam_org_name` (`list_restore_points` returns newest first); `<id>` must be a GUID
-   (8-4-4-4-12 hex digits, any case) and is matched ASCII case-insensitively against the points'
-   IDs. Anything else on the command line (a size above 100, a sign, a point that is neither, a
-   bad run ID or cursor, a flag twice) is a usage error, exit 64, before the config is read. A
-   well-formed ID that isn't one of the organisation's restore points is exit 4.
+   `veeam_org_name` (`list_restore_points` returns newest first); `<id>` must be 1 to 128 ASCII
+   letters, digits and hyphens (safe to echo in a message) and is matched ASCII
+   case-insensitively against the points' IDs. *Changed in the build:* this entry first said a
+   GUID, but Veeam's restore point IDs are two GUIDs run together (72 characters, e.g.
+   `c2f0f2e7-…-93a50cf702e3` `71ac3d9c-…-ae81fcc4681c` in `restore-points-200.json`), and the
+   connector's IDs are opaque, so a GUID rule would refuse every real ID. Anything else on the
+   command line (a size above 100, a sign, a point that is neither, a bad run ID or cursor, a
+   flag twice) is a usage error, exit 64, before the config is read. A well-formed ID that isn't
+   one of the organisation's restore points is exit 4.
 2. **Run ID and cursor, until the Cloud sends them** (W2.6 point 3 and its open point). Each
    invocation makes a run ID, `rp-<YYYYMMDDTHHMMSSZ>-<8 random hex digits>` (UTC, in
    `check_run_id`'s alphabet); `--run-id` reuses a recorded one to repeat a sample. The canary
    cursor is `--canary-cursor m,s,o` (default `0,0,0`); nothing is stored on the Worker. The
    command prints the run ID, the seed, the cursor and the next cursor before it restores, so an
    operator can repeat the run or carry the rotation on by hand. A cursor at or above the
-   manifest's canaries of its type is a usage error (exit 64) once the manifest is read.
+   manifest's canaries of its type is a usage error (exit 64) once the manifest is read (and one
+   above 0 for a type the manifest has no canaries of); each of its three numbers is 1 to 6
+   digits, so none can overflow.
 3. **The manifest** is `--manifest <path>`, default `seed-manifest.json` in the config file's
    folder (`%ProgramData%\RestoreProof\`, or the `--config` file's folder). No config key: the
    manifest is a client's, and the Cloud job will carry it (2026-09-29, "Clients live in the
    Cloud"). A manifest that doesn't load, or whose tenant isn't `graph_tenant_id`, is a
-   configuration error (exit 1).
+   configuration error (exit 1); the command checks the tenant as soon as the manifest is read,
+   with `choose_sample`'s words, so it fails before any Veeam call.
 4. **The order.** Arguments; config and the Veeam secrets (as `veeam list`); the manifest; the
    `veeam_m365` connector from the default registry; the organisation's restore points and the
    chosen one; `choose_sample`; the header printed; `restore_sample`, whose first step is still the

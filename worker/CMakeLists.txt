@@ -232,8 +232,8 @@ set_tests_properties(
     PROPERTIES ENVIRONMENT "RP_GRAPH_CERT_PFX_BASE64=set-by-ctest;RP_GRAPH_CERT_PASSWORD=set-by-ctest")
 
 # restore stops before any request in each of these too: the arguments, the
-# config and the Veeam secrets come first. ctest sets both variables and the
-# last two tests remove them.
+# config, the Veeam secrets and the Graph certificate variables come first.
+# ctest sets the variables and the last four tests remove them.
 rp_add_exe_test("rpworker restore rejects an unknown flag"
     ARGS restore --mails 1 EXIT_CODE 64 STDOUT "" STDERR "${RP_USAGE}")
 rp_add_exe_test("rpworker restore rejects a sample size above 100"
@@ -249,10 +249,21 @@ rp_add_exe_test("rpworker restore needs RP_VEEAM_PASSWORD"
     ARGS restore --config ${CMAKE_CURRENT_SOURCE_DIR}/config.example.json
     UNSET_ENV RP_VEEAM_PASSWORD
     EXIT_CODE 1 STDOUT "" STDERR "config error: RP_VEEAM_PASSWORD is not set")
+rp_add_exe_test("rpworker restore needs RP_GRAPH_CERT_PFX_BASE64"
+    ARGS restore --config ${CMAKE_CURRENT_SOURCE_DIR}/config.example.json
+    UNSET_ENV RP_GRAPH_CERT_PFX_BASE64 RP_GRAPH_CERT_PASSWORD
+    EXIT_CODE 1 STDOUT "" STDERR "config error: RP_GRAPH_CERT_PFX_BASE64 is not set")
+rp_add_exe_test("rpworker restore needs RP_GRAPH_CERT_PASSWORD"
+    ARGS restore --config ${CMAKE_CURRENT_SOURCE_DIR}/config.example.json
+    UNSET_ENV RP_GRAPH_CERT_PASSWORD
+    EXIT_CODE 1 STDOUT "" STDERR "config error: RP_GRAPH_CERT_PASSWORD is not set")
 set_tests_properties(
     "rpworker restore needs RP_VEEAM_USERNAME"
     "rpworker restore needs RP_VEEAM_PASSWORD"
-    PROPERTIES ENVIRONMENT "RP_VEEAM_USERNAME=set-by-ctest;RP_VEEAM_PASSWORD=set-by-ctest")
+    "rpworker restore needs RP_GRAPH_CERT_PFX_BASE64"
+    "rpworker restore needs RP_GRAPH_CERT_PASSWORD"
+    PROPERTIES ENVIRONMENT
+    "RP_VEEAM_USERNAME=set-by-ctest;RP_VEEAM_PASSWORD=set-by-ctest;RP_GRAPH_CERT_PFX_BASE64=set-by-ctest;RP_GRAPH_CERT_PASSWORD=set-by-ctest")
 
 # The checker itself must fail on a wrong exit code or wrong output, or the two
 # tests above would prove nothing.

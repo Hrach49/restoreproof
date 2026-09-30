@@ -143,7 +143,7 @@ bool parse_args(std::span<const std::string_view> args, RestoreArgs& parsed)
         } else if (name == "--od") {
             ok = size_option(parsed.onedrive);
         } else if (name == "--point" && !parsed.point) {
-            ok = value == kLatest || is_point_id(value);
+            ok = is_point_id(value); // `latest`, in any case, is one too
             parsed.point = value;
         } else if (name == "--run-id" && !parsed.run_id) {
             ok = valid_run_id(value);
@@ -223,7 +223,7 @@ const connector::RestorePoint* pick_point(const std::vector<connector::RestorePo
         err << "restore error: no restore points for veeam_org_name\n";
         return nullptr;
     }
-    if (!id || *id == kLatest) {
+    if (!id || ascii_iequals(*id, kLatest)) {
         return &points.front();
     }
     const auto it = std::ranges::find_if(
@@ -246,41 +246,68 @@ std::string of(int taken, int wanted)
     return std::format("{} of {}", taken, wanted);
 }
 
+// "canary shortfall", "random shortfall", both, or "" for none.
+std::string shortfall(const sampling::KindRecord& k)
+{
+    const bool canary_short = static_cast<int>(k.canary_ids.size()) < (k.requested + 1) / 2;
+    const bool random_short = k.random_taken < k.random_wanted;
+    return canary_short && random_short ? "canary and random shortfall"
+           : canary_short               ? "canary shortfall"
+           : random_short               ? "random shortfall"
+                                        : "";
+}
+
 TableRow kind_row(ItemKind kind, const sampling::KindRecord& k)
 {
-    const int canary_wanted = (k.requested + 1) / 2;
-    const int canary_taken = static_cast<int>(k.canary_ids.size());
-    const bool canary_short = canary_taken < canary_wanted;
-    const bool random_short = k.random_taken < k.random_wanted;
     std::vector<std::string> cells{kind_name(kind), std::to_string(k.requested),
-                                   of(canary_taken, canary_wanted),
+                                   of(static_cast<int>(k.canary_ids.size()), (k.requested + 1) / 2),
                                    of(k.random_taken, k.random_wanted)};
-    if (canary_short || random_short) {
-        cells.push_back(canary_short && random_short ? "canary and random shortfall"
-                        : canary_short               ? "canary shortfall"
-                                                     : "random shortfall");
+    if (std::string note = shortfall(k); !note.empty()) {
+        cells.push_back(std::move(note));
     }
     return {"  ", std::move(cells)};
 }
 
-// Everything printed before the restore.
-std::string format_header(const std::string& org, const connector::RestorePoint& point,
-                          const sampling::Selection& selection, std::size_t items)
+// Why an empty sample is empty: "<kind>: <shortfall>" for each type asked for.
+std::string empty_sample_reason(const sampling::SampleRecord& r)
+{
+    const std::pair<ItemKind, const sampling::KindRecord*> kinds[] = {
+        {ItemKind::mail, &r.mail}, {ItemKind::sharepoint, &r.sharepoint},
+        {ItemKind::onedrive, &r.onedrive}};
+    std::string text;
+    for (const auto& [kind, k] : kinds) {
+        if (k->requested > 0) {
+            text += (text.empty() ? "" : "; ") + kind_name(kind) + ": " + shortfall(*k);
+        }
+    }
+    return text;
+}
+
+// What is printed once the run ID exists, before the sample is chosen
+// (which browses Veeam and can fail).
+std::string format_intro(const std::string& org, const connector::RestorePoint& point,
+                         const std::string& run_id)
+{
+    return std::format("restore point {}  {}  (veeam_org_name {})\nrun {}  seed {}\n",
+                       table_cell(point.backup_time), table_cell(point.id), table_cell(org),
+                       run_id, sampling::seed_hex(sampling::seed_from_run_id(run_id)));
+}
+
+// What is printed once the sample is chosen, before the restore.
+std::string format_sample(const sampling::Selection& selection, std::size_t items)
 {
     const sampling::SampleRecord& r = selection.record;
-    std::string text = std::format("restore point {}  {}  (veeam_org_name {})\n",
-                                   table_cell(point.backup_time), table_cell(point.id),
-                                   table_cell(org));
-    text += std::format("run {}  seed {}  canary cursor {} -> {}\n", r.run_id,
-                        sampling::seed_hex(r.seed),
-                        cursor_text(r.mail.cursor, r.sharepoint.cursor, r.onedrive.cursor),
-                        cursor_text(r.mail.cursor_next, r.sharepoint.cursor_next,
-                                    r.onedrive.cursor_next));
+    std::string text = std::format(
+        "canary cursor {} -> {}\n",
+        cursor_text(r.mail.cursor, r.sharepoint.cursor, r.onedrive.cursor),
+        cursor_text(r.mail.cursor_next, r.sharepoint.cursor_next, r.onedrive.cursor_next));
     text += format_table({{"  ", {"KIND", "REQUESTED", "CANARIES", "RANDOM", "NOTE"}},
                           kind_row(ItemKind::mail, r.mail),
                           kind_row(ItemKind::sharepoint, r.sharepoint),
                           kind_row(ItemKind::onedrive, r.onedrive)});
-    text += std::format("restoring {} item(s) ...\n", items);
+    if (items > 0) {
+        text += std::format("restoring {} item(s) ...\n", items);
+    }
     return text;
 }
 
@@ -289,12 +316,32 @@ std::string cell_or_dash(std::string_view text)
     return text.empty() ? std::string{"-"} : table_cell(text);
 }
 
-// A session's end - start, "-" when either doesn't read or it's negative.
+// "H:MM:SS" for a whole number of seconds; a negative one is "-".
+std::string format_seconds(std::int64_t seconds)
+{
+    if (seconds < 0) {
+        return "-";
+    }
+    return std::format("{}:{:02}:{:02}", seconds / 3600, seconds / 60 % 60, seconds % 60);
+}
+
+// A session's end - start, cut to whole seconds; "-" when either doesn't read
+// or it's negative. Whole seconds and fractions are subtracted apart: two
+// times in nanoseconds can be further apart (1678 to 2261) than a signed
+// 64-bit count of nanoseconds holds.
 std::string session_elapsed(const connector::RestoreSessionResult& session)
 {
     const std::optional<VeeamTime> start = parse_veeam_time(session.started_at);
     const std::optional<VeeamTime> end = parse_veeam_time(session.ended_at);
-    return start && end ? format_elapsed(*end - *start) : std::string{"-"};
+    if (!start || !end) {
+        return "-";
+    }
+    const auto start_s = std::chrono::floor<std::chrono::seconds>(*start);
+    const auto end_s = std::chrono::floor<std::chrono::seconds>(*end);
+    const std::int64_t whole = (end_s - start_s).count();
+    // Each fraction is in [0 s, 1 s), so their difference is in (-1 s, 1 s).
+    const bool fraction_back = (*end - end_s) < (*start - start_s);
+    return format_seconds(fraction_back ? whole - 1 : whole);
 }
 
 // Per type: how many items were selected, and how many of those (the first)
@@ -372,6 +419,30 @@ void flush_or_throw(std::ostream& out)
     }
 }
 
+// The exit code of a restore that returned, with its line on `err`: an item
+// that failed for an infrastructure reason, or nothing sent, is an error (4),
+// never a restore failure; 5 only for partial or failed; 0 for succeeded.
+int restore_exit_code(const connector::RestoreResult& result, std::ostream& err)
+{
+    const auto infrastructure =
+        std::ranges::count_if(result.items, [](const connector::ItemRestoreResult& item) {
+            return item.infrastructure && item.outcome != connector::ItemOutcome::restored;
+        });
+    if (infrastructure > 0) {
+        err << "restore error: " << infrastructure
+            << " item(s) failed for an infrastructure reason (Veeam couldn't reach Microsoft "
+               "365, lacked permissions or was throttled); this is an error, not a restore "
+               "failure\n";
+        return exit_code::service;
+    }
+    if (result.status == connector::RestoreStatus::not_run) {
+        err << "restore error: the restore did not run: nothing was sent (status not_run)\n";
+        return exit_code::service;
+    }
+    return result.status == connector::RestoreStatus::succeeded ? exit_code::ok
+                                                                : exit_code::restore;
+}
+
 // what() is safe to print: connector::Error's never holds a credential.
 int report(std::ostream& err, std::string_view prefix, const std::exception& e, int code)
 {
@@ -390,11 +461,9 @@ std::string make_run_id()
 
 std::string format_elapsed(std::chrono::nanoseconds elapsed)
 {
-    if (elapsed < std::chrono::nanoseconds::zero()) {
-        return "-";
-    }
-    const auto seconds = std::chrono::duration_cast<std::chrono::seconds>(elapsed).count();
-    return std::format("{}:{:02}:{:02}", seconds / 3600, seconds / 60 % 60, seconds % 60);
+    return elapsed < std::chrono::nanoseconds::zero()
+               ? std::string{"-"}
+               : format_seconds(std::chrono::duration_cast<std::chrono::seconds>(elapsed).count());
 }
 
 RestoreCommandEnv default_restore_command_env()
@@ -435,6 +504,17 @@ int run_restore_command(std::span<const std::string_view> args, std::ostream& ou
     }
     if (!is_set(secrets.veeam_password)) {
         err << "config error: " << kEnvVeeamPassword << " is not set\n";
+        return exit_code::config;
+    }
+    // The restore reads and checks the Graph certificate itself, but only
+    // after the sample is chosen: an unset variable is said now, before any
+    // Veeam call.
+    if (!is_set(secrets.graph_cert_pfx_base64)) {
+        err << "config error: " << kEnvGraphCertPfxBase64 << " is not set\n";
+        return exit_code::config;
+    }
+    if (!is_set(secrets.graph_cert_password)) {
+        err << "config error: " << kEnvGraphCertPassword << " is not set\n";
         return exit_code::config;
     }
     const sampling::SamplePlan plan{parsed.mail.value_or(config.sample_mail),
@@ -484,6 +564,14 @@ int run_restore_command(std::span<const std::string_view> args, std::ostream& ou
         const std::string run_id = parsed.run_id ? std::string{*parsed.run_id}
                                    : env.make_run_id ? env.make_run_id()
                                                      : make_run_id();
+        sampling::check_run_id(run_id); // env.make_run_id's: nothing printed if it fails
+
+        // Once the run ID exists, before the sample is chosen (it browses
+        // Veeam) and the restore (it takes minutes): a run that fails from
+        // here on still shows its run ID and seed.
+        out << format_intro(config.veeam_org_name, *point, run_id);
+        flush_or_throw(out);
+
         const connector::RestoreTargets targets = connector::RestoreTargets::from_config(config);
         const sampling::Selection selection =
             sampling::choose_sample(*source, config.veeam_org_name, *point, targets,
@@ -495,10 +583,14 @@ int run_restore_command(std::span<const std::string_view> args, std::ostream& ou
                                           .sharepoint = selection.sharepoint,
                                           .onedrive = selection.onedrive};
 
-        // Before the restore, which takes minutes: a run that fails still
-        // shows its run ID. No restore when it can't be shown.
-        out << format_header(config.veeam_org_name, *point, selection, spec.item_count());
+        // No restore when the rest of the header can't be shown.
+        out << format_sample(selection, spec.item_count());
         flush_or_throw(out);
+        if (spec.item_count() == 0) {
+            err << "restore error: the sample is empty: nothing to restore ("
+                << empty_sample_reason(selection.record) << ")\n";
+            return exit_code::service;
+        }
 
         const auto now = [&env] {
             return env.now ? env.now() : std::chrono::steady_clock::now();
@@ -507,10 +599,16 @@ int run_restore_command(std::span<const std::string_view> args, std::ostream& ou
         const connector::RestoreResult result = source->restore_sample(spec);
         const auto total = now() - started;
 
-        out << format_result(result, selection, total);
-        flush_or_throw(out);
-        return result.status == connector::RestoreStatus::succeeded ? exit_code::ok
-                                                                    : exit_code::restore;
+        try {
+            out << format_result(result, selection, total);
+            flush_or_throw(out);
+        } catch (...) {
+            // Items may be in the targets now: say so, and which run.
+            err << "error: writing the output failed after the restore ran (run " << run_id
+                << ")\n";
+            return exit_code::config;
+        }
+        return restore_exit_code(result, err);
     } catch (const ConfigError& e) {
         return report(err, "config error: ", e, exit_code::config);
     } catch (const sampling::ManifestError& e) {

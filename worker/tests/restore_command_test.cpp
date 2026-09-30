@@ -198,7 +198,10 @@ struct FakeConnector {
                                                 point(kOlderId, kOlderTime)};
     connector::CandidatePool pool;
     std::function<void()> points_throw;
+    std::function<void()> candidates_throw;
     std::function<void()> restore_throw;
+    // Called first in restore_sample, on the test's thread.
+    std::function<void()> at_restore;
     std::function<connector::RestoreResult(const connector::RestoreSpec&)> answer = restored;
     // What the command's stdout held when restore_sample was called.
     const std::ostringstream* out = nullptr;
@@ -231,12 +234,18 @@ public:
     connector::CandidatePool list_candidates(const connector::CandidateQuery&) override
     {
         ++fake_.candidate_calls;
+        if (fake_.candidates_throw) {
+            fake_.candidates_throw();
+        }
         return fake_.pool;
     }
 
     connector::RestoreResult restore_sample(const connector::RestoreSpec& spec) override
     {
         ++fake_.restore_calls;
+        if (fake_.at_restore) {
+            fake_.at_restore();
+        }
         fake_.out_at_restore = fake_.out ? fake_.out->str() : "";
         fake_.spec = spec;
         // The connector's own log line: never on stdout.
@@ -322,6 +331,17 @@ struct Harness {
         return run_raw(args);
     }
 
+    // `args`, then --config, with stdout on `out`: the code and stderr.
+    std::pair<int, std::string> run_to(Args args, std::ostream& out)
+    {
+        const std::string path_arg = utf8(config_path);
+        args.push_back("--config");
+        args.push_back(path_arg);
+        std::ostringstream err;
+        const int code = rp::run_restore_command(args, out, err, env());
+        return {code, err.str()};
+    }
+
     Run run_raw(const Args& args)
     {
         std::ostringstream out;
@@ -343,7 +363,8 @@ struct Harness {
     std::filesystem::path manifest_path;
     FakeConnector fake;
     std::function<rp::Secrets()> load_secrets = [] {
-        return rp::Secrets{"rp-veeam", "Sentinel-Veeam-Password-9c2e", std::nullopt, std::nullopt};
+        return rp::Secrets{"rp-veeam", "Sentinel-Veeam-Password-9c2e", "UEZYIGJ5dGVz",
+                           "Sentinel-Pfx-Password-5d1a"};
     };
     std::function<void()> connector_throw;
     bool give_connector = true;
@@ -364,15 +385,22 @@ connector::MailSelector carol_mail(int n)
             "2026-09-20T10:00:0" + std::to_string(n) + "Z"};
 }
 
-// The header of `--mail 2 --sp 1 --od 0 --run-id run-0001` on the newest point
-// with one random mail candidate.
-std::string expected_header()
+// What `--run-id run-0001` on the newest point prints before the sample is
+// chosen.
+std::string expected_intro()
 {
     return "restore point " + kNewestTime + "  " + kNewestId + "  (veeam_org_name " + kOrgName +
            ")\n"
            "run run-0001  seed " +
-           seed_of(kRunId) +
-           "  canary cursor 0,0,0 -> 1,1,0\n"
+           seed_of(kRunId) + "\n";
+}
+
+// The header of `--mail 2 --sp 1 --od 0 --run-id run-0001` on the newest point
+// with one random mail candidate.
+std::string expected_header()
+{
+    return expected_intro() +
+           "canary cursor 0,0,0 -> 1,1,0\n"
            "  KIND        REQUESTED  CANARIES  RANDOM  NOTE\n"
            "  mail        2          1 of 1    1 of 1\n"
            "  sharepoint  1          1 of 1    0 of 0\n"
@@ -520,23 +548,30 @@ TEST_CASE("restore: without --config it reads the default config", "[restore_com
     CHECK(lab.default_path_calls == 1);
 }
 
-TEST_CASE("restore: both Veeam secrets are needed, as for veeam list", "[restore_command]")
+TEST_CASE("restore: both Veeam secrets and both Graph certificate variables are needed, before "
+          "any Veeam call",
+          "[restore_command]")
 {
-    const auto [username, password, message] =
-        GENERATE(table<std::optional<std::string>, std::optional<std::string>, std::string>({
-            {std::nullopt, "p", "config error: RP_VEEAM_USERNAME is not set\n"},
-            {std::string{}, "p", "config error: RP_VEEAM_USERNAME is not set\n"},
-            {"u", std::nullopt, "config error: RP_VEEAM_PASSWORD is not set\n"},
-            {"u", std::string{}, "config error: RP_VEEAM_PASSWORD is not set\n"},
+    using Secret = std::optional<std::string>;
+    const auto [username, password, pfx, pfx_password, message] =
+        GENERATE(table<Secret, Secret, Secret, Secret, std::string>({
+            {std::nullopt, "p", "x", "x", "config error: RP_VEEAM_USERNAME is not set\n"},
+            {std::string{}, "p", "x", "x", "config error: RP_VEEAM_USERNAME is not set\n"},
+            {"u", std::nullopt, "x", "x", "config error: RP_VEEAM_PASSWORD is not set\n"},
+            {"u", std::string{}, "x", "x", "config error: RP_VEEAM_PASSWORD is not set\n"},
+            {"u", "p", std::nullopt, "x", "config error: RP_GRAPH_CERT_PFX_BASE64 is not set\n"},
+            {"u", "p", std::string{}, std::nullopt,
+             "config error: RP_GRAPH_CERT_PFX_BASE64 is not set\n"},
+            {"u", "p", "x", std::nullopt, "config error: RP_GRAPH_CERT_PASSWORD is not set\n"},
+            {"u", "p", "x", std::string{}, "config error: RP_GRAPH_CERT_PASSWORD is not set\n"},
         }));
     Harness lab;
-    lab.load_secrets = [username = username, password = password] {
-        return rp::Secrets{username, password, std::nullopt, std::nullopt};
-    };
+    lab.load_secrets = [=] { return rp::Secrets{username, password, pfx, pfx_password}; };
 
     const Run run = lab.run({});
 
     CHECK(run.exit_code == rp::exit_code::config);
+    CHECK(run.out.empty());
     CHECK(run.err == message);
     CHECK(lab.make_connector_calls == 0);
 }
@@ -658,9 +693,9 @@ TEST_CASE("restore: each failure of the restore has its exit code; the header is
         {"ConfigError",
          [] {
              throw rp::ConfigError("RP_GRAPH_CERT_PFX_BASE64",
-                                   "RP_GRAPH_CERT_PFX_BASE64 is not set");
+                                   "RP_GRAPH_CERT_PFX_BASE64 is not valid Base64");
          },
-         rp::exit_code::config, "config error: RP_GRAPH_CERT_PFX_BASE64 is not set\n"},
+         rp::exit_code::config, "config error: RP_GRAPH_CERT_PFX_BASE64 is not valid Base64\n"},
         {"unexpected", [] { throw std::runtime_error("SENTINEL-UNSAFE-MESSAGE"); },
          rp::exit_code::config, "error: unexpected failure\n"},
     };
@@ -676,6 +711,41 @@ TEST_CASE("restore: each failure of the restore has its exit code; the header is
     CHECK(run.err == c.err);
     CHECK(run.out == expected_header());
     CHECK(lab.fake.restore_calls == 1);
+}
+
+TEST_CASE("restore: a failure choosing the sample restores nothing; the run ID is already out",
+          "[restore_command]")
+{
+    struct Case {
+        std::string name;
+        std::function<void()> raise;
+        int code;
+        std::string err;
+    };
+    const std::vector<Case> cases{
+        {"TransientError", [] { throw connector::TransientError("Veeam unreachable"); },
+         rp::exit_code::transient, "restore error: Veeam unreachable\n"},
+        {"AuthError", [] { throw connector::AuthError("Veeam refused the token"); },
+         rp::exit_code::auth, "restore error: Veeam refused the token\n"},
+        {"Error", [] { throw connector::Error("veeam_m365: an unexpected answer"); },
+         rp::exit_code::service, "restore error: veeam_m365: an unexpected answer\n"},
+        {"ManifestError",
+         [] { throw sampling::ManifestError("canary manifest: /entries/3: a canary in a target"); },
+         rp::exit_code::config, "config error: canary manifest: /entries/3: a canary in a target\n"},
+    };
+    const Case& c = cases[GENERATE(range(std::size_t{0}, std::size_t{4}))];
+    CAPTURE(c.name);
+    Harness lab;
+    lab.fake.candidates_throw = c.raise;
+
+    // --mail 2: a random half, so choose_sample lists candidates.
+    const Run run = lab.run({"--run-id", kRunId, "--mail", "2", "--sp", "0", "--od", "0"});
+
+    CHECK(run.exit_code == c.code);
+    CHECK(run.err == c.err);
+    CHECK(run.out == expected_intro());
+    CHECK(lab.fake.candidate_calls == 1);
+    CHECK(lab.fake.restore_calls == 0);
 }
 
 TEST_CASE("restore: a failure listing the restore points restores nothing and prints nothing",
@@ -789,6 +859,150 @@ TEST_CASE("restore: a stdout that takes nothing stops the command before the res
 
     CHECK(code == rp::exit_code::config);
     CHECK(err.str() == "error: unexpected failure\n");
+    CHECK(lab.fake.candidate_calls == 0);
+    CHECK(lab.fake.restore_calls == 0);
+}
+
+namespace {
+
+// A stdout that takes `limit` bytes, then fails, and keeps what it held at
+// each sync() (a flush).
+class RecordingStreamBuf : public std::streambuf {
+public:
+    explicit RecordingStreamBuf(std::size_t limit = std::string::npos) : limit_(limit) {}
+
+    std::string text;
+    std::vector<std::string> synced;
+
+protected:
+    int_type overflow(int_type c) override
+    {
+        if (traits_type::eq_int_type(c, traits_type::eof())) {
+            return traits_type::not_eof(c);
+        }
+        if (text.size() >= limit_) {
+            return traits_type::eof();
+        }
+        text.push_back(traits_type::to_char_type(c));
+        return c;
+    }
+
+    std::streamsize xsputn(const char* s, std::streamsize n) override
+    {
+        const std::size_t room = text.size() >= limit_ ? 0 : limit_ - text.size();
+        const std::size_t take = std::min(room, static_cast<std::size_t>(n));
+        text.append(s, take);
+        return static_cast<std::streamsize>(take);
+    }
+
+    int sync() override
+    {
+        synced.push_back(text);
+        return 0;
+    }
+
+private:
+    std::size_t limit_;
+};
+
+} // namespace
+
+TEST_CASE("restore: the run ID is flushed before the sample is chosen, the header before the "
+          "restore",
+          "[restore_command]")
+{
+    Harness lab;
+    lab.fake.pool.mail = {carol_mail(1)};
+    RecordingStreamBuf buffer;
+    std::ostream out(&buffer);
+    std::vector<std::string> synced_at_candidates;
+    std::vector<std::string> synced_at_restore;
+    lab.fake.candidates_throw = [&] { synced_at_candidates = buffer.synced; };
+    lab.fake.at_restore = [&] { synced_at_restore = buffer.synced; };
+
+    const auto [code, err] =
+        lab.run_to({"--run-id", kRunId, "--mail", "2", "--sp", "1", "--od", "0"}, out);
+
+    CHECK(code == rp::exit_code::ok);
+    CHECK(err.empty());
+    CHECK(synced_at_candidates == std::vector<std::string>{expected_intro()});
+    CHECK(synced_at_restore == std::vector<std::string>{expected_intro(), expected_header()});
+    CHECK(lab.fake.restore_calls == 1);
+}
+
+TEST_CASE("restore: a stdout that fails after the restore ran says so, with the run ID",
+          "[restore_command]")
+{
+    Harness lab;
+    lab.fake.pool.mail = {carol_mail(1)};
+    // The header fits; the tables don't.
+    RecordingStreamBuf buffer(expected_header().size() + 5);
+    std::ostream out(&buffer);
+
+    const auto [code, err] =
+        lab.run_to({"--run-id", kRunId, "--mail", "2", "--sp", "1", "--od", "0"}, out);
+
+    CHECK(code == rp::exit_code::config);
+    CHECK(err == "error: writing the output failed after the restore ran (run run-0001)\n");
+    CHECK(lab.fake.restore_calls == 1);
+    CHECK_THAT(buffer.text, StartsWith(expected_header()));
+}
+
+TEST_CASE("restore: a stdout that fails on the run ID stops the command before the sample",
+          "[restore_command]")
+{
+    Harness lab;
+    RecordingStreamBuf buffer(10);
+    std::ostream out(&buffer);
+
+    const auto [code, err] = lab.run_to({"--run-id", kRunId, "--mail", "2"}, out);
+
+    CHECK(code == rp::exit_code::config);
+    CHECK(err == "error: unexpected failure\n");
+    CHECK(lab.fake.candidate_calls == 0);
+    CHECK(lab.fake.restore_calls == 0);
+}
+
+TEST_CASE("restore: a stdout that fails on the sample's table stops the command before the "
+          "restore",
+          "[restore_command]")
+{
+    Harness lab;
+    lab.fake.pool.mail = {carol_mail(1)};
+    RecordingStreamBuf buffer(expected_intro().size() + 5);
+    std::ostream out(&buffer);
+
+    const auto [code, err] =
+        lab.run_to({"--run-id", kRunId, "--mail", "2", "--sp", "1", "--od", "0"}, out);
+
+    CHECK(code == rp::exit_code::config);
+    CHECK(err == "error: unexpected failure\n");
+    CHECK(lab.fake.candidate_calls == 1);
+    CHECK(lab.fake.restore_calls == 0);
+}
+
+TEST_CASE("restore: an empty sample restores nothing and is exit 4, the shortfall named",
+          "[restore_command]")
+{
+    const auto [manifest, sizes, cursor_line, reason] =
+        GENERATE(table<std::string, Args, std::string, std::string>({
+            {trimmed_manifest(0, 1, 0), Args{"--mail", "2", "--sp", "0", "--od", "1"},
+             "canary cursor 0,0,0 -> 0,0,0\n",
+             "mail: canary and random shortfall; onedrive: canary shortfall"},
+            {trimmed_manifest(0, 1, 1), Args{"--mail", "1", "--sp", "0", "--od", "0"},
+             "canary cursor 0,0,0 -> 0,0,0\n", "mail: canary shortfall"},
+        }));
+    Harness lab;
+    lab.dir.write("seed-manifest.json", manifest);
+    Args args = sizes;
+    args.insert(args.end(), {"--run-id", kRunId});
+
+    const Run run = lab.run(args);
+
+    CHECK(run.exit_code == rp::exit_code::service);
+    CHECK(run.err == "restore error: the sample is empty: nothing to restore (" + reason + ")\n");
+    CHECK_THAT(run.out, StartsWith(expected_intro() + cursor_line));
+    CHECK_THAT(run.out, !ContainsSubstring("restoring"));
     CHECK(lab.fake.restore_calls == 0);
 }
 
@@ -841,7 +1055,6 @@ TEST_CASE("restore: a restore that didn't succeed exits 5 with its status line",
     const auto [status, count] = GENERATE(table<connector::RestoreStatus, int>({
         {connector::RestoreStatus::partial, 1},
         {connector::RestoreStatus::failed, 0},
-        {connector::RestoreStatus::not_run, 0},
     }));
     Harness lab;
     lab.fake.answer = [status = status, count = count](const connector::RestoreSpec& spec) {
@@ -860,12 +1073,86 @@ TEST_CASE("restore: a restore that didn't succeed exits 5 with its status line",
                                           " of 2 item(s) restored in 0:02:03\n"));
 }
 
+TEST_CASE("restore: an item failed for an infrastructure reason is exit 4, never 5; the tables "
+          "are printed",
+          "[restore_command]")
+{
+    const auto [status, outcomes, infrastructure, code, err] = GENERATE(
+        table<connector::RestoreStatus, std::vector<connector::ItemOutcome>, std::vector<bool>,
+              int, std::string>({
+            {connector::RestoreStatus::partial,
+             {connector::ItemOutcome::restored, connector::ItemOutcome::failed},
+             {false, true},
+             rp::exit_code::service,
+             "restore error: 1 item(s) failed for an infrastructure reason (Veeam couldn't "
+             "reach Microsoft 365, lacked permissions or was throttled); this is an error, not "
+             "a restore failure\n"},
+            {connector::RestoreStatus::failed,
+             {connector::ItemOutcome::unknown, connector::ItemOutcome::failed},
+             {true, true},
+             rp::exit_code::service,
+             "restore error: 2 item(s) failed for an infrastructure reason (Veeam couldn't "
+             "reach Microsoft 365, lacked permissions or was throttled); this is an error, not "
+             "a restore failure\n"},
+            // One infrastructure failure among restore failures is still an error.
+            {connector::RestoreStatus::failed,
+             {connector::ItemOutcome::failed, connector::ItemOutcome::failed},
+             {false, true},
+             rp::exit_code::service,
+             "restore error: 1 item(s) failed for an infrastructure reason (Veeam couldn't "
+             "reach Microsoft 365, lacked permissions or was throttled); this is an error, not "
+             "a restore failure\n"},
+            // A restored item's flag counts for nothing.
+            {connector::RestoreStatus::partial,
+             {connector::ItemOutcome::restored, connector::ItemOutcome::failed},
+             {true, false},
+             rp::exit_code::restore,
+             ""},
+        }));
+    Harness lab;
+    lab.fake.answer = [=](const connector::RestoreSpec& spec) {
+        connector::RestoreResult result = restored(spec);
+        result.status = status;
+        result.items_restored = 0;
+        for (std::size_t i = 0; i < result.items.size(); ++i) {
+            result.items[i].outcome = outcomes.at(i);
+            result.items[i].infrastructure = infrastructure.at(i);
+            result.items_restored += outcomes.at(i) == connector::ItemOutcome::restored ? 1 : 0;
+        }
+        return result;
+    };
+
+    const Run run = lab.run({"--run-id", kRunId, "--mail", "1", "--sp", "1", "--od", "0"});
+
+    CHECK(run.exit_code == code);
+    CHECK(run.err == err);
+    CHECK_THAT(run.out, ContainsSubstring("\n  KIND        SOURCE  NAME"));
+    CHECK_THAT(run.out, ContainsSubstring("\nstatus " + std::string{connector::to_string(status)}));
+}
+
+TEST_CASE("restore: a restore that returns not_run is exit 4, never 5", "[restore_command]")
+{
+    Harness lab;
+    lab.fake.answer = [](const connector::RestoreSpec&) { return connector::RestoreResult{}; };
+
+    const Run run = lab.run({"--run-id", kRunId, "--mail", "1", "--sp", "0", "--od", "0"});
+
+    CHECK(run.exit_code == rp::exit_code::service);
+    CHECK(run.err == "restore error: the restore did not run: nothing was sent (status not_run)\n");
+    // Without items or sessions, only the status line follows the header.
+    const std::string last = "restoring 1 item(s) ...\n";
+    CHECK(run.out.substr(run.out.find(last) + last.size()) ==
+          "\nstatus not_run: 0 of 0 item(s) restored in 0:02:03\n");
+}
+
 TEST_CASE("restore: --point latest, or none, is the newest; an ID matches in any case",
           "[restore_command]")
 {
     const auto [point_args, expected] = GENERATE(table<Args, std::string>({
         {Args{}, kNewestId},
         {Args{"--point", "latest"}, kNewestId},
+        {Args{"--point", "LATEST"}, kNewestId},
+        {Args{"--point", "Latest"}, kNewestId},
         {Args{"--point", "C2F0F2E7-177F-48AC-992B-93A50CF702E3" "5E1C0A24-0000-4000-8000-000000000929"},
          kOlderId},
     }));
@@ -881,6 +1168,60 @@ TEST_CASE("restore: --point latest, or none, is the newest; an ID matches in any
     CHECK_THAT(run.out, StartsWith("restore point " +
                                    (expected == kNewestId ? kNewestTime : kOlderTime) + "  " +
                                    expected + "  "));
+}
+
+TEST_CASE("restore: the edges of the command line are accepted", "[restore_command]")
+{
+    Harness lab;
+    SECTION("--mail 100")
+    {
+        const Run run = lab.run({"--run-id", kRunId, "--mail", "100", "--sp", "0", "--od", "0"});
+        CHECK(run.exit_code == rp::exit_code::ok);
+        CHECK_THAT(run.out, ContainsSubstring(
+                                "  mail        100        20 of 50  0 of 50  canary and random "
+                                "shortfall\n"));
+    }
+    SECTION("a 128-character --point ID passes the command line, and isn't found")
+    {
+        const std::string id(128, 'a');
+        const Run run = lab.run({"--point", id});
+        CHECK(run.exit_code == rp::exit_code::service);
+        CHECK(run.err == "restore error: restore point " + id + " not found for veeam_org_name\n");
+        CHECK(lab.fake.points_calls == 1);
+    }
+    SECTION("--canary-cursor 0,0,9: the last OneDrive canary")
+    {
+        const Run run = lab.run(
+            {"--run-id", kRunId, "--canary-cursor", "0,0,9", "--mail", "0", "--sp", "0", "--od", "1"});
+        CHECK(run.exit_code == rp::exit_code::ok);
+        CHECK_THAT(run.out, ContainsSubstring("\ncanary cursor 0,0,9 -> 0,0,0\n"));
+        REQUIRE(lab.fake.spec);
+        CHECK(lab.fake.spec->onedrive.at(0).name == "rp-canary-20.png");
+    }
+    SECTION("a cursor of 0 for a type the manifest has no canaries of")
+    {
+        lab.dir.write("seed-manifest.json", trimmed_manifest(1, 1, 0));
+        const Run run = lab.run(
+            {"--run-id", kRunId, "--canary-cursor", "0,0,0", "--mail", "1", "--sp", "1", "--od", "0"});
+        CHECK(run.exit_code == rp::exit_code::ok);
+        REQUIRE(lab.fake.spec);
+        CHECK(lab.fake.spec->mail.size() == 1);
+        CHECK(lab.fake.spec->sharepoint.size() == 1);
+    }
+    SECTION("a manifest tenant that differs from graph_tenant_id only in case")
+    {
+        json manifest = json::parse(lab_manifest_text());
+        std::string tenant = kTenant;
+        for (char& c : tenant) {
+            c = static_cast<char>(c >= 'a' && c <= 'f' ? c - 'a' + 'A' : c);
+        }
+        REQUIRE(tenant != kTenant);
+        manifest["tenant_id"] = tenant;
+        lab.dir.write("seed-manifest.json", manifest.dump());
+        const Run run = lab.run({"--run-id", kRunId, "--mail", "1", "--sp", "0", "--od", "0"});
+        CHECK(run.exit_code == rp::exit_code::ok);
+        CHECK(run.err.empty());
+    }
 }
 
 TEST_CASE("restore: an absent size is the config's; a flag overrides it", "[restore_command]")
@@ -920,7 +1261,7 @@ TEST_CASE("restore: without --run-id a run ID is made; with it, it is reused and
         CHECK(run.exit_code == rp::exit_code::ok);
         CHECK(lab.run_id_calls == 1);
         CHECK_THAT(run.out, ContainsSubstring("\nrun " + kGeneratedRunId + "  seed " +
-                                              seed_of(kGeneratedRunId) + "  canary cursor "));
+                                              seed_of(kGeneratedRunId) + "\ncanary cursor "));
     }
     SECTION("reused")
     {
@@ -928,7 +1269,7 @@ TEST_CASE("restore: without --run-id a run ID is made; with it, it is reused and
         CHECK(run.exit_code == rp::exit_code::ok);
         CHECK(lab.run_id_calls == 0);
         CHECK_THAT(run.out, ContainsSubstring("\nrun repeat-me  seed " + seed_of("repeat-me") +
-                                              "  canary cursor "));
+                                              "\ncanary cursor "));
     }
 }
 
@@ -941,7 +1282,7 @@ TEST_CASE("restore: the canary cursor picks where each rotation starts and the n
                              "--sp", "1", "--od", "1"});
 
     CHECK(run.exit_code == rp::exit_code::ok);
-    CHECK_THAT(run.out, ContainsSubstring("  canary cursor 19,9,0 -> 1,0,1\n"));
+    CHECK_THAT(run.out, ContainsSubstring("\ncanary cursor 19,9,0 -> 1,0,1\n"));
     REQUIRE(lab.fake.spec);
     REQUIRE(lab.fake.spec->mail.size() == 2);
     CHECK(lab.fake.spec->mail[0].subject == "RP-CANARY-0020");
@@ -1003,7 +1344,9 @@ TEST_CASE("restore: each item's row: its source, outcome, session time and messa
 
     const Run run = lab.run({"--run-id", kRunId, "--mail", "2", "--sp", "1", "--od", "0"});
 
-    CHECK(run.exit_code == rp::exit_code::restore);
+    // The infrastructure failure makes it an error.
+    CHECK(run.exit_code == rp::exit_code::service);
+    CHECK_THAT(run.err, StartsWith("restore error: 1 item(s) failed for an infrastructure reason"));
     const std::string tables = run.out.substr(expected_header().size());
     CHECK(tables ==
           "\n"
@@ -1022,17 +1365,40 @@ TEST_CASE("restore: each item's row: its source, outcome, session time and messa
           "status partial: 1 of 3 item(s) restored in 0:02:03\n");
 }
 
-TEST_CASE("restore: a result without items or sessions prints only the status", "[restore_command]")
+TEST_CASE("restore: a session's elapsed time is cut to whole seconds and never overflows",
+          "[restore_command]")
 {
+    using namespace std::chrono;
+    // 1678 and 2261 are the ends of what a time in nanoseconds holds; the span
+    // between them is more nanoseconds than a signed 64-bit count holds.
+    const seconds span =
+        (sys_days{year{2261} / 12 / 31} + 23h + 59min + 59s) - sys_days{year{1678} / 1 / 1};
+    const std::string hours = std::to_string(span.count() / 3600);
+    const auto [started, ended, elapsed] = GENERATE_COPY(table<std::string, std::string, std::string>({
+        {"1678-01-01T00:00:00Z", "2261-12-31T23:59:59Z", hours + ":59:59"},
+        {"1678-01-01T00:00:00.5Z", "2261-12-31T23:59:59.25Z", hours + ":59:58"},
+        {"2261-12-31T23:59:59Z", "1678-01-01T00:00:00Z", "-"},
+        {"2026-09-30T10:00:00.9Z", "2026-09-30T10:00:01.1Z", "0:00:00"},
+        {"2026-09-30T10:00:00.1Z", "2026-09-30T10:00:01.9Z", "0:00:01"},
+        {"2026-09-30T10:00:01.1Z", "2026-09-30T10:00:01Z", "-"},
+        {"not a time", "2026-09-30T10:00:01Z", "-"},
+        {"", "2026-09-30T10:00:01Z", "-"},
+    }));
+    CAPTURE(started, ended);
     Harness lab;
-    lab.fake.answer = [](const connector::RestoreSpec&) { return connector::RestoreResult{}; };
+    lab.fake.answer = [=](const connector::RestoreSpec& spec) {
+        connector::RestoreResult result = restored(spec);
+        result.sessions.at(0).started_at = started;
+        result.sessions.at(0).ended_at = ended;
+        return result;
+    };
 
     const Run run = lab.run({"--run-id", kRunId, "--mail", "1", "--sp", "0", "--od", "0"});
 
-    CHECK(run.exit_code == rp::exit_code::restore);
-    const std::string last = "restoring 1 item(s) ...\n";
-    CHECK(run.out.substr(run.out.find(last) + last.size()) ==
-          "\nstatus not_run: 0 of 0 item(s) restored in 0:02:03\n");
+    CHECK(run.exit_code == rp::exit_code::ok);
+    // The item's row and the session's row.
+    CHECK_THAT(run.out, ContainsSubstring("sess-mail  " + elapsed + " "));
+    CHECK_THAT(run.out, ContainsSubstring(ended + "  " + elapsed + "\n"));
 }
 
 TEST_CASE("restore: log lines go to the logger, never to stdout; without one the command's "
@@ -1091,6 +1457,19 @@ TEST_CASE("restore: a made run ID is rp-<UTC time>-<8 hex digits> and passes che
     CHECK_NOTHROW(sampling::check_run_id(first));
     // 32 random bits each: equal only by a 1 in 2^32 chance within one second.
     CHECK(first != second);
+
+    // The time is UTC now: read it back and compare it with the system clock
+    // (UTC), which a local time would miss by the zone's offset.
+    using namespace std::chrono;
+    const auto number = [&](std::size_t at, std::size_t n) { return std::stoi(first.substr(at, n)); };
+    const year_month_day date{year{number(3, 4)}, month{static_cast<unsigned>(number(7, 2))},
+                              day{static_cast<unsigned>(number(9, 2))}};
+    REQUIRE(date.ok());
+    const sys_seconds made =
+        sys_days{date} + hours{number(12, 2)} + minutes{number(14, 2)} + seconds{number(16, 2)};
+    const auto off = system_clock::now() - made;
+    CHECK(off >= -1min);
+    CHECK(off <= 1min);
 }
 
 TEST_CASE("restore: the default environment reads the real config and secrets, with a stderr "
@@ -1209,6 +1588,21 @@ TEST_CASE("restore through veeam_m365: the target guard refuses a wrong target, 
     // The header was out; nothing was sent to restore.
     CHECK_THAT(run.out,
                StartsWith("restore point " + vrl::kBackupTime + "  " + vrl::kRestorePointId));
+    // Veeam saw only what comes before the guard: the sign-in, the restore
+    // points (a canary-only sample lists no candidates) and the sign-out. No
+    // explore session, no restore session list, no restore POST.
+    std::vector<std::string> veeam_calls;
+    for (const rp::HttpRequest& request : real.rig.veeam.requests()) {
+        const std::string path = request.url.substr(vrl::kBase.size());
+        veeam_calls.push_back(std::string{rp::to_string(request.method)} + " " +
+                              path.substr(0, path.find('?')));
+    }
+    CHECK(veeam_calls == std::vector<std::string>{
+                             "POST /v8/token",
+                             "GET /v8/Organizations",
+                             "GET /v8/RestorePoints",
+                             "POST /v8/token/logout",
+                         });
     CHECK(real.rig.restore_posts().empty());
     CHECK(real.rig.exporter->calls == 0);
 }
@@ -1233,7 +1627,8 @@ TEST_CASE("restore through veeam_m365: a canary restored on the recorded run, ex
           "restore point 2026-09-27T22:00:48.1447833Z  "
           "c2f0f2e7-177f-48ac-992b-93a50cf702e35e1c0a24-0000-4000-8000-000000000924  "
           "(veeam_org_name RestoreProofLab.onmicrosoft.com)\n"
-          "run run-0001  seed " + seed_of(kRunId) + "  canary cursor 10,0,0 -> 11,0,0\n"
+          "run run-0001  seed " + seed_of(kRunId) + "\n"
+          "canary cursor 10,0,0 -> 11,0,0\n"
           "  KIND        REQUESTED  CANARIES  RANDOM  NOTE\n"
           "  mail        1          1 of 1    0 of 0\n"
           "  sharepoint  0          0 of 0    0 of 0\n"

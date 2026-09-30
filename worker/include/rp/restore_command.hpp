@@ -74,28 +74,32 @@ std::string format_elapsed(std::chrono::nanoseconds elapsed);
 //   [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>]
 // in any order, each at most once, each with its value. <n> is 1 to 3 ASCII
 // digits, 0 to 100; an absent size is config's sample_mail, sample_sp or
-// sample_od. --point is `latest` (the default: the newest restore point) or a
-// restore point ID: 1 to 128 ASCII letters, digits and hyphens (Veeam's are
-// two GUIDs run together), matched ASCII case-insensitively. --run-id must pass
+// sample_od. --point is `latest` in any ASCII case (the default: the newest
+// restore point) or a restore point ID: 1 to 128 ASCII letters, digits and
+// hyphens (Veeam's are two GUIDs run together), matched ASCII
+// case-insensitively. --run-id must pass
 // sampling::check_run_id; without it a new one is made (make_run_id).
 // --canary-cursor is three decimal numbers of 1 to 6 digits each, split by
 // commas, nothing else (default 0,0,0). --manifest defaults to
 // seed-manifest.json in the config file's folder.
 //
-// In this order: the arguments; the config and the Veeam secrets; the
-// manifest (and its tenant against graph_tenant_id, and the cursor against its
-// canaries); the connector; its restore points for veeam_org_name and the one
-// chosen; sampling::choose_sample; the header, flushed; restore_sample; the
-// tables and the status line. Prints to `out`, as UTF-8:
+// In this order: the arguments; the config, the Veeam secrets and the Graph
+// certificate variables (set, not yet read); the manifest (and its tenant
+// against graph_tenant_id, and the cursor against its canaries); the
+// connector; its restore points for veeam_org_name and the one chosen; the
+// run ID; the first two lines, flushed; sampling::choose_sample (it browses
+// Veeam); the rest of the header, flushed; restore_sample; the tables and the
+// status line. Prints to `out`, as UTF-8:
 //
 //   restore point <backup_time>  <id>  (veeam_org_name <org>)
-//   run <run ID>  seed <8 hex digits>  canary cursor <m>,<s>,<o> -> <m>,<s>,<o>
+//   run <run ID>  seed <8 hex digits>
+//   canary cursor <m>,<s>,<o> -> <m>,<s>,<o>
 //     KIND        REQUESTED  CANARIES  RANDOM  NOTE
 //     mail        <n>        <t> of <w>  <t> of <w>  [canary shortfall | random
 //                                                     shortfall | canary and random shortfall]
 //     sharepoint  ...
 //     onedrive    ...
-//   restoring <k> item(s) ...
+//   restoring <k> item(s) ...                  (not printed when k is 0)
 //   <blank line>
 //     KIND  SOURCE  NAME  OUTCOME  SESSION  ELAPSED  MESSAGE        one row per item
 //   <blank line>
@@ -103,14 +107,17 @@ std::string format_elapsed(std::chrono::nanoseconds elapsed);
 //   <blank line>
 //   status <status>: <restored> of <sent> item(s) restored in <H:MM:SS>
 //
-// The header (the lines up to "restoring ...") is written and flushed before
-// restore_sample, so a run that then fails still shows its run ID and seed.
-// CANARIES: taken of ceil(n/2); RANDOM: taken of floor(n/2); a shortfall is
-// named, never filled. SOURCE is canary or random (by the item's place in its
-// type: canaries first), OUTCOME restored, failed or unknown, with
-// " (infrastructure)" when the connector reads the message as Veeam failing
-// to reach Microsoft 365; ELAPSED is the item's session's end - start as the
-// connector reports them ("-" when either doesn't read or it's negative);
+// The first two lines are written and flushed as soon as the run ID exists,
+// before choose_sample, so a run that fails from then on still shows its run
+// ID and seed; the rest of the header (up to "restoring ...") is flushed
+// before restore_sample. CANARIES: taken of ceil(n/2); RANDOM: taken of
+// floor(n/2); a shortfall is named, never filled. SOURCE is canary or random
+// (by the item's place in its type: canaries first), OUTCOME restored, failed
+// or unknown, with " (infrastructure)" when the connector reads the message as
+// Veeam failing to reach Microsoft 365 or lacking permissions (or being
+// throttled); ELAPSED is the item's session's end - start as the connector
+// reports them, cut to whole seconds ("-" when either doesn't read or it's
+// negative);
 // MESSAGE "-" when empty. RESTORED is "<restored> of <sent>". A table with no
 // rows isn't printed. The total is restore_sample's own time, by env.now.
 // Text from the connector goes through table_cell(): a control character
@@ -125,23 +132,37 @@ std::string format_elapsed(std::chrono::nanoseconds elapsed);
 //    the manifest has no <kind> canaries"), <kind> mail, sharepoint or onedrive;
 //  - 1: "config error: <message>" for a ConfigError (a config that doesn't
 //    load, a --config or --manifest path that isn't UTF-8, a secret that can't
-//    be read, "RP_VEEAM_USERNAME is not set" then RP_VEEAM_PASSWORD, and the
-//    Graph certificate, which restore_sample reads first), a
+//    be read, "RP_VEEAM_USERNAME is not set", then RP_VEEAM_PASSWORD,
+//    RP_GRAPH_CERT_PFX_BASE64 and RP_GRAPH_CERT_PASSWORD, all before any
+//    Veeam call; and a bad Graph certificate, which restore_sample reads and
+//    checks first), a
 //    sampling::ManifestError ("canary manifest: ...", a manifest that doesn't
 //    load or whose tenant_id isn't graph_tenant_id) and an
 //    UnknownConnectorError; "config error: unexpected failure" for any other
 //    exception while loading the config and secrets, and "error: unexpected
 //    failure" for any other exception after (a failed write or flush of `out`
-//    included; a failed header stops the command before restore_sample);
-//    neither ever shows the exception's message;
+//    before the restore included: it stops the command before choose_sample
+//    or restore_sample); neither ever shows the exception's message. A failed
+//    write or flush of `out` after restore_sample returned is "error: writing
+//    the output failed after the restore ran (run <run ID>)": items may be in
+//    the restore targets;
 //  - 2: "restore error: <what()>" for a connector::AuthError;
 //  - 3: the same for a connector::TransientError (Veeam unreachable);
 //  - 4: the same for any other connector::Error: a SafetyViolation ("restore
 //    error: target guard: ..."), a NotFoundError, a NotImplementedError; also
-//    "restore error: no restore points for veeam_org_name" and "restore error:
-//    restore point <id> not found for veeam_org_name";
-//  - 5 (exit_code::restore): the restore ran and its status is partial,
-//    failed or not_run; the tables and the status line are printed;
+//    "restore error: no restore points for veeam_org_name", "restore error:
+//    restore point <id> not found for veeam_org_name", "restore error: the
+//    sample is empty: nothing to restore (<kind>: <shortfall>[; ...])" after
+//    the header, without calling restore_sample (<kind> each type asked for,
+//    <shortfall> as in NOTE), and, after the tables and the status line:
+//    "restore error: <n> item(s) failed for an infrastructure reason (Veeam
+//    couldn't reach Microsoft 365, lacked permissions or was throttled); this
+//    is an error, not a restore failure" when any item not restored is marked
+//    infrastructure (whatever the status), and "restore error: the restore did
+//    not run: nothing was sent (status not_run)";
+//  - 5 (exit_code::restore): the restore ran and its status is partial or
+//    failed, no item for an infrastructure reason; the tables and the status
+//    line are printed, nothing on `err`;
 //  - 0: status succeeded (a random shortfall included: the header names it).
 // connector::Error's what() is safe to print (rp/connector.hpp). No exception
 // escapes.

@@ -152,7 +152,10 @@ W1.4 recordings the W2.4 runs didn't make:
 No recording holds a real item (every mail and file in them is a canary), so the items the
 tests list are synthetic: built in the test from a recorded entry (`w24-mail-x5-items`,
 `w24-sp-x1-documents`, `w24-od-x1-documents`, `w24-od-x1-folders-root`) with the ID, name,
-subject, class, time or size changed. None of them is saved here as if recorded.
+subject, class, time or size changed. The same goes for the extra mailboxes, libraries,
+OneDrives and users some tests add (copies of a recorded entry with another ID, address or
+UPN). None of them is saved here as if recorded. The pinned-draw test's expected containers and
+folders were worked out from these fixtures with a separate model of the draw, not recorded.
 
 `rest-certificate.pem` is not a response: it is the lab's Veeam REST certificate (public, as
 every TLS client sees it; no private key), exported on the Veeam server with

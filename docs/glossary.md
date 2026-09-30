@@ -25,7 +25,10 @@ Its expected values come from reading the live item through Microsoft Graph. Ran
 prove the test covers real content and not just our own planted evidence.
 
 **Sample.** The set of items one run selects and tests — canaries plus random items, chosen
-from a seed so the selection is reproducible.
+from a seed and a rotation cursor so the selection is reproducible. Per type, half the sample
+size (rounded up) are canaries, taken in manifest order from the cursor on so each is tested in
+turn; the other half are drawn from real data in the restore point with a seed derived from
+the run ID (`docs/decisions.md` 2026-09-30, W2.6).
 
 **Client.** One of an MSP's customers: one Microsoft 365 tenant, which Veeam backs up as one
 organisation. One Veeam server may back up many clients; one Worker talks to it with one set

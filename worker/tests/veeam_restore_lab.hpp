@@ -22,6 +22,7 @@
 
 #include <spdlog/logger.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstddef>
@@ -326,17 +327,16 @@ struct RestoreRig {
         return connector().restore_sample(spec);
     }
 
+    // The recorded time of the next restore POST (the last one repeats); an
+    // explore POST before it reads the same time.
     std::chrono::system_clock::time_point next_post_time()
     {
+        const std::size_t sent = restore_posts().size();
         const std::lock_guard lock(mutex);
         if (post_times.empty()) {
             return std::chrono::system_clock::time_point{};
         }
-        const auto out = post_times.front();
-        if (post_times.size() > 1) {
-            post_times.pop_front();
-        }
-        return out;
+        return post_times[std::min(sent, post_times.size() - 1)];
     }
 
     HttpResponse explore_response(const HttpRequest& request)

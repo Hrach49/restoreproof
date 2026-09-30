@@ -470,6 +470,221 @@ TEST_CASE("restore_sample: a OneDrive owner Veeam doesn't list", "[veeam_m365][w
     CHECK(rig.stops(run.explore()) == 1);
 }
 
+TEST_CASE("restore_sample: an explore POST that fails after Veeam may have opened the session: "
+          "found and stopped",
+          "[veeam_m365][w2.5]")
+{
+    struct Row {
+        std::string name;
+        std::function<HttpResponse(const HttpRequest&)> answer;
+        std::string kind;
+    };
+    const Row row = GENERATE(values<Row>({
+        {"dropped", dropped, "TransientError"},
+        {"timed out",
+         [](const HttpRequest& r) -> HttpResponse {
+             throw rp::HttpError("POST " + r.url + ": timed out", rp::TransportError::timeout, 0,
+                                 1);
+         },
+         "TransientError"},
+        {"500", [](const HttpRequest&) { return veeam_error(500, "Internal error"); }, "Error"},
+        {"201 without an id", [](const HttpRequest&) { return make_response(201, "{}"); },
+         "Error"},
+    }));
+    CAPTURE(row.name);
+    RestoreRig rig;
+    const Run run = mail_x1();
+    rig.serve(run);
+    rig.veeam.on(HttpMethod::post, url("/v8/Organizations/" + kOrgId + "/explore"), row.answer);
+    // Veeam lists a Working explore session of ours, made at the POST.
+    const std::string orphan = "e0000000-0000-4000-8000-000000000003";
+    const std::string restore = run.restore();
+    rig.veeam.on(HttpMethod::get, run.duplicate_url(),
+                 {fixture(run.file("sessions-after-post"), [&](json& b) {
+                     for (json& s : b["results"]) {
+                         if (s["id"] == restore) {
+                             s["id"] = orphan;
+                         }
+                     }
+                 })});
+    rig.get("/v8/RestoreSessions/" + orphan,
+            make_response(200, json{{"id", orphan}, {"state", "Working"}}.dump()));
+    rig.veeam.on(HttpMethod::post, url("/v8/RestoreSessions/" + orphan + "/Stop"),
+                 {load_fixture("veeam", "stop-204")});
+
+    const Caught thrown = caught_by([&] { rig.restore(restore_spec({mail_x1_item()})); });
+
+    CHECK(thrown.kind == row.kind);
+    CHECK(rig.explores_opened() == 1);
+    CHECK(rig.veeam.count(HttpMethod::get, run.duplicate_url()) == 1);
+    CHECK(rig.stops(orphan) == 1);
+    CHECK(rig.restore_posts().empty());
+    CHECK_THAT(rig.log(), ContainsSubstring("explore session " + orphan));
+}
+
+TEST_CASE("restore_sample: a failed explore POST with nothing to find, or a failed look, keeps "
+          "its error",
+          "[veeam_m365][w2.5]")
+{
+    RestoreRig rig;
+    const Run run = mail_x1();
+    rig.serve(run);
+    rig.veeam.on(HttpMethod::post, url("/v8/Organizations/" + kOrgId + "/explore"), dropped);
+    SECTION("nothing new listed")
+    {
+        const Caught thrown = caught_by([&] { rig.restore(restore_spec({mail_x1_item()})); });
+        CHECK(thrown.kind == "TransientError");
+        CHECK(rig.veeam.count(HttpMethod::get, run.duplicate_url()) == 1);
+    }
+    SECTION("the look fails")
+    {
+        rig.veeam.on(HttpMethod::get, run.duplicate_url(), {veeam_error(400, "Bad filter")});
+        const Caught thrown = caught_by([&] { rig.restore(restore_spec({mail_x1_item()})); });
+        CHECK(thrown.kind == "TransientError");
+        CHECK_THAT(rig.log(), ContainsSubstring("couldn't look for an explore session"));
+    }
+    SECTION("a refused sign-in: Veeam did nothing, so no look")
+    {
+        rig.veeam.on(HttpMethod::post, url("/v8/Organizations/" + kOrgId + "/explore"),
+                     {load_fixture("veeam", "api-expired-token-401")});
+        const Caught thrown = caught_by([&] { rig.restore(restore_spec({mail_x1_item()})); });
+        CHECK(thrown.kind == "AuthError");
+        CHECK(rig.veeam.count(HttpMethod::get, run.duplicate_url()) == 0);
+    }
+    CHECK(rig.restore_posts().empty());
+}
+
+TEST_CASE("restore_sample: two selectors of one item are refused before any POST",
+          "[veeam_m365][w2.5]")
+{
+    RestoreRig rig;
+    const Run run = mail_x1();
+    rig.serve(run);
+
+    const Caught thrown =
+        caught_by([&] { rig.restore(restore_spec({mail_x1_item(), mail_x1_item()})); });
+
+    CHECK(thrown.kind == "Error");
+    CHECK(thrown.what == "veeam_m365: mail item 1 \"RP-CANARY-0011\" is the same item in the "
+                         "restore point as mail item 0; nothing was restored");
+    CHECK(rig.restore_posts().empty());
+    CHECK(rig.exporter->calls == 0);
+    CHECK(rig.stops(run.explore()) == 1);
+}
+
+TEST_CASE("restore_sample: two files of one name are refused before any Veeam request",
+          "[veeam_m365][w2.5]")
+{
+    // Both would land on one file in the restore target (restore-flow §12):
+    // the second a new version of the first.
+    RestoreRig rig;
+    rig.serve(sp_x1());
+    rig.serve(od_x1());
+    connector::SharePointSelector other_folder = sp_x1_item();
+    other_folder.folder_path = "/Other";
+    other_folder.name = "RP-CANARY-06.PDF";
+    connector::OneDriveSelector bobs = od_x1_item();
+    bobs.user = kBob;
+    const bool sharepoint = GENERATE(true, false);
+    CAPTURE(sharepoint);
+
+    const Caught thrown = caught_by([&] {
+        rig.restore(sharepoint ? restore_spec({}, {sp_x1_item(), other_folder})
+                               : restore_spec({}, {}, {od_x1_item(), bobs}));
+    });
+
+    CHECK(thrown.kind == "Error");
+    CHECK(thrown.what == std::string{"veeam_m365: "} + (sharepoint ? "sharepoint" : "onedrive") +
+                             " items 0 and 1 are both named \"" +
+                             (sharepoint ? "rp-canary-06.pdf" : "rp-canary-16.pdf") +
+                             "\" (ignoring case), and would be restored onto one file in the "
+                             "restore target; restore them in separate runs; nothing was "
+                             "restored");
+    CHECK(rig.veeam.requests().empty());
+}
+
+TEST_CASE("restore_sample: Veeam unreachable or refusing the sign-in maps to connector errors",
+          "[veeam_m365][w2.5]")
+{
+    const Run run = mail_x1();
+    const std::string mailboxes =
+        url(paged("/v8/RestoreSessions/" + run.explore() + "/organization/mailboxes"));
+    struct Row {
+        std::string name;
+        std::function<void(RestoreRig&)> edit;
+        std::string kind;
+        std::size_t explores;
+        std::size_t stops;
+        std::string contains;
+    };
+    const Row row = GENERATE_COPY(
+        Row{"the preflight unreachable",
+            [](RestoreRig& rig) { rig.get("/v8/RestoreSessions?limit=200", make_response(503)); },
+            "TransientError", 0, 0, "HTTP 503"},
+        Row{"browsing drops",
+            [=](RestoreRig& rig) {
+                rig.veeam.on(HttpMethod::get, mailboxes, [](const HttpRequest& r) -> HttpResponse {
+                    throw rp::HttpError("GET " + r.url + ": connection dropped",
+                                        rp::TransportError::dropped, 0, 1);
+                });
+            },
+            "TransientError", 1, 1, "connection dropped"},
+        Row{"browsing refused after a fresh sign-in",
+            [=](RestoreRig& rig) {
+                rig.veeam.on(HttpMethod::get, mailboxes,
+                             {load_fixture("veeam", "api-expired-token-401")});
+            },
+            "AuthError", 1, 1, "HTTP 401"},
+        Row{"no answer, then the duplicate check unreachable",
+            [=](RestoreRig& rig) {
+                rig.veeam.on(HttpMethod::post, restore_url(run), dropped);
+                rig.veeam.on(HttpMethod::get, run.duplicate_url(), {make_response(503)});
+            },
+            "TransientError", 1, 0,
+            "; left open, as a restore may still be running: explore session(s) " +
+                run.explore()});
+    CAPTURE(row.name);
+    RestoreRig rig;
+    rig.serve(run);
+    row.edit(rig);
+
+    const Caught thrown = caught_by([&] { rig.restore(restore_spec({mail_x1_item()})); });
+
+    CHECK(thrown.kind == row.kind);
+    CHECK_THAT(thrown.what, ContainsSubstring(row.contains));
+    CHECK(rig.explores_opened() == row.explores);
+    CHECK(rig.stops(run.explore()) == row.stops);
+    CHECK(rig.posts(run.post_path()) <= 1);
+    check_no_secrets(rig, thrown.what);
+}
+
+TEST_CASE("restore_sample: an explore session that can't be closed keeps the run's error, and "
+          "the others are still closed",
+          "[veeam_m365][w2.5]")
+{
+    RestoreRig rig;
+    const Run mail = mail_x5();
+    const Run sp = sp_x1();
+    rig.serve(mail);
+    rig.serve(sp);
+    const std::string sites =
+        "/v8/RestoreSessions/" + sp.explore() + "/Organization/Sites/" + sp.container();
+    rig.get(paged(sites + "/Libraries"), make_response(200, R"({"results":[]})"));
+    rig.veeam.on(HttpMethod::post, url("/v8/RestoreSessions/" + mail.explore() + "/Stop"),
+                 {veeam_error(500, "Internal error")});
+
+    const Caught thrown =
+        caught_by([&] { rig.restore(restore_spec(mail_x5_items(), {sp_x1_item()})); });
+
+    CHECK(thrown.kind == "NotFoundError");
+    CHECK_THAT(thrown.what, StartsWith("veeam_m365: sharepoint item 0 \"rp-canary-06.pdf\": the "
+                                       "library of list"));
+    CHECK(rig.stops(mail.explore()) == 1);
+    CHECK(rig.stops(sp.explore()) == 1);
+    CHECK_THAT(rig.log(), ContainsSubstring("couldn't close explore session " + mail.explore()));
+    CHECK(rig.restore_posts().empty());
+}
+
 TEST_CASE("restore_sample: layer 2 refuses after browsing: no POST, the explore session closed",
           "[veeam_m365][w2.5]")
 {
@@ -528,7 +743,11 @@ TEST_CASE("restore_sample: a refused POST started nothing and is never resent",
             "Error",
             "HTTP 400 (ParameterValidationFailure): Missing mandatory parameters: CasServer."},
         Row{"401", load_fixture("veeam", "api-expired-token-401"), "AuthError", "HTTP 401"},
-        Row{"403", veeam_error(403, "Access denied"), "AuthError", "HTTP 403"});
+        Row{"403", veeam_error(403, "Access denied"), "AuthError", "HTTP 403"},
+        // Veeam's auth code with another status (restore-flow §15).
+        Row{"400, ResourceAccessDenied",
+            veeam_error(400, "Access denied", "ResourceAccessDenied"), "AuthError",
+            "HTTP 400 (ResourceAccessDenied): Access denied"});
     CAPTURE(row.name);
     RestoreRig rig;
     const Run run = mail_x1();
@@ -877,7 +1096,25 @@ TEST_CASE("restore_sample: statistics or events Veeam garbles get no verdict",
             "Error",
             "veeam_m365: unexpected response from Veeam: no whole \"restoredItemsCount\""},
         Row{"statistics refused", statistics, veeam_error(400, "Something broke"), "Error",
-            "Veeam GET " + statistics + ": HTTP 400: Something broke"},
+            "veeam_m365: restore session " + run.restore() +
+                " stopped, but its statistics couldn't be read: Veeam GET " + statistics +
+                ": HTTP 400: Something broke; no verdict"},
+        // After the restore ran: never NotFoundError (a missing item) or
+        // TransientError (try again), which would read as something else.
+        Row{"statistics gone", statistics,
+            veeam_error(404, "Restore session does not exist", "ResourceNotFound"), "Error",
+            "veeam_m365: restore session " + run.restore() +
+                " stopped, but its statistics couldn't be read: "},
+        Row{"statistics unreachable", statistics, make_response(503), "Error",
+            "veeam_m365: restore session " + run.restore() +
+                " stopped, but its statistics couldn't be read: "},
+        Row{"events gone", events,
+            veeam_error(404, "Restore session does not exist", "ResourceNotFound"), "Error",
+            "veeam_m365: restore session " + run.restore() +
+                " stopped, but its events couldn't be read: "},
+        Row{"events unreachable", events, make_response(503), "Error",
+            "veeam_m365: restore session " + run.restore() +
+                " stopped, but its events couldn't be read: "},
         Row{"an event of the wrong kind", events,
             fixture(run.file("events"), [](json& b) { b["results"][1]["itemName"] = 1; }),
             "Error", "veeam_m365: unexpected response from Veeam: \"itemName\" isn't a string"},
@@ -892,6 +1129,26 @@ TEST_CASE("restore_sample: statistics or events Veeam garbles get no verdict",
 
     CHECK(thrown.kind == row.kind);
     CHECK_THAT(thrown.what, StartsWith(row.message));
+    CHECK(rig.stops(run.explore()) == 1);
+}
+
+TEST_CASE("restore_sample: a stopped session without a result gets no verdict, and the explore "
+          "session closed",
+          "[veeam_m365][w2.5]")
+{
+    RestoreRig rig;
+    const Run run = mail_x1();
+    rig.serve(run);
+    rig.veeam.on(HttpMethod::get, run.session_url(run.restore()),
+                 {fixture(run.file("session-working")),
+                  fixture(run.file("session"), [](json& b) { b.erase("result"); })});
+
+    const Caught thrown = caught_by([&] { rig.restore(restore_spec({mail_x1_item()})); });
+
+    CHECK(thrown.kind == "Error");
+    CHECK(thrown.what ==
+          "veeam_m365: unexpected response from Veeam: a stopped session without a \"result\"");
+    CHECK(rig.gets("/v8/RestoreSessions/" + run.restore() + "/Statistics") == 0);
     CHECK(rig.stops(run.explore()) == 1);
 }
 

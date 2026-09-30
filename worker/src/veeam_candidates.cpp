@@ -59,7 +59,8 @@ constexpr std::array<std::string_view, 5> kSkippedLibraries = {
     "SitePages", "SiteAssets", "Style Library", "FormServerTemplates", "RestoreTarget"};
 
 // Top-level OneDrive folders never looked into, in any OneDrive: the restore
-// target and the canary folder.
+// target and the lab's canary folder; the query adds the folders its
+// manifest's OneDrive canaries are in.
 constexpr std::array<std::string_view, 2> kSkippedOneDriveFolders = {"RestoreTarget",
                                                                      "RestoreTest"};
 
@@ -500,12 +501,15 @@ void CandidateLister::browse_onedrive(connector::CandidatePool& pool,
             {ascii_lower(*url), resolved ? *owned_by.front() : *url, id, !resolved});
     }
 
+    std::vector<std::string_view> skip_top{kSkippedOneDriveFolders.begin(),
+                                           kSkippedOneDriveFolders.end()};
+    skip_top.insert(skip_top.end(), q.exclude.onedrive_folders.begin(),
+                    q.exclude.onedrive_folders.end());
     const auto units_of = [&](const Container& onedrive) {
         Unit root;
         root.folder_path = "/";
         root.parent = "root";
-        return walk(base + "/" + onedrive.id, {root},
-                    {kSkippedOneDriveFolders.begin(), kSkippedOneDriveFolders.end()});
+        return walk(base + "/" + onedrive.id, {root}, skip_top);
     };
 
     const auto list = [&](const Container& onedrive, const Unit& folder) {

@@ -2,8 +2,12 @@
 
 // The lab's tenant, Worker app and restore targets (lab/tenant.md, "Restore
 // targets") for the Graph [live] tests, each overridable by an RP_LIVE_*
-// variable (docs/testing.md, "Live tests"). No canary location is named here
-// or anywhere under worker/.
+// variable (docs/testing.md, "Live tests"). No canary location is named here:
+// the canaries' IDs and paths come from lab/seed-manifest.json. Under worker/
+// the canary folder appears only by its name, "RestoreTest", as a place a
+// random sample and a restore must never touch (the sampler and the lister,
+// docs/decisions.md 2026-09-30 W2.6 point 6; the target guard's forbidden
+// names), and in tests.
 
 #include "test_support.hpp"
 

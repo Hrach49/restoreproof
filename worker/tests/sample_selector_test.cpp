@@ -421,6 +421,10 @@ TEST_CASE("select refuses a pool with a restore target, a canary or a canary loc
          offered("onedrive", "in a canary location (a RestoreTest folder)")},
         {"a restoretest subfolder", [](auto& p) { p.onedrive[1].selector.folder_path = "//restoretest/old"; },
          offered("onedrive", "in a canary location (a RestoreTest folder)")},
+        {"a top-level folder the manifest's OneDrive canaries are in",
+         [](auto& p) { p.onedrive[1].selector.folder_path = "/CANARIES/2026"; },
+         offered("onedrive", "in a canary location (a folder the manifest's OneDrive canaries are in)"),
+         [](CanaryManifest& m) { m.onedrive[3].folder_path = "//Canaries/today"; }},
         {"a folder path with ..", [](auto& p) { p.onedrive[1].selector.folder_path = "/Projects/.."; },
          offered("onedrive", "in a folder path with a \"..\" segment")},
         {"no owner", [](auto& p) { p.onedrive[1].selector.user.clear(); },
@@ -893,6 +897,21 @@ TEST_CASE("choose_sample doesn't list candidates when every random half is 0; th
     CHECK(s.record.mail.pool_sha256 == rp::sha256_hex("[]"));
 }
 
+TEST_CASE("choose_sample excludes each top-level folder the OneDrive canaries are in, once",
+          "[sample-selector]")
+{
+    CanaryManifest manifest = lab_manifest();
+    manifest.onedrive[1].folder_path = "/Canaries/2026";
+    manifest.onedrive[2].folder_path = "/canaries";
+    manifest.onedrive[3].folder_path = "/"; // at the root: no folder to leave out
+    SamplingConnector c;
+    rp::sampling::choose_sample(c, "client", lab_point(), targets(), manifest.tenant_id, {0, 0, 2},
+                                manifest, {}, kRunId);
+    REQUIRE(c.queries.size() == 1);
+    CHECK(c.queries.front().exclude.onedrive_folders ==
+          std::vector<std::string>{"RestoreTest", "Canaries"});
+}
+
 TEST_CASE("choose_sample asks for the types with a random half, with the canaries excluded",
           "[sample-selector]")
 {
@@ -935,8 +954,9 @@ TEST_CASE("choose_sample asks for the types with a random half, with the canarie
     CHECK(q.exclude.subjects == subjects);
     CHECK(q.exclude.sharepoint_names == sp_names);
     CHECK(q.exclude.onedrive_names == od_names);
-    // Ten canaries, one library.
+    // Ten canaries, one library; ten OneDrive canaries, one top-level folder.
     CHECK(q.exclude.list_ids == std::vector<std::string>{lab_manifest().sharepoint[0].list_id});
+    CHECK(q.exclude.onedrive_folders == std::vector<std::string>{"RestoreTest"});
     CHECK(q.limits.containers_wanted == 3);
     CHECK(q.limits.containers_tried == 5);
     CHECK(q.limits.folders_per_container == 1);

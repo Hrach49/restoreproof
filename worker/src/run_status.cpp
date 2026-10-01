@@ -400,10 +400,12 @@ std::string stop_message(const RunStop& stop)
     case RunPhase::check:
         return std::format("the restored items couldn't be checked: {} ({})", text,
                            stop.error_code);
-    default:
-        return std::format("the run stopped before the restore: {} ({}); nothing was restored",
-                           text, stop.error_code);
+    case RunPhase::before_restore:
+        break;
     }
+    // before_restore; row 1 has refused a phase outside the enum.
+    return std::format("the run stopped before the restore: {} ({}); nothing was restored", text,
+                       stop.error_code);
 }
 
 // "<code> <n>, ..." for the unchecked items, in severity order.
@@ -641,7 +643,7 @@ int exit_code_of(const RunVerdict& verdict) noexcept
         return exit_code::ok;
     case RunStatus::fail:
         return exit_code::restore;
-    default:
+    case RunStatus::error:
         break;
     }
     const std::string_view code = verdict.error_code;

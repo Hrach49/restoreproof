@@ -674,9 +674,11 @@ int run_restore(std::span<const std::string_view> args, std::ostream& out, std::
             if (output_lost) {
                 if (result) {
                     err << "error: writing the output failed after the restore ran (run "
-                        << run_id << ", status " << connector::to_string(result->status) << ": "
+                        << run_id << ", restore " << connector::to_string(result->status) << ": "
                         << result->items_restored << " of " << result->items_sent
-                        << " item(s) restored)\n";
+                        << " item(s) restored); run status "
+                        << verification::to_string(verdict.status)
+                        << (verdict.error_code.empty() ? "" : " " + verdict.error_code) << '\n';
                 }
                 code = code == exit_code::ok ? exit_code::config : code;
             }

@@ -91,6 +91,8 @@ struct Lab {
         graph = std::make_unique<GraphClient>(
             graph_http, kTenant, kClient,
             rp::graph::load_client_certificate(pfx_base64(), kPfxPassword, kNow), options);
+        // The guard's mailbox check, which list_mail runs first (W3.2), as recorded.
+        serve_file(inbox_url(), "mailbox-inbox-200");
     }
 
     TargetReaderOptions reader_options()
@@ -98,6 +100,8 @@ struct Lab {
         TargetReaderOptions out;
         out.logger = logger;
         out.download.logger = logger;
+        // A clock that stands still: every read_ms is 0 unless a test says otherwise.
+        out.clock = [] { return std::chrono::steady_clock::time_point{}; };
         return out;
     }
 
@@ -181,6 +185,15 @@ Caught catch_error(const std::function<void()>& call)
         return Caught{"other", e.what()};
     }
     return {};
+}
+
+// The string at `key` of a recorded entry, if it has one: the fields W3.2 asks
+// for are read from a re-recording that has them, absent from one that doesn't.
+std::optional<std::string> string_or_none(const json& entry, const std::string& key)
+{
+    const auto found = entry.find(key);
+    return found != entry.end() && found->is_string() ? std::optional{found->get<std::string>()}
+                                                      : std::nullopt;
 }
 
 // A GUID of the same shape as `guid` that differs from it (built, not spelled out).
@@ -540,7 +553,8 @@ TEST_CASE("the mailbox's errors keep their W2.1 type", "[graph][targets]")
 
     CHECK(caught.kind == row.kind);
     CHECK(caught.grant == row.grant);
-    CHECK(lab.graph_gets().size() == 1);
+    // The mailbox check, then the listing.
+    CHECK(lab.graph_gets().size() == 2);
 }
 
 TEST_CASE("a mail body that isn't text is an error", "[graph][targets]")
@@ -627,7 +641,7 @@ TEST_CASE("bad listing replies are errors", "[graph][targets]")
         CHECK(caught.kind == "GraphError");
         CHECK(caught.what == bad_link);
         CHECK(lab.gets(first) == 1);
-        CHECK(lab.graph_gets().size() == 1);
+        CHECK(lab.graph_gets().size() == 2); // the mailbox check and the listing
     }
     SECTION("an A-B cycle ends when B links back to A, after two GETs")
     {
@@ -639,7 +653,7 @@ TEST_CASE("bad listing replies are errors", "[graph][targets]")
         const Caught caught = catch_error([&] { lab.reader().list_mail(); });
 
         CHECK(caught.what == bad_link);
-        CHECK(lab.graph_gets().size() == 2);
+        CHECK(lab.graph_gets().size() == 3);
     }
     SECTION("a nextLink to another resource")
     {
@@ -660,7 +674,7 @@ TEST_CASE("bad listing replies are errors", "[graph][targets]")
         const Caught caught = catch_error([&] { lab.reader().list_mail(); });
 
         CHECK(caught.what == bad_link);
-        CHECK(lab.graph_gets().size() == 1);
+        CHECK(lab.graph_gets().size() == 2);
     }
     SECTION("a nextLink to another drive")
     {
@@ -696,7 +710,7 @@ TEST_CASE("bad listing replies are errors", "[graph][targets]")
 
         CHECK(caught.kind == "GraphError");
         CHECK(caught.what == bad_link);
-        CHECK(lab.graph_gets().size() == 1);
+        CHECK(lab.graph_gets().size() == 2);
     }
     SECTION("the page cap: the error comes after exactly 100 GETs")
     {
@@ -713,7 +727,7 @@ TEST_CASE("bad listing replies are errors", "[graph][targets]")
         CHECK(caught.kind == "GraphError");
         CHECK(caught.what ==
               "listing the test mailbox's Inbox went past 100 pages; the Worker stops there");
-        CHECK(lab.graph_gets().size() == 100);
+        CHECK(lab.graph_gets().size() == 101); // the mailbox check, then 100 pages
     }
     SECTION("a message ID the Worker won't put in a URL")
     {
@@ -730,7 +744,7 @@ TEST_CASE("bad listing replies are errors", "[graph][targets]")
         CHECK(caught.kind == "GraphError");
         CHECK(caught.what == "Graph returned a message in the test mailbox's Inbox with an ID "
                              "the Worker won't put in a URL");
-        CHECK(lab.graph_gets().size() == 1);
+        CHECK(lab.graph_gets().size() == 2);
     }
     SECTION("a message that isn't an object")
     {
@@ -862,8 +876,11 @@ TEST_CASE("an empty Inbox lists as an empty vector", "[graph][targets]")
 
     CHECK(lab.reader().list_mail().empty());
 
-    REQUIRE(lab.graph_gets().size() == 1);
-    CHECK(lab.graph_gets()[0].headers.at("Prefer") == kPrefer);
+    // The guard's mailbox check (no Prefer), then the listing.
+    REQUIRE(lab.graph_gets().size() == 2);
+    CHECK(lab.graph_gets()[0].url == inbox_url());
+    CHECK_FALSE(lab.graph_gets()[0].headers.contains("Prefer"));
+    CHECK(lab.graph_gets()[1].headers.at("Prefer") == kPrefer);
     CHECK_THAT(lab.log(), ContainsSubstring("info listed 0 item(s) in the test mailbox's Inbox"));
 }
 
@@ -881,7 +898,11 @@ TEST_CASE("one mail lists as one FoundItem hashed by text-v1", "[graph][targets]
     expected.id = id;
     expected.subject = message.at("subject").get<std::string>();
     expected.sender = message.at("from").at("emailAddress").at("address").get<std::string>();
+    expected.sender_name = message.at("from").at("emailAddress").at("name").get<std::string>();
+    // Recorded before W3.2 asked for them: read when a re-recording has them.
+    expected.sent_at = string_or_none(message, "sentDateTime");
     expected.received_at = message.at("receivedDateTime").get<std::string>();
+    expected.created_at = string_or_none(message, "createdDateTime");
     expected.internet_message_id = message.at("internetMessageId").get<std::string>();
     expected.sha256 = rp::text_v1_sha256(message.at("body").at("content").get<std::string>());
     expected.sha256_rule = "text-v1";
@@ -889,19 +910,28 @@ TEST_CASE("one mail lists as one FoundItem hashed by text-v1", "[graph][targets]
     CHECK(items[0] == expected);
     CHECK_FALSE(items[0].name);
     CHECK_FALSE(items[0].size_bytes);
-    // The bodies come in the listing: one GET for the page, none per mail.
-    REQUIRE(lab.graph_gets().size() == 1);
-    for (const HttpRequest& request : lab.graph_gets()) {
-        CHECK(request.headers.at("Prefer") == kPrefer);
+    CHECK_FALSE(items[0].listed_size);
+    CHECK_FALSE(items[0].ctag);
+    CHECK_FALSE(items[0].modified_at);
+    CHECK(items[0].read_ms == 0);
+    // The bodies come in the listing: the mailbox check, one GET for the page, none per mail.
+    const std::vector<HttpRequest> gets = lab.graph_gets();
+    REQUIRE(gets.size() == 2);
+    CHECK(gets[0].url == inbox_url());
+    CHECK(gets[1].url == mail_list_url());
+    for (const HttpRequest& request : gets) {
         CHECK(request.headers.at("Authorization") == "Bearer token-1");
     }
+    CHECK(gets[1].headers.at("Prefer") == kPrefer);
     CHECK_THAT(lab.log(), ContainsSubstring("info listed 1 item(s) in the test mailbox's Inbox"));
 }
 
 TEST_CASE("a message without the optional fields keeps them empty", "[graph][targets]")
 {
     json value = messages_of("mail-list-200-one-item");
+    value[0].erase("sentDateTime");
     value[0].erase("receivedDateTime");
+    value[0].erase("createdDateTime");
     value[0].erase("internetMessageId");
     value[0]["subject"] = "";
     value[0]["from"] = json::object();
@@ -913,7 +943,10 @@ TEST_CASE("a message without the optional fields keeps them empty", "[graph][tar
     REQUIRE(items.size() == 1);
     CHECK(items[0].subject == std::optional<std::string>{""});
     CHECK_FALSE(items[0].sender);
+    CHECK_FALSE(items[0].sender_name);
+    CHECK_FALSE(items[0].sent_at);
     CHECK_FALSE(items[0].received_at);
+    CHECK_FALSE(items[0].created_at);
     CHECK_FALSE(items[0].internet_message_id);
 }
 
@@ -936,11 +969,13 @@ TEST_CASE("mail follows @odata.nextLink", "[graph][targets]")
     REQUIRE(items.size() == 2);
     CHECK(items[0].id == first_id);
     CHECK(items[1].id == second_id);
-    REQUIRE(lab.graph_gets().size() == 3);
-    CHECK(lab.graph_gets()[1].url == link);
-    CHECK(lab.graph_gets()[2].url == link2);
-    for (const HttpRequest& request : lab.graph_gets()) {
-        CHECK(request.headers.at("Prefer") == kPrefer);
+    const std::vector<HttpRequest> gets = lab.graph_gets();
+    REQUIRE(gets.size() == 4);
+    CHECK(gets[0].url == inbox_url());
+    CHECK(gets[2].url == link);
+    CHECK(gets[3].url == link2);
+    for (std::size_t i = 1; i < gets.size(); ++i) {
+        CHECK(gets[i].headers.at("Prefer") == kPrefer);
     }
 }
 
@@ -956,16 +991,17 @@ TEST_CASE("empty locations list as empty vectors, and list_all too", "[graph][ta
     CHECK(lab.reader().list_all().empty());
 
     const std::vector<HttpRequest> gets = lab.graph_gets();
-    REQUIRE(gets.size() == 5);
-    CHECK(gets[0].url == mail_list_url());
-    CHECK(gets[1].url == drive_url());
-    CHECK(gets[2].url == library_children_url());
-    CHECK(gets[3].url == folder_url());
-    CHECK(gets[4].url == folder_children_url());
-    CHECK(gets[0].headers.at("Prefer") == kPrefer);
-    for (std::size_t i = 1; i < gets.size(); ++i) {
-        CHECK_FALSE(gets[i].headers.contains("Prefer"));
+    REQUIRE(gets.size() == 6);
+    CHECK(gets[0].url == inbox_url());
+    CHECK(gets[1].url == mail_list_url());
+    CHECK(gets[2].url == drive_url());
+    CHECK(gets[3].url == library_children_url());
+    CHECK(gets[4].url == folder_url());
+    CHECK(gets[5].url == folder_children_url());
+    for (std::size_t i = 0; i < gets.size(); ++i) {
+        CHECK(gets[i].headers.contains("Prefer") == (i == 1));
     }
+    CHECK(gets[1].headers.at("Prefer") == kPrefer);
 }
 
 // ---- the RestoreTarget library and the OneDrive folder -------------------------------------
@@ -1107,6 +1143,8 @@ TEST_CASE("an Office file whose bytes differ from Graph's size lists as download
     CHECK(items[0].name == name);
     CHECK(items[0].sha256 == rp::sha256_hex(bytes));
     CHECK(items[0].size_bytes == std::optional<std::uint64_t>{bytes.size()});
+    // Graph's size is kept beside the downloaded count (W3.2).
+    CHECK(items[0].listed_size == file.at("size").get<std::uint64_t>());
     REQUIRE(lab.dl_http.requests().size() == 1);
     CHECK(lab.dl_http.requests()[0].max_body_bytes ==
           std::optional<std::uint64_t>{rp::graph::kMaxDownloadBytes});
@@ -1179,6 +1217,11 @@ TEST_CASE("one file in each file location lists as one FoundItem", "[graph][targ
     expected.sha256 = rp::sha256_hex(bytes);
     expected.sha256_rule = "bytes";
     expected.size_bytes = file.at("size").get<std::uint64_t>();
+    expected.listed_size = expected.size_bytes;
+    // Recorded before W3.2 asked for them: read when a re-recording has them.
+    expected.ctag = string_or_none(file, "cTag");
+    expected.created_at = string_or_none(file, "createdDateTime");
+    expected.modified_at = string_or_none(file, "lastModifiedDateTime");
     REQUIRE(items.size() == 1);
     CHECK(items[0] == expected);
     CHECK_FALSE(items[0].subject);
@@ -1232,8 +1275,13 @@ TEST_CASE("without hash_items no file is downloaded and each keeps Graph's size"
     expected.id = file.at("id").get<std::string>();
     expected.name = file.at("name").get<std::string>();
     expected.size_bytes = file.at("size").get<std::uint64_t>();
+    expected.listed_size = expected.size_bytes;
+    expected.ctag = string_or_none(file, "cTag");
+    expected.created_at = string_or_none(file, "createdDateTime");
+    expected.modified_at = string_or_none(file, "lastModifiedDateTime");
     REQUIRE(items.size() == 1);
     CHECK(items[0] == expected);
+    CHECK(items[0].read_ms == 0);
     CHECK(items[0].sha256.empty());
     CHECK(items[0].sha256_rule.empty());
     CHECK(on_file_calls == 0);
@@ -1297,11 +1345,13 @@ TEST_CASE("without hash_items no mail body is asked for or checked", "[graph][ta
     CHECK(items[0].internet_message_id == value[0].at("internetMessageId").get<std::string>());
     CHECK(items[0].sha256.empty());
     CHECK(items[0].sha256_rule.empty());
-    // One listing, without body in $select, and still the Prefer header (ImmutableId).
+    // The mailbox check and one listing, without body in $select, and still the
+    // Prefer header (ImmutableId).
     const std::vector<HttpRequest> gets = lab.graph_gets();
-    REQUIRE(gets.size() == 1);
-    CHECK(gets[0].url == mail_list_url(false));
-    CHECK(gets[0].headers.at("Prefer") == kPrefer);
+    REQUIRE(gets.size() == 2);
+    CHECK(gets[0].url == inbox_url());
+    CHECK(gets[1].url == mail_list_url(false));
+    CHECK(gets[1].headers.at("Prefer") == kPrefer);
 }
 
 TEST_CASE("folders and non-file items are skipped and logged", "[graph][targets]")
@@ -1409,6 +1459,322 @@ TEST_CASE("no credential, body, subject or file name reaches the log", "[graph][
         CAPTURE(line);
         CHECK(rp::redact(line) == line);
     }
+}
+
+// ---- W3.2: the mailbox check, the checker's fields and read_ms ----------------------------
+
+TEST_CASE("list_mail runs the guard's mailbox check first; a refusal lists nothing",
+          "[graph][targets]")
+{
+    const json no_id = [] {
+        json fixture = load_fixture_json("graph", "mailbox-inbox-200");
+        fixture["body"].erase("id");
+        return fixture;
+    }();
+    struct Row {
+        std::string name;
+        json inbox;
+        std::string kind;
+        std::string contains;
+    };
+    const Row row = GENERATE_COPY(
+        Row{"403: outside the Exchange scope",
+            load_fixture_json("graph", "mailbox-inbox-403-exchange"), "WrongTargetError",
+            "Graph refused the Worker app the Inbox of the mailbox test_mailbox names (403)"},
+        Row{"an Inbox without an id", no_id, "WrongTargetError",
+            "has no id; the Worker can't tell the mailbox is there"},
+        Row{"404: no such user", load_fixture_json("graph", "messages-404-unknown-user"),
+            "NotFoundError", "ErrorInvalidUser"});
+    const bool hash = GENERATE(true, false);
+    CAPTURE(row.name, hash);
+    Lab lab;
+    lab.serve(inbox_url(), row.inbox);
+    lab.serve_file(mail_list_url(hash), "mail-list-200-one-item");
+    TargetReaderOptions options = lab.reader_options();
+    options.hash_items = hash;
+    TargetReader reader(*lab.graph, lab.dl_http,
+                        rp::connector::RestoreTargets::from_config(lab_config()), options);
+
+    const Caught caught = catch_error([&] { reader.list_mail(); });
+
+    CHECK(caught.kind == row.kind);
+    CHECK_THAT(caught.what, ContainsSubstring(row.contains));
+    // The check alone: no message listing was asked for.
+    const std::vector<HttpRequest> gets = lab.graph_gets();
+    REQUIRE(gets.size() == 1);
+    CHECK(gets[0].url == inbox_url());
+    CHECK(lab.gets(mail_list_url(hash)) == 0);
+}
+
+TEST_CASE("the listings ask for exactly the fields W3.2 checks", "[graph][targets]")
+{
+    // Spelled out here, not taken from graph_lab.hpp, so a change to either shows.
+    const bool hash = GENERATE(true, false);
+    CAPTURE(hash);
+    Lab lab;
+    const std::string mail = kGraph + "/users/" + lab_values().mailbox +
+                             "/mailFolders/inbox/messages?$select=id,subject,from,sentDateTime,"
+                             "receivedDateTime,createdDateTime,internetMessageId" +
+                             (hash ? ",body" : "") + "&$top=100";
+    const std::string children =
+        "/children?$select=id,name,size,cTag,createdDateTime,lastModifiedDateTime,file,folder"
+        "&$top=200";
+    lab.graph_http.on(HttpMethod::get, mail, {page_of(json::array())});
+    lab.serve_file(drive_url(), "restoretarget-drive-200");
+    lab.graph_http.on(HttpMethod::get,
+                      kGraph + "/drives/" + lab_values().library_id + "/root" + children,
+                      {page_of(json::array())});
+    lab.serve_file(folder_url(), "onedrive-folder-200");
+    lab.graph_http.on(HttpMethod::get,
+                      kGraph + "/drives/" + lab_values().onedrive_drive_id + "/items/" +
+                          lab_values().folder_id + children,
+                      {page_of(json::array())});
+    TargetReaderOptions options = lab.reader_options();
+    options.hash_items = hash;
+    TargetReader reader(*lab.graph, lab.dl_http,
+                        rp::connector::RestoreTargets::from_config(lab_config()), options);
+
+    CHECK(reader.list_all().empty());
+
+    const std::vector<HttpRequest> gets = lab.graph_gets();
+    REQUIRE(gets.size() == 6);
+    CHECK(gets[1].url == mail);
+    CHECK(gets[1].url == mail_list_url(hash));
+    CHECK(gets[3].url == library_children_url());
+    CHECK(gets[5].url == folder_children_url());
+}
+
+TEST_CASE("a mail's sender name, sent and created times are read when Graph lists them",
+          "[graph][targets]")
+{
+    json value = messages_of("mail-list-200-one-item");
+    value[0]["sentDateTime"] = "2026-09-28T18:06:20Z";
+    value[0]["createdDateTime"] = "2026-09-30T21:44:01Z";
+    value[0]["from"]["emailAddress"]["name"] = "Sender Name";
+    Lab lab;
+    lab.graph_http.on(HttpMethod::get, mail_list_url(), {page_of(value)});
+
+    const std::vector<FoundItem> items = lab.reader().list_mail();
+
+    REQUIRE(items.size() == 1);
+    CHECK(items[0].sender_name == std::optional<std::string>{"Sender Name"});
+    CHECK(items[0].sent_at == std::optional<std::string>{"2026-09-28T18:06:20Z"});
+    CHECK(items[0].created_at == std::optional<std::string>{"2026-09-30T21:44:01Z"});
+    CHECK(items[0].sender ==
+          value[0].at("from").at("emailAddress").at("address").get<std::string>());
+    CHECK_FALSE(items[0].ctag);
+    CHECK_FALSE(items[0].modified_at);
+    CHECK_FALSE(items[0].listed_size);
+    CHECK(items[0].read_ms == 0);
+}
+
+TEST_CASE("a mail field that is missing or not a string is left empty", "[graph][targets]")
+{
+    using Edit = std::function<void(json&)>;
+    using Empty = std::function<bool(const FoundItem&)>;
+    struct Row {
+        std::string name;
+        Edit edit;
+        Empty empty;
+    };
+    const auto set = [](const std::string& key, const json& to) {
+        return Edit{[key, to](json& m) { m[key] = to; }};
+    };
+    const auto set_name = [](const json& to) {
+        return Edit{[to](json& m) { m["from"]["emailAddress"]["name"] = to; }};
+    };
+    const Empty no_name = [](const FoundItem& i) { return !i.sender_name; };
+    const Empty no_sent = [](const FoundItem& i) { return !i.sent_at; };
+    const Empty no_created = [](const FoundItem& i) { return !i.created_at; };
+    const Row row = GENERATE_COPY(
+        Row{"a sender with an address and no name",
+            [](json& m) { m["from"]["emailAddress"].erase("name"); }, no_name},
+        Row{"a name that is a number", set_name(7), no_name},
+        Row{"a name that is null", set_name(nullptr), no_name},
+        Row{"a name that is an object", set_name(json::object()), no_name},
+        Row{"emailAddress not an object", [](json& m) { m["from"]["emailAddress"] = "a@b"; },
+            no_name},
+        Row{"sentDateTime missing", [](json& m) { m.erase("sentDateTime"); }, no_sent},
+        Row{"sentDateTime a number", set("sentDateTime", 1), no_sent},
+        Row{"sentDateTime null", set("sentDateTime", nullptr), no_sent},
+        Row{"createdDateTime missing", [](json& m) { m.erase("createdDateTime"); }, no_created},
+        Row{"createdDateTime an array", set("createdDateTime", json::array()), no_created},
+        Row{"createdDateTime false", set("createdDateTime", false), no_created});
+    CAPTURE(row.name);
+    json value = messages_of("mail-list-200-one-item");
+    value[0]["sentDateTime"] = "2026-09-28T18:06:20Z";
+    value[0]["createdDateTime"] = "2026-09-30T21:44:01Z";
+    row.edit(value[0]);
+    Lab lab;
+    lab.graph_http.on(HttpMethod::get, mail_list_url(), {page_of(value)});
+
+    const std::vector<FoundItem> items = lab.reader().list_mail();
+
+    REQUIRE(items.size() == 1);
+    CHECK(row.empty(items[0]));
+    // The rest of the message is still read.
+    CHECK(items[0].id == value[0].at("id").get<std::string>());
+    CHECK(items[0].received_at == value[0].at("receivedDateTime").get<std::string>());
+}
+
+TEST_CASE("a file's cTag, created and modified times are read when Graph lists them",
+          "[graph][targets]")
+{
+    const FileLocation at = GENERATE(sharepoint_location(), onedrive_location());
+    const bool hash = GENERATE(true, false);
+    CAPTURE(at.name, hash);
+    json file = file_of(at);
+    file["cTag"] = "\"c:{made-up},2\"";
+    file["createdDateTime"] = "2026-09-28T18:06:30Z";
+    file["lastModifiedDateTime"] = "2026-09-30T21:44:05Z";
+    Lab lab;
+    serve_location(lab, at, page_of(json::array({file})));
+    TargetReaderOptions options = lab.reader_options();
+    options.hash_items = hash;
+    TargetReader reader(*lab.graph, lab.dl_http,
+                        rp::connector::RestoreTargets::from_config(lab_config()), options);
+
+    const std::vector<FoundItem> items = list(reader, at);
+
+    REQUIRE(items.size() == 1);
+    CHECK(items[0].ctag == file.at("cTag").get<std::string>());
+    CHECK(items[0].created_at == std::optional<std::string>{"2026-09-28T18:06:30Z"});
+    CHECK(items[0].modified_at == std::optional<std::string>{"2026-09-30T21:44:05Z"});
+    CHECK(items[0].listed_size == file.at("size").get<std::uint64_t>());
+    CHECK_FALSE(items[0].sender_name);
+    CHECK_FALSE(items[0].sent_at);
+}
+
+TEST_CASE("a file field that is missing or not a string is left empty", "[graph][targets]")
+{
+    const FileLocation at = GENERATE(sharepoint_location(), onedrive_location());
+    const std::string key =
+        GENERATE(as<std::string>{}, "cTag", "createdDateTime", "lastModifiedDateTime");
+    // "erase": the key removed; otherwise the value it is set to.
+    const json to = GENERATE(json("erase"), json(5), json(nullptr), json::object());
+    CAPTURE(at.name, key, to.dump());
+    json file = file_of(at);
+    file["cTag"] = "\"c:{X},1\"";
+    file["createdDateTime"] = "2026-09-28T18:06:30Z";
+    file["lastModifiedDateTime"] = "2026-09-30T21:44:05Z";
+    if (to == "erase") {
+        file.erase(key);
+    } else {
+        file[key] = to;
+    }
+    Lab lab;
+    serve_location(lab, at, page_of(json::array({file})));
+    TargetReader reader = lab.reader();
+
+    const std::vector<FoundItem> items = list(reader, at);
+
+    REQUIRE(items.size() == 1);
+    CHECK(items[0].ctag.has_value() == (key != "cTag"));
+    CHECK(items[0].created_at.has_value() == (key != "createdDateTime"));
+    CHECK(items[0].modified_at.has_value() == (key != "lastModifiedDateTime"));
+    CHECK(items[0].sha256 == rp::sha256_hex(bytes_of(at)));
+}
+
+namespace {
+
+// A clock that moves 5 ms each time it is read; a test may move it further.
+struct SteppingClock {
+    std::chrono::steady_clock::time_point at{};
+    int reads = 0;
+
+    std::function<std::chrono::steady_clock::time_point()> function()
+    {
+        return [this] {
+            ++reads;
+            const auto now = at;
+            at += 5ms;
+            return now;
+        };
+    }
+};
+
+} // namespace
+
+TEST_CASE("read_ms is each file's download, hash and on_file time", "[graph][targets]")
+{
+    const FileLocation at = GENERATE(sharepoint_location(), onedrive_location());
+    const bool with_on_file = GENERATE(false, true);
+    CAPTURE(at.name, with_on_file);
+    const json file = file_of(at);
+    const std::string id = file.at("id").get<std::string>();
+    // A second file: its own download, its own time.
+    json second = file;
+    second["id"] = id.substr(0, id.size() - 1) + "Z";
+    Lab lab;
+    serve_location(lab, at, page_of(json::array({file, second})));
+    lab.graph_http.on(HttpMethod::get, content_url(at, second.at("id").get<std::string>()),
+                      {load_fixture("graph", at.content_fixture)});
+    SteppingClock clock;
+    TargetReaderOptions options = lab.reader_options();
+    options.clock = clock.function();
+    std::vector<std::int64_t> seen_ms;
+    if (with_on_file) {
+        // on_file's own time counts: 100 ms the first time, 30 ms the second.
+        options.on_file = [&clock, &seen_ms](const FoundItem& item, std::string_view) {
+            seen_ms.push_back(item.read_ms);
+            clock.at += seen_ms.size() == 1 ? 100ms : 30ms;
+        };
+    }
+    TargetReader reader(*lab.graph, lab.dl_http,
+                        rp::connector::RestoreTargets::from_config(lab_config()), options);
+
+    const std::vector<FoundItem> items = list(reader, at);
+
+    REQUIRE(items.size() == 2);
+    // Read once before the download and once after on_file: 5 ms apart, plus on_file's.
+    CHECK(items[0].read_ms == (with_on_file ? 105 : 5));
+    CHECK(items[1].read_ms == (with_on_file ? 35 : 5));
+    CHECK(clock.reads == 4);
+    // on_file sees the item before its time is known.
+    CHECK(seen_ms ==
+          (with_on_file ? std::vector<std::int64_t>{0, 0} : std::vector<std::int64_t>{}));
+}
+
+TEST_CASE("read_ms is 0 for a mail and for a file not hashed, whose clock isn't read",
+          "[graph][targets]")
+{
+    const bool hash = GENERATE(true, false);
+    CAPTURE(hash);
+    Lab lab;
+    lab.serve_file(mail_list_url(hash), "mail-list-200-one-item");
+    serve_location(lab, sharepoint_location());
+    serve_location(lab, onedrive_location());
+    SteppingClock clock;
+    TargetReaderOptions options = lab.reader_options();
+    options.hash_items = hash;
+    options.clock = clock.function();
+    TargetReader reader(*lab.graph, lab.dl_http,
+                        rp::connector::RestoreTargets::from_config(lab_config()), options);
+
+    const std::vector<FoundItem> items = reader.list_all();
+
+    REQUIRE(items.size() == 3);
+    CHECK(items[0].read_ms == 0);
+    CHECK(items[1].read_ms == (hash ? 5 : 0));
+    CHECK(items[2].read_ms == (hash ? 5 : 0));
+    CHECK(clock.reads == (hash ? 4 : 0));
+}
+
+TEST_CASE("without a clock read_ms is measured on the steady clock", "[graph][targets]")
+{
+    CHECK_FALSE(TargetReaderOptions{}.clock);
+    Lab lab;
+    serve_location(lab, sharepoint_location());
+    TargetReaderOptions options = lab.reader_options();
+    options.clock = nullptr;
+    TargetReader reader(*lab.graph, lab.dl_http,
+                        rp::connector::RestoreTargets::from_config(lab_config()), options);
+
+    const std::vector<FoundItem> items = reader.list_sharepoint();
+
+    REQUIRE(items.size() == 1);
+    CHECK(items[0].read_ms >= 0);
+    CHECK(items[0].read_ms < 60'000);
 }
 
 // ---- the live test's output line ----------------------------------------------------------

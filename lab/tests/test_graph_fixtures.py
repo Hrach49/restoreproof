@@ -95,8 +95,8 @@ RT = tenant.RESTORE_TARGET_DRIVE_ID
 OD = tenant.ONEDRIVE_DRIVE_ID
 FOLDER = tenant.ONEDRIVE_TARGET_FOLDER_ID
 UPN = tenant.RESTORETEST_UPN
-MAIL_SELECT = "$select=id,subject,from,receivedDateTime,internetMessageId,body"
-CHILD_SELECT = "$select=id,name,size,file,folder&$top=200"
+MAIL_SELECT = "$select=id,subject,from,sentDateTime,receivedDateTime,createdDateTime,internetMessageId,body"
+CHILD_SELECT = "$select=id,name,size,cTag,createdDateTime,lastModifiedDateTime,file,folder&$top=200"
 TEMPAUTH_SENTINEL = "v1.eyJ0eXAiOiJKV1QiLCJhbGciOiJub25lIn0AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 CONTENT_LOCATION = (
     "https://restoreprooflab.sharepoint.com/sites/RestoreTest/_layouts/15/download.aspx"

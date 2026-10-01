@@ -8,7 +8,8 @@
 // drive or folder is a RestoreTarget where the config says, since the Worker
 // app's grants alone can't keep it out of the RestoreTest library
 // (docs/decisions.md 2026-09-25 and 2026-09-28, W2.2). Those checks are
-// rp/target_guard_graph.hpp's, which the restore-target guard runs too (W2.7).
+// rp/target_guard_graph.hpp's, which the restore-target guard runs too (W2.7);
+// since W3.2 the mail listing runs its mailbox check first as well.
 
 #include <rp/connector.hpp>
 #include <rp/graph_client.hpp>
@@ -21,6 +22,7 @@
 
 #include <spdlog/logger.h>
 
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -50,8 +52,17 @@ struct FoundItem {
     std::optional<std::string> name;                // files: the driveItem name
     std::optional<std::string> subject;             // mail ("" is kept as "")
     std::optional<std::string> sender;              // mail: from.emailAddress.address
+    std::optional<std::string> sender_name;         // mail: from.emailAddress.name
+    std::optional<std::string> sent_at;             // mail: sentDateTime as Graph gives it
     std::optional<std::string> received_at;         // mail: receivedDateTime as Graph gives it
     std::optional<std::string> internet_message_id; // mail: what W3.1 matches mail on
+    // createdDateTime (mail and files) and lastModifiedDateTime (files) as Graph
+    // gives them: W3.2 compares the newest of two copies by them.
+    std::optional<std::string> created_at;
+    std::optional<std::string> modified_at;
+    // Files: the cTag, which moves when a restore merges a new version into a
+    // same-named file (W3.2: a file whose cTag didn't move is an earlier run's).
+    std::optional<std::string> ctag;
     // Lower-case hex SHA-256. Mail: text-v1 of body.content. Files: the downloaded
     // bytes. Empty when TargetReaderOptions::hash_items is false.
     std::string sha256;
@@ -60,6 +71,13 @@ struct FoundItem {
     // Files: the bytes downloaded; Graph's size, but for an Office file
     // SharePoint rewrote. Without hash_items, Graph's size as listed.
     std::optional<std::uint64_t> size_bytes;
+    // Files: Graph's size as listed, kept when hashing puts the downloaded
+    // count in size_bytes. Mail: none.
+    std::optional<std::uint64_t> listed_size;
+    // Files: the milliseconds the download, the hash and on_file took for this
+    // file, by TargetReaderOptions::clock (W3.2's per-item ms). Mail, and files
+    // without hash_items: 0. on_file sees it still 0: it is set when on_file returns.
+    std::int64_t read_ms = 0;
 
     bool operator==(const FoundItem&) const = default;
 };
@@ -83,6 +101,8 @@ struct TargetReaderOptions {
     // computes office-v1 here. What it throws is thrown as it is. Never called
     // without hash_items.
     std::function<void(const FoundItem&, std::string_view bytes)> on_file;
+    // What FoundItem::read_ms is measured by; null: std::chrono::steady_clock::now.
+    std::function<std::chrono::steady_clock::time_point()> clock;
 };
 
 // Lists and hashes what is in the three restore targets. Items come in
@@ -100,7 +120,10 @@ public:
     TargetReader(GraphClient& graph, IHttpClient& download, connector::RestoreTargets targets,
                  TargetReaderOptions options = {});
 
-    std::vector<FoundItem> list_mail();       // the test mailbox's Inbox
+    // The test mailbox's Inbox, after the guard's mailbox check
+    // (check_restore_mailbox): a 403 on the Inbox is a WrongTargetError and
+    // nothing is listed.
+    std::vector<FoundItem> list_mail();
     std::vector<FoundItem> list_sharepoint(); // the RestoreTarget library's root
     std::vector<FoundItem> list_onedrive();   // the test OneDrive's /RestoreTarget folder
     // Mail, then SharePoint, then OneDrive; the first error ends it.
@@ -117,6 +140,7 @@ private:
     };
 
     std::vector<FoundItem> list_files(const FileTarget& target);
+    std::chrono::steady_clock::time_point now() const;
     void log(spdlog::level::level_enum level, const std::string& line) const;
 
     GraphClient& graph_;

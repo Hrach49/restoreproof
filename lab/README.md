@@ -285,8 +285,8 @@ What each request is and what is checked:
 - The mail requests carry `Prefer: outlook.body-content-type="text", IdType="ImmutableId"`, as
   the seeder's and the Worker's do (`MAIL_PREFER` in `seeder/graph.py`); no other request
   carries anything but `Authorization`. The list is the Worker's
-  (`$select=id,subject,from,receivedDateTime,internetMessageId,body&$top=100`): the bodies
-  come in the listing, and each must come back as `text`.
+  (`$select=id,subject,from,sentDateTime,receivedDateTime,createdDateTime,internetMessageId,body&$top=100`,
+  W3.2): the bodies come in the listing, and each must come back as `text`.
 - `restoretarget-drive-200.json` is the Worker's guard read of the library's drive
   (`$select=id,name,driveType,webUrl,sharePointIds`): it must be named `RestoreTarget`, its
   `webUrl` must end `/RestoreTarget`, and it must have `sharePointIds.siteId` and `.webId`.
@@ -297,7 +297,9 @@ What each request is and what is checked:
   outside the Exchange scope. The drive and folder lines also print the facts the
   Worker's guard depends on: `webUrl last segment=… sharePointIds=present|absent` and
   `parentReference.path=<value or (absent)> parentReference.id=present|absent`.
-- The children lists use `$select=id,name,size,file,folder&$top=200`. In `one-item` the one
+- The children lists use
+  `$select=id,name,size,cTag,createdDateTime,lastModifiedDateTime,file,folder&$top=200` (W3.2:
+  the checker tells this run's copies from an earlier run's by `cTag` and the times). In `one-item` the one
   child must be a file (a `file` facet).
 - The not-found cases use random IDs of the right shape, never a canary's: `01` and 32 base32
   letters for the OneDrive item, and the RestoreTarget drive ID with its last 16 bytes (the

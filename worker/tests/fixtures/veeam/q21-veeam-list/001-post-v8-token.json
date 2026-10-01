@@ -1,0 +1,17 @@
+{
+  "source": "rpworker 0.0.0 veeam list --record",
+  "request": "POST /v8/token",
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8"
+  },
+  "body": {
+    "access_token": "[REDACTED]",
+    "refresh_token": "[REDACTED]",
+    "token_type": "bearer",
+    "expires_in": 3600,
+    "userName": "DESKTOP-P55CDUM\\rp-veeam",
+    ".issued": "2026-10-01T08:45:58.7418682Z",
+    ".expires": "2026-10-01T09:45:58.7418682Z"
+  }
+}

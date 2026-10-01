@@ -1014,3 +1014,52 @@ TEST_CASE("rpworker veeam list reports a --record path that isn't UTF-8", "[veea
     REQUIRE(result.err == "config error: the --record path is not valid UTF-8\n");
     REQUIRE(lab.make_http_calls == 0);
 }
+
+TEST_CASE("rpworker veeam list replays the lab's live recording (Q2.1's Done when)",
+          "[veeam_command][record]")
+{
+    // `rpworker veeam list --record` against the lab's Veeam on 2026-10-01:
+    // tests/fixtures/veeam/q21-veeam-list/. The recording alone answers the
+    // command; the expected rows are read from it, never spelled here.
+    const std::filesystem::path dir =
+        std::filesystem::path{RP_FIXTURE_DIR} / "veeam" / "q21-veeam-list";
+    rp::test::FakeHttpClient recorded;
+    REQUIRE(recorded.serve_recording(dir) == 4);
+    Harness lab;
+    lab.make_http = [&recorded] {
+        return std::make_unique<rp::test::ForwardingHttpClient>(recorded);
+    };
+
+    const Run result = lab.run_list();
+    REQUIRE(result.err.empty());
+    REQUIRE(result.exit_code == 0);
+    // The token, the organisations, the restore points and the logout, each once.
+    CHECK(recorded.requests().size() == 4);
+
+    const json points =
+        json::parse(read_text(dir / "003-get-v8-restorepoints.json"))["body"]["results"];
+    REQUIRE(points.size() >= 2);
+    // Newest first, as Veeam's backupTime strings sort; each ID on its row.
+    std::vector<std::pair<std::string, std::string>> expected;
+    for (const json& point : points) {
+        expected.emplace_back(point.at("backupTime").get<std::string>(),
+                              point.at("id").get<std::string>());
+    }
+    std::ranges::sort(expected, std::greater<>{});
+    std::size_t at = 0;
+    for (const auto& [time, id] : expected) {
+        CAPTURE(time, id);
+        const std::size_t row = result.out.find("* RestoreProofLab.onmicrosoft.com  " + time, at);
+        REQUIRE(row != std::string::npos);
+        const std::size_t end = result.out.find('\n', row);
+        CHECK(result.out.substr(row, end - row).ends_with(id));
+        at = end;
+    }
+    CHECK_THAT(result.out, ContainsSubstring("1 organisation(s), " +
+                                             std::to_string(points.size()) +
+                                             " restore point(s); * = veeam_org_name\n"));
+    // Nothing secret was recorded: the tokens are the placeholder.
+    const json token = json::parse(read_text(dir / "001-post-v8-token.json"));
+    CHECK(token["body"]["access_token"] == "[REDACTED]");
+    CHECK(token["body"]["refresh_token"] == "[REDACTED]");
+}

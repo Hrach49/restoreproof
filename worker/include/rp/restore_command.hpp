@@ -72,6 +72,7 @@ std::string format_elapsed(std::chrono::nanoseconds elapsed);
 // in UTF-8:
 //   [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>]
 //   [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>]
+//   [--record <dir>]
 // in any order, each at most once, each with its value. <n> is 1 to 3 ASCII
 // digits, 0 to 100; an absent size is config's sample_mail, sample_sp or
 // sample_od. --point is `latest` in any ASCII case (the default: the newest
@@ -126,6 +127,15 @@ std::string format_elapsed(std::chrono::nanoseconds elapsed);
 // Text from the connector goes through table_cell(): a control character
 // becomes a space. Warnings go to stderr only.
 //
+// With --record <dir> (Q2.1, rp/recording_http_client.hpp), every exchange
+// with Veeam (under "veeam") and with Entra and Graph for the target guard
+// (under "graph") is also written, scrubbed, under <dir>/<service>/ (a folder
+// that must be new or empty, opened after the secrets and before any
+// request), and "recorded <n> exchange(s) in <dir>" ends `out`, whatever the
+// result; each exchange not written is a "record error: <service>/<file>:
+// <why>" line on `err`, and turns an exit code of 0 into 1. The restore
+// still writes to the tenant: recording changes nothing sent.
+//
 // Returns an rp::exit_code, with one line on `err` for each failure:
 //  - 64: a command line it doesn't understand (rp::kCliUsage), before the
 //    config is read; after it, "usage error: every sample size is 0 (--mail,
@@ -137,9 +147,10 @@ std::string format_elapsed(std::chrono::nanoseconds elapsed);
 //    load, a --config or --manifest path that isn't UTF-8, a secret that can't
 //    be read, "RP_VEEAM_USERNAME is not set", then RP_VEEAM_PASSWORD, and a
 //    Graph certificate that certificate_from_secrets refuses (unset, not
-//    Base64, a password that doesn't open it, expired, ...), all before any
-//    Veeam call), a sampling::ManifestError ("canary manifest: ...", a
-//    manifest that doesn't load, whose tenant_id isn't graph_tenant_id or
+//    Base64, a password that doesn't open it, expired, ...), and a --record
+//    folder that isn't new or empty, all before any Veeam call), a
+//    sampling::ManifestError ("canary manifest: ...", a manifest that
+//    doesn't load, whose tenant_id isn't graph_tenant_id or
 //    that names a restore target, all before the connector is made) and an
 //    UnknownConnectorError; "config error: unexpected failure" for any other
 //    exception while loading the config and secrets, and "error: unexpected

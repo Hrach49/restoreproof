@@ -313,6 +313,64 @@ session still `Working`.
    `rpworker graph list` that the targets are empty again. Remove the variables when done
    (`. ..\lab\entra\set-worker-env.ps1 -Clear`, and the two Veeam ones).
 
+### Recording fixtures (`--record <dir>`)
+
+Q2.1: `rpworker veeam list`, `graph list [--hash]` and `restore` take `--record <dir>`, which
+writes every exchange the command has with a service, scrubbed, as a fixture
+`FakeHttpClient` can serve (the format and rules: `docs/decisions.md` 2026-10-01, "Q2.1").
+Recording only watches: the command sends and prints what it would without it, then one more
+line, `recorded <n> exchange(s) in <dir>`. `restore --record` still writes into the tenant.
+
+1. Pick a folder that doesn't exist yet, outside the repo (for example
+   `$env:TEMP\rp-rec-<what>`). The command refuses a folder with anything in it, so a
+   recording never lands on committed fixtures.
+2. Set the variables as for the live tests (the two Veeam ones, and for Graph
+   `. ..\lab\entra\set-worker-env.ps1`), then run the command with `--record`:
+
+   ```powershell
+   .\build\dev\rpworker.exe veeam list --config <your config.json> --record $env:TEMP\rp-rec-veeam-list
+   ```
+
+3. Read what came out: `<dir>\veeam\`, `<dir>\graph\` and `<dir>\download\`, one file per
+   exchange, `001-post-v8-token.json` and so on. A `record error: <file>: refused: ...` line
+   means that exchange still held a secret after scrubbing and was not written (exit 1 if the
+   command had succeeded); the rest were. Nothing in a file may be secret: no request header,
+   no form body, no token (`[REDACTED]`), no download link's credential (`SCRUBBED`), no
+   downloaded bytes (`body_size` and `body_sha256` only).
+4. Copy the files you want into `worker/tests/fixtures/<service>/` (a subfolder per recording
+   keeps a run's files together), and replay them in a test:
+
+   ```cpp
+   rp::test::FakeHttpClient veeam;
+   veeam.serve_recording(std::filesystem::path{RP_FIXTURE_DIR} / "veeam" / "<recording>");
+   ```
+
+   `serve_recording` routes each file by its method and path (the request line; any host), and
+   serves the files of one request in number order, the last one repeating. `on_path(method,
+   "/v8/RestoreSessions/*", ...)` adds a route by pattern (`*` within one path segment), for a
+   query a test's clock changes. A `download` file has no bytes to serve and throws if asked;
+   give the test its own bytes.
+5. Delete the recording folder when done.
+
+### The network guard and the network-off run
+
+Unless `RP_LIVE=1`, `rptests` runs with the network guard on (`tests/test_main.cpp`): the HTTP
+client refuses any host outside `localhost`, `127.x.x.x` and `[::1]` before looking it up, and
+any socket to an address outside 127.0.0.0/8 and ::1. A test case during which it refused
+anything is named on stderr (`NETWORK GUARD: "<test>" tried to connect ...`) and fails the run,
+even if its own checks passed. CI runs every test this way.
+
+The Q2.1 "Done when" is also checked once by hand, with no network at all:
+
+1. Build as usual (`cmake --build --preset dev`), with the network on: vcpkg may need it.
+2. Turn the network off. Settings → Network & Internet → Advanced network settings (on
+   Windows 10: Change adapter options), right-click each adapter (Wi-Fi, Ethernet) →
+   **Disable**. Or unplug the cable and turn Wi-Fi off.
+3. Make sure `RP_LIVE` isn't set (`Remove-Item Env:RP_LIVE -ErrorAction SilentlyContinue`), and
+   run `ctest --preset dev` from `worker/`. Every test passes and the `[live]` ones show as
+   skipped.
+4. Turn the adapters back on (right-click → **Enable**).
+
 ### Running the gates locally
 
 Cloud, from `cloud/` (the same commands as CI; `make cov` runs both in WSL or Linux):

@@ -24,9 +24,12 @@
 #include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
+#include <fstream>
 #include <functional>
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <ostream>
@@ -53,11 +56,11 @@ using rp::test::make_response;
 using rp::test::to_response;
 
 const std::string kUsage = "usage: rpworker --version | rpworker config check [--config <path>] | "
-                           "rpworker veeam list [--config <path>] | "
-                           "rpworker graph list [--hash] [--config <path>] | "
+                           "rpworker veeam list [--config <path>] [--record <dir>] | "
+                           "rpworker graph list [--hash] [--config <path>] [--record <dir>] | "
                            "rpworker restore [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] "
                            "[--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] "
-                           "[--config <path>]\n";
+                           "[--config <path>] [--record <dir>]\n";
 
 const std::string kBase = "https://veeam.test:4443";
 const std::string kTokenUrl = kBase + "/v8/token";
@@ -239,7 +242,11 @@ TEST_CASE("rpworker veeam prints usage and exits 64 for arguments it doesn't und
         Args{"list", "--config", "x.json", "extra"},
         Args{"list", "--config", "x.json", "--config", "y.json"},
         Args{"--config", "x.json", "list"},
-        Args{"list", "list"});
+        Args{"list", "list"},
+        Args{"list", "--record"},
+        Args{"list", "--RECORD", "rec"},
+        Args{"list", "--record", "a", "--record", "b"},
+        Args{"list", "--record", "a", "--config"});
     CAPTURE(args);
     Harness lab;
 
@@ -866,4 +873,144 @@ TEST_CASE("rpworker veeam list never prints or logs the password or a token", "[
     }
     // After a sign-in the client has logged, so there was a log to leak into.
     CHECK(log.empty() == !c.signs_in);
+}
+
+// --- --record (Q2.1) -----------------------------------------------------------
+
+namespace {
+
+std::vector<std::string> files_in(const std::filesystem::path& dir)
+{
+    std::vector<std::string> names;
+    for (const auto& entry : std::filesystem::directory_iterator(dir)) {
+        names.push_back(utf8(entry.path().filename()));
+    }
+    std::ranges::sort(names);
+    return names;
+}
+
+std::string read_text(const std::filesystem::path& path)
+{
+    std::ifstream file(path, std::ios::binary);
+    return {std::istreambuf_iterator<char>(file), {}};
+}
+
+// `veeam list --config <the temp config> --record <dir>`.
+Run run_recorded(Harness& lab, const std::filesystem::path& dir)
+{
+    const std::string config_arg = utf8(lab.config_path);
+    const std::string record_arg = utf8(dir);
+    return lab.run(Args{"list", "--config", config_arg, "--record", record_arg});
+}
+
+const std::string kLabTable = kHeader + kNewestRow + kOldestRow + "\n" +
+                              "1 organisation(s), 2 restore point(s); * = veeam_org_name\n";
+
+} // namespace
+
+TEST_CASE("rpworker veeam list --record writes each exchange, and a replay prints the same "
+          "table",
+          "[veeam_command][record]")
+{
+    Harness lab;
+    const std::filesystem::path rec = lab.dir.path() / "rec";
+
+    const Run result = run_recorded(lab, rec);
+    REQUIRE(result.err.empty());
+    REQUIRE(result.exit_code == 0);
+    REQUIRE(result.out == kLabTable + "recorded 4 exchange(s) in " + utf8(rec) + "\n");
+    REQUIRE(files_in(rec) == std::vector<std::string>{"veeam"});
+    REQUIRE(files_in(rec / "veeam") ==
+            std::vector<std::string>{"001-post-v8-token.json", "002-get-v8-organizations.json",
+                                     "003-get-v8-restorepoints.json",
+                                     "004-post-v8-token-logout.json"});
+    for (const std::string& name : files_in(rec / "veeam")) {
+        const std::string text = read_text(rec / "veeam" / name);
+        CAPTURE(name);
+        CHECK_THAT(text, !ContainsSubstring("Sentinel"));
+        CHECK_THAT(text, !ContainsSubstring(kPasswordForm));
+        CHECK_THAT(text, !ContainsSubstring(kAccessToken));
+        CHECK_THAT(text, !ContainsSubstring(kRefreshToken));
+    }
+    const json token = json::parse(read_text(rec / "veeam" / "001-post-v8-token.json"));
+    CHECK(token["request"] == "POST /v8/token");
+    CHECK(token["body"]["access_token"] == "[REDACTED]");
+    CHECK(json::parse(read_text(rec / "veeam" / "002-get-v8-organizations.json"))["request"] ==
+          "GET /v8/Organizations?limit=1000&offset=0");
+
+    // The recording alone answers a second run: nothing else is routed.
+    Harness replay;
+    rp::test::FakeHttpClient recorded;
+    REQUIRE(recorded.serve_recording(rec / "veeam") == 4);
+    replay.make_http = [&recorded] {
+        return std::make_unique<rp::test::ForwardingHttpClient>(recorded);
+    };
+    const Run again = replay.run_list();
+    CHECK(again.err.empty());
+    CHECK(again.exit_code == 0);
+    CHECK(again.out == kLabTable);
+    CHECK(recorded.requests().size() == 4);
+}
+
+TEST_CASE("rpworker veeam list --record records a failed run too, which keeps its exit code",
+          "[veeam_command][record]")
+{
+    Harness lab;
+    lab.http.on(HttpMethod::post, kTokenUrl, {load_fixture("veeam", "token-rejected-401")});
+    const std::filesystem::path rec = lab.dir.path() / "rec";
+
+    const Run result = run_recorded(lab, rec);
+    REQUIRE(result.exit_code == 2);
+    REQUIRE(result.out == "recorded 1 exchange(s) in " + utf8(rec) + "\n");
+    REQUIRE(files_in(rec / "veeam") == std::vector<std::string>{"001-post-v8-token.json"});
+    CHECK(json::parse(read_text(rec / "veeam" / "001-post-v8-token.json"))["status"] == 401);
+}
+
+TEST_CASE("rpworker veeam list --record exits 1 when an exchange is refused for a secret",
+          "[veeam_command][record]")
+{
+    // Veeam echoing the password where no rule of redact() looks for one.
+    Harness lab;
+    json orgs = load_fixture_json("veeam", "organizations-200");
+    orgs["body"]["results"][0]["description"] = kPassword;
+    lab.http.on(HttpMethod::get, orgs_url(), {to_response(orgs)});
+    const std::filesystem::path rec = lab.dir.path() / "rec";
+
+    const Run result = run_recorded(lab, rec);
+    // The listing itself is untouched: recording never changes what the command sees.
+    REQUIRE(result.out == kLabTable + "recorded 3 exchange(s) in " + utf8(rec) + "\n");
+    REQUIRE(result.err ==
+            "record error: veeam/002-get-v8-organizations.json: refused: it holds a known secret\n");
+    REQUIRE(result.exit_code == 1);
+    REQUIRE(files_in(rec / "veeam") ==
+            std::vector<std::string>{"001-post-v8-token.json", "003-get-v8-restorepoints.json",
+                                     "004-post-v8-token-logout.json"});
+}
+
+TEST_CASE("rpworker veeam list --record refuses a folder that isn't empty, before any request",
+          "[veeam_command][record]")
+{
+    Harness lab;
+    const std::filesystem::path old = lab.dir.write("config-copy.json", "{}");
+    const std::string config_arg = utf8(lab.config_path);
+    const std::string record_arg = utf8(lab.dir.path());
+
+    const Run result = lab.run(Args{"list", "--record", record_arg, "--config", config_arg});
+    REQUIRE(result.exit_code == 1);
+    REQUIRE(result.out.empty());
+    REQUIRE(result.err ==
+            "config error: " + record_arg + ": the --record folder is not empty\n");
+    REQUIRE(lab.make_http_calls == 0);
+    CHECK(std::filesystem::exists(old));
+}
+
+TEST_CASE("rpworker veeam list reports a --record path that isn't UTF-8", "[veeam_command][record]")
+{
+    Harness lab;
+    const std::string config_arg = utf8(lab.config_path);
+
+    const Run result = lab.run(Args{"list", "--config", config_arg, "--record", "rec\xff"});
+    REQUIRE(result.exit_code == 1);
+    REQUIRE(result.err == "config error: the --record path is not valid UTF-8\n");
+    REQUIRE(lab.make_http_calls == 0);
 }

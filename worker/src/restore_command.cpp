@@ -3,6 +3,8 @@
 #include <rp/canary_manifest.hpp>
 #include <rp/cli.hpp>
 #include <rp/client_assertion.hpp>
+#include <rp/graph_client.hpp>
+#include <rp/http_client.hpp>
 #include <rp/sample_rng.hpp>
 #include <rp/sample_selector.hpp>
 
@@ -54,6 +56,7 @@ struct RestoreArgs {
     std::optional<sampling::CanaryCursor> cursor;
     std::optional<std::string_view> manifest;
     std::optional<std::string_view> config;
+    std::optional<std::string_view> record;
 };
 
 bool all_digits(std::string_view text) noexcept
@@ -125,46 +128,41 @@ bool valid_run_id(std::string_view text)
 // its value, every value well-formed.
 bool parse_args(std::span<const std::string_view> args, RestoreArgs& parsed)
 {
-    for (std::size_t i = 0; i < args.size(); i += 2) {
-        if (i + 1 >= args.size()) {
-            return false;
-        }
-        const std::string_view name = args[i];
-        const std::string_view value = args[i + 1];
-        const auto size_option = [&](std::optional<int>& target) {
-            if (target) {
-                return false;
-            }
-            target = parse_size(value);
+    const std::optional<CommandOptions> options =
+        parse_options(args, {"--mail", "--sp", "--od", "--point", "--run-id", "--canary-cursor",
+                             "--manifest", "--config", "--record"});
+    if (!options) {
+        return false;
+    }
+    const auto size_option = [&](std::string_view name, std::optional<int>& target) {
+        if (const std::optional<std::string_view> value = options->value(name)) {
+            target = parse_size(*value);
             return target.has_value();
-        };
-        bool ok = false;
-        if (name == "--mail") {
-            ok = size_option(parsed.mail);
-        } else if (name == "--sp") {
-            ok = size_option(parsed.sharepoint);
-        } else if (name == "--od") {
-            ok = size_option(parsed.onedrive);
-        } else if (name == "--point" && !parsed.point) {
-            ok = is_point_id(value); // `latest`, in any case, is one too
-            parsed.point = value;
-        } else if (name == "--run-id" && !parsed.run_id) {
-            ok = valid_run_id(value);
-            parsed.run_id = value;
-        } else if (name == "--canary-cursor" && !parsed.cursor) {
-            parsed.cursor = parse_cursor(value);
-            ok = parsed.cursor.has_value();
-        } else if (name == "--manifest" && !parsed.manifest) {
-            parsed.manifest = value;
-            ok = true;
-        } else if (name == "--config" && !parsed.config) {
-            parsed.config = value;
-            ok = true;
         }
-        if (!ok) {
+        return true;
+    };
+    if (!size_option("--mail", parsed.mail) || !size_option("--sp", parsed.sharepoint) ||
+        !size_option("--od", parsed.onedrive)) {
+        return false;
+    }
+    parsed.point = options->value("--point");
+    // `latest`, in any case, is a point ID too.
+    if (parsed.point && !is_point_id(*parsed.point)) {
+        return false;
+    }
+    parsed.run_id = options->value("--run-id");
+    if (parsed.run_id && !valid_run_id(*parsed.run_id)) {
+        return false;
+    }
+    if (const std::optional<std::string_view> cursor = options->value("--canary-cursor")) {
+        parsed.cursor = parse_cursor(*cursor);
+        if (!parsed.cursor) {
             return false;
         }
     }
+    parsed.manifest = options->value("--manifest");
+    parsed.config = options->value("--config");
+    parsed.record = options->value("--record");
     return true;
 }
 
@@ -463,8 +461,32 @@ RestoreCommandEnv default_restore_command_env()
     return env;
 }
 
-int run_restore_command(std::span<const std::string_view> args, std::ostream& out,
-                        std::ostream& err, const RestoreCommandEnv& env)
+namespace {
+
+// The connector's options with every HTTP client it makes recorded: Veeam's
+// under "veeam", Graph's (the target guard's) under "graph". A null maker is
+// the connector's own default, made here so it can be wrapped.
+connector::ConnectorOptions record_connector(connector::ConnectorOptions options,
+                                             const std::shared_ptr<FixtureRecorder>& recorder)
+{
+    options.make_http = [inner = options.make_http,
+                         recorder](const HttpClientOptions& http) -> std::unique_ptr<IHttpClient> {
+        return recorded(inner ? inner(http) : std::make_unique<HttpClient>(http), recorder,
+                        "veeam");
+    };
+    options.make_graph_http =
+        [inner = options.make_graph_http,
+         recorder](std::shared_ptr<spdlog::logger> logger) -> std::unique_ptr<IHttpClient> {
+        return recorded(inner ? inner(logger) : graph::make_graph_http_client(std::move(logger)),
+                        recorder, "graph");
+    };
+    return options;
+}
+
+// The command but for what --record wrote, which run_restore_command prints
+// last: `recorder` is set once the recording is open.
+int run_restore(std::span<const std::string_view> args, std::ostream& out, std::ostream& err,
+                const RestoreCommandEnv& env, std::shared_ptr<FixtureRecorder>& recorder)
 {
     RestoreArgs parsed;
     if (!parse_args(args, parsed)) {
@@ -529,8 +551,13 @@ int run_restore_command(std::span<const std::string_view> args, std::ostream& ou
             err << "usage error: --canary-cursor: " << *problem << '\n';
             return exit_code::usage;
         }
+        // Only now, the last check before the connector: a run stopped by
+        // the checks above makes no folder and prints no recording line.
+        recorder = open_recording(parsed.record, "restore", secrets);
 
-        connector::ConnectorOptions options = env.connector_options;
+        connector::ConnectorOptions options = recorder
+                                                  ? record_connector(env.connector_options, recorder)
+                                                  : env.connector_options;
         // Never spdlog's default logger, which writes to stdout.
         if (!options.logger) {
             options.logger = make_command_logger();
@@ -621,6 +648,16 @@ int run_restore_command(std::span<const std::string_view> args, std::ostream& ou
         restore_note();
         return exit_code::config;
     }
+}
+
+} // namespace
+
+int run_restore_command(std::span<const std::string_view> args, std::ostream& out,
+                        std::ostream& err, const RestoreCommandEnv& env)
+{
+    std::shared_ptr<FixtureRecorder> recorder;
+    const int code = run_restore(args, out, err, env, recorder);
+    return finish_recording(recorder.get(), out, err, code);
 }
 
 } // namespace rp

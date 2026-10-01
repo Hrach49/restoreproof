@@ -25,11 +25,11 @@ using Args = std::vector<std::string_view>;
 namespace {
 
 const std::string kUsage = "usage: rpworker --version | rpworker config check [--config <path>] | "
-                           "rpworker veeam list [--config <path>] | "
-                           "rpworker graph list [--hash] [--config <path>] | "
+                           "rpworker veeam list [--config <path>] [--record <dir>] | "
+                           "rpworker graph list [--hash] [--config <path>] [--record <dir>] | "
                            "rpworker restore [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] "
                            "[--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] "
-                           "[--config <path>]\n";
+                           "[--config <path>] [--record <dir>]\n";
 
 // Every key set; sample_od left out to show its default.
 const std::string kConfigJson = R"({

@@ -29,25 +29,14 @@ namespace {
 
 using graph::FoundItem;
 
-// Whether `args` are `list` followed by `--hash` and `--config <path>` in any
-// order, each at most once; sets `hash` and, for the latter, `config_arg` to
-// the path as given, in UTF-8.
-bool parse_list_args(std::span<const std::string_view> args, bool& hash,
-                     std::optional<std::string_view>& config_arg)
+// `list [--hash] [--config <path>] [--record <dir>]`'s options; nullopt for
+// any other command line.
+std::optional<CommandOptions> parse_list_args(std::span<const std::string_view> args)
 {
     if (args.empty() || args[0] != "list") {
-        return false;
+        return std::nullopt;
     }
-    for (std::size_t i = 1; i < args.size(); ++i) {
-        if (args[i] == "--hash" && !hash) {
-            hash = true;
-        } else if (args[i] == "--config" && !config_arg && i + 1 < args.size()) {
-            config_arg = args[++i];
-        } else {
-            return false;
-        }
-    }
-    return true;
+    return parse_options(args.subspan(1), {"--config", "--record"}, {"--hash"});
 }
 
 // The download client of a listing without --hash, which downloads nothing:
@@ -153,15 +142,21 @@ GraphCommandEnv default_graph_command_env()
     return env;
 }
 
-int run_graph_command(std::span<const std::string_view> args, std::ostream& out,
-                      std::ostream& err, const GraphCommandEnv& env)
+namespace {
+
+// The command but for what --record wrote, which run_graph_command prints
+// last: `recorder` is set once the recording is open.
+int run_list(std::span<const std::string_view> args, std::ostream& out, std::ostream& err,
+             const GraphCommandEnv& env, std::shared_ptr<FixtureRecorder>& recorder)
 {
-    bool hash = false;
-    std::optional<std::string_view> config_arg;
-    if (!parse_list_args(args, hash, config_arg)) {
+    const std::optional<CommandOptions> options = parse_list_args(args);
+    if (!options) {
         err << kCliUsage;
         return exit_code::usage;
     }
+    const bool hash = options->has_flag("--hash");
+    const std::optional<std::string_view> config_arg = options->value("--config");
+    const std::optional<std::string_view> record_arg = options->value("--record");
 
     // Never spdlog's default logger, which writes to stdout, where the tables are.
     graph::GraphClientOptions client_options = env.client_options;
@@ -177,7 +172,9 @@ int run_graph_command(std::span<const std::string_view> args, std::ostream& out,
                                                       : std::chrono::system_clock::now();
         // A CertificateError is a ConfigError: an unset or unusable certificate
         // is found here, before any request.
-        certificate = graph::certificate_from_secrets(env.load_secrets(), wall_now, logger);
+        const Secrets secrets = env.load_secrets();
+        certificate = graph::certificate_from_secrets(secrets, wall_now, logger);
+        recorder = open_recording(record_arg, hash ? "graph list --hash" : "graph list", secrets);
     } catch (const ConfigError& e) {
         err << "config error: " << e.what() << '\n';
         return exit_code::config;
@@ -192,9 +189,12 @@ int run_graph_command(std::span<const std::string_view> args, std::ostream& out,
     try {
         // Declared in this order so the reader and the client, which hold
         // references to the HTTP clients, go first.
-        const std::unique_ptr<IHttpClient> http = env.make_graph_http(logger);
+        // Downloads are recorded as their size and SHA-256 only, never the bytes.
+        const std::unique_ptr<IHttpClient> http =
+            recorded(env.make_graph_http(logger), recorder, "graph");
         const std::unique_ptr<IHttpClient> download =
-            hash ? env.make_download_http() : std::make_unique<NoDownloads>();
+            hash ? recorded(env.make_download_http(), recorder, "download", RecordedBody::digest)
+                 : std::make_unique<NoDownloads>();
         if (!http || !download) {
             throw std::logic_error("no HTTP client");
         }
@@ -227,6 +227,16 @@ int run_graph_command(std::span<const std::string_view> args, std::ostream& out,
         err << "error: unexpected failure\n";
         return exit_code::config;
     }
+}
+
+} // namespace
+
+int run_graph_command(std::span<const std::string_view> args, std::ostream& out,
+                      std::ostream& err, const GraphCommandEnv& env)
+{
+    std::shared_ptr<FixtureRecorder> recorder;
+    const int code = run_list(args, out, err, env, recorder);
+    return finish_recording(recorder.get(), out, err, code);
 }
 
 } // namespace rp

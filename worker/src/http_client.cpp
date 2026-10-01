@@ -9,9 +9,13 @@
 
 #include <curl/curl.h>
 
+#include <winsock2.h>
+#include <ws2tcpip.h>
+
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <filesystem>
 #include <mutex>
@@ -139,6 +143,81 @@ std::string error_text(const cpr::Error& error)
                                                 : std::to_string(static_cast<int>(error.code)));
 }
 
+namespace {
+
+std::atomic<bool> loopback_only{false};
+std::atomic<std::uint64_t> refused_connections{0};
+
+bool is_loopback_ipv4(std::string_view host) noexcept
+{
+    if (!host.starts_with("127.") || host.size() > 15) {
+        return false;
+    }
+    int dots = 0;
+    for (const char c : host) {
+        if (c == '.') {
+            ++dots;
+        } else if (c < '0' || c > '9') {
+            return false;
+        }
+    }
+    return dots == 3 && !host.ends_with('.') && host.find("..") == std::string_view::npos;
+}
+
+} // namespace
+
+bool set_loopback_only(bool on) noexcept
+{
+    return loopback_only.exchange(on);
+}
+
+std::uint64_t take_refused_connections() noexcept
+{
+    return refused_connections.exchange(0);
+}
+
+bool is_loopback_url(std::string_view url) noexcept
+{
+    const std::size_t scheme = url.find("://");
+    if (scheme == std::string_view::npos) {
+        return false;
+    }
+    std::string_view authority = url.substr(scheme + 3);
+    authority = authority.substr(0, authority.find_first_of("/?#"));
+    if (const std::size_t at = authority.rfind('@'); at != std::string_view::npos) {
+        authority.remove_prefix(at + 1);
+    }
+    if (authority.starts_with("[")) {
+        const std::size_t close = authority.find(']');
+        // No host at all: curl refuses the URL itself, before any lookup.
+        return close == std::string_view::npos || authority.substr(0, close + 1) == "[::1]";
+    }
+    const std::string_view host = authority.substr(0, authority.find(':'));
+    if (host.size() == 9) {
+        std::string lower(host);
+        std::ranges::transform(lower, lower.begin(), [](char c) {
+            return c >= 'A' && c <= 'Z' ? static_cast<char>(c - 'A' + 'a') : c;
+        });
+        if (lower == "localhost") {
+            return true;
+        }
+    }
+    return is_loopback_ipv4(host);
+}
+
+bool is_loopback_sockaddr(const ::sockaddr* address) noexcept
+{
+    if (address->sa_family == AF_INET) {
+        const auto* in = reinterpret_cast<const sockaddr_in*>(address);
+        return (ntohl(in->sin_addr.s_addr) >> 24) == 127;
+    }
+    if (address->sa_family == AF_INET6) {
+        const auto* in6 = reinterpret_cast<const sockaddr_in6*>(address);
+        return IN6_IS_ADDR_LOOPBACK(&in6->sin6_addr);
+    }
+    return false;
+}
+
 } // namespace detail
 
 namespace {
@@ -180,6 +259,18 @@ void allow_unknown_revocation_status(cpr::Session& session)
 {
     curl_easy_setopt(session.GetCurlHolder()->handle, CURLOPT_SSL_OPTIONS,
                      CURLSSLOPT_NATIVE_CA | CURLSSLOPT_REVOKE_BEST_EFFORT);
+}
+
+// Q2.1's network guard (detail::set_loopback_only): the socket curl asks for,
+// unless its address is outside the loopback range, which is counted and
+// refused (curl then fails the attempt with a connect error).
+curl_socket_t open_loopback_socket(void*, curlsocktype, curl_sockaddr* address)
+{
+    if (!detail::is_loopback_sockaddr(&address->addr)) {
+        ++detail::refused_connections;
+        return CURL_SOCKET_BAD;
+    }
+    return socket(address->family, address->socktype, address->protocol);
 }
 
 // The body of a request with max_body_bytes, read through a write callback:
@@ -228,6 +319,11 @@ cpr::Response perform(const HttpRequest& request, const cpr::SslOptions& ssl, bo
     }
     if (has_ca_file) {
         allow_unknown_revocation_status(session);
+    }
+    // Only ever in the unit tests. The source scan allows exactly this statement.
+    if (detail::loopback_only.load()) {
+        curl_easy_setopt(session.GetCurlHolder()->handle, CURLOPT_OPENSOCKETFUNCTION,
+                         &open_loopback_socket);
     }
     if (!request.parts.empty()) {
         session.SetMultipart(make_multipart(request.parts));
@@ -437,6 +533,13 @@ HttpResponse HttpClient::send(const HttpRequest& request)
     if (pin_error_) {
         throw HttpError(target + ": refused before sending: " + *pin_error_, TransportError::tls,
                         0, 0);
+    }
+    // The unit tests' network guard: no DNS lookup for a host outside it.
+    if (detail::loopback_only.load() && !detail::is_loopback_url(request.url)) {
+        ++detail::refused_connections;
+        throw HttpError(target + ": refused before sending: the tests' network guard allows "
+                                 "only loopback hosts",
+                        TransportError::connect, 0, 0);
     }
     const cpr::SslOptions ssl = detail::make_ssl_options(options_.ca_file, public_key_pin_);
 

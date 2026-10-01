@@ -729,3 +729,14 @@ TEST_CASE("redact treats applicationCertificate and its password as secret key n
         {R"({"applicationId":"1fd2609d"})", R"({"applicationId":"1fd2609d"})"},
     })));
 }
+
+TEST_CASE("the JWT start and base64url alphabet are the ones the recorder shares", "[redact]")
+{
+    STATIC_REQUIRE(rp::kJwtStart == "eyJ");
+    for (const char c : std::string_view{"azAZ09-_"}) {
+        CHECK(rp::is_base64url(c));
+    }
+    for (const char c : std::string_view{".=+/ \"%"}) {
+        CHECK_FALSE(rp::is_base64url(c));
+    }
+}

@@ -8,6 +8,18 @@ namespace rp {
 // What a secret is replaced with in logged text.
 inline constexpr std::string_view kRedacted = "[REDACTED]";
 
+// A JWT's compact form (RFC 7519) starts with the base64url of '{"', its
+// header's opening. Case matters. redact() and the fixture recorder's JWT
+// rule (rp/recording_http_client.hpp) both look for it.
+inline constexpr std::string_view kJwtStart = "eyJ";
+
+// A character of base64url (RFC 4648 section 5), a JWT part's alphabet.
+constexpr bool is_base64url(char c) noexcept
+{
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' ||
+           c == '_';
+}
+
 // Whether a header's value is a secret: Authorization or Proxy-Authorization,
 // in any case.
 bool is_secret_header(std::string_view name) noexcept;

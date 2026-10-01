@@ -57,6 +57,10 @@ const std::string kGraphHost = "https://graph.microsoft.com";
 // The live runs' IDs: with them the sample is the one the live run drew.
 const std::string kRun1 = "rp-20261001T172150Z-b029c118";
 const std::string kRun2 = "rp-20261001T172815Z-6285c4a6";
+// The live runs drew no random SharePoint or OneDrive file: the lab has no real
+// files (W3.3: warnings, never a status).
+const std::string kShortfalls = "warning: shortfall: sharepoint random: 0 of 2\n"
+                                "warning: shortfall: onedrive random: 0 of 2\n";
 
 std::string read_file(const std::filesystem::path& path)
 {
@@ -478,7 +482,8 @@ void check_replayed_as_recorded(const Replay& replay)
 // --- Failure paths first --------------------------------------------------------------
 
 TEST_CASE("replay of live run 2: mails Veeam said it restored over run 1's copies are "
-          "stale_target, never missing; the files, whose cTag moved, match; exit 4",
+          "stale_target, never missing; the files, whose cTag moved, match; status error "
+          "stale_target, exit 4",
           "[restore_replay][checker][veeam_m365]")
 {
     // Before the fix (commit 6fd89e9) these five were `missing`, and the run
@@ -490,9 +495,9 @@ TEST_CASE("replay of live run 2: mails Veeam said it restored over run 1's copie
     INFO(run.err);
     INFO(replay.log());
     CHECK(run.exit_code == rp::exit_code::service);
-    CHECK(run.err == "warning: 5 copies from earlier runs in the restore targets were ignored "
-                     "(mail 5, sharepoint 0, onedrive 0)\n"
-                     "check: 5 item(s) couldn't be checked\n");
+    CHECK(run.err == kShortfalls +
+                         "warning: stale_copies: 5 copies from earlier runs in the restore "
+                         "targets were ignored (mail 5, sharepoint 0, onedrive 0)\n");
     const std::string mail1 = "cd253eec-c697-4da2-94b7-24b76a19d79a";
     const std::string mail2 = "58b0bbf9-9b12-4f1c-a070-e7f32d7efe41";
     const std::string sp = "8d902916-7d9e-404c-ac0a-99d696e20b7f";
@@ -569,13 +574,16 @@ TEST_CASE("replay of live run 2: mails Veeam said it restored over run 1's copie
                   "         -    0",
                   "",
                   "check: 6 match, 0 mismatch, 0 missing, 5 error",
+                  "",
+                  "status error stale_target: 5 of 11 item(s) couldn't be checked (stale_target "
+                  "5); 6 verified",
               }));
     CHECK_THAT(run.out, !ContainsSubstring("missing  "));
     check_replayed_as_recorded(replay);
 }
 
 TEST_CASE("replay of live run 1 with a canary mail taken out of the after read: it is missing, "
-          "exit 5",
+          "status fail, exit 5",
           "[restore_replay][checker][veeam_m365]")
 {
     Replay replay("w32-live-run1");
@@ -589,19 +597,21 @@ TEST_CASE("replay of live run 1 with a canary mail taken out of the after read: 
 
     INFO(run.err);
     CHECK(run.exit_code == rp::exit_code::restore);
-    CHECK(run.err == "check: 1 item(s) didn't verify\n");
+    CHECK(run.err == kShortfalls);
     std::vector<std::string> outcomes;
     for (std::size_t i = 0; i < kRun1Names.size(); ++i) {
         outcomes.push_back("  " + kRun1Names[i] +
                            (i == 1 ? "missing  -       -    -" : "match    -       -    0"));
     }
     CHECK(run.out == restore_part(kRun1, "311f1eea", run1_rows(), "0:02:15") +
-                         run1_check(outcomes, "check: 10 match, 0 mismatch, 1 missing, 0 error"));
+                         run1_check(outcomes, "check: 10 match, 0 mismatch, 1 missing, 0 error") +
+                         "\nstatus fail: 1 of 11 item(s) didn't verify (1 missing, 0 mismatch)\n");
 }
 
 // --- The live runs as they went -------------------------------------------------------
 
-TEST_CASE("replay of live run 1: 11 items restored into empty targets, all match, exit 0",
+TEST_CASE("replay of live run 1: 11 items restored into empty targets, all match, status pass, "
+          "exit 0",
           "[restore_replay][checker][veeam_m365]")
 {
     Replay replay("w32-live-run1");
@@ -611,13 +621,15 @@ TEST_CASE("replay of live run 1: 11 items restored into empty targets, all match
     INFO(run.err);
     INFO(replay.log());
     CHECK(run.exit_code == rp::exit_code::ok);
-    CHECK(run.err.empty());
+    CHECK(run.err == kShortfalls);
     std::vector<std::string> outcomes;
     for (const std::string& name : kRun1Names) {
         outcomes.push_back("  " + name + "match    -       -    0");
     }
     CHECK(run.out == restore_part(kRun1, "311f1eea", run1_rows(), "0:02:15") +
-                         run1_check(outcomes, "check: 11 match, 0 mismatch, 0 missing, 0 error"));
+                         run1_check(outcomes, "check: 11 match, 0 mismatch, 0 missing, 0 error") +
+                         "\nstatus pass: 11 of 11 item(s) verified: manifest 9, fields 2, "
+                         "metadata 0\n");
     check_replayed_as_recorded(replay);
     // The recorded restore POSTs' credential is the recorder's placeholder;
     // the replay sent the exporter's, and no log line names it.

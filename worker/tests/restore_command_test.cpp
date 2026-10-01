@@ -56,6 +56,7 @@
 #include <vector>
 
 using Catch::Matchers::ContainsSubstring;
+using Catch::Matchers::EndsWith;
 using Catch::Matchers::StartsWith;
 using Args = std::vector<std::string_view>;
 using namespace std::chrono_literals;
@@ -735,6 +736,11 @@ const std::string kCheckOfThree =
     "\n"
     "check: 3 match, 0 mismatch, 0 missing, 0 error\n";
 
+// That run's status line: every item verified.
+const std::string kPassOfThree =
+    "\n"
+    "status pass: 3 of 3 item(s) verified: manifest 2, fields 1, metadata 0\n";
+
 } // namespace
 
 // --- Failure paths: the command line -----------------------------------------------
@@ -1109,7 +1115,7 @@ TEST_CASE("restore: a --manifest path that isn't UTF-8 is a config error", "[res
 // --- Failure paths: the connector --------------------------------------------------
 
 TEST_CASE("restore: each failure of the restore has its exit code; the header is already out, "
-          "and items may be in the targets",
+          "and items may be in the targets; the status says it, never what() says",
           "[restore_command]")
 {
     // restore_sample may have sent a restore before it threw.
@@ -1121,23 +1127,33 @@ TEST_CASE("restore: each failure of the restore has its exit code; the header is
         std::function<void()> raise;
         int code;
         std::string err;
+        std::string status; // after "status error "
     };
     const std::vector<Case> cases{
         {"AuthError", [] { throw connector::AuthError("Veeam refused the credentials"); },
-         rp::exit_code::auth, "restore error: Veeam refused the credentials\n" + started},
+         rp::exit_code::auth, "restore error: Veeam refused the credentials\n" + started,
+         "backup_auth: the restore didn't complete: the backup product refused the credentials "
+         "(backup_auth)"},
         {"TransientError", [] { throw connector::TransientError("Veeam unreachable"); },
-         rp::exit_code::transient, "restore error: Veeam unreachable\n" + started},
+         rp::exit_code::transient, "restore error: Veeam unreachable\n" + started,
+         "backup_transient: the restore didn't complete: the backup product couldn't be reached "
+         "or asked to try later (backup_transient)"},
         {"SafetyViolation",
          [] {
              throw connector::SafetyViolation(
                  "target guard: mail item 0 is sampled from a restore target");
          },
          rp::exit_code::service,
-         "restore error: target guard: mail item 0 is sampled from a restore target\n" + started},
+         "restore error: target guard: mail item 0 is sampled from a restore target\n" + started,
+         "target_guard: the restore didn't complete: the restore-target guard refused "
+         "(target_guard)"},
         {"NotFoundError", [] { throw connector::NotFoundError("mail item 0 isn't in the restore point"); },
-         rp::exit_code::service, "restore error: mail item 0 isn't in the restore point\n" + started},
+         rp::exit_code::service, "restore error: mail item 0 isn't in the restore point\n" + started,
+         "not_in_backup: the restore didn't complete: the client or a sampled item isn't in the "
+         "backup (not_in_backup)"},
         {"NotImplementedError", [] { throw connector::NotImplementedError("not here"); },
-         rp::exit_code::service, "restore error: not here\n" + started},
+         rp::exit_code::service, "restore error: not here\n" + started,
+         "backup: the restore didn't complete: the backup product reported an error (backup)"},
         // The connector's promise that no restore was sent: no note.
         {"nothing restored",
          [] {
@@ -1147,17 +1163,22 @@ TEST_CASE("restore: each failure of the restore has its exit code; the header is
          },
          rp::exit_code::service,
          "restore error: target guard: mail item 0 is sampled from a restore target; nothing "
-         "was restored\n"},
+         "was restored\n",
+         "target_guard: the restore didn't complete: the restore-target guard refused "
+         "(target_guard)"},
         {"Error", [] { throw connector::Error("Veeam said no"); }, rp::exit_code::service,
-         "restore error: Veeam said no\n" + started},
+         "restore error: Veeam said no\n" + started,
+         "backup: the restore didn't complete: the backup product reported an error (backup)"},
         {"ConfigError",
          [] {
              throw rp::ConfigError("RP_GRAPH_CERT_PFX_BASE64",
                                    "RP_GRAPH_CERT_PFX_BASE64 is not valid Base64");
          },
-         rp::exit_code::config, "config error: RP_GRAPH_CERT_PFX_BASE64 is not valid Base64\n"},
+         rp::exit_code::config, "config error: RP_GRAPH_CERT_PFX_BASE64 is not valid Base64\n",
+         "config: the restore didn't complete: the configuration isn't usable (config)"},
         {"unexpected", [] { throw std::runtime_error("SENTINEL-UNSAFE-MESSAGE"); },
-         rp::exit_code::config, "error: unexpected failure\n" + started},
+         rp::exit_code::config, "error: unexpected failure\n" + started,
+         "internal: the restore didn't complete: an unexpected failure (internal)"},
     };
     const Case& c = cases[GENERATE(range(std::size_t{0}, std::size_t{9}))];
     CAPTURE(c.name);
@@ -1169,7 +1190,8 @@ TEST_CASE("restore: each failure of the restore has its exit code; the header is
 
     CHECK(run.exit_code == c.code);
     CHECK(run.err == c.err);
-    CHECK(run.out == expected_header());
+    CHECK(run.out == expected_header() + "\nstatus error " + c.status + "\n");
+    CHECK_THAT(run.out, !ContainsSubstring("SENTINEL-UNSAFE-MESSAGE"));
     CHECK(lab.fake.restore_calls == 1);
     // The before snapshot was read; nothing is read back after a restore that threw.
     CHECK(lab.targets.graph.count(rp::HttpMethod::get,
@@ -1186,17 +1208,26 @@ TEST_CASE("restore: a failure choosing the sample restores nothing; the run ID i
         std::function<void()> raise;
         int code;
         std::string err;
+        std::string status; // after "status error "
     };
     const std::vector<Case> cases{
         {"TransientError", [] { throw connector::TransientError("Veeam unreachable"); },
-         rp::exit_code::transient, "restore error: Veeam unreachable\n"},
+         rp::exit_code::transient, "restore error: Veeam unreachable\n",
+         "backup_transient: the run stopped before the restore: the backup product couldn't be "
+         "reached or asked to try later (backup_transient); nothing was restored"},
         {"AuthError", [] { throw connector::AuthError("Veeam refused the token"); },
-         rp::exit_code::auth, "restore error: Veeam refused the token\n"},
+         rp::exit_code::auth, "restore error: Veeam refused the token\n",
+         "backup_auth: the run stopped before the restore: the backup product refused the "
+         "credentials (backup_auth); nothing was restored"},
         {"Error", [] { throw connector::Error("veeam_m365: an unexpected answer"); },
-         rp::exit_code::service, "restore error: veeam_m365: an unexpected answer\n"},
+         rp::exit_code::service, "restore error: veeam_m365: an unexpected answer\n",
+         "backup: the run stopped before the restore: the backup product reported an error "
+         "(backup); nothing was restored"},
         {"ManifestError",
          [] { throw sampling::ManifestError("canary manifest: /entries/3: a canary in a target"); },
-         rp::exit_code::config, "config error: canary manifest: /entries/3: a canary in a target\n"},
+         rp::exit_code::config, "config error: canary manifest: /entries/3: a canary in a target\n",
+         "config: the run stopped before the restore: the configuration isn't usable (config); "
+         "nothing was restored"},
     };
     const Case& c = cases[GENERATE(range(std::size_t{0}, std::size_t{4}))];
     CAPTURE(c.name);
@@ -1208,7 +1239,7 @@ TEST_CASE("restore: a failure choosing the sample restores nothing; the run ID i
 
     CHECK(run.exit_code == c.code);
     CHECK(run.err == c.err);
-    CHECK(run.out == expected_intro());
+    CHECK(run.out == expected_intro() + "\nstatus error " + c.status + "\n");
     CHECK(lab.fake.candidate_calls == 1);
     CHECK(lab.fake.restore_calls == 0);
 }
@@ -1396,24 +1427,26 @@ TEST_CASE("restore: the run ID is flushed before the sample is chosen, the heade
 }
 
 TEST_CASE("restore: a stdout that fails after the restore ran says so, with the run ID and the "
-          "restore's status and exit code",
+          "restore's own account; the check still runs and the status decides the exit code",
           "[restore_command]")
 {
-    const auto [status, infrastructure, code, err] =
-        GENERATE(table<connector::RestoreStatus, bool, int, std::string>({
-            // A restore that succeeded but whose output was lost isn't a success.
-            {connector::RestoreStatus::succeeded, false, rp::exit_code::config,
-             "error: writing the output failed after the restore ran (run run-0001, status "
-             "succeeded: 3 of 3 item(s) restored)\n"},
-            {connector::RestoreStatus::partial, false, rp::exit_code::restore,
-             "error: writing the output failed after the restore ran (run run-0001, status "
-             "partial: 3 of 3 item(s) restored)\n"},
-            {connector::RestoreStatus::partial, true, rp::exit_code::service,
-             "error: writing the output failed after the restore ran (run run-0001, status "
-             "partial: 3 of 3 item(s) restored)\n"
-             "restore error: 1 item(s) failed for an infrastructure reason (Veeam couldn't "
-             "reach Microsoft 365, lacked permissions or was throttled); this is an error, not "
-             "a restore failure\n"},
+    const std::string lost = "error: writing the output failed after the restore ran (run "
+                             "run-0001, status ";
+    const auto [status, infrastructure, sp_missing, code, err] =
+        GENERATE_COPY(table<connector::RestoreStatus, bool, bool, int, std::string>({
+            // A restore that passed but whose output was lost isn't a success.
+            {connector::RestoreStatus::succeeded, false, false, rp::exit_code::config,
+             lost + "succeeded: 3 of 3 item(s) restored)\n"},
+            // W3.3: a partial restore whose items all verify is a pass, so 1 here too.
+            {connector::RestoreStatus::partial, false, false, rp::exit_code::config,
+             lost + "partial: 3 of 3 item(s) restored)\n"},
+            {connector::RestoreStatus::partial, true, false, rp::exit_code::config,
+             lost + "partial: 3 of 3 item(s) restored)\n"
+                    "warning: backup_item: 1 verified item(s) the backup didn't report "
+                    "restored\n"},
+            // A missing item: the run's status is fail.
+            {connector::RestoreStatus::partial, false, true, rp::exit_code::restore,
+             lost + "partial: 3 of 3 item(s) restored)\n"},
         }));
     Harness lab;
     lab.fake.pool.mail = {carol_mail(1)};
@@ -1427,6 +1460,9 @@ TEST_CASE("restore: a stdout that fails after the restore ran says so, with the 
         }
         return result;
     };
+    if (sp_missing) {
+        lab.targets.after[kind_slot(connector::ItemKind::sharepoint)] = json::array();
+    }
     // The header fits; the tables don't.
     RecordingStreamBuf buffer(expected_header().size() + 5);
     std::ostream out(&buffer);
@@ -1437,6 +1473,8 @@ TEST_CASE("restore: a stdout that fails after the restore ran says so, with the 
     CHECK(exit_code == code);
     CHECK(error == err);
     CHECK(lab.fake.restore_calls == 1);
+    CHECK(lab.targets.graph.count(rp::HttpMethod::get,
+                                  rp::test::graph_lab::mail_list_url(true)) == 1);
     CHECK_THAT(buffer.text, StartsWith(expected_header()));
 }
 
@@ -1473,16 +1511,19 @@ TEST_CASE("restore: a stdout that fails on the sample's table stops the command 
     CHECK(lab.fake.restore_calls == 0);
 }
 
-TEST_CASE("restore: an empty sample restores nothing and is exit 4, the shortfall named",
+TEST_CASE("restore: an empty sample restores nothing and is status error empty_sample, exit 4, "
+          "each shortfall a warning",
           "[restore_command]")
 {
-    const auto [manifest, sizes, cursor_line, reason] =
+    const auto [manifest, sizes, cursor_line, warnings] =
         GENERATE(table<std::string, Args, std::string, std::string>({
             {trimmed_manifest(0, 1, 0), Args{"--mail", "2", "--sp", "0", "--od", "1"},
              "canary cursor 0,0,0 -> 0,0,0\n",
-             "mail: canary and random shortfall; onedrive: canary shortfall"},
+             "warning: shortfall: mail canary: 0 of 1\n"
+             "warning: shortfall: mail random: 0 of 1\n"
+             "warning: shortfall: onedrive canary: 0 of 1\n"},
             {trimmed_manifest(0, 1, 1), Args{"--mail", "1", "--sp", "0", "--od", "0"},
-             "canary cursor 0,0,0 -> 0,0,0\n", "mail: canary shortfall"},
+             "canary cursor 0,0,0 -> 0,0,0\n", "warning: shortfall: mail canary: 0 of 1\n"},
         }));
     Harness lab;
     lab.dir.write("seed-manifest.json", manifest);
@@ -1492,8 +1533,12 @@ TEST_CASE("restore: an empty sample restores nothing and is exit 4, the shortfal
     const Run run = lab.run(args);
 
     CHECK(run.exit_code == rp::exit_code::service);
-    CHECK(run.err == "restore error: the sample is empty: nothing to restore (" + reason + ")\n");
+    CHECK(run.err == warnings);
     CHECK_THAT(run.out, StartsWith(expected_intro() + cursor_line));
+    CHECK_THAT(run.out, EndsWith("\n"
+                                 "\n"
+                                 "status error empty_sample: the sample is empty: nothing to "
+                                 "restore\n"));
     CHECK_THAT(run.out, !ContainsSubstring("restoring"));
     CHECK(lab.fake.restore_calls == 0);
 }
@@ -1523,7 +1568,7 @@ TEST_CASE("restore: a succeeded restore prints the header, both tables and the s
               "  sess-sharepoint  sharepoint  Success  1 of 1    2026-09-30T10:01:10Z  2026-09-30T10:01:52.25Z  0:00:42\n"
               "\n"
               "status succeeded: 3 of 3 item(s) restored in 0:02:03\n" +
-              kCheckOfThree);
+              kCheckOfThree + kPassOfThree);
     // The header went out before the restore began.
     CHECK(lab.fake.out_at_restore == expected_header());
     REQUIRE(lab.fake.spec);
@@ -1543,12 +1588,24 @@ TEST_CASE("restore: a succeeded restore prints the header, both tables and the s
     CHECK(lab.made_for_org == kOrgName);
 }
 
-TEST_CASE("restore: a restore that didn't succeed exits 5 with its status line", "[restore_command]")
+TEST_CASE("restore: the backup's own status never decides the run's: a partial restore whose "
+          "items all verify passes, a failed one whose items all match is a contradiction, a "
+          "missing item fails",
+          "[restore_command]")
 {
-    const auto [status, count] = GENERATE(table<connector::RestoreStatus, int>({
-        {connector::RestoreStatus::partial, 1},
-        {connector::RestoreStatus::failed, 0},
-    }));
+    const auto [status, count, sp_missing, code, status_line] =
+        GENERATE(table<connector::RestoreStatus, int, bool, int, std::string>({
+            // W3.3: 0, not 5 as before.
+            {connector::RestoreStatus::partial, 1, false, rp::exit_code::ok,
+             "status pass: 2 of 2 item(s) verified: manifest 2, fields 0, metadata 0"},
+            {connector::RestoreStatus::failed, 0, false, rp::exit_code::service,
+             "status error restore_contradiction: the backup reported nothing restored, yet "
+             "every item verified: the evidence contradicts itself"},
+            {connector::RestoreStatus::partial, 1, true, rp::exit_code::restore,
+             "status fail: 1 of 2 item(s) didn't verify (1 missing, 0 mismatch)"},
+            {connector::RestoreStatus::failed, 0, true, rp::exit_code::restore,
+             "status fail: 1 of 2 item(s) didn't verify (1 missing, 0 mismatch)"},
+        }));
     Harness lab;
     lab.fake.answer = [status = status, count = count](const connector::RestoreSpec& spec) {
         connector::RestoreResult result = restored(spec);
@@ -1556,50 +1613,68 @@ TEST_CASE("restore: a restore that didn't succeed exits 5 with its status line",
         result.items_restored = count;
         return result;
     };
+    if (sp_missing) {
+        lab.targets.after[kind_slot(connector::ItemKind::sharepoint)] = json::array();
+    }
 
     const Run run = lab.run({"--run-id", kRunId, "--mail", "1", "--sp", "1", "--od", "0"});
 
-    CHECK(run.exit_code == rp::exit_code::restore);
+    CHECK(run.exit_code == code);
     CHECK(run.err.empty());
     CHECK_THAT(run.out, ContainsSubstring("\nstatus " + std::string{connector::to_string(status)} +
                                           ": " + std::to_string(count) +
                                           " of 2 item(s) restored in 0:02:03\n"));
+    CHECK_THAT(run.out, EndsWith("error\n\n" + status_line + "\n"));
 }
 
-TEST_CASE("restore: an item failed for an infrastructure reason is exit 4, never 5; the tables "
-          "are printed",
+TEST_CASE("restore: an item the backup failed for an infrastructure reason is unchecked when the "
+          "check doesn't find it, error 4; beside a missing item the run fails, 5; found, it "
+          "verifies with a warning",
           "[restore_command]")
 {
-    const auto [status, outcomes, infrastructure, code, err] = GENERATE(
-        table<connector::RestoreStatus, std::vector<connector::ItemOutcome>, std::vector<bool>,
-              int, std::string>({
+    const auto [status, outcomes, infrastructure, empty_targets, code, status_line, err] =
+        GENERATE(table<connector::RestoreStatus, std::vector<connector::ItemOutcome>,
+                       std::vector<bool>, std::vector<bool>, int, std::string, std::string>({
+            // The backup blamed infrastructure, yet the copy is there and matches.
             {connector::RestoreStatus::partial,
              {connector::ItemOutcome::restored, connector::ItemOutcome::failed},
              {false, true},
+             {false, false},
+             rp::exit_code::ok,
+             "status pass: 2 of 2 item(s) verified: manifest 2, fields 0, metadata 0",
+             "warning: backup_item: 1 verified item(s) the backup didn't report restored\n"},
+            {connector::RestoreStatus::partial,
+             {connector::ItemOutcome::restored, connector::ItemOutcome::failed},
+             {false, true},
+             {false, true},
              rp::exit_code::service,
-             "restore error: 1 item(s) failed for an infrastructure reason (Veeam couldn't "
-             "reach Microsoft 365, lacked permissions or was throttled); this is an error, not "
-             "a restore failure\n"},
+             "status error backup_infrastructure: 1 of 2 item(s) couldn't be checked "
+             "(backup_infrastructure 1); 1 verified",
+             ""},
             {connector::RestoreStatus::failed,
              {connector::ItemOutcome::unknown, connector::ItemOutcome::failed},
              {true, true},
+             {true, true},
              rp::exit_code::service,
-             "restore error: 2 item(s) failed for an infrastructure reason (Veeam couldn't "
-             "reach Microsoft 365, lacked permissions or was throttled); this is an error, not "
-             "a restore failure\n"},
-            // One infrastructure failure among restore failures is still an error.
+             "status error backup_infrastructure: 2 of 2 item(s) couldn't be checked "
+             "(backup_infrastructure 2)",
+             ""},
+            // W3.3: an infrastructure item beside a missing one is 5, not 4 as before.
             {connector::RestoreStatus::failed,
              {connector::ItemOutcome::failed, connector::ItemOutcome::failed},
              {false, true},
-             rp::exit_code::service,
-             "restore error: 1 item(s) failed for an infrastructure reason (Veeam couldn't "
-             "reach Microsoft 365, lacked permissions or was throttled); this is an error, not "
-             "a restore failure\n"},
+             {true, true},
+             rp::exit_code::restore,
+             "status fail: 1 of 2 item(s) didn't verify (1 missing, 0 mismatch); 1 couldn't be "
+             "checked",
+             ""},
             // A restored item's flag counts for nothing.
             {connector::RestoreStatus::partial,
              {connector::ItemOutcome::restored, connector::ItemOutcome::failed},
              {true, false},
+             {true, true},
              rp::exit_code::restore,
+             "status fail: 2 of 2 item(s) didn't verify (2 missing, 0 mismatch)",
              ""},
         }));
     Harness lab;
@@ -1614,6 +1689,11 @@ TEST_CASE("restore: an item failed for an infrastructure reason is exit 4, never
         }
         return result;
     };
+    for (std::size_t i = 0; i < empty_targets.size(); ++i) {
+        if (empty_targets[i]) {
+            lab.targets.after[i] = json::array();
+        }
+    }
 
     const Run run = lab.run({"--run-id", kRunId, "--mail", "1", "--sp", "1", "--od", "0"});
 
@@ -1621,6 +1701,7 @@ TEST_CASE("restore: an item failed for an infrastructure reason is exit 4, never
     CHECK(run.err == err);
     CHECK_THAT(run.out, ContainsSubstring("\n  KIND        SOURCE  NAME"));
     CHECK_THAT(run.out, ContainsSubstring("\nstatus " + std::string{connector::to_string(status)}));
+    CHECK_THAT(run.out, EndsWith("error\n\n" + status_line + "\n"));
 }
 
 TEST_CASE("restore: a restore that returns not_run is exit 4, never 5", "[restore_command]")
@@ -1633,7 +1714,7 @@ TEST_CASE("restore: a restore that returns not_run is exit 4, never 5", "[restor
     const Run run = lab.run({"--run-id", kRunId, "--mail", "1", "--sp", "0", "--od", "0"});
 
     CHECK(run.exit_code == rp::exit_code::service);
-    CHECK(run.err == "restore error: the restore did not run: nothing was sent (status not_run)\n");
+    CHECK(run.err.empty());
     // Without items or sessions, only the status line follows the header.
     const std::string last = "restoring 1 item(s) ...\n";
     CHECK(run.out.substr(run.out.find(last) + last.size()) ==
@@ -1642,7 +1723,9 @@ TEST_CASE("restore: a restore that returns not_run is exit 4, never 5", "[restor
           "  KIND  SOURCE  NAME            OUTCOME  FIELDS  DUP  MS\n"
           "  mail  canary  RP-CANARY-0001  missing  -       -    -\n"
           "\n"
-          "check: 0 match, 0 mismatch, 1 missing, 0 error\n");
+          "check: 0 match, 0 mismatch, 1 missing, 0 error\n"
+          "\n"
+          "status error not_run: the restore didn't run: nothing was sent\n");
 }
 
 TEST_CASE("restore: --point latest, or none, is the newest; an ID matches in any case",
@@ -1790,13 +1873,17 @@ TEST_CASE("restore: the canary cursor picks where each rotation starts and the n
     CHECK(lab.fake.spec->sharepoint.at(0).name == "rp-canary-10.png");
 }
 
-TEST_CASE("restore: a shortfall is named in the header, and is still a success", "[restore_command]")
+TEST_CASE("restore: a shortfall is named in the header and warned of, and is still a pass",
+          "[restore_command]")
 {
-    const auto [pool, sizes, row] = GENERATE(table<int, Args, std::string>({
-        {0, Args{"--mail", "2"}, "  mail        2          1 of 1    0 of 1  random shortfall\n"},
-        {2, Args{"--mail", "4"}, "  mail        4          1 of 2    2 of 2  canary shortfall\n"},
+    const auto [pool, sizes, row, warnings] = GENERATE(table<int, Args, std::string, std::string>({
+        {0, Args{"--mail", "2"}, "  mail        2          1 of 1    0 of 1  random shortfall\n",
+         "warning: shortfall: mail random: 0 of 1\n"},
+        {2, Args{"--mail", "4"}, "  mail        4          1 of 2    2 of 2  canary shortfall\n",
+         "warning: shortfall: mail canary: 1 of 2\n"},
         {0, Args{"--mail", "4"},
-         "  mail        4          1 of 2    0 of 2  canary and random shortfall\n"},
+         "  mail        4          1 of 2    0 of 2  canary and random shortfall\n",
+         "warning: shortfall: mail canary: 1 of 2\nwarning: shortfall: mail random: 0 of 2\n"},
     }));
     Harness lab;
     lab.dir.write("seed-manifest.json", trimmed_manifest(1, 1, 1));
@@ -1809,8 +1896,10 @@ TEST_CASE("restore: a shortfall is named in the header, and is still a success",
     const Run run = lab.run(args);
 
     CHECK(run.exit_code == rp::exit_code::ok);
+    CHECK(run.err == warnings);
     CHECK_THAT(run.out, ContainsSubstring(row));
     CHECK_THAT(run.out, ContainsSubstring("\nstatus succeeded: "));
+    CHECK_THAT(run.out, ContainsSubstring("\nstatus pass: "));
 }
 
 TEST_CASE("restore: each item's row: its source, outcome, session time and message",
@@ -1844,9 +1933,9 @@ TEST_CASE("restore: each item's row: its source, outcome, session time and messa
 
     const Run run = lab.run({"--run-id", kRunId, "--mail", "2", "--sp", "1", "--od", "0"});
 
-    // The infrastructure failure makes it an error.
-    CHECK(run.exit_code == rp::exit_code::service);
-    CHECK_THAT(run.err, StartsWith("restore error: 1 item(s) failed for an infrastructure reason"));
+    // Five items reported for three sent don't add up: error internal (W3.3, row 1).
+    CHECK(run.exit_code == rp::exit_code::config);
+    CHECK(run.err.empty());
     const std::string tables = run.out.substr(expected_header().size());
     CHECK(tables ==
           "\n"
@@ -1863,7 +1952,10 @@ TEST_CASE("restore: each item's row: its source, outcome, session time and messa
           "  s-back   onedrive    Failed   0 of 0    2026-09-30T10:00:01Z  2026-09-30T10:00:00Z  -\n"
           "\n"
           "status partial: 1 of 3 item(s) restored in 0:02:03\n" +
-          kCheckOfThree);
+          kCheckOfThree +
+          "\n"
+          "status error internal: the run's results don't add up: the restore reports 5 "
+          "item(s), the expected set 3\n");
 }
 
 TEST_CASE("restore: a session's elapsed time is cut to whole seconds and never overflows",
@@ -2006,7 +2098,7 @@ TEST_CASE("restore: the test helper's canary bodies are the ones the manifest ha
 }
 
 TEST_CASE("restore: a failure reading the targets before the restore stops the run, nothing "
-          "restored, with Graph's exit code",
+          "restored, status error with Graph's code",
           "[restore_command][checker]")
 {
     namespace gl = rp::test::graph_lab;
@@ -2015,18 +2107,19 @@ TEST_CASE("restore: a failure reading the targets before the restore stops the r
         connector::ItemKind kind;
         std::string fixture; // the listing's answer; empty: the guard refuses instead
         int code;
+        std::string error_code;
     };
     const std::vector<Case> cases{
         {"mail: a token Graph refuses", connector::ItemKind::mail, "api-invalid-token-401",
-         rp::exit_code::auth},
+         rp::exit_code::auth, "graph_auth"},
         {"sharepoint: no permission", connector::ItemKind::sharepoint, "site-403-accessdenied",
-         rp::exit_code::auth},
+         rp::exit_code::auth, "graph_permission"},
         {"onedrive: Graph unavailable", connector::ItemKind::onedrive, "messages-503-unavailable",
-         rp::exit_code::transient},
+         rp::exit_code::transient, "graph_transient"},
         {"sharepoint: a drive Graph doesn't know", connector::ItemKind::sharepoint,
-         "drive-404-itemnotfound", rp::exit_code::service},
+         "drive-404-itemnotfound", rp::exit_code::service, "graph"},
         {"sharepoint: not the RestoreTarget library", connector::ItemKind::sharepoint, "",
-         rp::exit_code::service},
+         rp::exit_code::service, "target_guard"},
     };
     const Case& c = cases[GENERATE(range(std::size_t{0}, std::size_t{5}))];
     CAPTURE(c.name);
@@ -2049,7 +2142,12 @@ TEST_CASE("restore: a failure reading the targets before the restore stops the r
     CHECK_THAT(run.err, StartsWith("check error: "));
     CHECK(run.err.ends_with("; nothing was restored\n"));
     CHECK(std::ranges::count(run.err, '\n') == 1);
-    CHECK(run.out.ends_with("restoring 3 item(s) ...\n"));
+    CHECK_THAT(run.out, ContainsSubstring("restoring 3 item(s) ...\n"
+                                          "\n"
+                                          "status error " +
+                                          c.error_code +
+                                          ": the run stopped before the restore: "));
+    CHECK_THAT(run.out, EndsWith(" (" + c.error_code + "); nothing was restored\n"));
     CHECK(lab.fake.restore_calls == 0);
     CHECK(lab.graph_clients == 1);
 }
@@ -2101,10 +2199,12 @@ TEST_CASE("restore: every type checked: canaries and random items of each, the O
                    "  onedrive    canary  rp-canary-12.docx  match    -       -    246000\n"
                    "  onedrive    random  deck.pptx          match    -       -    123000\n"
                    "\n"
-                   "check: 6 match, 0 mismatch, 0 missing, 0 error\n"));
+                   "check: 6 match, 0 mismatch, 0 missing, 0 error\n"
+                   "\n"
+                   "status pass: 6 of 6 item(s) verified: manifest 3, fields 1, metadata 2\n"));
 }
 
-TEST_CASE("restore: an item missing or not matching is exit 5, named on stderr",
+TEST_CASE("restore: an item missing or not matching is status fail, exit 5",
           "[restore_command][checker]")
 {
     Harness lab;
@@ -2114,10 +2214,13 @@ TEST_CASE("restore: an item missing or not matching is exit 5, named on stderr",
         lab.targets.after[kind_slot(connector::ItemKind::sharepoint)] = json::array();
         const Run run = lab.run({"--run-id", kRunId, "--mail", "2", "--sp", "1", "--od", "0"});
         CHECK(run.exit_code == rp::exit_code::restore);
-        CHECK(run.err == "check: 1 item(s) didn't verify\n");
+        CHECK(run.err.empty());
         CHECK_THAT(run.out, ContainsSubstring(
                                 "  sharepoint  canary  rp-canary-01.pdf  missing  -       -    -\n"));
-        CHECK(run.out.ends_with("check: 2 match, 0 mismatch, 1 missing, 0 error\n"));
+        CHECK(run.out.ends_with("check: 2 match, 0 mismatch, 1 missing, 0 error\n"
+                                "\n"
+                                "status fail: 1 of 3 item(s) didn't verify (1 missing, 0 "
+                                "mismatch)\n"));
     }
     SECTION("a mismatch: a body and a time that differ")
     {
@@ -2127,15 +2230,17 @@ TEST_CASE("restore: an item missing or not matching is exit 5, named on stderr",
             "another body")});
         const Run run = lab.run({"--run-id", kRunId, "--mail", "1", "--sp", "0", "--od", "0"});
         CHECK(run.exit_code == rp::exit_code::restore);
-        CHECK(run.err == "check: 1 item(s) didn't verify\n");
+        CHECK(run.err.empty());
         CHECK_THAT(run.out,
                    ContainsSubstring("  mail  canary  RP-CANARY-0001  mismatch  "
                                      "received_at,internet_message_id,sha256  -    123000\n"));
+        CHECK(run.out.ends_with("\nstatus fail: 1 of 1 item(s) didn't verify (0 missing, 1 "
+                                "mismatch)\n"));
     }
 }
 
-TEST_CASE("restore: a target that can't be read back makes its items error, exit 4; the others "
-          "are still checked",
+TEST_CASE("restore: a target that can't be read back makes its items unchecked, status error "
+          "with its code (graph_permission: exit 2); the others are still checked",
           "[restore_command][checker]")
 {
     Harness lab;
@@ -2149,15 +2254,18 @@ TEST_CASE("restore: a target that can't be read back makes its items error, exit
 
     const Run run = lab.run({"--run-id", kRunId, "--mail", "2", "--sp", "1", "--od", "0"});
 
-    CHECK(run.exit_code == rp::exit_code::service);
+    CHECK(run.exit_code == rp::exit_code::auth);
     CHECK_THAT(run.err, StartsWith("check error: "));
-    CHECK(run.err.ends_with("\ncheck: 1 item(s) couldn't be checked\n"));
+    CHECK(std::ranges::count(run.err, '\n') == 1);
     CHECK_THAT(run.out,
                ContainsSubstring(
                    "  mail        canary  RP-CANARY-0001    match    -                 -    123000\n"
                    "  mail        random  real mail 01      match    -                 -    123000\n"
                    "  sharepoint  canary  rp-canary-01.pdf  error    graph_permission  -    -\n"));
-    CHECK(run.out.ends_with("check: 2 match, 0 mismatch, 0 missing, 1 error\n"));
+    CHECK(run.out.ends_with("check: 2 match, 0 mismatch, 0 missing, 1 error\n"
+                            "\n"
+                            "status error graph_permission: 1 of 3 item(s) couldn't be checked "
+                            "(graph_permission 1); 2 verified\n"));
 }
 
 TEST_CASE("restore: copies earlier runs left are ignored and counted; a file only an earlier run "
@@ -2177,15 +2285,17 @@ TEST_CASE("restore: copies earlier runs left are ignored and counted; a file onl
     const Run run = lab.run({"--run-id", kRunId, "--mail", "1", "--sp", "1", "--od", "0"});
 
     CHECK(run.exit_code == rp::exit_code::service);
-    // One warning line, on stderr (docs/decisions.md 2026-10-01, W3.2 point 1).
-    CHECK(run.err == "warning: 2 copies from earlier runs in the restore targets were ignored "
-                     "(mail 1, sharepoint 1, onedrive 0)\n"
-                     "check: 1 item(s) couldn't be checked\n");
+    // One warning line, on stderr (docs/decisions.md 2026-10-01, W3.2 point 1; W3.3 point 4).
+    CHECK(run.err == "warning: stale_copies: 2 copies from earlier runs in the restore targets "
+                     "were ignored (mail 1, sharepoint 1, onedrive 0)\n");
     CHECK_THAT(run.out,
                ContainsSubstring(
                    "  mail        canary  RP-CANARY-0001    match    -             -    123000\n"
                    "  sharepoint  canary  rp-canary-01.pdf  error    stale_target  -    -\n"));
-    CHECK(run.out.ends_with("check: 1 match, 0 mismatch, 0 missing, 1 error\n"));
+    CHECK(run.out.ends_with("check: 1 match, 0 mismatch, 0 missing, 1 error\n"
+                            "\n"
+                            "status error stale_target: 1 of 2 item(s) couldn't be checked "
+                            "(stale_target 1); 1 verified\n"));
     // The earlier run's file was never downloaded.
     for (const rp::HttpRequest& request : lab.targets.graph.requests()) {
         CHECK(request.url.find("earlier-file") == std::string::npos);
@@ -2211,8 +2321,8 @@ TEST_CASE("restore: an earlier run's file that couldn't be downloaded doesn't to
 
     INFO(run.err);
     CHECK(run.exit_code == rp::exit_code::ok);
-    CHECK(run.err == "warning: 2 copies from earlier runs in the restore targets were ignored "
-                     "(mail 0, sharepoint 2, onedrive 0)\n");
+    CHECK(run.err == "warning: stale_copies: 2 copies from earlier runs in the restore targets "
+                     "were ignored (mail 0, sharepoint 2, onedrive 0)\n");
     CHECK_THAT(run.out, ContainsSubstring(
                             "  sharepoint  canary  rp-canary-01.pdf  match    -       -    246000\n"));
     for (const rp::HttpRequest& request : lab.targets.graph.requests()) {
@@ -2222,8 +2332,8 @@ TEST_CASE("restore: an earlier run's file that couldn't be downloaded doesn't to
     CHECK(lab.targets.download.requests()[0].url.ends_with("&rp-item=restored-sharepoint-0"));
 }
 
-TEST_CASE("restore: a failure in the check that isn't Graph's keeps the restore's tables and "
-          "exit code, and says the restore ran",
+TEST_CASE("restore: a failure in the check that isn't Graph's keeps the restore's tables, says "
+          "the restore ran, and is status error internal, exit 1, whatever the restore said",
           "[restore_command][checker]")
 {
     using Raise = std::function<void()>;
@@ -2233,8 +2343,8 @@ TEST_CASE("restore: a failure in the check that isn't Graph's keeps the restore'
         {"invalid_argument", [] { throw std::invalid_argument("SENTINEL-ARGUMENT"); }},
     }));
     const auto [status, code] = GENERATE(table<connector::RestoreStatus, int>({
-        {connector::RestoreStatus::succeeded, rp::exit_code::service},
-        {connector::RestoreStatus::partial, rp::exit_code::restore},
+        {connector::RestoreStatus::succeeded, rp::exit_code::config},
+        {connector::RestoreStatus::partial, rp::exit_code::config},
     }));
     CAPTURE(what, connector::to_string(status));
     Harness lab;
@@ -2254,6 +2364,9 @@ TEST_CASE("restore: a failure in the check that isn't Graph's keeps the restore'
     CHECK_THAT(run.out, ContainsSubstring("\nstatus " + std::string{connector::to_string(status)} +
                                           ": 2 of 2 item(s) restored in 0:02:03\n"));
     CHECK(run.out.find("check:") == std::string::npos);
+    CHECK(run.out.ends_with("\nstatus error internal: the restored items couldn't be checked: an "
+                            "unexpected failure (internal)\n"));
+    CHECK(run.out.find("SENTINEL") == std::string::npos);
     CHECK(run.err.find("SENTINEL") == std::string::npos);
 }
 
@@ -2274,16 +2387,21 @@ TEST_CASE("restore: two copies of one item: the newest is checked, and DUP says 
     const Run run = lab.run({"--run-id", kRunId, "--mail", "1", "--sp", "0", "--od", "0"});
 
     CHECK(run.exit_code == rp::exit_code::ok);
+    CHECK(run.err == "warning: duplicate: 1 item(s) had more than one restored copy; the newest "
+                     "was checked\n");
     CHECK_THAT(run.out,
                ContainsSubstring("  mail  canary  RP-CANARY-0001  match    -       2 copies  123000\n"));
+    CHECK(run.out.ends_with("\nstatus pass: 1 of 1 item(s) verified: manifest 1, fields 0, "
+                            "metadata 0\n"));
 }
 
-TEST_CASE("restore: a stdout that fails on the check's table says so, with the check's exit code",
+TEST_CASE("restore: a stdout that fails on the check's table says so, with the status's exit "
+          "code",
           "[restore_command][checker]")
 {
-    const auto [missing, code, note] = GENERATE(table<bool, int, std::string>({
-        {false, rp::exit_code::config, ""},
-        {true, rp::exit_code::restore, "check: 1 item(s) didn't verify\n"},
+    const auto [missing, code] = GENERATE(table<bool, int>({
+        {false, rp::exit_code::config},
+        {true, rp::exit_code::restore},
     }));
     Harness lab;
     if (missing) {
@@ -2305,8 +2423,7 @@ TEST_CASE("restore: a stdout that fails on the check's table says so, with the c
 
     CHECK(exit_code == code);
     CHECK(error == "error: writing the output failed after the restore ran (run run-0001, status "
-                   "succeeded: 1 of 1 item(s) restored)\n" +
-                       note);
+                   "succeeded: 1 of 1 item(s) restored)\n");
     CHECK(buffer.text.starts_with(before_check));
 }
 
@@ -2538,7 +2655,9 @@ TEST_CASE("restore through veeam_m365: a canary restored on the recorded run, ex
           "  KIND  SOURCE  NAME            OUTCOME  FIELDS  DUP  MS\n"
           "  mail  canary  RP-CANARY-0011  match    -       -    0\n"
           "\n"
-          "check: 1 match, 0 mismatch, 0 missing, 0 error\n");
+          "check: 1 match, 0 mismatch, 0 missing, 0 error\n"
+          "\n"
+          "status pass: 1 of 1 item(s) verified: manifest 1, fields 0, metadata 0\n");
     CHECK(real.rig.restore_posts().size() == 1);
     // The mailbox was read once without bodies before the restore, once with
     // them after it.
@@ -2578,7 +2697,11 @@ TEST_CASE("restore through veeam_m365 --record: every exchange written, the rest
     // Every call each service got, and the command says how many in all.
     CHECK(veeam.size() == real.rig.veeam.requests().size());
     CHECK(graph.size() == real.rig.lab.graph_http.requests().size());
-    CHECK(run.out.ends_with("check: 1 match, 0 mismatch, 0 missing, 0 error\nrecorded " +
+    CHECK(run.out.ends_with("check: 1 match, 0 mismatch, 0 missing, 0 error\n"
+                            "\n"
+                            "status pass: 1 of 1 item(s) verified: manifest 1, fields 0, "
+                            "metadata 0\n"
+                            "recorded " +
                             std::to_string(veeam.size() + graph.size()) + " exchange(s) in " +
                             utf8(rec) + "\n"));
 

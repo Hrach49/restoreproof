@@ -8,9 +8,11 @@
 // layer 1; this command builds no restore request of its own. Since W3.2 it
 // reads the restored items back through Graph and checks them against the
 // expected set (rp/checker.hpp): the targets are listed before the restore and
-// again, hashed, after it. Nothing is cleaned up (W3.4). The choices are the
-// 2026-09-30 W2.8 and 2026-10-01 W3.2 entries in docs/decisions.md; usage and
-// an example are in docs/worker-config.md ("rpworker restore").
+// again, hashed, after it. Since W3.3 the run ends with its status, pass, fail
+// or error (rp/run_status.hpp), which decides the exit code. Nothing is
+// cleaned up (W3.4). The choices are the 2026-09-30 W2.8 and 2026-10-01 W3.2
+// and W3.3 entries in docs/decisions.md; usage and an example are in
+// docs/worker-config.md ("rpworker restore").
 
 #include <rp/config.hpp>
 #include <rp/connector.hpp>
@@ -106,10 +108,11 @@ std::string format_elapsed(std::chrono::nanoseconds elapsed);
 // Veeam); the rest of the header, flushed; the expected set
 // (verification::build_expected_set); the before snapshot: the targets the
 // sample has items of, listed through Graph (graph::TargetReader, its guards
-// included) without hashing; restore_sample; the tables and the status line,
-// flushed; the after read: the same targets listed again, each item hashed
-// and each docx and xlsx by office-v1 (verification::office_hook);
-// verification::check; the check's table and lines. Prints to `out`, as UTF-8:
+// included) without hashing; restore_sample; the tables and the restore's
+// line, flushed; the after read: the same targets listed again, each item
+// hashed and each docx and xlsx by office-v1 (verification::office_hook);
+// verification::check; the check's table and line; the run's status
+// (verification::decide_status) and its warnings. Prints to `out`, as UTF-8:
 //
 //   restore point <backup_time>  <id>  (veeam_org_name <org>)
 //   run <run ID>  seed <8 hex digits>
@@ -130,10 +133,23 @@ std::string format_elapsed(std::chrono::nanoseconds elapsed);
 //     KIND  SOURCE  NAME  OUTCOME  FIELDS  DUP  MS              one row per expected item
 //   <blank line>
 //   check: <a> match, <b> mismatch, <c> missing, <d> error
+//   <blank line>
+//   status <pass|fail|error>[ <error_code>]: <message>
 //
-// The earlier runs' copies the check ignored are one line on `err`, only when
-// n isn't 0: "warning: <n> copies from earlier runs in the restore targets
-// were ignored (mail <x>, sharepoint <y>, onedrive <z>)". The after read
+// The status line (W3.3) ends every run once its first two lines are out,
+// whatever stopped it: a failure choosing the sample, an empty sample (status
+// error empty_sample, nothing restored), a failure in the before snapshot,
+// restore_sample throwing, the check failing unexpectedly, or the normal end;
+// it is its own paragraph after whatever was printed by then. Its message is
+// one line, counts and fixed words, never a tenant value nor an exception's
+// what() (that stays on `err`, as below). Then each of the status's warnings
+// is one line on `err`, "warning: <code>: <message>", in this order:
+// backup_session (a restore session whose result isn't Success), backup_item
+// (verified items the backup didn't report restored), duplicate, shortfall
+// (one per type and half that took fewer than it wanted, e.g. "warning:
+// shortfall: sharepoint random: 0 of 2") and stale_copies ("warning:
+// stale_copies: <n> copies from earlier runs in the restore targets were
+// ignored (mail <x>, sharepoint <y>, onedrive <z>)"). The after read
 // downloads only this run's copies of expected files
 // (verification::hash_filter): an earlier run's leftover is never read.
 //
@@ -170,7 +186,13 @@ std::string format_elapsed(std::chrono::nanoseconds elapsed);
 // <why>" line on `err`, and turns an exit code of 0 into 1. The restore
 // still writes to the tenant: recording changes nothing sent.
 //
-// Returns an rp::exit_code, with one line on `err` for each failure:
+// Returns an rp::exit_code. Once the run line is out, it is the status's
+// (verification::exit_code_of): pass 0; fail 5 (exit_code::restore); error 1
+// for config and internal, 2 for backup_auth, graph_auth and
+// graph_permission, 3 for backup_transient and graph_transient, 4 for any
+// other code (target_guard, not_in_backup, backup, backup_infrastructure,
+// graph, stale_target, empty_sample, not_run, restore_contradiction). Each
+// failure has one line on `err` too:
 //  - 64: a command line it doesn't understand (rp::kCliUsage), before the
 //    config is read; after it, "usage error: every sample size is 0 (--mail,
 //    --sp, --od, or config's sample_mail, sample_sp, sample_od): nothing to
@@ -191,50 +213,43 @@ std::string format_elapsed(std::chrono::nanoseconds elapsed);
 //    failure" for any other exception after (a failed write or flush of `out`
 //    before the restore included: it stops the command before choose_sample
 //    or restore_sample); neither ever shows the exception's message. A failed
-//    write or flush of `out` after restore_sample returned is "error: writing
-//    the output failed after the restore ran (run <run ID>, status <status>:
-//    <restored> of <sent> item(s) restored)", then the restore's own exit
-//    code and line as below (1 when that is 0: its output was lost);
-//  - before restore_sample, a failure reading the targets for the before
-//    snapshot stops the run, nothing restored: "check error: <what()>;
-//    nothing was restored", 2 for a graph::AuthError or PermissionError, 3
-//    for a graph::TransientError, 4 for any other graph::GraphError (a
-//    WrongTargetError of the targets' guards included), 1 for a ConfigError;
-//  - 2: "restore error: <what()>" for a connector::AuthError;
-//  - 3: the same for a connector::TransientError (Veeam unreachable);
-//  - 4: the same for any other connector::Error: a SafetyViolation ("restore
-//    error: target guard: ..."), a NotFoundError, a NotImplementedError; also
-//    "restore error: no restore points for veeam_org_name", "restore error:
-//    restore point <id> not found for veeam_org_name", "restore error: the
-//    sample is empty: nothing to restore (<kind>: <shortfall>[; ...])" after
-//    the header, without calling restore_sample (<kind> each type asked for,
-//    <shortfall> as in NOTE), and, after the tables and the status line:
-//    "restore error: <n> item(s) failed for an infrastructure reason (Veeam
-//    couldn't reach Microsoft 365, lacked permissions or was throttled); this
-//    is an error, not a restore failure" when any item not restored is marked
-//    infrastructure (whatever the status), and "restore error: the restore did
-//    not run: nothing was sent (status not_run)";
-//  - after an error restore_sample threw (2, 3, 4, or 1 for an unexpected
-//    one; not a ConfigError), unless its message ends with
-//    connector::kNothingRestored, a second line: "restore error: the restore
-//    had started: items may be in the restore targets (run <run ID>)";
-//  - 5 (exit_code::restore): the restore ran and its status is partial or
-//    failed, no item for an infrastructure reason; the tables and the status
-//    line are printed, nothing on `err`;
-//  - once the restore's code above is 0 (W3.2, until W3.3's status table): 5
-//    with "check: <n> item(s) didn't verify" when an item is missing or a
-//    mismatch, else 4 with "check: <n> item(s) couldn't be checked" when one
-//    is an error. A target whose after read failed is "check error:
-//    <what()>" on `err` and makes its items `error`, never a failed command;
-//    a failed write of the check's table is the output failure above, with
-//    the check's code in place of the restore's;
+//    write or flush of `out` once restore_sample returned (the tables, the
+//    check's table or the status line) doesn't stop the check: "error:
+//    writing the output failed after the restore ran (run <run ID>, status
+//    <restore status>: <restored> of <sent> item(s) restored)", then the
+//    warnings, and the status's exit code (1 when that is 0: its output was
+//    lost);
+//  - before the run line, with no status line: "restore error: <what()>" for
+//    a connector::Error listing the restore points (2 for an AuthError, 3 for
+//    a TransientError, 4 for any other), and 4 with "restore error: no
+//    restore points for veeam_org_name" or "restore error: restore point
+//    <id> not found for veeam_org_name";
+//  - the before snapshot: a failure reading the targets stops the run,
+//    nothing restored: "check error: <what()>; nothing was restored" for a
+//    graph::GraphError or a ConfigError; the status's code is graph_auth,
+//    graph_permission, graph_transient, target_guard (a WrongTargetError of
+//    the targets' guards) or graph, or config;
+//  - "restore error: <what()>" for a connector::Error while choosing the
+//    sample or restoring (backup_auth for an AuthError, backup_transient for
+//    a TransientError, target_guard for a SafetyViolation ("restore error:
+//    target guard: ..."), not_in_backup for a NotFoundError, backup for any
+//    other, a NotImplementedError included);
+//  - after an error restore_sample threw (not a ConfigError), unless its
+//    message ends with connector::kNothingRestored, a second line: "restore
+//    error: the restore had started: items may be in the restore targets
+//    (run <run ID>)";
+//  - a target whose after read failed is "check error: <what()>" on `err`
+//    and makes its items unchecked with its code (the status error), never a
+//    stop;
 //  - any other exception while reading back or checking (std::bad_alloc, a
 //    logic error): "check error: unexpected failure", then "restore error:
 //    the restore had started: items may be in the restore targets (run <run
-//    ID>)", no check table, and the restore's own code as above, or 4 when
-//    that is 0 (the items couldn't be checked);
-//  - 0: status succeeded and every item matched (a random shortfall
-//    included: the header names it).
+//    ID>)", no check table: status error internal, 1.
+// The backup's own status never decides: a partial restore whose items all
+// verify is a pass (0), a failed one whose items all match is error
+// restore_contradiction (4), an item it failed for an infrastructure reason
+// that the check doesn't find is unchecked (error backup_infrastructure, 4)
+// unless another item is missing or a mismatch (fail, 5).
 // connector::Error's what() is safe to print (rp/connector.hpp). No exception
 // escapes.
 int run_restore_command(std::span<const std::string_view> args, std::ostream& out,

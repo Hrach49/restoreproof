@@ -388,10 +388,18 @@ Worker, from `worker/` in a VS 2022 Developer PowerShell with OpenCppCoverage on
 ```powershell
 cmake --preset coverage
 cmake --build --preset coverage
-OpenCppCoverage --quiet --cover_children --sources "$PWD\src" --sources "$PWD\include" `
-  --sources "$PWD\app" --export_type "cobertura:$PWD\build\coverage\coverage.xml" -- ctest --preset coverage
+pwsh tools/run_coverage.ps1
 python tools/coverage_gate.py build/coverage/coverage.xml --min-line 80
 ```
+
+`tools/run_coverage.ps1` is what CI runs too. It runs `rptests.exe` once under OpenCppCoverage,
+every test case in one process, then the `rpworker.exe` tests through ctest (`ctest --preset
+coverage -L exe`), and merges the two into `build/coverage/coverage.xml`. Running each test case
+in its own process under OpenCppCoverage, as plain `ctest --preset coverage` would, took about an
+hour; this takes about 13 minutes on the dev laptop. `ctest --preset dev` and CI's Release
+`ctest --preset ci` still run each test case in its own process, so a test that only passes
+because of an earlier one shows up there (`docs/decisions.md`, 2026-10-01 "Worker coverage in
+one process").
 
 Lab, from `lab/` (the same commands as CI; see `lab/README.md`):
 

@@ -9,7 +9,9 @@
 // It checks that both runs chose the same sample, that TargetGuard::check_spec
 // accepts it, that the only POSTs were sign-ins, explore sessions and their
 // Stop, and that no session of the account is left Working; it prints the
-// selection and the result's "sample" object.
+// selection, the result's "sample" object and its "expected" object (W3.1:
+// one expected record per item, its kind explicit; the lab has no real files
+// yet, so expect a file shortfall).
 //
 // Environment: the Veeam and Graph variables of the other live tests
 // (docs/testing.md, "Live tests"), plus, both optional:
@@ -24,6 +26,7 @@
 #include <rp/config.hpp>
 #include <rp/connector.hpp>
 #include <rp/connector_registry.hpp>
+#include <rp/expected_set.hpp>
 #include <rp/graph_client.hpp>
 #include <rp/http_client.hpp>
 #include <rp/sample_selector.hpp>
@@ -212,6 +215,9 @@ TEST_CASE("live sample: choose_sample picks the same sample twice, the guard acc
 
     std::cout << "selection:\n" << selectors_json(first).dump(2) << "\n";
     std::cout << "sample:\n" << sampling::to_json(first.record).dump(2) << "\n";
+    const rp::verification::ExpectedSet expected =
+        rp::verification::build_expected_set(first, manifest);
+    std::cout << "expected:\n" << rp::verification::to_json(expected).dump(2) << "\n";
     for (const std::size_t n : sent.onedrive_root_entries) {
         std::cout << "a OneDrive's Documents?parentId=root listed " << n << " entries\n";
     }
@@ -220,6 +226,11 @@ TEST_CASE("live sample: choose_sample picks the same sample twice, the guard acc
     // 1. Twice the same: the draw is the run ID's and the restore point's.
     CHECK(selectors_json(second) == selectors_json(first));
     CHECK(sampling::to_json(second.record) == sampling::to_json(first.record));
+    // Every item has its expected record; the second run's is the same.
+    CHECK(expected.items.size() ==
+          first.mail.size() + first.sharepoint.size() + first.onedrive.size());
+    CHECK(rp::verification::to_json(rp::verification::build_expected_set(second, manifest)) ==
+          rp::verification::to_json(expected));
 
     // 2. The target guard's layer 1 accepts it (Graph, read-only).
     auto graph_http = rp::graph::make_graph_http_client(logger);

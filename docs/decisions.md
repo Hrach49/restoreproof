@@ -7,6 +7,170 @@ Format: date, decision, reason, alternatives rejected.
 
 ---
 
+## 2026-10-01 — W3.1 code review: what SharePoint rewrites, and expectations no item can over-claim (proposed)
+
+The `/code-review` of PR #145 found 13 issues; the owner chose six to fix and one to check
+live. Amends the W3.1 entry below (points 5, 9 and 10).
+
+1. **SharePoint's rewritten files, checked live.** The review doubted point 5's list: if
+   SharePoint rewrites a format the list leaves out, a random file of it gets Veeam's size as
+   its expectation and reads as `fail` after a good restore, and `graph list --hash` refuses
+   it as larger than Graph's size. Checked on 2026-10-01 (evidence
+   `docs/api/veeam-lab/w3.1-rewrite-check/`: the script, how the 23 test files were made, the
+   results): each file uploaded through Graph into a scratch folder of the RestoreTarget
+   library (as the admin; alice can't write it) and of alice's OneDrive `/RestoreTarget`, read
+   back at once and after 15 minutes, both folders deleted. SharePoint rewrote docx, docm,
+   xlsx, xlsm, pptx, pptm, **xlsb, doc, xls and ppt** (bigger at once, the same 15 minutes
+   later; for the packages `docProps/`, `customXml/`, `[trash]/`, `[Content_Types].xml` and
+   relationship parts, never `word/`, `xl/` or `ppt/` content). It left vsdx, vsdm, vssx, vstx,
+   xlam, ppam, odt, ods, odp, pdf, rtf and txt byte-identical. OneDrive rewrote nothing, docx
+   included. So the rule becomes `rp::is_rewritten_office_file` with `.xlsb`, `.doc`, `.xls`
+   and `.ppt` added; the untried templates and shows stay. It doesn't depend on the location:
+   a rule per location would trust that OneDrive never starts rewriting, and a random file
+   then only loses its size check. Limits: the doc, xls, ppt and ODF files came from
+   LibreOffice, not Office; vsdm, vssx, vstx, xlam and ppam were real packages with only their
+   main content type changed (SharePoint picks its parser by extension); one library with its
+   default columns.
+2. **No size expectation from a size not known.** A random file whose `size_bytes` is below 0
+   (a connector's "not known", -1) gets `metadata` by name only, as point 7 does for a mail's
+   missing fields. Refusing it in the sampler was rejected: the connector is backend-neutral,
+   and a missing fact was never a reason to drop an item.
+3. **A canary's rule must be one its file can be checked by.** The manifest loader refuses
+   `bytes` for a docx or xlsx, `office-v1` for a pdf, txt or png, and a name the Office rule
+   matches for any other type (or doesn't match for those two), as `python -m seeder`'s
+   validator already does for `content_rule`.
+4. **No item can read as checked against a hash it hasn't.** `ExpectedItem`'s defaults are a
+   canary's, so `to_json` now refuses (`std::logic_error`) an item whose fields don't back its
+   kind: `manifest` needs a canary source and ID, no key, a lower-case hex SHA-256 and its
+   type's rule; `fields` and `metadata` need a random source, a key, no canary ID or hash, and
+   a mail or a file respectively; and each item must be at its index. `to_string` of a kind or
+   source outside the enum is `"unknown"`, never `"manifest"`. Making the kind a required
+   constructor argument was rejected: every builder would change for a check `to_json` makes
+   once, where the result is written.
+5. **The record's counts must be the selection's.** `build_expected_set` also refuses a record
+   whose `random_taken` or `canary_wanted` isn't what the selection holds, so the `sample` and
+   `expected` objects can't disagree on how many items were tested.
+6. **A sender's display name is text a third party chose.** Each control character in it
+   (`control_chars.hpp`) becomes a space as Veeam's `from` is read, through
+   `rp::without_controls`, which `one_line` now uses too.
+7. **`expected_set_test.cpp` puts its failure paths first**, as the TDD rule says.
+
+Left as review comments, not done here: the duplicate random selector in `Selection`, the
+tie-break that keeps the copy with fewer facts, the narrower `internet_message_id` control
+check, the doubled comparisons in the sort, and the third `kind_name` copy. The 5-byte
+extension assumption went with point 1.
+
+---
+
+## 2026-10-01 — W3.1: the expected set (proposed; recorded before the build)
+
+Recorded before any of it was built. The owner confirmed decision 3 on 2026-10-01 (a random
+file's content is not expected in Stage 1; Veeam's document export is a follow-up task after
+W3.2). The rest is proposed: the owner confirms it in the W3.1 review, or supersedes it.
+
+**Decision.**
+
+1. **Every sampled item gets one expected record with one explicit expected kind.**
+   `rp::verification::build_expected_set(selection, manifest)` (`rp/expected_set.hpp`, a new
+   namespace W3.2 and W3.3 will share) is pure and returns one `ExpectedItem` per selector of
+   the selection. There are three kinds, never mixed, and no "unknown" kind or default path:
+   - `manifest`: a canary. The expected values are the manifest's, with a content hash: a
+     mail's `body_sha256` by `text-v1`, a file's `content_sha256` by its `content_rule`
+     (`bytes` or `office-v1`). A `bytes` file also expects its `stored_size`; an `office-v1`
+     file expects no size (SharePoint rewrites it). The strongest kind.
+   - `fields`: a random mail. The header fields as the backup lists them (Veeam's browse):
+     subject, sender display name, sent time, received time. No body hash: nothing knows the
+     body before the restore.
+   - `metadata`: a random file. Its name, and the size the backup lists, except for an Office
+     package (point 5), whose size is no expectation, so its name only.
+   The result shows each item's kind and counts the three (`counts`, all three keys always
+   there), so a report never claims more than was checked (W3.3, W4.1).
+2. **Random items are expected from the backup's own listing, not from Graph.** The Worker app
+   may read only the restore targets through Graph (L1.5, W2.6), so it can't read a random
+   item's source. This supersedes the glossary's sentence that a random item's expected values
+   come from a live Graph read (`docs/glossary.md`, "Random item", updated).
+3. **A random file's content is not expected in Stage 1** (owner confirmed 2026-10-01): no
+   Veeam export in W3.1. See Alternatives and Open.
+4. **A random mail's sender is a display name** (`sender_name`), because that is all Veeam's
+   browse lists (`from`, e.g. "Hrachya Harutyunyan"); a canary's sender is an address
+   (`sender_address`, the manifest's `sender`). W3.2 compares each with the matching Graph
+   field (`from.emailAddress.name` or `.address`).
+5. **One Office package rule.** `rp::is_office_package(name)` (`src/office_files.hpp`): the
+   name ends, ASCII case-insensitive, in `.docx`, `.docm`, `.dotx`, `.dotm`, `.xlsx`, `.xlsm`,
+   `.xltx`, `.xltm`, `.pptx`, `.pptm`, `.potx`, `.potm`, `.ppsx` or `.ppsm` (the Office Open XML
+   family SharePoint may rewrite), with something before the dot: a name that is only an
+   extension (`.docx`) isn't a package's. It decides a random file's "size is not an
+   expectation" and replaces the inline docx/xlsx check in `graph_targets.cpp`, so `graph list
+   --hash` now reads a pptx and the macro and template types up to the download limit too
+   (`SizeCheck::up_to_limit`), like docx and xlsx. Canaries keep the manifest's
+   `content_rule`. `office-v1` hashes only the `word/` and `xl/` parts, so it covers docx and
+   xlsx and not pptx: W3.2's concern (a random pptx is `metadata`, name only).
+6. **Times are `YYYY-MM-DDTHH:MM:SSZ`**, cut (not rounded) to whole seconds by the rule the
+   selector's `received_at` already uses (`veeam_restore::to_whole_seconds`). Tolerances (the
+   guide: received within 2 minutes) belong to W3.2.
+7. **A missing backup field doesn't drop a candidate.** A random mail without `from`, or whose
+   `sent` isn't a time, is still offered and gets `fields` with what is known (its subject and
+   received time are always there: the lister requires them). A random file always has a size
+   (the lister requires `sizeBytes`).
+8. **Order and identity.** The expected set is in `RestoreSpec` order (mail canaries, mail
+   randoms, SharePoint canaries, SharePoint randoms, OneDrive canaries, OneDrive randoms), each
+   item carrying its `index`, so it lines up with `RestoreResult::items`. A canary is named by
+   its manifest `id`, a random item by the sampler's key (the strings of
+   `record.<kind>.random_keys`).
+9. **The candidates carry their facts beside the key.** `connector::MailCandidate{selector,
+   sender_name, sent_at}` (empty: Veeam didn't say) makes `CandidatePool::mail` like the two
+   file candidate types, and `Selection` gains `mail_random`, `sharepoint_random` and
+   `onedrive_random`: the random candidates taken, in their selectors' order, each selector's
+   size -1 as before and the backup's `size_bytes` kept. The sampler's keys, deduplication,
+   draw, `pool_sha256` and `to_json(SampleRecord)` don't change, so the W2.8 run's recorded
+   sample still replays to the same pool hash. Candidates of one key and equal fields but
+   different facts are sorted by those facts too, so which one survives deduplication doesn't
+   depend on the listing's order.
+10. **The manifest's comparison fields become required in the loader.** `CanaryMail` gains
+    `sender`, `sent_at`, `internet_message_id`, `body_sha256` and `body_normalization`;
+    `CanaryFile` gains `content_sha256`. The schema requires them already, so the lab manifest
+    passes; a pilot's manifest without them is refused as it loads, before any Veeam call,
+    rather than giving items that can't be verified. Refused: a `sender` that isn't exactly one
+    `@` with no whitespace or control character; a `sent_at` that isn't a real whole-second
+    UTC time; an empty `internet_message_id` or one with a control character; a `body_sha256`
+    or `content_sha256` that isn't 64 lower-case hex digits; a `body_normalization` other than
+    `text-v1`.
+11. **Privacy.** The new customer data in the result is a random mail's sender display name
+    and sent time; its subject, mailbox and received time are in the sample record already.
+    Nothing else.
+
+**Reason.** W3.2 needs, per item, what to compare against and how strong that expectation is;
+recording it before anything is compared keeps the checker from taking its expectations from
+what it finds. The kinds keep the report's claims to what was tested (the report wording
+rule). The backup's own listing is the only source the Worker app may read for a random item,
+and it is what the restore restored from.
+
+**Alternatives rejected.**
+
+- *A fourth kind, `backup_content`, from Veeam's document export* (`…/Documents/{id}/save`
+  during `restore_sample`, the file's hash then expected): deferred, not rejected for good. An
+  Office file needs `office-v1` in C++, which needs the zip reader W3.2 brings; it doubles each
+  random file's traffic (export and read-back, up to 64 MiB each); it makes the builder depend
+  on `restore_sample`; the lab has no real files yet, so the path couldn't be run live. The
+  `expected_kind` field makes adding it later non-breaking.
+- *Expected values for random items from a Graph read of the source:* the Worker app has no
+  grant on any source (point 2).
+- *The facts inside the sampler's key:* every key and `pool_sha256` would change, and the W2.8
+  run's recorded sample would no longer replay.
+- *Two Office rules (the reader's docx/xlsx and the expected set's list):* two lists drift.
+
+**Open.**
+
+- A follow-up task after W3.2: the `backup_content` kind for random files from Veeam's
+  document export, once `office-v1` exists in C++ (point 3).
+- For W3.2: `FoundItem` needs the sender display name (`from.emailAddress.name`; Graph's
+  `$select` returns `from` already) to check `sender_name`; a canary mail is best found by
+  `internet_message_id` first (the manifest has it, and the W1.0 export kept it), then by
+  subject; `office-v1` in C++ needs a zip reader (none in `vcpkg.json` today) and must pass
+  `shared/testdata/office-content-v1/`.
+
+---
+
 ## 2026-10-01 — Q2.1 review: the restore credential never kept, recording off the lock, and the refusal rules (proposed)
 
 Amends the 2026-10-01 Q2.1 entry (points 2, 3 and 5) after the Q2.1 code review.

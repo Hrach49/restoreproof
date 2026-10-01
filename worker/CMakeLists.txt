@@ -30,6 +30,7 @@ add_library(rpcore STATIC
     src/config_check.cpp
     src/connector.cpp
     src/connector_registry.cpp
+    src/expected_set.cpp
     src/graph_client.cpp
     src/graph_command.cpp
     src/graph_download.cpp
@@ -103,6 +104,7 @@ add_executable(rptests
     tests/connector_registry_test.cpp
     tests/connector_test.cpp
     tests/deps_test.cpp
+    tests/expected_set_test.cpp
     tests/graph_client_live_test.cpp
     tests/graph_client_test.cpp
     tests/graph_command_live_test.cpp

@@ -49,6 +49,17 @@ TEST_CASE("percent_decode turns each %XX into its byte and keeps a stray '%'", "
     CHECK(rp::percent_decode(row.input) == row.expected);
 }
 
+TEST_CASE("without_controls replaces each control character with a space and never cuts", "[text_util]")
+{
+    CHECK(rp::without_controls("") == "");
+    CHECK(rp::without_controls("Hrachya Harutyunyan") == "Hrachya Harutyunyan");
+    CHECK(rp::without_controls("a\tb\x7F" "c\xC2\x9F" "d\xD8\x9C" "e\xE2\x80\x8F" "f\xE2\x80\xA8" "g\xE2\x81\xA6" "h") ==
+          "a b c d e f g h");
+    // Other multi-byte characters are kept.
+    CHECK(rp::without_controls("\xC5\xB9r\xC3\xB3" "d\xC5\x82o") == "\xC5\xB9r\xC3\xB3" "d\xC5\x82o");
+    CHECK(rp::without_controls(std::string(600, 'a')) == std::string(600, 'a'));
+}
+
 TEST_CASE("one_line replaces control characters with a space", "[text_util]")
 {
     const Row row = GENERATE(values<Row>({

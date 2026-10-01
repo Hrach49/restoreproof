@@ -157,7 +157,12 @@ class GateTest(unittest.TestCase):
         self.assertIn("FAIL", summary)
 
     def test_strict_names_match_headers_and_target_guard(self):
-        for name in (r"include\rp\signer.hpp", r"src\target_guard.cpp", r"src\run_status.cpp"):
+        for name in (
+            r"include\rp\signer.hpp",
+            r"src\target_guard.cpp",
+            r"src\run_status.cpp",
+            r"include\rp\run_status.hpp",
+        ):
             with self.subTest(name=name):
                 xml = cobertura((r"src\big.cpp", covered(1000)), (name, mixed(1, 1)))
                 code, _, _ = self.run_gate(xml)

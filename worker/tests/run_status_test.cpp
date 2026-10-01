@@ -3,8 +3,8 @@
 // `rpworker restore` gathers them. The tables below are the decision itself,
 // row for row: R<n><x> is row n of the run table in docs/verification.md
 // ("The status decision table"), I<n><x> rule n of the item verdicts, S<n> a
-// step of the severity order, E<n> an exception type of error-code table, X<n>
-// an exit code. Failure paths first: facts that don't add up, stops, then
+// step of the severity order, E<n> an exception type of the error-code table,
+// X<n> an exit code. Failure paths first: facts that don't add up, stops, then
 // fail before error before pass. The choices are the 2026-10-01 W3.3 entry in
 // docs/decisions.md.
 

@@ -9,6 +9,7 @@
 #include <map>
 #include <memory>
 #include <new>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -63,22 +64,61 @@ std::string_view content_folder(std::string_view file_type)
     throw OfficeContentError("not a ZIP package, so not a valid ." + std::string{file_type} + " file");
 }
 
-// Opens `bytes` read-only. With `check_consistency`, libzip also compares every
-// local header with its central directory entry and refuses a name stored twice
-// (ZIP_ER_EXISTS); without it, it only reads the central directory. Returns
-// nullptr and the error code when it can't open the package.
-Archive open_archive(std::string_view bytes, bool check_consistency, int& error_code)
+// The total-entries field of the end of central directory record, read
+// before libzip allocates its directory: the last "PK\x05\x06" with a whole
+// 22-byte record after it, within the last 65,557 bytes (the record and the
+// longest comment), searched backwards as Python's zipfile does. nullopt when
+// there is none: libzip then refuses the package. A ZIP64 package says 0xFFFF
+// here.
+std::optional<std::uint64_t> declared_entries(std::string_view bytes)
 {
+    constexpr std::size_t kRecord = 22;
+    constexpr std::size_t kSearch = kRecord + 0xFFFF;
+    if (bytes.size() < kRecord) {
+        return std::nullopt;
+    }
+    const std::size_t lowest = bytes.size() > kSearch ? bytes.size() - kSearch : 0;
+    for (std::size_t at = bytes.size() - kRecord + 1; at-- > lowest;) {
+        if (bytes.substr(at, 4) == std::string_view{"PK\x05\x06", 4}) {
+            const auto byte = [&](std::size_t i) {
+                return static_cast<std::uint64_t>(static_cast<unsigned char>(bytes[at + i]));
+            };
+            return byte(10) | (byte(11) << 8);
+        }
+    }
+    return std::nullopt;
+}
+
+[[noreturn]] void throw_too_many(std::uint64_t count, const OfficeLimits& limits)
+{
+    throw OfficeContentError("the package has " + std::to_string(count) +
+                             " entries, more than office-v1 reads (" +
+                             std::to_string(limits.max_entries) + ")");
+}
+
+// The package, read-only, from its central directory. No ZIP_CHECKCONS:
+// lab/seeder/office.py (Python's zipfile) never compares a local header with
+// its central directory entry but for a part it reads, and takes bytes after
+// the end record, so a check here could refuse a package Python hashes. A
+// name stored twice stays in libzip's list without it: refuse_doubled refuses
+// it. The entry count is checked before libzip allocates the directory.
+Archive open_package(std::string_view bytes, std::string_view file_type, const OfficeLimits& limits)
+{
+    if (bytes.empty()) {
+        throw_not_a_zip(file_type);  // libzip takes an empty buffer for an empty archive
+    }
+    if (const std::optional<std::uint64_t> count = declared_entries(bytes);
+        count && *count > limits.max_entries) {
+        throw_too_many(*count, limits);
+    }
     ZipError error;
     Source source{zip_source_buffer_create(bytes.data(), bytes.size(), 0, error.get())};
     if (!source) {
         throw std::bad_alloc{};  // its only failure for a non-null buffer
     }
-    const int flags = ZIP_RDONLY | (check_consistency ? ZIP_CHECKCONS : 0);
-    zip_t* archive = zip_open_from_source(source.get(), flags, error.get());
+    zip_t* archive = zip_open_from_source(source.get(), ZIP_RDONLY, error.get());
     if (archive == nullptr) {
-        error_code = error.code();
-        return nullptr;  // the source is still ours: `source` frees it
+        throw_not_a_zip(file_type);  // the source is still ours: `source` frees it
     }
     source.release();  // the archive owns it now and frees it in zip_discard
     return Archive{archive};
@@ -118,28 +158,6 @@ void refuse_doubled(const std::vector<std::string>& names)
     if (!doubled.empty()) {
         throw OfficeContentError("part(s) stored more than once: " + doubled);
     }
-}
-
-// The package, consistency-checked. A name stored twice is told apart from
-// any other inconsistency by reopening without the check, which allows it.
-Archive open_package(std::string_view bytes, std::string_view file_type)
-{
-    if (bytes.empty()) {
-        throw_not_a_zip(file_type);  // libzip takes an empty buffer for an empty archive
-    }
-    int code = ZIP_ER_OK;
-    Archive archive = open_archive(bytes, true, code);
-    if (archive) {
-        return archive;
-    }
-    if (code == ZIP_ER_EXISTS) {
-        int unused = ZIP_ER_OK;
-        if (Archive lenient = open_archive(bytes, false, unused)) {
-            const zip_int64_t count = zip_get_num_entries(lenient.get(), 0);
-            refuse_doubled(entry_names(lenient.get(), static_cast<std::uint64_t>(count)));
-        }
-    }
-    throw_not_a_zip(file_type);
 }
 
 // One content part's uncompressed bytes, read under the limits. `total` is
@@ -199,11 +217,14 @@ std::string read_part(zip_t* archive, zip_uint64_t index, const std::string& nam
         part.append(chunk.data(), static_cast<std::size_t>(n));
         total += n;
     }
-    // libzip checks the CRC but not a deflated part's declared size; Python's
-    // zipfile reads exactly that many bytes, so a part that lies fails there.
-    if ((stat.valid & ZIP_STAT_SIZE) != 0 && part.size() != stat.size) {
+    // libzip checks the CRC over what it read but not the declared size.
+    // Python's zipfile reads at most the declared size and checks the CRC over
+    // that: a part holding more fails there (its CRC is of the whole part), a
+    // part holding less is read whole and passes. So only more is refused.
+    if ((stat.valid & ZIP_STAT_SIZE) != 0 && part.size() > stat.size) {
         throw OfficeContentError("part " + name + " holds " + std::to_string(part.size()) +
-                                 " bytes, not the " + std::to_string(stat.size) + " its entry declares");
+                                 " bytes, more than the " + std::to_string(stat.size) +
+                                 " its entry declares");
     }
     return part;
 }
@@ -214,16 +235,15 @@ std::string office_v1_listing(std::string_view bytes, std::string_view file_type
                               const OfficeLimits& limits)
 {
     const std::string_view folder = content_folder(file_type);
-    const Archive archive = open_package(bytes, file_type);
+    const Archive archive = open_package(bytes, file_type, limits);
 
+    // Checked again on what libzip read: a ZIP64 directory's own count.
     const zip_int64_t count = zip_get_num_entries(archive.get(), 0);
     if (static_cast<std::uint64_t>(count) > limits.max_entries) {
-        throw OfficeContentError("the package has " + std::to_string(count) +
-                                 " entries, more than office-v1 reads (" +
-                                 std::to_string(limits.max_entries) + ")");
+        throw_too_many(static_cast<std::uint64_t>(count), limits);
     }
     const std::vector<std::string> names = entry_names(archive.get(), static_cast<std::uint64_t>(count));
-    refuse_doubled(names);  // libzip already refused one with the check; kept for the rule's sake
+    refuse_doubled(names);
 
     // (name, index), sorted by the name's bytes: std::string compares as
     // unsigned char, which is UTF-8 byte order.

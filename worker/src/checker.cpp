@@ -50,25 +50,6 @@ const TargetRead& read_of(const TargetsRead& reads, ItemKind kind)
     return reads.mail;
 }
 
-const std::map<std::string, std::optional<std::string>>& files_before(const TargetSnapshot& before,
-                                                                      ItemKind kind)
-{
-    return kind == ItemKind::sharepoint ? before.sharepoint : before.onedrive;
-}
-
-// Whether a file of the after read is this run's: not there before, or its
-// cTag moved (a restore merged a new version into a same-named file). A cTag
-// unknown on either side can't show a move: an earlier run's copy.
-bool file_is_new(const FoundItem& file,
-                 const std::map<std::string, std::optional<std::string>>& before)
-{
-    const auto it = before.find(file.id);
-    if (it == before.end()) {
-        return true;
-    }
-    return it->second && file.ctag && *it->second != *file.ctag;
-}
-
 // One type's after read split into this run's copies and earlier ones.
 struct Copies {
     std::vector<const FoundItem*> fresh;
@@ -83,8 +64,8 @@ Copies split(const TargetSnapshot& before, const TargetsRead& after, ItemKind ki
         return copies;
     }
     for (const FoundItem& item : read.items) {
-        const bool fresh = kind == ItemKind::mail ? !before.mail.contains(item.id)
-                                                  : file_is_new(item, files_before(before, kind));
+        const bool fresh =
+            kind == ItemKind::mail ? !before.mail.contains(item.id) : is_new_file(before, item);
         (fresh ? copies.fresh : copies.stale).push_back(&item);
     }
     return copies;
@@ -105,11 +86,10 @@ bool time_agrees(const std::string& expected, const std::optional<std::string>& 
 {
     const VeeamTime want = expected_time(expected);
     const std::optional<VeeamTime> got = found ? parse_veeam_time(*found) : std::nullopt;
-    if (!got) {
-        return false;
-    }
-    const auto off = *got > want ? *got - want : want - *got;
-    return off <= kTimeTolerance;
+    // Never `*got - want`: two times centuries apart overflow nanoseconds, and
+    // a wrapped difference could read as a match. Both bounds hold: every time
+    // parse_veeam_time gives is 1678-2261, well inside nanoseconds' range.
+    return got && *got >= want - kTimeTolerance && *got <= want + kTimeTolerance;
 }
 
 // The newest copy: by `when` (a time that doesn't read is the oldest), then
@@ -279,34 +259,33 @@ private:
         return clock_ ? clock_() : std::chrono::steady_clock::now();
     }
 
-    // This run's copies the item matches; a canary mail claims them.
+    // This run's copies the item matches that no item before it claimed; it
+    // claims them, so a copy counts for one item only.
     std::vector<const FoundItem*> lookup(const ExpectedItem& want)
     {
         std::vector<const FoundItem*> found;
         const std::vector<const FoundItem*>& fresh = copies_.at(want.kind).fresh;
+        const auto take = [&](const auto& matches) {
+            std::ranges::copy_if(fresh, std::back_inserter(found), [&](const FoundItem* item) {
+                return !claimed_.contains(item) && matches(*item);
+            });
+        };
         if (want.kind != ItemKind::mail) {
-            std::ranges::copy_if(fresh, std::back_inserter(found), [&](const FoundItem* item) {
-                return item->name && same_name(*item->name, want.file->name);
+            take([&](const FoundItem& item) {
+                return item.name && same_name(*item.name, want.file->name);
             });
-            return found;
-        }
-        const ExpectedMail& mail = *want.mail;
-        const auto unclaimed = [&](const FoundItem* item) { return !claimed_.contains(item->id); };
-        if (mail.internet_message_id) {
-            std::ranges::copy_if(fresh, std::back_inserter(found), [&](const FoundItem* item) {
-                return unclaimed(item) && item->internet_message_id == mail.internet_message_id;
-            });
-        }
-        if (found.empty()) {
-            std::ranges::copy_if(fresh, std::back_inserter(found), [&](const FoundItem* item) {
-                return unclaimed(item) && item->subject == mail.subject;
-            });
-        }
-        if (want.source == ItemSource::canary) {
-            for (const FoundItem* item : found) {
-                claimed_.insert(item->id);
+        } else {
+            const ExpectedMail& mail = *want.mail;
+            if (mail.internet_message_id) {
+                take([&](const FoundItem& item) {
+                    return item.internet_message_id == mail.internet_message_id;
+                });
+            }
+            if (found.empty()) {
+                take([&](const FoundItem& item) { return item.subject == mail.subject; });
             }
         }
+        claimed_.insert(found.begin(), found.end());
         return found;
     }
 
@@ -320,7 +299,7 @@ private:
     const TargetsRead& after_;
     std::function<std::chrono::steady_clock::time_point()> clock_;
     std::map<ItemKind, Copies> copies_;
-    std::set<std::string> claimed_; // mail Graph IDs a canary matched
+    std::set<const FoundItem*> claimed_; // the copies an item already matched
 };
 
 // Why an item's fields contradict its outcome; null when they don't.
@@ -410,6 +389,38 @@ TargetSnapshot snapshot_of(const TargetsRead& before)
     return snapshot;
 }
 
+bool is_new_file(const TargetSnapshot& before, const FoundItem& file)
+{
+    if (file.type == graph::ItemType::mail) {
+        throw std::logic_error("is_new_file: a mail is no file");
+    }
+    const auto& files = file.type == graph::ItemType::sharepoint ? before.sharepoint : before.onedrive;
+    const auto it = files.find(file.id);
+    if (it == files.end()) {
+        return true;
+    }
+    return it->second && file.ctag && *it->second != *file.ctag;
+}
+
+std::function<bool(const FoundItem&)> hash_filter(const ExpectedSet& expected,
+                                                  const TargetSnapshot& before)
+{
+    // The expected files' name keys per type, and the snapshot, copied.
+    std::map<graph::ItemType, std::set<std::string>> names;
+    for (const ExpectedItem& item : expected.items) {
+        if (item.file) {
+            names[item.kind == ItemKind::sharepoint ? graph::ItemType::sharepoint
+                                                    : graph::ItemType::onedrive]
+                .insert(name_key(item.file->name));
+        }
+    }
+    return [names = std::move(names), before](const FoundItem& file) {
+        const auto keys = names.find(file.type);
+        return keys != names.end() && file.name && keys->second.contains(name_key(*file.name)) &&
+               is_new_file(before, file);
+    };
+}
+
 std::string read_error_code(std::exception_ptr error)
 {
     if (!error) {
@@ -480,7 +491,8 @@ CheckResult check(const ExpectedSet& expected, const TargetSnapshot& before,
     CheckResult result;
     result.items.resize(expected.items.size());
     // Canary mails first, so they claim their copies before a random mail
-    // with the same subject looks.
+    // with the same subject looks; then every other item in index order. Each
+    // claims the copies it matched.
     for (const bool canaries : {true, false}) {
         for (const ExpectedItem& item : expected.items) {
             const bool canary_mail =

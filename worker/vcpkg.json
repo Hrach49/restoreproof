@@ -12,8 +12,13 @@
       ]
     },
     "cpr",
+    {
+      "name": "libzip",
+      "default-features": false
+    },
     "nlohmann-json",
     "openssl",
-    "spdlog"
+    "spdlog",
+    "zlib"
   ]
 }

@@ -7,6 +7,7 @@
 #include <openssl/evp.h>
 #include <spdlog/logger.h>
 #include <spdlog/sinks/ostream_sink.h>
+#include <zip.h>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -68,4 +69,40 @@ TEST_CASE("cpr builds a session URL with encoded query parameters without a netw
     // linked. GetFullRequestUrl only builds the URL; nothing is sent.
     REQUIRE(session.GetFullRequestUrl() ==
             "https://veeam.invalid/v8/Organizations?name=restore%20test&limit=10");
+}
+
+TEST_CASE("libzip writes a deflated entry into memory and reads it back", "[deps]")
+{
+    // office-v1 (rp/office_v1.hpp) reads restored packages from memory the
+    // same way; built without bzip2 or AES, deflate comes from zlib.
+    zip_error_t error;
+    zip_error_init(&error);
+    zip_source_t* buffer = zip_source_buffer_create(nullptr, 0, 0, &error);
+    REQUIRE(buffer != nullptr);
+    zip_source_keep(buffer);  // outlives the first archive, so it can be reopened
+
+    zip_t* archive = zip_open_from_source(buffer, ZIP_TRUNCATE, &error);
+    REQUIRE(archive != nullptr);
+    const std::string text(1000, 'w');
+    zip_source_t* data = zip_source_buffer(archive, text.data(), text.size(), 0);
+    REQUIRE(data != nullptr);
+    REQUIRE(zip_file_add(archive, "word/document.xml", data, ZIP_FL_ENC_UTF_8) == 0);
+    REQUIRE(zip_close(archive) == 0);
+
+    archive = zip_open_from_source(buffer, ZIP_RDONLY | ZIP_CHECKCONS, &error);
+    REQUIRE(archive != nullptr);
+    zip_stat_t stat;
+    REQUIRE(zip_stat(archive, "word/document.xml", 0, &stat) == 0);
+    CHECK(stat.comp_method == ZIP_CM_DEFLATE);
+    CHECK(stat.comp_size < stat.size);
+    zip_file_t* file = zip_fopen(archive, "word/document.xml", 0);
+    REQUIRE(file != nullptr);
+    std::string read(2000, '\0');
+    const zip_int64_t got = zip_fread(file, read.data(), read.size());
+    zip_fclose(file);
+    zip_discard(archive);  // frees the buffer too
+    zip_error_fini(&error);
+    REQUIRE(got == 1000);
+    read.resize(1000);
+    CHECK(read == text);
 }

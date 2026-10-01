@@ -214,7 +214,7 @@ public:
         }
         const std::vector<const FoundItem*> found = lookup(want);
         if (found.empty()) {
-            if (want.kind != ItemKind::mail && has_stale_name(want)) {
+            if (has_stale_copy(want)) {
                 out.outcome = CheckOutcome::error;
                 out.error_code = "stale_target";
                 out.reason = "only an earlier run's copy is in the target";
@@ -280,10 +280,20 @@ private:
         return found;
     }
 
-    bool has_stale_name(const ExpectedItem& want) const
+    // An earlier run's copy the item would have matched: then this run's restore can't be
+    // told from one that wrote nothing. A file restored over a same-named one moves its cTag,
+    // but Veeam leaves a mail that is already in the target as it is, says "restored
+    // successfully", and gives no new copy (W3.2 live run 2, 2026-10-01).
+    bool has_stale_copy(const ExpectedItem& want) const
     {
         return std::ranges::any_of(copies_.at(want.kind).stale, [&](const FoundItem* item) {
-            return item->name && same_name(*item->name, want.file->name);
+            if (want.kind != ItemKind::mail) {
+                return item->name && same_name(*item->name, want.file->name);
+            }
+            const ExpectedMail& mail = *want.mail;
+            return (mail.internet_message_id &&
+                    item->internet_message_id == mail.internet_message_id) ||
+                   item->subject == mail.subject;
         });
     }
 

@@ -612,7 +612,7 @@ check: 1 match, 0 mismatch, 0 missing, 0 error
   (`subject`, `sender_address`, `sender_name`, `sent_at`, `received_at`,
   `internet_message_id`, `size_bytes`, `sha256`) or an error's code (`graph_auth`,
   `graph_permission`, `graph_transient`, `target_guard`, `graph` when the target couldn't be
-  read back; `stale_target` when only an earlier run's copy of a file is there); `DUP` says
+  read back; `stale_target` when only an earlier run's copy of the item is there); `DUP` says
   `<n> copies` when the restore wrote more than one; `MS` is the item's own read and
   comparison time, `-` when no copy was found (`missing`, `error`). Then `check: <a> match,
   <b> mismatch, <c> missing, <d> error`. Only this run's copies of the sampled files are

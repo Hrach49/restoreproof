@@ -15,6 +15,7 @@
 #include <format>
 #include <map>
 #include <optional>
+#include <regex>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -292,6 +293,19 @@ ItemVerdict item_verdict(const RunFacts& facts, std::size_t i)
     return {Verdict::failed, {}};
 }
 
+// Whether a session's details read as the backup's counts, "<n> item(s)
+// processed" with an optional parenthesis of no parentheses, e.g. "5 items
+// processed (4 successes, 1 warning)". Any other text may name a tenant value
+// (an item, an address), so it never goes into a warning.
+bool is_counts(const std::string& details)
+{
+    static const std::regex counts(R"(\d+ items? processed( \([^()]*\))?)");
+    return std::regex_match(details, counts) &&
+           std::ranges::none_of(details, [](char c) {
+               return static_cast<unsigned char>(c) < 0x20 || static_cast<unsigned char>(c) >= 0x7F;
+           });
+}
+
 std::string or_dash(std::string text)
 {
     return text.empty() ? std::string{"-"} : text;
@@ -310,13 +324,13 @@ std::vector<StatusWarning> warnings_of(const RunFacts& facts,
             std::string message = std::format("{} session {}: {}", kind_name(session.kind),
                                               or_dash(one_line(session.id)),
                                               or_dash(one_line(session.result)));
-            if (!session.details.empty()) {
-                message += " (" + one_line(session.details) + ")";
+            if (is_counts(session.details)) {
+                message += " (" + session.details + ")";
             }
             std::vector<std::size_t> indexes;
             for (std::size_t i = 0; i < items; ++i) {
                 const connector::ItemRestoreResult* restored = restore_item(facts, i);
-                if (restored && restored->session_id == session.id) {
+                if (restored && !session.id.empty() && restored->session_id == session.id) {
                     indexes.push_back(i);
                 }
             }

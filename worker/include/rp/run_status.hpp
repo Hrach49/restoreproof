@@ -100,7 +100,10 @@ struct RunFacts {
 // backup product's session IDs, results and details only, control characters
 // as spaces). `indexes` are the expected items it concerns, ascending.
 //  - backup_session: one per restore session whose result isn't exactly
-//    "Success": "<kind> session <id>: <result>[ (<details>)]", its items;
+//    "Success": "<kind> session <id>: <result>[ (<details>)]", its items (an
+//    empty session ID matches none); the details only when they read as the
+//    backup's counts, "<n> item(s) processed[ (<no parentheses>)]" in
+//    printable ASCII, since other text may name an item or an address;
 //  - backup_item: the verified items the backup didn't report restored;
 //  - duplicate: the items more than one restored copy matched;
 //  - shortfall: one per Shortfall, "<kind> <canary|random>: <taken> of <wanted>";

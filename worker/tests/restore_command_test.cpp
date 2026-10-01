@@ -385,10 +385,12 @@ struct Harness {
     std::shared_ptr<spdlog::logger> logger;
 };
 
-connector::MailSelector carol_mail(int n)
+connector::MailCandidate carol_mail(int n)
 {
-    return {kCarol, "Archive", "real mail 0" + std::to_string(n),
-            "2026-09-20T10:00:0" + std::to_string(n) + "Z"};
+    return {{kCarol, "Archive", "real mail 0" + std::to_string(n),
+             "2026-09-20T10:00:0" + std::to_string(n) + "Z"},
+            "Carol Test",
+            "2026-09-20T09:59:0" + std::to_string(n) + "Z"};
 }
 
 // What `--run-id run-0001` on the newest point prints before the sample is

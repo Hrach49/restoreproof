@@ -382,7 +382,7 @@ void CandidateLister::browse_mail(connector::CandidatePool& pool)
         // of the folder, whatever its class.
         const std::map<std::string, int> subjects =
             occurrences(items, "subject", [](const json&, const std::string&) { return true; });
-        std::vector<connector::MailSelector> found;
+        std::vector<connector::MailCandidate> found;
         for (const json& item : items) {
             const std::string* subject = text_at(item, "subject");
             const std::string* item_class = text_at(item, "itemClass");
@@ -392,11 +392,25 @@ void CandidateLister::browse_mail(connector::CandidatePool& pool)
                 is_canary(*subject, q.exclude.subjects) || received == nullptr) {
                 continue;
             }
-            if (const std::optional<std::string> second = vr::to_whole_seconds(*received)) {
-                found.push_back({mailbox.address, folder.folder_path, *subject, *second});
+            const std::optional<std::string> second = vr::to_whole_seconds(*received);
+            if (!second) {
+                continue;
             }
+            // The header as the backup lists it, for the expected set (W3.1):
+            // left empty when Veeam doesn't say, never a reason to drop the mail.
+            connector::MailCandidate candidate{
+                {mailbox.address, folder.folder_path, *subject, *second}, {}, {}};
+            if (const std::string* from = text_at(item, "from")) {
+                candidate.sender_name = *from;
+            }
+            if (const std::string* sent = text_at(item, "sent")) {
+                candidate.sent_at = vr::to_whole_seconds(*sent).value_or("");
+            }
+            found.push_back(std::move(candidate));
         }
-        std::ranges::sort(found, {}, &connector::MailSelector::subject);
+        std::ranges::sort(found, {}, [](const connector::MailCandidate& c) -> const std::string& {
+            return c.selector.subject;
+        });
         pool.mail.insert(pool.mail.end(), found.begin(), found.end());
         return !found.empty();
     };

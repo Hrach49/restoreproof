@@ -385,7 +385,8 @@ connector::CandidateQuery query(bool mail, bool sharepoint, bool onedrive,
 std::vector<std::string> found(const connector::CandidatePool& pool)
 {
     std::vector<std::string> out;
-    for (const connector::MailSelector& s : pool.mail) {
+    for (const connector::MailCandidate& c : pool.mail) {
+        const connector::MailSelector& s = c.selector;
         out.push_back("mail|" + s.mailbox + "|" + s.folder + "|" + s.subject + "|" + s.received_at);
     }
     for (const connector::SharePointCandidate& c : pool.sharepoint) {
@@ -407,7 +408,8 @@ std::vector<std::string> found(const connector::CandidatePool& pool)
 std::string as_text(const connector::CandidatePool& pool)
 {
     std::string out;
-    for (const connector::MailSelector& s : pool.mail) {
+    for (const connector::MailCandidate& c : pool.mail) {
+        const connector::MailSelector& s = c.selector;
         out += s.mailbox + "|" + s.folder + "|" + s.subject + "\n";
     }
     for (const connector::SharePointCandidate& c : pool.sharepoint) {
@@ -1261,6 +1263,59 @@ TEST_CASE("list_candidates: real items outside the targets and canaries, as rest
     CHECK(rig.rig.lab.graph_gets() == 0);
 }
 
+TEST_CASE("list_candidates: a mail's sender name and sent time as Veeam lists them; a mail "
+          "without them is still offered",
+          "[veeam_m365][w2.6][w3.1]")
+{
+    // Every recorded mail is a canary, so the items are synthetic ones made
+    // from a recorded item (w24-mail-x5-items), with its from and sent.
+    const json recorded = results_of("w24-mail-x5-items").at(0);
+    CandidateRig rig;
+    rig.tenant.add_mail(kAliceMailbox, kArchive, mail("x-1", "Lunch"));
+    json no_from = mail("x-2", "Minutes");
+    no_from.erase("from");
+    rig.tenant.add_mail(kAliceMailbox, kArchive, no_from);
+    json null_from = mail("x-3", "Rota");
+    null_from["from"] = nullptr;
+    rig.tenant.add_mail(kAliceMailbox, kArchive, null_from);
+    json no_sent = mail("x-4", "Payroll");
+    no_sent.erase("sent");
+    rig.tenant.add_mail(kAliceMailbox, kArchive, no_sent);
+    json bad_sent = mail("x-5", "Offsite");
+    bad_sent["sent"] = "yesterday";
+    rig.tenant.add_mail(kAliceMailbox, kArchive, bad_sent);
+    json fractional = mail("x-6", "Budget");
+    fractional["sent"] = "2026-09-26T08:14:59.9999999Z";
+    rig.tenant.add_mail(kAliceMailbox, kArchive, fractional);
+    rig.serve();
+
+    const connector::CandidatePool pool = rig.list(query(true, false, false));
+
+    std::map<std::string, connector::MailCandidate> by_subject;
+    for (const connector::MailCandidate& c : pool.mail) {
+        by_subject.emplace(c.selector.subject, c);
+    }
+    REQUIRE(by_subject.size() == 6);
+    const std::string from = recorded.at("from").get<std::string>();
+    const std::string sent = recorded.at("sent").get<std::string>();
+    REQUIRE(from == "Hrachya Harutyunyan"); // a display name, not an address
+    REQUIRE(sent == "2026-09-24T22:14:40Z");
+    struct Row {
+        std::string subject;
+        std::string sender_name;
+        std::string sent_at;
+    };
+    for (const Row& row : {Row{"Lunch", from, sent}, Row{"Minutes", "", sent}, Row{"Rota", "", sent},
+                           Row{"Payroll", from, ""}, Row{"Offsite", from, ""},
+                           Row{"Budget", from, "2026-09-26T08:14:59Z"}}) {
+        CAPTURE(row.subject);
+        const connector::MailCandidate& c = by_subject.at(row.subject);
+        CHECK(c.sender_name == row.sender_name);
+        CHECK(c.sent_at == row.sent_at);
+        CHECK(c.selector.received_at == "2026-09-26T08:15:02Z");
+    }
+}
+
 namespace {
 
 // The mail folders listed, in order, as "<mailbox>|<folder name>", from the
@@ -1292,7 +1347,8 @@ std::vector<std::string> mail_folders_listed(const CandidateRig& rig)
 std::vector<std::string> mail_pool(const connector::CandidatePool& pool)
 {
     std::vector<std::string> out;
-    for (const connector::MailSelector& s : pool.mail) {
+    for (const connector::MailCandidate& c : pool.mail) {
+        const connector::MailSelector& s = c.selector;
         out.push_back(s.mailbox + "|" + s.folder + "|" + s.subject);
     }
     return out;

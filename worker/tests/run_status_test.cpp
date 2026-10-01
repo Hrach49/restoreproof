@@ -331,6 +331,55 @@ std::vector<Row> row1()
                  [] { return with_stop(run_of({match()}), RunPhase::check, "internal"); }),
         internal("R1u", "a stop whose phase isn't one of the table's",
                  [] { return stop_only(static_cast<RunPhase>(7), "backup"); }),
+        // Values outside their enums, and a check item whose `found` contradicts its outcome.
+        internal("R1v", "a check outcome outside its enum",
+                 [] {
+                     Run r = run_of({match()});
+                     r.check.items[0].outcome = static_cast<CheckOutcome>(9);
+                     return r;
+                 }),
+        internal("R1w", "an expected kind outside its enum",
+                 [] {
+                     Run r = run_of({match()});
+                     r.expected.items[0].expected_kind = static_cast<ExpectedKind>(9);
+                     return r;
+                 }),
+        internal("R1x", "a restore status outside its enum",
+                 [] {
+                     Run r = run_of({match()});
+                     r.restore.status = static_cast<RestoreStatus>(9);
+                     return r;
+                 }),
+        internal("R1y", "a restore item outcome outside its enum",
+                 [] {
+                     Run r = run_of({match()});
+                     r.restore.items[0].outcome = static_cast<ItemOutcome>(9);
+                     return r;
+                 }),
+        internal("R1z", "a match that found no copy",
+                 [] {
+                     Run r = run_of({match()});
+                     r.check.items[0].found = false;
+                     return r;
+                 }),
+        internal("R1aa", "a mismatch that found no copy",
+                 [] {
+                     Run r = run_of({mismatch()});
+                     r.check.items[0].found = false;
+                     return r;
+                 }),
+        internal("R1ab", "a missing item that found a copy",
+                 [] {
+                     Run r = run_of({missing()});
+                     r.check.items[0].found = true;
+                     return r;
+                 }),
+        internal("R1ac", "an error item that found a copy",
+                 [] {
+                     Run r = run_of({error("graph")});
+                     r.check.items[0].found = true;
+                     return r;
+                 }),
     };
 }
 

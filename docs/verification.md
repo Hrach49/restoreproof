@@ -260,7 +260,10 @@ whose items aren't (in number, index and kind), or an item `error` with a code t
 doesn't give; a restore result without a check and no stop; a stop whose code isn't one below,
 or whose phase contradicts what is there (a stop before or in the restore beside a restore
 result or a check, in the restore without an expected set, in the check without a restore
-result or beside a check). R1 carries no warnings, since its facts can't be trusted.
+result or beside a check); a value outside its enum (a stop's phase, an expected kind, the
+restore's status, a restore item's outcome, a check outcome); a check item whose `found`
+contradicts its outcome (a `match` or `mismatch` without a copy found, a `missing` or `error`
+with one). R1 carries no warnings, since its facts can't be trusted.
 
 **Precedence.** A stop or an unusable run always wins. Then a confirmed *failed* item wins over
 unchecked ones (R5 before R7): a missing or mismatched item counts only when its own target was

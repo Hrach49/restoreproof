@@ -157,7 +157,10 @@ struct RunVerdict {
 //     and no stop; a stop whose code isn't one of decision point 2's, or
 //     whose phase contradicts what is there (before_restore or restore beside
 //     a restore or a check, restore without an expected set, check without a
-//     restore or beside a check). No warnings.
+//     restore or beside a check); a value outside its enum (RunPhase,
+//     ExpectedKind, RestoreStatus, ItemOutcome, CheckOutcome); a check item
+//     whose `found` contradicts its outcome (match or mismatch not found,
+//     missing or error found). No warnings.
 //  2. a stop -> error, the stop's code;
 //  3. the expected set is empty -> error empty_sample;
 //  4. the restore returned not_run -> error not_run;

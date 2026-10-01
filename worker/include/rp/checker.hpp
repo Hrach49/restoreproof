@@ -34,12 +34,13 @@ namespace rp::verification {
 //  - match: a copy of this run's was found and every field the expectation
 //    carries agrees;
 //  - mismatch: a copy was found and at least one field doesn't agree;
-//  - missing: no copy of this run's that another item hadn't claimed; for a
-//    file, no earlier run's copy of its name either. A mail whose only copies
-//    are earlier runs' is missing: an earlier mail can't be told from none;
-//  - error: the item couldn't be checked: its target couldn't be read, or,
-//    for a file, only an earlier run's copy of its name is there
-//    (stale_target). Never a mismatch.
+//  - missing: no copy of this run's that another item hadn't claimed, and no
+//    earlier run's copy it would have matched either;
+//  - error: the item couldn't be checked: its target couldn't be read, or
+//    only an earlier run's copy it would have matched is there (stale_target:
+//    Veeam leaves a mail already in the target as it is and still says it
+//    restored it, so this run's restore can't be told from one that wrote
+//    nothing). Never a mismatch.
 enum class CheckOutcome { match, mismatch, missing, error };
 
 // "match", "mismatch", "missing" or "error"; "unknown" for a value outside the enum.
@@ -148,8 +149,10 @@ struct CheckResult {
 //    canaries go first, in index order;
 //  - a random mail: this run's mails with its subject;
 //  - a file: this run's files of its own target whose name is the same
-//    (rp::same_name); none, but an earlier run's copy of that name: `error`
-//    stale_target; none at all: `missing`;
+//    (rp::same_name);
+//  - none of this run's, but an earlier run's copy the item would have
+//    matched (a mail by its internet_message_id or subject, a file by its
+//    name): `error` stale_target; none at all: `missing`;
 //  - after the canary mails, every other item in index order; each item
 //    claims the copies it matched, so a copy counts for one item only, and an
 //    item that finds only claimed copies looks as if it found none;

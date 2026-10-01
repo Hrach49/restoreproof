@@ -135,10 +135,16 @@ targets were ignored (mail <x>, sharepoint <y>, onedrive <z>)`).
 in index order, and each item claims the copies it matched; a later item never sees them. Two
 expected items that would find the same copy (two random mails of one subject, two files of
 one `name_key`) can't both pass on it: the second finds only claimed copies and is `missing`
-(or `stale_target`, for a file, when an earlier run's copy of that name is there).
+(or `stale_target` when an earlier run's copy it would match is there).
 
-A file whose name only matches an earlier run's copy is `error`, code `stale_target`: the
-checker can't tell whether this restore wrote it, so it is neither found nor missing. When
+An item that only matches an earlier run's copy is `error`, code `stale_target`: the checker
+can't tell whether this restore wrote anything, so it is neither found nor missing. For a
+file this is a name whose copy's `cTag` didn't move. For a mail it is any earlier copy with
+its `internetMessageId` (a canary) or subject: Veeam leaves a mail that is already in the
+target as it is, gives no new copy and still reports it "restored successfully" (W3.2's live
+run 2 on 2026-10-01 restored five mails over run 1's copies: the Inbox kept run 1's five,
+same Graph IDs). So until W3.4 empties the targets before each run, a mail sampled again is
+`error`, never a `fail`. When
 more than one of this run's copies match, the newest is compared (mail `createdDateTime`, file
 `lastModifiedDateTime`, then the greater ID), and the item says `duplicate` with its `copies`;
 a duplicate doesn't change the outcome (W3.3 decides what it means for the run).
@@ -164,7 +170,7 @@ A file's name is how it is found, so it is not compared again.
 |---|---|
 | `match` | this run's copy found, every carried field agrees |
 | `mismatch` | this run's copy found, at least one field disagrees (named in `mismatches`) |
-| `missing` | no copy of this run's that no other item claimed, and for a file no earlier run's copy of its name; a mail whose only copies are earlier runs' is `missing` too (an earlier mail can't be told from none) |
+| `missing` | no copy of this run's that no other item claimed, and no earlier run's copy the item would match |
 | `error` | the item couldn't be checked: its target couldn't be read back (`graph_auth`, `graph_permission`, `graph_transient`, `target_guard`, `graph`), or `stale_target` |
 
 An infrastructure failure is always `error`, for every item of the type whose target couldn't

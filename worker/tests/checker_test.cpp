@@ -374,10 +374,13 @@ TEST_CASE("check: a stale file of another name doesn't make an item stale_target
     CHECK(item.outcome == CheckOutcome::missing);
 }
 
-TEST_CASE("check: a mail that was in the target before is never this run's copy, even when it "
-          "matches",
+TEST_CASE("check: a mail that was in the target before is never this run's copy; when it is the "
+          "only one that matches, the item is error stale_target, never missing",
           "[checker]")
 {
+    // W3.2 live run 2 (2026-10-01): Veeam said "restored successfully" for five mails already
+    // in the Inbox and wrote nothing; the Inbox kept run 1's copies, same Graph IDs. A missing
+    // item there would be a `fail` for what is an unclean target, so it is an error.
     const std::size_t index = GENERATE(std::size_t{0}, std::size_t{1});
     CAPTURE(index);
     Scene scene;
@@ -385,10 +388,44 @@ TEST_CASE("check: a mail that was in the target before is never this run's copy,
 
     const CheckResult result = scene.run();
 
-    // A mail's earlier copy can't be told from a missing one: missing, not stale_target.
-    CHECK(result.items[index].outcome == CheckOutcome::missing);
-    CHECK(result.items[index].error_code.empty());
+    const ItemCheck& item = result.items[index];
+    CHECK(item.outcome == CheckOutcome::error);
+    CHECK(item.error_code == "stale_target");
+    CHECK_FALSE(item.found);
+    CHECK(item.reason == "only an earlier run's copy is in the target");
+    CHECK(item.ms == 0);
     CHECK(result.stale_mail == 1);
+}
+
+TEST_CASE("check: an earlier mail that the item wouldn't match leaves it missing", "[checker]")
+{
+    const std::size_t index = GENERATE(std::size_t{0}, std::size_t{1});
+    CAPTURE(index);
+    Scene scene;
+    FoundItem& old = scene.after.mail.items[index];
+    scene.before.mail.insert(old.id);
+    old.subject = "another subject";
+    old.internet_message_id = "<another@id>";
+
+    const ItemCheck item = scene.run_one(index);
+
+    CHECK(item.outcome == CheckOutcome::missing);
+    CHECK(item.reason == "no restored copy found");
+}
+
+TEST_CASE("check: a canary mail whose earlier copy only shares its subject is stale_target too",
+          "[checker]")
+{
+    Scene scene;
+    FoundItem& old = scene.after.mail.items[0];
+    REQUIRE(scene.expected.items[0].mail->internet_message_id);
+    scene.before.mail.insert(old.id);
+    old.internet_message_id = "<another@id>";
+
+    const ItemCheck item = scene.run_one(0);
+
+    CHECK(item.outcome == CheckOutcome::error);
+    CHECK(item.error_code == "stale_target");
 }
 
 // --- Failure paths: fields that don't agree ---------------------------------------------

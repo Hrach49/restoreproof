@@ -43,14 +43,25 @@ jobs:
           "VCPKG_COMMIT=$baseline" >> $env:GITHUB_ENV
           "VCPKG_ROOT=$env:RUNNER_TEMP\vcpkg" >> $env:GITHUB_ENV
           "VCPKG_DEFAULT_BINARY_CACHE=$env:RUNNER_TEMP\vcpkg-cache" >> $env:GITHUB_ENV
+          "RUNNER_IMAGE=$env:ImageOS-$env:ImageVersion" >> $env:GITHUB_ENV
           New-Item -ItemType Directory -Force "$env:RUNNER_TEMP\vcpkg-cache" | Out-Null
 
+      # The key names the runner image as well as vcpkg.json: vcpkg's package
+      # hashes take in the compiler and tools of the image, and a cache is only
+      # saved under a key that doesn't exist yet. With vcpkg.json alone in the
+      # key, an image update that changed the compiler left a cache no package
+      # of which matched, never replaced: every run rebuilt OpenSSL and the
+      # rest (about 20 minutes). Now a new image gets a new key; the restore
+      # keys still bring the newest older cache, whose packages are reused if
+      # the image update didn't change their hashes.
       - name: Cache vcpkg binaries
         uses: actions/cache@v6
         with:
           path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
-          key: vcpkg-${{ runner.os }}-${{ hashFiles('worker/vcpkg.json') }}
-          restore-keys: vcpkg-${{ runner.os }}-
+          key: vcpkg-${{ runner.os }}-${{ env.RUNNER_IMAGE }}-${{ hashFiles('worker/vcpkg.json') }}
+          restore-keys: |
+            vcpkg-${{ runner.os }}-${{ env.RUNNER_IMAGE }}-
+            vcpkg-${{ runner.os }}-
 
       - name: Install vcpkg
         run: |
@@ -111,17 +122,15 @@ jobs:
       - name: Build (coverage)
         run: cmake --build --preset coverage
 
-      # --cover_children follows ctest into each rptests.exe process and, via
-      # tests/run_exe_test.cmake, into each rpworker.exe run. --sources limits
-      # the report to rpcore (src/, include/) and rpworker's main() (app/), so
-      # tests, Catch2 and the STL don't count. OpenCppCoverage returns the exit
-      # code of ctest, so a failing test fails this step.
+      # tools/run_coverage.ps1 runs rptests.exe once, every test case in one
+      # process, then ctest's rpworker.exe tests (label `exe`), and merges the
+      # two into build/coverage/coverage.xml. One process per test case, as
+      # ctest runs them, took 48 minutes here: OpenCppCoverage read rptests'
+      # PDB again for each. The Release ctest above still runs each test case
+      # in its own process. A failing test fails this step.
       - name: Test under OpenCppCoverage
         run: |
-          OpenCppCoverage --quiet --cover_children `
-            --sources "$PWD\src" --sources "$PWD\include" --sources "$PWD\app" `
-            --export_type "cobertura:$PWD\build\coverage\coverage.xml" `
-            -- ctest --preset coverage
+          ./tools/run_coverage.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       # Fails below RP_MIN_LINE_COVERAGE, below 100% line coverage on

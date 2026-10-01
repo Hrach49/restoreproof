@@ -7,6 +7,56 @@ Format: date, decision, reason, alternatives rejected.
 
 ---
 
+## 2026-10-01 — Worker coverage in one process; the vcpkg cache key names the runner image (proposed)
+
+Amends "Worker coverage via OpenCppCoverage" (2026-09-22): the tool and the gate stay, how the
+tests run under it changes.
+
+**Decision.**
+
+1. **The coverage run starts `rptests.exe` once.** `worker/tools/run_coverage.ps1`, which CI and
+   `docs/testing.md` both use, makes two OpenCppCoverage runs and merges them: `rptests.exe`
+   with every Catch2 test case in one process (exported as OpenCppCoverage's binary format),
+   then the `rpworker.exe` tests through `ctest --preset coverage -L exe` with
+   `--cover_children` and `--input_coverage`, exported as the Cobertura file the gate reads.
+   `rp_add_exe_test` gives each exe test the ctest label `exe`. `--modules` names the one exe
+   of each run, so the vcpkg DLLs' PDBs aren't read.
+2. **Test cases are still isolated where it is cheap.** `ctest --preset dev` and CI's Release
+   `ctest --preset ci` run each test case in its own process, as before. Only the coverage run
+   shares one.
+3. **CI's vcpkg cache key is `vcpkg-<os>-<image OS>-<image version>-<hash of vcpkg.json>`**,
+   with the restore keys falling back to the same image, then to any older cache.
+
+**Reason.** On 2026-10-01 the Worker job took 96 minutes on `main`. 48 of them were "Test under
+OpenCppCoverage": `catch_discover_tests` registers each of the 1,038 test cases as a ctest test,
+and OpenCppCoverage reads rptests' PDB (229 MB) and sets its breakpoints again for each
+process. On the dev laptop the per-test-case run's ctest times summed to 58 minutes; the
+script took 12.6 minutes (the 26 exe tests 24 s of it), and its report passed
+`coverage_gate.py` (97.8% line, the strict files at 100%, `app/main.cpp` present). Another 24
+minutes were vcpkg rebuilding every dependency (OpenSSL alone 12 to 17 minutes) in three of
+that day's four runs: the cache key held only `vcpkg.json`'s hash, a runner image update had
+changed the compiler, so no cached package matched ("Restored 0 package(s)"), and
+`actions/cache` never saves under a key that already exists, so the stale cache was never
+replaced.
+
+**Alternatives rejected.** *`ctest -j` under OpenCppCoverage*: still a thousand PDB loads, on a
+4-core runner. *Coverage only on `main`, not on pull requests*: the gate is the point of the
+PR check. *The compiler version in the cache key instead of the image*: vcpkg's hashes also
+take in CMake and PowerShell, which change with the image too. *A cache saved on every run
+under a per-run key*: a few hundred megabytes per run against the repository's cache quota.
+
+**Open.**
+- One of three single-process runs without OpenCppCoverage exited -1 after 150 s without
+  Catch2's summary and wasn't reproduced; another coverage run may have been using the build
+  folder at the time. If the coverage step fails where the Release ctest passes, suspect a
+  test that depends on another's state and fix the test.
+- The cache folder carries packages of older images forward until GitHub evicts the cache.
+  Small today; delete the caches by hand if it grows.
+- The Release build (11 to 16 minutes) and the coverage build (5 to 6.5) are the next largest
+  steps; precompiled headers for Catch2 and nlohmann-json in `rptests` are untried.
+
+---
+
 ## 2026-10-01 — W3.2 live run: a file's cTag moves on a restore over it; a mail already there isn't restored at all (proposed)
 
 Amends the W3.2 entry below (point 1 and its Open check) with what the live run showed

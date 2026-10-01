@@ -377,10 +377,12 @@ public:
     // reports how that went. Checks each item's target with TargetGuard
     // (W2.7, rp/target_guard.hpp) before any call to the backup product, and
     // each restore request again just before it is sent; a refusal is a
-    // SafetyViolation. An error it throws whose message ends with
-    // kNothingRestored promises that no restore was sent; any other may come
-    // after one was, so items may be in the targets (`rpworker restore` says
-    // so).
+    // SafetyViolation. A connector that reads the targets through Graph lets
+    // Graph's errors (rp/graph_errors.hpp) out as they are, so a caller can
+    // tell Graph from the backup product. An error it throws whose message
+    // ends with kNothingRestored promises that no restore was sent; any other
+    // may come after one was, so items may be in the targets (`rpworker
+    // restore` says so).
     virtual RestoreResult restore_sample(const RestoreSpec& spec) = 0;
 
     // W2.6: the random half's candidates in `query`'s restore point, never

@@ -106,10 +106,12 @@ public:
     //  1. the target guard's layer 1 (W2.7, rp/target_guard.hpp), before any
     //     Veeam request: every item checked, each target the spec uses
     //     resolved through Graph (made by options.make_graph if need be); a
-    //     refusal is its connector::SafetyViolation, Graph's errors connector
-    //     ones (AuthError and PermissionError connector::AuthError,
-    //     TransientError, the rest, NotFoundError included, connector::Error);
-    //     without a Graph client connector::Error, no request. An empty spec
+    //     refusal is its connector::SafetyViolation; Graph's errors pass out
+    //     as Graph's (rp/graph_errors.hpp), of their own type, their message
+    //     ending with connector::kNothingRestored, so the run blames Graph and
+    //     not the backup product (a target Graph can't find is a
+    //     graph::NotFoundError, never connector::NotFoundError); without a
+    //     Graph client connector::Error, no request. An empty spec
     //     then returns not_run, still without one;
     //  2. the organisation, as list_restore_points finds it (none is
     //     connector::Error here), whose settings must be of the expected

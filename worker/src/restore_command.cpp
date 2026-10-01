@@ -560,9 +560,9 @@ std::exception_ptr read_before(graph::GraphClient& client, IHttpClient& download
 // hashed, and each file `hash_file` takes (this run's copies of expected
 // files, verification::hash_filter) downloaded and hashed, a docx or xlsx by
 // office-v1 too; every other file, an earlier run's leftover included, is
-// listed only. A type whose read fails keeps its error code
-// (verification::read_error_code), and its line goes on `err`; anything that
-// isn't an infrastructure failure is thrown.
+// listed only. A type whose read fails with a Graph error keeps its error
+// code (verification::read_error_code), and its line goes on `err`; anything
+// else (an rp::ConfigError included) is thrown.
 void read_after(graph::GraphClient& client, IHttpClient& download,
                 const connector::RestoreTargets& targets, const connector::RestoreSpec& spec,
                 const std::shared_ptr<spdlog::logger>& logger,
@@ -582,7 +582,7 @@ void read_after(graph::GraphClient& client, IHttpClient& download,
         }
         try {
             target.items = list();
-        } catch (const std::exception& e) {
+        } catch (const graph::GraphError& e) {
             target.error_code = verification::read_error_code(std::current_exception());
             target.items.clear();
             err << "check error: " << e.what() << '\n';
@@ -672,14 +672,17 @@ int run_restore(std::span<const std::string_view> args, std::ostream& out, std::
                 }
             }
             if (output_lost) {
+                // With or without a restore, the status is said somewhere.
+                err << "error: writing the output failed";
                 if (result) {
-                    err << "error: writing the output failed after the restore ran (run "
-                        << run_id << ", restore " << connector::to_string(result->status) << ": "
-                        << result->items_restored << " of " << result->items_sent
-                        << " item(s) restored); run status "
-                        << verification::to_string(verdict.status)
-                        << (verdict.error_code.empty() ? "" : " " + verdict.error_code) << '\n';
+                    err << " after the restore ran (run " << run_id << ", restore "
+                        << connector::to_string(result->status) << ": " << result->items_restored
+                        << " of " << result->items_sent << " item(s) restored)";
+                } else {
+                    err << " (run " << run_id << ")";
                 }
+                err << "; run status " << verification::to_string(verdict.status)
+                    << (verdict.error_code.empty() ? "" : " " + verdict.error_code) << '\n';
                 code = code == exit_code::ok ? exit_code::config : code;
             }
             for (const verification::StatusWarning& warning : verdict.warnings) {
@@ -691,17 +694,19 @@ int run_restore(std::span<const std::string_view> args, std::ostream& out, std::
             return exit_code::config;
         }
     };
-    // The exit code of an exception: before the run line, `code` (its line is
-    // already on `err`); after it, the status of the stop it makes.
-    const auto stopped = [&](int code) {
-        return phase ? finish(verification::stop_reason(std::current_exception(), *phase),
-                              nullptr, false)
-                     : code;
+    // The exit code of the exception being handled (its line is already on
+    // `err`), from the stop it makes (rp/run_status.hpp), the one mapping of
+    // exceptions to codes: before the run line, that code's exit code; after
+    // it, the run's status.
+    const auto stopped = [&] {
+        const verification::RunStop stop = verification::stop_reason(
+            std::current_exception(), phase.value_or(verification::RunPhase::before_restore));
+        return phase ? finish(stop, nullptr, false) : verification::exit_code_of(stop.error_code);
     };
-    const auto restore_failed = [&](const connector::Error& e, int code) {
-        report(err, "restore error: ", e, code);
+    const auto restore_failed = [&](const std::exception& e) {
+        err << "restore error: " << e.what() << '\n';
         restore_note(e.what());
-        return stopped(code);
+        return stopped();
     };
 
     // Everything that can throw is in here, the output included, so no
@@ -844,9 +849,15 @@ int run_restore(std::span<const std::string_view> args, std::ostream& out, std::
                        verification::hash_filter(*expected, snapshot), after, err);
             checked = verification::check(*expected, snapshot, after, now);
         } catch (...) {
-            // Its message, if it has one, may not be safe to show.
-            err << "check error: unexpected failure\n"
-                   "restore error: the restore had started: items may be in the restore targets "
+            try {
+                throw;
+            } catch (const ConfigError& e) {
+                err << "check error: " << e.what() << '\n';
+            } catch (...) {
+                // Its message, if it has one, may not be safe to show.
+                err << "check error: unexpected failure\n";
+            }
+            err << "restore error: the restore had started: items may be in the restore targets "
                    "(run "
                 << run_id << ")\n";
             return finish(verification::stop_reason(std::current_exception(), *phase), nullptr,
@@ -862,25 +873,24 @@ int run_restore(std::span<const std::string_view> args, std::ostream& out, std::
         }
         return finish(std::nullopt, &*checked, output_lost);
     } catch (const ConfigError& e) {
-        report(err, "config error: ", e, exit_code::config);
-        return stopped(exit_code::config);
+        err << "config error: " << e.what() << '\n';
+        return stopped();
     } catch (const sampling::ManifestError& e) {
-        report(err, "config error: ", e, exit_code::config);
-        return stopped(exit_code::config);
+        err << "config error: " << e.what() << '\n';
+        return stopped();
     } catch (const connector::UnknownConnectorError& e) {
-        report(err, "config error: ", e, exit_code::config);
-        return stopped(exit_code::config);
-    } catch (const connector::AuthError& e) {
-        return restore_failed(e, exit_code::auth);
-    } catch (const connector::TransientError& e) {
-        return restore_failed(e, exit_code::transient);
+        err << "config error: " << e.what() << '\n';
+        return stopped();
     } catch (const connector::Error& e) {
-        return restore_failed(e, exit_code::service);
+        return restore_failed(e);
+    } catch (const graph::GraphError& e) {
+        // restore_sample's target guard, which lets Graph's errors out as Graph's.
+        return restore_failed(e);
     } catch (...) {
         // Its message, if it has one, may not be safe to show.
         err << "error: unexpected failure\n";
         restore_note();
-        return stopped(exit_code::config);
+        return stopped();
     }
 }
 

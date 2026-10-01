@@ -654,14 +654,20 @@ status pass: 1 of 1 item(s) verified: manifest 1, fields 0, metadata 0
   restored); run status <pass|fail|error>[ <code>]`, so the run's status is still on record.
   The check still runs and the warnings still go to stderr; the exit code is the
   status's, but 1 for a `pass`, since its output was lost. Before the restore, a stdout that
-  can't be written stops the command (`error: unexpected failure`, exit 1).
+  can't be written stops the command (`error: unexpected failure`, exit 1); once the run line
+  is out, its lost status line is said too: `error: writing the output failed (run <run ID>);
+  run status <pass|fail|error>[ <code>]`.
 - If choosing the sample or the restore itself fails with an error, the error is one line on
   stderr (`restore error: <message>`) and the status line names its code (`backup_auth`,
   `backup_transient`, `not_in_backup`, `target_guard`, `backup`; `config` for the restore
-  credential's certificate). After the restore started the tables can't be printed and items
-  may already be in the targets: unless Veeam's or the guard's message ends with `nothing was
-  restored`, a second line says so, `restore error: the restore had started: items may be in
-  the restore targets (run <run ID>)`. Check with `rpworker graph list`.
+  credential's certificate; `graph_auth`, `graph_permission`, `graph_transient` or `graph` when
+  the guard couldn't read a restore target through Graph, never a backup code). After the
+  restore started the tables can't be printed and items may already be in the targets: unless
+  Veeam's or the guard's message ends with `nothing was restored`, a second line says so,
+  `restore error: the restore had started: items may be in the restore targets (run <run
+  ID>)`, and the status reads `the restore didn't complete: ...; items may be in the restore
+  targets`; with that promise it reads `the restore didn't start: ...; nothing was restored`.
+  Check with `rpworker graph list`.
 - The output is UTF-8; control characters in Veeam's text are shown as spaces. Warnings go to
   stderr only.
 

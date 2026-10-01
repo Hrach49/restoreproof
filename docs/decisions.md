@@ -7,6 +7,49 @@ Format: date, decision, reason, alternatives rejected.
 
 ---
 
+## 2026-10-02 — W3.3 second review: Graph is blamed as Graph, one code table, "nothing restored" kept (proposed)
+
+Amends the W3.3 build notes below (points 1 and 7) after the PR #147 review's eight findings.
+
+1. **The guard's Graph errors stay Graph's.** `restore_sample`'s target guard (layer 1) used to
+   turn Graph's errors into connector ones, so a Graph 429 read `error backup_transient` and a
+   Graph 403 "the backup product refused the credentials". It now rethrows each as its own
+   Graph type with `; nothing was restored` appended (it runs before any Veeam call), so the
+   status is `graph_transient`, `graph_permission`, `graph_auth` or `graph`, and no "the
+   restore had started" note follows. A target Graph can't find is a `graph::NotFoundError`
+   (`graph`), still never `connector::NotFoundError`. `IConnector::restore_sample` documents
+   that a connector reading targets through Graph lets Graph's errors out.
+2. **`RunStop` carries `nothing_restored`, not `what()`.** The copied `message` was never
+   read (point 1 of the build notes said it was kept "for the evidence"; it wasn't). In the
+   restore phase the stop records whether the error promised `connector::kNothingRestored`,
+   and the status line says which: `the restore didn't start: ...; nothing was restored` or
+   `the restore didn't complete: ...; items may be in the restore targets`. The verdict and
+   the `status` object gain `restore_sent`, whether items may be in the targets, for W3.4's
+   cleanup, which can't read stderr.
+3. **One code table.** The stop texts, check codes, severity order and exit codes were four
+   parallel lists; a check code missing from the severity list made row 7 read past its end.
+   They are now one `kCodes` table with a `static_assert` that every check code ranks, each
+   rank once. `exit_code_of(code)` is exposed, and `rpworker restore` uses it with
+   `stop_reason` for an exception before its run line too, so the catch clauses no longer
+   carry exit codes of their own (no exit code changed).
+4. **Graph's errors map once.** `stop_reason` uses the checker's `read_error_code` for every
+   `graph::GraphError`. `read_error_code` no longer turns a `ConfigError` into `graph`: a
+   configuration problem is a `config` stop in every phase (the read-back included, where it
+   now stops the run, exit 1, instead of making its items `error graph`, exit 4).
+5. **`backup_session` details: counts only, inside the parenthesis too.** The pattern
+   `<n> item(s) processed[ (<no parentheses>)]` let `(alice@contoso.com: mailbox not found)`
+   through. The parenthesis now holds only `<n> <word>` pairs of Veeam's own words
+   (`success`/`successes`, `warning(s)`, `failure(s)`, `error(s)`, `skipped`).
+6. **A lost status line is always said.** When stdout fails after the run line but no
+   restore ran (an empty sample, a stop before the restore), stderr now reads `error: writing
+   the output failed (run <id>); run status <status>[ <code>]`; before, only a lost output
+   after a restore was said.
+
+**Reason.** The review's findings: the status must name the service that failed, never a
+tenant value, and the evidence must say whether the targets may hold this run's copies.
+
+---
+
 ## 2026-10-01 — W3.3 build notes: what the build settled beyond the approved table (proposed)
 
 Amends nothing in the approved W3.3 entry below; it records what building it settled where that

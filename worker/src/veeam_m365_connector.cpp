@@ -2,6 +2,7 @@
 
 #include <rp/client_assertion.hpp>
 #include <rp/graph_errors.hpp>
+#include <rp/target_guard_graph.hpp>
 #include <rp/target_guard_veeam.hpp>
 
 #include "command_config.hpp"
@@ -48,6 +49,32 @@ using veeam_browse::shown_text;
 using veeam_browse::text_at;
 using veeam_explore::find_organization;
 using veeam_explore::shown;
+
+// Throws a copy of `e`, of its own type, whose message ends with
+// connector::kNothingRestored: the guard's layer 1 failed before any Veeam call.
+[[noreturn]] void rethrow_nothing_restored(const graph::GraphError& e)
+{
+    const std::string message = std::string{e.what()} + std::string{connector::kNothingRestored};
+    if (const auto* p = dynamic_cast<const graph::PermissionError*>(&e)) {
+        throw graph::PermissionError(message, p->grant(), e.status(), e.code(), e.inner_code(),
+                                     e.request_id());
+    }
+    if (const auto* t = dynamic_cast<const graph::TransientError*>(&e)) {
+        throw graph::TransientError(message, e.status(), e.code(), e.inner_code(),
+                                    e.request_id(), t->retry_after());
+    }
+    if (dynamic_cast<const graph::AuthError*>(&e)) {
+        throw graph::AuthError(message, e.status(), e.code(), e.inner_code(), e.request_id());
+    }
+    if (dynamic_cast<const graph::NotFoundError*>(&e)) {
+        throw graph::NotFoundError(message, e.status(), e.code(), e.inner_code(), e.request_id());
+    }
+    if (dynamic_cast<const graph::WrongTargetError*>(&e)) {
+        throw graph::WrongTargetError(message, e.status(), e.code(), e.inner_code(),
+                                      e.request_id());
+    }
+    throw graph::GraphError(message, e.status(), e.code(), e.inner_code(), e.request_id());
+}
 
 connector::RestorePoint to_connector(const RestorePoint& point)
 {
@@ -955,19 +982,15 @@ connector::RestoreResult VeeamM365Connector::restore_sample(const connector::Res
         throw connector::Error(
             "veeam_m365: no Graph client, so the target guard can't run; nothing was restored");
     }
+    // Graph's errors pass out as Graph's, so the run's status blames Graph and
+    // not the backup product; a restore target Graph can't find is a
+    // graph::NotFoundError, never connector::NotFoundError (an item missing
+    // from the backup). Each says that nothing was restored.
     std::optional<CheckedTargets> checked;
     try {
         checked.emplace(TargetGuard(*graph_, guard_options_).check_spec(spec));
-    } catch (const graph::AuthError& e) {
-        throw connector::AuthError(e.what());
-    } catch (const graph::PermissionError& e) {
-        throw connector::AuthError(e.what());
-    } catch (const graph::TransientError& e) {
-        throw connector::TransientError(e.what());
     } catch (const graph::GraphError& e) {
-        // A NotFoundError among them: a restore target Graph can't find is a
-        // configuration problem, not an item missing from the backup.
-        throw connector::Error(e.what());
+        rethrow_nothing_restored(e);
     }
     if (spec.item_count() == 0) {
         return {};

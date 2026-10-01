@@ -34,45 +34,96 @@ using nlohmann::json;
 constexpr std::string_view kInternal = "internal";
 constexpr std::string_view kBackupInfrastructure = "backup_infrastructure";
 
-// Decision point 2: the unchecked items' codes, the most severe first.
-constexpr std::array<std::string_view, 7> kSeverity{
-    "target_guard", "graph_auth",      "graph_permission", "backup_infrastructure",
-    "graph",        "graph_transient", "stale_target"};
+constexpr int kNoSeverity = -1;
 
-// The codes CheckResult's item errors carry.
-constexpr std::array<std::string_view, 6> kCheckCodes{
-    "graph_auth", "graph_permission", "graph_transient", "target_guard", "graph", "stale_target"};
-
-// A stop's code, and what it says in the status line: never a tenant value.
-struct StopCode {
+// Decision point 2, the one vocabulary: each error code, what it says in a
+// stop's status line (empty: never a stop's code), whether CheckResult's item
+// errors carry it, its rank among the unchecked items' codes (0 the most
+// severe; kNoSeverity: never an unchecked item's) and its exit code. Never a
+// tenant value. restore_contradiction, a row's own code, isn't here: like
+// any code not in the table, its exit code is exit_code::service.
+struct ErrorCode {
     std::string_view code;
-    std::string_view text;
+    std::string_view stop_text;
+    bool check = false;
+    int severity = kNoSeverity;
+    int exit = exit_code::service;
 };
 
-constexpr std::array<StopCode, 12> kStopCodes{{
-    {"config", "the configuration isn't usable"},
-    {"internal", "an unexpected failure"},
-    {"backup_auth", "the backup product refused the credentials"},
-    {"backup_transient", "the backup product couldn't be reached or asked to try later"},
-    {"not_in_backup", "the client or a sampled item isn't in the backup"},
-    {"no_restore_point", "no restore point to restore from"},
-    {"target_guard", "the restore-target guard refused"},
-    {"backup", "the backup product reported an error"},
-    {"graph_auth", "Microsoft Graph refused the Worker's sign-in"},
-    {"graph_permission", "Microsoft Graph refused a permission the Worker relies on"},
-    {"graph_transient", "Microsoft Graph couldn't be reached or asked to try later"},
-    {"graph", "Microsoft Graph reported an error"},
+constexpr std::array<ErrorCode, 16> kCodes{{
+    {"config", "the configuration isn't usable", false, kNoSeverity, exit_code::config},
+    {"internal", "an unexpected failure", false, kNoSeverity, exit_code::config},
+    {"backup_auth", "the backup product refused the credentials", false, kNoSeverity,
+     exit_code::auth},
+    {"backup_transient", "the backup product couldn't be reached or asked to try later", false,
+     kNoSeverity, exit_code::transient},
+    {"not_in_backup", "the client or a sampled item isn't in the backup", false, kNoSeverity,
+     exit_code::service},
+    // In the vocabulary, not yet a stop's (docs/decisions.md, W3.3 build notes 8).
+    {"no_restore_point", "no restore point to restore from", false, kNoSeverity,
+     exit_code::service},
+    {"target_guard", "the restore-target guard refused", true, 0, exit_code::service},
+    {"backup", "the backup product reported an error", false, kNoSeverity, exit_code::service},
+    {"graph_auth", "Microsoft Graph refused the Worker's sign-in", true, 1, exit_code::auth},
+    {"graph_permission", "Microsoft Graph refused a permission the Worker relies on", true, 2,
+     exit_code::auth},
+    {"backup_infrastructure", "", false, 3, exit_code::service},
+    {"graph", "Microsoft Graph reported an error", true, 4, exit_code::service},
+    {"graph_transient", "Microsoft Graph couldn't be reached or asked to try later", true, 5,
+     exit_code::transient},
+    {"stale_target", "", true, 6, exit_code::service},
+    {"empty_sample", "", false, kNoSeverity, exit_code::service},
+    {"not_run", "", false, kNoSeverity, exit_code::service},
 }};
 
-const StopCode* stop_code(std::string_view code) noexcept
+// Every item error's code ranks, or row 7 would have nothing to pick; each
+// rank once, 0 to n - 1.
+consteval bool codes_hold_together()
 {
-    const auto it = std::ranges::find(kStopCodes, code, &StopCode::code);
-    return it == kStopCodes.end() ? nullptr : &*it;
+    int ranked = 0;
+    for (const ErrorCode& c : kCodes) {
+        if (c.check && c.severity == kNoSeverity) {
+            return false;
+        }
+        ranked += c.severity != kNoSeverity ? 1 : 0;
+    }
+    for (int rank = 0; rank < ranked; ++rank) {
+        int n = 0;
+        for (const ErrorCode& c : kCodes) {
+            n += c.severity == rank ? 1 : 0;
+        }
+        if (n != 1) {
+            return false;
+        }
+    }
+    return true;
+}
+static_assert(codes_hold_together(), "every check code ranks, each rank once");
+
+const ErrorCode* find_code(std::string_view code) noexcept
+{
+    const auto it = std::ranges::find(kCodes, code, &ErrorCode::code);
+    return it == kCodes.end() ? nullptr : &*it;
+}
+
+// A stop's code: one with a status-line text.
+const ErrorCode* stop_code(std::string_view code) noexcept
+{
+    const ErrorCode* found = find_code(code);
+    return found && !found->stop_text.empty() ? found : nullptr;
 }
 
 bool is_check_code(std::string_view code) noexcept
 {
-    return std::ranges::find(kCheckCodes, code) != kCheckCodes.end();
+    const ErrorCode* found = find_code(code);
+    return found && found->check;
+}
+
+// An unchecked item's code's rank; row 1 has made sure each has one.
+int severity_of(std::string_view code) noexcept
+{
+    const ErrorCode* found = find_code(code);
+    return found ? found->severity : kNoSeverity;
 }
 
 // Whether a value is one of its enum's: a value cast from outside it can't
@@ -294,16 +345,17 @@ ItemVerdict item_verdict(const RunFacts& facts, std::size_t i)
 }
 
 // Whether a session's details read as the backup's counts, "<n> item(s)
-// processed" with an optional parenthesis of no parentheses, e.g. "5 items
-// processed (4 successes, 1 warning)". Any other text may name a tenant value
-// (an item, an address), so it never goes into a warning.
+// processed", then optionally a parenthesis of counts of Veeam's own words,
+// e.g. "5 items processed (4 successes, 1 warning)". Any other text, inside
+// the parenthesis too, may name a tenant value (an item, an address), so it
+// never goes into a warning.
 bool is_counts(const std::string& details)
 {
-    static const std::regex counts(R"(\d+ items? processed( \([^()]*\))?)");
-    return std::regex_match(details, counts) &&
-           std::ranges::none_of(details, [](char c) {
-               return static_cast<unsigned char>(c) < 0x20 || static_cast<unsigned char>(c) >= 0x7F;
-           });
+    static const std::string count =
+        R"(\d+ (successes|success|warnings?|failures?|errors?|skipped))";
+    static const std::regex counts(R"(\d+ items? processed( \()" + count + "(, " + count +
+                                   R"()*\))?)");
+    return std::regex_match(details, counts);
 }
 
 std::string or_dash(std::string text)
@@ -393,10 +445,16 @@ RunVerdict error_verdict(RunVerdict verdict, std::string_view code, std::string 
 
 std::string stop_message(const RunStop& stop)
 {
-    const std::string_view text = stop_code(stop.error_code)->text;
+    const std::string_view text = stop_code(stop.error_code)->stop_text;
     switch (stop.phase) {
     case RunPhase::restore:
-        return std::format("the restore didn't complete: {} ({})", text, stop.error_code);
+        if (stop.nothing_restored) {
+            return std::format("the restore didn't start: {} ({}); nothing was restored", text,
+                               stop.error_code);
+        }
+        return std::format(
+            "the restore didn't complete: {} ({}); items may be in the restore targets", text,
+            stop.error_code);
     case RunPhase::check:
         return std::format("the restored items couldn't be checked: {} ({})", text,
                            stop.error_code);
@@ -408,14 +466,31 @@ std::string stop_message(const RunStop& stop)
                        stop.error_code);
 }
 
+// Whether a restore may have been sent, so items may be in the targets: a
+// restore that ran, or a stop in the restore that didn't promise nothing was.
+bool restore_sent(const RunFacts& facts) noexcept
+{
+    if (facts.restore) {
+        return facts.restore->status != RestoreStatus::not_run;
+    }
+    return facts.stop && facts.stop->phase == RunPhase::restore && !facts.stop->nothing_restored;
+}
+
 // "<code> <n>, ..." for the unchecked items, in severity order.
 std::string unchecked_codes(const std::vector<UncheckedItem>& unchecked)
 {
+    std::vector<const ErrorCode*> ranked;
+    for (const ErrorCode& c : kCodes) {
+        if (c.severity != kNoSeverity) {
+            ranked.push_back(&c);
+        }
+    }
+    std::ranges::sort(ranked, {}, &ErrorCode::severity);
     std::string text;
-    for (const std::string_view code : kSeverity) {
-        const auto n = std::ranges::count(unchecked, code, &UncheckedItem::error_code);
+    for (const ErrorCode* c : ranked) {
+        const auto n = std::ranges::count(unchecked, c->code, &UncheckedItem::error_code);
         if (n > 0) {
-            text += std::format("{}{} {}", text.empty() ? "" : ", ", code, n);
+            text += std::format("{}{} {}", text.empty() ? "" : ", ", c->code, n);
         }
     }
     return text;
@@ -455,7 +530,10 @@ RunStop stop_reason(std::exception_ptr error, RunPhase phase)
         throw std::invalid_argument("stop_reason: no exception");
     }
     const auto stop = [phase](std::string_view code, const std::exception& e) {
-        return RunStop{phase, std::string{code}, e.what()};
+        RunStop out{phase, std::string{code}};
+        out.nothing_restored = phase == RunPhase::restore &&
+                               std::string_view{e.what()}.ends_with(connector::kNothingRestored);
+        return out;
     };
     try {
         std::rethrow_exception(error);
@@ -465,16 +543,9 @@ RunStop stop_reason(std::exception_ptr error, RunPhase phase)
         return stop("config", e);
     } catch (const connector::UnknownConnectorError& e) {
         return stop("config", e);
-    } catch (const graph::WrongTargetError& e) {
-        return stop("target_guard", e);
-    } catch (const graph::AuthError& e) {
-        return stop("graph_auth", e);
-    } catch (const graph::PermissionError& e) {
-        return stop("graph_permission", e);
-    } catch (const graph::TransientError& e) {
-        return stop("graph_transient", e);
     } catch (const graph::GraphError& e) {
-        return stop("graph", e);
+        // The check's own mapping: a Graph failure has one code wherever it happens.
+        return stop(read_error_code(std::current_exception()), e);
     } catch (const connector::SafetyViolation& e) {
         return stop("target_guard", e);
     } catch (const connector::AuthError& e) {
@@ -486,9 +557,9 @@ RunStop stop_reason(std::exception_ptr error, RunPhase phase)
     } catch (const connector::Error& e) {
         return stop("backup", e);
     } catch (...) {
-        // Below: its message, if it has one, may not be safe to show.
+        // Below: an exception the Worker doesn't know promises nothing.
     }
-    return RunStop{phase, std::string{kInternal}, "unexpected failure"};
+    return RunStop{phase, std::string{kInternal}};
 }
 
 std::vector<Shortfall> shortfalls_of(const sampling::SampleRecord& record)
@@ -515,6 +586,7 @@ RunVerdict decide_status(const RunFacts& facts)
 {
     RunVerdict verdict;
     verdict.items = facts.expected ? facts.expected->items.size() : 0;
+    verdict.restore_sent = restore_sent(facts);
     // Row 1.
     if (const std::optional<std::string> why = inconsistency(facts)) {
         return error_verdict(std::move(verdict), kInternal,
@@ -587,17 +659,17 @@ RunVerdict decide_status(const RunFacts& facts)
     }
     // Row 7.
     if (!verdict.unchecked.empty()) {
-        const auto code = std::ranges::find_if(kSeverity, [&](std::string_view c) {
-            return std::ranges::find(verdict.unchecked, c, &UncheckedItem::error_code) !=
-                   verdict.unchecked.end();
-        });
+        const UncheckedItem& worst = std::ranges::min(
+            verdict.unchecked, {},
+            [](const UncheckedItem& item) { return severity_of(item.error_code); });
         std::string message =
             std::format("{} of {} item(s) couldn't be checked ({})", verdict.unchecked.size(), n,
                         unchecked_codes(verdict.unchecked));
         if (verdict.verified() > 0) {
             message += std::format("; {} verified", verdict.verified());
         }
-        return error_verdict(std::move(verdict), *code, std::move(message));
+        const std::string code = worst.error_code;
+        return error_verdict(std::move(verdict), code, std::move(message));
     }
     // Row 8.
     verdict.status = RunStatus::pass;
@@ -615,6 +687,7 @@ json to_json(const RunVerdict& verdict)
         out["error_code"] = verdict.error_code;
     }
     out["message"] = verdict.message;
+    out["restore_sent"] = verdict.restore_sent;
     out["counts"] = {{"items", verdict.items},
                      {"verified", verdict.verified()},
                      {"failed", verdict.failed.size()},
@@ -636,6 +709,12 @@ json to_json(const RunVerdict& verdict)
     return out;
 }
 
+int exit_code_of(std::string_view error_code) noexcept
+{
+    const ErrorCode* found = find_code(error_code);
+    return found ? found->exit : exit_code::service;
+}
+
 int exit_code_of(const RunVerdict& verdict) noexcept
 {
     switch (verdict.status) {
@@ -646,17 +725,7 @@ int exit_code_of(const RunVerdict& verdict) noexcept
     case RunStatus::error:
         break;
     }
-    const std::string_view code = verdict.error_code;
-    if (code == "config" || code == kInternal) {
-        return exit_code::config;
-    }
-    if (code == "backup_auth" || code == "graph_auth" || code == "graph_permission") {
-        return exit_code::auth;
-    }
-    if (code == "backup_transient" || code == "graph_transient") {
-        return exit_code::transient;
-    }
-    return exit_code::service;
+    return exit_code_of(verdict.error_code);
 }
 
 } // namespace rp::verification

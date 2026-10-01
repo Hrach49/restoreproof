@@ -335,7 +335,7 @@ item `indexes` it concerns, in this order:
 
 | Code | When | Message |
 |---|---|---|
-| `backup_session` | per restore session whose result isn't exactly `Success` | `<kind> session <id>: <result>[ (<details>)]` (the backup's words, control characters as spaces) |
+| `backup_session` | per restore session whose result isn't exactly `Success`; its indexes are the items sent in that session (an empty session ID matches none) | `<kind> session <id>: <result>[ (<details>)]` (the ID and result with control characters as spaces; the details only when they read as the backup's counts, `<n> item(s) processed[ (<no parentheses>)]` in printable ASCII, since any other text may name an item or an address) |
 | `backup_item` | verified items the backup didn't report restored | `<n> verified item(s) the backup didn't report restored` |
 | `duplicate` | items more than one of this run's copies matched (the newest was compared) | `<n> item(s) had more than one restored copy; the newest was checked` |
 | `shortfall` | per type and half that took fewer than it wanted | `<kind> <canary\|random>: <taken> of <wanted>` |

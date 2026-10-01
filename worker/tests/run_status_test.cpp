@@ -855,7 +855,7 @@ TEST_CASE("run status: each warning's message and indexes, never an item's name 
     It dup = It{.duplicate = true, .session = "s-2"};
     Run run = run_of({match(), warned, dup}, RestoreStatus::partial, "Warning");
     run.restore.items[1].message = "Alice's secret plan.docx: access denied";
-    run.restore.sessions[1].details = "2 items processed\n(1 failure)";
+    run.restore.sessions[1].details = "2 items processed (1 failure)";
     run.restore.sessions[0].result = "Success";
     run.shortfalls = {{ItemKind::sharepoint, ItemSource::canary, 2, 1},
                       {ItemKind::onedrive, ItemSource::random, 2, 0}};
@@ -892,7 +892,34 @@ TEST_CASE("run status: each warning's message and indexes, never an item's name 
         const verification::RunVerdict v = verification::decide_status(bare.facts());
         REQUIRE(v.warnings.size() == 1);
         CHECK(v.warnings[0].message == "mail session -: -");
+        // An empty session ID names no session: it matches no item, even one
+        // whose own session ID is empty too.
+        CHECK(v.warnings[0].indexes.empty());
     }
+}
+
+TEST_CASE("run status: a backup_session warning keeps the backup's details only when they read "
+          "as its counts",
+          "[run_status]")
+{
+    const auto [details, message] = GENERATE(table<std::string, std::string>({
+        {"5 items processed (4 successes, 1 warning)",
+         "mail session s-1: Warning (5 items processed (4 successes, 1 warning))"},
+        {"1 item processed", "mail session s-1: Warning (1 item processed)"},
+        // Anything else may hold a tenant value: left out.
+        {"Failed to restore 'Budget Q3.xlsx' for alice@contoso.com", "mail session s-1: Warning"},
+        {"2 items processed\n(1 failure)", "mail session s-1: Warning"},
+        {"2 items processed (1 failure) for alice@contoso.com", "mail session s-1: Warning"},
+        {"items processed", "mail session s-1: Warning"},
+    }));
+    CAPTURE(details);
+    Run run = run_of({match()}, RestoreStatus::partial, "Warning");
+    run.restore.sessions[0].details = details;
+    const verification::RunVerdict verdict = verification::decide_status(run.facts());
+    REQUIRE(verdict.warnings.size() == 1);
+    CHECK(verdict.warnings[0].message == message);
+    CHECK_THAT(verdict.warnings[0].message, !ContainsSubstring("Budget"));
+    CHECK_THAT(verdict.warnings[0].message, !ContainsSubstring("alice"));
 }
 
 TEST_CASE("run status: shortfalls_of is the sample's NOTE rule", "[run_status]")

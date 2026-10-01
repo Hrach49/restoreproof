@@ -27,6 +27,7 @@ add_library(rpcore STATIC
     src/canary_manifest.cpp
     src/cert_export.cpp
     src/cert_pin.cpp
+    src/checker.cpp
     src/cli.cpp
     src/client_assertion.cpp
     src/command_config.cpp
@@ -101,6 +102,7 @@ add_executable(rptests
     tests/canary_manifest_test.cpp
     tests/cert_export_test.cpp
     tests/cert_pin_test.cpp
+    tests/checker_test.cpp
     tests/client_assertion_test.cpp
     tests/cli_test.cpp
     tests/command_config_test.cpp

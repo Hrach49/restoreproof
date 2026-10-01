@@ -186,9 +186,11 @@ struct Harness {
         serve_location(graph_http, dl_http, onedrive_location());
     }
 
-    // The mail listing with the bodies (--hash) and without.
+    // The guard's mailbox check (W3.2: list_mail runs it first), and the mail
+    // listing with the bodies (--hash) and without.
     void serve_mail(const HttpResponse& response)
     {
+        graph_http.on(HttpMethod::get, inbox_url(), {load_fixture("graph", "mailbox-inbox-200")});
         graph_http.on(HttpMethod::get, mail_list_url(true), {response});
         graph_http.on(HttpMethod::get, mail_list_url(false), {response});
     }
@@ -504,6 +506,12 @@ TEST_CASE("rpworker graph list maps each Graph failure to its exit code and prin
                 lab.serve(folder_url(), load_fixture("graph", "onedrive-folder-403-accessdenied"));
             },
             rp::exit_code::auth, std::string{rp::graph::kOneDriveReadGrant.description}},
+        Row{"the guard refuses the mailbox (403 on its Inbox)", false,
+            [](Harness& lab) {
+                lab.serve(inbox_url(), load_fixture("graph", "mailbox-inbox-403-exchange"));
+            },
+            rp::exit_code::service,
+            "Graph refused the Worker app the Inbox of the mailbox test_mailbox names (403)"},
         Row{"404 on the mailbox", false,
             [](Harness& lab) {
                 lab.serve_mail(load_fixture("graph", "messages-404-unknown-user"));
@@ -708,10 +716,10 @@ TEST_CASE("rpworker graph list prints three empty tables for empty targets", "[g
     CHECK(result.exit_code == rp::exit_code::ok);
     CHECK(result.out == kEmptyOutput);
     CHECK(result.err.empty());
-    // The mailbox, then each file target's guard and listing; nothing downloaded.
-    CHECK(lab.graph_gets() == std::vector<std::string>{mail_list_url(hash), drive_url(),
-                                                       library_children_url(), folder_url(),
-                                                       folder_children_url()});
+    // The mailbox's guard and listing, then each file target's; nothing downloaded.
+    CHECK(lab.graph_gets() == std::vector<std::string>{inbox_url(), mail_list_url(hash),
+                                                       drive_url(), library_children_url(),
+                                                       folder_url(), folder_children_url()});
     CHECK(lab.dl_http.requests().empty());
     // The command's logger went to the Graph HTTP client too.
     CHECK(lab.make_graph_http_calls == 1);
@@ -744,7 +752,8 @@ TEST_CASE("rpworker graph list without --hash lists one item each and downloads 
         CAPTURE(url);
         CHECK_FALSE(url.ends_with("/content"));
     }
-    CHECK(lab.graph_gets().size() == 5);
+    // The mailbox's check and listing, each file target's guard and listing.
+    CHECK(lab.graph_gets().size() == 6);
     CHECK(lab.dl_http.requests().empty());
 }
 

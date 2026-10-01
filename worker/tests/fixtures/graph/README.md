@@ -61,6 +61,13 @@ answers 404 for an item the app may not read, so the lab can't provoke that 403 
   `SCRUBBED`; `@microsoft.graph.downloadUrl` is dropped from bodies. The tests serve the
   download from a second fake client and put their own sentinel in the link, which the
   sentinel test then looks for in the logs.
+- **W3.2's fields are not in the replies yet.** W3.2 widened the two `$select`s (mail:
+  `sentDateTime` and `createdDateTime`; files: `cTag`, `createdDateTime` and
+  `lastModifiedDateTime`) and the request lines of the `mail-list-*` and `*-children-*` files
+  were changed with them, to keep `lab`'s request-line check in step, but their bodies are
+  still the 2026-09-28 recordings without those fields, until the states are recorded again.
+  The tests read the new fields from a reply when it has them and put them into edited copies
+  where they need them; nothing here was given a field by hand.
 - **Tests read lab values from the files**, never spell them: a re-recording changes request
   IDs, and the scan in `graph_client_test.cpp` fails on any recorded GUID a test source spells
   other than its `stable` ones.

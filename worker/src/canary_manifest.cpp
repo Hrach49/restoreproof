@@ -5,6 +5,7 @@
 
 #include "folder_path.hpp"
 #include "name_key.hpp"
+#include "office_files.hpp"
 #include "path_utf8.hpp"
 #include "text_util.hpp"
 #include "uuid.hpp"
@@ -96,6 +97,41 @@ bool is_whole_second_utc(std::string_view value)
     return date.ok() && number(11, 2) < 24 && number(14, 2) < 60 && number(17, 2) < 60;
 }
 
+// The time at `object[key]` when it is "YYYY-MM-DDTHH:MM:SSZ" and real, else
+// a refusal naming `pointer/key`.
+std::string utc_at(const json& object, std::string_view key, const std::string& pointer)
+{
+    const auto it = object.find(std::string{key});
+    if (it == object.end() || !it->is_string() ||
+        !is_whole_second_utc(it->get_ref<const std::string&>())) {
+        refuse(pointer + "/" + std::string{key},
+               "must be \"YYYY-MM-DDTHH:MM:SSZ\", a real date and time in UTC");
+    }
+    return it->get<std::string>();
+}
+
+// The SHA-256 at `object[key]` when it is 64 lower-case hex digits, as the
+// Worker writes them, else a refusal naming `pointer/key`.
+std::string sha256_at(const json& object, std::string_view key, const std::string& pointer)
+{
+    const auto it = object.find(std::string{key});
+    if (it == object.end() || !it->is_string() || it->get_ref<const std::string&>().size() != 64 ||
+        !std::ranges::all_of(it->get_ref<const std::string&>(), [](char c) {
+            return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
+        })) {
+        refuse(pointer + "/" + std::string{key}, "must be 64 lower-case hex digits (a SHA-256)");
+    }
+    return it->get<std::string>();
+}
+
+// Whitespace or a control character: no address holds either.
+bool holds_space_or_control(std::string_view text)
+{
+    return std::ranges::any_of(text, [](char c) {
+        return static_cast<unsigned char>(c) <= 0x20 || c == 0x7F;
+    });
+}
+
 // Starts with "/" and has no ".." segment (folder_path.hpp, the guard's rule).
 bool is_manifest_folder_path(std::string_view path)
 {
@@ -131,19 +167,29 @@ CanaryMail read_mail(const json& entry, const std::string& pointer)
 {
     CanaryMail mail;
     mail.subject = text_at(entry, "subject", pointer);
-    const auto received = entry.find("received_at");
-    if (received == entry.end() || !received->is_string() ||
-        !is_whole_second_utc(received->get_ref<const std::string&>())) {
-        refuse(pointer + "/received_at",
-               "must be \"YYYY-MM-DDTHH:MM:SSZ\", a real date and time in UTC");
+    mail.received_at = utc_at(entry, "received_at", pointer);
+    // What the expected set compares with (W3.1).
+    mail.sender = text_at(entry, "sender", pointer);
+    if (std::ranges::count(mail.sender, '@') != 1) {
+        refuse(pointer + "/sender", "must hold exactly one \"@\" (an address)");
     }
-    mail.received_at = received->get<std::string>();
+    if (holds_space_or_control(mail.sender)) {
+        refuse(pointer + "/sender", "holds whitespace or a control character");
+    }
+    mail.sent_at = utc_at(entry, "sent_at", pointer);
+    mail.internet_message_id = text_at(entry, "internet_message_id", pointer);
+    if (std::ranges::any_of(mail.internet_message_id, [](char c) {
+            return static_cast<unsigned char>(c) < 0x20 || c == 0x7F;
+        })) {
+        refuse(pointer + "/internet_message_id", "holds a control character");
+    }
+    mail.body_normalization = one_of(entry, "body_normalization", pointer, {"text-v1"},
+                                     "must be \"text-v1\", the only one known");
+    mail.body_sha256 = sha256_at(entry, "body_sha256", pointer);
     const json& location = location_of(entry, pointer);
     mail.mailbox = text_at(location, "mailbox", pointer + "/location");
     // The target guard's rule: no address holds either.
-    if (std::ranges::any_of(mail.mailbox, [](char c) {
-            return static_cast<unsigned char>(c) <= 0x20 || c == 0x7F;
-        })) {
+    if (holds_space_or_control(mail.mailbox)) {
         refuse(pointer + "/location/mailbox", "holds whitespace or a control character");
     }
     if (is_restore_mailbox(mail.mailbox)) {
@@ -163,11 +209,23 @@ CanaryFile read_file(const json& entry, const std::string& pointer, bool sharepo
                                "must be \"bytes\" or \"office-v1\"") == "bytes"
                             ? ContentRule::bytes
                             : ContentRule::office_v1;
+    // The rule a restored copy can be checked by: office-v1 reads a docx or
+    // xlsx package, and a file SharePoint may rewrite never keeps its bytes.
+    const bool office_type = file.file_type == "docx" || file.file_type == "xlsx";
+    if ((file.content_rule == ContentRule::office_v1) != office_type) {
+        refuse(pointer + "/content_rule",
+               "must be \"office-v1\" for a docx or xlsx and \"bytes\" for a pdf, txt or png");
+    }
+    if (is_rewritten_office_file(file.name) != office_type) {
+        refuse(pointer + "/name",
+               "must be a name SharePoint rewrites (src/office_files.hpp) for a docx or xlsx, and only then");
+    }
     const auto size = entry.find("stored_size");
     if (size == entry.end() || !size->is_number_integer() || size->get<std::int64_t>() < 0) {
         refuse(pointer + "/stored_size", "must be an integer of 0 or more");
     }
     file.stored_size = size->get<std::int64_t>();
+    file.content_sha256 = sha256_at(entry, "content_sha256", pointer);
     const json& location = location_of(entry, pointer);
     const std::string where = pointer + "/location";
     const auto folder_path = location.find("folder_path");

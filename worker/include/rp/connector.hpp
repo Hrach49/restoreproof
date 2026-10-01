@@ -80,6 +80,8 @@ struct MailSelector {
     // Optional: when the message was received, "YYYY-MM-DDTHH:MM:SSZ" (the
     // manifest's received_at); set, the backup's copy must agree to the second.
     std::string received_at;
+
+    bool operator==(const MailSelector&) const = default;
 };
 
 struct SharePointSelector {
@@ -92,6 +94,8 @@ struct SharePointSelector {
     std::string list_id;
     // Optional: the size SharePoint stores (the manifest's stored_size); -1 = unchecked.
     std::int64_t size = -1;
+
+    bool operator==(const SharePointSelector&) const = default;
 };
 
 struct OneDriveSelector {
@@ -100,6 +104,8 @@ struct OneDriveSelector {
     std::string name;        // file name
     // Optional: the size OneDrive stores (the manifest's stored_size); -1 = unchecked.
     std::int64_t size = -1;
+
+    bool operator==(const OneDriveSelector&) const = default;
 };
 
 // One restore_sample call. RestoreTargets has no default, so a spec can't be
@@ -293,6 +299,16 @@ struct CandidateQuery {
     CandidateLimits limits;
 };
 
+// A mail candidate: its selector and what the backup lists of its header
+// beyond it (W3.1, the random mail's expected fields): the sender's display
+// name (Veeam's `from`, not an address) and the sent time,
+// "YYYY-MM-DDTHH:MM:SSZ" cut to the second. Empty: the backup didn't say.
+struct MailCandidate {
+    MailSelector selector;
+    std::string sender_name;
+    std::string sent_at;
+};
+
 // A file candidate: its selector (size -1) and the size the backup holds.
 struct SharePointCandidate {
     SharePointSelector selector;
@@ -322,7 +338,7 @@ struct BrowseRecord {
 };
 
 struct CandidatePool {
-    std::vector<MailSelector> mail;
+    std::vector<MailCandidate> mail;
     std::vector<SharePointCandidate> sharepoint;
     std::vector<OneDriveCandidate> onedrive;
     BrowseRecord mail_browse;

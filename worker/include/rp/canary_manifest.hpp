@@ -1,10 +1,12 @@
 #pragma once
 
 // lab/seed-manifest.json (seed-manifest.v1, shared/schemas/seed-manifest.v1.json):
-// the canary items, as far as the sampler (W2.6) uses them. W3.1 and W3.2 add
-// the fields they compare with. The rules are the loader's own, not the
+// the canary items, as far as the sampler (W2.6) and the expected set (W3.1)
+// use them: where each canary is, and the fields and content hash its
+// restored copy is compared with. The rules are the loader's own, not the
 // schema's: a pilot's manifest may hold another number of canaries, and a
-// field no rule names is ignored (docs/decisions.md 2026-09-30, W2.6).
+// field no rule names is ignored (docs/decisions.md 2026-09-30, W2.6, and
+// 2026-10-01, W3.1).
 
 #include <rp/connector.hpp>
 
@@ -29,6 +31,11 @@ struct CanaryMail {
     std::string folder;      // location.folder
     std::string subject;
     std::string received_at; // "YYYY-MM-DDTHH:MM:SSZ"
+    std::string sender;      // an address, as Graph's from.emailAddress.address
+    std::string sent_at;     // "YYYY-MM-DDTHH:MM:SSZ"
+    std::string internet_message_id;
+    std::string body_sha256;        // lower-case hex, of the body by body_normalization
+    std::string body_normalization; // "text-v1", the only one known
 };
 
 struct CanaryFile {
@@ -38,6 +45,8 @@ struct CanaryFile {
     std::string file_type; // pdf, docx, xlsx, txt or png
     ContentRule content_rule = ContentRule::bytes;
     std::int64_t stored_size = 0;
+    // Lower-case hex, by content_rule: what a restored copy is compared with.
+    std::string content_sha256;
     std::string folder_path; // location.folder_path, "/" first
     // sharepoint_file only: location.site_id (Graph), drive_id (Graph), list_id.
     std::string site_id;
@@ -70,10 +79,17 @@ public:
 // a GUID; entries that aren't an array of objects of kind mail,
 // sharepoint_file or onedrive_file; an id missing, empty or repeated; a mail
 // without subject, mailbox or folder, from a restoretest mailbox or one whose
-// address holds whitespace or a control character, or with a
-// received_at that isn't "YYYY-MM-DDTHH:MM:SSZ" or not a real date and time
-// (month 13, 31 September, hour 24, second 60); a file without name, with another
-// file_type or content_rule, a stored_size below 0, or a folder_path not
+// address holds whitespace or a control character, with a received_at or
+// sent_at that isn't "YYYY-MM-DDTHH:MM:SSZ" or not a real date and time
+// (month 13, 31 September, hour 24, second 60), a sender that isn't one "@"
+// with no whitespace or control character, an internet_message_id missing,
+// empty or with a control character, a body_normalization other than
+// "text-v1", or a body_sha256 that isn't 64 lower-case hex digits; a file
+// without name, with another file_type or content_rule, a content_rule other
+// than office-v1 for a docx or xlsx and bytes for a pdf, txt or png, a name
+// that is one SharePoint rewrites (src/office_files.hpp) for a pdf, txt or png or
+// isn't one for a docx or xlsx, a stored_size below
+// 0, a content_sha256 that isn't 64 lower-case hex digits, or a folder_path not
 // starting with "/" or with a ".." segment, a backslash or a colon; a SharePoint file whose site_id,
 // drive_id or list_id isn't a Graph site ID, a Graph drive ID or a GUID; a
 // OneDrive file without user; two subjects equal but for ASCII case; two

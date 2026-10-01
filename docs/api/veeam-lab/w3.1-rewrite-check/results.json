@@ -1,0 +1,1207 @@
+{
+  "run": "2026-10-01T11:27:53Z, folders rp-rewrite-check-20261001T112753Z (deleted after the run)",
+  "uploaded_by": {
+    "sharepoint": "admin, RestoreTarget library root",
+    "onedrive": "alice, OneDrive /RestoreTarget"
+  },
+  "files": {
+    "sharepoint/rp-rw-canary.docx": {
+      "uploaded": 3263,
+      "uploaded_sha256": "0e753ea2d65b48a88aedcc4f6740fe95aab0d115031ceb4628c0ae8ad11220b4",
+      "reads": [
+        {
+          "at": "t0",
+          "graph_size": 12865,
+          "downloaded": 12865,
+          "same_bytes": false,
+          "changed_parts": [
+            "[Content_Types].xml",
+            "[trash]/0000.dat",
+            "[trash]/0001.dat",
+            "[trash]/0002.dat",
+            "[trash]/0003.dat",
+            "_rels/.rels",
+            "customXml/_rels/item1.xml.rels",
+            "customXml/_rels/item2.xml.rels",
+            "customXml/_rels/item3.xml.rels",
+            "customXml/item1.xml",
+            "customXml/item2.xml",
+            "customXml/item3.xml",
+            "customXml/itemProps1.xml",
+            "customXml/itemProps2.xml",
+            "customXml/itemProps3.xml",
+            "docProps/core.xml",
+            "docProps/custom.xml",
+            "word/_rels/document.xml.rels"
+          ]
+        },
+        {
+          "at": "t+900s",
+          "graph_size": 12865,
+          "downloaded": 12865,
+          "same_bytes": false,
+          "changed_parts": [
+            "[Content_Types].xml",
+            "[trash]/0000.dat",
+            "[trash]/0001.dat",
+            "[trash]/0002.dat",
+            "[trash]/0003.dat",
+            "_rels/.rels",
+            "customXml/_rels/item1.xml.rels",
+            "customXml/_rels/item2.xml.rels",
+            "customXml/_rels/item3.xml.rels",
+            "customXml/item1.xml",
+            "customXml/item2.xml",
+            "customXml/item3.xml",
+            "customXml/itemProps1.xml",
+            "customXml/itemProps2.xml",
+            "customXml/itemProps3.xml",
+            "docProps/core.xml",
+            "docProps/custom.xml",
+            "word/_rels/document.xml.rels"
+          ]
+        }
+      ]
+    },
+    "sharepoint/rp-rw-deck.odp": {
+      "uploaded": 19222,
+      "uploaded_sha256": "f79fb754de77d075fef55ba77c2bc141140c83b9a49f642b66bc405ea91fd67b",
+      "reads": [
+        {
+          "at": "t0",
+          "graph_size": 19222,
+          "downloaded": 19222,
+          "same_bytes": true,
+          "changed_parts": []
+        },
+        {
+          "at": "t+900s",
+          "graph_size": 19222,
+          "downloaded": 19222,
+          "same_bytes": true,
+          "changed_parts": []
+        }
+      ]
+    },
+    "sharepoint/rp-rw-deck.ppam": {
+      "uploaded": 15508,
+      "uploaded_sha256": "c9a65a10e5c48bc2e0b661d1c04521556baf98f57f652bbd041239fc5dfd6401",
+      "reads": [
+        {
+          "at": "t0",
+          "graph_size": 15508,
+          "downloaded": 15508,
+          "same_bytes": true,
+          "changed_parts": []
+        },
+        {
+          "at": "t+900s",
+          "graph_size": 15508,
+          "downloaded": 15508,
+          "same_bytes": true,
+          "changed_parts": []
+        }
+      ]
+    },
+    "sharepoint/rp-rw-deck.ppt": {
+      "uploaded": 465920,
+      "uploaded_sha256": "2721628446c8514c23109f88ca0f7243d47a31d9cb3116b6cfb3e159becb5ad4",
+      "reads": [
+        {
+          "at": "t0",
+          "graph_size": 475648,
+          "downloaded": 475648,
+          "same_bytes": false,
+          "changed_parts": null
+        },
+        {
+          "at": "t+900s",
+          "graph_size": 475648,
+          "downloaded": 475648,
+          "same_bytes": false,
+          "changed_parts": null
+        }
+      ]
+    },
+    "sharepoint/rp-rw-deck.pptm": {
+      "uploaded": 15826,
+      "uploaded_sha256": "7c05958cdd0e97676cafadb7f1ffc8787b37f69d41239ce2bcc8fc310564cd9f",
+      "reads": [
+        {
+          "at": "t0",
+          "graph_size": 23220,
+          "downloaded": 23220,
+          "same_bytes": false,
+          "changed_parts": [
+            "[Content_Types].xml",
+            "[trash]/0000.dat",
+            "[trash]/0001.dat",
+            "[trash]/0002.dat",
+            "_rels/.rels",
+            "customXml/_rels/item1.xml.rels",
+            "customXml/_rels/item2.xml.rels",
+            "customXml/_rels/item3.xml.rels",
+            "customXml/item1.xml",
+            "customXml/item2.xml",
+            "customXml/item3.xml",
+            "customXml/itemProps1.xml",
+            "customXml/itemProps2.xml",
+            "customXml/itemProps3.xml",
+            "docProps/core.xml",
+            "docProps/custom.xml",
+            "ppt/_rels/presentation.xml.rels"
+          ]
+        },
+        {
+          "at": "t+900s",
+          "graph_size": 23220,
+          "downloaded": 23220,
+          "same_bytes": false,
+          "changed_parts": [
+            "[Content_Types].xml",
+            "[trash]/0000.dat",
+            "[trash]/0001.dat",
+            "[trash]/0002.dat",
+            "_rels/.rels",
+            "customXml/_rels/item1.xml.rels",
+            "customXml/_rels/item2.xml.rels",
+            "customXml/_rels/item3.xml.rels",
+            "customXml/item1.xml",
+            "customXml/item2.xml",
+            "customXml/item3.xml",
+            "customXml/itemProps1.xml",
+            "customXml/itemProps2.xml",
+            "customXml/itemProps3.xml",
+            "docProps/core.xml",
+            "docProps/custom.xml",
+            "ppt/_rels/presentation.xml.rels"
+          ]
+        }
+      ]
+    },
+    "sharepoint/rp-rw-deck.pptx": {
+      "uploaded": 15810,
+      "uploaded_sha256": "81b463819a4c238a2e6989c382dcfd04df2ada13546f78707d84000862025062",
+      "reads": [
+        {
+          "at": "t0",
+          "graph_size": 23182,
+          "downloaded": 23182,
+          "same_bytes": false,
+          "changed_parts": [
+            "[Content_Types].xml",
+            "[trash]/0000.dat",
+            "[trash]/0001.dat",
+            "[trash]/0002.dat",
+            "_rels/.rels",
+            "customXml/_rels/item1.xml.rels",
+            "customXml/_rels/item2.xml.rels",
+            "customXml/_rels/item3.xml.rels",
+            "customXml/item1.xml",
+            "customXml/item2.xml",
+            "customXml/item3.xml",
+            "customXml/itemProps1.xml",
+            "customXml/itemProps2.xml",
+            "customXml/itemProps3.xml",
+            "docProps/core.xml",
+            "docProps/custom.xml",
+            "ppt/_rels/presentation.xml.rels"
+          ]
+        },
+        {
+          "at": "t+900s",
+          "graph_size": 23182,
+          "downloaded": 23182,
+          "same_bytes": false,
+          "changed_parts": [
+            "[Content_Types].xml",
+            "[trash]/0000.dat",
+            "[trash]/0001.dat",
+            "[trash]/0002.dat",
+            "_rels/.rels",
+            "customXml/_rels/item1.xml.rels",
+            "customXml/_rels/item2.xml.rels",
+            "customXml/_rels/item3.xml.rels",
+            "customXml/item1.xml",
+            "customXml/item2.xml",
+            "customXml/item3.xml",
+            "customXml/itemProps1.xml",
+            "customXml/itemProps2.xml",
+            "customXml/itemProps3.xml",
+            "docProps/core.xml",
+            "docProps/custom.xml",
+            "ppt/_rels/presentation.xml.rels"
+          ]
+        }
+      ]
+    },
+    "sharepoint/rp-rw-doc.doc": {
+      "uploaded": 9216,
+      "uploaded_sha256": "4736faaa15f3789bb4519d21c29e19ec9bd5d539acc3e929a7b771f0b10da354",
+      "reads": [
+        {
+          "at": "t0",
+          "graph_size": 18944,
+          "downloaded": 18944,
+          "same_bytes": false,
+          "changed_parts": null
+        },
+        {
+          "at": "t+900s",
+          "graph_size": 18944,
+          "downloaded": 18944,
+          "same_bytes": false,
+          "changed_parts": null
+        }
+      ]
+    },
+    "sharepoint/rp-rw-doc.docm": {
+      "uploaded": 5397,
+      "uploaded_sha256": "26d68224137d265ab90cb937c5e9d4d3dc92bb906a71611e08feb0718d4fe2e6",
+      "reads": [
+        {
+          "at": "t0",
+          "graph_size": 12101,
+          "downloaded": 12101,
+          "same_bytes": false,
+          "changed_parts": [
+            "[Content_Types].xml",
+            "[trash]/0000.dat",
+            "[trash]/0001.dat",
+            "[trash]/0002.dat",
+            "customXml/_rels/item1.xml.rels",
+            "customXml/_rels/item2.xml.rels",
+            "customXml/_rels/item3.xml.rels",
+            "customXml/item1.xml",
+            "customXml/item2.xml",
+            "customXml/item3.xml",
+            "customXml/itemProps1.xml",
+            "customXml/itemProps2.xml",
+            "customXml/itemProps3.xml",
+            "docProps/core.xml",
+            "docProps/custom.xml",
+            "word/_rels/document.xml.rels"
+          ]
+        },
+        {
+          "at": "t+900s",
+          "graph_size": 12101,
+          "downloaded": 12101,
+          "same_bytes": false,
+          "changed_parts": [
+            "[Content_Types].xml",
+            "[trash]/0000.dat",
+            "[trash]/0001.dat",
+            "[trash]/0002.dat",
+            "customXml/_rels/item1.xml.rels",
+            "customXml/_rels/item2.xml.rels",
+            "customXml/_rels/item3.xml.rels",
+            "customXml/item1.xml",
+            "customXml/item2.xml",
+            "customXml/item3.xml",
+            "customXml/itemProps1.xml",
+            "customXml/itemProps2.xml",
+            "customXml/itemProps3.xml",
+            "docProps/core.xml",
+            "docProps/custom.xml",
+            "word/_rels/document.xml.rels"
+          ]
+        }
+      ]
+    },
+    "sharepoint/rp-rw-doc.docx": {
+      "uploaded": 5384,
+      "uploaded_sha256": "8e64c3fefc6609c964c70bf2c5d42e0946b7baf9542054455f4777d540e301ed",
+      "reads": [
+        {
+          "at": "t0",
+          "graph_size": 12073,
+          "downloaded": 12073,
+          "same_bytes": false,
+          "changed_parts": [
+            "[Content_Types].xml",
+            "[trash]/0000.dat",
+            "[trash]/0001.dat",
+            "[trash]/0002.dat",
+            "customXml/_rels/item1.xml.rels",
+            "customXml/_rels/item2.xml.rels",
+            "customXml/_rels/item3.xml.rels",
+            "customXml/item1.xml",
+            "customXml/item2.xml",
+            "customXml/item3.xml",
+            "customXml/itemProps1.xml",
+            "customXml/itemProps2.xml",
+            "customXml/itemProps3.xml",
+            "docProps/core.xml",
+            "docProps/custom.xml",
+            "word/_rels/document.xml.rels"
+          ]
+        },
+        {
+          "at": "t+900s",
+          "graph_size": 12073,
+          "downloaded": 12073,
+          "same_bytes": false,
+          "changed_parts": [
+            "[Content_Types].xml",
+            "[trash]/0000.dat",
+            "[trash]/0001.dat",
+            "[trash]/0002.dat",
+            "customXml/_rels/item1.xml.rels",
+            "customXml/_rels/item2.xml.rels",
+            "customXml/_rels/item3.xml.rels",
+            "customXml/item1.xml",
+            "customXml/item2.xml",
+            "customXml/item3.xml",
+            "customXml/itemProps1.xml",
+            "customXml/itemProps2.xml",
+            "customXml/itemProps3.xml",
+            "docProps/core.xml",
+            "docProps/custom.xml",
+            "word/_rels/document.xml.rels"
+          ]
+        }
+      ]
+    },
+    "sharepoint/rp-rw-doc.odt": {
+      "uploaded": 10511,
+      "uploaded_sha256": "413571a8f89d94131b5f63063cd7faae53c00a919ee58e9f12fe45d393c649a0",
+      "reads": [
+        {
+          "at": "t0",
+          "graph_size": 10511,
+          "downloaded": 10511,
+          "same_bytes": true,
+          "changed_parts": []
+        },
+        {
+          "at": "t+900s",
+          "graph_size": 10511,
+          "downloaded": 10511,
+          "same_bytes": true,
+          "changed_parts": []
+        }
+      ]
+    },
+    "sharepoint/rp-rw-doc.pdf": {
+      "uploaded": 22798,
+      "uploaded_sha256": "d9877a6a442f599b3d3ce7280cd85f33311835196b3c429c9959421ad48d22d5",
+      "reads": [
+        {
+          "at": "t0",
+          "graph_size": 22798,
+          "downloaded": 22798,
+          "same_bytes": true,
+          "changed_parts": null
+        },
+        {
+          "at": "t+900s",
+          "graph_size": 22798,
+          "downloaded": 22798,
+          "same_bytes": true,
+          "changed_parts": null
+        }
+      ]
+    },
+    "sharepoint/rp-rw-doc.rtf": {
+      "uploaded": 3489,
+      "uploaded_sha256": "d95a7572d9aa704d226c957f4952f6b1822a47851384961fae7002ad5e531726",
+      "reads": [
+        {
+          "at": "t0",
+          "graph_size": 3489,
+          "downloaded": 3489,
+          "same_bytes": true,
+          "changed_parts": null
+        },
+        {
+          "at": "t+900s",
+          "graph_size": 3489,
+          "downloaded": 3489,
+          "same_bytes": true,
+          "changed_parts": null
+        }
+      ]
+    },
+    "sharepoint/rp-rw-drawing.vsdm": {
+      "uploaded": 15950,
+      "uploaded_sha256": "49cff0695d7d1ceafe0229813a2a3e30d35fd58fd71f837a0917eb5405ff3583",
+      "reads": [
+        {
+          "at": "t0",
+          "graph_size": 15950,
+          "downloaded": 15950,
+          "same_bytes": true,
+          "changed_parts": []
+        },
+        {
+          "at": "t+900s",
+          "graph_size": 15950,
+          "downloaded": 15950,
+          "same_bytes": true,
+          "changed_parts": []
+        }
+      ]
+    },
+    "sharepoint/rp-rw-drawing.vsdx": {
+      "uploaded": 20056,
+      "uploaded_sha256": "f5ead22055be37b867a858cf94f1ecca4fe06d954c7c39f44cca72958a4410af",
+      "reads": [
+        {
+          "at": "t0",
+          "graph_size": 20056,
+          "downloaded": 20056,
+          "same_bytes": true,
+          "changed_parts": []
+        },
+        {
+          "at": "t+900s",
+          "graph_size": 20056,
+          "downloaded": 20056,
+          "same_bytes": true,
+          "changed_parts": []
+        }
+      ]
+    },
+    "sharepoint/rp-rw-drawing.vssx": {
+      "uploaded": 15941,
+      "uploaded_sha256": "42b28aa557c08f2b6fb7f519ba047a58fd5abd3d2861d4b095c6a990f8072b3e",
+      "reads": [
+        {
+          "at": "t0",
+          "graph_size": 15941,
+          "downloaded": 15941,
+          "same_bytes": true,
+          "changed_parts": []
+        },
+        {
+          "at": "t+900s",
+          "graph_size": 15941,
+          "downloaded": 15941,
+          "same_bytes": true,
+          "changed_parts": []
+        }
+      ]
+    },
+    "sharepoint/rp-rw-drawing.vstx": {
+      "uploaded": 15942,
+      "uploaded_sha256": "cd6cfb0d3192e8135960f503c7e64f4d33c0090b1aa1cc7d269f15fb773503f4",
+      "reads": [
+        {
+          "at": "t0",
+          "graph_size": 15942,
+          "downloaded": 15942,
+          "same_bytes": true,
+          "changed_parts": []
+        },
+        {
+          "at": "t+900s",
+          "graph_size": 15942,
+          "downloaded": 15942,
+          "same_bytes": true,
+          "changed_parts": []
+        }
+      ]
+    },
+    "sharepoint/rp-rw-plain.txt": {
+      "uploaded": 40,
+      "uploaded_sha256": "6603a24130658c433878e7d241b6b1ca92cc829cf4e0eb8fd8333123c36407b7",
+      "reads": [
+        {
+          "at": "t0",
+          "graph_size": 40,
+          "downloaded": 40,
+          "same_bytes": true,
+          "changed_parts": null
+        },
+        {
+          "at": "t+900s",
+          "graph_size": 40,
+          "downloaded": 40,
+          "same_bytes": true,
+          "changed_parts": null
+        }
+      ]
+    },
+    "sharepoint/rp-rw-sheet.ods": {
+      "uploaded": 8644,
+      "uploaded_sha256": "1e9f16934274c3b30a725d8116e26769cbc945b8255d76a79238b93b2d2ac817",
+      "reads": [
+        {
+          "at": "t0",
+          "graph_size": 8644,
+          "downloaded": 8644,
+          "same_bytes": true,
+          "changed_parts": []
+        },
+        {
+          "at": "t+900s",
+          "graph_size": 8644,
+          "downloaded": 8644,
+          "same_bytes": true,
+          "changed_parts": []
+        }
+      ]
+    },
+    "sharepoint/rp-rw-sheet.xlam": {
+      "uploaded": 5539,
+      "uploaded_sha256": "6f46d859c7faca549f7a9384b78060a6c48777ed7958f76ad0ea015ada8b2242",
+      "reads": [
+        {
+          "at": "t0",
+          "graph_size": 5539,
+          "downloaded": 5539,
+          "same_bytes": true,
+          "changed_parts": []
+        },
+        {
+          "at": "t+900s",
+          "graph_size": 5539,
+          "downloaded": 5539,
+          "same_bytes": true,
+          "changed_parts": []
+        }
+      ]
+    },
+    "sharepoint/rp-rw-sheet.xls": {
+      "uploaded": 5632,
+      "uploaded_sha256": "5683320c67129c46d06b7591e14e4364026a8a20f3b0dfc7f2e44ae72b263c50",
+      "reads": [
+        {
+          "at": "t0",
+          "graph_size": 15360,
+          "downloaded": 15360,
+          "same_bytes": false,
+          "changed_parts": null
+        },
+        {
+          "at": "t+900s",
+          "graph_size": 15360,
+          "downloaded": 15360,
+          "same_bytes": false,
+          "changed_parts": null
+        }
+      ]
+    },
+    "sharepoint/rp-rw-sheet.xlsb": {
+      "uploaded": 19226,
+      "uploaded_sha256": "06c648de5529e022ef399a2b6ebc227040e9fdf71a0780e19e614f556bdb53d7",
+      "reads": [
+        {
+          "at": "t0",
+          "graph_size": 25262,
+          "downloaded": 25262,
+          "same_bytes": false,
+          "changed_parts": [
+            "[Content_Types].xml",
+            "_rels/.rels",
+            "customXml/_rels/item1.xml.rels",
+            "customXml/_rels/item2.xml.rels",
+            "customXml/_rels/item3.xml.rels",
+            "customXml/item1.xml",
+            "customXml/item2.xml",
+            "customXml/item3.xml",
+            "customXml/itemProps1.xml",
+            "customXml/itemProps2.xml",
+            "customXml/itemProps3.xml",
+            "docProps/custom.xml",
+            "xl/_rels/workbook.bin.rels"
+          ]
+        },
+        {
+          "at": "t+900s",
+          "graph_size": 25262,
+          "downloaded": 25262,
+          "same_bytes": false,
+          "changed_parts": [
+            "[Content_Types].xml",
+            "_rels/.rels",
+            "customXml/_rels/item1.xml.rels",
+            "customXml/_rels/item2.xml.rels",
+            "customXml/_rels/item3.xml.rels",
+            "customXml/item1.xml",
+            "customXml/item2.xml",
+            "customXml/item3.xml",
+            "customXml/itemProps1.xml",
+            "customXml/itemProps2.xml",
+            "customXml/itemProps3.xml",
+            "docProps/custom.xml",
+            "xl/_rels/workbook.bin.rels"
+          ]
+        }
+      ]
+    },
+    "sharepoint/rp-rw-sheet.xlsm": {
+      "uploaded": 5697,
+      "uploaded_sha256": "a0de9cf8ab6d5e1f9bb4be0556261997d8fc961ccc1f749e4a41fa452efca799",
+      "reads": [
+        {
+          "at": "t0",
+          "graph_size": 13052,
+          "downloaded": 13052,
+          "same_bytes": false,
+          "changed_parts": [
+            "[Content_Types].xml",
+            "[trash]/0000.dat",
+            "[trash]/0001.dat",
+            "[trash]/0002.dat",
+            "_rels/.rels",
+            "customXml/_rels/item1.xml.rels",
+            "customXml/_rels/item2.xml.rels",
+            "customXml/_rels/item3.xml.rels",
+            "customXml/item1.xml",
+            "customXml/item2.xml",
+            "customXml/item3.xml",
+            "customXml/itemProps1.xml",
+            "customXml/itemProps2.xml",
+            "customXml/itemProps3.xml",
+            "docProps/core.xml",
+            "docProps/custom.xml",
+            "xl/_rels/workbook.xml.rels"
+          ]
+        },
+        {
+          "at": "t+900s",
+          "graph_size": 13052,
+          "downloaded": 13052,
+          "same_bytes": false,
+          "changed_parts": [
+            "[Content_Types].xml",
+            "[trash]/0000.dat",
+            "[trash]/0001.dat",
+            "[trash]/0002.dat",
+            "_rels/.rels",
+            "customXml/_rels/item1.xml.rels",
+            "customXml/_rels/item2.xml.rels",
+            "customXml/_rels/item3.xml.rels",
+            "customXml/item1.xml",
+            "customXml/item2.xml",
+            "customXml/item3.xml",
+            "customXml/itemProps1.xml",
+            "customXml/itemProps2.xml",
+            "customXml/itemProps3.xml",
+            "docProps/core.xml",
+            "docProps/custom.xml",
+            "xl/_rels/workbook.xml.rels"
+          ]
+        }
+      ]
+    },
+    "sharepoint/rp-rw-sheet.xlsx": {
+      "uploaded": 5683,
+      "uploaded_sha256": "1fc5e5abf731cdd58a85d7e7fcf6d0b43ebc052fb6ea380a874eff9cfc243786",
+      "reads": [
+        {
+          "at": "t0",
+          "graph_size": 13018,
+          "downloaded": 13018,
+          "same_bytes": false,
+          "changed_parts": [
+            "[Content_Types].xml",
+            "[trash]/0000.dat",
+            "[trash]/0001.dat",
+            "[trash]/0002.dat",
+            "_rels/.rels",
+            "customXml/_rels/item1.xml.rels",
+            "customXml/_rels/item2.xml.rels",
+            "customXml/_rels/item3.xml.rels",
+            "customXml/item1.xml",
+            "customXml/item2.xml",
+            "customXml/item3.xml",
+            "customXml/itemProps1.xml",
+            "customXml/itemProps2.xml",
+            "customXml/itemProps3.xml",
+            "docProps/core.xml",
+            "docProps/custom.xml",
+            "xl/_rels/workbook.xml.rels"
+          ]
+        },
+        {
+          "at": "t+900s",
+          "graph_size": 13018,
+          "downloaded": 13018,
+          "same_bytes": false,
+          "changed_parts": [
+            "[Content_Types].xml",
+            "[trash]/0000.dat",
+            "[trash]/0001.dat",
+            "[trash]/0002.dat",
+            "_rels/.rels",
+            "customXml/_rels/item1.xml.rels",
+            "customXml/_rels/item2.xml.rels",
+            "customXml/_rels/item3.xml.rels",
+            "customXml/item1.xml",
+            "customXml/item2.xml",
+            "customXml/item3.xml",
+            "customXml/itemProps1.xml",
+            "customXml/itemProps2.xml",
+            "customXml/itemProps3.xml",
+            "docProps/core.xml",
+            "docProps/custom.xml",
+            "xl/_rels/workbook.xml.rels"
+          ]
+        }
+      ]
+    },
+    "onedrive/rp-rw-canary.docx": {
+      "uploaded": 3263,
+      "uploaded_sha256": "0e753ea2d65b48a88aedcc4f6740fe95aab0d115031ceb4628c0ae8ad11220b4",
+      "reads": [
+        {
+          "at": "t0",
+          "graph_size": 3263,
+          "downloaded": 3263,
+          "same_bytes": true,
+          "changed_parts": []
+        },
+        {
+          "at": "t+900s",
+          "graph_size": 3263,
+          "downloaded": 3263,
+          "same_bytes": true,
+          "changed_parts": []
+        }
+      ]
+    },
+    "onedrive/rp-rw-deck.odp": {
+      "uploaded": 19222,
+      "uploaded_sha256": "f79fb754de77d075fef55ba77c2bc141140c83b9a49f642b66bc405ea91fd67b",
+      "reads": [
+        {
+          "at": "t0",
+          "graph_size": 19222,
+          "downloaded": 19222,
+          "same_bytes": true,
+          "changed_parts": []
+        },
+        {
+          "at": "t+900s",
+          "graph_size": 19222,
+          "downloaded": 19222,
+          "same_bytes": true,
+          "changed_parts": []
+        }
+      ]
+    },
+    "onedrive/rp-rw-deck.ppam": {
+      "uploaded": 15508,
+      "uploaded_sha256": "c9a65a10e5c48bc2e0b661d1c04521556baf98f57f652bbd041239fc5dfd6401",
+      "reads": [
+        {
+          "at": "t0",
+          "graph_size": 15508,
+          "downloaded": 15508,
+          "same_bytes": true,
+          "changed_parts": []
+        },
+        {
+          "at": "t+900s",
+          "graph_size": 15508,
+          "downloaded": 15508,
+          "same_bytes": true,
+          "changed_parts": []
+        }
+      ]
+    },
+    "onedrive/rp-rw-deck.ppt": {
+      "uploaded": 465920,
+      "uploaded_sha256": "2721628446c8514c23109f88ca0f7243d47a31d9cb3116b6cfb3e159becb5ad4",
+      "reads": [
+        {
+          "at": "t0",
+          "graph_size": 465920,
+          "downloaded": 465920,
+          "same_bytes": true,
+          "changed_parts": null
+        },
+        {
+          "at": "t+900s",
+          "graph_size": 465920,
+          "downloaded": 465920,
+          "same_bytes": true,
+          "changed_parts": null
+        }
+      ]
+    },
+    "onedrive/rp-rw-deck.pptm": {
+      "uploaded": 15826,
+      "uploaded_sha256": "7c05958cdd0e97676cafadb7f1ffc8787b37f69d41239ce2bcc8fc310564cd9f",
+      "reads": [
+        {
+          "at": "t0",
+          "graph_size": 15826,
+          "downloaded": 15826,
+          "same_bytes": true,
+          "changed_parts": []
+        },
+        {
+          "at": "t+900s",
+          "graph_size": 15826,
+          "downloaded": 15826,
+          "same_bytes": true,
+          "changed_parts": []
+        }
+      ]
+    },
+    "onedrive/rp-rw-deck.pptx": {
+      "uploaded": 15810,
+      "uploaded_sha256": "81b463819a4c238a2e6989c382dcfd04df2ada13546f78707d84000862025062",
+      "reads": [
+        {
+          "at": "t0",
+          "graph_size": 15810,
+          "downloaded": 15810,
+          "same_bytes": true,
+          "changed_parts": []
+        },
+        {
+          "at": "t+900s",
+          "graph_size": 15810,
+          "downloaded": 15810,
+          "same_bytes": true,
+          "changed_parts": []
+        }
+      ]
+    },
+    "onedrive/rp-rw-doc.doc": {
+      "uploaded": 9216,
+      "uploaded_sha256": "4736faaa15f3789bb4519d21c29e19ec9bd5d539acc3e929a7b771f0b10da354",
+      "reads": [
+        {
+          "at": "t0",
+          "graph_size": 9216,
+          "downloaded": 9216,
+          "same_bytes": true,
+          "changed_parts": null
+        },
+        {
+          "at": "t+900s",
+          "graph_size": 9216,
+          "downloaded": 9216,
+          "same_bytes": true,
+          "changed_parts": null
+        }
+      ]
+    },
+    "onedrive/rp-rw-doc.docm": {
+      "uploaded": 5397,
+      "uploaded_sha256": "26d68224137d265ab90cb937c5e9d4d3dc92bb906a71611e08feb0718d4fe2e6",
+      "reads": [
+        {
+          "at": "t0",
+          "graph_size": 5397,
+          "downloaded": 5397,
+          "same_bytes": true,
+          "changed_parts": []
+        },
+        {
+          "at": "t+900s",
+          "graph_size": 5397,
+          "downloaded": 5397,
+          "same_bytes": true,
+          "changed_parts": []
+        }
+      ]
+    },
+    "onedrive/rp-rw-doc.docx": {
+      "uploaded": 5384,
+      "uploaded_sha256": "8e64c3fefc6609c964c70bf2c5d42e0946b7baf9542054455f4777d540e301ed",
+      "reads": [
+        {
+          "at": "t0",
+          "graph_size": 5384,
+          "downloaded": 5384,
+          "same_bytes": true,
+          "changed_parts": []
+        },
+        {
+          "at": "t+900s",
+          "graph_size": 5384,
+          "downloaded": 5384,
+          "same_bytes": true,
+          "changed_parts": []
+        }
+      ]
+    },
+    "onedrive/rp-rw-doc.odt": {
+      "uploaded": 10511,
+      "uploaded_sha256": "413571a8f89d94131b5f63063cd7faae53c00a919ee58e9f12fe45d393c649a0",
+      "reads": [
+        {
+          "at": "t0",
+          "graph_size": 10511,
+          "downloaded": 10511,
+          "same_bytes": true,
+          "changed_parts": []
+        },
+        {
+          "at": "t+900s",
+          "graph_size": 10511,
+          "downloaded": 10511,
+          "same_bytes": true,
+          "changed_parts": []
+        }
+      ]
+    },
+    "onedrive/rp-rw-doc.pdf": {
+      "uploaded": 22798,
+      "uploaded_sha256": "d9877a6a442f599b3d3ce7280cd85f33311835196b3c429c9959421ad48d22d5",
+      "reads": [
+        {
+          "at": "t0",
+          "graph_size": 22798,
+          "downloaded": 22798,
+          "same_bytes": true,
+          "changed_parts": null
+        },
+        {
+          "at": "t+900s",
+          "graph_size": 22798,
+          "downloaded": 22798,
+          "same_bytes": true,
+          "changed_parts": null
+        }
+      ]
+    },
+    "onedrive/rp-rw-doc.rtf": {
+      "uploaded": 3489,
+      "uploaded_sha256": "d95a7572d9aa704d226c957f4952f6b1822a47851384961fae7002ad5e531726",
+      "reads": [
+        {
+          "at": "t0",
+          "graph_size": 3489,
+          "downloaded": 3489,
+          "same_bytes": true,
+          "changed_parts": null
+        },
+        {
+          "at": "t+900s",
+          "graph_size": 3489,
+          "downloaded": 3489,
+          "same_bytes": true,
+          "changed_parts": null
+        }
+      ]
+    },
+    "onedrive/rp-rw-drawing.vsdm": {
+      "uploaded": 15950,
+      "uploaded_sha256": "49cff0695d7d1ceafe0229813a2a3e30d35fd58fd71f837a0917eb5405ff3583",
+      "reads": [
+        {
+          "at": "t0",
+          "graph_size": 15950,
+          "downloaded": 15950,
+          "same_bytes": true,
+          "changed_parts": []
+        },
+        {
+          "at": "t+900s",
+          "graph_size": 15950,
+          "downloaded": 15950,
+          "same_bytes": true,
+          "changed_parts": []
+        }
+      ]
+    },
+    "onedrive/rp-rw-drawing.vsdx": {
+      "uploaded": 20056,
+      "uploaded_sha256": "f5ead22055be37b867a858cf94f1ecca4fe06d954c7c39f44cca72958a4410af",
+      "reads": [
+        {
+          "at": "t0",
+          "graph_size": 20056,
+          "downloaded": 20056,
+          "same_bytes": true,
+          "changed_parts": []
+        },
+        {
+          "at": "t+900s",
+          "graph_size": 20056,
+          "downloaded": 20056,
+          "same_bytes": true,
+          "changed_parts": []
+        }
+      ]
+    },
+    "onedrive/rp-rw-drawing.vssx": {
+      "uploaded": 15941,
+      "uploaded_sha256": "42b28aa557c08f2b6fb7f519ba047a58fd5abd3d2861d4b095c6a990f8072b3e",
+      "reads": [
+        {
+          "at": "t0",
+          "graph_size": 15941,
+          "downloaded": 15941,
+          "same_bytes": true,
+          "changed_parts": []
+        },
+        {
+          "at": "t+900s",
+          "graph_size": 15941,
+          "downloaded": 15941,
+          "same_bytes": true,
+          "changed_parts": []
+        }
+      ]
+    },
+    "onedrive/rp-rw-drawing.vstx": {
+      "uploaded": 15942,
+      "uploaded_sha256": "cd6cfb0d3192e8135960f503c7e64f4d33c0090b1aa1cc7d269f15fb773503f4",
+      "reads": [
+        {
+          "at": "t0",
+          "graph_size": 15942,
+          "downloaded": 15942,
+          "same_bytes": true,
+          "changed_parts": []
+        },
+        {
+          "at": "t+900s",
+          "graph_size": 15942,
+          "downloaded": 15942,
+          "same_bytes": true,
+          "changed_parts": []
+        }
+      ]
+    },
+    "onedrive/rp-rw-plain.txt": {
+      "uploaded": 40,
+      "uploaded_sha256": "6603a24130658c433878e7d241b6b1ca92cc829cf4e0eb8fd8333123c36407b7",
+      "reads": [
+        {
+          "at": "t0",
+          "graph_size": 40,
+          "downloaded": 40,
+          "same_bytes": true,
+          "changed_parts": null
+        },
+        {
+          "at": "t+900s",
+          "graph_size": 40,
+          "downloaded": 40,
+          "same_bytes": true,
+          "changed_parts": null
+        }
+      ]
+    },
+    "onedrive/rp-rw-sheet.ods": {
+      "uploaded": 8644,
+      "uploaded_sha256": "1e9f16934274c3b30a725d8116e26769cbc945b8255d76a79238b93b2d2ac817",
+      "reads": [
+        {
+          "at": "t0",
+          "graph_size": 8644,
+          "downloaded": 8644,
+          "same_bytes": true,
+          "changed_parts": []
+        },
+        {
+          "at": "t+900s",
+          "graph_size": 8644,
+          "downloaded": 8644,
+          "same_bytes": true,
+          "changed_parts": []
+        }
+      ]
+    },
+    "onedrive/rp-rw-sheet.xlam": {
+      "uploaded": 5539,
+      "uploaded_sha256": "6f46d859c7faca549f7a9384b78060a6c48777ed7958f76ad0ea015ada8b2242",
+      "reads": [
+        {
+          "at": "t0",
+          "graph_size": 5539,
+          "downloaded": 5539,
+          "same_bytes": true,
+          "changed_parts": []
+        },
+        {
+          "at": "t+900s",
+          "graph_size": 5539,
+          "downloaded": 5539,
+          "same_bytes": true,
+          "changed_parts": []
+        }
+      ]
+    },
+    "onedrive/rp-rw-sheet.xls": {
+      "uploaded": 5632,
+      "uploaded_sha256": "5683320c67129c46d06b7591e14e4364026a8a20f3b0dfc7f2e44ae72b263c50",
+      "reads": [
+        {
+          "at": "t0",
+          "graph_size": 5632,
+          "downloaded": 5632,
+          "same_bytes": true,
+          "changed_parts": null
+        },
+        {
+          "at": "t+900s",
+          "graph_size": 5632,
+          "downloaded": 5632,
+          "same_bytes": true,
+          "changed_parts": null
+        }
+      ]
+    },
+    "onedrive/rp-rw-sheet.xlsb": {
+      "uploaded": 19226,
+      "uploaded_sha256": "06c648de5529e022ef399a2b6ebc227040e9fdf71a0780e19e614f556bdb53d7",
+      "reads": [
+        {
+          "at": "t0",
+          "graph_size": 19226,
+          "downloaded": 19226,
+          "same_bytes": true,
+          "changed_parts": []
+        },
+        {
+          "at": "t+900s",
+          "graph_size": 19226,
+          "downloaded": 19226,
+          "same_bytes": true,
+          "changed_parts": []
+        }
+      ]
+    },
+    "onedrive/rp-rw-sheet.xlsm": {
+      "uploaded": 5697,
+      "uploaded_sha256": "a0de9cf8ab6d5e1f9bb4be0556261997d8fc961ccc1f749e4a41fa452efca799",
+      "reads": [
+        {
+          "at": "t0",
+          "graph_size": 5697,
+          "downloaded": 5697,
+          "same_bytes": true,
+          "changed_parts": []
+        },
+        {
+          "at": "t+900s",
+          "graph_size": 5697,
+          "downloaded": 5697,
+          "same_bytes": true,
+          "changed_parts": []
+        }
+      ]
+    },
+    "onedrive/rp-rw-sheet.xlsx": {
+      "uploaded": 5683,
+      "uploaded_sha256": "1fc5e5abf731cdd58a85d7e7fcf6d0b43ebc052fb6ea380a874eff9cfc243786",
+      "reads": [
+        {
+          "at": "t0",
+          "graph_size": 5683,
+          "downloaded": 5683,
+          "same_bytes": true,
+          "changed_parts": []
+        },
+        {
+          "at": "t+900s",
+          "graph_size": 5683,
+          "downloaded": 5683,
+          "same_bytes": true,
+          "changed_parts": []
+        }
+      ]
+    }
+  }
+}

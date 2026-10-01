@@ -182,11 +182,14 @@ targets through Graph. It checks that:
 - every POST was a sign-in (`/v8/token`, `/v8/token/logout`), an explore session (`/explore`)
   or its `/Stop` (the Veeam HTTP client is wrapped in a counting forwarder through
   `ConnectorOptions::make_http`, which records methods and URLs only);
-- afterwards `GET /v8/RestoreSessions?limit=200` lists no Working session of the account.
+- afterwards `GET /v8/RestoreSessions?limit=200` lists no Working session of the account;
+- the expected set (W3.1, `rp::verification::build_expected_set`) has one record per item,
+  the same for both calls.
 
 It prints the restore point, the selection, `to_json(record)` (the result's `sample` object:
 seed, manifest SHA-256, cursors, canary IDs, pool sizes and hashes, the containers looked
-into), how many entries each OneDrive's `Documents?parentId=root` listing held, and the number
+into), the expected set (`to_json(ExpectedSet)`, the result's `expected` object; the lab has
+no real files yet, so expect a file shortfall), how many entries each OneDrive's `Documents?parentId=root` listing held, and the number
 of GETs and POSTs. It needs the Veeam and Graph variables above (`RP_VEEAM_*`,
 `RP_LIVE_VEEAM_CA_FILE`, the Worker app's certificate), no elevation, plus two optional ones:
 

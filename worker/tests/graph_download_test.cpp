@@ -732,7 +732,7 @@ TEST_CASE("the download logs go to the spdlog default when no logger is given", 
     CHECK_THAT(stream.str(), !ContainsSubstring(kTempauth));
 }
 
-// ---- SizeCheck::up_to_limit: a docx or xlsx SharePoint may rewrite ------------------------
+// ---- SizeCheck::up_to_limit: an Office package SharePoint may rewrite -------------------
 
 // Review of W2.2: SharePoint rewrites Office files (lab/README.md, office-v1), so
 // the bytes served may differ from the size Graph listed. Such a file is read up

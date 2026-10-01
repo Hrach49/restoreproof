@@ -1,9 +1,14 @@
 #include <rp/restore_command.hpp>
 
 #include <rp/canary_manifest.hpp>
+#include <rp/checker.hpp>
 #include <rp/cli.hpp>
 #include <rp/client_assertion.hpp>
+#include <rp/expected_set.hpp>
 #include <rp/graph_client.hpp>
+#include <rp/graph_download.hpp>
+#include <rp/graph_errors.hpp>
+#include <rp/graph_targets.hpp>
 #include <rp/http_client.hpp>
 #include <rp/sample_rng.hpp>
 #include <rp/sample_selector.hpp>
@@ -20,7 +25,9 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <exception>
 #include <format>
+#include <functional>
 #include <map>
 #include <memory>
 #include <optional>
@@ -37,6 +44,7 @@ namespace rp {
 namespace {
 
 namespace sampling = rp::sampling;
+namespace verification = rp::verification;
 using connector::ItemKind;
 
 constexpr std::size_t kMaxSizeDigits = 3;
@@ -426,14 +434,89 @@ int report(std::ostream& err, std::string_view prefix, const std::exception& e, 
 }
 
 // Opens and checks the Graph certificate as restore_sample will, so a bad one
-// is said before any Veeam call. Nothing is logged: restore_sample's own load
-// warns of a certificate about to expire.
-void check_graph_certificate(const Secrets& secrets, const connector::ConnectorOptions& options)
+// is said before any Veeam call; the check's own Graph client signs in with
+// it. Nothing is logged: restore_sample's own load warns of a certificate
+// about to expire.
+graph::ClientCertificate check_graph_certificate(const Secrets& secrets,
+                                                 const connector::ConnectorOptions& options)
 {
     const auto wall_now =
         options.wall_now ? options.wall_now() : std::chrono::system_clock::now();
-    graph::certificate_from_secrets(secrets, wall_now,
-                                    std::make_shared<spdlog::logger>("rp-restore-certificate"));
+    return graph::certificate_from_secrets(
+        secrets, wall_now, std::make_shared<spdlog::logger>("rp-restore-certificate"));
+}
+
+// The check's table and its lines (W3.2): one row per expected item, then the
+// counts, then the earlier runs' copies when there were any.
+std::string format_check(const verification::ExpectedSet& expected,
+                         const verification::CheckResult& check)
+{
+    std::map<verification::CheckOutcome, std::size_t> counts;
+    std::string text;
+    if (!check.items.empty()) {
+        std::vector<TableRow> rows{
+            {"  ", {"KIND", "SOURCE", "NAME", "OUTCOME", "FIELDS", "DUP", "MS"}}};
+        for (const verification::ItemCheck& item : check.items) {
+            const verification::ExpectedItem& want = expected.items.at(item.index);
+            std::string fields;
+            for (const std::string& field : item.mismatches) {
+                fields += (fields.empty() ? "" : ",") + field;
+            }
+            if (fields.empty()) {
+                fields = item.error_code;
+            }
+            rows.push_back(
+                {"  ",
+                 {kind_name(item.kind), std::string{verification::to_string(want.source)},
+                  cell_or_dash(want.mail ? want.mail->subject : want.file->name),
+                  std::string{verification::to_string(item.outcome)}, cell_or_dash(fields),
+                  item.duplicate ? std::format("{} copies", item.copies) : std::string{"-"},
+                  item.found ? std::to_string(item.ms) : std::string{"-"}}});
+        }
+        text += '\n' + format_table(rows);
+    }
+    for (const verification::ItemCheck& item : check.items) {
+        ++counts[item.outcome];
+    }
+    text += std::format("\ncheck: {} match, {} mismatch, {} missing, {} error\n",
+                        counts[verification::CheckOutcome::match],
+                        counts[verification::CheckOutcome::mismatch],
+                        counts[verification::CheckOutcome::missing],
+                        counts[verification::CheckOutcome::error]);
+    if (const std::size_t stale = check.stale_mail + check.stale_sharepoint + check.stale_onedrive;
+        stale > 0) {
+        text += std::format("check: {} copies from earlier runs were ignored (mail {}, sharepoint "
+                            "{}, onedrive {})\n",
+                            stale, check.stale_mail, check.stale_sharepoint, check.stale_onedrive);
+    }
+    return text;
+}
+
+// The exit code once the restore was read back (W3.2, until W3.3's table):
+// the restore's own, when it isn't 0; then 5 when an item is missing or
+// didn't match, then 4 when one couldn't be checked; each with its line on `err`.
+int check_exit_code(int restore_code, const verification::CheckResult& check, std::ostream& err)
+{
+    if (restore_code != exit_code::ok) {
+        return restore_code;
+    }
+    const auto count = [&](auto pred) { return std::ranges::count_if(check.items, pred); };
+    const auto unverified = count([](const verification::ItemCheck& item) {
+        return item.outcome == verification::CheckOutcome::missing ||
+               item.outcome == verification::CheckOutcome::mismatch;
+    });
+    if (unverified > 0) {
+        err << "check: " << unverified << " item(s) didn't verify\n";
+        return exit_code::restore;
+    }
+    const auto unchecked = count([](const verification::ItemCheck& item) {
+        return item.outcome == verification::CheckOutcome::error;
+    });
+    if (unchecked > 0) {
+        err << "check: " << unchecked << " item(s) couldn't be checked\n";
+        return exit_code::service;
+    }
+    return exit_code::ok;
 }
 
 } // namespace
@@ -483,6 +566,89 @@ connector::ConnectorOptions record_connector(connector::ConnectorOptions options
     return options;
 }
 
+// The reader of the restore targets (W2.2), its lines on `logger`.
+graph::TargetReader target_reader(graph::GraphClient& client, IHttpClient& download,
+                                  const connector::RestoreTargets& targets,
+                                  const std::shared_ptr<spdlog::logger>& logger,
+                                  graph::TargetReaderOptions options)
+{
+    options.logger = logger;
+    options.download.logger = logger;
+    return graph::TargetReader(client, download, targets, std::move(options));
+}
+
+// The before snapshot (W3.2): the targets the spec has items for, listed
+// without hashing. exit_code::ok, or a failure's code with its line on `err`:
+// nothing has been restored yet, so the run stops. what() is safe to print:
+// GraphError's went through rp::redact(), a ConfigError names no secret.
+int read_before(graph::GraphClient& client, IHttpClient& download,
+                const connector::RestoreTargets& targets, const connector::RestoreSpec& spec,
+                const std::shared_ptr<spdlog::logger>& logger, verification::TargetsRead& before,
+                std::ostream& err)
+{
+    const auto failed = [&](const std::exception& e, int code) {
+        err << "check error: " << e.what() << "; nothing was restored\n";
+        return code;
+    };
+    try {
+        graph::TargetReaderOptions options;
+        options.hash_items = false;
+        graph::TargetReader reader = target_reader(client, download, targets, logger, options);
+        if (!spec.mail.empty()) {
+            before.mail.items = reader.list_mail();
+        }
+        if (!spec.sharepoint.empty()) {
+            before.sharepoint.items = reader.list_sharepoint();
+        }
+        if (!spec.onedrive.empty()) {
+            before.onedrive.items = reader.list_onedrive();
+        }
+        return exit_code::ok;
+    } catch (const graph::AuthError& e) {
+        return failed(e, exit_code::auth);
+    } catch (const graph::PermissionError& e) {
+        return failed(e, exit_code::auth);
+    } catch (const graph::TransientError& e) {
+        return failed(e, exit_code::transient);
+    } catch (const graph::GraphError& e) {
+        return failed(e, exit_code::service);
+    } catch (const ConfigError& e) {
+        return failed(e, exit_code::config);
+    }
+}
+
+// The after read (W3.2): the targets the spec has items for, hashed, each
+// docx and xlsx by office-v1 too. A type whose read fails keeps its error
+// code (verification::read_error_code), and its line goes on `err`;
+// anything that isn't an infrastructure failure is thrown.
+void read_after(graph::GraphClient& client, IHttpClient& download,
+                const connector::RestoreTargets& targets, const connector::RestoreSpec& spec,
+                const std::shared_ptr<spdlog::logger>& logger,
+                const std::function<std::chrono::steady_clock::time_point()>& clock,
+                verification::TargetsRead& after, std::ostream& err)
+{
+    graph::TargetReaderOptions options;
+    options.hash_items = true;
+    options.on_file = verification::office_hook(after);
+    options.clock = clock;
+    graph::TargetReader reader = target_reader(client, download, targets, logger, options);
+    const auto read = [&](bool wanted, verification::TargetRead& target, const auto& list) {
+        if (!wanted) {
+            return;
+        }
+        try {
+            target.items = list();
+        } catch (const std::exception& e) {
+            target.error_code = verification::read_error_code(std::current_exception());
+            target.items.clear();
+            err << "check error: " << e.what() << '\n';
+        }
+    };
+    read(!spec.mail.empty(), after.mail, [&] { return reader.list_mail(); });
+    read(!spec.sharepoint.empty(), after.sharepoint, [&] { return reader.list_sharepoint(); });
+    read(!spec.onedrive.empty(), after.onedrive, [&] { return reader.list_onedrive(); });
+}
+
 // The command but for what --record wrote, which run_restore_command prints
 // last: `recorder` is set once the recording is open.
 int run_restore(std::span<const std::string_view> args, std::ostream& out, std::ostream& err,
@@ -497,6 +663,7 @@ int run_restore(std::span<const std::string_view> args, std::ostream& out, std::
     std::filesystem::path config_path;
     Config config;
     Secrets secrets;
+    std::optional<graph::ClientCertificate> certificate;
     try {
         config_path = command_config_path(parsed.config, env.default_config_path);
         config = load_config(config_path);
@@ -504,7 +671,7 @@ int run_restore(std::span<const std::string_view> args, std::ostream& out, std::
         require_veeam_secrets(secrets);
         // restore_sample opens it only after the sample is chosen, which
         // browses Veeam. An unset password is none, as for `graph list`.
-        check_graph_certificate(secrets, env.connector_options);
+        certificate = check_graph_certificate(secrets, env.connector_options);
     } catch (const ConfigError& e) {
         return report(err, "config error: ", e, exit_code::config);
     } catch (...) {
@@ -606,30 +773,84 @@ int run_restore(std::span<const std::string_view> args, std::ostream& out, std::
             return exit_code::service;
         }
 
-        const auto now = [&env] {
+        const std::function<std::chrono::steady_clock::time_point()> now = [&env] {
             return env.now ? env.now() : std::chrono::steady_clock::now();
         };
+
+        // W3.2: what each restored copy should look like, and the targets as
+        // they are before the restore, read through Graph as `graph list`
+        // reads them. A failure here stops the run before anything is restored.
+        const verification::ExpectedSet expected =
+            verification::build_expected_set(selection, manifest);
+        // Declared in this order so the readers and the client, which hold
+        // references to the HTTP clients, go first. `options` records Graph
+        // under "graph" with --record; downloads are recorded as their size
+        // and SHA-256 only.
+        const std::unique_ptr<IHttpClient> graph_http =
+            options.make_graph_http ? options.make_graph_http(options.logger)
+                                    : graph::make_graph_http_client(options.logger);
+        const std::unique_ptr<IHttpClient> download_http =
+            recorded(env.make_download_http ? env.make_download_http()
+                                            : graph::make_download_http_client(),
+                     recorder, "download", RecordedBody::digest);
+        if (!graph_http || !download_http) {
+            throw std::logic_error("no HTTP client");
+        }
+        graph::GraphClientOptions client_options;
+        client_options.logger = options.logger;
+        client_options.now = options.now;
+        client_options.wall_now = options.wall_now;
+        client_options.sleep = options.sleep;
+        client_options.jitter = options.jitter;
+        graph::GraphClient graph_client(*graph_http, config.graph_tenant_id,
+                                        config.graph_client_id, std::move(*certificate),
+                                        client_options);
+        verification::TargetsRead before;
+        if (const int code = read_before(graph_client, *download_http, targets, spec,
+                                         options.logger, before, err);
+            code != exit_code::ok) {
+            return code;
+        }
+
         const auto started = now();
         restoring_run = run_id;
         const connector::RestoreResult result = source->restore_sample(spec);
         restoring_run.reset();
         const auto total = now() - started;
 
-        try {
-            out << format_result(result, selection, total);
-            flush_or_throw(out);
-        } catch (...) {
-            // Items may be in the targets now: say so, which run, and how it
-            // went. A restore that succeeded but whose output was lost isn't a
-            // success.
+        // Items may be in the targets now: say so, which run, and how it went.
+        // A restore that succeeded but whose output was lost isn't a success.
+        const auto output_failed = [&](const verification::CheckResult* check) {
             err << "error: writing the output failed after the restore ran (run " << run_id
                 << ", status " << connector::to_string(result.status) << ": "
                 << result.items_restored << " of " << result.items_sent
                 << " item(s) restored)\n";
-            const int code = restore_exit_code(result, err);
+            int code = restore_exit_code(result, err);
+            if (check) {
+                code = check_exit_code(code, *check, err);
+            }
             return code == exit_code::ok ? exit_code::config : code;
+        };
+        try {
+            out << format_result(result, selection, total);
+            flush_or_throw(out);
+        } catch (...) {
+            return output_failed(nullptr);
         }
-        return restore_exit_code(result, err);
+
+        // Read back, hashing, and compare: a read that fails makes its type's
+        // items `error`, never a failed command.
+        verification::TargetsRead after;
+        read_after(graph_client, *download_http, targets, spec, options.logger, now, after, err);
+        const verification::CheckResult check =
+            verification::check(expected, verification::snapshot_of(before), after, now);
+        try {
+            out << format_check(expected, check);
+            flush_or_throw(out);
+        } catch (...) {
+            return output_failed(&check);
+        }
+        return check_exit_code(restore_exit_code(result, err), check, err);
     } catch (const ConfigError& e) {
         return report(err, "config error: ", e, exit_code::config);
     } catch (const sampling::ManifestError& e) {

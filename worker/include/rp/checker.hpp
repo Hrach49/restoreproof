@@ -88,8 +88,9 @@ bool is_new_file(const TargetSnapshot& before, const graph::FoundItem& file);
 
 // TargetReaderOptions::hash_file for the after read: true for a file that is
 // this run's copy (is_new_file) and whose name has the name_key of an expected
-// file of its type, so an earlier run's leftover, or a file nobody expects, is
-// never downloaded. Keeps its own copy of what it needs; false for a mail.
+// file of its type that carries a hash or a size, so an earlier run's
+// leftover, a file nobody expects, or a random Office file (nothing of its
+// bytes compared) is never downloaded. Keeps its own copy of what it needs; false for a mail.
 std::function<bool(const graph::FoundItem&)> hash_filter(const ExpectedSet& expected,
                                                          const TargetSnapshot& before);
 

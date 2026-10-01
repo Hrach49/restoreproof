@@ -4,6 +4,7 @@
 #include <rp/graph_errors.hpp>
 #include <rp/office_v1.hpp>
 #include <rp/target_guard_graph.hpp>
+#include <rp/text_v1.hpp>
 
 #include "name_key.hpp"
 #include "text_util.hpp"
@@ -29,7 +30,6 @@ using nlohmann::json;
 // the issue's 2 minutes (docs/decisions.md 2026-10-01, W3.2 point 2).
 constexpr std::chrono::seconds kTimeTolerance{120};
 
-constexpr std::string_view kTextV1 = "text-v1";
 constexpr std::string_view kBytes = "bytes";
 
 std::string kind_name(ItemKind kind)
@@ -145,7 +145,7 @@ void compare_hash(const ExpectedItem& want, const FoundItem& got, const TargetRe
         return;
     }
     bool agrees = false;
-    if (want.sha256_rule == kTextV1 || want.sha256_rule == kBytes) {
+    if (want.sha256_rule == rp::kTextV1 || want.sha256_rule == kBytes) {
         agrees = got.sha256_rule == want.sha256_rule && got.sha256 == want.sha256;
     } else if (want.sha256_rule == kOfficeV1) {
         const auto it = read.office.find(got.id);
@@ -174,15 +174,6 @@ Comparison compare(const ExpectedItem& want, const FoundItem& got, const TargetR
     }
     compare_hash(want, got, read, out);
     return out;
-}
-
-std::string joined(const std::vector<std::string>& names)
-{
-    std::string text;
-    for (const std::string& name : names) {
-        text += (text.empty() ? "" : ", ") + name;
-    }
-    return text;
 }
 
 // The expected item is one build_expected_set makes: a mail with `mail`, a
@@ -246,7 +237,7 @@ public:
             out.outcome = CheckOutcome::match;
         } else {
             out.outcome = CheckOutcome::mismatch;
-            out.reason = "fields did not match: " + joined(out.mismatches) + comparison.note;
+            out.reason = "fields did not match: " + joined(out.mismatches, ", ") + comparison.note;
         }
         out.ms = copy.read_ms +
                  std::chrono::duration_cast<std::chrono::milliseconds>(now() - started).count();
@@ -405,10 +396,12 @@ bool is_new_file(const TargetSnapshot& before, const FoundItem& file)
 std::function<bool(const FoundItem&)> hash_filter(const ExpectedSet& expected,
                                                   const TargetSnapshot& before)
 {
-    // The expected files' name keys per type, and the snapshot, copied.
+    // The name keys per type of the expected files with something the bytes
+    // are compared for (a hash or a size; a random Office file has neither),
+    // and the snapshot, copied.
     std::map<graph::ItemType, std::set<std::string>> names;
     for (const ExpectedItem& item : expected.items) {
-        if (item.file) {
+        if (item.file && (!item.sha256.empty() || item.file->size_bytes)) {
             names[item.kind == ItemKind::sharepoint ? graph::ItemType::sharepoint
                                                     : graph::ItemType::onedrive]
                 .insert(name_key(item.file->name));

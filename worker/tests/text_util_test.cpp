@@ -18,6 +18,14 @@ struct Row {
 
 } // namespace
 
+TEST_CASE("joined puts the separator between names only", "[text_util]")
+{
+    CHECK(rp::joined({}, ", ").empty());
+    CHECK(rp::joined({"subject"}, ", ") == "subject");
+    CHECK(rp::joined({"subject", "sent_at", "sha256"}, ", ") == "subject, sent_at, sha256");
+    CHECK(rp::joined({"subject", "sent_at"}, ",") == "subject,sent_at");
+}
+
 TEST_CASE("form_encode percent-encodes every byte but letters, digits and -._~", "[text_util]")
 {
     const Row row = GENERATE(values<Row>({

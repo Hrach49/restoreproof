@@ -7,6 +7,210 @@ Format: date, decision, reason, alternatives rejected.
 
 ---
 
+## 2026-10-01 — W3.3: the status decision table (recorded before the build; the owner approved it as written)
+
+W3.3 (#38) turns what a run produced into one status, `pass`, `fail` or `error`. One pure
+function, `rp::verification::decide_status`, in new files `rp/run_status.hpp` and
+`src/run_status.cpp`. It never calls Veeam or Graph. Where the issue text predates W3.1/W3.2,
+the checker wins: item outcomes are `match`/`mismatch`/`missing`/`error`, not "found/match".
+
+1. **Inputs.** A `RunFacts` holds four things:
+   - the `ExpectedSet`;
+   - the sample's shortfalls (per type, canaries and random items, how many were wanted and
+     how many taken);
+   - at most one `RunStop` (a phase plus an `error_code` and a message) for whatever stopped
+     the run;
+   - the `RestoreResult` and the `CheckResult` when they exist.
+
+   A separate pure helper, `stop_reason(std::exception_ptr, RunPhase)`, maps an exception
+   to a `RunStop` by its type. The phases are `before_restore` (config, manifest, restore
+   points, sampling, the before snapshot), `restore` (`restore_sample` threw) and `check`
+   (the read-back or the check threw something that isn't Graph's). Per-type Graph failures
+   in the read-back are not stops: they are already item `error`s in the `CheckResult`.
+
+   **Each item gets one verdict, in this order, first fit wins:**
+   1. check `error` → *unchecked*, with the check's code;
+   2. check `match` → *verified*, whatever Veeam said about the item;
+   3. check `missing`/`mismatch` while Veeam marked the item not restored with
+      `infrastructure` → *unchecked*, `backup_infrastructure`;
+   4. check `missing`/`mismatch` → *failed*.
+
+   **The run, first fit wins:**
+
+   | # | When | Status | `error_code` |
+   |---|---|---|---|
+   | 1 | inputs that don't add up (check items ≠ expected items, indexes out of order, a restore result without a check and no stop) | error | `internal` |
+   | 2 | a stop in any phase | error | by the exception (point 2) |
+   | 3 | the sample is empty | error | `empty_sample` |
+   | 4 | the restore returned `not_run` | error | `not_run` |
+   | 5 | any item *failed* | **fail**, the failed items named | — |
+   | 6 | the restore is `failed` (Veeam: 0 restored) and every item matched | error | `restore_contradiction` |
+   | 7 | any item *unchecked* | error | the most severe item code (point 2) |
+   | 8 | every item *verified* | **pass**, with warnings (point 4) | — |
+
+   **Precedence.** A stop or an unusable run always wins. Then a confirmed *failed* item wins
+   over unchecked ones (row 5 before row 7). A missing or mismatched item counts only when
+   its own target was read fine and Veeam didn't blame infrastructure for it, so it is
+   evidence about the backup, and an unrelated unchecked item can't hide it. The unchecked
+   items are still listed beside the `fail`.
+
+   The interim code already put 5 before 4. One case changes: today an infrastructure item
+   anywhere makes the run 4 even when another item is missing.
+
+2. **Error codes.** One flat vocabulary, the same in every phase. The `rpworker` exit code is
+   in brackets (point 6).
+
+   | Code | From | Exit |
+   |---|---|---|
+   | `config` | `rp::ConfigError` (`graph::CertificateError` too), `sampling::ManifestError`, `connector::UnknownConnectorError` | 1 |
+   | `internal` | any other exception; inconsistent inputs (row 1) | 1 |
+   | `backup_auth` | `connector::AuthError` (also Graph auth inside `restore_sample`'s guard layer 1, as the connector maps it today) | 2 |
+   | `backup_transient` | `connector::TransientError` (unreachable, a timeout, a gateway error) | 3 |
+   | `not_in_backup` | `connector::NotFoundError`: unknown organisation, or (in `restore_sample`) a sampled item not in the restore point | 4 |
+   | `no_restore_point` | no restore points, or `--point` not among them (the command's own stop, not an exception) | 4 |
+   | `target_guard` | `connector::SafetyViolation`; `graph::WrongTargetError` (before snapshot or read-back) | 4 |
+   | `backup` | any other `connector::Error`: Veeam errors, an ambiguous match, a `Working` session of ours at preflight, a restore with no verdict (still `Working` after 20 min, session not found), a session that restored nothing for an infrastructure reason | 4 |
+   | `backup_infrastructure` | an item Veeam marked not restored with `infrastructure` that the check didn't find matching | 4 |
+   | `empty_sample` | row 3 | 4 |
+   | `not_run` | row 4 | 4 |
+   | `restore_contradiction` | row 6 | 4 |
+   | `graph_auth` / `graph_permission` | `graph::AuthError` / `PermissionError` (before snapshot or read-back) | 2 |
+   | `graph_transient` | `graph::TransientError` | 3 |
+   | `graph` | any other `graph::GraphError` | 4 |
+   | `stale_target` | the checker's: only an earlier run's copy is there | 4 |
+
+   With several unchecked items, the run's code is the first of these present: `target_guard`,
+   `graph_auth`, `graph_permission`, `backup_infrastructure`, `graph`, `graph_transient`,
+   `stale_target`. A misconfiguration or a safety problem outranks a retry-later one, and an
+   unclean target comes last. The message counts each code.
+
+   `backup` carries every other connector error. Splitting it (a `Working` session, no verdict)
+   needs new connector error classes, which is left open.
+
+3. **`duplicate`, and unchecked items beside matches.**
+   - **A duplicate is a warning, never a status.** The newest copy was compared and matched, so
+     the backup delivered the data. A second copy points at Veeam or the Worker writing twice,
+     not at the backup losing data, so `fail` would accuse the backup wrongly. It is a
+     `duplicate` warning naming the items, on a `pass` or a `fail`.
+   - **One item `error` with every other item matching is `error` for the run.** `pass` means
+     every sampled item verified, and a partial pass would claim more than was checked. The
+     result is finer than the status: per-item verdicts and the counts (point 5), so a report
+     can say "n of m verified, k couldn't be checked (code)" under an `error` without calling
+     it a pass. `stale_target` is `error` as the checker already decided (W3.2 live run).
+
+4. **Partial and Warning.** Veeam's word never decides the status. W3.2 live run 2b showed
+   that "restored" proves nothing, and a failure Veeam reports has to show up in the check to
+   become `fail`.
+   - `partial` (a `Warning` session, a `Failed` session beside restored items, a short
+     `restoredItemsCount`) with every item verified → `pass` with warnings. This is the issue's
+     rule.
+   - `partial` with an item missing or mismatched, not infrastructure → `fail`.
+   - `partial` with an infrastructure item that didn't match → `error` `backup_infrastructure`
+     (the W2.4 review's proposal, now settled).
+   - `failed` (0 restored, not infrastructure) → `fail` through its missing items. If every
+     item matched anyway → `error` `restore_contradiction`: when Veeam and Graph disagree that
+     completely, "when unsure, error".
+
+   **"The warning text attached"** means a `warnings` list on the status. Each warning has a
+   `code`, a one-line `message` and the item `indexes` it concerns. The codes:
+   - `backup_session`: per session whose result isn't `Success`, with Veeam's `result` and
+     `details` (Veeam's counts, never a tenant value);
+   - `backup_item`: verified items Veeam didn't report restored;
+   - `duplicate`;
+   - `shortfall`: per type and half, wanted and taken;
+   - `stale_copies`: earlier runs' copies ignored.
+
+   Item messages (which may hold a name) stay in the restore result, never in a warning.
+
+   **Where this disagrees with earlier entries:**
+   - W1.7 "`failed` → fail": now fail only through the check. A stale item gives `error`, and a
+     full contradiction gives `error`.
+   - W1.7 "`partial` → fail unless every item verifies": kept, except that an infrastructure
+     item makes it `error`.
+   - Restore-flow §15 row 810 ("0 restored → `fail`"): narrowed the same way as W1.7's
+     `failed` rule.
+   - The glossary's "no 'passed with warnings'": the status is never qualified. A pass still
+     means 100% verified, and the warnings are evidence beside it, so the glossary gets one
+     clarifying sentence.
+
+   **A shortfall never changes the status** (W2.6's proposal). It is a `shortfall` warning, and
+   the counts by expected kind keep the claim to what was checked.
+
+5. **The result type.**
+
+   ```cpp
+   enum class RunStatus { pass, fail, error };
+   struct StatusWarning { std::string code; std::string message; std::vector<std::size_t> indexes; };
+   struct RunVerdict {
+       RunStatus status;
+       std::string error_code;  // error only
+       std::string message;     // one line, never a tenant value
+       std::vector<std::size_t> failed;    // indexes, fail only
+       std::vector<std::size_t> unchecked; // indexes, with their codes in JSON
+       std::vector<StatusWarning> warnings;
+   };
+   ```
+
+   `to_json` gives the result's `status` object, by index like `expected` and `check`:
+
+   ```
+   {"status", "error_code"?, "message",
+    "counts": {"items", "verified", "failed", "unchecked"},
+    "verified": {"manifest", "fields", "metadata"},
+    "failed_items": [...],
+    "unchecked_items": [{"index", "error_code"}],
+    "warnings": [{"code", "message", "indexes"}]}
+   ```
+
+   W4.1 adopts it into `result.v1.json`.
+
+6. **`rpworker restore` once the status decides.**
+   - Once the run line is out, every ending prints `status <pass|fail|error>[ <code>]:
+     <message>` on stdout, then each warning as `warning: <code>: <message>` on stderr.
+   - The interim `check: n item(s) didn't verify` / `couldn't be checked` lines and the
+     restore's own infrastructure line are replaced by the status line.
+   - The exit code comes from the status: pass 0, fail 5 (`exit_code::restore`, now meaning
+     "the run's status is `fail`"), error by its code (point 2's column: 1, 2, 3 or 4).
+   - Usage errors stay 64 and are outside a run. Errors before the run line (arguments,
+     config, manifest) keep today's stderr lines and codes.
+   - **Changes from the interim:**
+     - a `partial` restore whose items all verify is 0, not 5;
+     - a `failed` restore with stale items is 4, not 5;
+     - an infrastructure item beside a missing item is 5, not 4.
+   - **W3.6 must decide** `rpworker test`'s codes. The guide's 0 pass / 1 fail / 3 error clash
+     with 1 config and 3 transient. The proposal for W3.6 is the same mapping as `restore` (0,
+     5, 1–4), so a script reads both commands the same way.
+
+7. **Coverage.** `run_status` matches no strict name (`vault`, `signer`, `target_guard`).
+   Proposed: add `run_status` to `tools/coverage_gate.py`'s `STRICT_NAMES` (100% line). It is
+   the Worker's counterpart of the Cloud's `app/results.py`, which is held to 100% branch.
+
+**Reason.** The check is the evidence. Veeam's account is only a warning or an infrastructure
+excuse, so neither an unclean target nor an unreachable service becomes `fail`, and a
+"restored successfully" that wrote nothing can't become `pass`.
+
+**Alternatives rejected.**
+- *An unchecked item outranks a failed one:* a real data loss would hide behind an unrelated
+  Graph hiccup.
+- *A duplicate fails the run:* it accuses the backup of the Worker's or Veeam's double write.
+- *Pass on the checked subset:* claims more than was tested.
+- *`partial` is always `fail`:* contradicts the issue and the evidence, since every item
+  verified.
+- *Backup codes named `veeam_*`:* the connector layer is product-neutral (W1.7). The run names
+  its connector.
+
+**Open.**
+- **A canary missing from a restore point dated after it** (W2.4's proposed `fail`) stays
+  `error` `not_in_backup` for now. `restore_sample` throws one `NotFoundError` for the whole
+  sample, with no item and no date, so the status can't name the item or know whether the
+  backup should hold it. Making it `fail` needs a per-item "not in restore point" outcome from
+  the connector and the manifest's date against `backupTime`: a later task.
+- A client with no restore points at all is `error` `no_restore_point`, not `fail`. Whether a
+  missing or too-old backup is a `fail` (restore point freshness) is a later product decision.
+- Finer `backup` codes need connector error subclasses.
+
+---
+
 ## 2026-10-01 — W3.2 live run: a file's cTag moves on a restore over it; a mail already there isn't restored at all (proposed)
 
 Amends the W3.2 entry below (point 1 and its Open check) with what the live run showed

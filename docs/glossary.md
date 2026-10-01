@@ -21,8 +21,19 @@ SHA-256, a canary can be checked against a known-correct answer rather than agai
 tenant. Half of every sample is canaries, rotated so all of them get tested over a few runs.
 
 **Random item.** An item picked from the customer's real backed-up data, not seeded by us.
-Its expected values come from reading the live item through Microsoft Graph. Random items
-prove the test covers real content and not just our own planted evidence.
+Its expected values come from the backup's own listing (Veeam's browse of the restore point),
+not from Graph: the Worker app may read only the restore targets (`docs/decisions.md`
+2026-10-01, W3.1). A random mail is expected by its header fields (expected kind `fields`), a
+random file by its name and listed size (`metadata`); neither has a content hash before the
+restore. Random items prove the test covers real content and not just our own planted
+evidence.
+
+**Expected kind.** How one sampled item's expectation was obtained, recorded with it before
+anything is compared (`rp::verification::ExpectedKind`, `docs/verification.md`): `manifest`
+for a canary (the manifest's values and content hash), `fields` for a random mail (subject,
+sender name, sent and received time as the backup lists them), `metadata` for a random file
+(its name, and the backup's size unless it is an Office package). Every item has exactly one;
+the report shows it per item and counts each, so it never claims more than was checked.
 
 **Sample.** The set of items one run selects and tests — canaries plus random items, chosen
 from a seed and a rotation cursor so the selection is reproducible. Per type, half the sample

@@ -1450,27 +1450,32 @@ TEST_CASE("restore: the run ID is flushed before the sample is chosen, the heade
     CHECK(lab.fake.restore_calls == 1);
 }
 
-TEST_CASE("restore: a stdout that fails after the restore ran says so, with the run ID and the "
-          "restore's own account; the check still runs and the status decides the exit code",
+TEST_CASE("restore: a stdout that fails after the restore ran says so, with the run ID, the "
+          "restore's own account and the run's status; the check still runs and the status "
+          "decides the exit code",
           "[restore_command]")
 {
     const std::string lost = "error: writing the output failed after the restore ran (run "
-                             "run-0001, status ";
+                             "run-0001, restore ";
     const auto [status, infrastructure, sp_missing, code, err] =
         GENERATE_COPY(table<connector::RestoreStatus, bool, bool, int, std::string>({
             // A restore that passed but whose output was lost isn't a success.
             {connector::RestoreStatus::succeeded, false, false, rp::exit_code::config,
-             lost + "succeeded: 3 of 3 item(s) restored)\n"},
+             lost + "succeeded: 3 of 3 item(s) restored); run status pass\n"},
             // W3.3: a partial restore whose items all verify is a pass, so 1 here too.
             {connector::RestoreStatus::partial, false, false, rp::exit_code::config,
-             lost + "partial: 3 of 3 item(s) restored)\n"},
+             lost + "partial: 3 of 3 item(s) restored); run status pass\n"},
             {connector::RestoreStatus::partial, true, false, rp::exit_code::config,
-             lost + "partial: 3 of 3 item(s) restored)\n"
+             lost + "partial: 3 of 3 item(s) restored); run status pass\n"
                     "warning: backup_item: 1 verified item(s) the backup didn't report "
                     "restored\n"},
             // A missing item: the run's status is fail.
             {connector::RestoreStatus::partial, false, true, rp::exit_code::restore,
-             lost + "partial: 3 of 3 item(s) restored)\n"},
+             lost + "partial: 3 of 3 item(s) restored); run status fail\n"},
+            // Veeam said failed, every item matched: an error, with its code.
+            {connector::RestoreStatus::failed, false, false, rp::exit_code::service,
+             lost + "failed: 3 of 3 item(s) restored); run status error "
+                    "restore_contradiction\n"},
         }));
     Harness lab;
     lab.fake.pool.mail = {carol_mail(1)};
@@ -2484,8 +2489,9 @@ TEST_CASE("restore: a stdout that fails on the check's table says so, with the s
         lab.run_to({"--run-id", kRunId, "--mail", "1", "--sp", "0", "--od", "0"}, out);
 
     CHECK(exit_code == code);
-    CHECK(error == "error: writing the output failed after the restore ran (run run-0001, status "
-                   "succeeded: 1 of 1 item(s) restored)\n");
+    CHECK(error == "error: writing the output failed after the restore ran (run run-0001, restore "
+                   "succeeded: 1 of 1 item(s) restored); run status " +
+                       std::string{missing ? "fail" : "pass"} + "\n");
     CHECK(buffer.text.starts_with(before_check));
 }
 

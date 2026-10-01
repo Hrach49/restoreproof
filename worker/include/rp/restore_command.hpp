@@ -215,10 +215,10 @@ std::string format_elapsed(std::chrono::nanoseconds elapsed);
 //    or restore_sample); neither ever shows the exception's message. A failed
 //    write or flush of `out` once restore_sample returned (the tables, the
 //    check's table or the status line) doesn't stop the check: "error:
-//    writing the output failed after the restore ran (run <run ID>, status
-//    <restore status>: <restored> of <sent> item(s) restored)", then the
-//    warnings, and the status's exit code (1 when that is 0: its output was
-//    lost);
+//    writing the output failed after the restore ran (run <run ID>, restore
+//    <restore status>: <restored> of <sent> item(s) restored); run status
+//    <pass|fail|error>[ <code>]", then the warnings, and the status's exit
+//    code (1 when that is 0: its output was lost);
 //  - before the run line, with no status line: "restore error: <what()>" for
 //    a connector::Error listing the restore points (2 for an AuthError, 3 for
 //    a TransientError, 4 for any other), and 4 with "restore error: no

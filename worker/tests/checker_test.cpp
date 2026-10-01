@@ -1271,6 +1271,27 @@ TEST_CASE("check: hash_filter takes only this run's files with an expected name 
     CHECK_FALSE(hash(mail));
 }
 
+TEST_CASE("check: hash_filter never downloads a random Office file, which carries no size or "
+          "hash to compare",
+          "[checker]")
+{
+    const ExpectedSet expected =
+        set_of({random_file(0, ItemKind::sharepoint, "plan.docx", std::nullopt),
+                random_file(1, ItemKind::onedrive, "notes.pdf"),
+                canary_file(2, ItemKind::onedrive, "rp-canary-02.docx", "office-v1")});
+    const auto hash = verification::hash_filter(expected, {});
+    const auto file = [](ItemType type, const std::string& name) {
+        FoundItem item;
+        item.type = type;
+        item.id = "new-" + name;
+        item.name = name;
+        return item;
+    };
+    CHECK_FALSE(hash(file(ItemType::sharepoint, "plan.docx")));
+    CHECK(hash(file(ItemType::onedrive, "notes.pdf")));
+    CHECK(hash(file(ItemType::onedrive, "rp-canary-02.docx")));
+}
+
 TEST_CASE("check: hash_filter keeps its own copy of what it was given", "[checker]")
 {
     std::function<bool(const FoundItem&)> hash;

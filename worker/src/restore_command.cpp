@@ -458,10 +458,7 @@ std::string format_check(const verification::ExpectedSet& expected,
             {"  ", {"KIND", "SOURCE", "NAME", "OUTCOME", "FIELDS", "DUP", "MS"}}};
         for (const verification::ItemCheck& item : check.items) {
             const verification::ExpectedItem& want = expected.items.at(item.index);
-            std::string fields;
-            for (const std::string& field : item.mismatches) {
-                fields += (fields.empty() ? "" : ",") + field;
-            }
+            std::string fields = joined(item.mismatches, ",");
             if (fields.empty()) {
                 fields = item.error_code;
             }

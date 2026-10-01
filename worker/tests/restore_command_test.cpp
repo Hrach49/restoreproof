@@ -2088,6 +2088,8 @@ TEST_CASE("restore: every type checked: canaries and random items of each, the O
     INFO(run.out);
     CHECK(run.exit_code == rp::exit_code::ok);
     CHECK(run.err.empty());
+    // deck.pptx, a random Office file, has no size or hash to compare: listed,
+    // never downloaded, so its read took one clock step, not two.
     CHECK_THAT(run.out,
                ContainsSubstring(
                    "\n"
@@ -2097,7 +2099,7 @@ TEST_CASE("restore: every type checked: canaries and random items of each, the O
                    "  sharepoint  canary  rp-canary-02.docx  match    -       -    246000\n"
                    "  sharepoint  random  report.pdf         match    -       -    246000\n"
                    "  onedrive    canary  rp-canary-12.docx  match    -       -    246000\n"
-                   "  onedrive    random  deck.pptx          match    -       -    246000\n"
+                   "  onedrive    random  deck.pptx          match    -       -    123000\n"
                    "\n"
                    "check: 6 match, 0 mismatch, 0 missing, 0 error\n"));
 }

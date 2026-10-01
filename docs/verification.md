@@ -103,7 +103,8 @@ items for, without hashing: the *before snapshot*, each mail's Graph ID and each
 `cTag`. After the restore it lists them again, hashing every mail body (`text-v1`) and every
 file that is this run's copy of an expected file (`bytes`, and `office-v1` for a docx or
 xlsx): the *after read*. A file that was there before with the same `cTag` (an earlier run's
-copy), or whose name has no expected file's `name_key`, is listed but never downloaded
+copy), or whose name has no `name_key` of an expected file that carries a hash or a size (a
+random Office file carries neither), is listed but never downloaded
 (`rp::verification::hash_filter`), so a leftover that is gone, has changed size or is too large
 by now can't turn a target's items into `error`. Both go through
 `rp::graph::TargetReader`, so every read runs the target guard's checks first (the mailbox's

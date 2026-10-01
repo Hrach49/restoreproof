@@ -183,9 +183,201 @@ std::size_t count_of(const ExpectedSet& set, ExpectedKind kind)
     return n;
 }
 
+// One consistent item of each sort: a SharePoint canary, a random mail, a
+// random OneDrive file and a mail canary, at their indexes.
+std::vector<ExpectedItem> consistent_items()
+{
+    ExpectedItem canary;
+    canary.index = 0;
+    canary.kind = ItemKind::sharepoint;
+    canary.source = ItemSource::canary;
+    canary.expected_kind = ExpectedKind::manifest;
+    canary.canary_id = "rp-canary-01.pdf";
+    canary.file = verification::ExpectedFile{"rp-canary-01.pdf", 925};
+    canary.sha256 = std::string(64, 'b');
+    canary.sha256_rule = "bytes";
+    ExpectedItem mail;
+    mail.index = 1;
+    mail.kind = ItemKind::mail;
+    mail.source = ItemSource::random;
+    mail.expected_kind = ExpectedKind::fields;
+    mail.random_key = {"carol@restoreprooflab.onmicrosoft.com", "Archive", "Lunch", "2026-09-20T10:00:00Z"};
+    mail.mail = verification::ExpectedMail{"Lunch", std::nullopt, std::nullopt, std::nullopt,
+                                           "2026-09-20T10:00:00Z", std::nullopt};
+    ExpectedItem file;
+    file.index = 2;
+    file.kind = ItemKind::onedrive;
+    file.source = ItemSource::random;
+    file.expected_kind = ExpectedKind::metadata;
+    file.random_key = {"carol@restoreprooflab.onmicrosoft.com", "/", "Plan.docx"};
+    file.file = verification::ExpectedFile{"Plan.docx", std::nullopt};
+    ExpectedItem mail_canary;
+    mail_canary.index = 3;
+    mail_canary.kind = ItemKind::mail;
+    mail_canary.source = ItemSource::canary;
+    mail_canary.expected_kind = ExpectedKind::manifest;
+    mail_canary.canary_id = "RP-CANARY-0008";
+    mail_canary.mail = verification::ExpectedMail{"RP-CANARY-0008", "admin@example.com", std::nullopt,
+                                                  "2026-09-24T22:14:41Z", "2026-09-24T22:14:44Z",
+                                                  "<id@example.com>"};
+    mail_canary.sha256 = std::string(64, 'c');
+    mail_canary.sha256_rule = "text-v1";
+    return {canary, mail, file, mail_canary};
+}
+
 } // namespace
 
-// 1. Acceptance (Done when, issue #36): every sampled item has an expected
+// 1. Refusals: nothing is built.
+TEST_CASE("build_expected_set refuses a selection that isn't this manifest's or doesn't add up",
+          "[expected-set]")
+{
+    struct Row {
+        std::string what;
+        std::function<void(Selection&, CanaryManifest&)> edit;
+        std::string kind;
+        std::string message;
+    };
+    const auto mismatch = [](std::string_view kind) {
+        return "expected set: the " + std::string{kind} +
+               " selectors don't match the canaries and random items recorded";
+    };
+    const Row row = GENERATE_COPY(values<Row>({
+        {"a selection from another manifest",
+         [](Selection&, CanaryManifest& m) { m.sha256 = std::string(64, '0'); }, "invalid_argument",
+         "expected set: the selection wasn't made from this manifest"},
+        {"a mail selector more than recorded",
+         [](Selection& s, CanaryManifest&) { s.mail.push_back(s.mail.back()); }, "invalid_argument",
+         mismatch("mail")},
+        {"a SharePoint random item taken but no selector",
+         [](Selection& s, CanaryManifest&) { s.sharepoint.pop_back(); }, "invalid_argument",
+         mismatch("sharepoint")},
+        {"a OneDrive random candidate missing",
+         [](Selection& s, CanaryManifest&) { s.onedrive_random.pop_back(); }, "invalid_argument",
+         mismatch("onedrive")},
+        {"a random key fewer than the random candidates",
+         [](Selection& s, CanaryManifest&) { s.record.mail.random_keys.pop_back(); }, "invalid_argument",
+         mismatch("mail")},
+        {"more mail random items taken than recorded",
+         [](Selection& s, CanaryManifest&) { ++s.record.mail.random_taken; }, "invalid_argument",
+         mismatch("mail")},
+        {"fewer SharePoint random items taken than recorded",
+         [](Selection& s, CanaryManifest&) { --s.record.sharepoint.random_taken; }, "invalid_argument",
+         mismatch("sharepoint")},
+        {"more OneDrive canaries wanted than recorded",
+         [](Selection& s, CanaryManifest&) { ++s.record.onedrive.canary_wanted; }, "invalid_argument",
+         mismatch("onedrive")},
+        {"a canary id more than selected",
+         [](Selection& s, CanaryManifest&) { s.record.onedrive.canary_ids.push_back("rp-canary-20.png"); },
+         "invalid_argument", mismatch("onedrive")},
+        {"a mail canary the manifest hasn't",
+         [](Selection& s, CanaryManifest&) { s.record.mail.canary_ids[1] = "RP-CANARY-9999"; },
+         "logic_error", "expected set: canary 1 of mail isn't in the manifest"},
+        {"a SharePoint canary that is a OneDrive canary",
+         [](Selection& s, CanaryManifest&) { s.record.sharepoint.canary_ids[0] = "rp-canary-11.pdf"; },
+         "logic_error", "expected set: canary 0 of sharepoint isn't in the manifest"},
+        {"a canary selector that isn't its entry's",
+         [](Selection& s, CanaryManifest&) { s.onedrive[1].folder_path = "/Elsewhere"; },
+         "logic_error", "expected set: canary 1 of onedrive isn't the manifest's entry"},
+        {"a random mail selector that differs from its candidate",
+         [](Selection& s, CanaryManifest&) { s.mail[3].subject = "something else"; }, "logic_error",
+         "expected set: random item 0 of mail isn't the candidate the sampler took"},
+        {"a random SharePoint selector that differs from its candidate",
+         [](Selection& s, CanaryManifest&) { s.sharepoint_random[1].selector.name = "other.pdf"; },
+         "logic_error", "expected set: random item 1 of sharepoint isn't the candidate the sampler took"},
+        {"a random mail key that isn't its selector's",
+         [](Selection& s, CanaryManifest&) { s.record.mail.random_keys[1][2] = "something else"; },
+         "logic_error", "expected set: random item 1 of mail isn't the candidate the sampler took"},
+        {"a random SharePoint key that isn't its selector's",
+         [](Selection& s, CanaryManifest&) { s.record.sharepoint.random_keys[0].back() = "other.pdf"; },
+         "logic_error", "expected set: random item 0 of sharepoint isn't the candidate the sampler took"},
+        {"a random OneDrive key that isn't its selector's",
+         [](Selection& s, CanaryManifest&) { s.record.onedrive.random_keys[0][0] = "dana@example.com"; },
+         "logic_error", "expected set: random item 0 of onedrive isn't the candidate the sampler took"},
+        {"a random OneDrive selector whose size isn't unchecked",
+         [](Selection& s, CanaryManifest&) { s.onedrive[2].size = 77; }, "logic_error",
+         "expected set: random item 0 of onedrive isn't the candidate the sampler took"},
+    }));
+    CAPTURE(row.what);
+    Selection s = select({6, 4, 3}, mixed_pool());
+    REQUIRE(s.mail.size() == 6);
+    REQUIRE(s.sharepoint.size() == 4);
+    REQUIRE(s.onedrive.size() == 3);
+    CanaryManifest manifest = lab_manifest();
+    REQUIRE_NOTHROW(verification::build_expected_set(s, manifest));
+    row.edit(s, manifest);
+    const Thrown thrown = thrown_by([&] { verification::build_expected_set(s, manifest); });
+    CHECK(thrown.kind == row.kind);
+    CHECK(thrown.what == row.message);
+}
+
+// 2. to_json writes no item whose expected kind its fields don't back.
+TEST_CASE("to_json refuses an item that claims more or other than it holds", "[expected-set]")
+{
+    struct Row {
+        std::string what;
+        std::function<void(std::vector<ExpectedItem>&)> edit;
+        std::string message;
+    };
+    const auto item = [](int n, std::string_view why) {
+        return "expected set: item " + std::to_string(n) + " " + std::string{why};
+    };
+    const std::string not_canary = "is manifest but not a canary with a hash and its rule";
+    const std::string not_random =
+        "is fields or metadata but not a random item of its type without a hash";
+    using Items = std::vector<ExpectedItem>;
+    const Row row = GENERATE_COPY(values<Row>({
+        // The review's case: a kind never set reads as a canary's.
+        {"a random file whose kind was never set",
+         [](Items& items) {
+             ExpectedItem forgot;
+             forgot.index = 4;
+             forgot.kind = ItemKind::onedrive;
+             forgot.random_key = {"carol@restoreprooflab.onmicrosoft.com", "/", "a.pdf"};
+             forgot.file = verification::ExpectedFile{"a.pdf", 12};
+             items.push_back(forgot);
+         },
+         item(4, not_canary)},
+        {"a manifest item without a hash", [](Items& i) { i[0].sha256.clear(); }, item(0, not_canary)},
+        {"a manifest item with an upper-case hash", [](Items& i) { i[0].sha256 = std::string(64, 'B'); },
+         item(0, not_canary)},
+        {"a manifest item whose hash isn't hex", [](Items& i) { i[0].sha256 = std::string(64, 'g'); },
+         item(0, not_canary)},
+        {"a manifest item whose hash is short", [](Items& i) { i[0].sha256.pop_back(); }, item(0, not_canary)},
+        {"a manifest item without a rule", [](Items& i) { i[0].sha256_rule.clear(); }, item(0, not_canary)},
+        {"a file by text-v1", [](Items& i) { i[0].sha256_rule = "text-v1"; }, item(0, not_canary)},
+        {"a mail by bytes", [](Items& i) { i[3].sha256_rule = "bytes"; }, item(3, not_canary)},
+        {"a manifest item from a random source", [](Items& i) { i[0].source = ItemSource::random; },
+         item(0, not_canary)},
+        {"a manifest item without a canary id", [](Items& i) { i[0].canary_id.clear(); }, item(0, not_canary)},
+        {"a manifest item with a random key", [](Items& i) { i[0].random_key = {"k"}; }, item(0, not_canary)},
+        {"a fields item with a hash", [](Items& i) { i[1].sha256 = std::string(64, 'b'); }, item(1, not_random)},
+        {"a metadata item with a rule", [](Items& i) { i[2].sha256_rule = "bytes"; }, item(2, not_random)},
+        {"a fields item from a canary", [](Items& i) { i[1].source = ItemSource::canary; }, item(1, not_random)},
+        {"a metadata item with a canary id", [](Items& i) { i[2].canary_id = "x"; }, item(2, not_random)},
+        {"a metadata item without a key", [](Items& i) { i[2].random_key.clear(); }, item(2, not_random)},
+        {"a file said to be fields", [](Items& i) { i[2].expected_kind = ExpectedKind::fields; },
+         item(2, not_random)},
+        {"a mail said to be metadata", [](Items& i) { i[1].expected_kind = ExpectedKind::metadata; },
+         item(1, not_random)},
+        {"an expected kind outside the enum", [](Items& i) { i[1].expected_kind = static_cast<ExpectedKind>(7); },
+         item(1, "has an unknown expected kind")},
+        {"an item out of its index", [](Items& i) { i[2].index = 7; }, item(2, "isn't at its index")},
+        {"a type outside the enum", [](Items& i) { i[1].kind = static_cast<ItemKind>(9); },
+         item(1, "has an unknown type")},
+        {"a mail without its fields", [](Items& i) { i[1].mail.reset(); }, item(1, "doesn't hold its type's fields")},
+        {"a file holding a mail's fields too", [](Items& i) { i[2].mail = verification::ExpectedMail{}; },
+         item(2, "doesn't hold its type's fields")},
+    }));
+    CAPTURE(row.what);
+    ExpectedSet set{std::string(64, 'a'), consistent_items()};
+    REQUIRE_NOTHROW(verification::to_json(set));
+    row.edit(set.items);
+    const Thrown thrown = thrown_by([&] { verification::to_json(set); });
+    CHECK(thrown.kind == "logic_error");
+    CHECK(thrown.what == row.message);
+}
+
+// 3. Acceptance (Done when, issue #36): every sampled item has an expected
 // record and its kind is explicit.
 TEST_CASE("every sampled item has an expected record, in RestoreSpec order, with its kind explicit",
           "[expected-set]")
@@ -304,81 +496,7 @@ TEST_CASE("every sampled item has an expected record, in RestoreSpec order, with
     }
 }
 
-// 2. Refusals: nothing is built.
-TEST_CASE("build_expected_set refuses a selection that isn't this manifest's or doesn't add up",
-          "[expected-set]")
-{
-    struct Row {
-        std::string what;
-        std::function<void(Selection&, CanaryManifest&)> edit;
-        std::string kind;
-        std::string message;
-    };
-    const auto mismatch = [](std::string_view kind) {
-        return "expected set: the " + std::string{kind} +
-               " selectors don't match the canaries and random items recorded";
-    };
-    const Row row = GENERATE_COPY(values<Row>({
-        {"a selection from another manifest",
-         [](Selection&, CanaryManifest& m) { m.sha256 = std::string(64, '0'); }, "invalid_argument",
-         "expected set: the selection wasn't made from this manifest"},
-        {"a mail selector more than recorded",
-         [](Selection& s, CanaryManifest&) { s.mail.push_back(s.mail.back()); }, "invalid_argument",
-         mismatch("mail")},
-        {"a SharePoint random item taken but no selector",
-         [](Selection& s, CanaryManifest&) { s.sharepoint.pop_back(); }, "invalid_argument",
-         mismatch("sharepoint")},
-        {"a OneDrive random candidate missing",
-         [](Selection& s, CanaryManifest&) { s.onedrive_random.pop_back(); }, "invalid_argument",
-         mismatch("onedrive")},
-        {"a random key fewer than the random candidates",
-         [](Selection& s, CanaryManifest&) { s.record.mail.random_keys.pop_back(); }, "invalid_argument",
-         mismatch("mail")},
-        {"a canary id more than selected",
-         [](Selection& s, CanaryManifest&) { s.record.onedrive.canary_ids.push_back("rp-canary-20.png"); },
-         "invalid_argument", mismatch("onedrive")},
-        {"a mail canary the manifest hasn't",
-         [](Selection& s, CanaryManifest&) { s.record.mail.canary_ids[1] = "RP-CANARY-9999"; },
-         "logic_error", "expected set: canary 1 of mail isn't in the manifest"},
-        {"a SharePoint canary that is a OneDrive canary",
-         [](Selection& s, CanaryManifest&) { s.record.sharepoint.canary_ids[0] = "rp-canary-11.pdf"; },
-         "logic_error", "expected set: canary 0 of sharepoint isn't in the manifest"},
-        {"a canary selector that isn't its entry's",
-         [](Selection& s, CanaryManifest&) { s.onedrive[1].folder_path = "/Elsewhere"; },
-         "logic_error", "expected set: canary 1 of onedrive isn't the manifest's entry"},
-        {"a random mail selector that differs from its candidate",
-         [](Selection& s, CanaryManifest&) { s.mail[3].subject = "something else"; }, "logic_error",
-         "expected set: random item 0 of mail isn't the candidate the sampler took"},
-        {"a random SharePoint selector that differs from its candidate",
-         [](Selection& s, CanaryManifest&) { s.sharepoint_random[1].selector.name = "other.pdf"; },
-         "logic_error", "expected set: random item 1 of sharepoint isn't the candidate the sampler took"},
-        {"a random mail key that isn't its selector's",
-         [](Selection& s, CanaryManifest&) { s.record.mail.random_keys[1][2] = "something else"; },
-         "logic_error", "expected set: random item 1 of mail isn't the candidate the sampler took"},
-        {"a random SharePoint key that isn't its selector's",
-         [](Selection& s, CanaryManifest&) { s.record.sharepoint.random_keys[0].back() = "other.pdf"; },
-         "logic_error", "expected set: random item 0 of sharepoint isn't the candidate the sampler took"},
-        {"a random OneDrive key that isn't its selector's",
-         [](Selection& s, CanaryManifest&) { s.record.onedrive.random_keys[0][0] = "dana@example.com"; },
-         "logic_error", "expected set: random item 0 of onedrive isn't the candidate the sampler took"},
-        {"a random OneDrive selector whose size isn't unchecked",
-         [](Selection& s, CanaryManifest&) { s.onedrive[2].size = 77; }, "logic_error",
-         "expected set: random item 0 of onedrive isn't the candidate the sampler took"},
-    }));
-    CAPTURE(row.what);
-    Selection s = select({6, 4, 3}, mixed_pool());
-    REQUIRE(s.mail.size() == 6);
-    REQUIRE(s.sharepoint.size() == 4);
-    REQUIRE(s.onedrive.size() == 3);
-    CanaryManifest manifest = lab_manifest();
-    REQUIRE_NOTHROW(verification::build_expected_set(s, manifest));
-    row.edit(s, manifest);
-    const Thrown thrown = thrown_by([&] { verification::build_expected_set(s, manifest); });
-    CHECK(thrown.kind == row.kind);
-    CHECK(thrown.what == row.message);
-}
-
-// 3. Canary mail, from the real manifest.
+// 4. Canary mail, from the real manifest.
 TEST_CASE("a canary mail expects the manifest's fields and its body hash by text-v1",
           "[expected-set]")
 {
@@ -406,7 +524,7 @@ TEST_CASE("a canary mail expects the manifest's fields and its body hash by text
     CHECK_FALSE(item.file);
 }
 
-// 4. Canary files.
+// 5. Canary files.
 TEST_CASE("a canary file expects its content hash by its rule, and its size only for bytes",
           "[expected-set]")
 {
@@ -447,7 +565,7 @@ TEST_CASE("a canary file expects its content hash by its rule, and its size only
     CHECK_FALSE(item.mail);
 }
 
-// 5. Random mail.
+// 6. Random mail.
 TEST_CASE("a random mail expects the backup's fields; what the backup didn't say is left out",
           "[expected-set]")
 {
@@ -491,7 +609,7 @@ TEST_CASE("a random mail expects the backup's fields; what the backup didn't say
     CHECK_FALSE(out.contains("sha256"));
 }
 
-// 6. Random files.
+// 7. Random files.
 TEST_CASE("a random file expects its name, and the backup's size unless it is an Office package",
           "[expected-set]")
 {
@@ -530,7 +648,40 @@ TEST_CASE("a random file expects its name, and the backup's size unless it is an
     CHECK(verification::to_json(set).at("items")[1].contains("size_bytes") == row.sized);
 }
 
-// 7. The one Office package rule.
+TEST_CASE("a random file whose size the backup didn't give expects no size", "[expected-set]")
+{
+    // -1 is the candidate's default: a connector that doesn't say.
+    const std::int64_t size = GENERATE(std::int64_t{-1}, std::int64_t{-42});
+    const bool sharepoint = GENERATE(true, false);
+    CAPTURE(size, sharepoint);
+    connector::CandidatePool pool;
+    if (sharepoint) {
+        pool.sharepoint = {sp_candidate(1, "report.pdf", size)};
+    } else {
+        pool.onedrive = {od_candidate("report.pdf", size)};
+    }
+    const ExpectedSet set = verification::build_expected_set(
+        select({0, sharepoint ? 2 : 0, sharepoint ? 0 : 2}, pool), lab_manifest());
+    REQUIRE(set.items.size() == 2);
+    REQUIRE(set.items[1].file);
+    CHECK(set.items[1].expected_kind == ExpectedKind::metadata);
+    CHECK(set.items[1].file->size_bytes == std::nullopt);
+    CHECK_FALSE(verification::to_json(set).at("items")[1].contains("size_bytes"));
+}
+
+// A size of 0 is one the backup gave: an empty file.
+TEST_CASE("a random empty file expects size 0", "[expected-set]")
+{
+    connector::CandidatePool pool;
+    pool.onedrive = {od_candidate("empty.txt", 0)};
+    const ExpectedSet set = verification::build_expected_set(select({0, 0, 2}, pool), lab_manifest());
+    REQUIRE(set.items.size() == 2);
+    REQUIRE(set.items[1].file);
+    CHECK(set.items[1].file->size_bytes == std::optional<std::int64_t>{0});
+}
+
+
+// 8. The one Office package rule.
 TEST_CASE("is_office_package: the Office Open XML extensions, ASCII case-insensitive",
           "[expected-set]")
 {
@@ -564,7 +715,7 @@ TEST_CASE("is_office_package: the Office Open XML extensions, ASCII case-insensi
     CHECK(rp::is_office_package(row.name) == row.office);
 }
 
-// 8. The result's "expected" object.
+// 9. The result's "expected" object.
 TEST_CASE("to_json writes the result's expected object; unknown values are left out",
           "[expected-set]")
 {
@@ -646,4 +797,7 @@ TEST_CASE("the kinds and sources as strings", "[expected-set]")
     CHECK(verification::to_string(ExpectedKind::metadata) == "metadata");
     CHECK(verification::to_string(ItemSource::canary) == "canary");
     CHECK(verification::to_string(ItemSource::random) == "random");
+    // Outside the enum: never a value that claims a check.
+    CHECK(verification::to_string(static_cast<ExpectedKind>(7)) == "unknown");
+    CHECK(verification::to_string(static_cast<ItemSource>(7)) == "unknown");
 }

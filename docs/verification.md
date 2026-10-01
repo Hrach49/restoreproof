@@ -31,7 +31,14 @@ There are three kinds, one per item, never mixed, and no "unknown" kind:
 - **Times** are `YYYY-MM-DDTHH:MM:SSZ`, cut (not rounded) to whole seconds. Tolerances are
   W3.2's.
 - **What the backup didn't say is not an expectation.** A random mail without `from`, or whose
-  `sent` isn't a time, is still offered and gets `fields` with what is known.
+  `sent` isn't a time, is still offered and gets `fields` with what is known; a random file
+  whose size is below 0 (a connector's "not known", `size_bytes` -1) gets `metadata` by name
+  only. A display name is the sender's own text, so each control character in it
+  (`worker/src/control_chars.hpp`) becomes a space as it is read.
+- **A canary's rule is the one its file can be checked by.** The manifest loader refuses
+  `bytes` for a docx or xlsx, `office-v1` for a pdf, txt or png, and a name that is an Office
+  package's for any type but docx and xlsx (or isn't one for those), as `python -m seeder`'s
+  validator does.
 - **Order.** The items are in `RestoreSpec` order (mail canaries, mail randoms, SharePoint
   canaries, SharePoint randoms, OneDrive canaries, OneDrive randoms), each with its `index`, so
   the n-th expected item lines up with the n-th `RestoreResult::items` entry. A canary is named
@@ -52,7 +59,12 @@ hashes only the `word/` and `xl/` parts, so it covers docx and xlsx, not pptx.
 
 `to_json(ExpectedSet)`, snake_case like the `sample` object; a value that isn't known is left
 out, never `null`; `counts` always has all three kinds, so a report can say "n of m items
-checked against a known hash" without recounting (W4.1 adopts it into `result.v1.json`):
+checked against a known hash" without recounting (W4.1 adopts it into `result.v1.json`). It
+writes nothing for an item whose fields don't back its kind (`manifest` without a canary ID, a
+lower-case hex hash and its type's rule; `fields` or `metadata` with a hash, a canary ID or no
+key, or for the other type; an item out of its index), so an item built elsewhere (W3.2, W4.1)
+can't read as checked against a hash it hasn't. `build_expected_set` also refuses a record
+whose `random_taken` or `canary_wanted` isn't what the selection holds.
 
 ```json
 {

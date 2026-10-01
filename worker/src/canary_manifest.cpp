@@ -5,6 +5,7 @@
 
 #include "folder_path.hpp"
 #include "name_key.hpp"
+#include "office_files.hpp"
 #include "path_utf8.hpp"
 #include "text_util.hpp"
 #include "uuid.hpp"
@@ -208,6 +209,17 @@ CanaryFile read_file(const json& entry, const std::string& pointer, bool sharepo
                                "must be \"bytes\" or \"office-v1\"") == "bytes"
                             ? ContentRule::bytes
                             : ContentRule::office_v1;
+    // The rule a restored copy can be checked by: office-v1 reads a docx or
+    // xlsx package, and a file SharePoint may rewrite never keeps its bytes.
+    const bool office_type = file.file_type == "docx" || file.file_type == "xlsx";
+    if ((file.content_rule == ContentRule::office_v1) != office_type) {
+        refuse(pointer + "/content_rule",
+               "must be \"office-v1\" for a docx or xlsx and \"bytes\" for a pdf, txt or png");
+    }
+    if (is_office_package(file.name) != office_type) {
+        refuse(pointer + "/name",
+               "must be an Office package's name (src/office_files.hpp) for a docx or xlsx, and only then");
+    }
     const auto size = entry.find("stored_size");
     if (size == entry.end() || !size->is_number_integer() || size->get<std::int64_t>() < 0) {
         refuse(pointer + "/stored_size", "must be an integer of 0 or more");

@@ -1297,6 +1297,11 @@ TEST_CASE("list_candidates: a mail's sender name and sent time as Veeam lists th
     json number_sent = mail("x-9", "Quiz");
     number_sent["sent"] = 1727215000;
     rig.tenant.add_mail(kAliceMailbox, kArchive, number_sent);
+    // A display name its sender chose, with a line break, a right-to-left
+    // override and NEL: each control character becomes a space.
+    json forged_from = mail("x-10", "Invoice");
+    forged_from["from"] = "Bob\r\nstatus: pass\xE2\x80\xAE" "evil\xC2\x85" "end";
+    rig.tenant.add_mail(kAliceMailbox, kArchive, forged_from);
     rig.serve();
 
     const connector::CandidatePool pool = rig.list(query(true, false, false));
@@ -1305,7 +1310,7 @@ TEST_CASE("list_candidates: a mail's sender name and sent time as Veeam lists th
     for (const connector::MailCandidate& c : pool.mail) {
         by_subject.emplace(c.selector.subject, c);
     }
-    REQUIRE(by_subject.size() == 9);
+    REQUIRE(by_subject.size() == 10);
     const std::string from = recorded.at("from").get<std::string>();
     const std::string sent = recorded.at("sent").get<std::string>();
     REQUIRE(from == "Hrachya Harutyunyan"); // a display name, not an address
@@ -1318,7 +1323,8 @@ TEST_CASE("list_candidates: a mail's sender name and sent time as Veeam lists th
     for (const Row& row : {Row{"Lunch", from, sent}, Row{"Minutes", "", sent}, Row{"Rota", "", sent},
                            Row{"Payroll", from, ""}, Row{"Offsite", from, ""},
                            Row{"Budget", from, "2026-09-26T08:14:59Z"}, Row{"Picnic", "", sent},
-                           Row{"Retro", "", sent}, Row{"Quiz", from, ""}}) {
+                           Row{"Retro", "", sent}, Row{"Quiz", from, ""},
+                           Row{"Invoice", "Bob  status: pass evil end", sent}}) {
         CAPTURE(row.subject);
         const connector::MailCandidate& c = by_subject.at(row.subject);
         CHECK(c.sender_name == row.sender_name);

@@ -85,7 +85,10 @@ public:
 // with no whitespace or control character, an internet_message_id missing,
 // empty or with a control character, a body_normalization other than
 // "text-v1", or a body_sha256 that isn't 64 lower-case hex digits; a file
-// without name, with another file_type or content_rule, a stored_size below
+// without name, with another file_type or content_rule, a content_rule other
+// than office-v1 for a docx or xlsx and bytes for a pdf, txt or png, a name
+// that is an Office package's (src/office_files.hpp) for a pdf, txt or png or
+// isn't one for a docx or xlsx, a stored_size below
 // 0, a content_sha256 that isn't 64 lower-case hex digits, or a folder_path not
 // starting with "/" or with a ".." segment, a backslash or a colon; a SharePoint file whose site_id,
 // drive_id or list_id isn't a Graph site ID, a Graph drive ID or a GUID; a

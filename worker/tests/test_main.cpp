@@ -4,8 +4,9 @@
 // fakes and to servers on 127.0.0.1, never to Veeam, Graph or anything else.
 // A test case during which the guard refused a connection is named on stderr,
 // and the run fails even if the test itself passed (a test expecting a
-// connection error would): its exit code is 1 when Catch2's was 0. ctest runs
-// each test case in its own process, so the failing case is the one named.
+// connection error would): its exit code is 1 when Catch2's was 0. The
+// listener names the case whether ctest runs each test case in its own
+// process or the coverage run (tools/run_coverage.ps1) runs them all in one.
 
 #include "../src/http_client_detail.hpp"
 

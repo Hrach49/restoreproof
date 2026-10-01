@@ -182,7 +182,9 @@ catch_discover_tests(rptests)
 # run_exe_test.cmake checks the exit code and both streams exactly; ctest's own
 # PASS_REGULAR_EXPRESSION and WILL_FAIL would ignore the exit code. ARGS takes
 # any number of arguments; they reach the script as one list. UNSET_ENV names
-# environment variables the script removes before running the exe.
+# environment variables the script removes before running the exe. Each test
+# carries the label `exe`: the coverage run (tools/run_coverage.ps1) runs
+# rptests.exe once itself and only these through ctest (`ctest -L exe`).
 set(RP_RUN_EXE_TEST ${CMAKE_CURRENT_SOURCE_DIR}/tests/run_exe_test.cmake)
 function(rp_add_exe_test name)
     cmake_parse_arguments(PARSE_ARGV 1 T "" "EXIT_CODE;STDOUT;STDERR" "ARGS;UNSET_ENV")
@@ -190,6 +192,7 @@ function(rp_add_exe_test name)
         "-DEXE=$<TARGET_FILE:rpworker>" "-DARGS=${T_ARGS}" "-DUNSET_ENV=${T_UNSET_ENV}"
         "-DEXIT_CODE=${T_EXIT_CODE}" "-DSTDOUT=${T_STDOUT}" "-DSTDERR=${T_STDERR}"
         -P ${RP_RUN_EXE_TEST})
+    set_tests_properties("${name}" PROPERTIES LABELS exe)
 endfunction()
 
 rp_add_exe_test("rpworker --version prints the project version"

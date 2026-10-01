@@ -26,7 +26,7 @@ namespace rp::verification {
 //  - manifest: a canary; the manifest's values, with a content hash;
 //  - fields: a random mail; its header as the backup lists it, no hash;
 //  - metadata: a random file; its name and the backup's size (none for an
-//    Office package, src/office_files.hpp), no hash.
+//    Office file SharePoint rewrites, src/office_files.hpp), no hash.
 enum class ExpectedKind { manifest, fields, metadata };
 
 // "manifest", "fields" or "metadata"; "unknown" for a value outside the enum,
@@ -82,7 +82,7 @@ struct ExpectedSet {
 // file, and content_sha256 by its content_rule); a random mail `fields`
 // (subject, received time, and the sender name and sent time when the backup
 // listed them); a random file `metadata` (name, and the backup's size unless
-// is_office_package or the size is below 0, one the backup didn't give). Nothing is built when (the first two for every type
+// is_rewritten_office_file or the size is below 0, one the backup didn't give). Nothing is built when (the first two for every type
 // first, then per type, mail, SharePoint, OneDrive, its canaries and then its
 // random items):
 //  - selection.record.manifest_sha256 isn't manifest.sha256:

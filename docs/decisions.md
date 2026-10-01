@@ -7,6 +7,61 @@ Format: date, decision, reason, alternatives rejected.
 
 ---
 
+## 2026-10-01 — W3.1 code review: what SharePoint rewrites, and expectations no item can over-claim (proposed)
+
+The `/code-review` of PR #145 found 13 issues; the owner chose six to fix and one to check
+live. Amends the W3.1 entry below (points 5, 9 and 10).
+
+1. **SharePoint's rewritten files, checked live.** The review doubted point 5's list: if
+   SharePoint rewrites a format the list leaves out, a random file of it gets Veeam's size as
+   its expectation and reads as `fail` after a good restore, and `graph list --hash` refuses
+   it as larger than Graph's size. Checked on 2026-10-01 (evidence
+   `docs/api/veeam-lab/w3.1-rewrite-check/`: the script, how the 23 test files were made, the
+   results): each file uploaded through Graph into a scratch folder of the RestoreTarget
+   library (as the admin; alice can't write it) and of alice's OneDrive `/RestoreTarget`, read
+   back at once and after 15 minutes, both folders deleted. SharePoint rewrote docx, docm,
+   xlsx, xlsm, pptx, pptm, **xlsb, doc, xls and ppt** (bigger at once, the same 15 minutes
+   later; for the packages `docProps/`, `customXml/`, `[trash]/`, `[Content_Types].xml` and
+   relationship parts, never `word/`, `xl/` or `ppt/` content). It left vsdx, vsdm, vssx, vstx,
+   xlam, ppam, odt, ods, odp, pdf, rtf and txt byte-identical. OneDrive rewrote nothing, docx
+   included. So the rule becomes `rp::is_rewritten_office_file` with `.xlsb`, `.doc`, `.xls`
+   and `.ppt` added; the untried templates and shows stay. It doesn't depend on the location:
+   a rule per location would trust that OneDrive never starts rewriting, and a random file
+   then only loses its size check. Limits: the doc, xls, ppt and ODF files came from
+   LibreOffice, not Office; vsdm, vssx, vstx, xlam and ppam were real packages with only their
+   main content type changed (SharePoint picks its parser by extension); one library with its
+   default columns.
+2. **No size expectation from a size not known.** A random file whose `size_bytes` is below 0
+   (a connector's "not known", -1) gets `metadata` by name only, as point 7 does for a mail's
+   missing fields. Refusing it in the sampler was rejected: the connector is backend-neutral,
+   and a missing fact was never a reason to drop an item.
+3. **A canary's rule must be one its file can be checked by.** The manifest loader refuses
+   `bytes` for a docx or xlsx, `office-v1` for a pdf, txt or png, and a name the Office rule
+   matches for any other type (or doesn't match for those two), as `python -m seeder`'s
+   validator already does for `content_rule`.
+4. **No item can read as checked against a hash it hasn't.** `ExpectedItem`'s defaults are a
+   canary's, so `to_json` now refuses (`std::logic_error`) an item whose fields don't back its
+   kind: `manifest` needs a canary source and ID, no key, a lower-case hex SHA-256 and its
+   type's rule; `fields` and `metadata` need a random source, a key, no canary ID or hash, and
+   a mail or a file respectively; and each item must be at its index. `to_string` of a kind or
+   source outside the enum is `"unknown"`, never `"manifest"`. Making the kind a required
+   constructor argument was rejected: every builder would change for a check `to_json` makes
+   once, where the result is written.
+5. **The record's counts must be the selection's.** `build_expected_set` also refuses a record
+   whose `random_taken` or `canary_wanted` isn't what the selection holds, so the `sample` and
+   `expected` objects can't disagree on how many items were tested.
+6. **A sender's display name is text a third party chose.** Each control character in it
+   (`control_chars.hpp`) becomes a space as Veeam's `from` is read, through
+   `rp::without_controls`, which `one_line` now uses too.
+7. **`expected_set_test.cpp` puts its failure paths first**, as the TDD rule says.
+
+Left as review comments, not done here: the duplicate random selector in `Selection`, the
+tie-break that keeps the copy with fewer facts, the narrower `internet_message_id` control
+check, the doubled comparisons in the sort, and the third `kind_name` copy. The 5-byte
+extension assumption went with point 1.
+
+---
+
 ## 2026-10-01 — W3.1: the expected set (proposed; recorded before the build)
 
 Recorded before any of it was built. The owner confirmed decision 3 on 2026-10-01 (a random

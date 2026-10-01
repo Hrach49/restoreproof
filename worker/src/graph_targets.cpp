@@ -242,9 +242,9 @@ std::vector<FoundItem> TargetReader::list_files(const FileTarget& target)
                 items.push_back(std::move(item));
                 continue;
             }
-            // SharePoint rewrites Office packages, so their bytes may differ
+            // SharePoint rewrites Office files, so their bytes may differ
             // from the size listed (office-v1; review of W2.2; one rule, W3.1).
-            const bool office = is_office_package(*name);
+            const bool office = is_rewritten_office_file(*name);
             const std::string bytes = download_item(
                 graph_, download_, *target.grant, tenant_host_, target.drive_id, id,
                 *item.size_bytes, office ? SizeCheck::up_to_limit : SizeCheck::exact,

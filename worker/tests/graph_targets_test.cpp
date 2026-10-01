@@ -1076,18 +1076,20 @@ TEST_CASE("a size mismatch fails the listing", "[graph][targets]")
     CHECK_THAT(caught.what, ContainsSubstring("SharePoint sent more than the"));
 }
 
-// Review of W2.2: SharePoint rewrites Office packages (lab/README.md,
+// Review of W2.2: SharePoint rewrites Office files (lab/README.md,
 // office-v1), so their bytes may differ from the size Graph lists; W3.2
 // compares them by content. They are read up to the download limit and kept
 // as they came. Since W3.1 one rule says which files they are
-// (src/office_files.hpp): docx, xlsx, pptx and their macro and template types.
-TEST_CASE("an Office package whose bytes differ from Graph's size lists as downloaded",
+// (src/office_files.hpp): docx, xlsx, pptx and their macro and template types,
+// and since the W3.1 review's live check xlsb, doc, xls and ppt.
+TEST_CASE("an Office file whose bytes differ from Graph's size lists as downloaded",
           "[graph][targets]")
 {
     const FileLocation at = GENERATE(sharepoint_location(), onedrive_location());
     CAPTURE(at.name);
     const std::string name = GENERATE(as<std::string>{}, "rewritten.docx", "Rewritten.XLSX",
-                                      "deck.pptx", "macros.XLSM", "template.dotx");
+                                      "deck.pptx", "macros.XLSM", "template.dotx", "Book.xlsb",
+                                      "old.DOC", "sheet.xls", "deck.ppt");
     CAPTURE(name);
     const std::string served = GENERATE(as<std::string>{}, "longer", "");
     json file = file_of(at);
@@ -1110,12 +1112,13 @@ TEST_CASE("an Office package whose bytes differ from Graph's size lists as downl
           std::optional<std::uint64_t>{rp::graph::kMaxDownloadBytes});
 }
 
-TEST_CASE("a file that isn't an Office package must be exactly Graph's size", "[graph][targets]")
+TEST_CASE("a file SharePoint doesn't rewrite must be exactly Graph's size", "[graph][targets]")
 {
     const FileLocation at = GENERATE(sharepoint_location(), onedrive_location());
     CAPTURE(at.name);
     const std::string name = GENERATE(as<std::string>{}, "notes.txt", "scan.pdf", "docx",
-                                      ".docx", "a.docx.txt", "a.ppt", "a.doc");
+                                      ".docx", "a.docx.txt", ".doc", "a.ppt.txt", "flow.vsdx",
+                                      "addin.xlam", "notes.odt");
     CAPTURE(name);
     json file = file_of(at);
     file["name"] = name;

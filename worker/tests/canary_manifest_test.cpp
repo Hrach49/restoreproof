@@ -156,7 +156,7 @@ TEST_CASE("the canary manifest refuses an entry or field that breaks its rule",
         return at(entry, "/content_rule: must be \"office-v1\" for a docx or xlsx and \"bytes\" for a pdf, txt or png");
     };
     const auto name_by_type = [](int entry) {
-        return at(entry, "/name: must be an Office package's name (src/office_files.hpp) for a docx or xlsx, and only then");
+        return at(entry, "/name: must be a name SharePoint rewrites (src/office_files.hpp) for a docx or xlsx, and only then");
     };
     const Row row = GENERATE_COPY(values<Row>({
         {"no schema", [](json& m) { m.erase("schema"); }, schema},

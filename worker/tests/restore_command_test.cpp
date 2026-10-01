@@ -1627,6 +1627,40 @@ TEST_CASE("restore: the backup's own status never decides the run's: a partial r
     CHECK_THAT(run.out, EndsWith("error\n\n" + status_line + "\n"));
 }
 
+TEST_CASE("restore: a failed restore whose item only an earlier run's copy matches is error "
+          "stale_target, exit 4, never a fail",
+          "[restore_command]")
+{
+    // W3.3: 4, not 5 as before. Veeam leaves a mail already in the target as
+    // it is (W3.2 live run), so this run's restore can't be told from one
+    // that wrote nothing.
+    Harness lab;
+    lab.fake.answer = [](const connector::RestoreSpec& spec) {
+        connector::RestoreResult result = restored(spec);
+        result.status = connector::RestoreStatus::failed;
+        result.items_restored = 0;
+        result.sessions[0].result = "Failed";
+        result.sessions[0].items_restored = 0;
+        result.items[0].outcome = connector::ItemOutcome::failed;
+        return result;
+    };
+    lab.targets.before[kind_slot(connector::ItemKind::mail)] = json::array(
+        {graph_mail("earlier-mail", "RP-CANARY-0001", "x@lab.example", "X", "2026-09-24T22:14:40Z",
+                    "2026-09-24T22:14:43Z", "<earlier@lab.example>", "old")});
+    lab.targets.after[kind_slot(connector::ItemKind::mail)] = json::array();
+
+    const Run run = lab.run({"--run-id", kRunId, "--mail", "1", "--sp", "0", "--od", "0"});
+
+    CHECK(run.exit_code == rp::exit_code::service);
+    CHECK(run.err == "warning: backup_session: mail session sess-mail: Failed\n"
+                     "warning: stale_copies: 1 copies from earlier runs in the restore targets "
+                     "were ignored (mail 1, sharepoint 0, onedrive 0)\n");
+    CHECK(run.out.ends_with("check: 0 match, 0 mismatch, 0 missing, 1 error\n"
+                            "\n"
+                            "status error stale_target: 1 of 1 item(s) couldn't be checked "
+                            "(stale_target 1)\n"));
+}
+
 TEST_CASE("restore: an item the backup failed for an infrastructure reason is unchecked when the "
           "check doesn't find it, error 4; beside a missing item the run fails, 5; found, it "
           "verifies with a warning",

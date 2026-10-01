@@ -1,0 +1,49 @@
+== restore run 2b (same canaries)
+restore point 2026-09-30T22:00:43.4764524Z  c2f0f2e7-177f-48ac-992b-93a50cf702e305134a51-8a9e-4298-b39a-1be364acd660  (veeam_org_name RestoreProofLab.onmicrosoft.com)
+run rp-20261001T172815Z-6285c4a6  seed be2461b7
+canary cursor 0,0,0 -> 3,3,3
+  KIND        REQUESTED  CANARIES  RANDOM  NOTE
+  mail        5          3 of 3    2 of 2
+  sharepoint  5          3 of 3    0 of 2  random shortfall
+  onedrive    5          3 of 3    0 of 2  random shortfall
+restoring 11 item(s) ...
+
+  KIND        SOURCE  NAME                                      OUTCOME   SESSION                               ELAPSED  MESSAGE
+  mail        canary  RP-CANARY-0001                            restored  cd253eec-c697-4da2-94b7-24b76a19d79a  0:00:33  Item RP-CANARY-0001 was restored successfully (type: IPM.Note; source: Alice Test\Inbox; target: restoretest@RestoreProofLab.onmicrosoft.com\<null>\Inbox)
+  mail        canary  RP-CANARY-0002                            restored  cd253eec-c697-4da2-94b7-24b76a19d79a  0:00:33  Item RP-CANARY-0002 was restored successfully (type: IPM.Note; source: Alice Test\Inbox; target: restoretest@RestoreProofLab.onmicrosoft.com\<null>\Inbox)
+  mail        canary  RP-CANARY-0003                            restored  cd253eec-c697-4da2-94b7-24b76a19d79a  0:00:33  Item RP-CANARY-0003 was restored successfully (type: IPM.Note; source: Alice Test\Inbox; target: restoretest@RestoreProofLab.onmicrosoft.com\<null>\Inbox)
+  mail        random  Weekly digest: Microsoft service updates  restored  58b0bbf9-9b12-4f1c-a070-e7f32d7efe41  0:00:28  Item Weekly digest: Microsoft service updates was restored successfully (type: IPM.Note; source: Hrachya Harutyunyan\Inbox; target: restoretest@RestoreProofLab.onmicrosoft.com\<null>\Inbox)
+  mail        random  Veeam website registration                restored  58b0bbf9-9b12-4f1c-a070-e7f32d7efe41  0:00:28  Item Veeam website registration was restored successfully (type: IPM.Note; source: Hrachya Harutyunyan\Inbox; target: restoretest@RestoreProofLab.onmicrosoft.com\<null>\Inbox)
+  sharepoint  canary  rp-canary-01.pdf                          restored  8d902916-7d9e-404c-ac0a-99d696e20b7f  0:00:47  Item rp-canary-01.pdf was restored successfully (type: File; source: /sites/RestoreTest/RestoreTest/rp-canary-01.pdf; target: https://restoreprooflab.sharepoint.com/sites/RestoreTest)
+  sharepoint  canary  rp-canary-02.docx                         restored  8d902916-7d9e-404c-ac0a-99d696e20b7f  0:00:47  Item rp-canary-02.docx was restored successfully (type: File; source: /sites/RestoreTest/RestoreTest/rp-canary-02.docx; target: https://restoreprooflab.sharepoint.com/sites/RestoreTest)
+  sharepoint  canary  rp-canary-03.xlsx                         restored  8d902916-7d9e-404c-ac0a-99d696e20b7f  0:00:47  Item rp-canary-03.xlsx was restored successfully (type: File; source: /sites/RestoreTest/RestoreTest/rp-canary-03.xlsx; target: https://restoreprooflab.sharepoint.com/sites/RestoreTest)
+  onedrive    canary  rp-canary-11.pdf                          restored  f0525c96-4934-452a-9417-aae689d10929  0:00:41  Item rp-canary-11.pdf was restored successfully (type: File; source: personal/alice_restoreprooflab_onmicrosoft_com/Documents/RestoreTarget/rp-canary-11.pdf; target: https://restoreprooflab-my.sharepoint.com/personal/alice_restoreprooflab_onmicrosoft_com)
+  onedrive    canary  rp-canary-12.docx                         restored  f0525c96-4934-452a-9417-aae689d10929  0:00:41  Item rp-canary-12.docx was restored successfully (type: File; source: personal/alice_restoreprooflab_onmicrosoft_com/Documents/RestoreTarget/rp-canary-12.docx; target: https://restoreprooflab-my.sharepoint.com/personal/alice_restoreprooflab_onmicrosoft_com)
+  onedrive    canary  rp-canary-13.xlsx                         restored  f0525c96-4934-452a-9417-aae689d10929  0:00:41  Item rp-canary-13.xlsx was restored successfully (type: File; source: personal/alice_restoreprooflab_onmicrosoft_com/Documents/RestoreTarget/rp-canary-13.xlsx; target: https://restoreprooflab-my.sharepoint.com/personal/alice_restoreprooflab_onmicrosoft_com)
+
+  SESSION                               KIND        RESULT   RESTORED  STARTED                       ENDED                         ELAPSED
+  cd253eec-c697-4da2-94b7-24b76a19d79a  mail        Success  3 of 3    2026-10-01T17:28:28.4077833Z  2026-10-01T17:29:01.9835177Z  0:00:33
+  58b0bbf9-9b12-4f1c-a070-e7f32d7efe41  mail        Success  2 of 2    2026-10-01T17:29:04.0928765Z  2026-10-01T17:29:32.1060606Z  0:00:28
+  8d902916-7d9e-404c-ac0a-99d696e20b7f  sharepoint  Success  3 of 3    2026-10-01T17:29:34.741611Z   2026-10-01T17:30:22.3608568Z  0:00:47
+  f0525c96-4934-452a-9417-aae689d10929  onedrive    Success  3 of 3    2026-10-01T17:30:25.6534539Z  2026-10-01T17:31:07.5816094Z  0:00:41
+
+status succeeded: 11 of 11 item(s) restored in 0:02:47
+warning: 5 copies from earlier runs in the restore targets were ignored (mail 5, sharepoint 0, onedrive 0)
+
+  KIND        SOURCE  NAME                                      OUTCOME  FIELDS  DUP  MS
+  mail        canary  RP-CANARY-0001                            missing  -       -    -
+  mail        canary  RP-CANARY-0002                            missing  -       -    -
+  mail        canary  RP-CANARY-0003                            missing  -       -    -
+  mail        random  Weekly digest: Microsoft service updates  missing  -       -    -
+  mail        random  Veeam website registration                missing  -       -    -
+  sharepoint  canary  rp-canary-01.pdf                          match    -       -    1670
+  sharepoint  canary  rp-canary-02.docx                         match    -       -    563
+  sharepoint  canary  rp-canary-03.xlsx                         match    -       -    565
+  onedrive    canary  rp-canary-11.pdf                          match    -       -    1035
+check: 5 item(s) didn't verify
+  onedrive    canary  rp-canary-12.docx                         match    -       -    720
+  onedrive    canary  rp-canary-13.xlsx                         match    -       -    373
+
+check: 6 match, 0 mismatch, 5 missing, 0 error
+recorded 173 exchange(s) in C:\Users\minas\AppData\Local\Temp\claude\C--restoreproof\6f45f11c-bcb6-4a12-9bb5-7ee8004d81a2\scratchpad\w3.2-live\record-2
+exit 5

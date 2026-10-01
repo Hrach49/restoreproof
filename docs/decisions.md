@@ -7,6 +7,278 @@ Format: date, decision, reason, alternatives rejected.
 
 ---
 
+## 2026-10-02 — W3.4: cleaning the restore targets before and after each run (recorded before the build; the owner approved it as written, the run mutex, the status line before the clean-after, the clean-before guard stop and the by-hand emptying of Deleted Items included)
+
+W3.4 (#39) adds the code that empties the three restore targets: the `restoretest` mailbox's Inbox, the **RestoreTarget** library in the RestoreTest site, and alice's OneDrive **/RestoreTarget** folder. The new class is `rp::graph::Cleaner`, in `rp/cleaner.hpp` and `src/cleaner.cpp`, and `GraphClient` gains one narrow write member. Nothing here deletes in, or names, the RestoreTest library or alice's /RestoreTest folder, which hold the canaries (2026-09-25). This builds on the W3.2 live run's Open items and the W3.3 second review's `restore_sent`. The issue text is older than 2026-09-25 and L1.5, so CLAUDE.md and this log win on three points:
+- the targets are RestoreTarget, not RestoreTest;
+- there is no `Sites.Selected` write, no `Files.ReadWrite.All` and no application access policy;
+- the issue's `Cleaner::clear()` and `DELETE /users/{u}/messages/{id}` become points 2 and 5 below.
+
+Copies from W2.5, W2.8 and W3.2 are still in the targets: 5 mails, 3 SharePoint files and 3 OneDrive files (`w3.2-live-6`). The first live clean removes them.
+
+**Decision.**
+
+1. **Permissions: the narrow write grants of `docs/security/graph-permissions.md` "Open items" 1, and nothing wider.**
+
+   | # | Grant | Change | How |
+   |---|---|---|---|
+   | 1 | `Sites.Selected` `read` on the RestoreTest site | unchanged; listing the library still relies on it | `POST /sites/{site}/permissions` |
+   | 2 | `Files.SelectedOperations.Selected` on alice's `/RestoreTarget` folder | `read` becomes `write` | the existing POST/PATCH in `new-worker-app.ps1` |
+   | 3 | Exchange RBAC on the scope `RestoreProof Worker - restoretest mailbox` | `Application Mail.Read` becomes `Application Mail.ReadWrite`; the assignment is renamed `RestoreProof Worker - Application Mail.ReadWrite - restoretest`, and the script's extra-assignment loop removes the old one | `New-ManagementRoleAssignment` |
+   | 4 | **new** `Lists.SelectedOperations.Selected` `write` on the RestoreTarget list only | a new Entra application permission, with admin consent | `POST /sites/{site}/lists/{list}/permissions`, `roles: ["write"]` |
+
+   - The token's `roles` claim goes from two roles to three: `Files.SelectedOperations.Selected`, `Lists.SelectedOperations.Selected` and `Sites.Selected`. `$GraphRoles` and `EXPECTED_ROLES` change together; `check-worker-app` still fails on any `Mail.*`, `*.All` or Exchange/SharePoint-audience role.
+   - **The script checks what it is about to make writable.** A new lab constant `$RestoreTargetListId` joins `$SiteId`, `$OneDriveDriveId` and `$OneDriveTargetFolderId`. Before the POST or PATCH that gives `write`:
+     - the script GETs the list (`$select=id,displayName,webUrl`) and refuses unless `displayName` is `RestoreTarget` and so is the webUrl's last segment;
+     - it GETs the folder (`name`, `parentReference.path`) and refuses unless it is `RestoreTarget` directly under the drive root.
+
+     This mirrors `check_restore_library` and `check_restore_onedrive_folder`.
+   - **`lab/tests/test_entra_script.py`:**
+     - `test_the_canary_locations_are_never_named` stays.
+     - A new test requires `$RestoreTargetListId` to equal `tenant.RESTORE_TARGET_LIST_ID` and the list-permissions POST to use only that variable.
+     - A new test requires each `write` grant to sit behind its name check.
+     - `test_grants_are_read_only` (lines 60-64) becomes "the only `write` grants are the RestoreTarget list and folder, and the only mail role is `Application Mail.ReadWrite`". Its assert that `Application Mail.ReadWrite` is absent is dropped.
+   - **What Microsoft documents.** Microsoft's selected-permissions overview (learn.microsoft.com/graph/permissions-selected-overview, checked 2026-10-02) says three things. A list, folder or file grant breaks inheritance on that resource. The result doesn't depend on the path (`/drives/{d}/items/{i}` or `/sites/{s}/lists/{l}/items/{i}`). `write` means "read and modify the metadata and contents". It also notes a service limit on unique permissions. Only two points are left implicit there: whether `write` allows a DELETE, and whether folder `write` allows deleting a child. Probes settle both (Open).
+   - **Residual risks:**
+     - `Mail.ReadWrite` lets the app change or delete any item in `restoretest`. That mailbox exists only for this.
+     - List `write` covers every item in the RestoreTarget library. Folder `write` covers the `/RestoreTarget` folder itself, and deleting that folder would drop the grant (point 4 never deletes a folder). Neither grant reaches a sibling list or folder.
+     - `Sites.Selected` `read` still lets the app read the canary library, as today.
+     - A wrong ID in a grant call would give write elsewhere. The name checks above refuse that before the grant, and the refusal probes (point 9) confirm it afterwards.
+     - Exchange caches role changes for 30 minutes to 2 hours. `Test-ServicePrincipalAuthorization` shows the new role at once, but a delete may still get 403 for that long. Probe again after the delay before trusting a failure.
+     - Falling back to `Sites.Selected` `write` is never an option. If a probe fails, this entry is amended.
+
+2. **The API.**
+
+   ```cpp
+   namespace rp::graph {
+   enum class CleanupWhen { before_run, after_run };
+   struct TargetCleanup {
+       std::string error_code;   // "" or target_guard, graph_auth, graph_permission,
+                                 // graph_transient, graph, config, internal
+       std::size_t found = 0;    // items listed in the first round
+       std::size_t deleted = 0;  // 204
+       std::size_t gone = 0;     // 404 on an item this call listed
+       std::size_t left = 0;     // still listed after the last round
+       std::size_t skipped = 0;  // entries that are not plain files or mails; never deleted
+       unsigned rounds = 0;      // 0, 1 or 2
+       bool ok() const;          // error_code empty, left == 0, skipped == 0
+   };
+   struct CleanupResult {
+       CleanupWhen when;
+       TargetCleanup mail, sharepoint, onedrive;
+       bool ok() const;          // all three ok
+   };
+   struct CleanerOptions { std::shared_ptr<spdlog::logger> logger; };
+   class Cleaner {
+   public:
+       Cleaner(GraphClient&, connector::RestoreTargets, CleanerOptions = {});
+       CleanupResult clean(CleanupWhen) noexcept;   // all three targets, always
+   };
+   nlohmann::json to_json(const CleanupResult&);
+   }
+   ```
+
+   - **`clean` never throws.** A failure goes into its target's `error_code`:
+     - Graph's errors map as in `verification::read_error_code` (`rp/checker.hpp`).
+     - A `ConfigError`, such as `CertificateError` on the token, becomes `config`.
+     - Anything else becomes `internal`, and `what()` is never copied.
+
+     One target's failure never stops the others.
+   - **`clean` always cleans all three targets, whatever the run sampled.** That includes everything in the `restoretest` Inbox, delivered mail too, because the mailbox exists only for restores. Mail that arrives after the clean-after is a leftover for the next clean-before, not a W3.4 failure.
+   - It is not thread-safe, like `TargetReader`.
+   - **Its listings are its own**, in `src/cleaner.cpp`, because `TargetReader` drops folders and keeps no parent reference. `list_pages` and the `is_inbox_path`/`is_library_root_path`/`is_folder_path` rules move from `src/graph_targets.cpp`'s anonymous namespace into `src/graph_paging.hpp`, so both readers keep one paging rule. `NextLinkRule` and `kMaxListPages` stay public in `rp/graph_targets.hpp`.
+   - **Nothing is downloaded and no body is read:**
+     - mail: `$select=id`, with `kMailPrefer`;
+     - files: `$select=id,name,eTag,file,folder,package,remoteItem,root,parentReference`.
+   - **There is no delete cap.** `kMaxListPages` already bounds a round. A target that holds more than that ends with `left > 0`.
+
+3. **`GraphClient` gains one write member, and only the Cleaner can call it.**
+   - **`ListedItem`.** `rp/graph_client.hpp` declares `class ListedItem`, a mail (mailbox and ID) or a file (drive, ID and eTag). Its constructor is private, with `friend class Cleaner`. Only the Cleaner's listing can make one.
+   - **`remove`.** `RemoveOutcome GraphClient::remove(const ListedItem&)` builds the path itself, and there are only two shapes:
+     - `POST /users/{mailbox}/messages/{id}/permanentDelete`, bodiless, with `kMailPrefer`'s IdType;
+     - `DELETE /drives/{drive}/items/{id}` with `If-Match: <eTag>`.
+
+     `RemoveOutcome` is `removed` (204), `gone` (404 with `itemNotFound`/`ErrorItemNotFound`) or `changed` (412). A 404 naming a missing container (`names_missing_container`) stays a `NotFoundError`.
+   - **A source scan**, like the TLS scan, fails the build if `ListedItem` or `remove(` appears under `src/`, `include/` or `app/` outside `graph_client.*` and `cleaner.*`. Tests reach `remove` only through the Cleaner.
+   - **One send path.** `send_get` becomes a private `send(HttpMethod, ...)`. `graph_url`'s v1.0 prefix and path checks, the caller-header check and the 401/403/404 rules stay the same for every method. Every message names the method ("Graph DELETE …", "Graph denied POST …"). `kCallerHeaders` stays `{"Prefer"}`.
+   - **Retries: a write is retried like a GET.** That means 5 attempts, 429/503 waited out within the per-wait and per-call caps, a transport failure resent, and one fresh token on a 401. A resent permanentDelete or If-Match DELETE of the same listed ID can only answer 204, 404 or 412, so it never deletes anything else. The round's re-list (point 6) settles what is left.
+   - **New grant texts** in `graph_client.hpp`. They name no lab value, and the table "every grant's text is generic" in `graph_client_test.cpp` gains rows:
+     - `kMailGrant` = `Exchange RBAC "Application Mail.ReadWrite" in a management scope covering the test mailbox`. It replaces `kMailReadGrant`.
+     - `kOneDriveGrant` = `Files.SelectedOperations.Selected write on the test OneDrive folder`. It replaces `kOneDriveReadGrant`.
+     - `kListWriteGrant` = `Lists.SelectedOperations.Selected write on the test library`.
+     - `kSitesReadGrant` stays.
+
+     The refusal table in `graph-permissions.md` changes to match.
+
+4. **How every delete is guarded.** Per target and per round, in this order. A refusal stops that target before its first DELETE.
+   1. **Resolve the target** with the existing checks, called directly: `check_restore_mailbox`, `check_restore_library` and `check_restore_onedrive_folder`, worded `{"deletes only in", "nothing was deleted"}`.
+      - They are not called through `TargetGuard::check_spec`, which resolves only the types in a spec (`src/target_guard.cpp:118-128`).
+      - A `WrongTargetError` is logged once at critical as `SECURITY: cleanup: <message>` through `redact()`, using a helper beside `rp::refusal` in `src/target_guard_refuse.hpp`. The target's `error_code` becomes `target_guard`. What the run does with that is point 8.
+   2. **List under the resolved IDs only**, paged by the shared rules:
+      - `/users/{ResolvedMailbox::address}/mailFolders/inbox/messages`;
+      - `/drives/{ResolvedLibrary::drive_id}/root/children`;
+      - `/drives/{ResolvedOneDriveFolder::drive_id}/items/{folder_id}/children`.
+
+      `is_inbox_path` and the other path rules pin each nextLink. A delete path comes only from the `ListedItem`, never from a nextLink.
+   3. **A file proves its place:**
+      - its `parentReference.driveId` is the resolved drive;
+      - in OneDrive, its `parentReference.id` is `folder_id`;
+      - in the library, its `parentReference.path` is the drive's root.
+
+      A mail's place is proved by the resolved mailbox, the Inbox-scoped listing path and the paging rule. There is no `parentFolderId` check: `check_restore_mailbox` reads the Inbox ID without Prefer (`src/target_guard_graph.cpp:214`), so it is in another form than the listing's ImmutableIds.
+   4. **The ID passes its rule:**
+      - files: `is_graph_item_id` (`src/config.cpp:407`), and the ID is not the folder's own ID or the library root's;
+      - mail: the predicate `graph_id` applies today (`is_id` with `"!-_="`, at most 512), shared from `graph_paging.hpp` as a `bool`.
+
+      An entry that fails is logged and counted `skipped`. It doesn't throw.
+   5. **Only plain files are deleted.** A file entry is deleted only if it has a `file` object and no `folder`, `package`, `remoteItem` or `root` facet. Everything else counts as `skipped`, is logged as what it is, and stays for the owner. Restores never make folders: mail lands in the Inbox, files in the target root (W2.4, W2.5, W2.8). A folder's or package's DELETE would take contents this call never listed.
+   6. **Only a listed item can be deleted.** A `ListedItem` exists only from this call's listing under that target (point 3).
+
+   The checks are GETs that run before the DELETEs. A rename between check and delete is a window Graph can't close. Accepted.
+
+5. **Delete semantics.**
+   - **Mail: `permanentDelete`.** A plain DELETE moves the mail to Deleted Items, where copies would pile up run after run and go into every nightly backup. `permanentDelete` puts it straight into Recoverable Items/Purges, which retention empties (later under a hold). Neither the checker nor Veeam's restore into the Inbox sees Purges.
+   - **Files: `DELETE` with `If-Match: <eTag>` from this call's listing.** The item goes to the site recycle bin, where SharePoint keeps it for 93 days from the delete (first and second stage together). A guard bug then costs a recoverable delete, not a lost file. A 412 means the item changed since it was listed (SharePoint's Office rewrite moves the eTag). It counts as `changed`, and the next round lists it again.
+
+6. **"One retry" is one more round.**
+   - Round 1 lists, deletes each listed item, and lists again.
+   - Round 2 does the same once more if anything is left, or if round 1 ended in a transient error or a 412.
+   - A `target_guard`, `graph_auth`, `graph_permission` or `config` error gets no second round, since a second round can't change it.
+   - The final listing sets `left`. A 404 on a listed item counts as `gone`. The re-list is what confirms it, since SharePoint also answers 404 for an item the app may not see.
+   - There is no loop beyond two rounds. A target left non-empty ends not ok, and the next run's clean-before takes it up.
+
+7. **The cleanup never changes the status, except through the guard (point 8).**
+   - `RunFacts`, `decide_status`, `kCodes`, the warning vocabulary and every exit code stay as W3.3 left them. `rp/run_status.hpp` doesn't include `rp/cleaner.hpp`.
+   - **The `cleanup` object.** The result gets it beside `status`:
+
+     ```
+     {"cleanup_ok": bool, "restore_may_still_run": bool, "before": {...}, "after": {...} | null}
+     ```
+
+     Each target in `before` and `after` has `found`, `deleted`, `gone`, `left`, `skipped`, `rounds`, and `error_code` only when it is set. It holds counts and codes only.
+   - **`cleanup_ok` is the state the run leaves behind:** `after.ok` when the clean-after ran, else `before.ok`. It is false whenever `restore_may_still_run` is true, or a restore was sent and no clean-after could run.
+   - **A not-ok target is visible.** Each one gets a stderr line `warning: cleanup: <mail|sharepoint|onedrive> <fixed text>`. This is the existing warning format, but outside `run_status`'s vocabulary. A run that passes with `cleanup_ok: false` still exits 0.
+   - W4.1 adopts the object into `result.v1.json`, and the dashboard flags repeated `cleanup_ok: false` (C-tasks).
+
+8. **Placement in `rpworker restore`.**
+   - **One run at a time.** Before its first Veeam call, the command takes a machine-wide named mutex, `Global\RestoreProof-restore-targets`, with no wait. It holds the mutex until it exits.
+     - An abandoned mutex (a crashed holder) counts as taken.
+     - A second run that can't take it prints `restore error: another RestoreProof run is using the restore targets; nothing was done` and exits 4 (`service`), with no run line and no status.
+     - The mutex is injected through the command's environment, so tests use a fake.
+     - The two `[live][writes]` tests take it too. `graph list` doesn't.
+
+     Without the mutex, one run's cleanup could delete another run's copies between that run's restore and its read-back, and its items would read `missing`: a false `fail`.
+   - **Where the Graph client lives.** `graph_http`, `download_http` and an `std::optional<graph::GraphClient>` are declared before `finish`, in the same scope as `result`/`expected`, in the order that destroys the client first. They are built right after the run line. Today they are locals inside the `try` (`src/restore_command.cpp:796-814`), destroyed before the outer catches reach `finish` through `stopped()`/`restore_failed()`. The certificate is still checked before any Veeam call.
+   - **Before.** Right after `run <id>  seed <hex>` and before `choose_sample`, every run that prints a run line cleans all three targets. That includes a run whose sample turns out empty.
+     - **A `target_guard` on any target stops the run.** It goes through `stop_reason`'s existing `WrongTargetError` mapping as `RunStop{target_guard}` in phase `before_restore`: status `error target_guard`, exit 4, nothing restored, and no Veeam explore session opened. The guard decides here, as layer 1 would. Layer 1 alone isn't enough, because it checks only sampled types and runs after `choose_sample`'s Veeam calls.
+     - Any other failure, or leftovers, lets the run go on. The before snapshot stays the second guard: leftovers are `stale_copies`, a sampled mail already there is `error stale_target`, and a Graph failure is `read_before`'s `check error: ...; nothing was restored` stop, as today.
+     - Cleaning first also removes the W3.2 residual risk, where an earlier run's Office file is rewritten between this run's two reads.
+   - **After.** In `finish()`, in this order:
+     1. `decide_status`;
+     2. the status line and its warnings, printed at once, so the decided verdict never waits on housekeeping;
+     3. the clean-after, only when `verdict.restore_sent`;
+     4. the cleanup line and its warnings.
+
+     The status line is no longer the last stdout line after a restore.
+     - On the normal path the clean-after comes after `read_after` and the check, so evidence is never deleted before it is read.
+     - After a check that threw, the copies are deleted too. The restore's own rows are the evidence.
+     - **A restore that may still run.** When the run stopped in phase `restore` without `nothing_restored` (a POST with no answer, a poll that gave up, a session that may still be `Working`), the clean-after still runs. `restore_may_still_run` is then true and `cleanup_ok` is false, since Veeam may still be writing. A `restore_sample` that returns has polled its sessions to the end.
+     - With no Graph client (a stop before it was built), the clean-after doesn't run, and `cleanup_ok` is false if `restore_sent` is true.
+   - **Output.** These lines go on stdout, with counts and codes only, never a name or an ID:
+     - `cleanup before ok: deleted 5 mail, 3 sharepoint, 3 onedrive`
+     - `cleanup after incomplete: deleted 2 mail, 3 sharepoint, 0 onedrive; left 0 mail, 0 sharepoint, 3 onedrive; skipped 1; onedrive graph_permission`
+     - `cleanup after incomplete: deleted 3 mail, 0 sharepoint, 0 onedrive; the restore may still be running; the next run cleans before`
+     - `cleanup after skipped: nothing was restored`
+     - `cleanup after skipped: no Graph client`
+
+     Each failing target also gets one stderr line, `cleanup error: <mail|sharepoint|onedrive>: <what>`.
+   - **`restore_note` stays.** The line `the restore had started: items may be in the restore targets (run <id>)` reports what the restore did, and the cleanup line after it says what remains. `docs/worker-config.md` lists both.
+   - **`rpworker test` (W3.6)** uses the same Cleaner, mutex and placements. The Veeam half of the pipeline's cleanup step (stopping our own `Working` sessions, `veeam-notes` §4.4) is W3.6's.
+   - **`rpworker graph list`** prints, under each table, `(<n> folder(s) or other entries not listed)` when there are any. A target showing zero then really holds nothing, which the Done-when needs.
+   - **Build notes.**
+     - Every `tests/restore_command_test.cpp` case past the run line gets cleanup routes on its `FakeHttpClient` (empty listings by default), plus a fake mutex.
+     - New rows cover each ending: a normal end, a check that throws, `restore_sample` throwing `connector::Error` after the POST (the clean-after still runs, and `restore_may_still_run` is set), a clean-before `target_guard`, and a mutex already held.
+     - `veeam_m365_restore_live_test.cpp` ends with `Cleaner::clean(after_run)`, so no live test leaves copies.
+
+9. **Probes, fixtures and the live check.**
+   - **`check-worker-app`'s write probes.** `Probe` gains `method`, a body and headers. Creates use `idempotent=False` and `rp-probe-<uuid>` names.
+     - **Must succeed** (create, then delete; `finally` deletes only on the RestoreTarget paths):
+       - a PUT of a small file into the RestoreTarget library root and into alice's `/RestoreTarget` folder, then a DELETE, expecting 201 then 204;
+       - a draft mail in `restoretest`, then `permanentDelete`, expecting 201 then 204.
+     - **Must be refused, and can change nothing even when granted.** The probe sends `PATCH {}` with `If-Match: "rp-probe-no-such-etag"` to one canary file in the library and one in alice's `/RestoreTest` folder.
+       - The seeder's admin credentials first confirm that each file exists, so a 404 means masked, not missing.
+       - 403 or 404 is refused. 412 or any 2xx fails the check.
+       - No `finally` ever touches a canary path.
+       - For alice's mailbox, the existing read refusal is the proof, since read and write share the RBAC scope. No draft is created there.
+     - The token's three roles are checked as in point 1. Evidence goes to `docs/security/w3.4-worker-app-check.txt`.
+   - **Fixtures** go in `worker/tests/fixtures/graph/w34-*`.
+     - `rpworker restore --record` on the first live run records the clean-before listings, the DELETEs and `permanentDelete`s (the 11 leftovers), and the clean-after.
+     - The 404 on an item already gone comes from the live test: a test-side `IHttpClient` wrapper sends the Cleaner's first DELETE twice, inside `rp::RecordingHttpClient`. The write still goes only through the Cleaner, on an item it listed.
+     - The 403 on a canary location is hand-written from the Python probe's recorded body, as for `onedrive-folder-403-accessdenied`. No Worker code ever sends a write at a canary.
+     - A 412 is hand-written.
+   - **The live test.** `worker/tests/cleaner_live_test.cpp`, tagged `[live][writes]` and gated like the restore test (`RP_LIVE=1` and `RP_LIVE_RESTORE=1`). It takes the mutex, cleans, then lists every entry of the three targets (folders included) and requires zero.
+   - **Done when:** right after `rpworker restore`, `rpworker graph list` shows zero items and no entries left unlisted in all three locations. Evidence goes to `docs/api/veeam-lab/w3.4-live-*`.
+
+10. **Coverage.** `cleaner` joins `STRICT_NAMES` in `worker/tools/coverage_gate.py` (line 37; 100% line), so `src/cleaner.cpp` and `include/rp/cleaner.hpp` are strict. This changes:
+    - `BRANCH_NOTE` (line 41) and the docstring;
+    - the two lists in `worker/tools/test_coverage_gate.py`;
+    - `docs/testing.md`;
+    - CLAUDE.md's "Coverage floors".
+
+    It is the only Worker code that deletes in the tenant, so it is held to the guard's floor. `src/graph_client.cpp`'s write path stays under the 80% gate, but it is tested by failure paths first:
+    - a 403 naming the write grant;
+    - a 404 for a missing container;
+    - a 412;
+    - a resent DELETE answered 404;
+    - a 401 resend;
+    - the source scan.
+
+**Reason.**
+- Without a clean before each run, every mail sampled again is `error stale_target`, and an earlier run's Office file can pass for this run's copy after SharePoint rewrites it. Without a clean after, Veeam backs up whatever the targets hold.
+- The narrow grants keep the canaries out of reach of any write. The library is protected by a list-scoped grant that the script checks by name, the OneDrive canaries because the grant sits on another folder, and other mailboxes by the RBAC scope.
+- To delete outside a target, the Cleaner would need a misconfigured grant, a wrong config and a guard bug all at once. It checks each target with the guard's own Graph checks, deletes only a `ListedItem` it just listed there, and has the only path to the write member. Even then, a file can be recovered.
+- The mutex keeps one run's cleanup from turning another run's restore into a false `fail`.
+- The cleanup stays out of `decide_status`, so a failed cleanup is housekeeping, never `fail` or `error`. A guard refusal stops the run, as the guard always does.
+
+**Alternatives rejected.**
+- *`Sites.Selected` `write` on the site* (the issue): it covers the canary library in the same site.
+- *`Files.ReadWrite.All`, or an Entra `Mail.ReadWrite` with an application access policy* (the issue): these are tenant-wide roles that L1.5 rejected, and RBAC already scopes mail.
+- *A public `GraphClient::remove(path, ...)`:* any later caller could delete outside the targets.
+- *Plain `DELETE` for mail:* copies pile up in Deleted Items and in every backup.
+- *`permanentDelete` for files:* irreversible, and it documents no `If-Match`.
+- *Deleting folders or packages:* a recursive delete of content never listed.
+- *A `parentFolderId` check for mail:* the guard's Inbox ID and the listing's ImmutableIds are different forms, and the listing path already pins the Inbox.
+- *`TargetGuard::check_spec` with a made-up spec:* it resolves only the sampled types and would blur what layer 1 vouches for.
+- *A cleanup failure as a status stop or a `kCodes` entry, or a `run_status` warning:* it would turn housekeeping into `error` and change exit codes.
+- *Letting a clean-before guard refusal run on to layer 1:* it opens Veeam sessions for nothing, and layer 1 misses unsampled types.
+- *Refusing to resend a write after `dropped`/`timeout`:* a resend of one listed ID can't delete anything else.
+- *A per-target delete cap:* the page limit already bounds a round.
+- *Cleaning only after the run, or only the sampled types:* leftovers from a crashed run, or in an unsampled target, would spoil a later run and be backed up.
+- *Any Worker-side write at a canary for a fixture or probe:* the 403 comes from the Python probe, which can change nothing.
+
+**Open.**
+- Live probes before the build:
+  - whether list `write` allows a DELETE;
+  - whether folder `write` allows deleting a child;
+  - whether `permanentDelete` takes the ImmutableId with `kMailPrefer`;
+  - whether a bodiless POST needs `Content-Length: 0`.
+- Deleted Items in `restoretest` may still hold copies from the hand cleanups. The owner empties it once by hand before the live check; the Cleaner never reads it.
+- Recycle-bin growth (it counts against site storage) and Purges under a hold. Revisit if the lab or a pilot runs into quota.
+- Mail `permanentDelete` exists in the global cloud only. A customer in US Gov or China needs another rule (W4.11/C5.13).
+- The mutex is per machine. Two Workers on two machines against one tenant aren't covered; Stage 1 has one Worker per Veeam server.
+- A `--keep` flag that skips the clean-after, for debugging.
+- W3.5 times the `cleanup` span. W3.6 adds the Veeam session sweep (and with it, an end to `restore_may_still_run`) and the same placements to `rpworker test`. W4.1 puts the `cleanup` object in `result.v1.json`, and the dashboard flags runs with `cleanup_ok: false` in a row.
+- Docs to change with the build:
+  - `docs/security/graph-permissions.md`: the granted table, the "not granted" row for write roles, the probes, and Open item 1 closed;
+  - `docs/verification.md`: a new section "Cleaning the restore targets (W3.4)", and lines 147-148;
+  - `docs/worker-config.md`: the `rpworker restore` output, the mutex, the "Nothing is cleaned up" lines, and `restore_note`;
+  - `docs/testing.md`: the "clean up by hand" lines, the overlap sentence (replaced by the mutex) and the live test;
+  - `docs/glossary.md`: **Cleaner**, `cleanup_ok`;
+  - `docs/api/veeam-restore-flow.md`'s hand-cleanup notes;
+  - CLAUDE.md.
+
+---
+
 ## 2026-10-02 — W3.3 second review: Graph is blamed as Graph, one code table, "nothing restored" kept (proposed)
 
 Amends the W3.3 build notes below (points 1 and 7) after the PR #147 review's eight findings.

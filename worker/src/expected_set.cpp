@@ -120,7 +120,8 @@ void add_kind(ItemKind kind, const std::vector<Selector>& selectors,
         out.push_back(std::move(item));
     }
     for (std::size_t j = 0; j < randoms.size(); ++j) {
-        if (!(selectors[c + j] == randoms[j].selector)) {
+        if (!(selectors[c + j] == randoms[j].selector) ||
+            record.random_keys[j] != sampling::random_key(selectors[c + j])) {
             throw std::logic_error("expected set: random item " + std::to_string(j) + " of " +
                                    kind_name(kind) + " isn't the candidate the sampler took");
         }

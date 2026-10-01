@@ -17,6 +17,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -189,25 +190,50 @@ std::size_t count_of(const ExpectedSet& set, ExpectedKind kind)
 TEST_CASE("every sampled item has an expected record, in RestoreSpec order, with its kind explicit",
           "[expected-set]")
 {
+    // Per type (mail, SharePoint, OneDrive): random items wanted and taken,
+    // and selectors; then the counts of manifest, fields and metadata. The
+    // pool holds 3 mails, 3 SharePoint and 2 OneDrive files.
     struct Row {
         std::string what;
         SamplePlan plan;
         CanaryCursor cursor;
+        std::array<int, 3> wanted;
+        std::array<int, 3> taken;
+        std::array<std::size_t, 3> selectors;
+        std::array<std::size_t, 3> counts;
     };
     const Row row = GENERATE_COPY(values<Row>({
-        {"canaries and random items of all three types", {5, 4, 3}, {0, 0, 0}},
-        // Random halves of 3, 4 and 3 from pools of 3, 3 and 2: shortfalls.
-        {"fewer random items than wanted", {7, 9, 7}, {3, 8, 9}},
-        {"a type of size 0", {0, 2, 3}, {0, 1, 2}},
-        {"only canaries", {1, 1, 1}, {19, 9, 0}},
+        {"canaries and random items of all three types", {5, 4, 3}, {0, 0, 0},
+         {2, 2, 1}, {2, 2, 1}, {5, 4, 3}, {7, 2, 3}},
+        // Random halves of 3, 4 and 3 from pools of 3, 3 and 2: SharePoint
+        // and OneDrive short.
+        {"fewer random items than wanted", {7, 9, 7}, {3, 8, 9},
+         {3, 4, 3}, {3, 3, 2}, {7, 8, 6}, {13, 3, 5}},
+        {"a type of size 0", {0, 2, 3}, {0, 1, 2}, {0, 1, 1}, {0, 1, 1}, {0, 2, 3}, {3, 0, 2}},
+        {"only canaries", {1, 1, 1}, {19, 9, 0}, {0, 0, 0}, {0, 0, 0}, {1, 1, 1}, {3, 0, 0}},
     }));
     CAPTURE(row.what);
     PoolConnector c(mixed_pool());
     const Selection s = rp::sampling::choose_sample(
         c, "RestoreProofLab.onmicrosoft.com", lab_point(), targets(), lab_manifest().tenant_id,
         row.plan, lab_manifest(), row.cursor, kRunId);
+    CHECK(s.record.mail.random_wanted == row.wanted[0]);
+    CHECK(s.record.sharepoint.random_wanted == row.wanted[1]);
+    CHECK(s.record.onedrive.random_wanted == row.wanted[2]);
+    CHECK(s.record.mail.random_taken == row.taken[0]);
+    CHECK(s.record.sharepoint.random_taken == row.taken[1]);
+    CHECK(s.record.onedrive.random_taken == row.taken[2]);
+    CHECK(s.mail_random.size() == static_cast<std::size_t>(row.taken[0]));
+    CHECK(s.sharepoint_random.size() == static_cast<std::size_t>(row.taken[1]));
+    CHECK(s.onedrive_random.size() == static_cast<std::size_t>(row.taken[2]));
+    CHECK(s.mail.size() == row.selectors[0]);
+    CHECK(s.sharepoint.size() == row.selectors[1]);
+    CHECK(s.onedrive.size() == row.selectors[2]);
 
     const ExpectedSet set = verification::build_expected_set(s, lab_manifest());
+    CHECK(count_of(set, ExpectedKind::manifest) == row.counts[0]);
+    CHECK(count_of(set, ExpectedKind::fields) == row.counts[1]);
+    CHECK(count_of(set, ExpectedKind::metadata) == row.counts[2]);
 
     const std::size_t n = s.mail.size() + s.sharepoint.size() + s.onedrive.size();
     REQUIRE(set.items.size() == n);
@@ -305,6 +331,9 @@ TEST_CASE("build_expected_set refuses a selection that isn't this manifest's or 
         {"a OneDrive random candidate missing",
          [](Selection& s, CanaryManifest&) { s.onedrive_random.pop_back(); }, "invalid_argument",
          mismatch("onedrive")},
+        {"a random key fewer than the random candidates",
+         [](Selection& s, CanaryManifest&) { s.record.mail.random_keys.pop_back(); }, "invalid_argument",
+         mismatch("mail")},
         {"a canary id more than selected",
          [](Selection& s, CanaryManifest&) { s.record.onedrive.canary_ids.push_back("rp-canary-20.png"); },
          "invalid_argument", mismatch("onedrive")},
@@ -323,6 +352,15 @@ TEST_CASE("build_expected_set refuses a selection that isn't this manifest's or 
         {"a random SharePoint selector that differs from its candidate",
          [](Selection& s, CanaryManifest&) { s.sharepoint_random[1].selector.name = "other.pdf"; },
          "logic_error", "expected set: random item 1 of sharepoint isn't the candidate the sampler took"},
+        {"a random mail key that isn't its selector's",
+         [](Selection& s, CanaryManifest&) { s.record.mail.random_keys[1][2] = "something else"; },
+         "logic_error", "expected set: random item 1 of mail isn't the candidate the sampler took"},
+        {"a random SharePoint key that isn't its selector's",
+         [](Selection& s, CanaryManifest&) { s.record.sharepoint.random_keys[0].back() = "other.pdf"; },
+         "logic_error", "expected set: random item 0 of sharepoint isn't the candidate the sampler took"},
+        {"a random OneDrive key that isn't its selector's",
+         [](Selection& s, CanaryManifest&) { s.record.onedrive.random_keys[0][0] = "dana@example.com"; },
+         "logic_error", "expected set: random item 0 of onedrive isn't the candidate the sampler took"},
         {"a random OneDrive selector whose size isn't unchecked",
          [](Selection& s, CanaryManifest&) { s.onedrive[2].size = 77; }, "logic_error",
          "expected set: random item 0 of onedrive isn't the candidate the sampler took"},
@@ -462,10 +500,10 @@ TEST_CASE("a random file expects its name, and the backup's size unless it is an
         bool sized;
     };
     const Row row = GENERATE(values<Row>({
-        {"PLAN.DOCX", false}, {"a.docm", false}, {"a.Dotx", false}, {"a.dotm", false},
-        {"Budget.XLSX", false}, {"a.xlsm", false}, {"a.xltx", false}, {"a.xltm", false},
-        {"Deck.PPTX", false}, {"a.pptm", false}, {"a.potx", false}, {"a.potm", false},
-        {"a.ppsx", false}, {"a.PPSM", false},
+        {"PLAN.DocX", false}, {"a.DocM", false}, {"a.Dotx", false}, {"a.dOTm", false},
+        {"Budget.XLsx", false}, {"a.xLSm", false}, {"a.XltX", false}, {"a.xLTm", false},
+        {"Deck.PPtx", false}, {"a.PptM", false}, {"a.pOTx", false}, {"a.POtm", false},
+        {"a.ppSX", false}, {"a.PpSm", false},
         {"report.pdf", true}, {"README", true}, {"notes.docx.txt", true}, {"old.doc", true},
         {"sheet.xls", true}, {"a.docxx", true},
     }));

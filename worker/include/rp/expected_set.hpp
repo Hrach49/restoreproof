@@ -78,17 +78,21 @@ struct ExpectedSet {
 // file, and content_sha256 by its content_rule); a random mail `fields`
 // (subject, received time, and the sender name and sent time when the backup
 // listed them); a random file `metadata` (name, and the backup's size unless
-// is_office_package). Nothing is built when, in this order:
+// is_office_package). Nothing is built when (the first two for every type
+// first, then per type, mail, SharePoint, OneDrive, its canaries and then its
+// random items):
 //  - selection.record.manifest_sha256 isn't manifest.sha256:
 //    std::invalid_argument("expected set: the selection wasn't made from this manifest");
-//  - a type's selectors aren't its canary_ids and <kind>_random in number:
+//  - a type's selectors aren't its canary_ids and <kind>_random in number, or
+//    its random_keys aren't as many as <kind>_random:
 //    std::invalid_argument("expected set: the <kind> selectors don't match the canaries
 //    and random items recorded");
 //  - a canary id isn't one of the manifest's canaries of that type:
 //    std::logic_error("expected set: canary <n> of <kind> isn't in the manifest"), by
 //    position, never quoting the id; or its selector isn't that entry's:
 //    "... isn't the manifest's entry";
-//  - a random selector isn't its candidate's: std::logic_error("expected set: random
+//  - a random selector isn't its candidate's, or its recorded key isn't the
+//    selector's (sampling::random_key): std::logic_error("expected set: random
 //    item <n> of <kind> isn't the candidate the sampler took").
 ExpectedSet build_expected_set(const sampling::Selection& selection,
                                const sampling::CanaryManifest& manifest);

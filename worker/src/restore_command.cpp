@@ -10,6 +10,7 @@
 #include <rp/graph_errors.hpp>
 #include <rp/graph_targets.hpp>
 #include <rp/http_client.hpp>
+#include <rp/run_status.hpp>
 #include <rp/sample_rng.hpp>
 #include <rp/sample_selector.hpp>
 
@@ -225,41 +226,33 @@ std::string of(int taken, int wanted)
     return std::format("{} of {}", taken, wanted);
 }
 
-// "canary shortfall", "random shortfall", both, or "" for none.
-std::string shortfall(const sampling::KindRecord& k)
+// A type's NOTE: "canary shortfall", "random shortfall", both, or "" for none,
+// by the one shortfall rule (verification::shortfalls_of).
+std::string shortfall_note(ItemKind kind, const std::vector<verification::Shortfall>& shortfalls)
 {
-    const bool canary_short = static_cast<int>(k.canary_ids.size()) < (k.requested + 1) / 2;
-    const bool random_short = k.random_taken < k.random_wanted;
+    bool canary_short = false;
+    bool random_short = false;
+    for (const verification::Shortfall& s : shortfalls) {
+        if (s.kind == kind) {
+            (s.source == verification::ItemSource::canary ? canary_short : random_short) = true;
+        }
+    }
     return canary_short && random_short ? "canary and random shortfall"
            : canary_short               ? "canary shortfall"
            : random_short               ? "random shortfall"
                                         : "";
 }
 
-TableRow kind_row(ItemKind kind, const sampling::KindRecord& k)
+TableRow kind_row(ItemKind kind, const sampling::KindRecord& k,
+                  const std::vector<verification::Shortfall>& shortfalls)
 {
     std::vector<std::string> cells{kind_name(kind), std::to_string(k.requested),
                                    of(static_cast<int>(k.canary_ids.size()), (k.requested + 1) / 2),
                                    of(k.random_taken, k.random_wanted)};
-    if (std::string note = shortfall(k); !note.empty()) {
+    if (std::string note = shortfall_note(kind, shortfalls); !note.empty()) {
         cells.push_back(std::move(note));
     }
     return {"  ", std::move(cells)};
-}
-
-// Why an empty sample is empty: "<kind>: <shortfall>" for each type asked for.
-std::string empty_sample_reason(const sampling::SampleRecord& r)
-{
-    const std::pair<ItemKind, const sampling::KindRecord*> kinds[] = {
-        {ItemKind::mail, &r.mail}, {ItemKind::sharepoint, &r.sharepoint},
-        {ItemKind::onedrive, &r.onedrive}};
-    std::string text;
-    for (const auto& [kind, k] : kinds) {
-        if (k->requested > 0) {
-            text += (text.empty() ? "" : "; ") + kind_name(kind) + ": " + shortfall(*k);
-        }
-    }
-    return text;
 }
 
 // What is printed once the run ID exists, before the sample is chosen
@@ -273,7 +266,8 @@ std::string format_intro(const std::string& org, const connector::RestorePoint& 
 }
 
 // What is printed once the sample is chosen, before the restore.
-std::string format_sample(const sampling::Selection& selection, std::size_t items)
+std::string format_sample(const sampling::Selection& selection, std::size_t items,
+                          const std::vector<verification::Shortfall>& shortfalls)
 {
     const sampling::SampleRecord& r = selection.record;
     std::string text = std::format(
@@ -281,9 +275,9 @@ std::string format_sample(const sampling::Selection& selection, std::size_t item
         cursor_text(r.mail.cursor, r.sharepoint.cursor, r.onedrive.cursor),
         cursor_text(r.mail.cursor_next, r.sharepoint.cursor_next, r.onedrive.cursor_next));
     text += format_table({{"  ", {"KIND", "REQUESTED", "CANARIES", "RANDOM", "NOTE"}},
-                          kind_row(ItemKind::mail, r.mail),
-                          kind_row(ItemKind::sharepoint, r.sharepoint),
-                          kind_row(ItemKind::onedrive, r.onedrive)});
+                          kind_row(ItemKind::mail, r.mail, shortfalls),
+                          kind_row(ItemKind::sharepoint, r.sharepoint, shortfalls),
+                          kind_row(ItemKind::onedrive, r.onedrive, shortfalls)});
     if (items > 0) {
         text += std::format("restoring {} item(s) ...\n", items);
     }
@@ -402,30 +396,6 @@ void flush_or_throw(std::ostream& out)
     }
 }
 
-// The exit code of a restore that returned, with its line on `err`: an item
-// that failed for an infrastructure reason, or nothing sent, is an error (4),
-// never a restore failure; 5 only for partial or failed; 0 for succeeded.
-int restore_exit_code(const connector::RestoreResult& result, std::ostream& err)
-{
-    const auto infrastructure =
-        std::ranges::count_if(result.items, [](const connector::ItemRestoreResult& item) {
-            return item.infrastructure && item.outcome != connector::ItemOutcome::restored;
-        });
-    if (infrastructure > 0) {
-        err << "restore error: " << infrastructure
-            << " item(s) failed for an infrastructure reason (Veeam couldn't reach Microsoft "
-               "365, lacked permissions or was throttled); this is an error, not a restore "
-               "failure\n";
-        return exit_code::service;
-    }
-    if (result.status == connector::RestoreStatus::not_run) {
-        err << "restore error: the restore did not run: nothing was sent (status not_run)\n";
-        return exit_code::service;
-    }
-    return result.status == connector::RestoreStatus::succeeded ? exit_code::ok
-                                                                : exit_code::restore;
-}
-
 // what() is safe to print: connector::Error's never holds a credential.
 int report(std::ostream& err, std::string_view prefix, const std::exception& e, int code)
 {
@@ -483,43 +453,13 @@ std::string format_check(const verification::ExpectedSet& expected,
     return text;
 }
 
-// The one warning line of the earlier runs' copies the check ignored (W3.2
-// point 1), on `err`; nothing when there were none.
-void warn_stale(const verification::CheckResult& check, std::ostream& err)
+// The status line (W3.3): "status <pass|fail|error>[ <code>]: <message>",
+// its own paragraph.
+std::string format_status(const verification::RunVerdict& verdict)
 {
-    if (const std::size_t stale = check.stale_mail + check.stale_sharepoint + check.stale_onedrive;
-        stale > 0) {
-        err << std::format("warning: {} copies from earlier runs in the restore targets were "
-                           "ignored (mail {}, sharepoint {}, onedrive {})\n",
-                           stale, check.stale_mail, check.stale_sharepoint, check.stale_onedrive);
-    }
-}
-
-// The exit code once the restore was read back (W3.2, until W3.3's table):
-// the restore's own, when it isn't 0; then 5 when an item is missing or
-// didn't match, then 4 when one couldn't be checked; each with its line on `err`.
-int check_exit_code(int restore_code, const verification::CheckResult& check, std::ostream& err)
-{
-    if (restore_code != exit_code::ok) {
-        return restore_code;
-    }
-    const auto count = [&](auto pred) { return std::ranges::count_if(check.items, pred); };
-    const auto unverified = count([](const verification::ItemCheck& item) {
-        return item.outcome == verification::CheckOutcome::missing ||
-               item.outcome == verification::CheckOutcome::mismatch;
-    });
-    if (unverified > 0) {
-        err << "check: " << unverified << " item(s) didn't verify\n";
-        return exit_code::restore;
-    }
-    const auto unchecked = count([](const verification::ItemCheck& item) {
-        return item.outcome == verification::CheckOutcome::error;
-    });
-    if (unchecked > 0) {
-        err << "check: " << unchecked << " item(s) couldn't be checked\n";
-        return exit_code::service;
-    }
-    return exit_code::ok;
+    return std::format("\nstatus {}{}: {}\n", verification::to_string(verdict.status),
+                       verdict.error_code.empty() ? "" : " " + verdict.error_code,
+                       verdict.message);
 }
 
 } // namespace
@@ -581,17 +521,19 @@ graph::TargetReader target_reader(graph::GraphClient& client, IHttpClient& downl
 }
 
 // The before snapshot (W3.2): the targets the spec has items for, listed
-// without hashing. exit_code::ok, or a failure's code with its line on `err`:
-// nothing has been restored yet, so the run stops. what() is safe to print:
-// GraphError's went through rp::redact(), a ConfigError names no secret.
-int read_before(graph::GraphClient& client, IHttpClient& download,
-                const connector::RestoreTargets& targets, const connector::RestoreSpec& spec,
-                const std::shared_ptr<spdlog::logger>& logger, verification::TargetsRead& before,
-                std::ostream& err)
+// without hashing. Null, or a Graph failure or a ConfigError, its line on
+// `err`: nothing has been restored yet, so the run stops there (W3.3: its
+// status decides the code). what() is safe to print: GraphError's went
+// through rp::redact(), a ConfigError names no secret. Anything else is thrown.
+std::exception_ptr read_before(graph::GraphClient& client, IHttpClient& download,
+                               const connector::RestoreTargets& targets,
+                               const connector::RestoreSpec& spec,
+                               const std::shared_ptr<spdlog::logger>& logger,
+                               verification::TargetsRead& before, std::ostream& err)
 {
-    const auto failed = [&](const std::exception& e, int code) {
+    const auto failed = [&](const std::exception& e) {
         err << "check error: " << e.what() << "; nothing was restored\n";
-        return code;
+        return std::current_exception();
     };
     try {
         graph::TargetReaderOptions options;
@@ -606,17 +548,11 @@ int read_before(graph::GraphClient& client, IHttpClient& download,
         if (!spec.onedrive.empty()) {
             before.onedrive.items = reader.list_onedrive();
         }
-        return exit_code::ok;
-    } catch (const graph::AuthError& e) {
-        return failed(e, exit_code::auth);
-    } catch (const graph::PermissionError& e) {
-        return failed(e, exit_code::auth);
-    } catch (const graph::TransientError& e) {
-        return failed(e, exit_code::transient);
+        return nullptr;
     } catch (const graph::GraphError& e) {
-        return failed(e, exit_code::service);
+        return failed(e);
     } catch (const ConfigError& e) {
-        return failed(e, exit_code::config);
+        return failed(e);
     }
 }
 
@@ -707,10 +643,63 @@ int run_restore(std::span<const std::string_view> args, std::ostream& out, std::
                 << *restoring_run << ")\n";
         }
     };
+
+    // W3.3: once the run line is out (`phase` set), every ending is a status
+    // (rp/run_status.hpp). What it is decided from outlives the try block, so
+    // the catch blocks below can decide it too.
+    std::optional<verification::RunPhase> phase;
+    std::string run_id;
+    std::optional<verification::ExpectedSet> expected;
+    std::vector<verification::Shortfall> shortfalls;
+    std::optional<connector::RestoreResult> result;
+    // The status line, then each warning on `err`; the exit code is the
+    // status's. With `output_lost` (or the status line failing too) the
+    // output is incomplete: after a restore that says so, with the run and
+    // the restore's own account, and a pass becomes 1.
+    const auto finish = [&](std::optional<verification::RunStop> stop,
+                            const verification::CheckResult* check, bool output_lost) noexcept {
+        try {
+            const verification::RunVerdict verdict = verification::decide_status(
+                {expected ? &*expected : nullptr, shortfalls, std::move(stop),
+                 result ? &*result : nullptr, check});
+            int code = verification::exit_code_of(verdict);
+            if (!output_lost) {
+                try {
+                    out << format_status(verdict);
+                    flush_or_throw(out);
+                } catch (...) {
+                    output_lost = true;
+                }
+            }
+            if (output_lost) {
+                if (result) {
+                    err << "error: writing the output failed after the restore ran (run "
+                        << run_id << ", status " << connector::to_string(result->status) << ": "
+                        << result->items_restored << " of " << result->items_sent
+                        << " item(s) restored)\n";
+                }
+                code = code == exit_code::ok ? exit_code::config : code;
+            }
+            for (const verification::StatusWarning& warning : verdict.warnings) {
+                err << "warning: " << warning.code << ": " << warning.message << '\n';
+            }
+            return code;
+        } catch (...) {
+            err << "error: unexpected failure\n";
+            return exit_code::config;
+        }
+    };
+    // The exit code of an exception: before the run line, `code` (its line is
+    // already on `err`); after it, the status of the stop it makes.
+    const auto stopped = [&](int code) {
+        return phase ? finish(verification::stop_reason(std::current_exception(), *phase),
+                              nullptr, false)
+                     : code;
+    };
     const auto restore_failed = [&](const connector::Error& e, int code) {
         report(err, "restore error: ", e, code);
         restore_note(e.what());
-        return code;
+        return stopped(code);
     };
 
     // Everything that can throw is in here, the output included, so no
@@ -751,20 +740,22 @@ int run_restore(std::span<const std::string_view> args, std::ostream& out, std::
         if (!point) {
             return exit_code::service;
         }
-        const std::string run_id = parsed.run_id ? std::string{*parsed.run_id}
-                                   : env.make_run_id ? env.make_run_id()
-                                                     : make_run_id();
+        run_id = parsed.run_id ? std::string{*parsed.run_id}
+                 : env.make_run_id ? env.make_run_id()
+                                   : make_run_id();
         sampling::check_run_id(run_id); // env.make_run_id's: nothing printed if it fails
 
         // Once the run ID exists, before the sample is chosen (it browses
         // Veeam) and the restore (it takes minutes): a run that fails from
-        // here on still shows its run ID and seed.
+        // here on still shows its run ID and seed, and ends with its status.
         out << format_intro(config.veeam_org_name, *point, run_id);
         flush_or_throw(out);
+        phase = verification::RunPhase::before_restore;
 
         const sampling::Selection selection =
             sampling::choose_sample(*source, config.veeam_org_name, *point, targets,
                                     config.graph_tenant_id, plan, manifest, cursor, run_id);
+        shortfalls = verification::shortfalls_of(selection.record);
         const connector::RestoreSpec spec{.client_ref = config.veeam_org_name,
                                           .restore_point = *point,
                                           .targets = targets,
@@ -773,23 +764,24 @@ int run_restore(std::span<const std::string_view> args, std::ostream& out, std::
                                           .onedrive = selection.onedrive};
 
         // No restore when the rest of the header can't be shown.
-        out << format_sample(selection, spec.item_count());
+        out << format_sample(selection, spec.item_count(), shortfalls);
         flush_or_throw(out);
+
+        // W3.1: what each restored copy should look like. An empty sample
+        // (row 3 of the status table) is said by the status, its shortfalls
+        // as warnings, and nothing is restored.
+        expected = verification::build_expected_set(selection, manifest);
         if (spec.item_count() == 0) {
-            err << "restore error: the sample is empty: nothing to restore ("
-                << empty_sample_reason(selection.record) << ")\n";
-            return exit_code::service;
+            return finish(std::nullopt, nullptr, false);
         }
 
         const std::function<std::chrono::steady_clock::time_point()> now = [&env] {
             return env.now ? env.now() : std::chrono::steady_clock::now();
         };
 
-        // W3.2: what each restored copy should look like, and the targets as
-        // they are before the restore, read through Graph as `graph list`
-        // reads them. A failure here stops the run before anything is restored.
-        const verification::ExpectedSet expected =
-            verification::build_expected_set(selection, manifest);
+        // W3.2: the targets as they are before the restore, read through
+        // Graph as `graph list` reads them. A failure here stops the run
+        // before anything is restored.
         // Declared in this order so the readers and the client, which hold
         // references to the HTTP clients, go first. `options` records Graph
         // under "graph" with --record; downloads are recorded as their size
@@ -814,73 +806,68 @@ int run_restore(std::span<const std::string_view> args, std::ostream& out, std::
                                         config.graph_client_id, std::move(*certificate),
                                         client_options);
         verification::TargetsRead before;
-        if (const int code = read_before(graph_client, *download_http, targets, spec,
-                                         options.logger, before, err);
-            code != exit_code::ok) {
-            return code;
+        if (const std::exception_ptr failed = read_before(graph_client, *download_http, targets,
+                                                          spec, options.logger, before, err)) {
+            return finish(verification::stop_reason(failed, *phase), nullptr, false);
         }
 
         const auto started = now();
+        phase = verification::RunPhase::restore;
         restoring_run = run_id;
-        const connector::RestoreResult result = source->restore_sample(spec);
+        result = source->restore_sample(spec);
         restoring_run.reset();
+        phase = verification::RunPhase::check;
         const auto total = now() - started;
 
-        // Items may be in the targets now: say so, which run, and how it went.
-        // A restore that succeeded but whose output was lost isn't a success.
-        const auto output_failed = [&](const verification::CheckResult* check) {
-            err << "error: writing the output failed after the restore ran (run " << run_id
-                << ", status " << connector::to_string(result.status) << ": "
-                << result.items_restored << " of " << result.items_sent
-                << " item(s) restored)\n";
-            int code = restore_exit_code(result, err);
-            if (check) {
-                code = check_exit_code(code, *check, err);
-            }
-            return code == exit_code::ok ? exit_code::config : code;
-        };
+        // Items may be in the targets now: say how it went. Output that is
+        // lost from here on doesn't stop the check: the status still decides
+        // the exit code, and a restore whose output was lost isn't a success.
+        bool output_lost = false;
         try {
-            out << format_result(result, selection, total);
+            out << format_result(*result, selection, total);
             flush_or_throw(out);
         } catch (...) {
-            return output_failed(nullptr);
+            output_lost = true;
         }
 
         // Read back, hashing, and compare: a read that fails makes its type's
-        // items `error`, never a failed command. Anything else that fails
-        // here (no memory, a bug) leaves every item unchecked: the restore's
-        // own exit code, or 4, and the restore's tables already out.
+        // items `error`, never a stop. Anything else that fails here (no
+        // memory, a bug) stops the run in its check phase: error internal,
+        // the restore's tables already out.
         std::optional<verification::CheckResult> checked;
         try {
             const verification::TargetSnapshot snapshot = verification::snapshot_of(before);
             verification::TargetsRead after;
             read_after(graph_client, *download_http, targets, spec, options.logger, now,
-                       verification::hash_filter(expected, snapshot), after, err);
-            checked = verification::check(expected, snapshot, after, now);
+                       verification::hash_filter(*expected, snapshot), after, err);
+            checked = verification::check(*expected, snapshot, after, now);
         } catch (...) {
             // Its message, if it has one, may not be safe to show.
             err << "check error: unexpected failure\n"
                    "restore error: the restore had started: items may be in the restore targets "
                    "(run "
                 << run_id << ")\n";
-            const int code = restore_exit_code(result, err);
-            return code == exit_code::ok ? exit_code::service : code;
+            return finish(verification::stop_reason(std::current_exception(), *phase), nullptr,
+                          output_lost);
         }
-        const verification::CheckResult& check = *checked;
-        warn_stale(check, err);
-        try {
-            out << format_check(expected, check);
-            flush_or_throw(out);
-        } catch (...) {
-            return output_failed(&check);
+        if (!output_lost) {
+            try {
+                out << format_check(*expected, *checked);
+                flush_or_throw(out);
+            } catch (...) {
+                output_lost = true;
+            }
         }
-        return check_exit_code(restore_exit_code(result, err), check, err);
+        return finish(std::nullopt, &*checked, output_lost);
     } catch (const ConfigError& e) {
-        return report(err, "config error: ", e, exit_code::config);
+        report(err, "config error: ", e, exit_code::config);
+        return stopped(exit_code::config);
     } catch (const sampling::ManifestError& e) {
-        return report(err, "config error: ", e, exit_code::config);
+        report(err, "config error: ", e, exit_code::config);
+        return stopped(exit_code::config);
     } catch (const connector::UnknownConnectorError& e) {
-        return report(err, "config error: ", e, exit_code::config);
+        report(err, "config error: ", e, exit_code::config);
+        return stopped(exit_code::config);
     } catch (const connector::AuthError& e) {
         return restore_failed(e, exit_code::auth);
     } catch (const connector::TransientError& e) {
@@ -891,7 +878,7 @@ int run_restore(std::span<const std::string_view> args, std::ostream& out, std::
         // Its message, if it has one, may not be safe to show.
         err << "error: unexpected failure\n";
         restore_note();
-        return exit_code::config;
+        return stopped(exit_code::config);
     }
 }
 

@@ -339,7 +339,7 @@ std::string restore_part(const std::string& run_id, const std::string& seed,
     };
     out.insert(out.end(), rows.begin(), rows.end());
     out.push_back("");
-    out.push_back("status succeeded: 11 of 11 item(s) restored in " + total);
+    out.push_back("restore succeeded: 11 of 11 item(s) restored in " + total);
     return lines(out);
 }
 

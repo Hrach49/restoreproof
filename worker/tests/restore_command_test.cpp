@@ -741,6 +741,30 @@ const std::string kPassOfThree =
     "\n"
     "status pass: 3 of 3 item(s) verified: manifest 2, fields 1, metadata 0\n";
 
+// Exactly one stdout line starts with "status ", the run's (W3.3), and it is
+// the last: a script reads the run's status from it, never the restore's own
+// line, which starts with "restore ".
+void check_one_status_line(const std::string& out)
+{
+    std::size_t status_lines = 0;
+    std::string last;
+    std::size_t start = 0;
+    while (start < out.size()) {
+        const std::size_t end = out.find('\n', start);
+        const std::string line =
+            out.substr(start, end == std::string::npos ? std::string::npos : end - start);
+        if (line.starts_with("status ")) {
+            ++status_lines;
+        }
+        if (!line.empty()) {
+            last = line;
+        }
+        start = end == std::string::npos ? out.size() : end + 1;
+    }
+    CHECK(status_lines == 1);
+    CHECK(last.starts_with("status "));
+}
+
 } // namespace
 
 // --- Failure paths: the command line -----------------------------------------------
@@ -1567,8 +1591,9 @@ TEST_CASE("restore: a succeeded restore prints the header, both tables and the s
               "  sess-mail        mail        Success  2 of 2    2026-09-30T10:00:00Z  2026-09-30T10:01:05Z     0:01:05\n"
               "  sess-sharepoint  sharepoint  Success  1 of 1    2026-09-30T10:01:10Z  2026-09-30T10:01:52.25Z  0:00:42\n"
               "\n"
-              "status succeeded: 3 of 3 item(s) restored in 0:02:03\n" +
+              "restore succeeded: 3 of 3 item(s) restored in 0:02:03\n" +
               kCheckOfThree + kPassOfThree);
+    check_one_status_line(run.out);
     // The header went out before the restore began.
     CHECK(lab.fake.out_at_restore == expected_header());
     REQUIRE(lab.fake.spec);
@@ -1621,10 +1646,11 @@ TEST_CASE("restore: the backup's own status never decides the run's: a partial r
 
     CHECK(run.exit_code == code);
     CHECK(run.err.empty());
-    CHECK_THAT(run.out, ContainsSubstring("\nstatus " + std::string{connector::to_string(status)} +
+    CHECK_THAT(run.out, ContainsSubstring("\nrestore " + std::string{connector::to_string(status)} +
                                           ": " + std::to_string(count) +
                                           " of 2 item(s) restored in 0:02:03\n"));
     CHECK_THAT(run.out, EndsWith("error\n\n" + status_line + "\n"));
+    check_one_status_line(run.out);
 }
 
 TEST_CASE("restore: a failed restore whose item only an earlier run's copy matches is error "
@@ -1659,6 +1685,7 @@ TEST_CASE("restore: a failed restore whose item only an earlier run's copy match
                             "\n"
                             "status error stale_target: 1 of 1 item(s) couldn't be checked "
                             "(stale_target 1)\n"));
+    check_one_status_line(run.out);
 }
 
 TEST_CASE("restore: an item the backup failed for an infrastructure reason is unchecked when the "
@@ -1734,7 +1761,7 @@ TEST_CASE("restore: an item the backup failed for an infrastructure reason is un
     CHECK(run.exit_code == code);
     CHECK(run.err == err);
     CHECK_THAT(run.out, ContainsSubstring("\n  KIND        SOURCE  NAME"));
-    CHECK_THAT(run.out, ContainsSubstring("\nstatus " + std::string{connector::to_string(status)}));
+    CHECK_THAT(run.out, ContainsSubstring("\nrestore " + std::string{connector::to_string(status)}));
     CHECK_THAT(run.out, EndsWith("error\n\n" + status_line + "\n"));
 }
 
@@ -1752,7 +1779,7 @@ TEST_CASE("restore: a restore that returns not_run is exit 4, never 5", "[restor
     // Without items or sessions, only the status line follows the header.
     const std::string last = "restoring 1 item(s) ...\n";
     CHECK(run.out.substr(run.out.find(last) + last.size()) ==
-          "\nstatus not_run: 0 of 0 item(s) restored in 0:02:03\n"
+          "\nrestore not_run: 0 of 0 item(s) restored in 0:02:03\n"
           "\n"
           "  KIND  SOURCE  NAME            OUTCOME  FIELDS  DUP  MS\n"
           "  mail  canary  RP-CANARY-0001  missing  -       -    -\n"
@@ -1760,6 +1787,7 @@ TEST_CASE("restore: a restore that returns not_run is exit 4, never 5", "[restor
           "check: 0 match, 0 mismatch, 1 missing, 0 error\n"
           "\n"
           "status error not_run: the restore didn't run: nothing was sent\n");
+    check_one_status_line(run.out);
 }
 
 TEST_CASE("restore: --point latest, or none, is the newest; an ID matches in any case",
@@ -1932,7 +1960,7 @@ TEST_CASE("restore: a shortfall is named in the header and warned of, and is sti
     CHECK(run.exit_code == rp::exit_code::ok);
     CHECK(run.err == warnings);
     CHECK_THAT(run.out, ContainsSubstring(row));
-    CHECK_THAT(run.out, ContainsSubstring("\nstatus succeeded: "));
+    CHECK_THAT(run.out, ContainsSubstring("\nrestore succeeded: "));
     CHECK_THAT(run.out, ContainsSubstring("\nstatus pass: "));
 }
 
@@ -1985,7 +2013,7 @@ TEST_CASE("restore: each item's row: its source, outcome, session time and messa
           "  s-bad    sharepoint  Failed   0 of 1    2026-09-30T10:00:00Z  not a time            -\n"
           "  s-back   onedrive    Failed   0 of 0    2026-09-30T10:00:01Z  2026-09-30T10:00:00Z  -\n"
           "\n"
-          "status partial: 1 of 3 item(s) restored in 0:02:03\n" +
+          "restore partial: 1 of 3 item(s) restored in 0:02:03\n" +
           kCheckOfThree +
           "\n"
           "status error internal: the run's results don't add up: the restore reports 5 "
@@ -2395,7 +2423,7 @@ TEST_CASE("restore: a failure in the check that isn't Graph's keeps the restore'
     CHECK(run.err == "check error: unexpected failure\n"
                      "restore error: the restore had started: items may be in the restore "
                      "targets (run run-0001)\n");
-    CHECK_THAT(run.out, ContainsSubstring("\nstatus " + std::string{connector::to_string(status)} +
+    CHECK_THAT(run.out, ContainsSubstring("\nrestore " + std::string{connector::to_string(status)} +
                                           ": 2 of 2 item(s) restored in 0:02:03\n"));
     CHECK(run.out.find("check:") == std::string::npos);
     CHECK(run.out.ends_with("\nstatus error internal: the restored items couldn't be checked: an "
@@ -2442,7 +2470,7 @@ TEST_CASE("restore: a stdout that fails on the check's table says so, with the s
         lab.targets.after[kind_slot(connector::ItemKind::mail)] = json::array();
     }
     // Everything up to the status line fits; the check's table doesn't.
-    const std::string status = "status succeeded: 1 of 1 item(s) restored in 0:02:03\n";
+    const std::string status = "restore succeeded: 1 of 1 item(s) restored in 0:02:03\n";
     std::string before_check;
     {
         Harness probe;
@@ -2684,7 +2712,7 @@ TEST_CASE("restore through veeam_m365: a canary restored on the recorded run, ex
           "  SESSION                               KIND  RESULT   RESTORED  STARTED                       ENDED                         ELAPSED\n"
           "  b6fe35ef-9633-481d-9756-3496a717d8a9  mail  Success  1 of 1    2026-09-28T21:27:28.3281642Z  2026-09-28T21:28:00.6973119Z  0:00:32\n"
           "\n"
-          "status succeeded: 1 of 1 item(s) restored in 0:00:05\n"
+          "restore succeeded: 1 of 1 item(s) restored in 0:00:05\n"
           "\n"
           "  KIND  SOURCE  NAME            OUTCOME  FIELDS  DUP  MS\n"
           "  mail  canary  RP-CANARY-0011  match    -       -    0\n"

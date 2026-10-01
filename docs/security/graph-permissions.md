@@ -83,7 +83,18 @@ names the grant it relies on, and any 403 Graph explains (`ErrorAccessDenied` fr
 or another code) becomes a `PermissionError` whose message names it:
 
 ```text
-Graph denied GET /v1.0/users/restoretest@contoso.onmicrosoft.com/mailFolders/inbox/messages (403 ErrorAccessDenied): the Worker app relies on Exchange RBAC "Application Mail.Read" in a management scope covering the test mailbox; see docs/security/graph-permissions.md
+Graph denied GET /v1.0/drives/b!XQgI_nDr6EKVpkcBib2Y65nzyk4OzJVNs_7NCRoJ5omdBuz_5GU6TJ2irAhs-dr6 (403 accessDenied): the Worker app relies on Sites.Selected read on the test site; see docs/security/graph-permissions.md
+```
+
+The mail calls are the exception. Since W3.2 every read of the test mailbox, the message
+listing included, first runs the restore-target guard's mailbox check (`GET
+/users/{test_mailbox}/mailFolders/inbox`), and a 403 there is the guard's refusal (a
+`WrongTargetError`, exit 4), not a `PermissionError`: the Exchange scope covers the
+`restoretest` mailbox alone, so a 403 may mean the address is another mailbox. Its message
+still names the grant:
+
+```text
+Graph refused the Worker app the Inbox of the mailbox test_mailbox names (403): the app's Exchange scope covers the restoretest mailbox alone, so the address is another mailbox, or the grant "Exchange RBAC "Application Mail.Read" in a management scope covering the test mailbox" is missing: the Worker reads only the restoretest mailbox; nothing was listed
 ```
 
 The path is shown without its query. A 403 without Graph's JSON error is no verdict on

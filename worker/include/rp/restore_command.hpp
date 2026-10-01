@@ -130,8 +130,12 @@ std::string format_elapsed(std::chrono::nanoseconds elapsed);
 //     KIND  SOURCE  NAME  OUTCOME  FIELDS  DUP  MS              one row per expected item
 //   <blank line>
 //   check: <a> match, <b> mismatch, <c> missing, <d> error
-//   check: <n> copies from earlier runs were ignored (mail <x>, sharepoint <y>, onedrive <z>)
-//                                                   (only when n isn't 0)
+//
+// The earlier runs' copies the check ignored are one line on `err`, only when
+// n isn't 0: "warning: <n> copies from earlier runs in the restore targets
+// were ignored (mail <x>, sharepoint <y>, onedrive <z>)". The after read
+// downloads only this run's copies of expected files
+// (verification::hash_filter): an earlier run's leftover is never read.
 //
 // The check's rows: SOURCE canary or random; NAME the expected subject or file
 // name; OUTCOME match, mismatch, missing or error; FIELDS the fields that
@@ -224,6 +228,11 @@ std::string format_elapsed(std::chrono::nanoseconds elapsed);
 //    <what()>" on `err` and makes its items `error`, never a failed command;
 //    a failed write of the check's table is the output failure above, with
 //    the check's code in place of the restore's;
+//  - any other exception while reading back or checking (std::bad_alloc, a
+//    logic error): "check error: unexpected failure", then "restore error:
+//    the restore had started: items may be in the restore targets (run <run
+//    ID>)", no check table, and the restore's own code as above, or 4 when
+//    that is 0 (the items couldn't be checked);
 //  - 0: status succeeded and every item matched (a random shortfall
 //    included: the header names it).
 // connector::Error's what() is safe to print (rp/connector.hpp). No exception

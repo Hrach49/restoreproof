@@ -1192,6 +1192,93 @@ TEST_CASE("on_file's exception propagates", "[graph][targets]")
     CHECK(caught.what == "office-v1 failed");
 }
 
+// Review of W3.2: the after read hashes only the files the check compares, so
+// an earlier run's leftover that would fail its download (gone, a size that
+// changed, too large) is listed, never read.
+TEST_CASE("a file hash_file rejects is listed but never downloaded, hashed or given to on_file",
+          "[graph][targets]")
+{
+    const FileLocation at = GENERATE(sharepoint_location(), onedrive_location());
+    CAPTURE(at.name);
+    const json file = file_of(at);
+    Lab lab;
+    serve_location(lab, at, page_of(json::array({file})));
+    // Its download would fail the listing.
+    lab.dl_http.on(HttpMethod::get, location_of(at), {make_response(404)});
+    TargetReaderOptions options = lab.reader_options();
+    std::vector<FoundItem> asked;
+    options.hash_file = [&asked](const FoundItem& item) {
+        asked.push_back(item);
+        return false;
+    };
+    int on_file_calls = 0;
+    options.on_file = [&on_file_calls](const FoundItem&, std::string_view) { ++on_file_calls; };
+    // A clock that moves: a file not read still has no read_ms.
+    std::chrono::steady_clock::time_point t{};
+    options.clock = [&t] {
+        t += std::chrono::milliseconds{5};
+        return t;
+    };
+    TargetReader reader(*lab.graph, lab.dl_http,
+                        rp::connector::RestoreTargets::from_config(lab_config()), options);
+
+    const std::vector<FoundItem> items = list(reader, at);
+
+    FoundItem expected;
+    expected.type = at.type;
+    expected.id = file.at("id").get<std::string>();
+    expected.name = file.at("name").get<std::string>();
+    expected.size_bytes = file.at("size").get<std::uint64_t>();
+    expected.listed_size = expected.size_bytes;
+    expected.ctag = string_or_none(file, "cTag");
+    expected.created_at = string_or_none(file, "createdDateTime");
+    expected.modified_at = string_or_none(file, "lastModifiedDateTime");
+    REQUIRE(items.size() == 1);
+    CHECK(items[0] == expected);
+    // The predicate saw the file as listed, before anything was read.
+    REQUIRE(asked.size() == 1);
+    CHECK(asked[0] == expected);
+    CHECK(on_file_calls == 0);
+    CHECK(lab.gets(content_url(at, expected.id)) == 0);
+    CHECK(lab.dl_http.requests().empty());
+}
+
+TEST_CASE("hash_file picks file by file which are downloaded; null hashes every file",
+          "[graph][targets]")
+{
+    const FileLocation at = GENERATE(sharepoint_location(), onedrive_location());
+    CAPTURE(at.name);
+    const bool with_predicate = GENERATE(false, true);
+    CAPTURE(with_predicate);
+    const json file = file_of(at);
+    const std::string id = file.at("id").get<std::string>();
+    // A second file the predicate rejects: its /content isn't even served.
+    json other = file;
+    other["id"] = id.substr(0, id.size() - 1) + "Z";
+    other["name"] = "leftover.bin";
+    Lab lab;
+    serve_location(lab, at, page_of(json::array({other, file})));
+    TargetReaderOptions options = lab.reader_options();
+    if (with_predicate) {
+        options.hash_file = [&id](const FoundItem& item) { return item.id == id; };
+    }
+    TargetReader reader(*lab.graph, lab.dl_http,
+                        rp::connector::RestoreTargets::from_config(lab_config()), options);
+
+    if (!with_predicate) {
+        // Without one, the leftover is downloaded too, and its /content fails.
+        CHECK(catch_error([&] { list(reader, at); }).kind != "none");
+        return;
+    }
+    const std::vector<FoundItem> items = list(reader, at);
+
+    REQUIRE(items.size() == 2);
+    CHECK(items[0].sha256.empty());
+    CHECK(items[1].sha256 == rp::sha256_hex(bytes_of(at)));
+    CHECK(items[1].sha256_rule == "bytes");
+    CHECK(lab.dl_http.requests().size() == 1);
+}
+
 TEST_CASE("one file in each file location lists as one FoundItem", "[graph][targets]")
 {
     const FileLocation at = GENERATE(sharepoint_location(), onedrive_location());

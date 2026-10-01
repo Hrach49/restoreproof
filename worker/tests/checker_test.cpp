@@ -500,6 +500,11 @@ TEST_CASE("check: times agree within 120 seconds either way, inclusive", "[check
         {"2026-09-24T22:12:42.9999999Z", false},
         {"2026-09-24T22:12:42Z", false},     // -121 s
         {"2026-09-24T22:14:43.1234567Z", true},
+        // Centuries apart: never subtracted, so never wrapped to a match.
+        {"1700-01-01T00:00:00Z", false},
+        {"1678-01-01T00:00:00Z", false},
+        {"2261-12-31T00:00:00Z", false},
+        {"2261-12-31T23:59:59.9999999Z", false},
     }));
     CAPTURE(received);
     Scene scene;
@@ -688,7 +693,8 @@ TEST_CASE("check: canaries claim first, whatever their place in the set", "[chec
     CHECK(result.items[0].outcome == CheckOutcome::missing);
 }
 
-TEST_CASE("check: random mails don't claim: two with one subject both see its copies",
+TEST_CASE("check: a random mail claims the copies it matched: a second with one subject is "
+          "missing",
           "[checker]")
 {
     const ExpectedSet expected = set_of({random_mail(0), random_mail(1)});
@@ -698,12 +704,55 @@ TEST_CASE("check: random mails don't claim: two with one subject both see its co
 
     const CheckResult result = verification::check(expected, {}, after);
 
-    for (const ItemCheck& item : result.items) {
-        CHECK(item.outcome == CheckOutcome::match);
-        CHECK(item.duplicate);
-        CHECK(item.copies == 2);
-        CHECK(item.graph_id == "m-2");
-    }
+    // The first in index order takes both copies; a copy counts for one item only.
+    CHECK(result.items[0].outcome == CheckOutcome::match);
+    CHECK(result.items[0].duplicate);
+    CHECK(result.items[0].copies == 2);
+    CHECK(result.items[0].graph_id == "m-2");
+    CHECK(result.items[1].outcome == CheckOutcome::missing);
+    CHECK_FALSE(result.items[1].found);
+    CHECK(result.items[1].reason == "no restored copy found");
+}
+
+TEST_CASE("check: two expected files of one type with one name: the second finds the first's "
+          "copy claimed",
+          "[checker]")
+{
+    const ItemKind kind = GENERATE(ItemKind::sharepoint, ItemKind::onedrive);
+    const bool second_random = GENERATE(false, true);
+    CAPTURE(connector::to_string(kind), second_random);
+    const ExpectedItem first = canary_file(0, kind, "rp-canary-01.pdf");
+    const ExpectedItem second = second_random ? random_file(1, kind, "RP-CANARY-01.PDF", 925)
+                                              : canary_file(1, kind, "Rp-Canary-01.pdf");
+    const ExpectedSet expected = set_of({first, second});
+    TargetsRead after;
+    read_of(after, kind).items = {file_copy(first, "f-1")};
+
+    const CheckResult result = verification::check(expected, {}, after);
+
+    CHECK(result.items[0].outcome == CheckOutcome::match);
+    CHECK(result.items[0].graph_id == "f-1");
+    CHECK(result.items[1].outcome == CheckOutcome::missing);
+    CHECK_FALSE(result.items[1].found);
+}
+
+TEST_CASE("check: a file's copy claimed by an earlier item, and an earlier run's copy of that "
+          "name: stale_target",
+          "[checker]")
+{
+    const ExpectedItem first = canary_file(0, ItemKind::sharepoint, "rp-canary-01.pdf");
+    const ExpectedItem second = random_file(1, ItemKind::sharepoint, "rp-canary-01.pdf", 925);
+    const ExpectedSet expected = set_of({first, second});
+    TargetSnapshot before;
+    before.sharepoint["f-old"] = "\"c:{old},1\"";
+    TargetsRead after;
+    after.sharepoint.items = {file_copy(first, "f-1"), file_copy(first, "f-old", "\"c:{old},1\"")};
+
+    const CheckResult result = verification::check(expected, before, after);
+
+    CHECK(result.items[0].outcome == CheckOutcome::match);
+    CHECK(result.items[1].outcome == CheckOutcome::error);
+    CHECK(result.items[1].error_code == "stale_target");
 }
 
 TEST_CASE("check: a file is found by its name as SharePoint compares it, in its own target only",
@@ -1128,6 +1177,113 @@ TEST_CASE("check: snapshot_of keeps each mail's ID and each file's ID with its c
                                      {"s-1", "\"c:{1},1\""}});
     CHECK(snapshot.onedrive ==
           std::map<std::string, std::optional<std::string>>{{"o-1", std::nullopt}});
+}
+
+TEST_CASE("check: is_new_file: a file not there before, or whose cTag moved; one cTag unknown "
+          "can't show a move",
+          "[checker]")
+{
+    using Tag = std::optional<std::string>;
+    const auto [there, before_tag, after_tag, fresh] = GENERATE(table<bool, Tag, Tag, bool>({
+        {false, std::nullopt, std::nullopt, true},
+        {false, std::nullopt, Tag{"\"c:{1},1\""}, true},
+        {true, Tag{"\"c:{1},1\""}, Tag{"\"c:{1},2\""}, true},
+        {true, Tag{"\"c:{1},1\""}, Tag{"\"c:{1},1\""}, false},
+        {true, std::nullopt, Tag{"\"c:{1},1\""}, false},
+        {true, Tag{"\"c:{1},1\""}, std::nullopt, false},
+        {true, std::nullopt, std::nullopt, false},
+    }));
+    const ItemType type = GENERATE(ItemType::sharepoint, ItemType::onedrive);
+    CAPTURE(there, before_tag, after_tag, rp::graph::to_string(type));
+    TargetSnapshot before;
+    FoundItem file;
+    file.type = type;
+    file.id = "f-1";
+    file.ctag = after_tag;
+    if (there) {
+        (type == ItemType::sharepoint ? before.sharepoint : before.onedrive)["f-1"] = before_tag;
+        // The same ID in the other target says nothing about this one.
+        (type == ItemType::sharepoint ? before.onedrive : before.sharepoint)["f-2"] = before_tag;
+    } else {
+        (type == ItemType::sharepoint ? before.onedrive : before.sharepoint)["f-1"] = before_tag;
+    }
+
+    CHECK(verification::is_new_file(before, file) == fresh);
+}
+
+TEST_CASE("check: is_new_file refuses a mail", "[checker]")
+{
+    FoundItem mail;
+    mail.id = "m-1";
+    CHECK_THROWS_AS(verification::is_new_file({}, mail), std::logic_error);
+}
+
+TEST_CASE("check: hash_filter takes only this run's files with an expected name of their type",
+          "[checker]")
+{
+    const ExpectedSet expected =
+        set_of({canary_mail(0), canary_file(1, ItemKind::sharepoint, "rp-canary-01.pdf"),
+                random_file(2, ItemKind::onedrive, "\xc3\xa9t\xc3\xa9.pdf")});
+    TargetSnapshot before;
+    before.sharepoint["s-old"] = "\"c:{old},1\"";
+    before.sharepoint["s-moved"] = "\"c:{moved},1\"";
+    const auto file = [](ItemType type, const std::string& id, const std::string& name,
+                         const std::string& ctag) {
+        FoundItem item;
+        item.type = type;
+        item.id = id;
+        item.name = name;
+        item.ctag = ctag;
+        return item;
+    };
+    struct Row {
+        std::string what;
+        FoundItem item;
+        bool hashed;
+    };
+    const std::vector<Row> rows{
+        {"new, expected name", file(ItemType::sharepoint, "s-new", "rp-canary-01.pdf", "\"c:{n},1\""),
+         true},
+        {"new, the name in another case", file(ItemType::sharepoint, "s-new", "RP-CANARY-01.PDF", "x"),
+         true},
+        {"new, beyond ASCII case", file(ItemType::onedrive, "o-new", "\xc3\x89T\xc3\x89.PDF", "x"),
+         true},
+        {"cTag moved", file(ItemType::sharepoint, "s-moved", "rp-canary-01.pdf", "\"c:{moved},2\""),
+         true},
+        {"an earlier run's copy", file(ItemType::sharepoint, "s-old", "rp-canary-01.pdf", "\"c:{old},1\""),
+         false},
+        {"new, a name nobody expects", file(ItemType::sharepoint, "s-x", "leftover.pdf", "x"), false},
+        {"new, the other type's name", file(ItemType::sharepoint, "s-x", "\xc3\xa9t\xc3\xa9.pdf", "x"),
+         false},
+        {"new, the mail's subject", file(ItemType::onedrive, "o-x", "RP-CANARY-0001", "x"), false},
+    };
+    const auto hash = verification::hash_filter(expected, before);
+    for (const Row& row : rows) {
+        CAPTURE(row.what);
+        CHECK(hash(row.item) == row.hashed);
+    }
+    FoundItem unnamed = rows[0].item;
+    unnamed.name.reset();
+    CHECK_FALSE(hash(unnamed));
+    // A mail has no bytes to hash: never one of the files.
+    FoundItem mail = rows[0].item;
+    mail.type = ItemType::mail;
+    CHECK_FALSE(hash(mail));
+}
+
+TEST_CASE("check: hash_filter keeps its own copy of what it was given", "[checker]")
+{
+    std::function<bool(const FoundItem&)> hash;
+    {
+        const ExpectedSet expected = set_of({canary_file(0, ItemKind::sharepoint, "a.pdf")});
+        const TargetSnapshot before;
+        hash = verification::hash_filter(expected, before);
+    }
+    FoundItem item;
+    item.type = ItemType::sharepoint;
+    item.id = "s-1";
+    item.name = "a.pdf";
+    CHECK(hash(item));
 }
 
 TEST_CASE("check: office_hook hashes each docx and xlsx by office-v1 into its type's read, and "

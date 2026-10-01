@@ -253,7 +253,9 @@ std::vector<FoundItem> TargetReader::list_files(const FileTarget& target)
             item.ctag = optional_string(entry, "cTag");
             item.created_at = optional_string(entry, "createdDateTime");
             item.modified_at = optional_string(entry, "lastModifiedDateTime");
-            if (!options_.hash_items) {
+            // Listed only: not hashing, or a file the caller doesn't compare
+            // (W3.2 review: an earlier run's leftover is never downloaded).
+            if (!options_.hash_items || (options_.hash_file && !options_.hash_file(item))) {
                 items.push_back(std::move(item));
                 continue;
             }

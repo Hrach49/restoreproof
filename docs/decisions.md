@@ -7,6 +7,58 @@ Format: date, decision, reason, alternatives rejected.
 
 ---
 
+## 2026-10-01 — W3.2 review: only this run's files are read back, a copy counts once, office-v1 no stricter than the seeder (proposed)
+
+Amends the W3.2 entry below (points 1, 4 and 6). Two reviews of the build (the checker and
+the command; office-v1, the rules and CI) found no false pass on the normal paths and these
+defects, each fixed with a test that failed first:
+
+1. **The after read downloads only this run's files with an expected name**
+   (`TargetReaderOptions::hash_file`, `verification::hash_filter`). Before, it hashed every
+   file in a target, earlier runs' leftovers included, so one leftover that couldn't be read
+   (deleted during the read, a size Graph and SharePoint disagree on, over 64 MiB) made every
+   item of its type `error`, and the leftovers, piling up until W3.4, were downloaded on every
+   run. Other files are listed, not downloaded.
+2. **Times are compared without subtracting them.** `want - got` in nanoseconds overflowed for
+   years far apart (1700 against 2026) and wrapped to a match; now `got` is checked against
+   `want ± 120 s`.
+3. **A failure in the check that isn't Graph's keeps the restore's exit code.** An unexpected
+   exception after the restore (out of memory, a broken expectation) ended as "unexpected
+   failure", exit 1, without the note that the restore ran. Now `check error: unexpected
+   failure`, the note, and the restore's own code, or 4 when that was 0.
+4. **A copy counts for one item only.** Random mails now claim the copies they match, as
+   canaries do, and so do files: two expected items of one subject (or one file name) and one
+   copy give one `match` and one `missing`, never two matches. The sampler already prevents
+   it; `check` is a general function and a Cloud job's sample might not.
+5. **The earlier-copies line is a warning on stderr**, as point 1 said.
+6. **office-v1 is no stricter than `lab/seeder/office.py` where a valid file could fail.**
+   libzip's `ZIP_CHECKCONS` refused a package whose local header disagrees with its directory
+   on a part the rule never reads, and trailing bytes after the end record; Python hashes both,
+   so a restored file Word opens would have been a `sha256` mismatch, a false `fail`. It is
+   dropped (`refuse_doubled` still refuses a name stored twice), and a deflated part declaring
+   more bytes than it holds is accepted as Python accepts it. The entry-count limit is now read
+   from the end record before libzip allocates the directory. The C++-only refusals
+   (methods other than stored and deflate, encryption, a stored part whose sizes differ, the
+   limits, names taken as stored) are written in `lab/README.md`'s office-v1 section: hostile
+   input only, no Office writer produces them.
+7. **Docs** follow: `docs/worker-config.md` (the check's exit-code rows, `graph list`'s Inbox
+   check first, a 403 there now the guard's refusal, exit 4, where it was a permission error,
+   exit 2), `docs/security/graph-permissions.md`, and the Graph fixtures README (seven request
+   lines widened over the 2026-09-28 bodies until re-recorded: an Open item of the W3.2 entry).
+
+**Reason.** Each was a way for the check to report something other than what the restore did:
+an outage of a file nobody asked about, a time a century off, a lost exit code, one copy
+proving two items, a valid document failing. The product's claim is only as good as the
+check's.
+
+**Alternatives rejected.** *Keep `ZIP_CHECKCONS` and document it*: a stricter rule than the
+seeder's turns a writer's harmless quirk into a `fail`. *Refuse two expected items of one
+name in `check`*: a logic error after the restore has run loses the run's result; claiming
+reports the truth (one copy, one item). *Download every file but ignore errors on stale ones*:
+still a download per leftover per run, and an error swallowed is an error hidden.
+
+---
+
 ## 2026-10-01 — W3.2: the checker (proposed; recorded before the build)
 
 Recorded before any of it was built, from W3.1's "Open" items (the W3.1 entry below) and issue
@@ -163,6 +215,9 @@ only zlib, which the build already ships.
 - W3.3: whether `duplicate` fails a run, and how `stale_target` maps (proposed: `error`).
 - W3.4: the Cleaner empties the targets; the before snapshot stays as a second guard.
 - The guide's `rpworker test` exit codes (0/1/3, W3.6) clash with `rp::exit_code`; W3.6 decides.
+- Re-record the Graph target fixtures (`record-graph-fixtures --state empty|one-item|paged`) so
+  their bodies carry the new fields; until then 7 fixtures have widened request lines over
+  2026-09-28 bodies.
 
 ---
 

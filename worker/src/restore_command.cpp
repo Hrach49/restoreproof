@@ -446,8 +446,8 @@ graph::ClientCertificate check_graph_certificate(const Secrets& secrets,
         secrets, wall_now, std::make_shared<spdlog::logger>("rp-restore-certificate"));
 }
 
-// The check's table and its lines (W3.2): one row per expected item, then the
-// counts, then the earlier runs' copies when there were any.
+// The check's table and its line (W3.2): one row per expected item, then the
+// counts.
 std::string format_check(const verification::ExpectedSet& expected,
                          const verification::CheckResult& check)
 {
@@ -483,13 +483,19 @@ std::string format_check(const verification::ExpectedSet& expected,
                         counts[verification::CheckOutcome::mismatch],
                         counts[verification::CheckOutcome::missing],
                         counts[verification::CheckOutcome::error]);
+    return text;
+}
+
+// The one warning line of the earlier runs' copies the check ignored (W3.2
+// point 1), on `err`; nothing when there were none.
+void warn_stale(const verification::CheckResult& check, std::ostream& err)
+{
     if (const std::size_t stale = check.stale_mail + check.stale_sharepoint + check.stale_onedrive;
         stale > 0) {
-        text += std::format("check: {} copies from earlier runs were ignored (mail {}, sharepoint "
-                            "{}, onedrive {})\n",
-                            stale, check.stale_mail, check.stale_sharepoint, check.stale_onedrive);
+        err << std::format("warning: {} copies from earlier runs in the restore targets were "
+                           "ignored (mail {}, sharepoint {}, onedrive {})\n",
+                           stale, check.stale_mail, check.stale_sharepoint, check.stale_onedrive);
     }
-    return text;
 }
 
 // The exit code once the restore was read back (W3.2, until W3.3's table):
@@ -617,18 +623,23 @@ int read_before(graph::GraphClient& client, IHttpClient& download,
     }
 }
 
-// The after read (W3.2): the targets the spec has items for, hashed, each
-// docx and xlsx by office-v1 too. A type whose read fails keeps its error
-// code (verification::read_error_code), and its line goes on `err`;
-// anything that isn't an infrastructure failure is thrown.
+// The after read (W3.2): the targets the spec has items for, each mail body
+// hashed, and each file `hash_file` takes (this run's copies of expected
+// files, verification::hash_filter) downloaded and hashed, a docx or xlsx by
+// office-v1 too; every other file, an earlier run's leftover included, is
+// listed only. A type whose read fails keeps its error code
+// (verification::read_error_code), and its line goes on `err`; anything that
+// isn't an infrastructure failure is thrown.
 void read_after(graph::GraphClient& client, IHttpClient& download,
                 const connector::RestoreTargets& targets, const connector::RestoreSpec& spec,
                 const std::shared_ptr<spdlog::logger>& logger,
                 const std::function<std::chrono::steady_clock::time_point()>& clock,
+                std::function<bool(const graph::FoundItem&)> hash_file,
                 verification::TargetsRead& after, std::ostream& err)
 {
     graph::TargetReaderOptions options;
     options.hash_items = true;
+    options.hash_file = std::move(hash_file);
     options.on_file = verification::office_hook(after);
     options.clock = clock;
     graph::TargetReader reader = target_reader(client, download, targets, logger, options);
@@ -839,11 +850,27 @@ int run_restore(std::span<const std::string_view> args, std::ostream& out, std::
         }
 
         // Read back, hashing, and compare: a read that fails makes its type's
-        // items `error`, never a failed command.
-        verification::TargetsRead after;
-        read_after(graph_client, *download_http, targets, spec, options.logger, now, after, err);
-        const verification::CheckResult check =
-            verification::check(expected, verification::snapshot_of(before), after, now);
+        // items `error`, never a failed command. Anything else that fails
+        // here (no memory, a bug) leaves every item unchecked: the restore's
+        // own exit code, or 4, and the restore's tables already out.
+        std::optional<verification::CheckResult> checked;
+        try {
+            const verification::TargetSnapshot snapshot = verification::snapshot_of(before);
+            verification::TargetsRead after;
+            read_after(graph_client, *download_http, targets, spec, options.logger, now,
+                       verification::hash_filter(expected, snapshot), after, err);
+            checked = verification::check(expected, snapshot, after, now);
+        } catch (...) {
+            // Its message, if it has one, may not be safe to show.
+            err << "check error: unexpected failure\n"
+                   "restore error: the restore had started: items may be in the restore targets "
+                   "(run "
+                << run_id << ")\n";
+            const int code = restore_exit_code(result, err);
+            return code == exit_code::ok ? exit_code::service : code;
+        }
+        const verification::CheckResult& check = *checked;
+        warn_stale(check, err);
         try {
             out << format_check(expected, check);
             flush_or_throw(out);

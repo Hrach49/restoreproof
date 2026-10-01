@@ -44,6 +44,7 @@
 #include <iterator>
 #include <map>
 #include <memory>
+#include <new>
 #include <optional>
 #include <ostream>
 #include <regex>
@@ -528,6 +529,9 @@ struct TargetsLab {
 
     rp::HttpResponse bytes(const rp::HttpRequest& request)
     {
+        if (download_throw) {
+            download_throw();
+        }
         const std::string id = request.url.substr(request.url.find("&rp-item=") + 9);
         const auto it = files.find(id);
         if (it == files.end()) {
@@ -541,6 +545,9 @@ struct TargetsLab {
     // The spec the restore was given, and the random mails' candidates.
     std::function<std::optional<connector::RestoreSpec>()> spec;
     std::function<connector::CandidatePool()> pool;
+    // Called first on each download: a test throws from it what no Graph
+    // failure is (std::bad_alloc, a logic error).
+    std::function<void()> download_throw;
     // A listing's answer in place of the page, when it returns one.
     std::function<std::optional<rp::HttpResponse>(connector::ItemKind, bool after)> fail;
     // What each target holds before the restore, and what the restore adds
@@ -2168,14 +2175,84 @@ TEST_CASE("restore: copies earlier runs left are ignored and counted; a file onl
     const Run run = lab.run({"--run-id", kRunId, "--mail", "1", "--sp", "1", "--od", "0"});
 
     CHECK(run.exit_code == rp::exit_code::service);
-    CHECK(run.err == "check: 1 item(s) couldn't be checked\n");
+    // One warning line, on stderr (docs/decisions.md 2026-10-01, W3.2 point 1).
+    CHECK(run.err == "warning: 2 copies from earlier runs in the restore targets were ignored "
+                     "(mail 1, sharepoint 1, onedrive 0)\n"
+                     "check: 1 item(s) couldn't be checked\n");
     CHECK_THAT(run.out,
                ContainsSubstring(
                    "  mail        canary  RP-CANARY-0001    match    -             -    123000\n"
                    "  sharepoint  canary  rp-canary-01.pdf  error    stale_target  -    -\n"));
-    CHECK(run.out.ends_with("check: 1 match, 0 mismatch, 0 missing, 1 error\n"
-                            "check: 2 copies from earlier runs were ignored (mail 1, sharepoint 1, "
-                            "onedrive 0)\n"));
+    CHECK(run.out.ends_with("check: 1 match, 0 mismatch, 0 missing, 1 error\n"));
+    // The earlier run's file was never downloaded.
+    for (const rp::HttpRequest& request : lab.targets.graph.requests()) {
+        CHECK(request.url.find("earlier-file") == std::string::npos);
+    }
+    CHECK(lab.targets.download.requests().empty());
+}
+
+TEST_CASE("restore: an earlier run's file that couldn't be downloaded doesn't touch the check; "
+          "only this run's expected files are read",
+          "[restore_command][checker]")
+{
+    Harness lab;
+    // Two leftovers whose downloads would fail the SharePoint read: one of
+    // the canary's name (its bytes no longer the size listed), one of another
+    // name, larger than the download limit.
+    lab.targets.before[kind_slot(connector::ItemKind::sharepoint)] =
+        json::array({graph_file("earlier-file", "RP-CANARY-01.PDF", 925, "\"c:{earlier},1\""),
+                     graph_file("earlier-other", "minutes.pdf", 70000000, "\"c:{other},4\"")});
+    lab.targets.files["earlier-file"] = "short";
+    lab.targets.files["earlier-other"] = "";
+
+    const Run run = lab.run({"--run-id", kRunId, "--mail", "0", "--sp", "1", "--od", "0"});
+
+    INFO(run.err);
+    CHECK(run.exit_code == rp::exit_code::ok);
+    CHECK(run.err == "warning: 2 copies from earlier runs in the restore targets were ignored "
+                     "(mail 0, sharepoint 2, onedrive 0)\n");
+    CHECK_THAT(run.out, ContainsSubstring(
+                            "  sharepoint  canary  rp-canary-01.pdf  match    -       -    246000\n"));
+    for (const rp::HttpRequest& request : lab.targets.graph.requests()) {
+        CHECK(request.url.find("earlier-") == std::string::npos);
+    }
+    REQUIRE(lab.targets.download.requests().size() == 1);
+    CHECK(lab.targets.download.requests()[0].url.ends_with("&rp-item=restored-sharepoint-0"));
+}
+
+TEST_CASE("restore: a failure in the check that isn't Graph's keeps the restore's tables and "
+          "exit code, and says the restore ran",
+          "[restore_command][checker]")
+{
+    using Raise = std::function<void()>;
+    const auto [what, raise] = GENERATE(table<std::string, Raise>({
+        {"bad_alloc", [] { throw std::bad_alloc(); }},
+        {"logic_error", [] { throw std::logic_error("SENTINEL-LOGIC"); }},
+        {"invalid_argument", [] { throw std::invalid_argument("SENTINEL-ARGUMENT"); }},
+    }));
+    const auto [status, code] = GENERATE(table<connector::RestoreStatus, int>({
+        {connector::RestoreStatus::succeeded, rp::exit_code::service},
+        {connector::RestoreStatus::partial, rp::exit_code::restore},
+    }));
+    CAPTURE(what, connector::to_string(status));
+    Harness lab;
+    lab.targets.download_throw = raise;
+    lab.fake.answer = [status = status](const connector::RestoreSpec& spec) {
+        connector::RestoreResult result = restored(spec);
+        result.status = status;
+        return result;
+    };
+
+    const Run run = lab.run({"--run-id", kRunId, "--mail", "1", "--sp", "1", "--od", "0"});
+
+    CHECK(run.exit_code == code);
+    CHECK(run.err == "check error: unexpected failure\n"
+                     "restore error: the restore had started: items may be in the restore "
+                     "targets (run run-0001)\n");
+    CHECK_THAT(run.out, ContainsSubstring("\nstatus " + std::string{connector::to_string(status)} +
+                                          ": 2 of 2 item(s) restored in 0:02:03\n"));
+    CHECK(run.out.find("check:") == std::string::npos);
+    CHECK(run.err.find("SENTINEL") == std::string::npos);
 }
 
 TEST_CASE("restore: two copies of one item: the newest is checked, and DUP says how many",

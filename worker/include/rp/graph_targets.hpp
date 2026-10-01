@@ -101,6 +101,13 @@ struct TargetReaderOptions {
     // computes office-v1 here. What it throws is thrown as it is. Never called
     // without hash_items.
     std::function<void(const FoundItem&, std::string_view bytes)> on_file;
+    // Asked of each file once it is listed, before anything is downloaded:
+    // whether to download and hash it (W3.2 review: the after read reads only
+    // this run's copies of expected files). A file it rejects is listed as
+    // without hash_items: Graph's size in size_bytes, no sha256, read_ms 0,
+    // on_file not called, nothing downloaded. Null: every file is hashed. Never
+    // asked without hash_items, nor for a mail. What it throws is thrown as it is.
+    std::function<bool(const FoundItem&)> hash_file;
     // What FoundItem::read_ms is measured by; null: std::chrono::steady_clock::now.
     std::function<std::chrono::steady_clock::time_point()> clock;
 };

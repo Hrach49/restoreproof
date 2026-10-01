@@ -34,9 +34,12 @@ namespace rp::verification {
 //  - match: a copy of this run's was found and every field the expectation
 //    carries agrees;
 //  - mismatch: a copy was found and at least one field doesn't agree;
-//  - missing: no copy of this run's, and none from an earlier run either;
-//  - error: the item couldn't be checked: its target couldn't be read, or
-//    only an earlier run's copy is there (stale_target). Never a mismatch.
+//  - missing: no copy of this run's that another item hadn't claimed; for a
+//    file, no earlier run's copy of its name either. A mail whose only copies
+//    are earlier runs' is missing: an earlier mail can't be told from none;
+//  - error: the item couldn't be checked: its target couldn't be read, or,
+//    for a file, only an earlier run's copy of its name is there
+//    (stale_target). Never a mismatch.
 enum class CheckOutcome { match, mismatch, missing, error };
 
 // "match", "mismatch", "missing" or "error"; "unknown" for a value outside the enum.
@@ -75,6 +78,20 @@ struct TargetSnapshot {
 
 // The before snapshot of a read.
 TargetSnapshot snapshot_of(const TargetsRead& before);
+
+// Whether a file of the after read is this run's copy: its ID wasn't in
+// `before`'s snapshot of its type (FoundItem::type), or its cTag moved (a
+// restore merged a new version into a same-named file). A cTag unknown on
+// either side can't show a move: an earlier run's copy. Throws
+// std::logic_error for a mail.
+bool is_new_file(const TargetSnapshot& before, const graph::FoundItem& file);
+
+// TargetReaderOptions::hash_file for the after read: true for a file that is
+// this run's copy (is_new_file) and whose name has the name_key of an expected
+// file of its type, so an earlier run's leftover, or a file nobody expects, is
+// never downloaded. Keeps its own copy of what it needs; false for a mail.
+std::function<bool(const graph::FoundItem&)> hash_filter(const ExpectedSet& expected,
+                                                         const TargetSnapshot& before);
 
 // The error_code of an exception thrown while reading a target:
 // graph::WrongTargetError "target_guard" (before GraphError: it is one),
@@ -127,11 +144,14 @@ struct CheckResult {
 //    (<code>)"; the other types are still checked;
 //  - a canary mail: this run's mails with its internet_message_id, byte-equal,
 //    or else those with its subject (internet_message_id then a mismatch);
-//    canaries go first, in index order, and claim every copy they matched;
-//  - a random mail: this run's mails no canary claimed, with its subject;
+//    canaries go first, in index order;
+//  - a random mail: this run's mails with its subject;
 //  - a file: this run's files of its own target whose name is the same
 //    (rp::same_name); none, but an earlier run's copy of that name: `error`
 //    stale_target; none at all: `missing`;
+//  - after the canary mails, every other item in index order; each item
+//    claims the copies it matched, so a copy counts for one item only, and an
+//    item that finds only claimed copies looks as if it found none;
 //  - several copies: the newest (a mail's created_at, a file's modified_at;
 //    one that doesn't read is oldest; a tie goes to the greater ID) is
 //    compared, duplicate set.

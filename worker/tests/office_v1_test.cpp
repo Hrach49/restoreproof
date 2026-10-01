@@ -194,9 +194,9 @@ TEST_CASE("bytes that are no ZIP package are refused as no valid file of their t
         {"bytes", std::string("\x00\x01\x02\x03\xff\xfe\xfd PK\x03\x04", 12)},
         {"the first half of a real package", local.substr(0, local.size() / 2)},
         {"a real package without its last byte", local.substr(0, local.size() - 1)},
-        {"a central directory entry that disagrees with its local header", [] {
+        {"an end record whose directory isn't there", [] {
              std::string zip = build_zip(stored(kDocx));
-             zip[4 + 4] = 0x08;  // the first local header's method: deflate, not stored
+             zip[zip.size() - 3] = 0x7F;  // the directory's offset: far past the end
              return zip;
          }()},
     }));
@@ -346,21 +346,106 @@ TEST_CASE("all parts together past the total limit are refused while they are re
                Equals("the content parts are larger than office-v1 reads (6000 bytes)"));
 }
 
-TEST_CASE("a part whose declared size lies is refused, the limits aside", "[office-v1]")
+TEST_CASE("a part that holds more than it declares is refused, the limits aside", "[office-v1]")
 {
-    // libzip checks a deflated part's CRC but not its size; office-v1 checks
-    // it, as Python's zipfile does by reading exactly the declared bytes. A
-    // stored part's sizes must agree as the package opens.
+    // libzip checks the CRC over what it read but not a deflated part's
+    // declared size; Python's zipfile reads at most the declared size, so its
+    // CRC fails on such a part (verified on these bytes with
+    // lab/seeder/office.py: "Bad CRC-32 for file 'word/document.xml'").
     const std::string actual = std::to_string(kDocx.at("word/document.xml").size());
-    const auto [deflate, declared, message] = GENERATE_COPY(table<bool, std::uint32_t, std::string>({
-        {true, 10, "part word/document.xml holds " + actual + " bytes, not the 10 its entry declares"},
-        {true, 100000, "part word/document.xml holds " + actual + " bytes, not the 100000 its entry declares"},
-        {false, 10, "not a ZIP package, so not a valid .docx file"},
-    }));
-    CAPTURE(deflate, declared);
-    std::vector<Entry> entries = stored(kDocx, deflate);
+    std::vector<Entry> entries = stored(kDocx, true);
+    entries[0].size = 10;
+    CHECK_THAT(error_of(build_zip(entries), "docx"),
+               Equals("part word/document.xml holds " + actual + " bytes, more than the 10 its entry declares"));
+}
+
+TEST_CASE("a deflated part that holds less than it declares is read whole, as in Python", "[office-v1]")
+{
+    // Python's zipfile stops at the end of the deflate stream and checks the
+    // CRC over what it read, which matches: lab/seeder/office.py hashed these
+    // bytes (Python 3.12.9) to the hash below.
+    std::vector<Entry> entries = stored(kDocx, true);
+    entries[0].size = 100000;
+    const std::string zip = build_zip(entries);
+    CHECK(rp::office_v1_sha256(zip, "docx") == hand_hash(kDocx));
+    CHECK(rp::office_v1_sha256(zip, "docx") == "95c1729b936aa1bd114751e7c71fedab8aff419fe1611d9794e176405fccf800");
+}
+
+TEST_CASE("a stored part whose sizes differ is refused as it is read", "[office-v1]")
+{
+    // libzip refuses it on reading. Python refuses one declaring less (bad
+    // CRC) but reads one declaring more; no Office writer makes either
+    // (lab/README.md, "The C++ checker also refuses").
+    const std::uint32_t declared = GENERATE(10u, 100000u);
+    CAPTURE(declared);
+    std::vector<Entry> entries = stored(kDocx);
     entries[0].size = declared;
-    CHECK_THAT(error_of(build_zip(entries), "docx"), Equals(message));
+    CHECK_THAT(error_of(build_zip(entries), "docx"), StartsWith("cannot read part word/document.xml: "));
+}
+
+TEST_CASE("a local header that disagrees with its directory entry, or bytes after the end record, "
+          "hash as in Python",
+          "[office-v1]")
+{
+    // Python's zipfile reads the central directory, compares a local header
+    // only with a part it reads (and only its name), and takes bytes after the
+    // end record. Each package below was hashed by lab/seeder/office.py
+    // (Python 3.12.9) to the hash at the end.
+    std::vector<Entry> with_props = stored(kDocx);
+    with_props.insert(with_props.begin(), Entry{.name = "docProps/core.xml", .data = "props"});
+    const auto [what, zip] = GENERATE_COPY(table<std::string, std::string>({
+        {"a metadata part's local method", [&] {
+             std::string zip = build_zip(with_props);
+             zip[8] = 0x08;  // docProps/core.xml's local header: deflate, not stored
+             return zip;
+         }()},
+        {"a metadata part's local name", [&] {
+             std::string zip = build_zip(with_props);
+             zip[30] = 'D';  // docProps/core.xml's local header: DocProps/core.xml
+             return zip;
+         }()},
+        {"a content part's local method", [] {
+             std::string zip = build_zip(stored(kDocx));
+             zip[8] = 0x08;  // word/document.xml's local header: deflate; its entry says stored
+             return zip;
+         }()},
+        {"bytes after the end record", build_zip(stored(kDocx)) + "trailing bytes after the end record"},
+    }));
+    CAPTURE(what);
+    CHECK(rp::office_v1_sha256(zip, "docx") == hand_hash(kDocx));
+    CHECK(rp::office_v1_sha256(zip, "docx") == "95c1729b936aa1bd114751e7c71fedab8aff419fe1611d9794e176405fccf800");
+}
+
+TEST_CASE("a content part's local header naming it otherwise is read by its directory name", "[office-v1]")
+{
+    // Less strict than Python, which refuses it ("File name in directory
+    // 'word/document.xml' and header b'Word/document.xml' differ"): libzip
+    // reads a local header's lengths only. The bytes hashed are the part's
+    // own, so it can't pass a changed part.
+    std::string zip = build_zip(stored(kDocx));
+    zip[30] = 'W';
+    CHECK(rp::office_v1_sha256(zip, "docx") == hand_hash(kDocx));
+}
+
+TEST_CASE("a package whose end record declares more entries than the limit is refused before "
+          "libzip reads its directory",
+          "[office-v1]")
+{
+    // The directory holds 2 entries: libzip would refuse the package as no ZIP;
+    // the refusal names the count, so the end record was read first.
+    const auto [what, declared, trailing] = GENERATE(table<std::string, std::uint32_t, std::string>({
+        {"10,001", 10001, ""},
+        {"60,000", 60000, ""},
+        {"ZIP64's marker", 0xFFFF, ""},
+        {"60,000, bytes after the end record", 60000, std::string(100, '\0') + "PK\x05"},
+    }));
+    CAPTURE(what);
+    std::string zip = build_zip(stored(kDocx));
+    const std::size_t end = zip.size() - 22;
+    zip[end + 8] = zip[end + 10] = static_cast<char>(declared & 0xFF);
+    zip[end + 9] = zip[end + 11] = static_cast<char>(declared >> 8);
+    CHECK_THAT(error_of(zip + trailing, "docx"),
+               Equals("the package has " + std::to_string(declared) + " entries, more than office-v1 reads (10000)"));
 }
 
 TEST_CASE("a package with more entries than the limit is refused", "[office-v1]")
@@ -515,3 +600,4 @@ TEST_CASE("names sort by their UTF-8 bytes, and a name without the UTF-8 flag is
     // `uv run python -c "from seeder.office import office_content_sha256; ..."`).
     CHECK(rp::office_v1_sha256(zip, "docx") == "22bd42bdd340c8f417d357594a95424744130f1f1148c9b8f281d5ec333c0392");
 }
+

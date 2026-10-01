@@ -1,0 +1,7 @@
+{
+  "source": "rpworker 0.0.0 restore --record",
+  "request": "POST /v8/RestoreSessions/cd7f33c8-78a0-4379-8d77-748ed3ee1978/Stop",
+  "status": 204,
+  "headers": {},
+  "body": null
+}

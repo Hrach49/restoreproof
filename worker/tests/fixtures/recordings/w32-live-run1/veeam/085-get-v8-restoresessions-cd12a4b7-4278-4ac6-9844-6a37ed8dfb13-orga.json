@@ -1,0 +1,36 @@
+{
+  "source": "rpworker 0.0.0 restore --record",
+  "request": "GET /v8/RestoreSessions/cd12a4b7-4278-4ac6-9844-6a37ed8dfb13/Organization/OneDrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/Documents/1726fbfd-3644-466a-b132-07aeb6f2a8b6",
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8"
+  },
+  "body": {
+    "oneDriveId": "6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325",
+    "sizeBytes": 5859,
+    "inheritedPermissions": true,
+    "version": "1.0",
+    "id": "1726fbfd-3644-466a-b132-07aeb6f2a8b6",
+    "versionId": 1,
+    "name": "rp-canary-13.xlsx",
+    "createdBy": "Alice Test",
+    "creationTime": "2026-09-24T22:11:26Z",
+    "modifiedBy": "Alice Test",
+    "modificationTime": "2026-09-24T22:11:26Z",
+    "isFolder": false,
+    "_links": {
+      "self": {
+        "href": "/v8/restoresessions/cd12a4b7-4278-4ac6-9844-6a37ed8dfb13/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/documents/1726fbfd-3644-466a-b132-07aeb6f2a8b6"
+      },
+      "onedrive": {
+        "href": "/v8/restoresessions/cd12a4b7-4278-4ac6-9844-6a37ed8dfb13/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325"
+      },
+      "parent": {
+        "href": "/v8/restoresessions/cd12a4b7-4278-4ac6-9844-6a37ed8dfb13/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/folders/8bc02bbf-9d4e-4c61-865f-d8a1495fe45c"
+      },
+      "versions": {
+        "href": "/v8/restoresessions/cd12a4b7-4278-4ac6-9844-6a37ed8dfb13/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/documents/1726fbfd-3644-466a-b132-07aeb6f2a8b6/versions"
+      }
+    }
+  }
+}

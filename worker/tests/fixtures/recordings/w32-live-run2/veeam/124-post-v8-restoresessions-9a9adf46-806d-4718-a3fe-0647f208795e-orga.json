@@ -1,0 +1,72 @@
+{
+  "source": "rpworker 0.0.0 restore --record",
+  "request": "POST /v8/RestoreSessions/9a9adf46-806d-4718-a3fe-0647f208795e/Organization/OneDrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/Documents/copyTo",
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8"
+  },
+  "body": {
+    "sessionId": "f0525c96-4934-452a-9417-aae689d10929"
+  },
+  "request_body": {
+    "documents": [
+      {
+        "oneDriveId": "6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325",
+        "sizeBytes": 925,
+        "inheritedPermissions": true,
+        "version": "1.0",
+        "id": "bab96008-6315-4110-89bc-75f4f3d587a4",
+        "versionId": 1,
+        "name": "rp-canary-11.pdf",
+        "createdBy": "Alice Test",
+        "creationTime": "2026-09-24T22:11:23Z",
+        "modifiedBy": "Alice Test",
+        "modificationTime": "2026-09-24T22:11:23Z",
+        "isFolder": false
+      },
+      {
+        "oneDriveId": "6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325",
+        "sizeBytes": 3263,
+        "inheritedPermissions": true,
+        "version": "1.0",
+        "id": "54c2c5db-082d-4877-a936-a83253b9a20a",
+        "versionId": 1,
+        "name": "rp-canary-12.docx",
+        "createdBy": "Alice Test",
+        "creationTime": "2026-09-24T22:11:25Z",
+        "modifiedBy": "Alice Test",
+        "modificationTime": "2026-09-24T22:11:25Z",
+        "isFolder": false
+      },
+      {
+        "oneDriveId": "6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325",
+        "sizeBytes": 5859,
+        "inheritedPermissions": true,
+        "version": "1.0",
+        "id": "1726fbfd-3644-466a-b132-07aeb6f2a8b6",
+        "versionId": 1,
+        "name": "rp-canary-13.xlsx",
+        "createdBy": "Alice Test",
+        "creationTime": "2026-09-24T22:11:26Z",
+        "modifiedBy": "Alice Test",
+        "modificationTime": "2026-09-24T22:11:26Z",
+        "isFolder": false
+      }
+    ],
+    "onedrive": {
+      "id": "6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325",
+      "name": "Alice Test",
+      "url": "https://restoreprooflab-my.sharepoint.com/personal/alice_restoreprooflab_onmicrosoft_com"
+    },
+    "folder": "RestoreTarget",
+    "changedItems": true,
+    "deletedItems": true,
+    "documentVersion": "Last",
+    "documentLastVersionAction": "Merge",
+    "officeRegion": "Worldwide",
+    "organizationName": "RestoreProofLab.onmicrosoft.com",
+    "applicationId": "1fd2609d-1242-43fe-94b5-d58688a90bd6",
+    "applicationCertificate": "[REDACTED]",
+    "applicationCertificatePassword": "[REDACTED]"
+  }
+}

@@ -1,0 +1,70 @@
+{
+  "source": "rpworker 0.0.0 restore --record",
+  "request": "GET /v8/RestoreSessions?startTimeFrom=2026-10-01T17:29:25Z&orderBy=CreationTime&orderAsc=false&limit=50",
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8"
+  },
+  "body": {
+    "offset": 0,
+    "limit": 50,
+    "_links": {
+      "self": {
+        "href": "/v8/RestoreSessions?starttimefrom=2026-10-01T17%3A29%3A25Z&orderby=CreationTime&orderasc=false&offset=0&limit=50"
+      }
+    },
+    "results": [
+      {
+        "id": "f0525c96-4934-452a-9417-aae689d10929",
+        "name": "OneDrive restore (Entire organization - 9/30/2026 10:00:43 PM)",
+        "organization": "RestoreProofLab.onmicrosoft.com",
+        "type": "Veod",
+        "creationTime": "2026-10-01T17:30:25.6534539Z",
+        "endTime": "9999-12-31T23:59:59.9999999",
+        "state": "Working",
+        "result": "Success",
+        "initiatedBy": "rp-veeam",
+        "scopeName": "",
+        "clientHost": "[::ffff:127.0.0.1]",
+        "eTag": 1,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/f0525c96-4934-452a-9417-aae689d10929"
+          },
+          "organization": {
+            "href": "/v8/restoresessions/f0525c96-4934-452a-9417-aae689d10929/organization"
+          },
+          "restoreSessionEvents": {
+            "href": "/v8/restoresessions/f0525c96-4934-452a-9417-aae689d10929/events"
+          }
+        }
+      },
+      {
+        "id": "8d902916-7d9e-404c-ac0a-99d696e20b7f",
+        "name": "SharePoint restore (Entire organization - 9/30/2026 10:00:43 PM)",
+        "organization": "RestoreProofLab.onmicrosoft.com",
+        "type": "Vesp",
+        "creationTime": "2026-10-01T17:29:34.741611Z",
+        "endTime": "2026-10-01T17:30:22.3608568Z",
+        "state": "Stopped",
+        "result": "Success",
+        "initiatedBy": "rp-veeam",
+        "details": "3 items processed (3 successes)",
+        "scopeName": "",
+        "clientHost": "[::ffff:127.0.0.1]",
+        "eTag": 2,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/8d902916-7d9e-404c-ac0a-99d696e20b7f"
+          },
+          "organization": {
+            "href": "/v8/restoresessions/8d902916-7d9e-404c-ac0a-99d696e20b7f/organization"
+          },
+          "restoreSessionEvents": {
+            "href": "/v8/restoresessions/8d902916-7d9e-404c-ac0a-99d696e20b7f/events"
+          }
+        }
+      }
+    ]
+  }
+}

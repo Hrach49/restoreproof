@@ -74,6 +74,73 @@ bool is_check_code(std::string_view code) noexcept
     return std::ranges::find(kCheckCodes, code) != kCheckCodes.end();
 }
 
+// Whether a value is one of its enum's: a value cast from outside it can't
+// be decided on (row 1). No default, so a new enumerator must be added here.
+bool known(RunPhase phase) noexcept
+{
+    switch (phase) {
+    case RunPhase::before_restore:
+    case RunPhase::restore:
+    case RunPhase::check:
+        return true;
+    }
+    return false;
+}
+
+bool known(CheckOutcome outcome) noexcept
+{
+    switch (outcome) {
+    case CheckOutcome::match:
+    case CheckOutcome::mismatch:
+    case CheckOutcome::missing:
+    case CheckOutcome::error:
+        return true;
+    }
+    return false;
+}
+
+bool known(ExpectedKind kind) noexcept
+{
+    switch (kind) {
+    case ExpectedKind::manifest:
+    case ExpectedKind::fields:
+    case ExpectedKind::metadata:
+        return true;
+    }
+    return false;
+}
+
+bool known(RestoreStatus status) noexcept
+{
+    switch (status) {
+    case RestoreStatus::not_run:
+    case RestoreStatus::succeeded:
+    case RestoreStatus::partial:
+    case RestoreStatus::failed:
+        return true;
+    }
+    return false;
+}
+
+bool known(ItemOutcome outcome) noexcept
+{
+    switch (outcome) {
+    case ItemOutcome::unknown:
+    case ItemOutcome::restored:
+    case ItemOutcome::failed:
+        return true;
+    }
+    return false;
+}
+
+// Whether a check item's `found` is what its outcome says: a match or a
+// mismatch compared a copy, missing and error didn't.
+bool found_fits(const ItemCheck& item) noexcept
+{
+    return item.found ==
+           (item.outcome == CheckOutcome::match || item.outcome == CheckOutcome::mismatch);
+}
+
 std::string kind_name(ItemKind kind)
 {
     return std::string{connector::to_string(kind)};
@@ -89,6 +156,9 @@ std::optional<std::string> inconsistency(const RunFacts& facts)
     if (facts.stop) {
         if (!stop_code(facts.stop->error_code)) {
             return "the stop's code isn't one the status knows";
+        }
+        if (!known(facts.stop->phase)) {
+            return "the stop's phase isn't one the status knows";
         }
         switch (facts.stop->phase) {
         case RunPhase::before_restore:
@@ -109,8 +179,6 @@ std::optional<std::string> inconsistency(const RunFacts& facts)
                 return "a stop in the check without a restore result or beside a check";
             }
             break;
-        default:
-            return "the stop's phase isn't one the status knows";
         }
     } else if (!expected) {
         return "no expected set and no stop";
@@ -121,6 +189,16 @@ std::optional<std::string> inconsistency(const RunFacts& facts)
     if (check && !restore) {
         return "a check without a restore result";
     }
+    if (restore) {
+        if (!known(restore->status)) {
+            return "the restore's status isn't one the status knows";
+        }
+        for (std::size_t i = 0; i < restore->items.size(); ++i) {
+            if (!known(restore->items[i].outcome)) {
+                return std::format("restore item {}'s outcome isn't one the status knows", i);
+            }
+        }
+    }
     if (!expected) {
         return std::nullopt; // a stop before the sample: nothing else to line up
     }
@@ -128,6 +206,9 @@ std::optional<std::string> inconsistency(const RunFacts& facts)
     for (std::size_t i = 0; i < items.size(); ++i) {
         if (items[i].index != i) {
             return std::format("expected item {} isn't at its index", i);
+        }
+        if (!known(items[i].expected_kind)) {
+            return std::format("expected item {}'s expected kind isn't one the status knows", i);
         }
     }
     if (restore && items.empty()) {
@@ -156,6 +237,13 @@ std::optional<std::string> inconsistency(const RunFacts& facts)
             const ItemCheck& item = check->items[i];
             if (item.index != i || item.kind != items[i].kind) {
                 return std::format("check item {} isn't its expected item", i);
+            }
+            if (!known(item.outcome)) {
+                return std::format("check item {}'s outcome isn't one the status knows", i);
+            }
+            if (!found_fits(item)) {
+                return std::format("check item {}'s outcome contradicts whether a copy was found",
+                                   i);
             }
             if (item.outcome == CheckOutcome::error && !is_check_code(item.error_code)) {
                 return std::format("check item {} is an error without a code the checker gives",

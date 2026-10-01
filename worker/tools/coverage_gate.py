@@ -11,9 +11,11 @@ Rules (CLAUDE.md, "Coverage floors"):
     rpworker.exe. An untested file would otherwise just be missing. Headers may
     be absent: a header of declarations has no executable lines;
   * total line coverage over the reported sources >= --min-line (80%);
-  * vault, signer and target_guard need 100% *branch* coverage. OpenCppCoverage
-    only measures lines (its Cobertura branch-rate is always 0), so this gate
-    enforces 100% *line* coverage on those files as the closest proxy.
+  * vault, signer, target_guard and run_status (the status decision table,
+    W3.3: the Worker's counterpart of the Cloud's app/results.py) need 100%
+    *branch* coverage. OpenCppCoverage only measures lines (its Cobertura
+    branch-rate is always 0), so this gate enforces 100% *line* coverage on
+    those files as the closest proxy.
     TODO: real branch coverage needs a different tool, e.g. clang-cl with
     -fprofile-instr-generate -fcoverage-mapping + llvm-cov, or MSVC
     Microsoft.CodeCoverage (Enterprise). A file is strict when any part of its
@@ -32,14 +34,14 @@ import xml.etree.ElementTree as ET
 from pathlib import Path, PurePosixPath
 from typing import Iterable, TextIO
 
-STRICT_NAMES = ("vault", "signer", "target_guard")
+STRICT_NAMES = ("vault", "signer", "target_guard", "run_status")
 SOURCE_DIRS = ("src", "include", "app")
 SOURCE_EXTS = (".cpp", ".cc", ".cxx", ".c")
 HEADER_EXTS = (".h", ".hpp", ".hh", ".hxx", ".ipp", ".inl")
 BRANCH_NOTE = (
     "Branch coverage is not measured: OpenCppCoverage reports line coverage only. "
-    "`vault`, `signer` and `target_guard` are held to 100% **line** coverage as a proxy "
-    "for the required 100% branch coverage."
+    "`vault`, `signer`, `target_guard` and `run_status` are held to 100% **line** coverage "
+    "as a proxy for the required 100% branch coverage."
 )
 
 

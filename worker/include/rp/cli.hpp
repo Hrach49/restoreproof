@@ -18,30 +18,35 @@ inline constexpr int ok = 0;
 // a command that ran but whose --record recording isn't complete (an exchange
 // refused or not written; a command that failed keeps its own code), or any
 // unexpected failure (whose message is never shown), an exception no command
-// handled included.
+// handled included. For `rpworker restore` also a run whose status is error
+// config or internal, and a pass whose output was lost.
 inline constexpr int config = 1;
 // The service refused the credentials, the account's role, the token or a
 // permission: Veeam's AuthError, Graph's AuthError and PermissionError (whose
-// message names the grant the call relies on).
+// message names the grant the call relies on). For `rpworker restore`: status
+// error backup_auth, graph_auth or graph_permission.
 inline constexpr int auth = 2;
 // The service couldn't be reached or asked to try later: no connection, a
 // timeout, a TLS handshake failure, 502/503/504 (and Graph's 429 and other
-// 5xx) after the retries (Veeam's and Graph's TransientError).
+// 5xx) after the retries (Veeam's and Graph's TransientError). For `rpworker
+// restore`: status error backup_transient or graph_transient.
 inline constexpr int transient = 3;
 // Any other error from the service (Veeam's or Graph's NotFoundError
 // included, a certificate that fails verification: TLS failures that aren't a
 // broken-off handshake, a failed download, and a restore target the guard
 // refuses: Graph's WrongTargetError, and the restore-target guard's
 // connector::SafetyViolation, rp/target_guard.hpp), or veeam_org_name not
-// among Veeam's organisations. For `rpworker restore` also: the guard
-// refusing, no restore points, a --point ID not found, an empty sample, and a
-// restore in which an item failed for an infrastructure reason (never 5).
+// among Veeam's organisations. For `rpworker restore` also: no restore
+// points, a --point ID not found, and a run whose status is error with any
+// code not named under 1, 2 or 3 (rp/run_status.hpp: target_guard,
+// not_in_backup, backup, backup_infrastructure, graph, stale_target,
+// empty_sample, not_run, restore_contradiction).
 inline constexpr int service = 4;
-// `rpworker restore` only: the restore ran and its status is partial or
-// failed (the status line says which), no item for an infrastructure reason.
-// A result, not an error: a restore that couldn't run at all, returned
-// not_run, or lost an item for an infrastructure reason ends as 1 to 4
-// (docs/decisions.md 2026-09-30, W2.8).
+// `rpworker restore` only: the run's status is `fail` (W3.3, rp/run_status.hpp):
+// an item is missing or a mismatch, its target read fine and the backup didn't
+// blame infrastructure for it. A result about the backup, not an error: a run
+// whose status is error ends as 1 to 4, whatever the restore itself reported
+// (docs/decisions.md 2026-10-01, W3.3).
 inline constexpr int restore = 5;
 // A command line rpworker doesn't understand; for `rpworker restore` also,
 // once the config or the manifest is read, every sample size 0 or a

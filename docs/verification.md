@@ -44,13 +44,20 @@ There are three kinds, one per item, never mixed, and no "unknown" kind:
   the n-th expected item lines up with the n-th `RestoreResult::items` entry. A canary is named
   by its manifest `id`, a random item by the sampler's key (`record.<kind>.random_keys`).
 
-### The Office package rule
+### The rule for the Office files SharePoint rewrites
 
-One rule, `rp::is_office_package(name)` (`worker/src/office_files.hpp`): the name ends, ASCII
-case-insensitive, in `.docx`, `.docm`, `.dotx`, `.dotm`, `.xlsx`, `.xlsm`, `.xltx`, `.xltm`,
-`.pptx`, `.pptm`, `.potx`, `.potm`, `.ppsx` or `.ppsm`, with something before the dot (`.docx`
-alone is not a package's name). SharePoint may rewrite these files, so their stored size is no
-expectation: a random Office file is `metadata` by name only. The Graph reader uses the same rule
+One rule, `rp::is_rewritten_office_file(name)` (`worker/src/office_files.hpp`): the name ends,
+ASCII case-insensitive, in `.docx`, `.docm`, `.dotx`, `.dotm`, `.xlsx`, `.xlsm`, `.xltx`,
+`.xltm`, `.xlsb`, `.pptx`, `.pptm`, `.potx`, `.potm`, `.ppsx`, `.ppsm`, `.doc`, `.xls` or
+`.ppt`, with something before the dot (`.docx` alone is not one). SharePoint rewrites these
+files, so their stored size is no expectation: such a random file is `metadata` by name only.
+The list is what the W3.1 review's live check saw (`docs/decisions.md` 2026-10-01, "W3.1 code
+review"; evidence `docs/api/veeam-lab/w3.1-rewrite-check/`): SharePoint's RestoreTarget
+library rewrote docx, docm, xlsx, xlsm, pptx, pptm, xlsb, doc, xls and ppt on upload, and left
+Visio (vsdx, vsdm, vssx, vstx), the add-ins (xlam, ppam), ODF, pdf, rtf and txt as uploaded;
+the templates and shows (dotx, xltx, potx, ppsx and their macro types) weren't tried and stay
+on the list as the Office Open XML family. OneDrive rewrote none, but the rule doesn't depend
+on where a file is. The Graph reader uses the same rule
 to read them up to the download limit instead of exactly Graph's size. Canaries keep the
 manifest's `content_rule` (`office-v1` for docx and xlsx, wherever they are). `office-v1`
 hashes only the `word/` and `xl/` parts, so it covers docx and xlsx, not pptx.

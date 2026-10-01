@@ -216,9 +216,9 @@ CanaryFile read_file(const json& entry, const std::string& pointer, bool sharepo
         refuse(pointer + "/content_rule",
                "must be \"office-v1\" for a docx or xlsx and \"bytes\" for a pdf, txt or png");
     }
-    if (is_office_package(file.name) != office_type) {
+    if (is_rewritten_office_file(file.name) != office_type) {
         refuse(pointer + "/name",
-               "must be an Office package's name (src/office_files.hpp) for a docx or xlsx, and only then");
+               "must be a name SharePoint rewrites (src/office_files.hpp) for a docx or xlsx, and only then");
     }
     const auto size = entry.find("stored_size");
     if (size == entry.end() || !size->is_number_integer() || size->get<std::int64_t>() < 0) {

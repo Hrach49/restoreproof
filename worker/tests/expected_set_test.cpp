@@ -610,7 +610,7 @@ TEST_CASE("a random mail expects the backup's fields; what the backup didn't say
 }
 
 // 7. Random files.
-TEST_CASE("a random file expects its name, and the backup's size unless it is an Office package",
+TEST_CASE("a random file expects its name, and the backup's size unless SharePoint rewrites it",
           "[expected-set]")
 {
     struct Row {
@@ -621,9 +621,11 @@ TEST_CASE("a random file expects its name, and the backup's size unless it is an
         {"PLAN.DocX", false}, {"a.DocM", false}, {"a.Dotx", false}, {"a.dOTm", false},
         {"Budget.XLsx", false}, {"a.xLSm", false}, {"a.XltX", false}, {"a.xLTm", false},
         {"Deck.PPtx", false}, {"a.PptM", false}, {"a.pOTx", false}, {"a.POtm", false},
-        {"a.ppSX", false}, {"a.PpSm", false},
-        {"report.pdf", true}, {"README", true}, {"notes.docx.txt", true}, {"old.doc", true},
-        {"sheet.xls", true}, {"a.docxx", true},
+        {"a.ppSX", false}, {"a.PpSm", false}, {"Book.XLSB", false}, {"old.doc", false},
+        {"sheet.xls", false}, {"Old.PPT", false},
+        {"report.pdf", true}, {"README", true}, {"notes.docx.txt", true}, {"flow.vsdx", true},
+        {"addin.xlam", true}, {"notes.odt", true},
+        {"a.docxx", true},
     }));
     const bool sharepoint = GENERATE(true, false);
     CAPTURE(row.name, sharepoint);
@@ -681,8 +683,8 @@ TEST_CASE("a random empty file expects size 0", "[expected-set]")
 }
 
 
-// 8. The one Office package rule.
-TEST_CASE("is_office_package: the Office Open XML extensions, ASCII case-insensitive",
+// 8. The one rule for the Office files SharePoint rewrites.
+TEST_CASE("is_rewritten_office_file: the extensions SharePoint was seen to rewrite, ASCII case-insensitive",
           "[expected-set]")
 {
     struct Row {
@@ -690,29 +692,39 @@ TEST_CASE("is_office_package: the Office Open XML extensions, ASCII case-insensi
         bool office;
     };
     const Row row = GENERATE(values<Row>({
-        // Not a package's name.
+        // Not one SharePoint rewrites (the live check of 2026-10-01).
         {"", false},
         {".docx", false}, // only an extension: no name before the dot
         {"docx", false},
         {"plan.docx.txt", false},
-        {"plan.doc", false},
-        {"plan.xls", false},
-        {"plan.ppt", false},
+        {".doc", false},
+        {"doc", false},
+        {"plan.doc.txt", false},
+        {"plan.vsdx", false},
+        {"plan.vsdm", false},
+        {"plan.vssx", false},
+        {"plan.vstx", false},
+        {"plan.xlam", false},
+        {"plan.ppam", false},
+        {"plan.ods", false},
+        {"plan.rtf", false},
+        {"plan.pdf", false},
         {"plan.docx ", false},
         {"plan.docxx", false},
         {"plan_docx", false},
         {"plan.odt", false},
         {"plan.zip", false},
-        // A package's.
+        // One it rewrites.
         {"a.docx", true}, {"a.docm", true}, {"a.dotx", true}, {"a.dotm", true},
         {"a.xlsx", true}, {"a.xlsm", true}, {"a.xltx", true}, {"a.xltm", true},
         {"a.pptx", true}, {"a.pptm", true}, {"a.potx", true}, {"a.potm", true},
-        {"a.ppsx", true}, {"a.ppsm", true},
+        {"a.ppsx", true}, {"a.ppsm", true}, {"a.xlsb", true}, {"a.doc", true},
+        {"a.xls", true}, {"a.ppt", true}, {"OLD.DOC", true}, {"Budget.Xls", true},
         {"PLAN.DOCX", true}, {"Plan.XlSx", true}, {"..pptx", true}, {"a.b.docx", true},
         {"\xC5\xB9r\xC3\xB3" "d\xC5\x82" "a.docx", true},
     }));
     CAPTURE(row.name);
-    CHECK(rp::is_office_package(row.name) == row.office);
+    CHECK(rp::is_rewritten_office_file(row.name) == row.office);
 }
 
 // 9. The result's "expected" object.

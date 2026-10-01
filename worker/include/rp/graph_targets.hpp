@@ -57,7 +57,7 @@ struct FoundItem {
     std::string sha256;
     // How sha256 was computed: "text-v1" or "bytes"; empty when sha256 is.
     std::string sha256_rule;
-    // Files: the bytes downloaded; Graph's size, but for an Office package
+    // Files: the bytes downloaded; Graph's size, but for an Office file
     // SharePoint rewrote. Without hash_items, Graph's size as listed.
     std::optional<std::uint64_t> size_bytes;
 

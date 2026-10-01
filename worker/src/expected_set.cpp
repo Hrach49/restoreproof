@@ -93,7 +93,7 @@ ExpectedItem from_random(const FileCandidate& candidate)
     item.expected_kind = ExpectedKind::metadata;
     const std::string& name = candidate.selector.name;
     // A size below 0 is one the backup didn't give: no expectation.
-    const bool sized = candidate.size_bytes >= 0 && !is_office_package(name);
+    const bool sized = candidate.size_bytes >= 0 && !is_rewritten_office_file(name);
     item.file = ExpectedFile{name, sized ? std::optional{candidate.size_bytes} : std::nullopt};
     return item;
 }

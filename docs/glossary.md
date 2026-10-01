@@ -33,7 +33,8 @@ anything is compared (`rp::verification::ExpectedKind`, `docs/verification.md`):
 for a canary (the manifest's values and content hash), `fields` for a random mail (subject,
 sender name, sent and received time as the backup lists them), `metadata` for a random file
 (its name, and the backup's size unless it is an Office package). Every item has exactly one;
-the report shows it per item and counts each, so it never claims more than was checked.
+the result records it per item and counts each, and the report (W3.3/W4.1) shows them, so it
+never claims more than was checked.
 
 **Sample.** The set of items one run selects and tests — canaries plus random items, chosen
 from a seed and a rotation cursor so the selection is reproducible. Per type, half the sample

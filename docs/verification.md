@@ -31,7 +31,7 @@ There are three kinds, one per item, never mixed, and no "unknown" kind:
 - **Times** are `YYYY-MM-DDTHH:MM:SSZ`, cut (not rounded) to whole seconds. Tolerances are
   W3.2's.
 - **What the backup didn't say is not an expectation.** A random mail without `from`, or whose
-  `sent` isn't a time, is still sampled and gets `fields` with what is known.
+  `sent` isn't a time, is still offered and gets `fields` with what is known.
 - **Order.** The items are in `RestoreSpec` order (mail canaries, mail randoms, SharePoint
   canaries, SharePoint randoms, OneDrive canaries, OneDrive randoms), each with its `index`, so
   the n-th expected item lines up with the n-th `RestoreResult::items` entry. A canary is named

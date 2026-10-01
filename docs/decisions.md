@@ -7,6 +7,165 @@ Format: date, decision, reason, alternatives rejected.
 
 ---
 
+## 2026-10-01 — W3.2: the checker (proposed; recorded before the build)
+
+Recorded before any of it was built, from W3.1's "Open" items (the W3.1 entry below) and issue
+#37. Where the issue text predates W3.1, W3.1 wins: a random mail's sender is Veeam's display
+name, a random Office file has no size, and a value missing from the expectation is not
+checked. The owner confirmed the before/after snapshot (1), libzip (4), the exit codes until
+W3.3 (6) and the timing split (7) on 2026-10-01; the rest is proposed until the W3.2 review.
+
+**Decision.**
+
+1. **One read of each target, before and after; this run's copies are the new ones.** The
+   checker never searches per item. `rpworker restore` lists the three targets without hashing
+   just before `restore_sample` (the *before* snapshot: each mail's Graph ID, each file's ID and
+   `cTag`), and lists them again, hashing, after it (the *after* listing), through
+   `TargetReader`, so every read keeps W2.2's guards and paging rules; the mail listing gains
+   the `check_restore_mailbox` check the file listings already run. Matching is in memory:
+   - **Canary mail:** among the mails not in the before snapshot (a restore gives every copy a
+     new Graph ID: W2.5 and W2.8 restored `RP-CANARY-0001` under two IDs), the ones whose
+     `internetMessageId` equals the manifest's; if none, the ones whose subject is the
+     expected subject exactly (then `internet_message_id` is reported as the field that didn't
+     match).
+   - **Random mail:** the new mails whose subject is the expected subject exactly, not already
+     claimed by a canary.
+   - **File:** the files of its own target whose name has the expected name's `name_key`
+     (`src/name_key.hpp`, the sampler's Unicode case key: SharePoint and OneDrive names are
+     case-insensitive). A file that was in the before snapshot counts as this run's only if its
+     `cTag` changed (a restore over a same-named file merges a new version into it,
+     `documentLastVersionAction: Merge`, same item ID); one whose `cTag` didn't change is an
+     earlier run's copy, and the item is `error` (`stale_target`), neither found nor missing:
+     the checker can't tell whether this restore wrote it.
+   - **Duplicate:** more than one new copy matches. The checker compares the newest (mail:
+     `createdDateTime`, file: `lastModifiedDateTime`, then the higher ID), sets
+     `duplicate: true` and `copies: n`, and does not change `match` because of it; W3.3 decides
+     whether a duplicate fails a run. With the at-most-once POST and the same-name refusals of
+     W2.5/W2.6, a duplicate means Veeam wrote twice, which W3.3 should see.
+   - Leftovers from earlier runs are ignored, not checked, and counted (`stale_copies` per
+     target in the check's JSON, and one warning line), so a run on unclean targets still
+     verifies honestly. An earlier mail copy can't pass for this run's (new Graph IDs only);
+     an earlier file copy can't either (`stale_target` unless its `cTag` moved).
+
+2. **Comparisons and tolerances, per field present in the expectation; a field the
+   expectation doesn't carry is not compared.**
+
+   | Field | Rule |
+   |---|---|
+   | subject | byte-equal |
+   | `sender_address` (canary) | `from.emailAddress.address`, ASCII case-insensitive |
+   | `sender_name` (random) | `from.emailAddress.name` after `rp::without_controls` (the expectation's own rule), byte-equal |
+   | `received_at` | Graph `receivedDateTime` within ±120 s (the issue's 2 minutes; every live restore so far kept it to the second) |
+   | `sent_at` | Graph `sentDateTime` within ±120 s, for the same reason |
+   | `internet_message_id` (canary) | byte-equal |
+   | mail `sha256` (`text-v1`) | `text_v1_sha256(body.content)` equal |
+   | file name | found by `name_key`, so equal after normalisation by construction; not a separate field |
+   | file `size_bytes` | the downloaded byte count equal (only `bytes` canaries and non-Office random files carry one) |
+   | file `sha256` `bytes` | SHA-256 of the downloaded bytes equal |
+   | file `sha256` `office-v1` | `office_v1_sha256(bytes, file_type)` equal; a restored docx/xlsx that is no valid package (not a ZIP, no content part, a part twice, a bad CRC, a limit hit) is a mismatch on `sha256` with that reason: the restored file is broken, not the test |
+
+   Times are parsed as UTC from Graph's `YYYY-MM-DDTHH:MM:SS[.f]Z` and the expectation's
+   whole-second form. A Graph value that is missing or unparseable where the expectation has
+   one is a mismatch on that field.
+
+3. **`FoundItem` gains** `sender_name` (`from.emailAddress.name`, already in the reply),
+   `sent_at` (`sentDateTime`), `created_at` (mail and file `createdDateTime`), `modified_at`
+   (file `lastModifiedDateTime`), `ctag` (file `cTag`) and `listed_size` (Graph's size, kept
+   beside the downloaded count). The `$select` strings become
+   `id,subject,from,sentDateTime,receivedDateTime,createdDateTime,internetMessageId[,body]`
+   and `id,name,size,cTag,createdDateTime,lastModifiedDateTime,file,folder`. All are plain
+   message and driveItem properties under the three existing read grants
+   (`docs/security/graph-permissions.md`: no new permission). The fixtures that carry these
+   URLs, `tests/graph_lab.hpp` and the lab recorder's `MAIL_SELECT`/`CHILDREN_QUERY` change
+   together, and the new fields are re-recorded live (W2.1's `record-graph-fixtures`) rather
+   than written by hand.
+
+4. **office-v1 in C++: libzip from vcpkg, `default-features: false`** (zlib only; BSD-3;
+   1.11.4 at the pinned baseline; zlib is already in the build through curl and goes into
+   `vcpkg.json` explicitly). `rp::office_v1_sha256(std::string_view bytes, file_type)` in
+   `rp/office_v1.hpp` follows `lab/seeder/office.py` exactly: docx `word/`, xlsx `xl/`, any
+   other type refused; every part from the central directory, a name twice refused; parts
+   under the folder, not containing `_rels/`, not ending in `/`, case-sensitive; sorted by
+   UTF-8 bytes; one line `sha256  name\n` each; the SHA-256 of the lines. Read from memory
+   (`zip_source_buffer_create`), stored and deflate only, encrypted entries refused, CRC
+   checked, each part read by `zip_fread` under a cap (64 MiB per part and in all, 10 000
+   entries), so a zip bomb is a refusal. It passes `shared/testdata/office-content-v1/`; since
+   every counted part there is stored, the C++ tests add their own deflated packages (as
+   `lab/tests/test_office.py` does). **A pptx** (and every other Office type but docx and xlsx)
+   has no office-v1 rule: the manifest loader already refuses office-v1 on anything but docx
+   and xlsx, so no canary is a pptx, and a random pptx is `metadata` by name only (W3.1). Its
+   content is never checked in Stage 1; a `ppt/` rule would be a new rule, `office-v2`.
+
+5. **The result type.** `rp::verification::check(ExpectedSet, before, after)` (pure: the
+   Graph reads happen outside it) returns a `CheckResult` with one `ItemCheck` per expected
+   item, in the same order and with the same `index`, so `expected.items[i]`,
+   `RestoreResult::items[i]` and `check.items[i]` describe one item. `ItemCheck`: `index`,
+   `outcome` (`match`, `mismatch`, `missing`, `error`), `found`, `mismatches` (the field
+   names: `subject`, `sender_address`, `sender_name`, `sent_at`, `received_at`,
+   `internet_message_id`, `size_bytes`, `sha256`), `reason` (one line, no tenant values),
+   `duplicate`, `copies`, `graph_id`, `ms`, and `error_code` for `error`. An infrastructure
+   failure (a Graph `AuthError`, `PermissionError`, `TransientError`, `WrongTargetError` or
+   other `GraphError` while listing or downloading a target) makes every item of that type
+   `error` with `graph_auth`, `graph_permission`, `graph_transient`, `target_guard` or `graph`,
+   never `missing` or `mismatch`; the other types are still checked. JSON, the result's `check`
+   object (W4.1 adopts it into `result.v1.json`, which doesn't exist yet): `counts` per
+   outcome, `stale_copies` per target, `items[]` with `index`, `outcome`, `found`, then
+   `mismatches`, `reason`, `duplicate`, `copies`, `error_code` and `ms` only when set. Found
+   values (subjects, names, senders) are never written: the expectation already holds what was
+   checked, and the result shouldn't hold more tenant data than it. `ms` is the item's own
+   cost: its file's download, hash and office-v1 time, measured inside `TargetReader` per file,
+   plus its comparison; for a mail, only the comparison (its body comes with the listing).
+
+6. **`rpworker restore` checks after it restores.** It builds the expected set
+   (`build_expected_set`), takes the before snapshot, restores, reads the after listing,
+   checks, and prints one row per item (KIND SOURCE NAME OUTCOME FIELDS DUPLICATE MS) and a
+   `check` line with the counts. Until W3.3 the exit code is the restore's, then 5
+   (`exit_code::restore`) if any item is `missing` or `mismatch`, then 4 if any is `error`;
+   W3.3's table replaces this. A Graph failure on the before snapshot stops the run before any
+   Veeam restore (exit 2, 3 or 4, as `graph list`). No `--no-check`: a restore that isn't read
+   back proves nothing.
+
+7. **Timings: W3.2 owns per-item `ms` and nothing else.** W3.5 owns the timer, the run's spans
+   (`restore_point_lookup`, `sample_select`, `restore_submit`, `restore_wait`, `verify`,
+   `cleanup`, `total`) and the issue's "total recovery time = restore start → last item
+   verified", which becomes a W3.5 span. The issue's step-timings line moves to W3.5.
+
+**Reason.** One listing per target before and after is the only isolation the evidence
+supports: restored mails keep their `receivedDateTime` and `internetMessageId`, files keep
+their name and `createdDateTime` and land flat in the target root (L1.4, W2.5, W2.8), so no
+property of a copy says which run wrote it, except a mail's new Graph ID and, for a file, a
+`cTag` that moved. Matching in memory needs no new Graph URL shape (`$filter` on
+`internetMessageId` would be a new path for the guards and fixtures) and reuses TargetReader's
+guards. Infrastructure failures stay `error` by type, so a Graph outage can never look like a
+missing item. libzip is mature, reads from memory, streams each part under a cap, and needs
+only zlib, which the build already ships.
+
+**Alternatives rejected.**
+- *Search per item* (`$filter=internetMessageId eq …`, a file by path): a new URL per item for
+  the guards to vet, a 404-or-empty meaning to define, and no way to tell this run's copies
+  from leftovers.
+- *Require empty targets* (`error` if anything is there before the restore): honest, but every
+  run would stop until W3.4 and the owner would empty the targets by hand each time; the
+  snapshot gives the same safety and lets W3.4's Cleaner come later.
+- *Take the newest and pass* on a file whose `cTag` didn't move: an earlier run's copy would
+  pass for a restore that wrote nothing, the false pass the product exists to prevent.
+- *A hand-written ZIP reader on zlib*: full control, but 200–300 lines of format parsing that
+  libzip already does and is tested for; *minizip-ng* (defaults pull bzip2, lzma, zstd),
+  *zlib's minizip* (memory I/O through a custom filefunc, a CVE history), *miniz*/*kubazip* (a
+  second inflate beside zlib, weaker limits).
+- *Found values in the JSON*: more tenant data in the bundle than the expectation holds.
+- *Building W3.5's timer here*: two tasks owning one thing.
+
+**Open.**
+- A live check early in the build: after a restore over a same-named file in a target, does
+  its `cTag` change? If not, every such item is `stale_target` (`error`) until the targets are
+  emptied, which is safe; the check only settles what can be detected.
+- W3.3: whether `duplicate` fails a run, and how `stale_target` maps (proposed: `error`).
+- W3.4: the Cleaner empties the targets; the before snapshot stays as a second guard.
+- The guide's `rpworker test` exit codes (0/1/3, W3.6) clash with `rp::exit_code`; W3.6 decides.
+
+---
+
 ## 2026-10-01 — W3.1 code review: what SharePoint rewrites, and expectations no item can over-claim (proposed)
 
 The `/code-review` of PR #145 found 13 issues; the owner chose six to fix and one to check

@@ -42,31 +42,32 @@ enum class RunPhase { before_restore, restore, check };
 // "before_restore", "restore" or "check"; "unknown" for a value outside the enum.
 std::string_view to_string(RunPhase phase) noexcept;
 
-// What stopped a run.
+// What stopped a run. Never the exception's what(), which may name a tenant
+// value: the command prints that on stderr itself.
 struct RunStop {
     RunPhase phase = RunPhase::before_restore;
     std::string error_code; // a code of decision point 2, e.g. "backup_transient"
-    // The exception's what() for a type the Worker knows (rp::ConfigError,
-    // sampling::ManifestError, connector::UnknownConnectorError,
-    // graph::GraphError, connector::Error: safe to print, but it may name a
-    // tenant value, so it goes to stderr and never into RunVerdict::message);
-    // "unexpected failure" for any other.
-    std::string message;
+    // In the restore phase only: the error promised that no restore was sent
+    // (its message ends with connector::kNothingRestored), so the restore
+    // targets are as they were. Ignored in the other phases.
+    bool nothing_restored = false;
 };
 
 // The stop an exception makes, by its type (decision point 2), the same in
 // every phase:
 //  - rp::ConfigError (graph::CertificateError too), sampling::ManifestError,
 //    connector::UnknownConnectorError: config;
-//  - graph::WrongTargetError: target_guard; graph::AuthError: graph_auth;
-//    graph::PermissionError: graph_permission; graph::TransientError:
-//    graph_transient; any other graph::GraphError: graph;
+//  - a graph::GraphError: the check's code for it (read_error_code,
+//    rp/checker.hpp): target_guard, graph_auth, graph_permission,
+//    graph_transient or graph, wherever it was thrown (the connector's guard
+//    lets Graph's errors out as Graph's);
 //  - connector::SafetyViolation: target_guard; connector::AuthError:
 //    backup_auth; connector::TransientError: backup_transient;
 //    connector::NotFoundError: not_in_backup; any other connector::Error:
 //    backup;
-//  - anything else: internal, message "unexpected failure" (its what() may
-//    not be safe to show, so it is never copied).
+//  - anything else: internal.
+// In the restore phase, nothing_restored is whether a known exception's
+// what() ends with connector::kNothingRestored (never for internal).
 // Throws std::invalid_argument for a null `error`.
 RunStop stop_reason(std::exception_ptr error, RunPhase phase);
 
@@ -102,8 +103,9 @@ struct RunFacts {
 //  - backup_session: one per restore session whose result isn't exactly
 //    "Success": "<kind> session <id>: <result>[ (<details>)]", its items (an
 //    empty session ID matches none); the details only when they read as the
-//    backup's counts, "<n> item(s) processed[ (<no parentheses>)]" in
-//    printable ASCII, since other text may name an item or an address;
+//    backup's counts, "<n> item(s) processed[ (<n> <word>, ...)]" with words
+//    of Veeam's own (success(es), warning(s), failure(s), error(s), skipped),
+//    since other text may name an item or an address;
 //  - backup_item: the verified items the backup didn't report restored;
 //  - duplicate: the items more than one restored copy matched;
 //  - shortfall: one per Shortfall, "<kind> <canary|random>: <taken> of <wanted>";
@@ -128,6 +130,10 @@ struct RunVerdict {
     RunStatus status = RunStatus::error;
     std::string error_code; // error only
     std::string message;    // one line, never a tenant value
+    // Whether a restore may have been sent, so items may be in the restore
+    // targets (W3.4's cleanup): a restore result that isn't not_run, or a stop
+    // in the restore without nothing_restored. Set by every row.
+    bool restore_sent = false;
     // Rows 5 to 8 only (the item verdicts); empty for rows 1 to 4.
     std::vector<std::size_t> failed;      // fail only
     std::vector<UncheckedItem> unchecked; // ascending by index
@@ -164,7 +170,8 @@ struct RunVerdict {
 //     ExpectedKind, RestoreStatus, ItemOutcome, CheckOutcome); a check item
 //     whose `found` contradicts its outcome (match or mismatch not found,
 //     missing or error found). No warnings.
-//  2. a stop -> error, the stop's code;
+//  2. a stop -> error, the stop's code; in the restore phase its message says
+//     whether nothing was restored or items may be in the restore targets;
 //  3. the expected set is empty -> error empty_sample;
 //  4. the restore returned not_run -> error not_run;
 //  5. any item failed -> fail, the failed items (and the unchecked beside them);
@@ -178,16 +185,20 @@ struct RunVerdict {
 RunVerdict decide_status(const RunFacts& facts);
 
 // The result's "status" object: {"status", "error_code" (error only),
-// "message", "counts": {"items", "verified", "failed", "unchecked"},
+// "message", "restore_sent", "counts": {"items", "verified", "failed", "unchecked"},
 // "verified": {"manifest", "fields", "metadata"}, "failed_items": [index...],
 // "unchecked_items": [{"index", "error_code"}], "warnings": [{"code",
 // "message", "indexes"}]}. Every key but error_code always there.
 nlohmann::json to_json(const RunVerdict& verdict);
 
-// rpworker's exit code for a verdict (rp::exit_code): pass 0; fail 5
-// (exit_code::restore); error by its code: config and internal 1;
-// backup_auth, graph_auth and graph_permission 2; backup_transient and
-// graph_transient 3; any other 4.
+// rpworker's exit code for an error code (rp::exit_code), from the one table
+// of codes the status line's texts and row 7's severity come from too: config
+// and internal 1; backup_auth, graph_auth and graph_permission 2;
+// backup_transient and graph_transient 3; any other 4.
+int exit_code_of(std::string_view error_code) noexcept;
+
+// rpworker's exit code for a verdict: pass 0; fail 5 (exit_code::restore);
+// error its code's.
 int exit_code_of(const RunVerdict& verdict) noexcept;
 
 } // namespace rp::verification

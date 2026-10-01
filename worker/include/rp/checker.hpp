@@ -98,9 +98,11 @@ std::function<bool(const graph::FoundItem&)> hash_filter(const ExpectedSet& expe
 // The error_code of an exception thrown while reading a target:
 // graph::WrongTargetError "target_guard" (before GraphError: it is one),
 // graph::AuthError "graph_auth", graph::PermissionError "graph_permission",
-// graph::TransientError "graph_transient", any other graph::GraphError and an
-// rp::ConfigError (a graph::CertificateError) "graph". Rethrows anything else,
-// and std::invalid_argument for a null `error`.
+// graph::TransientError "graph_transient", any other graph::GraphError
+// "graph": the one mapping of Graph's errors, stop_reason's too
+// (rp/run_status.hpp). Rethrows anything else (an rp::ConfigError, which is a
+// stop `config` wherever it happens, included), and std::invalid_argument for
+// a null `error`.
 std::string read_error_code(std::exception_ptr error);
 
 // TargetReaderOptions::on_file for the after read: office-v1 of each file

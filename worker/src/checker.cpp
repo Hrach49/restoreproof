@@ -441,8 +441,6 @@ std::string read_error_code(std::exception_ptr error)
         return "graph_transient";
     } catch (const graph::GraphError&) {
         return "graph";
-    } catch (const ConfigError&) {
-        return "graph";
     }
 }
 

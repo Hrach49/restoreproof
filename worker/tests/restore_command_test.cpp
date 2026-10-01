@@ -17,6 +17,7 @@
 #include <rp/config.hpp>
 #include <rp/connector.hpp>
 #include <rp/connector_registry.hpp>
+#include <rp/graph_errors.hpp>
 #include <rp/http_client.hpp>
 #include <rp/restore_command.hpp>
 #include <rp/sample_rng.hpp>
@@ -1139,7 +1140,8 @@ TEST_CASE("restore: a --manifest path that isn't UTF-8 is a config error", "[res
 // --- Failure paths: the connector --------------------------------------------------
 
 TEST_CASE("restore: each failure of the restore has its exit code; the header is already out, "
-          "and items may be in the targets; the status says it, never what() says",
+          "and items may be in the targets unless the error says not; the status says which, "
+          "never what() says",
           "[restore_command]")
 {
     // restore_sample may have sent a restore before it threw.
@@ -1157,11 +1159,11 @@ TEST_CASE("restore: each failure of the restore has its exit code; the header is
         {"AuthError", [] { throw connector::AuthError("Veeam refused the credentials"); },
          rp::exit_code::auth, "restore error: Veeam refused the credentials\n" + started,
          "backup_auth: the restore didn't complete: the backup product refused the credentials "
-         "(backup_auth)"},
+         "(backup_auth); items may be in the restore targets"},
         {"TransientError", [] { throw connector::TransientError("Veeam unreachable"); },
          rp::exit_code::transient, "restore error: Veeam unreachable\n" + started,
          "backup_transient: the restore didn't complete: the backup product couldn't be reached "
-         "or asked to try later (backup_transient)"},
+         "or asked to try later (backup_transient); items may be in the restore targets"},
         {"SafetyViolation",
          [] {
              throw connector::SafetyViolation(
@@ -1170,14 +1172,15 @@ TEST_CASE("restore: each failure of the restore has its exit code; the header is
          rp::exit_code::service,
          "restore error: target guard: mail item 0 is sampled from a restore target\n" + started,
          "target_guard: the restore didn't complete: the restore-target guard refused "
-         "(target_guard)"},
+         "(target_guard); items may be in the restore targets"},
         {"NotFoundError", [] { throw connector::NotFoundError("mail item 0 isn't in the restore point"); },
          rp::exit_code::service, "restore error: mail item 0 isn't in the restore point\n" + started,
          "not_in_backup: the restore didn't complete: the client or a sampled item isn't in the "
-         "backup (not_in_backup)"},
+         "backup (not_in_backup); items may be in the restore targets"},
         {"NotImplementedError", [] { throw connector::NotImplementedError("not here"); },
          rp::exit_code::service, "restore error: not here\n" + started,
-         "backup: the restore didn't complete: the backup product reported an error (backup)"},
+         "backup: the restore didn't complete: the backup product reported an error (backup); "
+         "items may be in the restore targets"},
         // The connector's promise that no restore was sent: no note.
         {"nothing restored",
          [] {
@@ -1188,23 +1191,42 @@ TEST_CASE("restore: each failure of the restore has its exit code; the header is
          rp::exit_code::service,
          "restore error: target guard: mail item 0 is sampled from a restore target; nothing "
          "was restored\n",
-         "target_guard: the restore didn't complete: the restore-target guard refused "
-         "(target_guard)"},
+         "target_guard: the restore didn't start: the restore-target guard refused "
+         "(target_guard); nothing was restored"},
+        // The guard's Graph errors are Graph's, never the backup product's.
+        {"graph PermissionError",
+         [] {
+             throw rp::graph::PermissionError(
+                 "Graph denied reading the RestoreTarget library; nothing was restored",
+                 "Sites.Selected");
+         },
+         rp::exit_code::auth,
+         "restore error: Graph denied reading the RestoreTarget library; nothing was restored\n",
+         "graph_permission: the restore didn't start: Microsoft Graph refused a permission the "
+         "Worker relies on (graph_permission); nothing was restored"},
+        {"graph TransientError",
+         [] { throw rp::graph::TransientError("Graph 429; nothing was restored", 429); },
+         rp::exit_code::transient, "restore error: Graph 429; nothing was restored\n",
+         "graph_transient: the restore didn't start: Microsoft Graph couldn't be reached or asked "
+         "to try later (graph_transient); nothing was restored"},
         {"Error", [] { throw connector::Error("Veeam said no"); }, rp::exit_code::service,
          "restore error: Veeam said no\n" + started,
-         "backup: the restore didn't complete: the backup product reported an error (backup)"},
+         "backup: the restore didn't complete: the backup product reported an error (backup); "
+         "items may be in the restore targets"},
         {"ConfigError",
          [] {
              throw rp::ConfigError("RP_GRAPH_CERT_PFX_BASE64",
                                    "RP_GRAPH_CERT_PFX_BASE64 is not valid Base64");
          },
          rp::exit_code::config, "config error: RP_GRAPH_CERT_PFX_BASE64 is not valid Base64\n",
-         "config: the restore didn't complete: the configuration isn't usable (config)"},
+         "config: the restore didn't complete: the configuration isn't usable (config); items "
+         "may be in the restore targets"},
         {"unexpected", [] { throw std::runtime_error("SENTINEL-UNSAFE-MESSAGE"); },
          rp::exit_code::config, "error: unexpected failure\n" + started,
-         "internal: the restore didn't complete: an unexpected failure (internal)"},
+         "internal: the restore didn't complete: an unexpected failure (internal); items may be "
+         "in the restore targets"},
     };
-    const Case& c = cases[GENERATE(range(std::size_t{0}, std::size_t{9}))];
+    const Case& c = cases[GENERATE(range(std::size_t{0}, std::size_t{11}))];
     CAPTURE(c.name);
     Harness lab;
     lab.fake.pool.mail = {carol_mail(1)};
@@ -1535,7 +1557,9 @@ TEST_CASE("restore: a stdout that fails on the sample's table stops the command 
         lab.run_to({"--run-id", kRunId, "--mail", "2", "--sp", "1", "--od", "0"}, out);
 
     CHECK(code == rp::exit_code::config);
-    CHECK(err == "error: unexpected failure\n");
+    // Its status line is lost too, so stderr says it.
+    CHECK(err == "error: unexpected failure\n"
+                 "error: writing the output failed (run run-0001); run status error internal\n");
     CHECK(lab.fake.candidate_calls == 1);
     CHECK(lab.fake.restore_calls == 0);
 }
@@ -1569,6 +1593,33 @@ TEST_CASE("restore: an empty sample restores nothing and is status error empty_s
                                  "status error empty_sample: the sample is empty: nothing to "
                                  "restore\n"));
     CHECK_THAT(run.out, !ContainsSubstring("restoring"));
+    CHECK(lab.fake.restore_calls == 0);
+}
+
+TEST_CASE("restore: a status line lost without a restore is said on stderr, with the run and "
+          "its status",
+          "[restore_command]")
+{
+    const Args args{"--mail", "1", "--sp", "0", "--od", "0", "--run-id", kRunId};
+    const std::string status_line =
+        "status error empty_sample: the sample is empty: nothing to restore\n";
+    Harness whole;
+    whole.dir.write("seed-manifest.json", trimmed_manifest(0, 1, 1));
+    const Run full = whole.run(args);
+    REQUIRE(full.out.ends_with(status_line));
+
+    Harness lab;
+    lab.dir.write("seed-manifest.json", trimmed_manifest(0, 1, 1));
+    // Everything but the status line fits.
+    RecordingStreamBuf buffer(full.out.size() - status_line.size() + 5);
+    std::ostream out(&buffer);
+
+    const auto [code, err] = lab.run_to(args, out);
+
+    CHECK(code == rp::exit_code::service);
+    CHECK(err == "error: writing the output failed (run run-0001); run status error "
+                 "empty_sample\n"
+                 "warning: shortfall: mail canary: 0 of 1\n");
     CHECK(lab.fake.restore_calls == 0);
 }
 

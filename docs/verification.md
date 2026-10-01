@@ -216,8 +216,10 @@ target nor an unreachable service becomes `fail`.
 
 **Inputs** (`RunFacts`): the expected set; the sample's shortfalls (`shortfalls_of`, per type,
 canaries and random items, wanted and taken); at most one `RunStop` (a phase, an `error_code`
-and the exception's `what()`); the `RestoreResult` and the `CheckResult` when they exist.
-`stop_reason(exception, phase)` makes the stop from an exception's type. The phases are
+and, in the restore phase, `nothing_restored`: the error's message ends with the connector's
+`; nothing was restored` promise; never the exception's `what()`); the `RestoreResult` and the
+`CheckResult` when they exist. `stop_reason(exception, phase)` makes the stop from an
+exception's type. The phases are
 `before_restore` (sampling, the expected set, the before snapshot), `restore`
 (`restore_sample` threw) and `check` (the read-back or the check threw something that isn't
 Graph's). A Graph failure in the read-back is not a stop: its type's items are already
@@ -286,11 +288,15 @@ How the backup's own status reads (decision point 4):
 
 ### Error codes
 
-One flat vocabulary, the same in every phase, with `rpworker`'s exit code.
+One flat vocabulary, the same in every phase, with `rpworker`'s exit code. In the code it is
+one table (`kCodes` in `src/run_status.cpp`: each code's stop text, whether the checker gives
+it, its severity rank and its exit code); a Graph exception's code is the checker's
+`read_error_code` wherever it is thrown, the restore-target guard's layer 1 inside
+`restore_sample` included, which lets Graph's errors out as Graph's.
 
 | Code | From | Exit |
 |---|---|---|
-| `config` | `rp::ConfigError` (`graph::CertificateError` too), `sampling::ManifestError`, `connector::UnknownConnectorError` | 1 |
+| `config` | `rp::ConfigError` (`graph::CertificateError` too), `sampling::ManifestError`, `connector::UnknownConnectorError`, in any phase (in the read-back too: a stop, never an item error) | 1 |
 | `internal` | any other exception (its `what()` is never shown); facts that don't add up (R1) | 1 |
 | `backup_auth` | `connector::AuthError` | 2 |
 | `backup_transient` | `connector::TransientError` (unreachable, a timeout, a gateway error) | 3 |
@@ -319,7 +325,7 @@ address or Graph ID) and never an exception's `what()`, which goes to stderr onl
 | Row | Message |
 |---|---|
 | R1 | `the run's results don't add up: <why>` |
-| R2 | `the run stopped before the restore: <reason> (<code>); nothing was restored`, `the restore didn't complete: <reason> (<code>)` or `the restored items couldn't be checked: <reason> (<code>)`, by phase |
+| R2 | `the run stopped before the restore: <reason> (<code>); nothing was restored`; in the restore, `the restore didn't start: <reason> (<code>); nothing was restored` when the error promised it, else `the restore didn't complete: <reason> (<code>); items may be in the restore targets`; or `the restored items couldn't be checked: <reason> (<code>)`, by phase |
 | R3 | `the sample is empty: nothing to restore` |
 | R4 | `the restore didn't run: nothing was sent` |
 | R5 | `<f> of <n> item(s) didn't verify (<x> missing, <y> mismatch)[; <u> couldn't be checked]` |
@@ -335,7 +341,7 @@ item `indexes` it concerns, in this order:
 
 | Code | When | Message |
 |---|---|---|
-| `backup_session` | per restore session whose result isn't exactly `Success`; its indexes are the items sent in that session (an empty session ID matches none) | `<kind> session <id>: <result>[ (<details>)]` (the ID and result with control characters as spaces; the details only when they read as the backup's counts, `<n> item(s) processed[ (<no parentheses>)]` in printable ASCII, since any other text may name an item or an address) |
+| `backup_session` | per restore session whose result isn't exactly `Success`; its indexes are the items sent in that session (an empty session ID matches none) | `<kind> session <id>: <result>[ (<details>)]` (the ID and result with control characters as spaces; the details only when they read as the backup's counts, `<n> item(s) processed[ (<n> <word>, ...)]` with words of Veeam's own (`success`/`successes`, `warning(s)`, `failure(s)`, `error(s)`, `skipped`), since any other text, inside the parenthesis too, may name an item or an address) |
 | `backup_item` | verified items the backup didn't report restored | `<n> verified item(s) the backup didn't report restored` |
 | `duplicate` | items more than one of this run's copies matched (the newest was compared) | `<n> item(s) had more than one restored copy; the newest was checked` |
 | `shortfall` | per type and half that took fewer than it wanted | `<kind> <canary\|random>: <taken> of <wanted>` |
@@ -351,12 +357,14 @@ own message (which may hold a name) stays in the restore result, never in a warn
 `to_json(RunVerdict)`, by index like `expected` and `check`; every key but `error_code` (error
 only) is always there. `counts.items` is always the expected set's size (0 without one). The
 other counts, `verified` and the item lists are the item verdicts of rows R5 to R8; for R1 to
-R4 nothing got as far as a verdict, so they are 0 and the lists empty. W4.1 adopts it into
-`result.v1.json`.
+R4 nothing got as far as a verdict, so they are 0 and the lists empty. `restore_sent` is whether
+a restore may have been sent, so items may be in the restore targets (W3.4's cleanup): a restore
+result that isn't `not_run`, or a stop in the restore without `nothing_restored`. W4.1 adopts it
+into `result.v1.json`.
 
 ```json
 {
-  "status": "error", "error_code": "stale_target",
+  "status": "error", "error_code": "stale_target", "restore_sent": true,
   "message": "1 of 3 item(s) couldn't be checked (stale_target 1); 2 verified",
   "counts": {"items": 3, "verified": 2, "failed": 0, "unchecked": 1},
   "verified": {"manifest": 1, "fields": 1, "metadata": 0},

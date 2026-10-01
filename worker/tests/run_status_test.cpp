@@ -159,7 +159,7 @@ Run run_of(const std::vector<It>& items, RestoreStatus status = RestoreStatus::s
 
 Run with_stop(Run run, RunPhase phase, const std::string& code)
 {
-    run.stop = RunStop{phase, code, "what() of the exception"};
+    run.stop = RunStop{phase, code};
     return run;
 }
 
@@ -170,7 +170,7 @@ Run stop_only(RunPhase phase, const std::string& code)
     run.with_expected = false;
     run.with_restore = false;
     run.with_check = false;
-    run.stop = RunStop{phase, code, "what() of the exception"};
+    run.stop = RunStop{phase, code};
     return run;
 }
 
@@ -672,7 +672,7 @@ TEST_CASE("run status, severity: each unchecked code outranks the ones after it"
 }
 
 TEST_CASE("run status, error codes: each exception type is its code, in every phase, its "
-          "what() kept for stderr only",
+          "what() never kept",
           "[run_status]")
 {
     struct ErrorRow {
@@ -726,7 +726,9 @@ TEST_CASE("run status, error codes: each exception type is its code, in every ph
     const RunStop stop = verification::stop_reason(error, phase);
     CHECK(stop.phase == phase);
     CHECK(stop.error_code == row.code);
-    CHECK(stop.message == (row.known ? what : "unexpected failure"));
+    // None of these promises that nothing was restored.
+    CHECK_FALSE(stop.nothing_restored);
+    CHECK(row.known == (row.code != "internal"));
 
     // Through the table: error with that code, and a message that never quotes what().
     Run run = phase == RunPhase::check    ? run_of({match()})
@@ -753,6 +755,58 @@ TEST_CASE("run status: stop_reason needs an exception", "[run_status]")
     CHECK_THROWS_AS(verification::stop_reason(nullptr, RunPhase::check), std::invalid_argument);
 }
 
+TEST_CASE("run status: a restore error that promises nothing was restored is a stop with "
+          "nothing_restored, in the restore phase only",
+          "[run_status]")
+{
+    const std::string promise{connector::kNothingRestored};
+    const auto stop_of = [](std::exception_ptr error, RunPhase phase) {
+        return verification::stop_reason(std::move(error), phase);
+    };
+    const auto guard = std::make_exception_ptr(
+        connector::SafetyViolation("target guard: mail item 0 is sampled from a target" + promise));
+    const auto graph = std::make_exception_ptr(
+        rp::graph::PermissionError("Graph denied the library" + promise, "Sites.Selected"));
+    const auto later = std::make_exception_ptr(connector::TransientError("Veeam 503 polling"));
+
+    CHECK(stop_of(guard, RunPhase::restore).nothing_restored);
+    CHECK(stop_of(guard, RunPhase::restore).error_code == "target_guard");
+    // A Graph error from the connector's guard is Graph's code, not the backup product's.
+    CHECK(stop_of(graph, RunPhase::restore).nothing_restored);
+    CHECK(stop_of(graph, RunPhase::restore).error_code == "graph_permission");
+    CHECK_FALSE(stop_of(later, RunPhase::restore).nothing_restored);
+    // Elsewhere it means nothing.
+    CHECK_FALSE(stop_of(guard, RunPhase::before_restore).nothing_restored);
+    CHECK_FALSE(stop_of(guard, RunPhase::check).nothing_restored);
+    // An exception the Worker doesn't know promises nothing, whatever it says.
+    CHECK_FALSE(
+        stop_of(std::make_exception_ptr(std::runtime_error("x" + promise)), RunPhase::restore)
+            .nothing_restored);
+}
+
+TEST_CASE("run status: restore_sent says whether items may be in the restore targets",
+          "[run_status]")
+{
+    const auto sent = [](const Run& run) {
+        return verification::decide_status(run.facts()).restore_sent;
+    };
+    CHECK(sent(run_of({match()})));
+    CHECK(sent(run_of({missing()})));
+    Run not_run = run_of({missing()}, RestoreStatus::not_run);
+    not_run.restore.items.clear();
+    CHECK_FALSE(sent(not_run));
+    CHECK_FALSE(sent(sample_only({})));
+    CHECK_FALSE(sent(stop_only(RunPhase::before_restore, "backup")));
+    CHECK_FALSE(sent(with_stop(sample_only({match()}), RunPhase::before_restore, "graph")));
+    CHECK(sent(with_stop(sample_only({match()}), RunPhase::restore, "backup_transient")));
+    Run untouched = with_stop(sample_only({match()}), RunPhase::restore, "target_guard");
+    untouched.stop->nothing_restored = true;
+    CHECK_FALSE(sent(untouched));
+    Run check = with_stop(run_of({match()}), RunPhase::check, "internal");
+    check.with_check = false;
+    CHECK(sent(check));
+}
+
 TEST_CASE("run status: a stop's message says where the run stopped, never what() says",
           "[run_status]")
 {
@@ -763,7 +817,12 @@ TEST_CASE("run status: a stop's message says where the run stopped, never what()
     const Run restore = with_stop(sample_only({match()}), RunPhase::restore, "backup_auth");
     CHECK(verification::decide_status(restore.facts()).message ==
           "the restore didn't complete: the backup product refused the credentials "
-          "(backup_auth)");
+          "(backup_auth); items may be in the restore targets");
+    Run unsent = with_stop(sample_only({match()}), RunPhase::restore, "graph_transient");
+    unsent.stop->nothing_restored = true;
+    CHECK(verification::decide_status(unsent.facts()).message ==
+          "the restore didn't start: Microsoft Graph couldn't be reached or asked to try later "
+          "(graph_transient); nothing was restored");
     Run check = with_stop(run_of({match()}), RunPhase::check, "internal");
     check.with_check = false;
     CHECK(verification::decide_status(check.facts()).message ==
@@ -910,6 +969,12 @@ TEST_CASE("run status: a backup_session warning keeps the backup's details only 
         {"Failed to restore 'Budget Q3.xlsx' for alice@contoso.com", "mail session s-1: Warning"},
         {"2 items processed\n(1 failure)", "mail session s-1: Warning"},
         {"2 items processed (1 failure) for alice@contoso.com", "mail session s-1: Warning"},
+        // Inside the parenthesis too: only counts of the backup's own words.
+        {"1 item processed (alice@contoso.com: mailbox not found)", "mail session s-1: Warning"},
+        {"1 item processed (1 Budget)", "mail session s-1: Warning"},
+        {"1 item processed ()", "mail session s-1: Warning"},
+        {"3 items processed (1 success, 1 error, 1 skipped)",
+         "mail session s-1: Warning (3 items processed (1 success, 1 error, 1 skipped))"},
         {"items processed", "mail session s-1: Warning"},
     }));
     CAPTURE(details);
@@ -959,7 +1024,7 @@ TEST_CASE("run status: to_json is the result's status object", "[run_status]")
             {match(), error("stale_target"), It{.expected_kind = ExpectedKind::fields}});
         run.check.stale_mail = 1;
         const json want = json::parse(R"j({
-                  "status": "error", "error_code": "stale_target",
+                  "status": "error", "error_code": "stale_target", "restore_sent": true,
                   "message": "1 of 3 item(s) couldn't be checked (stale_target 1); 2 verified",
                   "counts": {"items": 3, "verified": 2, "failed": 0, "unchecked": 1},
                   "verified": {"manifest": 1, "fields": 1, "metadata": 0},
@@ -976,7 +1041,7 @@ TEST_CASE("run status: to_json is the result's status object", "[run_status]")
             verification::to_json(verification::decide_status(run_of({missing()}).facts()));
         CHECK_FALSE(out.contains("error_code"));
         const json want = json::parse(R"j({
-                  "status": "fail",
+                  "status": "fail", "restore_sent": true,
                   "message": "1 of 1 item(s) didn't verify (1 missing, 0 mismatch)",
                   "counts": {"items": 1, "verified": 0, "failed": 1, "unchecked": 0},
                   "verified": {"manifest": 0, "fields": 0, "metadata": 0},
@@ -989,7 +1054,7 @@ TEST_CASE("run status: to_json is the result's status object", "[run_status]")
         const json out = verification::to_json(
             verification::decide_status(run_of({It{.duplicate = true}}).facts()));
         const json want = json::parse(R"j({
-                  "status": "pass",
+                  "status": "pass", "restore_sent": true,
                   "message": "1 of 1 item(s) verified: manifest 1, fields 0, metadata 0",
                   "counts": {"items": 1, "verified": 1, "failed": 0, "unchecked": 0},
                   "verified": {"manifest": 1, "fields": 0, "metadata": 0},
@@ -1004,6 +1069,7 @@ TEST_CASE("run status: to_json is the result's status object", "[run_status]")
         const json out = verification::to_json(verification::decide_status(
             stop_only(RunPhase::before_restore, "backup_transient").facts()));
         CHECK(out["error_code"] == "backup_transient");
+        CHECK(out["restore_sent"] == false);
         const json counts =
             json::parse(R"j({"items": 0, "verified": 0, "failed": 0, "unchecked": 0})j");
         CHECK(out["counts"] == counts);
@@ -1044,6 +1110,14 @@ TEST_CASE("run status: the exit code of each status and error code", "[run_statu
     verdict.status = row.status;
     verdict.error_code = row.code;
     CHECK(verification::exit_code_of(verdict) == row.exit);
+    if (row.status == RunStatus::error) {
+        CHECK(verification::exit_code_of(row.code) == row.exit);
+    }
+}
+
+TEST_CASE("run status: a code outside the vocabulary exits 4", "[run_status]")
+{
+    CHECK(verification::exit_code_of("teapot") == rp::exit_code::service);
 }
 
 TEST_CASE("run status: the names of statuses and phases", "[run_status]")

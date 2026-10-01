@@ -218,7 +218,9 @@ std::string format_elapsed(std::chrono::nanoseconds elapsed);
 //    writing the output failed after the restore ran (run <run ID>, restore
 //    <restore status>: <restored> of <sent> item(s) restored); run status
 //    <pass|fail|error>[ <code>]", then the warnings, and the status's exit
-//    code (1 when that is 0: its output was lost);
+//    code (1 when that is 0: its output was lost); a status line lost with
+//    no restore result (once the run line is out) is "error: writing the
+//    output failed (run <run ID>); run status ...";
 //  - before the run line, with no status line: "restore error: <what()>" for
 //    a connector::Error listing the restore points (2 for an AuthError, 3 for
 //    a TransientError, 4 for any other), and 4 with "restore error: no
@@ -233,7 +235,11 @@ std::string format_elapsed(std::chrono::nanoseconds elapsed);
 //    sample or restoring (backup_auth for an AuthError, backup_transient for
 //    a TransientError, target_guard for a SafetyViolation ("restore error:
 //    target guard: ..."), not_in_backup for a NotFoundError, backup for any
-//    other, a NotImplementedError included);
+//    other, a NotImplementedError included), or a graph::GraphError
+//    restore_sample's guard let out (graph_auth, graph_permission,
+//    graph_transient or graph, never a backup code); every exception's exit
+//    code, before the run line too, is its stop's (verification::stop_reason
+//    and exit_code_of), the one mapping;
 //  - after an error restore_sample threw (not a ConfigError), unless its
 //    message ends with connector::kNothingRestored, a second line: "restore
 //    error: the restore had started: items may be in the restore targets
@@ -242,7 +248,8 @@ std::string format_elapsed(std::chrono::nanoseconds elapsed);
 //    and makes its items unchecked with its code (the status error), never a
 //    stop;
 //  - any other exception while reading back or checking (std::bad_alloc, a
-//    logic error): "check error: unexpected failure", then "restore error:
+//    logic error): "check error: unexpected failure" ("check error:
+//    <what()>" for a ConfigError, status error config), then "restore error:
 //    the restore had started: items may be in the restore targets (run <run
 //    ID>)", no check table: status error internal, 1.
 // The backup's own status never decides: a partial restore whose items all

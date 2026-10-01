@@ -1183,8 +1183,10 @@ TEST_CASE("check: read_error_code names each infrastructure failure; anything el
     CHECK(code_of(rp::graph::TransientError("try later", 503)) == "graph_transient");
     CHECK(code_of(rp::graph::NotFoundError("no drive", 404)) == "graph");
     CHECK(code_of(rp::graph::GraphError("odd answer")) == "graph");
-    CHECK(code_of(rp::graph::CertificateError("RP_GRAPH_CERT_PFX_BASE64 is not set")) == "graph");
-    CHECK(code_of(rp::ConfigError("x", "bad")) == "graph");
+    // A configuration problem is a stop `config` wherever it happens, never a Graph item error.
+    CHECK_THROWS_AS(code_of(rp::graph::CertificateError("RP_GRAPH_CERT_PFX_BASE64 is not set")),
+                    rp::graph::CertificateError);
+    CHECK_THROWS_AS(code_of(rp::ConfigError("x", "bad")), rp::ConfigError);
     CHECK_THROWS_AS(code_of(std::runtime_error("SENTINEL")), std::runtime_error);
     CHECK_THROWS_AS(code_of(std::bad_alloc()), std::bad_alloc);
     CHECK_THROWS_AS(verification::read_error_code(nullptr), std::invalid_argument);

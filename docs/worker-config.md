@@ -376,7 +376,7 @@ config error: C:\ProgramData\RestoreProof\config.json: config key "poll_interval
 ## `rpworker veeam list`
 
 ```
-rpworker veeam list [--config <path>]
+rpworker veeam list [--config <path>] [--record <dir>]
 ```
 
 Signs in to the Veeam REST API (`veeam_url`, with `veeam_ca_file` and `veeam_cert_sha256` as
@@ -432,7 +432,7 @@ shown. Debug lines are not shown.
 ## `rpworker graph list`
 
 ```
-rpworker graph list [--hash] [--config <path>]
+rpworker graph list [--hash] [--config <path>] [--record <dir>]
 ```
 
 Shows what is in the three restore targets right now: the test mailbox's Inbox
@@ -498,6 +498,7 @@ not shown.
 ```
 rpworker restore [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>]
                  [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>]
+                 [--record <dir>]
 ```
 
 **It writes to the tenant.** It picks a restore point of `veeam_org_name`, chooses a sample
@@ -614,6 +615,27 @@ restore error: target guard: the drive test_library_id names is "Dokumenty", not
 Veeam's and the guard's messages never contain a password, a token or a certificate. Debug
 lines are not shown.
 
+## `--record <dir>`
+
+`rpworker veeam list`, `graph list` and `restore` take `--record <dir>` (Q2.1), in any place
+among their other flags, once. It writes every exchange the command has with a service as a
+test fixture, scrubbed, and changes nothing else: the same requests go out and the same output
+comes back, then one more line on stdout, `recorded <n> exchange(s) in <dir>`. `restore
+--record` still writes into the tenant. How to record and replay: `docs/testing.md`,
+"Recording fixtures"; what a fixture keeps and never keeps: `docs/decisions.md` 2026-10-01,
+"Q2.1".
+
+- `<dir>` must not exist yet (it is made) or be an empty folder. Anything in it, or a file
+  there, is exit 1 before any request: `config error: <dir>: the --record folder is not empty`
+  (`... the --record path is not a folder`, `... the --record folder can't be made`,
+  `config error: the --record path is not valid UTF-8`).
+- One subfolder per service, `veeam`, `graph` and `download`, and one file per exchange,
+  `<nnn>-<method>-<path>.json`, numbered in the order sent.
+- An exchange that still holds a secret after scrubbing is not written: `record error:
+  <service>/<file>: refused: <which rule>` on stderr, one line each (`... could not be
+  written` for a write that failed). The command's own result stands, but a command that
+  succeeded exits 1 then, since its recording isn't complete.
+
 ## Exit codes
 
 The same for every `rpworker` command (`rp::exit_code` in `worker/include/rp/cli.hpp`):
@@ -621,7 +643,7 @@ The same for every `rpworker` command (`rp::exit_code` in `worker/include/rp/cli
 | Exit code | Meaning | stderr |
 |---|---|---|
 | 0 | Success. | (nothing) |
-| 1 | The config or a secret is missing or invalid, or something unexpected failed (an error no command handles ends here too, never in an `abort()`, whose exit code would be 3). For `graph list` this includes the certificate: `RP_GRAPH_CERT_PFX_BASE64` unset, a PFX that doesn't open with `RP_GRAPH_CERT_PASSWORD`, or a certificate that isn't valid now, all found before any request. For `restore`, also the same certificate problems as `graph list` (before any Veeam call; `RP_GRAPH_CERT_PASSWORD` unset is fine for a PFX without a password), a manifest that doesn't load, whose `tenant_id` isn't `graph_tenant_id` or that names a restore target (before any Veeam call), an unknown connector, and stdout failing after a restore that succeeded. | `config error: <path>: <message>`, `config error: the --config path is not valid UTF-8`, `config error: the --manifest path is not valid UTF-8`, `config error: canary manifest: <message>`, `config error: cannot find the ProgramData folder`, `config error: environment variable <name> is not valid Unicode`, `config error: RP_VEEAM_USERNAME is not set` (then `RP_VEEAM_PASSWORD`), `config error: RP_GRAPH_CERT_PFX_BASE64 is not set` (or another message naming the certificate's variables), for `restore` `config error: unknown connector "<name>" (known: <names>)` and `error: writing the output failed after the restore ran (run <run ID>, status succeeded: ...)`, `config error: unexpected failure` or `error: unexpected failure`; an unexpected failure's own message is never shown |
+| 1 | The config or a secret is missing or invalid, or something unexpected failed (an error no command handles ends here too, never in an `abort()`, whose exit code would be 3). For `graph list` this includes the certificate: `RP_GRAPH_CERT_PFX_BASE64` unset, a PFX that doesn't open with `RP_GRAPH_CERT_PASSWORD`, or a certificate that isn't valid now, all found before any request. For `restore`, also the same certificate problems as `graph list` (before any Veeam call; `RP_GRAPH_CERT_PASSWORD` unset is fine for a PFX without a password), a manifest that doesn't load, whose `tenant_id` isn't `graph_tenant_id` or that names a restore target (before any Veeam call), an unknown connector, and stdout failing after a restore that succeeded. With `--record`, a folder that isn't new or empty, and a command that succeeded but whose recording isn't complete. | `config error: <path>: <message>`, `config error: the --config path is not valid UTF-8`, `config error: the --manifest path is not valid UTF-8`, `config error: canary manifest: <message>`, `config error: cannot find the ProgramData folder`, `config error: environment variable <name> is not valid Unicode`, `config error: RP_VEEAM_USERNAME is not set` (then `RP_VEEAM_PASSWORD`), `config error: RP_GRAPH_CERT_PFX_BASE64 is not set` (or another message naming the certificate's variables), for `restore` `config error: unknown connector "<name>" (known: <names>)` and `error: writing the output failed after the restore ran (run <run ID>, status succeeded: ...)`, with `--record` `config error: <dir>: the --record folder is not empty` and `record error: <service>/<file>: refused: ...`, `config error: unexpected failure` or `error: unexpected failure`; an unexpected failure's own message is never shown |
 | 2 | The service refused the sign-in, the account's role, the token or a permission: Veeam's credentials or role; Entra refusing the Worker app's sign-in; Graph refusing the token, or denying a call for want of a grant (the message names the grant, see `docs/security/graph-permissions.md`). | `veeam error: <message>`, `graph error: <message>` or `restore error: <message>` |
 | 3 | The service couldn't be reached or asked to try later: no connection, a timeout, a TLS handshake that broke off, or a 502, 503 or 504 (for Graph also a 429 or another 5xx) after the retries. | `veeam error: <message>`, `graph error: <message>` or `restore error: <message>` |
 | 4 | Any other error from the service. Veeam: an unknown organisation, a bad request, an unexpected answer, or no organisation named `veeam_org_name`; also Veeam's certificate failing verification, which a retry won't fix: `veeam_ca_file` doesn't hold Veeam's certificate or its CA, or Veeam's certificate was renewed and no longer matches `veeam_cert_sha256` (see "Veeam's default certificate"). Graph: the mailbox, drive or folder not found, a drive or folder the guard refuses (not the RestoreTarget the config says), a download that failed, an unexpected answer. `restore`: the restore-target guard refusing (nothing is restored), a sampled item or the organisation not in Veeam, no restore points, a `--point` ID that isn't one of them, an empty sample, a restore session of the Veeam account still `Working`, the restore credential's export failing (not elevated), a restore that returned `not_run`, an item that failed for an infrastructure reason (an error, never 5), any other error of the restore. | `veeam error: <message>` (`... TLS failure: ...` for a certificate), `veeam error: organisation <name> (veeam_org_name) not found in Veeam`, `graph error: <message>`, `restore error: <message>` (`restore error: target guard: ...` for the guard), `restore error: no restore points for veeam_org_name`, `restore error: restore point <id> not found for veeam_org_name`, `restore error: the sample is empty: nothing to restore (...)`, `restore error: <n> item(s) failed for an infrastructure reason (...); this is an error, not a restore failure`, or `restore error: the restore did not run: nothing was sent (status not_run)`; after an error of a restore that had started, also `restore error: the restore had started: items may be in the restore targets (run <run ID>)` |
@@ -631,5 +653,5 @@ The same for every `rpworker` command (`rp::exit_code` in `worker/include/rp/cli
 The usage line is:
 
 ```
-usage: rpworker --version | rpworker config check [--config <path>] | rpworker veeam list [--config <path>] | rpworker graph list [--hash] [--config <path>] | rpworker restore [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>]
+usage: rpworker --version | rpworker config check [--config <path>] | rpworker veeam list [--config <path>] [--record <dir>] | rpworker graph list [--hash] [--config <path>] [--record <dir>] | rpworker restore [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--record <dir>]
 ```

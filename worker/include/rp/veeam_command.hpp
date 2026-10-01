@@ -1,9 +1,9 @@
 #pragma once
 
-// `rpworker veeam list [--config <path>]` (W1.6): signs in to Veeam, lists
-// every organisation and its restore points as a table, and logs out. The
-// output and exit codes are in docs/worker-config.md ("rpworker veeam list")
-// and docs/decisions.md (2026-09-27).
+// `rpworker veeam list [--config <path>] [--record <dir>]` (W1.6, Q2.1): signs
+// in to Veeam, lists every organisation and its restore points as a table,
+// and logs out. The output and exit codes are in docs/worker-config.md
+// ("rpworker veeam list") and docs/decisions.md (2026-09-27).
 
 #include <rp/http_client.hpp>
 #include <rp/secrets.hpp>
@@ -42,7 +42,8 @@ struct VeeamCommandEnv {
 VeeamCommandEnv default_veeam_command_env();
 
 // `rpworker veeam ...`. `args` is what follows "veeam" on the command line,
-// in UTF-8; the only subcommand is `list [--config <path>]`.
+// in UTF-8; the only subcommand is `list`, followed by `--config <path>` and
+// `--record <dir>` in any order, each at most once.
 //
 // Prints to `out`, as UTF-8, a table of every organisation Veeam returns
 // (sorted by name, ASCII case-insensitively, then ID) with its restore points
@@ -52,12 +53,21 @@ VeeamCommandEnv default_veeam_command_env();
 // out of Veeam at the end, after the table, whatever happened after the
 // sign-in.
 //
+// With --record <dir> (Q2.1, rp/recording_http_client.hpp), every exchange
+// with Veeam is also written, scrubbed, under <dir>/veeam/ (a folder that must
+// be new or empty, opened after the secrets and before any request), and
+// "recorded <n> exchange(s) in <dir>" ends `out`, whatever the result; each
+// exchange not written is a "record error: veeam/<file>: <why>" line on `err`,
+// and turns an exit code of 0 into 1.
+//
 // Returns an rp::exit_code, with one line on `err` for each failure:
 //  - 64: arguments it doesn't understand (rp::kCliUsage);
 //  - 1: "config error: <message>" for a ConfigError (a config that doesn't
 //    load, a --config path that isn't UTF-8, a secret that can't be read),
 //    "config error: RP_VEEAM_USERNAME is not set" (then RP_VEEAM_PASSWORD)
-//    for a missing secret, "config error: unexpected failure" for any other
+//    for a missing secret, a --record folder that isn't new or empty or a
+//    --record path that isn't UTF-8, "config error: unexpected failure" for
+//    any other
 //    exception while loading the config and secrets, and "error: unexpected
 //    failure" for one that isn't a VeeamError afterwards (one while writing
 //    the table included, after which `out` may hold part of it); neither

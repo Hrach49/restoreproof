@@ -7,6 +7,134 @@ Format: date, decision, reason, alternatives rejected.
 
 ---
 
+## 2026-10-01 — Q2.1 review: the restore credential never kept, recording off the lock, and the refusal rules (proposed)
+
+Amends the 2026-10-01 Q2.1 entry (points 2, 3 and 5) after the Q2.1 code review.
+
+**Decision.**
+
+1. **The restore credential is checked in its own exchange's file only.** What the recorder
+   learns (`rp::secrets_in`, now `rp::LearnedSecrets`) comes in two lists. `kept` holds the
+   `Authorization` value, tokens, form and query secrets, and a response body's secret values;
+   these are checked in every later file. `one_time` holds the secret values of a JSON request
+   body, which is a restore POST's `applicationCertificate` and its password. That credential
+   is exported for one call (2026-09-30 W2.5 point 1), so it is checked against its own file
+   and then wiped. The recorder's copies are wiped too (`secure_wipe`): both lists when they
+   go, every kept secret in `~FixtureRecorder` (held in a deque, so adding one never leaves a
+   moved copy behind), a parsed JSON body's strings and its text before redaction, the
+   JSON-escaped copy of each secret the check makes, and a refused file's text. A later file
+   that held a past restore's credential would no longer be refused by the known-secret
+   check; `redact()` still replaces it under its own keys.
+2. **Recording no longer holds up the command.** Secrets are learned before any lock. The
+   kept list sits under a shared mutex, locked exclusively only to add to it and shared while
+   files are scrubbed. The numbering and the counts have their own short lock. The scrub and
+   the disk write run outside both, so one exchange's write never delays another's send. A
+   `digest` body (a download) is not converted or scanned: nothing is learned from it, since
+   it is never written.
+3. **The refusal rules.** The JWT rule uses `redact()`'s `rp::kJwtStart` and
+   `rp::is_base64url` (now in `rp/redact.hpp`), and keeps its own length threshold (37) on
+   purpose: it catches a dotless run `redact()` would miss. `client_assertion` is now refused
+   the way `tempauth` is, and no longer as a mere mention. A value of it (the name in any case,
+   then `=`, `%3D` or `:`) other than a placeholder is refused. Entra's AADSTS7000218 text,
+   which only names the parameter, can be recorded.
+4. **Small fixes.** The `--record` folder is checked with `is_directory` after
+   `create_directories`, whose MSVC result is false for a path ending in a separator even when
+   it made the folder. `restore` opens its recording only after its pre-Veeam checks (sample
+   sizes, manifest, cursor), so a run they stop makes no folder and prints no `recorded` line.
+   `FakeHttpClient::serve_recording` orders files by their number, so file 1000 comes after 999,
+   and matches requests by `rp::request_path`, the recorder's own rule. The commands' option
+   loops are one parser, `parse_options` in `src/command_config.hpp`.
+
+**Reason.** The code review of the Q2.1 PR found these. Point 1 restores W2.5's rule that the
+exported PFX outlives its call nowhere, which `--record` had broken.
+
+**Alternatives rejected.** Keeping the credential and wiping it only when the recorder goes
+(the recorder lives for the whole restore); keeping a hash of it instead (a hash can't be
+searched for in a file); widening the file number to four digits (every committed recording's
+names would change, and 10 000 exchanges would still break it).
+
+---
+
+## 2026-10-01 — Q2.1: `--record <dir>`, what a recorded fixture keeps, and the unit tests' network guard (proposed)
+
+With the owner's answers of 2026-10-01: `restore` may record, and `--record` takes a folder
+that must be new or empty. Proposed: the owner confirms it in the Q2.1 review, or supersedes it.
+
+**Decision.**
+
+1. **`--record <dir>` on `veeam list`, `graph list [--hash]` and `restore`.** Each wraps the
+   HTTP clients it makes in `rp::RecordingHttpClient` (`rp/recording_http_client.hpp`), which
+   passes every request to the real client unchanged and hands each response it returns to
+   one `rp::FixtureRecorder`. A request that throws (no connection, a timeout) isn't recorded
+   and its exception goes on unchanged. Recording never changes what a command sends or sees;
+   a file refused or not written is a line on stderr, never an exception inside the command,
+   so a restore's at-most-once POST can't be mistaken for a POST that got no answer.
+2. **Where it goes.** `<dir>` must not exist or be an empty folder (otherwise exit 1,
+   `config error: <dir>: the --record folder is not empty`, before any request), so a
+   recording never overwrites committed fixtures: the developer looks the files over and copies
+   the ones wanted into `worker/tests/fixtures/<service>/`. One subfolder per service: `veeam`
+   (the Veeam client and the connector), `graph` (Entra's token endpoint and Graph, the target
+   guard's included) and `download` (`graph list --hash`'s downloads). One file per exchange,
+   `<nnn>-<method>-<path slug>.json`, numbered per service from 001 in the order sent; a
+   refused exchange keeps its number, so the gap shows. After the command:
+   `recorded <n> exchange(s) in <dir>` on stdout, one `record error: <service>/<file>: <why>` per
+   exchange not written on stderr, and exit 1 if the command had succeeded (a command that
+   failed keeps its code).
+3. **The file format is the fixtures' own** (`worker/tests/fixtures/veeam/README.md`):
+   `source` (`rpworker <version> <command> --record`), `request` (`<METHOD> <path>?<query>`, no
+   scheme or host), `status`, `headers`, `body`; `FakeHttpClient::serve_recording(dir)` serves
+   a service folder by method and path, the files of one request in number order, the last
+   repeating, whatever the host. Key order is kept as received.
+4. **What a fixture keeps, and never keeps.**
+   - Request headers: none, ever. Response headers: only `Content-Type`, `Retry-After`,
+     `WWW-Authenticate` and `Location`, the last with every query value `SCRUBBED`.
+   - Request bodies: only a JSON one (a restore's), as `request_body`. A form body (the Veeam
+     password grant, Entra's client assertion) and a multipart one are never written.
+   - Response bodies: JSON as JSON, with every `@microsoft.graph.downloadUrl` and
+     `@content.downloadUrl` dropped; other UTF-8 text as a string; a body that isn't UTF-8,
+     and every `download` body (file contents), only as `body_size` and `body_sha256`, never a
+     byte. A download's request line has every query value `SCRUBBED` (the link is a
+     credential).
+   - All of it goes through `rp::redact()`, so tokens, the client assertion, passwords, the
+     PFX, `applicationCertificate*` and `Authorization` read `[REDACTED]`; a token reply's
+     `access_token` and `refresh_token` become that placeholder, which the Veeam and Graph
+     clients accept on replay.
+5. **Refused if a secret survives** (mirroring `Save-Evidence`, the PowerShell collection's
+   evidence writer): the recorder is given the Veeam password, the Graph PFX and its password,
+   and learns, before scrubbing, every secret an exchange carries (the `Authorization` value
+   and its bearer token, the values of the keys `redact()` treats as secret in a form, JSON
+   body or query, a `Location`'s included); values under 6 characters and the placeholders are
+   left out. A file whose text still holds one (as written or JSON-escaped), anything
+   JWT-shaped (`eyJ` and 37 or more base64url characters), a `tempauth` value other than a
+   placeholder, or the word `client_assertion` is not written.
+6. **The unit tests' network guard.** `rptests` has its own `main` (`tests/test_main.cpp`):
+   unless `RP_LIVE=1`, it turns on `rp::detail::set_loopback_only`, under which `rp::HttpClient`
+   refuses any URL whose host isn't `localhost`, `127.x.x.x` or `[::1]` before any lookup, and
+   any socket curl would open to an address outside 127.0.0.0/8 and ::1 (a
+   `CURLOPT_OPENSOCKETFUNCTION` callback, the TLS scan's one new reviewed statement). A
+   listener counts the refusals per test case; a case with any is named on stderr and the run
+   exits 1 even if the test passed. `rpworker.exe`'s ctest runs all stop before any request
+   (their comments in `worker/CMakeLists.txt` say so). The manual proof is one `ctest --preset
+   dev` with the network adapter disabled (`docs/testing.md`, "The network-off run").
+
+**Reason.** Sprint 3 needs new fixtures (W3.2's deleted messages, W3.4's empty folders after
+cleanup), and recording them from the Worker's own C++ calls is safer than writing them by hand
+or from the PowerShell collection. A folder that must be empty keeps a recording from ever
+landing on committed fixtures unreviewed. Refusing, rather than scrubbing harder, keeps the
+rule simple: a file with a secret in it is never written at all. The guard turns "the unit
+suite never touches the network" from a convention into something every CI run checks.
+
+**Alternatives rejected.** Recording straight into `worker/tests/fixtures/` (overwrites
+hand-edited fixtures); recording only the read-only commands (W3.x needs whole restore runs,
+and recording only watches); keeping request headers or form bodies with their secrets
+redacted (nothing needs them, and redaction is the only thing between them and the repo);
+recording download bytes (canary files are in `lab/canary/` already, and a restored file could
+be anything); a proxy variable pointing curl at a dead address (a test expecting a connection
+error would still pass, and nothing would name it); a firewall rule or container in CI (heavy,
+and not what runs on a developer's machine).
+
+---
+
 ## 2026-10-01 — W2.8 second review: the certificate and the manifest checked before Veeam, and what a restore that failed partway says (proposed)
 
 Amends the 2026-09-30 W2.8 entry (points 3, 4 and 5) after the second W2.8 review (PR #142).

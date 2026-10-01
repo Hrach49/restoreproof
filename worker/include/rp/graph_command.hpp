@@ -1,11 +1,11 @@
 #pragma once
 
-// `rpworker graph list [--hash] [--config <path>]` (W2.3): what is in the
-// three restore targets right now, read through Graph with W2.2's
-// rp::graph::TargetReader and printed as three tables. The operator's check
-// before and after a restore. Reads only. The output and exit codes are in
-// docs/worker-config.md ("rpworker graph list") and docs/decisions.md
-// (2026-09-28, W2.3).
+// `rpworker graph list [--hash] [--config <path>] [--record <dir>]` (W2.3,
+// Q2.1): what is in the three restore targets right now, read through Graph
+// with W2.2's rp::graph::TargetReader and printed as three tables. The
+// operator's check before and after a restore. Reads only. The output and
+// exit codes are in docs/worker-config.md ("rpworker graph list") and
+// docs/decisions.md (2026-09-28, W2.3).
 
 #include <rp/graph_client.hpp>
 #include <rp/http_client.hpp>
@@ -52,8 +52,8 @@ struct GraphCommandEnv {
 GraphCommandEnv default_graph_command_env();
 
 // `rpworker graph ...`. `args` is what follows "graph" on the command line, in
-// UTF-8; the only subcommand is `list`, followed by `--hash` and `--config
-// <path>` in any order, each at most once.
+// UTF-8; the only subcommand is `list`, followed by `--hash`, `--config
+// <path>` and `--record <dir>` in any order, each at most once.
 //
 // Signs in to Graph as the Worker app (graph_tenant_id, graph_client_id, and
 // the certificate from RP_GRAPH_CERT_PFX_BASE64 and RP_GRAPH_CERT_PASSWORD),
@@ -71,12 +71,22 @@ GraphCommandEnv default_graph_command_env();
 // space. The tables are built in full before anything is printed, so a
 // failure prints nothing on `out`.
 //
+// With --record <dir> (Q2.1, rp/recording_http_client.hpp), every exchange
+// with Entra and Graph (under "graph") and each download (under "download",
+// as its size and SHA-256 only) is also written, scrubbed, under
+// <dir>/<service>/ (a folder that must be new or empty, opened after the
+// secrets and before any request), and "recorded <n> exchange(s) in <dir>"
+// ends `out`, whatever the result; each exchange not written is a "record
+// error: <service>/<file>: <why>" line on `err`, and turns an exit code of 0
+// into 1.
+//
 // Returns an rp::exit_code, with one line on `err` for each failure:
 //  - 64: arguments it doesn't understand (rp::kCliUsage);
 //  - 1: "config error: <message>" for a ConfigError (a config that doesn't
 //    load, a --config path that isn't UTF-8, a secret that can't be read, and
 //    a graph::CertificateError: "RP_GRAPH_CERT_PFX_BASE64 is not set", a PFX
-//    that doesn't open, a certificate that isn't valid), "config error:
+//    that doesn't open, a certificate that isn't valid, and a --record folder
+//    that isn't new or empty), "config error:
 //    unexpected failure" for any other exception while loading the config,
 //    secrets and certificate, and "error: unexpected failure" for one that
 //    isn't a graph::GraphError afterwards (a failed write or flush of `out`

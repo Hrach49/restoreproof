@@ -32,6 +32,7 @@
 #include <catch2/generators/catch_generators_range.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <cstddef>
 #include <filesystem>
@@ -65,9 +66,11 @@ using rp::test::graph_lab::lab_values;
 
 const std::string kUsage =
     "usage: rpworker --version | rpworker config check [--config <path>] | "
-    "rpworker veeam list [--config <path>] | rpworker graph list [--hash] [--config <path>] | "
+    "rpworker veeam list [--config <path>] [--record <dir>] | "
+    "rpworker graph list [--hash] [--config <path>] [--record <dir>] | "
     "rpworker restore [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] "
-    "[--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>]\n";
+    "[--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] "
+    "[--record <dir>]\n";
 
 const std::string kOrgName = "RestoreProofLab.onmicrosoft.com";
 // Veeam's restore point IDs are two GUIDs run together. Made up.
@@ -510,6 +513,31 @@ TEST_CASE("restore: a canary cursor out of the manifest's range is a usage error
     CHECK(run.exit_code == rp::exit_code::usage);
     CHECK(run.out.empty());
     CHECK(run.err == "usage error: --canary-cursor: " + message + "\n");
+    CHECK(lab.make_connector_calls == 0);
+}
+
+TEST_CASE("restore --record: a run the checks stop before Veeam makes no folder and prints no "
+          "recording line",
+          "[restore_command][record]")
+{
+    // 0: every size 0; 1: a cursor out of range; 2: a manifest that isn't there.
+    const int stop = GENERATE(0, 1, 2);
+    CAPTURE(stop);
+    Harness lab;
+    const std::filesystem::path rec = lab.dir.path() / "rec";
+    const std::string rec_arg = utf8(rec);
+    const std::string missing = utf8(lab.dir.path() / "missing.json");
+    Args args{"--record", rec_arg};
+    const std::vector<Args> stops{{"--mail", "0", "--sp", "0", "--od", "0"},
+                                  {"--canary-cursor", "20,0,0"},
+                                  {"--manifest", missing}};
+    args.insert(args.end(), stops[stop].begin(), stops[stop].end());
+
+    const Run run = lab.run(args);
+
+    CHECK(run.exit_code == (stop == 2 ? rp::exit_code::config : rp::exit_code::usage));
+    CHECK(run.out.empty());
+    CHECK_FALSE(std::filesystem::exists(rec));
     CHECK(lab.make_connector_calls == 0);
 }
 
@@ -1786,4 +1814,62 @@ TEST_CASE("restore through veeam_m365: a canary restored on the recorded run, ex
     CHECK(real.rig.exporter->calls == 1);
     CHECK_THAT(run.out, !ContainsSubstring(vrl::kPassword));
     CHECK_THAT(run.out, !ContainsSubstring(vrl::kFakePfxPassword));
+}
+
+TEST_CASE("restore through veeam_m365 --record: every exchange written, the restore credential "
+          "and the password never",
+          "[restore_command][veeam_m365][record]")
+{
+    RealRig real;
+    real.rig.serve(vrl::mail_x1());
+    const std::filesystem::path rec = real.dir.path() / "rec";
+
+    const Run run = real.run({"--run-id", kRunId, "--canary-cursor", "10,0,0", "--mail", "1",
+                              "--sp", "0", "--od", "0", "--record", utf8(rec)});
+    INFO(run.out);
+    INFO(run.err);
+    REQUIRE(run.exit_code == rp::exit_code::ok);
+    REQUIRE(run.err.empty());
+
+    const auto files = [](const std::filesystem::path& dir) {
+        std::vector<std::filesystem::path> paths;
+        for (const auto& entry : std::filesystem::directory_iterator(dir)) {
+            paths.push_back(entry.path());
+        }
+        std::ranges::sort(paths);
+        return paths;
+    };
+    const std::vector<std::filesystem::path> veeam = files(rec / "veeam");
+    const std::vector<std::filesystem::path> graph = files(rec / "graph");
+    // Every call each service got, and the command says how many in all.
+    CHECK(veeam.size() == real.rig.veeam.requests().size());
+    CHECK(graph.size() == real.rig.lab.graph_http.requests().size());
+    CHECK(run.out.ends_with("status succeeded: 1 of 1 item(s) restored in 0:00:05\nrecorded " +
+                            std::to_string(veeam.size() + graph.size()) + " exchange(s) in " +
+                            utf8(rec) + "\n"));
+
+    std::size_t restore_posts = 0;
+    for (const auto& list : {veeam, graph}) {
+        for (const std::filesystem::path& path : list) {
+            std::ifstream file(path, std::ios::binary);
+            const std::string text{std::istreambuf_iterator<char>(file), {}};
+            CAPTURE(path.filename().string());
+            for (const std::string& secret :
+                 {vrl::kPassword, vrl::kFakePfx, vrl::kFakePfxPassword,
+                  std::string{rp::test::graph_lab::kPfxPassword}}) {
+                CHECK(text.find(secret) == std::string::npos);
+            }
+            const json fixture = json::parse(text);
+            if (fixture["request"].get<std::string>().ends_with("/restoreTo")) {
+                ++restore_posts;
+                // The body as sent, with its credential scrubbed: what the
+                // target guard's tests check a restore body against.
+                CHECK(fixture["request_body"]["applicationCertificate"] == "[REDACTED]");
+                CHECK(fixture["request_body"]["applicationCertificatePassword"] == "[REDACTED]");
+                CHECK(fixture["request_body"]["mailbox"] ==
+                      rp::test::graph_lab::lab_values().mailbox);
+            }
+        }
+    }
+    CHECK(restore_posts == 1);
 }

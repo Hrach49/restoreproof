@@ -33,7 +33,9 @@
 #include <cstddef>
 #include <filesystem>
 #include <functional>
+#include <fstream>
 #include <ios>
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <ostream>
@@ -62,11 +64,11 @@ using rp::test::to_response;
 using namespace rp::test::graph_lab;
 
 const std::string kUsage = "usage: rpworker --version | rpworker config check [--config <path>] | "
-                           "rpworker veeam list [--config <path>] | "
-                           "rpworker graph list [--hash] [--config <path>] | "
+                           "rpworker veeam list [--config <path>] [--record <dir>] | "
+                           "rpworker graph list [--hash] [--config <path>] [--record <dir>] | "
                            "rpworker restore [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] "
                            "[--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] "
-                           "[--config <path>]\n";
+                           "[--config <path>] [--record <dir>]\n";
 
 // The download link's credential: in no output, error or log line.
 const std::string kTempauth = "v1.SENTINEL-command-tempauth";
@@ -323,7 +325,8 @@ TEST_CASE("rpworker graph prints usage and exits 64 for arguments it doesn't und
                                Args{"list", "extra"}, Args{"list", "--config"},
                                Args{"list", "--hash", "--config"}, Args{"list", "--hash", "--hash"},
                                Args{"list", "--config", "a.json", "--config", "b.json"},
-                               Args{"list", "--HASH"}, Args{"--hash", "list"});
+                               Args{"list", "--HASH"}, Args{"--hash", "list"},
+                               Args{"list", "--record"}, Args{"list", "--record", "a", "--record", "b"});
     CAPTURE(args);
     Harness lab;
 
@@ -988,4 +991,68 @@ TEST_CASE("rpworker graph's real environment reads ProgramData and the process e
     // The real clocks, waits and jitter.
     REQUIRE_FALSE(env.client_options.now);
     REQUIRE_FALSE(env.client_options.wall_now);
+}
+
+// --- --record (Q2.1) -----------------------------------------------------------
+
+TEST_CASE("rpworker graph list --hash --record keeps Graph and downloads apart, the bytes and "
+          "the link's credential out",
+          "[graph_command][record]")
+{
+    Harness lab;
+    lab.serve_one_each();
+    const FileLocation at = sharepoint_location();
+    const std::string id = file_of(at).at("id").get<std::string>();
+    const std::string link = "https://" + host_of(location_of(at)) +
+                             "/sites/s/_layouts/15/download.aspx?UniqueId=u&tempauth=" +
+                             kTempauth + "&ApiVersion=2.0";
+    HttpResponse redirect = make_response(302);
+    redirect.headers["Location"] = link;
+    lab.graph_http.on(HttpMethod::get, content_url(at, id), {redirect});
+    lab.dl_http.on(HttpMethod::get, link,
+                   {make_response(200, bytes_of(at), "application/octet-stream")});
+    const std::filesystem::path rec = lab.dir.path() / "rec";
+    const std::string config_arg = utf8(lab.config_path);
+    const std::string record_arg = utf8(rec);
+
+    const Run result = lab.run(Args{"list", "--record", record_arg, "--hash", "--config", config_arg});
+    REQUIRE(result.err.empty());
+    REQUIRE(result.exit_code == rp::exit_code::ok);
+
+    std::vector<std::filesystem::path> graph_files;
+    std::vector<std::filesystem::path> download_files;
+    for (const auto& entry : std::filesystem::directory_iterator(rec / "graph")) {
+        graph_files.push_back(entry.path());
+    }
+    for (const auto& entry : std::filesystem::directory_iterator(rec / "download")) {
+        download_files.push_back(entry.path());
+    }
+    CHECK(result.out.ends_with("3 item(s) in the three restore targets\nrecorded " +
+                               std::to_string(graph_files.size() + download_files.size()) +
+                               " exchange(s) in " + record_arg + "\n"));
+    // Every Graph call (the token among them) and each file's download.
+    CHECK(graph_files.size() == lab.graph_http.requests().size());
+    REQUIRE(download_files.size() == 2);
+
+    std::string everything;
+    for (const auto& files : {graph_files, download_files}) {
+        for (const std::filesystem::path& path : files) {
+            std::ifstream file(path, std::ios::binary);
+            everything += std::string{std::istreambuf_iterator<char>(file), {}};
+        }
+    }
+    for (const std::string& secret :
+         {kTempauth, std::string{"token-1"}, std::string{kPfxPassword}, pfx_base64().substr(0, 40),
+          bytes_of(at)}) {
+        CAPTURE(secret);
+        CHECK(everything.find(secret) == std::string::npos);
+    }
+    CHECK_THAT(everything, ContainsSubstring("tempauth=SCRUBBED"));
+    for (const std::filesystem::path& path : download_files) {
+        std::ifstream file(path, std::ios::binary);
+        const json fixture = json::parse(std::string{std::istreambuf_iterator<char>(file), {}});
+        CAPTURE(path.filename().string());
+        CHECK(fixture["body"].is_null());
+        CHECK(fixture["body_sha256"].get<std::string>().size() == 64);
+    }
 }

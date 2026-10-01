@@ -238,7 +238,7 @@ void check_pool(const connector::CandidatePool& pool, const connector::RestoreTa
                 const Forbidden& f)
 {
     for (std::size_t i = 0; i < pool.mail.size(); ++i) {
-        if (const auto why = forbidden(pool.mail[i], f)) {
+        if (const auto why = forbidden(pool.mail[i].selector, f)) {
             refuse_candidate(ItemKind::mail, i, *why);
         }
     }
@@ -304,10 +304,27 @@ void set_unchecked_size(connector::OneDriveSelector& o)
     o.size = -1;
 }
 
-template <typename Canary, typename Selector, typename ToSelector>
+// What a candidate carries beside its selector, as text: a further sort key,
+// so of two candidates of one key and equal fields the one kept doesn't
+// depend on the listing's order.
+Key facts_of(const connector::MailCandidate& c)
+{
+    return {c.sender_name, c.sent_at};
+}
+Key facts_of(const connector::SharePointCandidate& c)
+{
+    return {std::to_string(c.size_bytes)};
+}
+Key facts_of(const connector::OneDriveCandidate& c)
+{
+    return {std::to_string(c.size_bytes)};
+}
+
+template <typename Canary, typename Candidate, typename ToSelector>
 void select_kind(ItemKind kind, int size, const std::vector<Canary>& canaries, std::uint32_t cursor,
-                 std::vector<Selector> candidates, const connector::BrowseRecord& browse,
-                 std::uint32_t seed, ToSelector to_selector, std::vector<Selector>& out,
+                 const std::vector<Candidate>& pool, const connector::BrowseRecord& browse,
+                 std::uint32_t seed, ToSelector to_selector,
+                 std::vector<decltype(Candidate::selector)>& out, std::vector<Candidate>& random_out,
                  KindRecord& record)
 {
     const std::size_t m = canaries.size();
@@ -328,31 +345,32 @@ void select_kind(ItemKind kind, int size, const std::vector<Canary>& canaries, s
         taken.insert(name_key(shown_name(out.back())));
     }
 
-    // Sorted by key and then every field, one per key: the listing's order
-    // doesn't matter. Each candidate's key and fields are built once.
+    // Sorted by key, then every field, then the facts, one per key: the
+    // listing's order doesn't matter. Each candidate's keys are built once.
     struct Keyed {
         Key key;
         Key all;
-        Selector selector;
+        Key facts;
+        Candidate candidate;
     };
     std::vector<Keyed> keyed;
-    keyed.reserve(candidates.size());
-    for (Selector& candidate : candidates) {
-        Key key = key_of(candidate);
-        Key all = all_of(candidate);
-        keyed.push_back({std::move(key), std::move(all), std::move(candidate)});
+    keyed.reserve(pool.size());
+    for (const Candidate& candidate : pool) {
+        keyed.push_back({key_of(candidate.selector), all_of(candidate.selector),
+                         facts_of(candidate), candidate});
     }
     std::sort(keyed.begin(), keyed.end(), [](const Keyed& a, const Keyed& b) {
-        return a.key != b.key ? a.key < b.key : a.all < b.all;
+        return a.key != b.key ? a.key < b.key : a.all != b.all ? a.all < b.all : a.facts < b.facts;
     });
     keyed.erase(std::unique(keyed.begin(), keyed.end(),
                             [](const Keyed& a, const Keyed& b) { return a.key == b.key; }),
                 keyed.end());
-    candidates.clear();
+    std::vector<Candidate> candidates;
+    candidates.reserve(keyed.size());
     nlohmann::json keys = nlohmann::json::array();
     for (Keyed& k : keyed) {
         keys.push_back(k.key);
-        candidates.push_back(std::move(k.selector));
+        candidates.push_back(std::move(k.candidate));
     }
     record.pool_size = candidates.size();
     record.pool_sha256 =
@@ -368,28 +386,18 @@ void select_kind(ItemKind kind, int size, const std::vector<Canary>& canaries, s
         if (!i) {
             break;
         }
-        Selector picked = candidates[*i];
+        Candidate picked = candidates[*i];
         // Skipped, its draw used up: two of one name (the case of any letter
         // aside, as SharePoint and OneDrive compare) can't both be restored.
-        if (!taken.insert(name_key(shown_name(picked))).second) {
+        if (!taken.insert(name_key(shown_name(picked.selector))).second) {
             continue;
         }
-        record.random_keys.push_back(key_of(picked));
-        set_unchecked_size(picked);
-        out.push_back(std::move(picked));
+        record.random_keys.push_back(key_of(picked.selector));
+        set_unchecked_size(picked.selector);
+        out.push_back(picked.selector);
+        random_out.push_back(std::move(picked));
         ++record.random_taken;
     }
-}
-
-template <typename Candidate>
-auto selectors_of(const std::vector<Candidate>& candidates)
-{
-    std::vector<decltype(Candidate::selector)> out;
-    out.reserve(candidates.size());
-    for (const Candidate& candidate : candidates) {
-        out.push_back(candidate.selector);
-    }
-    return out;
 }
 
 nlohmann::json kind_json(const KindRecord& k)
@@ -483,13 +491,13 @@ Selection SampleSelector::select(const SamplePlan& plan, const CanaryManifest& m
     record.seed = seed_from_run_id(run_id);
     record.manifest_sha256 = manifest.sha256;
     select_kind(ItemKind::mail, plan.mail, manifest.mail, cursor.mail, pool.mail, pool.mail_browse,
-                record.seed, to_selector, selection.mail, record.mail);
+                record.seed, to_selector, selection.mail, selection.mail_random, record.mail);
     select_kind(ItemKind::sharepoint, plan.sharepoint, manifest.sharepoint, cursor.sharepoint,
-                selectors_of(pool.sharepoint), pool.sharepoint_browse, record.seed,
-                to_sharepoint_selector, selection.sharepoint, record.sharepoint);
+                pool.sharepoint, pool.sharepoint_browse, record.seed, to_sharepoint_selector,
+                selection.sharepoint, selection.sharepoint_random, record.sharepoint);
     select_kind(ItemKind::onedrive, plan.onedrive, manifest.onedrive, cursor.onedrive,
-                selectors_of(pool.onedrive), pool.onedrive_browse, record.seed,
-                to_onedrive_selector, selection.onedrive, record.onedrive);
+                pool.onedrive, pool.onedrive_browse, record.seed, to_onedrive_selector,
+                selection.onedrive, selection.onedrive_random, record.onedrive);
     return selection;
 }
 

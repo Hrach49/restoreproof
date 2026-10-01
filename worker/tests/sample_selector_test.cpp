@@ -75,9 +75,11 @@ std::string two_digits(int n)
     return (n < 10 ? "0" : "") + std::to_string(n);
 }
 
-connector::MailSelector mail_candidate(int n, const std::string& folder = "Archive")
+connector::MailCandidate mail_candidate(int n, const std::string& folder = "Archive")
 {
-    return {kCarol, folder, "real mail " + two_digits(n), "2026-09-20T10:00:" + two_digits(n % 60) + "Z"};
+    return {{kCarol, folder, "real mail " + two_digits(n), "2026-09-20T10:00:" + two_digits(n % 60) + "Z"},
+            "Carol Test",
+            "2026-09-20T09:59:" + two_digits(n % 60) + "Z"};
 }
 
 connector::SharePointCandidate sp_candidate(int n, const std::string& folder = "/Projects")
@@ -361,22 +363,22 @@ TEST_CASE("select refuses a pool with a restore target, a canary or a canary loc
     };
     const Row row = GENERATE_COPY(values<Row>({
         // Mail.
-        {"a restoretest mailbox", [](auto& p) { p.mail[1].mailbox = "restoretest@RestoreProofLab.onmicrosoft.com"; },
+        {"a restoretest mailbox", [](auto& p) { p.mail[1].selector.mailbox = "restoretest@RestoreProofLab.onmicrosoft.com"; },
          offered("mail", "from a restore target (a restoretest mailbox)")},
-        {"a canary's Sent Items copy", [](auto& p) { p.mail[1].subject = "rp-canary-0003"; },
+        {"a canary's Sent Items copy", [](auto& p) { p.mail[1].selector.subject = "rp-canary-0003"; },
          offered("mail", "a canary (its subject starts with rp-canary-)")},
-        {"a subject with the canary prefix", [](auto& p) { p.mail[1].subject = "RP-Canary-weekly"; },
+        {"a subject with the canary prefix", [](auto& p) { p.mail[1].selector.subject = "RP-Canary-weekly"; },
          offered("mail", "a canary (its subject starts with rp-canary-)")},
-        {"a canary's subject in another case", [](auto& p) { p.mail[1].subject = "QUARTERLY figures"; },
+        {"a canary's subject in another case", [](auto& p) { p.mail[1].selector.subject = "QUARTERLY figures"; },
          offered("mail", "a canary (its subject is a canary's)"),
          [](CanaryManifest& m) { m.mail[4].subject = "Quarterly Figures"; }},
-        {"no mailbox", [](auto& p) { p.mail[1].mailbox.clear(); },
+        {"no mailbox", [](auto& p) { p.mail[1].selector.mailbox.clear(); },
          offered("mail", "incomplete (no mailbox, folder, subject or received time)")},
-        {"no folder", [](auto& p) { p.mail[1].folder.clear(); },
+        {"no folder", [](auto& p) { p.mail[1].selector.folder.clear(); },
          offered("mail", "incomplete (no mailbox, folder, subject or received time)")},
-        {"no subject", [](auto& p) { p.mail[1].subject.clear(); },
+        {"no subject", [](auto& p) { p.mail[1].selector.subject.clear(); },
          offered("mail", "incomplete (no mailbox, folder, subject or received time)")},
-        {"no received time", [](auto& p) { p.mail[1].received_at.clear(); },
+        {"no received time", [](auto& p) { p.mail[1].selector.received_at.clear(); },
          offered("mail", "incomplete (no mailbox, folder, subject or received time)")},
         // SharePoint.
         {"the RestoreTarget library", [](auto& p) { p.sharepoint[1].selector.drive_id = targets().library_id(); },
@@ -632,8 +634,8 @@ TEST_CASE("two mails of one subject, but for case, are never both taken", "[samp
 {
     connector::CandidatePool pool;
     pool.mail = {mail_candidate(1, "Archive"), mail_candidate(2, "Projects")};
-    pool.mail[0].subject = "Hello";
-    pool.mail[1].subject = "HELLO";
+    pool.mail[0].selector.subject = "Hello";
+    pool.mail[1].selector.subject = "HELLO";
     for (const std::string run_id : {"run-0001", "run-0002", "run-0003", "run-0004"}) {
         CAPTURE(run_id);
         const Selection s = select({4, 0, 0}, pool, {}, run_id);
@@ -804,6 +806,99 @@ TEST_CASE("a random file's size is unchecked: -1, whatever the candidate held", 
     CHECK(s.sharepoint[1].size == -1);
     CHECK(s.onedrive[1].size == -1);
     CHECK(s.sharepoint[1].drive_id == pool.sharepoint[0].selector.drive_id);
+    // The backup's size stays beside the selector, for the expected set (W3.1).
+    REQUIRE(s.sharepoint_random.size() == 1);
+    CHECK(s.sharepoint_random[0].selector.size == -1);
+    CHECK(s.sharepoint_random[0].size_bytes == 1001);
+    REQUIRE(s.onedrive_random.size() == 1);
+    CHECK(s.onedrive_random[0].size_bytes == 501);
+}
+
+TEST_CASE("the random candidates taken are kept with their facts, in their selectors' order",
+          "[sample-selector]")
+{
+    connector::CandidatePool pool;
+    for (int i = 0; i < 30; ++i) {
+        pool.mail.push_back(mail_candidate(i));
+        pool.sharepoint.push_back(sp_candidate(i));
+        pool.onedrive.push_back(od_candidate(i));
+    }
+    const Selection s = select({9, 8, 7}, pool, {2, 3, 4});
+    REQUIRE(s.mail_random.size() == 4);
+    REQUIRE(s.sharepoint_random.size() == 4);
+    REQUIRE(s.onedrive_random.size() == 3);
+    for (std::size_t j = 0; j < s.mail_random.size(); ++j) {
+        CAPTURE(j);
+        const connector::MailCandidate& taken = s.mail_random[j];
+        CHECK(s.mail[s.record.mail.canary_ids.size() + j] == taken.selector);
+        const int n = std::stoi(taken.selector.subject.substr(10)); // "real mail NN"
+        CHECK(taken.sender_name == "Carol Test");
+        CHECK(taken.sent_at == mail_candidate(n).sent_at);
+    }
+    for (std::size_t j = 0; j < s.sharepoint_random.size(); ++j) {
+        CAPTURE(j);
+        const connector::SharePointCandidate& taken = s.sharepoint_random[j];
+        CHECK(s.sharepoint[s.record.sharepoint.canary_ids.size() + j] == taken.selector);
+        CHECK(taken.selector.size == -1);
+        const int n = std::stoi(taken.selector.name.substr(7, 2)); // "report-NN.pdf"
+        CHECK(taken.size_bytes == 1000 + n);
+    }
+    for (std::size_t j = 0; j < s.onedrive_random.size(); ++j) {
+        CAPTURE(j);
+        const connector::OneDriveCandidate& taken = s.onedrive_random[j];
+        CHECK(s.onedrive[s.record.onedrive.canary_ids.size() + j] == taken.selector);
+        CHECK(taken.selector.size == -1);
+        const int n = std::stoi(taken.selector.name.substr(6, 2)); // "notes-NN.txt"
+        CHECK(taken.size_bytes == 500 + n);
+    }
+
+    // Only canaries, or nothing: none taken.
+    const Selection canaries = select({1, 1, 0}, pool);
+    CHECK(canaries.mail_random.empty());
+    CHECK(canaries.sharepoint_random.empty());
+    CHECK(canaries.onedrive_random.empty());
+}
+
+TEST_CASE("of two candidates of one key but other facts, the one kept doesn't depend on the "
+          "pool's order",
+          "[sample-selector]")
+{
+    connector::CandidatePool pool;
+    connector::MailCandidate a = mail_candidate(1);
+    connector::MailCandidate b = mail_candidate(1);
+    b.sender_name = "Another Name";
+    connector::MailCandidate c = mail_candidate(1);
+    c.sent_at.clear();
+    pool.mail = {a, b, c};
+    connector::SharePointCandidate small = sp_candidate(1);
+    connector::SharePointCandidate large = sp_candidate(1);
+    large.size_bytes = 99999;
+    pool.sharepoint = {small, large};
+    connector::OneDriveCandidate first = od_candidate(1);
+    connector::OneDriveCandidate second = od_candidate(1);
+    second.size_bytes = 7;
+    pool.onedrive = {first, second};
+
+    const Selection once = select({2, 2, 2}, pool);
+    connector::CandidatePool reversed = pool;
+    std::reverse(reversed.mail.begin(), reversed.mail.end());
+    std::reverse(reversed.sharepoint.begin(), reversed.sharepoint.end());
+    std::reverse(reversed.onedrive.begin(), reversed.onedrive.end());
+    const Selection other = select({2, 2, 2}, reversed);
+
+    REQUIRE(once.mail_random.size() == 1);
+    REQUIRE(other.mail_random.size() == 1);
+    CHECK(once.record.mail.pool_size == 1);
+    CHECK(once.mail_random[0].sender_name == other.mail_random[0].sender_name);
+    CHECK(once.mail_random[0].sent_at == other.mail_random[0].sent_at);
+    REQUIRE(once.sharepoint_random.size() == 1);
+    REQUIRE(other.sharepoint_random.size() == 1);
+    CHECK(once.sharepoint_random[0].size_bytes == other.sharepoint_random[0].size_bytes);
+    REQUIRE(once.onedrive_random.size() == 1);
+    REQUIRE(other.onedrive_random.size() == 1);
+    CHECK(once.onedrive_random[0].size_bytes == other.onedrive_random[0].size_bytes);
+    // The keys and pool hashes are the facts-free ones.
+    CHECK(everything(once) == everything(other));
 }
 
 // 10. The result's "sample" object.

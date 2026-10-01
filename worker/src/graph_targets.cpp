@@ -6,6 +6,7 @@
 #include <rp/text_v1.hpp>
 
 #include "json_fields.hpp"
+#include "office_files.hpp"
 #include "text_util.hpp"
 #include "uuid.hpp"
 
@@ -241,9 +242,9 @@ std::vector<FoundItem> TargetReader::list_files(const FileTarget& target)
                 items.push_back(std::move(item));
                 continue;
             }
-            // SharePoint rewrites docx and xlsx, so their bytes may differ from
-            // the size listed (office-v1; review of W2.2).
-            const bool office = ascii_ends_with_i(*name, ".docx") || ascii_ends_with_i(*name, ".xlsx");
+            // SharePoint rewrites Office packages, so their bytes may differ
+            // from the size listed (office-v1; review of W2.2; one rule, W3.1).
+            const bool office = is_office_package(*name);
             const std::string bytes = download_item(
                 graph_, download_, *target.grant, tenant_host_, target.drive_id, id,
                 *item.size_bytes, office ? SizeCheck::up_to_limit : SizeCheck::exact,

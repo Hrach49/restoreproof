@@ -80,6 +80,14 @@ struct Selection {
     std::vector<connector::MailSelector> mail;
     std::vector<connector::SharePointSelector> sharepoint;
     std::vector<connector::OneDriveSelector> onedrive;
+    // Per type, the random candidates taken, in the order their selectors
+    // follow the canaries, with what the backup listed beside the key (W3.1:
+    // a mail's sender name and sent time, a file's size_bytes); each
+    // selector's size -1, as in the selectors above. Per type, selectors ==
+    // record.canary_ids + <kind>_random in number.
+    std::vector<connector::MailCandidate> mail_random;
+    std::vector<connector::SharePointCandidate> sharepoint_random;
+    std::vector<connector::OneDriveCandidate> onedrive_random;
     SampleRecord record;
 };
 
@@ -94,7 +102,9 @@ public:
     //    deduplicated first (mail [mailbox lower case, folder, subject,
     //    received_at]; SharePoint [site_id lower case, list_id lower case,
     //    folder_path, name]; OneDrive [user lower case, folder_path, name]),
-    //    by a Shuffle on the type's items stream. A pick whose subject or name
+    //    by a Shuffle on the type's items stream (candidates of one key and
+    //    equal fields sorted by their facts too, so the one kept doesn't
+    //    depend on the pool's order). A pick whose subject or name
     //    is already taken, the case of any letter aside (src/name_key.hpp,
     //    Unicode), is skipped, its draw used up. Too few candidates is a
     //    shortfall, recorded and not filled.

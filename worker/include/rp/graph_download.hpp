@@ -6,8 +6,9 @@
 // That redirect is followed WITHOUT the Graph token, through an HttpClient of
 // its own that logs nothing, and only to the test tenant's SharePoint over
 // https (docs/decisions.md, W2.1 §6 and W2.2). The file is read whole into
-// memory, capped at the size Graph lists for it, or for a docx or xlsx at
-// DownloadOptions::max_bytes.
+// memory, capped at the size Graph lists for it, or for an Office package
+// (src/office_files.hpp: docx, xlsx, pptx and their macro and template types)
+// at DownloadOptions::max_bytes.
 
 #include <rp/graph_client.hpp>
 #include <rp/http_client.hpp>
@@ -30,7 +31,7 @@ inline constexpr std::uint64_t kMaxDownloadBytes = 64ull * 1024 * 1024;
 enum class SizeCheck {
     // Exactly that many bytes; the body is cut one byte past it.
     exact,
-    // Any count up to DownloadOptions::max_bytes: a docx or xlsx, which
+    // Any count up to DownloadOptions::max_bytes: an Office package, which
     // SharePoint rewrites (lab/README.md, office-v1), so its bytes may differ
     // from the size listed. W3.2 compares such files by content.
     up_to_limit,

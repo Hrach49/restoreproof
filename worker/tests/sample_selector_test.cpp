@@ -831,6 +831,7 @@ TEST_CASE("the random candidates taken are kept with their facts, in their selec
         CAPTURE(j);
         const connector::MailCandidate& taken = s.mail_random[j];
         CHECK(s.mail[s.record.mail.canary_ids.size() + j] == taken.selector);
+        CHECK(rp::sampling::random_key(taken.selector) == s.record.mail.random_keys[j]);
         const int n = std::stoi(taken.selector.subject.substr(10)); // "real mail NN"
         CHECK(taken.sender_name == "Carol Test");
         CHECK(taken.sent_at == mail_candidate(n).sent_at);
@@ -839,6 +840,7 @@ TEST_CASE("the random candidates taken are kept with their facts, in their selec
         CAPTURE(j);
         const connector::SharePointCandidate& taken = s.sharepoint_random[j];
         CHECK(s.sharepoint[s.record.sharepoint.canary_ids.size() + j] == taken.selector);
+        CHECK(rp::sampling::random_key(taken.selector) == s.record.sharepoint.random_keys[j]);
         CHECK(taken.selector.size == -1);
         const int n = std::stoi(taken.selector.name.substr(7, 2)); // "report-NN.pdf"
         CHECK(taken.size_bytes == 1000 + n);
@@ -847,6 +849,7 @@ TEST_CASE("the random candidates taken are kept with their facts, in their selec
         CAPTURE(j);
         const connector::OneDriveCandidate& taken = s.onedrive_random[j];
         CHECK(s.onedrive[s.record.onedrive.canary_ids.size() + j] == taken.selector);
+        CHECK(rp::sampling::random_key(taken.selector) == s.record.onedrive.random_keys[j]);
         CHECK(taken.selector.size == -1);
         const int n = std::stoi(taken.selector.name.substr(6, 2)); // "notes-NN.txt"
         CHECK(taken.size_bytes == 500 + n);

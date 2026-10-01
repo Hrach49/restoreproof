@@ -1287,6 +1287,16 @@ TEST_CASE("list_candidates: a mail's sender name and sent time as Veeam lists th
     json fractional = mail("x-6", "Budget");
     fractional["sent"] = "2026-09-26T08:14:59.9999999Z";
     rig.tenant.add_mail(kAliceMailbox, kArchive, fractional);
+    // Not a string: the field is empty and the mail still offered (decision 7).
+    json object_from = mail("x-7", "Picnic");
+    object_from["from"] = {{"name", "Hrachya Harutyunyan"}};
+    rig.tenant.add_mail(kAliceMailbox, kArchive, object_from);
+    json array_from = mail("x-8", "Retro");
+    array_from["from"] = json::array({"Hrachya Harutyunyan"});
+    rig.tenant.add_mail(kAliceMailbox, kArchive, array_from);
+    json number_sent = mail("x-9", "Quiz");
+    number_sent["sent"] = 1727215000;
+    rig.tenant.add_mail(kAliceMailbox, kArchive, number_sent);
     rig.serve();
 
     const connector::CandidatePool pool = rig.list(query(true, false, false));
@@ -1295,7 +1305,7 @@ TEST_CASE("list_candidates: a mail's sender name and sent time as Veeam lists th
     for (const connector::MailCandidate& c : pool.mail) {
         by_subject.emplace(c.selector.subject, c);
     }
-    REQUIRE(by_subject.size() == 6);
+    REQUIRE(by_subject.size() == 9);
     const std::string from = recorded.at("from").get<std::string>();
     const std::string sent = recorded.at("sent").get<std::string>();
     REQUIRE(from == "Hrachya Harutyunyan"); // a display name, not an address
@@ -1307,7 +1317,8 @@ TEST_CASE("list_candidates: a mail's sender name and sent time as Veeam lists th
     };
     for (const Row& row : {Row{"Lunch", from, sent}, Row{"Minutes", "", sent}, Row{"Rota", "", sent},
                            Row{"Payroll", from, ""}, Row{"Offsite", from, ""},
-                           Row{"Budget", from, "2026-09-26T08:14:59Z"}}) {
+                           Row{"Budget", from, "2026-09-26T08:14:59Z"}, Row{"Picnic", "", sent},
+                           Row{"Retro", "", sent}, Row{"Quiz", from, ""}}) {
         CAPTURE(row.subject);
         const connector::MailCandidate& c = by_subject.at(row.subject);
         CHECK(c.sender_name == row.sender_name);

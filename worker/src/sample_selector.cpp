@@ -254,19 +254,6 @@ void check_pool(const connector::CandidatePool& pool, const connector::RestoreTa
     }
 }
 
-Key key_of(const connector::MailSelector& m)
-{
-    return {ascii_lower(m.mailbox), m.folder, m.subject, m.received_at};
-}
-Key key_of(const connector::SharePointSelector& s)
-{
-    return {ascii_lower(s.site_id), ascii_lower(s.list_id), s.folder_path, s.name};
-}
-Key key_of(const connector::OneDriveSelector& o)
-{
-    return {ascii_lower(o.user), o.folder_path, o.name};
-}
-
 // Every field, so equal keys still sort one way whatever the listing's order.
 Key all_of(const connector::MailSelector& m)
 {
@@ -356,7 +343,7 @@ void select_kind(ItemKind kind, int size, const std::vector<Canary>& canaries, s
     std::vector<Keyed> keyed;
     keyed.reserve(pool.size());
     for (const Candidate& candidate : pool) {
-        keyed.push_back({key_of(candidate.selector), all_of(candidate.selector),
+        keyed.push_back({random_key(candidate.selector), all_of(candidate.selector),
                          facts_of(candidate), candidate});
     }
     std::sort(keyed.begin(), keyed.end(), [](const Keyed& a, const Keyed& b) {
@@ -392,7 +379,7 @@ void select_kind(ItemKind kind, int size, const std::vector<Canary>& canaries, s
         if (!taken.insert(name_key(shown_name(picked.selector))).second) {
             continue;
         }
-        record.random_keys.push_back(key_of(picked.selector));
+        record.random_keys.push_back(random_key(picked.selector));
         set_unchecked_size(picked.selector);
         out.push_back(picked.selector);
         random_out.push_back(std::move(picked));
@@ -435,6 +422,21 @@ std::vector<std::string> unique_folded(std::vector<std::string> values)
 }
 
 } // namespace
+
+std::vector<std::string> random_key(const connector::MailSelector& m)
+{
+    return {ascii_lower(m.mailbox), m.folder, m.subject, m.received_at};
+}
+
+std::vector<std::string> random_key(const connector::SharePointSelector& s)
+{
+    return {ascii_lower(s.site_id), ascii_lower(s.list_id), s.folder_path, s.name};
+}
+
+std::vector<std::string> random_key(const connector::OneDriveSelector& o)
+{
+    return {ascii_lower(o.user), o.folder_path, o.name};
+}
 
 std::optional<std::string> cursor_problem(const CanaryManifest& manifest,
                                           const CanaryCursor& cursor)

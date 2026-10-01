@@ -400,11 +400,14 @@ void CandidateLister::browse_mail(connector::CandidatePool& pool)
             // left empty when Veeam doesn't say, never a reason to drop the mail.
             connector::MailCandidate candidate{
                 {mailbox.address, folder.folder_path, *subject, *second}, {}, {}};
-            if (const std::string* from = text_at(item, "from")) {
-                candidate.sender_name = *from;
+            // Read tolerantly: a field that isn't a string is one Veeam didn't
+            // say (decision 7), not a reason to fail the listing.
+            if (const auto from = item.find("from"); from != item.end() && from->is_string()) {
+                candidate.sender_name = from->get<std::string>();
             }
-            if (const std::string* sent = text_at(item, "sent")) {
-                candidate.sent_at = vr::to_whole_seconds(*sent).value_or("");
+            if (const auto sent = item.find("sent"); sent != item.end() && sent->is_string()) {
+                candidate.sent_at =
+                    vr::to_whole_seconds(sent->get_ref<const std::string&>()).value_or("");
             }
             found.push_back(std::move(candidate));
         }

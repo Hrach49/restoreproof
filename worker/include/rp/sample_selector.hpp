@@ -118,6 +118,14 @@ public:
                             const connector::CandidatePool& pool, std::string_view run_id);
 };
 
+// A random candidate's key, as select sorts, deduplicates and records it
+// (KindRecord::random_keys): mail [mailbox lower case, folder, subject,
+// received_at]; SharePoint [site_id lower case, list_id lower case,
+// folder_path, name]; OneDrive [user lower case, folder_path, name].
+std::vector<std::string> random_key(const connector::MailSelector& mail);
+std::vector<std::string> random_key(const connector::SharePointSelector& file);
+std::vector<std::string> random_key(const connector::OneDriveSelector& file);
+
 // Why `cursor` is out of `manifest`'s range, for the first type that is (mail,
 // sharepoint, onedrive): "the <kind> cursor must be below <n>, the manifest's
 // <kind> canaries", or "the <kind> cursor must be 0: the manifest has no <kind>

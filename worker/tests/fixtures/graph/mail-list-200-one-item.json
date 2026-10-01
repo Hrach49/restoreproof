@@ -1,6 +1,6 @@
 {
   "source": "live 2026-09-28: GET the restoretest inbox as the Worker lists it, one mail, its body as text",
-  "request": "GET /v1.0/users/restoretest@RestoreProofLab.onmicrosoft.com/mailFolders/inbox/messages?$select=id,subject,from,receivedDateTime,internetMessageId,body&$top=100",
+  "request": "GET /v1.0/users/restoretest@RestoreProofLab.onmicrosoft.com/mailFolders/inbox/messages?$select=id,subject,from,sentDateTime,receivedDateTime,createdDateTime,internetMessageId,body&$top=100",
   "status": 200,
   "headers": {
     "Content-Type": "application/json; odata.metadata=minimal; odata.streaming=true; IEEE754Compatible=false; charset=utf-8",

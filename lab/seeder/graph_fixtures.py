@@ -289,14 +289,16 @@ NOBODY_SHOWN = f"nobody-…@{tenant.TENANT_DOMAIN}"
 # ---- the restore targets, read as the Worker's TargetReader reads them (W2.2) --------------
 
 RESTORE_TARGET = "RestoreTarget"
-# With the body, so one call lists and hashes a page (review of W2.2: no GET per mail).
-MAIL_SELECT = "$select=id,subject,from,receivedDateTime,internetMessageId,body"
+# With the body, so one call lists and hashes a page (review of W2.2: no GET per mail);
+# sentDateTime and createdDateTime for W3.2's checker, as the Worker asks.
+MAIL_SELECT = "$select=id,subject,from,sentDateTime,receivedDateTime,createdDateTime,internetMessageId,body"
 DRIVE_SELECT = "$select=id,name,driveType,webUrl,sharePointIds"
 # sharepointIds: the OneDrive's site URL and IDs, which a OneDrive restore names (W2.7).
 FOLDER_SELECT = "$select=id,name,folder,parentReference,sharepointIds"
 # The guard's mailbox check (W2.7): a 200 only inside the Exchange RBAC scope.
 INBOX_SELECT = "$select=id"
-CHILDREN_QUERY = "$select=id,name,size,file,folder&$top=200"
+# cTag and the two times: W3.2's checker tells this run's copies from an earlier run's by them.
+CHILDREN_QUERY = "$select=id,name,size,cTag,createdDateTime,lastModifiedDateTime,file,folder&$top=200"
 PREFER = (("Prefer", MAIL_PREFER),)
 # An ID from a reply may go in a URL path only if it is made of these (Exchange IDs end in "=").
 _SAFE_ID = re.compile(r"[A-Za-z0-9!_=-]{1,512}")

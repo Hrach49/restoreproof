@@ -1,0 +1,11 @@
+{
+  "source": "rpworker 0.0.0 restore --record",
+  "request": "GET /sites/RestoreTest/_layouts/15/download.aspx?UniqueId=SCRUBBED&Translate=SCRUBBED&tempauth=SCRUBBED&ApiVersion=SCRUBBED",
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/pdf"
+  },
+  "body": null,
+  "body_size": 925,
+  "body_sha256": "9c79923653e6c2890199e4973b83924eb44b9cf1a2d7f484ef87037ac169a886"
+}

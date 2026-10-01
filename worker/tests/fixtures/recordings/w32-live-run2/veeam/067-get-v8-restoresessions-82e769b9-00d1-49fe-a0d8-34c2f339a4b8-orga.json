@@ -1,0 +1,60 @@
+{
+  "source": "rpworker 0.0.0 restore --record",
+  "request": "GET /v8/RestoreSessions/82e769b9-00d1-49fe-a0d8-34c2f339a4b8/organization/mailboxes/e00393b0-a896-4487-ad04-0e1be36468fb/items/LgAAAEYAAAAWAAAAAAAAAJQ40Ee3vkxBk1fd6-4CAU4BAP0LwXmScMJMnrn-sNESuJ8AAAAAAQwAAAAAAACUONBHt75MQZNX3evuAgFOBwD9C8F5knDCTJ65_rDRErifAAAAAAEMAAD9C8F5knDCTJ65_rDRErifAAAAAFuNAAD9C8F5knDCTJ65_rDRErifAAAAADsB",
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8"
+  },
+  "body": {
+    "mailboxId": "e00393b0-a896-4487-ad04-0e1be36468fb",
+    "attachments": [],
+    "subject": "RP-CANARY-0003",
+    "itemClass": "IPM.Note",
+    "_links": {
+      "self": {
+        "href": "/v8/restoresessions/82e769b9-00d1-49fe-a0d8-34c2f339a4b8/organization/mailboxes/e00393b0-a896-4487-ad04-0e1be36468fb/items/LgAAAEYAAAAWAAAAAAAAAJQ40Ee3vkxBk1fd6-4CAU4BAP0LwXmScMJMnrn-sNESuJ8AAAAAAQwAAAAAAACUONBHt75MQZNX3evuAgFOBwD9C8F5knDCTJ65_rDRErifAAAAAAEMAAD9C8F5knDCTJ65_rDRErifAAAAAFuNAAD9C8F5knDCTJ65_rDRErifAAAAADsB"
+      },
+      "parent": {
+        "href": "/v8/restoresessions/82e769b9-00d1-49fe-a0d8-34c2f339a4b8/organization/mailboxes/e00393b0-a896-4487-ad04-0e1be36468fb/folders/AAAAAJQ40Ee3vkxBk1fd6-4CAU4BAP0LwXmScMJMnrn-sNESuJ8AAAAAAQwAAA"
+      },
+      "mailbox": {
+        "href": "/v8/restoresessions/82e769b9-00d1-49fe-a0d8-34c2f339a4b8/organization/mailboxes/e00393b0-a896-4487-ad04-0e1be36468fb"
+      }
+    },
+    "_actions": {
+      "restoreToOriginalLocation": {
+        "uri": "/v8/restoresessions/82e769b9-00d1-49fe-a0d8-34c2f339a4b8/organization/mailboxes/e00393b0-a896-4487-ad04-0e1be36468fb/items/LgAAAEYAAAAWAAAAAAAAAJQ40Ee3vkxBk1fd6-4CAU4BAP0LwXmScMJMnrn-sNESuJ8AAAAAAQwAAAAAAACUONBHt75MQZNX3evuAgFOBwD9C8F5knDCTJ65_rDRErifAAAAAAEMAAD9C8F5knDCTJ65_rDRErifAAAAAFuNAAD9C8F5knDCTJ65_rDRErifAAAAADsB/restore",
+        "method": "POST"
+      },
+      "restoreTo": {
+        "uri": "/v8/restoresessions/82e769b9-00d1-49fe-a0d8-34c2f339a4b8/organization/mailboxes/e00393b0-a896-4487-ad04-0e1be36468fb/items/LgAAAEYAAAAWAAAAAAAAAJQ40Ee3vkxBk1fd6-4CAU4BAP0LwXmScMJMnrn-sNESuJ8AAAAAAQwAAAAAAACUONBHt75MQZNX3evuAgFOBwD9C8F5knDCTJ65_rDRErifAAAAAAEMAAD9C8F5knDCTJ65_rDRErifAAAAAFuNAAD9C8F5knDCTJ65_rDRErifAAAAADsB/restoreTo",
+        "method": "POST"
+      },
+      "exportToPst": {
+        "uri": "/v8/restoresessions/82e769b9-00d1-49fe-a0d8-34c2f339a4b8/organization/mailboxes/e00393b0-a896-4487-ad04-0e1be36468fb/items/LgAAAEYAAAAWAAAAAAAAAJQ40Ee3vkxBk1fd6-4CAU4BAP0LwXmScMJMnrn-sNESuJ8AAAAAAQwAAAAAAACUONBHt75MQZNX3evuAgFOBwD9C8F5knDCTJ65_rDRErifAAAAAAEMAAD9C8F5knDCTJ65_rDRErifAAAAAFuNAAD9C8F5knDCTJ65_rDRErifAAAAADsB/exportToPst",
+        "method": "POST"
+      },
+      "saveToMsg": {
+        "uri": "/v8/restoresessions/82e769b9-00d1-49fe-a0d8-34c2f339a4b8/organization/mailboxes/e00393b0-a896-4487-ad04-0e1be36468fb/items/LgAAAEYAAAAWAAAAAAAAAJQ40Ee3vkxBk1fd6-4CAU4BAP0LwXmScMJMnrn-sNESuJ8AAAAAAQwAAAAAAACUONBHt75MQZNX3evuAgFOBwD9C8F5knDCTJ65_rDRErifAAAAAAEMAAD9C8F5knDCTJ65_rDRErifAAAAAFuNAAD9C8F5knDCTJ65_rDRErifAAAAADsB/Save",
+        "method": "POST"
+      },
+      "sendToDefaultAddress": {
+        "uri": "/v8/restoresessions/82e769b9-00d1-49fe-a0d8-34c2f339a4b8/organization/mailboxes/e00393b0-a896-4487-ad04-0e1be36468fb/items/LgAAAEYAAAAWAAAAAAAAAJQ40Ee3vkxBk1fd6-4CAU4BAP0LwXmScMJMnrn-sNESuJ8AAAAAAQwAAAAAAACUONBHt75MQZNX3evuAgFOBwD9C8F5knDCTJ65_rDRErifAAAAAAEMAAD9C8F5knDCTJ65_rDRErifAAAAAFuNAAD9C8F5knDCTJ65_rDRErifAAAAADsB/sendToDefaultAddress",
+        "method": "POST"
+      },
+      "sendToDifferentAddress": {
+        "uri": "/v8/restoresessions/82e769b9-00d1-49fe-a0d8-34c2f339a4b8/organization/mailboxes/e00393b0-a896-4487-ad04-0e1be36468fb/items/LgAAAEYAAAAWAAAAAAAAAJQ40Ee3vkxBk1fd6-4CAU4BAP0LwXmScMJMnrn-sNESuJ8AAAAAAQwAAAAAAACUONBHt75MQZNX3evuAgFOBwD9C8F5knDCTJ65_rDRErifAAAAAAEMAAD9C8F5knDCTJ65_rDRErifAAAAAFuNAAD9C8F5knDCTJ65_rDRErifAAAAADsB/sendToDifferentAddress",
+        "method": "POST"
+      }
+    },
+    "id": "LgAAAEYAAAAWAAAAAAAAAJQ40Ee3vkxBk1fd6-4CAU4BAP0LwXmScMJMnrn-sNESuJ8AAAAAAQwAAAAAAACUONBHt75MQZNX3evuAgFOBwD9C8F5knDCTJ65_rDRErifAAAAAAEMAAD9C8F5knDCTJ65_rDRErifAAAAAFuNAAD9C8F5knDCTJ65_rDRErifAAAAADsB",
+    "from": "Hrachya Harutyunyan",
+    "importance": "Normal",
+    "cc": "",
+    "bcc": "",
+    "to": "Alice Test",
+    "sent": "2026-09-24T22:14:40Z",
+    "received": "2026-09-24T22:14:43.77087Z",
+    "reminder": false
+  }
+}

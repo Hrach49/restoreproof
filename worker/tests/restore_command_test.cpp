@@ -21,6 +21,7 @@
 #include <rp/restore_command.hpp>
 #include <rp/sample_rng.hpp>
 #include <rp/secrets.hpp>
+#include <rp/text_v1.hpp>
 
 #include <nlohmann/json.hpp>
 
@@ -33,13 +34,17 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <functional>
 #include <iterator>
+#include <map>
 #include <memory>
+#include <new>
 #include <optional>
 #include <ostream>
 #include <regex>
@@ -271,8 +276,294 @@ struct Run {
     std::string err;
 };
 
+// lab/seeder/catalog.py's MAIL_SENTENCES and MAIL_FOOTER: what a canary mail's
+// body holds, so a restored copy can carry it (its text-v1 hash is the
+// manifest's body_sha256; a test below holds them to it).
+const std::vector<std::string> kMailSentences{
+    "The lighthouse keeper counted forty-one ships before dawn.",
+    "A copper kettle whistled twice in the empty kitchen.",
+    "Seven orange kites drifted over the harbour wall.",
+    "The night train to Krakow left three minutes early.",
+    "A grey heron stood motionless in the shallow reeds.",
+    "Twelve jars of plum jam lined the pantry shelf.",
+    "The clockmaker replaced a spring worn thin by time.",
+    "Fresh snow covered the bicycle left by the gate.",
+    "A violinist tuned the strings beneath the old bridge.",
+    "The library smelled of cedar, dust and rain.",
+    "Nine paper boats raced down the gutter after the storm.",
+    "The baker shaped two hundred rolls before sunrise.",
+    "A red fox crossed the frozen field without a sound.",
+    "The ferry horn echoed across the misty fjord.",
+    "Four chess pieces were missing from the park table.",
+    "The gardener planted tulips in a perfect spiral.",
+    "A brass compass pointed stubbornly to the north-east.",
+    "The museum guard hummed an old waltz at closing time.",
+    "Silver rain tapped on the greenhouse roof all night.",
+    "The cartographer inked a river that no longer exists.",
+};
+const std::string kMailFooter =
+    "RestoreProof canary mail. Do not edit, move or delete this message.\r\n"
+    "It is one of the 40 expected items in lab/seed-manifest.json.";
+
+// The body of canary mail "RP-CANARY-00nn" as sent.
+std::string canary_body(const std::string& subject)
+{
+    return kMailSentences.at(std::stoul(subject.substr(10)) - 1) + "\r\n\r\n" + kMailFooter;
+}
+
+// A file's bytes, or nullopt when it can't be read. No Catch2 assertion: the
+// fakes' handlers call it.
+std::optional<std::string> file_bytes(const std::filesystem::path& path)
+{
+    std::ifstream file(path, std::ios::binary);
+    if (!file) {
+        return std::nullopt;
+    }
+    return std::string{std::istreambuf_iterator<char>(file), {}};
+}
+
+// A message as Graph lists it in the test mailbox.
+json graph_mail(const std::string& id, const std::string& subject, const std::string& address,
+                const std::string& name, const std::string& sent, const std::string& received,
+                const std::string& internet_message_id, const std::string& body)
+{
+    return {{"id", id},
+            {"subject", subject},
+            {"from", {{"emailAddress", {{"name", name}, {"address", address}}}}},
+            {"sentDateTime", sent},
+            {"receivedDateTime", received},
+            {"createdDateTime", "2026-10-01T10:00:00Z"},
+            {"internetMessageId", internet_message_id},
+            {"body", {{"contentType", "text"}, {"content", body}}}};
+}
+
+// A file as Graph lists it in a file target.
+json graph_file(const std::string& id, const std::string& name, std::size_t size,
+                const std::string& ctag = "\"c:{restored},1\"")
+{
+    return {{"id", id},
+            {"name", name},
+            {"size", size},
+            {"cTag", ctag},
+            {"createdDateTime", "2026-09-24T22:14:43Z"},
+            {"lastModifiedDateTime", "2026-10-01T10:00:00Z"},
+            {"file", {{"mimeType", "application/octet-stream"}}}};
+}
+
+std::size_t kind_slot(connector::ItemKind kind)
+{
+    return static_cast<std::size_t>(kind);
+}
+
+// The restore targets as the check reads them through Graph (W3.2): the
+// guards' recorded replies, and listings the test sets, before the restore and
+// after it. After it, unless the test sets `after`, each target holds what it
+// held before and a faithful copy of each item the restore was given
+// (`mirror`): a canary as the manifest describes it (a mail with its body as
+// sent, a file with lab/canary's bytes), a random mail as its candidate. No
+// Catch2 assertions in the handlers.
+struct TargetsLab {
+    TargetsLab()
+    {
+        namespace gl = rp::test::graph_lab;
+        manifest = json::parse(lab_manifest_text());
+        graph.on(rp::HttpMethod::post, gl::kTokenUrl, {gl::token_response()});
+        graph.on(rp::HttpMethod::get, gl::inbox_url(), {rp::test::load_fixture("graph", "mailbox-inbox-200")});
+        graph.on(rp::HttpMethod::get, gl::drive_url(),
+                 {rp::test::load_fixture("graph", "restoretarget-drive-200")});
+        graph.on(rp::HttpMethod::get, gl::folder_url(),
+                 {rp::test::load_fixture("graph", "onedrive-folder-200")});
+        const auto serve = [this](const std::string& url, connector::ItemKind kind) {
+            graph.on(rp::HttpMethod::get, url,
+                     [this, kind](const rp::HttpRequest&) { return listing(kind); });
+        };
+        serve(gl::mail_list_url(false), connector::ItemKind::mail);
+        serve(gl::mail_list_url(true), connector::ItemKind::mail);
+        serve(gl::library_children_url(), connector::ItemKind::sharepoint);
+        serve(gl::folder_children_url(), connector::ItemKind::onedrive);
+        base_location[kind_slot(connector::ItemKind::sharepoint)] =
+            gl::location_of(gl::sharepoint_location());
+        base_location[kind_slot(connector::ItemKind::onedrive)] =
+            gl::location_of(gl::onedrive_location());
+        graph.on_path(rp::HttpMethod::get, "/v1.0/drives/*/items/*/content",
+                      [this](const rp::HttpRequest& request) { return content(request); });
+        for (const connector::ItemKind kind :
+             {connector::ItemKind::sharepoint, connector::ItemKind::onedrive}) {
+            download.on_path(rp::HttpMethod::get,
+                             std::string{rp::request_path(base_location[kind_slot(kind)])} +
+                                 "&rp-item=*",
+                             [this](const rp::HttpRequest& request) { return bytes(request); });
+        }
+    }
+
+    // A listing page: what the target holds before the restore or after it.
+    rp::HttpResponse listing(connector::ItemKind kind)
+    {
+        const bool after_restore = restored && restored();
+        if (fail) {
+            if (std::optional<rp::HttpResponse> response = fail(kind, after_restore)) {
+                return *response;
+            }
+        }
+        json value = before[kind_slot(kind)];
+        if (after_restore) {
+            const json added = after[kind_slot(kind)] ? *after[kind_slot(kind)] : mirror(kind);
+            for (const json& item : added) {
+                value.push_back(item);
+            }
+            for (const json& item : value) {
+                if (item.contains("file") && !files.contains(item["id"].get<std::string>())) {
+                    files[item["id"].get<std::string>()] =
+                        std::string(item["size"].get<std::size_t>(), 'r');
+                }
+            }
+        }
+        return rp::test::graph_lab::page_of(value);
+    }
+
+    // The copies a faithful restore of the spec's items makes.
+    json mirror(connector::ItemKind kind)
+    {
+        json out = json::array();
+        if (!spec) {
+            return out;
+        }
+        const std::optional<connector::RestoreSpec> s = spec();
+        if (!s) {
+            return out;
+        }
+        const auto entry = [&](const std::string& field, const std::string& value) -> const json* {
+            for (const json& e : manifest.at("entries")) {
+                if (e.value(field, "") == value) {
+                    return &e;
+                }
+            }
+            return nullptr;
+        };
+        const std::string prefix = "restored-" + std::string{connector::to_string(kind)} + "-";
+        std::size_t n = 0;
+        const auto add_file = [&](const std::string& name, std::int64_t size) {
+            const std::string id = prefix + std::to_string(n++);
+            const std::optional<std::string> canary =
+                entry("name", name) ? file_bytes(std::filesystem::path{RP_SOURCE_DIR} / ".." /
+                                                 "lab" / "canary" / name)
+                                    : std::nullopt;
+            std::string content = canary ? *canary
+                                         : std::string(static_cast<std::size_t>(
+                                                           std::max<std::int64_t>(size, 0)),
+                                                       'r');
+            out.push_back(graph_file(id, name, content.size()));
+            files[id] = std::move(content);
+        };
+        switch (kind) {
+        case connector::ItemKind::mail:
+            for (const connector::MailSelector& m : s->mail) {
+                const std::string id = prefix + std::to_string(n++);
+                if (const json* e = entry("subject", m.subject)) {
+                    out.push_back(graph_mail(id, m.subject, e->at("sender").get<std::string>(),
+                                             "Hrachya Harutyunyan",
+                                             e->at("sent_at").get<std::string>(),
+                                             e->at("received_at").get<std::string>(),
+                                             e->at("internet_message_id").get<std::string>(),
+                                             canary_body(m.subject)));
+                    continue;
+                }
+                const std::vector<connector::MailCandidate> candidates = candidates_of().mail;
+                const auto candidate =
+                    std::ranges::find_if(candidates, [&](const connector::MailCandidate& c) {
+                        return c.selector == m;
+                    });
+                const bool known = candidate != candidates.end();
+                const std::string name = known ? candidate->sender_name : "";
+                const std::string sent = known ? candidate->sent_at : "";
+                out.push_back(graph_mail(id, m.subject, "carol@RestoreProofLab.onmicrosoft.com",
+                                         name, sent, m.received_at, "<" + id + "@lab.example>",
+                                         "a random mail's body"));
+            }
+            break;
+        case connector::ItemKind::sharepoint:
+            for (const connector::SharePointSelector& f : s->sharepoint) {
+                add_file(f.name, size_of(candidates_of().sharepoint, f));
+            }
+            break;
+        case connector::ItemKind::onedrive:
+            for (const connector::OneDriveSelector& f : s->onedrive) {
+                add_file(f.name, size_of(candidates_of().onedrive, f));
+            }
+            break;
+        }
+        return out;
+    }
+
+    connector::CandidatePool candidates_of() const
+    {
+        return pool ? pool() : connector::CandidatePool{};
+    }
+
+    // The size the backup holds of a random file: its candidate's.
+    template <typename Candidate, typename Selector>
+    static std::int64_t size_of(const std::vector<Candidate>& candidates, const Selector& selector)
+    {
+        for (const Candidate& c : candidates) {
+            if (c.selector == selector) {
+                return c.size_bytes;
+            }
+        }
+        return selector.size;
+    }
+
+    // A file's /content: a 302 to its download link.
+    rp::HttpResponse content(const rp::HttpRequest& request)
+    {
+        const std::size_t start = request.url.find("/items/") + 7;
+        const std::string id = request.url.substr(start, request.url.find("/content") - start);
+        const bool onedrive =
+            request.url.find(rp::test::graph_lab::lab_values().onedrive_drive_id) != std::string::npos;
+        rp::HttpResponse response = rp::test::make_response(302);
+        response.headers["Location"] =
+            base_location[kind_slot(onedrive ? connector::ItemKind::onedrive
+                                             : connector::ItemKind::sharepoint)] +
+            "&rp-item=" + id;
+        return response;
+    }
+
+    rp::HttpResponse bytes(const rp::HttpRequest& request)
+    {
+        if (download_throw) {
+            download_throw();
+        }
+        const std::string id = request.url.substr(request.url.find("&rp-item=") + 9);
+        const auto it = files.find(id);
+        if (it == files.end()) {
+            return rp::test::make_response(404);
+        }
+        return rp::test::make_response(200, it->second, "application/octet-stream");
+    }
+
+    // Whether the restore has run: the listings are the after ones from then.
+    std::function<bool()> restored;
+    // The spec the restore was given, and the random mails' candidates.
+    std::function<std::optional<connector::RestoreSpec>()> spec;
+    std::function<connector::CandidatePool()> pool;
+    // Called first on each download: a test throws from it what no Graph
+    // failure is (std::bad_alloc, a logic error).
+    std::function<void()> download_throw;
+    // A listing's answer in place of the page, when it returns one.
+    std::function<std::optional<rp::HttpResponse>(connector::ItemKind, bool after)> fail;
+    // What each target holds before the restore, and what the restore adds
+    // (nullopt: the mirror).
+    std::array<json, 3> before{json::array(), json::array(), json::array()};
+    std::array<std::optional<json>, 3> after;
+    json manifest;
+    std::array<std::string, 3> base_location;
+    std::map<std::string, std::string> files; // file ID -> its bytes
+    rp::test::FakeHttpClient graph;
+    rp::test::FakeHttpClient download;
+};
+
 // A temp folder with config.json and the lab's manifest beside it, the fake
-// connector, secrets, a clock and a run ID the test chose.
+// connector, Graph and the downloads on TargetsLab, secrets, a clock and a
+// run ID the test chose.
 struct Harness {
     explicit Harness(const json& config_edit = json::object())
     {
@@ -284,6 +575,9 @@ struct Harness {
         logger = std::make_shared<spdlog::logger>("restore_command_test", sink);
         logger->set_pattern("[%l] %v");
         logger->set_level(spdlog::level::trace);
+        targets.restored = [this] { return fake.restore_calls > 0; };
+        targets.spec = [this] { return fake.spec; };
+        targets.pool = [this] { return fake.pool; };
     }
 
     rp::RestoreCommandEnv env()
@@ -314,6 +608,17 @@ struct Harness {
         env.connector_options.logger = logger;
         // The certificate is checked at the time the lab's is valid.
         env.connector_options.wall_now = [] { return rp::test::graph_lab::kNow; };
+        // The check's Graph (W3.2): never a wait between attempts.
+        env.connector_options.make_graph_http =
+            [this](std::shared_ptr<spdlog::logger>) -> std::unique_ptr<rp::IHttpClient> {
+            ++graph_clients;
+            return std::make_unique<rp::test::ForwardingHttpClient>(targets.graph);
+        };
+        env.connector_options.sleep = [](std::chrono::milliseconds) {};
+        env.connector_options.jitter = [] { return 0.0; };
+        env.make_download_http = [this]() -> std::unique_ptr<rp::IHttpClient> {
+            return std::make_unique<rp::test::ForwardingHttpClient>(targets.download);
+        };
         env.make_run_id = [this] {
             ++run_id_calls;
             return kGeneratedRunId;
@@ -380,9 +685,11 @@ struct Harness {
     int load_secrets_calls = 0;
     int make_connector_calls = 0;
     int run_id_calls = 0;
+    int graph_clients = 0;
     std::string made_for_org;
     std::ostringstream log_stream;
     std::shared_ptr<spdlog::logger> logger;
+    TargetsLab targets;
 };
 
 connector::MailCandidate carol_mail(int n)
@@ -415,6 +722,18 @@ std::string expected_header()
            "  onedrive    0          0 of 0    0 of 0\n"
            "restoring 3 item(s) ...\n";
 }
+
+// The check's part of that run's output when each item's copy is faithful:
+// a mail's ms is its comparison (one tick of the harness's clock, 123 s), a
+// file's its download and hash too (two).
+const std::string kCheckOfThree =
+    "\n"
+    "  KIND        SOURCE  NAME              OUTCOME  FIELDS  DUP  MS\n"
+    "  mail        canary  RP-CANARY-0001    match    -       -    123000\n"
+    "  mail        random  real mail 01      match    -       -    123000\n"
+    "  sharepoint  canary  rp-canary-01.pdf  match    -       -    246000\n"
+    "\n"
+    "check: 3 match, 0 mismatch, 0 missing, 0 error\n";
 
 } // namespace
 
@@ -852,6 +1171,11 @@ TEST_CASE("restore: each failure of the restore has its exit code; the header is
     CHECK(run.err == c.err);
     CHECK(run.out == expected_header());
     CHECK(lab.fake.restore_calls == 1);
+    // The before snapshot was read; nothing is read back after a restore that threw.
+    CHECK(lab.targets.graph.count(rp::HttpMethod::get,
+                                  rp::test::graph_lab::mail_list_url(false)) == 1);
+    CHECK(lab.targets.graph.count(rp::HttpMethod::get,
+                                  rp::test::graph_lab::mail_list_url(true)) == 0);
 }
 
 TEST_CASE("restore: a failure choosing the sample restores nothing; the run ID is already out",
@@ -1198,7 +1522,8 @@ TEST_CASE("restore: a succeeded restore prints the header, both tables and the s
               "  sess-mail        mail        Success  2 of 2    2026-09-30T10:00:00Z  2026-09-30T10:01:05Z     0:01:05\n"
               "  sess-sharepoint  sharepoint  Success  1 of 1    2026-09-30T10:01:10Z  2026-09-30T10:01:52.25Z  0:00:42\n"
               "\n"
-              "status succeeded: 3 of 3 item(s) restored in 0:02:03\n");
+              "status succeeded: 3 of 3 item(s) restored in 0:02:03\n" +
+              kCheckOfThree);
     // The header went out before the restore began.
     CHECK(lab.fake.out_at_restore == expected_header());
     REQUIRE(lab.fake.spec);
@@ -1302,6 +1627,8 @@ TEST_CASE("restore: a restore that returns not_run is exit 4, never 5", "[restor
 {
     Harness lab;
     lab.fake.answer = [](const connector::RestoreSpec&) { return connector::RestoreResult{}; };
+    // Nothing was sent, so nothing is in the mailbox.
+    lab.targets.after[0] = json::array();
 
     const Run run = lab.run({"--run-id", kRunId, "--mail", "1", "--sp", "0", "--od", "0"});
 
@@ -1310,7 +1637,12 @@ TEST_CASE("restore: a restore that returns not_run is exit 4, never 5", "[restor
     // Without items or sessions, only the status line follows the header.
     const std::string last = "restoring 1 item(s) ...\n";
     CHECK(run.out.substr(run.out.find(last) + last.size()) ==
-          "\nstatus not_run: 0 of 0 item(s) restored in 0:02:03\n");
+          "\nstatus not_run: 0 of 0 item(s) restored in 0:02:03\n"
+          "\n"
+          "  KIND  SOURCE  NAME            OUTCOME  FIELDS  DUP  MS\n"
+          "  mail  canary  RP-CANARY-0001  missing  -       -    -\n"
+          "\n"
+          "check: 0 match, 0 mismatch, 1 missing, 0 error\n");
 }
 
 TEST_CASE("restore: --point latest, or none, is the newest; an ID matches in any case",
@@ -1530,7 +1862,8 @@ TEST_CASE("restore: each item's row: its source, outcome, session time and messa
           "  s-bad    sharepoint  Failed   0 of 1    2026-09-30T10:00:00Z  not a time            -\n"
           "  s-back   onedrive    Failed   0 of 0    2026-09-30T10:00:01Z  2026-09-30T10:00:00Z  -\n"
           "\n"
-          "status partial: 1 of 3 item(s) restored in 0:02:03\n");
+          "status partial: 1 of 3 item(s) restored in 0:02:03\n" +
+          kCheckOfThree);
 }
 
 TEST_CASE("restore: a session's elapsed time is cut to whole seconds and never overflows",
@@ -1654,6 +1987,356 @@ TEST_CASE("restore: the default environment reads the real config and secrets, w
     CHECK(env.connector_options.logger->name() == "rpworker");
 }
 
+// --- The check (W3.2) ----------------------------------------------------------------
+
+TEST_CASE("restore: the test helper's canary bodies are the ones the manifest hashed",
+          "[restore_command][checker]")
+{
+    std::size_t mails = 0;
+    const json manifest = json::parse(lab_manifest_text());
+    for (const json& entry : manifest.at("entries")) {
+        if (entry.at("kind").get<std::string>() == "mail") {
+            ++mails;
+            const std::string subject = entry.at("subject").get<std::string>();
+            CAPTURE(subject);
+            CHECK(rp::text_v1_sha256(canary_body(subject)) == entry.at("body_sha256").get<std::string>());
+        }
+    }
+    CHECK(mails == kMailSentences.size());
+}
+
+TEST_CASE("restore: a failure reading the targets before the restore stops the run, nothing "
+          "restored, with Graph's exit code",
+          "[restore_command][checker]")
+{
+    namespace gl = rp::test::graph_lab;
+    struct Case {
+        std::string name;
+        connector::ItemKind kind;
+        std::string fixture; // the listing's answer; empty: the guard refuses instead
+        int code;
+    };
+    const std::vector<Case> cases{
+        {"mail: a token Graph refuses", connector::ItemKind::mail, "api-invalid-token-401",
+         rp::exit_code::auth},
+        {"sharepoint: no permission", connector::ItemKind::sharepoint, "site-403-accessdenied",
+         rp::exit_code::auth},
+        {"onedrive: Graph unavailable", connector::ItemKind::onedrive, "messages-503-unavailable",
+         rp::exit_code::transient},
+        {"sharepoint: a drive Graph doesn't know", connector::ItemKind::sharepoint,
+         "drive-404-itemnotfound", rp::exit_code::service},
+        {"sharepoint: not the RestoreTarget library", connector::ItemKind::sharepoint, "",
+         rp::exit_code::service},
+    };
+    const Case& c = cases[GENERATE(range(std::size_t{0}, std::size_t{5}))];
+    CAPTURE(c.name);
+    Harness lab;
+    if (c.fixture.empty()) {
+        json drive = rp::test::load_fixture_json("graph", "restoretarget-drive-200");
+        drive["body"]["name"] = "Dokumenty";
+        lab.targets.graph.on(rp::HttpMethod::get, gl::drive_url(), {rp::test::to_response(drive)});
+    } else {
+        const rp::HttpResponse answer = rp::test::load_fixture("graph", c.fixture);
+        lab.targets.fail = [kind = c.kind, answer](connector::ItemKind k,
+                                                   bool) -> std::optional<rp::HttpResponse> {
+            return k == kind ? std::optional{answer} : std::nullopt;
+        };
+    }
+
+    const Run run = lab.run({"--run-id", kRunId, "--mail", "1", "--sp", "1", "--od", "1"});
+
+    CHECK(run.exit_code == c.code);
+    CHECK_THAT(run.err, StartsWith("check error: "));
+    CHECK(run.err.ends_with("; nothing was restored\n"));
+    CHECK(std::ranges::count(run.err, '\n') == 1);
+    CHECK(run.out.ends_with("restoring 3 item(s) ...\n"));
+    CHECK(lab.fake.restore_calls == 0);
+    CHECK(lab.graph_clients == 1);
+}
+
+TEST_CASE("restore: the before snapshot reads only the targets the sample has items for",
+          "[restore_command][checker]")
+{
+    namespace gl = rp::test::graph_lab;
+    Harness lab;
+
+    const Run run = lab.run({"--run-id", kRunId, "--mail", "1", "--sp", "0", "--od", "0"});
+
+    CHECK(run.exit_code == rp::exit_code::ok);
+    CHECK(lab.targets.graph.count(rp::HttpMethod::get, gl::mail_list_url(false)) == 1);
+    CHECK(lab.targets.graph.count(rp::HttpMethod::get, gl::mail_list_url(true)) == 1);
+    CHECK(lab.targets.graph.count(rp::HttpMethod::get, gl::library_children_url()) == 0);
+    CHECK(lab.targets.graph.count(rp::HttpMethod::get, gl::folder_children_url()) == 0);
+}
+
+TEST_CASE("restore: every type checked: canaries and random items of each, the Office ones by "
+          "office-v1, exit 0",
+          "[restore_command][checker]")
+{
+    Harness lab;
+    lab.fake.pool.mail = {carol_mail(1)};
+    lab.fake.pool.sharepoint = {
+        {{lab_values().site_id, "b!madeUpSourceLibraryDrive", "/Projects", "report.pdf",
+          "0b5e1d2c-0000-4000-8000-00000000c0de"},
+         1234}};
+    lab.fake.pool.onedrive = {{{kCarol, "/Projects", "deck.pptx"}, 9000}};
+
+    // Cursor 0,1,1: rp-canary-02.docx and rp-canary-12.docx, both office-v1.
+    const Run run = lab.run({"--run-id", kRunId, "--canary-cursor", "0,1,1", "--mail", "2",
+                             "--sp", "2", "--od", "2"});
+
+    INFO(run.out);
+    CHECK(run.exit_code == rp::exit_code::ok);
+    CHECK(run.err.empty());
+    // deck.pptx, a random Office file, has no size or hash to compare: listed,
+    // never downloaded, so its read took one clock step, not two.
+    CHECK_THAT(run.out,
+               ContainsSubstring(
+                   "\n"
+                   "  KIND        SOURCE  NAME               OUTCOME  FIELDS  DUP  MS\n"
+                   "  mail        canary  RP-CANARY-0001     match    -       -    123000\n"
+                   "  mail        random  real mail 01       match    -       -    123000\n"
+                   "  sharepoint  canary  rp-canary-02.docx  match    -       -    246000\n"
+                   "  sharepoint  random  report.pdf         match    -       -    246000\n"
+                   "  onedrive    canary  rp-canary-12.docx  match    -       -    246000\n"
+                   "  onedrive    random  deck.pptx          match    -       -    123000\n"
+                   "\n"
+                   "check: 6 match, 0 mismatch, 0 missing, 0 error\n"));
+}
+
+TEST_CASE("restore: an item missing or not matching is exit 5, named on stderr",
+          "[restore_command][checker]")
+{
+    Harness lab;
+    lab.fake.pool.mail = {carol_mail(1)};
+    SECTION("missing")
+    {
+        lab.targets.after[kind_slot(connector::ItemKind::sharepoint)] = json::array();
+        const Run run = lab.run({"--run-id", kRunId, "--mail", "2", "--sp", "1", "--od", "0"});
+        CHECK(run.exit_code == rp::exit_code::restore);
+        CHECK(run.err == "check: 1 item(s) didn't verify\n");
+        CHECK_THAT(run.out, ContainsSubstring(
+                                "  sharepoint  canary  rp-canary-01.pdf  missing  -       -    -\n"));
+        CHECK(run.out.ends_with("check: 2 match, 0 mismatch, 1 missing, 0 error\n"));
+    }
+    SECTION("a mismatch: a body and a time that differ")
+    {
+        lab.targets.after[kind_slot(connector::ItemKind::mail)] = json::array({graph_mail(
+            "restored-1", "RP-CANARY-0001", "HrachyaHarutyunyan@RestoreProofLab.onmicrosoft.com",
+            "Hrachya", "2026-09-24T22:14:40Z", "2026-09-24T22:20:00Z", "<x@lab.example>",
+            "another body")});
+        const Run run = lab.run({"--run-id", kRunId, "--mail", "1", "--sp", "0", "--od", "0"});
+        CHECK(run.exit_code == rp::exit_code::restore);
+        CHECK(run.err == "check: 1 item(s) didn't verify\n");
+        CHECK_THAT(run.out,
+                   ContainsSubstring("  mail  canary  RP-CANARY-0001  mismatch  "
+                                     "received_at,internet_message_id,sha256  -    123000\n"));
+    }
+}
+
+TEST_CASE("restore: a target that can't be read back makes its items error, exit 4; the others "
+          "are still checked",
+          "[restore_command][checker]")
+{
+    Harness lab;
+    lab.fake.pool.mail = {carol_mail(1)};
+    const rp::HttpResponse denied = rp::test::load_fixture("graph", "site-403-accessdenied");
+    lab.targets.fail = [denied](connector::ItemKind kind,
+                                bool after) -> std::optional<rp::HttpResponse> {
+        return after && kind == connector::ItemKind::sharepoint ? std::optional{denied}
+                                                                 : std::nullopt;
+    };
+
+    const Run run = lab.run({"--run-id", kRunId, "--mail", "2", "--sp", "1", "--od", "0"});
+
+    CHECK(run.exit_code == rp::exit_code::service);
+    CHECK_THAT(run.err, StartsWith("check error: "));
+    CHECK(run.err.ends_with("\ncheck: 1 item(s) couldn't be checked\n"));
+    CHECK_THAT(run.out,
+               ContainsSubstring(
+                   "  mail        canary  RP-CANARY-0001    match    -                 -    123000\n"
+                   "  mail        random  real mail 01      match    -                 -    123000\n"
+                   "  sharepoint  canary  rp-canary-01.pdf  error    graph_permission  -    -\n"));
+    CHECK(run.out.ends_with("check: 2 match, 0 mismatch, 0 missing, 1 error\n"));
+}
+
+TEST_CASE("restore: copies earlier runs left are ignored and counted; a file only an earlier run "
+          "left is an error",
+          "[restore_command][checker]")
+{
+    Harness lab;
+    // An earlier run's mail with this run's subject, and the canary file under
+    // its own name with a cTag the restore doesn't move.
+    lab.targets.before[kind_slot(connector::ItemKind::mail)] = json::array(
+        {graph_mail("earlier-mail", "RP-CANARY-0001", "x@lab.example", "X", "2026-09-24T22:14:40Z",
+                    "2026-09-24T22:14:43Z", "<earlier@lab.example>", "old")});
+    lab.targets.before[kind_slot(connector::ItemKind::sharepoint)] =
+        json::array({graph_file("earlier-file", "RP-CANARY-01.PDF", 925, "\"c:{earlier},1\"")});
+    lab.targets.after[kind_slot(connector::ItemKind::sharepoint)] = json::array();
+
+    const Run run = lab.run({"--run-id", kRunId, "--mail", "1", "--sp", "1", "--od", "0"});
+
+    CHECK(run.exit_code == rp::exit_code::service);
+    // One warning line, on stderr (docs/decisions.md 2026-10-01, W3.2 point 1).
+    CHECK(run.err == "warning: 2 copies from earlier runs in the restore targets were ignored "
+                     "(mail 1, sharepoint 1, onedrive 0)\n"
+                     "check: 1 item(s) couldn't be checked\n");
+    CHECK_THAT(run.out,
+               ContainsSubstring(
+                   "  mail        canary  RP-CANARY-0001    match    -             -    123000\n"
+                   "  sharepoint  canary  rp-canary-01.pdf  error    stale_target  -    -\n"));
+    CHECK(run.out.ends_with("check: 1 match, 0 mismatch, 0 missing, 1 error\n"));
+    // The earlier run's file was never downloaded.
+    for (const rp::HttpRequest& request : lab.targets.graph.requests()) {
+        CHECK(request.url.find("earlier-file") == std::string::npos);
+    }
+    CHECK(lab.targets.download.requests().empty());
+}
+
+TEST_CASE("restore: an earlier run's file that couldn't be downloaded doesn't touch the check; "
+          "only this run's expected files are read",
+          "[restore_command][checker]")
+{
+    Harness lab;
+    // Two leftovers whose downloads would fail the SharePoint read: one of
+    // the canary's name (its bytes no longer the size listed), one of another
+    // name, larger than the download limit.
+    lab.targets.before[kind_slot(connector::ItemKind::sharepoint)] =
+        json::array({graph_file("earlier-file", "RP-CANARY-01.PDF", 925, "\"c:{earlier},1\""),
+                     graph_file("earlier-other", "minutes.pdf", 70000000, "\"c:{other},4\"")});
+    lab.targets.files["earlier-file"] = "short";
+    lab.targets.files["earlier-other"] = "";
+
+    const Run run = lab.run({"--run-id", kRunId, "--mail", "0", "--sp", "1", "--od", "0"});
+
+    INFO(run.err);
+    CHECK(run.exit_code == rp::exit_code::ok);
+    CHECK(run.err == "warning: 2 copies from earlier runs in the restore targets were ignored "
+                     "(mail 0, sharepoint 2, onedrive 0)\n");
+    CHECK_THAT(run.out, ContainsSubstring(
+                            "  sharepoint  canary  rp-canary-01.pdf  match    -       -    246000\n"));
+    for (const rp::HttpRequest& request : lab.targets.graph.requests()) {
+        CHECK(request.url.find("earlier-") == std::string::npos);
+    }
+    REQUIRE(lab.targets.download.requests().size() == 1);
+    CHECK(lab.targets.download.requests()[0].url.ends_with("&rp-item=restored-sharepoint-0"));
+}
+
+TEST_CASE("restore: a failure in the check that isn't Graph's keeps the restore's tables and "
+          "exit code, and says the restore ran",
+          "[restore_command][checker]")
+{
+    using Raise = std::function<void()>;
+    const auto [what, raise] = GENERATE(table<std::string, Raise>({
+        {"bad_alloc", [] { throw std::bad_alloc(); }},
+        {"logic_error", [] { throw std::logic_error("SENTINEL-LOGIC"); }},
+        {"invalid_argument", [] { throw std::invalid_argument("SENTINEL-ARGUMENT"); }},
+    }));
+    const auto [status, code] = GENERATE(table<connector::RestoreStatus, int>({
+        {connector::RestoreStatus::succeeded, rp::exit_code::service},
+        {connector::RestoreStatus::partial, rp::exit_code::restore},
+    }));
+    CAPTURE(what, connector::to_string(status));
+    Harness lab;
+    lab.targets.download_throw = raise;
+    lab.fake.answer = [status = status](const connector::RestoreSpec& spec) {
+        connector::RestoreResult result = restored(spec);
+        result.status = status;
+        return result;
+    };
+
+    const Run run = lab.run({"--run-id", kRunId, "--mail", "1", "--sp", "1", "--od", "0"});
+
+    CHECK(run.exit_code == code);
+    CHECK(run.err == "check error: unexpected failure\n"
+                     "restore error: the restore had started: items may be in the restore "
+                     "targets (run run-0001)\n");
+    CHECK_THAT(run.out, ContainsSubstring("\nstatus " + std::string{connector::to_string(status)} +
+                                          ": 2 of 2 item(s) restored in 0:02:03\n"));
+    CHECK(run.out.find("check:") == std::string::npos);
+    CHECK(run.err.find("SENTINEL") == std::string::npos);
+}
+
+TEST_CASE("restore: two copies of one item: the newest is checked, and DUP says how many",
+          "[restore_command][checker]")
+{
+    Harness lab;
+    lab.targets.after[kind_slot(connector::ItemKind::sharepoint)] = json::array();
+    lab.targets.spec = [&lab]() -> std::optional<connector::RestoreSpec> {
+        if (!lab.fake.spec) {
+            return std::nullopt;
+        }
+        connector::RestoreSpec twice = *lab.fake.spec;
+        twice.mail.push_back(twice.mail.front());
+        return twice;
+    };
+
+    const Run run = lab.run({"--run-id", kRunId, "--mail", "1", "--sp", "0", "--od", "0"});
+
+    CHECK(run.exit_code == rp::exit_code::ok);
+    CHECK_THAT(run.out,
+               ContainsSubstring("  mail  canary  RP-CANARY-0001  match    -       2 copies  123000\n"));
+}
+
+TEST_CASE("restore: a stdout that fails on the check's table says so, with the check's exit code",
+          "[restore_command][checker]")
+{
+    const auto [missing, code, note] = GENERATE(table<bool, int, std::string>({
+        {false, rp::exit_code::config, ""},
+        {true, rp::exit_code::restore, "check: 1 item(s) didn't verify\n"},
+    }));
+    Harness lab;
+    if (missing) {
+        lab.targets.after[kind_slot(connector::ItemKind::mail)] = json::array();
+    }
+    // Everything up to the status line fits; the check's table doesn't.
+    const std::string status = "status succeeded: 1 of 1 item(s) restored in 0:02:03\n";
+    std::string before_check;
+    {
+        Harness probe;
+        before_check = probe.run({"--run-id", kRunId, "--mail", "1", "--sp", "0", "--od", "0"}).out;
+        before_check = before_check.substr(0, before_check.find(status) + status.size());
+    }
+    RecordingStreamBuf buffer(before_check.size() + 3);
+    std::ostream out(&buffer);
+
+    const auto [exit_code, error] =
+        lab.run_to({"--run-id", kRunId, "--mail", "1", "--sp", "0", "--od", "0"}, out);
+
+    CHECK(exit_code == code);
+    CHECK(error == "error: writing the output failed after the restore ran (run run-0001, status "
+                   "succeeded: 1 of 1 item(s) restored)\n" +
+                       note);
+    CHECK(buffer.text.starts_with(before_check));
+}
+
+TEST_CASE("restore --record: the check's Graph calls and downloads are recorded too, downloads "
+          "as a digest",
+          "[restore_command][checker][record]")
+{
+    Harness lab;
+    const std::filesystem::path rec = lab.dir.path() / "rec";
+
+    const Run run = lab.run(
+        {"--run-id", kRunId, "--mail", "0", "--sp", "1", "--od", "0", "--record", utf8(rec)});
+
+    INFO(run.err);
+    REQUIRE(run.exit_code == rp::exit_code::ok);
+    std::vector<std::filesystem::path> downloads;
+    for (const auto& entry : std::filesystem::directory_iterator(rec / "download")) {
+        downloads.push_back(entry.path());
+    }
+    REQUIRE(downloads.size() == 1);
+    const json fixture = json::parse(*file_bytes(downloads[0]));
+    CHECK(fixture["body"].is_null());
+    CHECK(fixture.contains("body_sha256"));
+    std::size_t graph = 0;
+    for ([[maybe_unused]] const auto& entry : std::filesystem::directory_iterator(rec / "graph")) {
+        ++graph;
+    }
+    CHECK(graph == lab.targets.graph.requests().size());
+}
+
 // --- Through the real veeam_m365 connector -------------------------------------------
 
 namespace {
@@ -1698,7 +2381,41 @@ struct RealRig {
         };
         o.cert_exporter = rig.exporter;
         env.now = [this] { return rig.clock.now(); };
+        env.make_download_http = [this]() -> std::unique_ptr<rp::IHttpClient> {
+            return std::make_unique<rp::test::ForwardingHttpClient>(download);
+        };
         return env;
+    }
+
+    // The test mailbox for the check (W3.2), on the guard's Graph: empty
+    // before the restore (the listing without bodies), and after it (with
+    // them) holding the restored copy of canary `subject`: W2.2's recorded
+    // one-mail listing, edited to carry the canary's fields and its body as
+    // sent (tests/fixtures/graph/README.md: edited copies are built in the test).
+    void serve_mailbox(const std::string& subject)
+    {
+        namespace gl = rp::test::graph_lab;
+        json entry;
+        const json manifest = json::parse(lab_manifest_text());
+        for (const json& e : manifest.at("entries")) {
+            if (e.value("subject", "") == subject) {
+                entry = e;
+            }
+        }
+        REQUIRE(entry.is_object());
+        json listing = rp::test::load_fixture_json("graph", "mail-list-200-one-item");
+        json& mail = listing["body"]["value"][0];
+        mail["subject"] = subject;
+        mail["internetMessageId"] = entry["internet_message_id"];
+        mail["from"]["emailAddress"]["address"] = entry["sender"];
+        mail["sentDateTime"] = entry["sent_at"];
+        mail["receivedDateTime"] = entry["received_at"];
+        mail["createdDateTime"] = "2026-09-28T21:28:00Z";
+        mail["body"]["content"] = canary_body(subject);
+        rig.lab.graph_http.on(rp::HttpMethod::get, gl::mail_list_url(false),
+                              {rp::test::load_fixture("graph", "mail-list-200-empty")});
+        rig.lab.graph_http.on(rp::HttpMethod::get, gl::mail_list_url(true),
+                              {rp::test::to_response(listing)});
     }
 
     Run run(Args args)
@@ -1715,6 +2432,7 @@ struct RealRig {
     rp::test::TempDir dir;
     std::filesystem::path config_path;
     vrl::RestoreRig rig;
+    rp::test::FakeHttpClient download;
 };
 
 } // namespace
@@ -1738,8 +2456,8 @@ TEST_CASE("restore through veeam_m365: Veeam unreachable is exit 3 and nothing i
     CHECK(real.rig.restore_posts().empty());
 }
 
-TEST_CASE("restore through veeam_m365: the target guard refuses a wrong target, exit 4, "
-          "before any restore request",
+TEST_CASE("restore through veeam_m365: a wrong target is refused, exit 4, before any restore "
+          "request",
           "[restore_command][veeam_m365][target_guard]")
 {
     RealRig real;
@@ -1749,10 +2467,13 @@ TEST_CASE("restore through veeam_m365: the target guard refuses a wrong target, 
     const Run run = real.run({"--run-id", kRunId, "--mail", "0", "--sp", "1", "--od", "0"});
 
     CHECK(run.exit_code == rp::exit_code::service);
-    // docs/worker-config.md's error example.
-    CHECK(run.err == "restore error: target guard: the drive test_library_id names is "
-                     "\"Dokumenty\", not \"RestoreTarget\": the Worker restores only into the "
-                     "RestoreTarget library; nothing was restored\n");
+    // Since W3.2 the check's before snapshot reads the targets first, through
+    // the same guard checks (rp/target_guard_graph.hpp), so it is the one that
+    // refuses; the connector's guard, which would refuse next, is
+    // veeam_m365_restore_guard_test.cpp's. docs/worker-config.md's error example.
+    CHECK(run.err == "check error: the drive test_library_id names is \"Dokumenty\", not "
+                     "\"RestoreTarget\": the Worker reads only the RestoreTarget library; nothing "
+                     "was listed; nothing was restored\n");
     // The header was out; nothing was sent to restore.
     CHECK_THAT(run.out,
                StartsWith("restore point " + vrl::kBackupTime + "  " + vrl::kRestorePointId));
@@ -1780,6 +2501,7 @@ TEST_CASE("restore through veeam_m365: a canary restored on the recorded run, ex
 {
     RealRig real;
     real.rig.serve(vrl::mail_x1());
+    real.serve_mailbox("RP-CANARY-0011");
 
     // RP-CANARY-0011, bob's first, is the manifest's mail canary 10: W2.4's
     // recorded single-mail restore.
@@ -1811,8 +2533,17 @@ TEST_CASE("restore through veeam_m365: a canary restored on the recorded run, ex
           "  SESSION                               KIND  RESULT   RESTORED  STARTED                       ENDED                         ELAPSED\n"
           "  b6fe35ef-9633-481d-9756-3496a717d8a9  mail  Success  1 of 1    2026-09-28T21:27:28.3281642Z  2026-09-28T21:28:00.6973119Z  0:00:32\n"
           "\n"
-          "status succeeded: 1 of 1 item(s) restored in 0:00:05\n");
+          "status succeeded: 1 of 1 item(s) restored in 0:00:05\n"
+          "\n"
+          "  KIND  SOURCE  NAME            OUTCOME  FIELDS  DUP  MS\n"
+          "  mail  canary  RP-CANARY-0011  match    -       -    0\n"
+          "\n"
+          "check: 1 match, 0 mismatch, 0 missing, 0 error\n");
     CHECK(real.rig.restore_posts().size() == 1);
+    // The mailbox was read once without bodies before the restore, once with
+    // them after it.
+    CHECK(real.rig.lab.gets(rp::test::graph_lab::mail_list_url(false)) == 1);
+    CHECK(real.rig.lab.gets(rp::test::graph_lab::mail_list_url(true)) == 1);
     CHECK(real.rig.exporter->calls == 1);
     CHECK_THAT(run.out, !ContainsSubstring(vrl::kPassword));
     CHECK_THAT(run.out, !ContainsSubstring(vrl::kFakePfxPassword));
@@ -1824,6 +2555,7 @@ TEST_CASE("restore through veeam_m365 --record: every exchange written, the rest
 {
     RealRig real;
     real.rig.serve(vrl::mail_x1());
+    real.serve_mailbox("RP-CANARY-0011");
     const std::filesystem::path rec = real.dir.path() / "rec";
 
     const Run run = real.run({"--run-id", kRunId, "--canary-cursor", "10,0,0", "--mail", "1",
@@ -1846,7 +2578,7 @@ TEST_CASE("restore through veeam_m365 --record: every exchange written, the rest
     // Every call each service got, and the command says how many in all.
     CHECK(veeam.size() == real.rig.veeam.requests().size());
     CHECK(graph.size() == real.rig.lab.graph_http.requests().size());
-    CHECK(run.out.ends_with("status succeeded: 1 of 1 item(s) restored in 0:00:05\nrecorded " +
+    CHECK(run.out.ends_with("check: 1 match, 0 mismatch, 0 missing, 0 error\nrecorded " +
                             std::to_string(veeam.size() + graph.size()) + " exchange(s) in " +
                             utf8(rec) + "\n"));
 

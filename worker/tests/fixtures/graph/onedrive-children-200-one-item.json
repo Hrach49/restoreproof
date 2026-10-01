@@ -1,6 +1,6 @@
 {
   "source": "live 2026-09-28: GET the children of alice's /RestoreTarget, one file",
-  "request": "GET /v1.0/drives/b!wA9gbfhlEUitGAluxbfoNBr_z5gEtDhErm5pJ6bMwyXfZJ8a_dkCQ696RX0r7_U3/items/01ZK75LGDGB6QOO3MGNFGYOY6C6VBDG5OH/children?$select=id,name,size,file,folder&$top=200",
+  "request": "GET /v1.0/drives/b!wA9gbfhlEUitGAluxbfoNBr_z5gEtDhErm5pJ6bMwyXfZJ8a_dkCQ696RX0r7_U3/items/01ZK75LGDGB6QOO3MGNFGYOY6C6VBDG5OH/children?$select=id,name,size,cTag,createdDateTime,lastModifiedDateTime,file,folder&$top=200",
   "status": 200,
   "headers": {
     "Content-Type": "application/json; odata.metadata=minimal; odata.streaming=true; IEEE754Compatible=false; charset=utf-8",

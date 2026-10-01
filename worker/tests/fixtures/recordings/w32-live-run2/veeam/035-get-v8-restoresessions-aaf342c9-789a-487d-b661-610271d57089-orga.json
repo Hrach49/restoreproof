@@ -1,0 +1,18 @@
+{
+  "source": "rpworker 0.0.0 restore --record",
+  "request": "GET /v8/RestoreSessions/aaf342c9-789a-487d-b661-610271d57089/Organization/Sites/8940f75b-a091-4115-80e0-418447edb6e3b0066e5e-cea1-4afd-bdc5-4907d626db31/Folders?parentId=8940f75b-a091-4115-80e0-418447edb6e3b0066e5e-cea1-4afd-bdc5-4907d626db310d5c9105-7b7f-4c1a-ae7f-0a7d4f547c52&limit=1000&offset=0",
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8"
+  },
+  "body": {
+    "offset": 0,
+    "limit": 1000,
+    "_links": {
+      "self": {
+        "href": "/v8/RestoreSessions/aaf342c9-789a-487d-b661-610271d57089/Organization/Sites/8940f75b-a091-4115-80e0-418447edb6e3b0066e5e-cea1-4afd-bdc5-4907d626db31/Folders?parentid=8940f75b-a091-4115-80e0-418447edb6e3b0066e5e-cea1-4afd-bdc5-4907d626db310d5c9105-7b7f-4c1a-ae7f-0a7d4f547c52&offset=0&limit=1000"
+      }
+    },
+    "results": []
+  }
+}

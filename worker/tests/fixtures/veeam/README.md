@@ -56,6 +56,11 @@ served together:
 |---|---|---|
 | `q21-veeam-list/` | `rpworker veeam list --record` against the lab's Veeam, 2026-10-01 (seven restore points; nothing refused) | Q2.1's Done when: `veeam_command_test.cpp` replays it through `serve_recording` and checks the table against the recorded restore points |
 
+A recording that spans several services (`veeam/`, `graph/`, `download/`) goes in
+`../recordings/<name>/` instead, with a README.md saying what it is and what was edited:
+`w32-live-run1/` and `w32-live-run2/`, W3.2's two live `rpworker restore --record` runs, replayed
+whole by `restore_replay_test.cpp`.
+
 ## Files
 
 | Fixture | Source (`docs/api/veeam-lab/`) | For |

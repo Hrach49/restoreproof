@@ -1,0 +1,143 @@
+{
+  "source": "rpworker 0.0.0 restore --record",
+  "request": "GET /v8/RestoreSessions/30e112c7-86a1-4f2a-b952-ad8c00479159/Events?limit=1000&offset=0",
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8"
+  },
+  "body": {
+    "offset": 0,
+    "limit": 1000,
+    "_links": {
+      "self": {
+        "href": "/v8/RestoreSessions/30e112c7-86a1-4f2a-b952-ad8c00479159/Events?offset=0&limit=1000"
+      }
+    },
+    "results": [
+      {
+        "itemSizeBytes": 0,
+        "id": "f5411fd0-dde7-46d4-aa47-3c233f057547",
+        "type": "None",
+        "status": "Success",
+        "startTime": "2026-10-01T17:23:54.2713835Z",
+        "endTime": "2026-10-01T17:23:54.2713835Z",
+        "duration": "00:00:00",
+        "title": "Restore session started",
+        "message": "Restore session started",
+        "order": 0,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/30e112c7-86a1-4f2a-b952-ad8c00479159/events/f5411fd0-dde7-46d4-aa47-3c233f057547"
+          },
+          "restoreSession": {
+            "href": "/v8/restoresessions/30e112c7-86a1-4f2a-b952-ad8c00479159"
+          }
+        }
+      },
+      {
+        "itemName": "rp-canary-11.pdf",
+        "itemType": "File",
+        "itemSizeBytes": 925,
+        "source": "personal/alice_restoreprooflab_onmicrosoft_com/Documents/RestoreTarget/rp-canary-11.pdf",
+        "target": "https://restoreprooflab-my.sharepoint.com/personal/alice_restoreprooflab_onmicrosoft_com",
+        "id": "7a906a01-8d24-37ac-63ec-19a25111a1b8",
+        "type": "Restore",
+        "status": "Success",
+        "startTime": "2026-10-01T17:24:11.4034149Z",
+        "endTime": "2026-10-01T17:24:11.4954147Z",
+        "duration": "00:00:00.0919998",
+        "title": "Item is successfully restored.",
+        "message": "Item rp-canary-11.pdf was restored successfully (type: File; source: personal/alice_restoreprooflab_onmicrosoft_com/Documents/RestoreTarget/rp-canary-11.pdf; target: https://restoreprooflab-my.sharepoint.com/personal/alice_restoreprooflab_onmicrosoft_com)",
+        "order": 1,
+        "organizationId": "ff96d072-29e2-4cb4-a155-2590f5473176",
+        "backedUpOrganizationId": "RestoreProofLab.onmicrosoft.com:00000000-0000-0000-0000-000000000000:00000000-0000-0000-0000-000000000000",
+        "userId": "RestoreProofLab.onmicrosoft.com:00000000-0000-0000-0000-000000000000:00000000-0000-0000-0000-000000000000:b8712372-d84b-4c0c-8d78-5ab08331da42:00000000-0000-0000-0000-000000000000",
+        "siteId": "6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325",
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/30e112c7-86a1-4f2a-b952-ad8c00479159/events/7a906a01-8d24-37ac-63ec-19a25111a1b8"
+          },
+          "restoreSession": {
+            "href": "/v8/restoresessions/30e112c7-86a1-4f2a-b952-ad8c00479159"
+          }
+        }
+      },
+      {
+        "itemName": "rp-canary-12.docx",
+        "itemType": "File",
+        "itemSizeBytes": 3263,
+        "source": "personal/alice_restoreprooflab_onmicrosoft_com/Documents/RestoreTarget/rp-canary-12.docx",
+        "target": "https://restoreprooflab-my.sharepoint.com/personal/alice_restoreprooflab_onmicrosoft_com",
+        "id": "f4ea5548-2c21-b538-072a-a528589d809f",
+        "type": "Restore",
+        "status": "Success",
+        "startTime": "2026-10-01T17:24:11.4659395Z",
+        "endTime": "2026-10-01T17:24:11.5078097Z",
+        "duration": "00:00:00.0418702",
+        "title": "Item is successfully restored.",
+        "message": "Item rp-canary-12.docx was restored successfully (type: File; source: personal/alice_restoreprooflab_onmicrosoft_com/Documents/RestoreTarget/rp-canary-12.docx; target: https://restoreprooflab-my.sharepoint.com/personal/alice_restoreprooflab_onmicrosoft_com)",
+        "order": 2,
+        "organizationId": "ff96d072-29e2-4cb4-a155-2590f5473176",
+        "backedUpOrganizationId": "RestoreProofLab.onmicrosoft.com:00000000-0000-0000-0000-000000000000:00000000-0000-0000-0000-000000000000",
+        "userId": "RestoreProofLab.onmicrosoft.com:00000000-0000-0000-0000-000000000000:00000000-0000-0000-0000-000000000000:b8712372-d84b-4c0c-8d78-5ab08331da42:00000000-0000-0000-0000-000000000000",
+        "siteId": "6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325",
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/30e112c7-86a1-4f2a-b952-ad8c00479159/events/f4ea5548-2c21-b538-072a-a528589d809f"
+          },
+          "restoreSession": {
+            "href": "/v8/restoresessions/30e112c7-86a1-4f2a-b952-ad8c00479159"
+          }
+        }
+      },
+      {
+        "itemName": "rp-canary-13.xlsx",
+        "itemType": "File",
+        "itemSizeBytes": 5859,
+        "source": "personal/alice_restoreprooflab_onmicrosoft_com/Documents/RestoreTarget/rp-canary-13.xlsx",
+        "target": "https://restoreprooflab-my.sharepoint.com/personal/alice_restoreprooflab_onmicrosoft_com",
+        "id": "1c49b8df-e70b-1477-1215-60301dac7319",
+        "type": "Restore",
+        "status": "Success",
+        "startTime": "2026-10-01T17:24:11.4789918Z",
+        "endTime": "2026-10-01T17:24:16.5223612Z",
+        "duration": "00:00:05.0433694",
+        "title": "Item is successfully restored.",
+        "message": "Item rp-canary-13.xlsx was restored successfully (type: File; source: personal/alice_restoreprooflab_onmicrosoft_com/Documents/RestoreTarget/rp-canary-13.xlsx; target: https://restoreprooflab-my.sharepoint.com/personal/alice_restoreprooflab_onmicrosoft_com)",
+        "order": 3,
+        "organizationId": "ff96d072-29e2-4cb4-a155-2590f5473176",
+        "backedUpOrganizationId": "RestoreProofLab.onmicrosoft.com:00000000-0000-0000-0000-000000000000:00000000-0000-0000-0000-000000000000",
+        "userId": "RestoreProofLab.onmicrosoft.com:00000000-0000-0000-0000-000000000000:00000000-0000-0000-0000-000000000000:b8712372-d84b-4c0c-8d78-5ab08331da42:00000000-0000-0000-0000-000000000000",
+        "siteId": "6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325",
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/30e112c7-86a1-4f2a-b952-ad8c00479159/events/1c49b8df-e70b-1477-1215-60301dac7319"
+          },
+          "restoreSession": {
+            "href": "/v8/restoresessions/30e112c7-86a1-4f2a-b952-ad8c00479159"
+          }
+        }
+      },
+      {
+        "itemSizeBytes": 0,
+        "id": "06110a02-21e9-4a1b-8d4c-1cd117d3541b",
+        "type": "None",
+        "status": "Success",
+        "startTime": "2026-10-01T17:24:26.6404995Z",
+        "endTime": "2026-10-01T17:24:26.6404995Z",
+        "duration": "00:00:00",
+        "title": "Restore session completed",
+        "message": "Restore session completed",
+        "order": 4,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/30e112c7-86a1-4f2a-b952-ad8c00479159/events/06110a02-21e9-4a1b-8d4c-1cd117d3541b"
+          },
+          "restoreSession": {
+            "href": "/v8/restoresessions/30e112c7-86a1-4f2a-b952-ad8c00479159"
+          }
+        }
+      }
+    ]
+  }
+}

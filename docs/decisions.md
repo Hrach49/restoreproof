@@ -7,6 +7,63 @@ Format: date, decision, reason, alternatives rejected.
 
 ---
 
+## 2026-10-01 — W3.3 build notes: what the build settled beyond the approved table (proposed)
+
+Amends nothing in the approved W3.3 entry below; it records what building it settled where that
+entry was silent, and what its review changed. Code: `rp/run_status.hpp`,
+`src/restore_command.cpp`; tables: `docs/verification.md`, "The status decision table".
+
+1. **The status line never quotes an exception.** Its message is fixed text per code and phase
+   ("the run stopped before the restore: the backup product couldn't be reached or asked to
+   try later (backup_transient); nothing was restored"), counts for rows 5 to 8, never a
+   tenant value. A connector's or Graph's `what()` can name the client or an item, so it stays
+   on stderr in the existing `restore error: ...` and `check error: ...` lines, and in
+   `RunStop::message` for the evidence.
+2. **Exit codes against the interim (W2.8/W3.2) code.** The decision's three: a `partial`
+   restore whose items all verify is 0 (was 5); a `failed` restore with stale items is 4 (was
+   5); an infrastructure item beside a missing item is 5 (was 4). Also, by the code table: an
+   after-read Graph auth or permission failure is 2 and a transient one 3 (both were 4); an
+   unexpected (non-Graph) failure in the check is `error internal`, 1 (was the restore's code
+   or 4); a restore result that doesn't line up with the sample (another number or kind of
+   items) is `error internal`, 1.
+3. **Output lost after the restore doesn't stop the check.** The check still runs, the
+   warnings still go to stderr, the status decides the exit code, and a `pass` becomes 1 (its
+   output was lost). The stderr line names the restore's account and the run's status:
+   `error: writing the output failed after the restore ran (run <id>, restore <status>: <n>
+   of <m> item(s) restored); run status <pass|fail|error>[ <code>]`.
+4. **The not_run and empty-sample stderr lines are gone**, as are the interim `check: ...`
+   lines and the infrastructure line: the status line says each (`status error not_run`,
+   `status error empty_sample`, its shortfalls as warnings). Earlier runs' copies are the
+   `stale_copies` warning.
+5. **Only the run's line starts with `status`.** The restore's own line is now `restore
+   <not_run|succeeded|partial|failed>: <n> of <m> item(s) restored in H:MM:SS` (was `status
+   ...`; `status failed` began with `status fail`). The run's status line is the last line of
+   stdout but for `--record`'s `recorded ...` line.
+6. **Row 1 checks more than the approved list:** a sample of items with neither a restore
+   result nor a stop; a stop whose code isn't in the vocabulary, or whose phase contradicts
+   what is there (before or in the restore beside a restore result or a check, in the restore
+   without an expected set, in the check without a restore result or beside a check); a restore
+   or check item of another kind than its expected item; an item `error` with a code the
+   checker doesn't give; a value outside its enum (`RunPhase`, `ExpectedKind`,
+   `RestoreStatus`, `ItemOutcome`, `CheckOutcome`); a check item whose `found` contradicts its
+   outcome. Row 1 carries no warnings.
+7. **`backup_session` keeps Veeam's `details` only when they read as its counts**, `<n>
+   item(s) processed[ (<no parentheses>)]` in printable ASCII; anything else may name an item
+   or an address and is left out. An empty session ID matches no item.
+8. **`no_restore_point` is in the vocabulary but not yet used.** A failure before the run line
+   (no restore points, an unknown `--point`, Veeam unreachable or refusing while listing
+   restore points, a config or manifest problem) keeps its stderr line and exit code and
+   prints no status line. **Open for W3.6:** `rpworker test` and the result JSON need a status
+   for these too, so the run line (or a status) should come before listing restore points.
+9. **R5 before R7 stays as approved**, so a `target_guard` unchecked item sits below a failed
+   item (the run is `fail`, the guard's item listed as unchecked). Noted as a possible
+   revisit: a guard refusal is a safety signal one might want to outrank everything.
+
+**Reason.** Each point keeps the approved table's rule (the check is the evidence, never a
+tenant value in the status, infrastructure never `fail`) where the entry didn't say how.
+
+---
+
 ## 2026-10-01 — W3.3: the status decision table (recorded before the build; the owner approved it as written)
 
 W3.3 (#38) turns what a run produced into one status, `pass`, `fail` or `error`. One pure

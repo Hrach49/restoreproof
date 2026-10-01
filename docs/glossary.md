@@ -113,12 +113,11 @@ recorded beside a pass (a restore session Veeam didn't call `Success`, a duplica
 sample shortfall, earlier runs' copies ignored) are evidence, and a pass with warnings still
 means every sampled item verified.
 
-**`fail`.** The backup did not deliver the data. The restore failed, or an item was missing,
-or an item's content did not match. A `fail` is a statement about the customer's backup — it
-is the product working, not the product broken. It needs a *failed* item: missing or
-mismatched, its target read fine, and not one the backup blamed on infrastructure. A failed
-restore whose items all turn up anyway is not a `fail` (it is `error`
-`restore_contradiction`).
+**`fail`.** The backup did not deliver the data: an item was missing, or its content did not
+match, while its target was read fine and Veeam didn't blame infrastructure for it (a *failed*
+item). A `fail` is a statement about the customer's backup — it is the product working, not
+the product broken. A restore Veeam reports as failed counts only through its missing items:
+one whose items all turn up anyway is not a `fail` (it is `error` `restore_contradiction`).
 
 **`error`.** The test itself could not run, or couldn't tell, so nothing certain was learned
 about the backup: Veeam unreachable, Graph authentication or permission refused, a

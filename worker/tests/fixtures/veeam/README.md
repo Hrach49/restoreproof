@@ -54,6 +54,7 @@ served together:
 
 | Recording | Command | For |
 |---|---|---|
+| `q21-veeam-list/` | `rpworker veeam list --record` against the lab's Veeam, 2026-10-01 (seven restore points; nothing refused) | Q2.1's Done when: `veeam_command_test.cpp` replays it through `serve_recording` and checks the table against the recorded restore points |
 
 ## Files
 

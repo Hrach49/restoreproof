@@ -147,9 +147,9 @@ struct RestoreSpec {
 // evidence. not_run is error not_run; failed with every item matching is
 // error restore_contradiction; otherwise the items decide: a partial restore
 // whose items all verify passes, with a backup_session warning per session
-// that wasn't a Success,
-// and an item not restored for an infrastructure reason that the check
-// doesn't find is unchecked (backup_infrastructure), never failed.
+// that wasn't a Success, and an item not restored for an infrastructure
+// reason that the check doesn't find is unchecked (backup_infrastructure),
+// never failed.
 enum class RestoreStatus { not_run, succeeded, partial, failed };
 
 // "not_run", "succeeded", "partial", "failed".

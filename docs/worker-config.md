@@ -580,6 +580,8 @@ status succeeded: 1 of 1 item(s) restored in 0:00:05
   mail  canary  RP-CANARY-0011  match    -       -    0
 
 check: 1 match, 0 mismatch, 0 missing, 0 error
+
+status pass: 1 of 1 item(s) verified: manifest 1, fields 0, metadata 0
 ```
 
 - **The header.** Its first two lines (the restore point, the run ID and seed) are printed as
@@ -588,25 +590,26 @@ check: 1 match, 0 mismatch, 0 missing, 0 error
   per-type table, `restoring ...`) is printed before the restore starts, which takes minutes.
   `CANARIES` is taken of half the size rounded up, `RANDOM` taken of half rounded down; fewer
   taken is a shortfall, named in `NOTE` (`canary shortfall`, `random shortfall` or both) and
-  never filled. A shortfall with every sampled item restored is still `succeeded`, exit 0. A
-  sample with no item at all (every type asked for fell short entirely) restores nothing: no
-  `restoring ...` line, `restore error: the sample is empty: nothing to restore (<kind>:
-  <shortfall>; ...)`, exit 4.
+  never filled. A shortfall never changes the run's status: with every sampled item verified
+  it is still `pass`, exit 0, with one `warning: shortfall: <kind> <canary|random>: <taken> of
+  <wanted>` per half that fell short. A sample with no item at all (every type asked for fell
+  short entirely) restores nothing: no `restoring ...` line, `status error empty_sample: the
+  sample is empty: nothing to restore` and the shortfall warnings, exit 4.
 - **One row per item**, mail first, then SharePoint, then OneDrive, each type's canaries
   first: `SOURCE` is `canary` or `random`; `OUTCOME` is `restored`, `failed` or `unknown`
   (Veeam said nothing about it), with ` (infrastructure)` when Veeam's message reads as Veeam
   failing to reach Microsoft 365, lacking permissions or being throttled rather than the item
   being wrong; `ELAPSED` is the item's restore session's; `MESSAGE` is Veeam's, `-` if none.
-  An item that failed for an infrastructure reason makes the run an error, not a restore
-  failure: after the status line, `restore error: <n> item(s) failed for an infrastructure
-  reason (Veeam couldn't reach Microsoft 365, lacked permissions or was throttled); this is an
-  error, not a restore failure`, exit 4.
+  What Veeam says of an item is only its account: the check decides (below). An item Veeam
+  failed for an infrastructure reason that the check doesn't find is *unchecked* (`error
+  backup_infrastructure`), never a restore failure; one the check finds matching anyway is
+  verified, with a `backup_item` warning.
 - **One row per restore session**: Veeam's result, items restored of sent, start and end as
   Veeam wrote them, and the time between (`-` when either doesn't read).
-- **The status line**: the restore's status (`succeeded`, `partial`, `failed` or `not_run`,
-  `worker/include/rp/connector.hpp`), items restored of sent, and the time the restore took.
-  Times are `H:MM:SS`, cut to whole seconds. `not_run` (nothing sent) is followed by `restore
-  error: the restore did not run: nothing was sent (status not_run)`, exit 4.
+- **The restore's line**: `status <restore status>: ...`, the restore's own status
+  (`succeeded`, `partial`, `failed` or `not_run`, `worker/include/rp/connector.hpp`), items
+  restored of sent, and the time the restore took. Times are `H:MM:SS`, cut to whole seconds.
+  It is Veeam's account, not the run's status, which comes last.
 - **The check (W3.2)**: one row per sampled item, in the same order. `OUTCOME` is `match`,
   `mismatch`, `missing` or `error`; `FIELDS` names the fields that didn't match
   (`subject`, `sender_address`, `sender_name`, `sent_at`, `received_at`,
@@ -619,31 +622,44 @@ check: 1 match, 0 mismatch, 0 missing, 0 error
   downloaded: a file that was in the target before the restore with the same `cTag`, or whose
   name no sampled file has, is listed but never read, so an earlier run's leftover can't fail
   the check. Copies earlier runs left are ignored and counted in one warning on stderr:
-  `warning: <n> copies from earlier runs in the restore targets were ignored (mail <x>,
-  sharepoint <y>, onedrive <z>)`. Until W3.3, when the restore's own exit code is 0: an item
-  `missing` or `mismatch` is exit 5 with `check: <n> item(s) didn't verify`, else an item
-  `error` is exit 4 with `check: <n> item(s) couldn't be checked` (and one `check error:
-  <message>` line per target that couldn't be read back).
+  `warning: stale_copies: <n> copies from earlier runs in the restore targets were ignored
+  (mail <x>, sharepoint <y>, onedrive <z>)`. A target that couldn't be read back is one
+  `check error: <message>` line on stderr, and its items are `error`.
+- **The run's status (W3.3)** ends every run once its first two lines are out, however it
+  ended: `status <pass|fail|error>[ <code>]: <message>`, its own paragraph, then each warning
+  as `warning: <code>: <message>` on stderr. The exit code is the status's: `pass` 0 (every
+  sampled item verified), `fail` 5 (an item missing or a mismatch, its target read fine, not
+  blamed on infrastructure), `error` 1 to 4 by its code (table below). The message is counts
+  and fixed words, never a subject, a name, an address or an exception's message. Veeam's
+  own status never decides: a `partial` restore whose items all verify is `pass` (with a
+  `backup_session` warning per session that wasn't `Success`); a `failed` one whose items all
+  match anyway is `error restore_contradiction`; an item only an earlier run's copy matches is
+  `error stale_target`; one item that couldn't be checked beside matches is `error`, never a
+  partial pass; a missing item beside one that couldn't be checked is `fail`. The decision
+  table, the codes and the warnings: `docs/verification.md`, "The status decision table".
 - **If reading back or checking fails for a reason that isn't Graph's** (out of memory, a bug),
   the check's table isn't printed: `check error: unexpected failure`, then `restore error:
-  the restore had started: items may be in the restore targets (run <run ID>)`; the exit code
-  is the restore's own (5 for partial or failed, 4 with its line for an infrastructure failure
-  or `not_run`), or 4 for a restore that succeeded, since its items couldn't be checked.
+  the restore had started: items may be in the restore targets (run <run ID>)`, and `status
+  error internal: the restored items couldn't be checked: an unexpected failure (internal)`,
+  exit 1.
 - **Before the restore**, the targets are read for the check: a failure there stops the run
-  and nothing is restored: `check error: <message>; nothing was restored`, exit 1 (the Graph
-  certificate failing as Graph signs in), 2 (Graph refused the sign-in or a permission), 3
-  (Graph unreachable) or 4 (any other Graph error, a target its guard refuses included).
+  and nothing is restored: `check error: <message>; nothing was restored`, then `status error
+  <code>: the run stopped before the restore: ...; nothing was restored`, exit 1 (`config`:
+  the Graph certificate failing as Graph signs in), 2 (`graph_auth`, `graph_permission`), 3
+  (`graph_transient`) or 4 (`graph`; `target_guard`, a target its guard refuses).
 - If stdout can't be written after the restore ran, the error says so, since items may now be
   in the targets, with the run and how the restore went: `error: writing the output failed
-  after the restore ran (run <run ID>, status <status>: <restored> of <sent> item(s)
-  restored)`. The exit code is then the restore's own (5 for partial or failed, 4 with its
-  line for an infrastructure failure or `not_run`), but 1 for a restore that succeeded, since
-  its output was lost. Before the restore, a stdout that can't be written stops the command
-  (`error: unexpected failure`, exit 1).
-- If the restore itself fails with an error after it started, the tables can't be printed
-  and items may already be in the targets: unless Veeam's or the guard's message ends with
-  `nothing was restored`, a second line says so, `restore error: the restore had started:
-  items may be in the restore targets (run <run ID>)`. Check with `rpworker graph list`.
+  after the restore ran (run <run ID>, status <restore status>: <restored> of <sent> item(s)
+  restored)`. The check still runs and the warnings still go to stderr; the exit code is the
+  status's, but 1 for a `pass`, since its output was lost. Before the restore, a stdout that
+  can't be written stops the command (`error: unexpected failure`, exit 1).
+- If choosing the sample or the restore itself fails with an error, the error is one line on
+  stderr (`restore error: <message>`) and the status line names its code (`backup_auth`,
+  `backup_transient`, `not_in_backup`, `target_guard`, `backup`; `config` for the restore
+  credential's certificate). After the restore started the tables can't be printed and items
+  may already be in the targets: unless Veeam's or the guard's message ends with `nothing was
+  restored`, a second line says so, `restore error: the restore had started: items may be in
+  the restore targets (run <run ID>)`. Check with `rpworker graph list`.
 - The output is UTF-8; control characters in Veeam's text are shown as spaces. Warnings go to
   stderr only.
 
@@ -652,6 +668,9 @@ An error is one line on stderr. After the header it follows what is on stdout:
 ```
 check error: the drive test_library_id names is "Dokumenty", not "RestoreTarget": the Worker reads only the RestoreTarget library; nothing was listed; nothing was restored
 ```
+
+and stdout ends with `status error target_guard: the run stopped before the restore: the
+restore-target guard refused (target_guard); nothing was restored`, exit 4.
 
 (the check's before snapshot reads the targets through the same guard checks the restore
 runs, so a wrong target is refused there first; the restore's own refusal reads `restore
@@ -688,11 +707,13 @@ The same for every `rpworker` command (`rp::exit_code` in `worker/include/rp/cli
 | Exit code | Meaning | stderr |
 |---|---|---|
 | 0 | Success. | (nothing) |
-| 1 | The config or a secret is missing or invalid, or something unexpected failed (an error no command handles ends here too, never in an `abort()`, whose exit code would be 3). For `graph list` this includes the certificate: `RP_GRAPH_CERT_PFX_BASE64` unset, a PFX that doesn't open with `RP_GRAPH_CERT_PASSWORD`, or a certificate that isn't valid now, all found before any request. For `restore`, also the same certificate problems as `graph list` (before any Veeam call; `RP_GRAPH_CERT_PASSWORD` unset is fine for a PFX without a password), the certificate failing as the check's reads before the restore sign in (nothing restored), a manifest that doesn't load, whose `tenant_id` isn't `graph_tenant_id` or that names a restore target (before any Veeam call), an unknown connector, and stdout failing after a restore that succeeded. With `--record`, a folder that isn't new or empty, and a command that succeeded but whose recording isn't complete. | `config error: <path>: <message>`, `config error: the --config path is not valid UTF-8`, `config error: the --manifest path is not valid UTF-8`, `config error: canary manifest: <message>`, `config error: cannot find the ProgramData folder`, `config error: environment variable <name> is not valid Unicode`, `config error: RP_VEEAM_USERNAME is not set` (then `RP_VEEAM_PASSWORD`), `config error: RP_GRAPH_CERT_PFX_BASE64 is not set` (or another message naming the certificate's variables), for `restore` `config error: unknown connector "<name>" (known: <names>)`, `check error: <message>; nothing was restored` and `error: writing the output failed after the restore ran (run <run ID>, status succeeded: ...)`, with `--record` `config error: <dir>: the --record folder is not empty` and `record error: <service>/<file>: refused: ...`, `config error: unexpected failure` or `error: unexpected failure`; an unexpected failure's own message is never shown |
-| 2 | The service refused the sign-in, the account's role, the token or a permission: Veeam's credentials or role; Entra refusing the Worker app's sign-in; Graph refusing the token, or denying a call for want of a grant (the message names the grant, see `docs/security/graph-permissions.md`); for `restore` also on the check's reads before the restore (nothing restored). | `veeam error: <message>`, `graph error: <message>`, `restore error: <message>` or `check error: <message>; nothing was restored` |
-| 3 | The service couldn't be reached or asked to try later: no connection, a timeout, a TLS handshake that broke off, or a 502, 503 or 504 (for Graph also a 429 or another 5xx) after the retries; for `restore` also on the check's reads before the restore (nothing restored). | `veeam error: <message>`, `graph error: <message>`, `restore error: <message>` or `check error: <message>; nothing was restored` |
-| 4 | Any other error from the service. Veeam: an unknown organisation, a bad request, an unexpected answer, or no organisation named `veeam_org_name`; also Veeam's certificate failing verification, which a retry won't fix: `veeam_ca_file` doesn't hold Veeam's certificate or its CA, or Veeam's certificate was renewed and no longer matches `veeam_cert_sha256` (see "Veeam's default certificate"). Graph: the mailbox, drive or folder not found, a mailbox, drive or folder the guard refuses (not the RestoreTarget the config says; a 403 on the test mailbox's Inbox included), a download that failed, an unexpected answer. `restore`: the restore-target guard refusing (nothing is restored), a sampled item or the organisation not in Veeam, no restore points, a `--point` ID that isn't one of them, an empty sample, a restore session of the Veeam account still `Working`, the restore credential's export failing (not elevated), a restore that returned `not_run`, an item that failed for an infrastructure reason (an error, never 5), any other error of the restore; the check's reads before the restore failing on any other Graph error (nothing restored); after a restore that succeeded, an item the check couldn't check (its target couldn't be read back, or only an earlier run's copy of a file is there), or reading back failing for a reason that isn't Graph's. | `veeam error: <message>` (`... TLS failure: ...` for a certificate), `veeam error: organisation <name> (veeam_org_name) not found in Veeam`, `graph error: <message>`, `restore error: <message>` (`restore error: target guard: ...` for the guard), `restore error: no restore points for veeam_org_name`, `restore error: restore point <id> not found for veeam_org_name`, `restore error: the sample is empty: nothing to restore (...)`, `restore error: <n> item(s) failed for an infrastructure reason (...); this is an error, not a restore failure`, `restore error: the restore did not run: nothing was sent (status not_run)`, `check error: <message>; nothing was restored`, `check: <n> item(s) couldn't be checked` (after a `check error: <message>` per target that couldn't be read back), or `check error: unexpected failure`; after an error of a restore that had started, and after `check error: unexpected failure`, also `restore error: the restore had started: items may be in the restore targets (run <run ID>)` |
-| 5 | `restore` only: the restore ran and its status is `partial` or `failed` (the status line on stdout says which), no item for an infrastructure reason; or it succeeded and the check found an item missing or not matching (W3.2). A result, not an error: a restore that couldn't run at all, returned `not_run` or lost an item for an infrastructure reason is 1 to 4, and so is an item the check couldn't check (4). | (nothing); `check: <n> item(s) didn't verify` for the check |
+| 1 | The config or a secret is missing or invalid, or something unexpected failed (an error no command handles ends here too, never in an `abort()`, whose exit code would be 3). For `graph list` this includes the certificate: `RP_GRAPH_CERT_PFX_BASE64` unset, a PFX that doesn't open with `RP_GRAPH_CERT_PASSWORD`, or a certificate that isn't valid now, all found before any request. For `restore`, also the same certificate problems as `graph list` (before any Veeam call; `RP_GRAPH_CERT_PASSWORD` unset is fine for a PFX without a password), the certificate failing as the check's reads before the restore sign in (nothing restored), a manifest that doesn't load, whose `tenant_id` isn't `graph_tenant_id` or that names a restore target (before any Veeam call), an unknown connector, a run whose status is `error config` or `error internal` (the facts
+not adding up, or the check failing for a reason that isn't Graph's), and stdout failing after
+a restore whose run passed. With `--record`, a folder that isn't new or empty, and a command that succeeded but whose recording isn't complete. | `config error: <path>: <message>`, `config error: the --config path is not valid UTF-8`, `config error: the --manifest path is not valid UTF-8`, `config error: canary manifest: <message>`, `config error: cannot find the ProgramData folder`, `config error: environment variable <name> is not valid Unicode`, `config error: RP_VEEAM_USERNAME is not set` (then `RP_VEEAM_PASSWORD`), `config error: RP_GRAPH_CERT_PFX_BASE64 is not set` (or another message naming the certificate's variables), for `restore` `config error: unknown connector "<name>" (known: <names>)`, `check error: <message>; nothing was restored`, `check error: unexpected failure` and `error: writing the output failed after the restore ran (run <run ID>, status ...)`, with `--record` `config error: <dir>: the --record folder is not empty` and `record error: <service>/<file>: refused: ...`, `config error: unexpected failure` or `error: unexpected failure`; an unexpected failure's own message is never shown |
+| 2 | The service refused the sign-in, the account's role, the token or a permission: Veeam's credentials or role; Entra refusing the Worker app's sign-in; Graph refusing the token, or denying a call for want of a grant (the message names the grant, see `docs/security/graph-permissions.md`); for `restore`, a run whose status is `error backup_auth`, `graph_auth` or `graph_permission`: on the check's reads before the restore (nothing restored) or after it (the item couldn't be checked). | `veeam error: <message>`, `graph error: <message>`, `restore error: <message>` or `check error: <message>; nothing was restored` |
+| 3 | The service couldn't be reached or asked to try later: no connection, a timeout, a TLS handshake that broke off, or a 502, 503 or 504 (for Graph also a 429 or another 5xx) after the retries; for `restore`, a run whose status is `error backup_transient` or `graph_transient`, before the restore or after it. | `veeam error: <message>`, `graph error: <message>`, `restore error: <message>` or `check error: <message>; nothing was restored` |
+| 4 | Any other error from the service. Veeam: an unknown organisation, a bad request, an unexpected answer, or no organisation named `veeam_org_name`; also Veeam's certificate failing verification, which a retry won't fix: `veeam_ca_file` doesn't hold Veeam's certificate or its CA, or Veeam's certificate was renewed and no longer matches `veeam_cert_sha256` (see "Veeam's default certificate"). Graph: the mailbox, drive or folder not found, a mailbox, drive or folder the guard refuses (not the RestoreTarget the config says; a 403 on the test mailbox's Inbox included), a download that failed, an unexpected answer. `restore`: no restore points or a `--point` ID that isn't one of them (before the run line), and a run whose status is `error` with any other code: `target_guard` (the restore-target guard refusing, nothing restored), `not_in_backup` (a sampled item or the organisation not in Veeam), `backup` (a restore session of the Veeam account still `Working`, the restore credential's export failing when not elevated, any other error of the restore), `empty_sample`, `not_run`, `restore_contradiction`, `backup_infrastructure` (an item Veeam failed for an infrastructure reason that the check didn't find), `graph` (any other Graph error, before the restore or reading an item back), `stale_target` (only an earlier run's copy of an item is there). | `veeam error: <message>` (`... TLS failure: ...` for a certificate), `veeam error: organisation <name> (veeam_org_name) not found in Veeam`, `graph error: <message>`, `restore error: <message>` (`restore error: target guard: ...` for the guard), `restore error: no restore points for veeam_org_name`, `restore error: restore point <id> not found for veeam_org_name`, `check error: <message>; nothing was restored`, or a `check error: <message>` per target that couldn't be read back; after an error of a restore that had started, also `restore error: the restore had started: items may be in the restore targets (run <run ID>)`; for a run, the status line is on stdout and its warnings follow on stderr |
+| 5 | `restore` only: the run's status is `fail` (W3.3): an item is missing or doesn't match, its target read fine and Veeam didn't blame infrastructure for it, whatever Veeam's own status says (`status fail: ...` on stdout). A result about the backup, not an error: a run that couldn't run at all or couldn't tell is `error`, 1 to 4. | (nothing but the run's warnings) |
 | 64 | The command line isn't understood. For `restore` also, once the config or the manifest is read: every sample size 0, or a `--canary-cursor` out of the manifest's range. | the usage line; for `restore`, `usage error: every sample size is 0 (--mail, --sp, --od, or config's sample_mail, sample_sp, sample_od): nothing to restore` or `usage error: --canary-cursor: the <kind> cursor must be below <n>, the manifest's <kind> canaries` (`... must be 0: the manifest has no <kind> canaries`) |
 
 The usage line is:

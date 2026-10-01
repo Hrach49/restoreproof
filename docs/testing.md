@@ -304,8 +304,12 @@ session still `Working`.
    ```
 
    Note the printed run ID (`--run-id` repeats the sample) and the next canary cursor
-   (`--canary-cursor` carries the rotation on). Exit 0 is `succeeded`, 5 `partial` or `failed`,
-   4 an error such as the guard refusing or an item failed for an infrastructure reason.
+   (`--canary-cursor` carries the rotation on). The last stdout line is the run's status
+   (W3.3): exit 0 is `pass` (every sampled item read back and verified), 5 `fail` (an item
+   missing or not matching), 1 to 4 an `error` by its code, such as `target_guard` (the guard
+   refusing), `stale_target` (an earlier run's copy still in a target: clean up first) or
+   `backup_infrastructure` (an item Veeam failed for an infrastructure reason); warnings go to
+   stderr (`docs/verification.md`, "The status decision table").
 5. Read the targets back with their hashes:
 
    ```powershell

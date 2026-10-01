@@ -475,7 +475,8 @@ OneDrive (RestoreTarget folder): 1 item(s)
 - **`--hash`** downloads each file (without the Graph token, from the test tenant's SharePoint
   only) and adds `SHA256` and `RULE` to every table: `text-v1` for mail (the hash of the
   body's text, `lab/README.md`), `bytes` for files. `SIZE` is then the bytes downloaded, which
-  for a docx or xlsx SharePoint rewrote may differ from Graph's size. Without `--hash` nothing
+  for an Office package SharePoint rewrote (docx, xlsx, pptx and their macro and template
+  types, `worker/src/office_files.hpp`) may differ from Graph's size. Without `--hash` nothing
   is downloaded, no mail body is read, and `SIZE` is Graph's.
 - **Everything is read before anything is printed.** If any call fails, stdout stays empty. If
   writing to stdout fails (a full disk, a closed pipe), the command exits 1 with

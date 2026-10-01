@@ -24,7 +24,7 @@ How we test, what CI enforces, and the once-per-sprint mutation run. Set up in L
 
 | Guard | Where | Rule |
 |---|---|---|
-| Worker coverage | `.github/workflows/worker.yml`, OpenCppCoverage + `worker/tools/coverage_gate.py` | 80% line on `rpcore` (`worker/src/`, `worker/include/`) plus `rpworker`'s `main()` (`worker/app/`); 100% **line** on vault, signer and target_guard (the vault and signer once they exist), meaning any file with a path part named or prefixed `vault`, `signer` or `target_guard` (`src/signer/ed25519.cpp`, `src/vault_dpapi.cpp`; W2.7's `src/target_guard.cpp`, `src/target_guard_graph.cpp`, `src/target_guard_veeam.cpp` and their headers); every `.cpp` on disk under `src/`, `include/` and `app/` must appear in the report, so a file no test links into `rptests` (or, for `app/`, that ctest's runs of `rpworker.exe` don't reach) fails (headers of declarations may be absent) |
+| Worker coverage | `.github/workflows/worker.yml`, OpenCppCoverage + `worker/tools/coverage_gate.py` | 80% line on `rpcore` (`worker/src/`, `worker/include/`) plus `rpworker`'s `main()` (`worker/app/`); 100% **line** on vault, signer, target_guard and run_status (the vault and signer once they exist), meaning any file with a path part named or prefixed `vault`, `signer`, `target_guard` or `run_status` (`src/signer/ed25519.cpp`, `src/vault_dpapi.cpp`; W2.7's `src/target_guard.cpp`, `src/target_guard_graph.cpp`, `src/target_guard_veeam.cpp` and their headers; W3.3's `src/run_status.cpp`, the status decision table); every `.cpp` on disk under `src/`, `include/` and `app/` must appear in the report, so a file no test links into `rptests` (or, for `app/`, that ctest's runs of `rpworker.exe` don't reach) fails (headers of declarations may be absent) |
 | Cloud coverage | `.github/workflows/cloud.yml`, pytest-cov | 80% on `app/`, measured as coverage's combined line + branch figure; 100% line + branch on `app/auth`, `app/results.py` and `app/repo` (skipped while absent), checked by `cloud/tools/check_coverage.py` |
 | Lab tests and canary hashes | `.github/workflows/lab.yml` | `lab/`'s pytest suite passes (offline, fake Graph tenant), and `python -m seeder hash` reproduces every hash in `lab/seed-manifest.json` from the committed `lab/canary/` files and the catalog (L1.2's Done when). No coverage floor |
 | No test, no merge | `.github/workflows/pr-guards.yml`, `.github/scripts/tests_touched.py` | Each side needs its own tests: a PR that changes `worker/src/`, `worker/include/` or `worker/app/` must add or change a C++ file (`.cpp`, `.hpp`, `.h`) under `worker/tests/`, and one that changes `cloud/app/` must add or change a `.py` under `cloud/tests/`. Deleting a test, editing fixtures or editing `tests/e2e/scenarios.md` doesn't count |
@@ -38,7 +38,7 @@ Both coverage jobs write their numbers to the workflow run's summary page; the W
 also uploads the Cobertura XML as the `worker-coverage-cobertura` artifact.
 
 **Known gap:** OpenCppCoverage reports line coverage only, not branch coverage. CLAUDE.md asks
-for 100% branch on vault, signer and target_guard; until the Worker has a branch-capable tool,
+for 100% branch on vault, signer, target_guard and run_status; until the Worker has a branch-capable tool,
 those files are held to 100% line instead. See `docs/decisions.md`.
 
 ### Live tests
@@ -304,8 +304,12 @@ session still `Working`.
    ```
 
    Note the printed run ID (`--run-id` repeats the sample) and the next canary cursor
-   (`--canary-cursor` carries the rotation on). Exit 0 is `succeeded`, 5 `partial` or `failed`,
-   4 an error such as the guard refusing or an item failed for an infrastructure reason.
+   (`--canary-cursor` carries the rotation on). The last stdout line is the run's status
+   (W3.3): exit 0 is `pass` (every sampled item read back and verified), 5 `fail` (an item
+   missing or not matching), 1 to 4 an `error` by its code, such as `target_guard` (the guard
+   refusing), `stale_target` (an earlier run's copy still in a target: clean up first) or
+   `backup_infrastructure` (an item Veeam failed for an infrastructure reason); warnings go to
+   stderr (`docs/verification.md`, "The status decision table").
 5. Read the targets back with their hashes:
 
    ```powershell

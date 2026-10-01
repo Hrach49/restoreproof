@@ -58,7 +58,10 @@ past the interface sees the product's own types or errors.
 
 **Restore status.** A connector's report of how the restore itself went: `succeeded`,
 `partial`, `failed` or `not_run` (`rp::connector::RestoreStatus`). Not a run outcome: `pass`,
-`fail` and `error` are decided afterwards from it and the Graph comparison (W3.3).
+`fail` and `error` are decided afterwards from it and the Graph comparison (W3.3,
+[verification.md](verification.md), "The status decision table"), and the comparison wins: a
+`partial` restore whose items all verify is a `pass` with a warning, and a "restored" item
+that isn't there is a `fail`.
 
 **Explore session.** A Veeam session that opens one restore point for browsing
 (`POST /v8/Organizations/{id}/explore` with the point's exact `backupTime`, one per item
@@ -105,16 +108,35 @@ The three statuses, and the line between them. The full decision table lives in
 [verification.md](verification.md).
 
 **`pass`.** The restore ran and 100% of sampled items match their expected values. Nothing
-less is a pass: no "passed with warnings".
+less is a pass: no "passed with warnings". The status is never qualified; the *warnings*
+recorded beside a pass (a restore session Veeam didn't call `Success`, a duplicate copy, a
+sample shortfall, earlier runs' copies ignored) are evidence, and a pass with warnings still
+means every sampled item verified.
 
-**`fail`.** The backup did not deliver the data. The restore failed, or an item was missing,
-or an item's content did not match. A `fail` is a statement about the customer's backup — it
-is the product working, not the product broken.
+**`fail`.** The backup did not deliver the data: an item was missing, or its content did not
+match, while its target was read fine and Veeam didn't blame infrastructure for it (a *failed*
+item). A `fail` is a statement about the customer's backup — it is the product working, not
+the product broken. A restore Veeam reports as failed counts only through its missing items:
+one whose items all turn up anyway is not a `fail` (it is `error` `restore_contradiction`).
 
-**`error`.** The test itself could not run, so nothing was learned about the backup: Veeam
-unreachable, Graph authentication or permission refused, a `TargetGuard` violation, the
-Cloud unreachable at dispatch. **Infrastructure problems are never reported as `fail`**,
-because a `fail` accuses the customer's backup of losing data.
+**`error`.** The test itself could not run, or couldn't tell, so nothing certain was learned
+about the backup: Veeam unreachable, Graph authentication or permission refused, a
+`TargetGuard` violation, the Cloud unreachable at dispatch, an empty sample, a restore that
+sent nothing (`not_run`), an item that couldn't be checked (its target unreadable, only an
+earlier run's copy there: `stale_target`, or an item Veeam failed for an infrastructure
+reason: `backup_infrastructure`), or a restore Veeam called failed whose items all matched
+(`restore_contradiction`). Each `error` carries one `error_code` (the list is in
+[verification.md](verification.md)). **Infrastructure problems are never reported as
+`fail`**, because a `fail` accuses the customer's backup of losing data.
+
+**Item verdict.** What W3.3 makes of one sampled item: *verified* (the check found it
+matching), *failed* (missing or mismatched, evidence against the backup) or *unchecked* (it
+couldn't be checked, with a code). A `fail` names its failed items; an `error` its unchecked
+ones.
+
+**Warning (of a run).** A note beside the status, with a code (`backup_session`,
+`backup_item`, `duplicate`, `shortfall`, `stale_copies`), a one-line message and the items it
+concerns. Never changes the status, never names a tenant value.
 
 ## Evidence
 

@@ -9,6 +9,7 @@
 #include "target_guard_lab.hpp"
 
 #include <rp/connector.hpp>
+#include <rp/graph_errors.hpp>
 #include <rp/veeam_m365_connector.hpp>
 
 #include <nlohmann/json.hpp>
@@ -27,6 +28,7 @@
 #include <utility>
 #include <vector>
 
+using Catch::Matchers::EndsWith;
 using Catch::Matchers::StartsWith;
 
 namespace {
@@ -78,6 +80,14 @@ Caught caught_by(const std::function<void()>& call)
         return {"NotImplementedError", e.what()};
     } catch (const connector::Error& e) {
         return {"Error", e.what()};
+    } catch (const rp::graph::PermissionError& e) {
+        return {"graph::PermissionError", e.what()};
+    } catch (const rp::graph::TransientError& e) {
+        return {"graph::TransientError", e.what()};
+    } catch (const rp::graph::NotFoundError& e) {
+        return {"graph::NotFoundError", e.what()};
+    } catch (const rp::graph::GraphError& e) {
+        return {"graph::GraphError", e.what()};
     } catch (const std::exception& e) {
         return {"not a connector error", e.what()};
     }
@@ -166,7 +176,7 @@ TEST_CASE("restore_sample without a Graph client refuses to run", "[veeam_m365][
     CHECK(rig.lab.graph_http.requests().empty());
 }
 
-TEST_CASE("restore_sample turns the guard's Graph errors into connector errors",
+TEST_CASE("restore_sample lets the guard's Graph errors out as Graph's, nothing restored",
           "[veeam_m365][target_guard]")
 {
     struct Row {
@@ -176,12 +186,17 @@ TEST_CASE("restore_sample turns the guard's Graph errors into connector errors",
         std::string kind;
     };
     const Row row = GENERATE(values<Row>({
-        {"a 403 on the library", drive_url(), "site-403-accessdenied", "AuthError"},
-        {"a 503 on the Inbox", inbox_url(), "messages-503-unavailable", "TransientError"},
+        // Graph's, never the connector's: the run's status blames Graph, not
+        // the backup product.
+        {"a 403 on the library", drive_url(), "site-403-accessdenied", "graph::PermissionError"},
+        {"a 503 on the Inbox", inbox_url(), "messages-503-unavailable", "graph::TransientError"},
         // A restore target Graph can't find is the run's error, never
-        // NotFoundError (in restore_sample, a sampled item missing: `fail`).
-        {"a 404 on the folder", folder_url(), "onedrive-folder-404-itemnotfound", "Error"},
-        {"a 404 on the Inbox", inbox_url(), "messages-404-mailbox-not-enabled", "Error"},
+        // connector::NotFoundError (in restore_sample, a sampled item missing: `fail`).
+        {"a 404 on the folder", folder_url(), "onedrive-folder-404-itemnotfound",
+         "graph::NotFoundError"},
+        // The guard's own GraphError for a mailbox that isn't enabled.
+        {"a 404 on the Inbox", inbox_url(), "messages-404-mailbox-not-enabled",
+         "graph::GraphError"},
     }));
     CAPTURE(row.name);
     Rig rig;
@@ -191,5 +206,6 @@ TEST_CASE("restore_sample turns the guard's Graph errors into connector errors",
 
     CHECK(thrown.kind == row.kind);
     CHECK_THAT(thrown.what, !StartsWith("target guard: "));
+    CHECK_THAT(thrown.what, EndsWith(std::string{connector::kNothingRestored}));
     CHECK(rig.veeam.requests().empty());
 }

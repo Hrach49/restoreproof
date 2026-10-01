@@ -49,6 +49,7 @@ add_library(rpcore STATIC
     src/redact.cpp
     src/restore_command.cpp
     src/retry_policy.cpp
+    src/run_status.cpp
     src/sample_rng.cpp
     src/sample_selector.cpp
     src/secrets.cpp
@@ -130,6 +131,7 @@ add_executable(rptests
     tests/restore_command_test.cpp
     tests/restore_replay_test.cpp
     tests/retry_policy_test.cpp
+    tests/run_status_test.cpp
     tests/sample_rng_test.cpp
     tests/sample_selector_live_test.cpp
     tests/sample_selector_test.cpp

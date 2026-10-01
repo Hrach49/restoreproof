@@ -1,0 +1,731 @@
+#include <rp/run_status.hpp>
+
+#include <rp/canary_manifest.hpp>
+#include <rp/cli.hpp>
+#include <rp/config.hpp>
+#include <rp/connector_registry.hpp>
+#include <rp/graph_errors.hpp>
+#include <rp/target_guard_graph.hpp>
+
+#include "text_util.hpp"
+
+#include <algorithm>
+#include <array>
+#include <cstddef>
+#include <format>
+#include <map>
+#include <optional>
+#include <regex>
+#include <stdexcept>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
+
+namespace rp::verification {
+
+namespace {
+
+using connector::ItemKind;
+using connector::ItemOutcome;
+using connector::RestoreStatus;
+using nlohmann::json;
+
+constexpr std::string_view kInternal = "internal";
+constexpr std::string_view kBackupInfrastructure = "backup_infrastructure";
+
+constexpr int kNoSeverity = -1;
+
+// Decision point 2, the one vocabulary: each error code, what it says in a
+// stop's status line (empty: never a stop's code), whether CheckResult's item
+// errors carry it, its rank among the unchecked items' codes (0 the most
+// severe; kNoSeverity: never an unchecked item's) and its exit code. Never a
+// tenant value. restore_contradiction, a row's own code, isn't here: like
+// any code not in the table, its exit code is exit_code::service.
+struct ErrorCode {
+    std::string_view code;
+    std::string_view stop_text;
+    bool check = false;
+    int severity = kNoSeverity;
+    int exit = exit_code::service;
+};
+
+constexpr std::array<ErrorCode, 16> kCodes{{
+    {"config", "the configuration isn't usable", false, kNoSeverity, exit_code::config},
+    {"internal", "an unexpected failure", false, kNoSeverity, exit_code::config},
+    {"backup_auth", "the backup product refused the credentials", false, kNoSeverity,
+     exit_code::auth},
+    {"backup_transient", "the backup product couldn't be reached or asked to try later", false,
+     kNoSeverity, exit_code::transient},
+    {"not_in_backup", "the client or a sampled item isn't in the backup", false, kNoSeverity,
+     exit_code::service},
+    // In the vocabulary, not yet a stop's (docs/decisions.md, W3.3 build notes 8).
+    {"no_restore_point", "no restore point to restore from", false, kNoSeverity,
+     exit_code::service},
+    {"target_guard", "the restore-target guard refused", true, 0, exit_code::service},
+    {"backup", "the backup product reported an error", false, kNoSeverity, exit_code::service},
+    {"graph_auth", "Microsoft Graph refused the Worker's sign-in", true, 1, exit_code::auth},
+    {"graph_permission", "Microsoft Graph refused a permission the Worker relies on", true, 2,
+     exit_code::auth},
+    {"backup_infrastructure", "", false, 3, exit_code::service},
+    {"graph", "Microsoft Graph reported an error", true, 4, exit_code::service},
+    {"graph_transient", "Microsoft Graph couldn't be reached or asked to try later", true, 5,
+     exit_code::transient},
+    {"stale_target", "", true, 6, exit_code::service},
+    {"empty_sample", "", false, kNoSeverity, exit_code::service},
+    {"not_run", "", false, kNoSeverity, exit_code::service},
+}};
+
+// Every item error's code ranks, or row 7 would have nothing to pick; each
+// rank once, 0 to n - 1.
+consteval bool codes_hold_together()
+{
+    int ranked = 0;
+    for (const ErrorCode& c : kCodes) {
+        if (c.check && c.severity == kNoSeverity) {
+            return false;
+        }
+        ranked += c.severity != kNoSeverity ? 1 : 0;
+    }
+    for (int rank = 0; rank < ranked; ++rank) {
+        int n = 0;
+        for (const ErrorCode& c : kCodes) {
+            n += c.severity == rank ? 1 : 0;
+        }
+        if (n != 1) {
+            return false;
+        }
+    }
+    return true;
+}
+static_assert(codes_hold_together(), "every check code ranks, each rank once");
+
+const ErrorCode* find_code(std::string_view code) noexcept
+{
+    const auto it = std::ranges::find(kCodes, code, &ErrorCode::code);
+    return it == kCodes.end() ? nullptr : &*it;
+}
+
+// A stop's code: one with a status-line text.
+const ErrorCode* stop_code(std::string_view code) noexcept
+{
+    const ErrorCode* found = find_code(code);
+    return found && !found->stop_text.empty() ? found : nullptr;
+}
+
+bool is_check_code(std::string_view code) noexcept
+{
+    const ErrorCode* found = find_code(code);
+    return found && found->check;
+}
+
+// An unchecked item's code's rank; row 1 has made sure each has one.
+int severity_of(std::string_view code) noexcept
+{
+    const ErrorCode* found = find_code(code);
+    return found ? found->severity : kNoSeverity;
+}
+
+// Whether a value is one of its enum's: a value cast from outside it can't
+// be decided on (row 1). No default, so a new enumerator must be added here.
+bool known(RunPhase phase) noexcept
+{
+    switch (phase) {
+    case RunPhase::before_restore:
+    case RunPhase::restore:
+    case RunPhase::check:
+        return true;
+    }
+    return false;
+}
+
+bool known(CheckOutcome outcome) noexcept
+{
+    switch (outcome) {
+    case CheckOutcome::match:
+    case CheckOutcome::mismatch:
+    case CheckOutcome::missing:
+    case CheckOutcome::error:
+        return true;
+    }
+    return false;
+}
+
+bool known(ExpectedKind kind) noexcept
+{
+    switch (kind) {
+    case ExpectedKind::manifest:
+    case ExpectedKind::fields:
+    case ExpectedKind::metadata:
+        return true;
+    }
+    return false;
+}
+
+bool known(RestoreStatus status) noexcept
+{
+    switch (status) {
+    case RestoreStatus::not_run:
+    case RestoreStatus::succeeded:
+    case RestoreStatus::partial:
+    case RestoreStatus::failed:
+        return true;
+    }
+    return false;
+}
+
+bool known(ItemOutcome outcome) noexcept
+{
+    switch (outcome) {
+    case ItemOutcome::unknown:
+    case ItemOutcome::restored:
+    case ItemOutcome::failed:
+        return true;
+    }
+    return false;
+}
+
+// Whether a check item's `found` is what its outcome says: a match or a
+// mismatch compared a copy, missing and error didn't.
+bool found_fits(const ItemCheck& item) noexcept
+{
+    return item.found ==
+           (item.outcome == CheckOutcome::match || item.outcome == CheckOutcome::mismatch);
+}
+
+std::string kind_name(ItemKind kind)
+{
+    return std::string{connector::to_string(kind)};
+}
+
+// Why the facts don't add up (row 1), in words without a tenant value; nullopt
+// when they do.
+std::optional<std::string> inconsistency(const RunFacts& facts)
+{
+    const ExpectedSet* expected = facts.expected;
+    const connector::RestoreResult* restore = facts.restore;
+    const CheckResult* check = facts.check;
+    if (facts.stop) {
+        if (!stop_code(facts.stop->error_code)) {
+            return "the stop's code isn't one the status knows";
+        }
+        if (!known(facts.stop->phase)) {
+            return "the stop's phase isn't one the status knows";
+        }
+        switch (facts.stop->phase) {
+        case RunPhase::before_restore:
+            if (restore || check) {
+                return "a stop before the restore beside a restore result or a check";
+            }
+            break;
+        case RunPhase::restore:
+            if (restore || check) {
+                return "a stop in the restore beside a restore result or a check";
+            }
+            if (!expected) {
+                return "a stop in the restore without an expected set";
+            }
+            break;
+        case RunPhase::check:
+            if (!restore || check) {
+                return "a stop in the check without a restore result or beside a check";
+            }
+            break;
+        }
+    } else if (!expected) {
+        return "no expected set and no stop";
+    }
+    if (restore && !expected) {
+        return "a restore result without an expected set";
+    }
+    if (check && !restore) {
+        return "a check without a restore result";
+    }
+    if (restore) {
+        if (!known(restore->status)) {
+            return "the restore's status isn't one the status knows";
+        }
+        for (std::size_t i = 0; i < restore->items.size(); ++i) {
+            if (!known(restore->items[i].outcome)) {
+                return std::format("restore item {}'s outcome isn't one the status knows", i);
+            }
+        }
+    }
+    if (!expected) {
+        return std::nullopt; // a stop before the sample: nothing else to line up
+    }
+    const std::vector<ExpectedItem>& items = expected->items;
+    for (std::size_t i = 0; i < items.size(); ++i) {
+        if (items[i].index != i) {
+            return std::format("expected item {} isn't at its index", i);
+        }
+        if (!known(items[i].expected_kind)) {
+            return std::format("expected item {}'s expected kind isn't one the status knows", i);
+        }
+    }
+    if (restore && items.empty()) {
+        return "a restore of an empty sample";
+    }
+    if (!restore && !facts.stop && !items.empty()) {
+        return "a sample without a restore result and no stop";
+    }
+    if (restore && restore->status != RestoreStatus::not_run) {
+        if (restore->items.size() != items.size()) {
+            return std::format("the restore reports {} item(s), the expected set {}",
+                               restore->items.size(), items.size());
+        }
+        for (std::size_t i = 0; i < items.size(); ++i) {
+            if (restore->items[i].kind != items[i].kind) {
+                return std::format("restore item {} isn't its expected item's kind", i);
+            }
+        }
+    }
+    if (check) {
+        if (check->items.size() != items.size()) {
+            return std::format("the check has {} item(s), the expected set {}",
+                               check->items.size(), items.size());
+        }
+        for (std::size_t i = 0; i < items.size(); ++i) {
+            const ItemCheck& item = check->items[i];
+            if (item.index != i || item.kind != items[i].kind) {
+                return std::format("check item {} isn't its expected item", i);
+            }
+            if (!known(item.outcome)) {
+                return std::format("check item {}'s outcome isn't one the status knows", i);
+            }
+            if (!found_fits(item)) {
+                return std::format("check item {}'s outcome contradicts whether a copy was found",
+                                   i);
+            }
+            if (item.outcome == CheckOutcome::error && !is_check_code(item.error_code)) {
+                return std::format("check item {} is an error without a code the checker gives",
+                                   i);
+            }
+        }
+    }
+    if (restore && !check && !facts.stop) {
+        return "a restore result without a check";
+    }
+    return std::nullopt;
+}
+
+// The backup's account of item `i`, when the restore reports items lined up
+// with the expected set.
+const connector::ItemRestoreResult* restore_item(const RunFacts& facts, std::size_t i)
+{
+    if (!facts.restore || facts.restore->status == RestoreStatus::not_run ||
+        i >= facts.restore->items.size()) {
+        return nullptr;
+    }
+    return &facts.restore->items[i];
+}
+
+enum class Verdict { verified, failed, unchecked };
+
+struct ItemVerdict {
+    Verdict verdict = Verdict::failed;
+    std::string code; // unchecked only
+};
+
+// Decision point 1's item rules, first fit wins.
+ItemVerdict item_verdict(const RunFacts& facts, std::size_t i)
+{
+    const ItemCheck& item = facts.check->items[i];
+    if (item.outcome == CheckOutcome::error) {
+        return {Verdict::unchecked, item.error_code};
+    }
+    if (item.outcome == CheckOutcome::match) {
+        return {Verdict::verified, {}};
+    }
+    const connector::ItemRestoreResult* restored = restore_item(facts, i);
+    if (restored && restored->outcome != ItemOutcome::restored && restored->infrastructure) {
+        return {Verdict::unchecked, std::string{kBackupInfrastructure}};
+    }
+    return {Verdict::failed, {}};
+}
+
+// Whether a session's details read as the backup's counts, "<n> item(s)
+// processed", then optionally a parenthesis of counts of Veeam's own words,
+// e.g. "5 items processed (4 successes, 1 warning)". Any other text, inside
+// the parenthesis too, may name a tenant value (an item, an address), so it
+// never goes into a warning.
+bool is_counts(const std::string& details)
+{
+    static const std::string count =
+        R"(\d+ (successes|success|warnings?|failures?|errors?|skipped))";
+    static const std::regex counts(R"(\d+ items? processed( \()" + count + "(, " + count +
+                                   R"()*\))?)");
+    return std::regex_match(details, counts);
+}
+
+std::string or_dash(std::string text)
+{
+    return text.empty() ? std::string{"-"} : text;
+}
+
+std::vector<StatusWarning> warnings_of(const RunFacts& facts,
+                                       const std::vector<ItemVerdict>& verdicts)
+{
+    std::vector<StatusWarning> warnings;
+    const std::size_t items = facts.expected ? facts.expected->items.size() : 0;
+    if (facts.restore) {
+        for (const connector::RestoreSessionResult& session : facts.restore->sessions) {
+            if (session.result == "Success") {
+                continue;
+            }
+            std::string message = std::format("{} session {}: {}", kind_name(session.kind),
+                                              or_dash(one_line(session.id)),
+                                              or_dash(one_line(session.result)));
+            if (is_counts(session.details)) {
+                message += " (" + session.details + ")";
+            }
+            std::vector<std::size_t> indexes;
+            for (std::size_t i = 0; i < items; ++i) {
+                const connector::ItemRestoreResult* restored = restore_item(facts, i);
+                if (restored && !session.id.empty() && restored->session_id == session.id) {
+                    indexes.push_back(i);
+                }
+            }
+            warnings.push_back({"backup_session", std::move(message), std::move(indexes)});
+        }
+    }
+    std::vector<std::size_t> unreported;
+    std::vector<std::size_t> duplicates;
+    for (std::size_t i = 0; i < verdicts.size(); ++i) {
+        const connector::ItemRestoreResult* restored = restore_item(facts, i);
+        if (verdicts[i].verdict == Verdict::verified && restored &&
+            restored->outcome != ItemOutcome::restored) {
+            unreported.push_back(i);
+        }
+        if (facts.check->items[i].duplicate) {
+            duplicates.push_back(i);
+        }
+    }
+    if (!unreported.empty()) {
+        warnings.push_back({"backup_item",
+                            std::format("{} verified item(s) the backup didn't report restored",
+                                        unreported.size()),
+                            std::move(unreported)});
+    }
+    if (!duplicates.empty()) {
+        warnings.push_back({"duplicate",
+                            std::format("{} item(s) had more than one restored copy; the newest "
+                                        "was checked",
+                                        duplicates.size()),
+                            std::move(duplicates)});
+    }
+    for (const Shortfall& s : facts.shortfalls) {
+        warnings.push_back({"shortfall",
+                            std::format("{} {}: {} of {}", kind_name(s.kind), to_string(s.source),
+                                        s.taken, s.wanted),
+                            {}});
+    }
+    if (facts.check) {
+        const CheckResult& c = *facts.check;
+        if (const std::size_t stale = c.stale_mail + c.stale_sharepoint + c.stale_onedrive;
+            stale > 0) {
+            warnings.push_back(
+                {"stale_copies",
+                 std::format("{} copies from earlier runs in the restore targets were ignored "
+                             "(mail {}, sharepoint {}, onedrive {})",
+                             stale, c.stale_mail, c.stale_sharepoint, c.stale_onedrive),
+                 {}});
+        }
+    }
+    return warnings;
+}
+
+RunVerdict error_verdict(RunVerdict verdict, std::string_view code, std::string message)
+{
+    verdict.status = RunStatus::error;
+    verdict.error_code = std::string{code};
+    verdict.message = std::move(message);
+    return verdict;
+}
+
+std::string stop_message(const RunStop& stop)
+{
+    const std::string_view text = stop_code(stop.error_code)->stop_text;
+    switch (stop.phase) {
+    case RunPhase::restore:
+        if (stop.nothing_restored) {
+            return std::format("the restore didn't start: {} ({}); nothing was restored", text,
+                               stop.error_code);
+        }
+        return std::format(
+            "the restore didn't complete: {} ({}); items may be in the restore targets", text,
+            stop.error_code);
+    case RunPhase::check:
+        return std::format("the restored items couldn't be checked: {} ({})", text,
+                           stop.error_code);
+    case RunPhase::before_restore:
+        break;
+    }
+    // before_restore; row 1 has refused a phase outside the enum.
+    return std::format("the run stopped before the restore: {} ({}); nothing was restored", text,
+                       stop.error_code);
+}
+
+// Whether a restore may have been sent, so items may be in the targets: a
+// restore that ran, or a stop in the restore that didn't promise nothing was.
+bool restore_sent(const RunFacts& facts) noexcept
+{
+    if (facts.restore) {
+        return facts.restore->status != RestoreStatus::not_run;
+    }
+    return facts.stop && facts.stop->phase == RunPhase::restore && !facts.stop->nothing_restored;
+}
+
+// "<code> <n>, ..." for the unchecked items, in severity order.
+std::string unchecked_codes(const std::vector<UncheckedItem>& unchecked)
+{
+    std::vector<const ErrorCode*> ranked;
+    for (const ErrorCode& c : kCodes) {
+        if (c.severity != kNoSeverity) {
+            ranked.push_back(&c);
+        }
+    }
+    std::ranges::sort(ranked, {}, &ErrorCode::severity);
+    std::string text;
+    for (const ErrorCode* c : ranked) {
+        const auto n = std::ranges::count(unchecked, c->code, &UncheckedItem::error_code);
+        if (n > 0) {
+            text += std::format("{}{} {}", text.empty() ? "" : ", ", c->code, n);
+        }
+    }
+    return text;
+}
+
+} // namespace
+
+std::string_view to_string(RunStatus status) noexcept
+{
+    switch (status) {
+    case RunStatus::pass:
+        return "pass";
+    case RunStatus::fail:
+        return "fail";
+    case RunStatus::error:
+        return "error";
+    }
+    return "unknown";
+}
+
+std::string_view to_string(RunPhase phase) noexcept
+{
+    switch (phase) {
+    case RunPhase::before_restore:
+        return "before_restore";
+    case RunPhase::restore:
+        return "restore";
+    case RunPhase::check:
+        return "check";
+    }
+    return "unknown";
+}
+
+RunStop stop_reason(std::exception_ptr error, RunPhase phase)
+{
+    if (!error) {
+        throw std::invalid_argument("stop_reason: no exception");
+    }
+    const auto stop = [phase](std::string_view code, const std::exception& e) {
+        RunStop out{phase, std::string{code}};
+        out.nothing_restored = phase == RunPhase::restore &&
+                               std::string_view{e.what()}.ends_with(connector::kNothingRestored);
+        return out;
+    };
+    try {
+        std::rethrow_exception(error);
+    } catch (const ConfigError& e) {
+        return stop("config", e);
+    } catch (const sampling::ManifestError& e) {
+        return stop("config", e);
+    } catch (const connector::UnknownConnectorError& e) {
+        return stop("config", e);
+    } catch (const graph::GraphError& e) {
+        // The check's own mapping: a Graph failure has one code wherever it happens.
+        return stop(read_error_code(std::current_exception()), e);
+    } catch (const connector::SafetyViolation& e) {
+        return stop("target_guard", e);
+    } catch (const connector::AuthError& e) {
+        return stop("backup_auth", e);
+    } catch (const connector::TransientError& e) {
+        return stop("backup_transient", e);
+    } catch (const connector::NotFoundError& e) {
+        return stop("not_in_backup", e);
+    } catch (const connector::Error& e) {
+        return stop("backup", e);
+    } catch (...) {
+        // Below: an exception the Worker doesn't know promises nothing.
+    }
+    return RunStop{phase, std::string{kInternal}};
+}
+
+std::vector<Shortfall> shortfalls_of(const sampling::SampleRecord& record)
+{
+    std::vector<Shortfall> shortfalls;
+    const std::pair<ItemKind, const sampling::KindRecord*> kinds[] = {
+        {ItemKind::mail, &record.mail},
+        {ItemKind::sharepoint, &record.sharepoint},
+        {ItemKind::onedrive, &record.onedrive}};
+    for (const auto& [kind, k] : kinds) {
+        const int canary_wanted = (k->requested + 1) / 2;
+        const int canary_taken = static_cast<int>(k->canary_ids.size());
+        if (canary_taken < canary_wanted) {
+            shortfalls.push_back({kind, ItemSource::canary, canary_wanted, canary_taken});
+        }
+        if (k->random_taken < k->random_wanted) {
+            shortfalls.push_back({kind, ItemSource::random, k->random_wanted, k->random_taken});
+        }
+    }
+    return shortfalls;
+}
+
+RunVerdict decide_status(const RunFacts& facts)
+{
+    RunVerdict verdict;
+    verdict.items = facts.expected ? facts.expected->items.size() : 0;
+    verdict.restore_sent = restore_sent(facts);
+    // Row 1.
+    if (const std::optional<std::string> why = inconsistency(facts)) {
+        return error_verdict(std::move(verdict), kInternal,
+                             "the run's results don't add up: " + *why);
+    }
+    std::vector<ItemVerdict> verdicts;
+    if (facts.check) {
+        for (std::size_t i = 0; i < facts.check->items.size(); ++i) {
+            verdicts.push_back(item_verdict(facts, i));
+        }
+    }
+    verdict.warnings = warnings_of(facts, verdicts);
+    // Row 2.
+    if (facts.stop) {
+        return error_verdict(std::move(verdict), facts.stop->error_code,
+                             stop_message(*facts.stop));
+    }
+    // Row 3.
+    if (verdict.items == 0) {
+        return error_verdict(std::move(verdict), "empty_sample",
+                             "the sample is empty: nothing to restore");
+    }
+    // Row 4.
+    if (facts.restore->status == RestoreStatus::not_run) {
+        return error_verdict(std::move(verdict), "not_run",
+                             "the restore didn't run: nothing was sent");
+    }
+    std::size_t missing = 0;
+    std::size_t mismatch = 0;
+    for (std::size_t i = 0; i < verdicts.size(); ++i) {
+        switch (verdicts[i].verdict) {
+        case Verdict::verified:
+            switch (facts.expected->items[i].expected_kind) {
+            case ExpectedKind::manifest:
+                ++verdict.verified_manifest;
+                break;
+            case ExpectedKind::fields:
+                ++verdict.verified_fields;
+                break;
+            case ExpectedKind::metadata:
+                ++verdict.verified_metadata;
+                break;
+            }
+            break;
+        case Verdict::failed:
+            verdict.failed.push_back(i);
+            ++(facts.check->items[i].outcome == CheckOutcome::missing ? missing : mismatch);
+            break;
+        case Verdict::unchecked:
+            verdict.unchecked.push_back({i, verdicts[i].code});
+            break;
+        }
+    }
+    const std::size_t n = verdict.items;
+    // Row 5.
+    if (!verdict.failed.empty()) {
+        verdict.status = RunStatus::fail;
+        verdict.message = std::format("{} of {} item(s) didn't verify ({} missing, {} mismatch)",
+                                      verdict.failed.size(), n, missing, mismatch);
+        if (!verdict.unchecked.empty()) {
+            verdict.message += std::format("; {} couldn't be checked", verdict.unchecked.size());
+        }
+        return verdict;
+    }
+    // Row 6.
+    if (facts.restore->status == RestoreStatus::failed && verdict.unchecked.empty()) {
+        return error_verdict(std::move(verdict), "restore_contradiction",
+                             "the backup reported nothing restored, yet every item verified: the "
+                             "evidence contradicts itself");
+    }
+    // Row 7.
+    if (!verdict.unchecked.empty()) {
+        const UncheckedItem& worst = std::ranges::min(
+            verdict.unchecked, {},
+            [](const UncheckedItem& item) { return severity_of(item.error_code); });
+        std::string message =
+            std::format("{} of {} item(s) couldn't be checked ({})", verdict.unchecked.size(), n,
+                        unchecked_codes(verdict.unchecked));
+        if (verdict.verified() > 0) {
+            message += std::format("; {} verified", verdict.verified());
+        }
+        const std::string code = worst.error_code;
+        return error_verdict(std::move(verdict), code, std::move(message));
+    }
+    // Row 8.
+    verdict.status = RunStatus::pass;
+    verdict.message = std::format("{} of {} item(s) verified: manifest {}, fields {}, metadata {}",
+                                  n, n, verdict.verified_manifest, verdict.verified_fields,
+                                  verdict.verified_metadata);
+    return verdict;
+}
+
+json to_json(const RunVerdict& verdict)
+{
+    json out = json::object();
+    out["status"] = to_string(verdict.status);
+    if (verdict.status == RunStatus::error) {
+        out["error_code"] = verdict.error_code;
+    }
+    out["message"] = verdict.message;
+    out["restore_sent"] = verdict.restore_sent;
+    out["counts"] = {{"items", verdict.items},
+                     {"verified", verdict.verified()},
+                     {"failed", verdict.failed.size()},
+                     {"unchecked", verdict.unchecked.size()}};
+    out["verified"] = {{"manifest", verdict.verified_manifest},
+                       {"fields", verdict.verified_fields},
+                       {"metadata", verdict.verified_metadata}};
+    out["failed_items"] = verdict.failed;
+    json unchecked = json::array();
+    for (const UncheckedItem& item : verdict.unchecked) {
+        unchecked.push_back({{"index", item.index}, {"error_code", item.error_code}});
+    }
+    out["unchecked_items"] = std::move(unchecked);
+    json warnings = json::array();
+    for (const StatusWarning& w : verdict.warnings) {
+        warnings.push_back({{"code", w.code}, {"message", w.message}, {"indexes", w.indexes}});
+    }
+    out["warnings"] = std::move(warnings);
+    return out;
+}
+
+int exit_code_of(std::string_view error_code) noexcept
+{
+    const ErrorCode* found = find_code(error_code);
+    return found ? found->exit : exit_code::service;
+}
+
+int exit_code_of(const RunVerdict& verdict) noexcept
+{
+    switch (verdict.status) {
+    case RunStatus::pass:
+        return exit_code::ok;
+    case RunStatus::fail:
+        return exit_code::restore;
+    case RunStatus::error:
+        break;
+    }
+    return exit_code_of(verdict.error_code);
+}
+
+} // namespace rp::verification

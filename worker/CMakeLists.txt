@@ -10,9 +10,13 @@ find_package(Catch2 3 CONFIG REQUIRED)
 find_package(cpr CONFIG REQUIRED)
 # Test-only: the local HTTP(S) server the HTTP client tests talk to.
 find_package(httplib CONFIG REQUIRED)
+# office-v1 (W3.2) opens restored docx/xlsx packages; zlib is its only codec.
+find_package(libzip CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(OpenSSL REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
+# Test-only, directly: office_v1_test.cpp deflates the packages it builds.
+find_package(ZLIB REQUIRED)
 
 enable_testing()
 
@@ -23,6 +27,7 @@ add_library(rpcore STATIC
     src/canary_manifest.cpp
     src/cert_export.cpp
     src/cert_pin.cpp
+    src/checker.cpp
     src/cli.cpp
     src/client_assertion.cpp
     src/command_config.cpp
@@ -39,6 +44,7 @@ add_library(rpcore STATIC
     src/graph_targets.cpp
     src/http_client.cpp
     src/name_key.cpp
+    src/office_v1.cpp
     src/recording_http_client.cpp
     src/redact.cpp
     src/restore_command.cpp
@@ -66,11 +72,11 @@ add_library(rpcore STATIC
 target_include_directories(rpcore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_definitions(rpcore PUBLIC RP_VERSION="${PROJECT_VERSION}")
 # PUBLIC: JSON values and loggers will appear in rpcore's headers.
-# PRIVATE: cpr and OpenSSL stay behind rpcore's own interfaces (HTTP client,
-# signer), so callers don't see their headers.
+# PRIVATE: cpr, OpenSSL and libzip stay behind rpcore's own interfaces (HTTP
+# client, signer, office-v1), so callers don't see their headers.
 target_link_libraries(rpcore
     PUBLIC nlohmann_json::nlohmann_json spdlog::spdlog
-    PRIVATE cpr::cpr OpenSSL::Crypto
+    PRIVATE cpr::cpr OpenSSL::Crypto libzip::zip
 )
 # C4062 (an enumerator not handled in a switch that has no default) is an
 # error in rpcore, so a value added to an enum such as HttpMethod can't fall
@@ -96,6 +102,7 @@ add_executable(rptests
     tests/canary_manifest_test.cpp
     tests/cert_export_test.cpp
     tests/cert_pin_test.cpp
+    tests/checker_test.cpp
     tests/client_assertion_test.cpp
     tests/cli_test.cpp
     tests/command_config_test.cpp
@@ -117,9 +124,11 @@ add_executable(rptests
     tests/http_client_test.cpp
     tests/http_client_tls_test.cpp
     tests/name_key_test.cpp
+    tests/office_v1_test.cpp
     tests/recording_http_client_test.cpp
     tests/redact_test.cpp
     tests/restore_command_test.cpp
+    tests/restore_replay_test.cpp
     tests/retry_policy_test.cpp
     tests/sample_rng_test.cpp
     tests/sample_selector_live_test.cpp
@@ -153,6 +162,9 @@ target_link_libraries(rptests PRIVATE ncrypt)
 # httplib is test-only: the HTTP client tests run a server on 127.0.0.1.
 # http_client_test.cpp also reads rpcore's internal src/http_client_detail.hpp.
 target_link_libraries(rptests PRIVATE httplib::httplib)
+# deps_test.cpp writes and reads a package with libzip; office_v1_test.cpp
+# deflates the packages it builds byte by byte (zlib).
+target_link_libraries(rptests PRIVATE libzip::zip ZLIB::ZLIB)
 # The source scan in http_client_test.cpp looks for code that turns TLS
 # verification off anywhere in the Worker.
 target_compile_definitions(rptests PRIVATE RP_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")

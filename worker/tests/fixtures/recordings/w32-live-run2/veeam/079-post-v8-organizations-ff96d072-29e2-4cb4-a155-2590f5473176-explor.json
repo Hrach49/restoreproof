@@ -1,0 +1,40 @@
+{
+  "source": "rpworker 0.0.0 restore --record",
+  "request": "POST /v8/Organizations/ff96d072-29e2-4cb4-a155-2590f5473176/explore",
+  "status": 201,
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8",
+    "Location": "/v8/restoresessions/9a9adf46-806d-4718-a3fe-0647f208795e"
+  },
+  "body": {
+    "id": "9a9adf46-806d-4718-a3fe-0647f208795e",
+    "name": "OneDrive restore (Entire organization - 9/30/2026 10:00:43 PM)",
+    "organization": "RestoreProofLab.onmicrosoft.com",
+    "type": "Veod",
+    "creationTime": "2026-10-01T17:28:27.4241081Z",
+    "endTime": "9999-12-31T23:59:59.9999999",
+    "state": "Working",
+    "result": "Success",
+    "initiatedBy": "rp-veeam",
+    "scopeName": "",
+    "clientHost": "localhost:4443 (via: [::ffff:127.0.0.1])",
+    "eTag": 1,
+    "_links": {
+      "self": {
+        "href": "/v8/restoresessions/9a9adf46-806d-4718-a3fe-0647f208795e"
+      },
+      "organization": {
+        "href": "/v8/restoresessions/9a9adf46-806d-4718-a3fe-0647f208795e/organization"
+      },
+      "restoreSessionEvents": {
+        "href": "/v8/restoresessions/9a9adf46-806d-4718-a3fe-0647f208795e/events"
+      }
+    }
+  },
+  "request_body": {
+    "dateTime": "2026-09-30T22:00:43.4764524Z",
+    "type": "Veod",
+    "showDeleted": false,
+    "showAllVersions": false
+  }
+}

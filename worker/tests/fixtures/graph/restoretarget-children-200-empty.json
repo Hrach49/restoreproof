@@ -1,6 +1,6 @@
 {
   "source": "live 2026-09-28: GET the RestoreTarget library's root children, empty",
-  "request": "GET /v1.0/drives/b!XQgI_nDr6EKVpkcBib2Y65nzyk4OzJVNs_7NCRoJ5omdBuz_5GU6TJ2irAhs-dr6/root/children?$select=id,name,size,file,folder&$top=200",
+  "request": "GET /v1.0/drives/b!XQgI_nDr6EKVpkcBib2Y65nzyk4OzJVNs_7NCRoJ5omdBuz_5GU6TJ2irAhs-dr6/root/children?$select=id,name,size,cTag,createdDateTime,lastModifiedDateTime,file,folder&$top=200",
   "status": 200,
   "headers": {
     "Content-Type": "application/json; odata.metadata=minimal; odata.streaming=true; IEEE754Compatible=false; charset=utf-8",

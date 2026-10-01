@@ -13,6 +13,7 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cctype>
 #include <cstddef>
 #include <iterator>
@@ -25,7 +26,12 @@ namespace {
 
 using nlohmann::json;
 
-constexpr std::string_view kChildrenQuery = "?$select=id,name,size,file,folder&$top=200";
+// cTag and the two times: W3.2's checker tells this run's copies from an
+// earlier run's by them (docs/decisions.md 2026-10-01, W3.2).
+constexpr std::string_view kChildrenQuery =
+    "?$select=id,name,size,cTag,createdDateTime,lastModifiedDateTime,file,folder&$top=200";
+constexpr std::string_view kMailSelect =
+    "?$select=id,subject,from,sentDateTime,receivedDateTime,createdDateTime,internetMessageId";
 
 // 1..max_size of ASCII letters, digits and the characters in `extra`.
 bool is_id(std::string_view text, std::string_view extra, std::size_t max_size)
@@ -193,6 +199,11 @@ TargetReader::TargetReader(GraphClient& graph, IHttpClient& download,
     tenant_host_ = parse_graph_site_id(targets_.site_id()).value().host;
 }
 
+std::chrono::steady_clock::time_point TargetReader::now() const
+{
+    return options_.clock ? options_.clock() : std::chrono::steady_clock::now();
+}
+
 void TargetReader::log(spdlog::level::level_enum level, const std::string& line) const
 {
     // May be null: spdlog::drop_all() and shutdown() clear the default logger.
@@ -238,13 +249,20 @@ std::vector<FoundItem> TargetReader::list_files(const FileTarget& target)
             item.id = id;
             item.name = *name;
             item.size_bytes = size->get<std::uint64_t>();
-            if (!options_.hash_items) {
+            item.listed_size = item.size_bytes;
+            item.ctag = optional_string(entry, "cTag");
+            item.created_at = optional_string(entry, "createdDateTime");
+            item.modified_at = optional_string(entry, "lastModifiedDateTime");
+            // Listed only: not hashing, or a file the caller doesn't compare
+            // (W3.2 review: an earlier run's leftover is never downloaded).
+            if (!options_.hash_items || (options_.hash_file && !options_.hash_file(item))) {
                 items.push_back(std::move(item));
                 continue;
             }
             // SharePoint rewrites Office files, so their bytes may differ
             // from the size listed (office-v1; review of W2.2; one rule, W3.1).
             const bool office = is_rewritten_office_file(*name);
+            const auto started = now();
             const std::string bytes = download_item(
                 graph_, download_, *target.grant, tenant_host_, target.drive_id, id,
                 *item.size_bytes, office ? SizeCheck::up_to_limit : SizeCheck::exact,
@@ -255,6 +273,8 @@ std::vector<FoundItem> TargetReader::list_files(const FileTarget& target)
             if (options_.on_file) {
                 options_.on_file(item, bytes);
             }
+            item.read_ms =
+                std::chrono::duration_cast<std::chrono::milliseconds>(now() - started).count();
             items.push_back(std::move(item));
         }
     }
@@ -291,13 +311,15 @@ std::string mail_body_sha256(const json& message, const std::string& location)
 
 std::vector<FoundItem> TargetReader::list_mail()
 {
+    // The guard's mailbox check first, as the file targets run theirs (W3.2).
+    check_restore_mailbox(graph_, targets_);
     const std::string& mailbox = targets_.mailbox();
     const std::string location = "the test mailbox's Inbox";
     const HttpHeaders prefer{{"Prefer", std::string{kMailPrefer}}};
     const std::vector<json> pages =
         list_pages(graph_,
                    "/users/" + mailbox + "/mailFolders/inbox/messages" +
-                       "?$select=id,subject,from,receivedDateTime,internetMessageId" +
+                       std::string{kMailSelect} +
                        (options_.hash_items ? ",body" : "") + "&$top=100",
                    kMailReadGrant, prefer, location, [&mailbox](const std::vector<std::string>& path) {
                        return is_inbox_path(path, mailbox);
@@ -318,9 +340,12 @@ std::vector<FoundItem> TargetReader::list_mail()
                 const auto address = from->find("emailAddress");
                 if (address != from->end()) {
                     item.sender = optional_string(*address, "address");
+                    item.sender_name = optional_string(*address, "name");
                 }
             }
+            item.sent_at = optional_string(message, "sentDateTime");
             item.received_at = optional_string(message, "receivedDateTime");
+            item.created_at = optional_string(message, "createdDateTime");
             item.internet_message_id = optional_string(message, "internetMessageId");
             items.push_back(std::move(item));
         }

@@ -1,0 +1,18 @@
+{
+  "source": "rpworker 0.0.0 restore --record",
+  "request": "GET /v8/RestoreSessions/59addb2f-6084-4fd7-bed5-b7f4689fac00/Organization/OneDrives/41514e3e-02f7-405b-96da-9b8bd8e1d45d98cfff1a-b404-4438-ae6e-6927a6ccc325/Folders?parentId=root&limit=1000&offset=0",
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8"
+  },
+  "body": {
+    "offset": 0,
+    "limit": 1000,
+    "_links": {
+      "self": {
+        "href": "/v8/RestoreSessions/59addb2f-6084-4fd7-bed5-b7f4689fac00/Organization/OneDrives/41514e3e-02f7-405b-96da-9b8bd8e1d45d98cfff1a-b404-4438-ae6e-6927a6ccc325/Folders?parentid=root&offset=0&limit=1000"
+      }
+    },
+    "results": []
+  }
+}

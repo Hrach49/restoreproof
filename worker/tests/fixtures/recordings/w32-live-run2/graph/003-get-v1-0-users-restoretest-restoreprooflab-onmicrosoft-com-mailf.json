@@ -1,0 +1,88 @@
+{
+  "source": "rpworker 0.0.0 restore --record",
+  "request": "GET /v1.0/users/restoretest@RestoreProofLab.onmicrosoft.com/mailFolders/inbox/messages?$select=id,subject,from,sentDateTime,receivedDateTime,createdDateTime,internetMessageId&$top=100",
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/json; odata.metadata=minimal; odata.streaming=true; IEEE754Compatible=false; charset=utf-8"
+  },
+  "body": {
+    "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#users('restoretest%40RestoreProofLab.onmicrosoft.com')/mailFolders('inbox')/messages(id,subject,from,sentDateTime,receivedDateTime,createdDateTime,internetMessageId)",
+    "value": [
+      {
+        "@odata.etag": "W/\"CQAAABYAAACnL+u8BR8BT6morC7OYUFaAAADTyxK\"",
+        "id": "AAkALgAAAAAAHYQDEapmEc2byACqAC-EWg0Apy-rvAUfAU_pqKwuzmFBWgAAA1LvKgAA",
+        "createdDateTime": "2026-10-01T17:21:25Z",
+        "receivedDateTime": "2026-09-28T02:50:39Z",
+        "sentDateTime": "2026-09-28T02:50:30Z",
+        "internetMessageId": "<b88e9a70-1aca-49c5-bdd2-f4382fe58ef3@az.northeurope.microsoft.com>",
+        "subject": "Weekly digest: Microsoft service updates",
+        "from": {
+          "emailAddress": {
+            "name": "Microsoft 365 Message center",
+            "address": "o365mc@microsoft.com"
+          }
+        }
+      },
+      {
+        "@odata.etag": "W/\"CQAAABYAAACnL+u8BR8BT6morC7OYUFaAAADTyxI\"",
+        "id": "AAkALgAAAAAAHYQDEapmEc2byACqAC-EWg0Apy-rvAUfAU_pqKwuzmFBWgAAA1LvLAAA",
+        "createdDateTime": "2026-10-01T17:21:25Z",
+        "receivedDateTime": "2026-09-24T23:06:27Z",
+        "sentDateTime": "2026-09-24T23:06:22Z",
+        "internetMessageId": "<8043abc8-694f-4787-b693-17d2fb0487e9@WA2PEPF000003AA.POLP291.PROD.OUTLOOK.COM>",
+        "subject": "Veeam website registration",
+        "from": {
+          "emailAddress": {
+            "name": "Veeam Software",
+            "address": "support@veeam.com"
+          }
+        }
+      },
+      {
+        "@odata.etag": "W/\"CQAAABYAAACnL+u8BR8BT6morC7OYUFaAAADTyw9\"",
+        "id": "AAkALgAAAAAAHYQDEapmEc2byACqAC-EWg0Apy-rvAUfAU_pqKwuzmFBWgAAA1LvJQAA",
+        "createdDateTime": "2026-10-01T17:20:57Z",
+        "receivedDateTime": "2026-09-24T22:14:43Z",
+        "sentDateTime": "2026-09-24T22:14:40Z",
+        "internetMessageId": "<WA1P291MB02782A0BB98A6248EFAC581C8B812@WA1P291MB0278.POLP291.PROD.OUTLOOK.COM>",
+        "subject": "RP-CANARY-0002",
+        "from": {
+          "emailAddress": {
+            "name": "Hrachya Harutyunyan",
+            "address": "HrachyaHarutyunyan@RestoreProofLab.onmicrosoft.com"
+          }
+        }
+      },
+      {
+        "@odata.etag": "W/\"CQAAABYAAACnL+u8BR8BT6morC7OYUFaAAADTyw5\"",
+        "id": "AAkALgAAAAAAHYQDEapmEc2byACqAC-EWg0Apy-rvAUfAU_pqKwuzmFBWgAAA1LvIQAA",
+        "createdDateTime": "2026-10-01T17:20:57Z",
+        "receivedDateTime": "2026-09-24T22:14:43Z",
+        "sentDateTime": "2026-09-24T22:14:40Z",
+        "internetMessageId": "<WA1P291MB02781921393C1534F31F644B8B812@WA1P291MB0278.POLP291.PROD.OUTLOOK.COM>",
+        "subject": "RP-CANARY-0003",
+        "from": {
+          "emailAddress": {
+            "name": "Hrachya Harutyunyan",
+            "address": "HrachyaHarutyunyan@RestoreProofLab.onmicrosoft.com"
+          }
+        }
+      },
+      {
+        "@odata.etag": "W/\"CQAAABYAAACnL+u8BR8BT6morC7OYUFaAAADTyw7\"",
+        "id": "AAkALgAAAAAAHYQDEapmEc2byACqAC-EWg0Apy-rvAUfAU_pqKwuzmFBWgAAA1LvIwAA",
+        "createdDateTime": "2026-10-01T17:20:57Z",
+        "receivedDateTime": "2026-09-24T22:14:43Z",
+        "sentDateTime": "2026-09-24T22:14:40Z",
+        "internetMessageId": "<WA1P291MB0278BF626D9584D9B97A7B578B812@WA1P291MB0278.POLP291.PROD.OUTLOOK.COM>",
+        "subject": "RP-CANARY-0001",
+        "from": {
+          "emailAddress": {
+            "name": "Hrachya Harutyunyan",
+            "address": "HrachyaHarutyunyan@RestoreProofLab.onmicrosoft.com"
+          }
+        }
+      }
+    ]
+  }
+}

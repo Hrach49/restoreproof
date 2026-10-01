@@ -1,8 +1,8 @@
 #pragma once
 
-// Text helpers shared by the service clients (VeeamClient, GraphClient):
-// encoding a form value, decoding a URL's path and making a server's text fit
-// one log line.
+// Text helpers shared by the service clients (VeeamClient, GraphClient) and
+// the commands: encoding a form value, decoding a URL's path, joining names
+// and making a server's text fit one log line.
 
 #include "control_chars.hpp"
 
@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace rp {
 
@@ -43,6 +44,19 @@ inline bool ascii_ends_with_i(std::string_view text, std::string_view suffix)
 {
     return text.size() > suffix.size() &&
            ascii_iequals(text.substr(text.size() - suffix.size()), suffix);
+}
+
+// `names` one after another with `separator` between them.
+inline std::string joined(const std::vector<std::string>& names, std::string_view separator)
+{
+    std::string text;
+    for (const std::string& name : names) {
+        if (!text.empty()) {
+            text += separator;
+        }
+        text += name;
+    }
+    return text;
 }
 
 // Percent-encoding for an application/x-www-form-urlencoded value: every byte

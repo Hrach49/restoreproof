@@ -94,7 +94,112 @@ whose `random_taken` or `canary_wanted` isn't what the selection holds.
 
 ## Comparing (W3.2)
 
-To be written with W3.2.
+`rp::verification::check(expected, before, after)` in `worker/include/rp/checker.hpp` decides,
+for each expected item, what became of it in the restore targets. It is pure: `rpworker
+restore` does the Graph reads around it (`docs/decisions.md` 2026-10-01, W3.2).
+
+**Two reads, one check.** Just before the restore the command lists the targets the sample has
+items for, without hashing: the *before snapshot*, each mail's Graph ID and each file's ID and
+`cTag`. After the restore it lists them again, hashing every mail body (`text-v1`) and every
+file that is this run's copy of an expected file (`bytes`, and `office-v1` for a docx or
+xlsx): the *after read*. A file that was there before with the same `cTag` (an earlier run's
+copy), or whose name has no `name_key` of an expected file that carries a hash or a size (a
+random Office file carries neither), is listed but never downloaded
+(`rp::verification::hash_filter`), so a leftover that is gone, has changed size or is too large
+by now can't turn a target's items into `error`. Both go through
+`rp::graph::TargetReader`, so every read runs the target guard's checks first (the mailbox's
+Inbox, the RestoreTarget library, the OneDrive RestoreTarget folder) and nothing outside the
+targets is read. A failure in the before snapshot stops the run before anything is restored.
+
+**This run's copies.** Restored copies look like their originals: a mail keeps its
+`receivedDateTime` and `internetMessageId`, a file its name and `createdDateTime`, and all
+land flat in the target. So a copy counts as this run's only if:
+
+- a mail: its Graph ID wasn't in the before snapshot (every restore gives a new ID);
+- a file: its ID wasn't there, or its `cTag` changed (a restore over a same-named file merges
+  a new version into the same item).
+
+Everything else is an earlier run's copy: never compared, counted in `stale_copies`, and
+named in one warning line on stderr (`warning: <n> copies from earlier runs in the restore
+targets were ignored (mail <x>, sharepoint <y>, onedrive <z>)`).
+
+**Finding an item.**
+
+| Item | Looked for among this run's copies |
+|---|---|
+| canary mail | `internetMessageId` equal to the manifest's; if none, the subject exactly (then `internet_message_id` doesn't match) |
+| random mail | the subject exactly |
+| file | its own target, a name with the same `name_key` (case-insensitive as SharePoint and OneDrive are) |
+
+**A copy counts for one item only.** Canary mails are looked up first, then every other item
+in index order, and each item claims the copies it matched; a later item never sees them. Two
+expected items that would find the same copy (two random mails of one subject, two files of
+one `name_key`) can't both pass on it: the second finds only claimed copies and is `missing`
+(or `stale_target` when an earlier run's copy it would match is there).
+
+An item that only matches an earlier run's copy is `error`, code `stale_target`: the checker
+can't tell whether this restore wrote anything, so it is neither found nor missing. For a
+file this is a name whose copy's `cTag` didn't move. For a mail it is any earlier copy with
+its `internetMessageId` (a canary) or subject: Veeam leaves a mail that is already in the
+target as it is, gives no new copy and still reports it "restored successfully" (W3.2's live
+run 2 on 2026-10-01 restored five mails over run 1's copies: the Inbox kept run 1's five,
+same Graph IDs). So until W3.4 empties the targets before each run, a mail sampled again is
+`error`, never a `fail`. When
+more than one of this run's copies match, the newest is compared (mail `createdDateTime`, file
+`lastModifiedDateTime`, then the greater ID), and the item says `duplicate` with its `copies`;
+a duplicate doesn't change the outcome (W3.3 decides what it means for the run).
+
+**Comparing.** Only what the expectation carries is compared; a value the expectation doesn't
+have is never a mismatch.
+
+| Field | Rule |
+|---|---|
+| `subject` | byte-equal |
+| `sender_address` (canary) | Graph's `from.emailAddress.address`, ASCII case-insensitive |
+| `sender_name` (random mail) | Graph's `from.emailAddress.name`, control characters as spaces (the expectation's rule), byte-equal |
+| `sent_at`, `received_at` | within 120 seconds either way, inclusive; a missing or unreadable Graph time is a mismatch |
+| `internet_message_id` (canary) | byte-equal |
+| `size_bytes` | the downloaded byte count |
+| `sha256` | by the expectation's rule: `text-v1` of the body, `bytes` of the file, `office-v1` of the package; a restored docx or xlsx that isn't a valid package is a mismatch on `sha256`, since the restored file is broken, not the test |
+
+A file's name is how it is found, so it is not compared again.
+
+**Outcomes.**
+
+| Outcome | When |
+|---|---|
+| `match` | this run's copy found, every carried field agrees |
+| `mismatch` | this run's copy found, at least one field disagrees (named in `mismatches`) |
+| `missing` | no copy of this run's that no other item claimed, and no earlier run's copy the item would match |
+| `error` | the item couldn't be checked: its target couldn't be read back (`graph_auth`, `graph_permission`, `graph_transient`, `target_guard`, `graph`), or `stale_target` |
+
+An infrastructure failure is always `error`, for every item of the type whose target couldn't
+be read, never `missing` or `mismatch`; the other types are still checked.
+
+**The `check` object.** Lined up with `expected` and `RestoreResult::items` by `index`:
+
+```json
+{
+  "counts": {"match": 3, "mismatch": 0, "missing": 1, "error": 0},
+  "stale_copies": {"mail": 2, "sharepoint": 0, "onedrive": 1},
+  "items": [
+    {"index": 0, "outcome": "match", "found": true, "ms": 4},
+    {"index": 1, "outcome": "missing", "found": false, "reason": "no restored copy found"}
+  ]
+}
+```
+
+`mismatches`, `reason`, `duplicate` with `copies`, `error_code` and `ms` appear only when they
+apply. Values found in the tenant (subjects, names, senders, IDs) are never written: the
+`expected` object already holds what was checked. `ms` is the item's own cost: its file's
+download, hash and `office-v1` time, plus its comparison. The run's step timings are W3.5's.
+
+Until W3.3 turns this into a status, `rpworker restore` exits 5 when its restore succeeded but
+an item is `missing` or `mismatch`, and 4 when one is `error` (`docs/worker-config.md`).
+
+**Not checked in Stage 1.** A random file's content (no expectation, W3.1 decision 3). A pptx,
+or any Office type but docx and xlsx: `office-v1` reads only `word/` and `xl/` parts, so
+these are checked by name only; a `ppt/` rule would be a new rule, `office-v2`.
 
 ## The status decision table (W3.3)
 

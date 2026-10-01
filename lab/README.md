@@ -285,8 +285,8 @@ What each request is and what is checked:
 - The mail requests carry `Prefer: outlook.body-content-type="text", IdType="ImmutableId"`, as
   the seeder's and the Worker's do (`MAIL_PREFER` in `seeder/graph.py`); no other request
   carries anything but `Authorization`. The list is the Worker's
-  (`$select=id,subject,from,receivedDateTime,internetMessageId,body&$top=100`): the bodies
-  come in the listing, and each must come back as `text`.
+  (`$select=id,subject,from,sentDateTime,receivedDateTime,createdDateTime,internetMessageId,body&$top=100`,
+  W3.2): the bodies come in the listing, and each must come back as `text`.
 - `restoretarget-drive-200.json` is the Worker's guard read of the library's drive
   (`$select=id,name,driveType,webUrl,sharePointIds`): it must be named `RestoreTarget`, its
   `webUrl` must end `/RestoreTarget`, and it must have `sharePointIds.siteId` and `.webId`.
@@ -297,7 +297,9 @@ What each request is and what is checked:
   outside the Exchange scope. The drive and folder lines also print the facts the
   Worker's guard depends on: `webUrl last segment=… sharePointIds=present|absent` and
   `parentReference.path=<value or (absent)> parentReference.id=present|absent`.
-- The children lists use `$select=id,name,size,file,folder&$top=200`. In `one-item` the one
+- The children lists use
+  `$select=id,name,size,cTag,createdDateTime,lastModifiedDateTime,file,folder&$top=200` (W3.2:
+  the checker tells this run's copies from an earlier run's by `cTag` and the times). In `one-item` the one
   child must be a file (a `file` facet).
 - The not-found cases use random IDs of the right shape, never a canary's: `01` and 32 base32
   letters for the OneDrive item, and the RestoreTarget drive ID with its last 16 bytes (the
@@ -431,9 +433,11 @@ The SharePoint `RestoreTest` library rewrites docx and xlsx files: once on uploa
 some minutes later, without changing `lastModifiedDateTime` (see the findings below). No
 whole-file hash of them stays valid, so Office files are compared on their content parts:
 
-1. Open the file as a ZIP package.
+1. Open the file as a ZIP package, reading its central directory. A part name stored twice is
+   refused (the package is not valid input).
 2. Take every part whose name starts with the content folder, `word/` for docx and `xl/` for
-   xlsx, except parts inside a `_rels/` folder.
+   xlsx (case-sensitive), except parts inside a `_rels/` folder and names ending in `/`
+   (folder entries).
 3. Sort the part names by their UTF-8 bytes.
 4. For each part write one line: lower-case hex SHA-256 of the uncompressed part bytes, two
    spaces, the part name, LF.
@@ -449,6 +453,20 @@ the whole file.
 canaries and the same files as SharePoint rewrote them, which must give equal hashes, with the
 expected values in `cases.json`. W3.2's C++ checker must pass them. A different rule gets a new
 name (`office-v2`).
+
+**The C++ checker also refuses** (`worker/src/office_v1.cpp`, over libzip), where
+`seeder/office.py` (Python's `zipfile`) may not: a counted part compressed by any method but
+stored or deflate; an encrypted counted part; a stored counted part whose compressed and
+uncompressed sizes differ; a counted part larger than 64 MiB uncompressed, or counted parts
+larger than 64 MiB together; a package of more than 10,000 entries (read from the end record
+before the directory is, so a ZIP64 package is refused too). Names are taken as stored: a
+backslash is not turned into `/`, as Python's `zipfile` does on Windows. These are
+hostile-input differences only: no Office writer produces them. Where Python is lenient on
+something a valid file could carry, the C++ checker is too: a local header that disagrees with
+its central directory entry, bytes after the end record, and a deflated part that declares
+more bytes than it holds all hash as in Python (one local header difference is even read where
+Python refuses: a counted part whose local header names it otherwise is read by its directory
+name). A counted part that holds more than it declares is refused by both.
 
 ## The manifest
 

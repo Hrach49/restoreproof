@@ -39,8 +39,10 @@ inline const std::chrono::system_clock::time_point kNow =
 inline constexpr const char* kPfxPassword = "Sentinel-Targets-PFX-Password-3b9d";
 
 // Without the body when nothing is hashed (`graph list` without --hash).
-inline const std::string kMailSelect = "?$select=id,subject,from,receivedDateTime,internetMessageId";
-inline const std::string kChildrenQuery = "/children?$select=id,name,size,file,folder&$top=200";
+inline const std::string kMailSelect =
+    "?$select=id,subject,from,sentDateTime,receivedDateTime,createdDateTime,internetMessageId";
+inline const std::string kChildrenQuery =
+    "/children?$select=id,name,size,cTag,createdDateTime,lastModifiedDateTime,file,folder&$top=200";
 inline const std::string kPrefer = std::string{rp::graph::kMailPrefer};
 
 // The Worker app's certificate as RP_GRAPH_CERT_PFX_BASE64 holds it, valid at kNow.

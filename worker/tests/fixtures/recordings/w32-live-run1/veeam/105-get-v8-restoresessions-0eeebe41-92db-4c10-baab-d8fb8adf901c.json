@@ -1,0 +1,34 @@
+{
+  "source": "rpworker 0.0.0 restore --record",
+  "request": "GET /v8/RestoreSessions/0eeebe41-92db-4c10-baab-d8fb8adf901c",
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8"
+  },
+  "body": {
+    "id": "0eeebe41-92db-4c10-baab-d8fb8adf901c",
+    "name": "Exchange restore (Entire organization - 9/30/2026 10:00:43 PM)",
+    "organization": "RestoreProofLab.onmicrosoft.com",
+    "type": "Vex",
+    "creationTime": "2026-10-01T17:22:42.7173935Z",
+    "endTime": "2026-10-01T17:23:11.0785475Z",
+    "state": "Stopped",
+    "result": "Success",
+    "initiatedBy": "rp-veeam",
+    "details": "2 items processed (2 successes)",
+    "scopeName": "",
+    "clientHost": "[::ffff:127.0.0.1]",
+    "eTag": 2,
+    "_links": {
+      "self": {
+        "href": "/v8/restoresessions/0eeebe41-92db-4c10-baab-d8fb8adf901c"
+      },
+      "organization": {
+        "href": "/v8/restoresessions/0eeebe41-92db-4c10-baab-d8fb8adf901c/organization"
+      },
+      "restoreSessionEvents": {
+        "href": "/v8/restoresessions/0eeebe41-92db-4c10-baab-d8fb8adf901c/events"
+      }
+    }
+  }
+}

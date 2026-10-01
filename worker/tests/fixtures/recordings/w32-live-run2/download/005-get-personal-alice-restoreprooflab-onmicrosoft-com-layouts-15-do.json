@@ -1,0 +1,11 @@
+{
+  "source": "rpworker 0.0.0 restore --record",
+  "request": "GET /personal/alice_restoreprooflab_onmicrosoft_com/_layouts/15/download.aspx?UniqueId=SCRUBBED&Translate=SCRUBBED&tempauth=SCRUBBED&ApiVersion=SCRUBBED",
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+  },
+  "body": null,
+  "body_size": 3263,
+  "body_sha256": "d15743168af7a46ae0bc3f572ee1f87e88c39dc962429ec8bebc59712b195297"
+}

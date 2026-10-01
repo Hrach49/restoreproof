@@ -128,7 +128,7 @@ std::string format_elapsed(std::chrono::nanoseconds elapsed);
 //   <blank line>
 //     SESSION  KIND  RESULT  RESTORED  STARTED  ENDED  ELAPSED        one row per session
 //   <blank line>
-//   status <status>: <restored> of <sent> item(s) restored in <H:MM:SS>
+//   restore <status>: <restored> of <sent> item(s) restored in <H:MM:SS>
 //   <blank line>
 //     KIND  SOURCE  NAME  OUTCOME  FIELDS  DUP  MS              one row per expected item
 //   <blank line>

@@ -574,7 +574,7 @@ restoring 1 item(s) ...
   SESSION                               KIND  RESULT   RESTORED  STARTED                       ENDED                         ELAPSED
   b6fe35ef-9633-481d-9756-3496a717d8a9  mail  Success  1 of 1    2026-09-28T21:27:28.3281642Z  2026-09-28T21:28:00.6973119Z  0:00:32
 
-status succeeded: 1 of 1 item(s) restored in 0:00:05
+restore succeeded: 1 of 1 item(s) restored in 0:00:05
 
   KIND  SOURCE  NAME            OUTCOME  FIELDS  DUP  MS
   mail  canary  RP-CANARY-0011  match    -       -    0
@@ -606,7 +606,8 @@ status pass: 1 of 1 item(s) verified: manifest 1, fields 0, metadata 0
   verified, with a `backup_item` warning.
 - **One row per restore session**: Veeam's result, items restored of sent, start and end as
   Veeam wrote them, and the time between (`-` when either doesn't read).
-- **The restore's line**: `status <restore status>: ...`, the restore's own status
+- **The restore's line**: `restore <restore status>: ...` (`status ...` until W3.3, renamed so
+  that only the run's status line starts with `status`), the restore's own status
   (`succeeded`, `partial`, `failed` or `not_run`, `worker/include/rp/connector.hpp`), items
   restored of sent, and the time the restore took. Times are `H:MM:SS`, cut to whole seconds.
   It is Veeam's account, not the run's status, which comes last.

@@ -382,7 +382,7 @@ std::string format_result(const connector::RestoreResult& result,
         }
         text += '\n' + format_table(rows);
     }
-    text += std::format("\nstatus {}: {} of {} item(s) restored in {}\n",
+    text += std::format("\nrestore {}: {} of {} item(s) restored in {}\n",
                         connector::to_string(result.status), result.items_restored,
                         result.items_sent, format_elapsed(total));
     return text;

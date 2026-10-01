@@ -29,12 +29,13 @@ namespace rp::verification {
 //    Office package, src/office_files.hpp), no hash.
 enum class ExpectedKind { manifest, fields, metadata };
 
-// "manifest", "fields" or "metadata".
+// "manifest", "fields" or "metadata"; "unknown" for a value outside the enum,
+// never one that claims a check.
 std::string_view to_string(ExpectedKind kind) noexcept;
 
 enum class ItemSource { canary, random };
 
-// "canary" or "random".
+// "canary" or "random"; "unknown" for a value outside the enum.
 std::string_view to_string(ItemSource source) noexcept;
 
 // Times are "YYYY-MM-DDTHH:MM:SSZ"; nullopt: not an expectation.
@@ -49,9 +50,12 @@ struct ExpectedMail {
 
 struct ExpectedFile {
     std::string name;
-    std::optional<std::int64_t> size_bytes; // nullopt: not an expectation (an Office package)
+    std::optional<std::int64_t> size_bytes; // nullopt: not an expectation (an Office
+                                            // package, or a size the backup didn't give)
 };
 
+// Its defaults are a canary's, but to_json writes no item whose fields don't
+// hold what its expected kind claims.
 struct ExpectedItem {
     std::size_t index = 0; // its position in RestoreSpec and RestoreResult::items
     connector::ItemKind kind = connector::ItemKind::mail;
@@ -78,13 +82,14 @@ struct ExpectedSet {
 // file, and content_sha256 by its content_rule); a random mail `fields`
 // (subject, received time, and the sender name and sent time when the backup
 // listed them); a random file `metadata` (name, and the backup's size unless
-// is_office_package). Nothing is built when (the first two for every type
+// is_office_package or the size is below 0, one the backup didn't give). Nothing is built when (the first two for every type
 // first, then per type, mail, SharePoint, OneDrive, its canaries and then its
 // random items):
 //  - selection.record.manifest_sha256 isn't manifest.sha256:
 //    std::invalid_argument("expected set: the selection wasn't made from this manifest");
-//  - a type's selectors aren't its canary_ids and <kind>_random in number, or
-//    its random_keys aren't as many as <kind>_random:
+//  - a type's selectors aren't its canary_ids and <kind>_random in number, its
+//    random_keys or random_taken aren't as many as <kind>_random, or its
+//    canary_wanted isn't as many as its canary_ids:
 //    std::invalid_argument("expected set: the <kind> selectors don't match the canaries
 //    and random items recorded");
 //  - a canary id isn't one of the manifest's canaries of that type:
@@ -103,7 +108,13 @@ ExpectedSet build_expected_set(const sampling::Selection& selection,
 // "sender_address", "sender_name", "sent_at", "received_at",
 // "internet_message_id" for a mail or "name", "size_bytes" for a file, and
 // "sha256", "sha256_rule"}]}. A key whose value isn't known is left out,
-// never null.
+// never null. Nothing is written, std::logic_error("expected set: item <n>
+// <why>"), when an item isn't at its index, or its expected kind isn't
+// backed by its fields: `manifest` only for a canary with a canary_id, no
+// key, a lower-case hex sha256 and its type's rule (text-v1 for a mail,
+// bytes or office-v1 for a file); `fields` only for a random mail and
+// `metadata` only for a random file, each with a key and no canary_id or
+// hash; a mail holds `mail` and a file `file`, never both.
 nlohmann::json to_json(const ExpectedSet& set);
 
 } // namespace rp::verification

@@ -95,6 +95,24 @@ inline std::string percent_decode(std::string_view text)
     return out;
 }
 
+// `text` with each control character (control_chars.hpp) replaced by a
+// space: text from a server that the Worker keeps or prints.
+inline std::string without_controls(std::string_view text)
+{
+    std::string out;
+    out.reserve(text.size());
+    for (std::size_t i = 0; i < text.size();) {
+        if (const std::size_t length = control_character_length(text, i); length != 0) {
+            out += ' ';
+            i += length;
+        } else {
+            out += text[i];
+            ++i;
+        }
+    }
+    return out;
+}
+
 // Text from a response, made fit for one log line: each control character
 // (control_chars.hpp: the multi-byte ones that forge or reorder lines too)
 // becomes a space, and it is cut at `max_bytes` bytes, back to the start of a
@@ -107,18 +125,7 @@ inline std::string one_line(std::string_view text, std::size_t max_bytes = kOneL
             --cut;
         }
     }
-    const std::string_view kept = text.substr(0, cut);
-    std::string out;
-    out.reserve(kept.size());
-    for (std::size_t i = 0; i < kept.size();) {
-        if (const std::size_t length = control_character_length(kept, i); length != 0) {
-            out += ' ';
-            i += length;
-        } else {
-            out += kept[i];
-            ++i;
-        }
-    }
+    std::string out = without_controls(text.substr(0, cut));
     if (text.size() > max_bytes) {
         out += "...";
     }

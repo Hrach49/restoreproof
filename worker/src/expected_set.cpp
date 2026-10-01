@@ -2,6 +2,7 @@
 
 #include "office_files.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <stdexcept>
 #include <string>
@@ -23,14 +24,16 @@ std::string kind_name(ItemKind kind)
     return std::string{connector::to_string(kind)};
 }
 
-// Per type, as many selectors as canaries and random candidates recorded,
-// and a key per random candidate.
+// Per type, as many selectors as canaries and random candidates recorded, a
+// key per random candidate, and the record's counts what the selection holds.
 template <typename Selector, typename Candidate>
 void check_counts(ItemKind kind, const std::vector<Selector>& selectors,
                   const sampling::KindRecord& record, const std::vector<Candidate>& randoms)
 {
     if (selectors.size() != record.canary_ids.size() + randoms.size() ||
-        record.random_keys.size() != randoms.size()) {
+        record.random_keys.size() != randoms.size() ||
+        std::cmp_not_equal(record.canary_wanted, record.canary_ids.size()) ||
+        std::cmp_not_equal(record.random_taken, randoms.size())) {
         throw std::invalid_argument("expected set: the " + kind_name(kind) +
                                     " selectors don't match the canaries and random items recorded");
     }
@@ -89,8 +92,9 @@ ExpectedItem from_random(const FileCandidate& candidate)
     ExpectedItem item;
     item.expected_kind = ExpectedKind::metadata;
     const std::string& name = candidate.selector.name;
-    item.file = ExpectedFile{name, is_office_package(name) ? std::nullopt
-                                                           : std::optional{candidate.size_bytes}};
+    // A size below 0 is one the backup didn't give: no expectation.
+    const bool sized = candidate.size_bytes >= 0 && !is_office_package(name);
+    item.file = ExpectedFile{name, sized ? std::optional{candidate.size_bytes} : std::nullopt};
     return item;
 }
 
@@ -149,6 +153,51 @@ void put(json& out, const char* key, const std::string& value)
     }
 }
 
+bool is_lower_hex_sha256(const std::string& text)
+{
+    return text.size() == 64 && std::ranges::all_of(text, [](char c) {
+               return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
+           });
+}
+
+// Why `item` claims what its fields don't hold, or nullptr: each expected
+// kind with exactly its source, type and evidence, so no item reads as
+// checked against a hash it hasn't.
+const char* inconsistency(const ExpectedItem& item, std::size_t position)
+{
+    if (item.index != position) {
+        return "isn't at its index";
+    }
+    const bool mail = item.kind == ItemKind::mail;
+    const bool file = item.kind == ItemKind::sharepoint || item.kind == ItemKind::onedrive;
+    if (!mail && !file) {
+        return "has an unknown type";
+    }
+    if (item.mail.has_value() != mail || item.file.has_value() != file) {
+        return "doesn't hold its type's fields";
+    }
+    switch (item.expected_kind) {
+    case ExpectedKind::manifest: {
+        const bool rule = mail ? item.sha256_rule == "text-v1"
+                               : item.sha256_rule == "bytes" || item.sha256_rule == "office-v1";
+        if (item.source != ItemSource::canary || item.canary_id.empty() ||
+            !item.random_key.empty() || !is_lower_hex_sha256(item.sha256) || !rule) {
+            return "is manifest but not a canary with a hash and its rule";
+        }
+        return nullptr;
+    }
+    case ExpectedKind::fields:
+    case ExpectedKind::metadata:
+        if (item.source != ItemSource::random || item.random_key.empty() ||
+            !item.canary_id.empty() || !item.sha256.empty() || !item.sha256_rule.empty() ||
+            mail != (item.expected_kind == ExpectedKind::fields)) {
+            return "is fields or metadata but not a random item of its type without a hash";
+        }
+        return nullptr;
+    }
+    return "has an unknown expected kind";
+}
+
 json item_json(const ExpectedItem& item)
 {
     json out = {
@@ -188,9 +237,9 @@ std::string_view to_string(ExpectedKind kind) noexcept
     case ExpectedKind::metadata:
         return "metadata";
     case ExpectedKind::manifest:
-        break;
+        return "manifest";
     }
-    return "manifest";
+    return "unknown";
 }
 
 std::string_view to_string(ItemSource source) noexcept
@@ -199,9 +248,9 @@ std::string_view to_string(ItemSource source) noexcept
     case ItemSource::random:
         return "random";
     case ItemSource::canary:
-        break;
+        return "canary";
     }
-    return "canary";
+    return "unknown";
 }
 
 ExpectedSet build_expected_set(const sampling::Selection& selection,
@@ -235,6 +284,9 @@ json to_json(const ExpectedSet& set)
     std::size_t metadata = 0;
     json items = json::array();
     for (const ExpectedItem& item : set.items) {
+        if (const char* why = inconsistency(item, items.size())) {
+            throw std::logic_error("expected set: item " + std::to_string(items.size()) + " " + why);
+        }
         switch (item.expected_kind) {
         case ExpectedKind::manifest:
             ++manifest;

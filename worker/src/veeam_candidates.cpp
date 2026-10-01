@@ -402,8 +402,9 @@ void CandidateLister::browse_mail(connector::CandidatePool& pool)
                 {mailbox.address, folder.folder_path, *subject, *second}, {}, {}};
             // Read tolerantly: a field that isn't a string is one Veeam didn't
             // say (decision 7), not a reason to fail the listing.
+            // A display name its sender chose: no control character kept.
             if (const auto from = item.find("from"); from != item.end() && from->is_string()) {
-                candidate.sender_name = from->get<std::string>();
+                candidate.sender_name = without_controls(from->get_ref<const std::string&>());
             }
             if (const auto sent = item.find("sent"); sent != item.end() && sent->is_string()) {
                 candidate.sent_at =

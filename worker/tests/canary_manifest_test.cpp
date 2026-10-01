@@ -152,6 +152,12 @@ TEST_CASE("the canary manifest refuses an entry or field that breaks its rule",
         at(kFirstSharePoint, "/location/folder_path: must start with \"/\" and have no \"..\" segment, backslash or colon");
     const std::string od_folder_path =
         at(kFirstOneDrive, "/location/folder_path: must start with \"/\" and have no \"..\" segment, backslash or colon");
+    const auto rule_by_type = [](int entry) {
+        return at(entry, "/content_rule: must be \"office-v1\" for a docx or xlsx and \"bytes\" for a pdf, txt or png");
+    };
+    const auto name_by_type = [](int entry) {
+        return at(entry, "/name: must be an Office package's name (src/office_files.hpp) for a docx or xlsx, and only then");
+    };
     const Row row = GENERATE_COPY(values<Row>({
         {"no schema", [](json& m) { m.erase("schema"); }, schema},
         {"schema v2", [](json& m) { m["schema"] = "seed-manifest.v2"; }, schema},
@@ -249,6 +255,21 @@ TEST_CASE("the canary manifest refuses an entry or field that breaks its rule",
          at(kFirstOneDrive, "/content_rule: must be \"bytes\" or \"office-v1\"")},
         {"content_rule office-v2", [](json& m) { m["entries"][kFirstSharePoint]["content_rule"] = "office-v2"; },
          at(kFirstSharePoint, "/content_rule: must be \"bytes\" or \"office-v1\"")},
+        // A rule a restored copy can be checked by (W3.1 review).
+        {"a docx by bytes", [](json& m) { m["entries"][kFirstSharePoint + 1]["content_rule"] = "bytes"; },
+         rule_by_type(kFirstSharePoint + 1)},
+        {"an xlsx by bytes", [](json& m) { m["entries"][kFirstOneDrive + 2]["content_rule"] = "bytes"; },
+         rule_by_type(kFirstOneDrive + 2)},
+        {"a pdf by office-v1", [](json& m) { m["entries"][kFirstSharePoint]["content_rule"] = "office-v1"; },
+         rule_by_type(kFirstSharePoint)},
+        {"a png by office-v1", [](json& m) { m["entries"][kFirstOneDrive + 4]["content_rule"] = "office-v1"; },
+         rule_by_type(kFirstOneDrive + 4)},
+        {"a pdf named .docx", [](json& m) { m["entries"][kFirstSharePoint]["name"] = "rp-canary-01.docx"; },
+         name_by_type(kFirstSharePoint)},
+        {"a txt named .XLSM", [](json& m) { m["entries"][kFirstOneDrive + 3]["name"] = "rp-canary-14.XLSM"; },
+         name_by_type(kFirstOneDrive + 3)},
+        {"a docx named .pdf", [](json& m) { m["entries"][kFirstOneDrive + 1]["name"] = "rp-canary-12.pdf"; },
+         name_by_type(kFirstOneDrive + 1)},
         {"no content_sha256", [](json& m) { m["entries"][kFirstOneDrive + 1].erase("content_sha256"); }, content_hash},
         {"content_sha256 in upper case",
          [](json& m) {
@@ -289,9 +310,9 @@ TEST_CASE("the canary manifest refuses an entry or field that breaks its rule",
         {"a OneDrive name repeated but for a non-ASCII letter's case",
          [](json& m) {
              m["entries"][kFirstOneDrive]["name"] = "\xC5\xB9r\xC3\xB3" "d\xC5\x82" "a.pdf";
-             m["entries"][kFirstOneDrive + 2]["name"] = "\xC5\xB9R\xC3\x93" "D\xC5\x81" "A.PDF";
+             m["entries"][kFirstOneDrive + 3]["name"] = "\xC5\xB9R\xC3\x93" "D\xC5\x81" "A.PDF";
          },
-         at(kFirstOneDrive + 2, "/name: repeats /entries/30/name (ignoring case)")},
+         at(kFirstOneDrive + 3, "/name: repeats /entries/30/name (ignoring case)")},
         // SharePoint.
         {"site_id a GUID", [](json& m) { m["entries"][kFirstSharePoint]["location"]["site_id"] = "fe08085d-eb70-42e8-95a6-470189bd98eb"; },
          at(kFirstSharePoint, "/location/site_id: ") + std::string{rp::kGraphSiteIdRule}},

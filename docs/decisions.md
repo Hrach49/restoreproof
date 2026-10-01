@@ -7,6 +7,49 @@ Format: date, decision, reason, alternatives rejected.
 
 ---
 
+## 2026-10-01 — W3.2 live run: a file's cTag moves on a restore over it; a mail already there isn't restored at all (proposed)
+
+Amends the W3.2 entry below (point 1 and its Open check) with what the live run showed
+(`docs/api/veeam-lab/README.md`, "W3.2 live run"):
+
+1. **The cTag check is answered: yes.** Restoring the same 6 canary files over run 1's copies
+   (run 2b) moved every file's `cTag`, the OneDrive pdf, docx and xlsx included, whose bytes
+   didn't change. So point 1's rule holds: a file whose `cTag` moved is this run's copy, and
+   all 6 were `match`.
+2. **A mail that is already in the target is not restored, and Veeam says it was.** Run 2b's
+   five mails were each "restored successfully" in a `Success` session, but the Inbox kept run
+   1's copies, same Graph IDs, and gained nothing (`changedItems: true` restores only what
+   differs). Point 1 had assumed every mail restore gives a new Graph ID, from W2.5 and W2.8,
+   which both started on empty targets. The build reported the five as `missing`, a `fail`
+   for what is an unclean target: the infrastructure-as-fail the status rules forbid. Fixed
+   (commit 6fd89e9, a test first): a mail with no copy of this run's but an earlier one it
+   would match (its `internetMessageId`, or its subject) is `error` `stale_target`, as a file
+   with only an unmoved earlier copy already was. A mail sampled again is therefore always
+   `error` until the targets are emptied before each run.
+3. **The check doesn't trust "restored successfully".** Run 2b is the case the product exists
+   for: Veeam reported 11 of 11, and 5 had not been written by this run. The check said so.
+
+**Reason.** Live evidence over the assumption it replaces; and `stale_target` keeps an unclean
+target out of `fail`, where `missing` would have put it.
+
+**Alternatives rejected.** *Ask Veeam to restore mails as copies, or turn `changedItems` off*:
+the restore bodies are fixed by W2.4/W2.7's guard on the exact key set, and a second copy beside
+an old one still can't say which run wrote it. *Count an earlier mail copy as found*: a restore
+that wrote nothing would pass.
+
+**Open.**
+- W3.4 must empty the targets **before** each run, not only after: with leftovers, every mail
+  sampled again is `error`. The before snapshot stays as the second guard.
+- A residual risk to note for W3.4: SharePoint rewrites an uploaded Office file again some
+  minutes later (`lab/README.md`, office-v1), which also moves its `cTag`. An earlier run's docx
+  or xlsx in the RestoreTarget library, restored minutes before, could be rewritten between this
+  run's two reads and look like this run's copy. Cleaning before each run removes it; until
+  then, leave a few minutes between runs that sample the same Office canaries.
+- Veeam's explore-session Stop timed out once (run 2, 30 s twice, before any restore; the
+  command refused to go on, exit 4, as designed). Watch for it; no change now.
+
+---
+
 ## 2026-10-01 — W3.2 review: only this run's files are read back, a copy counts once, office-v1 no stricter than the seeder (proposed)
 
 Amends the W3.2 entry below (points 1, 4 and 6). Two reviews of the build (the checker and

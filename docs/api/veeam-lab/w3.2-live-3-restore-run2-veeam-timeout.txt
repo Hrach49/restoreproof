@@ -1,0 +1,7 @@
+== restore run 2 (same canaries)
+restore point 2026-09-30T22:00:43.4764524Z  c2f0f2e7-177f-48ac-992b-93a50cf702e305134a51-8a9e-4298-b39a-1be364acd660  (veeam_org_name RestoreProofLab.onmicrosoft.com)
+run rp-20261001T172434Z-999c6dea  seed 577b0ec8
+[2026-10-01 19:25:09.701] [rpworker] [warning] veeam_m365: stopping explore session afa54daa-95d7-4b11-9580-ee0d52c5878b failed (Veeam POST https://localhost:4443/v8/RestoreSessions/afa54daa-95d7-4b11-9580-ee0d52c5878b/Stop: timed out: Operation timed out after 30004 milliseconds with 0 bytes received) and it is still Working; sending Stop once more
+[2026-10-01 19:25:39.713] [rpworker] [warning] veeam_m365: couldn't close explore session afa54daa-95d7-4b11-9580-ee0d52c5878b: Veeam POST https://localhost:4443/v8/RestoreSessions/afa54daa-95d7-4b11-9580-ee0d52c5878b/Stop: timed out: Operation timed out after 30008 milliseconds with 0 bytes received
+restore error: veeam_m365: explore session afa54daa-95d7-4b11-9580-ee0d52c5878b couldn't be stopped, and restore_sample's preflight would refuse to run; stop it with docs/api/veeam-m365/08-sweep-sessions.ps1; nothing was listed
+exit 4

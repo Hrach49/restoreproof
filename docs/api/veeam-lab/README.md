@@ -154,3 +154,40 @@ the destination path (`…/Documents/RestoreTarget/…`), as W2.4 recorded
 
 Neither holds a credential: the command prints none. The copies stay in the targets until
 removed by hand (W3.4).
+
+## W3.2 live run (`rpworker restore` with the check)
+
+W3.2's "Done when" for a live run, 2026-10-01, from an elevated Windows PowerShell with the lab
+config (`%LOCALAPPDATA%\RestoreProof\lab\config.json`) and `--record`, on the restore point of
+2026-09-30T22:00:43.4764524Z, canary cursor `0,0,0`:
+
+- **Run 1** (`rp-20261001T172150Z-b029c118`, the targets empty before it): 3 canaries of each
+  type and 2 random mails (the file random halves short, as in W2.8), 11 of 11 restored in four
+  `Success` sessions, and the check read all 11 back: **11 match**, 0 mismatch, 0 missing, 0
+  error, exit 0. The SharePoint docx and xlsx, which SharePoint rewrites, matched by
+  `office-v1`; everything else by `text-v1` or `bytes`.
+- **Run 2** (`rp-20261001T172434Z-999c6dea`): stopped while choosing the sample, before any
+  restore: Veeam didn't answer a Stop of an explore session within 30 s, twice, and the command
+  refused to go on (`restore error: ... couldn't be stopped ...; nothing was listed`, exit 4).
+  The session read `Stopped` a few minutes later (`08-sweep-sessions.ps1 -WhatIf`: none
+  Working).
+- **Run 2b** (`rp-20261001T172815Z-6285c4a6`, the same canaries again, over run 1's copies):
+  11 of 11 "restored" in four `Success` sessions. **Files**: all 6 `match`, and none counted as
+  an earlier copy: a restore over a same-named file moves its `cTag` (the W3.2 decision's open
+  check), the OneDrive pdf, docx and xlsx included, whose bytes didn't change. **Mails**: Veeam
+  said each was "restored successfully", but the Inbox kept run 1's five copies with the same
+  Graph IDs and no new one: Veeam leaves a mail that is already in the target as it is. The
+  build then reported the five as `missing` (exit 5), which would have been a `fail` for an
+  unclean target; fixed the same day (commit 6fd89e9): such an item is `error` `stale_target`.
+
+| File | What it is |
+|---|---|
+| [`w3.2-live-1-graph-list-before.txt`](w3.2-live-1-graph-list-before.txt) | `rpworker graph list` before run 1: the three targets empty |
+| [`w3.2-live-2-restore-run1.txt`](w3.2-live-2-restore-run1.txt) | run 1's output and exit code: the restore and the check, 11 match |
+| [`w3.2-live-3-restore-run2-veeam-timeout.txt`](w3.2-live-3-restore-run2-veeam-timeout.txt) | run 2: Veeam's explore session Stop timing out, nothing restored |
+| [`w3.2-live-4-graph-list-after-run1.txt`](w3.2-live-4-graph-list-after-run1.txt) | `rpworker graph list --hash` after run 1 (and run 2, which wrote nothing) |
+| [`w3.2-live-5-restore-run2b.txt`](w3.2-live-5-restore-run2b.txt) | run 2b's output: 6 files match, 5 mails `missing` before the fix (stderr lines interleaved by the console) |
+| [`w3.2-live-6-graph-list-after-run2b.txt`](w3.2-live-6-graph-list-after-run2b.txt) | `rpworker graph list --hash` after run 2b: the same five mail IDs; the SharePoint docx/xlsx bytes rewritten again |
+
+Runs 1 and 2b's `--record` folders are replayed by `worker/tests/` (W3.2). None of these files
+holds a credential. The 11 copies stay in the targets until removed by hand (W3.4).

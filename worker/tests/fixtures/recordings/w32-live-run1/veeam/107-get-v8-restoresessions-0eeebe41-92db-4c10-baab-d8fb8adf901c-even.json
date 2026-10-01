@@ -1,0 +1,113 @@
+{
+  "source": "rpworker 0.0.0 restore --record",
+  "request": "GET /v8/RestoreSessions/0eeebe41-92db-4c10-baab-d8fb8adf901c/Events?limit=1000&offset=0",
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8"
+  },
+  "body": {
+    "offset": 0,
+    "limit": 1000,
+    "_links": {
+      "self": {
+        "href": "/v8/RestoreSessions/0eeebe41-92db-4c10-baab-d8fb8adf901c/Events?offset=0&limit=1000"
+      }
+    },
+    "results": [
+      {
+        "itemSizeBytes": 0,
+        "id": "bc6e9fa7-01b0-4a5f-a62c-9efa466ee117",
+        "type": "None",
+        "status": "Success",
+        "startTime": "2026-10-01T17:22:42.7234433Z",
+        "endTime": "2026-10-01T17:22:42.7234433Z",
+        "duration": "00:00:00",
+        "title": "Restore session started",
+        "message": "Restore session started",
+        "order": 0,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/0eeebe41-92db-4c10-baab-d8fb8adf901c/events/bc6e9fa7-01b0-4a5f-a62c-9efa466ee117"
+          },
+          "restoreSession": {
+            "href": "/v8/restoresessions/0eeebe41-92db-4c10-baab-d8fb8adf901c"
+          }
+        }
+      },
+      {
+        "itemName": "Weekly digest: Microsoft service updates",
+        "itemType": "IPM.Note",
+        "itemSizeBytes": 933222,
+        "source": "Hrachya Harutyunyan\\Inbox",
+        "target": "restoretest@RestoreProofLab.onmicrosoft.com\\<null>\\Inbox",
+        "id": "9baa5ca0-9059-aae2-bf44-262e536f8ee2",
+        "type": "Restore",
+        "status": "Success",
+        "startTime": "2026-10-01T17:23:00.909099Z",
+        "endTime": "2026-10-01T17:23:00.9489952Z",
+        "duration": "00:00:00.0398962",
+        "title": "Message successfully restored",
+        "message": "Item Weekly digest: Microsoft service updates was restored successfully (type: IPM.Note; source: Hrachya Harutyunyan\\Inbox; target: restoretest@RestoreProofLab.onmicrosoft.com\\<null>\\Inbox)",
+        "order": 1,
+        "organizationId": "ff96d072-29e2-4cb4-a155-2590f5473176",
+        "backedUpOrganizationId": "RestoreProofLab.onmicrosoft.com:00000000-0000-0000-0000-000000000000:00000000-0000-0000-0000-000000000000",
+        "userId": "RestoreProofLab.onmicrosoft.com:00000000-0000-0000-0000-000000000000:00000000-0000-0000-0000-000000000000:533138fa-6982-4fd2-a8b1-593d3f655d32:00000000-0000-0000-0000-000000000000",
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/0eeebe41-92db-4c10-baab-d8fb8adf901c/events/9baa5ca0-9059-aae2-bf44-262e536f8ee2"
+          },
+          "restoreSession": {
+            "href": "/v8/restoresessions/0eeebe41-92db-4c10-baab-d8fb8adf901c"
+          }
+        }
+      },
+      {
+        "itemName": "Veeam website registration",
+        "itemType": "IPM.Note",
+        "itemSizeBytes": 70937,
+        "source": "Hrachya Harutyunyan\\Inbox",
+        "target": "restoretest@RestoreProofLab.onmicrosoft.com\\<null>\\Inbox",
+        "id": "85ac1b6f-5c02-251a-28e1-3a1ae901767c",
+        "type": "Restore",
+        "status": "Success",
+        "startTime": "2026-10-01T17:23:00.9619104Z",
+        "endTime": "2026-10-01T17:23:00.9890318Z",
+        "duration": "00:00:00.0271214",
+        "title": "Folder successfully restored",
+        "message": "Item Veeam website registration was restored successfully (type: IPM.Note; source: Hrachya Harutyunyan\\Inbox; target: restoretest@RestoreProofLab.onmicrosoft.com\\<null>\\Inbox)",
+        "order": 2,
+        "organizationId": "ff96d072-29e2-4cb4-a155-2590f5473176",
+        "backedUpOrganizationId": "RestoreProofLab.onmicrosoft.com:00000000-0000-0000-0000-000000000000:00000000-0000-0000-0000-000000000000",
+        "userId": "RestoreProofLab.onmicrosoft.com:00000000-0000-0000-0000-000000000000:00000000-0000-0000-0000-000000000000:533138fa-6982-4fd2-a8b1-593d3f655d32:00000000-0000-0000-0000-000000000000",
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/0eeebe41-92db-4c10-baab-d8fb8adf901c/events/85ac1b6f-5c02-251a-28e1-3a1ae901767c"
+          },
+          "restoreSession": {
+            "href": "/v8/restoresessions/0eeebe41-92db-4c10-baab-d8fb8adf901c"
+          }
+        }
+      },
+      {
+        "itemSizeBytes": 0,
+        "id": "d065805e-e80e-46bf-916c-18cbbb810e60",
+        "type": "None",
+        "status": "Success",
+        "startTime": "2026-10-01T17:23:11.08918Z",
+        "endTime": "2026-10-01T17:23:11.08918Z",
+        "duration": "00:00:00",
+        "title": "Restore session completed",
+        "message": "Restore session completed",
+        "order": 3,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/0eeebe41-92db-4c10-baab-d8fb8adf901c/events/d065805e-e80e-46bf-916c-18cbbb810e60"
+          },
+          "restoreSession": {
+            "href": "/v8/restoresessions/0eeebe41-92db-4c10-baab-d8fb8adf901c"
+          }
+        }
+      }
+    ]
+  }
+}

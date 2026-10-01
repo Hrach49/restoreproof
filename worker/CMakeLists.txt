@@ -128,6 +128,7 @@ add_executable(rptests
     tests/recording_http_client_test.cpp
     tests/redact_test.cpp
     tests/restore_command_test.cpp
+    tests/restore_replay_test.cpp
     tests/retry_policy_test.cpp
     tests/sample_rng_test.cpp
     tests/sample_selector_live_test.cpp

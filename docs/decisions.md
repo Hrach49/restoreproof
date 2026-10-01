@@ -45,6 +45,12 @@ that wrote nothing would pass.
   or xlsx in the RestoreTarget library, restored minutes before, could be rewritten between this
   run's two reads and look like this run's copy. Cleaning before each run removes it; until
   then, leave a few minutes between runs that sample the same Office canaries.
+- The Graph fields W3.2 reads are now tested on live bodies: runs 1 and 2b's `--record`
+  folders are replayed whole by `worker/tests/restore_replay_test.cpp`
+  (`worker/tests/fixtures/recordings/w32-live-run{1,2}/`, the owner's two real mails' bodies
+  and one invoice number replaced, each edit in the folder's README). Re-recording W2.2's
+  target-state fixtures (the W3.2 entry's Open item) is no longer needed for coverage; do it
+  when those states are next recorded.
 - Veeam's explore-session Stop timed out once (run 2, 30 s twice, before any restore; the
   command refused to go on, exit 4, as designed). Watch for it; no change now.
 

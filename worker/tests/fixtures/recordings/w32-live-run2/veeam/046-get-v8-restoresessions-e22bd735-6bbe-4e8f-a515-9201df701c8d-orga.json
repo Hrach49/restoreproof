@@ -1,0 +1,106 @@
+{
+  "source": "rpworker 0.0.0 restore --record",
+  "request": "GET /v8/RestoreSessions/e22bd735-6bbe-4e8f-a515-9201df701c8d/Organization/OneDrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/Folders?parentId=root&limit=1000&offset=0",
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8"
+  },
+  "body": {
+    "offset": 0,
+    "limit": 1000,
+    "_links": {
+      "self": {
+        "href": "/v8/RestoreSessions/e22bd735-6bbe-4e8f-a515-9201df701c8d/Organization/OneDrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/Folders?parentid=root&offset=0&limit=1000"
+      }
+    },
+    "results": [
+      {
+        "oneDriveId": "6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325",
+        "version": "1.0",
+        "id": "e7a00f66-866d-4d69-8763-c2f5423375c7",
+        "versionId": 2,
+        "name": "RestoreTarget",
+        "createdBy": "Alice Test",
+        "creationTime": "2026-09-25T19:57:20Z",
+        "modifiedBy": "Alice Test",
+        "modificationTime": "2026-09-25T19:57:20Z",
+        "isFolder": true,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/e22bd735-6bbe-4e8f-a515-9201df701c8d/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/folders/e7a00f66-866d-4d69-8763-c2f5423375c7"
+          },
+          "onedrive": {
+            "href": "/v8/restoresessions/e22bd735-6bbe-4e8f-a515-9201df701c8d/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325"
+          },
+          "folders": {
+            "href": "/v8/restoresessions/e22bd735-6bbe-4e8f-a515-9201df701c8d/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/folders?parentId=e7a00f66-866d-4d69-8763-c2f5423375c7"
+          },
+          "documents": {
+            "href": "/v8/restoresessions/e22bd735-6bbe-4e8f-a515-9201df701c8d/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/documents?parentId=e7a00f66-866d-4d69-8763-c2f5423375c7"
+          },
+          "versions": {
+            "href": "/v8/restoresessions/e22bd735-6bbe-4e8f-a515-9201df701c8d/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/folders/e7a00f66-866d-4d69-8763-c2f5423375c7/versions"
+          }
+        }
+      },
+      {
+        "oneDriveId": "6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325",
+        "version": "1.0",
+        "id": "8bc02bbf-9d4e-4c61-865f-d8a1495fe45c",
+        "versionId": 1,
+        "name": "RestoreTest",
+        "createdBy": "Alice Test",
+        "creationTime": "2026-09-24T17:46:54Z",
+        "modifiedBy": "Alice Test",
+        "modificationTime": "2026-09-24T17:46:54Z",
+        "isFolder": true,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/e22bd735-6bbe-4e8f-a515-9201df701c8d/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/folders/8bc02bbf-9d4e-4c61-865f-d8a1495fe45c"
+          },
+          "onedrive": {
+            "href": "/v8/restoresessions/e22bd735-6bbe-4e8f-a515-9201df701c8d/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325"
+          },
+          "folders": {
+            "href": "/v8/restoresessions/e22bd735-6bbe-4e8f-a515-9201df701c8d/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/folders?parentId=8bc02bbf-9d4e-4c61-865f-d8a1495fe45c"
+          },
+          "documents": {
+            "href": "/v8/restoresessions/e22bd735-6bbe-4e8f-a515-9201df701c8d/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/documents?parentId=8bc02bbf-9d4e-4c61-865f-d8a1495fe45c"
+          },
+          "versions": {
+            "href": "/v8/restoresessions/e22bd735-6bbe-4e8f-a515-9201df701c8d/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/folders/8bc02bbf-9d4e-4c61-865f-d8a1495fe45c/versions"
+          }
+        }
+      },
+      {
+        "oneDriveId": "6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325",
+        "version": "1.0",
+        "id": "f6cf8ed4-5372-48a1-bc28-492536eb9c1b",
+        "versionId": 1,
+        "name": "Microsoft Copilot Chat Files",
+        "createdBy": "Alice Test",
+        "creationTime": "2026-09-28T18:09:42Z",
+        "modifiedBy": "Alice Test",
+        "modificationTime": "2026-09-28T18:09:42Z",
+        "isFolder": true,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/e22bd735-6bbe-4e8f-a515-9201df701c8d/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/folders/f6cf8ed4-5372-48a1-bc28-492536eb9c1b"
+          },
+          "onedrive": {
+            "href": "/v8/restoresessions/e22bd735-6bbe-4e8f-a515-9201df701c8d/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325"
+          },
+          "folders": {
+            "href": "/v8/restoresessions/e22bd735-6bbe-4e8f-a515-9201df701c8d/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/folders?parentId=f6cf8ed4-5372-48a1-bc28-492536eb9c1b"
+          },
+          "documents": {
+            "href": "/v8/restoresessions/e22bd735-6bbe-4e8f-a515-9201df701c8d/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/documents?parentId=f6cf8ed4-5372-48a1-bc28-492536eb9c1b"
+          },
+          "versions": {
+            "href": "/v8/restoresessions/e22bd735-6bbe-4e8f-a515-9201df701c8d/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/folders/f6cf8ed4-5372-48a1-bc28-492536eb9c1b/versions"
+          }
+        }
+      }
+    ]
+  }
+}

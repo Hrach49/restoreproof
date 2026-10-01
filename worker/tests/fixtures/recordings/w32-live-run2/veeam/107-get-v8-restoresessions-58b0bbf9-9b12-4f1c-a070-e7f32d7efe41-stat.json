@@ -1,0 +1,15 @@
+{
+  "source": "rpworker 0.0.0 restore --record",
+  "request": "GET /v8/RestoreSessions/58b0bbf9-9b12-4f1c-a070-e7f32d7efe41/Statistics",
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8"
+  },
+  "body": {
+    "totalItemsCount": 2,
+    "restoredItemsCount": 2,
+    "failedItemsCount": 0,
+    "skippedItemsCount": 0,
+    "items": []
+  }
+}

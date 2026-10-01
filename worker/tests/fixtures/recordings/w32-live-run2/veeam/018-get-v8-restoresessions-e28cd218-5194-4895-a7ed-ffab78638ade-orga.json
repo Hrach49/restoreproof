@@ -1,0 +1,71 @@
+{
+  "source": "rpworker 0.0.0 restore --record",
+  "request": "GET /v8/RestoreSessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/2567d67d-00ea-4a01-ad42-4a2051901a23/items?parentId=AAAAAAlnvmD9LHFEuIkHmJRMHwsBAAtHXpNLoj9LqivbOmEsb8sAAAAAAQwAAA&limit=1000&offset=0",
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8"
+  },
+  "body": {
+    "offset": 0,
+    "limit": 1000,
+    "_links": {
+      "self": {
+        "href": "/v8/RestoreSessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/2567d67d-00ea-4a01-ad42-4a2051901a23/items?parentid=AAAAAAlnvmD9LHFEuIkHmJRMHwsBAAtHXpNLoj9LqivbOmEsb8sAAAAAAQwAAA&offset=0&limit=1000"
+      }
+    },
+    "results": [
+      {
+        "mailboxId": "2567d67d-00ea-4a01-ad42-4a2051901a23",
+        "attachments": [],
+        "subject": "The new All Company group is ready",
+        "itemClass": "IPM.Note.GroupMailbox.WarmupEmail",
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/2567d67d-00ea-4a01-ad42-4a2051901a23/items/LgAAAEYAAAAWAAAAAAAAAAlnvmD9LHFEuIkHmJRMHwsBAAtHXpNLoj9LqivbOmEsb8sAAAAAAQwAAAAAAAAJZ75g_SxxRLiJB5iUTB8LBwALR16TS6I_S6or2zphLG_LAAAAAAEMAAALR16TS6I_S6or2zphLG_LAAAAAA0oAAALR16TS6I_S6or2zphLG_LAAAAAAFi"
+          },
+          "parent": {
+            "href": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/2567d67d-00ea-4a01-ad42-4a2051901a23/folders/AAAAAAlnvmD9LHFEuIkHmJRMHwsBAAtHXpNLoj9LqivbOmEsb8sAAAAAAQwAAA"
+          },
+          "mailbox": {
+            "href": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/2567d67d-00ea-4a01-ad42-4a2051901a23"
+          }
+        },
+        "_actions": {
+          "restoreToOriginalLocation": {
+            "uri": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/2567d67d-00ea-4a01-ad42-4a2051901a23/items/LgAAAEYAAAAWAAAAAAAAAAlnvmD9LHFEuIkHmJRMHwsBAAtHXpNLoj9LqivbOmEsb8sAAAAAAQwAAAAAAAAJZ75g_SxxRLiJB5iUTB8LBwALR16TS6I_S6or2zphLG_LAAAAAAEMAAALR16TS6I_S6or2zphLG_LAAAAAA0oAAALR16TS6I_S6or2zphLG_LAAAAAAFi/restore",
+            "method": "POST"
+          },
+          "restoreTo": {
+            "uri": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/2567d67d-00ea-4a01-ad42-4a2051901a23/items/LgAAAEYAAAAWAAAAAAAAAAlnvmD9LHFEuIkHmJRMHwsBAAtHXpNLoj9LqivbOmEsb8sAAAAAAQwAAAAAAAAJZ75g_SxxRLiJB5iUTB8LBwALR16TS6I_S6or2zphLG_LAAAAAAEMAAALR16TS6I_S6or2zphLG_LAAAAAA0oAAALR16TS6I_S6or2zphLG_LAAAAAAFi/restoreTo",
+            "method": "POST"
+          },
+          "exportToPst": {
+            "uri": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/2567d67d-00ea-4a01-ad42-4a2051901a23/items/LgAAAEYAAAAWAAAAAAAAAAlnvmD9LHFEuIkHmJRMHwsBAAtHXpNLoj9LqivbOmEsb8sAAAAAAQwAAAAAAAAJZ75g_SxxRLiJB5iUTB8LBwALR16TS6I_S6or2zphLG_LAAAAAAEMAAALR16TS6I_S6or2zphLG_LAAAAAA0oAAALR16TS6I_S6or2zphLG_LAAAAAAFi/exportToPst",
+            "method": "POST"
+          },
+          "saveToMsg": {
+            "uri": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/2567d67d-00ea-4a01-ad42-4a2051901a23/items/LgAAAEYAAAAWAAAAAAAAAAlnvmD9LHFEuIkHmJRMHwsBAAtHXpNLoj9LqivbOmEsb8sAAAAAAQwAAAAAAAAJZ75g_SxxRLiJB5iUTB8LBwALR16TS6I_S6or2zphLG_LAAAAAAEMAAALR16TS6I_S6or2zphLG_LAAAAAA0oAAALR16TS6I_S6or2zphLG_LAAAAAAFi/Save",
+            "method": "POST"
+          },
+          "sendToDefaultAddress": {
+            "uri": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/2567d67d-00ea-4a01-ad42-4a2051901a23/items/LgAAAEYAAAAWAAAAAAAAAAlnvmD9LHFEuIkHmJRMHwsBAAtHXpNLoj9LqivbOmEsb8sAAAAAAQwAAAAAAAAJZ75g_SxxRLiJB5iUTB8LBwALR16TS6I_S6or2zphLG_LAAAAAAEMAAALR16TS6I_S6or2zphLG_LAAAAAA0oAAALR16TS6I_S6or2zphLG_LAAAAAAFi/sendToDefaultAddress",
+            "method": "POST"
+          },
+          "sendToDifferentAddress": {
+            "uri": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/2567d67d-00ea-4a01-ad42-4a2051901a23/items/LgAAAEYAAAAWAAAAAAAAAAlnvmD9LHFEuIkHmJRMHwsBAAtHXpNLoj9LqivbOmEsb8sAAAAAAQwAAAAAAAAJZ75g_SxxRLiJB5iUTB8LBwALR16TS6I_S6or2zphLG_LAAAAAAEMAAALR16TS6I_S6or2zphLG_LAAAAAA0oAAALR16TS6I_S6or2zphLG_LAAAAAAFi/sendToDifferentAddress",
+            "method": "POST"
+          }
+        },
+        "id": "LgAAAEYAAAAWAAAAAAAAAAlnvmD9LHFEuIkHmJRMHwsBAAtHXpNLoj9LqivbOmEsb8sAAAAAAQwAAAAAAAAJZ75g_SxxRLiJB5iUTB8LBwALR16TS6I_S6or2zphLG_LAAAAAAEMAAALR16TS6I_S6or2zphLG_LAAAAAA0oAAALR16TS6I_S6or2zphLG_LAAAAAAFi",
+        "from": "All Company",
+        "importance": "Normal",
+        "cc": "",
+        "bcc": "",
+        "to": "All Company",
+        "sent": "2026-09-23T16:45:23.0155058Z",
+        "received": "2026-09-23T16:45:23.0155058Z",
+        "reminder": false
+      }
+    ]
+  }
+}

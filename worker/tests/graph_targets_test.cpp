@@ -1780,7 +1780,83 @@ struct SteppingClock {
     }
 };
 
+// A Graph reply of W3.2's live run 1 (tests/fixtures/recordings/w32-live-run1/),
+// recorded after the restore with the wider $select. Its own request line is
+// the URL it is served on.
+json live_run1_reply(const std::string& file)
+{
+    return load_fixture_json("recordings/w32-live-run1/graph", file);
+}
+
+void serve_recorded(Lab& lab, const json& fixture)
+{
+    lab.graph_http.on(HttpMethod::get,
+                      "https://graph.microsoft.com" + fixture.at("request").get<std::string>().substr(4),
+                      {to_response(fixture)});
+}
+
 } // namespace
+
+TEST_CASE("Graph lists the fields W3.2 checks live: a mail's sent and created times, a file's "
+          "cTag, created and modified times",
+          "[graph][targets]")
+{
+    // Every message and file of the after-restore listings carries them, and
+    // each lands in its FoundItem as Graph gave it.
+    Lab lab;
+    const json mail = live_run1_reply("013-get-v1-0-users-restoretest-restoreprooflab-onmicrosoft-com-mailf");
+    const json library = live_run1_reply("015-get-v1-0-drives-b-xqgi-ndr6ekvpkcbib2y65nzyk4ozjvns-7ncroj5omdbu");
+    const json folder = live_run1_reply("020-get-v1-0-drives-b-wa9gbfhleuitgaluxbfonbr-z5getdherm5pj6bmwyxfzj");
+    serve_recorded(lab, mail);
+    serve_recorded(lab, library);
+    serve_recorded(lab, folder);
+    lab.serve_file(drive_url(), "restoretarget-drive-200");
+    lab.serve_file(folder_url(), "onedrive-folder-200");
+
+    const std::vector<FoundItem> mails = lab.reader().list_mail();
+    const json& messages = mail.at("body").at("value");
+    REQUIRE(mails.size() == 5);
+    REQUIRE(messages.size() == 5);
+    for (std::size_t i = 0; i < mails.size(); ++i) {
+        CAPTURE(i);
+        REQUIRE(messages[i].contains("sentDateTime"));
+        REQUIRE(messages[i].contains("createdDateTime"));
+        CHECK(mails[i].id == messages[i].at("id").get<std::string>());
+        CHECK(mails[i].sent_at == messages[i].at("sentDateTime").get<std::string>());
+        CHECK(mails[i].created_at == messages[i].at("createdDateTime").get<std::string>());
+        CHECK(mails[i].sender_name ==
+              messages[i].at("from").at("emailAddress").at("name").get<std::string>());
+        CHECK(mails[i].internet_message_id ==
+              messages[i].at("internetMessageId").get<std::string>());
+        CHECK(mails[i].sha256_rule == "text-v1");
+    }
+
+    // Without hashing, as the before snapshot reads them: nothing downloaded.
+    TargetReaderOptions options = lab.reader_options();
+    options.hash_items = false;
+    TargetReader reader(*lab.graph, lab.dl_http,
+                        rp::connector::RestoreTargets::from_config(lab_config()), options);
+    const std::vector<std::pair<std::vector<FoundItem>, json>> listings{
+        {reader.list_sharepoint(), library.at("body").at("value")},
+        {reader.list_onedrive(), folder.at("body").at("value")},
+    };
+    for (const auto& [items, value] : listings) {
+        REQUIRE(items.size() == 3);
+        REQUIRE(value.size() == 3);
+        for (std::size_t i = 0; i < items.size(); ++i) {
+            CAPTURE(value[i].at("name").get<std::string>());
+            REQUIRE(value[i].contains("cTag"));
+            REQUIRE(value[i].contains("createdDateTime"));
+            REQUIRE(value[i].contains("lastModifiedDateTime"));
+            CHECK(items[i].name == value[i].at("name").get<std::string>());
+            CHECK(items[i].ctag == value[i].at("cTag").get<std::string>());
+            CHECK(items[i].created_at == value[i].at("createdDateTime").get<std::string>());
+            CHECK(items[i].modified_at == value[i].at("lastModifiedDateTime").get<std::string>());
+            CHECK(items[i].listed_size == value[i].at("size").get<std::uint64_t>());
+        }
+    }
+    CHECK(lab.dl_http.requests().empty());
+}
 
 TEST_CASE("read_ms is each file's download, hash and on_file time", "[graph][targets]")
 {

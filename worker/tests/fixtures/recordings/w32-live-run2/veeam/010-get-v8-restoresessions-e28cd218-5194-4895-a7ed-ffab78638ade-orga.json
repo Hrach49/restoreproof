@@ -1,0 +1,582 @@
+{
+  "source": "rpworker 0.0.0 restore --record",
+  "request": "GET /v8/RestoreSessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders?limit=1000&offset=0",
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8"
+  },
+  "body": {
+    "offset": 0,
+    "limit": 1000,
+    "_links": {
+      "self": {
+        "href": "/v8/RestoreSessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders?offset=0&limit=1000"
+      }
+    },
+    "results": [
+      {
+        "name": "Archive",
+        "type": "None",
+        "category": "None",
+        "description": "",
+        "mailboxId": "12af7578-24c6-48e4-a3a5-3174bda4f4d4",
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders/AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAhs0AAA"
+          },
+          "children": {
+            "href": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders?parentId=AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAhs0AAA"
+          },
+          "items": {
+            "href": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/items?folderId=AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAhs0AAA"
+          },
+          "mailbox": {
+            "href": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4"
+          }
+        },
+        "_actions": {
+          "restoreToOriginalLocation": {
+            "uri": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders/AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAhs0AAA/restore",
+            "method": "POST"
+          },
+          "restoreTo": {
+            "uri": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders/AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAhs0AAA/restoreTo",
+            "method": "POST"
+          },
+          "exportToPst": {
+            "uri": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders/AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAhs0AAA/exportToPst",
+            "method": "POST"
+          },
+          "search": {
+            "uri": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders/AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAhs0AAA/search",
+            "method": "POST"
+          }
+        },
+        "id": "AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAhs0AAA"
+      },
+      {
+        "name": "Calendar",
+        "type": "Appointment",
+        "category": "None",
+        "description": "",
+        "mailboxId": "12af7578-24c6-48e4-a3a5-3174bda4f4d4",
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders/AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAQ0AAA"
+          },
+          "children": {
+            "href": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders?parentId=AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAQ0AAA"
+          },
+          "items": {
+            "href": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/items?folderId=AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAQ0AAA"
+          },
+          "mailbox": {
+            "href": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4"
+          }
+        },
+        "_actions": {
+          "restoreToOriginalLocation": {
+            "uri": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders/AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAQ0AAA/restore",
+            "method": "POST"
+          },
+          "restoreTo": {
+            "uri": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders/AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAQ0AAA/restoreTo",
+            "method": "POST"
+          },
+          "exportToPst": {
+            "uri": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders/AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAQ0AAA/exportToPst",
+            "method": "POST"
+          },
+          "search": {
+            "uri": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders/AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAQ0AAA/search",
+            "method": "POST"
+          }
+        },
+        "id": "AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAQ0AAA"
+      },
+      {
+        "name": "Contacts",
+        "type": "Contact",
+        "category": "None",
+        "description": "",
+        "mailboxId": "12af7578-24c6-48e4-a3a5-3174bda4f4d4",
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders/AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAQ4AAA"
+          },
+          "children": {
+            "href": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders?parentId=AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAQ4AAA"
+          },
+          "items": {
+            "href": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/items?folderId=AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAQ4AAA"
+          },
+          "mailbox": {
+            "href": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4"
+          }
+        },
+        "_actions": {
+          "restoreToOriginalLocation": {
+            "uri": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders/AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAQ4AAA/restore",
+            "method": "POST"
+          },
+          "restoreTo": {
+            "uri": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders/AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAQ4AAA/restoreTo",
+            "method": "POST"
+          },
+          "exportToPst": {
+            "uri": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders/AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAQ4AAA/exportToPst",
+            "method": "POST"
+          },
+          "search": {
+            "uri": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders/AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAQ4AAA/search",
+            "method": "POST"
+          }
+        },
+        "id": "AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAQ4AAA"
+      },
+      {
+        "name": "Conversation History",
+        "type": "None",
+        "category": "None",
+        "description": "",
+        "mailboxId": "12af7578-24c6-48e4-a3a5-3174bda4f4d4",
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders/AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAhsgAAA"
+          },
+          "children": {
+            "href": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders?parentId=AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAhsgAAA"
+          },
+          "items": {
+            "href": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/items?folderId=AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAhsgAAA"
+          },
+          "mailbox": {
+            "href": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4"
+          }
+        },
+        "_actions": {
+          "restoreToOriginalLocation": {
+            "uri": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders/AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAhsgAAA/restore",
+            "method": "POST"
+          },
+          "restoreTo": {
+            "uri": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders/AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAhsgAAA/restoreTo",
+            "method": "POST"
+          },
+          "exportToPst": {
+            "uri": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders/AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAhsgAAA/exportToPst",
+            "method": "POST"
+          },
+          "search": {
+            "uri": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders/AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAhsgAAA/search",
+            "method": "POST"
+          }
+        },
+        "id": "AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAhsgAAA"
+      },
+      {
+        "name": "Deleted Items",
+        "type": "None",
+        "category": "Deleted",
+        "description": "",
+        "mailboxId": "12af7578-24c6-48e4-a3a5-3174bda4f4d4",
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders/AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAQoAAA"
+          },
+          "children": {
+            "href": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders?parentId=AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAQoAAA"
+          },
+          "items": {
+            "href": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/items?folderId=AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAQoAAA"
+          },
+          "mailbox": {
+            "href": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4"
+          }
+        },
+        "_actions": {
+          "restoreToOriginalLocation": {
+            "uri": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders/AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAQoAAA/restore",
+            "method": "POST"
+          },
+          "restoreTo": {
+            "uri": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders/AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAQoAAA/restoreTo",
+            "method": "POST"
+          },
+          "exportToPst": {
+            "uri": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders/AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAQoAAA/exportToPst",
+            "method": "POST"
+          },
+          "search": {
+            "uri": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders/AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAQoAAA/search",
+            "method": "POST"
+          }
+        },
+        "id": "AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAQoAAA"
+      },
+      {
+        "name": "Drafts",
+        "type": "None",
+        "category": "Drafts",
+        "description": "",
+        "mailboxId": "12af7578-24c6-48e4-a3a5-3174bda4f4d4",
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders/AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAQ8AAA"
+          },
+          "children": {
+            "href": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders?parentId=AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAQ8AAA"
+          },
+          "items": {
+            "href": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/items?folderId=AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAQ8AAA"
+          },
+          "mailbox": {
+            "href": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4"
+          }
+        },
+        "_actions": {
+          "restoreToOriginalLocation": {
+            "uri": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders/AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAQ8AAA/restore",
+            "method": "POST"
+          },
+          "restoreTo": {
+            "uri": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders/AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAQ8AAA/restoreTo",
+            "method": "POST"
+          },
+          "exportToPst": {
+            "uri": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders/AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAQ8AAA/exportToPst",
+            "method": "POST"
+          },
+          "search": {
+            "uri": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders/AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAQ8AAA/search",
+            "method": "POST"
+          }
+        },
+        "id": "AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAQ8AAA"
+      },
+      {
+        "name": "Inbox",
+        "type": "None",
+        "category": "Inbox",
+        "description": "",
+        "mailboxId": "12af7578-24c6-48e4-a3a5-3174bda4f4d4",
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders/AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAQwAAA"
+          },
+          "children": {
+            "href": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders?parentId=AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAQwAAA"
+          },
+          "items": {
+            "href": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/items?folderId=AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAQwAAA"
+          },
+          "mailbox": {
+            "href": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4"
+          }
+        },
+        "_actions": {
+          "restoreToOriginalLocation": {
+            "uri": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders/AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAQwAAA/restore",
+            "method": "POST"
+          },
+          "restoreTo": {
+            "uri": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders/AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAQwAAA/restoreTo",
+            "method": "POST"
+          },
+          "exportToPst": {
+            "uri": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders/AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAQwAAA/exportToPst",
+            "method": "POST"
+          },
+          "search": {
+            "uri": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders/AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAQwAAA/search",
+            "method": "POST"
+          }
+        },
+        "id": "AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAQwAAA"
+      },
+      {
+        "name": "Journal",
+        "type": "Journal",
+        "category": "None",
+        "description": "",
+        "mailboxId": "12af7578-24c6-48e4-a3a5-3174bda4f4d4",
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders/AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAARAAAA"
+          },
+          "children": {
+            "href": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders?parentId=AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAARAAAA"
+          },
+          "items": {
+            "href": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/items?folderId=AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAARAAAA"
+          },
+          "mailbox": {
+            "href": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4"
+          }
+        },
+        "_actions": {
+          "restoreToOriginalLocation": {
+            "uri": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders/AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAARAAAA/restore",
+            "method": "POST"
+          },
+          "restoreTo": {
+            "uri": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders/AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAARAAAA/restoreTo",
+            "method": "POST"
+          },
+          "exportToPst": {
+            "uri": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders/AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAARAAAA/exportToPst",
+            "method": "POST"
+          },
+          "search": {
+            "uri": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders/AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAARAAAA/search",
+            "method": "POST"
+          }
+        },
+        "id": "AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAARAAAA"
+      },
+      {
+        "name": "Notes",
+        "type": "StickyNote",
+        "category": "None",
+        "description": "",
+        "mailboxId": "12af7578-24c6-48e4-a3a5-3174bda4f4d4",
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders/AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAREAAA"
+          },
+          "children": {
+            "href": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders?parentId=AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAREAAA"
+          },
+          "items": {
+            "href": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/items?folderId=AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAREAAA"
+          },
+          "mailbox": {
+            "href": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4"
+          }
+        },
+        "_actions": {
+          "restoreToOriginalLocation": {
+            "uri": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders/AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAREAAA/restore",
+            "method": "POST"
+          },
+          "restoreTo": {
+            "uri": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders/AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAREAAA/restoreTo",
+            "method": "POST"
+          },
+          "exportToPst": {
+            "uri": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders/AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAREAAA/exportToPst",
+            "method": "POST"
+          },
+          "search": {
+            "uri": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders/AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAREAAA/search",
+            "method": "POST"
+          }
+        },
+        "id": "AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAREAAA"
+      },
+      {
+        "name": "Outbox",
+        "type": "None",
+        "category": "Outbox",
+        "description": "",
+        "mailboxId": "12af7578-24c6-48e4-a3a5-3174bda4f4d4",
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders/AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAQsAAA"
+          },
+          "children": {
+            "href": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders?parentId=AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAQsAAA"
+          },
+          "items": {
+            "href": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/items?folderId=AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAQsAAA"
+          },
+          "mailbox": {
+            "href": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4"
+          }
+        },
+        "_actions": {
+          "restoreToOriginalLocation": {
+            "uri": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders/AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAQsAAA/restore",
+            "method": "POST"
+          },
+          "restoreTo": {
+            "uri": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders/AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAQsAAA/restoreTo",
+            "method": "POST"
+          },
+          "exportToPst": {
+            "uri": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders/AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAQsAAA/exportToPst",
+            "method": "POST"
+          },
+          "search": {
+            "uri": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders/AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAQsAAA/search",
+            "method": "POST"
+          }
+        },
+        "id": "AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAQsAAA"
+      },
+      {
+        "name": "Permanently Deleted Items",
+        "type": "None",
+        "category": "PermanentlyDeletedItems",
+        "description": "",
+        "mailboxId": "12af7578-24c6-48e4-a3a5-3174bda4f4d4",
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders/AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAhqQAAA"
+          },
+          "children": {
+            "href": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders?parentId=AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAhqQAAA"
+          },
+          "items": {
+            "href": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/items?folderId=AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAhqQAAA"
+          },
+          "mailbox": {
+            "href": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4"
+          }
+        },
+        "_actions": {
+          "restoreToOriginalLocation": {
+            "uri": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders/AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAhqQAAA/restore",
+            "method": "POST"
+          },
+          "restoreTo": {
+            "uri": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders/AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAhqQAAA/restoreTo",
+            "method": "POST"
+          },
+          "exportToPst": {
+            "uri": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders/AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAhqQAAA/exportToPst",
+            "method": "POST"
+          },
+          "search": {
+            "uri": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders/AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAhqQAAA/search",
+            "method": "POST"
+          }
+        },
+        "id": "AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAhqQAAA"
+      },
+      {
+        "name": "Sent Items",
+        "type": "None",
+        "category": "Sent",
+        "description": "",
+        "mailboxId": "12af7578-24c6-48e4-a3a5-3174bda4f4d4",
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders/AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAQkAAA"
+          },
+          "children": {
+            "href": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders?parentId=AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAQkAAA"
+          },
+          "items": {
+            "href": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/items?folderId=AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAQkAAA"
+          },
+          "mailbox": {
+            "href": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4"
+          }
+        },
+        "_actions": {
+          "restoreToOriginalLocation": {
+            "uri": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders/AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAQkAAA/restore",
+            "method": "POST"
+          },
+          "restoreTo": {
+            "uri": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders/AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAQkAAA/restoreTo",
+            "method": "POST"
+          },
+          "exportToPst": {
+            "uri": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders/AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAQkAAA/exportToPst",
+            "method": "POST"
+          },
+          "search": {
+            "uri": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders/AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAQkAAA/search",
+            "method": "POST"
+          }
+        },
+        "id": "AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAQkAAA"
+      },
+      {
+        "name": "Tasks",
+        "type": "Task",
+        "category": "None",
+        "description": "",
+        "mailboxId": "12af7578-24c6-48e4-a3a5-3174bda4f4d4",
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders/AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAARIAAA"
+          },
+          "children": {
+            "href": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders?parentId=AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAARIAAA"
+          },
+          "items": {
+            "href": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/items?folderId=AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAARIAAA"
+          },
+          "mailbox": {
+            "href": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4"
+          }
+        },
+        "_actions": {
+          "restoreToOriginalLocation": {
+            "uri": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders/AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAARIAAA/restore",
+            "method": "POST"
+          },
+          "restoreTo": {
+            "uri": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders/AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAARIAAA/restoreTo",
+            "method": "POST"
+          },
+          "exportToPst": {
+            "uri": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders/AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAARIAAA/exportToPst",
+            "method": "POST"
+          },
+          "search": {
+            "uri": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders/AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAARIAAA/search",
+            "method": "POST"
+          }
+        },
+        "id": "AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAARIAAA"
+      },
+      {
+        "name": "Team Chat",
+        "type": "None",
+        "category": "None",
+        "description": "",
+        "mailboxId": "12af7578-24c6-48e4-a3a5-3174bda4f4d4",
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders/AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAhskAAA"
+          },
+          "parent": {
+            "href": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders/AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAhsgAAA"
+          },
+          "children": {
+            "href": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders?parentId=AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAhskAAA"
+          },
+          "items": {
+            "href": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/items?folderId=AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAhskAAA"
+          },
+          "mailbox": {
+            "href": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4"
+          }
+        },
+        "_actions": {
+          "restoreToOriginalLocation": {
+            "uri": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders/AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAhskAAA/restore",
+            "method": "POST"
+          },
+          "restoreTo": {
+            "uri": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders/AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAhskAAA/restoreTo",
+            "method": "POST"
+          },
+          "exportToPst": {
+            "uri": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders/AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAhskAAA/exportToPst",
+            "method": "POST"
+          },
+          "search": {
+            "uri": "/v8/restoresessions/e28cd218-5194-4895-a7ed-ffab78638ade/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders/AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAhskAAA/search",
+            "method": "POST"
+          }
+        },
+        "id": "AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAhskAAA"
+      }
+    ]
+  }
+}

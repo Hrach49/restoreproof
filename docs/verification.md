@@ -349,8 +349,9 @@ own message (which may hold a name) stays in the restore result, never in a warn
 ### The result's `status` object
 
 `to_json(RunVerdict)`, by index like `expected` and `check`; every key but `error_code` (error
-only) is always there. The counts and item lists are the item verdicts of rows R5 to R8; for
-R1 to R4 nothing got as far as a verdict, so they are 0 and empty. W4.1 adopts it into
+only) is always there. `counts.items` is always the expected set's size (0 without one). The
+other counts, `verified` and the item lists are the item verdicts of rows R5 to R8; for R1 to
+R4 nothing got as far as a verdict, so they are 0 and the lists empty. W4.1 adopts it into
 `result.v1.json`.
 
 ```json

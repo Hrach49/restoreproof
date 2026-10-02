@@ -120,7 +120,7 @@ client ID matches `WORKER_CLIENT_ID` in `lab/seeder/tenant.py`.
 | Graph application permissions (admin consent) | `Sites.Selected`, `Files.SelectedOperations.Selected`, `Lists.SelectedOperations.Selected` (W3.4, 2026-10-02); nothing else |
 | SharePoint grants | `read` on the RestoreTest site; `write` on the RestoreTarget list only (W3.4); `write` on alice's OneDrive `RestoreTarget` folder (raised from `read` in W3.4) |
 | Exchange Online | Role assignment `RestoreProof Worker - Application Mail.ReadWrite - restoretest` (role `Application Mail.ReadWrite`, replacing `Application Mail.Read` in W3.4), management scope `RestoreProof Worker - restoretest mailbox` (`PrimarySmtpAddress -eq 'restoretest@RestoreProofLab.onmicrosoft.com'`) |
-| Live check | `python -m seeder check-worker-app`: 16/16 on 2026-09-27, `docs/security/l1.5-worker-app-check.txt` |
+| Live check | `python -m seeder check-worker-app`: 16/16 on 2026-09-27 (`docs/security/l1.5-worker-app-check.txt`); 22/22 on 2026-10-02 after W3.4 (`docs/security/w3.4-worker-app-check.txt`), with `lab/entra/check-worker-grants.ps1` "canary grants: ok" (`docs/security/w3.4-worker-grants-check.txt`) |
 
 Setting it up changed the tenant in two other ways:
 

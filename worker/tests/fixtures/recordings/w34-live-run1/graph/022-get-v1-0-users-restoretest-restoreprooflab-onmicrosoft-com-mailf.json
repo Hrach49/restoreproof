@@ -1,0 +1,108 @@
+{
+  "source": "rpworker 0.0.0 restore --record",
+  "request": "GET /v1.0/users/restoretest@RestoreProofLab.onmicrosoft.com/mailFolders/inbox/messages?$select=id,subject,from,sentDateTime,receivedDateTime,createdDateTime,internetMessageId,body&$top=100",
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/json; odata.metadata=minimal; odata.streaming=true; IEEE754Compatible=false; charset=utf-8"
+  },
+  "body": {
+    "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#users('restoretest%40RestoreProofLab.onmicrosoft.com')/mailFolders('inbox')/messages(id,subject,from,sentDateTime,receivedDateTime,createdDateTime,internetMessageId,body)",
+    "value": [
+      {
+        "@odata.etag": "W/\"CQAAABYAAACnL+u8BR8BT6morC7OYUFaAAAFQlae\"",
+        "id": "AAkALgAAAAAAHYQDEapmEc2byACqAC-EWg0Apy-rvAUfAU_pqKwuzmFBWgAABUZGlQAA",
+        "createdDateTime": "2026-10-02T18:03:01Z",
+        "receivedDateTime": "2026-09-28T20:26:32Z",
+        "sentDateTime": "2026-09-28T20:26:31Z",
+        "internetMessageId": "<WA1P291MB02787E32520F02764A1031FB8B8D2@WA1P291MB0278.POLP291.PROD.OUTLOOK.COM>",
+        "subject": "sub",
+        "body": {
+          "contentType": "text",
+          "content": "Su b\r\n"
+        },
+        "from": {
+          "emailAddress": {
+            "name": "Hrachya Harutyunyan",
+            "address": "HrachyaHarutyunyan@RestoreProofLab.onmicrosoft.com"
+          }
+        }
+      },
+      {
+        "@odata.etag": "W/\"CQAAABYAAACnL+u8BR8BT6morC7OYUFaAAAFQlag\"",
+        "id": "AAkALgAAAAAAHYQDEapmEc2byACqAC-EWg0Apy-rvAUfAU_pqKwuzmFBWgAABUZGlwAA",
+        "createdDateTime": "2026-10-02T18:03:01Z",
+        "receivedDateTime": "2026-09-28T18:17:24Z",
+        "sentDateTime": "2026-09-28T18:17:23Z",
+        "internetMessageId": "<WA1P291MB0278A357F45FCB043F6BE4A98B8D2@WA1P291MB0278.POLP291.PROD.OUTLOOK.COM>",
+        "subject": "RestoreProof W2.2 second mail 3n5w",
+        "body": {
+          "contentType": "text",
+          "content": "RestoreProof W2.2 second body 8d6r\r\n"
+        },
+        "from": {
+          "emailAddress": {
+            "name": "Hrachya Harutyunyan",
+            "address": "HrachyaHarutyunyan@RestoreProofLab.onmicrosoft.com"
+          }
+        }
+      },
+      {
+        "@odata.etag": "W/\"CQAAABYAAACnL+u8BR8BT6morC7OYUFaAAAFQlaZ\"",
+        "id": "AAkALgAAAAAAHYQDEapmEc2byACqAC-EWg0Apy-rvAUfAU_pqKwuzmFBWgAABUZCqAAA",
+        "createdDateTime": "2026-10-02T18:02:26Z",
+        "receivedDateTime": "2026-09-24T22:14:43Z",
+        "sentDateTime": "2026-09-24T22:14:40Z",
+        "internetMessageId": "<WA1P291MB02782A0BB98A6248EFAC581C8B812@WA1P291MB0278.POLP291.PROD.OUTLOOK.COM>",
+        "subject": "RP-CANARY-0002",
+        "body": {
+          "contentType": "text",
+          "content": "A copper kettle whistled twice in the empty kitchen.\r\n\r\nRestoreProof canary mail. Do not edit, move or delete this message.\r\nIt is one of the 40 expected items in lab/seed-manifest.json."
+        },
+        "from": {
+          "emailAddress": {
+            "name": "Hrachya Harutyunyan",
+            "address": "HrachyaHarutyunyan@RestoreProofLab.onmicrosoft.com"
+          }
+        }
+      },
+      {
+        "@odata.etag": "W/\"CQAAABYAAACnL+u8BR8BT6morC7OYUFaAAAFQlaV\"",
+        "id": "AAkALgAAAAAAHYQDEapmEc2byACqAC-EWg0Apy-rvAUfAU_pqKwuzmFBWgAABUZCpAAA",
+        "createdDateTime": "2026-10-02T18:02:23Z",
+        "receivedDateTime": "2026-09-24T22:14:43Z",
+        "sentDateTime": "2026-09-24T22:14:40Z",
+        "internetMessageId": "<WA1P291MB02781921393C1534F31F644B8B812@WA1P291MB0278.POLP291.PROD.OUTLOOK.COM>",
+        "subject": "RP-CANARY-0003",
+        "body": {
+          "contentType": "text",
+          "content": "Seven orange kites drifted over the harbour wall.\r\n\r\nRestoreProof canary mail. Do not edit, move or delete this message.\r\nIt is one of the 40 expected items in lab/seed-manifest.json."
+        },
+        "from": {
+          "emailAddress": {
+            "name": "Hrachya Harutyunyan",
+            "address": "HrachyaHarutyunyan@RestoreProofLab.onmicrosoft.com"
+          }
+        }
+      },
+      {
+        "@odata.etag": "W/\"CQAAABYAAACnL+u8BR8BT6morC7OYUFaAAAFQlaX\"",
+        "id": "AAkALgAAAAAAHYQDEapmEc2byACqAC-EWg0Apy-rvAUfAU_pqKwuzmFBWgAABUZCpgAA",
+        "createdDateTime": "2026-10-02T18:02:26Z",
+        "receivedDateTime": "2026-09-24T22:14:43Z",
+        "sentDateTime": "2026-09-24T22:14:40Z",
+        "internetMessageId": "<WA1P291MB0278BF626D9584D9B97A7B578B812@WA1P291MB0278.POLP291.PROD.OUTLOOK.COM>",
+        "subject": "RP-CANARY-0001",
+        "body": {
+          "contentType": "text",
+          "content": "The lighthouse keeper counted forty-one ships before dawn.\r\n\r\nRestoreProof canary mail. Do not edit, move or delete this message.\r\nIt is one of the 40 expected items in lab/seed-manifest.json."
+        },
+        "from": {
+          "emailAddress": {
+            "name": "Hrachya Harutyunyan",
+            "address": "HrachyaHarutyunyan@RestoreProofLab.onmicrosoft.com"
+          }
+        }
+      }
+    ]
+  }
+}

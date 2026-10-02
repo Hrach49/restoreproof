@@ -1,8 +1,12 @@
 // W3.4: emptying the three restore targets (rp/cleaner.hpp). Graph is one
 // FakeHttpClient; the guard's checks are served from the recorded drive,
-// folder and Inbox replies, the listings and deletes from the hand-written
-// w34-* fixtures (tests/fixtures/graph/README.md). Every lab value is read from
-// the fixtures. The fake records which IDs each listing served, and every test
+// folder and Inbox replies, the listings and 204s from the W3.4 live run's
+// recording (tests/fixtures/recordings/w34-live-run1/: the clean after's
+// listings of 5 mails and 3 + 3 files, and its first permanentDelete and
+// DELETE), and the answers no live run gave (403, 404, 412) from the
+// hand-written w34-* fixtures (tests/fixtures/graph/README.md). Every lab
+// value is read from the fixtures. The fake records which IDs each listing
+// served, and every test
 // ends by checking that each write the Cleaner sent was a permanentDelete or
 // DELETE of one of them, in its own target: the Cleaner's one promise. The
 // guard's refusals are edits of the recorded replies, never a canary's ID.
@@ -128,14 +132,26 @@ HttpMethod write_method(Which which)
     return which == Which::mail ? HttpMethod::post : HttpMethod::del;
 }
 
-// The recorded-shape listing of two items, as JSON (its "value" is what the
-// tests edit).
-json two_items(Which which)
+// The W3.4 live run's recording (tests/fixtures/recordings/w34-live-run1/).
+const char* const kRecording = "recordings/w34-live-run1/graph";
+
+// The clean after's first listing of `which` in the W3.4 live run, as JSON
+// (its "value" is what the tests edit): 5 mails, or 3 files, each deleted live.
+json recorded_items(Which which)
 {
-    const char* name = which == Which::mail         ? "w34-mail-list-200-two"
-                       : which == Which::sharepoint ? "w34-restoretarget-children-200-two"
-                                                    : "w34-onedrive-children-200-two";
-    return load_fixture_json("graph", name);
+    const char* name =
+        which == Which::mail
+            ? "034-get-v1-0-users-restoretest-restoreprooflab-onmicrosoft-com-mailf"
+        : which == Which::sharepoint
+            ? "042-get-v1-0-drives-b-xqgi-ndr6ekvpkcbib2y65nzyk4ozjvns-7ncroj5omdbu"
+            : "048-get-v1-0-drives-b-wa9gbfhleuitgaluxbfonbr-z5getdherm5pj6bmwyxfzj";
+    return load_fixture_json(kRecording, name);
+}
+
+// How many items recorded_items(which) lists.
+std::size_t recorded_count(Which which)
+{
+    return recorded_items(which).at("body").at("value").size();
 }
 
 // The fixture's body with its value replaced.
@@ -148,7 +164,7 @@ HttpResponse listing_of(const json& fixture, const json& value)
 
 HttpResponse empty_listing(Which which)
 {
-    return listing_of(two_items(which), json::array());
+    return listing_of(recorded_items(which), json::array());
 }
 
 std::string id_at(const json& fixture, std::size_t i)
@@ -156,10 +172,13 @@ std::string id_at(const json& fixture, std::size_t i)
     return fixture.at("body").at("value").at(i).at("id").get<std::string>();
 }
 
+// The live run's first permanentDelete or DELETE, answered 204.
 HttpResponse deleted(Which which)
 {
-    return load_fixture("graph",
-                        which == Which::mail ? "w34-mail-permanentdelete-204" : "w34-file-delete-204");
+    return load_fixture(kRecording,
+                        which == Which::mail
+                            ? "035-post-v1-0-users-restoretest-restoreprooflab-onmicrosoft-com-messa"
+                            : "043-delete-v1-0-drives-b-xqgi-ndr6ekvpkcbib2y65nzyk4ozjvns-7ncroj5omdbu");
 }
 
 // Graph and its token route as a test sees them; the three guards answer as
@@ -225,13 +244,21 @@ struct Lab {
         http.on(write_method(which), write_url(which, id), std::move(responses));
     }
 
-    // Both items of the two-item listing are served once, then the target is
-    // empty, and both deletes answer 204.
-    void serve_two(Which which)
+    // Every item of the recorded listing is served once, then the target is
+    // empty, and every delete answers 204.
+    void serve_recorded(Which which)
     {
-        const json fixture = two_items(which);
+        const json fixture = recorded_items(which);
         list(which, {to_response(fixture), empty_listing(which)});
-        for (std::size_t i = 0; i < 2; ++i) {
+        for (std::size_t i = 0; i < recorded_count(which); ++i) {
+            on_delete(which, id_at(fixture, i), {deleted(which)});
+        }
+    }
+
+    // Every item but the first of `fixture`'s listing answers its delete 204.
+    void delete_rest(Which which, const json& fixture)
+    {
+        for (std::size_t i = 1; i < fixture.at("body").at("value").size(); ++i) {
             on_delete(which, id_at(fixture, i), {deleted(which)});
         }
     }
@@ -367,7 +394,7 @@ TEST_CASE("a target the guard refuses is never listed or deleted in, and the oth
     INFO(name_of(refused));
     Lab lab;
     for (const Which which : {Which::mail, Which::sharepoint, Which::onedrive}) {
-        lab.serve_two(which);
+        lab.serve_recorded(which);
     }
     switch (refused) {
     case Which::mail:
@@ -404,7 +431,7 @@ TEST_CASE("a target the guard refuses is never listed or deleted in, and the oth
     CHECK_THAT(log, ContainsSubstring("; nothing was deleted\n"));
     for (const Which other : {Which::mail, Which::sharepoint, Which::onedrive}) {
         if (other != refused) {
-            require_cleaned(of(result, other), 2);
+            require_cleaned(of(result, other), recorded_count(other));
         }
     }
     CHECK_FALSE(result.ok());
@@ -428,9 +455,10 @@ TEST_CASE("a 403 on a delete is graph_permission naming the write grant, with no
             "DELETE"});
     INFO(name_of(row.which));
     Lab lab;
-    const json fixture = two_items(row.which);
+    const json fixture = recorded_items(row.which);
+    const std::size_t n = recorded_count(row.which);
     lab.list(row.which, {to_response(fixture)});
-    for (std::size_t i = 0; i < 2; ++i) {
+    for (std::size_t i = 0; i < n; ++i) {
         lab.on_delete(row.which, id_at(fixture, i), {load_fixture("graph", row.fixture)});
     }
 
@@ -438,9 +466,9 @@ TEST_CASE("a 403 on a delete is graph_permission naming the write grant, with no
 
     const TargetCleanup& t = of(result, row.which);
     require_stopped(t, "graph_permission");
-    CHECK(t.found == 2);
+    CHECK(t.found == n);
     CHECK(t.deleted == 0);
-    CHECK(t.left == 2);
+    CHECK(t.left == n);
     // The first refusal stops the target: one write, one listing.
     CHECK(lab.writes_to(row.which).size() == 1);
     CHECK(lab.gets(listing_url(row.which)) == 1);
@@ -461,7 +489,7 @@ TEST_CASE("a token Entra refuses stops every target as graph_auth, nothing delet
 {
     Lab lab;
     for (const Which which : {Which::mail, Which::sharepoint, Which::onedrive}) {
-        lab.serve_two(which);
+        lab.serve_recorded(which);
     }
     lab.http.on(HttpMethod::post, kTokenUrl, {load_fixture("graph", "token-unknown-thumbprint-401")});
 
@@ -494,16 +522,16 @@ TEST_CASE("a ConfigError is config and anything else internal, its text never co
     SECTION("an exception the Worker doesn't know, on one target")
     {
         Lab lab;
-        lab.serve_two(Which::mail);
-        lab.serve_two(Which::onedrive);
+        lab.serve_recorded(Which::mail);
+        lab.serve_recorded(Which::onedrive);
         lab.http.on(HttpMethod::get, listing_url(Which::sharepoint),
                     [](const HttpRequest&) -> HttpResponse {
                         throw std::runtime_error("sentinel-internal-5b7e");
                     });
         const CleanupResult result = lab.clean();
         require_stopped(result.sharepoint, "internal");
-        require_cleaned(result.mail, 2);
-        require_cleaned(result.onedrive, 2);
+        require_cleaned(result.mail, recorded_count(Which::mail));
+        require_cleaned(result.onedrive, recorded_count(Which::onedrive));
         const std::string log = lab.log();
         CHECK_THAT(log, ContainsSubstring("the RestoreTarget library: stopped (internal)\n"));
         CHECK_THAT(log, !ContainsSubstring("sentinel-internal-5b7e"));
@@ -517,25 +545,27 @@ TEST_CASE("a TransientError ends round 1, and round 2 cleans", "[cleaner][transi
     const Which which = GENERATE(Which::mail, Which::sharepoint, Which::onedrive);
     INFO(name_of(which));
     Lab lab;
-    const json fixture = two_items(which);
-    // Round 1 lists both; its first delete gives up after five 503s. Round 2
-    // lists both again, deletes them, and lists nothing.
+    const json fixture = recorded_items(which);
+    const std::size_t n = recorded_count(which);
+    // Round 1 lists them all; its first delete gives up after five 503s,
+    // which ends the round. Round 2 lists them all again, deletes them, and
+    // lists nothing.
     lab.list(which, {to_response(fixture), to_response(fixture), empty_listing(which)});
     const HttpResponse unavailable = load_fixture("graph", "messages-503-unavailable");
     lab.on_delete(which, id_at(fixture, 0),
                   {unavailable, unavailable, unavailable, unavailable, unavailable, deleted(which)});
-    lab.on_delete(which, id_at(fixture, 1), {deleted(which)});
+    lab.delete_rest(which, fixture);
 
     const CleanupResult result = lab.clean();
 
     const TargetCleanup& t = of(result, which);
     CHECK(t.error_code.empty());
     CHECK(t.rounds == 2);
-    CHECK(t.found == 2);
-    CHECK(t.deleted == 2);
+    CHECK(t.found == n);
+    CHECK(t.deleted == n);
     CHECK(t.left == 0);
     CHECK(t.ok());
-    CHECK(lab.writes_to(which).size() == 7);
+    CHECK(lab.writes_to(which).size() == 5 + n);
     CHECK_THAT(lab.log(), ContainsSubstring("; one more round"));
     lab.require_only_listed_writes();
 }
@@ -577,7 +607,7 @@ TEST_CASE("a 412 leaves the file to round 2, which lists it again and deletes it
     const Which which = GENERATE(Which::sharepoint, Which::onedrive);
     INFO(name_of(which));
     Lab lab;
-    const json fixture = two_items(which);
+    const json fixture = recorded_items(which);
     // The first file changed after it was listed (SharePoint rewrites Office
     // files): a new eTag in every later listing.
     json changed = fixture.at("body").at("value").at(0);
@@ -586,24 +616,27 @@ TEST_CASE("a 412 leaves the file to round 2, which lists it again and deletes it
                      listing_of(fixture, json::array({changed})), empty_listing(which)});
     lab.on_delete(which, id_at(fixture, 0),
                   {load_fixture("graph", "w34-file-delete-412-resourcemodified"), deleted(which)});
-    lab.on_delete(which, id_at(fixture, 1), {deleted(which)});
+    lab.delete_rest(which, fixture);
+    const std::size_t n = recorded_count(which);
 
     const CleanupResult result = lab.clean();
 
     const TargetCleanup& t = of(result, which);
     CHECK(t.error_code.empty());
     CHECK(t.rounds == 2);
-    CHECK(t.found == 2);
-    CHECK(t.deleted == 2);
+    CHECK(t.found == n);
+    CHECK(t.deleted == n);
     CHECK(t.left == 0);
     CHECK(t.ok());
+    // Round 1: the changed file's 412, then the others; round 2: the changed file.
     const std::vector<HttpRequest> writes = lab.writes_to(which);
-    REQUIRE(writes.size() == 3);
+    REQUIRE(writes.size() == n + 1);
+    CHECK(writes[0].url == write_url(which, id_at(fixture, 0)));
     CHECK(writes[0].headers.at("If-Match") ==
           fixture.at("body").at("value").at(0).at("eTag").get<std::string>());
     // Round 2 sends the eTag it listed, never round 1's.
-    CHECK(writes[2].url == writes[0].url);
-    CHECK(writes[2].headers.at("If-Match") == changed.at("eTag").get<std::string>());
+    CHECK(writes[n].url == writes[0].url);
+    CHECK(writes[n].headers.at("If-Match") == changed.at("eTag").get<std::string>());
     CHECK_THAT(lab.log(), ContainsSubstring("changed since it was listed"));
     lab.require_only_listed_writes();
 }
@@ -614,24 +647,26 @@ TEST_CASE("a target still holding items after two rounds ends with them left",
     const Which which = GENERATE(Which::mail, Which::sharepoint, Which::onedrive);
     INFO(name_of(which));
     Lab lab;
-    const json fixture = two_items(which);
+    const json fixture = recorded_items(which);
     // The listing never empties (Graph lagging, or mail still arriving).
     lab.list(which, {to_response(fixture)});
     lab.on_delete(which, id_at(fixture, 0), {deleted(which)});
-    lab.on_delete(which, id_at(fixture, 1), {deleted(which)});
+    lab.delete_rest(which, fixture);
+    const std::size_t n = recorded_count(which);
 
     const CleanupResult result = lab.clean();
 
     const TargetCleanup& t = of(result, which);
     CHECK(t.error_code.empty());
     CHECK(t.rounds == 2);
-    CHECK(t.found == 2);
-    CHECK(t.deleted == 4);
-    CHECK(t.left == 2);
+    CHECK(t.found == n);
+    CHECK(t.deleted == 2 * n);
+    CHECK(t.left == n);
     CHECK_FALSE(t.ok());
     CHECK_FALSE(result.ok());
     CHECK(lab.gets(listing_url(which)) == 4);
-    CHECK_THAT(lab.log(), ContainsSubstring("left 2, skipped 0 in 2 round(s)"));
+    CHECK_THAT(lab.log(), ContainsSubstring("left " + std::to_string(n) +
+                                            ", skipped 0 in 2 round(s)"));
     lab.require_only_listed_writes();
 }
 
@@ -640,19 +675,20 @@ TEST_CASE("Graph's 404 for a listed item counts it gone", "[cleaner][gone]")
     const Which which = GENERATE(Which::mail, Which::sharepoint, Which::onedrive);
     INFO(name_of(which));
     Lab lab;
-    const json fixture = two_items(which);
+    const json fixture = recorded_items(which);
     lab.list(which, {to_response(fixture), empty_listing(which)});
     lab.on_delete(which, id_at(fixture, 0),
                   {load_fixture("graph", which == Which::mail
                                              ? "w34-mail-permanentdelete-404-erroritemnotfound"
                                              : "w34-file-delete-404-itemnotfound")});
-    lab.on_delete(which, id_at(fixture, 1), {deleted(which)});
+    lab.delete_rest(which, fixture);
 
     const CleanupResult result = lab.clean();
 
     const TargetCleanup& t = of(result, which);
     CHECK(t.error_code.empty());
-    CHECK(t.deleted == 1);
+    CHECK(t.found == recorded_count(which));
+    CHECK(t.deleted == recorded_count(which) - 1);
     CHECK(t.gone == 1);
     CHECK(t.left == 0);
     CHECK(t.rounds == 1);
@@ -666,7 +702,7 @@ TEST_CASE("a delete resent after a dropped connection and answered 404 counts as
     const Which which = GENERATE(Which::mail, Which::sharepoint);
     INFO(name_of(which));
     Lab lab;
-    const json fixture = two_items(which);
+    const json fixture = recorded_items(which);
     lab.list(which, {listing_of(fixture, json::array({fixture["body"]["value"][0]})),
                      empty_listing(which)});
     const HttpResponse not_found =
@@ -700,7 +736,7 @@ TEST_CASE("a 401 on a delete gets one fresh token and the delete again", "[clean
     const Which which = GENERATE(Which::mail, Which::onedrive);
     INFO(name_of(which));
     Lab lab;
-    const json fixture = two_items(which);
+    const json fixture = recorded_items(which);
     lab.list(which, {listing_of(fixture, json::array({fixture["body"]["value"][0]})),
                      empty_listing(which)});
     lab.on_delete(which, id_at(fixture, 0),
@@ -745,7 +781,7 @@ TEST_CASE("Graph's other answers to a delete stop the target as graph", "[cleane
             "Graph DELETE"});
     INFO(row.name);
     Lab lab;
-    const json fixture = two_items(row.which);
+    const json fixture = recorded_items(row.which);
     lab.list(row.which, {to_response(fixture)});
     lab.on_delete(row.which, id_at(fixture, 0), {row.answer()});
 
@@ -837,7 +873,7 @@ TEST_CASE("an entry that isn't a plain file in its place is skipped and never de
     INFO(name_of(row.which) << ": " << row.name);
 
     Lab lab;
-    const json fixture = two_items(row.which);
+    const json fixture = recorded_items(row.which);
     json first = fixture["body"]["value"][0];
     row.edit(first);
     const json second = fixture["body"]["value"][1];
@@ -889,7 +925,7 @@ TEST_CASE("a nextLink that leaves the target stops it before any delete", "[clea
             "https://example.invalid/v1.0/drives/" + v.library_id + "/root/children"});
     INFO(row.name);
     Lab lab;
-    json fixture = two_items(row.which);
+    json fixture = recorded_items(row.which);
     fixture["body"]["@odata.nextLink"] = row.link;
     lab.list(row.which, {to_response(fixture)});
 
@@ -909,7 +945,7 @@ TEST_CASE("a target past the page limit is cleaned up to it and ends with items 
     const Which which = GENERATE(Which::mail, Which::sharepoint, Which::onedrive);
     INFO(name_of(which));
     Lab lab;
-    const json fixture = two_items(which);
+    const json fixture = recorded_items(which);
     const json entry = fixture.at("body").at("value").at(0);
     const auto link = [which](int page) {
         return listing_url(which) + "&$skiptoken=" + std::to_string(page);
@@ -974,20 +1010,21 @@ TEST_CASE("the Cleaner deletes every mail and plain file each target lists", "[c
 {
     Lab lab;
     for (const Which which : {Which::mail, Which::sharepoint, Which::onedrive}) {
-        lab.serve_two(which);
+        lab.serve_recorded(which);
     }
 
     const CleanupResult result = lab.clean(CleanupWhen::before_run);
 
     for (const Which which : {Which::mail, Which::sharepoint, Which::onedrive}) {
         INFO(name_of(which));
-        require_cleaned(of(result, which), 2);
+        const std::size_t n = recorded_count(which);
+        require_cleaned(of(result, which), n);
         // Listed, deleted, listed again.
         CHECK(lab.gets(listing_url(which)) == 2);
-        const json fixture = two_items(which);
+        const json fixture = recorded_items(which);
         const std::vector<HttpRequest> writes = lab.writes_to(which);
-        REQUIRE(writes.size() == 2);
-        for (std::size_t i = 0; i < 2; ++i) {
+        REQUIRE(writes.size() == n);
+        for (std::size_t i = 0; i < n; ++i) {
             CHECK(writes[i].url == write_url(which, id_at(fixture, i)));
             if (which != Which::mail) {
                 CHECK(writes[i].headers.at("If-Match") ==
@@ -1009,7 +1046,7 @@ TEST_CASE("the Cleaner deletes every mail and plain file each target lists", "[c
 TEST_CASE("the Cleaner follows a nextLink within the Inbox", "[cleaner][paging]")
 {
     Lab lab;
-    const json fixture = two_items(Which::mail);
+    const json fixture = recorded_items(Which::mail);
     const std::string next = listing_url(Which::mail) + "&$skip=1";
     json page1 = fixture;
     page1["body"]["value"] = json::array({fixture["body"]["value"][0]});

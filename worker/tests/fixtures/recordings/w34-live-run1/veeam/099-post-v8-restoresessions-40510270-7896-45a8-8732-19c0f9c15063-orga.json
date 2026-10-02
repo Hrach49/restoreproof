@@ -1,0 +1,36 @@
+{
+  "source": "rpworker 0.0.0 restore --record",
+  "request": "POST /v8/RestoreSessions/40510270-7896-45a8-8732-19c0f9c15063/organization/mailboxes/dcb1746c-fabf-4fc6-a9c2-8c6f50c76f3f/items/restoreTo",
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8"
+  },
+  "body": {
+    "sessionId": "a085841a-4cdb-45e1-93eb-8dfb11a084d1"
+  },
+  "request_body": {
+    "mailbox": "restoretest@RestoreProofLab.onmicrosoft.com",
+    "folder": "Inbox",
+    "items": [
+      {
+        "id": "LgAAAEYAAAAWAAAAAAAAAIZPctwPvSlNre4ajjSb9hcBAEDNIgUfUXRPn_iTFtRs8kcAAAAAAQkAAAAAAACGT3LcD70pTa3uGo40m_YXBwBAzSIFH1F0T5_4kxbUbPJHAAAAAAEJAABAzSIFH1F0T5_4kxbUbPJHAAACc0xdAABAzSIFH1F0T5_4kxbUbPJHAAACcBuD"
+      },
+      {
+        "id": "LgAAAEYAAAAWAAAAAAAAAIZPctwPvSlNre4ajjSb9hcBAEDNIgUfUXRPn_iTFtRs8kcAAAAAAQkAAAAAAACGT3LcD70pTa3uGo40m_YXBwBAzSIFH1F0T5_4kxbUbPJHAAAAAAEJAABAzSIFH1F0T5_4kxbUbPJHAAACc0xcAABAzSIFH1F0T5_4kxbUbPJHAAACcAoy"
+      }
+    ],
+    "changedItems": true,
+    "deletedItems": true,
+    "markRestoredAsUnread": false,
+    "excludeDrafts": false,
+    "excludeDeletedItems": false,
+    "excludeInPlaceHoldItems": true,
+    "excludeLitigationHoldItems": true,
+    "officeRegion": "Worldwide",
+    "officeOrganizationName": "RestoreProofLab.onmicrosoft.com",
+    "applicationId": "1fd2609d-1242-43fe-94b5-d58688a90bd6",
+    "applicationCertificate": "[REDACTED]",
+    "applicationCertificatePassword": "[REDACTED]",
+    "impersonationAccountName": "restoretest@RestoreProofLab.onmicrosoft.com"
+  }
+}

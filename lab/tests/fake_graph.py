@@ -7,7 +7,12 @@ so "/me" is always that account's own mailbox. Drives are reachable only by the 
 App-only tokens (the RestoreProof Worker app, L1.5) are JWT-shaped, made by make_app_token. The
 fake answers them from `app_grants`, the resources the app was granted, the way Graph answered
 in the lab: 200 on a granted resource, 403 on any other one, and 404 on items a folder grant
-masks. APP_GRANTS is what L1.5 grants.
+masks. APP_GRANTS is what L1.5 and W3.4 grant.
+
+App-only writes (W3.4's probes) follow the same grants: a file uploaded into, or deleted or
+PATCHed in, a folder the app may write; a draft created in, or permanently deleted from, a
+mailbox it may write. Without write: 403 where the app may read, 404 where a folder grant masks
+the item. An If-Match that isn't the item's ETag is 412, as SharePoint answers.
 """
 
 import base64
@@ -36,15 +41,24 @@ _SUBJECT_FILTER = re.compile(r"^subject eq '(.*)'$")
 _USER_MESSAGES = re.compile(r"^/users/([^/]+)/messages$")
 _SITE = re.compile(r"^/sites/(.+?)(/drives)?$")
 _DRIVE = re.compile(r"^/drives/([^/]+)(?:/(root|items/[^/]+)(/children)?)?$")
+_APP_UPLOAD = re.compile(r"^/drives/([^/]+)/items/([^/:]+):/([^/:]+):/content$")
+_APP_ITEM = re.compile(r"^/drives/([^/]+)/items/([^/:]+)$")
+_APP_PERMANENT_DELETE = re.compile(r"^/users/([^/]+)/messages/([^/]+)/permanentDelete$")
 
-# Grant keys: "mailbox:<upn lower>", "site:<site id>", "folder:<drive id>/<item id>", "directory".
+# Grant keys: "mailbox:<upn lower>", "site:<site id>", "folder:<drive id>/<item id>", "directory";
+# W3.4's writes: "mailbox-write:<upn lower>", "list-write:<drive id>" (a library's whole list),
+# "folder-write:<drive id>/<item id>".
 APP_GRANTS = frozenset(
     {
         f"mailbox:{tenant.RESTORETEST_UPN.lower()}",
         f"site:{tenant.SHAREPOINT_SITE_ID}",
         f"folder:{tenant.ONEDRIVE_DRIVE_ID}/{tenant.ONEDRIVE_TARGET_FOLDER_ID}",
+        f"mailbox-write:{tenant.RESTORETEST_UPN.lower()}",
+        f"list-write:{tenant.RESTORE_TARGET_DRIVE_ID}",
+        f"folder-write:{tenant.ONEDRIVE_DRIVE_ID}/{tenant.ONEDRIVE_TARGET_FOLDER_ID}",
     }
 )
+WRITE_GRANTS = frozenset(g for g in APP_GRANTS if "-write:" in g)
 # The drives of each site, as far as the fake knows.
 SITE_DRIVES = {
     tenant.SHAREPOINT_SITE_ID: (tenant.RESTORE_TARGET_DRIVE_ID, tenant.SHAREPOINT_DRIVE_ID),
@@ -56,7 +70,7 @@ SITE_DRIVES = {
 DRIVE_ROOT_ITEMS = {
     tenant.ONEDRIVE_DRIVE_ID: (tenant.ONEDRIVE_TARGET_FOLDER_ID, tenant.ONEDRIVE_FOLDER_ID, "01FAKEALICEFILE"),
 }
-APP_ROLES = ("Sites.Selected", "Files.SelectedOperations.Selected")
+APP_ROLES = ("Sites.Selected", "Files.SelectedOperations.Selected", "Lists.SelectedOperations.Selected")
 # The folders' names, as a listing shows them.
 ITEM_NAMES = {tenant.ONEDRIVE_TARGET_FOLDER_ID: "RestoreTarget", tenant.ONEDRIVE_FOLDER_ID: "RestoreTest"}
 
@@ -103,6 +117,10 @@ class FakeTenant:
         self.rewrite_types = set(rewrite_types)
         self.app_grants = set(app_grants)
         self.app_requests: list[tuple[str, str]] = []  # (method, path) of every app-only call
+        # Every app-only write: (method, path, headers without Authorization, body).
+        self.app_writes: list[tuple[str, str, dict[str, str], bytes | None]] = []
+        self.app_items: dict[tuple[str, str], dict] = {}  # (drive, id) -> {name, parent, eTag}: app uploads
+        self.app_drafts: dict[str, dict[str, dict]] = {}  # upn lower -> id -> draft
         self.item_names = dict(ITEM_NAMES)
         self.drive_access = dict(
             drive_access
@@ -193,7 +211,7 @@ class FakeTenant:
         self.headers_seen.append(dict(headers))
         auth = headers.get("Authorization", "")
         if auth.startswith("Bearer eyJ"):
-            return self._app_request(method, url)
+            return self._app_request(method, url, headers, body)
         if not auth.startswith("Bearer token:"):
             return graph_error(401, "InvalidAuthenticationToken", "no token")
         account = auth[len("Bearer token:") :]
@@ -232,16 +250,99 @@ class FakeTenant:
 
     # --- app-only (the Worker app) ------------------------------------------------------------
 
-    def _app_request(self, method: str, url: str) -> HttpResponse:
+    def _app_request(self, method: str, url: str, headers: Mapping[str, str], body: bytes | None) -> HttpResponse:
         assert url.startswith(GRAPH_BASE), url
         path = unquote(urlsplit(url[len(GRAPH_BASE) :]).path)
         self.app_requests.append((method, path))
-        if method != "GET":
-            return graph_error(405, "BadRequest", "the fake answers app-only GETs only")
-        answer = self._app_answer(path)
+        if method == "GET":
+            answer = self._app_answer(path)
+        else:
+            kept = {k: v for k, v in headers.items() if k != "Authorization"}
+            self.app_writes.append((method, path, kept, body))
+            answer = self._app_write(method, path, headers, body)
         if answer is None:
-            return graph_error(400, "BadRequest", f"fake tenant has no app-only route for {path}")
+            return graph_error(400, "BadRequest", f"fake tenant has no app-only route for {method} {path}")
         return answer
+
+    # --- app-only writes (W3.4) ----------------------------------------------------------------
+
+    def _app_access(self, drive_id: str, folder: str) -> str:
+        """"write", "read", "masked" (a folder grant elsewhere in the drive) or "none"."""
+        if f"list-write:{drive_id}" in self.app_grants or f"folder-write:{drive_id}/{folder}" in self.app_grants:
+            return "write"
+        site = next((s for s, drives in SITE_DRIVES.items() if drive_id in drives), None)
+        if f"site:{site}" in self.app_grants or f"folder:{drive_id}/{folder}" in self.app_grants:
+            return "read"
+        if self._folder_grants(drive_id) or any(g.startswith(f"folder-write:{drive_id}/") for g in self.app_grants):
+            return "masked"
+        return "none"
+
+    @staticmethod
+    def _refused(access: str) -> HttpResponse:
+        if access == "masked":
+            return graph_error(404, "itemNotFound", "The resource could not be found.")
+        return graph_error(403, "accessDenied", "Access denied")
+
+    def _app_locate(self, drive_id: str, item_id: str) -> tuple[str, str, Callable[[], None]] | None:
+        """(folder as an access key, eTag, remove) of an app upload or a seeded item."""
+        if (drive_id, item_id) in self.app_items:
+            item = self.app_items[(drive_id, item_id)]
+            return item["parent"], item["eTag"], lambda: self.app_items.pop((drive_id, item_id))
+        drive = self.drives.get(drive_id)
+        if drive is not None and item_id in drive.items:
+            parent = drive.items[item_id]["parent"]
+            folder = "root" if parent == SHAREPOINT_ROOT_ID else parent
+            return folder, f'"{{{item_id}}},1"', lambda: drive.items.pop(item_id)
+        return None
+
+    def _app_write(self, method: str, path: str, headers: Mapping[str, str], body: bytes | None) -> HttpResponse | None:
+        mail_denied = graph_error(403, "ErrorAccessDenied", "Access is denied. Check credentials and try again.")
+        if (m := _USER_MESSAGES.match(path)) and method == "POST":
+            upn = m.group(1).lower()
+            if f"mailbox-write:{upn}" not in self.app_grants:
+                return mail_denied
+            draft = json.loads(body or b"{}")
+            draft_id = self._next_id("AAMkImmutableDraft-")
+            self.app_drafts.setdefault(upn, {})[draft_id] = draft
+            return json_response(201, {"id": draft_id, "subject": draft.get("subject"), "isDraft": True})
+        if (m := _APP_PERMANENT_DELETE.match(path)) and method == "POST":
+            upn, draft_id = m.group(1).lower(), m.group(2)
+            if f"mailbox-write:{upn}" not in self.app_grants:
+                return mail_denied
+            if draft_id not in self.app_drafts.get(upn, {}):
+                return graph_error(404, "ErrorItemNotFound", "The specified object was not found in the store.")
+            del self.app_drafts[upn][draft_id]
+            return HttpResponse(204)
+        if (m := _APP_UPLOAD.match(path)) and method == "PUT":
+            drive_id, folder, name = m.groups()
+            access = self._app_access(drive_id, folder)
+            if access != "write":
+                return self._refused(access)
+            if any(i["name"] == name and i["parent"] == folder for (d, _), i in self.app_items.items() if d == drive_id):
+                return graph_error(409, "nameAlreadyExists", "The specified item name already exists.")
+            item_id = self._next_id("01FAKEAPPITEM")
+            etag = f'"{{{item_id}}},1"'
+            self.app_items[(drive_id, item_id)] = {"name": name, "parent": folder, "eTag": etag, "data": body}
+            parent_id = "01FAKERESTORETARGETROOT" if folder == "root" else folder
+            item = {"id": item_id, "name": name, "eTag": etag, "file": {}, "parentReference": {"driveId": drive_id, "id": parent_id}}
+            return json_response(201, item)
+        if (m := _APP_ITEM.match(path)) and method in ("DELETE", "PATCH"):
+            drive_id, item_id = m.groups()
+            located = self._app_locate(drive_id, item_id)
+            if located is None:
+                return graph_error(404, "itemNotFound", "The resource could not be found.")
+            folder, etag, remove = located
+            access = self._app_access(drive_id, folder)
+            if access != "write":
+                return self._refused(access)
+            if_match = headers.get("If-Match")
+            if if_match is not None and if_match != etag:
+                return graph_error(412, "resourceModified", "ETag does not match current item's value")
+            if method == "DELETE":
+                remove()
+                return HttpResponse(204)
+            return json_response(200, {"id": item_id})
+        return None
 
     def _app_answer(self, path: str) -> HttpResponse | None:
         """What Graph answered the Worker app in the lab (docs/security/graph-permissions.md): 200

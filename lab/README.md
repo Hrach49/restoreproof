@@ -117,11 +117,17 @@ Disconnect-MgGraph | Out-Null
 ## One-time setup: the RestoreProof Worker app (L1.5)
 
 The Worker's own app registration: single tenant, app-only, with a certificate. It can read
-the three restore targets, and two things it doesn't use: the rest of the RestoreTest site (the
-canary library included, since a site grant covers the whole site) and the metadata of alice's
-OneDrive site and root folder. Nothing else. What is granted and why:
-`docs/security/graph-permissions.md`. `entra/new-worker-app.ps1` does everything below the
-first two steps, and is safe to run again.
+the three restore targets and, since W3.4, delete in them (the Cleaner): write on the
+RestoreTarget list, write on alice's `/RestoreTarget` folder, and `Application Mail.ReadWrite`
+on the `restoretest` mailbox. It can also read two things it doesn't use: the rest of the
+RestoreTest site (the canary library included, since a site grant covers the whole site) and
+the metadata of alice's OneDrive site and root folder. Nothing else, and no write outside the
+restore targets. What is granted and why: `docs/security/graph-permissions.md`.
+`entra/new-worker-app.ps1` does everything below the first two steps, and is safe to run again:
+on an app set up before W3.4 it adds the `Lists.SelectedOperations.Selected` consent and the
+list grant, raises the folder grant to `write`, and replaces the `Application Mail.Read`
+assignment with `Application Mail.ReadWrite`. Before each write grant it reads the list or
+folder and stops, granting nothing, unless it is the RestoreTarget one.
 
 1. **Install the modules** (once), in PowerShell 7 (Start, type `pwsh`, open "PowerShell 7"):
 
@@ -156,16 +162,19 @@ first two steps, and is safe to run again.
    applications", "Manage app permission grants and app role assignments" and "Have full
    control of all site collections". Leave "Consent on behalf of your organization"
    **unticked**, so only the admin's own sessions get these, then click **Accept**.
-4. **Wait, then check.** Exchange applies permission changes after 30 minutes to 2 hours. The
-   script's `Test-ServicePrincipalAuthorization` lines show the new state at once. Then, from
-   `lab/`:
+4. **Wait, then check.** Exchange applies permission changes after 30 minutes to 2 hours (until
+   then the mail write probe may get 403). The script's `Test-ServicePrincipalAuthorization`
+   lines show the new state at once. Then, from `lab/`:
 
    ```powershell
    uv run python -m seeder check-worker-app --client-id <the client ID the script printed>
    ```
 
-   A browser window opens once: sign in as alice. The check reads her canary folder with the
-   seeder app to confirm it exists (the Worker app gets 404 on it either way).
+   A browser window opens twice: sign in as alice, then as the admin. The check reads her
+   canary folder and one of its files, and one canary file in the RestoreTest library as the
+   admin, with the seeder app, to confirm they exist (the Worker app gets 404 or 403 on them
+   either way). It then creates and deletes one `rp-probe-<uuid>` item in each restore target,
+   and sends each of the two canary files a `PATCH` that must be refused (below).
 
 5. **Optional: remove the admin from alice's OneDrive.** Open her OneDrive with the link from
    step 2, then gear icon > **OneDrive settings** > **More settings** > **Site collection
@@ -206,7 +215,7 @@ uv run python -m seeder generate      # write the 20 files into canary/
 uv run python -m seeder hash          # offline check: canary/ and the manifest agree (L1.2's Done when)
 uv run python -m seeder seed          # live: put the 40 items in the tenant, write seed-manifest.json
 uv run python -m seeder verify        # live: re-read the 40 items and compare with the manifest
-uv run python -m seeder check-worker-app  # live: what the Worker app can and can't read (L1.5)
+uv run python -m seeder check-worker-app  # live: what the Worker app can and can't reach (L1.5, W3.4)
 uv run python -m seeder record-graph-fixtures  # live: re-record worker/tests/fixtures/graph/ (W2.1)
 uv run python -m seeder record-graph-fixtures --state empty  # live: the restore targets, empty (W2.2)
 ```
@@ -217,7 +226,7 @@ uv run python -m seeder record-graph-fixtures --state empty  # live: the restore
 | `hash` | no | Checks that `seed-manifest.json` exists, is valid JSON and matches the schema; has exactly 40 entries whose ids, kinds and order match the catalog; that each file in `canary/` has the recorded `local_sha256` and `local_size` and that `stored_matches_local` is consistent; that each mail's `sent_body_sha256` equals the text-v1 hash of the catalog body and its subject and recipient match the catalog. Prints one line per entry and a summary (`40/40 entries reproduce the manifest hashes`) | 0 all reproduce; 1 any difference (each message names the entry, expected and actual); 2 manifest missing, unreadable or invalid (wrong count, order or schema) |
 | `seed` | yes | Signs in three times, sends the missing mails, uploads the missing files, reads all 40 back and writes the manifest. Step by step below | 0 manifest written; 1 a problem the output explains (missing canary file, duplicate subject, mail timeout); 2 sign-in or Graph error. No manifest is written unless it exits 0 |
 | `verify` | yes | Re-reads every item by its Graph id as the account that owns it (alice: mails 0001–0010 and the OneDrive files; bob: mails 0011–0020; admin: the SharePoint files). Compares subject, sender (case-insensitive), sent and received dates, `internet_message_id` and `body_sha256`; for files name and `content_sha256` by `content_rule` (and size for `bytes` files); an Office file whose bytes changed but whose content didn't is `ok`, with a note. Prints `ok`, `DIFF` or `MISSING` per entry and a summary (`40/40 entries in the tenant match the manifest`) | 0 all ok; 1 any DIFF or MISSING; 2 manifest missing or invalid, or a sign-in or Graph error |
-| `check-worker-app` | yes | Signs in as the RestoreProof Worker app with its certificate (PFX from `--pfx`, default `%LOCALAPPDATA%\RestoreProof\lab\worker-graph.pfx`; password from Credential Manager). Checks the Graph token's roles are exactly `Files.SelectedOperations.Selected` and `Sites.Selected` and that its Exchange Online and SharePoint tokens carry none, signs in as alice (the seeder app) to confirm her canary folder exists, then sends one GET per probe and prints `ok` or `UNEXPECTED` per row with the expected and actual status (the probe table is in `docs/security/graph-permissions.md`). Only reads | 0 all as expected; 1 anything unexpected; 2 a missing or unusable credential, or a sign-in error (the app's or alice's) |
+| `check-worker-app` | yes | Signs in as the RestoreProof Worker app with its certificate (PFX from `--pfx`, default `%LOCALAPPDATA%\RestoreProof\lab\worker-graph.pfx`; password from Credential Manager). Checks the Graph token's roles are exactly `Files.SelectedOperations.Selected`, `Lists.SelectedOperations.Selected` and `Sites.Selected` and that its Exchange Online and SharePoint tokens carry none, signs in as alice and the admin (the seeder app) to confirm her canary folder and the two canary files the refusal probes aim at exist, then sends one request per probe and prints `ok` or `UNEXPECTED` per row with the expected and actual status (the probe table is in `docs/security/graph-permissions.md`). Writes only W3.4's probes, below | 0 all as expected; 1 anything unexpected; 2 a missing or unusable credential, or a sign-in error (the app's, alice's or the admin's) |
 | `record-graph-fixtures` | yes | Records the Graph and Entra replies the Worker's GraphClient tests replay (W2.1) into `--out`, default `worker/tests/fixtures/graph/`. Signs in as the RestoreProof Worker app the way the Worker does: its own client assertion (PS256, header `x5t#S256`), certificate and password as for `check-worker-app`. Then sends six more token requests that must fail (an assertion signed by an unknown key, an unknown certificate, app and tenant, one expired and one not yet valid by an hour) and seven GETs (the restoretest inbox, alice's inbox, the tenant root site, `/users`, a bad and a missing token, an unknown user). Prints one line per file with the status and error code. With `--state empty\|one-item\|paged` (W2.2) it records the three restore targets instead, read the way the Worker's `TargetReader` reads them. Only reads. Details below | 0 all of the state's files written; 1 a reply had another status than its file name says, or not the content its state needs, nothing written; 2 a missing or unusable credential, a failed sign-in, a network error, a reply that holds something secret-looking, or a request that needs an item or link an earlier reply didn't give, nothing written |
 
 A usage error (unknown command or option) exits 2. Ctrl+C exits 130; `seed` then says nothing was written.
@@ -232,11 +241,48 @@ Options:
 | `--pfx <path>` | `check-worker-app`, `record-graph-fixtures` | The Worker app's certificate, if not in the default place |
 | `--out <dir>` | `record-graph-fixtures` | Where to write the fixtures (default `worker/tests/fixtures/graph/` in the repo). Existing files of the same names are replaced; other files are left alone |
 | `--state auth\|empty\|one-item\|paged` | `record-graph-fixtures` | Which fixtures: `auth` (default) the 14 of W2.1; the others the restore targets in that state (W2.2), see below |
-| `--seeder-client-id <id>` | `check-worker-app` | The seeder app's client ID, for alice's sign-in. Same order as `--client-id` for `seed` |
+| `--seeder-client-id <id>` | `check-worker-app` | The seeder app's client ID, for alice's and the admin's sign-ins. Same order as `--client-id` for `seed` |
 | `--auth browser\|device` | `seed`, `verify`, `check-worker-app` | `browser` (default) opens a browser window for each sign-in. `device` prints a code to enter at https://microsoft.com/devicelogin instead |
 | `--force` | `seed` | Send every mail again and replace every file, even if it is already there |
 | `--mail-timeout <seconds>` | `seed` | How long to wait for sent mails to arrive (default 600) |
 | `--canary-dir`, `--manifest` | all that use them | Other paths than `canary/` and `seed-manifest.json` (tests use these) |
+
+### `check-worker-app`'s write probes (W3.4)
+
+W3.4's Cleaner deletes what a run restored, so the check proves the app can delete in the
+three restore targets and nowhere near the canaries (`docs/decisions.md` 2026-10-02, point 9).
+After the read probes it sends, in this order:
+
+| Rows | Requests | Expected |
+|---|---|---|
+| RestoreTarget library: create a file, delete it | `PUT /drives/{RestoreTarget drive}/items/root:/rp-probe-<uuid>.txt:/content` (fail on a name conflict), then `DELETE /drives/{RestoreTarget drive}/items/{id}` with the `If-Match` ETag the upload returned | 201, then 204 |
+| alice's OneDrive: RestoreTarget folder: create a file, delete it | the same, under `/drives/{alice's drive}/items/{RestoreTarget}:` | 201, then 204 |
+| restoretest's mailbox: create a draft, permanently delete it | `POST /users/restoretest@…/messages` (a draft with subject `rp-probe-<uuid>` and no recipient), then `POST …/messages/{id}/permanentDelete`, both with `Prefer: IdType="ImmutableId"` | 201, then 204 |
+| RestoreTest library: change a canary file | `PATCH /drives/{RestoreTest drive}/items/{rp-canary-01.pdf}` with body `{}` and `If-Match: "rp-probe-no-such-etag"` | 403 or 404 |
+| alice's OneDrive: change a canary file in RestoreTest | the same at `rp-canary-11.pdf` in her `/RestoreTest` folder | 403 or 404 |
+
+Rules the code keeps, each with a test in `tests/test_worker_app.py`:
+
+- **Writes go to the restore targets only.** Every create and delete path is checked against
+  the three targets before it is sent, and one naming the canary library, list or folder is
+  refused without a request.
+- **A probe deletes only its own item.** The delete is built from the create's reply only when
+  that reply shows the probe's name, the target's drive and (in OneDrive) the
+  `/RestoreTarget` folder. Otherwise nothing is deleted and the row says to check by hand.
+- **A create is never sent twice.** After no answer or a 502/503/504 the item may exist; the
+  row says so (a file is removed by the Worker's next clean, a draft in `restoretest`'s Drafts
+  by hand).
+- **An interrupted delete is sent once more on the way out**, for that same item only.
+- **At a canary, only the refusal `PATCH`.** It has an empty body and an `If-Match` no item
+  has, so even if it were let through it would change nothing (412). 412 or any 2xx fails the
+  check. The seeder's sign-ins confirm both canary files first (the admin for the library,
+  alice for her folder); one that can't be confirmed fails the check and gets no `PATCH`.
+
+Save the output as the W3.4 evidence (from `lab/`; it holds no secret):
+
+```powershell
+uv run python -m seeder check-worker-app | Tee-Object -FilePath ..\docs\security\w3.4-worker-app-check.txt
+```
 
 ## Recording the Worker's Graph fixtures (W2.1)
 

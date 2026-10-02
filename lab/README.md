@@ -258,8 +258,10 @@ After the read probes it sends, in this order:
 | RestoreTarget library: create a file, delete it | `PUT /drives/{RestoreTarget drive}/items/root:/rp-probe-<uuid>.txt:/content` (fail on a name conflict), then `DELETE /drives/{RestoreTarget drive}/items/{id}` with the `If-Match` ETag the upload returned | 201, then 204 |
 | alice's OneDrive: RestoreTarget folder: create a file, delete it | the same, under `/drives/{alice's drive}/items/{RestoreTarget}:` | 201, then 204 |
 | restoretest's mailbox: create a draft, permanently delete it | `POST /users/restoretest@…/messages` (a draft with subject `rp-probe-<uuid>` and no recipient), then `POST …/messages/{id}/permanentDelete`, both with `Prefer: IdType="ImmutableId"` | 201, then 204 |
-| RestoreTest library: change a canary file | `PATCH /drives/{RestoreTest drive}/items/{rp-canary-01.pdf}` with body `{}` and `If-Match: "rp-probe-no-such-etag"` | 403 or 404 |
-| alice's OneDrive: change a canary file in RestoreTest | the same at `rp-canary-11.pdf` in her `/RestoreTest` folder | 403 or 404 |
+| RestoreTarget library: invalid name (control) | `POST /drives/{RestoreTarget drive}/items/root/children` with body `{"name": "rp-probe-invalid:name", "folder": {}, "@microsoft.graph.conflictBehavior": "fail"}` | 400 |
+| alice's OneDrive: RestoreTarget folder: invalid name (control) | the same at `/drives/{alice's drive}/items/{RestoreTarget}/children` | 400 |
+| RestoreTest library: invalid name beside a canary | the same at `/drives/{RestoreTest drive}/items/root/children`, the folder of `rp-canary-01.pdf` | 403 or 404 |
+| alice's OneDrive: invalid name in RestoreTest | the same at `/drives/{alice's drive}/items/{RestoreTest}/children`, the folder of `rp-canary-11.pdf` | 403 or 404 |
 
 Rules the code keeps, each with a test in `tests/test_worker_app.py`:
 
@@ -273,10 +275,34 @@ Rules the code keeps, each with a test in `tests/test_worker_app.py`:
   row says so (a file is removed by the Worker's next clean, a draft in `restoretest`'s Drafts
   by hand).
 - **An interrupted delete is sent once more on the way out**, for that same item only.
-- **At a canary, only the refusal `PATCH`.** It has an empty body and an `If-Match` no item
-  has, so even if it were let through it would change nothing (412). 412 or any 2xx fails the
-  check. The seeder's sign-ins confirm both canary files first (the admin for the library,
-  alice for her folder); one that can't be confirmed fails the check and gets no `PATCH`.
+- **At a canary location, only the invalid-name folder create.** It asks for a folder named
+  `rp-probe-invalid:name` in the canary file's own folder; `:` is invalid in SharePoint and
+  OneDrive names, so even if it were let through it would create nothing. It names the folder,
+  never a canary file. 403 (no write) or 404 (masked) passes. 400 fails the check: the request
+  passed the permission check and only the name stopped it, so the app may write there. Any
+  2xx fails it too and says what to remove by hand; 409, 412 or anything else fails it. The
+  seeder's sign-ins confirm both canary files first (the admin for the library, alice for her
+  folder), so a 404 means "hidden"; one that can't be confirmed fails the check and gets no
+  request. **Its limit:** it asks the folder, so a write grant on one canary file alone
+  (`Files.SelectedOperations.Selected` allows one on a single driveItem) isn't seen and the
+  check passes; only a read-only listing of that file's permissions shows it (a test pins
+  this).
+- **The control: the same create in the two file restore targets must get 400.** It shows what
+  "allowed" looks like, so a canary's 403 is a refusal and not a request SharePoint would have
+  rejected anyway. Anything but 400 fails the check (a 403 or 404: the app can't write in its
+  own target; a 2xx: it created something, remove it by hand). It is the only folder create the code sends in a restore target, with exactly that
+  body.
+- **Why not a `PATCH` (2026-10-02).** The first design sent the canary file a `PATCH {}` with an
+  `If-Match` no item has. Live, the library canary answered 412, not 403: where the app may
+  read an item, SharePoint checks `If-Match` before write permission, so a 412 can't tell
+  "refused" from "allowed but stopped by the ETag". An owner's read-only listing of the grants
+  showed no application grant on the canary library's list or on `rp-canary-01.pdf`, and the
+  site's `read` for RestoreProof Worker; it printed the RestoreTarget list's `write` grant with
+  an empty application name, so whose it is waits for the controls' 400 in the re-run
+  (`docs/decisions.md` 2026-10-02 build notes). If a live run ever shows
+  a canary answering 400 to the invalid-name create too (SharePoint checking the name before
+  permission), the check fails, as it must; telling a refusal apart would then need another
+  design, never a pass.
 
 Save the output as the W3.4 evidence (from `lab/`; it holds no secret):
 

@@ -9,12 +9,16 @@ seeder app, delegated) to confirm her canary folder and one canary file in each 
 exist, so the app's 404 on them means "hidden", not "gone". docs/security/graph-permissions.md
 says why each probe is there.
 
-W3.4 added writes, in two kinds only. In each of the three restore targets it creates one item
-named rp-probe-<uuid> and deletes it again (201, then 204): the Cleaner's grants work. And at one
-canary file in the RestoreTest library and one in alice's /RestoreTest folder it sends a PATCH
-with an empty body and an If-Match no item has, which must be refused (403 or 404) and could
-change nothing even if it were let through (412). Nothing else is ever written, and nothing is
-ever deleted outside a restore target.
+W3.4 added writes, in three kinds only. In each of the three restore targets it creates one item
+named rp-probe-<uuid> and deletes it again (201, then 204): the Cleaner's grants work. In the
+folder of one canary file in the RestoreTest library and of one in alice's /RestoreTest folder
+it asks to create a folder named rp-probe-invalid:name, a name SharePoint never accepts: that
+must be refused (403, or 404 where SharePoint masks the folder), and can create nothing even if a
+grant were wrong (400). As a control, the same request in the two file restore targets must get
+that 400, which shows what "allowed" looks like. Nothing else is ever written, and nothing is
+ever deleted outside a restore target. (Until 2026-10-02 the canary probe was a PATCH with an
+If-Match no item has; live, SharePoint answered it 412 where the app may read but not write, so
+it couldn't tell a refusal from a write the ETag stopped.)
 
 The certificate's private key is in a PFX file outside the repo; its password is a generic
 credential in Windows Credential Manager. Neither, nor the token, is ever printed.
@@ -63,8 +67,11 @@ EXPECTED_ROLES = frozenset({"Sites.Selected", "Files.SelectedOperations.Selected
 # ---- W3.4's write probes
 PROBE_PREFIX = "rp-probe-"
 PROBE_FILE_BODY = b"RestoreProof check-worker-app write probe (W3.4). Safe to delete.\n"
-# The refusal probes' If-Match: no item has this ETag, so even a PATCH let through changes nothing.
-NO_SUCH_ETAG = '"rp-probe-no-such-etag"'
+# The refusal probe and its control: a folder create with a name SharePoint and OneDrive never
+# accept (":" is invalid there), so even a request let through creates nothing. Where the app may
+# write, Graph answers 400 (the control); where it may not, 403, or 404 where a folder grant masks.
+INVALID_NAME = "rp-probe-invalid:name"
+INVALID_FOLDER_BODY = {"name": INVALID_NAME, "folder": {}, "@microsoft.graph.conflictBehavior": "fail"}
 # The Worker reads and deletes mail by ImmutableId (W3.4, point 3): the probe does the same.
 IMMUTABLE_ID = 'IdType="ImmutableId"'
 # A Graph item or message ID, as the Worker accepts one (letters, digits and "!-_=").
@@ -445,6 +452,15 @@ class WriteTarget:
             idempotent=False,
         )
 
+    def control_probe(self) -> Probe:
+        """The calibration control in a file restore target: the invalid-name folder create,
+        expected 400 (past the permission check, stopped by the name). It creates nothing."""
+        if self.kind != "file":
+            raise ValueError(f"{self.label} is not a file restore target")
+        return invalid_folder_create(
+            f"{self.label}: invalid name (control)", self.drive_id, self.folder_id, 400
+        )
+
     def delete_label(self) -> str:
         return f"{self.label}: {'permanently delete it' if self.kind == 'mail' else 'delete it'}"
 
@@ -501,6 +517,52 @@ def write_targets() -> list[WriteTarget]:
     ]
 
 
+def control_targets() -> list[WriteTarget]:
+    """The file restore targets: the invalid-name control runs in each."""
+    return [t for t in write_targets() if t.kind == "file"]
+
+
+def invalid_folder_create(
+    label: str, drive_id: str, folder_id: str, expected: int, also_ok: tuple[int, ...] = ()
+) -> Probe:
+    """POST /drives/{drive}/items/{folder}/children with INVALID_FOLDER_BODY, and nothing else."""
+    path = f"/drives/{drive_id}/items/{seg(folder_id)}/children"
+    body = dict(INVALID_FOLDER_BODY)
+    return Probe(label, path, expected, method="POST", json_body=body, also_ok=also_ok, idempotent=False)
+
+
+def _is_invalid_folder_create(probe: Probe, path: str) -> bool:
+    """Exactly the invalid-name folder create at `path`: that body, no headers, no query."""
+    return (
+        probe.method == "POST"
+        and probe.path == path
+        and probe.json_body == INVALID_FOLDER_BODY
+        and probe.body is None
+        and not probe.headers
+        and not probe.params
+        and not probe.idempotent
+    )
+
+
+def _invalid_create_note(actual: int | None, control: bool) -> str:
+    """Why an invalid-name create's answer is wrong, for its row; empty when there's nothing to add."""
+    if actual is not None and 200 <= actual < 300:
+        return f"created something: remove {INVALID_NAME} by hand"
+    if control and actual in (403, 404):
+        return "no write in this restore target: a canary's 403 would prove nothing"
+    if not control and actual == 400:
+        return "past the permission check, only the name stopped it: the app may write here"
+    return ""
+
+
+def run_control_probe(graph: GraphClient, target: WriteTarget) -> ProbeResult:
+    """The invalid-name folder create in a file restore target: 400 is what "allowed" looks like."""
+    probe = target.control_probe()
+    _check_write(probe)
+    _, actual = _send(graph, probe)
+    return ProbeResult(probe, actual, "" if actual == probe.expected else _invalid_create_note(actual, True))
+
+
 def _canary_item_ids() -> frozenset[str]:
     """The canary files' drive item IDs from lab/seed-manifest.json (none if it can't be read):
     a delete never names one, whatever a create's reply said."""
@@ -513,17 +575,21 @@ def _canary_item_ids() -> frozenset[str]:
 
 def _check_write(probe: Probe) -> None:
     """Belt and braces, apart from delete_probe's own checks: a create goes only into a restore
-    target itself (the library's root, alice's /RestoreTarget folder, restoretest's messages); a
-    delete names exactly the item delete_probe proved (probe.item_id), never a target folder or a
-    canary file; and no write names a canary location."""
+    target itself (the library's root, alice's /RestoreTarget folder, restoretest's messages); the
+    invalid-name folder create (the control) only into the two file targets, with exactly its
+    body; a delete names exactly the item delete_probe proved (probe.item_id), never a target
+    folder or a canary file; and no write names a canary location."""
     sp, od, mailbox = tenant.RESTORE_TARGET_DRIVE_ID, tenant.ONEDRIVE_DRIVE_ID, tenant.RESTORETEST_UPN
     canary = (tenant.SHAREPOINT_DRIVE_ID, tenant.ONEDRIVE_FOLDER_ID, tenant.SHAREPOINT_LIST_ID)
     item = probe.item_id
     if not item:
         creates = (f"/drives/{sp}/items/root:/", f"/drives/{od}/items/{tenant.ONEDRIVE_TARGET_FOLDER_ID}:/")
+        controls = (f"/drives/{sp}/items/root/children", f"/drives/{od}/items/{tenant.ONEDRIVE_TARGET_FOLDER_ID}/children")
         allowed = (
-            probe.method == "PUT" and probe.path.startswith(creates) and probe.path.count(":/") == 2
-        ) or (probe.method == "POST" and probe.path == f"/users/{mailbox}/messages")
+            (probe.method == "PUT" and probe.path.startswith(creates) and probe.path.count(":/") == 2)
+            or (probe.method == "POST" and probe.path == f"/users/{mailbox}/messages")
+            or any(_is_invalid_folder_create(probe, path) for path in controls)
+        )
     else:
         deletes = {f"/drives/{sp}/items/{seg(item)}", f"/drives/{od}/items/{seg(item)}"}
         allowed = (
@@ -594,14 +660,15 @@ def refusal_canaries() -> list[CanaryRefusal]:
     library = next(f for f in files if f.kind == "sharepoint_file")
     onedrive = next(f for f in files if f.kind == "onedrive_file")
     return [
-        CanaryRefusal("RestoreTest library: change a canary file", library, "admin"),
-        CanaryRefusal("alice's OneDrive: change a canary file in RestoreTest", onedrive, "alice"),
+        CanaryRefusal("RestoreTest library: invalid name beside a canary", library, "admin"),
+        CanaryRefusal("alice's OneDrive: invalid name in RestoreTest", onedrive, "alice"),
     ]
 
 
 def confirm_canary_file(graph: GraphClient, canary: CanaryRefusal) -> tuple[str | None, str]:
     """As the file's uploader: its item ID, or None and why. Without it, a 404 to the app could
-    mean the file is gone rather than hidden, so the refusal probe isn't sent."""
+    mean the folder is gone rather than hidden, so the refusal probe isn't sent. The ID is only
+    the confirmation: the probe never names a canary file, only the folder it is in."""
     f = canary.file
     try:
         item = get_item_by_path(graph, f.drive_id, f.folder_id, f.name, owner=f.uploader)
@@ -628,21 +695,30 @@ def confirm_canary_file(graph: GraphClient, canary: CanaryRefusal) -> tuple[str 
     return item_id, f.name
 
 
-def refusal_probe(canary: CanaryRefusal, item_id: str | None) -> Probe:
-    """PATCH {} with an If-Match no item has: refused is 403 (no write) or 404 (masked); 412
-    means the app may write there; a 2xx means it wrote. The only request ever sent at a canary."""
-    path = f"/drives/{canary.file.drive_id}/items/{seg(item_id)}" if item_id else "(not sent)"
-    return Probe(canary.label, path, 403, method="PATCH", headers={"If-Match": NO_SUCH_ETAG}, json_body={}, also_ok=(404,))
+def _canary_create_path(canary: CanaryRefusal) -> str:
+    return f"/drives/{canary.file.drive_id}/items/{seg(canary.file.folder_id)}/children"
 
 
-def run_refusal_probe(graph: GraphClient, canary: CanaryRefusal, item_id: str | None) -> ProbeResult:
-    probe = refusal_probe(canary, item_id)
-    if item_id is None:
+def refusal_probe(canary: CanaryRefusal, confirmed: bool) -> Probe:
+    """The invalid-name folder create in the canary file's own folder: refused is 403 (no write)
+    or 404 (masked). 400 means the request passed the permission check and only the name stopped
+    it, so the app may write there; a 2xx means it created something. The only request ever sent
+    at a canary location; it names the folder, never a canary file, so a write grant on one
+    canary file alone isn't seen here (only a read-only listing of its permissions shows it)."""
+    if not confirmed:
+        return Probe(canary.label, "(not sent)", 403, method="POST", also_ok=(404,))
+    return invalid_folder_create(canary.label, canary.file.drive_id, canary.file.folder_id, 403, also_ok=(404,))
+
+
+def run_refusal_probe(graph: GraphClient, canary: CanaryRefusal, confirmed: bool) -> ProbeResult:
+    probe = refusal_probe(canary, confirmed)
+    if not confirmed:
         return ProbeResult(probe, None, "not sent: the canary file's existence wasn't confirmed")
-    if probe.method != "PATCH" or probe.json_body != {} or dict(probe.headers or {}) != {"If-Match": NO_SUCH_ETAG}:
-        raise ValueError("a canary is only ever sent PATCH {} with If-Match " + NO_SUCH_ETAG)
+    path = _canary_create_path(canary)
+    if not _is_invalid_folder_create(probe, path):
+        raise ValueError(f"a canary location is only ever sent POST {path} with {INVALID_FOLDER_BODY}")
     _, actual = _send(graph, probe)
-    return ProbeResult(probe, actual)
+    return ProbeResult(probe, actual, "" if actual in probe.accepted else _invalid_create_note(actual, False))
 
 
 # ---- the command ---------------------------------------------------------------------------
@@ -726,14 +802,16 @@ def run_check(
     results = run_probes(graph, probes())
     for target in write_targets():
         results += run_write_probe(graph, target)
+    for target in control_targets():
+        results.append(run_control_probe(graph, target))
     for canary, item_id in zip(refusal_canaries(), canary_ids):
-        results.append(run_refusal_probe(graph, canary, item_id))
-    say(f"{'result':<10}  {'expect':>7}  {'got':>6}  {'probe':<58}  request")
+        results.append(run_refusal_probe(graph, canary, item_id is not None))
+    say(f"{'result':<10}  {'expect':>7}  {'got':>6}  {'probe':<62}  request")
     for r in results:
         actual = "none" if r.actual is None else str(r.actual)
         verdict = "ok" if r.ok else "UNEXPECTED"
         request = f"{r.probe.method} {r.probe.path}"
-        say(f"{verdict:<10}  {r.probe.expect_text:>7}  {actual:>6}  {r.probe.label:<58}  {request}{r.note}")
+        say(f"{verdict:<10}  {r.probe.expect_text:>7}  {actual:>6}  {r.probe.label:<62}  {request}{r.note}")
     passed = sum(r.ok for r in results)
     unexpected += len(results) - passed
     summary = f"{passed}/{len(results)} probes as expected"

@@ -1,0 +1,14 @@
+{
+  "source": "hand-shaped from live answers, 2026-10-02: the live cleaner test's recording rp-w34-rec-cleaner-20261002T210555 (graph/005: GET of the message its repeated permanentDelete, graph/004, was refused 403 ErrorCannotDeleteObject; answered 200 although the final Inbox listing was empty) and read-only probes (GET /users/{mailbox}/messages/{id}?$select=id,parentFolderId,subject with Prefer IdType=\"ImmutableId\": 200). Request, message ID, @odata.etag and headers are graph/005's; @odata.context is adjusted to the wider $select; parentFolderId is exact, from the read-only probe of 2026-10-02, and equals byte for byte the id of the mailbox's Recoverable Items Purges folder (GET /users/{mailbox}/mailFolders/recoverableitemspurges?$select=id,displayName: displayName 'Purges'; w34-mail-purges-200-id.json), not the Inbox's (mailbox-inbox-200.json, ...AAAAAAEMAAA=). A purged message still resolves by its ID, from Purges (docs/decisions.md 2026-10-02 W3.4 build notes, point 15)",
+  "request": "GET /v1.0/users/restoretest@RestoreProofLab.onmicrosoft.com/messages/AAkALgAAAAAAHYQDEapmEc2byACqAC-EWg0Apy-rvAUfAU_pqKwuzmFBWgAABUZOdgAA?$select=id,parentFolderId",
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/json; odata.metadata=minimal; odata.streaming=true; IEEE754Compatible=false; charset=utf-8"
+  },
+  "body": {
+    "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#users('restoretest%40RestoreProofLab.onmicrosoft.com')/messages(id,parentFolderId)/$entity",
+    "@odata.etag": "W/\"CQAAABYAAACnL+u8BR8BT6morC7OYUFaAAAFQlp7\"",
+    "id": "AAkALgAAAAAAHYQDEapmEc2byACqAC-EWg0Apy-rvAUfAU_pqKwuzmFBWgAABUZOdgAA",
+    "parentFolderId": "AAMkADYyNGRlZDhkLTM1MmEtNGI1NS05Y2I5LTM4OTliNzZhMTRjOAAuAAAAAADjrcyzRbMCTbaiTPZo3n0vAQCnL_u8BR8BT6morC7OYUFaAAAAAAFiAAA="
+  }
+}

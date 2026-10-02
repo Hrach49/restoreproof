@@ -1,0 +1,14 @@
+{
+  "source": "live: rpworker 0.0.0 cleaner live test --record, 2026-10-02 (recording rp-w34-rec-cleaner-20261002T204648, graph/004, unedited but this note): the second of two permanentDelete POSTs of one seeded draft in the restoretest Inbox, the first already answered 204; Graph answers a repeated permanentDelete of a purged message 403 ErrorCannotDeleteObject, not 404 (docs/decisions.md 2026-10-02 W3.4 build notes, point 15)",
+  "request": "POST /v1.0/users/restoretest@RestoreProofLab.onmicrosoft.com/messages/AAkALgAAAAAAHYQDEapmEc2byACqAC-EWg0Apy-rvAUfAU_pqKwuzmFBWgAABUZMggAA/permanentDelete",
+  "status": 403,
+  "headers": {
+    "Content-Type": "application/json; odata.metadata=minimal; odata.streaming=true; IEEE754Compatible=false; charset=utf-8"
+  },
+  "body": {
+    "error": {
+      "code": "ErrorCannotDeleteObject",
+      "message": "Object cannot be deleted."
+    }
+  }
+}

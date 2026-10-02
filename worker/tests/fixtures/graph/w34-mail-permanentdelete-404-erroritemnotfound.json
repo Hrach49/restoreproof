@@ -1,5 +1,5 @@
 {
-  "source": "hand-written: W3.4, in the shape of messages-404-unknown-user.json: a permanentDelete of a mail no longer there, Exchange's ErrorItemNotFound. Kept hand-written: the W3.4 live restore run deleted each mail once (recordings/w34-live-run1/); a recorded 404 needs cleaner_live_test's second permanentDelete, not yet run with RP_LIVE_RECORD_DIR",
+  "source": "hand-written: W3.4, in the shape of messages-404-unknown-user.json: Exchange's ErrorItemNotFound for a message no longer there. Never seen live: the live cleaner test of 2026-10-02 sent a permanentDelete twice and Exchange answered the second 403 ErrorCannotDeleteObject (w34-mail-permanentdelete-403-cannotdeleteobject-repeat.json), not 404. Kept for a message deleted by someone else between the Cleaner's listing and its permanentDelete (or GET), and as the 404 of the GET remove() sends after that 403 (W3.4 build notes point 15)",
   "request": "POST /v1.0/users/restoretest@RestoreProofLab.onmicrosoft.com/messages/<message id>/permanentDelete",
   "status": 404,
   "headers": {

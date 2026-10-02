@@ -856,9 +856,23 @@ RemoveOutcome GraphClient::remove(const ListedItem& item)
         path = "/drives/" + item.container() + "/items/" + item.id();
         own["If-Match"] = item.etag();
     }
-    const std::optional<HttpResponse> response =
-        send(mail ? HttpMethod::post : HttpMethod::del, path, item.grant(), Mode::remove, {},
-             own, std::nullopt);
+    std::optional<HttpResponse> response;
+    try {
+        response = send(mail ? HttpMethod::post : HttpMethod::del, path, item.grant(),
+                        Mode::remove, {}, own, std::nullopt);
+    } catch (const PermissionError& e) {
+        // Exchange answers a permanentDelete of a message already purged (a
+        // resend whose first answer was lost) 403 ErrorCannotDeleteObject, not
+        // 404, as the live cleanup test saw (W3.4 build notes point 15). One
+        // check tells the two apart: is the message gone, not found or found
+        // in Recoverable Items' Purges? Only a positive answer makes it gone;
+        // in the Inbox the refusal stands, and a check that can't say, or
+        // finds it in another folder, throws its own error.
+        if (!mail || e.code() != "ErrorCannotDeleteObject" || !purged_or_gone(item)) {
+            throw;
+        }
+        return RemoveOutcome::gone;
+    }
     if (!response) {
         return RemoveOutcome::gone;
     }
@@ -873,6 +887,78 @@ RemoveOutcome GraphClient::remove(const ListedItem& item)
                          ": HTTP " + std::to_string(response->status) +
                          ", where 204 was expected" + request_id_suffix(request_id),
                      response->status, {}, {}, request_id);
+}
+
+bool GraphClient::purged_or_gone(const ListedItem& item)
+{
+    // Every path built from the item's mailbox and ID alone, as the POST's;
+    // all read by ImmutableId, as the listing did. At most these three GETs.
+    const HttpHeaders prefer{{"Prefer", std::string{kMailPrefer}}};
+    const std::string base = "/users/" + item.container();
+    const std::string message = base + "/messages/" + item.id() + "?$select=id,parentFolderId";
+    const std::string purges = base + "/mailFolders/recoverableitemspurges?$select=id";
+    const std::string inbox = base + "/mailFolders/inbox?$select=id";
+
+    // A string at `key` of a 200's JSON object, non-empty, or a GraphError:
+    // an answer that can't be read never makes a message gone.
+    const auto folder_id = [](const std::string& path, const HttpResponse& response,
+                              std::string_view expected, const char* key,
+                              std::string_view what) {
+        const std::string head =
+            "Graph GET " + display_path(graph_url(path, "GET")) + ": HTTP " +
+            std::to_string(response.status);
+        const std::string request_id = header_request_id(response);
+        if (response.status != 200) {
+            throw GraphError(head + ", where " + std::string{expected} + " was expected" +
+                                 request_id_suffix(request_id),
+                             response.status, {}, {}, request_id);
+        }
+        const json body = json::parse(response.body, nullptr, false);
+        if (body.is_discarded() || !body.is_object()) {
+            throw GraphError(head + ", but the reply isn't a JSON object, so " +
+                                 std::string{what} + " can't be read; the mail isn't counted gone" +
+                                 request_id_suffix(request_id),
+                             response.status, {}, {}, request_id);
+        }
+        const auto it = body.find(key);
+        if (it == body.end() || !it->is_string() || it->get_ref<const std::string&>().empty()) {
+            throw GraphError(head + ", but the reply has no " + key + " to read " +
+                                 std::string{what} + " by; the mail isn't counted gone" +
+                                 request_id_suffix(request_id),
+                             response.status, {}, {}, request_id);
+        }
+        return it->get<std::string>();
+    };
+    // A folder's ID: get()'s rules (a 404 is an error), then folder_id's.
+    const auto folder = [&](const std::string& path, std::string_view what) {
+        return folder_id(
+            path, *send(HttpMethod::get, path, item.grant(), Mode::get, {}, prefer, std::nullopt),
+            "200", "id", what);
+    };
+    const std::string shown = "Graph GET " + display_path(graph_url(message, "GET"));
+
+    const std::optional<HttpResponse> found =
+        send(HttpMethod::get, message, item.grant(), Mode::remove, {}, prefer, std::nullopt);
+    if (!found) {
+        log_debug(shown + ": after 403 ErrorCannotDeleteObject, the message is gone");
+        return true;
+    }
+    const std::string parent =
+        folder_id(message, *found, "200 or 404", "parentFolderId", "the message's folder");
+    // Gone only on a positive match, byte for byte: the message is in the
+    // mailbox's Recoverable Items Purges folder, where permanentDelete puts it
+    // (seen live: a purged message still answers by its ID, from there).
+    if (parent == folder(purges, "the Purges folder's ID")) {
+        log_debug(shown + ": after 403 ErrorCannotDeleteObject, the message is in Recoverable "
+                          "Items' Purges: it is gone");
+        return true;
+    }
+    if (parent == folder(inbox, "the Inbox's ID")) {
+        return false;
+    }
+    throw GraphError(shown + ": after 403 ErrorCannotDeleteObject, the message is in another "
+                             "folder of the mailbox, neither the Inbox nor Recoverable Items' "
+                             "Purges; the mail isn't counted gone");
 }
 
 std::optional<HttpResponse> GraphClient::send(HttpMethod method, std::string_view path_or_url,
@@ -917,7 +1003,9 @@ std::optional<HttpResponse> GraphClient::send(HttpMethod method, std::string_vie
         } catch (const HttpError& e) {
             // A lost connection or a timeout is sent again: a GET changes
             // nothing, and a resent permanentDelete or If-Match DELETE of
-            // the same listed ID can only answer 204, 404 or 412 (W3.4). A
+            // the same listed ID can only answer 204, 404 or 412, or for a
+            // mail already purged 403 ErrorCannotDeleteObject, which remove()
+            // checks with GETs (W3.4 build notes point 15). A
             // certificate failure or a malformed URL won't fix itself.
             retry.summary = transport_summary(e, method_name, url);
             if (!is_retryable(AttemptOutcome{e.error(), 0})) {

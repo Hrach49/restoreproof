@@ -1,4 +1,4 @@
-[33;1mWARNING: Note: Sign in by Web Account Manager (WAM) is enabled by default on Windows. If using an embedded terminal, the interactive browser window may be hidden behind other windows.[0m
+WARNING: Note: Sign in by Web Account Manager (WAM) is enabled by default on Windows. If using an embedded terminal, the interactive browser window may be hidden behind other windows.
 RestoreProof Worker grant check (W3.4): read-only, Worker app 737da5ef-baf2-4198-b009-e160d8ca77c9
 scope: the app's grants on the canaries and every parent; its tenant-wide roles are check-worker-app's token-roles row (only the three *.Selected roles)
 RestoreTest site                                         ok       1 permission(s), 1 Worker app, 0 other app(s)

@@ -395,8 +395,7 @@ catch {
 # runs from a script (no parent window); a browser sign-in works.
 # Every Exchange call below carries -ErrorAction Stop: its cmdlets are functions in a generated
 # module, which don't see this script's $ErrorActionPreference when it is started as
-# .
-ew-worker-app.ps1 from an open window, so their errors would print and the run carry on.
+# .\new-worker-app.ps1 from an open window, so their errors would print and the run carry on.
 Connect-ExchangeOnline -UserPrincipalName $AdminUpn -ShowBanner:$false -DisableWAM -ErrorAction Stop
 try {
     if (-not (Get-ServicePrincipal -Identity $appId -ErrorAction SilentlyContinue)) {

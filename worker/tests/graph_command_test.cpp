@@ -497,7 +497,7 @@ TEST_CASE("rpworker graph list maps each Graph failure to its exit code and prin
             [](Harness& lab) {
                 lab.serve_mail(load_fixture("graph", "messages-403-exchange"));
             },
-            rp::exit_code::auth, std::string{rp::graph::kMailReadGrant.description}},
+            rp::exit_code::auth, std::string{rp::graph::kMailGrant.description}},
         Row{"403 on the RestoreTarget library", false,
             [](Harness& lab) { lab.serve(drive_url(), load_fixture("graph", "site-403-accessdenied")); },
             rp::exit_code::auth, std::string{rp::graph::kSitesReadGrant.description}},
@@ -505,7 +505,7 @@ TEST_CASE("rpworker graph list maps each Graph failure to its exit code and prin
             [](Harness& lab) {
                 lab.serve(folder_url(), load_fixture("graph", "onedrive-folder-403-accessdenied"));
             },
-            rp::exit_code::auth, std::string{rp::graph::kOneDriveReadGrant.description}},
+            rp::exit_code::auth, std::string{rp::graph::kOneDriveGrant.description}},
         Row{"the guard refuses the mailbox (403 on its Inbox)", false,
             [](Harness& lab) {
                 lab.serve(inbox_url(), load_fixture("graph", "mailbox-inbox-403-exchange"));
@@ -824,9 +824,50 @@ TEST_CASE("rpworker graph list keeps Graph's order, pads to the widest row, and 
                            std::to_string(first.at("size").get<std::size_t>()),
                            first.at("id").get<std::string>()},
                           {"b.txt", "123456", "01SECOND"}}) +
+                   "  (1 folder(s) or other entries not listed)\n"
                    "\n"));
     CHECK_THAT(result.out, ContainsSubstring("\n2 item(s) in the three restore targets\n"));
     CHECK(result.out.find("01FOLDER") == std::string::npos);
+}
+
+TEST_CASE("rpworker graph list says how many folders or other entries each file target left "
+          "out (W3.4), so zero items means an empty target",
+          "[graph_command]")
+{
+    const bool hash = GENERATE(false, true);
+    CAPTURE(hash);
+    const auto entries = [](const FileLocation& at) {
+        json folder = file_of(at);
+        folder.erase("file");
+        folder["folder"] = {{"childCount", 2}};
+        folder["id"] = "01FOLDER";
+        json other = file_of(at);
+        other.erase("file");
+        other["package"] = {{"type", "oneNote"}};
+        other["id"] = "01PACKAGE";
+        return json::array({folder, other});
+    };
+    Harness lab;
+    lab.serve_empty();
+    lab.serve(library_children_url(), page_of(entries(sharepoint_location())));
+    json onedrive = entries(onedrive_location());
+    onedrive.erase(1);
+    lab.serve(folder_children_url(), page_of(onedrive));
+
+    const Run result = lab.run_list(hash);
+
+    CHECK(result.exit_code == rp::exit_code::ok);
+    CHECK_THAT(result.out, ContainsSubstring("SharePoint (RestoreTarget library): 0 item(s)\n"
+                                             "  (2 folder(s) or other entries not listed)\n"
+                                             "\n"
+                                             "OneDrive (RestoreTarget folder): 0 item(s)\n"
+                                             "  (1 folder(s) or other entries not listed)\n"
+                                             "\n"
+                                             "0 item(s) in the three restore targets\n"));
+    // The mailbox's listing leaves nothing out: the first such line is SharePoint's.
+    CHECK(result.out.find("not listed") > result.out.find("SharePoint ("));
+    CHECK(result.out.find("01FOLDER") == std::string::npos);
+    CHECK(lab.dl_http.requests().empty());
 }
 
 TEST_CASE("rpworker graph list shows the bytes downloaded as SIZE with --hash, Graph's without",

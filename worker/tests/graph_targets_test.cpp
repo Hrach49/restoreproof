@@ -445,7 +445,7 @@ TEST_CASE("a missing drive or folder is a NotFoundError, never an empty listing"
                    ContainsSubstring(
                        "; if the folder test_onedrive_folder_id names does exist, the Worker app "
                        "may lack the grant \"" +
-                       std::string{rp::graph::kOneDriveReadGrant.description} +
+                       std::string{rp::graph::kOneDriveGrant.description} +
                        "\" (SharePoint answers 404 for an item the app may not read)"));
         CHECK_THAT(caught.what, ContainsSubstring("404"));
         CHECK(lab.gets(folder_children_url()) == 0);
@@ -463,7 +463,7 @@ TEST_CASE("each file location's errors keep their W2.1 type", "[graph][targets]"
         Row{"sharepoint: site-403-accessdenied on the drive", "PermissionError",
             std::string{rp::graph::kSitesReadGrant.description}},
         Row{"onedrive: onedrive-folder-403-accessdenied on the folder", "PermissionError",
-            std::string{rp::graph::kOneDriveReadGrant.description}},
+            std::string{rp::graph::kOneDriveGrant.description}},
         Row{"sharepoint: 503 on the children", "TransientError", ""},
         Row{"onedrive: 503 on the children", "TransientError", ""});
     CAPTURE(row.name);
@@ -541,7 +541,7 @@ TEST_CASE("the mailbox's errors keep their W2.1 type", "[graph][targets]")
     };
     const Row row = GENERATE(
         Row{"messages-403-exchange", "PermissionError",
-            std::string{rp::graph::kMailReadGrant.description}},
+            std::string{rp::graph::kMailGrant.description}},
         Row{"messages-404-unknown-user", "NotFoundError", ""},
         Row{"messages-404-mailbox-not-enabled", "GraphError", ""});
     CAPTURE(row.fixture);

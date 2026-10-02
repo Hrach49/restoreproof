@@ -9,27 +9,62 @@
 // reads the restored items back through Graph and checks them against the
 // expected set (rp/checker.hpp): the targets are listed before the restore and
 // again, hashed, after it. Since W3.3 the run ends with its status, pass, fail
-// or error (rp/run_status.hpp), which decides the exit code. Nothing is
-// cleaned up (W3.4). The choices are the 2026-09-30 W2.8 and 2026-10-01 W3.2
-// and W3.3 entries in docs/decisions.md; usage and an example are in
+// or error (rp/run_status.hpp), which decides the exit code. Since W3.4 it
+// holds the run mutex (rp/run_lock.hpp) and empties the three restore targets
+// (rp/cleaner.hpp) before the sample is chosen and, when a restore was sent,
+// after the status line; the cleanup never changes the status but through the
+// guard. The choices are the 2026-09-30 W2.8, 2026-10-01 W3.2 and W3.3 and
+// 2026-10-02 W3.4 entries in docs/decisions.md; usage and an example are in
 // docs/worker-config.md ("rpworker restore").
 
+#include <rp/cleaner.hpp>
 #include <rp/config.hpp>
 #include <rp/connector.hpp>
 #include <rp/connector_registry.hpp>
 #include <rp/http_client.hpp>
+#include <rp/run_lock.hpp>
 #include <rp/secrets.hpp>
+
+#include <nlohmann/json.hpp>
 
 #include <chrono>
 #include <filesystem>
 #include <functional>
 #include <iosfwd>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
 
 namespace rp {
+
+// What a run's cleanup did and the state it leaves the restore targets in
+// (W3.4 point 7): the result's `cleanup` object beside `status`, which W4.1
+// adopts into result.v1.json. Counts and codes only.
+struct RunCleanup {
+    // The clean before the sample was chosen; nullopt when none ran (the run
+    // stopped before its Graph client was made).
+    std::optional<graph::CleanupResult> before;
+    // The clean after the status line; nullopt when none ran: nothing was
+    // restored, or there was no Graph client.
+    std::optional<graph::CleanupResult> after;
+    // The status's restore_sent: items may be in the targets.
+    bool restore_sent = false;
+    // The run stopped in its restore phase without the connector's promise
+    // that nothing was sent (a POST with no answer, a poll that gave up):
+    // Veeam may still be writing into the targets after the clean-after.
+    bool restore_may_still_run = false;
+
+    // The state the run leaves behind: false when the restore may still run,
+    // else after's ok() when the clean-after ran, else false when a restore
+    // was sent, else before's ok() (false when that didn't run either).
+    bool cleanup_ok() const noexcept;
+};
+
+// {"cleanup_ok", "restore_may_still_run", "before": {...} | null, "after":
+// {...} | null}, each clean as graph::to_json(CleanupResult).
+nlohmann::json to_json(const RunCleanup& cleanup);
 
 // What the command reaches outside itself. run_cli passes
 // default_restore_command_env(); tests pass a temp config, their own secrets, a
@@ -55,8 +90,9 @@ struct RestoreCommandEnv {
     // sleep and jitter.
     connector::ConnectorOptions connector_options;
     // Makes the HTTP client the check downloads restored files through
-    // (W3.2); null = graph::make_download_http_client. Called once, after the
-    // sample is chosen and before the targets are first read.
+    // (W3.2); null = graph::make_download_http_client. Called once, right
+    // after the run line, with the Graph client the cleanup and the check
+    // share (W3.4).
     std::function<std::unique_ptr<IHttpClient>()> make_download_http;
     // A new run ID when --run-id isn't given; null = make_run_id(). What it
     // returns must pass sampling::check_run_id, or the command fails with
@@ -66,11 +102,20 @@ struct RestoreCommandEnv {
     // (each file's read, each comparison) are measured by; null =
     // steady_clock::now.
     std::function<std::chrono::steady_clock::time_point()> now;
+    // Takes the run mutex without waiting (W3.4): the lock, held until the
+    // command returns, or null when another run holds it. Null =
+    // rp::try_take_restore_targets_lock. Called once, after the manifest's
+    // checks and before the --record folder and the connector are made. What
+    // it throws is an unexpected failure (exit 1).
+    std::function<std::unique_ptr<RunLock>()> take_run_lock;
+    // Given the run's cleanup once its last line is out, for every run that
+    // printed its run line; null = nothing. W4.1 writes it into the result.
+    std::function<void(const RunCleanup&)> on_cleanup;
 };
 
 // The real environment: rp::default_config_path, rp::load_secrets_from_env, the
 // default registry's veeam_m365 connector with a logger that writes warnings
-// and worse to stderr, make_run_id and the steady clock.
+// and worse to stderr, make_run_id, the steady clock and the real run mutex.
 RestoreCommandEnv default_restore_command_env();
 
 // "rp-<YYYYMMDDTHHMMSSZ>-<8 lower-case hex digits>": the current UTC time and
@@ -103,8 +148,10 @@ std::string format_elapsed(std::chrono::nanoseconds elapsed);
 // connector_options.wall_now, or now: an unset RP_GRAPH_CERT_PASSWORD is no
 // password, as for `graph list`); the manifest, sampling::check_manifest
 // (its tenant, no canary in a restore target) and sampling::cursor_problem;
-// the connector; its restore points for veeam_org_name and the one chosen; the
-// run ID; the first two lines, flushed; sampling::choose_sample (it browses
+// the run mutex (env.take_run_lock, W3.4); the connector; its restore points
+// for veeam_org_name and the one chosen; the run ID; the first two lines,
+// flushed; the Graph client and the clean before (graph::Cleaner, all three
+// targets) and its line, flushed; sampling::choose_sample (it browses
 // Veeam); the rest of the header, flushed; the expected set
 // (verification::build_expected_set); the before snapshot: the targets the
 // sample has items of, listed through Graph (graph::TargetReader, its guards
@@ -112,10 +159,12 @@ std::string format_elapsed(std::chrono::nanoseconds elapsed);
 // line, flushed; the after read: the same targets listed again, each item
 // hashed and each docx and xlsx by office-v1 (verification::office_hook);
 // verification::check; the check's table and line; the run's status
-// (verification::decide_status) and its warnings. Prints to `out`, as UTF-8:
+// (verification::decide_status) and its warnings; the clean after, when the
+// status says a restore was sent, and its line. Prints to `out`, as UTF-8:
 //
 //   restore point <backup_time>  <id>  (veeam_org_name <org>)
 //   run <run ID>  seed <8 hex digits>
+//   cleanup before <ok|incomplete>: deleted <a> mail, <b> sharepoint, <c> onedrive[...]
 //   canary cursor <m>,<s>,<o> -> <m>,<s>,<o>
 //     KIND        REQUESTED  CANARIES  RANDOM  NOTE
 //     mail        <n>        <t> of <w>  <t> of <w>  [canary shortfall | random
@@ -135,6 +184,31 @@ std::string format_elapsed(std::chrono::nanoseconds elapsed);
 //   check: <a> match, <b> mismatch, <c> missing, <d> error
 //   <blank line>
 //   status <pass|fail|error>[ <error_code>]: <message>
+//   cleanup after <ok|incomplete|skipped>: ...
+//
+// The cleanup lines (W3.4) hold counts and codes, never a name or an ID:
+//   cleanup <before|after> ok: deleted <a> mail, <b> sharepoint, <c> onedrive
+//   cleanup <before|after> incomplete: deleted ...[; left <x> mail, <y>
+//     sharepoint, <z> onedrive][; skipped <n>][; <target> <error_code>]...[;
+//     the restore may still be running; the next run cleans before]
+//   cleanup after skipped: nothing was restored
+//   cleanup after skipped: no Graph client
+// "deleted" counts Graph's 204s; "left" the items the last listing still
+// showed; "skipped" the entries never deleted (folders, packages, ...). Each
+// target that stopped on an error is a line on `err`, "cleanup error:
+// <mail|sharepoint|onedrive>: <what> (<error_code>)", <what> a fixed text
+// (the Cleaner's own log line has Graph's message), and each target not left
+// empty "warning: cleanup: <target> not emptied <before|after> the run (left
+// <x>, skipped <n>[, <error_code>])". A clean-before whose guard refused a
+// target (target_guard) stops the run there, before any Veeam explore
+// session: status error target_guard, exit 4. Any other cleanup failure only
+// shows in these lines and in RunCleanup (env.on_cleanup): it never changes
+// the status or the exit code; a pass with leftovers still exits 0. The
+// clean after runs after the status line and its warnings, so the decided
+// verdict never waits on it, and after the check, so no evidence is deleted
+// before it is read; after a check that threw, and after a restore_sample
+// that threw having sent a restore (the cleanup line then says the restore
+// may still be running), it runs too.
 //
 // The status line (W3.3) ends every run once its first two lines are out,
 // whatever stopped it: a failure choosing the sample, an empty sample (status
@@ -177,10 +251,11 @@ std::string format_elapsed(std::chrono::nanoseconds elapsed);
 // becomes a space. Warnings go to stderr only.
 //
 // With --record <dir> (Q2.1, rp/recording_http_client.hpp), every exchange
-// with Veeam (under "veeam"), with Entra and Graph for the target guard and
-// the check (under "graph") and each download of the check (under
-// "download", its size and SHA-256 only) is also written, scrubbed, under <dir>/<service>/ (a folder
-// that must be new or empty, opened after the secrets and before any
+// with Veeam (under "veeam"), with Entra and Graph for the target guard, the
+// cleanup and the check (under "graph"; the cleanup's deletes too) and each
+// download of the check (under "download", its size and SHA-256 only) is also
+// written, scrubbed, under <dir>/<service>/ (a folder that must be new or
+// empty, opened after the secrets and before any
 // request), and "recorded <n> exchange(s) in <dir>" ends `out`, whatever the
 // result; each exchange not written is a "record error: <service>/<file>:
 // <why>" line on `err`, and turns an exit code of 0 into 1. The restore
@@ -221,6 +296,12 @@ std::string format_elapsed(std::chrono::nanoseconds elapsed);
 //    code (1 when that is 0: its output was lost); a status line lost with
 //    no restore result (once the run line is out) is "error: writing the
 //    output failed (run <run ID>); run status ...";
+//  - 4, before any Veeam call, with no run line and no status line:
+//    "restore error: another RestoreProof run is using the restore targets;
+//    nothing was done" when the run mutex is taken (W3.4), or "restore
+//    error: the last RestoreProof run ended without releasing the restore
+//    targets; nothing was done; the next run cleans them before it restores"
+//    when its last holder ended without releasing it (rp::AbandonedRunLock);
 //  - before the run line, with no status line: "restore error: <what()>" for
 //    a connector::Error listing the restore points (2 for an AuthError, 3 for
 //    a TransientError, 4 for any other), and 4 with "restore error: no

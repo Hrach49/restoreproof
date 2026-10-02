@@ -57,11 +57,14 @@ int report_graph_error(std::ostream& err, const graph::GraphError& e, int code)
     return code;
 }
 
-// What the three restore targets hold, in the order they are printed.
+// What the three restore targets hold, in the order they are printed, and
+// how many entries each file target's listing left out (W3.4).
 struct Listing {
     std::vector<FoundItem> mail;
     std::vector<FoundItem> sharepoint;
     std::vector<FoundItem> onedrive;
+    std::size_t sharepoint_unlisted = 0;
+    std::size_t onedrive_unlisted = 0;
 };
 
 // Graph's text as a cell; "-" when it's missing or empty.
@@ -71,10 +74,12 @@ std::string cell_or_dash(const std::optional<std::string>& text)
 }
 
 // One location: its heading, then, if it holds anything, its column header
-// and rows, indented, then a blank line.
+// and rows, indented, then how many entries the listing left out, if any
+// (W3.4: a location showing zero then really holds nothing), then a blank line.
 std::string format_location(std::string_view where, std::vector<std::string> columns,
                             const std::vector<FoundItem>& items, bool hash,
-                            std::vector<std::string> (*cells)(const FoundItem&))
+                            std::vector<std::string> (*cells)(const FoundItem&),
+                            std::size_t unlisted = 0)
 {
     std::string text = std::format("{}: {} item(s)\n", where, items.size());
     if (!items.empty()) {
@@ -92,6 +97,9 @@ std::string format_location(std::string_view where, std::vector<std::string> col
             rows.push_back({"  ", std::move(row)});
         }
         text += format_table(rows);
+    }
+    if (unlisted > 0) {
+        text += std::format("  ({} folder(s) or other entries not listed)\n", unlisted);
     }
     return text + '\n';
 }
@@ -118,9 +126,9 @@ std::string format_listing(std::string_view mailbox, const Listing& listing, boo
         format_location(std::format("Mail ({}, Inbox)", table_cell(mailbox)),
                         {"RECEIVED", "SENDER", "SUBJECT", "ID"}, listing.mail, hash, mail_cells);
     text += format_location("SharePoint (RestoreTarget library)", {"NAME", "SIZE", "ID"},
-                            listing.sharepoint, hash, file_cells);
+                            listing.sharepoint, hash, file_cells, listing.sharepoint_unlisted);
     text += format_location("OneDrive (RestoreTarget folder)", {"NAME", "SIZE", "ID"},
-                            listing.onedrive, hash, file_cells);
+                            listing.onedrive, hash, file_cells, listing.onedrive_unlisted);
     text += std::format("{} item(s) in the three restore targets\n",
                         listing.mail.size() + listing.sharepoint.size() +
                             listing.onedrive.size());
@@ -207,7 +215,12 @@ int run_list(std::span<const std::string_view> args, std::ostream& out, std::ost
         graph::TargetReader reader(client, *download,
                                    connector::RestoreTargets::from_config(config), options);
         // Every list first, in the order printed: a failure prints no partial table.
-        const Listing listing{reader.list_mail(), reader.list_sharepoint(), reader.list_onedrive()};
+        Listing listing;
+        listing.mail = reader.list_mail();
+        listing.sharepoint = reader.list_sharepoint();
+        listing.sharepoint_unlisted = reader.unlisted();
+        listing.onedrive = reader.list_onedrive();
+        listing.onedrive_unlisted = reader.unlisted();
         out << format_listing(config.test_mailbox, listing, hash);
         // A full disk or a closed pipe: never exit 0 with a short listing.
         if (!out.flush()) {

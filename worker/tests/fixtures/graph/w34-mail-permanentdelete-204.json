@@ -1,0 +1,10 @@
+{
+  "source": "hand-written: W3.4 stand-in until the first live clean is recorded (rpworker restore --record), in the shape of a mail's permanentDelete (bodiless POST, Prefer IdType=ImmutableId), answered 204",
+  "request": "POST /v1.0/users/restoretest@RestoreProofLab.onmicrosoft.com/messages/<message id>/permanentDelete",
+  "status": 204,
+  "headers": {
+    "request-id": "00000000-0000-4000-8000-000000003404",
+    "client-request-id": "00000000-0000-4000-8000-000000003404"
+  },
+  "body": null
+}

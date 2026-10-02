@@ -288,7 +288,7 @@ struct Lab {
 Caught get_once(Lab& lab)
 {
     auto client = lab.make_client();
-    return catch_graph([&] { client->get(kMessagesPath, rp::graph::kMailReadGrant); });
+    return catch_graph([&] { client->get(kMessagesPath, rp::graph::kMailGrant); });
 }
 
 std::string thumbprint()
@@ -951,7 +951,7 @@ TEST_CASE("callers waiting behind a failed token request share its failure", "[g
             threads.emplace_back([&] {
                 ++ready;
                 try {
-                    client->get(kMessagesPath, rp::graph::kMailReadGrant);
+                    client->get(kMessagesPath, rp::graph::kMailGrant);
                 } catch (const rp::graph::AuthError&) {
                     ++auth;
                 } catch (...) {
@@ -969,7 +969,7 @@ TEST_CASE("callers waiting behind a failed token request share its failure", "[g
     lab.set_on_token([](int n, const HttpRequest&) {
         return token_response("token-" + std::to_string(n));
     });
-    CHECK(catch_graph([&] { client->get(kMessagesPath, rp::graph::kMailReadGrant); }).kind ==
+    CHECK(catch_graph([&] { client->get(kMessagesPath, rp::graph::kMailGrant); }).kind ==
           "none");
     CHECK(lab.token_requests == 2);
     CHECK(lab.bearers() == std::vector<std::string>{"Bearer token-2"});
@@ -1034,9 +1034,9 @@ TEST_CASE("get() sends the token nowhere but https://graph.microsoft.com/v1.0/",
     Lab lab;
     auto client = lab.make_client();
 
-    const Caught by_get = catch_graph([&] { client->get(target, rp::graph::kMailReadGrant); });
+    const Caught by_get = catch_graph([&] { client->get(target, rp::graph::kMailGrant); });
     const Caught by_json =
-        catch_graph([&] { client->get_json(target, rp::graph::kMailReadGrant); });
+        catch_graph([&] { client->get_json(target, rp::graph::kMailGrant); });
 
     CHECK(by_get.kind == "GraphError");
     CHECK(by_json.kind == "GraphError");
@@ -1074,8 +1074,8 @@ TEST_CASE("a 401 after a fresh token is an AuthError that names the grant", "[gr
     CHECK(caught.what ==
           "Graph GET /v1.0/users/restoretest@RestoreProofLab.onmicrosoft.com/mailFolders/inbox/"
           "messages: HTTP 401 (InvalidAuthenticationToken) again after a fresh token: the Worker "
-          "app relies on Exchange RBAC \"Application Mail.Read\" in a management scope covering "
-          "the test mailbox; see docs/security/graph-permissions.md (request ID " +
+          "app relies on Exchange RBAC \"Application Mail.ReadWrite\" in a management scope "
+          "covering the test mailbox; see docs/security/graph-permissions.md (request ID " +
               row.request_id + ")");
     // One fresh token, one resend, no wait.
     CHECK(lab.token_requests == 2);
@@ -1126,7 +1126,7 @@ TEST_CASE("a 401 for a token another call has replaced is resent with the curren
     });
     client = lab.make_client();
 
-    CHECK(client->get(kMessagesPath, rp::graph::kMailReadGrant).status == 200);
+    CHECK(client->get(kMessagesPath, rp::graph::kMailGrant).status == 200);
     CHECK(lab.token_requests == 2);
     CHECK(lab.bearers() ==
           std::vector<std::string>{"Bearer token-1", "Bearer token-2", "Bearer token-2"});
@@ -1148,11 +1148,11 @@ TEST_CASE("a 401 that keeps coming for replaced tokens ends after three resends"
     client = lab.make_client();
 
     const Caught caught =
-        catch_graph([&] { client->get(kMessagesPath, rp::graph::kMailReadGrant); });
+        catch_graph([&] { client->get(kMessagesPath, rp::graph::kMailGrant); });
 
     CHECK(caught.kind == "AuthError");
     CHECK_THAT(caught.what, ContainsSubstring("again with a newer token"));
-    CHECK_THAT(caught.what, ContainsSubstring("Application Mail.Read"));
+    CHECK_THAT(caught.what, ContainsSubstring("Application Mail.ReadWrite"));
     CHECK(lab.http.count(HttpMethod::get, kMessagesUrl) == 4);
 }
 
@@ -1178,7 +1178,7 @@ TEST_CASE("a replaced token that is due as well counts as the one fresh token",
     client = lab.make_client();
 
     const Caught caught =
-        catch_graph([&] { client->get(kMessagesPath, rp::graph::kMailReadGrant); });
+        catch_graph([&] { client->get(kMessagesPath, rp::graph::kMailGrant); });
 
     CHECK(caught.kind == "AuthError");
     CHECK_THAT(caught.what, ContainsSubstring("again after a fresh token"));
@@ -1216,10 +1216,10 @@ TEST_CASE("a 403 is a PermissionError naming the grant the call relies on",
     Row row = GENERATE(values<Row>({
         {"messages-403-exchange",
          "/users/alice@RestoreProofLab.onmicrosoft.com/mailFolders/inbox/messages?$top=1&$select=id",
-         rp::graph::kMailReadGrant, "ErrorAccessDenied", ""},
+         rp::graph::kMailGrant, "ErrorAccessDenied", ""},
         {"site-403-accessdenied", "/sites/restoreprooflab.sharepoint.com",
          rp::graph::kSitesReadGrant, "accessDenied", ""},
-        {"users-403-requestdenied", "/users?$top=1&$select=id", rp::graph::kMailReadGrant,
+        {"users-403-requestdenied", "/users?$top=1&$select=id", rp::graph::kMailGrant,
          "Authorization_RequestDenied", ""},
     }));
     row.request_id = recorded_request_id(row.fixture);
@@ -1285,7 +1285,7 @@ TEST_CASE("a 404 is a NotFoundError with Graph's explanation", "[graph][client][
     lab.http.on(HttpMethod::get, url, {load_fixture("graph", "messages-404-unknown-user")});
     auto client = lab.make_client();
 
-    const Caught caught = catch_graph([&] { client->get(path, rp::graph::kMailReadGrant); });
+    const Caught caught = catch_graph([&] { client->get(path, rp::graph::kMailGrant); });
 
     CHECK(caught.kind == "NotFoundError");
     CHECK(caught.status == 404);
@@ -1313,10 +1313,10 @@ TEST_CASE("find() answers an item Graph says is missing with nullopt", "[graph][
     lab.http.on(HttpMethod::get, kMessagesUrl, {response});
     auto client = lab.make_client();
 
-    CHECK_FALSE(client->find(kMessagesPath, rp::graph::kMailReadGrant).has_value());
-    CHECK_FALSE(client->find_json(kMessagesPath, rp::graph::kMailReadGrant).has_value());
+    CHECK_FALSE(client->find(kMessagesPath, rp::graph::kMailGrant).has_value());
+    CHECK_FALSE(client->find_json(kMessagesPath, rp::graph::kMailGrant).has_value());
     // get() is for what must be there: the same 404 is an error.
-    CHECK(catch_graph([&] { client->get(kMessagesPath, rp::graph::kMailReadGrant); }).kind ==
+    CHECK(catch_graph([&] { client->get(kMessagesPath, rp::graph::kMailGrant); }).kind ==
           "NotFoundError");
     CHECK(lab.http.count(HttpMethod::get, kMessagesUrl) == 3);
 }
@@ -1343,9 +1343,9 @@ TEST_CASE("find() still throws for a missing mailbox or user and anything but Gr
     lab.http.on(HttpMethod::get, kMessagesUrl, {row.response});
     auto client = lab.make_client();
 
-    CHECK(catch_graph([&] { client->find(kMessagesPath, rp::graph::kMailReadGrant); }).kind ==
+    CHECK(catch_graph([&] { client->find(kMessagesPath, rp::graph::kMailGrant); }).kind ==
           row.kind);
-    CHECK(catch_graph([&] { client->find_json(kMessagesPath, rp::graph::kMailReadGrant); }).kind ==
+    CHECK(catch_graph([&] { client->find_json(kMessagesPath, rp::graph::kMailGrant); }).kind ==
           row.kind);
 }
 
@@ -1355,8 +1355,8 @@ TEST_CASE("find() returns what is there, as get() does", "[graph][client][get]")
     auto client = lab.make_client();
 
     const std::optional<HttpResponse> response =
-        client->find(kMessagesPath, rp::graph::kMailReadGrant);
-    const std::optional<json> doc = client->find_json(kMessagesPath, rp::graph::kMailReadGrant);
+        client->find(kMessagesPath, rp::graph::kMailGrant);
+    const std::optional<json> doc = client->find_json(kMessagesPath, rp::graph::kMailGrant);
 
     REQUIRE(response.has_value());
     CHECK(response->status == 200);
@@ -1454,7 +1454,7 @@ TEST_CASE("a Graph error keeps innerError's code and request ID", "[graph][clien
     auto client = lab.make_client();
 
     try {
-        client->get(kMessagesPath, rp::graph::kMailReadGrant);
+        client->get(kMessagesPath, rp::graph::kMailGrant);
         FAIL("get() returned after an error status");
     } catch (const rp::graph::GraphError& e) {
         CHECK(e.status() == row.response.status);
@@ -1636,7 +1636,7 @@ TEST_CASE("a token renewal inside a GET waits within the same 300 s", "[graph][c
     GraphClient client(lab.http, kTenant, kClient, certificate(), options);
 
     const Caught caught =
-        catch_graph([&] { client.get(kMessagesPath, rp::graph::kMailReadGrant); });
+        catch_graph([&] { client.get(kMessagesPath, rp::graph::kMailGrant); });
 
     CHECK(caught.kind == "TransientError");
     CHECK_THAT(caught.what, ContainsSubstring("300 s"));
@@ -1675,7 +1675,7 @@ TEST_CASE("a call with a good token doesn't wait behind another call's token ren
                                  : load_fixture("graph", "messages-200");
     });
     auto client = lab.make_client();
-    REQUIRE(client->get(kMessagesPath, rp::graph::kMailReadGrant).status == 200);
+    REQUIRE(client->get(kMessagesPath, rp::graph::kMailGrant).status == 200);
 
     std::jthread renewer([&client] {
         try {
@@ -1688,7 +1688,7 @@ TEST_CASE("a call with a good token doesn't wait behind another call's token ren
         std::this_thread::yield();
     }
     const auto start = std::chrono::steady_clock::now();
-    const int status = client->get(kMessagesPath, rp::graph::kMailReadGrant).status;
+    const int status = client->get(kMessagesPath, rp::graph::kMailGrant).status;
     const auto elapsed = std::chrono::steady_clock::now() - start;
     release = true;
     renewer.join();
@@ -1740,7 +1740,7 @@ TEST_CASE("time spent waiting for another call's token renewal counts toward a c
     {
         std::jthread waiter([&] {
             waiter_started = true;
-            caught = catch_graph([&] { client->get(kMessagesPath, rp::graph::kMailReadGrant); });
+            caught = catch_graph([&] { client->get(kMessagesPath, rp::graph::kMailGrant); });
         });
     }
     renewer.join();
@@ -1763,7 +1763,7 @@ TEST_CASE("the token is checked again before every attempt", "[graph][client][ge
     options.sleep = [&lab](std::chrono::milliseconds) { lab.advance(3600s); };
     GraphClient client(lab.http, kTenant, kClient, certificate(), options);
 
-    CHECK(client.get(kMessagesPath, rp::graph::kMailReadGrant).status == 200);
+    CHECK(client.get(kMessagesPath, rp::graph::kMailGrant).status == 200);
     CHECK(lab.token_requests == 2);
     CHECK(lab.bearers() == std::vector<std::string>{"Bearer token-1", "Bearer token-2"});
 }
@@ -1892,9 +1892,9 @@ TEST_CASE("a GET's redirect is returned, not followed, and get_json refuses it",
     lab.http.on(HttpMethod::get, kMessagesUrl, {redirect});
     auto client = lab.make_client();
 
-    const HttpResponse response = client->get(kMessagesPath, rp::graph::kMailReadGrant);
+    const HttpResponse response = client->get(kMessagesPath, rp::graph::kMailGrant);
     const Caught by_json =
-        catch_graph([&] { client->get_json(kMessagesPath, rp::graph::kMailReadGrant); });
+        catch_graph([&] { client->get_json(kMessagesPath, rp::graph::kMailGrant); });
 
     CHECK(response.status == status);
     CHECK(response.headers.at("Location") == "https://evil.example/steal");
@@ -1916,7 +1916,7 @@ TEST_CASE("get_json refuses a reply that isn't a JSON object without quoting it"
     auto client = lab.make_client();
 
     const Caught caught =
-        catch_graph([&] { client->get_json(kMessagesPath, rp::graph::kMailReadGrant); });
+        catch_graph([&] { client->get_json(kMessagesPath, rp::graph::kMailGrant); });
 
     CHECK(caught.kind == "GraphError");
     CHECK(caught.status == 200);
@@ -1939,7 +1939,7 @@ TEST_CASE("no token reaches a GET's error message or the log", "[graph][client][
                                 "api-insufficient-claims-401"}) {
         lab.http.on(HttpMethod::get, kMessagesUrl, {load_fixture("graph", fixture)});
         messages.push_back(
-            catch_graph([&] { client->get(kMessagesPath, rp::graph::kMailReadGrant); }).what);
+            catch_graph([&] { client->get(kMessagesPath, rp::graph::kMailGrant); }).what);
     }
 
     const std::string log = lab.log();
@@ -1971,7 +1971,7 @@ TEST_CASE("a client with default clocks and jitter signs in and waits at least 5
     };
     GraphClient client(lab.http, kTenant, kClient, certificate(), options);
 
-    CHECK(client.get(kMessagesPath, rp::graph::kMailReadGrant).status == 200);
+    CHECK(client.get(kMessagesPath, rp::graph::kMailGrant).status == 200);
     CHECK(lab.waits() == std::vector<std::chrono::milliseconds>{5s});
     CHECK(lab.bearers() == std::vector<std::string>{"Bearer token-2"});
 }
@@ -2005,7 +2005,7 @@ TEST_CASE("nothing secret reaches an error message or the log", "[graph][client]
     std::vector<std::string> messages;
     for (int i = 0; i < 4; ++i) {
         const Caught caught =
-            catch_graph([&] { client->get(kMessagesPath, rp::graph::kMailReadGrant); });
+            catch_graph([&] { client->get(kMessagesPath, rp::graph::kMailGrant); });
         messages.push_back(caught.what);
         lab.advance(3600s);
     }
@@ -2036,7 +2036,7 @@ TEST_CASE("the token request is a client-credentials grant with a fresh assertio
     Lab lab;
     auto client = lab.make_client();
 
-    client->get(kMessagesPath, rp::graph::kMailReadGrant);
+    client->get(kMessagesPath, rp::graph::kMailGrant);
 
     const std::vector<HttpRequest> sent = lab.http.requests();
     REQUIRE(sent.size() == 2);
@@ -2097,7 +2097,7 @@ TEST_CASE("get() returns the recorded inbox", "[graph][client]")
     Lab lab;
     auto client = lab.make_client();
 
-    const HttpResponse response = client->get(kMessagesPath, rp::graph::kMailReadGrant);
+    const HttpResponse response = client->get(kMessagesPath, rp::graph::kMailGrant);
 
     CHECK(response.status == 200);
     CHECK(json::parse(response.body).at("value") == json::array());
@@ -2130,12 +2130,12 @@ TEST_CASE("get() sends a path under v1.0 and an exact v1.0 URL as they are, with
 
     // Whitespace in the query is refused like anywhere else.
     if (row.target.find(' ') != std::string::npos) {
-        CHECK(catch_graph([&] { client->get(row.target, rp::graph::kMailReadGrant); }).kind ==
+        CHECK(catch_graph([&] { client->get(row.target, rp::graph::kMailGrant); }).kind ==
               "GraphError");
         CHECK(lab.http.requests().empty());
         return;
     }
-    CHECK(client->get(row.target, rp::graph::kMailReadGrant).status == 200);
+    CHECK(client->get(row.target, rp::graph::kMailGrant).status == 200);
     CHECK(lab.http.count(HttpMethod::get, row.url) == 1);
     CHECK(lab.bearers() == std::vector<std::string>{"Bearer token-1"});
 }
@@ -2145,7 +2145,7 @@ TEST_CASE("get_json returns the recorded inbox", "[graph][client][get]")
     Lab lab;
     auto client = lab.make_client();
 
-    const json doc = client->get_json(kMessagesPath, rp::graph::kMailReadGrant);
+    const json doc = client->get_json(kMessagesPath, rp::graph::kMailGrant);
 
     CHECK(doc.at("value") == json::array());
     CHECK(doc.at("@odata.context").get<std::string>().starts_with(
@@ -2168,7 +2168,7 @@ TEST_CASE("pages follow @odata.nextLink with the same token", "[graph][client][g
     std::vector<std::string> ids;
     std::string target = kMessagesPath;
     for (int page = 0; page < 10 && !target.empty(); ++page) {
-        const json doc = client->get_json(target, rp::graph::kMailReadGrant);
+        const json doc = client->get_json(target, rp::graph::kMailGrant);
         for (const json& item : doc.at("value")) {
             ids.push_back(item.at("id").get<std::string>());
         }
@@ -2206,7 +2206,7 @@ TEST_CASE("the token is kept and used for later calls", "[graph][client]")
     auto client = lab.make_client();
 
     for (int i = 0; i < 3; ++i) {
-        client->get(kMessagesPath, rp::graph::kMailReadGrant);
+        client->get(kMessagesPath, rp::graph::kMailGrant);
         lab.advance(1000s);
     }
 
@@ -2239,12 +2239,12 @@ TEST_CASE("the token is renewed 60 s before it expires, or at half a short lifet
     });
     auto client = lab.make_client();
 
-    client->get(kMessagesPath, rp::graph::kMailReadGrant);
+    client->get(kMessagesPath, rp::graph::kMailGrant);
     lab.advance(row.renew_after - 1ms);
-    client->get(kMessagesPath, rp::graph::kMailReadGrant);
+    client->get(kMessagesPath, rp::graph::kMailGrant);
     CHECK(lab.token_requests == 1);
     lab.advance(1ms);
-    client->get(kMessagesPath, rp::graph::kMailReadGrant);
+    client->get(kMessagesPath, rp::graph::kMailGrant);
     CHECK(lab.token_requests == 2);
     CHECK(lab.bearers() ==
           std::vector<std::string>{"Bearer token-1", "Bearer token-1", "Bearer token-2"});
@@ -2279,7 +2279,7 @@ TEST_CASE("concurrent calls share one token request", "[graph][client]")
         for (int i = 0; i < kThreads; ++i) {
             threads.emplace_back([&] {
                 try {
-                    if (client->get(kMessagesPath, rp::graph::kMailReadGrant).status == 200) {
+                    if (client->get(kMessagesPath, rp::graph::kMailGrant).status == 200) {
                         ++succeeded;
                     }
                 } catch (...) {
@@ -2309,7 +2309,7 @@ TEST_CASE("get refuses a caller header other than Prefer before sending anything
     auto client = lab.make_client();
 
     const Caught caught = catch_graph(
-        [&] { client->get(kMessagesPath, rp::graph::kMailReadGrant, {{name, "x"}}); });
+        [&] { client->get(kMessagesPath, rp::graph::kMailGrant, {{name, "x"}}); });
 
     CHECK(caught.kind == "GraphError");
     CHECK(caught.what == "Graph GET: refused the header \"" + name +
@@ -2329,7 +2329,7 @@ TEST_CASE("get refuses a Prefer value with a control character or an empty one",
     auto client = lab.make_client();
 
     const Caught caught = catch_graph(
-        [&] { client->get(kMessagesPath, rp::graph::kMailReadGrant, {{"Prefer", value}}); });
+        [&] { client->get(kMessagesPath, rp::graph::kMailGrant, {{"Prefer", value}}); });
 
     CHECK(caught.kind == "GraphError");
     CHECK(caught.what == "Graph GET: refused the value of the header \"Prefer\": it is empty or "
@@ -2351,7 +2351,7 @@ TEST_CASE("a Prefer header goes with every attempt, after a 401 resend and a 503
 
     // Any case of the name is the one allowed header.
     const HttpResponse response =
-        client->get(kMessagesPath, rp::graph::kMailReadGrant, {{"prefer", prefer}});
+        client->get(kMessagesPath, rp::graph::kMailGrant, {{"prefer", prefer}});
 
     CHECK(response.status == 200);
     CHECK(lab.bearers() ==
@@ -2376,11 +2376,11 @@ TEST_CASE("get_json, find and find_json pass the headers through", "[graph][clie
     const rp::HttpHeaders headers{{"Prefer", "x=1"}};
 
     if (call == "get_json") {
-        client->get_json(kMessagesPath, rp::graph::kMailReadGrant, headers);
+        client->get_json(kMessagesPath, rp::graph::kMailGrant, headers);
     } else if (call == "find") {
-        CHECK(client->find(kMessagesPath, rp::graph::kMailReadGrant, headers).has_value());
+        CHECK(client->find(kMessagesPath, rp::graph::kMailGrant, headers).has_value());
     } else {
-        CHECK(client->find_json(kMessagesPath, rp::graph::kMailReadGrant, headers).has_value());
+        CHECK(client->find_json(kMessagesPath, rp::graph::kMailGrant, headers).has_value());
     }
 
     const std::vector<HttpRequest> sent = lab.http.requests();
@@ -2400,11 +2400,11 @@ TEST_CASE("the refusals of a caller header come before the URL is sent, for ever
 
     const Caught caught = catch_graph([&] {
         if (call == "get_json") {
-            client->get_json(kMessagesPath, rp::graph::kMailReadGrant, headers);
+            client->get_json(kMessagesPath, rp::graph::kMailGrant, headers);
         } else if (call == "find") {
-            client->find(kMessagesPath, rp::graph::kMailReadGrant, headers);
+            client->find(kMessagesPath, rp::graph::kMailGrant, headers);
         } else {
-            client->find_json(kMessagesPath, rp::graph::kMailReadGrant, headers);
+            client->find_json(kMessagesPath, rp::graph::kMailGrant, headers);
         }
     });
 
@@ -2420,12 +2420,14 @@ TEST_CASE("every grant's text is generic: it names no lab value", "[graph][clien
         std::string text;
     };
     const Row row = GENERATE(values<Row>({
-        {rp::graph::kMailReadGrant,
-         "Exchange RBAC \"Application Mail.Read\" in a management scope covering the test "
+        {rp::graph::kMailGrant,
+         "Exchange RBAC \"Application Mail.ReadWrite\" in a management scope covering the test "
          "mailbox"},
         {rp::graph::kSitesReadGrant, "Sites.Selected read on the test site"},
-        {rp::graph::kOneDriveReadGrant,
-         "Files.SelectedOperations.Selected read on the test OneDrive folder"},
+        {rp::graph::kOneDriveGrant,
+         "Files.SelectedOperations.Selected write on the test OneDrive folder"},
+        {rp::graph::kListWriteGrant,
+         "Lists.SelectedOperations.Selected write on the test library"},
     }));
     CAPTURE(row.text);
 
@@ -2438,4 +2440,112 @@ TEST_CASE("every grant's text is generic: it names no lab value", "[graph][clien
         CAPTURE(lab_value);
         CHECK(lower.find(lab_value) == std::string::npos);
     }
+}
+
+namespace {
+
+// W3.4 point 3: GraphClient's one write member, remove(), and the ListedItem
+// it takes belong to graph_client.* and the Cleaner (cleaner.*) alone. A
+// tripwire like the TLS scan: with whitespace removed, `source` must not name
+// ListedItem at all, nor call or name a member remove: ".remove(",
+// "->remove(", "GraphClient::remove" or any other qualified "X::remove(" but
+// the standard library's (std::remove, std::filesystem::remove, fs::remove).
+// remove_if, remove_prefix and the like are other names.
+std::vector<std::string> find_graph_writes(std::string_view source)
+{
+    std::string compact;
+    std::copy_if(source.begin(), source.end(), std::back_inserter(compact),
+                 [](char c) { return !std::isspace(static_cast<unsigned char>(c)); });
+    std::vector<std::string> found;
+    if (compact.find("ListedItem") != std::string::npos) {
+        found.emplace_back("ListedItem");
+    }
+    if (compact.find("GraphClient::remove") != std::string::npos) {
+        found.emplace_back("GraphClient::remove");
+    }
+    const auto is_word = [](char c) {
+        return std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '_';
+    };
+    constexpr std::string_view call = "remove(";
+    for (std::size_t at = compact.find(call); at != std::string::npos;
+         at = compact.find(call, at + 1)) {
+        const std::string_view before = std::string_view{compact}.substr(0, at);
+        if (before.ends_with(".") || before.ends_with("->")) {
+            found.emplace_back("a member call of remove");
+            continue;
+        }
+        if (!before.ends_with("::")) {
+            continue; // a free function, or another name ending in "remove"
+        }
+        // The qualifier: the name before "::".
+        std::size_t start = before.size() - 2;
+        while (start > 0 && is_word(before[start - 1])) {
+            --start;
+        }
+        const std::string_view qualifier = before.substr(start, before.size() - 2 - start);
+        if (qualifier != "std" && qualifier != "filesystem" && qualifier != "fs") {
+            found.emplace_back(std::string{qualifier} + "::remove");
+        }
+    }
+    return found;
+}
+
+} // namespace
+
+TEST_CASE("the Graph write scan flags each way to reach remove or ListedItem", "[graph][client]")
+{
+    const std::string_view planted = GENERATE(
+        "graph.remove(item);", "graph_ . remove ( item );", "client->remove(item);",
+        "client -> remove\n(item);", "rp::graph::ListedItem item;", "const ListedItem& item",
+        "auto f = &GraphClient::remove;", "GraphClient :: remove", "graph::GraphClient::remove(x)",
+        "std::invoke(&rp::graph::GraphClient::remove, graph, item);", "Writer::remove(x);",
+        "// a comment that names ListedItem");
+    CAPTURE(planted);
+    CHECK_FALSE(find_graph_writes(planted).empty());
+}
+
+TEST_CASE("the Graph write scan passes the standard library's removes", "[graph][client]")
+{
+    const std::string_view legitimate = GENERATE(
+        "v.erase(std::remove(v.begin(), v.end(), x), v.end());",
+        "std::filesystem::remove(path);", "fs::remove(path, ec);", "std :: remove ( a, b, c )",
+        "text.remove_prefix(1);", "s.remove_suffix(2);", "std::remove_if(a, b, f)",
+        "v.remove_if(f);", "remove(path.c_str());", "RemoveOutcome::removed",
+        "// cleans the targets");
+    CAPTURE(legitimate);
+    CHECK(find_graph_writes(legitimate).empty());
+}
+
+TEST_CASE("only graph_client.* and cleaner.* reach GraphClient's write member", "[graph][client]")
+{
+    const std::filesystem::path root{RP_SOURCE_DIR};
+    std::size_t scanned = 0;
+    std::set<std::string> allowed_hits;
+    for (const char* dir : {"src", "include", "app"}) {
+        for (const auto& entry : std::filesystem::recursive_directory_iterator(root / dir)) {
+            const std::filesystem::path& path = entry.path();
+            if (!entry.is_regular_file() ||
+                (path.extension() != ".cpp" && path.extension() != ".hpp" &&
+                 path.extension() != ".h")) {
+                continue;
+            }
+            std::ifstream file(path, std::ios::binary);
+            const std::string text{std::istreambuf_iterator<char>(file), {}};
+            const std::string relative = path.lexically_relative(root).generic_string();
+            CAPTURE(relative);
+            const std::string stem = path.stem().string();
+            if (stem == "graph_client" || stem == "cleaner") {
+                if (!find_graph_writes(text).empty()) {
+                    allowed_hits.insert(relative);
+                }
+            } else {
+                CHECK(find_graph_writes(text) == std::vector<std::string>{});
+            }
+            ++scanned;
+        }
+    }
+    // The scan saw the client itself, so it isn't looking in the wrong place.
+    CHECK(scanned >= 10);
+    CHECK(allowed_hits.contains("include/rp/graph_client.hpp"));
+    CHECK(allowed_hits.contains("src/graph_client.cpp"));
 }

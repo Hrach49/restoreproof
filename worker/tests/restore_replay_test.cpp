@@ -61,6 +61,8 @@ const std::string kRun2 = "rp-20261001T172815Z-6285c4a6";
 // files (W3.3: warnings, never a status).
 const std::string kShortfalls = "warning: shortfall: sharepoint random: 0 of 2\n"
                                 "warning: shortfall: onedrive random: 0 of 2\n";
+// W3.4: the clean after, which finds the Cleaner's (empty) listings.
+const std::string kCleanAfter = "cleanup after ok: deleted 0 mail, 0 sharepoint, 0 onedrive";
 
 std::string read_file(const std::filesystem::path& path)
 {
@@ -133,6 +135,23 @@ struct Replay {
 
         veeam_files = veeam.serve_recording(dir / "veeam");
         graph_files = graph.serve_recording(dir / "graph");
+        // W3.4: the Cleaner's listings, which these recordings (made before
+        // W3.4) don't hold: empty, so the clean before and after delete
+        // nothing; its guard checks are the recorded ones.
+        const json config = lab_config();
+        const std::string files =
+            "?$select=id,name,eTag,file,folder,package,remoteItem,root,parentReference&$top=200";
+        for (const std::string& path :
+             {"/users/" + config.at("test_mailbox").get<std::string>() +
+                  "/mailFolders/inbox/messages?$select=id&$top=100",
+              "/drives/" + config.at("test_library_id").get<std::string>() + "/root/children" +
+                  files,
+              "/drives/" + config.at("test_onedrive_drive_id").get<std::string>() + "/items/" +
+                  config.at("test_onedrive_folder_id").get<std::string>() + "/children" + files}) {
+            cleanup_urls.push_back(kGraphHost + "/v1.0" + path);
+            graph.on(rp::HttpMethod::get, cleanup_urls.back(),
+                     {rp::test::graph_lab::page_of(json::array())});
+        }
         // When each restore POST went out: its duplicate check's startTimeFrom
         // plus the check's 60 s window, so the replayed checks ask for exactly
         // the recorded query.
@@ -244,6 +263,10 @@ struct Replay {
         env.make_download_http = [this]() -> std::unique_ptr<rp::IHttpClient> {
             return std::make_unique<rp::test::ForwardingHttpClient>(download);
         };
+        // W3.4: a fake run mutex, never the machine's.
+        env.take_run_lock = []() -> std::unique_ptr<rp::RunLock> {
+            return std::make_unique<rp::RunLock>();
+        };
         return env;
     }
 
@@ -301,6 +324,7 @@ struct Replay {
     rp::test::FakeHttpClient download;
     std::size_t veeam_files = 0;
     std::size_t graph_files = 0;
+    std::vector<std::string> cleanup_urls; // the Cleaner's three listings (W3.4)
     vrl::FakeClock clock;
     std::shared_ptr<vrl::FakeExporter> exporter = std::make_shared<vrl::FakeExporter>();
     std::vector<std::chrono::system_clock::time_point> post_times;
@@ -330,6 +354,7 @@ std::string restore_part(const std::string& run_id, const std::string& seed,
         "c2f0f2e7-177f-48ac-992b-93a50cf702e305134a51-8a9e-4298-b39a-1be364acd660  "
         "(veeam_org_name RestoreProofLab.onmicrosoft.com)",
         "run " + run_id + "  seed " + seed,
+        "cleanup before ok: deleted 0 mail, 0 sharepoint, 0 onedrive",
         "canary cursor 0,0,0 -> 3,3,3",
         "  KIND        REQUESTED  CANARIES  RANDOM  NOTE",
         "  mail        5          3 of 3    2 of 2",
@@ -463,7 +488,14 @@ const std::vector<std::string> kCanaryFiles{
 void check_replayed_as_recorded(const Replay& replay)
 {
     CHECK(replay.veeam.requests().size() == replay.veeam_files);
-    CHECK(replay.graph.requests().size() == replay.graph_files);
+    // W3.4: and the clean before and after: each resolved the three targets
+    // once (the recorded guard checks again) and listed each one twice, empty.
+    std::size_t listings = 0;
+    for (const std::string& url : replay.cleanup_urls) {
+        CHECK(replay.graph.count(rp::HttpMethod::get, url) == 4);
+        listings += replay.graph.count(rp::HttpMethod::get, url);
+    }
+    CHECK(replay.graph.requests().size() == replay.graph_files + listings + 6);
     CHECK(replay.restore_posts() == 4);
     CHECK(replay.exporter->calls == 4);
     REQUIRE(replay.served == kCanaryFiles);
@@ -577,6 +609,7 @@ TEST_CASE("replay of live run 2: mails Veeam said it restored over run 1's copie
                   "",
                   "status error stale_target: 5 of 11 item(s) couldn't be checked (stale_target "
                   "5); 6 verified",
+                  kCleanAfter,
               }));
     CHECK_THAT(run.out, !ContainsSubstring("missing  "));
     check_replayed_as_recorded(replay);
@@ -605,7 +638,8 @@ TEST_CASE("replay of live run 1 with a canary mail taken out of the after read: 
     }
     CHECK(run.out == restore_part(kRun1, "311f1eea", run1_rows(), "0:02:15") +
                          run1_check(outcomes, "check: 10 match, 0 mismatch, 1 missing, 0 error") +
-                         "\nstatus fail: 1 of 11 item(s) didn't verify (1 missing, 0 mismatch)\n");
+                         "\nstatus fail: 1 of 11 item(s) didn't verify (1 missing, 0 mismatch)\n" +
+                         kCleanAfter + "\n");
 }
 
 // --- The live runs as they went -------------------------------------------------------
@@ -629,7 +663,8 @@ TEST_CASE("replay of live run 1: 11 items restored into empty targets, all match
     CHECK(run.out == restore_part(kRun1, "311f1eea", run1_rows(), "0:02:15") +
                          run1_check(outcomes, "check: 11 match, 0 mismatch, 0 missing, 0 error") +
                          "\nstatus pass: 11 of 11 item(s) verified: manifest 9, fields 2, "
-                         "metadata 0\n");
+                         "metadata 0\n" +
+                         kCleanAfter + "\n");
     check_replayed_as_recorded(replay);
     // The recorded restore POSTs' credential is the recorder's placeholder;
     // the replay sent the exporter's, and no log line names it.

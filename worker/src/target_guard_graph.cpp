@@ -119,13 +119,13 @@ ResolvedOneDriveFolder check_restore_onedrive_folder(GraphClient& graph,
     try {
         folder = graph.get_json("/drives/" + drive_id + "/items/" + targets.onedrive_folder_id() +
                                     "?$select=id,name,folder,parentReference,sharepointIds",
-                                kOneDriveReadGrant);
+                                kOneDriveGrant);
     } catch (const NotFoundError& e) {
         // SharePoint answers 404, not 403, for an item the app may not read.
         missing.emplace(std::string{e.what()} +
                             "; if the folder test_onedrive_folder_id names does exist, the "
                             "Worker app may lack the grant \"" +
-                            std::string{kOneDriveReadGrant.description} +
+                            std::string{kOneDriveGrant.description} +
                             "\" (SharePoint answers 404 for an item the app may not read)",
                         e.status(), e.code(), e.inner_code(), e.request_id());
     }
@@ -213,7 +213,7 @@ ResolvedMailbox check_restore_mailbox(GraphClient& graph, const connector::Resto
     bool refused = false;
     try {
         inbox = graph.get_json("/users/" + mailbox + "/mailFolders/inbox?$select=id",
-                               kMailReadGrant);
+                               kMailGrant);
     } catch (const PermissionError&) {
         refused = true;
     }
@@ -221,7 +221,7 @@ ResolvedMailbox check_restore_mailbox(GraphClient& graph, const connector::Resto
         throw WrongTargetError(
             "Graph refused the Worker app the Inbox of the mailbox test_mailbox names (403): the "
             "app's Exchange scope covers the restoretest mailbox alone, so the address is another "
-            "mailbox, or the grant \"" + std::string{kMailReadGrant.description} +
+            "mailbox, or the grant \"" + std::string{kMailGrant.description} +
             "\" is missing: the Worker " + std::string{wording.only} +
             " the restoretest mailbox" + outcome);
     }

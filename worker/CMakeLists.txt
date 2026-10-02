@@ -28,6 +28,7 @@ add_library(rpcore STATIC
     src/cert_export.cpp
     src/cert_pin.cpp
     src/checker.cpp
+    src/cleaner.cpp
     src/cli.cpp
     src/client_assertion.cpp
     src/command_config.cpp
@@ -41,6 +42,7 @@ add_library(rpcore STATIC
     src/graph_download.cpp
     src/graph_errors.cpp
     src/graph_ids.cpp
+    src/graph_paging.cpp
     src/graph_targets.cpp
     src/http_client.cpp
     src/name_key.cpp
@@ -49,6 +51,7 @@ add_library(rpcore STATIC
     src/redact.cpp
     src/restore_command.cpp
     src/retry_policy.cpp
+    src/run_lock.cpp
     src/run_status.cpp
     src/sample_rng.cpp
     src/sample_selector.cpp
@@ -104,6 +107,8 @@ add_executable(rptests
     tests/cert_export_test.cpp
     tests/cert_pin_test.cpp
     tests/checker_test.cpp
+    tests/cleaner_live_test.cpp
+    tests/cleaner_test.cpp
     tests/client_assertion_test.cpp
     tests/cli_test.cpp
     tests/command_config_test.cpp
@@ -120,6 +125,8 @@ add_executable(rptests
     tests/graph_download_test.cpp
     tests/graph_errors_test.cpp
     tests/graph_ids_test.cpp
+    tests/graph_paging_test.cpp
+    tests/graph_write_rule_test.cpp
     tests/graph_targets_live_test.cpp
     tests/graph_targets_test.cpp
     tests/http_client_test.cpp
@@ -131,6 +138,7 @@ add_executable(rptests
     tests/restore_command_test.cpp
     tests/restore_replay_test.cpp
     tests/retry_policy_test.cpp
+    tests/run_lock_test.cpp
     tests/run_status_test.cpp
     tests/sample_rng_test.cpp
     tests/sample_selector_live_test.cpp
@@ -159,6 +167,9 @@ add_executable(rptests
 # deps_test.cpp uses cpr and OpenSSL directly, so it links them itself.
 # tests/test_main.cpp is rptests' main: Catch2's, inside the network guard (Q2.1).
 target_link_libraries(rptests PRIVATE rpcore cpr::cpr OpenSSL::Crypto Catch2::Catch2)
+# restore_command_test.cpp's Catch2 tables outgrow an object file's 65,279
+# sections.
+target_compile_options(rptests PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/bigobj>)
 # cert_export_test.cpp deletes the CNG key file it makes (ncrypt).
 target_link_libraries(rptests PRIVATE ncrypt)
 # httplib is test-only: the HTTP client tests run a server on 127.0.0.1.

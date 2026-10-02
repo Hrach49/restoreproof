@@ -23,6 +23,7 @@
 #include <spdlog/logger.h>
 
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -33,10 +34,9 @@
 
 namespace rp::graph {
 
-// Sent as Prefer on every mail call, as the seeder does (lab/README.md,
-// "text-v1"): bodies as text, IDs that survive a move.
-inline constexpr std::string_view kMailPrefer =
-    "outlook.body-content-type=\"text\", IdType=\"ImmutableId\"";
+// kMailPrefer, sent as Prefer on every mail call, is rp/graph_client.hpp's
+// (the Cleaner's deletes send it too, W3.4).
+
 // A listing follows @odata.nextLink at most this many pages.
 inline constexpr int kMaxListPages = 100;
 
@@ -135,6 +135,12 @@ public:
     std::vector<FoundItem> list_onedrive();   // the test OneDrive's /RestoreTarget folder
     // Mail, then SharePoint, then OneDrive; the first error ends it.
     std::vector<FoundItem> list_all();
+    // The entries the last list_mail, list_sharepoint or list_onedrive call
+    // left out: folders and entries that aren't files (W3.4: `graph list`
+    // says how many, so a target showing zero items really holds nothing).
+    // 0 after list_mail, which leaves nothing out, and before any call;
+    // list_all's is its OneDrive listing's.
+    std::size_t unlisted() const noexcept;
 
 private:
     struct FileTarget {
@@ -155,6 +161,7 @@ private:
     connector::RestoreTargets targets_;
     TargetReaderOptions options_;
     std::string tenant_host_; // test_site_id's host, lower case
+    std::size_t unlisted_ = 0;
 };
 
 } // namespace rp::graph

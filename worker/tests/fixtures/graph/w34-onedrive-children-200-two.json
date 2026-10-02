@@ -1,0 +1,51 @@
+{
+  "source": "hand-written: W3.4 stand-in until the first live clean is recorded (rpworker restore --record), in the shape of onedrive-children-200-one-item.json: the children of alice's /RestoreTarget as the Cleaner lists them (eTag, facets, parentReference), two files",
+  "request": "GET /v1.0/drives/b!wA9gbfhlEUitGAluxbfoNBr_z5gEtDhErm5pJ6bMwyXfZJ8a_dkCQ696RX0r7_U3/items/01ZK75LGDGB6QOO3MGNFGYOY6C6VBDG5OH/children?$select=id,name,eTag,file,folder,package,remoteItem,root,parentReference&$top=200",
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/json; odata.metadata=minimal; odata.streaming=true; IEEE754Compatible=false; charset=utf-8",
+    "request-id": "00000000-0000-4000-8000-000000003403",
+    "client-request-id": "00000000-0000-4000-8000-000000003403"
+  },
+  "body": {
+    "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#Collection(driveItem)",
+    "value": [
+      {
+        "@odata.etag": "\"{5E2F3C4D-7F80-4192-A3B4-C5D6E7F8091A},1\"",
+        "id": "01ZK75LG4QZ3BDN7TQXBCJ4VZ3HSXK2QMA",
+        "eTag": "\"{5E2F3C4D-7F80-4192-A3B4-C5D6E7F8091A},1\"",
+        "name": "rp-w34-onedrive-a.txt",
+        "parentReference": {
+          "driveType": "business",
+          "driveId": "b!wA9gbfhlEUitGAluxbfoNBr_z5gEtDhErm5pJ6bMwyXfZJ8a_dkCQ696RX0r7_U3",
+          "id": "01ZK75LGDGB6QOO3MGNFGYOY6C6VBDG5OH",
+          "path": "/drives/b!wA9gbfhlEUitGAluxbfoNBr_z5gEtDhErm5pJ6bMwyXfZJ8a_dkCQ696RX0r7_U3/root:/RestoreTarget"
+        },
+        "file": {
+          "mimeType": "text/plain",
+          "hashes": {
+            "quickXorHash": "AAAAAAAAAAAAAAAAAAAAAAAAAAA="
+          }
+        }
+      },
+      {
+        "@odata.etag": "\"{6F304D5E-8091-42A3-B4C5-D6E7F8091A2B},1\"",
+        "id": "01ZK75LG7KD2L5VWN4ZQBEJXRZTGQ6OUYB",
+        "eTag": "\"{6F304D5E-8091-42A3-B4C5-D6E7F8091A2B},1\"",
+        "name": "rp-w34-onedrive-b.txt",
+        "parentReference": {
+          "driveType": "business",
+          "driveId": "b!wA9gbfhlEUitGAluxbfoNBr_z5gEtDhErm5pJ6bMwyXfZJ8a_dkCQ696RX0r7_U3",
+          "id": "01ZK75LGDGB6QOO3MGNFGYOY6C6VBDG5OH",
+          "path": "/drives/b!wA9gbfhlEUitGAluxbfoNBr_z5gEtDhErm5pJ6bMwyXfZJ8a_dkCQ696RX0r7_U3/root:/RestoreTarget"
+        },
+        "file": {
+          "mimeType": "text/plain",
+          "hashes": {
+            "quickXorHash": "AAAAAAAAAAAAAAAAAAAAAAAAAAA="
+          }
+        }
+      }
+    ]
+  }
+}

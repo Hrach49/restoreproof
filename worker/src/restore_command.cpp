@@ -2,6 +2,7 @@
 
 #include <rp/canary_manifest.hpp>
 #include <rp/checker.hpp>
+#include <rp/cleaner.hpp>
 #include <rp/cli.hpp>
 #include <rp/client_assertion.hpp>
 #include <rp/expected_set.hpp>
@@ -10,8 +11,10 @@
 #include <rp/graph_errors.hpp>
 #include <rp/graph_targets.hpp>
 #include <rp/http_client.hpp>
+#include <rp/run_lock.hpp>
 #include <rp/run_status.hpp>
 #include <rp/sample_rng.hpp>
+#include <rp/target_guard_graph.hpp>
 #include <rp/sample_selector.hpp>
 
 #include "command_config.hpp"
@@ -23,6 +26,7 @@
 #include <spdlog/logger.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -462,7 +466,126 @@ std::string format_status(const verification::RunVerdict& verdict)
                        verdict.message);
 }
 
+// A clean's three targets, by the names its lines give them, in that order.
+std::array<std::pair<std::string_view, const graph::TargetCleanup*>, 3>
+cleaned_targets(const graph::CleanupResult& result)
+{
+    return {{{"mail", &result.mail},
+             {"sharepoint", &result.sharepoint},
+             {"onedrive", &result.onedrive}}};
+}
+
+// What a cleanup error code means, in fixed words: the Cleaner's own log line
+// (on stderr through the command's logger) has Graph's message.
+std::string_view cleanup_error_text(std::string_view code) noexcept
+{
+    if (code == "target_guard") {
+        return "the restore-target guard refused the target; nothing was deleted in it";
+    }
+    if (code == "graph_auth") {
+        return "Microsoft Entra refused the Worker's sign-in";
+    }
+    if (code == "graph_permission") {
+        return "Microsoft Graph refused a permission the cleanup relies on";
+    }
+    if (code == "graph_transient") {
+        return "Microsoft Graph couldn't be reached or asked to try later, in both rounds";
+    }
+    if (code == "graph") {
+        return "Microsoft Graph gave an answer the cleanup can't use";
+    }
+    if (code == "config") {
+        return "the configuration isn't usable";
+    }
+    return "an unexpected failure";
+}
+
+// A clean's line on stdout (W3.4 point 8): counts and codes, never a name or
+// an ID.
+std::string format_cleanup(const graph::CleanupResult& result, bool may_still_run)
+{
+    const auto targets = cleaned_targets(result);
+    std::string line = std::format(
+        "cleanup {} {}: deleted {} mail, {} sharepoint, {} onedrive",
+        result.when == graph::CleanupWhen::before_run ? "before" : "after",
+        result.ok() && !may_still_run ? "ok" : "incomplete", result.mail.deleted,
+        result.sharepoint.deleted, result.onedrive.deleted);
+    if (result.mail.left + result.sharepoint.left + result.onedrive.left > 0) {
+        line += std::format("; left {} mail, {} sharepoint, {} onedrive", result.mail.left,
+                            result.sharepoint.left, result.onedrive.left);
+    }
+    if (const std::size_t skipped =
+            result.mail.skipped + result.sharepoint.skipped + result.onedrive.skipped;
+        skipped > 0) {
+        line += std::format("; skipped {}", skipped);
+    }
+    for (const auto& [name, target] : targets) {
+        if (!target->error_code.empty()) {
+            line += std::format("; {} {}", name, target->error_code);
+        }
+    }
+    if (may_still_run) {
+        line += "; the restore may still be running; the next run cleans before";
+    }
+    return line + '\n';
+}
+
+// A clean's lines on `err`: one per target that stopped on an error, then one
+// warning per target it didn't leave empty. Outside run_status's warnings:
+// the cleanup never changes the status.
+void report_cleanup(std::ostream& err, const graph::CleanupResult& result)
+{
+    const auto targets = cleaned_targets(result);
+    for (const auto& [name, target] : targets) {
+        if (!target->error_code.empty()) {
+            err << "cleanup error: " << name << ": " << cleanup_error_text(target->error_code)
+                << " (" << target->error_code << ")\n";
+        }
+    }
+    const std::string_view when =
+        result.when == graph::CleanupWhen::before_run ? "before" : "after";
+    for (const auto& [name, target] : targets) {
+        if (!target->ok()) {
+            err << "warning: cleanup: " << name << " not emptied " << when << " the run (left "
+                << target->left << ", skipped " << target->skipped
+                << (target->error_code.empty() ? "" : ", " + target->error_code) << ")\n";
+        }
+    }
+}
+
+// Whether the guard refused any target of the clean: a clean-before that did
+// stops the run (W3.4 point 8).
+bool refused_by_guard(const graph::CleanupResult& result)
+{
+    const auto targets = cleaned_targets(result);
+    return std::ranges::any_of(targets, [](const auto& target) {
+        return target.second->error_code == "target_guard";
+    });
+}
+
 } // namespace
+
+bool RunCleanup::cleanup_ok() const noexcept
+{
+    if (restore_may_still_run) {
+        return false;
+    }
+    if (after) {
+        return after->ok();
+    }
+    if (restore_sent) {
+        return false;
+    }
+    return before && before->ok();
+}
+
+nlohmann::json to_json(const RunCleanup& cleanup)
+{
+    return {{"cleanup_ok", cleanup.cleanup_ok()},
+            {"restore_may_still_run", cleanup.restore_may_still_run},
+            {"before", cleanup.before ? graph::to_json(*cleanup.before) : nlohmann::json()},
+            {"after", cleanup.after ? graph::to_json(*cleanup.after) : nlohmann::json()}};
+}
 
 std::string make_run_id()
 {
@@ -484,6 +607,7 @@ RestoreCommandEnv default_restore_command_env()
     env.default_config_path = default_config_path;
     env.load_secrets = load_secrets_from_env;
     env.connector_options.logger = make_command_logger();
+    env.take_run_lock = try_take_restore_targets_lock;
     return env;
 }
 
@@ -652,13 +776,60 @@ int run_restore(std::span<const std::string_view> args, std::ostream& out, std::
     std::optional<verification::ExpectedSet> expected;
     std::vector<verification::Shortfall> shortfalls;
     std::optional<connector::RestoreResult> result;
+
+    // W3.4: the run mutex, and Graph for the cleanup and the check, made right
+    // after the run line and kept here so finish() can clean after a restore
+    // however the run ends. Declared in this order so the Cleaner and the
+    // client, which hold references to the HTTP clients, go first, and the
+    // mutex last.
+    std::unique_ptr<RunLock> run_lock;
+    std::unique_ptr<IHttpClient> graph_http;
+    std::unique_ptr<IHttpClient> download_http;
+    std::optional<graph::GraphClient> graph_client;
+    std::optional<graph::Cleaner> cleaner;
+    RunCleanup cleanup;
+    // The clean after, its line (on `err` when stdout is lost) and its lines
+    // on `err`, then env.on_cleanup. Never changes the exit code: a failure
+    // here is one line on `err`.
+    const auto clean_after = [&](bool restore_sent, bool may_still_run,
+                                 bool output_lost) noexcept {
+        try {
+            cleanup.restore_sent = restore_sent;
+            cleanup.restore_may_still_run = may_still_run;
+            std::string line;
+            if (!restore_sent) {
+                line = "cleanup after skipped: nothing was restored\n";
+            } else if (!cleaner) {
+                line = "cleanup after skipped: no Graph client\n";
+            } else {
+                cleanup.after = cleaner->clean(graph::CleanupWhen::after_run);
+                line = format_cleanup(*cleanup.after, may_still_run);
+            }
+            (output_lost ? err : out) << line;
+            out.flush();
+            if (cleanup.after) {
+                report_cleanup(err, *cleanup.after);
+            }
+            if (env.on_cleanup) {
+                env.on_cleanup(cleanup);
+            }
+        } catch (...) {
+            err << "cleanup error: unexpected failure\n";
+        }
+    };
     // The status line, then each warning on `err`; the exit code is the
     // status's. With `output_lost` (or the status line failing too) the
     // output is incomplete: after a restore that says so, with the run and
-    // the restore's own account, and a pass becomes 1.
+    // the restore's own account, and a pass becomes 1. Then the clean after
+    // (W3.4), only when the status says a restore was sent: the verdict never
+    // waits on housekeeping.
     const auto finish = [&](std::optional<verification::RunStop> stop,
                             const verification::CheckResult* check, bool output_lost) noexcept {
         try {
+            // Veeam may still be writing: a stop in the restore without the
+            // connector's promise that nothing was sent.
+            const bool may_still_run = stop && stop->phase == verification::RunPhase::restore &&
+                                       !stop->nothing_restored;
             const verification::RunVerdict verdict = verification::decide_status(
                 {expected ? &*expected : nullptr, shortfalls, std::move(stop),
                  result ? &*result : nullptr, check});
@@ -688,6 +859,7 @@ int run_restore(std::span<const std::string_view> args, std::ostream& out, std::
             for (const verification::StatusWarning& warning : verdict.warnings) {
                 err << "warning: " << warning.code << ": " << warning.message << '\n';
             }
+            clean_after(verdict.restore_sent, may_still_run, output_lost);
             return code;
         } catch (...) {
             err << "error: unexpected failure\n";
@@ -721,6 +893,23 @@ int run_restore(std::span<const std::string_view> args, std::ostream& out, std::
         if (const std::optional<std::string> problem = sampling::cursor_problem(manifest, cursor)) {
             err << "usage error: --canary-cursor: " << *problem << '\n';
             return exit_code::usage;
+        }
+        // W3.4: one run at a time on the restore targets, held until the
+        // command returns: another run's cleanup could otherwise delete this
+        // run's copies before they are read back (a false fail). Before the
+        // --record folder and any Veeam call: a run refused here does nothing.
+        try {
+            run_lock = env.take_run_lock ? env.take_run_lock() : try_take_restore_targets_lock();
+        } catch (const AbandonedRunLock&) {
+            // A crashed run's mutex: no run has it now, and the next one takes it.
+            err << "restore error: the last RestoreProof run ended without releasing the restore "
+                   "targets; nothing was done; the next run cleans them before it restores\n";
+            return exit_code::service;
+        }
+        if (!run_lock) {
+            err << "restore error: another RestoreProof run is using the restore targets; "
+                   "nothing was done\n";
+            return exit_code::service;
         }
         // Only now, the last check before the connector: a run stopped by
         // the checks above makes no folder and prints no recording line.
@@ -759,6 +948,49 @@ int run_restore(std::span<const std::string_view> args, std::ostream& out, std::
         flush_or_throw(out);
         phase = verification::RunPhase::before_restore;
 
+        // Graph for the cleanup and the check (W3.2, W3.4), one client for
+        // both. `options` records Graph under "graph" with --record, the
+        // cleanup's deletes included; downloads are recorded as their size
+        // and SHA-256 only.
+        graph_http = options.make_graph_http ? options.make_graph_http(options.logger)
+                                             : graph::make_graph_http_client(options.logger);
+        download_http = recorded(env.make_download_http ? env.make_download_http()
+                                                         : graph::make_download_http_client(),
+                                 recorder, "download", RecordedBody::digest);
+        if (!graph_http || !download_http) {
+            throw std::logic_error("no HTTP client");
+        }
+        graph::GraphClientOptions client_options;
+        client_options.logger = options.logger;
+        client_options.now = options.now;
+        client_options.wall_now = options.wall_now;
+        client_options.sleep = options.sleep;
+        client_options.jitter = options.jitter;
+        graph_client.emplace(*graph_http, config.graph_tenant_id, config.graph_client_id,
+                             std::move(*certificate), client_options);
+        graph::CleanerOptions cleaner_options;
+        cleaner_options.logger = options.logger;
+        cleaner.emplace(*graph_client, targets, cleaner_options);
+
+        // W3.4: every run with a run line empties all three targets first,
+        // whatever it samples, so an earlier run's copies can't pass for this
+        // run's. Leftovers or a Graph failure let the run go on (the before
+        // snapshot is the second guard); a guard refusal stops it before
+        // choose_sample opens any Veeam session, as layer 1 would, and layer 1
+        // sees only the sampled types.
+        cleanup.before = cleaner->clean(graph::CleanupWhen::before_run);
+        out << format_cleanup(*cleanup.before, false);
+        flush_or_throw(out);
+        report_cleanup(err, *cleanup.before);
+        if (refused_by_guard(*cleanup.before)) {
+            return finish(verification::stop_reason(
+                              std::make_exception_ptr(graph::WrongTargetError(
+                                  "cleanup: the restore-target guard refused a restore "
+                                  "target; nothing was restored")),
+                              *phase),
+                          nullptr, false);
+        }
+
         const sampling::Selection selection =
             sampling::choose_sample(*source, config.veeam_org_name, *point, targets,
                                     config.graph_tenant_id, plan, manifest, cursor, run_id);
@@ -789,31 +1021,8 @@ int run_restore(std::span<const std::string_view> args, std::ostream& out, std::
         // W3.2: the targets as they are before the restore, read through
         // Graph as `graph list` reads them. A failure here stops the run
         // before anything is restored.
-        // Declared in this order so the readers and the client, which hold
-        // references to the HTTP clients, go first. `options` records Graph
-        // under "graph" with --record; downloads are recorded as their size
-        // and SHA-256 only.
-        const std::unique_ptr<IHttpClient> graph_http =
-            options.make_graph_http ? options.make_graph_http(options.logger)
-                                    : graph::make_graph_http_client(options.logger);
-        const std::unique_ptr<IHttpClient> download_http =
-            recorded(env.make_download_http ? env.make_download_http()
-                                            : graph::make_download_http_client(),
-                     recorder, "download", RecordedBody::digest);
-        if (!graph_http || !download_http) {
-            throw std::logic_error("no HTTP client");
-        }
-        graph::GraphClientOptions client_options;
-        client_options.logger = options.logger;
-        client_options.now = options.now;
-        client_options.wall_now = options.wall_now;
-        client_options.sleep = options.sleep;
-        client_options.jitter = options.jitter;
-        graph::GraphClient graph_client(*graph_http, config.graph_tenant_id,
-                                        config.graph_client_id, std::move(*certificate),
-                                        client_options);
         verification::TargetsRead before;
-        if (const std::exception_ptr failed = read_before(graph_client, *download_http, targets,
+        if (const std::exception_ptr failed = read_before(*graph_client, *download_http, targets,
                                                           spec, options.logger, before, err)) {
             return finish(verification::stop_reason(failed, *phase), nullptr, false);
         }
@@ -845,7 +1054,7 @@ int run_restore(std::span<const std::string_view> args, std::ostream& out, std::
         try {
             const verification::TargetSnapshot snapshot = verification::snapshot_of(before);
             verification::TargetsRead after;
-            read_after(graph_client, *download_http, targets, spec, options.logger, now,
+            read_after(*graph_client, *download_http, targets, spec, options.logger, now,
                        verification::hash_filter(*expected, snapshot), after, err);
             checked = verification::check(*expected, snapshot, after, now);
         } catch (...) {

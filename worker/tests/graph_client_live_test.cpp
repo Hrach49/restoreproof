@@ -77,7 +77,7 @@ TEST_CASE("live: GraphClient reads the test mailbox and is denied another one, n
     // A 200 means Entra took the client assertion and Exchange the token.
     const std::string mailbox = env_or("RP_LIVE_GRAPH_MAILBOX", kLabMailbox);
     const nlohmann::json inbox =
-        graph.client.get_json(first_message_path(mailbox), rp::graph::kMailReadGrant);
+        graph.client.get_json(first_message_path(mailbox), rp::graph::kMailGrant);
     REQUIRE(inbox.contains("value"));
     CHECK(inbox["value"].is_array());
     std::cout << "inbox of " << mailbox << ": " << inbox["value"].size()
@@ -89,7 +89,7 @@ TEST_CASE("live: GraphClient reads the test mailbox and is denied another one, n
     const std::string denied = env_or("RP_LIVE_GRAPH_DENIED_MAILBOX", kLabDeniedMailbox);
     bool thrown = false;
     try {
-        graph.client.get(first_message_path(denied), rp::graph::kMailReadGrant);
+        graph.client.get(first_message_path(denied), rp::graph::kMailGrant);
     } catch (const rp::graph::PermissionError& e) {
         thrown = true;
         std::cout << "denied as expected: " << e.what() << "\n";
@@ -97,8 +97,8 @@ TEST_CASE("live: GraphClient reads the test mailbox and is denied another one, n
         CHECK(e.status() == 403);
         CHECK(e.code() == "ErrorAccessDenied");
         CHECK(message.find("ErrorAccessDenied") != std::string::npos);
-        CHECK(message.find(rp::graph::kMailReadGrant.description) != std::string::npos);
-        CHECK(e.grant() == rp::graph::kMailReadGrant.description);
+        CHECK(message.find(rp::graph::kMailGrant.description) != std::string::npos);
+        CHECK(e.grant() == rp::graph::kMailGrant.description);
         CHECK(message.find("$top") == std::string::npos);
     }
     CHECK(thrown);

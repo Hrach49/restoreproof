@@ -162,6 +162,8 @@ class GateTest(unittest.TestCase):
             r"src\target_guard.cpp",
             r"src\run_status.cpp",
             r"include\rp\run_status.hpp",
+            r"src\cleaner.cpp",
+            r"include\rp\cleaner.hpp",
         ):
             with self.subTest(name=name):
                 xml = cobertura((r"src\big.cpp", covered(1000)), (name, mixed(1, 1)))
@@ -185,7 +187,7 @@ class GateTest(unittest.TestCase):
     def test_strict_name_does_not_match_unrelated_file(self):
         # "vaulted.cpp" is not the vault: a strict name must be a whole path
         # part, or a prefix followed by "_".
-        for name in (r"src\vaulted.cpp", r"src\signers.cpp", r"src\my_vault.cpp"):
+        for name in (r"src\vaulted.cpp", r"src\signers.cpp", r"src\my_vault.cpp", r"src\cleaners.cpp"):
             with self.subTest(name=name):
                 xml = cobertura((r"src\big.cpp", covered(1000)), (name, mixed(1, 1)))
                 code, _, _ = self.run_gate(xml)
@@ -228,7 +230,7 @@ class GateTest(unittest.TestCase):
     def test_absent_strict_files_are_skipped_with_a_note(self):
         code, _, summary = self.run_gate(cobertura((r"src\a.cpp", covered(10))))
         self.assertEqual(code, 0)
-        for name in ("vault", "signer", "target_guard", "run_status"):
+        for name in ("vault", "signer", "target_guard", "run_status", "cleaner"):
             self.assertIn(f"`{name}`", summary)
         self.assertIn("not present yet", summary)
 

@@ -1,0 +1,16 @@
+{
+  "source": "hand-written: W3.4 stand-in until the first live clean is recorded (rpworker restore --record), in the shape of messages-404-unknown-user.json: a permanentDelete of a mail no longer there, Exchange's ErrorItemNotFound",
+  "request": "POST /v1.0/users/restoretest@RestoreProofLab.onmicrosoft.com/messages/<message id>/permanentDelete",
+  "status": 404,
+  "headers": {
+    "Content-Type": "application/json; odata.metadata=minimal; odata.streaming=true; IEEE754Compatible=false; charset=utf-8",
+    "request-id": "00000000-0000-4000-8000-000000003405",
+    "client-request-id": "00000000-0000-4000-8000-000000003405"
+  },
+  "body": {
+    "error": {
+      "code": "ErrorItemNotFound",
+      "message": "The specified object was not found in the store."
+    }
+  }
+}

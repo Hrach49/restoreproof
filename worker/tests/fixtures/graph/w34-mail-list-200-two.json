@@ -1,0 +1,23 @@
+{
+  "source": "hand-written: W3.4 stand-in until the first live clean is recorded (rpworker restore --record), in the shape of mail-list-200-one-item.json: the restoretest Inbox as the Cleaner lists it (IDs only, Prefer), two mails",
+  "request": "GET /v1.0/users/restoretest@RestoreProofLab.onmicrosoft.com/mailFolders/inbox/messages?$select=id&$top=100",
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/json; odata.metadata=minimal; odata.streaming=true; IEEE754Compatible=false; charset=utf-8",
+    "request-id": "00000000-0000-4000-8000-000000003401",
+    "client-request-id": "00000000-0000-4000-8000-000000003401"
+  },
+  "body": {
+    "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#users('restoretest%40RestoreProofLab.onmicrosoft.com')/mailFolders('inbox')/messages(id)",
+    "value": [
+      {
+        "@odata.etag": "W/\"CQAAABYAAACnL+u8BR8BT6morC7OYUFaAAADq1Xa\"",
+        "id": "AAkALgAAAAAAHYQDEapmEc2byACqAC-EWg0Apy-rvAUfAU_pqKwuzmFBWgAAA3Ra1AAA"
+      },
+      {
+        "@odata.etag": "W/\"CQAAABYAAACnL+u8BR8BT6morC7OYUFaAAADq1Xb\"",
+        "id": "AAkALgAAAAAAHYQDEapmEc2byACqAC-EWg0Apy-rvAUfAU_pqKwuzmFBWgAAA3Ra1QAA"
+      }
+    ]
+  }
+}

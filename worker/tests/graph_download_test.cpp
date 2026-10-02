@@ -378,12 +378,12 @@ TEST_CASE("Graph's /content errors keep their W2.1 type", "[graph][download]")
     }
 
     const Caught caught =
-        catch_download([&] { lab.download(10, kTenantHost, kDrive, rp::graph::kOneDriveReadGrant); });
+        catch_download([&] { lab.download(10, kTenantHost, kDrive, rp::graph::kOneDriveGrant); });
 
     CHECK(caught.kind == row.kind);
     CHECK(caught.status == row.status);
     if (row.kind == "PermissionError") {
-        CHECK(caught.grant == std::string{rp::graph::kOneDriveReadGrant.description});
+        CHECK(caught.grant == std::string{rp::graph::kOneDriveGrant.description});
     }
     CHECK(lab.dl_http.requests().empty());
 }

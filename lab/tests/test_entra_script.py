@@ -34,6 +34,8 @@ def constant(name: str) -> str:
         ("SiteId", tenant.SHAREPOINT_SITE_ID),
         ("OneDriveDriveId", tenant.ONEDRIVE_DRIVE_ID),
         ("OneDriveTargetFolderId", tenant.ONEDRIVE_TARGET_FOLDER_ID),
+        ("RestoreTargetListId", tenant.RESTORE_TARGET_LIST_ID),
+        ("RestoreTargetName", worker_app.TARGET_FOLDER_NAME),
         ("CredTarget", worker_app.CREDENTIAL_TARGET),
         ("PfxName", worker_app.PFX_NAME),
         ("AppName", "RestoreProof Worker"),
@@ -57,11 +59,69 @@ def test_the_canary_locations_are_never_named():
     assert tenant.SHAREPOINT_LIST_ID not in text
 
 
-def test_grants_are_read_only():
-    roles = re.findall(r"roles\s*=\s*@\(([^)]*)\)", script_text())
-    assert roles, "no roles = @(...) in the script"
-    assert all(r.strip() == "'read'" for r in roles), roles
-    assert "Application Mail.ReadWrite" not in script_text()
+def code_text() -> str:
+    """The script without its comment-based help and comment lines."""
+    text = re.sub(r"<#.*?#>", "", script_text(), flags=re.DOTALL)
+    return "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
+
+
+# Every Invoke-Graph call that sends roles: its method, its path and the body up to its end.
+_GRANT_CALL = re.compile(r'Invoke-Graph (POST|PATCH) "([^"]*permissions[^"]*)" @\{(.*?)\}\s*\|', re.DOTALL)
+
+
+def grant_calls() -> list[tuple[str, str, str]]:
+    calls = []
+    for method, path, body in _GRANT_CALL.findall(code_text()):
+        roles = re.search(r"roles\s*=\s*@\(([^)]*)\)", body)
+        assert roles, (method, path)
+        calls.append((method, path, roles.group(1).strip()))
+    return calls
+
+
+def test_the_only_write_grants_are_the_restore_target_list_and_folder():
+    # W3.4 (docs/decisions.md 2026-10-02, point 1): the site keeps read; write goes on the
+    # RestoreTarget list and alice's RestoreTarget folder only, and nothing is owner or fullcontrol.
+    calls = grant_calls()
+    assert {roles for _, _, roles in calls} == {"'read'", "'write'"}, calls
+    writes = {(method, path.split("/permissions")[0]) for method, path, roles in calls if roles == "'write'"}
+    assert writes == {("POST", "$list"), ("PATCH", "$list"), ("POST", "$folder"), ("PATCH", "$folder")}
+    reads = {path.split("/permissions")[0] for _, path, roles in calls if roles == "'read'"}
+    assert reads == {"sites/$SiteId"}
+    roles_anywhere = re.findall(r"roles\s*=\s*@\(([^)]*)\)", code_text())
+    assert len(roles_anywhere) == len(calls)  # no roles sent any other way
+    code = code_text()
+    assert re.search(r'^\s*\$list = "sites/\$SiteId/lists/\$RestoreTargetListId"$', code, re.MULTILINE)
+    assert re.search(r'^\s*\$folder = "drives/\$OneDriveDriveId/items/\$OneDriveTargetFolderId"$', code, re.MULTILINE)
+    assert len(re.findall(r"^\s*\$(list|folder) = ", code, re.MULTILINE)) == 2  # never re-pointed
+
+
+def test_the_only_mail_role_is_application_mail_readwrite():
+    assert constant("MailRoleName") == "Application Mail.ReadWrite"
+    assert constant("MailAssignmentName") == "RestoreProof Worker - Application Mail.ReadWrite - restoretest"
+    assert constant("MailScopeName") == "RestoreProof Worker - restoretest mailbox"  # the existing scope
+    assert set(re.findall(r"Application Mail\.\w+", code_text())) == {"Application Mail.ReadWrite"}
+    # The old "Application Mail.Read" assignment goes through the extra-assignment loop.
+    assert "Remove-ManagementRoleAssignment -Identity $extra.Identity" in code_text()
+
+
+def test_the_list_grant_uses_only_the_restore_target_list_id():
+    lists = re.findall(r"lists/([^\"?/]+)", code_text())
+    assert lists and set(lists) <= {"$RestoreTargetListId", "${RestoreTargetListId}"}, lists
+    assert tenant.RESTORE_TARGET_LIST_ID != tenant.SHAREPOINT_LIST_ID
+
+
+def test_each_write_grant_sits_behind_its_name_check():
+    # Within its step, the name check runs before the step's first permission write.
+    checked = set()
+    for step in re.split(r"^\s*Step ", code_text(), flags=re.MULTILINE):
+        if "@('write')" not in step:
+            continue
+        first_write = min(step.index(m) for m in ('Invoke-Graph POST "$', 'Invoke-Graph PATCH "$') if m in step)
+        for check, variable in (("Assert-RestoreTargetList", "$list"), ("Assert-RestoreTargetFolder", "$folder")):
+            if f'Invoke-Graph POST "{variable}/permissions"' in step:
+                assert check in step[:first_write], check
+                checked.add(check)
+    assert checked == {"Assert-RestoreTargetList", "Assert-RestoreTargetFolder"}
 
 
 def test_the_password_only_reaches_credential_manager_the_pfx_export_and_load():
@@ -190,6 +250,96 @@ STUBS = """
     function Done { param($Text) "done: $Text" | Out-Host }
     function Invoke-Graph { param($Method, $Path, $Body) "$Method $Path $($Body | ConvertTo-Json -Compress -Depth 5)" | Out-Host }
 """
+
+
+def name_check(function: str, reply: str) -> subprocess.CompletedProcess:
+    """Runs the script's name check `function` with Invoke-Graph answering `reply` (a hashtable,
+    as Invoke-MgGraphRequest -OutputType HashTable gives) and the script's own constants."""
+    constants = "\n".join(
+        f"${name} = '{constant(name)}'"
+        for name in ("SiteId", "OneDriveDriveId", "OneDriveTargetFolderId", "RestoreTargetListId", "RestoreTargetName")
+    )
+    command = f"""
+        Set-StrictMode -Version Latest
+        $ErrorActionPreference = 'Stop'
+        function Done {{ param($Text) "done: $Text" | Out-Host }}
+        function Invoke-Graph {{ param($Method, $Path, $Body) "request: $Method $Path" | Out-Host; {reply} }}
+        {constants}
+        {script_function(function)}
+        try {{ {function}; 'checked' }} catch {{ "refused: $_" }}
+    """
+    return run_pwsh(command)
+
+
+_SITE_URL = "https://restoreprooflab.sharepoint.com/sites/RestoreTest"
+
+
+@pytest.mark.skipif(shutil.which("pwsh") is None, reason="PowerShell 7 not installed")
+@pytest.mark.parametrize(
+    ("reply", "refused"),
+    [
+        # failure paths first: the canary library, a renamed list, the address of another list
+        (f"@{{ id = 'x'; displayName = 'RestoreTest'; webUrl = '{_SITE_URL}/RestoreTest' }}", True),
+        (f"@{{ id = 'x'; displayName = 'RestoreTarget'; webUrl = '{_SITE_URL}/RestoreTest' }}", True),
+        (f"@{{ id = 'x'; displayName = 'RestoreTest'; webUrl = '{_SITE_URL}/RestoreTarget' }}", True),
+        (f"@{{ id = 'x'; displayName = 'restoretarget'; webUrl = '{_SITE_URL}/RestoreTarget' }}", True),
+        (f"@{{ id = 'x'; displayName = 'RestoreTarget'; webUrl = '{_SITE_URL}/Lists/RestoreTarget2' }}", True),
+        ("@{ id = 'x'; displayName = 'RestoreTarget' }", True),
+        ("@{ id = 'x' }", True),
+        (f"@{{ id = 'x'; displayName = 'RestoreTarget'; webUrl = '{_SITE_URL}/RestoreTarget' }}", False),
+        (f"@{{ id = 'x'; displayName = 'RestoreTarget'; webUrl = '{_SITE_URL}/restoretarget/' }}", False),
+    ],
+)
+def test_the_list_name_check(reply, refused):
+    result = name_check("Assert-RestoreTargetList", reply)
+    assert result.returncode == 0, result.stdout + result.stderr
+    request = f"request: GET sites/{tenant.SHAREPOINT_SITE_ID}/lists/{tenant.RESTORE_TARGET_LIST_ID}?$select=id,displayName,webUrl"
+    assert request in result.stdout
+    if refused:
+        assert "refused: The list $RestoreTargetListId names" in result.stdout
+        assert "no write grant was made" in result.stdout
+        assert "checked" not in result.stdout.splitlines()
+    else:
+        assert result.stdout.splitlines()[-1] == "checked"
+
+
+def _folder(name: str, *, folder: bool = True, drive: str | None = tenant.ONEDRIVE_DRIVE_ID, path: str = "/drive/root:") -> str:
+    parts = [f"name = '{name}'"]
+    if folder:
+        parts.append("folder = @{ childCount = 0 }")
+    if drive is not None:
+        parts.append(f"parentReference = @{{ driveId = '{drive}'; path = '{path}' }}")
+    return "@{ " + "; ".join(parts) + " }"
+
+
+@pytest.mark.skipif(shutil.which("pwsh") is None, reason="PowerShell 7 not installed")
+@pytest.mark.parametrize(
+    ("reply", "refused"),
+    [
+        # failure paths first: the canary folder, a nested RestoreTarget, another drive, a file
+        (_folder("RestoreTest"), True),
+        (_folder("RestoreTarget", path="/drive/root:/RestoreTest"), True),
+        (_folder("RestoreTarget", drive="b!other"), True),
+        (_folder("RestoreTarget", folder=False), True),
+        (_folder("restoretarget"), True),
+        (_folder("RestoreTarget", drive=None), True),
+        (_folder("RestoreTarget"), False),
+        (_folder("RestoreTarget", path=f"/drives/{tenant.ONEDRIVE_DRIVE_ID}/root:"), False),
+    ],
+)
+def test_the_folder_name_check(reply, refused):
+    result = name_check("Assert-RestoreTargetFolder", reply)
+    assert result.returncode == 0, result.stdout + result.stderr
+    request = (
+        f"request: GET drives/{tenant.ONEDRIVE_DRIVE_ID}/items/{tenant.ONEDRIVE_TARGET_FOLDER_ID}"
+        "?$select=id,name,folder,parentReference"
+    )
+    assert request in result.stdout
+    if refused:
+        assert "refused: The item $OneDriveTargetFolderId names" in result.stdout
+        assert "no write grant was made" in result.stdout
+    else:
+        assert result.stdout.splitlines()[-1] == "checked"
 
 
 @pytest.mark.skipif(shutil.which("pwsh") is None, reason="PowerShell 7 not installed")

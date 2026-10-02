@@ -12,14 +12,20 @@
        credential "RestoreProof Lab - Worker Graph app PFX"). The copy in the certificate store is
        deleted once the PFX is written. An existing PFX and password are reused.
     2. App registration "RestoreProof Worker": single tenant, the certificate as its only
-       credential (any other certificate or client secret is removed), and exactly two Microsoft
-       Graph application permissions: Sites.Selected and Files.SelectedOperations.Selected. Admin
-       consent is granted for those two; any other consented application permission, on Graph
-       (e.g. Mail.Read) or another API (e.g. Exchange's full_access_as_app), is removed.
-    3. SharePoint: read on the RestoreTest site (Sites.Selected), read on alice's OneDrive
-       RestoreTarget folder (Files.SelectedOperations.Selected). Nothing else.
-    4. Exchange Online RBAC for Applications: "Application Mail.Read" on the restoretest mailbox
-       only (a management scope), then Test-ServicePrincipalAuthorization for restoretest and alice.
+       credential (any other certificate or client secret is removed), and exactly three Microsoft
+       Graph application permissions: Sites.Selected, Files.SelectedOperations.Selected and
+       Lists.SelectedOperations.Selected (W3.4). Admin consent is granted for those three; any
+       other consented application permission, on Graph (e.g. Mail.Read) or another API (e.g.
+       Exchange's full_access_as_app), is removed.
+    3. SharePoint: read on the RestoreTest site (Sites.Selected); write on the RestoreTarget list
+       only (Lists.SelectedOperations.Selected) and on alice's OneDrive RestoreTarget folder
+       (Files.SelectedOperations.Selected), so the Worker's Cleaner can delete restored copies
+       (W3.4). Nothing else. Before each write grant the script reads the list or folder and
+       refuses unless it is named RestoreTarget (the list's address too; the folder directly
+       under the drive's root).
+    4. Exchange Online RBAC for Applications: "Application Mail.ReadWrite" on the restoretest
+       mailbox only (a management scope; until W3.4 "Application Mail.Read", whose assignment the
+       script removes), then Test-ServicePrincipalAuthorization for restoretest and alice.
 
     It ends by printing the client ID and the certificate thumbprint. The permissions and the
     reasons for them are in docs/security/graph-permissions.md; the steps around it (becoming site
@@ -43,19 +49,21 @@ $AliceUpn = 'alice@RestoreProofLab.onmicrosoft.com'
 $SiteId = 'restoreprooflab.sharepoint.com,fe08085d-eb70-42e8-95a6-470189bd98eb,4ecaf399-cc0e-4d95-b3fe-cd091a09e689'
 $OneDriveDriveId = 'b!wA9gbfhlEUitGAluxbfoNBr_z5gEtDhErm5pJ6bMwyXfZJ8a_dkCQ696RX0r7_U3'
 $OneDriveTargetFolderId = '01ZK75LGDGB6QOO3MGNFGYOY6C6VBDG5OH'
+$RestoreTargetListId = 'ffec069d-65e4-4c3a-9da2-ac086cf9dafa'
+$RestoreTargetName = 'RestoreTarget'
 
 # ---- the app ------------------------------------------------------------------------------------
 $AppName = 'RestoreProof Worker'
 $GraphAppId = '00000003-0000-0000-c000-000000000000'
-$GraphRoles = @('Sites.Selected', 'Files.SelectedOperations.Selected')
+$GraphRoles = @('Sites.Selected', 'Files.SelectedOperations.Selected', 'Lists.SelectedOperations.Selected')
 $CertSubject = 'CN=RestoreProof Worker (lab)'
 $CredTarget = 'RestoreProof Lab - Worker Graph app PFX'
 $CredUser = 'rp-worker-pfx'
 $PfxName = 'worker-graph.pfx'
 $PfxPath = Join-Path $env:LOCALAPPDATA "RestoreProof\lab\$PfxName"
 $MailScopeName = 'RestoreProof Worker - restoretest mailbox'
-$MailRoleName = 'Application Mail.Read'
-$MailAssignmentName = 'RestoreProof Worker - Application Mail.Read - restoretest'
+$MailRoleName = 'Application Mail.ReadWrite'
+$MailAssignmentName = 'RestoreProof Worker - Application Mail.ReadWrite - restoretest'
 
 function Step([string]$Text) { Write-Host "`n==> $Text" -ForegroundColor Cyan }
 function Done([string]$Text) { Write-Host "    $Text" }
@@ -140,6 +148,38 @@ function Set-OnlyCredential($App, $KeyCredential, [string]$Thumbprint) {
         Invoke-Graph POST "applications/$($App.id)/removePassword" @{ keyId = $secret.keyId } | Out-Null
         Done "removed client secret '$($secret.displayName)': the certificate is the only credential"
     }
+}
+
+# W3.4: what is about to become writable must be the RestoreTarget list, by its name and by its
+# address. A wrong ID would give the Worker write on another list (the canary library is in the
+# same site), so nothing is granted unless both say RestoreTarget. Mirrors the Worker's
+# check_restore_library (worker/src/target_guard_graph.cpp): the name exact, the address's last
+# segment in any ASCII case.
+function Assert-RestoreTargetList {
+    $reply = Invoke-Graph GET "sites/$SiteId/lists/${RestoreTargetListId}?`$select=id,displayName,webUrl"
+    $name = "$($reply['displayName'])"
+    $url = "$($reply['webUrl'])".TrimEnd('/')
+    $segment = [Uri]::UnescapeDataString($url.Substring($url.LastIndexOf('/') + 1))
+    if ($name -cne $RestoreTargetName -or $segment -ne $RestoreTargetName) {
+        throw "The list `$RestoreTargetListId names is '$name' at '$url', not the $RestoreTargetName library: " +
+              'no write grant was made. Check the list ID in lab/tenant.md.'
+    }
+    Done "the list is '$name' ($url)"
+}
+
+# W3.4: the folder about to become writable must be RestoreTarget, directly under the root of
+# alice's drive (Graph writes the root either way). Mirrors check_restore_onedrive_folder.
+function Assert-RestoreTargetFolder {
+    $item = Invoke-Graph GET "drives/$OneDriveDriveId/items/${OneDriveTargetFolderId}?`$select=id,name,folder,parentReference"
+    $parent = $item['parentReference']
+    $path = if ($parent) { "$($parent['path'])" } else { '' }
+    $drive = if ($parent) { "$($parent['driveId'])" } else { '' }
+    $atRoot = @('/drive/root:', "/drives/$OneDriveDriveId/root:") -ccontains $path
+    if ("$($item['name'])" -cne $RestoreTargetName -or -not $item['folder'] -or $drive -cne $OneDriveDriveId -or -not $atRoot) {
+        throw "The item `$OneDriveTargetFolderId names is '$($item['name'])' in '$path', not the $RestoreTargetName folder " +
+              "directly under the root of alice's OneDrive: no write grant was made. Check the folder ID in lab/tenant.md."
+    }
+    Done "the folder is '$($item['name'])', directly under the drive's root"
 }
 
 # ---- 1. certificate -------------------------------------------------------------------------------
@@ -291,26 +331,49 @@ try {
         else { Done 'already granted' }
     }
 
-    Step "Files.SelectedOperations.Selected: read on alice's OneDrive RestoreTarget folder"
+    Step 'Lists.SelectedOperations.Selected: write on the RestoreTarget list only (W3.4)'
+    Assert-RestoreTargetList
+    $list = "sites/$SiteId/lists/$RestoreTargetListId"
+    $listPerms = @((Invoke-Graph GET "$list/permissions").value)
+    # A list's grant may come back in the folder's form or the site's (grantedToIdentities): either counts.
+    $mine = @($listPerms | Where-Object {
+            @($_['grantedToV2'], $_['grantedTo']) + @($_['grantedToIdentitiesV2']) + @($_['grantedToIdentities']) |
+                Where-Object { $_ -and $_['application'] -and $_['application'].id -eq $appId }
+        })
+    if ($mine.Count -eq 0) {
+        Invoke-Graph POST "$list/permissions" @{
+            roles       = @('write')
+            grantedToV2 = @{ application = @{ id = $appId } }
+        } | Out-Null
+        Done 'granted'
+    }
+    elseif ((@($mine[0].roles) -join ',') -ne 'write') {
+        Invoke-Graph PATCH "$list/permissions/$($mine[0].id)" @{ roles = @('write') } | Out-Null
+        Done "changed roles from '$(@($mine[0].roles) -join ',')' to 'write'"
+    }
+    else { Done 'already granted' }
+
+    Step "Files.SelectedOperations.Selected: write on alice's OneDrive RestoreTarget folder (W3.4)"
     $folder = "drives/$OneDriveDriveId/items/$OneDriveTargetFolderId"
     try { $folderPerms = @((Invoke-Graph GET "$folder/permissions").value) }
     catch {
         throw "Can't read the permissions of alice's RestoreTarget folder as $AdminUpn ($($_.Exception.Message)). " +
               "Make $AdminUpn a site collection admin of alice's OneDrive first (lab/README.md, 'RestoreProof Worker app'), then run this script again."
     }
+    Assert-RestoreTargetFolder
     $mine = @($folderPerms | Where-Object {
             @($_['grantedToV2'], $_['grantedTo']) | Where-Object { $_ -and $_['application'] -and $_['application'].id -eq $appId }
         })
     if ($mine.Count -eq 0) {
         Invoke-Graph POST "$folder/permissions" @{
-            roles       = @('read')
+            roles       = @('write')
             grantedToV2 = @{ application = @{ id = $appId } }
         } | Out-Null
         Done 'granted'
     }
-    elseif ((@($mine[0].roles) -join ',') -ne 'read') {
-        Invoke-Graph PATCH "$folder/permissions/$($mine[0].id)" @{ roles = @('read') } | Out-Null
-        Done "changed roles from '$(@($mine[0].roles) -join ',')' to 'read'"
+    elseif ((@($mine[0].roles) -join ',') -ne 'write') {
+        Invoke-Graph PATCH "$folder/permissions/$($mine[0].id)" @{ roles = @('write') } | Out-Null
+        Done "changed roles from '$(@($mine[0].roles) -join ',')' to 'write'"
     }
     else { Done 'already granted' }
 }
@@ -395,5 +458,5 @@ Done "Service principal ID       $spId"
 Done "Certificate thumbprint     $thumbprint (SHA-1), expires $($notAfter.ToString('yyyy-MM-dd')) UTC"
 Done "Certificate file           $PfxPath (password: Credential Manager, '$CredTarget')"
 Done ''
-Done 'Mail access can take 30 minutes to 2 hours to apply. Then, from lab\:'
+Done 'Mail access can take 30 minutes to 2 hours to apply (until then a mail delete may get 403). Then, from lab\:'
 Done "  uv run python -m seeder check-worker-app --client-id $appId"

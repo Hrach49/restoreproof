@@ -29,6 +29,7 @@ changes a mail body, the manifest records the changed bytes and also says that t
 | `seeder/` | The tool: `catalog.py` (the 40 items and where they go), `tenant.py` (tenant IDs, copied from `tenant.md`), `generate.py`, `normalize.py`, `manifest.py`, `auth.py`, `graph.py`, `transport.py`, `seed.py`, `verify.py`, `cli.py`; `worker_app.py` is `check-worker-app` (L1.5); `graph_fixtures.py` is `record-graph-fixtures` (W2.1, and W2.2's restore-target states) |
 | `tests/` | pytest, one file per module, against a fake in-memory Graph tenant. No network |
 | `entra/new-worker-app.ps1` | Creates or updates the RestoreProof Worker app registration and its grants (L1.5), below |
+| `entra/check-worker-grants.ps1` | Read-only: lists the SharePoint and OneDrive grants and checks the Worker app holds none at a canary and its write grants on the two file restore targets (W3.4), below |
 | `entra/set-worker-env.ps1` | Puts the Worker app's certificate into `RP_GRAPH_CERT_PFX_BASE64` and `RP_GRAPH_CERT_PASSWORD` for one PowerShell session (W2.1), below |
 | `canary/` | The 20 generated files, committed |
 | `seed-manifest.json` | Written by a live `seed` run; committed, so CI runs the `hash` check on it, and the Worker's sampler (W2.6) reads it (`worker/include/rp/canary_manifest.hpp`) |
@@ -127,7 +128,9 @@ restore targets. What is granted and why: `docs/security/graph-permissions.md`.
 on an app set up before W3.4 it adds the `Lists.SelectedOperations.Selected` consent and the
 list grant, raises the folder grant to `write`, and replaces the `Application Mail.Read`
 assignment with `Application Mail.ReadWrite`. Before each write grant it reads the list or
-folder and stops, granting nothing, unless it is the RestoreTarget one.
+folder and stops, granting nothing, unless it is the RestoreTarget one. After the grants it runs
+`entra/check-worker-grants.ps1` in the same session, a read-only listing of the grants (below),
+and stops before the Exchange step if that finds a problem.
 
 1. **Install the modules** (once), in PowerShell 7 (Start, type `pwsh`, open "PowerShell 7"):
 
@@ -170,16 +173,25 @@ folder and stops, granting nothing, unless it is the RestoreTarget one.
    uv run python -m seeder check-worker-app --client-id <the client ID the script printed>
    ```
 
-   A browser window opens twice: sign in as alice, then as the admin. The check reads her
-   canary folder and one of its files, and one canary file in the RestoreTest library as the
-   admin, with the seeder app, to confirm they exist (the Worker app gets 404 or 403 on them
-   either way). It then creates and deletes one `rp-probe-<uuid>` item in each restore target,
-   and sends each of the two canary files a `PATCH` that must be refused (below).
+   A browser window opens once: sign in as alice. The check reads her canary folder with the
+   seeder app to confirm it exists and holds files (the Worker app gets 404 on it either way).
+   It then creates and deletes one `rp-probe-<uuid>` item in each restore target (below). It
+   sends nothing but GETs anywhere near a canary: that the app can't write there is proven by
+   the grant check, next.
+5. **Check the grants, read-only.** From the repo root (the setup script has already run it
+   once; run it alone any time):
 
-5. **Optional: remove the admin from alice's OneDrive.** Open her OneDrive with the link from
+   ```powershell
+   pwsh -NoProfile -File lab\entra\check-worker-grants.ps1 | Tee-Object docs\security\w3.4-worker-grants-check.txt
+   ```
+
+   It signs in as the admin (Microsoft Graph, `Sites.FullControl.All` only, the one scope that
+   can read grants), sends GETs only, and signs out. It needs the admin to be a site
+   collection admin of alice's OneDrive (step 2), so run it before step 6. Rows below.
+6. **Optional: remove the admin from alice's OneDrive.** Open her OneDrive with the link from
    step 2, then gear icon > **OneDrive settings** > **More settings** > **Site collection
-   administrators**, and remove the admin. The Worker's grant stays. Running the script again
-   needs step 2 again.
+   administrators**, and remove the admin. The Worker's grant stays. Running the script or the
+   grant check again needs step 2 again.
 
 The certificate's private key exists only in `%LOCALAPPDATA%\RestoreProof\lab\worker-graph.pfx`
 (outside the repo). Its password exists only in Credential Manager, as the generic credential
@@ -226,7 +238,7 @@ uv run python -m seeder record-graph-fixtures --state empty  # live: the restore
 | `hash` | no | Checks that `seed-manifest.json` exists, is valid JSON and matches the schema; has exactly 40 entries whose ids, kinds and order match the catalog; that each file in `canary/` has the recorded `local_sha256` and `local_size` and that `stored_matches_local` is consistent; that each mail's `sent_body_sha256` equals the text-v1 hash of the catalog body and its subject and recipient match the catalog. Prints one line per entry and a summary (`40/40 entries reproduce the manifest hashes`) | 0 all reproduce; 1 any difference (each message names the entry, expected and actual); 2 manifest missing, unreadable or invalid (wrong count, order or schema) |
 | `seed` | yes | Signs in three times, sends the missing mails, uploads the missing files, reads all 40 back and writes the manifest. Step by step below | 0 manifest written; 1 a problem the output explains (missing canary file, duplicate subject, mail timeout); 2 sign-in or Graph error. No manifest is written unless it exits 0 |
 | `verify` | yes | Re-reads every item by its Graph id as the account that owns it (alice: mails 0001–0010 and the OneDrive files; bob: mails 0011–0020; admin: the SharePoint files). Compares subject, sender (case-insensitive), sent and received dates, `internet_message_id` and `body_sha256`; for files name and `content_sha256` by `content_rule` (and size for `bytes` files); an Office file whose bytes changed but whose content didn't is `ok`, with a note. Prints `ok`, `DIFF` or `MISSING` per entry and a summary (`40/40 entries in the tenant match the manifest`) | 0 all ok; 1 any DIFF or MISSING; 2 manifest missing or invalid, or a sign-in or Graph error |
-| `check-worker-app` | yes | Signs in as the RestoreProof Worker app with its certificate (PFX from `--pfx`, default `%LOCALAPPDATA%\RestoreProof\lab\worker-graph.pfx`; password from Credential Manager). Checks the Graph token's roles are exactly `Files.SelectedOperations.Selected`, `Lists.SelectedOperations.Selected` and `Sites.Selected` and that its Exchange Online and SharePoint tokens carry none, signs in as alice and the admin (the seeder app) to confirm her canary folder and the two canary files the refusal probes aim at exist, then sends one request per probe and prints `ok` or `UNEXPECTED` per row with the expected and actual status (the probe table is in `docs/security/graph-permissions.md`). Writes only W3.4's probes, below | 0 all as expected; 1 anything unexpected; 2 a missing or unusable credential, or a sign-in error (the app's, alice's or the admin's) |
+| `check-worker-app` | yes | Signs in as the RestoreProof Worker app with its certificate (PFX from `--pfx`, default `%LOCALAPPDATA%\RestoreProof\lab\worker-graph.pfx`; password from Credential Manager). Checks the Graph token's roles are exactly `Files.SelectedOperations.Selected`, `Lists.SelectedOperations.Selected` and `Sites.Selected` and that its Exchange Online and SharePoint tokens carry none, signs in as alice (the seeder app) to confirm her canary folder exists, then sends one request per probe and prints `ok` or `UNEXPECTED` per row with the expected and actual status (the probe table is in `docs/security/graph-permissions.md`). Writes only W3.4's probes in the three restore targets, below; at a canary it sends nothing but GETs (the write refusal there is `entra/check-worker-grants.ps1`'s) | 0 all as expected; 1 anything unexpected; 2 a missing or unusable credential, or a sign-in error (the app's or alice's) |
 | `record-graph-fixtures` | yes | Records the Graph and Entra replies the Worker's GraphClient tests replay (W2.1) into `--out`, default `worker/tests/fixtures/graph/`. Signs in as the RestoreProof Worker app the way the Worker does: its own client assertion (PS256, header `x5t#S256`), certificate and password as for `check-worker-app`. Then sends six more token requests that must fail (an assertion signed by an unknown key, an unknown certificate, app and tenant, one expired and one not yet valid by an hour) and seven GETs (the restoretest inbox, alice's inbox, the tenant root site, `/users`, a bad and a missing token, an unknown user). Prints one line per file with the status and error code. With `--state empty\|one-item\|paged` (W2.2) it records the three restore targets instead, read the way the Worker's `TargetReader` reads them. Only reads. Details below | 0 all of the state's files written; 1 a reply had another status than its file name says, or not the content its state needs, nothing written; 2 a missing or unusable credential, a failed sign-in, a network error, a reply that holds something secret-looking, or a request that needs an item or link an earlier reply didn't give, nothing written |
 
 A usage error (unknown command or option) exits 2. Ctrl+C exits 130; `seed` then says nothing was written.
@@ -241,7 +253,7 @@ Options:
 | `--pfx <path>` | `check-worker-app`, `record-graph-fixtures` | The Worker app's certificate, if not in the default place |
 | `--out <dir>` | `record-graph-fixtures` | Where to write the fixtures (default `worker/tests/fixtures/graph/` in the repo). Existing files of the same names are replaced; other files are left alone |
 | `--state auth\|empty\|one-item\|paged` | `record-graph-fixtures` | Which fixtures: `auth` (default) the 14 of W2.1; the others the restore targets in that state (W2.2), see below |
-| `--seeder-client-id <id>` | `check-worker-app` | The seeder app's client ID, for alice's and the admin's sign-ins. Same order as `--client-id` for `seed` |
+| `--seeder-client-id <id>` | `check-worker-app` | The seeder app's client ID, for alice's sign-in. Same order as `--client-id` for `seed` |
 | `--auth browser\|device` | `seed`, `verify`, `check-worker-app` | `browser` (default) opens a browser window for each sign-in. `device` prints a code to enter at https://microsoft.com/devicelogin instead |
 | `--force` | `seed` | Send every mail again and replace every file, even if it is already there |
 | `--mail-timeout <seconds>` | `seed` | How long to wait for sent mails to arrive (default 600) |
@@ -250,24 +262,23 @@ Options:
 ### `check-worker-app`'s write probes (W3.4)
 
 W3.4's Cleaner deletes what a run restored, so the check proves the app can delete in the
-three restore targets and nowhere near the canaries (`docs/decisions.md` 2026-10-02, point 9).
-After the read probes it sends, in this order:
+three restore targets (`docs/decisions.md` 2026-10-02, point 9). After the read probes it
+sends, in this order:
 
 | Rows | Requests | Expected |
 |---|---|---|
 | RestoreTarget library: create a file, delete it | `PUT /drives/{RestoreTarget drive}/items/root:/rp-probe-<uuid>.txt:/content` (fail on a name conflict), then `DELETE /drives/{RestoreTarget drive}/items/{id}` with the `If-Match` ETag the upload returned | 201, then 204 |
 | alice's OneDrive: RestoreTarget folder: create a file, delete it | the same, under `/drives/{alice's drive}/items/{RestoreTarget}:` | 201, then 204 |
 | restoretest's mailbox: create a draft, permanently delete it | `POST /users/restoretest@…/messages` (a draft with subject `rp-probe-<uuid>` and no recipient), then `POST …/messages/{id}/permanentDelete`, both with `Prefer: IdType="ImmutableId"` | 201, then 204 |
-| RestoreTarget library: invalid name (control) | `POST /drives/{RestoreTarget drive}/items/root/children` with body `{"name": "rp-probe-invalid:name", "folder": {}, "@microsoft.graph.conflictBehavior": "fail"}` | 400 |
-| alice's OneDrive: RestoreTarget folder: invalid name (control) | the same at `/drives/{alice's drive}/items/{RestoreTarget}/children` | 400 |
-| RestoreTest library: invalid name beside a canary | the same at `/drives/{RestoreTest drive}/items/root/children`, the folder of `rp-canary-01.pdf` | 403 or 404 |
-| alice's OneDrive: invalid name in RestoreTest | the same at `/drives/{alice's drive}/items/{RestoreTest}/children`, the folder of `rp-canary-11.pdf` | 403 or 404 |
 
 Rules the code keeps, each with a test in `tests/test_worker_app.py`:
 
 - **Writes go to the restore targets only.** Every create and delete path is checked against
   the three targets before it is sent, and one naming the canary library, list or folder is
-  refused without a request.
+  refused without a request. No folder is ever created, anywhere.
+- **Nothing but a GET reaches a canary.** No request of another method goes to the canary
+  library, list or folder, and no request names a canary file's ID (a test runs the check
+  against a fake tenant with and without misgrants and looks at every request).
 - **A probe deletes only its own item.** The delete is built from the create's reply only when
   that reply shows the probe's name, the target's drive and (in OneDrive) the
   `/RestoreTarget` folder. Otherwise nothing is deleted and the row says to check by hand.
@@ -275,40 +286,78 @@ Rules the code keeps, each with a test in `tests/test_worker_app.py`:
   row says so (a file is removed by the Worker's next clean, a draft in `restoretest`'s Drafts
   by hand).
 - **An interrupted delete is sent once more on the way out**, for that same item only.
-- **At a canary location, only the invalid-name folder create.** It asks for a folder named
-  `rp-probe-invalid:name` in the canary file's own folder; `:` is invalid in SharePoint and
-  OneDrive names, so even if it were let through it would create nothing. It names the folder,
-  never a canary file. 403 (no write) or 404 (masked) passes. 400 fails the check: the request
-  passed the permission check and only the name stopped it, so the app may write there. Any
-  2xx fails it too and says what to remove by hand; 409, 412 or anything else fails it. The
-  seeder's sign-ins confirm both canary files first (the admin for the library, alice for her
-  folder), so a 404 means "hidden"; one that can't be confirmed fails the check and gets no
-  request. **Its limit:** it asks the folder, so a write grant on one canary file alone
-  (`Files.SelectedOperations.Selected` allows one on a single driveItem) isn't seen and the
-  check passes; only a read-only listing of that file's permissions shows it (a test pins
-  this).
-- **The control: the same create in the two file restore targets must get 400.** It shows what
-  "allowed" looks like, so a canary's 403 is a refusal and not a request SharePoint would have
-  rejected anyway. Anything but 400 fails the check (a 403 or 404: the app can't write in its
-  own target; a 2xx: it created something, remove it by hand). It is the only folder create the code sends in a restore target, with exactly that
-  body.
-- **Why not a `PATCH` (2026-10-02).** The first design sent the canary file a `PATCH {}` with an
-  `If-Match` no item has. Live, the library canary answered 412, not 403: where the app may
-  read an item, SharePoint checks `If-Match` before write permission, so a 412 can't tell
-  "refused" from "allowed but stopped by the ETag". An owner's read-only listing of the grants
-  showed no application grant on the canary library's list or on `rp-canary-01.pdf`, and the
-  site's `read` for RestoreProof Worker; it printed the RestoreTarget list's `write` grant with
-  an empty application name, so whose it is waits for the controls' 400 in the re-run
-  (`docs/decisions.md` 2026-10-02 build notes). If a live run ever shows
-  a canary answering 400 to the invalid-name create too (SharePoint checking the name before
-  permission), the check fails, as it must; telling a refusal apart would then need another
-  design, never a pass.
 
 Save the output as the W3.4 evidence (from `lab/`; it holds no secret):
 
 ```powershell
 uv run python -m seeder check-worker-app | Tee-Object -FilePath ..\docs\security\w3.4-worker-app-check.txt
 ```
+
+### The canary grant check: `entra/check-worker-grants.ps1` (W3.4)
+
+No write probe can prove the app is refused at a canary without risking a real write there.
+Live on 2026-10-02 two were tried and neither could tell: a `PATCH` with a made-up `If-Match`
+on a canary file the app can read got 412 (SharePoint checks the ETag before write
+permission), and a folder create with an invalid name (`rp-probe-invalid:name`) got 400 at both
+canary locations, alice's `/RestoreTest` folder included, which the app can't even read (404 on
+a GET): Graph checks the name before any permission, so a 400 says nothing. So the proof is the
+grants themselves. In Microsoft's selected-permissions model an app reaches a site, list,
+folder or file only through an application grant on it or on a parent it inherits from
+([Overview of Selected permissions](https://learn.microsoft.com/graph/permissions-selected-overview),
+"How access is calculated"). `docs/decisions.md` 2026-10-02, W3.4 build notes, points 13 and 14.
+
+The grants are half the proof. The other half is the app's tenant-wide roles: an application
+role such as `Sites.ReadWrite.All` or `Files.ReadWrite.All` would reach every canary without
+any grant this script lists. `check-worker-app`'s token-roles rows check those (only the three
+`*.Selected` roles in the Graph token, none for SharePoint or Exchange); the script says so on
+its second line (`scope: …`). Both runs together are the evidence.
+
+The script lists the grants read-only, as the admin, and matches the Worker app by its client
+ID (`$WorkerAppId`, `737da5ef-…`), never by its name: the live listing showed the RestoreTarget
+list's application grant with an empty name. The ID is read from `grantedToV2`, `grantedTo`,
+`grantedToIdentitiesV2` and `grantedToIdentities`, whichever Graph gives, and, failing closed,
+a permission that names the ID anywhere else (SharePoint can show an app principal as a
+`siteUser` whose login name holds it, with no `application` facet) counts as the Worker app's
+too. Every parent of each canary is read, up to its site: alice's OneDrive site is found by its
+URL (`GET /sites/restoreprooflab-my.sharepoint.com:/personal/alice_…`), checked to hold her
+OneDrive drive (`GET /sites/{her site}/drive`), and her Documents list through the drive
+(`GET /drives/{alice's drive}/list`); if any of that fails, her site and list are one problem
+and their grants aren't read.
+
+| Location | Request (GET) | Must hold |
+|---|---|---|
+| RestoreTest site | `/sites/{site}/permissions`, then each Worker app grant by its ID (the list may leave roles out) | exactly one Worker app grant, roles exactly `read` |
+| canary library RestoreTest (list) | `/sites/{site}/lists/{canary list}/permissions` | no Worker app grant of its own; an inherited one only with roles `read` |
+| canary library root folder | `/drives/{RestoreTest drive}/root/permissions` (the library canaries sit in its root) | as the canary list |
+| alice's OneDrive site | `/sites/{her site}/permissions` | no Worker app grant at all |
+| alice's OneDrive Documents list | `/sites/{her site}/lists/{her Documents list}/permissions` | no Worker app grant at all |
+| alice's OneDrive root | `/drives/{alice's drive}/root/permissions` | no Worker app grant at all |
+| alice's RestoreTest canary folder | `/drives/{alice's drive}/items/{RestoreTest}/permissions` | no Worker app grant at all |
+| each of the 10 library canary files | `/drives/{RestoreTest drive}/items/{id}/permissions`, IDs from `seed-manifest.json` | as the canary list |
+| each of the 10 OneDrive canary files | `/drives/{alice's drive}/items/{id}/permissions` | no Worker app grant at all |
+| RestoreTarget list | `/sites/{site}/lists/{RestoreTarget list}/permissions` | exactly one Worker app grant of its own, roles exactly `write` |
+| alice's RestoreTarget folder | `/drives/{alice's drive}/items/{RestoreTarget}/permissions` | the same |
+
+It follows `@odata.nextLink` (only within Graph v1.0). Any other application's grant is printed
+as a `note:` line, not a problem (in SharePoint's claim form too). A GET that fails, or a reply
+without a permission list (`value`), is a problem, never a pass. It refuses to run, reading
+nothing, if `seed-manifest.json` can't be read, lists fewer than 20 canary files, or puts one
+outside its canary drive, a library file outside the canary list's root folder, or a OneDrive
+file outside alice's canary folder (the parents it reads). It prints one line per location (label, `ok` or
+`PROBLEM`, the counts), each problem and note under it, then `canary grants: ok` (exit 0) or
+`canary grants: N problem(s)` (exit 1). Nothing it prints is secret. Save it as the W3.4
+evidence, from the repo root:
+
+```powershell
+pwsh -NoProfile -File lab\entra\check-worker-grants.ps1 | Tee-Object docs\security\w3.4-worker-grants-check.txt
+```
+
+`new-worker-app.ps1` runs the same script at its end, in its own Graph session
+(`-UseCurrentSession`, with the client ID it set up). The rules are a pure function,
+`Test-PermissionRule`, which `tests/test_entra_script.py` runs through `pwsh` row by row,
+failure rows first, and the whole script with `Invoke-MgGraphRequest` stubbed; the same file
+checks that the script sends only GETs, asks only for `Sites.FullControl.All` and names no
+write verb.
 
 ## Recording the Worker's Graph fixtures (W2.1)
 

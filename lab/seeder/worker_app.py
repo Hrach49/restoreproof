@@ -4,21 +4,17 @@ Signs in as the Worker's own app registration with its certificate (client crede
 user), then sends one request per probe and compares the HTTP status with the expected one:
 200 where L1.5 granted read access, 403 on what it didn't grant, and 404 where SharePoint hides
 items around the one folder the app may read. It also asks for tokens for Exchange Online's and
-SharePoint's own APIs, which must carry no roles, and signs in as alice and the admin (the
-seeder app, delegated) to confirm her canary folder and one canary file in each canary location
-exist, so the app's 404 on them means "hidden", not "gone". docs/security/graph-permissions.md
-says why each probe is there.
+SharePoint's own APIs, which must carry no roles, and signs in as alice (the seeder app,
+delegated) to confirm her canary folder exists, so the app's 404 on it means "hidden", not
+"gone". docs/security/graph-permissions.md says why each probe is there.
 
-W3.4 added writes, in three kinds only. In each of the three restore targets it creates one item
-named rp-probe-<uuid> and deletes it again (201, then 204): the Cleaner's grants work. In the
-folder of one canary file in the RestoreTest library and of one in alice's /RestoreTest folder
-it asks to create a folder named rp-probe-invalid:name, a name SharePoint never accepts: that
-must be refused (403, or 404 where SharePoint masks the folder), and can create nothing even if a
-grant were wrong (400). As a control, the same request in the two file restore targets must get
-that 400, which shows what "allowed" looks like. Nothing else is ever written, and nothing is
-ever deleted outside a restore target. (Until 2026-10-02 the canary probe was a PATCH with an
-If-Match no item has; live, SharePoint answered it 412 where the app may read but not write, so
-it couldn't tell a refusal from a write the ETag stopped.)
+W3.4 added writes, in the three restore targets only: in each it creates one item named
+rp-probe-<uuid> and deletes it again (201, then 204), so the Cleaner's grants work. Nothing is
+ever written or deleted outside a restore target, and no request but a GET ever goes to a canary
+location. That the app can't write at a canary is proven read-only, from the grants themselves,
+by lab/entra/check-worker-grants.ps1: live on 2026-10-02 no write probe could tell a refusal
+there (a PATCH with a made-up If-Match got 412, an invalid-name folder create 400 even where the
+app can't read), docs/decisions.md 2026-10-02, W3.4 build notes, point 13.
 
 The certificate's private key is in a PFX file outside the repo; its password is a generic
 credential in Windows Credential Manager. Neither, nor the token, is ever printed.
@@ -43,8 +39,7 @@ from cryptography.hazmat.primitives.serialization import pkcs12
 
 from seeder import MANIFEST_PATH, tenant
 from seeder.auth import AuthError
-from seeder.catalog import CanaryFile, canary_files
-from seeder.graph import GraphClient, GraphError, get_item_by_path, seg
+from seeder.graph import GraphClient, GraphError, seg
 from seeder.http import HttpResponse, Transport
 
 CLIENT_ID_ENV = "RP_LAB_WORKER_CLIENT_ID"
@@ -67,11 +62,6 @@ EXPECTED_ROLES = frozenset({"Sites.Selected", "Files.SelectedOperations.Selected
 # ---- W3.4's write probes
 PROBE_PREFIX = "rp-probe-"
 PROBE_FILE_BODY = b"RestoreProof check-worker-app write probe (W3.4). Safe to delete.\n"
-# The refusal probe and its control: a folder create with a name SharePoint and OneDrive never
-# accept (":" is invalid there), so even a request let through creates nothing. Where the app may
-# write, Graph answers 400 (the control); where it may not, 403, or 404 where a folder grant masks.
-INVALID_NAME = "rp-probe-invalid:name"
-INVALID_FOLDER_BODY = {"name": INVALID_NAME, "folder": {}, "@microsoft.graph.conflictBehavior": "fail"}
 # The Worker reads and deletes mail by ImmutableId (W3.4, point 3): the probe does the same.
 IMMUTABLE_ID = 'IdType="ImmutableId"'
 # A Graph item or message ID, as the Worker accepts one (letters, digits and "!-_=").
@@ -284,18 +274,8 @@ class Probe:
     json_body: Any = None
     body: bytes | None = None
     idempotent: bool = True
-    # Other statuses that pass too: a refusal may be 403 or SharePoint's masking 404.
-    also_ok: tuple[int, ...] = ()
     # W3.4: a delete's item, as the create's reply proved it (WriteTarget.delete_probe).
     item_id: str = ""
-
-    @property
-    def accepted(self) -> tuple[int, ...]:
-        return (self.expected, *self.also_ok)
-
-    @property
-    def expect_text(self) -> str:
-        return "/".join(str(status) for status in self.accepted)
 
 
 _ONE_ID = {"$top": "1", "$select": "id"}
@@ -341,7 +321,7 @@ class ProbeResult:
 
     @property
     def ok(self) -> bool:
-        return self.actual in self.probe.accepted and not self.problem
+        return self.actual == self.probe.expected and not self.problem
 
     @property
     def note(self) -> str:
@@ -452,15 +432,6 @@ class WriteTarget:
             idempotent=False,
         )
 
-    def control_probe(self) -> Probe:
-        """The calibration control in a file restore target: the invalid-name folder create,
-        expected 400 (past the permission check, stopped by the name). It creates nothing."""
-        if self.kind != "file":
-            raise ValueError(f"{self.label} is not a file restore target")
-        return invalid_folder_create(
-            f"{self.label}: invalid name (control)", self.drive_id, self.folder_id, 400
-        )
-
     def delete_label(self) -> str:
         return f"{self.label}: {'permanently delete it' if self.kind == 'mail' else 'delete it'}"
 
@@ -499,7 +470,7 @@ class WriteTarget:
         return Probe(self.delete_label(), path, 204, method="DELETE", headers=headers, item_id=item_id), ""
 
 
-# The folders themselves and the canary folder: never a delete's target, whatever a reply says.
+# The target folders themselves and the canary folder: never a delete's target, whatever a reply says.
 _NEVER_DELETED = frozenset({"root", tenant.ONEDRIVE_TARGET_FOLDER_ID, tenant.ONEDRIVE_FOLDER_ID})
 
 
@@ -517,52 +488,6 @@ def write_targets() -> list[WriteTarget]:
     ]
 
 
-def control_targets() -> list[WriteTarget]:
-    """The file restore targets: the invalid-name control runs in each."""
-    return [t for t in write_targets() if t.kind == "file"]
-
-
-def invalid_folder_create(
-    label: str, drive_id: str, folder_id: str, expected: int, also_ok: tuple[int, ...] = ()
-) -> Probe:
-    """POST /drives/{drive}/items/{folder}/children with INVALID_FOLDER_BODY, and nothing else."""
-    path = f"/drives/{drive_id}/items/{seg(folder_id)}/children"
-    body = dict(INVALID_FOLDER_BODY)
-    return Probe(label, path, expected, method="POST", json_body=body, also_ok=also_ok, idempotent=False)
-
-
-def _is_invalid_folder_create(probe: Probe, path: str) -> bool:
-    """Exactly the invalid-name folder create at `path`: that body, no headers, no query."""
-    return (
-        probe.method == "POST"
-        and probe.path == path
-        and probe.json_body == INVALID_FOLDER_BODY
-        and probe.body is None
-        and not probe.headers
-        and not probe.params
-        and not probe.idempotent
-    )
-
-
-def _invalid_create_note(actual: int | None, control: bool) -> str:
-    """Why an invalid-name create's answer is wrong, for its row; empty when there's nothing to add."""
-    if actual is not None and 200 <= actual < 300:
-        return f"created something: remove {INVALID_NAME} by hand"
-    if control and actual in (403, 404):
-        return "no write in this restore target: a canary's 403 would prove nothing"
-    if not control and actual == 400:
-        return "past the permission check, only the name stopped it: the app may write here"
-    return ""
-
-
-def run_control_probe(graph: GraphClient, target: WriteTarget) -> ProbeResult:
-    """The invalid-name folder create in a file restore target: 400 is what "allowed" looks like."""
-    probe = target.control_probe()
-    _check_write(probe)
-    _, actual = _send(graph, probe)
-    return ProbeResult(probe, actual, "" if actual == probe.expected else _invalid_create_note(actual, True))
-
-
 def _canary_item_ids() -> frozenset[str]:
     """The canary files' drive item IDs from lab/seed-manifest.json (none if it can't be read):
     a delete never names one, whatever a create's reply said."""
@@ -575,20 +500,16 @@ def _canary_item_ids() -> frozenset[str]:
 
 def _check_write(probe: Probe) -> None:
     """Belt and braces, apart from delete_probe's own checks: a create goes only into a restore
-    target itself (the library's root, alice's /RestoreTarget folder, restoretest's messages); the
-    invalid-name folder create (the control) only into the two file targets, with exactly its
-    body; a delete names exactly the item delete_probe proved (probe.item_id), never a target
-    folder or a canary file; and no write names a canary location."""
+    target itself (the library's root, alice's /RestoreTarget folder, restoretest's messages); a
+    delete names exactly the item delete_probe proved (probe.item_id), never a target folder or a
+    canary file; and no write names a canary location. Nothing else is ever sent but a GET."""
     sp, od, mailbox = tenant.RESTORE_TARGET_DRIVE_ID, tenant.ONEDRIVE_DRIVE_ID, tenant.RESTORETEST_UPN
     canary = (tenant.SHAREPOINT_DRIVE_ID, tenant.ONEDRIVE_FOLDER_ID, tenant.SHAREPOINT_LIST_ID)
     item = probe.item_id
     if not item:
         creates = (f"/drives/{sp}/items/root:/", f"/drives/{od}/items/{tenant.ONEDRIVE_TARGET_FOLDER_ID}:/")
-        controls = (f"/drives/{sp}/items/root/children", f"/drives/{od}/items/{tenant.ONEDRIVE_TARGET_FOLDER_ID}/children")
-        allowed = (
-            (probe.method == "PUT" and probe.path.startswith(creates) and probe.path.count(":/") == 2)
-            or (probe.method == "POST" and probe.path == f"/users/{mailbox}/messages")
-            or any(_is_invalid_folder_create(probe, path) for path in controls)
+        allowed = (probe.method == "PUT" and probe.path.startswith(creates) and probe.path.count(":/") == 2) or (
+            probe.method == "POST" and probe.path == f"/users/{mailbox}/messages"
         )
     else:
         deletes = {f"/drives/{sp}/items/{seg(item)}", f"/drives/{od}/items/{seg(item)}"}
@@ -644,83 +565,6 @@ def run_write_probe(graph: GraphClient, target: WriteTarget, name: str | None = 
     return results
 
 
-# ---- W3.4: the refusal probes at the canaries -------------------------------------------------
-
-
-@dataclass(frozen=True)
-class CanaryRefusal:
-    label: str
-    file: CanaryFile  # its uploader confirms it exists, so the app's 404 means "hidden"
-    signed_in_as: str  # "admin" | "alice", for the confirmation row
-
-
-def refusal_canaries() -> list[CanaryRefusal]:
-    """One canary file in the RestoreTest library and one in alice's /RestoreTest folder."""
-    files = canary_files()
-    library = next(f for f in files if f.kind == "sharepoint_file")
-    onedrive = next(f for f in files if f.kind == "onedrive_file")
-    return [
-        CanaryRefusal("RestoreTest library: invalid name beside a canary", library, "admin"),
-        CanaryRefusal("alice's OneDrive: invalid name in RestoreTest", onedrive, "alice"),
-    ]
-
-
-def confirm_canary_file(graph: GraphClient, canary: CanaryRefusal) -> tuple[str | None, str]:
-    """As the file's uploader: its item ID, or None and why. Without it, a 404 to the app could
-    mean the folder is gone rather than hidden, so the refusal probe isn't sent. The ID is only
-    the confirmation: the probe never names a canary file, only the folder it is in."""
-    f = canary.file
-    try:
-        item = get_item_by_path(graph, f.drive_id, f.folder_id, f.name, owner=f.uploader)
-    except GraphError as exc:
-        return None, f"HTTP {exc.status if exc.status is not None else 'none'}"
-    except ValueError:
-        return None, "the answer can't be read"
-    if item is None:
-        return None, f"{f.name} missing: run python -m seeder seed"
-    if not isinstance(item, dict):
-        return None, "the answer can't be read"
-    parent, item_id = item.get("parentReference"), item.get("id")
-    real_folder = f.folder_id == "root" or (isinstance(parent, dict) and parent.get("id") == f.folder_id)
-    if (
-        not isinstance(item.get("file"), dict)
-        or not isinstance(parent, dict)
-        or parent.get("driveId") != f.drive_id
-        or not real_folder
-        or not isinstance(item_id, str)
-        or not _ITEM_ID.fullmatch(item_id)
-        or item_id in _NEVER_DELETED
-    ):
-        return None, f"{f.name} is not a canary file where seed put it"
-    return item_id, f.name
-
-
-def _canary_create_path(canary: CanaryRefusal) -> str:
-    return f"/drives/{canary.file.drive_id}/items/{seg(canary.file.folder_id)}/children"
-
-
-def refusal_probe(canary: CanaryRefusal, confirmed: bool) -> Probe:
-    """The invalid-name folder create in the canary file's own folder: refused is 403 (no write)
-    or 404 (masked). 400 means the request passed the permission check and only the name stopped
-    it, so the app may write there; a 2xx means it created something. The only request ever sent
-    at a canary location; it names the folder, never a canary file, so a write grant on one
-    canary file alone isn't seen here (only a read-only listing of its permissions shows it)."""
-    if not confirmed:
-        return Probe(canary.label, "(not sent)", 403, method="POST", also_ok=(404,))
-    return invalid_folder_create(canary.label, canary.file.drive_id, canary.file.folder_id, 403, also_ok=(404,))
-
-
-def run_refusal_probe(graph: GraphClient, canary: CanaryRefusal, confirmed: bool) -> ProbeResult:
-    probe = refusal_probe(canary, confirmed)
-    if not confirmed:
-        return ProbeResult(probe, None, "not sent: the canary file's existence wasn't confirmed")
-    path = _canary_create_path(canary)
-    if not _is_invalid_folder_create(probe, path):
-        raise ValueError(f"a canary location is only ever sent POST {path} with {INVALID_FOLDER_BODY}")
-    _, actual = _send(graph, probe)
-    return ProbeResult(probe, actual, "" if actual in probe.accepted else _invalid_create_note(actual, False))
-
-
 # ---- the command ---------------------------------------------------------------------------
 
 
@@ -732,15 +576,15 @@ def run_check(
     read_password: Callable[[str], str | None],
     transport: Transport,
     alice_token: Callable[[], str],
-    admin_token: Callable[[], str],
     app: Any = None,
     out: Callable[[str], None] = print,
     sleep: Callable[[float], None] | None = None,
 ) -> int:
     """0: every probe, every token's roles and the canary folder as expected. 1: anything
     unexpected. Credential and sign-in problems raise CredentialError/AuthError (the CLI exits 2).
-    alice_token: alice's delegated Graph token (the seeder app), for reads of her canary folder
-    and one of its files. admin_token: the admin's, for one read of a canary file in the library."""
+    alice_token: alice's delegated Graph token (the seeder app), for one read of her canary folder.
+    No write at a canary is ever probed: lab/entra/check-worker-grants.ps1 proves the refusal
+    read-only, from the grants."""
     password = read_password(CREDENTIAL_TARGET)
     if not password:
         raise CredentialError(
@@ -758,7 +602,10 @@ def run_check(
     def say(line: str) -> None:
         out(_redact(line, secrets))
 
-    say("RestoreProof Worker app check (L1.5, W3.4): app-only Microsoft Graph; writes only in the restore targets")
+    say(
+        "RestoreProof Worker app check (L1.5, W3.4): app-only Microsoft Graph; writes only in the restore targets; "
+        "canary write refusal is checked by lab/entra/check-worker-grants.ps1"
+    )
     say(f"tenant ID    {tenant_id}")
     say(f"client ID    {client_id}")
     say(f"certificate  SHA-1 thumbprint {certificate.thumbprint_sha1}, expires {certificate.not_after:%Y-%m-%d}")
@@ -783,35 +630,18 @@ def run_check(
     canary_ok, canary_note = confirm_canary_folder(alice)
     say(f"{'canary folder, read as alice':<32}  {canary_note}  {'ok' if canary_ok else 'UNEXPECTED'}")
     unexpected += 0 if canary_ok else 1
-    owners = {"alice": alice}
-    canary_ids: list[str | None] = []
-    for canary in refusal_canaries():
-        if canary.signed_in_as not in owners:
-            owners[canary.signed_in_as] = GraphClient(
-                transport, admin_token, f"{tenant.ADMIN_UPN} (seeder app)", sleep=sleep or _sleep
-            )
-        item_id, note = confirm_canary_file(owners[canary.signed_in_as], canary)
-        where = "library" if canary.file.kind == "sharepoint_file" else "OneDrive"
-        label = f"canary file, {where}, read as {canary.signed_in_as}"
-        say(f"{label:<32}  {note}  {'ok' if item_id else 'UNEXPECTED'}")
-        unexpected += 0 if item_id else 1
-        canary_ids.append(item_id)
     say("")
 
     graph = GraphClient(transport, signin.token, "RestoreProof Worker (app-only)", sleep=sleep or _sleep)
     results = run_probes(graph, probes())
     for target in write_targets():
         results += run_write_probe(graph, target)
-    for target in control_targets():
-        results.append(run_control_probe(graph, target))
-    for canary, item_id in zip(refusal_canaries(), canary_ids):
-        results.append(run_refusal_probe(graph, canary, item_id is not None))
     say(f"{'result':<10}  {'expect':>7}  {'got':>6}  {'probe':<62}  request")
     for r in results:
         actual = "none" if r.actual is None else str(r.actual)
         verdict = "ok" if r.ok else "UNEXPECTED"
         request = f"{r.probe.method} {r.probe.path}"
-        say(f"{verdict:<10}  {r.probe.expect_text:>7}  {actual:>6}  {r.probe.label:<62}  {request}{r.note}")
+        say(f"{verdict:<10}  {r.probe.expected:>7}  {actual:>6}  {r.probe.label:<62}  {request}{r.note}")
     passed = sum(r.ok for r in results)
     unexpected += len(results) - passed
     summary = f"{passed}/{len(results)} probes as expected"

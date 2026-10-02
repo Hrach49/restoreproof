@@ -9,14 +9,14 @@ fake answers them from `app_grants`, the resources the app was granted, the way 
 in the lab: 200 on a granted resource, 403 on any other one, and 404 on items a folder grant
 masks. APP_GRANTS is what L1.5 and W3.4 grant.
 
-App-only writes (W3.4's probes) follow the same grants: a file uploaded into, a folder created
-in, or an item deleted or PATCHed in, a folder the app may write; a draft created in, or
+App-only writes (W3.4's probes, in the restore targets only) follow the same grants: a file
+uploaded into, or an item deleted in, a folder the app may write; a draft created in, or
 permanently deleted from, a mailbox it may write. Without write: 403 where the app may read, 404
-where a folder grant masks the item. A grant on one item alone lets that item be PATCHed or
-deleted, never a folder be created beside it. An If-Match that isn't the item's ETag is 412 wherever the
-app may read the item, write or not: SharePoint checks the ETag before write permission (seen
-live on 2026-10-02 at a canary file). A folder create with a name SharePoint never accepts is
-400, but only where the app may write: elsewhere it is refused (403/404) first.
+where a folder grant masks the item. A delete whose If-Match isn't the item's ETag is 412 wherever
+the app may read the item, write or not: SharePoint checks the ETag before write permission (seen
+live on 2026-10-02 for a PATCH at a canary file, build notes point 12; the fake assumes a DELETE
+alike). There is no folder-create or PATCH route: check-worker-app sends neither (no write probe
+can prove a refusal at a canary, docs/decisions.md 2026-10-02, W3.4 build notes, point 13).
 """
 
 import base64
@@ -48,14 +48,10 @@ _DRIVE = re.compile(r"^/drives/([^/]+)(?:/(root|items/[^/]+)(/children)?)?$")
 _APP_UPLOAD = re.compile(r"^/drives/([^/]+)/items/([^/:]+):/([^/:]+):/content$")
 _APP_ITEM = re.compile(r"^/drives/([^/]+)/items/([^/:]+)$")
 _APP_PERMANENT_DELETE = re.compile(r"^/users/([^/]+)/messages/([^/]+)/permanentDelete$")
-_APP_CHILDREN = re.compile(r"^/drives/([^/]+)/items/([^/:]+)/children$")
-# Characters SharePoint and OneDrive refuse in a file or folder name.
-_INVALID_NAME_CHARS = set('"*:<>?/\\|')
 
 # Grant keys: "mailbox:<upn lower>", "site:<site id>", "folder:<drive id>/<item id>", "directory";
 # W3.4's writes: "mailbox-write:<upn lower>", "list-write:<drive id>" (a library's whole list),
-# "folder-write:<drive id>/<item id>", "item-write:<drive id>/<item id>" (one driveItem alone, as
-# Files.SelectedOperations.Selected allows: it opens that item, not its folder).
+# "folder-write:<drive id>/<item id>".
 APP_GRANTS = frozenset(
     {
         f"mailbox:{tenant.RESTORETEST_UPN.lower()}",
@@ -334,40 +330,21 @@ class FakeTenant:
             parent_id = "01FAKERESTORETARGETROOT" if folder == "root" else folder
             item = {"id": item_id, "name": name, "eTag": etag, "file": {}, "parentReference": {"driveId": drive_id, "id": parent_id}}
             return json_response(201, item)
-        if (m := _APP_CHILDREN.match(path)) and method == "POST":
-            drive_id, folder = m.groups()
-            access = self._app_access(drive_id, folder)
-            if access != "write":
-                return self._refused(access)
-            request = json.loads(body or b"{}")
-            name = request.get("name")
-            if not isinstance(name, str) or not name or set(name) & _INVALID_NAME_CHARS:
-                return graph_error(400, "invalidRequest", "The provided name contains invalid characters.")
-            if any(i["name"] == name and i["parent"] == folder for (d, _), i in self.app_items.items() if d == drive_id):
-                return graph_error(409, "nameAlreadyExists", "The specified item name already exists.")
-            item_id = self._next_id("01FAKEAPPFOLDER")
-            etag = f'"{{{item_id}}},1"'
-            self.app_items[(drive_id, item_id)] = {"name": name, "parent": folder, "eTag": etag, "data": None}
-            return json_response(201, {"id": item_id, "name": name, "eTag": etag, "folder": {"childCount": 0}})
-        if (m := _APP_ITEM.match(path)) and method in ("DELETE", "PATCH"):
+        if (m := _APP_ITEM.match(path)) and method == "DELETE":
             drive_id, item_id = m.groups()
             located = self._app_locate(drive_id, item_id)
             if located is None:
                 return graph_error(404, "itemNotFound", "The resource could not be found.")
             folder, etag, remove = located
             access = self._app_access(drive_id, folder)
-            if f"item-write:{drive_id}/{item_id}" in self.app_grants:
-                access = "write"
             if_match = headers.get("If-Match")
             if access in ("write", "read") and if_match is not None and if_match != etag:
-                # Live (2026-10-02): the ETag is checked before write permission.
+                # Live (2026-10-02, a PATCH at a canary file): the ETag is checked before write permission.
                 return graph_error(412, "resourceModified", "ETag does not match current item's value")
             if access != "write":
                 return self._refused(access)
-            if method == "DELETE":
-                remove()
-                return HttpResponse(204)
-            return json_response(200, {"id": item_id})
+            remove()
+            return HttpResponse(204)
         return None
 
     def _app_answer(self, path: str) -> HttpResponse | None:

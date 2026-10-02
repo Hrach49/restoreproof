@@ -477,7 +477,10 @@ OneDrive (RestoreTarget folder): 1 item(s)
   message's immutable ID. A missing or empty field shows as `-`, a missing or empty
   subject as `(no subject)`.
 - **Files:** `SIZE` is in bytes, `ID` the driveItem ID. Subfolders and items that aren't files
-  are skipped (restores land files in the root) and don't count.
+  are skipped (restores land files in the root) and don't count. Since W3.4, when a file
+  target's listing skipped any, a line under its table (or under its heading, with no rows)
+  says how many: `  (<n> folder(s) or other entries not listed)`. A target showing `0 item(s)`
+  and no such line holds nothing at all.
 - **`--hash`** downloads each file (without the Graph token, from the test tenant's SharePoint
   only) and adds `SHA256` and `RULE` to every table: `text-v1` for mail (the hash of the
   body's text, `lab/README.md`), `bytes` for files. `SIZE` is then the bytes downloaded, which
@@ -517,10 +520,17 @@ guard (W2.7); the command has no restore path of its own. Since W3.2 it reads th
 items back through Graph and checks them (`docs/verification.md`, "Comparing"): it lists the
 targets the sample has items for just before the restore and again after it, hashing every
 mail body and this run's copies of the sampled files.
-Nothing is cleaned up: the restored copies stay in the targets until removed by hand (W3.4
-automates it); copies earlier runs left are ignored and counted. The code is
-`rp::run_restore_command` in `worker/include/rp/restore_command.hpp`; the choices are
-`docs/decisions.md` 2026-09-30 (W2.8) and 2026-10-01 (W3.2).
+Since W3.4 it also **deletes**, in the three restore targets only: it empties all three
+before choosing the sample, and again after the run's status line once a restore may have
+been sent (the Cleaner, `docs/verification.md`, "Cleaning the restore targets (W3.4)").
+Everything in them goes: every mail in the `restoretest` Inbox, delivered mail too, and
+every plain file in the RestoreTarget library's root and alice's `/RestoreTarget` folder.
+Mails are permanently deleted (never through Deleted Items); files go to the site's recycle
+bin. Folders and other entries that aren't plain files are never deleted: they are counted
+as skipped and left for the owner. Copies an earlier run left that the clean before couldn't
+delete are still ignored and counted by the check. The code is `rp::run_restore_command` in
+`worker/include/rp/restore_command.hpp`; the choices are `docs/decisions.md` 2026-09-30
+(W2.8), 2026-10-01 (W3.2) and 2026-10-02 (W3.4).
 
 It needs:
 
@@ -541,7 +551,23 @@ It needs:
 - no restore session of the Veeam account still `Working`: the restore checks, after the
   guard and before any explore session, and refuses with `restore error: veeam_m365: Veeam has restore sessions of <account> still
   Working (<IDs>); stop them first (docs/api/veeam-m365/08-sweep-sessions.ps1); nothing was
-  restored`, exit 4.
+  restored`, exit 4;
+- **no other RestoreProof run on this machine** (W3.4). After the config, the secrets, the
+  manifest and the cursor are checked, and before the `--record` folder is made or Veeam is
+  called, the command takes the machine-wide named mutex `Global\RestoreProof-restore-targets`
+  without waiting, and holds it until it exits (`worker/include/rp/run_lock.hpp`). If another
+  run holds it, or Windows refuses to open it (another user's run made it): `restore error:
+  another RestoreProof run is using the restore targets; nothing was done`, exit 4, with no
+  run line and no status. If its last holder ended without releasing it (a crashed run), this
+  run is refused once with `restore error: the last RestoreProof run ended without releasing
+  the restore targets; nothing was done; the next run cleans them before it restores`, exit 4,
+  and the mutex is let go, so the next run takes it. One run's cleanup
+  could otherwise delete another run's copies before they are read back, which would read as
+  `missing`, a false `fail`. `graph list` only reads and doesn't take it; the two
+  `[live][writes]` tests do (`docs/testing.md`);
+- the Worker app's write grants on the three restore targets
+  (`docs/security/graph-permissions.md`). Without them the cleanup's deletes are refused
+  (`graph_permission` on that target, below) and the run goes on; the copies stay.
 
 The flags come in any order, each at most once:
 
@@ -561,6 +587,7 @@ the test's clock):
 ```
 restore point 2026-09-27T22:00:48.1447833Z  c2f0f2e7-177f-48ac-992b-93a50cf702e35e1c0a24-0000-4000-8000-000000000924  (veeam_org_name RestoreProofLab.onmicrosoft.com)
 run run-0001  seed 8b26e36a
+cleanup before ok: deleted 0 mail, 0 sharepoint, 0 onedrive
 canary cursor 10,0,0 -> 11,0,0
   KIND        REQUESTED  CANARIES  RANDOM  NOTE
   mail        1          1 of 1    0 of 0
@@ -582,12 +609,14 @@ restore succeeded: 1 of 1 item(s) restored in 0:00:05
 check: 1 match, 0 mismatch, 0 missing, 0 error
 
 status pass: 1 of 1 item(s) verified: manifest 1, fields 0, metadata 0
+cleanup after ok: deleted 1 mail, 0 sharepoint, 0 onedrive
 ```
 
 - **The header.** Its first two lines (the restore point, the run ID and seed) are printed as
   soon as the run ID exists, before the sample is chosen, which browses Veeam: a run that fails
-  from then on still shows its run ID. The rest (the canary cursor and the next one, the
-  per-type table, `restoring ...`) is printed before the restore starts, which takes minutes.
+  from then on still shows its run ID. The clean before's line follows (below). The rest (the
+  canary cursor and the next one, the per-type table, `restoring ...`) is printed before the
+  restore starts, which takes minutes.
   `CANARIES` is taken of half the size rounded up, `RANDOM` taken of half rounded down; fewer
   taken is a shortfall, named in `NOTE` (`canary shortfall`, `random shortfall` or both) and
   never filled. A shortfall never changes the run's status: with every sampled item verified
@@ -638,11 +667,51 @@ status pass: 1 of 1 item(s) verified: manifest 1, fields 0, metadata 0
   `error stale_target`; one item that couldn't be checked beside matches is `error`, never a
   partial pass; a missing item beside one that couldn't be checked is `fail`. The decision
   table, the codes and the warnings: `docs/verification.md`, "The status decision table".
+  Since W3.4 the status line is no longer the last stdout line: the clean after's line follows
+  it.
+- **The cleanup (W3.4).** Two lines on stdout, counts and codes only, never a name or an ID:
+  the clean before's, right after the run line, and the clean after's, right after the status
+  line and its warnings, so the decided status never waits on it:
+
+  ```
+  cleanup <before|after> ok: deleted <a> mail, <b> sharepoint, <c> onedrive
+  cleanup <before|after> incomplete: deleted <a> mail, <b> sharepoint, <c> onedrive[; left <x> mail, <y> sharepoint, <z> onedrive][; skipped <n>][; <target> <code>]...[; the restore may still be running; the next run cleans before]
+  cleanup after skipped: nothing was restored
+  cleanup after skipped: no Graph client
+  ```
+
+  `deleted` counts Graph's 204s; `left` what the last listing still showed; `skipped` the
+  entries never deleted (a folder, a package, a file not proving its place); `<target>` is
+  `mail`, `sharepoint` or `onedrive`, and `<code>` what stopped it: `target_guard`,
+  `graph_auth`, `graph_permission`, `graph_transient` (in both rounds), `graph`, `config` or
+  `internal`. For example `cleanup after incomplete: deleted 2 mail, 0 sharepoint, 0 onedrive;
+  left 0 mail, 1 sharepoint, 0 onedrive; sharepoint graph_permission`. On stderr, each target
+  that stopped on an error gets `cleanup error: <target>: <fixed text> (<code>)`, and each
+  target not left empty `warning: cleanup: <target> not emptied <before|after> the run (left
+  <x>, skipped <n>[, <code>])`; the Cleaner's own warning and error lines, with Graph's message
+  or a skipped entry's ID, go to stderr too, through `redact()`.
+  - The clean after runs only when the status says a restore may have been sent
+    (`restore_sent`); otherwise its line is `cleanup after skipped: nothing was restored`, so
+    every run that prints a status line ends with a `cleanup after` line. It runs after the
+    check, so nothing is deleted before it is read back, and also after a check that threw.
+    When the restore stopped with an error that doesn't promise `nothing was restored` (a POST
+    with no answer, a poll that gave up), it still runs, and its line ends `the restore may
+    still be running; the next run cleans before`: Veeam may still be writing.
+  - **The cleanup never changes the status or the exit code**, but in one case: when the clean
+    before's guard check refuses a target (it isn't the RestoreTarget the config says), the run
+    stops there, before the sample is chosen and before any Veeam explore session: `cleanup
+    error: <target>: the restore-target guard refused the target; nothing was deleted in it
+    (target_guard)`, one `SECURITY: cleanup: ...` line in the log, then `status error
+    target_guard: the run stopped before the restore: the restore-target guard refused
+    (target_guard); nothing was restored`, exit 4. The other targets are cleaned all the same.
+    Any other cleanup failure, or leftovers, only shows in these lines: a `pass` whose clean
+    after left something still exits 0. A failure of the clean after itself prints `cleanup
+    error: unexpected failure` and keeps the exit code.
 - **If reading back or checking fails for a reason that isn't Graph's** (out of memory, a bug),
   the check's table isn't printed: `check error: unexpected failure`, then `restore error:
   the restore had started: items may be in the restore targets (run <run ID>)`, and `status
   error internal: the restored items couldn't be checked: an unexpected failure (internal)`,
-  exit 1.
+  exit 1. The clean after then deletes the copies; the restore's own rows are the evidence.
 - **Before the restore**, the targets are read for the check: a failure there stops the run
   and nothing is restored: `check error: <message>; nothing was restored`, then `status error
   <code>: the run stopped before the restore: ...; nothing was restored`, exit 1 (`config`:
@@ -667,22 +736,36 @@ status pass: 1 of 1 item(s) verified: manifest 1, fields 0, metadata 0
   `restore error: the restore had started: items may be in the restore targets (run <run
   ID>)`, and the status reads `the restore didn't complete: ...; items may be in the restore
   targets`; with that promise it reads `the restore didn't start: ...; nothing was restored`.
-  Check with `rpworker graph list`.
+  The "had started" line (`restore_note` in the code) says what the restore did; the clean
+  after's line that ends the run says what is left (`the restore may still be running` when
+  Veeam may still be writing). Check with `rpworker graph list`.
 - The output is UTF-8; control characters in Veeam's text are shown as spaces. Warnings go to
   stderr only.
 
-An error is one line on stderr. After the header it follows what is on stdout:
+An error's line goes to stderr, after whatever stdout shows by then. For example, with
+`test_library_id` naming a library that isn't the RestoreTarget library (a drive named
+`Dokumenty`), the clean before refuses it, cleans the other two targets and stops the run:
 
 ```
-check error: the drive test_library_id names is "Dokumenty", not "RestoreTarget": the Worker reads only the RestoreTarget library; nothing was listed; nothing was restored
+run run-0001  seed 8b26e36a
+cleanup before incomplete: deleted 0 mail, 0 sharepoint, 0 onedrive; sharepoint target_guard
+
+status error target_guard: the run stopped before the restore: the restore-target guard refused (target_guard); nothing was restored
+cleanup after skipped: nothing was restored
 ```
 
-and stdout ends with `status error target_guard: the run stopped before the restore: the
-restore-target guard refused (target_guard); nothing was restored`, exit 4.
+with, on stderr, the log's `SECURITY: cleanup: the drive test_library_id names is
+"Dokumenty", ...` line and
 
-(the check's before snapshot reads the targets through the same guard checks the restore
-runs, so a wrong target is refused there first; the restore's own refusal reads `restore
-error: target guard: ...`).
+```
+cleanup error: sharepoint: the restore-target guard refused the target; nothing was deleted in it (target_guard)
+warning: cleanup: sharepoint not emptied before the run (left 0, skipped 0, target_guard)
+```
+
+exit 4. Veeam saw only the sign-in, the restore points and the sign-out. (The clean before
+resolves all three targets through the same guard checks the check's before snapshot and the
+restore use, so it refuses first; the snapshot's refusal reads `check error: ...; nothing was
+restored`, the restore's own `restore error: target guard: ...`.)
 
 Veeam's and the guard's messages never contain a password, a token or a certificate. Debug
 lines are not shown.
@@ -693,7 +776,8 @@ lines are not shown.
 among their other flags, once. It writes every exchange the command has with a service as a
 test fixture, scrubbed, and changes nothing else: the same requests go out and the same output
 comes back, then one more line on stdout, `recorded <n> exchange(s) in <dir>`. `restore
---record` still writes into the tenant. How to record and replay: `docs/testing.md`,
+--record` still writes into the tenant, and records the cleanup's listings, `permanentDelete`s
+and `DELETE`s under `graph` (W3.4). How to record and replay: `docs/testing.md`,
 "Recording fixtures"; what a fixture keeps and never keeps: `docs/decisions.md` 2026-10-01,
 "Q2.1".
 
@@ -718,7 +802,7 @@ The same for every `rpworker` command (`rp::exit_code` in `worker/include/rp/cli
 | 1 | The config or a secret is missing or invalid, or something unexpected failed (an error no command handles ends here too, never in an `abort()`, whose exit code would be 3). For `graph list` this includes the certificate: `RP_GRAPH_CERT_PFX_BASE64` unset, a PFX that doesn't open with `RP_GRAPH_CERT_PASSWORD`, or a certificate that isn't valid now, all found before any request. For `restore`, also the same certificate problems as `graph list` (before any Veeam call; `RP_GRAPH_CERT_PASSWORD` unset is fine for a PFX without a password), the certificate failing as the check's reads before the restore sign in (nothing restored), a manifest that doesn't load, whose `tenant_id` isn't `graph_tenant_id` or that names a restore target (before any Veeam call), an unknown connector, a run whose status is `error config` or `error internal` (the facts not adding up, or the check failing for a reason that isn't Graph's), and stdout failing after a restore whose run passed. With `--record`, a folder that isn't new or empty, and a command that succeeded but whose recording isn't complete. | `config error: <path>: <message>`, `config error: the --config path is not valid UTF-8`, `config error: the --manifest path is not valid UTF-8`, `config error: canary manifest: <message>`, `config error: cannot find the ProgramData folder`, `config error: environment variable <name> is not valid Unicode`, `config error: RP_VEEAM_USERNAME is not set` (then `RP_VEEAM_PASSWORD`), `config error: RP_GRAPH_CERT_PFX_BASE64 is not set` (or another message naming the certificate's variables), for `restore` `config error: unknown connector "<name>" (known: <names>)`, `check error: <message>; nothing was restored`, `check error: unexpected failure` and `error: writing the output failed after the restore ran (run <run ID>, restore ...); run status ...`, with `--record` `config error: <dir>: the --record folder is not empty` and `record error: <service>/<file>: refused: ...`, `config error: unexpected failure` or `error: unexpected failure`; an unexpected failure's own message is never shown |
 | 2 | The service refused the sign-in, the account's role, the token or a permission: Veeam's credentials or role; Entra refusing the Worker app's sign-in; Graph refusing the token, or denying a call for want of a grant (the message names the grant, see `docs/security/graph-permissions.md`); for `restore`, a run whose status is `error backup_auth`, `graph_auth` or `graph_permission`: on the check's reads before the restore (nothing restored) or after it (the item couldn't be checked). | `veeam error: <message>`, `graph error: <message>`, `restore error: <message>` or `check error: <message>; nothing was restored` |
 | 3 | The service couldn't be reached or asked to try later: no connection, a timeout, a TLS handshake that broke off, or a 502, 503 or 504 (for Graph also a 429 or another 5xx) after the retries; for `restore`, a run whose status is `error backup_transient` or `graph_transient`, before the restore or after it. | `veeam error: <message>`, `graph error: <message>`, `restore error: <message>` or `check error: <message>; nothing was restored` |
-| 4 | Any other error from the service. Veeam: an unknown organisation, a bad request, an unexpected answer, or no organisation named `veeam_org_name`; also Veeam's certificate failing verification, which a retry won't fix: `veeam_ca_file` doesn't hold Veeam's certificate or its CA, or Veeam's certificate was renewed and no longer matches `veeam_cert_sha256` (see "Veeam's default certificate"). Graph: the mailbox, drive or folder not found, a mailbox, drive or folder the guard refuses (not the RestoreTarget the config says; a 403 on the test mailbox's Inbox included), a download that failed, an unexpected answer. `restore`: no restore points or a `--point` ID that isn't one of them (before the run line), and a run whose status is `error` with any other code: `target_guard` (the restore-target guard refusing, nothing restored), `not_in_backup` (a sampled item or the organisation not in Veeam), `backup` (a restore session of the Veeam account still `Working`, the restore credential's export failing when not elevated, any other error of the restore), `empty_sample`, `not_run`, `restore_contradiction`, `backup_infrastructure` (an item Veeam failed for an infrastructure reason that the check didn't find), `graph` (any other Graph error, before the restore or reading an item back), `stale_target` (only an earlier run's copy of an item is there). | `veeam error: <message>` (`... TLS failure: ...` for a certificate), `veeam error: organisation <name> (veeam_org_name) not found in Veeam`, `graph error: <message>`, `restore error: <message>` (`restore error: target guard: ...` for the guard), `restore error: no restore points for veeam_org_name`, `restore error: restore point <id> not found for veeam_org_name`, `check error: <message>; nothing was restored`, or a `check error: <message>` per target that couldn't be read back; after an error of a restore that had started, also `restore error: the restore had started: items may be in the restore targets (run <run ID>)`; for a run, the status line is on stdout and its warnings follow on stderr |
+| 4 | Any other error from the service. Veeam: an unknown organisation, a bad request, an unexpected answer, or no organisation named `veeam_org_name`; also Veeam's certificate failing verification, which a retry won't fix: `veeam_ca_file` doesn't hold Veeam's certificate or its CA, or Veeam's certificate was renewed and no longer matches `veeam_cert_sha256` (see "Veeam's default certificate"). Graph: the mailbox, drive or folder not found, a mailbox, drive or folder the guard refuses (not the RestoreTarget the config says; a 403 on the test mailbox's Inbox included), a download that failed, an unexpected answer. `restore`: another RestoreProof run holding the run mutex, no restore points or a `--point` ID that isn't one of them (before the run line), and a run whose status is `error` with any other code: `target_guard` (the restore-target guard refusing, in the clean before or later, nothing restored), `not_in_backup` (a sampled item or the organisation not in Veeam), `backup` (a restore session of the Veeam account still `Working`, the restore credential's export failing when not elevated, any other error of the restore), `empty_sample`, `not_run`, `restore_contradiction`, `backup_infrastructure` (an item Veeam failed for an infrastructure reason that the check didn't find), `graph` (any other Graph error, before the restore or reading an item back), `stale_target` (only an earlier run's copy of an item is there). | `veeam error: <message>` (`... TLS failure: ...` for a certificate), `veeam error: organisation <name> (veeam_org_name) not found in Veeam`, `graph error: <message>`, `restore error: <message>` (`restore error: target guard: ...` for the guard), `restore error: another RestoreProof run is using the restore targets; nothing was done`, `restore error: no restore points for veeam_org_name`, `restore error: restore point <id> not found for veeam_org_name`, `cleanup error: <target>: the restore-target guard refused the target; nothing was deleted in it (target_guard)`, `check error: <message>; nothing was restored`, or a `check error: <message>` per target that couldn't be read back; after an error of a restore that had started, also `restore error: the restore had started: items may be in the restore targets (run <run ID>)`; for a run, the status line is on stdout and its warnings follow on stderr |
 | 5 | `restore` only: the run's status is `fail` (W3.3): an item is missing or doesn't match, its target read fine and Veeam didn't blame infrastructure for it, whatever Veeam's own status says (`status fail: ...` on stdout). A result about the backup, not an error: a run that couldn't run at all or couldn't tell is `error`, 1 to 4. | (nothing but the run's warnings) |
 | 64 | The command line isn't understood. For `restore` also, once the config or the manifest is read: every sample size 0, or a `--canary-cursor` out of the manifest's range. | the usage line; for `restore`, `usage error: every sample size is 0 (--mail, --sp, --od, or config's sample_mail, sample_sp, sample_od): nothing to restore` or `usage error: --canary-cursor: the <kind> cursor must be below <n>, the manifest's <kind> canaries` (`... must be 0: the manifest has no <kind> canaries`) |
 

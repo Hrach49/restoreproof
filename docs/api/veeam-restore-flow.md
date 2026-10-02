@@ -130,8 +130,8 @@ revision's.
 | alice's `/RestoreTarget` | 0 | 1: `rp-canary-16.pdf`, 925 bytes |
 
 All 8 SHA-256 values equal `lab/seed-manifest.json`: the mails' `text-v1` `body_sha256`, the
-pdfs' `content_sha256` (rule `bytes`). W3.4's cleanup doesn't exist yet, so the owner removed
-the 8 copies by hand. After that, `rpworker graph list` found 0 items in each of the three
+pdfs' `content_sha256` (rule `bytes`). W3.4's cleanup didn't exist yet, so the owner removed
+the 8 copies by hand (since W3.4 `rpworker restore` deletes them itself, §18). After that, `rpworker graph list` found 0 items in each of the three
 targets (2026-09-28, about 21:38Z).
 
 ## 2. Preflight
@@ -146,6 +146,9 @@ and points to [`08-sweep-sessions.ps1`](veeam-m365/08-sweep-sessions.ps1). The d
 
 The Worker's planned first pipeline step (cleanup, veeam-notes §4.4) stops leftover sessions
 instead of refusing. The caveat there still holds: run one test at a time per Veeam server.
+Since W3.4 `rpworker restore` enforces it per machine with the named mutex
+`Global\RestoreProof-restore-targets` (`worker/include/rp/run_lock.hpp`), taken before its
+first Veeam call; two Workers on two machines against one tenant aren't covered.
 
 ### 2.2 The organisation's app
 
@@ -960,8 +963,12 @@ four W2.4 runs and `w10-*.json` from W1.0's failed restores, listed in
   machines.
 - **Two restore calls from one explore session** (for mails from two mailboxes): not tried.
   W2.5's live run (§19) had one source container per type, so it didn't try it either.
-- **Cleanup.** The owner removed the 8 restored items by hand (§1), and the one from mail r1. W3.4 needs write
-  permissions the Worker app doesn't have (`docs/security/graph-permissions.md`).
+- **Cleanup.** The owner removed the 8 restored items by hand (§1), and the one from mail r1.
+  W3.4 built the Worker's own cleanup (`rp::graph::Cleaner`, `docs/verification.md`, "Cleaning
+  the restore targets (W3.4)"): `rpworker restore` empties the three targets before and after
+  each run through Graph, with the narrow write grants of `docs/security/graph-permissions.md`.
+  Not run live yet; the copies from W2.5, W2.8 and W3.2 are still in the targets until the
+  first live clean.
 - **Canary missing from the restore point** (§4, §15): zero matches for a canary the manifest
   dates before `backupTime` is proposed as `fail`, not `error`. W3.3 settles it.
 
@@ -1003,7 +1010,7 @@ restore"): [`w2.5-live-restore-result.json`](veeam-lab/w2.5-live-restore-result.
 - per-item outcomes from the events, matched by `itemName` (§12), for all three types.
 
 **Afterwards.** `08-sweep-sessions.ps1 -WhatIf` listed 96 sessions, none `Working`: the finally
-path (§11) stopped all three explore sessions. The 10 copies are still in the targets; the owner
-removes them by hand until W3.4's cleanup exists (§18).
+path (§11) stopped all three explore sessions. The 10 copies stayed in the targets; since W3.4
+the live test ends with the Cleaner's clean after the run, so it leaves none (§18).
 
 Still untried: two restore calls from one explore session (§18).

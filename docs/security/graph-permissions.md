@@ -336,7 +336,7 @@ A sentinel test greps every output for the PFX password, the token and the priva
 
 ## Open items
 
-1. **Write access for cleanup (W3.4). Decided; live proof pending.** Decided in
+1. **Write access for cleanup (W3.4). Closed on 2026-10-02:** `check-worker-app` 22/22 (list `write` allows a `DELETE`, folder `write` allows deleting a child, `permanentDelete` takes the ImmutableId) and `check-worker-grants.ps1` "canary grants: ok", both saved. Decided in
    `docs/decisions.md` 2026-10-02, "W3.4: cleaning the restore targets before and after each
    run", point 1: grants #2, #3 and #4 above, made by the owner with
    `lab/entra/new-worker-app.ps1` and the admin consent, to be proved by a re-run of

@@ -8,7 +8,7 @@
 // alice's /RestoreTarget folder, and a message with subject rp-probe-<uuid>
 // created in the restoretest Inbox (a draft there, which the Cleaner lists
 // like any Inbox mail). The Cleaner then has real deletes to make, and the
-// doubled deletes below a real 404 to see. The seeds are sent by the test
+// doubled deletes below an item already gone to see. The seeds are sent by the test
 // itself, with a token of its own and cpr: GraphClient has no create member
 // (its only write is remove(), for the Cleaner) and rp::IHttpClient has no
 // PUT. Before any seed is sent, the configured IDs are checked against every
@@ -30,12 +30,19 @@
 // skips is left for the owner and fails the last check: remove it by hand.
 //
 // W3.4 point 9: the Cleaner's first file DELETE and first mail
-// permanentDelete are each sent twice, and the second answer (Graph's 404 for
-// an item already gone) is what the Cleaner sees: it counts that item `gone`.
+// permanentDelete are each sent twice, and the second answer is what the
+// Cleaner sees: it counts that item `gone`. For the file that answer is
+// Graph's 404 itemNotFound; for the mail it is 403 ErrorCannotDeleteObject
+// (seen live on 2026-10-02), which remove() follows with one check, is the
+// message gone: a GET of the message's parentFolderId (live it answered 200,
+// the purged message in Recoverable Items) and a GET of the Purges folder's
+// ID; only a byte-for-byte match (or a 404) makes it gone, the Inbox's ID
+// leaves the 403, any other folder is an error (W3.4 build notes point 15).
 // With RP_LIVE_RECORD_DIR set to a new or empty folder, every Graph exchange
 // of the Cleaner and the final listings is recorded there as `rpworker
-// restore --record` would (rp::FixtureRecorder, under graph/), those 404s
-// included, for the w34-*-404-* fixtures. The seeds are not recorded.
+// restore --record` would (rp::FixtureRecorder, under graph/), the second
+// answers and those GETs included; the first answer of each doubled send is
+// not (the wrapper sits inside the recorder). The seeds are not recorded.
 
 #include "../src/command_config.hpp"
 #include "graph_live_lab.hpp"
@@ -369,8 +376,8 @@ TEST_CASE("live cleanup: the Cleaner empties the three restore targets with fold
     CHECK(result.sharepoint.error_code.empty());
     CHECK(result.onedrive.error_code.empty());
     CHECK(result.ok());
-    // Each seed was found and removed: deleted (204), or gone (404) for the
-    // one whose delete was sent twice.
+    // Each seed was found and removed: deleted (204), or gone for the one
+    // whose delete was sent twice.
     CHECK(result.mail.found >= 1);
     CHECK(result.sharepoint.found >= 1);
     CHECK(result.onedrive.found >= 1);
@@ -378,8 +385,9 @@ TEST_CASE("live cleanup: the Cleaner empties the three restore targets with fold
     CHECK(result.sharepoint.deleted + result.sharepoint.gone >= 1);
     CHECK(result.onedrive.deleted + result.onedrive.gone >= 1);
     // With the seeds there, the first file DELETE and the first mail
-    // permanentDelete are both sent twice, and each second answer, Graph's
-    // 404, was counted gone, not an error.
+    // permanentDelete are both sent twice, and each second answer (the
+    // file's 404, the mail's 403 ErrorCannotDeleteObject with the message
+    // found in Recoverable Items' Purges) was counted gone, not an error.
     std::cout << "deletes sent twice: " << doubler.doubled() << "\n";
     CHECK(doubler.doubled() == 2);
     CHECK(result.mail.gone >= 1);

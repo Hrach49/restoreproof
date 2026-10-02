@@ -1,20 +1,18 @@
 {
-  "source": "hand-written: W3.4, in the shape of drive-404-itemnotfound.json: a DELETE of a file no longer there. Kept hand-written: the W3.4 live restore run deleted each copy once (recordings/w34-live-run1/); a recorded 404 needs cleaner_live_test's second DELETE, not yet run with RP_LIVE_RECORD_DIR",
-  "request": "DELETE /v1.0/drives/b!XQgI_nDr6EKVpkcBib2Y65nzyk4OzJVNs_7NCRoJ5omdBuz_5GU6TJ2irAhs-dr6/items/<item id>",
+  "source": "live: rpworker 0.0.0 cleaner live test --record, 2026-10-02 (recording rp-w34-rec-cleaner-20261002T204648, graph/007, unedited but this note): the second of two If-Match DELETEs of one seeded file in the RestoreTarget library, the first already answered 204",
+  "request": "DELETE /v1.0/drives/b!XQgI_nDr6EKVpkcBib2Y65nzyk4OzJVNs_7NCRoJ5omdBuz_5GU6TJ2irAhs-dr6/items/01BLWRTHOMCS7ULEE5E5FZDO7XXSTYVY2O",
   "status": 404,
   "headers": {
-    "Content-Type": "application/json",
-    "request-id": "00000000-0000-4000-8000-000000003408",
-    "client-request-id": "00000000-0000-4000-8000-000000003408"
+    "Content-Type": "application/json"
   },
   "body": {
     "error": {
       "code": "itemNotFound",
-      "message": "Item not found",
+      "message": "The resource could not be found.",
       "innerError": {
-        "date": "2026-10-02T00:00:00",
-        "request-id": "00000000-0000-4000-8000-000000003409",
-        "client-request-id": "00000000-0000-4000-8000-000000003409"
+        "date": "2026-10-02T18:45:27",
+        "request-id": "11418f62-70c8-4297-8d76-e67f4bc754f4",
+        "client-request-id": "11418f62-70c8-4297-8d76-e67f4bc754f4"
       }
     }
   }

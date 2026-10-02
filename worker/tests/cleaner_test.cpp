@@ -3,11 +3,15 @@
 // folder and Inbox replies, the listings and 204s from the W3.4 live run's
 // recording (tests/fixtures/recordings/w34-live-run1/: the clean after's
 // listings of 5 mails and 3 + 3 files, and its first permanentDelete and
-// DELETE), and the answers no live run gave (403, 404, 412) from the
-// hand-written w34-* fixtures (tests/fixtures/graph/README.md). Every lab
-// value is read from the fixtures. The fake records which IDs each listing
-// served, and every test
-// ends by checking that each write the Cleaner sent was a permanentDelete or
+// DELETE), the live cleaner test's second answers to a doubled delete (a
+// file's 404 itemNotFound, a mail's 403 ErrorCannotDeleteObject), the
+// purged mail as Graph still gives it by its ID, in Recoverable Items' Purges
+// (hand-shaped from that run's and a probe's live values), the Purges folder's
+// ID (a read-only probe's), and the answers no live run
+// gave (the refusing 403s, Exchange's 404, the 412) from the hand-written
+// w34-* fixtures (tests/fixtures/graph/README.md). Every lab value is read
+// from the fixtures. The fake records which IDs each listing served, and
+// every test ends by checking that each write the Cleaner sent was a permanentDelete or
 // DELETE of one of them, in its own target: the Cleaner's one promise. The
 // guard's refusals are edits of the recorded replies, never a canary's ID.
 // GraphClient::remove is reached only through the Cleaner (the source scan in
@@ -36,6 +40,7 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <atomic>
+#include <cctype>
 #include <chrono>
 #include <cstddef>
 #include <functional>
@@ -125,6 +130,82 @@ std::string write_url(Which which, const std::string& id)
         break;
     }
     return kGraph + "/drives/" + v.onedrive_drive_id + "/items/" + id;
+}
+
+// The first GET remove() sends after a permanentDelete answered 403
+// ErrorCannotDeleteObject: which folder is the message in now (W3.4 build
+// notes point 15)? The second is the ID of the mailbox's Recoverable Items
+// Purges folder, at purges_url(), where a purged message is; only if the
+// message isn't there, the third is the Inbox's ID, at inbox_url(), the URL
+// the guard reads too, but with the Prefer header the guard's GET doesn't
+// send.
+std::string message_url(const std::string& id)
+{
+    return kGraph + "/users/" + lab_values().mailbox + "/messages/" + id +
+           "?$select=id,parentFolderId";
+}
+
+std::string purges_url()
+{
+    return kGraph + "/users/" + lab_values().mailbox +
+           "/mailFolders/recoverableitemspurges?$select=id";
+}
+
+// The Purges folder's ID, as the live read-only probe of 2026-10-02 read it.
+const char* const kPurges = "w34-mail-purges-200-id";
+
+std::string purges_id()
+{
+    return load_fixture_json("graph", kPurges).at("body").at("id").get<std::string>();
+}
+
+// The Purges reply with its id set to `id` (nullopt: left out).
+HttpResponse purges_with(const std::optional<json>& id)
+{
+    json edited = load_fixture_json("graph", kPurges);
+    if (id) {
+        edited["body"]["id"] = *id;
+    } else {
+        edited["body"].erase("id");
+    }
+    return to_response(edited);
+}
+
+// `text` in ASCII lower case.
+std::string lower_case(std::string text)
+{
+    for (char& c : text) {
+        c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+    return text;
+}
+
+// The live cleaner test's second permanentDelete of a mail its first had
+// already purged (tests/fixtures/graph/README.md).
+const char* const kCannotDelete = "w34-mail-permanentdelete-403-cannotdeleteobject-repeat";
+
+// The purged message, as Graph still gives it by its ID: its parentFolderId
+// is, byte for byte, the ID of Recoverable Items' Purges (the live probe's
+// values).
+const char* const kPurged = "w34-mail-get-200-purged-parentfolder";
+
+// The recorded Inbox reply's ID (mailbox-inbox-200, the guard's).
+std::string inbox_id()
+{
+    return load_fixture_json("graph", "mailbox-inbox-200").at("body").at("id").get<std::string>();
+}
+
+// The purged message's reply with its parentFolderId set to `folder`
+// (nullopt: left out).
+HttpResponse message_in(const std::optional<json>& folder)
+{
+    json edited = load_fixture_json("graph", kPurged);
+    if (folder) {
+        edited["body"]["parentFolderId"] = *folder;
+    } else {
+        edited["body"].erase("parentFolderId");
+    }
+    return to_response(edited);
 }
 
 HttpMethod write_method(Which which)
@@ -347,6 +428,55 @@ struct Lab {
 
     std::size_t gets(const std::string& url) const { return http.count(HttpMethod::get, url); }
 
+    // remove()'s Inbox GET after a 403 ErrorCannotDeleteObject answers
+    // `answers` in turn (the last repeating); the guard's GET of the same URL,
+    // sent without a Prefer header, still gets the recorded Inbox. No
+    // assertions: this runs on the client's thread.
+    void on_inbox_check(std::vector<HttpResponse> answers)
+    {
+        auto state = std::make_shared<std::pair<std::size_t, std::vector<HttpResponse>>>(
+            0, std::move(answers));
+        const HttpResponse guard = load_fixture("graph", "mailbox-inbox-200");
+        http.on(HttpMethod::get, inbox_url(), [this, state, guard](const HttpRequest& request) {
+            if (!request.headers.contains("Prefer")) {
+                return guard;
+            }
+            const std::lock_guard lock(mutex);
+            HttpResponse answer = state->second[std::min(state->first, state->second.size() - 1)];
+            ++state->first;
+            return answer;
+        });
+    }
+
+    // How many Purges GETs remove() sent (no one else asks), each checked to
+    // carry kPrefer.
+    std::size_t purges_checks() const
+    {
+        std::size_t n = 0;
+        for (const HttpRequest& request : http.requests()) {
+            if (request.method == HttpMethod::get && request.url == purges_url()) {
+                CHECK(request.headers.at("Prefer") == kPrefer);
+                ++n;
+            }
+        }
+        return n;
+    }
+
+    // How many Inbox GETs remove() sent: those with the Prefer header (the
+    // guard's has none), each checked to carry kPrefer.
+    std::size_t inbox_checks() const
+    {
+        std::size_t n = 0;
+        for (const HttpRequest& request : http.requests()) {
+            if (request.method == HttpMethod::get && request.url == inbox_url() &&
+                request.headers.contains("Prefer")) {
+                CHECK(request.headers.at("Prefer") == kPrefer);
+                ++n;
+            }
+        }
+        return n;
+    }
+
     FakeHttpClient http;
     std::ostringstream log_stream;
     std::shared_ptr<spdlog::logger> logger;
@@ -452,7 +582,10 @@ TEST_CASE("a 403 on a delete is graph_permission naming the write grant, with no
         Row{Which::sharepoint, "w34-file-delete-403-accessdenied", &rp::graph::kListWriteGrant,
             "DELETE"},
         Row{Which::onedrive, "w34-file-delete-403-accessdenied", &rp::graph::kOneDriveGrant,
-            "DELETE"});
+            "DELETE"},
+        // ErrorCannotDeleteObject means "check the message" for a mail only:
+        // a file's 403 is a refusal whatever its code.
+        Row{Which::sharepoint, kCannotDelete, &rp::graph::kListWriteGrant, "DELETE"});
     INFO(name_of(row.which));
     Lab lab;
     const json fixture = recorded_items(row.which);
@@ -472,6 +605,12 @@ TEST_CASE("a 403 on a delete is graph_permission naming the write grant, with no
     // The first refusal stops the target: one write, one listing.
     CHECK(lab.writes_to(row.which).size() == 1);
     CHECK(lab.gets(listing_url(row.which)) == 1);
+    // A 403 that isn't a mail's ErrorCannotDeleteObject is never followed
+    // by a GET of the item.
+    CHECK(lab.gets(message_url(id_at(fixture, 0))) == 0);
+    CHECK(lab.gets(write_url(row.which, id_at(fixture, 0))) == 0);
+    CHECK(lab.purges_checks() == 0);
+    CHECK(lab.inbox_checks() == 0);
     const std::string log = lab.log();
     CHECK_THAT(log, ContainsSubstring(std::string{"Graph denied "} + row.method));
     CHECK_THAT(log, ContainsSubstring(std::string{row.grant->description}));
@@ -481,6 +620,370 @@ TEST_CASE("a 403 on a delete is graph_permission naming the write grant, with no
             CHECK(of(result, other).ok());
         }
     }
+    lab.require_only_listed_writes();
+}
+
+TEST_CASE("a permanentDelete's 403 ErrorCannotDeleteObject on a mail still in the Inbox is "
+          "graph_permission naming the mail grant",
+          "[cleaner][permission][cannot_delete]")
+{
+    // W3.4 build notes point 15: the message's parentFolderId isn't the
+    // Purges folder's ID but is the Inbox's, byte for byte, so the 403 was a
+    // refusal and stands, with no second round.
+    Lab lab;
+    const json fixture = recorded_items(Which::mail);
+    const std::size_t n = recorded_count(Which::mail);
+    lab.list(Which::mail, {to_response(fixture)});
+    for (std::size_t i = 0; i < n; ++i) {
+        lab.on_delete(Which::mail, id_at(fixture, i), {load_fixture("graph", kCannotDelete)});
+    }
+    lab.http.on(HttpMethod::get, message_url(id_at(fixture, 0)), {message_in(json(inbox_id()))});
+    lab.http.on(HttpMethod::get, purges_url(), {load_fixture("graph", kPurges)});
+    lab.on_inbox_check({load_fixture("graph", "mailbox-inbox-200")});
+
+    const CleanupResult result = lab.clean();
+
+    require_stopped(result.mail, "graph_permission");
+    CHECK(result.mail.found == n);
+    CHECK(result.mail.deleted == 0);
+    CHECK(result.mail.gone == 0);
+    CHECK(result.mail.left == n);
+    CHECK(lab.writes_to(Which::mail).size() == 1);
+    CHECK(lab.gets(listing_url(Which::mail)) == 1);
+    // One check: the message's folder, the Purges folder's ID, then the
+    // Inbox's ID, once each.
+    CHECK(lab.gets(message_url(id_at(fixture, 0))) == 1);
+    CHECK(lab.purges_checks() == 1);
+    CHECK(lab.inbox_checks() == 1);
+    // All three GETs read by ImmutableId, as the listing did.
+    for (const HttpRequest& request : lab.http.requests()) {
+        if (request.url == message_url(id_at(fixture, 0))) {
+            CHECK(request.headers.at("Prefer") == kPrefer);
+        }
+    }
+    const std::string log = lab.log();
+    CHECK_THAT(log, ContainsSubstring("Graph denied POST"));
+    CHECK_THAT(log, ContainsSubstring("(403 ErrorCannotDeleteObject)"));
+    CHECK_THAT(log, ContainsSubstring(std::string{rp::graph::kMailGrant.description}));
+    CHECK_THAT(log, !ContainsSubstring("is gone"));
+    CHECK(result.sharepoint.ok());
+    CHECK(result.onedrive.ok());
+    lab.require_only_listed_writes();
+}
+
+TEST_CASE("a permanentDelete's 403 ErrorCannotDeleteObject on a mail whose folder can't be read "
+          "is an error, never gone",
+          "[cleaner][permission][cannot_delete]")
+{
+    // Fail closed: a parentFolderId that is missing, empty or not a string, or
+    // a reply that isn't a JSON object, says nothing about where the message
+    // is, so the target stops (graph) and the mail is left. Neither folder is
+    // asked: there is nothing to compare their IDs with.
+    struct Row {
+        const char* name;
+        std::function<HttpResponse()> answer;
+        const char* logged;
+    };
+    const Row row = GENERATE(
+        Row{"no parentFolderId", [] { return message_in(std::nullopt); }, "parentFolderId"},
+        Row{"an empty parentFolderId", [] { return message_in(json("")); }, "parentFolderId"},
+        Row{"a number", [] { return message_in(json(42)); }, "parentFolderId"},
+        Row{"a null", [] { return message_in(json(nullptr)); }, "parentFolderId"},
+        Row{"an array", [] { return message_in(json::array({"x"})); }, "parentFolderId"},
+        Row{"an object", [] { return message_in(json::object({{"id", "x"}})); },
+            "parentFolderId"},
+        Row{"a reply that isn't JSON",
+            [] {
+                HttpResponse r = message_in(json("x"));
+                r.body = "not json";
+                return r;
+            },
+            "isn't a JSON object"},
+        Row{"a JSON array",
+            [] {
+                HttpResponse r = message_in(json("x"));
+                r.body = "[]";
+                return r;
+            },
+            "isn't a JSON object"});
+    INFO(row.name);
+    Lab lab;
+    const json fixture = recorded_items(Which::mail);
+    lab.list(Which::mail, {to_response(fixture)});
+    lab.on_delete(Which::mail, id_at(fixture, 0), {load_fixture("graph", kCannotDelete)});
+    lab.http.on(HttpMethod::get, message_url(id_at(fixture, 0)), {row.answer()});
+    lab.http.on(HttpMethod::get, purges_url(), {load_fixture("graph", kPurges)});
+    lab.on_inbox_check({load_fixture("graph", "mailbox-inbox-200")});
+
+    const CleanupResult result = lab.clean();
+
+    require_stopped(result.mail, "graph");
+    CHECK(result.mail.deleted == 0);
+    CHECK(result.mail.gone == 0);
+    CHECK(result.mail.left == recorded_count(Which::mail));
+    CHECK(lab.writes_to(Which::mail).size() == 1);
+    CHECK(lab.purges_checks() == 0);
+    CHECK(lab.inbox_checks() == 0);
+    const std::string log = lab.log();
+    CHECK_THAT(log, ContainsSubstring(row.logged));
+    CHECK_THAT(log, !ContainsSubstring("is gone"));
+    CHECK_THAT(log, !ContainsSubstring("): Graph denied POST"));
+    lab.require_only_listed_writes();
+}
+
+TEST_CASE("a permanentDelete's 403 ErrorCannotDeleteObject whose message GET fails stops the "
+          "mail target with that GET's error",
+          "[cleaner][permission][cannot_delete]")
+{
+    struct Row {
+        const char* name;
+        std::function<std::vector<HttpResponse>()> answers;
+        const char* code;
+        unsigned rounds;
+        const char* logged;
+    };
+    const Row row = GENERATE(
+        Row{"a 403 on the GET",
+            [] { return std::vector{load_fixture("graph", "messages-403-exchange")}; },
+            "graph_permission", 1, "Graph denied GET"},
+        Row{"503s on the GET in both rounds",
+            [] { return std::vector{load_fixture("graph", "messages-503-unavailable")}; },
+            "graph_transient", 2, "Graph GET"},
+        Row{"a 404 naming a missing mailbox",
+            [] { return std::vector{load_fixture("graph", "messages-404-unknown-user")}; },
+            "graph", 1, "ErrorInvalidUser"},
+        Row{"a 412 to the GET", [] { return std::vector{make_response(412)}; }, "graph", 1,
+            "HTTP 412, where 200 or 404 was expected"},
+        Row{"a 302 to the GET",
+            [] {
+                HttpResponse r = make_response(302);
+                r.headers["Location"] = "https://example.invalid/";
+                return std::vector{r};
+            },
+            "graph", 1, "HTTP 302, where 200 or 404 was expected"});
+    INFO(row.name);
+    Lab lab;
+    const json fixture = recorded_items(Which::mail);
+    lab.list(Which::mail, {to_response(fixture)});
+    lab.on_delete(Which::mail, id_at(fixture, 0), {load_fixture("graph", kCannotDelete)});
+    lab.http.on(HttpMethod::get, message_url(id_at(fixture, 0)), row.answers());
+    lab.http.on(HttpMethod::get, purges_url(), {load_fixture("graph", kPurges)});
+    lab.on_inbox_check({load_fixture("graph", "mailbox-inbox-200")});
+
+    const CleanupResult result = lab.clean();
+
+    require_stopped(result.mail, row.code, row.rounds);
+    CHECK(result.mail.deleted == 0);
+    CHECK(result.mail.gone == 0);
+    CHECK(lab.writes_to(Which::mail).size() == row.rounds);
+    CHECK(lab.purges_checks() == 0);
+    CHECK(lab.inbox_checks() == 0);
+    const std::string log = lab.log();
+    CHECK_THAT(log, ContainsSubstring(row.logged));
+    // The target stops on the GET's error, never on the POST's refusal.
+    CHECK_THAT(log, !ContainsSubstring("): Graph denied POST"));
+    CHECK_THAT(log, !ContainsSubstring("is gone"));
+    lab.require_only_listed_writes();
+}
+
+TEST_CASE("a permanentDelete's 403 ErrorCannotDeleteObject whose Inbox GET fails or can't be "
+          "read stops the mail target, never gone",
+          "[cleaner][permission][cannot_delete]")
+{
+    // The message's parentFolderId isn't the Purges folder's ID; it is the
+    // recorded Inbox's, but without the Inbox's own ID read there is nothing
+    // to compare it with, so the target stops on the Inbox GET's error and
+    // the mail is never counted gone.
+    struct Row {
+        const char* name;
+        std::function<std::vector<HttpResponse>()> answers;
+        const char* code;
+        unsigned rounds;
+        const char* logged;
+    };
+    const auto inbox_with = [](std::optional<json> id) {
+        json edited = load_fixture_json("graph", "mailbox-inbox-200");
+        if (id) {
+            edited["body"]["id"] = *id;
+        } else {
+            edited["body"].erase("id");
+        }
+        return std::vector{to_response(edited)};
+    };
+    const Row row = GENERATE_COPY(
+        Row{"a 403 on the Inbox",
+            [] { return std::vector{load_fixture("graph", "mailbox-inbox-403-exchange")}; },
+            "graph_permission", 1, "Graph denied GET"},
+        Row{"503s on the Inbox in both rounds",
+            [] { return std::vector{load_fixture("graph", "messages-503-unavailable")}; },
+            "graph_transient", 2, "Graph GET"},
+        Row{"a 404 naming a missing mailbox",
+            [] { return std::vector{load_fixture("graph", "messages-404-unknown-user")}; },
+            "graph", 1, "ErrorInvalidUser"},
+        Row{"a 302 to the Inbox",
+            [] {
+                HttpResponse r = make_response(302);
+                r.headers["Location"] = "https://example.invalid/";
+                return std::vector{r};
+            },
+            "graph", 1, "HTTP 302, where 200 was expected"},
+        Row{"no id", [inbox_with] { return inbox_with(std::nullopt); }, "graph", 1,
+            "the Inbox's ID"},
+        Row{"an empty id", [inbox_with] { return inbox_with(json("")); }, "graph", 1,
+            "the Inbox's ID"},
+        Row{"a number id", [inbox_with] { return inbox_with(json(7)); }, "graph", 1,
+            "the Inbox's ID"},
+        Row{"a null id", [inbox_with] { return inbox_with(json(nullptr)); }, "graph", 1,
+            "the Inbox's ID"});
+    INFO(row.name);
+    Lab lab;
+    const json fixture = recorded_items(Which::mail);
+    lab.list(Which::mail, {to_response(fixture)});
+    lab.on_delete(Which::mail, id_at(fixture, 0), {load_fixture("graph", kCannotDelete)});
+    lab.http.on(HttpMethod::get, message_url(id_at(fixture, 0)), {message_in(json(inbox_id()))});
+    lab.http.on(HttpMethod::get, purges_url(), {load_fixture("graph", kPurges)});
+    lab.on_inbox_check(row.answers());
+
+    const CleanupResult result = lab.clean();
+
+    require_stopped(result.mail, row.code, row.rounds);
+    CHECK(result.mail.deleted == 0);
+    CHECK(result.mail.gone == 0);
+    CHECK(lab.writes_to(Which::mail).size() == row.rounds);
+    CHECK(lab.gets(message_url(id_at(fixture, 0))) == row.rounds);
+    CHECK(lab.purges_checks() == row.rounds);
+    const std::string log = lab.log();
+    CHECK_THAT(log, ContainsSubstring(row.logged));
+    CHECK_THAT(log, !ContainsSubstring("): Graph denied POST"));
+    CHECK_THAT(log, !ContainsSubstring("is gone"));
+    lab.require_only_listed_writes();
+}
+
+TEST_CASE("a permanentDelete's 403 ErrorCannotDeleteObject whose Purges GET fails or can't be "
+          "read stops the mail target, never gone",
+          "[cleaner][permission][cannot_delete]")
+{
+    // The message's parentFolderId is the live purged one; without the
+    // Purges folder's own ID read there is nothing to match it with, so the
+    // mail is never counted gone, and the Inbox isn't asked.
+    struct Row {
+        const char* name;
+        std::function<std::vector<HttpResponse>()> answers;
+        const char* code;
+        unsigned rounds;
+        const char* logged;
+        // The Purges GETs sent: one per round, but a 503's five attempts.
+        unsigned sent = 0; // 0: rounds
+    };
+    const Row row = GENERATE(
+        Row{"a 403 on Purges",
+            [] { return std::vector{load_fixture("graph", "mailbox-inbox-403-exchange")}; },
+            "graph_permission", 1, "Graph denied GET"},
+        Row{"503s on Purges in both rounds",
+            [] { return std::vector{load_fixture("graph", "messages-503-unavailable")}; },
+            "graph_transient", 2, "Graph GET", 10},
+        Row{"a 404 naming a missing mailbox",
+            [] { return std::vector{load_fixture("graph", "messages-404-unknown-user")}; },
+            "graph", 1, "ErrorInvalidUser"},
+        Row{"a 404 for the folder",
+            [] {
+                return std::vector{
+                    load_fixture("graph", "w34-mail-permanentdelete-404-erroritemnotfound")};
+            },
+            "graph", 1, "ErrorItemNotFound"},
+        Row{"a 302 to Purges",
+            [] {
+                HttpResponse r = make_response(302);
+                r.headers["Location"] = "https://example.invalid/";
+                return std::vector{r};
+            },
+            "graph", 1, "HTTP 302, where 200 was expected"},
+        Row{"a reply that isn't JSON",
+            [] {
+                HttpResponse r = purges_with(json("x"));
+                r.body = "not json";
+                return std::vector{r};
+            },
+            "graph", 1, "isn't a JSON object"},
+        Row{"no id", [] { return std::vector{purges_with(std::nullopt)}; }, "graph", 1,
+            "the Purges folder's ID"},
+        Row{"an empty id", [] { return std::vector{purges_with(json(""))}; }, "graph", 1,
+            "the Purges folder's ID"},
+        Row{"a number id", [] { return std::vector{purges_with(json(7))}; }, "graph", 1,
+            "the Purges folder's ID"},
+        Row{"a null id", [] { return std::vector{purges_with(json(nullptr))}; }, "graph", 1,
+            "the Purges folder's ID"});
+    INFO(row.name);
+    Lab lab;
+    const json fixture = recorded_items(Which::mail);
+    lab.list(Which::mail, {to_response(fixture)});
+    lab.on_delete(Which::mail, id_at(fixture, 0), {load_fixture("graph", kCannotDelete)});
+    lab.http.on(HttpMethod::get, message_url(id_at(fixture, 0)),
+                {load_fixture("graph", kPurged)});
+    lab.http.on(HttpMethod::get, purges_url(), row.answers());
+    lab.on_inbox_check({load_fixture("graph", "mailbox-inbox-200")});
+
+    const CleanupResult result = lab.clean();
+
+    require_stopped(result.mail, row.code, row.rounds);
+    CHECK(result.mail.deleted == 0);
+    CHECK(result.mail.gone == 0);
+    CHECK(lab.writes_to(Which::mail).size() == row.rounds);
+    CHECK(lab.gets(message_url(id_at(fixture, 0))) == row.rounds);
+    CHECK(lab.purges_checks() == (row.sent == 0 ? row.rounds : row.sent));
+    CHECK(lab.inbox_checks() == 0);
+    const std::string log = lab.log();
+    CHECK_THAT(log, ContainsSubstring(row.logged));
+    CHECK_THAT(log, !ContainsSubstring("): Graph denied POST"));
+    CHECK_THAT(log, !ContainsSubstring("is gone"));
+    lab.require_only_listed_writes();
+}
+
+TEST_CASE("a permanentDelete's 403 ErrorCannotDeleteObject on a mail in another folder of the "
+          "mailbox is an error, never gone",
+          "[cleaner][permission][cannot_delete]")
+{
+    // W3.4 build notes point 15: only a positive match makes a mail gone. A
+    // parentFolderId that is neither the Purges folder's ID nor the Inbox's,
+    // byte for byte (a message moved elsewhere, an ID in another form, one
+    // differing in case only), fails closed: the target stops (graph) and
+    // the mail is left.
+    struct Row {
+        const char* name;
+        std::function<std::string()> folder;
+    };
+    const Row row = GENERATE(
+        Row{"Purges in lower case", [] { return lower_case(purges_id()); }},
+        Row{"the Inbox in lower case", [] { return lower_case(inbox_id()); }},
+        Row{"another folder", [] { return std::string{"AAMkAnotherFolderOfTheMailbox="}; }});
+    INFO(row.name);
+    Lab lab;
+    const json fixture = recorded_items(Which::mail);
+    lab.list(Which::mail, {to_response(fixture)});
+    lab.on_delete(Which::mail, id_at(fixture, 0), {load_fixture("graph", kCannotDelete)});
+    lab.http.on(HttpMethod::get, message_url(id_at(fixture, 0)),
+                {message_in(json(row.folder()))});
+    lab.http.on(HttpMethod::get, purges_url(), {load_fixture("graph", kPurges)});
+    lab.on_inbox_check({load_fixture("graph", "mailbox-inbox-200")});
+
+    const CleanupResult result = lab.clean();
+
+    require_stopped(result.mail, "graph");
+    CHECK(result.mail.deleted == 0);
+    CHECK(result.mail.gone == 0);
+    CHECK(result.mail.left == recorded_count(Which::mail));
+    CHECK(lab.writes_to(Which::mail).size() == 1);
+    // At most three GETs, no loop.
+    CHECK(lab.gets(message_url(id_at(fixture, 0))) == 1);
+    CHECK(lab.purges_checks() == 1);
+    CHECK(lab.inbox_checks() == 1);
+    const std::string log = lab.log();
+    CHECK_THAT(log, ContainsSubstring("in another folder of the mailbox"));
+    CHECK_THAT(log, ContainsSubstring("the mail isn't counted gone"));
+    CHECK_THAT(log, !ContainsSubstring("is gone"));
+    CHECK_THAT(log, !ContainsSubstring("): Graph denied POST"));
+    CHECK(result.sharepoint.ok());
+    CHECK(result.onedrive.ok());
     lab.require_only_listed_writes();
 }
 
@@ -728,6 +1231,126 @@ TEST_CASE("a delete resent after a dropped connection and answered 404 counts as
     const std::vector<HttpRequest> writes = lab.writes_to(which);
     REQUIRE(writes.size() == 2);
     CHECK(writes[1].url == writes[0].url);
+    lab.require_only_listed_writes();
+}
+
+TEST_CASE("a permanentDelete's 403 ErrorCannotDeleteObject on a mail Graph no longer finds counts "
+          "it gone, no folder asked",
+          "[cleaner][gone][cannot_delete]")
+{
+    // W3.4 build notes point 15: the message GET's 404 says the mail is gone,
+    // with no folder GET, and the round's listing again confirms it. Exchange's
+    // code and SharePoint's both count.
+    const char* const not_found = GENERATE("w34-mail-permanentdelete-404-erroritemnotfound",
+                                           "w34-file-delete-404-itemnotfound");
+    INFO(not_found);
+    Lab lab;
+    const json fixture = recorded_items(Which::mail);
+    const std::size_t n = recorded_count(Which::mail);
+    lab.list(Which::mail, {to_response(fixture), empty_listing(Which::mail)});
+    lab.on_delete(Which::mail, id_at(fixture, 0), {load_fixture("graph", kCannotDelete)});
+    lab.delete_rest(Which::mail, fixture);
+    lab.http.on(HttpMethod::get, message_url(id_at(fixture, 0)),
+                {load_fixture("graph", not_found)});
+    lab.http.on(HttpMethod::get, purges_url(), {load_fixture("graph", kPurges)});
+    lab.on_inbox_check({load_fixture("graph", "mailbox-inbox-200")});
+
+    const CleanupResult result = lab.clean();
+
+    CHECK(result.mail.error_code.empty());
+    CHECK(result.mail.found == n);
+    CHECK(result.mail.deleted == n - 1);
+    CHECK(result.mail.gone == 1);
+    CHECK(result.mail.left == 0);
+    CHECK(result.mail.rounds == 1);
+    CHECK(result.mail.ok());
+    CHECK(lab.gets(message_url(id_at(fixture, 0))) == 1);
+    CHECK(lab.purges_checks() == 0);
+    CHECK(lab.inbox_checks() == 0);
+    CHECK(lab.gets(listing_url(Which::mail)) == 2);
+    CHECK(lab.writes_to(Which::mail).size() == n);
+    CHECK_THAT(lab.log(), ContainsSubstring("is gone"));
+    lab.require_only_listed_writes();
+}
+
+TEST_CASE("a permanentDelete's 403 ErrorCannotDeleteObject on a mail in Recoverable Items' "
+          "Purges counts it gone, the Inbox not asked",
+          "[cleaner][gone][cannot_delete]")
+{
+    // The live case (2026-10-02 21:05): Graph still finds the purged message
+    // by its ID (200), and its parentFolderId is, byte for byte, the ID of the
+    // mailbox's Recoverable Items Purges folder (the read-only probe's): a
+    // positive match, so it is gone.
+    Lab lab;
+    const json fixture = recorded_items(Which::mail);
+    const std::size_t n = recorded_count(Which::mail);
+    lab.list(Which::mail, {to_response(fixture), empty_listing(Which::mail)});
+    lab.on_delete(Which::mail, id_at(fixture, 0), {load_fixture("graph", kCannotDelete)});
+    lab.delete_rest(Which::mail, fixture);
+    lab.http.on(HttpMethod::get, message_url(id_at(fixture, 0)),
+                {load_fixture("graph", kPurged)});
+    lab.http.on(HttpMethod::get, purges_url(), {load_fixture("graph", kPurges)});
+    lab.on_inbox_check({load_fixture("graph", "mailbox-inbox-200")});
+
+    const CleanupResult result = lab.clean();
+
+    // The two live values are the same ID, and not the Inbox's.
+    CHECK(load_fixture_json("graph", kPurged).at("body").at("parentFolderId") == purges_id());
+    CHECK(purges_id() != inbox_id());
+    CHECK(result.mail.error_code.empty());
+    CHECK(result.mail.found == n);
+    CHECK(result.mail.deleted == n - 1);
+    CHECK(result.mail.gone == 1);
+    CHECK(result.mail.left == 0);
+    CHECK(result.mail.rounds == 1);
+    CHECK(result.mail.ok());
+    // One check, no loop: the message GET, then the Purges GET, once each.
+    CHECK(lab.gets(message_url(id_at(fixture, 0))) == 1);
+    CHECK(lab.purges_checks() == 1);
+    CHECK(lab.inbox_checks() == 0);
+    CHECK(lab.gets(listing_url(Which::mail)) == 2);
+    CHECK(lab.writes_to(Which::mail).size() == n);
+    CHECK_THAT(lab.log(), ContainsSubstring("is gone"));
+    lab.require_only_listed_writes();
+}
+
+TEST_CASE("a permanentDelete resent after a dropped connection and answered 403 "
+          "ErrorCannotDeleteObject counts the mail gone",
+          "[cleaner][gone][cannot_delete]")
+{
+    // The production case the live test copies: the first permanentDelete
+    // purged the mail but its answer was lost, and the resend is refused. The
+    // check finds the message in Purges (as live) or not at all.
+    const char* const check = GENERATE(kPurged, "w34-mail-permanentdelete-404-erroritemnotfound");
+    INFO(check);
+    Lab lab;
+    const json fixture = recorded_items(Which::mail);
+    lab.list(Which::mail, {listing_of(fixture, json::array({fixture["body"]["value"][0]})),
+                           empty_listing(Which::mail)});
+    const HttpResponse cannot_delete = load_fixture("graph", kCannotDelete);
+    auto sent = std::make_shared<std::atomic<int>>(0);
+    lab.http.on(HttpMethod::post, write_url(Which::mail, id_at(fixture, 0)),
+                [sent, cannot_delete](const HttpRequest&) -> HttpResponse {
+                    if (sent->fetch_add(1) == 0) {
+                        // The first went out and purged the mail; its answer was lost.
+                        throw rp::HttpError("dropped", rp::TransportError::dropped, 0, 1);
+                    }
+                    return cannot_delete;
+                });
+    lab.http.on(HttpMethod::get, message_url(id_at(fixture, 0)), {load_fixture("graph", check)});
+    lab.http.on(HttpMethod::get, purges_url(), {load_fixture("graph", kPurges)});
+    lab.on_inbox_check({load_fixture("graph", "mailbox-inbox-200")});
+
+    const CleanupResult result = lab.clean();
+
+    CHECK(result.mail.error_code.empty());
+    CHECK(result.mail.gone == 1);
+    CHECK(result.mail.deleted == 0);
+    CHECK(result.mail.ok());
+    CHECK(lab.writes_to(Which::mail).size() == 2);
+    CHECK(lab.gets(message_url(id_at(fixture, 0))) == 1);
+    CHECK(lab.purges_checks() == (std::string{check} == kPurged ? 1u : 0u));
+    CHECK(lab.inbox_checks() == 0);
     lab.require_only_listed_writes();
 }
 

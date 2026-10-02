@@ -316,13 +316,37 @@ public:
     // is a GraphError before anything is sent. Everything else as get(): the
     // URL checks, 401, 403 (a PermissionError naming item.grant()), the
     // retries (a write is retried like a GET: a resent permanentDelete or
-    // If-Match DELETE of the same ID can only answer 204, 404 or 412) and the
+    // If-Match DELETE of the same ID can only answer 204, 404 or 412, or a
+    // mail's 403 ErrorCannotDeleteObject, below) and the
     // messages, which name the method.
     //  - 204: removed. Any other 2xx or a 3xx is a GraphError.
     //  - 404 with Graph's itemNotFound or ErrorItemNotFound: gone. Any other
     //    404 Graph explains (names_missing_container's codes included: a
     //    missing mailbox) is a NotFoundError; one it doesn't, a GraphError.
     //  - 412, for a file: changed. For a mail, a GraphError.
+    //  - 403 ErrorCannotDeleteObject, for a mail: what Exchange answers a
+    //    permanentDelete of a message already purged (a resend whose first
+    //    answer was lost; seen live, W3.4 build notes point 15). One check
+    //    follows, is the message gone, at most three GETs with Prefer:
+    //    kMailPrefer, every path built here from the item's mailbox and ID
+    //    alone, no loop: GET /users/{mailbox}/messages/{id}?$select=id,
+    //    parentFolderId; only if that answers 200, GET /users/{mailbox}/
+    //    mailFolders/recoverableitemspurges?$select=id; only if that doesn't
+    //    match, GET /users/{mailbox}/mailFolders/inbox?$select=id. Gone is a
+    //    positive answer only: the message's 404 with itemNotFound or
+    //    ErrorItemNotFound (no folder GET), or a non-empty string
+    //    parentFolderId equal, byte for byte, to the Purges folder's
+    //    non-empty string id (a purged message still answers by its ID, from
+    //    Purges, seen live; the Inbox not asked). Equal to the Inbox's id: the
+    //    PermissionError naming item.grant() stands. Equal to neither (moved
+    //    to another folder, an ID in another form): a GraphError, the message
+    //    "in another folder of the mailbox", never gone. Anything else fails
+    //    closed too: any GET's own error (its 403, 5xx after the retries, a
+    //    404 of a folder or naming a missing mailbox), any other status a
+    //    GraphError ("where 200 or 404 was expected" for the message, "where
+    //    200 was expected" for a folder), and a reply that isn't a JSON
+    //    object or has no such ID a GraphError. Any other 403, and every 403
+    //    for a file, is the PermissionError with no GET.
     RemoveOutcome remove(const ListedItem& item);
 
 private:
@@ -371,6 +395,10 @@ private:
                                      const HttpHeaders& caller_headers,
                                      const HttpHeaders& own_headers,
                                      std::optional<std::uint64_t> max_body_bytes);
+    // remove()'s check after a mail's 403 ErrorCannotDeleteObject: true if
+    // the message is gone (not found, or in Recoverable Items' Purges), false
+    // if it is still in the Inbox; anything else throws (see remove()).
+    bool purged_or_gone(const ListedItem& item);
     // The body of a response get() or find() returned, as a JSON object.
     static nlohmann::json json_body(std::string_view path_or_url, const HttpResponse& response);
     // One `method` request of `url` with `token` and `headers`, one attempt,

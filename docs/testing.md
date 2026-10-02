@@ -291,12 +291,23 @@ test before the first write. Then it signs in to Graph as the Worker app, runs
 `RP_LIVE_TARGET_*` variables above, defaulting to the lab's), prints its counts, and requires no
 error, an ok clean, and each seed found and deleted (`deleted` or `gone` at least 1 per target).
 Its first file `DELETE` and first mail `permanentDelete` are each sent twice; with the seeds
-there both happen, so it requires two doubled sends, the second answer of each (Graph's 404)
-counted `gone`. Last, it lists each target again with `$top=1` and no type filter, folders
+there both happen, so it requires two doubled sends, the second answer of each counted `gone`:
+the file's is Graph's 404 `itemNotFound`, the mail's 403 `ErrorCannotDeleteObject` (seen live
+on 2026-10-02), which `GraphClient::remove` follows with one check, is the message gone: its
+`parentFolderId` (live, the purged message still answered 200, from Recoverable Items) against
+the `id` of the mailbox's `recoverableitemspurges` folder, then the Inbox's; only a 404 or a
+byte-for-byte match with Purges makes it `gone`, the Inbox leaves the 403's `PermissionError`,
+and any other folder is an error, never `gone` (`docs/decisions.md`, W3.4 build notes, point
+15). Last, it lists each target again with `$top=1` and no type filter, folders
 included, and requires zero entries: the W3.4 Done-when's "zero items and no entries left
 unlisted". Set `RP_LIVE_RECORD_DIR` to a new or empty folder to record the Cleaner's and the
-last listings' Graph exchanges there (under `graph/`; the seeds are not recorded), the two
-404s included: W3.4's `w34-*-404-*` fixtures. It needs the Graph certificate variables,
+last listings' Graph exchanges there (under `graph/`; the seeds are not recorded), the second
+answer of each doubled send included (the first is not: the wrapper sits inside the recorder).
+The 2026-10-02 run gave `w34-file-delete-404-itemnotfound.json` and
+`w34-mail-permanentdelete-403-cannotdeleteobject-repeat.json`; its 21:05 rerun the message
+GET's 200 behind the hand-shaped `w34-mail-get-200-purged-parentfolder.json`, whose
+`parentFolderId` and `w34-mail-purges-200-id.json`'s `id` come from a read-only probe of the same
+day. It needs the Graph certificate variables,
 `RP_LIVE=1` and `RP_LIVE_RESTORE=1`, and no elevation. It deletes everything in the three
 targets, delivered mail in `restoretest` too. From a VS 2022 Developer PowerShell:
 
@@ -379,15 +390,14 @@ Recording only watches: the command sends and prints what it would without it, t
 line, `recorded <n> exchange(s) in <dir>`. `restore --record` still writes into the tenant,
 and records the cleanup's listings, `permanentDelete`s and `DELETE`s under `graph` too.
 
-The W3.4 Cleaner's fixtures `worker/tests/fixtures/graph/w34-*.json` are hand-written stand-ins
-until the first live clean is recorded (`worker/tests/fixtures/graph/README.md`): the first
-live `rpworker restore --record` should replace the three listings and the two 204s with
-recorded ones. A recorded 404 for an item already gone needs a delete sent twice: the live
-cleanup test sends its first file `DELETE` and first mail `permanentDelete` twice (the
-test-side wrapper `SendFirstDeleteTwice`) and, with `RP_LIVE_RECORD_DIR` set to a new or empty
-folder, records every Graph exchange there under `graph/`, those 404s included. The 412 and the two
-403s stay hand-written; no Worker code ever sends a write at a canary location to record a
-refusal.
+The W3.4 Cleaner's listings and 204s are recorded (`worker/tests/fixtures/recordings/w34-live-run1/`),
+and so are the answers to a delete sent twice: the live cleanup test sends its first file
+`DELETE` and first mail `permanentDelete` twice (the test-side wrapper `SendFirstDeleteTwice`)
+and, with `RP_LIVE_RECORD_DIR` set to a new or empty folder, records every Graph exchange there
+under `graph/`, the second answers included; its 2026-10-02 run gave the file's 404 and the
+mail's 403 `ErrorCannotDeleteObject` (`worker/tests/fixtures/graph/README.md`). The 412, the
+refusing 403s and Exchange's 404 stay hand-written; no Worker code ever sends a write at a
+canary location to record a refusal.
 
 1. Pick a folder that doesn't exist yet, outside the repo (for example
    `$env:TEMP\rp-rec-<what>`). The command refuses a folder with anything in it, so a

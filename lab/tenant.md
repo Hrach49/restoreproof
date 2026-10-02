@@ -102,8 +102,9 @@ the next point, so the sampler (W2.6) never takes items from a target.
 
 ## RestoreProof Worker app (L1.5)
 
-The Worker's own app registration: it reads back what Veeam restored, app-only. It can read
-the three restore targets, the rest of the RestoreTest site (canary library included) and the
+The Worker's own app registration: it reads back what Veeam restored and, since W3.4
+(2026-10-02), deletes it again, app-only. It can read and write the three restore targets
+(nothing else is writable), read the rest of the RestoreTest site (canary library included) and the
 metadata of alice's OneDrive site and root folder, nothing else. What is granted, why, and how
 it is checked:
 `docs/security/graph-permissions.md`. Made on 2026-09-27 with `lab/entra/new-worker-app.ps1`
@@ -116,9 +117,9 @@ client ID matches `WORKER_CLIENT_ID` in `lab/seeder/tenant.py`.
 | Service principal object ID | `f5a56ba3-1b8f-4d4c-8a0a-b2b579b7bd5f` |
 | Sign-in audience | Single tenant (`AzureADMyOrg`) |
 | Credential | Certificate (no client secret): self-signed RSA 2048, `CN=RestoreProof Worker (lab)`, SHA-1 thumbprint `B56D2BD39945BAB1484A53F6C78C059A369EDBB3`, created 2026-09-27, expires 2027-09-27. Private key only in `%LOCALAPPDATA%\RestoreProof\lab\worker-graph.pfx`; its password only in Credential Manager (`RestoreProof Lab - Worker Graph app PFX`) |
-| Graph application permissions (admin consent) | `Sites.Selected`, `Files.SelectedOperations.Selected`; nothing else |
-| SharePoint grants | `read` on the RestoreTest site; `read` on alice's OneDrive `RestoreTarget` folder |
-| Exchange Online | Role assignment `RestoreProof Worker - Application Mail.Read - restoretest` (role `Application Mail.Read`), management scope `RestoreProof Worker - restoretest mailbox` (`PrimarySmtpAddress -eq 'restoretest@RestoreProofLab.onmicrosoft.com'`) |
+| Graph application permissions (admin consent) | `Sites.Selected`, `Files.SelectedOperations.Selected`, `Lists.SelectedOperations.Selected` (W3.4, 2026-10-02); nothing else |
+| SharePoint grants | `read` on the RestoreTest site; `write` on the RestoreTarget list only (W3.4); `write` on alice's OneDrive `RestoreTarget` folder (raised from `read` in W3.4) |
+| Exchange Online | Role assignment `RestoreProof Worker - Application Mail.ReadWrite - restoretest` (role `Application Mail.ReadWrite`, replacing `Application Mail.Read` in W3.4), management scope `RestoreProof Worker - restoretest mailbox` (`PrimarySmtpAddress -eq 'restoretest@RestoreProofLab.onmicrosoft.com'`) |
 | Live check | `python -m seeder check-worker-app`: 16/16 on 2026-09-27, `docs/security/l1.5-worker-app-check.txt` |
 
 Setting it up changed the tenant in two other ways:

@@ -1,0 +1,52 @@
+restore point 2026-10-01T22:01:38.761857Z  c2f0f2e7-177f-48ac-992b-93a50cf702e35492ac04-4228-4bb8-bca4-b68172c5c582  (veeam_org_name RestoreProofLab.onmicrosoft.com)
+run rp-20261002T180310Z-6661beff  seed 6933ea77
+cleanup before ok: deleted 0 mail, 0 sharepoint, 0 onedrive
+canary cursor 0,0,0 -> 3,3,3
+  KIND        REQUESTED  CANARIES  RANDOM  NOTE
+  mail        5          3 of 3    2 of 2
+  sharepoint  5          3 of 3    0 of 2  random shortfall
+  onedrive    5          3 of 3    0 of 2  random shortfall
+restoring 11 item(s) ...
+
+  KIND        SOURCE  NAME                                OUTCOME   SESSION                               ELAPSED  MESSAGE
+  mail        canary  RP-CANARY-0001                      restored  fa02805a-e8be-4ae9-8f1c-099f05ab89e5  0:00:39  Item RP-CANARY-0001 was restored successfully (type: IPM.Note; source: Alice Test\Inbox; target: restoretest@RestoreProofLab.onmicrosoft.com\<null>\Inbox)
+  mail        canary  RP-CANARY-0002                      restored  fa02805a-e8be-4ae9-8f1c-099f05ab89e5  0:00:39  Item RP-CANARY-0002 was restored successfully (type: IPM.Note; source: Alice Test\Inbox; target: restoretest@RestoreProofLab.onmicrosoft.com\<null>\Inbox)
+  mail        canary  RP-CANARY-0003                      restored  fa02805a-e8be-4ae9-8f1c-099f05ab89e5  0:00:39  Item RP-CANARY-0003 was restored successfully (type: IPM.Note; source: Alice Test\Inbox; target: restoretest@RestoreProofLab.onmicrosoft.com\<null>\Inbox)
+  mail        random  sub                                 restored  a085841a-4cdb-45e1-93eb-8dfb11a084d1  0:00:28  Item sub was restored successfully (type: IPM.Note; source: Hrachya Harutyunyan\Sent Items; target: restoretest@RestoreProofLab.onmicrosoft.com\<null>\Inbox)
+  mail        random  RestoreProof W2.2 second mail 3n5w  restored  a085841a-4cdb-45e1-93eb-8dfb11a084d1  0:00:28  Item RestoreProof W2.2 second mail 3n5w was restored successfully (type: IPM.Note; source: Hrachya Harutyunyan\Sent Items; target: restoretest@RestoreProofLab.onmicrosoft.com\<null>\Inbox)
+  sharepoint  canary  rp-canary-01.pdf                    restored  e018de5b-9435-4cff-ad54-891d7350d949  0:00:38  Item rp-canary-01.pdf was restored successfully (type: File; source: /sites/RestoreTest/RestoreTest/rp-canary-01.pdf; target: https://restoreprooflab.sharepoint.com/sites/RestoreTest)
+  sharepoint  canary  rp-canary-02.docx                   restored  e018de5b-9435-4cff-ad54-891d7350d949  0:00:38  Item rp-canary-02.docx was restored successfully (type: File; source: /sites/RestoreTest/RestoreTest/rp-canary-02.docx; target: https://restoreprooflab.sharepoint.com/sites/RestoreTest)
+  sharepoint  canary  rp-canary-03.xlsx                   restored  e018de5b-9435-4cff-ad54-891d7350d949  0:00:38  Item rp-canary-03.xlsx was restored successfully (type: File; source: /sites/RestoreTest/RestoreTest/rp-canary-03.xlsx; target: https://restoreprooflab.sharepoint.com/sites/RestoreTest)
+  onedrive    canary  rp-canary-11.pdf                    restored  5a915694-76f5-4b55-85b0-475c51c341a7  0:00:37  Item rp-canary-11.pdf was restored successfully (type: File; source: personal/alice_restoreprooflab_onmicrosoft_com/Documents/RestoreTarget/rp-canary-11.pdf; target: https://restoreprooflab-my.sharepoint.com/personal/alice_restoreprooflab_onmicrosoft_com)
+  onedrive    canary  rp-canary-12.docx                   restored  5a915694-76f5-4b55-85b0-475c51c341a7  0:00:37  Item rp-canary-12.docx was restored successfully (type: File; source: personal/alice_restoreprooflab_onmicrosoft_com/Documents/RestoreTarget/rp-canary-12.docx; target: https://restoreprooflab-my.sharepoint.com/personal/alice_restoreprooflab_onmicrosoft_com)
+  onedrive    canary  rp-canary-13.xlsx                   restored  5a915694-76f5-4b55-85b0-475c51c341a7  0:00:37  Item rp-canary-13.xlsx was restored successfully (type: File; source: personal/alice_restoreprooflab_onmicrosoft_com/Documents/RestoreTarget/rp-canary-13.xlsx; target: https://restoreprooflab-my.sharepoint.com/personal/alice_restoreprooflab_onmicrosoft_com)
+
+  SESSION                               KIND        RESULT   RESTORED  STARTED                       ENDED                         ELAPSED
+  fa02805a-e8be-4ae9-8f1c-099f05ab89e5  mail        Success  3 of 3    2026-10-02T18:03:32.8466307Z  2026-10-02T18:04:12.2520691Z  0:00:39
+  a085841a-4cdb-45e1-93eb-8dfb11a084d1  mail        Success  2 of 2    2026-10-02T18:04:13.6599107Z  2026-10-02T18:04:42.4323881Z  0:00:28
+  e018de5b-9435-4cff-ad54-891d7350d949  sharepoint  Success  3 of 3    2026-10-02T18:04:44.3486805Z  2026-10-02T18:05:22.6849024Z  0:00:38
+  5a915694-76f5-4b55-85b0-475c51c341a7  onedrive    Success  3 of 3    2026-10-02T18:05:25.1374022Z  2026-10-02T18:06:02.9035178Z  0:00:37
+
+restore succeeded: 11 of 11 item(s) restored in 0:02:38
+
+  KIND        SOURCE  NAME                                OUTCOME  FIELDS  DUP  MS
+  mail        canary  RP-CANARY-0001                      match    -       -    0
+  mail        canary  RP-CANARY-0002                      match    -       -    0
+  mail        canary  RP-CANARY-0003                      match    -       -    0
+  mail        random  sub                                 match    -       -    0
+  mail        random  RestoreProof W2.2 second mail 3n5w  match    -       -    0
+  sharepoint  canary  rp-canary-01.pdf                    match    -       -    434
+  sharepoint  canary  rp-canary-02.docx                   match    -       -    354
+  sharepoint  canary  rp-canary-03.xlsx                   match    -       -    369
+  onedrive    canary  rp-canary-11.pdf                    match    -       -    333
+  onedrive    canary  rp-canary-12.docx                   match    -       -    331
+  onedrive    canary  rp-canary-13.xlsx                   match    -       -    341
+
+check: 11 match, 0 mismatch, 0 missing, 0 error
+
+status pass: 11 of 11 item(s) verified: manifest 9, fields 2, metadata 0
+warning: shortfall: sharepoint random: 0 of 2
+warning: shortfall: onedrive random: 0 of 2
+cleanup after ok: deleted 5 mail, 3 sharepoint, 3 onedrive
+recorded 200 exchange(s) in C:\Users\minas\AppData\Local\Temp\rp-w34-rec-20261002T200307\restore
+exit code 0

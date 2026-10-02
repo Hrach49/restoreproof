@@ -14,6 +14,17 @@ names the restore point it used, because "the data restores" is only true of a p
 original location, and never any other. Enforced per item by `TargetGuard`. (The `RestoreTest`
 library and OneDrive folder hold the canary files and are not restore targets.)
 
+**Cleaner.** The Worker code that empties the three restore targets before and after each run
+(`rp::graph::Cleaner`, W3.4): every mail in the `restoretest` Inbox (permanently deleted, never
+through Deleted Items) and every plain file in the RestoreTarget library and alice's
+`/RestoreTarget` folder (to the site recycle bin). It is the only Worker code that deletes in
+the tenant: it checks each target with the guard's own checks, deletes only what it has just
+listed there, and leaves folders and anything else that isn't a plain file for the owner
+(*skipped*). Its result never changes a run's status, except that a guard refusal before the
+run stops it (`error` `target_guard`). Only one run at a time uses the targets: `rpworker
+restore` holds a machine-wide mutex while it runs, so one run's cleanup can't delete another's
+copies before they are checked.
+
 **Canary item.** An item we seeded ourselves and whose expected content we recorded in
 `lab/seed-manifest.json` (mails `RP-CANARY-0001`…`0020`, files `rp-canary-01.pdf`…
 `rp-canary-20.png`, whose types cycle pdf, docx, xlsx, txt, png; see `lab/README.md`). Because the manifest holds the expected subject, sender, date and
@@ -137,6 +148,13 @@ ones.
 **Warning (of a run).** A note beside the status, with a code (`backup_session`,
 `backup_item`, `duplicate`, `shortfall`, `stale_copies`), a one-line message and the items it
 concerns. Never changes the status, never names a tenant value.
+
+**`cleanup_ok`.** Whether a run left the restore targets clean, in the result's `cleanup`
+object beside `status` (W3.4): the clean after's verdict when it ran, else the clean before's;
+false when a restore was sent and no clean after could run, or when the restore may still be
+running in Veeam (`restore_may_still_run`). A target is clean when nothing stopped its
+cleanup and nothing was left or skipped. Housekeeping, not a result: a `pass` with
+`cleanup_ok: false` is still a `pass`.
 
 ## Evidence
 

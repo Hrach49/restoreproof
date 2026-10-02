@@ -22,7 +22,9 @@
        (Files.SelectedOperations.Selected), so the Worker's Cleaner can delete restored copies
        (W3.4). Nothing else. Before each write grant the script reads the list or folder and
        refuses unless it is named RestoreTarget (the list's address too; the folder directly
-       under the drive's root).
+       under the drive's root). Then it runs check-worker-grants.ps1 in the same session: a
+       read-only listing of the grants, which stops the script if the Worker app holds any grant
+       at a canary or lacks one of its own (W3.4).
     4. Exchange Online RBAC for Applications: "Application Mail.ReadWrite" on the restoretest
        mailbox only (a management scope; until W3.4 "Application Mail.Read", whose assignment the
        script removes), then Test-ServicePrincipalAuthorization for restoretest and alice.
@@ -376,6 +378,15 @@ try {
         Done "changed roles from '$(@($mine[0].roles) -join ',')' to 'write'"
     }
     else { Done 'already granted' }
+
+    # W3.4, build notes point 13: no write probe can prove a refusal at a canary, so the grants
+    # themselves are read back (GETs only, in this session) and checked.
+    Step 'Read-only grant check: no Worker app grant at a canary (check-worker-grants.ps1)'
+    & (Join-Path $PSScriptRoot 'check-worker-grants.ps1') -UseCurrentSession -AppId $appId
+    if ($LASTEXITCODE -ne 0) {
+        throw 'The grant check found a problem (above). Fix the grants before relying on the Worker app; ' +
+              'no Exchange step was run.'
+    }
 }
 finally {
     Disconnect-MgGraph | Out-Null
@@ -459,3 +470,4 @@ Done "Certificate file           $PfxPath (password: Credential Manager, '$CredT
 Done ''
 Done 'Mail access can take 30 minutes to 2 hours to apply (until then a mail delete may get 403). Then, from lab\:'
 Done "  uv run python -m seeder check-worker-app --client-id $appId"
+Done 'The grant check alone, read-only: pwsh -NoProfile -File lab\entra\check-worker-grants.ps1'

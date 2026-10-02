@@ -165,14 +165,13 @@ statuses are the ones Graph gave in the lab: 403 where nothing is granted, 404 f
 hidden inside a site where the app holds a folder grant. It also takes a token for Exchange
 Online's and SharePoint's own APIs: a role consented there (`full_access_as_app`,
 `Sites.Read.All`) never shows in the Graph token, and all Graph probes would still pass. And it
-signs in as alice and as the admin (the seeder app, delegated; a browser opens for each,
-`--auth device` for a code) to confirm her canary folder exists and that the two canary files
-the refusal probes aim at exist, since a deleted item answers 404 too. Exit 0 means everything
-was as expected; 1 means any probe, token, the canary folder or a canary file was not; 2 means
-the credential or a sign-in failed.
+signs in as alice (the seeder app, delegated; a browser opens, `--auth device` for a code) to
+confirm her canary folder exists, since a deleted folder answers 404 too. Exit 0 means
+everything was as expected; 1 means any probe, token or the canary folder was not; 2 means the
+credential or a sign-in failed.
 
-Since W3.4 it also writes, in three kinds only (`docs/decisions.md` 2026-10-02, point 9, as
-amended by the build notes' point on the live 412):
+Since W3.4 it also writes, in the three restore targets only (`docs/decisions.md` 2026-10-02,
+point 9, and the build notes' point 13):
 
 - **Write probes, which must succeed.** In each restore target it creates one item named
   `rp-probe-<uuid>` and deletes it again: a small `.txt` file uploaded into the RestoreTarget
@@ -183,24 +182,11 @@ amended by the build notes' point on the live 412):
   may be). The delete is sent only for an item the create's reply proves to be the probe's own,
   in that target: its name, its drive and, in OneDrive, its folder. An interrupted delete is
   sent once more on the way out, and only there.
-- **Refusal probes, which must be refused and could create nothing anyway.** In the folder of
-  one canary file in the RestoreTest library (its root) and of one in alice's `/RestoreTest`
-  folder it sends `POST /drives/{drive}/items/{folder}/children` with the body
-  `{"name": "rp-probe-invalid:name", "folder": {}, "@microsoft.graph.conflictBehavior": "fail"}`.
-  `:` is invalid in a SharePoint or OneDrive name, so nothing can be created. 403 or 404 is
-  refused (ok). 400 means the request passed the permission check and only the name stopped it,
-  so the app may write there; any 2xx means it created something (the row says to remove it by
-  hand); 409, 412 or anything else is not a refusal either: all fail the check. The request
-  names the folder, never a canary file. The seeder's own sign-ins (the admin for the library,
-  alice for her folder) confirm each canary file exists first, so a 404 means "hidden"; a file
-  that can't be confirmed fails the check, and nothing is sent there. Nothing else is ever sent
-  at a canary location. alice's mailbox gets no write probe: read and write share the RBAC
-  scope, so the read probe's 403 is the proof.
-- **Controls, which must get 400.** The same invalid-name create in the RestoreTarget library's
-  root and in alice's `/RestoreTarget` folder, where the app may write: 400 shows what
-  "allowed" looks like, so a canary's 403 is a refusal and not something SharePoint rejects for
-  every caller. Anything but 400 fails the check (a 403 or 404: no write in the target; a 2xx:
-  it created something, remove it by hand). It creates nothing.
+- **Nothing but GETs at a canary.** No write probe can prove a refusal there (below), so none is
+  sent: no request of another method goes to the canary library, its list or alice's canary
+  folder, and no request names a canary file. That the app can't write at a canary is proven
+  read-only, from the grants, by `lab/entra/check-worker-grants.ps1`. alice's mailbox gets no
+  write probe either: read and write share the RBAC scope, so the read probe's 403 is the proof.
 
 | Probe | Request | Expected | What it proves |
 |---|---|---|---|
@@ -208,8 +194,6 @@ amended by the build notes' point on the live 412):
 | token roles, Exchange Online | a token for `https://outlook.office365.com` | no roles | No `full_access_as_app` or other Exchange application role (that would reach every mailbox over EWS) |
 | token roles, SharePoint | a token for `https://restoreprooflab.sharepoint.com` | no roles | No SharePoint application role (`Sites.Read.All` there would reach every site over SharePoint REST) |
 | canary folder, read as alice | `GET /drives/{alice's drive}/items/{RestoreTest}`, as alice | a folder with files | The folder the canary-folder probes expect 404 on exists, so their 404 means "hidden", not "gone" |
-| canary file, library, read as admin | `GET /drives/{RestoreTest drive}/items/root:/rp-canary-01.pdf:`, as the admin | a file there | The library refusal probe's target exists |
-| canary file, OneDrive, read as alice | `GET /drives/{alice's drive}/items/{RestoreTest}:/rp-canary-11.pdf:`, as alice | a file there | The OneDrive refusal probe's target exists, so its 404 means "hidden" |
 | restoretest's mailbox | `GET /users/restoretest@…/messages` | 200 | #3 reaches the test mailbox |
 | RestoreTest site | `GET /sites/{RestoreTest site ID}` | 200 | #1 reaches the site |
 | RestoreTarget library: the drive | `GET /drives/{RestoreTarget drive ID}` | 200 | #1 covers the SharePoint restore target |
@@ -229,57 +213,59 @@ amended by the build notes' point on the live 412):
 | RestoreTarget library: create a file / delete it | `PUT /drives/{RestoreTarget drive}/items/root:/rp-probe-<uuid>.txt:/content`, then `DELETE /drives/{RestoreTarget drive}/items/{id}` with `If-Match` | 201, then 204 | #4 lets the Cleaner delete in the library, a `DELETE` included |
 | alice's OneDrive: RestoreTarget folder: create a file / delete it | `PUT …/items/{RestoreTarget}:/rp-probe-<uuid>.txt:/content`, then `DELETE …/items/{id}` with `If-Match` | 201, then 204 | #2 `write` lets the Cleaner delete a child of the folder |
 | restoretest's mailbox: create a draft / permanently delete it | `POST /users/restoretest@…/messages`, then `POST …/messages/{id}/permanentDelete`, ImmutableId | 201, then 204 | #3 lets the Cleaner permanently delete mail, by the ImmutableId it lists |
-| RestoreTarget library: invalid name (control) | `POST /drives/{RestoreTarget drive}/items/root/children`, body `{"name": "rp-probe-invalid:name", "folder": {}, "@microsoft.graph.conflictBehavior": "fail"}` | 400 | Where #4 lets the app write, the request passes the permission check and only the name stops it: what "allowed" looks like |
-| alice's OneDrive: RestoreTarget folder: invalid name (control) | `POST /drives/{alice's drive}/items/{RestoreTarget}/children`, as above | 400 | The same under #2 |
-| RestoreTest library: invalid name beside a canary | `POST /drives/{RestoreTest drive}/items/root/children` (the folder of rp-canary-01), as above | 403 or 404 | #4 is on the RestoreTarget list only: the app can't write in the canary library's root (a grant on one canary file alone isn't seen; see below) |
-| alice's OneDrive: invalid name in RestoreTest | `POST /drives/{alice's drive}/items/{RestoreTest}/children` (the folder of rp-canary-11), as above | 403 or 404 (404 expected: the folder is masked; the old `PATCH` got 404 there live on 2026-10-02) | #2 is on the RestoreTarget folder only: the canary folder stays out of reach (a grant on one canary file alone isn't seen; see below) |
 
 The live run's output is the Done-when evidence: `docs/security/l1.5-worker-app-check.txt`
-(L1.5) and, once the owner has run the W3.4 setup and the check, `docs/security/w3.4-worker-app-check.txt`
-(the output saved as it is printed; it holds no secret). The script also prints Exchange's own
+(L1.5) and, once the owner has run the W3.4 setup and the checks, `docs/security/w3.4-worker-app-check.txt`
+and `docs/security/w3.4-worker-grants-check.txt` (the grant check's; each saved as it is
+printed; neither holds a secret). The script also prints Exchange's own
 view (`Test-ServicePrincipalAuthorization`): `InScope` True for restoretest and False for
 alice, now for the role `Application Mail.ReadWrite`.
 
 ### How each refusal is verified
 
-- **The canary library (#1 read, #4 not on it).** The invalid-name folder create in its root
-  must get 403. The library is in the same site as the RestoreTarget list, so a list grant made
-  on the wrong ID would show here as 400; the script's name check refuses that ID before the
-  grant.
-- **alice's canary folder (#2 not on it).** The same create in it must get 404 (masked) or 403;
-  400 would mean a folder grant reaches it. The read probes on the folder still expect 404.
-- **The controls.** The same create in the two file restore targets must get 400, so a 403 at a
-  canary is a refusal, not a request SharePoint would reject anyway.
-- **What the probe does not see: a grant on one canary file.** The create asks the canary
-  file's folder, not the file. `Files.SelectedOperations.Selected` can also grant write on one
-  driveItem alone; such a grant on `rp-canary-01.pdf` or `rp-canary-11.pdf` leaves the folder's
-  answer 403 or 404, and the check passes (a test pins this). The probe catches a write grant on
-  the canary library's list, on the site or on alice's canary folder; a grant on a single canary
-  file shows only in a read-only listing of that file's permissions, like the owner's below.
-  The old `PATCH` named the file, but its 412 couldn't tell either.
-- **Why not a `PATCH` (live, 2026-10-02).** The first refusal probe was `PATCH {}` on the canary
-  file with `If-Match: "rp-probe-no-such-etag"`. At `rp-canary-01.pdf` in the library it got
-  412, not 403 or 404, and the check failed, as it should on an unknown answer. An owner-run,
-  read-only listing of the grants (the admin, `Sites.FullControl.All`) showed the canary side
-  right: the app has only `read` on the RestoreTest site (the grant named RestoreProof Worker),
-  and no application grant at all on the canary library's list (`7eb0f08a-…`) or on
-  `rp-canary-01.pdf` (inherited site groups only). The RestoreTarget list has unique
-  permissions with one application `write` grant, but the listing printed that application's
-  name empty, so it didn't show whose it is; the controls' 400 in the live re-run, or a listing
-  that prints `grantedToV2.application.id`, will. So where the app may read an item SharePoint checks
-  `If-Match` before write permission, and a 412 can't tell "refused" from "allowed but stopped by
-  the ETag". alice's canary answered 404 (the app can't read that folder), which was right. The
-  invalid-name folder create replaced it: it never names a canary file, can create nothing, and
-  its control shows the 400 a permitted request gets. If a canary ever answers that create 400
-  too (SharePoint checking the name before permission), the check fails, and telling a refusal
-  apart would need yet another design, never a pass.
+- **The canaries (#1 read on the site; #2 and #4 not on them): by the grants, read-only.**
+  `lab/entra/check-worker-grants.ps1` lists the grants as the admin (`Sites.FullControl.All`,
+  GETs only) and matches the Worker app by its client ID, never its name. It requires: on the
+  RestoreTest site exactly one Worker app grant, `read`; on the canary library's list, its root
+  folder and each of its 10 canary files no Worker app grant of its own and an inherited one
+  only `read`; on alice's OneDrive site, its Documents list, her OneDrive root, her
+  `/RestoreTest` folder and its 10 canary files no Worker app grant at all (her site found by
+  its URL and checked to hold her drive, the list through the drive); on the RestoreTarget list
+  and alice's `/RestoreTarget` folder exactly one Worker app grant of its own, `write`. A
+  permission naming the app's ID anywhere counts as the app's (SharePoint's `siteUser` claim
+  form included). The canary files come from `lab/seed-manifest.json`; a failed GET or a reply
+  without a permission list is a problem, never a pass; another application's grant is printed
+  as a note. In the selected-permissions model access comes only from an application grant on
+  the resource or on a parent it inherits from (Microsoft,
+  [Overview of Selected permissions](https://learn.microsoft.com/graph/permissions-selected-overview),
+  "How access is calculated"), so no grant on a canary or any of its parents means no access
+  through a grant. The proof has a second half: no tenant-wide role (`Sites.ReadWrite.All`,
+  `Files.ReadWrite.All` and the like reach every canary with no grant listed), which
+  `check-worker-app`'s token-roles rows check (only the three `*.Selected` roles in the Graph
+  token, none for SharePoint or Exchange). The two runs together are the evidence. It also catches what
+  a probe at a folder never could, a write grant on one canary file alone
+  (`Files.SelectedOperations.Selected` allows one on a single driveItem). `new-worker-app.ps1`
+  runs it at its end and stops on a problem. Rows in `lab/README.md`.
+- **Why no write probe (live, 2026-10-02).** Two were tried and neither can tell a refusal from
+  a permitted write that something else stopped. A `PATCH {}` with `If-Match:
+  "rp-probe-no-such-etag"` on `rp-canary-01.pdf` got 412: where the app may read an item,
+  SharePoint checks `If-Match` before write permission. A folder create with a name SharePoint
+  never accepts (`rp-probe-invalid:name`) got 400 at both canary locations, alice's
+  `/RestoreTest` folder included, which the same app gets 404 on for a plain GET (it can't even
+  see it), and 400 in the two restore targets too: Graph validates the name before any
+  permission check, so a 400 says nothing. Any probe whose request could pass the checks would
+  risk a real write at a canary, so the check reads the grants instead
+  (`docs/decisions.md` 2026-10-02, W3.4 build notes, points 12 and 13).
+- **alice's canary folder, read side.** The read probes on it still expect 404 (masked), after
+  alice's own sign-in confirms the folder exists.
 - **Other mailboxes (#3 scoped).** No write is sent to alice's mailbox. Read and write share
   the RBAC scope, so the read probe's 403 on alice's mailbox, and `Test-ServicePrincipalAuthorization`'s
   `InScope` False, prove the write is refused there too.
 - **Other sites and the directory.** Unchanged since L1.5: the 403 read probes.
 - **In the Worker.** No Worker code ever sends a write at a canary: the Cleaner deletes only an
   item it listed in a restore target, behind the guard's own checks (`docs/decisions.md`
-  2026-10-02, point 4). Its tests replay a hand-written 403 taken from the Python probe's reply.
+  2026-10-02, point 4). Its tests replay a hand-written 403: no write at a canary is ever sent,
+  live or from the lab, to record one.
 
 The tests (`lab/tests/test_worker_app.py`) run the same check against a fake tenant, failure
 paths first:
@@ -289,13 +275,9 @@ paths first:
 - a write grant missing (the create fails, and no delete is sent), a delete refused, a created
   item the reply doesn't prove to be in its target (never deleted), a create with an unknown
   outcome (never sent again), and an interrupted delete (sent once more, in the target only);
-- a 400, 409, 412, 500 or any 2xx on a canary's invalid-name create (a misgranted canary
-  library shows as 400 from the fake tenant itself), a control answering 403, 404, 409, 500 or
-  a 2xx, and a canary file missing or unreadable by its owner (an error, never a pass; nothing
-  is sent there); the only request at a canary location is that exact `POST`, with no canary
-  file's ID in any path; the fake tenant answers a wrong `If-Match` on a readable canary 412, as
-  seen live; and the probe's limit: a write grant on one canary file alone leaves the check
-  passing;
+- no request but a GET reaching a canary location or naming a canary file, and no folder
+  create anywhere, with the grants as they are and with a write grant on the canary library or
+  on alice's canary folder (which `check-worker-app` doesn't probe: the grant check reads them);
 - an extra or missing role, and any role in the Exchange Online or SharePoint token;
 - `RestoreTarget` renamed or missing from alice's root listing;
 - the canary folder missing or empty, although the app still gets 404 on it;
@@ -310,7 +292,16 @@ the canary library, a renamed list, another list's address, the canary folder, a
 renamed folder and another drive. It also checks the script's text: the only `write` grants
 are on the RestoreTarget list and folder, each behind its name check; the list grant uses only
 `$RestoreTargetListId`; the only mail role is `Application Mail.ReadWrite`; and the canary
-library and folder are never named.
+library and folder are never named. For `check-worker-grants.ps1` it runs the rules
+(`Test-PermissionRule`) row by row, failure rows first (a Worker app write on the canary list,
+a grant of its own or an inherited one other than `read` on a canary file, any Worker app entry
+on alice's canary folder, the site grant `write`, missing or doubled, the app matched by its ID
+with an empty name, the RestoreTarget `write` missing), then the whole script with
+`Invoke-MgGraphRequest` stubbed: a failed GET, a next page, a manifest that can't be read or
+lists fewer than 20 files (nothing read), another account, and the grants as set up; and it
+checks the script's constants against `seeder/tenant.py`, that every Graph call is a `GET`, that
+it asks for `Sites.FullControl.All` only and names no write verb, and that `new-worker-app.ps1`
+runs it after the grants and stops on a problem.
 
 A sentinel test greps every output for the PFX password, the token and the private key.
 
@@ -345,11 +336,14 @@ A sentinel test greps every output for the PFX password, the token and the priva
 
 ## Open items
 
-1. **Write access for cleanup (W3.4). Closed.** Decided in `docs/decisions.md` 2026-10-02,
-   "W3.4: cleaning the restore targets before and after each run", point 1: grants #2, #3 and
-   #4 above, made by the owner with `lab/entra/new-worker-app.ps1` and the admin consent, and
-   proved by `check-worker-app`'s write and refusal probes (evidence
-   `docs/security/w3.4-worker-app-check.txt`). `Sites.Selected` `write` is never an option. If
+1. **Write access for cleanup (W3.4). Decided; live proof pending.** Decided in
+   `docs/decisions.md` 2026-10-02, "W3.4: cleaning the restore targets before and after each
+   run", point 1: grants #2, #3 and #4 above, made by the owner with
+   `lab/entra/new-worker-app.ps1` and the admin consent, to be proved by a re-run of
+   `check-worker-app` (its token roles and write probes) and a run of the read-only grant check,
+   `lab/entra/check-worker-grants.ps1`, saved as `docs/security/w3.4-worker-app-check.txt` and
+   `docs/security/w3.4-worker-grants-check.txt` (the build notes' "Still open"). This item is
+   closed once both are saved and pass. `Sites.Selected` `write` is never an option. If
    a probe fails live (whether list `write` allows a `DELETE`, whether folder `write` allows
    deleting a child), that entry is amended, not this table widened. Exchange caches role
    changes for 30 minutes to 2 hours: probe again after the delay before trusting a 403 on the

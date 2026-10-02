@@ -1,4 +1,7 @@
-"""check-worker-app (L1.5, W3.4): the Worker app's permissions, probed with its own app-only token."""
+"""check-worker-app (L1.5, W3.4): the Worker app's permissions, probed with its own app-only token.
+
+No write is ever sent at a canary: lab/entra/check-worker-grants.ps1 proves the refusal there from
+the grants, read-only (tests/test_entra_script.py)."""
 
 import datetime as dt
 import json
@@ -15,6 +18,7 @@ from cryptography.hazmat.primitives.serialization import pkcs12
 from cryptography.x509.oid import NameOID
 
 from seeder import cli, tenant, worker_app
+from seeder.catalog import canary_files
 from seeder.auth import AuthError
 from seeder.graph import seg
 from seeder.http import HttpResponse, TransportError
@@ -22,18 +26,14 @@ from seeder.worker_app import (
     CLIENT_ID_ENV,
     GRAPH_SCOPES,
     IMMUTABLE_ID,
-    INVALID_FOLDER_BODY,
-    INVALID_NAME,
     OTHER_API_SCOPES,
     CREDENTIAL_TARGET,
     EXPECTED_ROLES,
     CredentialError,
     WriteTarget,
-    control_targets,
     default_pfx_path,
     load_pfx,
     probes,
-    refusal_canaries,
     resolve_worker_client_id,
     run_check,
     run_write_probe,
@@ -43,10 +43,10 @@ from tests.fake_graph import APP_GRANTS, WRITE_GRANTS, FakeSignIn, FakeTenant, m
 from tests.fake_transport import graph_error, json_response
 
 CLIENT_ID = "11111111-2222-3333-4444-555555555555"
-# Every row of the probe table: the GETs, create and delete per restore target, the invalid-name
-# control per file restore target, one refusal per canary.
-TOTAL = len(probes()) + 2 * len(write_targets()) + len(control_targets()) + len(refusal_canaries())
-LIBRARY_CANARY, ONEDRIVE_CANARY = (c.file for c in refusal_canaries())
+# Every row of the probe table: the GETs, and a create and a delete per restore target.
+TOTAL = len(probes()) + 2 * len(write_targets())
+LIBRARY_CANARY = next(f for f in canary_files() if f.kind == "sharepoint_file")
+ONEDRIVE_CANARY = next(f for f in canary_files() if f.kind == "onedrive_file")
 PASSWORD_SENTINEL = "pfx-password-SENTINEL-DO-NOT-LEAK"
 TOKEN_SENTINEL = "token-signature-SENTINEL-DO-NOT-LEAK"
 
@@ -141,7 +141,6 @@ def check(pfx_path, *, fake=None, app=None, read_password=None, transport=None):
         read_password=read_password or password_store(),
         transport=transport or fake,
         alice_token=FakeSignIn().token_provider(tenant.ALICE_UPN, "test"),
-        admin_token=FakeSignIn().token_provider(tenant.ADMIN_UPN, "test"),
         app=app if app is not None else FakeConfidentialApp(),
         out=lines.append,
         sleep=lambda s: None,
@@ -509,16 +508,11 @@ def test_a_write_grant_missing_fails_its_create_and_sends_no_delete(pfx, grant):
     delete = row(lines, f"{label}: {'permanently delete it' if 'mailbox' in grant else 'delete it'}")
     assert delete.startswith("UNEXPECTED") and "(not sent)" in delete and "nothing to delete" in delete
     methods = [m for m, *_ in fake.app_writes]
-    # the POSTs after the mailbox's own: the two controls and the two canary creates
+    assert lines[-1] == f"{TOTAL - 2}/{TOTAL} probes as expected; 2 UNEXPECTED"
     if "mailbox" in grant:
-        assert lines[-1] == f"{TOTAL - 2}/{TOTAL} probes as expected; 2 UNEXPECTED"
-        assert methods.count("POST") == 1 + 4 and methods.count("DELETE") == 2  # no permanentDelete
+        assert methods.count("POST") == 1 and methods.count("DELETE") == 2  # no permanentDelete
     else:
-        # the control in that target fails too: 403, the app can't write there
-        control = row(lines, f"{label}: invalid name (control)")
-        assert control.startswith("UNEXPECTED") and " 403 " in control
-        assert lines[-1] == f"{TOTAL - 3}/{TOTAL} probes as expected; 3 UNEXPECTED"
-        assert methods.count("POST") == 2 + 4 and methods.count("DELETE") == 1
+        assert methods.count("POST") == 2 and methods.count("DELETE") == 1
 
 
 def test_a_refused_delete_leaves_a_note_and_fails(pfx):
@@ -627,6 +621,10 @@ def test_the_write_probes_refuse_a_canary_location_before_any_request():
     assert sent == []
 
 
+def _folder_create(path: str) -> "worker_app.Probe":
+    return worker_app.Probe("c", path, 201, method="POST", json_body={"name": "rp-probe-x", "folder": {}}, idempotent=False)
+
+
 def _canary_file_ids(kind: str) -> list[str]:
     manifest = json.loads((Path(__file__).resolve().parents[1] / "seed-manifest.json").read_text("utf-8"))
     return [e["drive_item_id"] for e in manifest["entries"] if e["kind"] == kind]
@@ -635,10 +633,6 @@ def _canary_file_ids(kind: str) -> list[str]:
 _OD, _SP = tenant.ONEDRIVE_DRIVE_ID, tenant.RESTORE_TARGET_DRIVE_ID
 _OD_CANARY = _canary_file_ids("onedrive_file")[0]
 _SP_CANARY = _canary_file_ids("sharepoint_file")[0]
-
-
-def _folder_create(path: str, body, method: str = "POST") -> "worker_app.Probe":
-    return worker_app.Probe("c", path, 400, method=method, json_body=body, idempotent=False)
 
 
 @pytest.mark.parametrize(
@@ -659,18 +653,13 @@ def _folder_create(path: str, body, method: str = "POST") -> "worker_app.Probe":
         worker_app.Probe("c", f"/drives/{_OD}/items/01ABC:/rp-probe-x.txt:/content", 201, method="PUT"),
         worker_app.Probe("c", f"/drives/{_SP}/items/01ABC:/rp-probe-x.txt:/content", 201, method="PUT"),
         worker_app.Probe("c", f"/users/{tenant.RESTORETEST_UPN}/messages/AAk=/move", 201, method="POST"),
-        # The invalid-name folder create (the control) only in a file restore target, only with
-        # that exact body: never a valid name, never elsewhere.
-        _folder_create(f"/drives/{_SP}/items/root/children", {**INVALID_FOLDER_BODY, "name": "rp-probe-valid"}),
-        _folder_create(f"/drives/{_SP}/items/root/children", {"name": INVALID_NAME, "folder": {}}),
-        _folder_create(f"/drives/{_SP}/items/root/children", None),
-        _folder_create(f"/drives/{_SP}/items/01ABC/children", INVALID_FOLDER_BODY),
-        _folder_create(f"/drives/{_OD}/items/root/children", INVALID_FOLDER_BODY),
-        _folder_create(f"/drives/{_OD}/items/{tenant.ONEDRIVE_FOLDER_ID}/children", INVALID_FOLDER_BODY),
-        _folder_create(f"/drives/{tenant.SHAREPOINT_DRIVE_ID}/items/root/children", INVALID_FOLDER_BODY),
-        _folder_create(f"/drives/{_SP}/items/root/children", INVALID_FOLDER_BODY, method="PUT"),
-        replace(_folder_create(f"/drives/{_SP}/items/root/children", INVALID_FOLDER_BODY), headers={"If-Match": "*"}),
-        replace(_folder_create(f"/drives/{_SP}/items/root/children", INVALID_FOLDER_BODY), params={"a": "b"}),
+        # No folder is ever created, not even in a restore target, and nothing at a canary.
+        _folder_create(f"/drives/{_SP}/items/root/children"),
+        _folder_create(f"/drives/{_OD}/items/{tenant.ONEDRIVE_TARGET_FOLDER_ID}/children"),
+        _folder_create(f"/drives/{_OD}/items/{tenant.ONEDRIVE_FOLDER_ID}/children"),
+        _folder_create(f"/drives/{tenant.SHAREPOINT_DRIVE_ID}/items/root/children"),
+        replace(_folder_create(f"/drives/{tenant.SHAREPOINT_DRIVE_ID}/items/{_SP_CANARY}"), method="PATCH", item_id=_SP_CANARY),
+        worker_app.Probe("c", f"/drives/{tenant.SHAREPOINT_DRIVE_ID}/items/root:/rp-probe-x.txt:/content", 201, method="PUT"),
     ],
     ids=[
         "delete-onedrive-canary-file",
@@ -683,16 +672,12 @@ def _folder_create(path: str, body, method: str = "POST") -> "worker_app.Probe":
         "create-in-another-onedrive-folder",
         "create-in-a-library-folder",
         "post-other-than-a-draft",
-        "folder-create-with-a-valid-name",
-        "folder-create-without-conflict-fail",
-        "folder-create-without-a-body",
-        "folder-create-in-a-library-folder",
-        "folder-create-in-onedrive-root",
+        "folder-create-in-the-library-target",
+        "folder-create-in-the-onedrive-target",
         "folder-create-in-the-onedrive-canary-folder",
         "folder-create-in-the-canary-library",
-        "folder-create-as-put",
-        "folder-create-with-headers",
-        "folder-create-with-params",
+        "patch-of-a-canary-file",
+        "create-in-the-canary-library",
     ],
 )
 def test_check_write_refuses_anything_but_the_targets_and_the_proven_item(probe):
@@ -703,12 +688,6 @@ def test_check_write_refuses_anything_but_the_targets_and_the_proven_item(probe)
 def test_check_write_takes_the_probes_own_creates_and_proven_deletes():
     for target in write_targets():
         worker_app._check_write(target.create_probe("rp-probe-x"))
-    for target in control_targets():
-        worker_app._check_write(target.control_probe())
-    assert [t.control_probe().path for t in control_targets()] == [
-        f"/drives/{_SP}/items/root/children",
-        f"/drives/{_OD}/items/{tenant.ONEDRIVE_TARGET_FOLDER_ID}/children",
-    ]
     for probe in (
         worker_app.Probe("d", f"/drives/{_OD}/items/01ABC", 204, method="DELETE", item_id="01ABC"),
         worker_app.Probe("d", f"/drives/{_SP}/items/01ABC", 204, method="DELETE", item_id="01ABC"),
@@ -723,207 +702,59 @@ def test_check_write_takes_the_probes_own_creates_and_proven_deletes():
         worker_app._check_write(probe)
 
 
-# ---- failure paths: the invalid-name folder create at the canaries and its control ------------
+# ---- failure paths: nothing but a GET ever reaches a canary ----------------------------------------
 
-CANARY_LABELS = {c.file.kind: c.label for c in refusal_canaries()}
-CONTROL_LABELS = [t.control_probe().label for t in control_targets()]
-# The only path a canary location is ever sent: a folder create in the canary file's own folder.
-CANARY_CREATES = {
-    "library": f"/drives/{tenant.SHAREPOINT_DRIVE_ID}/items/{tenant.SHAREPOINT_FOLDER_ID}/children",
-    "onedrive": f"/drives/{tenant.ONEDRIVE_DRIVE_ID}/items/{tenant.ONEDRIVE_FOLDER_ID}/children",
-}
+CANARY_LOCATIONS = (tenant.SHAREPOINT_DRIVE_ID, tenant.ONEDRIVE_FOLDER_ID, tenant.SHAREPOINT_LIST_ID)
 
 
-def canary_label(canary: str) -> str:
-    return CANARY_LABELS["sharepoint_file" if canary == "library" else "onedrive_file"]
+class Recording:
+    """The fake tenant, recording every request (app-only and alice's) as (method, url)."""
 
+    def __init__(self, fake: FakeTenant) -> None:
+        self.fake, self.sent = fake, []
 
-def answer_with(status: int):
-    if status in (200, 201):
-        return json_response(status, {"id": "01FAKEMADE", "name": INVALID_NAME, "folder": {}})
-    if status == 204:
-        return HttpResponse(204)
-    return graph_error(status, "someError", f"HTTP {status}")
-
-
-@pytest.mark.parametrize("canary", ["library", "onedrive"])
-@pytest.mark.parametrize("answer", [400, 409, 412, 500, 200, 201])
-def test_a_canary_that_does_not_refuse_the_invalid_folder_fails_the_check(pfx, canary, answer):
-    # 400: past the permission check, only the name stopped it, so the app may write there.
-    # 409/412/anything else: not a refusal either. A 2xx: it made something.
-    fake = with_canary(FakeTenant())
-
-    def hook(method, path, headers, body):
-        return answer_with(answer) if (method, path) == ("POST", CANARY_CREATES[canary]) else None
-
-    code, lines, _ = check(pfx, fake=fake, transport=Wrapped(fake, hook))
-    assert code == 1
-    line = row(lines, canary_label(canary))
-    assert line.startswith("UNEXPECTED") and "403/404" in line and f" {answer} " in line
-    if answer == 400:
-        assert "may write here" in line
-    if answer in (200, 201):
-        assert "created something" in line and "by hand" in line
-    assert lines[-1] == f"{TOTAL - 1}/{TOTAL} probes as expected; 1 UNEXPECTED"
-
-
-@pytest.mark.parametrize("target", [0, 1])
-@pytest.mark.parametrize("answer", [403, 404, 201, 409, 500])
-def test_a_control_that_does_not_answer_400_fails_the_check(pfx, target, answer):
-    # 403/404 in a restore target: the app can't write there, so a canary's 403 proves nothing.
-    fake = with_canary(FakeTenant())
-    t = control_targets()[target]
-    path = t.control_probe().path
-
-    def hook(method, p, headers, body):
-        return answer_with(answer) if (method, p) == ("POST", path) else None
-
-    code, lines, _ = check(pfx, fake=fake, transport=Wrapped(fake, hook))
-    assert code == 1
-    line = row(lines, CONTROL_LABELS[target])
-    assert line.startswith("UNEXPECTED") and " 400 " in line and f" {answer} " in line
-    if answer in (403, 404):
-        assert "no write in this restore target" in line
-    if answer == 201:
-        assert "created something" in line and "by hand" in line
-    assert lines[-1] == f"{TOTAL - 1}/{TOTAL} probes as expected; 1 UNEXPECTED"
-
-
-def test_a_control_without_write_shows_403_from_the_fake(pfx):
-    # The real fake: the RestoreTarget list grant gone, the site read still there.
-    fake = with_canary(FakeTenant(app_grants=APP_GRANTS - {f"list-write:{tenant.RESTORE_TARGET_DRIVE_ID}"}))
-    code, lines, _ = check(pfx, fake=fake)
-    assert code == 1
-    line = row(lines, "RestoreTarget library: invalid name (control)")
-    assert line.startswith("UNEXPECTED") and " 403 " in line and "no write in this restore target" in line
-
-
-def test_a_write_grant_on_the_canary_library_shows_as_400(pfx):
-    # The real fake, a wrong grant: the list grant on the canary library instead of RestoreTarget.
-    fake = with_canary(FakeTenant(app_grants=APP_GRANTS | {f"list-write:{tenant.SHAREPOINT_DRIVE_ID}"}))
-    code, lines, _ = check(pfx, fake=fake)
-    assert code == 1
-    line = row(lines, canary_label("library"))
-    assert line.startswith("UNEXPECTED") and " 400 " in line and "may write here" in line
-    assert fake.item(tenant.SHAREPOINT_DRIVE_ID, LIBRARY_CANARY.name) is not None  # changed nothing
-    assert fake.app_items == {}  # and made nothing
-
-
-def test_a_write_grant_on_one_canary_file_is_not_seen_by_the_folder_probe(pfx):
-    # The probe's documented limit (docs/decisions.md 2026-10-02 build notes, point 12): the
-    # invalid-name create asks the canary file's folder, so a grant on the file alone
-    # (Files.SelectedOperations.Selected allows one on a single driveItem) still gets 403 there
-    # and the check passes. Only the owner's read-only grant listing shows such a grant.
-    fake = with_canary(FakeTenant())
-    item_id = fake.item(tenant.SHAREPOINT_DRIVE_ID, LIBRARY_CANARY.name)[0]
-    fake.app_grants.add(f"item-write:{tenant.SHAREPOINT_DRIVE_ID}/{item_id}")
-    graph = worker_app.GraphClient(fake, lambda: make_app_token(CLIENT_ID), "test", sleep=lambda s: None)
-    # The fake honours the misgrant: a PATCH on that file is let through ...
-    assert graph.request("PATCH", f"/drives/{tenant.SHAREPOINT_DRIVE_ID}/items/{item_id}", json_body={}).status == 200
-    fake.app_writes.clear()
-    code, lines, _ = check(pfx, fake=fake)
-    # ... and yet the check passes: its canary row is the folder's 403.
-    assert code == 0
-    assert row(lines, canary_label("library")).startswith("ok") and " 403 " in row(lines, canary_label("library"))
-    assert all(item_id not in path for _, path, _, _ in fake.app_writes)
-
-
-def test_the_fake_answers_412_to_a_patch_with_a_wrong_etag_on_a_readable_canary():
-    # The live finding (2026-10-02) that retired the PATCH probe: where the app can read but not
-    # write, SharePoint checks If-Match first, so 412 can't tell a refusal from a stopped write.
-    fake = with_canary(FakeTenant())
-    item_id = fake.item(tenant.SHAREPOINT_DRIVE_ID, LIBRARY_CANARY.name)[0]
-    graph = worker_app.GraphClient(fake, lambda: make_app_token(CLIENT_ID), "test", sleep=lambda s: None)
-    for method in ("PATCH", "DELETE"):
-        with pytest.raises(worker_app.GraphError) as exc:
-            graph.request(method, f"/drives/{tenant.SHAREPOINT_DRIVE_ID}/items/{item_id}",
-                          headers={"If-Match": '"no-such-etag"'}, json_body={} if method == "PATCH" else None)
-        assert exc.value.status == 412
-    with pytest.raises(worker_app.GraphError) as exc:  # without If-Match: the refusal itself
-        graph.request("PATCH", f"/drives/{tenant.SHAREPOINT_DRIVE_ID}/items/{item_id}", json_body={})
-    assert exc.value.status == 403
-    assert fake.item(tenant.SHAREPOINT_DRIVE_ID, LIBRARY_CANARY.name) is not None
+    def request(self, method, url, headers, body=None):
+        self.sent.append((method, url))
+        return self.fake.request(method, url, headers, body)
 
 
 @pytest.mark.parametrize(
-    "grants, where, status",
+    "grants",
     [
-        (APP_GRANTS, CANARY_CREATES["library"], 403),  # read, no write
-        (APP_GRANTS, CANARY_CREATES["onedrive"], 404),  # masked by the folder grant
-        (APP_GRANTS, f"/drives/{tenant.RESTORE_TARGET_DRIVE_ID}/items/root/children", 400),  # write: the name
+        APP_GRANTS,
+        # Misgrants check-worker-app can't see and doesn't probe: lab/entra/check-worker-grants.ps1
+        # reads them from the grants (tests/test_entra_script.py).
+        APP_GRANTS | {f"list-write:{tenant.SHAREPOINT_DRIVE_ID}"},
+        APP_GRANTS | {f"folder-write:{tenant.ONEDRIVE_DRIVE_ID}/{tenant.ONEDRIVE_FOLDER_ID}"},
+        APP_GRANTS - {f"list-write:{tenant.RESTORE_TARGET_DRIVE_ID}"},
     ],
+    ids=["as-granted", "write-on-the-canary-library", "write-on-alices-canary-folder", "target-write-missing"],
 )
-def test_the_fake_answers_an_invalid_folder_name_by_access(grants, where, status):
-    fake = FakeTenant(app_grants=grants)
-    graph = worker_app.GraphClient(fake, lambda: make_app_token(CLIENT_ID), "test", sleep=lambda s: None)
-    with pytest.raises(worker_app.GraphError) as exc:
-        graph.request("POST", where, json_body=INVALID_FOLDER_BODY, idempotent=False)
-    assert exc.value.status == status
-    assert fake.app_items == {}
+def test_no_request_but_a_get_reaches_a_canary_and_no_folder_is_ever_created(pfx, grants):
+    fake = with_canary(FakeTenant(app_grants=grants))
+    recording = Recording(fake)
+    check(pfx, fake=fake, transport=recording)
+    canary_items = set(_canary_file_ids("sharepoint_file") + _canary_file_ids("onedrive_file"))
+    canary_items |= {fake.item(tenant.SHAREPOINT_DRIVE_ID, LIBRARY_CANARY.name)[0],
+                     fake.item(tenant.ONEDRIVE_DRIVE_ID, ONEDRIVE_CANARY.name)[0]}
+    assert recording.sent
+    for method, url in recording.sent:
+        path = url.split("?")[0]
+        assert not any(item in url for item in canary_items), url  # no request names a canary file
+        if method != "GET":
+            assert not any(location in url for location in CANARY_LOCATIONS), (method, url)
+            assert not path.endswith("/children"), (method, url)  # no folder create, anywhere
+            assert method in ("PUT", "POST", "DELETE"), (method, url)
+    assert not [m for m, _ in recording.sent if m == "PATCH"]
 
 
-def test_the_fake_creates_a_folder_with_a_valid_name_where_the_app_may_write():
-    fake = FakeTenant()
-    graph = worker_app.GraphClient(fake, lambda: make_app_token(CLIENT_ID), "test", sleep=lambda s: None)
-    path = f"/drives/{tenant.RESTORE_TARGET_DRIVE_ID}/items/root/children"
-    body = {**INVALID_FOLDER_BODY, "name": "rp-probe-valid"}
-    assert graph.request("POST", path, json_body=body, idempotent=False).status == 201
-    with pytest.raises(worker_app.GraphError) as exc:
-        graph.request("POST", path, json_body=body, idempotent=False)
-    assert exc.value.status == 409  # conflictBehavior fail
-
-
-@pytest.mark.parametrize("canary", ["library", "onedrive"])
-def test_a_missing_canary_file_is_an_error_not_a_pass(pfx, canary):
-    # Its 404 to the app would prove nothing about masking, so the create isn't even sent.
-    fake = FakeTenant()
-    if canary == "library":
-        fake.put_item(tenant.ONEDRIVE_DRIVE_ID, ONEDRIVE_CANARY.name, b"canary")
-    else:
-        fake.put_item(tenant.SHAREPOINT_DRIVE_ID, LIBRARY_CANARY.name, b"canary")
-        fake.put_item(tenant.ONEDRIVE_DRIVE_ID, "another.txt", b"x")  # the folder isn't empty
+def test_a_write_grant_at_a_canary_is_not_check_worker_apps_to_find(pfx):
+    # It sends nothing there to find one: the header says where that proof lives.
+    fake = with_canary(FakeTenant(app_grants=APP_GRANTS | {f"list-write:{tenant.SHAREPOINT_DRIVE_ID}"}))
     code, lines, _ = check(pfx, fake=fake)
-    assert code == 1
-    where, who = ("library", "admin") if canary == "library" else ("OneDrive", "alice")
-    confirm = row(lines, f"canary file, {where}, read as {who}")
-    assert "UNEXPECTED" in confirm and "missing: run python -m seeder seed" in confirm
-    refusal = row(lines, canary_label(canary))
-    assert refusal.startswith("UNEXPECTED") and "(not sent)" in refusal and "wasn't confirmed" in refusal
-    assert CANARY_CREATES[canary] not in [p for _, p, *_ in fake.app_writes]
-
-
-def test_a_canary_file_unreadable_by_its_owner_is_an_error(pfx):
-    fake = with_canary(FakeTenant(drive_access={tenant.ONEDRIVE_DRIVE_ID: tenant.ALICE_UPN}))  # admin: 403
-    code, lines, _ = check(pfx, fake=fake)
-    assert code == 1
-    assert "HTTP 403" in row(lines, "canary file, library, read as admin")
-    assert not [p for _, p, *_ in fake.app_writes if tenant.SHAREPOINT_DRIVE_ID in p]
-
-
-@pytest.mark.parametrize("change", ["method", "path", "body", "headers", "params", "not idempotent"])
-def test_a_canary_is_only_ever_sent_the_invalid_folder_create(change, monkeypatch):
-    sent: list = []
-
-    class Recorder:
-        def request(self, method, url, headers, body=None):
-            sent.append((method, url))
-            raise AssertionError("no request may be sent")
-
-    canary = refusal_canaries()[0]
-    good = worker_app.refusal_probe(canary, True)
-    bad = {
-        "method": {"method": "PATCH"},
-        "path": {"path": good.path.replace("/children", "")},
-        "body": {"json_body": {**INVALID_FOLDER_BODY, "name": "rp-probe-valid"}},
-        "headers": {"headers": {"If-Match": '"x"'}},
-        "params": {"params": {"x": "y"}},
-        "not idempotent": {"idempotent": True},
-    }[change]
-    monkeypatch.setattr(worker_app, "refusal_probe", lambda c, confirmed: replace(good, **bad))
-    graph = worker_app.GraphClient(Recorder(), lambda: "eyJ.x.y", "test")
-    with pytest.raises(ValueError, match="only ever sent"):
-        worker_app.run_refusal_probe(graph, canary, True)
-    assert sent == []
+    assert code == 0
+    assert "canary write refusal is checked by lab/entra/check-worker-grants.ps1" in lines[0]
+    assert fake.item(tenant.SHAREPOINT_DRIVE_ID, LIBRARY_CANARY.name) is not None
 
 
 # ---- happy paths ---------------------------------------------------------------------------
@@ -941,8 +772,7 @@ def test_everything_as_granted_passes(pfx, key_and_cert):
     for api in OTHER_API_SCOPES:
         assert row(lines, f"token roles, {api}").rstrip().endswith("(none)  ok")
     assert row(lines, "canary folder, read as alice").rstrip().endswith("RestoreTest, 1 item  ok")
-    assert row(lines, "canary file, library, read as admin").rstrip().endswith(f"{LIBRARY_CANARY.name}  ok")
-    assert row(lines, "canary file, OneDrive, read as alice").rstrip().endswith(f"{ONEDRIVE_CANARY.name}  ok")
+    assert not any("read as admin" in line for line in lines)
     # every probe item was deleted again, and nothing else was changed
     assert fake.app_items == {} and fake.app_drafts == {tenant.RESTORETEST_UPN.lower(): {}}
     assert fake.item(tenant.SHAREPOINT_DRIVE_ID, LIBRARY_CANARY.name) is not None
@@ -994,43 +824,38 @@ def test_only_the_root_listing_checks_what_is_listed():
     assert listing[0].params is not None and "$top" not in listing[0].params  # a page of 1 would hide the rest
 
 
-def test_the_check_writes_only_in_the_restore_targets_and_sends_canaries_one_invalid_create(pfx):
-    # W3.4, point 9 as amended (build notes): creates and deletes in the three restore targets,
-    # the invalid-name folder create as the control in the two file targets, and at a canary
-    # location only that create, in the canary file's own folder. Nothing else is ever written.
+def test_the_fake_checks_a_delete_if_match_before_write_permission_as_seen_live():
+    # docs/decisions.md 2026-10-02, W3.4 build notes, point 12: SharePoint answered a made-up
+    # If-Match with 412 at a canary file the app may only read, before checking write permission.
+    fake = with_canary(FakeTenant())
+    item_id, _ = fake.item(tenant.SHAREPOINT_DRIVE_ID, LIBRARY_CANARY.name)
+    url = f"https://graph.microsoft.com/v1.0/drives/{tenant.SHAREPOINT_DRIVE_ID}/items/{item_id}"
+    auth = {"Authorization": f"Bearer {make_app_token(CLIENT_ID)}"}
+    assert fake.request("DELETE", url, auth | {"If-Match": '"{made-up},1"'}).status == 412
+    assert fake.request("DELETE", url, auth).status == 403  # without If-Match: refused
+    assert fake.item(tenant.SHAREPOINT_DRIVE_ID, LIBRARY_CANARY.name) is not None
+
+
+def test_the_check_writes_only_in_the_restore_targets(pfx):
+    # W3.4: creates and deletes in the three restore targets, and nothing else is ever written.
     _, _, fake = check(pfx)
     reads = [path for method, path in fake.app_requests if method == "GET"]
     assert len(reads) == len(probes())
     library = f"/drives/{tenant.RESTORE_TARGET_DRIVE_ID}/items/"
     onedrive = f"/drives/{tenant.ONEDRIVE_DRIVE_ID}/items/"
     mailbox = f"/users/{tenant.RESTORETEST_UPN}/messages"
-    controls = [t.control_probe().path for t in control_targets()]
-    canary_items = {fake.item(tenant.SHAREPOINT_DRIVE_ID, LIBRARY_CANARY.name)[0],
-                    fake.item(tenant.ONEDRIVE_DRIVE_ID, ONEDRIVE_CANARY.name)[0]}
-    canary_items |= set(_canary_file_ids("sharepoint_file") + _canary_file_ids("onedrive_file"))
     by_method: dict[str, list[str]] = {}
-    at_canaries = []
-    for method, path, headers, body in fake.app_writes:
-        assert not any(item in path for item in canary_items), path  # no canary file is ever named
+    for method, path, _, _ in fake.app_writes:
+        assert path.startswith((library, onedrive, mailbox)), path
+        assert not any(location in path for location in CANARY_LOCATIONS), path
         by_method.setdefault(method, []).append(path)
-        if tenant.SHAREPOINT_DRIVE_ID in path or tenant.ONEDRIVE_FOLDER_ID in path:
-            at_canaries.append(path)
-            assert method == "POST" and path in CANARY_CREATES.values(), (method, path)
-            assert json.loads(body) == INVALID_FOLDER_BODY
-            assert set(headers) == {"Content-Type"}
-        else:
-            assert path.startswith((library, onedrive, mailbox)), path
-        if path.endswith("/children"):
-            assert json.loads(body) == INVALID_FOLDER_BODY and method == "POST"
-    assert sorted(at_canaries) == sorted(CANARY_CREATES.values())
-    assert "PATCH" not in by_method
+    assert set(by_method) == {"PUT", "DELETE", "POST"}
     assert len(by_method["PUT"]) == 2 and len(by_method["DELETE"]) == 2
     assert by_method["PUT"][0].startswith(f"{library}root:/rp-probe-")
     assert by_method["PUT"][1].startswith(f"{onedrive}{tenant.ONEDRIVE_TARGET_FOLDER_ID}:/rp-probe-")
     posts = by_method["POST"]
-    assert posts[0] == mailbox and posts[1].endswith("/permanentDelete")
-    assert posts[2:] == controls + [CANARY_CREATES["library"], CANARY_CREATES["onedrive"]]
-    assert fake.app_items == {}  # the invalid name made nothing anywhere
+    assert len(posts) == 2 and posts[0] == mailbox and posts[1].endswith("/permanentDelete")
+    assert fake.app_items == {}
 
 
 def test_the_write_probes_name_their_items_rp_probe_uuid_and_delete_mail_by_immutable_id(pfx):
@@ -1045,28 +870,6 @@ def test_the_write_probes_name_their_items_rp_probe_uuid_and_delete_mail_by_immu
     assert posts[1][2] is None  # permanentDelete has no body
     deletes = [h for m, _, h, _ in fake.app_writes if m == "DELETE"]
     assert all(h.get("If-Match", "").startswith('"{01FAKEAPPITEM') for h in deletes)  # the eTag the create gave
-
-
-def test_canary_refusals_count_403_and_404_as_refused_and_the_controls_400(pfx):
-    _, lines, _ = check(pfx)
-    library = row(lines, canary_label("library"))
-    onedrive = row(lines, canary_label("onedrive"))
-    assert library.startswith("ok") and " 403 " in library
-    assert library.rstrip().endswith(f"POST {CANARY_CREATES['library']}")
-    assert onedrive.startswith("ok") and " 404 " in onedrive  # masked by the folder grant
-    assert onedrive.rstrip().endswith(f"POST {CANARY_CREATES['onedrive']}")
-    assert CONTROL_LABELS == [
-        "RestoreTarget library: invalid name (control)",
-        "alice's OneDrive: RestoreTarget folder: invalid name (control)",
-    ]
-    for label in CONTROL_LABELS:
-        line = row(lines, label)
-        assert line.startswith("ok") and " 400 " in line and line.rstrip().endswith("/children")
-
-
-def test_the_invalid_name_is_one_sharepoint_never_accepts():
-    assert INVALID_NAME.startswith("rp-probe-") and ":" in INVALID_NAME
-    assert INVALID_FOLDER_BODY == {"name": INVALID_NAME, "folder": {}, "@microsoft.graph.conflictBehavior": "fail"}
 
 
 def test_every_probe_path_uses_the_ids_from_tenant_py():

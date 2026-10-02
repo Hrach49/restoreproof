@@ -158,6 +158,20 @@ def test_script_parses():
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+@pytest.mark.skipif(shutil.which("pwsh") is None, reason="PowerShell 7 not installed")
+def test_no_comment_text_runs_as_a_command():
+    # A comment once split before "\new-worker-app.ps1", leaving "ew-worker-app.ps1 from an open
+    # window, ..." as a command line: the script stopped there, between Graph and Exchange.
+    command = f"""
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile('{SCRIPT}', [ref]$null, [ref]$null)
+        $ast.FindAll({{ param($n) $n -is [System.Management.Automation.Language.CommandAst] }}, $true) |
+            ForEach-Object {{ $_.GetCommandName() }} | Where-Object {{ $_ -match '\\.ps1$|[\\\\/]' }}
+    """
+    result = run_pwsh(command)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert result.stdout.split() == []
+
+
 def run_pwsh(command: str) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["pwsh", "-NoProfile", "-NonInteractive", "-Command", command], capture_output=True, text=True, timeout=120

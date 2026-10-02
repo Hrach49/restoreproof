@@ -270,23 +270,45 @@ read a restore's copies back and compare them with the manifest, use `rpworker r
 whose check does it before its clean after.
 
 **The live cleanup test.** `worker/tests/cleaner_live_test.cpp` (W3.4, tag `[live][writes]`,
-ctest name `live cleanup: the Cleaner empties the three restore targets, folders and all`)
-signs in to Graph as the Worker app, runs `Cleaner::clean(after_run)` on the three restore
-targets of `graph_live_lab.hpp`'s config (the `RP_LIVE_TARGET_*` variables above, defaulting to
-the lab's), prints its counts, and requires no error and an ok clean. Then it lists each target
-again with `$top=1` and no type filter, folders included, and requires zero entries: the W3.4
-Done-when's "zero items and no entries left unlisted". Its first file `DELETE` and first mail
-`permanentDelete` are each sent twice, and it checks that the second answer, Graph's 404, was
-counted `gone`; set `RP_LIVE_RECORD_DIR` to a new or empty folder to record its Graph exchanges
-there (W3.4's `w34-*-404-*` fixtures). It needs the Graph certificate
-variables, `RP_LIVE=1` and `RP_LIVE_RESTORE=1`, and no elevation. It deletes everything in the
-three targets, delivered mail in `restoretest` too:
+ctest name `live cleanup: the Cleaner empties the three restore targets with folders and all`;
+no comma in it, since Catch2 splits a test name given on its command line at a comma) first
+seeds one item of its own in each restore target, because the targets are usually empty now
+(every `rpworker restore` cleans before and after): a small `rp-probe-<uuid>.txt` `PUT` into
+the RestoreTarget library's root, one into alice's `/RestoreTarget` folder (both with
+`@microsoft.graph.conflictBehavior=fail`), and a message with subject `rp-probe-<uuid>` created
+in the `restoretest` Inbox (`POST /users/{mailbox}/mailFolders/inbox/messages`). The seeds are
+sent by the test itself, with a token of its own and cpr, not through `GraphClient`, whose only
+write is the Cleaner's `remove()`. Before anything is sent, the config's restore-target IDs are
+checked against `lab/seed-manifest.json` (`sampling::check_manifest`, then every canary's
+mailbox, SharePoint drive and folder ID), then for shape (`RestoreTargets::from_config`, the
+`parse_config` rules), and each target is resolved through the target guard's own Graph checks
+(`check_restore_mailbox`, `check_restore_library`, `check_restore_onedrive_folder`, as the
+Cleaner's `resolve()` runs them, on a Graph client of their own so the recording holds only the
+Cleaner's exchanges); the three seed paths are built only from what those checks established
+(`worker/tests/live_seed.hpp`, unit-tested in `live_seed_test.cpp`), and any refusal stops the
+test before the first write. Then it signs in to Graph as the Worker app, runs
+`Cleaner::clean(after_run)` on the three restore targets of `graph_live_lab.hpp`'s config (the
+`RP_LIVE_TARGET_*` variables above, defaulting to the lab's), prints its counts, and requires no
+error, an ok clean, and each seed found and deleted (`deleted` or `gone` at least 1 per target).
+Its first file `DELETE` and first mail `permanentDelete` are each sent twice; with the seeds
+there both happen, so it requires two doubled sends, the second answer of each (Graph's 404)
+counted `gone`. Last, it lists each target again with `$top=1` and no type filter, folders
+included, and requires zero entries: the W3.4 Done-when's "zero items and no entries left
+unlisted". Set `RP_LIVE_RECORD_DIR` to a new or empty folder to record the Cleaner's and the
+last listings' Graph exchanges there (under `graph/`; the seeds are not recorded), the two
+404s included: W3.4's `w34-*-404-*` fixtures. It needs the Graph certificate variables,
+`RP_LIVE=1` and `RP_LIVE_RESTORE=1`, and no elevation. It deletes everything in the three
+targets, delivered mail in `restoretest` too. From a VS 2022 Developer PowerShell:
 
 ```powershell
 $env:RP_LIVE = '1'
 $env:RP_LIVE_RESTORE = '1'
+$env:RP_LIVE_RECORD_DIR = "$env:TEMP\rp-w34-cleaner-rec"   # optional, new or empty
 ctest --preset dev -R "live cleanup" -V
 ```
+
+or, from any shell in `C:\restoreproof\worker` with the same variables,
+`.\build\dev\rptests.exe "live cleanup*" -s`.
 
 **When something is left.** A folder, a package or another entry the Cleaner skips (it deletes
 only mails and plain files) is never deleted: it fails the cleanup test's last check, and the

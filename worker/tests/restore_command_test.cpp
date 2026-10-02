@@ -3201,7 +3201,10 @@ struct RealRig {
             {gl::page_of(empty), gl::page_of(empty),
              gl::page_of(json::array({{{"id", mail["id"]}}})), gl::page_of(empty)});
         rig.lab.graph_http.on_path(rp::HttpMethod::post, "/v1.0/users/*/messages/*/permanentDelete",
-                                   {rp::test::load_fixture("graph", "w34-mail-permanentdelete-204")});
+                                   {rp::test::load_fixture(
+                                       "recordings/w34-live-run1/graph",
+                                       "035-post-v1-0-users-restoretest-restoreprooflab-"
+                                       "onmicrosoft-com-messa")});
     }
 
     Run run(Args args)

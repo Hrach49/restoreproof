@@ -1,0 +1,7 @@
+{
+  "source": "rpworker 0.0.0 restore --record",
+  "request": "POST /v1.0/users/restoretest@RestoreProofLab.onmicrosoft.com/messages/AAkALgAAAAAAHYQDEapmEc2byACqAC-EWg0Apy-rvAUfAU_pqKwuzmFBWgAABUZCpgAA/permanentDelete",
+  "status": 204,
+  "headers": {},
+  "body": null
+}

@@ -1,0 +1,251 @@
+{
+  "source": "rpworker 0.0.0 restore --record",
+  "request": "GET /v8/RestorePoints?organizationId=ff96d072-29e2-4cb4-a155-2590f5473176&limit=1000&offset=0",
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8"
+  },
+  "body": {
+    "offset": 0,
+    "limit": 1000,
+    "_links": {
+      "self": {
+        "href": "/v8/RestorePoints?organizationid=ff96d072-29e2-4cb4-a155-2590f5473176&offset=0&limit=1000"
+      }
+    },
+    "results": [
+      {
+        "id": "c2f0f2e7-177f-48ac-992b-93a50cf702e35492ac04-4228-4bb8-bca4-b68172c5c582",
+        "isDeleted": false,
+        "repositoryId": "c2f0f2e7-177f-48ac-992b-93a50cf702e3",
+        "backupTime": "2026-10-01T22:01:38.761857Z",
+        "jobId": "4cf03510-457c-401b-a1c6-e7e69be296e1",
+        "retrievalId": "00000000-0000-0000-0000-000000000000",
+        "organizationId": "ff96d072-29e2-4cb4-a155-2590f5473176",
+        "isExchange": true,
+        "isSharePoint": true,
+        "isOneDrive": true,
+        "isTeams": false,
+        "isLongTermCopy": false,
+        "isCopy": false,
+        "isRetrieved": false,
+        "eTag": 1,
+        "objectsEtag": 5,
+        "_links": {
+          "self": {
+            "href": "/v8/restorePoints/c2f0f2e7-177f-48ac-992b-93a50cf702e35492ac04-4228-4bb8-bca4-b68172c5c582"
+          },
+          "organization": {
+            "href": "/v8/organizations/ff96d072-29e2-4cb4-a155-2590f5473176"
+          },
+          "backupRepository": {
+            "href": "/v8/backuprepositories/c2f0f2e7-177f-48ac-992b-93a50cf702e3"
+          }
+        }
+      },
+      {
+        "id": "c2f0f2e7-177f-48ac-992b-93a50cf702e305134a51-8a9e-4298-b39a-1be364acd660",
+        "isDeleted": false,
+        "repositoryId": "c2f0f2e7-177f-48ac-992b-93a50cf702e3",
+        "backupTime": "2026-09-30T22:00:43.4764524Z",
+        "jobId": "4cf03510-457c-401b-a1c6-e7e69be296e1",
+        "retrievalId": "00000000-0000-0000-0000-000000000000",
+        "organizationId": "ff96d072-29e2-4cb4-a155-2590f5473176",
+        "isExchange": true,
+        "isSharePoint": true,
+        "isOneDrive": true,
+        "isTeams": false,
+        "isLongTermCopy": false,
+        "isCopy": false,
+        "isRetrieved": false,
+        "eTag": 1,
+        "objectsEtag": 5,
+        "_links": {
+          "self": {
+            "href": "/v8/restorePoints/c2f0f2e7-177f-48ac-992b-93a50cf702e305134a51-8a9e-4298-b39a-1be364acd660"
+          },
+          "organization": {
+            "href": "/v8/organizations/ff96d072-29e2-4cb4-a155-2590f5473176"
+          },
+          "backupRepository": {
+            "href": "/v8/backuprepositories/c2f0f2e7-177f-48ac-992b-93a50cf702e3"
+          }
+        }
+      },
+      {
+        "id": "c2f0f2e7-177f-48ac-992b-93a50cf702e395c23640-eb99-4bad-ae72-f5f9cf21aac1",
+        "isDeleted": false,
+        "repositoryId": "c2f0f2e7-177f-48ac-992b-93a50cf702e3",
+        "backupTime": "2026-09-29T22:00:45.6603083Z",
+        "jobId": "4cf03510-457c-401b-a1c6-e7e69be296e1",
+        "retrievalId": "00000000-0000-0000-0000-000000000000",
+        "organizationId": "ff96d072-29e2-4cb4-a155-2590f5473176",
+        "isExchange": true,
+        "isSharePoint": true,
+        "isOneDrive": true,
+        "isTeams": false,
+        "isLongTermCopy": false,
+        "isCopy": false,
+        "isRetrieved": false,
+        "eTag": 1,
+        "objectsEtag": 5,
+        "_links": {
+          "self": {
+            "href": "/v8/restorePoints/c2f0f2e7-177f-48ac-992b-93a50cf702e395c23640-eb99-4bad-ae72-f5f9cf21aac1"
+          },
+          "organization": {
+            "href": "/v8/organizations/ff96d072-29e2-4cb4-a155-2590f5473176"
+          },
+          "backupRepository": {
+            "href": "/v8/backuprepositories/c2f0f2e7-177f-48ac-992b-93a50cf702e3"
+          }
+        }
+      },
+      {
+        "id": "c2f0f2e7-177f-48ac-992b-93a50cf702e3fca73965-27c5-4087-9008-4292ec265ec3",
+        "isDeleted": false,
+        "repositoryId": "c2f0f2e7-177f-48ac-992b-93a50cf702e3",
+        "backupTime": "2026-09-28T22:00:53.2665624Z",
+        "jobId": "4cf03510-457c-401b-a1c6-e7e69be296e1",
+        "retrievalId": "00000000-0000-0000-0000-000000000000",
+        "organizationId": "ff96d072-29e2-4cb4-a155-2590f5473176",
+        "isExchange": true,
+        "isSharePoint": true,
+        "isOneDrive": true,
+        "isTeams": false,
+        "isLongTermCopy": false,
+        "isCopy": false,
+        "isRetrieved": false,
+        "eTag": 1,
+        "objectsEtag": 5,
+        "_links": {
+          "self": {
+            "href": "/v8/restorePoints/c2f0f2e7-177f-48ac-992b-93a50cf702e3fca73965-27c5-4087-9008-4292ec265ec3"
+          },
+          "organization": {
+            "href": "/v8/organizations/ff96d072-29e2-4cb4-a155-2590f5473176"
+          },
+          "backupRepository": {
+            "href": "/v8/backuprepositories/c2f0f2e7-177f-48ac-992b-93a50cf702e3"
+          }
+        }
+      },
+      {
+        "id": "c2f0f2e7-177f-48ac-992b-93a50cf702e377858499-919b-4609-9b15-5b7fb33b5004",
+        "isDeleted": false,
+        "repositoryId": "c2f0f2e7-177f-48ac-992b-93a50cf702e3",
+        "backupTime": "2026-09-27T22:00:48.1447833Z",
+        "jobId": "4cf03510-457c-401b-a1c6-e7e69be296e1",
+        "retrievalId": "00000000-0000-0000-0000-000000000000",
+        "organizationId": "ff96d072-29e2-4cb4-a155-2590f5473176",
+        "isExchange": true,
+        "isSharePoint": true,
+        "isOneDrive": true,
+        "isTeams": false,
+        "isLongTermCopy": false,
+        "isCopy": false,
+        "isRetrieved": false,
+        "eTag": 1,
+        "objectsEtag": 5,
+        "_links": {
+          "self": {
+            "href": "/v8/restorePoints/c2f0f2e7-177f-48ac-992b-93a50cf702e377858499-919b-4609-9b15-5b7fb33b5004"
+          },
+          "organization": {
+            "href": "/v8/organizations/ff96d072-29e2-4cb4-a155-2590f5473176"
+          },
+          "backupRepository": {
+            "href": "/v8/backuprepositories/c2f0f2e7-177f-48ac-992b-93a50cf702e3"
+          }
+        }
+      },
+      {
+        "id": "c2f0f2e7-177f-48ac-992b-93a50cf702e3d2839f5c-9512-47c6-b812-b4940b77de6a",
+        "isDeleted": false,
+        "repositoryId": "c2f0f2e7-177f-48ac-992b-93a50cf702e3",
+        "backupTime": "2026-09-27T11:23:13.4561092Z",
+        "jobId": "4cf03510-457c-401b-a1c6-e7e69be296e1",
+        "retrievalId": "00000000-0000-0000-0000-000000000000",
+        "organizationId": "ff96d072-29e2-4cb4-a155-2590f5473176",
+        "isExchange": true,
+        "isSharePoint": true,
+        "isOneDrive": true,
+        "isTeams": false,
+        "isLongTermCopy": false,
+        "isCopy": false,
+        "isRetrieved": false,
+        "eTag": 1,
+        "objectsEtag": 5,
+        "_links": {
+          "self": {
+            "href": "/v8/restorePoints/c2f0f2e7-177f-48ac-992b-93a50cf702e3d2839f5c-9512-47c6-b812-b4940b77de6a"
+          },
+          "organization": {
+            "href": "/v8/organizations/ff96d072-29e2-4cb4-a155-2590f5473176"
+          },
+          "backupRepository": {
+            "href": "/v8/backuprepositories/c2f0f2e7-177f-48ac-992b-93a50cf702e3"
+          }
+        }
+      },
+      {
+        "id": "c2f0f2e7-177f-48ac-992b-93a50cf702e371ac3d9c-eb29-42b6-a391-ae81fcc4681c",
+        "isDeleted": false,
+        "repositoryId": "c2f0f2e7-177f-48ac-992b-93a50cf702e3",
+        "backupTime": "2026-09-25T19:37:15.2145203Z",
+        "jobId": "4cf03510-457c-401b-a1c6-e7e69be296e1",
+        "retrievalId": "00000000-0000-0000-0000-000000000000",
+        "organizationId": "ff96d072-29e2-4cb4-a155-2590f5473176",
+        "isExchange": true,
+        "isSharePoint": true,
+        "isOneDrive": true,
+        "isTeams": false,
+        "isLongTermCopy": false,
+        "isCopy": false,
+        "isRetrieved": false,
+        "eTag": 1,
+        "objectsEtag": 5,
+        "_links": {
+          "self": {
+            "href": "/v8/restorePoints/c2f0f2e7-177f-48ac-992b-93a50cf702e371ac3d9c-eb29-42b6-a391-ae81fcc4681c"
+          },
+          "organization": {
+            "href": "/v8/organizations/ff96d072-29e2-4cb4-a155-2590f5473176"
+          },
+          "backupRepository": {
+            "href": "/v8/backuprepositories/c2f0f2e7-177f-48ac-992b-93a50cf702e3"
+          }
+        }
+      },
+      {
+        "id": "c2f0f2e7-177f-48ac-992b-93a50cf702e32fb3c7e0-ff6e-4949-8b2d-ae32ecf9e9a7",
+        "isDeleted": false,
+        "repositoryId": "c2f0f2e7-177f-48ac-992b-93a50cf702e3",
+        "backupTime": "2026-09-25T19:24:31.0936821Z",
+        "jobId": "4cf03510-457c-401b-a1c6-e7e69be296e1",
+        "retrievalId": "00000000-0000-0000-0000-000000000000",
+        "organizationId": "ff96d072-29e2-4cb4-a155-2590f5473176",
+        "isExchange": true,
+        "isSharePoint": true,
+        "isOneDrive": true,
+        "isTeams": false,
+        "isLongTermCopy": false,
+        "isCopy": false,
+        "isRetrieved": false,
+        "eTag": 1,
+        "objectsEtag": 5,
+        "_links": {
+          "self": {
+            "href": "/v8/restorePoints/c2f0f2e7-177f-48ac-992b-93a50cf702e32fb3c7e0-ff6e-4949-8b2d-ae32ecf9e9a7"
+          },
+          "organization": {
+            "href": "/v8/organizations/ff96d072-29e2-4cb4-a155-2590f5473176"
+          },
+          "backupRepository": {
+            "href": "/v8/backuprepositories/c2f0f2e7-177f-48ac-992b-93a50cf702e3"
+          }
+        }
+      }
+    ]
+  }
+}

@@ -131,6 +131,7 @@ add_executable(rptests
     tests/graph_targets_test.cpp
     tests/http_client_test.cpp
     tests/http_client_tls_test.cpp
+    tests/live_seed_test.cpp
     tests/name_key_test.cpp
     tests/office_v1_test.cpp
     tests/recording_http_client_test.cpp

@@ -1,0 +1,63 @@
+{
+  "source": "rpworker 0.0.0 restore --record",
+  "request": "GET /v8/RestoreSessions/f159555a-21d4-4423-a487-50c2c91b49fc/Organization/OneDrives?limit=1000&offset=0",
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8"
+  },
+  "body": {
+    "offset": 0,
+    "limit": 1000,
+    "_links": {
+      "self": {
+        "href": "/v8/RestoreSessions/f159555a-21d4-4423-a487-50c2c91b49fc/Organization/OneDrives?offset=0&limit=1000"
+      }
+    },
+    "results": [
+      {
+        "id": "6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325",
+        "name": "Alice Test",
+        "url": "https://restoreprooflab-my.sharepoint.com/personal/alice_restoreprooflab_onmicrosoft_com",
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/f159555a-21d4-4423-a487-50c2c91b49fc/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325"
+          },
+          "folders": {
+            "href": "/v8/restoresessions/f159555a-21d4-4423-a487-50c2c91b49fc/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/folders?parentId=Root"
+          },
+          "allfolders": {
+            "href": "/v8/restoresessions/f159555a-21d4-4423-a487-50c2c91b49fc/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/folders"
+          },
+          "documents": {
+            "href": "/v8/restoresessions/f159555a-21d4-4423-a487-50c2c91b49fc/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/documents?parentId=Root"
+          },
+          "alldocuments": {
+            "href": "/v8/restoresessions/f159555a-21d4-4423-a487-50c2c91b49fc/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/documents"
+          }
+        }
+      },
+      {
+        "id": "41514e3e-02f7-405b-96da-9b8bd8e1d45d98cfff1a-b404-4438-ae6e-6927a6ccc325",
+        "name": "Hrachya Harutyunyan",
+        "url": "https://restoreprooflab-my.sharepoint.com/personal/hrachyaharutyunyan_restoreprooflab_onmicrosoft_com",
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/f159555a-21d4-4423-a487-50c2c91b49fc/organization/onedrives/41514e3e-02f7-405b-96da-9b8bd8e1d45d98cfff1a-b404-4438-ae6e-6927a6ccc325"
+          },
+          "folders": {
+            "href": "/v8/restoresessions/f159555a-21d4-4423-a487-50c2c91b49fc/organization/onedrives/41514e3e-02f7-405b-96da-9b8bd8e1d45d98cfff1a-b404-4438-ae6e-6927a6ccc325/folders?parentId=Root"
+          },
+          "allfolders": {
+            "href": "/v8/restoresessions/f159555a-21d4-4423-a487-50c2c91b49fc/organization/onedrives/41514e3e-02f7-405b-96da-9b8bd8e1d45d98cfff1a-b404-4438-ae6e-6927a6ccc325/folders"
+          },
+          "documents": {
+            "href": "/v8/restoresessions/f159555a-21d4-4423-a487-50c2c91b49fc/organization/onedrives/41514e3e-02f7-405b-96da-9b8bd8e1d45d98cfff1a-b404-4438-ae6e-6927a6ccc325/documents?parentId=Root"
+          },
+          "alldocuments": {
+            "href": "/v8/restoresessions/f159555a-21d4-4423-a487-50c2c91b49fc/organization/onedrives/41514e3e-02f7-405b-96da-9b8bd8e1d45d98cfff1a-b404-4438-ae6e-6927a6ccc325/documents"
+          }
+        }
+      }
+    ]
+  }
+}

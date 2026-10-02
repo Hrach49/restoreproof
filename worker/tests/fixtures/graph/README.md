@@ -116,16 +116,38 @@ answers 404 for an item the app may not read, so the lab can't provoke that 403 
 | `onedrive-folder-404-itemnotfound.json` | live: an item ID of no item in alice's OneDrive | 404 `itemNotFound` → `NotFoundError` (W2.2) |
 | `restoretarget-content-302.json` | live: a file's `/content` in the RestoreTarget library, redirect not followed, `Location` scrubbed | 302 → the download follows `Location` without the token (W2.2) |
 | `onedrive-content-302.json` | live: a file's `/content` in alice's `/RestoreTarget`, redirect not followed, `Location` scrubbed | 302 on the `-my` host → the download follows `Location` without the token (W2.2) |
-| `w34-mail-list-200-two.json` | hand-written: W3.4 stand-in until the first live clean is recorded, in the shape of `mail-list-200-one-item.json`: the restoretest Inbox as the Cleaner lists it (`$select=id`, `Prefer`), two mails | the Cleaner's mail listing: each ID becomes one `permanentDelete`; its edits are the bad-ID rows (W3.4) |
-| `w34-restoretarget-children-200-two.json` | hand-written: W3.4 stand-in until the first live clean is recorded, in the shape of `restoretarget-children-200-one-item.json`: the library's root children with `eTag`, the facets and `parentReference`, two files | the Cleaner's library listing: each file one `DELETE` with `If-Match`; its edits are the place, facet, ID and eTag rows (W3.4) |
-| `w34-onedrive-children-200-two.json` | hand-written: W3.4 stand-in until the first live clean is recorded, in the shape of `onedrive-children-200-one-item.json`: the children of alice's `/RestoreTarget` with `eTag`, the facets and `parentReference`, two files | the Cleaner's OneDrive listing, as the library's (W3.4) |
-| `w34-mail-permanentdelete-204.json` | hand-written: W3.4 stand-in until the first live clean is recorded: a mail's bodiless `permanentDelete`, answered 204 | `RemoveOutcome::removed` for a mail (W3.4) |
-| `w34-mail-permanentdelete-404-erroritemnotfound.json` | hand-written: W3.4 stand-in until the first live clean is recorded, in the shape of `messages-404-unknown-user.json`: a `permanentDelete` of a mail no longer there | 404 `ErrorItemNotFound` → `gone` (W3.4) |
-| `w34-mail-permanentdelete-403-exchange.json` | hand-written: W3.4 stand-in until the first live clean is recorded, in the shape of `mailbox-inbox-403-exchange.json`: a `permanentDelete` while the Exchange role is still read-only | 403 → `PermissionError` naming the mail grant; the mail target ends `graph_permission` (W3.4) |
-| `w34-file-delete-204.json` | hand-written: W3.4 stand-in until the first live clean is recorded: a file's `DELETE` with `If-Match`, answered 204 | `RemoveOutcome::removed` for a file (W3.4) |
-| `w34-file-delete-404-itemnotfound.json` | hand-written: W3.4 stand-in until the first live clean is recorded, in the shape of `drive-404-itemnotfound.json`: a `DELETE` of a file no longer there | 404 `itemNotFound` → `gone`; a resent `DELETE` answered so too (W3.4) |
-| `w34-file-delete-412-resourcemodified.json` | hand-written: W3.4 stand-in until the first live clean is recorded, in the shape of `drive-404-itemnotfound.json`: a `DELETE` whose `If-Match` no longer matches | 412 → `changed`: the next round lists the file again (W3.4) |
-| `w34-file-delete-403-accessdenied.json` | hand-written: W3.4 stand-in until the first live clean is recorded, in the shape of `onedrive-folder-403-accessdenied.json`: a `DELETE` without the write grant | 403 → `PermissionError` naming the list or folder write grant (W3.4) |
+| `w34-mail-permanentdelete-404-erroritemnotfound.json` | hand-written, in the shape of `messages-404-unknown-user.json`: a `permanentDelete` of a mail no longer there; no live run has recorded one yet (below) | 404 `ErrorItemNotFound` → `gone` (W3.4) |
+| `w34-mail-permanentdelete-403-exchange.json` | hand-written, in the shape of `mailbox-inbox-403-exchange.json`: a `permanentDelete` while the Exchange role is still read-only; the lab, granted, can't be refused (below) | 403 → `PermissionError` naming the mail grant; the mail target ends `graph_permission` (W3.4) |
+| `w34-file-delete-404-itemnotfound.json` | hand-written, in the shape of `drive-404-itemnotfound.json`: a `DELETE` of a file no longer there; no live run has recorded one yet (below) | 404 `itemNotFound` → `gone`; a resent `DELETE` answered so too (W3.4) |
+| `w34-file-delete-412-resourcemodified.json` | hand-written, in the shape of `drive-404-itemnotfound.json`: a `DELETE` whose `If-Match` no longer matches; no live run has met one (below) | 412 → `changed`: the next round lists the file again (W3.4) |
+| `w34-file-delete-403-accessdenied.json` | hand-written, in the shape of `onedrive-folder-403-accessdenied.json`: a `DELETE` without the write grant; the lab, granted, can't be refused (below) | 403 → `PermissionError` naming the list or folder write grant (W3.4) |
+
+## The Cleaner's fixtures (W3.4): recorded and hand-written
+
+The Cleaner's listings and 204s are **recorded**, from the W3.4 live run of 2026-10-02
+(`rpworker restore --record`, run `rp-20261002T180310Z-6661beff`;
+`../recordings/w34-live-run1/README.md`). `cleaner_test.cpp` and `restore_command_test.cpp`
+load them from there, unedited, in place of the hand-written stand-ins they replaced
+(`w34-mail-list-200-two.json`, `w34-restoretarget-children-200-two.json`,
+`w34-onedrive-children-200-two.json`, `w34-mail-permanentdelete-204.json`,
+`w34-file-delete-204.json`, removed):
+
+| Recording file (`../recordings/w34-live-run1/graph/`) | What it is | For |
+|---|---|---|
+| `034-get-...-mailf.json` | the clean after's first listing of the restoretest Inbox (`$select=id`, `Prefer`): the run's 5 mails | the Cleaner's mail listing; its edits are the bad-ID rows |
+| `042-get-...-7ncroj5omdbu.json` | the clean after's first listing of the RestoreTarget library's root (`eTag`, facets, `parentReference`): the run's 3 files | the Cleaner's library listing; its edits are the place, facet, ID and eTag rows |
+| `048-get-...-z5getdherm5pj6bmwyxfzj.json` | the clean after's first listing of alice's `/RestoreTarget`: the run's 3 files | the Cleaner's OneDrive listing, as the library's |
+| `035-post-...-messa.json` | the first mail's bodiless `permanentDelete`, 204 | `RemoveOutcome::removed` for a mail |
+| `043-delete-...-7ncroj5omdbu.json` | the first library file's `DELETE` with `If-Match`, 204 | `RemoveOutcome::removed` for a file (OneDrive's 204, `049`, is the same reply) |
+
+The `w34-*` files left here stay **hand-written**, because no live run has given those
+answers: the 403s can't be provoked while the lab holds the W3.4 write grants (every live
+delete was allowed); the 404s need a second delete of an item already gone, which
+`cleaner_live_test.cpp` sends (with `RP_LIVE_RECORD_DIR` it records them) but which hasn't run
+yet, and the W3.4 restore run's targets were empty before it, so its clean before deleted
+nothing; and a 412 needs a file changed between its listing and its `DELETE`, which no live run
+has met. Each one's `source` says so. Replace a 404 with its recording once the live cleanup
+test has run.
 
 Entra's refusals that the lab can't provoke (Conditional Access, a disabled app, the other
 transient codes) are built in `graph_client_test.cpp` from `entra_error()`, in the recorded

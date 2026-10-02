@@ -1,0 +1,41 @@
+{
+  "source": "rpworker 0.0.0 restore --record",
+  "request": "GET /v1.0/drives/b!wA9gbfhlEUitGAluxbfoNBr_z5gEtDhErm5pJ6bMwyXfZJ8a_dkCQ696RX0r7_U3/items/01ZK75LGDGB6QOO3MGNFGYOY6C6VBDG5OH?$select=id,name,folder,parentReference,sharepointIds",
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/json; odata.metadata=minimal; odata.streaming=true; IEEE754Compatible=false; charset=utf-8"
+  },
+  "body": {
+    "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#Collection(driveItem)/$entity",
+    "@odata.etag": "\"{E7A00F66-866D-4D69-8763-C2F5423375C7},2\"",
+    "id": "01ZK75LGDGB6QOO3MGNFGYOY6C6VBDG5OH",
+    "name": "RestoreTarget",
+    "parentReference": {
+      "driveType": "business",
+      "driveId": "b!wA9gbfhlEUitGAluxbfoNBr_z5gEtDhErm5pJ6bMwyXfZJ8a_dkCQ696RX0r7_U3",
+      "id": "01ZK75LGF6Y2GOVW7725BZO354PWSELRRZ",
+      "name": "Documents",
+      "path": "/drives/b!wA9gbfhlEUitGAluxbfoNBr_z5gEtDhErm5pJ6bMwyXfZJ8a_dkCQ696RX0r7_U3/root:",
+      "sharepointIds": {
+        "listId": "1a9f64df-d9fd-4302-af7a-457d2beff537",
+        "listItemUniqueId": "8eb7c890-24e8-412e-969f-434a33284a63",
+        "siteId": "6d600fc0-65f8-4811-ad18-096ec5b7e834",
+        "siteUrl": "https://restoreprooflab-my.sharepoint.com/personal/alice_restoreprooflab_onmicrosoft_com",
+        "webId": "98cfff1a-b404-4438-ae6e-6927a6ccc325"
+      },
+      "siteId": "6d600fc0-65f8-4811-ad18-096ec5b7e834"
+    },
+    "folder": {
+      "childCount": 3
+    },
+    "sharepointIds": {
+      "listId": "1a9f64df-d9fd-4302-af7a-457d2beff537",
+      "listItemId": "12",
+      "listItemUniqueId": "e7a00f66-866d-4d69-8763-c2f5423375c7",
+      "siteId": "6d600fc0-65f8-4811-ad18-096ec5b7e834",
+      "siteUrl": "https://restoreprooflab-my.sharepoint.com/personal/alice_restoreprooflab_onmicrosoft_com",
+      "tenantId": "bcd6bd1a-ea42-489d-aa28-2c19a44ad146",
+      "webId": "98cfff1a-b404-4438-ae6e-6927a6ccc325"
+    }
+  }
+}

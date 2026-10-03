@@ -81,7 +81,7 @@ struct Presentation {
     // no rows; printed after the check and before its count line. `verdict`
     // is the run's, decided from that check.
     std::function<std::string(const verification::ExpectedSet&, const verification::CheckResult&,
-                              const verification::RunVerdict&)>
+                              const verification::RunVerdict&, const connector::RestoreResult*)>
         check_table;
     // Called once the config is read and before the secrets; what it throws
     // is handled as the config's errors are (a ConfigError: "config error:

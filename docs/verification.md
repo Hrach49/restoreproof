@@ -237,9 +237,19 @@ Each item gets one verdict; the first rule that fits wins.
 | I1 | the check says `error` | *unchecked*, with the check's code |
 | I2 | the check says `match` | *verified*, whatever the backup said about the item |
 | I3 | `missing` or `mismatch`, and the backup marked the item not restored with `infrastructure` | *unchecked*, `backup_infrastructure` |
-| I4 | `missing` or `mismatch` | *failed* |
+| I4 | `missing` or `mismatch`, the backup said the restore point doesn't hold the item (`not_in_backup`), and the point isn't shown to hold it: a random item, or a canary whose restore point wasn't taken strictly after the manifest's `seeded_at` (or either time doesn't read) | *unchecked*, `not_in_backup` |
+| I5 | `missing` or `mismatch` | *failed* |
 
-A restored item's `infrastructure` flag counts for nothing (I4c): only an item the backup says
+**An item the restore point doesn't hold (Q3.1, `docs/decisions.md` 2026-10-03).** The
+connector reports it per item, `ItemOutcome::not_in_backup`, never sends it, and restores the
+others. The manifest's `seeded_at` is when every canary was in place, so a restore point taken
+later must hold each one: a canary missing from it is *failed* (I5), and the run `fail`s
+naming it in its row (`rpworker test`'s REASON `not_in_backup`). A canary missing from an
+older point, or a random item (drawn from this very point's listing, so its absence is the
+backup product contradicting itself), is *unchecked* `not_in_backup` (I4): the test can't say
+the backup lost it.
+
+A restored item's `infrastructure` flag counts for nothing (I5c): only an item the backup says
 it didn't restore can be excused.
 
 ### The run
@@ -303,7 +313,7 @@ it, its severity rank and its exit code); a Graph exception's code is the checke
 | `internal` | any other exception (its `what()` is never shown); facts that don't add up (R1) | 1 |
 | `backup_auth` | `connector::AuthError` | 2 |
 | `backup_transient` | `connector::TransientError` (unreachable, a timeout, a gateway error) | 3 |
-| `not_in_backup` | `connector::NotFoundError`: the organisation, or a sampled item not in the restore point | 4 |
+| `not_in_backup` | `connector::NotFoundError`: the organisation; an item the restore point doesn't hold that it isn't shown to hold (I4) | 4 |
 | `no_restore_point` | no restore points, or `--point` not among them (the command says these before its run line, so no status yet) | 4 |
 | `target_guard` | `connector::SafetyViolation`; `graph::WrongTargetError` | 4 |
 | `backup` | any other `connector::Error` | 4 |
@@ -317,9 +327,9 @@ it, its severity rank and its exit code); a Graph exception's code is the checke
 | `stale_target` | the checker's: only an earlier run's copy is there | 4 |
 
 `pass` exits 0 and `fail` 5 (`exit_code::restore`, `exit_code_of`). With several unchecked
-items, the run's code is the first of these present (the severity order, `S1`–`S6` in the
-test): `target_guard`, `graph_auth`, `graph_permission`, `backup_infrastructure`, `graph`,
-`graph_transient`, `stale_target`. A misconfiguration or a safety problem outranks a
+items, the run's code is the first of these present (the severity order, `S1`–`S7` in the
+test): `target_guard`, `graph_auth`, `graph_permission`, `backup_infrastructure`,
+`not_in_backup`, `graph`, `graph_transient`, `stale_target`. A misconfiguration or a safety problem outranks a
 retry-later one, and an unclean target comes last. The message counts each code.
 
 **Messages** are one line of counts and fixed words, never a tenant value (no subject, name,
@@ -388,10 +398,10 @@ note) stay on stderr as before. `rpworker test` (W3.6) runs the same pipeline an
 same way; its table after the check shows each item's verdict (`docs/worker-config.md`,
 "`rpworker test`").
 
-**Open** (decision W3.3): a canary missing from a restore point dated after it stays `error`
-`not_in_backup` until the connector reports a per-item "not in restore point"; a client with
-no restore points is `no_restore_point`, not `fail`, until restore point freshness is decided;
-finer `backup` codes need connector error subclasses.
+**Open** (decision W3.3): a client with no restore points is `no_restore_point`, not `fail`,
+until restore point freshness is decided; finer `backup` codes need connector error
+subclasses. (A canary missing from a restore point dated after it is `fail` since Q3.1, I4
+and I5 above.)
 
 ## Cleaning the restore targets (W3.4)
 

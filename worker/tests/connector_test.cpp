@@ -407,6 +407,7 @@ TEST_CASE("item kinds and outcomes have stable names", "[connector]")
         {connector::ItemOutcome::unknown, "unknown"},
         {connector::ItemOutcome::restored, "restored"},
         {connector::ItemOutcome::failed, "failed"},
+        {connector::ItemOutcome::not_in_backup, "not_in_backup"},
     }));
     CHECK(connector::to_string(outcome) == outcome_name);
 }

@@ -58,8 +58,10 @@ std::string verdict_cell(const verification::RunVerdict& verdict, std::size_t in
 }
 
 // An item's REASON, fixed words only: never ItemCheck::reason, whose
-// office-v1 note names a part inside a tenant file.
-std::string reason_cell(const verification::ItemCheck& item)
+// office-v1 note names a part inside a tenant file. A missing item the
+// backup said the restore point doesn't hold is "not_in_backup" (Q3.1).
+std::string reason_cell(const verification::ItemCheck& item,
+                        const connector::RestoreResult* restore)
 {
     switch (item.outcome) {
     case verification::CheckOutcome::match:
@@ -67,6 +69,10 @@ std::string reason_cell(const verification::ItemCheck& item)
     case verification::CheckOutcome::mismatch:
         return cell_or_dash(joined(item.mismatches, ","));
     case verification::CheckOutcome::missing:
+        if (restore && item.index < restore->items.size() &&
+            restore->items[item.index].outcome == connector::ItemOutcome::not_in_backup) {
+            return "not_in_backup";
+        }
         return "missing";
     case verification::CheckOutcome::error:
         return cell_or_dash(item.error_code);
@@ -77,7 +83,8 @@ std::string reason_cell(const verification::ItemCheck& item)
 // test's table (W3.6 point 4): one row per expected item, after the check.
 std::string format_check_table(const verification::ExpectedSet& expected,
                                const verification::CheckResult& check,
-                               const verification::RunVerdict& verdict)
+                               const verification::RunVerdict& verdict,
+                               const connector::RestoreResult* restore)
 {
     if (check.items.empty()) {
         return {};
@@ -92,7 +99,7 @@ std::string format_check_table(const verification::ExpectedSet& expected,
                          std::string{verification::to_string(want.expected_kind)},
                          item.found ? "yes" : "no",
                          std::string{verification::to_string(item.outcome)},
-                         verdict_cell(verdict, item.index), reason_cell(item),
+                         verdict_cell(verdict, item.index), reason_cell(item, restore),
                          item.found ? std::to_string(item.ms) : std::string{"-"}}});
     }
     return '\n' + format_table(rows);

@@ -168,9 +168,12 @@ enum class ItemOutcome {
     unknown,  // it said nothing about the item
     restored, // it says restored
     failed,   // it says the item's restore failed
+    // The restore point doesn't hold the item, so it was never sent (Q3.1):
+    // the run's status decides whether the backup should have held it.
+    not_in_backup,
 };
 
-// "unknown", "restored", "failed".
+// "unknown", "restored", "failed", "not_in_backup".
 std::string_view to_string(ItemOutcome outcome) noexcept;
 
 // One item of the spec, as the backup product reported it.
@@ -388,7 +391,10 @@ public:
     // tell Graph from the backup product. An error it throws whose message
     // ends with kNothingRestored promises that no restore was sent; any other
     // may come after one was, so items may be in the targets (`rpworker
-    // restore` says so).
+    // restore` says so). An item the restore point doesn't hold is reported
+    // as ItemOutcome::not_in_backup, not thrown (Q3.1), so the run's status
+    // can name it; a NotFoundError thrown here is still taken as
+    // not_in_backup for the whole run.
     virtual RestoreResult restore_sample(const RestoreSpec& spec) = 0;
 
     // W2.6: the random half's candidates in `query`'s restore point, never

@@ -7,6 +7,25 @@ Format: date, decision, reason, alternatives rejected.
 
 ---
 
+## 2026-10-03 — Q3.1: an item the restore point doesn't hold is reported per item; a canary missing from a later point is `fail` (proposed)
+
+Closes the first "Open" point of W3.3. Q3.1's scenario 2 (#42: a canary mail permanently deleted, then backed up) wants `fail` naming the item; until now `restore_sample` threw one `NotFoundError` for the whole sample, so the run ended `error not_in_backup` with no item, and its message ("the restore didn't complete ... items may be in the restore targets") overstated it, since browsing fails before any restore is sent. The owner chose to fix it within Q3.1.
+
+1. **The connector reports it per item.** `connector::ItemOutcome` gains `not_in_backup`. `VeeamM365Connector::restore_sample` catches browsing's `connector::NotFoundError` per item (`resolve_item` in `src/veeam_m365_connector.cpp`: the item, or its mailbox, folder, site, library or OneDrive, has no match in the restore point), records that outcome with browsing's message, never sends the item, and restores the others. `restore_sample` no longer throws `connector::NotFoundError`; any other browsing error (several matches, a re-read that differs, the test OneDrive missing) still ends the run as before. `items_sent` counts what was sent. `veeam_restore::overall_status` gains `not_in_point`: nothing sent because nothing was in the point is `failed` (not `not_run`, which row 4 would make an `error`), and a run that missed some items is at best `partial`.
+2. **The status decides whether the backup should have held it.** New item rule I4 (the old I4 is now I5): `missing` or `mismatch` with the backup's `not_in_backup` is *unchecked* `not_in_backup` unless the item is a canary and the restore point was taken strictly after the manifest's `seeded_at`; then I5 makes it *failed* and the run `fail`. `seeded_at` is the seeder's time after the last canary was written (required by `seed-manifest.v1`; the loader now reads and checks it, `CanaryManifest::seeded_at`), carried as `ExpectedSet::canaries_seeded_at`; `RunFacts::restore_point_time` is the chosen point's `backupTime`. Both are read with `parse_veeam_time`; a time that doesn't read says "not shown to hold", never `fail`.
+3. **A random item missing is never `fail`.** Its pool was listed from the same restore point, so its absence is the backup product contradicting itself, not lost data: `error not_in_backup`.
+4. **`not_in_backup` ranks after `backup_infrastructure`** among the unchecked items' codes (`target_guard`, `graph_auth`, `graph_permission`, `backup_infrastructure`, `not_in_backup`, `graph`, `graph_transient`, `stale_target`): a backup-side reason, more specific than a Graph error.
+5. **Naming the item.** The status message still names nothing (counts only); the item is named by its row: `rpworker test`'s REASON reads `not_in_backup` (the check table now gets the restore result), `rpworker restore`'s OUTCOME `not_in_backup` with Veeam's lookup message, and the `--json` summary's `status.failed_items` and `restore.items[].outcome`.
+
+**Alternatives rejected.**
+- *Every missing canary is `fail`:* a restore point taken before the canaries were seeded can't hold them; that is a test-setup problem, not the backup's.
+- *Per-canary dates (`received_at`, `last_modified_at`):* finer, but the manifest's single `seeded_at` is later than all of them and needs no per-kind rule; it is the conservative bound.
+- *Keep throwing and parse the item from the message:* the status would depend on a message's wording.
+
+Tests: `run_status_test.cpp` (I1c, I2c, I4a–I4f, I5e–I5f, S1–S7), `veeam_m365_restore_test.cpp` (`[q3.1]`: each kind of missing item, and one missing beside one restored on W2.4's recorded single-mail restore), `veeam_restore_test.cpp` (`overall_status`), `canary_manifest_test.cpp` (`seeded_at`), `expected_set_test.cpp`, `restore_command_test.cpp` and `test_command_test.cpp` (the run's status line and the REASON cell, for a point after and before `seeded_at`). The live proof is Q3.1's scenario 2 (`tests/e2e/scenarios.md`).
+
+---
+
 ## 2026-10-03 — PR #153 review: the `--json` check makes the writer's temp file; device names refused; the summary's `exit_code` is the process's (proposed)
 
 The review of PR #153 found more `--json` paths that passed the check and failed only after the whole run, and two places where the summary said less than the truth. Fixed on the branch, with tests (`tests/atomic_file_test.cpp`, `tests/test_command_test.cpp`):

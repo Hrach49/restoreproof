@@ -72,6 +72,9 @@ struct ExpectedItem {
 struct ExpectedSet {
     std::string manifest_sha256;
     std::vector<ExpectedItem> items; // in index order
+    // The manifest's seeded_at: a restore point taken after it holds every
+    // canary (Q3.1). Empty: not known, so no missing canary is the backup's.
+    std::string canaries_seeded_at;
 };
 
 // Pure. One ExpectedItem per selector of `selection`, in RestoreSpec order:

@@ -267,6 +267,7 @@ ExpectedSet build_expected_set(const sampling::Selection& selection,
 
     ExpectedSet set;
     set.manifest_sha256 = manifest.sha256;
+    set.canaries_seeded_at = manifest.seeded_at;
     add_kind(ItemKind::mail, selection.mail, record.mail, selection.mail_random, manifest.mail,
              sampling::to_selector, set.items);
     add_kind(ItemKind::sharepoint, selection.sharepoint, record.sharepoint,

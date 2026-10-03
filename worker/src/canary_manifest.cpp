@@ -283,6 +283,7 @@ CanaryManifest parse_canary_manifest(std::string_view json_text)
         !is_uuid(tenant->get_ref<const std::string&>())) {
         refuse("/tenant_id", "must be a GUID");
     }
+    std::string seeded_at = utc_at(root, "seeded_at", "");
     const auto entries = root.find("entries");
     if (entries == root.end() || !entries->is_array()) {
         refuse("/entries", "must be an array");
@@ -290,6 +291,7 @@ CanaryManifest parse_canary_manifest(std::string_view json_text)
 
     CanaryManifest manifest;
     manifest.tenant_id = tenant->get<std::string>();
+    manifest.seeded_at = std::move(seeded_at);
     manifest.sha256 = sha256_hex(json_text);
     std::map<std::string, std::string> ids;
     Seen subjects{ascii_lower};

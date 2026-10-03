@@ -617,15 +617,16 @@ SessionVerdict judge(connector::ItemKind kind, const std::string& session_id,
 }
 
 connector::RestoreStatus overall_status(std::size_t sessions, std::int64_t restored,
-                                        bool all_succeeded) noexcept
+                                        bool all_succeeded, std::size_t not_in_point) noexcept
 {
-    if (sessions == 0) {
+    if (sessions == 0 && not_in_point == 0) {
         return connector::RestoreStatus::not_run;
     }
     if (restored == 0) {
         return connector::RestoreStatus::failed;
     }
-    return all_succeeded ? connector::RestoreStatus::succeeded : connector::RestoreStatus::partial;
+    return all_succeeded && not_in_point == 0 ? connector::RestoreStatus::succeeded
+                                              : connector::RestoreStatus::partial;
 }
 
 } // namespace rp::veeam_restore

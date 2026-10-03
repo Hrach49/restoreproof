@@ -810,12 +810,14 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
                                        !stop->nothing_restored;
             verdict = verification::decide_status(
                 {expected ? &*expected : nullptr, shortfalls, std::move(stop),
-                 result ? &*result : nullptr, check});
+                 result ? &*result : nullptr, check,
+                 chosen ? chosen->backup_time : std::string{}});
             code = verification::exit_code_of(*verdict);
             if (check && !output_lost) {
                 try {
                     if (presentation.check_table) {
-                        out << presentation.check_table(*expected, *check, *verdict);
+                        out << presentation.check_table(*expected, *check, *verdict,
+                                                        result ? &*result : nullptr);
                     }
                     out << format_check_counts(*check);
                     flush_or_throw(out);

@@ -94,6 +94,10 @@ struct RunFacts {
     std::optional<RunStop> stop;           // whatever stopped the run, at most one
     const connector::RestoreResult* restore = nullptr; // restore_sample returned
     const CheckResult* check = nullptr;                // the check ran
+    // The restore point's backup time as the backup product wrote it (Veeam's
+    // UTC form, rp::parse_veeam_time); empty or unreadable: not known. Read
+    // only for an item the backup said the restore point doesn't hold.
+    std::string restore_point_time;
 };
 
 // One note beside the status, never a status of its own. `message` is one
@@ -120,7 +124,7 @@ struct StatusWarning {
 
 // An item that couldn't be checked, with why: the check's code
 // (graph_auth, graph_permission, graph_transient, target_guard, graph,
-// stale_target) or backup_infrastructure.
+// stale_target), backup_infrastructure or not_in_backup.
 struct UncheckedItem {
     std::size_t index = 0;
     std::string error_code;
@@ -155,7 +159,11 @@ struct RunVerdict {
 // code; `match` -> verified, whatever the backup said; `missing` or
 // `mismatch` while the backup said the item wasn't restored, for an
 // infrastructure reason -> unchecked, backup_infrastructure; `missing` or
-// `mismatch` -> failed. The run, first fit wins:
+// `mismatch` while the backup said the restore point doesn't hold the item
+// (ItemOutcome::not_in_backup), unless it is a canary and the restore point
+// was taken after the expected set's canaries_seeded_at (both read, the
+// point strictly later) -> unchecked, not_in_backup; `missing` or `mismatch`
+// -> failed. The run, first fit wins:
 //  1. facts that don't add up -> error internal: no expected set and no stop;
 //     a restore without an expected set, or a check without a restore; an
 //     expected item not at its index; a restore of an empty sample, or a
@@ -179,7 +187,7 @@ struct RunVerdict {
 //     restore_contradiction;
 //  7. any item unchecked -> error, the first item code present of
 //     target_guard, graph_auth, graph_permission, backup_infrastructure,
-//     graph, graph_transient, stale_target;
+//     not_in_backup, graph, graph_transient, stale_target;
 //  8. every item verified -> pass.
 // Rows 2 to 8 carry the warnings their facts give (StatusWarning).
 RunVerdict decide_status(const RunFacts& facts);

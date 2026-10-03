@@ -437,6 +437,29 @@ TEST_CASE("test: VERDICT and REASON: an infrastructure item is unchecked, never 
          {{"mail", "RP-CANARY-0001", "manifest", "no", "missing", "failed", "missing", "-"},
           {"sharepoint", "rp-canary-01.pdf", "manifest", "no", "missing",
            "unchecked backup_infrastructure", "missing", "-"}}},
+        {"a canary the restore point doesn't hold, the point taken after the manifest was seeded",
+         [](TestLab& lab) {
+             lab.fake.answer = [](const rp::connector::RestoreSpec& spec) {
+                 return not_in_point(spec);
+             };
+             lab.targets.after[0] = json::array();
+         },
+         Args{"--mail", "1", "--sp", "0", "--od", "0"},
+         rp::exit_code::restore,
+         {{"mail", "RP-CANARY-0001", "manifest", "no", "missing", "failed", "not_in_backup",
+           "-"}}},
+        {"a canary a restore point taken before the manifest was seeded doesn't hold",
+         [](TestLab& lab) {
+             lab.fake.points = {point(kNewestId, "2026-09-24T22:00:00Z")};
+             lab.fake.answer = [](const rp::connector::RestoreSpec& spec) {
+                 return not_in_point(spec);
+             };
+             lab.targets.after[0] = json::array();
+         },
+         Args{"--mail", "1", "--sp", "0", "--od", "0"},
+         rp::exit_code::service,
+         {{"mail", "RP-CANARY-0001", "manifest", "no", "missing", "unchecked not_in_backup",
+           "not_in_backup", "-"}}},
         {"a mail whose time, ID and body differ",
          [](TestLab& lab) {
              lab.targets.after[0] = json::array({graph_mail(
@@ -497,7 +520,7 @@ TEST_CASE("test: VERDICT and REASON: an infrastructure item is unchecked, never 
          rp::exit_code::service,
          {{"mail", "RP-CANARY-0001", "manifest", "no", "missing", "-", "missing", "-"}}},
     };
-    const Case& c = cases[GENERATE(range(std::size_t{0}, std::size_t{7}))];
+    const Case& c = cases[GENERATE(range(std::size_t{0}, std::size_t{9}))];
     CAPTURE(c.name);
     TestLab lab;
     c.setup(lab);

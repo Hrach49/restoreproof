@@ -125,9 +125,12 @@ public:
     //     (connector::Error, stop them with 08-sweep-sessions.ps1);
     //  4. for each type with items (mail, SharePoint, OneDrive) an explore
     //     session on the restore point, every item found in it by listing
-    //     (exactly one match each: none is connector::NotFoundError, several
-    //     connector::Error; a mailbox is a primary one, never an archive) and
-    //     re-read. The test OneDrive missing from the point is
+    //     (exactly one match each; several connector::Error; a mailbox is a
+    //     primary one, never an archive) and re-read. An item with no match
+    //     (it, or its mailbox, folder, site, library or OneDrive, isn't in the
+    //     restore point) is never sent: its result is
+    //     ItemOutcome::not_in_backup with browsing's message, and the other
+    //     items go ahead (Q3.1). The test OneDrive missing from the point is
     //     connector::Error;
     //  5. one restore call per source container, same-named items in separate
     //     calls: the body built, the certificate exported, layer 2
@@ -149,9 +152,10 @@ public:
     // unless a restore may still be running (no verdict on the POST, a
     // timeout, a 404, failing polls): then they are left open and named in the
     // error. Veeam's errors map as list_restore_points maps them, but for
-    // NotFoundError, which is connector::Error: here connector::NotFoundError
-    // only ever means a sampled item (or its source mailbox, folder, site,
-    // library or OneDrive) isn't in the restore point. The spec's client_ref
+    // NotFoundError, which is connector::Error; restore_sample never throws
+    // connector::NotFoundError (step 4 reports such an item instead). With
+    // every item missing from the point, nothing is sent and the status is
+    // `failed`; with some, `partial` at best. The spec's client_ref
     // must be set and its backup_time Veeam's UTC form (std::invalid_argument,
     // before any Veeam request).
     connector::RestoreResult restore_sample(const connector::RestoreSpec& spec) override;

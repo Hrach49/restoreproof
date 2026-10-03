@@ -247,9 +247,11 @@ SessionVerdict judge(connector::ItemKind kind, const std::string& session_id,
                      const std::vector<std::string>& tenant_texts = {});
 
 // The W1.7 order with W2.5's stricter succeeded (rp/connector.hpp): not_run
-// without a session, failed with nothing restored, succeeded when every
-// session succeeded, else partial.
+// without a session and no item the restore point lacked, failed with
+// nothing restored, succeeded when every session succeeded and every item
+// was in the restore point, else partial. `not_in_point`: the spec's items
+// the restore point doesn't hold, never sent (Q3.1).
 connector::RestoreStatus overall_status(std::size_t sessions, std::int64_t restored,
-                                        bool all_succeeded) noexcept;
+                                        bool all_succeeded, std::size_t not_in_point = 0) noexcept;
 
 } // namespace rp::veeam_restore

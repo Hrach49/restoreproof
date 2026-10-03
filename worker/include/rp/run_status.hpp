@@ -191,6 +191,23 @@ RunVerdict decide_status(const RunFacts& facts);
 // "message", "indexes"}]}. Every key but error_code always there.
 nlohmann::json to_json(const RunVerdict& verdict);
 
+// Whether a restore session's details read as the backup's counts: "<n>
+// item(s) processed", then optionally a parenthesis of "<n> <word>" pairs of
+// Veeam's own words (success(es), warning(s), failure(s), error(s), skipped),
+// e.g. "5 items processed (4 successes, 1 warning)". The one filter of
+// Veeam's details: backup_session's warning and the result's `restore`
+// object keep them only then; any other text may name an item or an address.
+bool is_backup_counts(std::string_view details);
+
+// The result's "restore" object (W3.6 point 5): {"status", "items_sent",
+// "items_restored", "sessions": [{"id", "kind", "result", "details" (when
+// is_backup_counts, else null), "items_sent", "items_restored",
+// "started_at_raw", "ended_at_raw" (the product's text, unparsed)}], "items":
+// [{"index" (its place in result.items), "kind", "outcome", "infrastructure",
+// "session_id"}]}. No item name and no Veeam message: those may name a tenant
+// value.
+nlohmann::json to_json(const connector::RestoreResult& result);
+
 // rpworker's exit code for an error code (rp::exit_code), from the one table
 // of codes the status line's texts and row 7's severity come from too: config
 // and internal 1; backup_auth, graph_auth and graph_permission 2;

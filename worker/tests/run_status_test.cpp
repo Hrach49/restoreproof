@@ -1131,3 +1131,85 @@ TEST_CASE("run status: the names of statuses and phases", "[run_status]")
     CHECK(verification::to_string(RunPhase::check) == "check");
     CHECK(verification::to_string(static_cast<RunPhase>(9)) == "unknown");
 }
+
+// --- The result's `restore` object (W3.6 point 5) ------------------------------------
+
+TEST_CASE("run status: a session's details are kept only as the backup's counts, the one filter "
+          "of backup_session",
+          "[run_status][restore_json]")
+{
+    const auto [details, kept] = GENERATE(table<std::string, bool>({
+        {"5 items processed", true},
+        {"1 item processed (1 success)", true},
+        {"5 items processed (4 successes, 1 warning)", true},
+        {"3 items processed (1 failure, 1 error, 1 skipped)", true},
+        {"", false},
+        {"5 items processed (alice@contoso.com: mailbox not found)", false},
+        {"5 items processed (4 successes, alice@contoso.com)", false},
+        {"Restoring RP-CANARY-0001 failed", false},
+        {"5 items processed\n(4 successes)", false},
+    }));
+    CAPTURE(details);
+    CHECK(verification::is_backup_counts(details) == kept);
+    connector::RestoreResult result;
+    result.sessions.push_back({"s-1", ItemKind::mail, "Warning", details, "", "", 1, 0});
+    const json written = verification::to_json(result);
+    const json& session = written.at("sessions").at(0);
+    CHECK(session.at("details") == (kept ? json(details) : json()));
+}
+
+TEST_CASE("run status: the restore object holds counts, sessions and items, never an item's "
+          "name or the backup's message",
+          "[run_status][restore_json]")
+{
+    connector::RestoreResult result;
+    result.status = RestoreStatus::partial;
+    result.items_sent = 3;
+    result.items_restored = 1;
+    result.session_ids = {"s-mail", "s-sp"};
+    result.log = "SENTINEL-LOG";
+    result.sessions = {
+        {"s-mail", ItemKind::mail, "Success", "2 items processed (2 successes)",
+         "2026-09-30T10:00:00Z", "2026-09-30T10:01:05.1234567Z", 2, 2},
+        {"s-sp", ItemKind::sharepoint, "Failed", "SENTINEL-DETAILS rp-canary-01.pdf",
+         "2026-09-30T10:01:10Z", "0001-01-01T00:00:00Z", 1, 0},
+    };
+    result.items = {
+        {ItemKind::mail, "SENTINEL-NAME-0", "s-mail", ItemOutcome::restored, "", false},
+        {ItemKind::mail, "SENTINEL-NAME-1", "s-mail", ItemOutcome::failed,
+         "SENTINEL-MESSAGE Veeam could not reach Microsoft 365", true},
+        {ItemKind::sharepoint, "SENTINEL-NAME-2", "s-sp", ItemOutcome::unknown, "", false},
+    };
+
+    const json written = verification::to_json(result);
+
+    const json want = json::parse(R"json({
+        "status": "partial", "items_sent": 3, "items_restored": 1,
+        "sessions": [
+            {"id": "s-mail", "kind": "mail", "result": "Success",
+             "details": "2 items processed (2 successes)", "items_sent": 2, "items_restored": 2,
+             "started_at_raw": "2026-09-30T10:00:00Z",
+             "ended_at_raw": "2026-09-30T10:01:05.1234567Z"},
+            {"id": "s-sp", "kind": "sharepoint", "result": "Failed", "details": null,
+             "items_sent": 1, "items_restored": 0,
+             "started_at_raw": "2026-09-30T10:01:10Z", "ended_at_raw": "0001-01-01T00:00:00Z"}],
+        "items": [
+            {"index": 0, "kind": "mail", "outcome": "restored", "infrastructure": false,
+             "session_id": "s-mail"},
+            {"index": 1, "kind": "mail", "outcome": "failed", "infrastructure": true,
+             "session_id": "s-mail"},
+            {"index": 2, "kind": "sharepoint", "outcome": "unknown", "infrastructure": false,
+             "session_id": "s-sp"}]})json");
+    CHECK(written == want);
+    CHECK(written.dump().find("SENTINEL") == std::string::npos);
+}
+
+TEST_CASE("run status: a restore that didn't run is an empty restore object", "[run_status][restore_json]")
+{
+    const json written = verification::to_json(connector::RestoreResult{});
+    CHECK(written == json{{"status", "not_run"},
+                          {"items_sent", 0},
+                          {"items_restored", 0},
+                          {"sessions", json::array()},
+                          {"items", json::array()}});
+}

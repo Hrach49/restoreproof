@@ -14,9 +14,11 @@
 // (rp/cleaner.hpp) before the sample is chosen and, when a restore was sent,
 // after the status line; the cleanup never changes the status but through the
 // guard. Since W3.5 it times its steps and ends with their table, which
-// changes nothing else. The choices are the 2026-09-30 W2.8, 2026-10-01 W3.2
-// and W3.3, 2026-10-02 W3.4 and 2026-10-03 W3.5 entries in docs/decisions.md;
-// usage and an example are in
+// changes nothing else. Since W3.6 its run is the pipeline `rpworker test`
+// shares (src/run_pipeline.hpp, rp/test_command.hpp), so both run, print and
+// exit alike but for each one's tables. The choices are the 2026-09-30 W2.8,
+// 2026-10-01 W3.2 and W3.3, 2026-10-02 W3.4 and 2026-10-03 W3.5 and W3.6
+// entries in docs/decisions.md; usage and an example are in
 // docs/worker-config.md ("rpworker restore").
 
 #include <rp/cleaner.hpp>
@@ -125,6 +127,12 @@ struct RestoreCommandEnv {
     // run line; null = nothing. W4.1 writes timing::to_json of it into the
     // result as `timings`. What it throws is ignored: timings decide nothing.
     std::function<void(const timing::RunTimings&)> on_timings;
+    // `rpworker test --json <file>` only (W3.6, rp/test_command.hpp): writes
+    // the run summary's text to the file, whether it did. Null = the atomic
+    // writer (src/atomic_file.hpp: a temp file beside it, flushed, moved
+    // onto it, never over a file already there). What it throws is a
+    // failure. `restore` never calls it.
+    std::function<bool(const std::filesystem::path&, std::string_view)> write_summary;
 };
 
 // The real environment: rp::default_config_path, rp::load_secrets_from_env, the

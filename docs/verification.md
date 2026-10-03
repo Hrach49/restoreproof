@@ -384,7 +384,9 @@ Once its run line is out, every ending prints `status <pass|fail|error>[ <code>]
 stdout, then each warning as `warning: <code>: <message>` on stderr, and exits with the
 status's code (`docs/worker-config.md`, "`rpworker restore`"). The error lines that carry an
 exception's `what()` (`restore error: ...`, `check error: ...`, the "the restore had started"
-note) stay on stderr as before.
+note) stay on stderr as before. `rpworker test` (W3.6) runs the same pipeline and ends the
+same way; its table after the check shows each item's verdict (`docs/worker-config.md`,
+"`rpworker test`").
 
 **Open** (decision W3.3): a canary missing from a restore point dated after it stays `error`
 `not_in_backup` until the connector reports a per-item "not in restore point"; a client with
@@ -521,3 +523,26 @@ before W3.4) is emptied once by hand; the Cleaner never reads it. Stopping our o
 sessions still `Working` is W3.6's, with the same Cleaner and placements in `rpworker test`;
 W3.5 times the two cleans as the spans `cleanup_before` and `cleanup_after` (`docs/decisions.md`
 2026-10-03, W3.5; `cleanup_after` stays `not run` when the clean after is skipped).
+
+## The `--json` run summary (W3.6)
+
+`rpworker test --json <file>` writes the run summary `rp.run-summary.v0` (`docs/worker-config.md`,
+"`--json <file>`"; `docs/decisions.md` 2026-10-03, W3.6 point 5). It holds the objects above as
+they are (`sample`, `expected`, `check`, `status`, `cleanup`, `timings`), plus `restore`
+(`verification::to_json(RestoreResult)` in `rp/run_status.hpp`: counts, sessions and items, no
+item name and no Veeam message; a session's `details` only when `is_backup_counts`, the filter
+the `backup_session` warning uses). It holds no secret, but more tenant data than stdout:
+
+- `expected.items`: sender addresses and names, Internet message IDs, sent and received times,
+  and the random mails' subjects and file names;
+- `sample.*.random.keys`: mailbox addresses, folder names, mail subjects and received times,
+  site and list IDs, folder paths, file names and OneDrive UPNs (`random_key`);
+- `sample.*.random.containers_listed`: mailbox addresses and, for an unresolved OneDrive, its
+  URL;
+- a `check` item's `reason`: for an Office file that isn't a valid package, the office-v1
+  reader's error text, which names a part of the tenant file. This is the one place an
+  exception's text reaches the file. It is W3.2's `check` object as approved; stdout's REASON
+  column shows only fixed words.
+
+These are written as designed: they are the objects W4.1 signs, the file is local, and the
+owner chose its path. Keep the file out of the repository.

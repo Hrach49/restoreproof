@@ -105,6 +105,18 @@ std::unique_ptr<IHttpClient> recorded(std::unique_ptr<IHttpClient> client,
                                                  body);
 }
 
+int recorded_exit_code(const FixtureRecorder* recorder, int code) noexcept
+{
+    if (recorder == nullptr || code != exit_code::ok) {
+        return code;
+    }
+    try {
+        return recorder->problems().empty() ? code : exit_code::config;
+    } catch (...) {
+        return exit_code::config;
+    }
+}
+
 int finish_recording(const FixtureRecorder* recorder, std::ostream& out, std::ostream& err,
                      int code) noexcept
 {
@@ -119,10 +131,9 @@ int finish_recording(const FixtureRecorder* recorder, std::ostream& out, std::os
         for (const std::string& problem : problems) {
             err << "record error: " << problem << '\n';
         }
-        return problems.empty() || code != exit_code::ok ? code : exit_code::config;
     } catch (...) {
-        return code == exit_code::ok ? exit_code::config : code;
     }
+    return recorded_exit_code(recorder, code);
 }
 
 } // namespace rp

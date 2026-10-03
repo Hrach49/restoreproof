@@ -195,7 +195,7 @@ TEST_CASE("test --json: a path that isn't UTF-8, a name Windows can't hold, a fi
           "[test_command][json]")
 {
     // By index: each run of the case has its own temp folder.
-    const std::size_t which = GENERATE(range(std::size_t{0}, std::size_t{11}));
+    const std::size_t which = GENERATE(range(std::size_t{0}, std::size_t{16}));
     TestLab lab;
     const std::vector<std::pair<std::string, std::string>> cases{
         {"\xff.json", "not a UTF-8 path"},
@@ -209,9 +209,19 @@ TEST_CASE("test --json: a path that isn't UTF-8, a name Windows can't hold, a fi
         {utf8(lab.dir.path() / ".."), "not a file name"},
         {utf8(lab.config_path), "the file already exists"},
         {utf8(lab.dir.path()), "the file already exists"},
-        // A device: anything but "not found" is a file there.
-        {utf8(lab.dir.path() / "NUL"), "the file already exists"},
+        // Devices: Win32 says "not found" for PRN, AUX or LPT1 with no such
+        // device, and the write would fail after the run, or reach the device.
+        {utf8(lab.dir.path() / "NUL"), "not a file name"},
+        {utf8(lab.dir.path() / "PRN"), "not a file name"},
+        {utf8(lab.dir.path() / "aux.json"), "not a file name"},
+        {utf8(lab.dir.path() / "LPT1.json"), "not a file name"},
+        // Win32 would write run.json.
+        {utf8(lab.dir.path() / "run.json."), "not a file name"},
         {utf8(lab.dir.path() / "missing" / "run.json"), "the folder doesn't exist"},
+        // The writer's temp name, 21 characters longer, is too long: found
+        // by making it now, not after the run.
+        {utf8(lab.dir.path() / (std::string(235, 'r') + ".json")),
+         "a file can't be written there"},
     };
     const auto& [arg, message] = cases[which];
     CAPTURE(arg, message);
@@ -646,8 +656,14 @@ TEST_CASE("test --json: the v0 summary has every top-level key for each way a ru
          },
          Args{"--mail", "0", "--sp", "1", "--od", "0"}, rp::exit_code::service,
          "error stale_target", {}},
+        // After the run line, before the clean before: no clean ran, so
+        // `cleanup` is null too.
+        {"no download client",
+         [](TestLab& lab) { lab.no_download_http = true; }, three, rp::exit_code::config,
+         "error internal",
+         {"sample", "expected", "restore", "check", "cleanup"}},
     };
-    const Case& c = cases[GENERATE(range(std::size_t{0}, std::size_t{14}))];
+    const Case& c = cases[GENERATE(range(std::size_t{0}, std::size_t{15}))];
     CAPTURE(c.name);
     TestLab lab;
     lab.fake.pool.mail = {carol_mail(1)};
@@ -687,7 +703,9 @@ TEST_CASE("test --json: the v0 summary has every top-level key for each way a ru
         CHECK(status.at("error_code") == c.status.substr(c.status.find(' ') + 1));
     }
     REQUIRE(lab.cleanups.size() == 1);
-    CHECK(summary.at("cleanup") == rp::to_json(lab.cleanups[0]));
+    if (!c.nulls.contains("cleanup")) {
+        CHECK(summary.at("cleanup") == rp::to_json(lab.cleanups[0]));
+    }
     CHECK(summary.at("timings") == rp::timing::to_json(lab.timings.at(0)));
     CHECK(status.at("restore_sent") == lab.cleanups[0].restore_sent);
     if (!summary.at("sample").is_null()) {
@@ -792,7 +810,7 @@ TEST_CASE("test --json: a file that appeared after the check is never overwritte
 }
 
 TEST_CASE("test --json: with stdout lost the file is still written, without its line; the "
-          "summary keeps the status's exit code",
+          "summary's exit code is the process's, 1",
           "[test_command][json]")
 {
     TestLab lab;
@@ -814,8 +832,32 @@ TEST_CASE("test --json: with stdout lost the file is still written, without its 
         CAPTURE(key);
         CHECK_FALSE(summary.at(key).is_null());
     }
-    CHECK(summary.at("exit_code") == rp::exit_code::ok);
+    CHECK(summary.at("exit_code") == rp::exit_code::config);
     CHECK(summary.at("status").at("status") == "pass");
+}
+
+TEST_CASE("test --json --record: a recording that isn't complete makes a pass exit 1, and the "
+          "summary says 1",
+          "[test_command][json][record]")
+{
+    namespace gl = rp::test::graph_lab;
+    TestLab lab;
+    // The recorder refuses an exchange that holds the Veeam password.
+    json edited = rp::test::load_fixture_json("graph", "restoretarget-drive-200");
+    edited["body"]["description"] = "Sentinel-Veeam-Password-9c2e";
+    lab.targets.graph.on(rp::HttpMethod::get, gl::drive_url(), {rp::test::to_response(edited)});
+    const std::filesystem::path rec = lab.dir.path() / "rec";
+
+    const Run run = lab.run({"--run-id", kRunId, "--mail", "0", "--sp", "1", "--od", "0", "--json",
+                             lab.json_arg(), "--record", utf8(rec)});
+
+    INFO(run.out);
+    CHECK(run.exit_code == rp::exit_code::config);
+    CHECK_THAT(run.err, ContainsSubstring("record error: graph/"));
+    CHECK_THAT(run.out, ContainsSubstring("\nstatus pass: "));
+    const json summary = lab.summary();
+    CHECK(summary.at("status").at("status") == "pass");
+    CHECK(summary.at("exit_code") == rp::exit_code::config);
 }
 
 TEST_CASE("test --json: started_at and ended_at are the wall clock where total starts and ends, "

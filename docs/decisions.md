@@ -7,6 +7,20 @@ Format: date, decision, reason, alternatives rejected.
 
 ---
 
+## 2026-10-03 — PR #153 review: the `--json` check makes the writer's temp file; device names refused; the summary's `exit_code` is the process's (proposed)
+
+The review of PR #153 found more `--json` paths that passed the check and failed only after the whole run, and two places where the summary said less than the truth. Fixed on the branch, with tests (`tests/atomic_file_test.cpp`, `tests/test_command_test.cpp`):
+
+1. **One check, the writer's own: `rp::check_new_file` in `src/atomic_file.hpp`.** In order: a plain name, nothing there, the folder there, then the writer's first step done for real: `CreateFileW` `CREATE_NEW` on a `<file>.<16 hex>.tmp` name, with `FILE_FLAG_DELETE_ON_CLOSE`, so nothing is left. `check_json_path` maps its answer to the texts and no longer re-derives the writer's rules. New text, exit 1: `config error: --json <file>: a file can't be written there`, for a folder the Worker may not write to, a read-only volume, or a name or path too long once the temp's 21 characters are added (a 240-character name fits 255, its temp name doesn't; there is no long-path manifest).
+2. **DOS device names aren't plain file names.** `CON`, `PRN`, `AUX`, `NUL`, `CONIN$`, `CONOUT$`, `COM0`–`COM9`, `LPT0`–`LPT9`, and COM/LPT with a superscript 1–3, in any ASCII case, alone or before the first `.` (spaces before it ignored). On Windows 10 Win32 answers "not found" for `PRN` or `aux.json` with no such device, so they passed as "no file yet"; with a printer or a COM port the summary could have gone to it. `NUL` now reads `not a file name`, not `the file already exists` (amends the W3.6 review point 3's example).
+3. **A name ending in `.` or a space isn't plain.** Win32 strips it: `--json run.json.` wrote `run.json` and printed `wrote run.json.`.
+4. **The summary's `exit_code` is the process's as known when the file is written.** It was the status's alone, so a pass whose stdout was lost, or whose `--record` recording was incomplete, said 0 for a process that exits 1. Now both are in it (`recorded_exit_code` in `src/command_config.hpp`, the rule `finish_recording` applies). Only the file's own failed write comes later, and then there is no file. `RunSummary::exit_code` is gone; the hook already gets the code. Amends W3.6 point 5's "`exit_code`: the status's code, before any change below".
+5. **`cleanup` is `null` when no clean ran.** It was always an object; now `null` when the run stopped after its run line but before the clean before (the clean after only runs after it), as the v0 rule says.
+
+Rejected: keeping the name rules and adding a length rule and an ACL check one by one; each is a guess at what `CreateFileW` will do, and making the temp file is the answer.
+
+---
+
 ## 2026-10-03 — W3.6 review: a `--json` path the writer can't use is refused before the run (proposed)
 
 The reviews of the W3.6 branch found `--json` values that passed the up-front check and so cost a whole run, the restore into the tenant and the clean after included, before the write failed at the end. Fixed on the branch, with tests (`tests/test_command_test.cpp`, `tests/atomic_file_test.cpp`, `tests/cli_test.cpp`, and one exe test):

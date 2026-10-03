@@ -41,6 +41,13 @@ std::optional<std::string> read_file(const std::filesystem::path& path)
     return std::string{std::istreambuf_iterator<char>(file), {}};
 }
 
+// `name` as UTF-8, for a test's message.
+std::string as_utf8(const std::wstring& name)
+{
+    const std::u8string text = std::filesystem::path{name}.u8string();
+    return {text.begin(), text.end()};
+}
+
 constexpr const char* kSuffix = "0123456789abcdef";
 
 rp::AtomicWriteOptions fixed_suffix()
@@ -163,8 +170,8 @@ TEST_CASE("atomic file: a plain file name: not empty, '.' or '..', no control ch
           "of < > : \" / \\ | ? *",
           "[atomic_file]")
 {
-    const std::vector<std::wstring> plain{L"run.json", L"run",      L"тест.json", L".run.json",
-                                          L"a b.json", L"run.json.", L"..."};
+    const std::vector<std::wstring> plain{L"run.json", L"run", L"тест.json", L".run.json",
+                                          L"a b.json"};
     for (std::size_t i = 0; i < plain.size(); ++i) {
         CAPTURE(i);
         CHECK(rp::is_plain_file_name(plain[i]));
@@ -178,6 +185,122 @@ TEST_CASE("atomic file: a plain file name: not empty, '.' or '..', no control ch
         CAPTURE(i);
         CHECK_FALSE(rp::is_plain_file_name(refused[i]));
     }
+}
+
+TEST_CASE("atomic file: a name ending in '.' or ' ' isn't plain: Win32 would write another name",
+          "[atomic_file]")
+{
+    for (const std::wstring name : {L"run.json.", L"run.json ", L"...", L"run. ", L" "}) {
+        CAPTURE(name.size());
+        CHECK_FALSE(rp::is_plain_file_name(name));
+    }
+}
+
+TEST_CASE("atomic file: a DOS device's name isn't plain, alone, with an extension, in any case",
+          "[atomic_file]")
+{
+    // Win32 says "not found" for PRN, AUX, COM1 or LPT1 with no such device:
+    // only the name rule stops them.
+    for (const std::wstring name :
+         {L"PRN", L"prn.json", L"AUX", L"aux.json", L"Nul", L"nul.tar.gz", L"CON", L"con.json",
+          L"CONIN$", L"conout$.json", L"COM1", L"com9.json", L"LPT1", L"lpt1.json", L"COM0",
+          L"LPT0.json", L"COM\u00b9", L"lpt\u00b2.json", L"LPT\u00b3", L"PRN .json", L"aux  .x"}) {
+        CAPTURE(as_utf8(name));
+        CHECK_FALSE(rp::is_plain_file_name(name));
+    }
+    for (const std::wstring name :
+         {L"PRNT.json", L"auxiliary.json", L"console.json", L"nul_x.json", L"COM10", L"com.json",
+          L"LPT", L"lpt10.json", L"COMA", L"xprn.json", L"run.prn", L"a.aux.json", L"COM\u00b4",
+          L" PRN.json"}) {
+        CAPTURE(as_utf8(name));
+        CHECK(rp::is_plain_file_name(name));
+    }
+}
+
+TEST_CASE("atomic file: the writer refuses a device's name or a trailing '.', and makes nothing",
+          "[atomic_file]")
+{
+    const rp::test::TempDir dir;
+    CHECK_FALSE(rp::write_file_atomically(dir.path() / "PRN.json", "this run"));
+    CHECK_FALSE(rp::write_file_atomically(dir.path() / "run.json.", "this run"));
+    CHECK(names_in(dir.path()).empty());
+}
+
+// --- Checking a path before a run (check_new_file) ---------------------------------
+
+TEST_CASE("atomic file: check_new_file: a plain name in a folder it can write is ok, and leaves "
+          "nothing behind",
+          "[atomic_file]")
+{
+    const rp::test::TempDir dir;
+    CHECK(rp::check_new_file(dir.path() / L"тест-run.json") == rp::NewFileCheck::ok);
+    CHECK(names_in(dir.path()).empty());
+}
+
+TEST_CASE("atomic file: check_new_file: a name, a file already there, a missing folder, each said "
+          "before anything is made",
+          "[atomic_file]")
+{
+    const rp::test::TempDir dir;
+    const std::filesystem::path earlier = dir.write("earlier.json", "earlier run");
+
+    CHECK(rp::check_new_file(dir.path() / "run.json:x") == rp::NewFileCheck::not_a_file_name);
+    CHECK(rp::check_new_file(dir.path() / "PRN.json") == rp::NewFileCheck::not_a_file_name);
+    CHECK(rp::check_new_file(dir.path() / "run.json.") == rp::NewFileCheck::not_a_file_name);
+    CHECK(rp::check_new_file(earlier) == rp::NewFileCheck::exists);
+    CHECK(rp::check_new_file(dir.path()) == rp::NewFileCheck::exists);
+    CHECK(rp::check_new_file(dir.path() / "missing" / "run.json") == rp::NewFileCheck::no_folder);
+
+    CHECK(names_in(dir.path()) == std::set<std::string>{"earlier.json"});
+    CHECK(read_file(earlier) == "earlier run");
+}
+
+TEST_CASE("atomic file: check_new_file: a name too long once the temp's 21 characters are added "
+          "can't be written, as the writer would find only at the end",
+          "[atomic_file]")
+{
+    const rp::test::TempDir dir;
+    // 240 units fit a 255-unit name; "<name>.<16 hex>.tmp" doesn't.
+    const std::filesystem::path target = dir.path() / (std::string(235, 'r') + ".json");
+
+    CHECK(rp::check_new_file(target) == rp::NewFileCheck::cannot_write);
+    CHECK_FALSE(rp::write_file_atomically(target, "this run"));
+    CHECK(names_in(dir.path()).empty());
+}
+
+TEST_CASE("atomic file: check_new_file: the temp name taken, or a suffix that isn't hex, can't be "
+          "written; someone else's temp file is left as it was",
+          "[atomic_file]")
+{
+    const rp::test::TempDir dir;
+    const std::string temp_name = std::string{"run.json."} + kSuffix + ".tmp";
+    const std::filesystem::path temp = dir.write(temp_name, "someone else's");
+
+    CHECK(rp::check_new_file(dir.path() / "run.json", fixed_suffix()) ==
+          rp::NewFileCheck::cannot_write);
+    rp::AtomicWriteOptions bad;
+    bad.temp_suffix = [] { return std::string{"not hex"}; };
+    CHECK(rp::check_new_file(dir.path() / "run.json", bad) == rp::NewFileCheck::cannot_write);
+    rp::AtomicWriteOptions throwing;
+    throwing.temp_suffix = []() -> std::string { throw std::runtime_error("no"); };
+    CHECK(rp::check_new_file(dir.path() / "run.json", throwing) == rp::NewFileCheck::cannot_write);
+
+    CHECK(read_file(temp) == "someone else's");
+    CHECK(names_in(dir.path()) == std::set<std::string>{temp_name});
+}
+
+TEST_CASE("atomic file: check_new_file then the writer: the check's temp file is gone, so the "
+          "writer's own, with the same suffix, is made",
+          "[atomic_file]")
+{
+    const rp::test::TempDir dir;
+    const std::filesystem::path target = dir.path() / "run.json";
+
+    REQUIRE(rp::check_new_file(target, fixed_suffix()) == rp::NewFileCheck::ok);
+    CHECK(rp::write_file_atomically(target, "this run", fixed_suffix()));
+
+    CHECK(read_file(target) == "this run");
+    CHECK(names_in(dir.path()) == std::set<std::string>{"run.json"});
 }
 
 // --- Writing -------------------------------------------------------------------------

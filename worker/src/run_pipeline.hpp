@@ -65,11 +65,9 @@ struct RunSummary {
     const connector::RestoreResult* restore = nullptr;
     const verification::CheckResult* check = nullptr;
     const verification::RunVerdict* verdict = nullptr; // null only after an unexpected failure
+    // Null when no clean ran: the run stopped before the clean before.
     const RunCleanup* cleanup = nullptr;
     const timing::RunTimings* timings = nullptr;
-    // The status's exit code (verification::exit_code_of), before the output
-    // or the summary's own failures change it; without a verdict, 1.
-    int exit_code = 1;
 };
 
 // Where a command's output differs from the other's.

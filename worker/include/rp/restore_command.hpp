@@ -13,8 +13,10 @@
 // holds the run mutex (rp/run_lock.hpp) and empties the three restore targets
 // (rp/cleaner.hpp) before the sample is chosen and, when a restore was sent,
 // after the status line; the cleanup never changes the status but through the
-// guard. The choices are the 2026-09-30 W2.8, 2026-10-01 W3.2 and W3.3 and
-// 2026-10-02 W3.4 entries in docs/decisions.md; usage and an example are in
+// guard. Since W3.5 it times its steps and ends with their table, which
+// changes nothing else. The choices are the 2026-09-30 W2.8, 2026-10-01 W3.2
+// and W3.3, 2026-10-02 W3.4 and 2026-10-03 W3.5 entries in docs/decisions.md;
+// usage and an example are in
 // docs/worker-config.md ("rpworker restore").
 
 #include <rp/cleaner.hpp>
@@ -24,6 +26,7 @@
 #include <rp/http_client.hpp>
 #include <rp/run_lock.hpp>
 #include <rp/secrets.hpp>
+#include <rp/step_timer.hpp>
 
 #include <nlohmann/json.hpp>
 
@@ -98,9 +101,9 @@ struct RestoreCommandEnv {
     // returns must pass sampling::check_run_id, or the command fails with
     // "error: unexpected failure".
     std::function<std::string()> make_run_id;
-    // The steady clock the restore's total time and each checked item's ms
-    // (each file's read, each comparison) are measured by; null =
-    // steady_clock::now.
+    // The steady clock the restore's own time, each checked item's ms (each
+    // file's read, each comparison) and the step timings (W3.5) are measured
+    // by; null = steady_clock::now. Never a wall clock.
     std::function<std::chrono::steady_clock::time_point()> now;
     // Takes the run mutex without waiting (W3.4): the lock, held until the
     // command returns, or null when another run holds it. Null =
@@ -111,6 +114,11 @@ struct RestoreCommandEnv {
     // Given the run's cleanup once its last line is out, for every run that
     // printed its run line; null = nothing. W4.1 writes it into the result.
     std::function<void(const RunCleanup&)> on_cleanup;
+    // Given the run's step timings (W3.5) once, after the table (or where it
+    // would have been when stdout is lost), for every run that printed its
+    // run line; null = nothing. W4.1 writes timing::to_json of it into the
+    // result as `timings`. What it throws is ignored: timings decide nothing.
+    std::function<void(const timing::RunTimings&)> on_timings;
 };
 
 // The real environment: rp::default_config_path, rp::load_secrets_from_env, the
@@ -160,7 +168,8 @@ std::string format_elapsed(std::chrono::nanoseconds elapsed);
 // hashed and each docx and xlsx by office-v1 (verification::office_hook);
 // verification::check; the check's table and line; the run's status
 // (verification::decide_status) and its warnings; the clean after, when the
-// status says a restore was sent, and its line. Prints to `out`, as UTF-8:
+// status says a restore was sent, and its line; the step timings' table
+// (W3.5). Prints to `out`, as UTF-8:
 //
 //   restore point <backup_time>  <id>  (veeam_org_name <org>)
 //   run <run ID>  seed <8 hex digits>
@@ -185,6 +194,30 @@ std::string format_elapsed(std::chrono::nanoseconds elapsed);
 //   <blank line>
 //   status <pass|fail|error>[ <error_code>]: <message>
 //   cleanup after <ok|incomplete|skipped>: ...
+//   <blank line>
+//   STEP                  TIME         NOTE
+//   restore_point_lookup  <H:MM:SS.mmm | ->  [<note>]   all eleven spans, in
+//   ...                                                  timing::Span order
+//   total                 ...
+//
+// The step timings (W3.5, rp/step_timer.hpp; docs/decisions.md 2026-10-03
+// W3.5): named spans on env.now, read at fixed boundaries, spans that share a
+// boundary sharing one reading. `total` starts just before the restore points
+// are listed (what comes before is local and untimed) and ends after the
+// clean after; restore_point_lookup, cleanup_before, sample_select,
+// target_snapshot (the before snapshot), restore (restore_sample, the same
+// readings as the restore's line), verify (the restore's tables, the read
+// back and the check), recovery (restore + verify) and cleanup_after are the
+// command's own; restore_submit and restore_wait are the sessions' reported
+// durations, summed (timing::sum_session_durations), "not reported" when
+// restore_sample threw. The spans overlap and don't add up to total. A span a
+// stop left open ends "stopped" with total; NOTE is empty for a measured span,
+// else "stopped", "not run", "not reported", "clock went back" or "not
+// closed" (only through a bug), and a span without a duration reads "-". The
+// table ends every run that printed its run line, after the cleanup after
+// line; none before it. It isn't printed when stdout is lost, a failing table
+// write changes nothing, and timings never change a status, a warning or an
+// exit code. env.on_timings gets them once, after the table.
 //
 // The cleanup lines (W3.4) hold counts and codes, never a name or an ID:
 //   cleanup <before|after> ok: deleted <a> mail, <b> sharepoint, <c> onedrive
@@ -246,7 +279,8 @@ std::string format_elapsed(std::chrono::nanoseconds elapsed);
 // reports them, cut to whole seconds ("-" when either doesn't read or it's
 // negative);
 // MESSAGE "-" when empty. RESTORED is "<restored> of <sent>". A table with no
-// rows isn't printed. The total is restore_sample's own time, by env.now.
+// rows isn't printed. The restore's line's time is restore_sample's own, by
+// env.now: the step timings' `restore` span, not their `total`.
 // Text from the connector goes through table_cell(): a control character
 // becomes a space. Warnings go to stderr only.
 //

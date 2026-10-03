@@ -194,7 +194,9 @@ be read, never `missing` or `mismatch`; the other types are still checked.
 `mismatches`, `reason`, `duplicate` with `copies`, `error_code` and `ms` appear only when they
 apply. Values found in the tenant (subjects, names, senders, IDs) are never written: the
 `expected` object already holds what was checked. `ms` is the item's own cost: its file's
-download, hash and `office-v1` time, plus its comparison. The run's step timings are W3.5's.
+download, hash and `office-v1` time, plus its comparison. The run's step timings are W3.5's (`docs/decisions.md` 2026-10-03, W3.5;
+`rp/step_timer.hpp`): W3.2 point 7's "restore start → last item verified" is the span
+`recovery`, and its cleanup is the two spans `cleanup_before` and `cleanup_after`.
 
 **Not checked in Stage 1.** A random file's content (no expectation, W3.1 decision 3). A pptx,
 or any Office type but docx and xlsx: `office-v1` reads only `word/` and `xl/` parts, so
@@ -517,4 +519,5 @@ clean after's ok when it ran; else false if a restore was sent; else the clean b
 **Not done by the Cleaner.** Deleted Items in `restoretest` (copies from the hand cleanups
 before W3.4) is emptied once by hand; the Cleaner never reads it. Stopping our own Veeam
 sessions still `Working` is W3.6's, with the same Cleaner and placements in `rpworker test`;
-W3.5 times the cleanup.
+W3.5 times the two cleans as the spans `cleanup_before` and `cleanup_after` (`docs/decisions.md`
+2026-10-03, W3.5; `cleanup_after` stays `not run` when the clean after is skipped).

@@ -7,6 +7,207 @@ Format: date, decision, reason, alternatives rejected.
 
 ---
 
+## 2026-10-03 — W3.5 build notes: what the build settled beyond the approved entry (proposed)
+
+The build follows the W3.5 entry below: its span names and boundaries, states, NOTE words, `H:MM:SS.mmm`, the `timings` JSON, `on_timings`, and submit and wait measured per session and summed. What it adds or settles where the entry was silent:
+
+1. **Three more free functions in `rp/step_timer.hpp`.** `note(SpanState)` (the table's NOTE words), `format_timings(RunTimings)` (the table, through `src/text_table.hpp`) and `sum_session_durations(...)` (point 3's sum). The command and the tests share them, so the words and the sum rule live in one place.
+2. **The sum's order of rules.** No sessions, or any session without a duration: `not_reported`, checked first. Then any negative session: `clock_backwards`. Otherwise the sum, held at `nanoseconds::max()` rather than wrapping (unreachable in practice).
+3. **A hand-built `RunTimings`.** `format_timings` and `to_json` show a `measured` or `stopped` span whose duration is missing or negative as `clock_backwards`, and ignore a duration beside any other state. A `StepTimer` never makes either. A `Span` outside the enum is refused by every call (`false`).
+4. **The TIME column is as wide as its widest cell.** `text_table` pads by content, so when no span has a duration (every reading went back), the header reads `STEP                  TIME  NOTE`, not the entry's example width. The values and words are as approved.
+5. **Failures inside `finish`'s timing step.** An `on_timings` that throws is ignored. A clock that throws while `total` ends leaves what is still open as `open` (`not closed`). Neither changes a line, a status or an exit code. The submit and wait spans are marked `not reported` when `restore` is still open at the end, which is exactly when `restore_sample` threw.
+6. **Coverage (point 6).** `step_timer` is not on `STRICT_NAMES`. `tests/step_timer_test.cpp` is written to reach every line of `src/step_timer.cpp`; CI's coverage run is where that is checked.
+
+---
+
+## 2026-10-03 — W3.5: step timings, one timer and named spans for `rpworker restore` (recorded before the build; the owner approved it as written, the four points of choice included)
+
+W3.5 (#40) adds a timer that records named spans of one run. `rpworker restore` prints them as a table at the end of the run and hands them to the env as the result's `timings` object, which W4.1 adopts into `result.v1.json` as it adopts `status` and `cleanup`.
+
+- New files: `rp/step_timer.hpp` and `src/step_timer.cpp`, namespace `rp::timing`.
+- `connector::RestoreSessionResult` gains two optional durations.
+- `RestoreCommandEnv` gains one hook.
+
+The issue lists seven spans. Two later entries change that list, and this entry follows them; where it differs from the issue, it wins:
+- W3.2 point 7's "total recovery time = restore start → last item verified" becomes its own span, `recovery`. `total` stays the whole run.
+- W3.4 split the cleanup into two cleans, so `cleanup` becomes `cleanup_before` and `cleanup_after` (point 2).
+
+**Decision.**
+
+1. **The timer: `rp::timing::StepTimer`, a fixed set of spans on one injected steady clock. It never throws.**
+
+   ```cpp
+   namespace rp::timing {
+   enum class Span { restore_point_lookup, cleanup_before, sample_select, target_snapshot,
+                     restore, restore_submit, restore_wait, verify, recovery,
+                     cleanup_after, total };            // the table's and the JSON's order
+   inline constexpr std::size_t kSpanCount = 11;
+   std::string_view to_string(Span) noexcept;          // "restore_point_lookup", ...
+
+   enum class SpanState { not_run, open, measured, stopped, not_reported, clock_backwards };
+   std::string_view to_string(SpanState) noexcept;     // "not_run", "open", ...
+
+   struct SpanTiming {
+       SpanState state = SpanState::not_run;
+       std::optional<std::chrono::nanoseconds> duration; // only when measured or stopped; never negative
+   };
+   struct RunTimings { std::array<SpanTiming, kSpanCount> spans; };
+
+   class StepTimer {
+   public:
+       using Clock = std::function<std::chrono::steady_clock::time_point()>;
+       explicit StepTimer(Clock now);                                         // null: steady_clock::now
+       std::chrono::steady_clock::time_point now() const;                     // one clock reading
+       bool start(Span, std::chrono::steady_clock::time_point at) noexcept;   // false unless not_run
+       bool end(Span, std::chrono::steady_clock::time_point at,
+                bool stopped = false) noexcept;                               // false unless open
+       bool report(Span, std::optional<std::chrono::nanoseconds>) noexcept;   // a connector's duration; false unless not_run
+       void stop_open(std::chrono::steady_clock::time_point at) noexcept;     // every open span ends `stopped`
+       RunTimings timings() const noexcept;                                   // reads no clock
+   };
+   std::string format_span(std::chrono::nanoseconds);  // "H:MM:SS.mmm", cut to the ms; negative: "-"
+   nlohmann::json to_json(const RunTimings&);
+   }
+   ```
+
+   - **Time points are passed in.** One clock reading can end one span and start the next. That lets spans share an instant exactly: `recovery` starts with `restore`, and it ends with `verify`.
+   - **A misused span is ignored, and the first call holds.** That covers a second `start`, an `end` or `report` on a span that isn't in the right state, and a second `end`. The call returns `false` and never throws. These are bugs in the caller, and they must not throw inside `finish`, which is `noexcept`, or turn a run into `error internal`.
+   - **A clock that goes backwards never yields a duration.** That means an end earlier than its start, or a negative reported duration. The state is `clock_backwards` and `duration` is unset. No zero, absolute value or negative number is ever made up.
+   - **A span never closed:** `timings()` shows it as `open`, with no duration, and reads no clock. In the command, `finish` calls `stop_open` before it reads the timings, so `open` only ever appears through a bug, and a test pins that.
+   - **The clock is `RestoreCommandEnv::now`,** which already times the restore and each item's `ms`. It falls back to `steady_clock::now`. No wall clock is used. The command's existing `now` lambda (`restore_command.cpp`, defined after `build_expected_set` today) moves up beside the state that outlives the try block, so `finish` and `clean_after` can use it.
+
+2. **What each span covers in `rpworker restore`.** Each boundary is one reading of `now()`. Spans that share a boundary share the reading.
+
+   | Span | Starts | Ends |
+   |---|---|---|
+   | `total` | Just before `source->list_restore_points(...)`, the run's first call to a service. | After `clean_after` returns (its line, `report_cleanup`, `on_cleanup`), just before the table. |
+   | `restore_point_lookup` | Same reading as `total`'s start. | Just after `pick_point` returns a point. |
+   | `cleanup_before` | Just before `cleaner->clean(before_run)`. | Just after it returns, before its line. `clean` is `noexcept`, so the span always ends `measured`. |
+   | `sample_select` | Just before `sampling::choose_sample(...)`. | Just after it returns. Its `list_candidates` browse falls inside. |
+   | `target_snapshot` | Just before `read_before(...)`. | On success, the existing `started` reading. On a returned failure, a new reading with `stopped`. |
+   | `restore` | The existing `started` reading. | The existing reading after `restore_sample`. This is the same measurement the `restore <status>: … in H:MM:SS` line prints, and that line doesn't change. |
+   | `restore_submit`, `restore_wait` | Reported by the connector (point 3). | |
+   | `verify` | Same reading as `restore`'s end. | A new reading just after `verification::check(...)` returns. It covers writing the restore tables, the reads back with hashing, and the comparison. |
+   | `recovery` | Same reading as `restore`'s start. | Same reading as `verify`'s end. This is W3.2's "restore start → last item verified": `check` gives every item's verdict in one call, after the reads. |
+   | `cleanup_after` | Just before `cleaner->clean(after_run)` inside `clean_after`. | Just after it returns. It stays `not_run` when the clean after is skipped (nothing restored, or no Graph client). |
+
+   - **Two cleanup spans, not one.** The two cleans run minutes apart, on either side of the restore, and they do different jobs: the first removes an earlier run's leftovers, the second removes this run's copies and is skipped when nothing was sent. A sum wouldn't be an interval. It would hide which clean was slow, and it would read the same whether or not the clean after ran. The issue's `cleanup`, and W3.2 point 7's, is these two names.
+   - **`target_snapshot` and `restore` go beyond the issue's list.**
+     - `target_snapshot` is W3.2's Graph read before the restore. Without a span, that time would be unattributed.
+     - `restore` is the whole `restore_sample` call, already printed since W2.8. On one clock, `restore − restore_submit − restore_wait` is the connector's own preparation and result reading: guard layer 1, the restore-point recheck, the preflight, the explore sessions and browsing, then statistics and events. That remainder gets no span of its own.
+   - **The spans overlap and don't add up to `total`.** `restore` contains submit and wait, and `recovery` contains `restore` and `verify`. Some time sits in no span except `total`: the run ID, the intro, making the Graph clients, the sample header, `build_expected_set`, the status line and its warnings. Everything before `total`'s start is local and service-free and is untimed: arguments, config, secrets, certificate, manifest, run lock, `--record` folder, and making the connector.
+   - **The fake clock stays put.** No new reading falls between `started` and the restore's end reading, or between `read_after`'s clock calls and `check`'s. So the Harness's `restored in 0:02:03` and the per-item `123000`/`246000` ms don't change. RealRig's `rig.clock` only moves on `sleep`, so its `0:00:05` doesn't change either.
+
+3. **How the connector reports submit and wait: two optional durations per session, summed by the command.**
+
+   `RestoreSessionResult` gains the following. `rp/connector.hpp` gains `<chrono>` and `<optional>` and no Veeam type. The include scan in `tests/connector_test.cpp` checks file names only, and it still passes.
+
+   ```cpp
+   // This session's submit and wait, on the connector's own steady clock;
+   // nullopt when the connector didn't measure it.
+   std::optional<std::chrono::nanoseconds> submit_time;
+   std::optional<std::chrono::nanoseconds> wait_time;
+   ```
+
+   In `RestoreRun::restore_call` both are measured with `c_.now`, the steady clock that the 20-minute poll deadline uses:
+   - **Submit** runs from just before `c_.exporter->export_pfx(...)` to just after `sessions_.know(id)`. It covers the export, guard layer 2, the one POST, and the duplicate check, including `no_answer`'s three 10 s re-looks. Building the body comes before it and is pure.
+   - **Wait** is the `poll(id, kind)` call, from its first GET to its return. Statistics (with their 409 waits), events and `judge` are result reading, not waiting, so they count only in `restore`.
+
+   The command reports `restore_submit` and `restore_wait` to the timer as the **sum** over `result->sessions`. Sessions alternate submit, wait, submit, wait, so the sum is the time spent in each phase, while "first start to last end" would overlap the other phase. The sum is replaced by a state, never shown as a partial number:
+   - a session without the duration, or a result with no sessions (the fake connectors): `not_reported`;
+   - any negative session duration: `clock_backwards`.
+
+   The command's and the connector's clocks are the same `steady_clock` in production and the same `rig.clock` in RealRig. Only durations cross the boundary, never time points.
+
+   **When `restore_sample` throws,** its local `RestoreResult` is lost, as it is today. `restore` and `recovery` end `stopped` at `finish`'s reading. `restore_submit` and `restore_wait` are `not_reported`, not `not_run`, because a POST may have gone out. Nothing partial is carried out of the connector (see Alternatives and the owner's choice).
+
+4. **Output: one table, last, after the `cleanup after` line.** `cleanup_after` and `total` are only known once the clean after is done.
+   - At the end of `finish`, after `clean_after`, the command ends `total`, calls `stop_open`, then prints the table.
+   - It does this for every run that printed its run line, the same rule as the status line.
+   - With `--record`, `recorded <n> exchange(s) in <dir>` still comes after it.
+
+   ```
+
+   STEP                  TIME         NOTE
+   restore_point_lookup  0:00:00.412
+   cleanup_before        0:00:03.106
+   sample_select         0:00:21.870
+   target_snapshot       0:00:01.204
+   restore               0:08:10.004
+   restore_submit        0:00:04.120
+   restore_wait          0:07:31.000
+   verify                0:02:00.551
+   recovery              0:10:10.555
+   cleanup_after         0:00:05.200
+   total                 0:12:41.880
+   ```
+
+   - All eleven rows always print, in `Span` order, laid out by `src/text_table.hpp`. TIME is `format_span`: `H:MM:SS.mmm`, cut to the millisecond, hours not capped. Whole seconds would read `0:00:00` for most steps. The existing `H:MM:SS` columns and the restore line don't change.
+   - A span without a duration prints `-`. NOTE is empty for `measured`. Otherwise it is one fixed phrase: `stopped`, `not run`, `not reported`, `clock went back`, or `not closed` (the last only through a bug). It never holds a tenant value or `what()`.
+   - **Stdout lost** (`output_lost`): no table, and nothing goes to `err`, which already carries the status. `on_timings` is still called.
+   - **A table that fails to write** changes nothing. That includes the exit code, as with the `cleanup after` line.
+   - Timings never change a status, a warning or an exit code.
+   - The order of the last lines becomes: status line, its warnings on `err`, `cleanup after …`, the table.
+
+   **Each early stop** (one row of the command test's `GENERATE` table):
+
+   | Stop | Spans |
+   |---|---|
+   | Before the run line: usage, config, manifest, cursor, run lock, `--record` folder, connector, `list_restore_points` error, no point or an unknown point, bad run ID | No table and no `on_timings`. Stdout stays empty, as today, so no ctest exe test changes (all eight `restore` ones stop before any request). |
+   | Clean-before `target_guard` | lookup, `cleanup_before` and `total` measured. The rest `not run`. |
+   | `choose_sample` throws | `sample_select` `stopped`. Later spans `not run`, except `total`. |
+   | Empty sample | Measured through `sample_select`. Later spans `not run`, except `total`. |
+   | Reads before fail | `target_snapshot` `stopped`. Later spans `not run`, except `total`. |
+   | `restore_sample` throws (with or without `kNothingRestored`) | `restore` and `recovery` `stopped`. Submit and wait `not reported`. `verify` `not run`. `cleanup_after` measured if the clean after ran, else `not run`. |
+   | Reads back or the check throws | `verify` and `recovery` `stopped`. Submit and wait as reported. `cleanup_after` measured. |
+   | A target's read-back Graph error | Not a stop. The spans are as on a normal run. |
+   | Normal run, pass or fail | All measured. Submit and wait as reported. |
+
+   `total` is always measured, or `clock_backwards`, once the run line is out. It ends after the clean after, so it is never `stopped`.
+
+5. **JSON for W4.1: the result's `timings` object.** It is handed to the new `RestoreCommandEnv::on_timings(const timing::RunTimings&)`, called once, after the table (or where the table would have been), for every run that printed its run line. W3.4 point 7 has the same form: fixed keys, `null` for what didn't run, an optional key left out when unset.
+
+   ```
+   {"spans": {"<span>": {"ms": <int >= 0>, "note"?: "stopped"}
+                      | {"note": "not_reported" | "clock_backwards" | "open"}
+                      | null}}
+   ```
+
+   - All eleven span names are always keys. `null` means `not_run`.
+   - `ms` is whole milliseconds, cut toward zero, from the steady clock only. It is the unit W3.2's `check.items[].ms` uses. No wall times and no tenant values.
+   - `to_json` lives in `src/step_timer.cpp`. W4.1 adopts it into `result.v1.json`, which doesn't exist yet.
+
+6. **Coverage.** `step_timer` is not on `STRICT_NAMES`. Its tests still reach every line of `src/step_timer.cpp`, and the build notes will say so. rpcore's 80% floor is unchanged.
+
+**Reason.**
+- Fixed span names keep the table, the JSON keys and the tests stable. A string API would let a typo add a span.
+- Passing time points in and sharing readings makes `recovery` exactly `restore` + `verify`. It also puts no new reading where the tests' fake clock is already measured.
+- Never making up a duration follows "never claim more than was tested". Not run, stopped, not reported and clock-backwards each read differently, both in the table and in the JSON.
+- Per-session durations keep the connector neutral, sit beside Veeam's own per-session start and end strings, and are testable on `FakeClock` with the recorded fixtures.
+
+**Alternatives rejected.**
+- *One `cleanup` span, or `cleanup` with `before`/`after` parts:* it hides which clean took the time, and it is a second JSON shape kept only to keep a name.
+- *`total` = restore start → last item verified:* that is `recovery`. Folding it in loses the run's own time.
+- *A timer pointer or sink on `RestoreSpec`, or `IConnector::last_timings()`, to keep the submit and wait of a restore that threw:* it adds a second way for results to leave the connector, and puts a non-data member on the spec the guard checks. `restore` (`stopped`) already gives that run's time. Revisit if W4.1 needs it.
+- *Timings carried on the connector's exceptions:* every throw site and error type would change.
+- *Statistics' 409 waits and events counted as `restore_wait`:* they read results, bounded at 30 s. "Wait" means Veeam still running.
+- *A span for explore and browsing:* it is `restore − submit − wait` on one clock.
+- *Printing the table before the status line:* `cleanup_after` and `total` aren't known then.
+- *Moving the table to `err` when stdout is lost:* `err` already carries the status and the cleanup. Timings decide nothing.
+- *Absent keys for spans that didn't run:* W3.4's `before`/`after` are `null` when they didn't run. This entry follows that.
+- *Throwing on a misused span:* it would stop a run over a timing bug, inside `noexcept` code.
+
+**Open.**
+- W3.6 (`rpworker test`) uses the same timer and the same placements. W4.1 writes `timings` into `result.v1.json` through `on_timings`.
+- Docs to change with the build:
+  - `docs/worker-config.md`, "`rpworker restore`": the sample run block gains the table; a new **Step timings (W3.5).** bullet; the status bullet's and the cleanup bullet's claims about which line comes last.
+  - `docs/verification.md`, lines ~197 and ~520: point to this entry and to `cleanup_before`/`cleanup_after`.
+  - `include/rp/restore_command.hpp`: the comments on `now` and `on_timings`, and the comment at ~249 ("The total is restore_sample's own time").
+  - `docs/glossary.md`: **span**, **recovery time**.
+  - CLAUDE.md's status paragraph: W3.4 ran live on 2026-10-02 (evidence `docs/api/veeam-lab/w3.4-live-*`, commits 28ea8ee and 4327fa6) and merged as PR #149, with its review fixes in 1e2f12e. Add W3.5.
+
+---
+
 ## 2026-10-03 — W3.4 PR review: one refused delete no longer stops its target (proposed)
 
 **Decision.** In the Cleaner's delete loop, a `GraphError` on one item that is neither a

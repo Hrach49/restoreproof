@@ -10,8 +10,10 @@
 
 #include <rp/config.hpp>
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -195,6 +197,10 @@ struct RestoreSessionResult {
     std::string ended_at;   // as the product wrote it (Veeam: endTime)
     int items_sent = 0;
     int items_restored = 0; // as the product counts them
+    // This session's submit and wait, on the connector's own steady clock;
+    // nullopt when the connector didn't measure it.
+    std::optional<std::chrono::nanoseconds> submit_time;
+    std::optional<std::chrono::nanoseconds> wait_time;
 };
 
 struct RestoreResult {

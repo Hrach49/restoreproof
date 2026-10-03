@@ -27,6 +27,7 @@
 #include <rp/restore_command.hpp>
 #include <rp/secrets.hpp>
 #include <rp/sha256.hpp>
+#include <rp/step_timer.hpp>
 
 #include <nlohmann/json.hpp>
 
@@ -317,6 +318,9 @@ struct Replay {
         env.take_run_lock = []() -> std::unique_ptr<rp::RunLock> {
             return std::make_unique<rp::RunLock>();
         };
+        env.on_timings = [this](const rp::timing::RunTimings& run_timings) {
+            timings.push_back(run_timings);
+        };
         return env;
     }
 
@@ -373,6 +377,16 @@ struct Replay {
         return log_stream.str();
     }
 
+    // The run's stdout up to its step timings' table (W3.5): REQUIREs one
+    // run's timings, and their table at the end.
+    std::string body(const Run& run) const
+    {
+        REQUIRE(timings.size() == 1);
+        const std::string table = "\n" + rp::timing::format_timings(timings[0]);
+        REQUIRE(run.out.ends_with(table));
+        return run.out.substr(0, run.out.size() - table.size());
+    }
+
     std::filesystem::path dir;
     rp::test::TempDir temp;
     std::filesystem::path config_path;
@@ -391,6 +405,7 @@ struct Replay {
     std::vector<Exchange> graph_log;  // every Graph exchange, in order
     std::ostringstream log_stream;
     std::shared_ptr<spdlog::logger> logger;
+    std::vector<rp::timing::RunTimings> timings; // W3.5: each run's
 };
 
 std::string lines(const std::vector<std::string>& rows)
@@ -748,7 +763,7 @@ TEST_CASE("replay of live run 2: mails Veeam said it restored over run 1's copie
             "  onedrive    Success  3 of 3    2026-10-01T17:30:25.6534539Z  "
             "2026-10-01T17:31:07.5816094Z  0:00:41",
     };
-    CHECK(run.out ==
+    CHECK(replay.body(run) ==
           restore_part(kRun2, "be2461b7", rows, "0:02:40") +
               lines({
                   "",
@@ -808,10 +823,11 @@ TEST_CASE("replay of live run 1 with a canary mail taken out of the after read: 
         outcomes.push_back("  " + kRun1Names[i] +
                            (i == 1 ? "missing  -       -    -" : "match    -       -    0"));
     }
-    CHECK(run.out == restore_part(kRun1, "311f1eea", run1_rows(), "0:02:15") +
-                         run1_check(outcomes, "check: 10 match, 0 mismatch, 1 missing, 0 error") +
-                         "\nstatus fail: 1 of 11 item(s) didn't verify (1 missing, 0 mismatch)\n" +
-                         kCleanAfter + "\n");
+    CHECK(replay.body(run) ==
+          restore_part(kRun1, "311f1eea", run1_rows(), "0:02:15") +
+              run1_check(outcomes, "check: 10 match, 0 mismatch, 1 missing, 0 error") +
+              "\nstatus fail: 1 of 11 item(s) didn't verify (1 missing, 0 mismatch)\n" +
+              kCleanAfter + "\n");
 }
 
 // --- The live runs as they went -------------------------------------------------------
@@ -832,11 +848,12 @@ TEST_CASE("replay of live run 1: 11 items restored into empty targets, all match
     for (const std::string& name : kRun1Names) {
         outcomes.push_back("  " + name + "match    -       -    0");
     }
-    CHECK(run.out == restore_part(kRun1, "311f1eea", run1_rows(), "0:02:15") +
-                         run1_check(outcomes, "check: 11 match, 0 mismatch, 0 missing, 0 error") +
-                         "\nstatus pass: 11 of 11 item(s) verified: manifest 9, fields 2, "
-                         "metadata 0\n" +
-                         kCleanAfter + "\n");
+    CHECK(replay.body(run) ==
+          restore_part(kRun1, "311f1eea", run1_rows(), "0:02:15") +
+              run1_check(outcomes, "check: 11 match, 0 mismatch, 0 missing, 0 error") +
+              "\nstatus pass: 11 of 11 item(s) verified: manifest 9, fields 2, "
+              "metadata 0\n" +
+              kCleanAfter + "\n");
     check_replayed_as_recorded(replay);
     // The recorded restore POSTs' credential is the recorder's placeholder;
     // the replay sent the exporter's, and no log line names it.
@@ -925,7 +942,22 @@ TEST_CASE("replay of the W3.4 live run: the clean before finds the targets empty
                  {"", "check: 11 match, 0 mismatch, 0 missing, 0 error", "",
                   "status pass: 11 of 11 item(s) verified: manifest 9, fields 2, metadata 0",
                   "cleanup after ok: deleted 5 mail, 3 sharepoint, 3 onedrive"});
-    CHECK(run.out == restore_part(kW34Run, "6933ea77", rows, kW34Total, kW34Point) + lines(check));
+    CHECK(replay.body(run) ==
+          restore_part(kW34Run, "6933ea77", rows, kW34Total, kW34Point) + lines(check));
+    // W3.5: the step timings, last. The replay's clock moves only on the
+    // connector's waits between polls, so the four sessions' waits, summed,
+    // are the whole restore, and every span is measured.
+    CHECK(run.out.substr(replay.body(run).size()) ==
+          lines({"", "STEP                  TIME         NOTE",
+                 "restore_point_lookup  0:00:00.000", "cleanup_before        0:00:00.000",
+                 "sample_select         0:00:00.000", "target_snapshot       0:00:00.000",
+                 "restore               " + kW34Total + ".000",
+                 "restore_submit        0:00:00.000",
+                 "restore_wait          " + kW34Total + ".000",
+                 "verify                0:00:00.000",
+                 "recovery              " + kW34Total + ".000",
+                 "cleanup_after         0:00:00.000",
+                 "total                 " + kW34Total + ".000"}));
 
     // Every recorded exchange was asked for, and nothing else: the replay sent
     // exactly the live run's requests, its Cleaner's included, route by route.

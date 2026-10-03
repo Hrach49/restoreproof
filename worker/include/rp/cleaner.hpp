@@ -29,7 +29,8 @@ enum class CleanupWhen { before_run, after_run };
 
 // What a clean did to one target. Counts and a code only: never a name or an ID.
 struct TargetCleanup {
-    // "" or what stopped it: target_guard, graph_auth, graph_permission,
+    // "" or what stopped it, or the code of the first delete Graph refused in
+    // the last round when something was left after it: target_guard, graph_auth, graph_permission,
     // graph_transient, graph (as verification::read_error_code), config (an
     // rp::ConfigError, such as a CertificateError on the token) or internal
     // (anything else).
@@ -98,10 +99,12 @@ public:
     //     else is logged and counted `skipped`, never deleted;
     //  4. delete each with GraphClient::remove (a mail's permanentDelete, a
     //     file's If-Match DELETE): 204 deleted, 404 gone, 412 left for the
-    //     next round;
+    //     next round. Any other GraphError on one delete, but a TransientError
+    //     (which ends the round) and an AuthError (which stops the target), is
+    //     that item's: logged, and the other items are still deleted;
     //  5. list again: `left`.
     // Round 2 runs when round 1 ended with something left (a 412 included) or
-    // in a TransientError, never after any other error.
+    // in a TransientError, never after any other error or a refused delete.
     CleanupResult clean(CleanupWhen when) noexcept;
 
 private:

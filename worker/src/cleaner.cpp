@@ -119,6 +119,9 @@ TargetCleanup Cleaner::clean_target(const Target& target, std::string_view phase
     const std::string where = "cleanup " + std::string{phase} + ": " + std::string{target.location};
     TargetCleanup out;
     bool listed = false;
+    // The code of the first delete Graph refused in the last round, while
+    // something is left after it: what kept the target from being emptied.
+    std::string refused_code;
     const auto stopped = [&](const std::string& code, std::string_view what) {
         out.error_code = code;
         log(spdlog::level::err, where + ": stopped (" + code + ")" +
@@ -138,24 +141,46 @@ TargetCleanup Cleaner::clean_target(const Target& target, std::string_view phase
                 }
                 out.left = listing.items.size();
                 out.skipped = listing.skipped;
+                refused_code.clear();
+                std::string round_refused;
                 for (const ListedItem& item : listing.items) {
-                    switch (graph_.remove(item)) {
-                    case RemoveOutcome::removed:
-                        ++out.deleted;
-                        break;
-                    case RemoveOutcome::gone:
-                        ++out.gone;
-                        break;
-                    case RemoveOutcome::changed:
-                        log(spdlog::level::info, where + ": " + item.id() +
-                                                     " changed since it was listed; the next "
-                                                     "round lists it again");
-                        break;
+                    try {
+                        switch (graph_.remove(item)) {
+                        case RemoveOutcome::removed:
+                            ++out.deleted;
+                            break;
+                        case RemoveOutcome::gone:
+                            ++out.gone;
+                            break;
+                        case RemoveOutcome::changed:
+                            log(spdlog::level::info, where + ": " + item.id() +
+                                                         " changed since it was listed; the next "
+                                                         "round lists it again");
+                            break;
+                        }
+                    } catch (const TransientError&) {
+                        throw; // the round's, as a listing's
+                    } catch (const AuthError&) {
+                        throw; // the token's: no other delete would get through
+                    } catch (const GraphError& e) {
+                        // This item's refusal (a locked or checked-out file, a
+                        // labelled mail): the other items are still tried, and
+                        // it stays for the next round or run.
+                        const std::string code =
+                            verification::read_error_code(std::current_exception());
+                        if (round_refused.empty()) {
+                            round_refused = code;
+                        }
+                        log(spdlog::level::warn, where + ": " + item.id() + " not deleted (" +
+                                                     code + "): " + e.what());
                     }
                 }
                 listing = list(target, resolved);
                 out.left = listing.items.size();
                 out.skipped = listing.skipped;
+                if (out.left > 0) {
+                    refused_code = round_refused;
+                }
             } catch (const TransientError& e) {
                 // A second round may get through; after it, the error stands.
                 if (round == kMaxRounds) {
@@ -164,9 +189,14 @@ TargetCleanup Cleaner::clean_target(const Target& target, std::string_view phase
                 log(spdlog::level::warn, where + ": " + e.what() + "; one more round");
                 again = true;
             }
-            if (!again && out.left == 0) {
+            // A refused delete gets no second round: Graph would refuse it
+            // again.
+            if (!again && (out.left == 0 || !refused_code.empty())) {
                 break;
             }
+        }
+        if (!refused_code.empty()) {
+            stopped(refused_code, "a delete Graph refused left the target not emptied");
         }
         log(out.ok() ? spdlog::level::info : spdlog::level::warn,
             where + ": deleted " + std::to_string(out.deleted) + ", gone " +

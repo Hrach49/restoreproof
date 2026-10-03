@@ -243,6 +243,12 @@ HttpResponse listing_of(const json& fixture, const json& value)
     return to_response(edited);
 }
 
+// The fixture's listing cut to its first item.
+HttpResponse first_only(const json& fixture)
+{
+    return listing_of(fixture, json::array({fixture.at("body").at("value").at(0)}));
+}
+
 HttpResponse empty_listing(Which which)
 {
     return listing_of(recorded_items(which), json::array());
@@ -568,7 +574,8 @@ TEST_CASE("a target the guard refuses is never listed or deleted in, and the oth
     lab.require_only_listed_writes();
 }
 
-TEST_CASE("a 403 on a delete is graph_permission naming the write grant, with no second round",
+TEST_CASE("a 403 on a delete is graph_permission naming the write grant; every listed item is "
+          "still tried, with no second round",
           "[cleaner][permission]")
 {
     struct Row {
@@ -602,9 +609,10 @@ TEST_CASE("a 403 on a delete is graph_permission naming the write grant, with no
     CHECK(t.found == n);
     CHECK(t.deleted == 0);
     CHECK(t.left == n);
-    // The first refusal stops the target: one write, one listing.
-    CHECK(lab.writes_to(row.which).size() == 1);
-    CHECK(lab.gets(listing_url(row.which)) == 1);
+    // A refusal is the item's: each item gets its one write, then the
+    // listing again, and no second round.
+    CHECK(lab.writes_to(row.which).size() == n);
+    CHECK(lab.gets(listing_url(row.which)) == 2);
     // A 403 that isn't a mail's ErrorCannotDeleteObject is never followed
     // by a GET of the item.
     CHECK(lab.gets(message_url(id_at(fixture, 0))) == 0);
@@ -615,6 +623,7 @@ TEST_CASE("a 403 on a delete is graph_permission naming the write grant, with no
     CHECK_THAT(log, ContainsSubstring(std::string{"Graph denied "} + row.method));
     CHECK_THAT(log, ContainsSubstring(std::string{row.grant->description}));
     CHECK_THAT(log, ContainsSubstring("stopped (graph_permission)"));
+    CHECK(occurrences(log, " not deleted (graph_permission): ") == n);
     for (const Which other : {Which::mail, Which::sharepoint, Which::onedrive}) {
         if (other != row.which) {
             CHECK(of(result, other).ok());
@@ -632,11 +641,8 @@ TEST_CASE("a permanentDelete's 403 ErrorCannotDeleteObject on a mail still in th
     // refusal and stands, with no second round.
     Lab lab;
     const json fixture = recorded_items(Which::mail);
-    const std::size_t n = recorded_count(Which::mail);
-    lab.list(Which::mail, {to_response(fixture)});
-    for (std::size_t i = 0; i < n; ++i) {
-        lab.on_delete(Which::mail, id_at(fixture, i), {load_fixture("graph", kCannotDelete)});
-    }
+    lab.list(Which::mail, {first_only(fixture)});
+    lab.on_delete(Which::mail, id_at(fixture, 0), {load_fixture("graph", kCannotDelete)});
     lab.http.on(HttpMethod::get, message_url(id_at(fixture, 0)), {message_in(json(inbox_id()))});
     lab.http.on(HttpMethod::get, purges_url(), {load_fixture("graph", kPurges)});
     lab.on_inbox_check({load_fixture("graph", "mailbox-inbox-200")});
@@ -644,12 +650,12 @@ TEST_CASE("a permanentDelete's 403 ErrorCannotDeleteObject on a mail still in th
     const CleanupResult result = lab.clean();
 
     require_stopped(result.mail, "graph_permission");
-    CHECK(result.mail.found == n);
+    CHECK(result.mail.found == 1);
     CHECK(result.mail.deleted == 0);
     CHECK(result.mail.gone == 0);
-    CHECK(result.mail.left == n);
+    CHECK(result.mail.left == 1);
     CHECK(lab.writes_to(Which::mail).size() == 1);
-    CHECK(lab.gets(listing_url(Which::mail)) == 1);
+    CHECK(lab.gets(listing_url(Which::mail)) == 2);
     // One check: the message's folder, the Purges folder's ID, then the
     // Inbox's ID, once each.
     CHECK(lab.gets(message_url(id_at(fixture, 0))) == 1);
@@ -709,7 +715,7 @@ TEST_CASE("a permanentDelete's 403 ErrorCannotDeleteObject on a mail whose folde
     INFO(row.name);
     Lab lab;
     const json fixture = recorded_items(Which::mail);
-    lab.list(Which::mail, {to_response(fixture)});
+    lab.list(Which::mail, {first_only(fixture)});
     lab.on_delete(Which::mail, id_at(fixture, 0), {load_fixture("graph", kCannotDelete)});
     lab.http.on(HttpMethod::get, message_url(id_at(fixture, 0)), {row.answer()});
     lab.http.on(HttpMethod::get, purges_url(), {load_fixture("graph", kPurges)});
@@ -720,7 +726,7 @@ TEST_CASE("a permanentDelete's 403 ErrorCannotDeleteObject on a mail whose folde
     require_stopped(result.mail, "graph");
     CHECK(result.mail.deleted == 0);
     CHECK(result.mail.gone == 0);
-    CHECK(result.mail.left == recorded_count(Which::mail));
+    CHECK(result.mail.left == 1);
     CHECK(lab.writes_to(Which::mail).size() == 1);
     CHECK(lab.purges_checks() == 0);
     CHECK(lab.inbox_checks() == 0);
@@ -764,7 +770,7 @@ TEST_CASE("a permanentDelete's 403 ErrorCannotDeleteObject whose message GET fai
     INFO(row.name);
     Lab lab;
     const json fixture = recorded_items(Which::mail);
-    lab.list(Which::mail, {to_response(fixture)});
+    lab.list(Which::mail, {first_only(fixture)});
     lab.on_delete(Which::mail, id_at(fixture, 0), {load_fixture("graph", kCannotDelete)});
     lab.http.on(HttpMethod::get, message_url(id_at(fixture, 0)), row.answers());
     lab.http.on(HttpMethod::get, purges_url(), {load_fixture("graph", kPurges)});
@@ -838,7 +844,7 @@ TEST_CASE("a permanentDelete's 403 ErrorCannotDeleteObject whose Inbox GET fails
     INFO(row.name);
     Lab lab;
     const json fixture = recorded_items(Which::mail);
-    lab.list(Which::mail, {to_response(fixture)});
+    lab.list(Which::mail, {first_only(fixture)});
     lab.on_delete(Which::mail, id_at(fixture, 0), {load_fixture("graph", kCannotDelete)});
     lab.http.on(HttpMethod::get, message_url(id_at(fixture, 0)), {message_in(json(inbox_id()))});
     lab.http.on(HttpMethod::get, purges_url(), {load_fixture("graph", kPurges)});
@@ -916,7 +922,7 @@ TEST_CASE("a permanentDelete's 403 ErrorCannotDeleteObject whose Purges GET fail
     INFO(row.name);
     Lab lab;
     const json fixture = recorded_items(Which::mail);
-    lab.list(Which::mail, {to_response(fixture)});
+    lab.list(Which::mail, {first_only(fixture)});
     lab.on_delete(Which::mail, id_at(fixture, 0), {load_fixture("graph", kCannotDelete)});
     lab.http.on(HttpMethod::get, message_url(id_at(fixture, 0)),
                 {load_fixture("graph", kPurged)});
@@ -959,7 +965,7 @@ TEST_CASE("a permanentDelete's 403 ErrorCannotDeleteObject on a mail in another 
     INFO(row.name);
     Lab lab;
     const json fixture = recorded_items(Which::mail);
-    lab.list(Which::mail, {to_response(fixture)});
+    lab.list(Which::mail, {first_only(fixture)});
     lab.on_delete(Which::mail, id_at(fixture, 0), {load_fixture("graph", kCannotDelete)});
     lab.http.on(HttpMethod::get, message_url(id_at(fixture, 0)),
                 {message_in(json(row.folder()))});
@@ -971,7 +977,7 @@ TEST_CASE("a permanentDelete's 403 ErrorCannotDeleteObject on a mail in another 
     require_stopped(result.mail, "graph");
     CHECK(result.mail.deleted == 0);
     CHECK(result.mail.gone == 0);
-    CHECK(result.mail.left == recorded_count(Which::mail));
+    CHECK(result.mail.left == 1);
     CHECK(lab.writes_to(Which::mail).size() == 1);
     // At most three GETs, no loop.
     CHECK(lab.gets(message_url(id_at(fixture, 0))) == 1);
@@ -1405,7 +1411,7 @@ TEST_CASE("Graph's other answers to a delete stop the target as graph", "[cleane
     INFO(row.name);
     Lab lab;
     const json fixture = recorded_items(row.which);
-    lab.list(row.which, {to_response(fixture)});
+    lab.list(row.which, {first_only(fixture)});
     lab.on_delete(row.which, id_at(fixture, 0), {row.answer()});
 
     const CleanupResult result = lab.clean();
@@ -1416,6 +1422,103 @@ TEST_CASE("Graph's other answers to a delete stop the target as graph", "[cleane
     CHECK(t.deleted == 0);
     CHECK(lab.writes_to(row.which).size() == 1);
     CHECK_THAT(lab.log(), ContainsSubstring(row.logged));
+    lab.require_only_listed_writes();
+}
+
+TEST_CASE("a delete Graph refuses leaves that item and the others are still deleted",
+          "[cleaner][errors]")
+{
+    // A locked or checked-out file, a labelled mail: Graph refuses that one
+    // item, and every later clean would stop at it in the same listing order
+    // if the refusal stopped the target.
+    struct Row {
+        const char* name;
+        Which which;
+        std::function<HttpResponse()> answer;
+        const char* code;
+    };
+    const Row row = GENERATE(
+        Row{"a 423 on a locked file", Which::sharepoint,
+            [] {
+                return make_response(
+                    423, R"({"error":{"code":"resourceLocked","message":"The resource is locked."}})",
+                    "application/json");
+            },
+            "graph"},
+        Row{"a 409 on a checked-out file", Which::onedrive,
+            [] {
+                return make_response(
+                    409, R"({"error":{"code":"resourceModified","message":"Checked out."}})",
+                    "application/json");
+            },
+            "graph"},
+        Row{"a 403 on a mail", Which::mail,
+            [] { return load_fixture("graph", "w34-mail-permanentdelete-403-exchange"); },
+            "graph_permission"});
+    INFO(row.name);
+    Lab lab;
+    const json fixture = recorded_items(row.which);
+    const std::size_t n = recorded_count(row.which);
+    lab.list(row.which, {to_response(fixture), first_only(fixture)});
+    lab.on_delete(row.which, id_at(fixture, 0), {row.answer()});
+    lab.delete_rest(row.which, fixture);
+
+    const CleanupResult result = lab.clean();
+
+    const TargetCleanup& t = of(result, row.which);
+    require_stopped(t, row.code);
+    CHECK(t.found == n);
+    CHECK(t.deleted == n - 1);
+    CHECK(t.left == 1);
+    // One write per item, the listing again, no second round.
+    CHECK(lab.writes_to(row.which).size() == n);
+    CHECK(lab.gets(listing_url(row.which)) == 2);
+    const std::string log = lab.log();
+    CHECK_THAT(log, ContainsSubstring(id_at(fixture, 0) + " not deleted (" + row.code + "): "));
+    CHECK_THAT(log, ContainsSubstring(std::string{"stopped ("} + row.code + ")"));
+    lab.require_only_listed_writes();
+}
+
+TEST_CASE("a delete Graph refuses for an item gone by the next listing leaves no error",
+          "[cleaner][errors]")
+{
+    Lab lab;
+    const json fixture = recorded_items(Which::sharepoint);
+    lab.list(Which::sharepoint, {first_only(fixture), empty_listing(Which::sharepoint)});
+    lab.on_delete(Which::sharepoint, id_at(fixture, 0),
+                  {make_response(423, R"({"error":{"code":"resourceLocked","message":"x"}})",
+                                 "application/json")});
+
+    const CleanupResult result = lab.clean();
+
+    CHECK(result.sharepoint.error_code.empty());
+    CHECK(result.sharepoint.rounds == 1);
+    CHECK(result.sharepoint.left == 0);
+    CHECK(result.sharepoint.ok());
+    CHECK_THAT(lab.log(), ContainsSubstring(" not deleted (graph): "));
+    lab.require_only_listed_writes();
+}
+
+TEST_CASE("a delete answered 401 after a fresh token stops the target as graph_auth, the other "
+          "items untried",
+          "[cleaner][auth]")
+{
+    Lab lab;
+    const json fixture = recorded_items(Which::onedrive);
+    const std::size_t n = recorded_count(Which::onedrive);
+    lab.list(Which::onedrive, {to_response(fixture)});
+    lab.on_delete(Which::onedrive, id_at(fixture, 0),
+                  {load_fixture("graph", "api-invalid-token-401")});
+    lab.delete_rest(Which::onedrive, fixture);
+
+    const CleanupResult result = lab.clean();
+
+    require_stopped(result.onedrive, "graph_auth");
+    CHECK(result.onedrive.deleted == 0);
+    CHECK(result.onedrive.left == n);
+    // The first item's two attempts only: no other delete would get through.
+    CHECK(lab.writes_to(Which::onedrive).size() == 2);
+    CHECK(lab.gets(listing_url(Which::onedrive)) == 1);
     lab.require_only_listed_writes();
 }
 

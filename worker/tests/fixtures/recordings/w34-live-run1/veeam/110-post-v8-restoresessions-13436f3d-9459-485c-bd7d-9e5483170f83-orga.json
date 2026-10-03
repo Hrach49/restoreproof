@@ -1,0 +1,64 @@
+{
+  "source": "rpworker 0.0.0 restore --record",
+  "request": "POST /v8/RestoreSessions/13436f3d-9459-485c-bd7d-9e5483170f83/Organization/Sites/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689/Documents/restoreTo",
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8"
+  },
+  "body": {
+    "sessionId": "e018de5b-9435-4cff-ad54-891d7350d949"
+  },
+  "request_body": {
+    "documents": [
+      {
+        "siteId": "fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689",
+        "sizeBytes": 925,
+        "version": "1.0",
+        "versionId": 1,
+        "id": "fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e6897eb0f08a-f57b-418c-8ca6-f2ab81297666c137e9be-2c7c-49b8-b09a-8ada92102e78",
+        "name": "rp-canary-01.pdf",
+        "createdBy": "Hrachya Harutyunyan",
+        "creationTime": "2026-09-24T22:14:43Z",
+        "modifiedBy": "Hrachya Harutyunyan",
+        "modificationTime": "2026-09-24T22:14:43Z",
+        "isFolder": false
+      },
+      {
+        "siteId": "fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689",
+        "sizeBytes": 15690,
+        "version": "1.0",
+        "versionId": 1,
+        "id": "fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e6897eb0f08a-f57b-418c-8ca6-f2ab81297666f10ca0c2-1946-45df-97d4-17f81d23dcba",
+        "name": "rp-canary-02.docx",
+        "createdBy": "Hrachya Harutyunyan",
+        "creationTime": "2026-09-24T22:14:45Z",
+        "modifiedBy": "Hrachya Harutyunyan",
+        "modificationTime": "2026-09-24T22:14:45Z",
+        "isFolder": false
+      },
+      {
+        "siteId": "fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689",
+        "sizeBytes": 20120,
+        "version": "1.0",
+        "versionId": 1,
+        "id": "fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e6897eb0f08a-f57b-418c-8ca6-f2ab81297666c2681fa2-ad9f-4460-bdfb-70847df90911",
+        "name": "rp-canary-03.xlsx",
+        "createdBy": "Hrachya Harutyunyan",
+        "creationTime": "2026-09-24T22:14:45Z",
+        "modifiedBy": "Hrachya Harutyunyan",
+        "modificationTime": "2026-09-24T22:14:45Z",
+        "isFolder": false
+      }
+    ],
+    "siteURL": "https://restoreprooflab.sharepoint.com/sites/RestoreTest",
+    "list": "RestoreTarget",
+    "sendSharedLinksNotification": false,
+    "documentVersion": "Last",
+    "documentLastVersionAction": "Merge",
+    "officeRegion": "Worldwide",
+    "organizationName": "RestoreProofLab.onmicrosoft.com",
+    "applicationId": "1fd2609d-1242-43fe-94b5-d58688a90bd6",
+    "applicationCertificate": "[REDACTED]",
+    "applicationCertificatePassword": "[REDACTED]"
+  }
+}

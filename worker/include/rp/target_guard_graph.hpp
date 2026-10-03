@@ -88,14 +88,14 @@ ResolvedLibrary check_restore_library(GraphClient& graph, const connector::Resto
 // case-insensitive), a GUID webId and a siteUrl https on the tenant's OneDrive
 // host (rp::onedrive_host of test_site_id's, no query, fragment or
 // whitespace): the address a OneDrive restore names (W2.7). A 404 is a NotFoundError that adds that
-// the Worker app may lack kOneDriveReadGrant: SharePoint answers 404, not 403,
+// the Worker app may lack kOneDriveGrant: SharePoint answers 404, not 403,
 // for an item the app may not read.
 ResolvedOneDriveFolder check_restore_onedrive_folder(GraphClient& graph,
                                                      const connector::RestoreTargets& targets,
                                                      const TargetCheckWording& wording = {});
 
 // GET /users/{test_mailbox}/mailFolders/inbox?$select=id (W2.7). The Worker app
-// reads mail only through Exchange RBAC "Application Mail.Read" in a management
+// reads mail only through Exchange RBAC "Application Mail.ReadWrite" in a management
 // scope of the restoretest mailbox's primary address alone
 // (docs/security/graph-permissions.md, #3), so a 200 shows the configured
 // address reaches that mailbox, not a live mailbox holding the name as an

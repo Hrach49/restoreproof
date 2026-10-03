@@ -8,7 +8,8 @@
 // RP_LIVE_RESTORE=1, so a normal RP_LIVE=1 run stays read-only. Run it by
 // hand, from an elevated shell (the certificate export reads
 // LocalMachine\My's private key), with the restore targets empty first
-// (`rpworker graph list`); clean them up by hand afterwards until W3.4.
+// (`rpworker graph list`). It holds the run mutex (rp/run_lock.hpp) and ends
+// with the Cleaner's clean after the run (W3.4), so it leaves no copies.
 // docs/testing.md, "Live restore (writes to the lab tenant)".
 //
 // Environment: the Veeam and Graph variables of the other live tests
@@ -23,9 +24,13 @@
 #include "test_support.hpp"
 
 #include <rp/cert_export.hpp>
+#include <rp/cleaner.hpp>
+#include <rp/client_assertion.hpp>
 #include <rp/config.hpp>
 #include <rp/connector.hpp>
 #include <rp/connector_registry.hpp>
+#include <rp/graph_client.hpp>
+#include <rp/run_lock.hpp>
 #include <rp/secrets.hpp>
 
 #include <nlohmann/json.hpp>
@@ -36,6 +41,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -221,6 +227,9 @@ TEST_CASE("live restore: restore_sample restores 10 canaries into the lab's rest
     }
     const std::optional<std::string> ca_file = rp::test::get_env("RP_LIVE_VEEAM_CA_FILE");
     REQUIRE(ca_file);
+    // One run at a time on the restore targets (W3.4), as rpworker restore.
+    const std::unique_ptr<rp::RunLock> lock = rp::try_take_restore_targets_lock();
+    REQUIRE(lock != nullptr); // another RestoreProof run is using the restore targets
     rp::Config config = rp::test::graph_live::live_config();
     config.veeam_url = env_or("RP_LIVE_VEEAM_URL", "https://localhost:4443");
     config.veeam_ca_file = ca_file;
@@ -268,18 +277,48 @@ TEST_CASE("live restore: restore_sample restores 10 canaries into the lab's rest
                   << f.size << "\n";
     }
 
-    const connector::RestoreResult result = source.restore_sample(spec);
-    print_summary(result);
-    if (const std::optional<std::string> evidence = rp::test::get_env("RP_LIVE_EVIDENCE_FILE");
-        evidence && !evidence->empty()) {
-        // The variable is UTF-8; a path from a std::string would be read as ANSI.
-        std::ofstream out(std::filesystem::path{std::u8string(evidence->begin(), evidence->end())},
-                          std::ios::binary);
-        REQUIRE(out);
-        out << to_json(result, spec).dump(2) << "\n";
-        std::cout << "evidence written to " << *evidence << "\n";
+    // W3.4: the copies go again, whatever the restore did: the Cleaner is made
+    // before the restore and cleans on every way out of it, a throw or a
+    // failed REQUIRE included.
+    const std::unique_ptr<rp::IHttpClient> graph_http = rp::graph::make_graph_http_client(logger);
+    rp::graph::GraphClientOptions graph_options;
+    graph_options.logger = logger;
+    rp::graph::GraphClient graph(
+        *graph_http, config.graph_tenant_id, config.graph_client_id,
+        rp::graph::certificate_from_secrets(rp::load_secrets_from_env(),
+                                            std::chrono::system_clock::now(), logger),
+        graph_options);
+    rp::graph::CleanerOptions cleaner_options;
+    cleaner_options.logger = logger;
+    rp::graph::Cleaner cleaner(graph, spec.targets, cleaner_options);
+    const auto clean_after = [&cleaner] {
+        const rp::graph::CleanupResult cleaned = cleaner.clean(rp::graph::CleanupWhen::after_run);
+        std::cout << "cleanup after " << rp::graph::to_json(cleaned).dump() << "\n";
+        return cleaned;
+    };
+
+    std::optional<connector::RestoreResult> restored;
+    try {
+        restored = source.restore_sample(spec);
+        print_summary(*restored);
+        if (const std::optional<std::string> evidence = rp::test::get_env("RP_LIVE_EVIDENCE_FILE");
+            evidence && !evidence->empty()) {
+            // The variable is UTF-8; a path from a std::string would be read as ANSI.
+            std::ofstream out(
+                std::filesystem::path{std::u8string(evidence->begin(), evidence->end())},
+                std::ios::binary);
+            REQUIRE(out);
+            out << to_json(*restored, spec).dump(2) << "\n";
+            std::cout << "evidence written to " << *evidence << "\n";
+        }
+    } catch (...) {
+        clean_after(); // clean() never throws
+        throw;
     }
+    const rp::graph::CleanupResult cleaned = clean_after();
+    const connector::RestoreResult& result = *restored;
 
     REQUIRE(result.status == connector::RestoreStatus::succeeded);
     REQUIRE(result.items_restored == 10);
+    CHECK(cleaned.ok());
 }

@@ -1,0 +1,61 @@
+{
+  "source": "rpworker 0.0.0 restore --record",
+  "request": "GET /v1.0/drives/b!XQgI_nDr6EKVpkcBib2Y65nzyk4OzJVNs_7NCRoJ5omdBuz_5GU6TJ2irAhs-dr6/root/children?$select=id,name,size,cTag,createdDateTime,lastModifiedDateTime,file,folder&$top=200",
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/json; odata.metadata=minimal; odata.streaming=true; IEEE754Compatible=false; charset=utf-8"
+  },
+  "body": {
+    "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#Collection(driveItem)",
+    "value": [
+      {
+        "@odata.etag": "\"{D7FBF502-4CD6-4F2E-9419-F8D42D3BD988},4\"",
+        "createdDateTime": "2026-09-24T22:14:43Z",
+        "id": "01BLWRTHIC6X55PVSMFZHZIGPY2QWTXWMI",
+        "lastModifiedDateTime": "2026-10-02T18:05:06Z",
+        "name": "rp-canary-01.pdf",
+        "cTag": "\"c:{D7FBF502-4CD6-4F2E-9419-F8D42D3BD988},1\"",
+        "file": {
+          "fileExtension": ".pdf",
+          "hashes": {
+            "quickXorHash": "QA/h3iWPmegJn7YmfER5VvwK1LA="
+          },
+          "mimeType": "application/pdf"
+        },
+        "size": 925
+      },
+      {
+        "@odata.etag": "\"{13E84AE9-7498-4BCC-B1AE-FDA199EF5D20},4\"",
+        "createdDateTime": "2026-09-24T22:14:45Z",
+        "id": "01BLWRTHPJJLUBHGDUZRF3DLX5UGM66XJA",
+        "lastModifiedDateTime": "2026-10-02T18:05:07Z",
+        "name": "rp-canary-02.docx",
+        "cTag": "\"c:{13E84AE9-7498-4BCC-B1AE-FDA199EF5D20},8\"",
+        "file": {
+          "fileExtension": ".docx",
+          "hashes": {
+            "quickXorHash": "f+8J6BCDWyDz3KRz668pTKcpaeI="
+          },
+          "mimeType": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        },
+        "size": 15563
+      },
+      {
+        "@odata.etag": "\"{F5EAA1AD-A4FE-4CEF-947B-43AFAFD016F9},4\"",
+        "createdDateTime": "2026-09-24T22:14:45Z",
+        "id": "01BLWRTHNNUHVPL7VE55GJI62DV6X5AFXZ",
+        "lastModifiedDateTime": "2026-10-02T18:05:08Z",
+        "name": "rp-canary-03.xlsx",
+        "cTag": "\"c:{F5EAA1AD-A4FE-4CEF-947B-43AFAFD016F9},8\"",
+        "file": {
+          "fileExtension": ".xlsx",
+          "hashes": {
+            "quickXorHash": "DIdavEWuIl0XwigwDmXHKwrbYIY="
+          },
+          "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        },
+        "size": 19993
+      }
+    ]
+  }
+}

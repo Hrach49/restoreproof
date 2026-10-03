@@ -29,14 +29,18 @@ using connector::kNothingRestored;
 
 } // namespace
 
-connector::SafetyViolation refusal(const TargetGuardOptions& options, const std::string& message)
+void log_security(const std::shared_ptr<spdlog::logger>& logger, const std::string& message)
 {
     // May be null: spdlog::drop_all() and shutdown() clear the default logger.
-    const std::shared_ptr<spdlog::logger> logger =
-        options.logger ? options.logger : spdlog::default_logger();
-    if (logger) {
-        logger->critical("SECURITY: {}", redact(message));
+    const std::shared_ptr<spdlog::logger> to = logger ? logger : spdlog::default_logger();
+    if (to) {
+        to->critical("SECURITY: {}", redact(message));
     }
+}
+
+connector::SafetyViolation refusal(const TargetGuardOptions& options, const std::string& message)
+{
+    log_security(options.logger, message);
     return connector::SafetyViolation(message);
 }
 

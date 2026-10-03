@@ -1,0 +1,7 @@
+{
+  "source": "rpworker 0.0.0 restore --record",
+  "request": "POST /v8/token/logout",
+  "status": 204,
+  "headers": {},
+  "body": null
+}

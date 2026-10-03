@@ -1,0 +1,37 @@
+{
+  "source": "rpworker 0.0.0 restore --record",
+  "request": "GET /v8/RestoreSessions/e018de5b-9435-4cff-ad54-891d7350d949/Statistics",
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8"
+  },
+  "body": {
+    "totalItemsCount": 3,
+    "restoredItemsCount": 3,
+    "failedItemsCount": 0,
+    "skippedItemsCount": 0,
+    "items": [
+      {
+        "id": "c137e9be-2c7c-49b8-b09a-8ada92102e78",
+        "itemRestoreDetailsType": "Item",
+        "name": "rp-canary-01.pdf",
+        "itemType": "SharePointItem",
+        "status": "Success"
+      },
+      {
+        "id": "f10ca0c2-1946-45df-97d4-17f81d23dcba",
+        "itemRestoreDetailsType": "Item",
+        "name": "rp-canary-02.docx",
+        "itemType": "SharePointItem",
+        "status": "Success"
+      },
+      {
+        "id": "c2681fa2-ad9f-4460-bdfb-70847df90911",
+        "itemRestoreDetailsType": "Item",
+        "name": "rp-canary-03.xlsx",
+        "itemType": "SharePointItem",
+        "status": "Success"
+      }
+    ]
+  }
+}

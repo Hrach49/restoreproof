@@ -24,7 +24,7 @@ How we test, what CI enforces, and the once-per-sprint mutation run. Set up in L
 
 | Guard | Where | Rule |
 |---|---|---|
-| Worker coverage | `.github/workflows/worker.yml`, OpenCppCoverage + `worker/tools/coverage_gate.py` | 80% line on `rpcore` (`worker/src/`, `worker/include/`) plus `rpworker`'s `main()` (`worker/app/`); 100% **line** on vault, signer, target_guard and run_status (the vault and signer once they exist), meaning any file with a path part named or prefixed `vault`, `signer`, `target_guard` or `run_status` (`src/signer/ed25519.cpp`, `src/vault_dpapi.cpp`; W2.7's `src/target_guard.cpp`, `src/target_guard_graph.cpp`, `src/target_guard_veeam.cpp` and their headers; W3.3's `src/run_status.cpp`, the status decision table); every `.cpp` on disk under `src/`, `include/` and `app/` must appear in the report, so a file no test links into `rptests` (or, for `app/`, that ctest's runs of `rpworker.exe` don't reach) fails (headers of declarations may be absent) |
+| Worker coverage | `.github/workflows/worker.yml`, OpenCppCoverage + `worker/tools/coverage_gate.py` | 80% line on `rpcore` (`worker/src/`, `worker/include/`) plus `rpworker`'s `main()` (`worker/app/`); 100% **line** on vault, signer, target_guard, run_status and cleaner (the vault and signer once they exist), meaning any file with a path part named or prefixed `vault`, `signer`, `target_guard`, `run_status` or `cleaner` (`src/signer/ed25519.cpp`, `src/vault_dpapi.cpp`; W2.7's `src/target_guard.cpp`, `src/target_guard_graph.cpp`, `src/target_guard_veeam.cpp` and their headers; W3.3's `src/run_status.cpp`, the status decision table; W3.4's `src/cleaner.cpp` and `include/rp/cleaner.hpp`, the only Worker code that deletes in the tenant); every `.cpp` on disk under `src/`, `include/` and `app/` must appear in the report, so a file no test links into `rptests` (or, for `app/`, that ctest's runs of `rpworker.exe` don't reach) fails (headers of declarations may be absent) |
 | Cloud coverage | `.github/workflows/cloud.yml`, pytest-cov | 80% on `app/`, measured as coverage's combined line + branch figure; 100% line + branch on `app/auth`, `app/results.py` and `app/repo` (skipped while absent), checked by `cloud/tools/check_coverage.py` |
 | Lab tests and canary hashes | `.github/workflows/lab.yml` | `lab/`'s pytest suite passes (offline, fake Graph tenant), and `python -m seeder hash` reproduces every hash in `lab/seed-manifest.json` from the committed `lab/canary/` files and the catalog (L1.2's Done when). No coverage floor |
 | No test, no merge | `.github/workflows/pr-guards.yml`, `.github/scripts/tests_touched.py` | Each side needs its own tests: a PR that changes `worker/src/`, `worker/include/` or `worker/app/` must add or change a C++ file (`.cpp`, `.hpp`, `.h`) under `worker/tests/`, and one that changes `cloud/app/` must add or change a `.py` under `cloud/tests/`. Deleting a test, editing fixtures or editing `tests/e2e/scenarios.md` doesn't count |
@@ -38,13 +38,14 @@ Both coverage jobs write their numbers to the workflow run's summary page; the W
 also uploads the Cobertura XML as the `worker-coverage-cobertura` artifact.
 
 **Known gap:** OpenCppCoverage reports line coverage only, not branch coverage. CLAUDE.md asks
-for 100% branch on vault, signer, target_guard and run_status; until the Worker has a branch-capable tool,
+for 100% branch on vault, signer, target_guard, run_status and cleaner; until the Worker has a branch-capable tool,
 those files are held to 100% line instead. See `docs/decisions.md`.
 
 ### Live tests
 
 Tests tagged `[live]` call the lab's real services and are skipped unless `RP_LIVE=1` is set;
-they are read-only. `RP_LIVE=1 ctest --preset dev` runs them with the rest, or run them alone
+they are read-only, except the two tagged `[live][writes]`, which also need `RP_LIVE_RESTORE=1`
+("Live restore" below). `RP_LIVE=1 ctest --preset dev` runs them with the rest, or run them alone
 with `build\dev\rptests.exe "[live]"` (which also prints what they found). Three are Veeam's,
 four Graph's and one the sampler's dry run, which uses both (below); once `RP_LIVE=1` is set,
 each needs its variables below and fails, rather than skips, without them.
@@ -210,9 +211,13 @@ Until the lab holds real (non-canary) data the random half is mostly a recorded 
 
 ### Live restore (writes to the lab tenant)
 
-**This test writes.** It is the only live test that changes anything: it restores real items
-into the three restore targets. It is skipped unless **both** `RP_LIVE=1` and
-`RP_LIVE_RESTORE=1` are set, so a normal `RP_LIVE=1` run stays read-only.
+**These two tests write.** They are the only live tests that change anything: one restores
+real items into the three restore targets and deletes them again, the other only deletes
+(W3.4's Cleaner). Each is skipped unless **both** `RP_LIVE=1` and `RP_LIVE_RESTORE=1` are set,
+so a normal `RP_LIVE=1` run stays read-only. Each takes the run mutex
+`Global\RestoreProof-restore-targets` first, as `rpworker restore` does
+(`worker/include/rp/run_lock.hpp`), and fails at once (`REQUIRE(lock != nullptr)`) while another
+RestoreProof run holds it, so a test never deletes a running restore's copies.
 
 `worker/tests/veeam_m365_restore_live_test.cpp` (W2.5, tag `[live][writes]`, ctest name
 `live restore: restore_sample restores 10 canaries into the lab's restore targets`) makes the
@@ -226,7 +231,9 @@ the newest. It then builds one spec from `lab/seed-manifest.json`:
 
 It calls `restore_sample` once and prints the status, each restore session (start, end, result,
 details), each item's outcome and the log. It passes only with status `succeeded` and 10 items
-restored. It needs the variables of the Veeam and Graph live tests above, plus:
+restored. Since W3.4 it then runs `Cleaner::clean(after_run)` on the three targets and prints
+its counts (`cleanup after {...}`), so it leaves no copies; it checks that the clean was ok too.
+It needs the variables of the Veeam and Graph live tests above, plus:
 
 | Variable | Value |
 |---|---|
@@ -240,10 +247,10 @@ Before running it:
    needs administrator rights. Start `Developer PowerShell for VS 2022` with right-click, **Run
    as administrator**. Without elevation the test fails at the first restore call with a
    certificate export error, before anything is restored.
-2. **Make sure the restore targets are empty.** Run `rpworker graph list` (above, and
-   `docs/worker-config.md`) and check that the `restoretest` Inbox, the RestoreTarget library and
-   alice's `/RestoreTarget` folder show no items. The verification that W3.2 adds compares what
-   is there with the manifest, and leftovers from an earlier run would get in the way.
+2. **Make sure the restore targets are empty.** Run the live cleanup test (below), then
+   `rpworker graph list` (above, and `docs/worker-config.md`) and check that the `restoretest`
+   Inbox, the RestoreTarget library and alice's `/RestoreTarget` folder show `0 item(s)` and no
+   `(... not listed)` line.
 3. **Make sure no restore session of the Veeam account is still running.** The connector refuses
    to start if one is (`docs/api/veeam-m365/08-sweep-sessions.ps1` stops them).
 
@@ -257,22 +264,77 @@ $env:RP_LIVE_EVIDENCE_FILE = "$env:TEMP\w2.5-live-restore.json"   # optional
 ctest --preset dev -R "live restore" -V
 ```
 
-(or `.\build\dev\rptests.exe "[live][writes]"`). Then read the targets back with their hashes
-and compare them with the manifest:
+(`.\build\dev\rptests.exe "[live][writes]"` runs both writing tests). The restored copies are
+deleted at the test's end, so `rpworker graph list --hash` afterwards shows empty targets; to
+read a restore's copies back and compare them with the manifest, use `rpworker restore` (below),
+whose check does it before its clean after.
+
+**The live cleanup test.** `worker/tests/cleaner_live_test.cpp` (W3.4, tag `[live][writes]`,
+ctest name `live cleanup: the Cleaner empties the three restore targets with folders and all`;
+no comma in it, since Catch2 splits a test name given on its command line at a comma) first
+seeds one item of its own in each restore target, because the targets are usually empty now
+(every `rpworker restore` cleans before and after): a small `rp-probe-<uuid>.txt` `PUT` into
+the RestoreTarget library's root, one into alice's `/RestoreTarget` folder (both with
+`@microsoft.graph.conflictBehavior=fail`), and a message with subject `rp-probe-<uuid>` created
+in the `restoretest` Inbox (`POST /users/{mailbox}/mailFolders/inbox/messages`). The seeds are
+sent by the test itself, with a token of its own and cpr, not through `GraphClient`, whose only
+write is the Cleaner's `remove()`. Before anything is sent, the config's restore-target IDs are
+checked against `lab/seed-manifest.json` (`sampling::check_manifest`, then every canary's
+mailbox, SharePoint drive and folder ID), then for shape (`RestoreTargets::from_config`, the
+`parse_config` rules), and each target is resolved through the target guard's own Graph checks
+(`check_restore_mailbox`, `check_restore_library`, `check_restore_onedrive_folder`, as the
+Cleaner's `resolve()` runs them, on a Graph client of their own so the recording holds only the
+Cleaner's exchanges); the three seed paths are built only from what those checks established
+(`worker/tests/live_seed.hpp`, unit-tested in `live_seed_test.cpp`), and any refusal stops the
+test before the first write. Then it signs in to Graph as the Worker app, runs
+`Cleaner::clean(after_run)` on the three restore targets of `graph_live_lab.hpp`'s config (the
+`RP_LIVE_TARGET_*` variables above, defaulting to the lab's), prints its counts, and requires no
+error, an ok clean, and each seed found and deleted (`deleted` or `gone` at least 1 per target).
+Its first file `DELETE` and first mail `permanentDelete` are each sent twice; with the seeds
+there both happen, so it requires two doubled sends, the second answer of each counted `gone`:
+the file's is Graph's 404 `itemNotFound`, the mail's 403 `ErrorCannotDeleteObject` (seen live
+on 2026-10-02), which `GraphClient::remove` follows with one check, is the message gone: its
+`parentFolderId` (live, the purged message still answered 200, from Recoverable Items) against
+the `id` of the mailbox's `recoverableitemspurges` folder, then the Inbox's; only a 404 or a
+byte-for-byte match with Purges makes it `gone`, the Inbox leaves the 403's `PermissionError`,
+and any other folder is an error, never `gone` (`docs/decisions.md`, W3.4 build notes, point
+15). Last, it lists each target again with `$top=1` and no type filter, folders
+included, and requires zero entries: the W3.4 Done-when's "zero items and no entries left
+unlisted". Set `RP_LIVE_RECORD_DIR` to a new or empty folder to record the Cleaner's and the
+last listings' Graph exchanges there (under `graph/`; the seeds are not recorded), the second
+answer of each doubled send included (the first is not: the wrapper sits inside the recorder).
+The folder is opened before the first seed, so one that isn't new or empty fails the test with
+nothing written. Only a first delete Graph answers 204 is doubled: a 429 or 503 GraphClient
+retries, or a 412, leaves the doubling to the next attempt.
+The 2026-10-02 run gave `w34-file-delete-404-itemnotfound.json` and
+`w34-mail-permanentdelete-403-cannotdeleteobject-repeat.json`; its 21:05 rerun the message
+GET's 200 behind the hand-shaped `w34-mail-get-200-purged-parentfolder.json`, whose
+`parentFolderId` and `w34-mail-purges-200-id.json`'s `id` come from a read-only probe of the same
+day. It needs the Graph certificate variables,
+`RP_LIVE=1` and `RP_LIVE_RESTORE=1`, and no elevation. It deletes everything in the three
+targets, delivered mail in `restoretest` too. From a VS 2022 Developer PowerShell:
 
 ```powershell
-.\build\dev\rpworker.exe graph list --hash --config <your config.json>
+$env:RP_LIVE = '1'
+$env:RP_LIVE_RESTORE = '1'
+$env:RP_LIVE_RECORD_DIR = "$env:TEMP\rp-w34-cleaner-rec-$(Get-Date -Format yyyyMMddTHHmmss)"   # optional, new or empty
+ctest --preset dev -R "live cleanup" -V
 ```
 
-(`--config` can be left out when the config is in its default place, `docs/worker-config.md`.)
+or, from any shell in `C:\restoreproof\worker` with the same variables,
+`.\build\dev\rptests.exe "live cleanup*" -s`.
 
-**Clean up by hand afterwards.** Until W3.4's cleanup exists, delete the restored mails from the
-`restoretest` Inbox and the files from the RestoreTarget library and alice's `/RestoreTarget`
-folder in the Microsoft 365 web apps, then run `rpworker graph list` again to check that they
-are empty. Remove the variables when done:
+**When something is left.** A folder, a package or another entry the Cleaner skips (it deletes
+only mails and plain files) is never deleted: it fails the cleanup test's last check, and the
+restore test's `cleanup after` shows it as `skipped`. Remove it by hand in the Microsoft 365
+web apps, then run the cleanup test again. A delete refused with 403 means a write grant is
+missing or not yet active (`docs/security/graph-permissions.md`; Exchange may take up to two
+hours to apply a role change). The `restoretest` mailbox's Deleted Items, which may still hold
+copies from the hand cleanups before W3.4, is emptied once by hand; the Cleaner never reads it.
+Remove the variables when done:
 
 ```powershell
-Remove-Item Env:RP_LIVE, Env:RP_LIVE_RESTORE, Env:RP_LIVE_EVIDENCE_FILE -ErrorAction SilentlyContinue
+Remove-Item Env:RP_LIVE, Env:RP_LIVE_RESTORE, Env:RP_LIVE_EVIDENCE_FILE, Env:RP_LIVE_RECORD_DIR -ErrorAction SilentlyContinue
 . ..\lab\entra\set-worker-env.ps1 -Clear
 ```
 
@@ -281,16 +343,19 @@ Remove-Item Env:RP_LIVE, Env:RP_LIVE_RESTORE, Env:RP_LIVE_EVIDENCE_FILE -ErrorAc
 **This writes too.** `rpworker restore` (W2.8, `docs/worker-config.md`) chooses a sample and
 restores it into the three restore targets, like the live test above, but from the command
 line. ctest's `rpworker restore` exe tests all stop before any request (the arguments, the
-config, the secrets), so nothing writes unless you run it by hand. Before running it, check
-the same three points as for the live restore: an elevated shell, empty targets, no restore
-session still `Working`.
+config, the secrets), so nothing writes unless you run it by hand. Since W3.4 it also
+deletes: it empties the three targets before it samples and again after its status line
+(`docs/worker-config.md`, "`rpworker restore`"). Before running it, check: an elevated shell,
+no restore session still `Working`, and no other RestoreProof run on this machine (the run
+mutex refuses a second one: `restore error: another RestoreProof run is using the restore
+targets; nothing was done`, exit 4). The targets needn't be empty first.
 
 1. Open `Developer PowerShell for VS 2022` (or PowerShell) with **Run as administrator**, and
    go to `C:\restoreproof\worker`.
 2. Set `RP_VEEAM_USERNAME` and `RP_VEEAM_PASSWORD` (the Veeam account, as for the Veeam live
    tests), and the Graph certificate variables with `. ..\lab\entra\set-worker-env.ps1`.
    The command checks all four are set before it calls Veeam.
-3. Check the targets are empty:
+3. Optionally, see what is in the targets now (the clean before deletes it):
 
    ```powershell
    .\build\dev\rpworker.exe graph list --config <your config.json>
@@ -304,21 +369,20 @@ session still `Working`.
    ```
 
    Note the printed run ID (`--run-id` repeats the sample) and the next canary cursor
-   (`--canary-cursor` carries the rotation on). The last stdout line is the run's status
-   (W3.3): exit 0 is `pass` (every sampled item read back and verified), 5 `fail` (an item
+   (`--canary-cursor` carries the rotation on). The line after `run ...` is the clean
+   before's (`cleanup before ok: deleted ...`). The run's status line (W3.3) comes next to
+   last: exit 0 is `pass` (every sampled item read back and verified), 5 `fail` (an item
    missing or not matching), 1 to 4 an `error` by its code, such as `target_guard` (the guard
-   refusing), `stale_target` (an earlier run's copy still in a target: clean up first) or
-   `backup_infrastructure` (an item Veeam failed for an infrastructure reason); warnings go to
-   stderr (`docs/verification.md`, "The status decision table").
-5. Read the targets back with their hashes:
-
-   ```powershell
-   .\build\dev\rpworker.exe graph list --hash --config <your config.json>
-   ```
-
-6. Clean up by hand, as after the live restore, until W3.4's cleanup exists, and check with
-   `rpworker graph list` that the targets are empty again. Remove the variables when done
-   (`. ..\lab\entra\set-worker-env.ps1 -Clear`, and the two Veeam ones).
+   refusing, the clean before's included), `stale_target` (an earlier run's copy the clean
+   before couldn't delete) or `backup_infrastructure` (an item Veeam failed for an
+   infrastructure reason); warnings go to stderr (`docs/verification.md`, "The status decision
+   table"). The last line is the clean after's: `cleanup after ok: ...` when all three targets
+   were left empty; `incomplete` names what was left, skipped or refused, and never changes the
+   exit code.
+5. Check with `rpworker graph list` that the targets are empty again (`0 item(s)` each and no
+   `(... not listed)` line: the W3.4 Done-when). If not, see "When something is left" above.
+   Remove the variables when done (`. ..\lab\entra\set-worker-env.ps1 -Clear`, and the two
+   Veeam ones).
 
 ### Recording fixtures (`--record <dir>`)
 
@@ -326,7 +390,17 @@ Q2.1: `rpworker veeam list`, `graph list [--hash]` and `restore` take `--record 
 writes every exchange the command has with a service, scrubbed, as a fixture
 `FakeHttpClient` can serve (the format and rules: `docs/decisions.md` 2026-10-01, "Q2.1").
 Recording only watches: the command sends and prints what it would without it, then one more
-line, `recorded <n> exchange(s) in <dir>`. `restore --record` still writes into the tenant.
+line, `recorded <n> exchange(s) in <dir>`. `restore --record` still writes into the tenant,
+and records the cleanup's listings, `permanentDelete`s and `DELETE`s under `graph` too.
+
+The W3.4 Cleaner's listings and 204s are recorded (`worker/tests/fixtures/recordings/w34-live-run1/`),
+and so are the answers to a delete sent twice: the live cleanup test sends its first file
+`DELETE` and first mail `permanentDelete` twice (the test-side wrapper `SendFirstDeleteTwice`)
+and, with `RP_LIVE_RECORD_DIR` set to a new or empty folder, records every Graph exchange there
+under `graph/`, the second answers included; its 2026-10-02 run gave the file's 404 and the
+mail's 403 `ErrorCannotDeleteObject` (`worker/tests/fixtures/graph/README.md`). The 412, the
+refusing 403s and Exchange's 404 stay hand-written; no Worker code ever sends a write at a
+canary location to record a refusal.
 
 1. Pick a folder that doesn't exist yet, outside the repo (for example
    `$env:TEMP\rp-rec-<what>`). The command refuses a folder with anything in it, so a

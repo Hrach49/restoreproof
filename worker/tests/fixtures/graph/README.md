@@ -116,6 +116,62 @@ answers 404 for an item the app may not read, so the lab can't provoke that 403 
 | `onedrive-folder-404-itemnotfound.json` | live: an item ID of no item in alice's OneDrive | 404 `itemNotFound` → `NotFoundError` (W2.2) |
 | `restoretarget-content-302.json` | live: a file's `/content` in the RestoreTarget library, redirect not followed, `Location` scrubbed | 302 → the download follows `Location` without the token (W2.2) |
 | `onedrive-content-302.json` | live: a file's `/content` in alice's `/RestoreTarget`, redirect not followed, `Location` scrubbed | 302 on the `-my` host → the download follows `Location` without the token (W2.2) |
+| `w34-mail-permanentdelete-404-erroritemnotfound.json` | hand-written, in the shape of `messages-404-unknown-user.json`: Exchange's 404 for a message no longer there. **Never seen live**: a repeated `permanentDelete` answers 403 `ErrorCannotDeleteObject` instead (next row). Kept for a message someone else deleted between the Cleaner's listing and its `permanentDelete`, and as a 404 of the message GET that follows that 403 (below), though live that GET answered 200 | 404 `ErrorItemNotFound` → `gone`, on the `permanentDelete` or on the message GET after a 403 `ErrorCannotDeleteObject`, with no Inbox GET (W3.4, build notes point 15) |
+| `w34-mail-permanentdelete-403-cannotdeleteobject-repeat.json` | live: the live cleaner test of 2026-10-02 (`rp-w34-rec-cleaner-20261002T204648`, `graph/004`), unedited but its `source`: the second of two `permanentDelete`s of one seeded draft, the first already answered 204 | 403 `ErrorCannotDeleteObject` on a mail → one check, is the message gone: its `parentFolderId`, then the Purges folder's `id`, then the Inbox's; 404 or Purges, byte for byte → `gone`, the Inbox → `PermissionError` naming the mail grant, another folder, anything unreadable or any other error an error, never `gone`; for a file a plain `PermissionError` (W3.4, build notes point 15) |
+| `w34-mail-get-200-purged-parentfolder.json` | hand-shaped from live answers: the live cleaner test of 2026-10-02 21:05 (`rp-w34-rec-cleaner-20261002T210555`, `graph/005`: the message GET after the repeated `permanentDelete`'s 403 answered **200**, though the final Inbox listing was empty) and read-only probes after it (`$select=id,parentFolderId,subject`, ImmutableId: 200). Request, ID and eTag are `graph/005`'s; the `parentFolderId` is exact, from the read-only probe of 2026-10-02: byte for byte the Purges folder's `id` (next row), not the Inbox's `...AAAAAAEMAAA=` | 200 with the Purges folder's ID as `parentFolderId`: the purged message → `gone` (W3.4, build notes point 15); the tests edit its `parentFolderId` for the Inbox's ID, another folder's, one differing in case only, a missing, empty or non-string one |
+| `w34-mail-purges-200-id.json` | live read-only probe, 2026-10-02: `GET /users/{restoretest}/mailFolders/recoverableitemspurges?$select=id,displayName`, ImmutableId: 200, `displayName` `Purges`; shaped like `mailbox-inbox-200.json` (request narrowed to `$select=id`, `displayName` and request IDs left out), the `id` exact | the Purges folder's `id` the purged message's `parentFolderId` must equal, byte for byte, to count `gone` (W3.4, build notes point 15); the tests edit it for a missing, empty, non-string `id` or a non-JSON reply (an error, never `gone`) |
+| `w34-mail-permanentdelete-403-exchange.json` | hand-written, in the shape of `mailbox-inbox-403-exchange.json`: a `permanentDelete` while the Exchange role is still read-only; the lab, granted, can't be refused (below) | 403 → `PermissionError` naming the mail grant; the mail target ends `graph_permission` (W3.4) |
+| `w34-file-delete-404-itemnotfound.json` | live: the live cleaner test of 2026-10-02 (`rp-w34-rec-cleaner-20261002T204648`, `graph/007`), unedited but its `source`: the second of two `DELETE`s of one seeded file in the RestoreTarget library, the first already answered 204; replaced the hand-written stand-in | 404 `itemNotFound` → `gone`; a resent `DELETE` answered so too; also SharePoint's code on the message GET after a mail's 403 `ErrorCannotDeleteObject` (W3.4) |
+| `w34-file-delete-412-resourcemodified.json` | hand-written, in the shape of `drive-404-itemnotfound.json`: a `DELETE` whose `If-Match` no longer matches; no live run has met one (below) | 412 → `changed`: the next round lists the file again (W3.4) |
+| `w34-file-delete-403-accessdenied.json` | hand-written, in the shape of `onedrive-folder-403-accessdenied.json`: a `DELETE` without the write grant; the lab, granted, can't be refused (below) | 403 → `PermissionError` naming the list or folder write grant (W3.4) |
+
+## The Cleaner's fixtures (W3.4): recorded and hand-written
+
+The Cleaner's listings and 204s are **recorded**, from the W3.4 live run of 2026-10-02
+(`rpworker restore --record`, run `rp-20261002T180310Z-6661beff`;
+`../recordings/w34-live-run1/README.md`). `cleaner_test.cpp` and `restore_command_test.cpp`
+load them from there, unedited, in place of the hand-written stand-ins they replaced
+(`w34-mail-list-200-two.json`, `w34-restoretarget-children-200-two.json`,
+`w34-onedrive-children-200-two.json`, `w34-mail-permanentdelete-204.json`,
+`w34-file-delete-204.json`, removed):
+
+| Recording file (`../recordings/w34-live-run1/graph/`) | What it is | For |
+|---|---|---|
+| `034-get-...-mailf.json` | the clean after's first listing of the restoretest Inbox (`$select=id`, `Prefer`): the run's 5 mails | the Cleaner's mail listing; its edits are the bad-ID rows |
+| `042-get-...-7ncroj5omdbu.json` | the clean after's first listing of the RestoreTarget library's root (`eTag`, facets, `parentReference`): the run's 3 files | the Cleaner's library listing; its edits are the place, facet, ID and eTag rows |
+| `048-get-...-z5getdherm5pj6bmwyxfzj.json` | the clean after's first listing of alice's `/RestoreTarget`: the run's 3 files | the Cleaner's OneDrive listing, as the library's |
+| `035-post-...-messa.json` | the first mail's bodiless `permanentDelete`, 204 | `RemoveOutcome::removed` for a mail |
+| `043-delete-...-7ncroj5omdbu.json` | the first library file's `DELETE` with `If-Match`, 204 | `RemoveOutcome::removed` for a file (OneDrive's 204, `049`, is the same reply) |
+
+Two `w34-*` files here are **recorded** by the live cleanup test of 2026-10-02
+(`cleaner_live_test.cpp` with `RP_LIVE_RECORD_DIR`; console output
+`docs/api/veeam-lab/w3.4-live-1-cleaner-test.txt`), which sends the Cleaner's first file
+`DELETE` and first mail `permanentDelete` twice: `w34-file-delete-404-itemnotfound.json`
+(`graph/007`, the second `DELETE`'s 404) and
+`w34-mail-permanentdelete-403-cannotdeleteobject-repeat.json` (`graph/004`, the second
+`permanentDelete`'s 403). The recording holds only the second answer of each doubled send (the
+test's wrapper sits inside the recorder). That run is how the 403 was found: Exchange answers
+a repeated `permanentDelete` of a purged message 403 `ErrorCannotDeleteObject`, not 404, so
+`GraphClient::remove` now checks such a 403: is the message gone
+(`docs/decisions.md`, 2026-10-02 W3.4 build notes, point 15). A rerun at 21:05
+(`rp-w34-rec-cleaner-20261002T210555`) showed the purged message still answers a GET by its ID
+(200), from Recoverable Items: hence the check compares its `parentFolderId`, byte for byte,
+with the `id` of the mailbox's `recoverableitemspurges` folder (`gone` only on that match), then
+with the Inbox's (the 403 stands), any other folder an error
+(`w34-mail-get-200-purged-parentfolder.json`, hand-shaped from that run with its
+`parentFolderId` exact from a read-only probe; `w34-mail-purges-200-id.json`, that probe's
+Purges folder; the Inbox's ID is `mailbox-inbox-200.json`'s, the same as that run's
+`graph/002`). An earlier rule, `gone` whenever the folder wasn't the Inbox, failed open and was
+replaced. The rest of that recording (the
+token, the guard's checks, the listings) adds nothing the W3.4 restore run's recording doesn't
+have, so it isn't committed.
+
+The other `w34-*` files stay **hand-written**, because no live run has given those answers:
+the refusing 403s can't be provoked while the lab holds the W3.4 write grants (every live
+delete was allowed); Exchange's 404 `ErrorItemNotFound` was never seen (a repeated
+`permanentDelete` gets the 403 above) and stays for a message deleted by someone else between
+the listing and the delete, for a 404 of the message GET after that 403, and for a 404 of the Purges folder GET (an error); and a 412 needs a file changed
+between its listing and its `DELETE`, which no live run has met. Each one's `source` says so.
 
 Entra's refusals that the lab can't provoke (Conditional Access, a disabled app, the other
 transient codes) are built in `graph_client_test.cpp` from `entra_error()`, in the recorded

@@ -1,0 +1,12 @@
+{
+  "source": "live read-only probe, 2026-10-02: GET /users/restoretest@RestoreProofLab.onmicrosoft.com/mailFolders/recoverableitemspurges?$select=id,displayName with Prefer IdType=\"ImmutableId\": 200, displayName 'Purges'. Shaped like mailbox-inbox-200.json: request line narrowed to the $select=id the Worker sends, @odata.context adjusted to it, displayName and the request-id headers left out; the id is the probe's, exact, and equals byte for byte the parentFolderId of the purged message (w34-mail-get-200-purged-parentfolder.json) (docs/decisions.md 2026-10-02 W3.4 build notes, point 15)",
+  "request": "GET /v1.0/users/restoretest@RestoreProofLab.onmicrosoft.com/mailFolders/recoverableitemspurges?$select=id",
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/json; odata.metadata=minimal; odata.streaming=true; IEEE754Compatible=false; charset=utf-8"
+  },
+  "body": {
+    "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#users('restoretest%40RestoreProofLab.onmicrosoft.com')/mailFolders(id)/$entity",
+    "id": "AAMkADYyNGRlZDhkLTM1MmEtNGI1NS05Y2I5LTM4OTliNzZhMTRjOAAuAAAAAADjrcyzRbMCTbaiTPZo3n0vAQCnL_u8BR8BT6morC7OYUFaAAAAAAFiAAA="
+  }
+}

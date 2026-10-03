@@ -5,6 +5,7 @@
 #include <rp/version.hpp>
 
 #include "control_chars.hpp"
+#include "graph_write_rule.hpp"
 #include "text_util.hpp"
 #include "uuid.hpp"
 
@@ -252,9 +253,21 @@ bool is_header_safe(std::string_view token) noexcept
     return std::all_of(token.begin(), token.end(), [](char c) { return c > ' ' && c < 0x7F; });
 }
 
+// Whether `value` is empty or holds a control character (those of
+// control_chars.hpp, CR and LF included).
+bool empty_or_control(std::string_view value) noexcept
+{
+    bool control = value.empty();
+    for (std::size_t i = 0; i < value.size() && !control; ++i) {
+        control = control_character_length(value, i) != 0;
+    }
+    return control;
+}
+
 // A caller's headers (see GraphClient::get): only kCallerHeaders, each with
-// a value that is neither empty nor holds a control character.
-void check_caller_headers(const HttpHeaders& headers)
+// a value that is neither empty nor holds a control character. `method`
+// names the call in the message.
+void check_caller_headers(const HttpHeaders& headers, std::string_view method)
 {
     const CaseInsensitiveLess less;
     for (const auto& [name, value] : headers) {
@@ -264,17 +277,15 @@ void check_caller_headers(const HttpHeaders& headers)
         if (!allowed) {
             // No ':' after the quoted name: redact() would read
             // "Authorization": as a JSON secret and mask the message.
-            throw GraphError("Graph GET: refused the header \"" + one_line(name, 64) +
+            throw GraphError("Graph " + std::string{method} + ": refused the header \"" +
+                             one_line(name, 64) +
                              "\" since a caller may add only Prefer; the token and the other "
                              "headers are the client's");
         }
-        bool control = value.empty();
-        for (std::size_t i = 0; i < value.size() && !control; ++i) {
-            control = control_character_length(value, i) != 0;
-        }
-        if (control) {
-            throw GraphError("Graph GET: refused the value of the header \"Prefer\": it is "
-                             "empty or holds a control character");
+        if (empty_or_control(value)) {
+            throw GraphError("Graph " + std::string{method} +
+                             ": refused the value of the header \"Prefer\": it is empty or "
+                             "holds a control character");
         }
     }
 }
@@ -364,14 +375,16 @@ std::string graph_prefix()
     return std::string{kGraphBaseUrl} + "/";
 }
 
-// The URL a GET for `path_or_url` goes to (see GraphClient::get); throws
-// GraphError for anything else. Checked as text, before anything is sent.
-std::string graph_url(std::string_view path_or_url)
+// The URL a call for `path_or_url` goes to (see GraphClient::get); throws
+// GraphError for anything else, naming `method`. Checked as text, before
+// anything is sent.
+std::string graph_url(std::string_view path_or_url, std::string_view method)
 {
     const std::string prefix = graph_prefix();
     const auto refuse = [&](std::string_view why) {
-        throw GraphError("Graph GET: refused \"" + one_line(path_or_url, 200) + "\": " +
-                         std::string{why} + "; the token goes only to " + prefix);
+        throw GraphError("Graph " + std::string{method} + ": refused \"" +
+                         one_line(path_or_url, 200) + "\": " + std::string{why} +
+                         "; the token goes only to " + prefix);
     };
     if (path_or_url.empty()) {
         refuse("neither a path starting with '/' nor a URL");
@@ -464,6 +477,13 @@ bool names_missing_container(std::string_view code)
     constexpr std::array<std::string_view, 3> codes{"ErrorInvalidUser", "ErrorNonExistentMailbox",
                                                      "Request_ResourceNotFound"};
     return std::find(codes.begin(), codes.end(), code) != codes.end();
+}
+
+// The 404 codes that say the item a remove() addresses isn't there:
+// SharePoint's and OneDrive's, and Exchange's.
+bool names_missing_item(std::string_view code)
+{
+    return code == "itemNotFound" || code == "ErrorItemNotFound";
 }
 
 std::string relies_on(const Grant& grant)
@@ -764,16 +784,18 @@ GraphClient::Token GraphClient::current_token(milliseconds& waited)
     return token_now();
 }
 
-HttpRequest GraphClient::api_request(const std::string& url, const std::string& token,
-                                     const HttpHeaders& headers,
+HttpRequest GraphClient::api_request(HttpMethod method, const std::string& url,
+                                     const std::string& token, const HttpHeaders& headers,
                                      std::optional<std::uint64_t> max_body_bytes) const
 {
     HttpRequest request;
-    request.method = HttpMethod::get;
+    // Bodiless, a POST included: curl sends it with Content-Length: 0.
+    request.method = method;
     request.url = url;
     request.headers = common_headers();
-    // check_caller_headers() let only kCallerHeaders through; the token is
-    // set after them all the same.
+    // check_caller_headers() let only kCallerHeaders through, and the
+    // client's own are If-Match and Prefer; the token is set after them all
+    // the same.
     for (const auto& [name, value] : headers) {
         request.headers[name] = value;
     }
@@ -791,24 +813,172 @@ HttpResponse GraphClient::get(std::string_view path_or_url, const Grant& grant,
                               std::optional<std::uint64_t> max_body_bytes)
 {
     // Never nullopt: only an item lookup answers a 404 with it.
-    return *send_get(path_or_url, grant, false, headers, max_body_bytes);
+    return *send(HttpMethod::get, path_or_url, grant, Mode::get, headers, {}, max_body_bytes);
 }
 
 std::optional<HttpResponse> GraphClient::find(std::string_view path_or_url, const Grant& grant,
                                               const HttpHeaders& headers)
 {
-    return send_get(path_or_url, grant, true, headers, std::nullopt);
+    return send(HttpMethod::get, path_or_url, grant, Mode::find, headers, {}, std::nullopt);
 }
 
-std::optional<HttpResponse> GraphClient::send_get(std::string_view path_or_url, const Grant& grant,
-                                                  bool item_lookup, const HttpHeaders& headers,
-                                                  std::optional<std::uint64_t> max_body_bytes)
+bool is_sendable_item(bool mail, std::string_view container, std::string_view id,
+                      std::string_view etag) noexcept
 {
+    const auto plain = [](std::string_view text, std::string_view extra) {
+        return !text.empty() && std::all_of(text.begin(), text.end(), [extra](char c) {
+            return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+                   extra.find(c) != std::string_view::npos;
+        });
+    };
+    return plain(container, mail ? "@.-_+'" : "!-_") && plain(id, "!-_=") && id.size() <= 512 &&
+           (mail || !empty_or_control(etag));
+}
+
+RemoveOutcome GraphClient::remove(const ListedItem& item)
+{
+    // The item's parts go into the path and a header as they are: anything
+    // that could change the path's shape or split a header is refused here,
+    // before anything is sent (the Cleaner checked them already).
+    const bool mail = item.kind() == ListedItem::Kind::mail;
+    const std::string_view method = mail ? "POST" : "DELETE";
+    if (!is_sendable_item(mail, item.container(), item.id(), item.etag())) {
+        throw GraphError("Graph " + std::string{method} +
+                         ": refused an item whose mailbox, drive, ID or eTag can't go into a "
+                         "request; nothing was deleted");
+    }
+    HttpHeaders own;
+    std::string path;
+    if (mail) {
+        path = "/users/" + item.container() + "/messages/" + item.id() + "/permanentDelete";
+        own["Prefer"] = std::string{kMailPrefer};
+    } else {
+        path = "/drives/" + item.container() + "/items/" + item.id();
+        own["If-Match"] = item.etag();
+    }
+    std::optional<HttpResponse> response;
+    try {
+        response = send(mail ? HttpMethod::post : HttpMethod::del, path, item.grant(),
+                        Mode::remove, {}, own, std::nullopt);
+    } catch (const PermissionError& e) {
+        // Exchange answers a permanentDelete of a message already purged (a
+        // resend whose first answer was lost) 403 ErrorCannotDeleteObject, not
+        // 404, as the live cleanup test saw (W3.4 build notes point 15). One
+        // check tells the two apart: is the message gone, not found or found
+        // in Recoverable Items' Purges? Only a positive answer makes it gone;
+        // in the Inbox the refusal stands, and a check that can't say, or
+        // finds it in another folder, throws its own error.
+        if (!mail || e.code() != "ErrorCannotDeleteObject" || !purged_or_gone(item)) {
+            throw;
+        }
+        return RemoveOutcome::gone;
+    }
+    if (!response) {
+        return RemoveOutcome::gone;
+    }
+    if (response->status == 204) {
+        return RemoveOutcome::removed;
+    }
+    if (response->status == 412 && !mail) {
+        return RemoveOutcome::changed;
+    }
+    const std::string request_id = header_request_id(*response);
+    throw GraphError("Graph " + std::string{method} + " " + display_path(graph_url(path, method)) +
+                         ": HTTP " + std::to_string(response->status) +
+                         ", where 204 was expected" + request_id_suffix(request_id),
+                     response->status, {}, {}, request_id);
+}
+
+bool GraphClient::purged_or_gone(const ListedItem& item)
+{
+    // Every path built from the item's mailbox and ID alone, as the POST's;
+    // all read by ImmutableId, as the listing did. At most these three GETs.
+    const HttpHeaders prefer{{"Prefer", std::string{kMailPrefer}}};
+    const std::string base = "/users/" + item.container();
+    const std::string message = base + "/messages/" + item.id() + "?$select=id,parentFolderId";
+    const std::string purges = base + "/mailFolders/recoverableitemspurges?$select=id";
+    const std::string inbox = base + "/mailFolders/inbox?$select=id";
+
+    // A string at `key` of a 200's JSON object, non-empty, or a GraphError:
+    // an answer that can't be read never makes a message gone.
+    const auto folder_id = [](const std::string& path, const HttpResponse& response,
+                              std::string_view expected, const char* key,
+                              std::string_view what) {
+        const std::string head =
+            "Graph GET " + display_path(graph_url(path, "GET")) + ": HTTP " +
+            std::to_string(response.status);
+        const std::string request_id = header_request_id(response);
+        if (response.status != 200) {
+            throw GraphError(head + ", where " + std::string{expected} + " was expected" +
+                                 request_id_suffix(request_id),
+                             response.status, {}, {}, request_id);
+        }
+        const json body = json::parse(response.body, nullptr, false);
+        if (body.is_discarded() || !body.is_object()) {
+            throw GraphError(head + ", but the reply isn't a JSON object, so " +
+                                 std::string{what} + " can't be read; the mail isn't counted gone" +
+                                 request_id_suffix(request_id),
+                             response.status, {}, {}, request_id);
+        }
+        const auto it = body.find(key);
+        if (it == body.end() || !it->is_string() || it->get_ref<const std::string&>().empty()) {
+            throw GraphError(head + ", but the reply has no " + key + " to read " +
+                                 std::string{what} + " by; the mail isn't counted gone" +
+                                 request_id_suffix(request_id),
+                             response.status, {}, {}, request_id);
+        }
+        return it->get<std::string>();
+    };
+    // A folder's ID: get()'s rules (a 404 is an error), then folder_id's.
+    const auto folder = [&](const std::string& path, std::string_view what) {
+        return folder_id(
+            path, *send(HttpMethod::get, path, item.grant(), Mode::get, {}, prefer, std::nullopt),
+            "200", "id", what);
+    };
+    const std::string shown = "Graph GET " + display_path(graph_url(message, "GET"));
+
+    const std::optional<HttpResponse> found =
+        send(HttpMethod::get, message, item.grant(), Mode::remove, {}, prefer, std::nullopt);
+    if (!found) {
+        log_debug(shown + ": after 403 ErrorCannotDeleteObject, the message is gone");
+        return true;
+    }
+    const std::string parent =
+        folder_id(message, *found, "200 or 404", "parentFolderId", "the message's folder");
+    // Gone only on a positive match, byte for byte: the message is in the
+    // mailbox's Recoverable Items Purges folder, where permanentDelete puts it
+    // (seen live: a purged message still answers by its ID, from there).
+    if (parent == folder(purges, "the Purges folder's ID")) {
+        log_debug(shown + ": after 403 ErrorCannotDeleteObject, the message is in Recoverable "
+                          "Items' Purges: it is gone");
+        return true;
+    }
+    if (parent == folder(inbox, "the Inbox's ID")) {
+        return false;
+    }
+    throw GraphError(shown + ": after 403 ErrorCannotDeleteObject, the message is in another "
+                             "folder of the mailbox, neither the Inbox nor Recoverable Items' "
+                             "Purges; the mail isn't counted gone");
+}
+
+std::optional<HttpResponse> GraphClient::send(HttpMethod method, std::string_view path_or_url,
+                                              const Grant& grant, Mode mode,
+                                              const HttpHeaders& caller_headers,
+                                              const HttpHeaders& own_headers,
+                                              std::optional<std::uint64_t> max_body_bytes)
+{
+    const std::string_view method_name = to_string(method);
     // Before anything is sent, the token request included.
-    const std::string url = graph_url(path_or_url);
-    check_caller_headers(headers);
+    const std::string url = graph_url(path_or_url, method_name);
+    check_caller_headers(caller_headers, method_name);
+    HttpHeaders headers = caller_headers;
+    // The client's own headers (remove()'s If-Match and Prefer): the eTag was
+    // checked by is_sendable_item, the Prefer is a constant.
+    for (const auto& [name, value] : own_headers) {
+        headers[name] = value;
+    }
     const std::string path = display_path(url);
-    const std::string what = "Graph GET " + path;
+    const std::string what = "Graph " + std::string{method_name} + " " + path;
 
     // Every wait of this call, its token renewals' included.
     milliseconds waited{0};
@@ -828,12 +998,16 @@ std::optional<HttpResponse> GraphClient::send_get(std::string_view path_or_url, 
 
         HttpResponse response;
         try {
-            response = http_.send(api_request(url, token.access, headers, max_body_bytes));
+            response =
+                http_.send(api_request(method, url, token.access, headers, max_body_bytes));
         } catch (const HttpError& e) {
-            // A GET changes nothing, so a lost connection or a timeout is
-            // sent again; a certificate failure or a malformed URL won't fix
-            // itself.
-            retry.summary = transport_summary(e, "GET", url);
+            // A lost connection or a timeout is sent again: a GET changes
+            // nothing, and a resent permanentDelete or If-Match DELETE of
+            // the same listed ID can only answer 204, 404 or 412, or for a
+            // mail already purged 403 ErrorCannotDeleteObject, which remove()
+            // checks with GETs (W3.4 build notes point 15). A
+            // certificate failure or a malformed URL won't fix itself.
+            retry.summary = transport_summary(e, method_name, url);
             if (!is_retryable(AttemptOutcome{e.error(), 0})) {
                 throw GraphError(what + ": " + retry.summary, e.status());
             }
@@ -843,6 +1017,10 @@ std::optional<HttpResponse> GraphClient::send_get(std::string_view path_or_url, 
         if (retry.summary.empty()) {
             const int status = response.status;
             if (status >= 200 && status <= 399) {
+                return response;
+            }
+            // A file changed since it was listed: remove() says so.
+            if (status == 412 && mode == Mode::remove) {
                 return response;
             }
             const GraphReply reply = parse_graph_reply(response);
@@ -912,7 +1090,8 @@ std::optional<HttpResponse> GraphClient::send_get(std::string_view path_or_url, 
                                      status, {}, {}, reply.request_id);
                 }
                 if (status == 403) {
-                    throw PermissionError("Graph denied GET " + path + " (403" +
+                    throw PermissionError("Graph denied " + std::string{method_name} + " " +
+                                              path + " (403" +
                                               (reply.code.empty() ? "" : " " + reply.code) +
                                               "): " + relies_on(grant) + rid,
                                           std::string{grant.description}, status, reply.code,
@@ -924,7 +1103,8 @@ std::optional<HttpResponse> GraphClient::send_get(std::string_view path_or_url, 
                 // wrong path's is no item missing from a restore. Nor is a
                 // mailbox or user that doesn't exist.
                 if (status == 404 && !reply.code.empty()) {
-                    if (item_lookup && !names_missing_container(reply.code)) {
+                    if ((mode == Mode::find && !names_missing_container(reply.code)) ||
+                        (mode == Mode::remove && names_missing_item(reply.code))) {
                         log_debug(head + ": not there");
                         return std::nullopt;
                     }
@@ -1003,8 +1183,8 @@ std::optional<json> GraphClient::find_json(std::string_view path_or_url, const G
 
 json GraphClient::json_body(std::string_view path_or_url, const HttpResponse& response)
 {
-    const std::string what = "Graph GET " + display_path(graph_url(path_or_url)) + ": HTTP " +
-                             std::to_string(response.status);
+    const std::string what = "Graph GET " + display_path(graph_url(path_or_url, "GET")) +
+                             ": HTTP " + std::to_string(response.status);
     const std::string request_id = header_request_id(response);
     if (response.status >= 300) {
         throw GraphError(what + ", a redirect where JSON was expected" +

@@ -100,7 +100,7 @@ TEST_CASE("the guard refuses a test_mailbox that reaches another mailbox than re
           "target guard: Graph refused the Worker app the Inbox of the mailbox test_mailbox names "
           "(403): the app's Exchange scope covers the restoretest mailbox alone, so the address is "
           "another mailbox, or the grant \"" +
-              std::string{rp::graph::kMailReadGrant.description} +
+              std::string{rp::graph::kMailGrant.description} +
               "\" is missing: the Worker restores only into the restoretest mailbox" + kRestored);
     CHECK(lab.gets(inbox_url(alias)) == 1);
     CHECK(lab.log() == "critical SECURITY: " + thrown.what + "\n");
@@ -543,7 +543,7 @@ TEST_CASE("the folder's 404 still says the Worker app may lack its grant", "[tar
 
     CHECK(thrown.kind == "NotFoundError");
     CHECK_THAT(thrown.what, ContainsSubstring("the Worker app may lack the grant \"" +
-                                              std::string{rp::graph::kOneDriveReadGrant.description}));
+                                              std::string{rp::graph::kOneDriveGrant.description}));
 }
 
 // ---- what passes ---------------------------------------------------------------------------

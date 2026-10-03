@@ -1,0 +1,43 @@
+RestoreProof Worker app check (L1.5, W3.4): app-only Microsoft Graph; writes only in the restore targets
+tenant ID    bcd6bd1a-ea42-489d-aa28-2c19a44ad146
+client ID    737da5ef-baf2-4198-b009-e160d8ca77c9
+certificate  SHA-1 thumbprint B56D2BD39945BAB1484A53F6C78C059A369EDBB3, expires 2027-09-27
+token roles, Microsoft Graph      Files.SelectedOperations.Selected, Lists.SelectedOperations.Selected, Sites.Selected  ok
+token roles, Exchange Online      (none)  ok
+token roles, SharePoint           (none)  ok
+==> Sign in as alice@RestoreProofLab.onmicrosoft.com  (confirm her RestoreTest canary folder and one of its files exist)
+    A browser window opens; choose or type alice@RestoreProofLab.onmicrosoft.com.
+canary folder, read as alice      RestoreTest, 10 items  ok
+==> Sign in as HrachyaHarutyunyan@RestoreProofLab.onmicrosoft.com  (confirm a canary file in the RestoreTest library exists)
+    A browser window opens; choose or type HrachyaHarutyunyan@RestoreProofLab.onmicrosoft.com.
+canary file, library, read as admin  rp-canary-01.pdf  ok
+canary file, OneDrive, read as alice  rp-canary-11.pdf  ok
+
+result       expect     got  probe                                                           request
+ok              200     200  restoretest's mailbox: list messages                            GET /users/restoretest@RestoreProofLab.onmicrosoft.com/messages
+ok              200     200  RestoreTest site: the site                                      GET /sites/restoreprooflab.sharepoint.com,fe08085d-eb70-42e8-95a6-470189bd98eb,4ecaf399-cc0e-4d95-b3fe-cd091a09e689
+ok              200     200  RestoreTarget library: the drive                                GET /drives/b!XQgI_nDr6EKVpkcBib2Y65nzyk4OzJVNs_7NCRoJ5omdBuz_5GU6TJ2irAhs-dr6
+ok              200     200  RestoreTarget library: files in its root                        GET /drives/b!XQgI_nDr6EKVpkcBib2Y65nzyk4OzJVNs_7NCRoJ5omdBuz_5GU6TJ2irAhs-dr6/root/children
+ok              200     200  alice's OneDrive: RestoreTarget folder                          GET /drives/b!wA9gbfhlEUitGAluxbfoNBr_z5gEtDhErm5pJ6bMwyXfZJ8a_dkCQ696RX0r7_U3/items/01ZK75LGDGB6QOO3MGNFGYOY6C6VBDG5OH
+ok              200     200  alice's OneDrive: files in RestoreTarget                        GET /drives/b!wA9gbfhlEUitGAluxbfoNBr_z5gEtDhErm5pJ6bMwyXfZJ8a_dkCQ696RX0r7_U3/items/01ZK75LGDGB6QOO3MGNFGYOY6C6VBDG5OH/children
+ok              200     200  alice's OneDrive: the site (metadata)                           GET /sites/restoreprooflab-my.sharepoint.com:/personal/alice_restoreprooflab_onmicrosoft_com
+ok              200     200  alice's OneDrive: root folder (metadata)                        GET /drives/b!wA9gbfhlEUitGAluxbfoNBr_z5gEtDhErm5pJ6bMwyXfZJ8a_dkCQ696RX0r7_U3/root
+ok              200     200  alice's OneDrive: files in her root (only RestoreTarget)        GET /drives/b!wA9gbfhlEUitGAluxbfoNBr_z5gEtDhErm5pJ6bMwyXfZJ8a_dkCQ696RX0r7_U3/root/children
+ok              403     403  alice's mailbox: list messages                                  GET /users/alice@RestoreProofLab.onmicrosoft.com/messages
+ok              403     403  tenant root site: the site                                      GET /sites/restoreprooflab.sharepoint.com
+ok              403     403  tenant root site: its libraries (/drives)                       GET /sites/restoreprooflab.sharepoint.com/drives
+ok              403     403  OneDrive host root site: the site                               GET /sites/restoreprooflab-my.sharepoint.com
+ok              403     403  directory: list users                                           GET /users
+ok              404     404  alice's OneDrive: RestoreTest canary folder                     GET /drives/b!wA9gbfhlEUitGAluxbfoNBr_z5gEtDhErm5pJ6bMwyXfZJ8a_dkCQ696RX0r7_U3/items/01ZK75LGF7FPAIWTU5MFGIMX6YUFEV7ZC4
+ok              404     404  alice's OneDrive: files in the RestoreTest canary folder        GET /drives/b!wA9gbfhlEUitGAluxbfoNBr_z5gEtDhErm5pJ6bMwyXfZJ8a_dkCQ696RX0r7_U3/items/01ZK75LGF7FPAIWTU5MFGIMX6YUFEV7ZC4/children
+ok              201     201  RestoreTarget library: create a file                            PUT /drives/b!XQgI_nDr6EKVpkcBib2Y65nzyk4OzJVNs_7NCRoJ5omdBuz_5GU6TJ2irAhs-dr6/items/root:/rp-probe-ed3042e4-b18d-4fe4-bc93-de2bd6031a1c.txt:/content
+ok              204     204  RestoreTarget library: delete it                                DELETE /drives/b!XQgI_nDr6EKVpkcBib2Y65nzyk4OzJVNs_7NCRoJ5omdBuz_5GU6TJ2irAhs-dr6/items/01BLWRTHLCMSSMJ3R4HNDZ57QUZHZM52CK
+ok              201     201  alice's OneDrive: RestoreTarget folder: create a file           PUT /drives/b!wA9gbfhlEUitGAluxbfoNBr_z5gEtDhErm5pJ6bMwyXfZJ8a_dkCQ696RX0r7_U3/items/01ZK75LGDGB6QOO3MGNFGYOY6C6VBDG5OH:/rp-probe-ee45b92d-bb8e-4bef-9c0f-3e96434a9a97.txt:/content
+ok              204     204  alice's OneDrive: RestoreTarget folder: delete it               DELETE /drives/b!wA9gbfhlEUitGAluxbfoNBr_z5gEtDhErm5pJ6bMwyXfZJ8a_dkCQ696RX0r7_U3/items/01ZK75LGDYJWX5HXWBTBAK365TEVBMGDHG
+ok              201     201  restoretest's mailbox: create a draft                           POST /users/restoretest@RestoreProofLab.onmicrosoft.com/messages
+ok              204     204  restoretest's mailbox: permanently delete it                    POST /users/restoretest@RestoreProofLab.onmicrosoft.com/messages/AAkALgAAAAAAHYQDEapmEc2byACqAC-EWg0Apy-rvAUfAU_pqKwuzmFBWgAABTyFcgAA/permanentDelete
+ok              400     400  RestoreTarget library: invalid name (control)                   POST /drives/b!XQgI_nDr6EKVpkcBib2Y65nzyk4OzJVNs_7NCRoJ5omdBuz_5GU6TJ2irAhs-dr6/items/root/children
+ok              400     400  alice's OneDrive: RestoreTarget folder: invalid name (control)  POST /drives/b!wA9gbfhlEUitGAluxbfoNBr_z5gEtDhErm5pJ6bMwyXfZJ8a_dkCQ696RX0r7_U3/items/01ZK75LGDGB6QOO3MGNFGYOY6C6VBDG5OH/children
+UNEXPECTED  403/404     400  RestoreTest library: invalid name beside a canary               POST /drives/b!XQgI_nDr6EKVpkcBib2Y65nzyk4OzJVNs_7NCRoJ5omK8LB-e_WMQYym8quBKXZm/items/root/children  (past the permission check, only the name stopped it: the app may write here)
+UNEXPECTED  403/404     400  alice's OneDrive: invalid name in RestoreTest                   POST /drives/b!wA9gbfhlEUitGAluxbfoNBr_z5gEtDhErm5pJ6bMwyXfZJ8a_dkCQ696RX0r7_U3/items/01ZK75LGF7FPAIWTU5MFGIMX6YUFEV7ZC4/children  (past the permission check, only the name stopped it: the app may write here)
+24/26 probes as expected; 2 UNEXPECTED

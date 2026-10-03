@@ -63,7 +63,10 @@ GraphCommandEnv default_graph_command_env();
 // location and its count ("Mail (<test_mailbox>, Inbox): 2 item(s)"), then, if
 // it holds anything, a column header and one row per item in Graph's order.
 // Mail: RECEIVED, SENDER, SUBJECT, ID; files: NAME, SIZE, ID ("-" for a
-// missing or empty value, "(no subject)" for a missing or empty subject). With --hash each
+// missing or empty value, "(no subject)" for a missing or empty subject). Under
+// a file target's rows (under its heading when it lists none), "  (<n>
+// folder(s) or other entries not listed)" when its listing left any out
+// (W3.4), so a location showing zero items really holds nothing. With --hash each
 // file is downloaded (without the token) and both kinds get SHA256 and RULE
 // ("text-v1" for mail, "bytes" for files); without it nothing is downloaded
 // and SIZE is Graph's. A blank line after each table, then a summary line.

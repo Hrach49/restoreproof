@@ -1,0 +1,21 @@
+{
+  "source": "hand-written: W3.4, in the shape of onedrive-folder-403-accessdenied.json: a DELETE refused without the write grant. Kept hand-written: with the W3.4 grants in place no live run can be refused (the W3.4 live run of 2026-10-02 deleted every copy, recordings/w34-live-run1/)",
+  "request": "DELETE /v1.0/drives/b!XQgI_nDr6EKVpkcBib2Y65nzyk4OzJVNs_7NCRoJ5omdBuz_5GU6TJ2irAhs-dr6/items/<item id>",
+  "status": 403,
+  "headers": {
+    "Content-Type": "application/json",
+    "request-id": "00000000-0000-4000-8000-000000003412",
+    "client-request-id": "00000000-0000-4000-8000-000000003412"
+  },
+  "body": {
+    "error": {
+      "code": "accessDenied",
+      "message": "Access denied",
+      "innerError": {
+        "date": "2026-10-02T00:00:00",
+        "request-id": "00000000-0000-4000-8000-000000003413",
+        "client-request-id": "00000000-0000-4000-8000-000000003413"
+      }
+    }
+  }
+}

@@ -100,6 +100,34 @@ first is 2026-09-27T11:23:13Z, and W2.4 saw them in the 2026-09-27T22:00:48Z poi
 the two earlier points without them). Anything left in a target at backup time is in
 the next point, so the sampler (W2.6) never takes items from a target.
 
+## Real data for the random sample (L1.8)
+
+What `python -m seeder seed-real` puts in the tenant, so the sampler's random half (W2.6) has
+real, non-canary items to draw from (`docs/decisions.md` 2026-10-03, W3.6 point 2). Fixed in
+`lab/seeder/seed_real.py`; steps and rules in `lab/README.md`. No manifest: the Worker reads a
+random item's expected values from Veeam. None of these is a canary or in a restore target.
+
+**SharePoint**, uploaded by the admin to the root of the RestoreTest site's default drive (its
+"Documents" library, `Shared Documents`; not the RestoreTest or RestoreTarget library), no
+subfolders: `team-meeting-notes.txt`, `supplier-contacts.txt`, `project-brief.pdf`,
+`budget-summary.pdf`, `office-floor-plan.png`, `brand-colours-draft.png`, `room-bookings.xlsx`.
+
+**OneDrive**, uploaded by alice to the root of her OneDrive, in no folder:
+`reading-list.txt`, `travel-notes.txt`, `expense-report-march.pdf`, `course-certificate.pdf`,
+`holiday-photo.png`, `whiteboard-sketch.png`, `weekly-status.docx`.
+
+**Mail**, plain text, each sent once by its sender (so it is in the sender's Sent Items and the
+recipient's Inbox):
+
+| From alice to bob | From bob to alice |
+|---|---|
+| `Lunch on Friday` | `Quarterly numbers are in` |
+| `Notes from the supplier call` | `Laptop replacement request` |
+| `Draft agenda for the offsite` | `Kitchen rota for next week` |
+| `Printer on the second floor` | `Training session moved to Thursday` |
+| `Holiday cover in August` | `Client visit on Tuesday` |
+| `Parking passes for visitors` | `Updated phone list` |
+
 ## RestoreProof Worker app (L1.5)
 
 The Worker's own app registration: it reads back what Veeam restored and, since W3.4

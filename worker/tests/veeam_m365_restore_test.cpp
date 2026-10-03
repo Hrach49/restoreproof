@@ -1788,3 +1788,139 @@ TEST_CASE("restore_sample sends same-named mails of one mailbox in separate call
     CHECK(result.items[0].session_id == run.restore());
     CHECK(result.items[1].session_id == second);
 }
+
+// ---- step timings (W3.5) -----------------------------------------------------------------
+// Each session's submit (the export through the session known: guard layer 2,
+// the POST, the duplicate check and its re-looks) and wait (the poll), on the
+// connector's steady clock (docs/decisions.md 2026-10-03 W3.5 point 3). The
+// fake clock moves only on the connector's waits, so these are exact.
+
+TEST_CASE("restore_sample timings: statistics' 409 waits are not waiting", "[veeam_m365][w3.5]")
+{
+    const Run run = mail_x1();
+    RestoreRig rig;
+    rig.serve(run);
+    rig.veeam.on(HttpMethod::get, url("/v8/RestoreSessions/" + run.restore() + "/Statistics"),
+                 {load_fixture("veeam", "statistics-409"), load_fixture("veeam", "statistics-409"),
+                  fixture(run.file("statistics"))});
+
+    const connector::RestoreResult result = rig.restore(restore_spec({mail_x1_item()}));
+
+    REQUIRE(result.sessions.size() == 1);
+    // One poll wait, then two statistics waits that count in neither.
+    CHECK(rig.clock.waits() == std::vector<std::chrono::milliseconds>{5s, 5s, 5s});
+    CHECK(result.sessions[0].submit_time == std::chrono::nanoseconds{0});
+    CHECK(result.sessions[0].wait_time == std::chrono::nanoseconds{5s});
+}
+
+TEST_CASE("restore_sample timings: no answer to the POST: the duplicate check's re-looks are "
+          "submit time",
+          "[veeam_m365][w3.5]")
+{
+    const int empty_looks = GENERATE(1, 2, 3);
+    CAPTURE(empty_looks);
+    RestoreRig rig;
+    const Run run = mail_x1();
+    rig.serve(run);
+    rig.veeam.on(HttpMethod::post, restore_url(run), dropped);
+    const std::string restore = run.restore();
+    std::vector<HttpResponse> looks(static_cast<std::size_t>(empty_looks),
+                                    fixture(run.file("sessions-after-post"), [&](json& b) {
+                                        json kept = json::array();
+                                        for (json& s : b["results"]) {
+                                            if (s["id"] != restore) {
+                                                kept.push_back(s);
+                                            }
+                                        }
+                                        b["results"] = kept;
+                                    }));
+    looks.push_back(fixture(run.file("sessions-after-post")));
+    rig.veeam.on(HttpMethod::get, run.duplicate_url(), std::move(looks));
+
+    const connector::RestoreResult result = rig.restore(restore_spec({mail_x1_item()}));
+
+    CHECK(result.status == connector::RestoreStatus::succeeded);
+    REQUIRE(result.sessions.size() == 1);
+    CHECK(rig.veeam.count(HttpMethod::get, run.duplicate_url()) == empty_looks + 1);
+    CHECK(result.sessions[0].submit_time == std::chrono::nanoseconds{10s} * empty_looks);
+    CHECK(result.sessions[0].wait_time == std::chrono::nanoseconds{5s});
+}
+
+TEST_CASE("restore_sample timings: a session Stopped at the first poll waited 0",
+          "[veeam_m365][w3.5]")
+{
+    RestoreRig rig;
+    const Run run = mail_x1();
+    rig.serve(run);
+    rig.veeam.on(HttpMethod::get, run.session_url(run.restore()), {fixture(run.file("session"))});
+
+    const connector::RestoreResult result = rig.restore(restore_spec({mail_x1_item()}));
+
+    CHECK(result.status == connector::RestoreStatus::succeeded);
+    REQUIRE(result.sessions.size() == 1);
+    CHECK(rig.clock.waits().empty());
+    CHECK(result.sessions[0].submit_time == std::chrono::nanoseconds{0});
+    CHECK(result.sessions[0].wait_time == std::chrono::nanoseconds{0});
+}
+
+TEST_CASE("restore_sample timings: a Working session's polls are its wait",
+          "[veeam_m365][w3.5]")
+{
+    const int working = GENERATE(1, 2, 7);
+    CAPTURE(working);
+    RestoreRig rig;
+    const Run run = mail_x5();
+    rig.serve(run);
+    std::vector<HttpResponse> polls(static_cast<std::size_t>(working),
+                                    fixture(run.file("session-working")));
+    polls.push_back(fixture(run.file("session")));
+    rig.veeam.on(HttpMethod::get, run.session_url(run.restore()), std::move(polls));
+
+    const connector::RestoreResult result = rig.restore(restore_spec(mail_x5_items()));
+
+    REQUIRE(result.sessions.size() == 1);
+    CHECK(result.sessions[0].submit_time == std::chrono::nanoseconds{0});
+    CHECK(result.sessions[0].wait_time == std::chrono::nanoseconds{5s} * working);
+}
+
+TEST_CASE("restore_sample timings: each session measured on its own", "[veeam_m365][w3.5]")
+{
+    RestoreRig rig;
+    const std::vector<Run> runs{mail_x5(), sp_x1(), od_x1()};
+    for (const Run& run : runs) {
+        rig.serve(run);
+    }
+    // SharePoint polled Working three times; OneDrive's POST unanswered and
+    // its session listed only at the second look.
+    const Run& sp = runs[1];
+    rig.veeam.on(HttpMethod::get, sp.session_url(sp.restore()),
+                 {fixture(sp.file("session-working")), fixture(sp.file("session-working")),
+                  fixture(sp.file("session-working")), fixture(sp.file("session"))});
+    const Run& od = runs[2];
+    const std::string od_restore = od.restore();
+    rig.veeam.on(HttpMethod::post, restore_url(od), dropped);
+    rig.veeam.on(HttpMethod::get, od.duplicate_url(),
+                 {fixture(od.file("sessions-after-post"),
+                          [&](json& b) {
+                              json kept = json::array();
+                              for (json& s : b["results"]) {
+                                  if (s["id"] != od_restore) {
+                                      kept.push_back(s);
+                                  }
+                              }
+                              b["results"] = kept;
+                          }),
+                  fixture(od.file("sessions-after-post"))});
+
+    const connector::RestoreResult result =
+        rig.restore(restore_spec(mail_x5_items(), {sp_x1_item()}, {od_x1_item()}));
+
+    CHECK(result.status == connector::RestoreStatus::succeeded);
+    REQUIRE(result.sessions.size() == 3);
+    CHECK(result.sessions[0].submit_time == std::chrono::nanoseconds{0});
+    CHECK(result.sessions[0].wait_time == std::chrono::nanoseconds{5s});
+    CHECK(result.sessions[1].submit_time == std::chrono::nanoseconds{0});
+    CHECK(result.sessions[1].wait_time == std::chrono::nanoseconds{15s});
+    CHECK(result.sessions[2].submit_time == std::chrono::nanoseconds{10s});
+    CHECK(result.sessions[2].wait_time == std::chrono::nanoseconds{5s});
+}

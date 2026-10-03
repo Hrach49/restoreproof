@@ -1,0 +1,33 @@
+{
+  "source": "rpworker 0.0.0 restore --record",
+  "request": "GET /v8/RestoreSessions/f159555a-21d4-4423-a487-50c2c91b49fc",
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8"
+  },
+  "body": {
+    "id": "f159555a-21d4-4423-a487-50c2c91b49fc",
+    "name": "OneDrive restore (Entire organization - 10/1/2026 10:01:38 PM)",
+    "organization": "RestoreProofLab.onmicrosoft.com",
+    "type": "Veod",
+    "creationTime": "2026-10-02T18:03:25.0639243Z",
+    "endTime": "9999-12-31T23:59:59.9999999",
+    "state": "Working",
+    "result": "Success",
+    "initiatedBy": "rp-veeam",
+    "scopeName": "",
+    "clientHost": "localhost:4443 (via: [::ffff:127.0.0.1])",
+    "eTag": 1,
+    "_links": {
+      "self": {
+        "href": "/v8/restoresessions/f159555a-21d4-4423-a487-50c2c91b49fc"
+      },
+      "organization": {
+        "href": "/v8/restoresessions/f159555a-21d4-4423-a487-50c2c91b49fc/organization"
+      },
+      "restoreSessionEvents": {
+        "href": "/v8/restoresessions/f159555a-21d4-4423-a487-50c2c91b49fc/events"
+      }
+    }
+  }
+}

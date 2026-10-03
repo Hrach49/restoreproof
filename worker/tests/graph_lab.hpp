@@ -200,7 +200,7 @@ inline FileLocation onedrive_location()
             "onedrive-children-200-one-item",
             "onedrive-content-302",
             "the test OneDrive folder",
-            &rp::graph::kOneDriveReadGrant};
+            &rp::graph::kOneDriveGrant};
 }
 
 inline std::string content_url(const FileLocation& at, const std::string& id)

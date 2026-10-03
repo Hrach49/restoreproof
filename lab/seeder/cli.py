@@ -52,7 +52,7 @@ def _parser() -> argparse.ArgumentParser:
     paths(verify, canary=False)
     signin(verify)
     worker = sub.add_parser(
-        "check-worker-app", help="probe what the RestoreProof Worker app can and can't read (live, L1.5)"
+        "check-worker-app", help="probe what the RestoreProof Worker app can and can't reach (live, L1.5, W3.4)"
     )
     worker.add_argument("--client-id", help="Worker app client ID (else RP_LAB_WORKER_CLIENT_ID, else tenant.py)")
     worker.add_argument("--pfx", type=Path, help=f"the app's certificate (default: {default_pfx_path()})")
@@ -98,14 +98,14 @@ def _run(args: argparse.Namespace) -> int:
             state=args.state,
         )
     if args.command == "check-worker-app":
+        seeder = SignIn(resolve_client_id(args.seeder_client_id), tenant.TENANT_ID, mode=args.auth, out=print)
         return run_check(
             client_id=resolve_worker_client_id(args.client_id),
             tenant_id=tenant.TENANT_ID,
             pfx_path=args.pfx or default_pfx_path(),
             read_password=read_generic_credential,
             transport=RequestsTransport(),
-            alice_token=SignIn(resolve_client_id(args.seeder_client_id), tenant.TENANT_ID, mode=args.auth, out=print)
-            .token_provider(tenant.ALICE_UPN, "confirm her RestoreTest canary folder exists"),
+            alice_token=seeder.token_provider(tenant.ALICE_UPN, "confirm her RestoreTest canary folder exists"),
         )
     client_id = resolve_client_id(args.client_id)
     signin = SignIn(client_id, tenant.TENANT_ID, mode=args.auth, out=print)

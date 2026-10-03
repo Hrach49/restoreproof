@@ -1,0 +1,32 @@
+{
+  "source": "rpworker 0.0.0 restore --record",
+  "request": "GET /v8/RestoreSessions/13436f3d-9459-485c-bd7d-9e5483170f83/Organization/Sites/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689/Documents/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e6897eb0f08a-f57b-418c-8ca6-f2ab81297666f10ca0c2-1946-45df-97d4-17f81d23dcba",
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8"
+  },
+  "body": {
+    "siteId": "fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689",
+    "sizeBytes": 15690,
+    "version": "1.0",
+    "versionId": 1,
+    "id": "fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e6897eb0f08a-f57b-418c-8ca6-f2ab81297666f10ca0c2-1946-45df-97d4-17f81d23dcba",
+    "name": "rp-canary-02.docx",
+    "createdBy": "Hrachya Harutyunyan",
+    "creationTime": "2026-09-24T22:14:45Z",
+    "modifiedBy": "Hrachya Harutyunyan",
+    "modificationTime": "2026-09-24T22:14:45Z",
+    "isFolder": false,
+    "_links": {
+      "self": {
+        "href": "/v8/restoresessions/13436f3d-9459-485c-bd7d-9e5483170f83/organization/sites/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689/documents/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e6897eb0f08a-f57b-418c-8ca6-f2ab81297666f10ca0c2-1946-45df-97d4-17f81d23dcba"
+      },
+      "library": {
+        "href": "/v8/restoresessions/13436f3d-9459-485c-bd7d-9e5483170f83/organization/sites/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689/libraries/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e6897eb0f08a-f57b-418c-8ca6-f2ab81297666"
+      },
+      "versions": {
+        "href": "/v8/restoresessions/13436f3d-9459-485c-bd7d-9e5483170f83/organization/sites/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689/documents/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e6897eb0f08a-f57b-418c-8ca6-f2ab81297666f10ca0c2-1946-45df-97d4-17f81d23dcba/versions"
+      }
+    }
+  }
+}

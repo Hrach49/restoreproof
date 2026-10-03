@@ -1,0 +1,11 @@
+{
+  "source": "rpworker 0.0.0 restore --record",
+  "request": "GET /sites/RestoreTest/_layouts/15/download.aspx?UniqueId=SCRUBBED&Translate=SCRUBBED&tempauth=SCRUBBED&ApiVersion=SCRUBBED",
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+  },
+  "body": null,
+  "body_size": 19993,
+  "body_sha256": "6cebda959d081feb9499a51cf1e2d5bf15fa37ab23bbe95b2e26bcc55fbd396a"
+}

@@ -144,8 +144,9 @@ file this is a name whose copy's `cTag` didn't move. For a mail it is any earlie
 its `internetMessageId` (a canary) or subject: Veeam leaves a mail that is already in the
 target as it is, gives no new copy and still reports it "restored successfully" (W3.2's live
 run 2 on 2026-10-01 restored five mails over run 1's copies: the Inbox kept run 1's five,
-same Graph IDs). So until W3.4 empties the targets before each run, a mail sampled again is
-`error`, never a `fail`. When
+same Graph IDs). So a mail sampled again while an earlier copy is still there is `error`,
+never a `fail`. Since W3.4 the clean before empties the targets first ("Cleaning the restore
+targets (W3.4)" below), so this happens only when it couldn't delete that copy. When
 more than one of this run's copies match, the newest is compared (mail `createdDateTime`, file
 `lastModifiedDateTime`, then the greater ID), and the item says `duplicate` with its `copies`;
 a duplicate doesn't change the outcome (W3.3 decides what it means for the run).
@@ -387,3 +388,133 @@ note) stay on stderr as before.
 `not_in_backup` until the connector reports a per-item "not in restore point"; a client with
 no restore points is `no_restore_point`, not `fail`, until restore point freshness is decided;
 finer `backup` codes need connector error subclasses.
+
+## Cleaning the restore targets (W3.4)
+
+Every run empties the three restore targets before it samples and after its status is
+decided, so an earlier run's copy can't pass for this run's (or turn a mail sampled again into
+`stale_target`, or an earlier Office file rewritten between this run's two reads into a false
+match), and Veeam's nightly backup doesn't take the copies into the next restore point. The
+decisions are `docs/decisions.md` 2026-10-02, W3.4, approved as written.
+
+**The Cleaner.** `rp::graph::Cleaner` in `worker/include/rp/cleaner.hpp` is the only Worker
+code that deletes in the tenant, and the only code that reaches `GraphClient::remove`, its one
+write member: a source scan in `tests/graph_client_test.cpp` fails the build if `ListedItem`
+or a `remove(` call on the client appears under `src/`, `include/` or `app/` outside
+`graph_client.*` and `cleaner.*`. A `ListedItem` (a mail: mailbox and ID; a file: drive, ID
+and eTag) has a private constructor and only the Cleaner's listing makes one, so only an item
+just listed in a target can be deleted. `clean(before_run | after_run)` cleans all three
+targets, always, whatever the run sampled, one after the other; one target's failure never
+stops the others, and it never throws. It cleans everything in them: every mail in the
+`restoretest` Inbox (delivered mail too: the mailbox exists only for restores) and every plain
+file in the RestoreTarget library's root and alice's `/RestoreTarget` folder. Nothing it does
+names or reads the canaries' RestoreTest library or `/RestoreTest` folder. It is held to 100%
+line coverage like `target_guard` (`cleaner` in `worker/tools/coverage_gate.py`).
+
+**Per target, each round:**
+
+1. **Resolve** the target with the guard's own Graph checks (`rp/target_guard_graph.hpp`):
+   `check_restore_mailbox`, `check_restore_library`, `check_restore_onedrive_folder`, worded
+   "deletes only in ...; nothing was deleted". A refusal (`WrongTargetError`) is one critical
+   `SECURITY: cleanup: <message>` log line through `redact()`, and the target's code is
+   `target_guard`: nothing is listed or deleted in it.
+2. **List** under the resolved IDs only, never a body or a download: the Inbox's messages
+   (`$select=id`, `$top=100`, with `kMailPrefer`, whose `IdType` is ImmutableId), the library's root children and
+   the folder's children (`$select=id,name,eTag,file,folder,package,remoteItem,root,parentReference`,
+   `$top=200`). Each `@odata.nextLink` must stay on the same resource
+   (`src/graph_paging.hpp`, the rules `TargetReader` uses too), and pages are bounded by
+   `kMaxListPages`; a delete path never comes from a nextLink.
+3. **Keep only what may be deleted.** A mail whose ID passes `is_listed_id`. A file whose
+   `parentReference.driveId` is the resolved drive, whose `parentReference.id` is the folder
+   (OneDrive) or whose `parentReference.path` is the drive's root (library), whose ID passes
+   `is_graph_item_id` and isn't its parent's, with an eTag of 1 to 512 printable ASCII
+   characters, a `file` object and no `folder`, `package`, `remoteItem` or `root` facet.
+   Anything else is counted `skipped`, logged as a warning ("never deleted; left for the
+   owner") and never deleted: a folder's or package's delete would take contents never listed.
+   Restores never make folders.
+4. **Delete** each kept item with `GraphClient::remove`: a mail by a bodiless
+   `POST /users/{mailbox}/messages/{id}/permanentDelete` (straight to Recoverable Items, never
+   Deleted Items, where copies would pile up and be backed up), a file by
+   `DELETE /drives/{drive}/items/{id}` with `If-Match: <eTag>` (to the site recycle bin, so a
+   guard bug costs a recoverable delete). 204 counts `deleted`; a 404 Graph names as
+   `itemNotFound`/`ErrorItemNotFound` counts `gone`; a 412 on a file (it changed since it was
+   listed, as SharePoint's Office rewrite does) leaves it for the next round. Any other
+   refusal of one delete (a locked or checked-out file, a labelled mail: a 403, 409, 423 or
+   any other answer that isn't transient or a refused token) is that item's: it is logged
+   with its code and the other listed items are still deleted. A transient error ends the
+   round and a 401 after a fresh token stops the target, as on a listing. Writes are
+   retried like reads (5 attempts, a 401 gets one fresh token); a resent delete of one listed
+   ID can only answer 204, 404 or 412.
+5. **List again**: what is still there is `left`, the entries kept out `skipped`.
+
+A second round runs only when the first ended with something left (a 412 included) or in a
+transient error; no other error gets one, a refused delete with something left after it
+included, and there is never a third. A listing reads at most
+`kMaxListPages` pages (`list_pages`' bounded mode, the link past the last page checked but
+never fetched): a target that holds more is cleaned up to that, logs that it lists more, and
+ends with `left > 0` (the count of the last listing, so at most that many pages' worth), for
+the next round or the next run's clean before; never an error, which would stop every later
+clean at the same listing.
+
+**A target's code**, when it stopped, or when a delete Graph refused in its last round left it
+not emptied (the first such delete's code): `target_guard`; `graph_auth`, `graph_permission`,
+`graph_transient` (in both rounds) or `graph`, as the checker's `read_error_code`; `config`
+for an `rp::ConfigError` (a `CertificateError` on the token); `internal` for anything else,
+whose text is never copied. A 403 on a delete names the write grant it relies on
+(`docs/security/graph-permissions.md`).
+
+**In `rpworker restore`** (`docs/worker-config.md`, "`rpworker restore`"):
+
+- **One run at a time.** Before its first Veeam call the command takes the machine-wide named
+  mutex `Global\RestoreProof-restore-targets` without waiting (`rp/run_lock.hpp`) and holds it
+  until it exits; a second run is refused with exit 4 and no run line. Without it, one run's
+  cleanup could delete another's copies between that run's restore and its read-back: a false
+  `fail`.
+- **Before**: right after the run line and before the sample is chosen, every run cleans all
+  three targets. A `target_guard` on any target stops the run as `RunStop{target_guard}` in
+  phase `before_restore` (row R2: `error target_guard`, exit 4, no explore session opened);
+  layer 1 alone wouldn't do, since it sees only the sampled types and runs after Veeam is
+  browsed. Any other failure, or leftovers, lets the run go on: the before snapshot is still
+  the second guard (leftovers are `stale_copies`, a sampled mail already there is
+  `stale_target`).
+- **After**: in the run's ending, the status is decided and its line and warnings printed
+  first, then, only when `restore_sent`, the clean after, then its line. On the normal path it
+  runs after the check, so nothing is deleted before it is read; after a check that threw it
+  runs too (the restore's own rows are the evidence). When the run stopped in the restore
+  without `nothing_restored`, Veeam may still be writing: it runs anyway and the run's
+  `restore_may_still_run` is true.
+- **The cleanup never changes the status**, but through the guard refusal above: `RunFacts`,
+  `decide_status`, the codes, the warnings and the exit codes are W3.3's, and
+  `rp/run_status.hpp` doesn't include `rp/cleaner.hpp`. A cleanup failure is housekeeping,
+  shown in the cleanup lines and `warning: cleanup: ...` lines on stderr (outside the status's
+  warning vocabulary); a `pass` with `cleanup_ok: false` still exits 0.
+
+**The result's `cleanup` object.** `to_json(RunCleanup)` in `rp/restore_command.hpp`, handed
+to `RestoreCommandEnv::on_cleanup` once the run's last line is out (no result file exists yet;
+W4.1 adopts it into `result.v1.json` beside `status`). Counts and codes only, never a name or
+an ID; `error_code` only when set; `after` is `null` when the clean after didn't run (and
+`before` when the run stopped before it):
+
+```json
+{
+  "cleanup_ok": false, "restore_may_still_run": false,
+  "before": {"mail": {"found": 5, "deleted": 5, "gone": 0, "left": 0, "skipped": 0, "rounds": 1},
+             "sharepoint": {"found": 3, "deleted": 3, "gone": 0, "left": 0, "skipped": 0, "rounds": 1},
+             "onedrive": {"found": 3, "deleted": 3, "gone": 0, "left": 0, "skipped": 0, "rounds": 1}},
+  "after": {"mail": {"found": 2, "deleted": 2, "gone": 0, "left": 0, "skipped": 0, "rounds": 1},
+            "sharepoint": {"found": 1, "deleted": 0, "gone": 0, "left": 1, "skipped": 0, "rounds": 1,
+                           "error_code": "graph_permission"},
+            "onedrive": {"found": 0, "deleted": 0, "gone": 0, "left": 0, "skipped": 0, "rounds": 1}}
+}
+```
+
+`found` is the first listing's count of mails and plain files; `deleted` Graph's 204s; `gone`
+its 404s for an item this call listed; `left` and `skipped` the last listing's; `rounds` 1
+or 2. A target is ok with no `error_code`, nothing left and nothing skipped. **`cleanup_ok`**
+is the state the run leaves the targets in: false while `restore_may_still_run`; else the
+clean after's ok when it ran; else false if a restore was sent; else the clean before's ok.
+
+**Not done by the Cleaner.** Deleted Items in `restoretest` (copies from the hand cleanups
+before W3.4) is emptied once by hand; the Cleaner never reads it. Stopping our own Veeam
+sessions still `Working` is W3.6's, with the same Cleaner and placements in `rpworker test`;
+W3.5 times the cleanup.

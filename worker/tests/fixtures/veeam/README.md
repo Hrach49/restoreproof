@@ -58,8 +58,9 @@ served together:
 
 A recording that spans several services (`veeam/`, `graph/`, `download/`) goes in
 `../recordings/<name>/` instead, with a README.md saying what it is and what was edited:
-`w32-live-run1/` and `w32-live-run2/`, W3.2's two live `rpworker restore --record` runs, replayed
-whole by `restore_replay_test.cpp`.
+`w32-live-run1/` and `w32-live-run2/`, W3.2's two live `rpworker restore --record` runs, and
+`w34-live-run1/`, W3.4's first run with the Cleaner (its listings, `DELETE`s and
+`permanentDelete`s included), each replayed whole by `restore_replay_test.cpp`.
 
 ## Files
 

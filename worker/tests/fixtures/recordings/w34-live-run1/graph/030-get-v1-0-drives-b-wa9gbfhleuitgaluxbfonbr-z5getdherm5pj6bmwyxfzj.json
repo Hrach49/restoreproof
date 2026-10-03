@@ -1,0 +1,10 @@
+{
+  "source": "rpworker 0.0.0 restore --record",
+  "request": "GET /v1.0/drives/b!wA9gbfhlEUitGAluxbfoNBr_z5gEtDhErm5pJ6bMwyXfZJ8a_dkCQ696RX0r7_U3/items/01ZK75LGCGGX6B5VP2DRFLTAKWN2MHFHY2/content",
+  "status": 302,
+  "headers": {
+    "Content-Type": "application/octet-stream",
+    "Location": "https://restoreprooflab-my.sharepoint.com/personal/alice_restoreprooflab_onmicrosoft_com/_layouts/15/download.aspx?UniqueId=SCRUBBED&Translate=SCRUBBED&tempauth=SCRUBBED&ApiVersion=SCRUBBED"
+  },
+  "body": null
+}

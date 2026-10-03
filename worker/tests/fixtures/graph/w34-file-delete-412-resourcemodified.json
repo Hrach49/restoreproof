@@ -1,0 +1,21 @@
+{
+  "source": "hand-written: W3.4, in the shape of drive-404-itemnotfound.json: a DELETE whose If-Match no longer matches (SharePoint rewrote the file after it was listed). Kept hand-written: no live run has met a file changed between its listing and its DELETE, and none can be made to without writing to a target outside the Cleaner",
+  "request": "DELETE /v1.0/drives/b!XQgI_nDr6EKVpkcBib2Y65nzyk4OzJVNs_7NCRoJ5omdBuz_5GU6TJ2irAhs-dr6/items/<item id>",
+  "status": 412,
+  "headers": {
+    "Content-Type": "application/json",
+    "request-id": "00000000-0000-4000-8000-000000003410",
+    "client-request-id": "00000000-0000-4000-8000-000000003410"
+  },
+  "body": {
+    "error": {
+      "code": "resourceModified",
+      "message": "ETag does not match current item's value",
+      "innerError": {
+        "date": "2026-10-02T00:00:00",
+        "request-id": "00000000-0000-4000-8000-000000003411",
+        "client-request-id": "00000000-0000-4000-8000-000000003411"
+      }
+    }
+  }
+}

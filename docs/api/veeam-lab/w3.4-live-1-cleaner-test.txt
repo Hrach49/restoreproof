@@ -1,0 +1,250 @@
+Filters: "live cleanup*"
+Randomness seeded to: 819714581
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+rptests.exe is a Catch2 v3.16.0 host application.
+Run with -? for options
+
+-------------------------------------------------------------------------------
+live cleanup: the Cleaner empties the three restore targets with folders and
+              all
+-------------------------------------------------------------------------------
+C:\restoreproof\worker\tests\cleaner_live_test.cpp(301)
+...............................................................................
+
+C:\restoreproof\worker\tests\test_support.hpp(76): PASSED:
+  REQUIRE( size > 0 )
+with expansion:
+  7 > 0
+
+C:\restoreproof\worker\tests\test_support.hpp(90): PASSED:
+  REQUIRE( size > 0 )
+with expansion:
+  1 > 0
+
+C:\restoreproof\worker\tests\test_support.hpp(76): PASSED:
+  REQUIRE( size > 0 )
+with expansion:
+  15 > 0
+
+C:\restoreproof\worker\tests\test_support.hpp(90): PASSED:
+  REQUIRE( size > 0 )
+with expansion:
+  1 > 0
+
+C:\restoreproof\worker\tests\cleaner_live_test.cpp(308): PASSED:
+  REQUIRE( lock != nullptr )
+with expansion:
+  0000017896FA00C0 != nullptr
+
+C:\restoreproof\worker\tests\test_support.hpp(76): PASSED:
+  REQUIRE( size > 0 )
+with expansion:
+  23 > 0
+
+C:\restoreproof\worker\tests\test_support.hpp(76): PASSED:
+  REQUIRE( size > 0 )
+with expansion:
+  23 > 0
+
+C:\restoreproof\worker\tests\test_support.hpp(76): PASSED:
+  REQUIRE( size > 0 )
+with expansion:
+  22 > 0
+
+C:\restoreproof\worker\tests\test_support.hpp(76): PASSED:
+  REQUIRE( size > 0 )
+with expansion:
+  22 > 0
+
+C:\restoreproof\worker\tests\test_support.hpp(76): PASSED:
+  REQUIRE( size > 0 )
+with expansion:
+  25 > 0
+
+C:\restoreproof\worker\tests\test_support.hpp(76): PASSED:
+  REQUIRE( size > 0 )
+with expansion:
+  32 > 0
+
+C:\restoreproof\worker\tests\test_support.hpp(76): PASSED:
+  REQUIRE( size > 0 )
+with expansion:
+  33 > 0
+
+C:\restoreproof\worker\tests\cleaner_live_test.cpp(326): PASSED:
+  REQUIRE( clash.empty() )
+with expansion:
+  true
+with message:
+
+
+seed PUT /drives/b!XQgI_nDr6EKVpkcBib2Y65nzyk4OzJVNs_7NCRoJ5omdBuz_5GU6TJ2irAhs-dr6/items/root:/rp-probe-6c2e9d95-bec0-47dd-870a-b1dc758b634b.txt:/content?%40microsoft.graph.conflictBehavior=fail: HTTP 201
+seed PUT /drives/b!wA9gbfhlEUitGAluxbfoNBr_z5gEtDhErm5pJ6bMwyXfZJ8a_dkCQ696RX0r7_U3/items/01ZK75LGDGB6QOO3MGNFGYOY6C6VBDG5OH:/rp-probe-6c2e9d95-bec0-47dd-870a-b1dc758b634b.txt:/content?%40microsoft.graph.conflictBehavior=fail: HTTP 201
+seed POST /users/restoretest@RestoreProofLab.onmicrosoft.com/mailFolders/inbox/messages: HTTP 201
+C:\restoreproof\worker\tests\cleaner_live_test.cpp(349): PASSED:
+  CHECK( seeded_file_in_place(library_seed, file_name, paths.library_drive_id) )
+with expansion:
+  true
+with message:
+
+
+C:\restoreproof\worker\tests\cleaner_live_test.cpp(351): PASSED:
+  CHECK( seeded_file_in_place(onedrive_seed, file_name, paths.onedrive_drive_id, paths.onedrive_folder_id) )
+with expansion:
+  true
+with message:
+
+
+C:\restoreproof\worker\tests\cleaner_live_test.cpp(352): PASSED:
+  CHECK( (mail_seed && mail_seed->value("subject", "") == probe) )
+with expansion:
+  true
+with message:
+
+
+C:\restoreproof\worker\tests\test_support.hpp(76): PASSED:
+  REQUIRE( size > 0 )
+with expansion:
+  18 > 0
+with message:
+
+
+C:\restoreproof\worker\tests\test_support.hpp(90): PASSED:
+  REQUIRE( size > 0 )
+with expansion:
+  68 > 0
+with message:
+
+
+[2026-10-02 21:50:57.366] [live_cleanup] [info] cleanup after: the test mailbox's Inbox: deleted 0, gone 1, left 0, skipped 0 in 1 round(s)
+
+[2026-10-02 21:50:58.342] [live_cleanup] [info] cleanup after: the RestoreTarget library: deleted 0, gone 1, left 0, skipped 0 in 1 round(s)
+
+[2026-10-02 21:50:59.125] [live_cleanup] [info] cleanup after: the test OneDrive folder: deleted 1, gone 0, left 0, skipped 0 in 1 round(s)
+
+cleanup {"mail":{"deleted":0,"found":1,"gone":1,"left":0,"rounds":1,"skipped":0},"onedrive":{"deleted":1,"found":1,"gone":0,"left":0,"rounds":1,"skipped":0},"sharepoint":{"deleted":0,"found":1,"gone":1,"left":0,"rounds":1,"skipped":0}}
+C:\restoreproof\worker\tests\cleaner_live_test.cpp(375): PASSED:
+  CHECK( result.mail.error_code.empty() )
+with expansion:
+  true
+with message:
+
+
+C:\restoreproof\worker\tests\cleaner_live_test.cpp(376): PASSED:
+  CHECK( result.sharepoint.error_code.empty() )
+with expansion:
+  true
+with message:
+
+
+C:\restoreproof\worker\tests\cleaner_live_test.cpp(377): PASSED:
+  CHECK( result.onedrive.error_code.empty() )
+with expansion:
+  true
+with message:
+
+
+C:\restoreproof\worker\tests\cleaner_live_test.cpp(378): PASSED:
+  CHECK( result.ok() )
+with expansion:
+  true
+with message:
+
+
+C:\restoreproof\worker\tests\cleaner_live_test.cpp(381): PASSED:
+  CHECK( result.mail.found >= 1 )
+with expansion:
+  1 >= 1
+with message:
+
+
+C:\restoreproof\worker\tests\cleaner_live_test.cpp(382): PASSED:
+  CHECK( result.sharepoint.found >= 1 )
+with expansion:
+  1 >= 1
+with message:
+
+
+C:\restoreproof\worker\tests\cleaner_live_test.cpp(383): PASSED:
+  CHECK( result.onedrive.found >= 1 )
+with expansion:
+  1 >= 1
+with message:
+
+
+C:\restoreproof\worker\tests\cleaner_live_test.cpp(384): PASSED:
+  CHECK( result.mail.deleted + result.mail.gone >= 1 )
+with expansion:
+  1 >= 1
+with message:
+
+
+C:\restoreproof\worker\tests\cleaner_live_test.cpp(385): PASSED:
+  CHECK( result.sharepoint.deleted + result.sharepoint.gone >= 1 )
+with expansion:
+  1 >= 1
+with message:
+
+
+C:\restoreproof\worker\tests\cleaner_live_test.cpp(386): PASSED:
+  CHECK( result.onedrive.deleted + result.onedrive.gone >= 1 )
+with expansion:
+  1 >= 1
+with message:
+
+
+deletes sent twice: 2
+C:\restoreproof\worker\tests\cleaner_live_test.cpp(392): PASSED:
+  CHECK( doubler.doubled() == 2 )
+with expansion:
+  2 == 2
+with message:
+
+
+C:\restoreproof\worker\tests\cleaner_live_test.cpp(393): PASSED:
+  CHECK( result.mail.gone >= 1 )
+with expansion:
+  1 >= 1
+with message:
+
+
+C:\restoreproof\worker\tests\cleaner_live_test.cpp(394): PASSED:
+  CHECK( result.sharepoint.gone + result.onedrive.gone >= 1 )
+with expansion:
+  1 >= 1
+with message:
+
+
+recorded 15 exchange(s) in C:\Users\minas\AppData\Local\Temp\rp-w34-rec-cleaner-20261002T215053
+C:\restoreproof\worker\tests\cleaner_live_test.cpp(398): PASSED:
+  CHECK( recorder->problems().empty() )
+with expansion:
+  true
+with message:
+
+
+C:\restoreproof\worker\tests\cleaner_live_test.cpp(406): PASSED:
+  CHECK( entries_at(client, "/users/" + config.test_mailbox + "/mailFolders/inbox/messages?$top=1&$select=id", rp::graph::kMailGrant, {{"Prefer", std::string{rp::graph::kMailPrefer}}}) == 0 )
+with expansion:
+  0 == 0
+with message:
+
+
+C:\restoreproof\worker\tests\cleaner_live_test.cpp(409): PASSED:
+  CHECK( entries_at(client, "/drives/" + config.test_library_id + "/root/children?$top=1&$select=id", rp::graph::kSitesReadGrant) == 0 )
+with expansion:
+  0 == 0
+with message:
+
+
+C:\restoreproof\worker\tests\cleaner_live_test.cpp(413): PASSED:
+  CHECK( entries_at(client, "/drives/" + config.test_onedrive_drive_id + "/items/" + config.test_onedrive_folder_id + "/children?$top=1&$select=id", rp::graph::kOneDriveGrant) == 0 )
+with expansion:
+  0 == 0
+with message:
+
+
+===============================================================================
+All tests passed (35 assertions in 1 test case)
+

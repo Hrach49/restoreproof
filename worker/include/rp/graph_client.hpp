@@ -27,6 +27,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 
 namespace rp::graph {
 
@@ -37,15 +38,29 @@ struct Grant {
     std::string_view description;
 };
 
-// Reading a mailbox: Exchange Online RBAC for applications, not a Graph
-// application permission.
-inline constexpr Grant kMailReadGrant{
-    "Exchange RBAC \"Application Mail.Read\" in a management scope covering the test mailbox"};
+// The test mailbox: Exchange Online RBAC for applications, not a Graph
+// application permission. ReadWrite since W3.4: the Cleaner deletes there; the
+// readers rely on the same assignment.
+inline constexpr Grant kMailGrant{
+    "Exchange RBAC \"Application Mail.ReadWrite\" in a management scope covering the test "
+    "mailbox"};
 // Reading the test site's RestoreTarget library.
 inline constexpr Grant kSitesReadGrant{"Sites.Selected read on the test site"};
-// Reading the test OneDrive folder (a grant on that folder only).
-inline constexpr Grant kOneDriveReadGrant{
-    "Files.SelectedOperations.Selected read on the test OneDrive folder"};
+// The test OneDrive folder (a grant on that folder only): write since W3.4, for
+// the Cleaner; the readers rely on the same grant.
+inline constexpr Grant kOneDriveGrant{
+    "Files.SelectedOperations.Selected write on the test OneDrive folder"};
+// Deleting in the test site's RestoreTarget library (a grant on that list
+// only, W3.4); listing it still relies on kSitesReadGrant.
+inline constexpr Grant kListWriteGrant{
+    "Lists.SelectedOperations.Selected write on the test library"};
+
+// Sent as Prefer on every mail call, as the seeder does (lab/README.md,
+// "text-v1"): bodies as text, IDs that survive a move. GraphClient::remove
+// sends it with a mail's permanentDelete, so the listed ImmutableId is read as
+// one.
+inline constexpr std::string_view kMailPrefer =
+    "outlook.body-content-type=\"text\", IdType=\"ImmutableId\"";
 
 // The only headers a caller may add (any case). Everything else, Authorization
 // included, is the client's own.
@@ -97,6 +112,64 @@ struct GraphClientOptions {
     std::function<double()> jitter;
     // Per request, as HttpRequest::timeout; above 0.
     std::chrono::milliseconds timeout = kDefaultHttpTimeout;
+};
+
+class Cleaner;
+
+// An item the Cleaner listed in a restore target, the one thing
+// GraphClient::remove deletes (docs/decisions.md 2026-10-02, W3.4 point 3):
+// a mail in the test mailbox (its address and the message's ImmutableId) or a
+// file in the RestoreTarget library or the test OneDrive folder (the drive, the
+// item ID and the eTag it was listed with). Only the Cleaner can make one, and
+// only from its own listing under a target it resolved; a source scan in
+// tests/graph_client_test.cpp keeps the name out of every other Worker file.
+class ListedItem {
+public:
+    enum class Kind { mail, file };
+
+    Kind kind() const noexcept { return kind_; }
+    // The mailbox's address, or the drive ID.
+    const std::string& container() const noexcept { return container_; }
+    const std::string& id() const noexcept { return id_; }
+    // Files: the eTag sent as If-Match. Mail: empty.
+    const std::string& etag() const noexcept { return etag_; }
+    // What the delete relies on: kMailGrant, kListWriteGrant or kOneDriveGrant.
+    const Grant& grant() const noexcept { return *grant_; }
+
+private:
+    friend class Cleaner;
+
+    ListedItem(Kind kind, std::string container, std::string id, std::string etag,
+               const Grant& grant)
+        : kind_(kind), container_(std::move(container)), id_(std::move(id)),
+          etag_(std::move(etag)), grant_(&grant)
+    {
+    }
+    static ListedItem mail(std::string mailbox, std::string id)
+    {
+        return {Kind::mail, std::move(mailbox), std::move(id), {}, kMailGrant};
+    }
+    static ListedItem library_file(std::string drive, std::string id, std::string etag)
+    {
+        return {Kind::file, std::move(drive), std::move(id), std::move(etag), kListWriteGrant};
+    }
+    static ListedItem onedrive_file(std::string drive, std::string id, std::string etag)
+    {
+        return {Kind::file, std::move(drive), std::move(id), std::move(etag), kOneDriveGrant};
+    }
+
+    Kind kind_;
+    std::string container_;
+    std::string id_;
+    std::string etag_;
+    const Grant* grant_;
+};
+
+// What became of a ListedItem GraphClient::remove was asked to delete.
+enum class RemoveOutcome {
+    removed, // 204
+    gone,    // 404 itemNotFound / ErrorItemNotFound: not there (any more)
+    changed, // 412: the file changed since it was listed; nothing was deleted
 };
 
 // The resends one call makes for 401s while other calls keep replacing the
@@ -232,6 +305,50 @@ public:
     std::optional<nlohmann::json> find_json(std::string_view path_or_url, const Grant& grant,
                                             const HttpHeaders& headers = {});
 
+    // Deletes `item` (W3.4; only the Cleaner can make one). The path is built
+    // here, from the item alone, in one of two shapes:
+    //  - a mail: POST /users/{mailbox}/messages/{id}/permanentDelete, bodiless,
+    //    with Prefer: kMailPrefer (the ID is an ImmutableId). The mail goes to
+    //    Recoverable Items/Purges, never to Deleted Items;
+    //  - a file: DELETE /drives/{drive}/items/{id} with If-Match: the eTag it
+    //    was listed with. The file goes to the site recycle bin.
+    // An item whose container, ID or eTag can't go into the path or a header
+    // is a GraphError before anything is sent. Everything else as get(): the
+    // URL checks, 401, 403 (a PermissionError naming item.grant()), the
+    // retries (a write is retried like a GET: a resent permanentDelete or
+    // If-Match DELETE of the same ID can only answer 204, 404 or 412, or a
+    // mail's 403 ErrorCannotDeleteObject, below) and the
+    // messages, which name the method.
+    //  - 204: removed. Any other 2xx or a 3xx is a GraphError.
+    //  - 404 with Graph's itemNotFound or ErrorItemNotFound: gone. Any other
+    //    404 Graph explains (names_missing_container's codes included: a
+    //    missing mailbox) is a NotFoundError; one it doesn't, a GraphError.
+    //  - 412, for a file: changed. For a mail, a GraphError.
+    //  - 403 ErrorCannotDeleteObject, for a mail: what Exchange answers a
+    //    permanentDelete of a message already purged (a resend whose first
+    //    answer was lost; seen live, W3.4 build notes point 15). One check
+    //    follows, is the message gone, at most three GETs with Prefer:
+    //    kMailPrefer, every path built here from the item's mailbox and ID
+    //    alone, no loop: GET /users/{mailbox}/messages/{id}?$select=id,
+    //    parentFolderId; only if that answers 200, GET /users/{mailbox}/
+    //    mailFolders/recoverableitemspurges?$select=id; only if that doesn't
+    //    match, GET /users/{mailbox}/mailFolders/inbox?$select=id. Gone is a
+    //    positive answer only: the message's 404 with itemNotFound or
+    //    ErrorItemNotFound (no folder GET), or a non-empty string
+    //    parentFolderId equal, byte for byte, to the Purges folder's
+    //    non-empty string id (a purged message still answers by its ID, from
+    //    Purges, seen live; the Inbox not asked). Equal to the Inbox's id: the
+    //    PermissionError naming item.grant() stands. Equal to neither (moved
+    //    to another folder, an ID in another form): a GraphError, the message
+    //    "in another folder of the mailbox", never gone. Anything else fails
+    //    closed too: any GET's own error (its 403, 5xx after the retries, a
+    //    404 of a folder or naming a missing mailbox), any other status a
+    //    GraphError ("where 200 or 404 was expected" for the message, "where
+    //    200 was expected" for a folder), and a reply that isn't a JSON
+    //    object or has no such ID a GraphError. Any other 403, and every 403
+    //    for a file, is the PermissionError with no GET.
+    RemoveOutcome remove(const ListedItem& item);
+
 private:
     struct Token {
         std::string access;
@@ -261,15 +378,32 @@ private:
     // a stored token clears it.
     void fetch_token_locked(std::chrono::milliseconds& waited);
     void store_token_locked(const HttpResponse& response);
-    // get() and find(): with `item_lookup`, a 404 Graph explains that
-    // doesn't name a missing mailbox or user is nullopt.
-    std::optional<HttpResponse> send_get(std::string_view path_or_url, const Grant& grant,
-                                         bool item_lookup, const HttpHeaders& headers,
-                                         std::optional<std::uint64_t> max_body_bytes);
+    // How send() reads a 404 and a 412.
+    enum class Mode {
+        get,    // get(): a 404 is a NotFoundError
+        find,   // find(): a 404 Graph explains that doesn't name a missing
+                // mailbox or user is nullopt
+        remove, // remove(): a 404 itemNotFound/ErrorItemNotFound is nullopt, a
+                // 412 is returned
+    };
+    // One call of `method` (see get() and remove()). `caller_headers` are
+    // checked as get() says; `own_headers` are the client's own for this call
+    // (remove()'s If-Match and Prefer), each value checked for control
+    // characters. Both are checked before anything is sent.
+    std::optional<HttpResponse> send(HttpMethod method, std::string_view path_or_url,
+                                     const Grant& grant, Mode mode,
+                                     const HttpHeaders& caller_headers,
+                                     const HttpHeaders& own_headers,
+                                     std::optional<std::uint64_t> max_body_bytes);
+    // remove()'s check after a mail's 403 ErrorCannotDeleteObject: true if
+    // the message is gone (not found, or in Recoverable Items' Purges), false
+    // if it is still in the Inbox; anything else throws (see remove()).
+    bool purged_or_gone(const ListedItem& item);
     // The body of a response get() or find() returned, as a JSON object.
     static nlohmann::json json_body(std::string_view path_or_url, const HttpResponse& response);
-    // One GET of `url` with `token` and the caller's `headers`, one attempt.
-    HttpRequest api_request(const std::string& url, const std::string& token,
+    // One `method` request of `url` with `token` and `headers`, one attempt,
+    // bodiless.
+    HttpRequest api_request(HttpMethod method, const std::string& url, const std::string& token,
                             const HttpHeaders& headers,
                             std::optional<std::uint64_t> max_body_bytes) const;
     // One token request with a new assertion.

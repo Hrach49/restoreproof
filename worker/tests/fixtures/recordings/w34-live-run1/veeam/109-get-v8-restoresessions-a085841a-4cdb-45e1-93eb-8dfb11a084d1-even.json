@@ -1,0 +1,113 @@
+{
+  "source": "rpworker 0.0.0 restore --record",
+  "request": "GET /v8/RestoreSessions/a085841a-4cdb-45e1-93eb-8dfb11a084d1/Events?limit=1000&offset=0",
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8"
+  },
+  "body": {
+    "offset": 0,
+    "limit": 1000,
+    "_links": {
+      "self": {
+        "href": "/v8/RestoreSessions/a085841a-4cdb-45e1-93eb-8dfb11a084d1/Events?offset=0&limit=1000"
+      }
+    },
+    "results": [
+      {
+        "itemSizeBytes": 0,
+        "id": "3ba9438d-4809-464d-9253-31f3eb1aa076",
+        "type": "None",
+        "status": "Success",
+        "startTime": "2026-10-02T18:04:13.6641956Z",
+        "endTime": "2026-10-02T18:04:13.6641956Z",
+        "duration": "00:00:00",
+        "title": "Restore session started",
+        "message": "Restore session started",
+        "order": 0,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/a085841a-4cdb-45e1-93eb-8dfb11a084d1/events/3ba9438d-4809-464d-9253-31f3eb1aa076"
+          },
+          "restoreSession": {
+            "href": "/v8/restoresessions/a085841a-4cdb-45e1-93eb-8dfb11a084d1"
+          }
+        }
+      },
+      {
+        "itemName": "sub",
+        "itemType": "IPM.Note",
+        "itemSizeBytes": 12438,
+        "source": "Hrachya Harutyunyan\\Sent Items",
+        "target": "restoretest@RestoreProofLab.onmicrosoft.com\\<null>\\Inbox",
+        "id": "92eb830d-b246-07d7-f464-8e2d7eb62afc",
+        "type": "Restore",
+        "status": "Success",
+        "startTime": "2026-10-02T18:04:37.2494677Z",
+        "endTime": "2026-10-02T18:04:37.2764722Z",
+        "duration": "00:00:00.0270045",
+        "title": "Message successfully restored",
+        "message": "Item sub was restored successfully (type: IPM.Note; source: Hrachya Harutyunyan\\Sent Items; target: restoretest@RestoreProofLab.onmicrosoft.com\\<null>\\Inbox)",
+        "order": 1,
+        "organizationId": "ff96d072-29e2-4cb4-a155-2590f5473176",
+        "backedUpOrganizationId": "RestoreProofLab.onmicrosoft.com:00000000-0000-0000-0000-000000000000:00000000-0000-0000-0000-000000000000",
+        "userId": "RestoreProofLab.onmicrosoft.com:00000000-0000-0000-0000-000000000000:00000000-0000-0000-0000-000000000000:533138fa-6982-4fd2-a8b1-593d3f655d32:00000000-0000-0000-0000-000000000000",
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/a085841a-4cdb-45e1-93eb-8dfb11a084d1/events/92eb830d-b246-07d7-f464-8e2d7eb62afc"
+          },
+          "restoreSession": {
+            "href": "/v8/restoresessions/a085841a-4cdb-45e1-93eb-8dfb11a084d1"
+          }
+        }
+      },
+      {
+        "itemName": "RestoreProof W2.2 second mail 3n5w",
+        "itemType": "IPM.Note",
+        "itemSizeBytes": 12580,
+        "source": "Hrachya Harutyunyan\\Sent Items",
+        "target": "restoretest@RestoreProofLab.onmicrosoft.com\\<null>\\Inbox",
+        "id": "88c4d733-ceee-c157-33d2-1e020dd4f979",
+        "type": "Restore",
+        "status": "Success",
+        "startTime": "2026-10-02T18:04:37.2901574Z",
+        "endTime": "2026-10-02T18:04:37.3237094Z",
+        "duration": "00:00:00.0335520",
+        "title": "Folder successfully restored",
+        "message": "Item RestoreProof W2.2 second mail 3n5w was restored successfully (type: IPM.Note; source: Hrachya Harutyunyan\\Sent Items; target: restoretest@RestoreProofLab.onmicrosoft.com\\<null>\\Inbox)",
+        "order": 2,
+        "organizationId": "ff96d072-29e2-4cb4-a155-2590f5473176",
+        "backedUpOrganizationId": "RestoreProofLab.onmicrosoft.com:00000000-0000-0000-0000-000000000000:00000000-0000-0000-0000-000000000000",
+        "userId": "RestoreProofLab.onmicrosoft.com:00000000-0000-0000-0000-000000000000:00000000-0000-0000-0000-000000000000:533138fa-6982-4fd2-a8b1-593d3f655d32:00000000-0000-0000-0000-000000000000",
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/a085841a-4cdb-45e1-93eb-8dfb11a084d1/events/88c4d733-ceee-c157-33d2-1e020dd4f979"
+          },
+          "restoreSession": {
+            "href": "/v8/restoresessions/a085841a-4cdb-45e1-93eb-8dfb11a084d1"
+          }
+        }
+      },
+      {
+        "itemSizeBytes": 0,
+        "id": "9486eb48-ef20-4920-b5e1-69459b652c69",
+        "type": "None",
+        "status": "Success",
+        "startTime": "2026-10-02T18:04:42.4432898Z",
+        "endTime": "2026-10-02T18:04:42.4432898Z",
+        "duration": "00:00:00",
+        "title": "Restore session completed",
+        "message": "Restore session completed",
+        "order": 3,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/a085841a-4cdb-45e1-93eb-8dfb11a084d1/events/9486eb48-ef20-4920-b5e1-69459b652c69"
+          },
+          "restoreSession": {
+            "href": "/v8/restoresessions/a085841a-4cdb-45e1-93eb-8dfb11a084d1"
+          }
+        }
+      }
+    ]
+  }
+}

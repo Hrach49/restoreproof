@@ -1,0 +1,16 @@
+{
+  "source": "hand-written: W3.4, in the shape of mailbox-inbox-403-exchange.json: a permanentDelete refused while the Exchange role is still Application Mail.Read (or cached). Kept hand-written: with the W3.4 grants in place no live run can be refused (recordings/w34-live-run1/)",
+  "request": "POST /v1.0/users/restoretest@RestoreProofLab.onmicrosoft.com/messages/<message id>/permanentDelete",
+  "status": 403,
+  "headers": {
+    "Content-Type": "application/json; odata.metadata=minimal; odata.streaming=true; IEEE754Compatible=false; charset=utf-8",
+    "request-id": "00000000-0000-4000-8000-000000003406",
+    "client-request-id": "00000000-0000-4000-8000-000000003406"
+  },
+  "body": {
+    "error": {
+      "code": "ErrorAccessDenied",
+      "message": "Access is denied. Check credentials and try again."
+    }
+  }
+}

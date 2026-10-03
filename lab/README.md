@@ -2,7 +2,8 @@
 
 `lab/` holds the test tenant's notes (`tenant.md`) and the seeder, a small Python tool that
 puts 40 known items into the tenant and records what they look like in
-`lab/seed-manifest.json`.
+`lab/seed-manifest.json`. It also puts real, non-canary files and mails there for the
+sampler's random half (`seed-real`, L1.8, below).
 
 ## What the canary set is
 
@@ -26,7 +27,7 @@ changes a mail body, the manifest records the changed bytes and also says that t
 | Path | What |
 |---|---|
 | `pyproject.toml`, `uv.lock`, `.python-version` | Its own uv project (Python 3.12). Runtime: msal, requests, jsonschema, cryptography. Dev only: pytest and the readers the tests use to open the files (python-docx, openpyxl, pypdf, pillow) |
-| `seeder/` | The tool: `catalog.py` (the 40 items and where they go), `tenant.py` (tenant IDs, copied from `tenant.md`), `generate.py`, `normalize.py`, `manifest.py`, `auth.py`, `graph.py`, `transport.py`, `seed.py`, `verify.py`, `cli.py`; `worker_app.py` is `check-worker-app` (L1.5); `graph_fixtures.py` is `record-graph-fixtures` (W2.1, and W2.2's restore-target states) |
+| `seeder/` | The tool: `catalog.py` (the 40 items and where they go), `tenant.py` (tenant IDs, copied from `tenant.md`), `generate.py`, `normalize.py`, `manifest.py`, `auth.py`, `graph.py`, `transport.py`, `seed.py`, `verify.py`, `cli.py`; `seed_real.py` is `seed-real` (L1.8); `worker_app.py` is `check-worker-app` (L1.5); `graph_fixtures.py` is `record-graph-fixtures` (W2.1, and W2.2's restore-target states) |
 | `tests/` | pytest, one file per module, against a fake in-memory Graph tenant. No network |
 | `entra/new-worker-app.ps1` | Creates or updates the RestoreProof Worker app registration and its grants (L1.5), below |
 | `entra/check-worker-grants.ps1` | Read-only: lists the SharePoint and OneDrive grants and checks the Worker app holds none at a canary and its write grants on the two file restore targets (W3.4), below |
@@ -227,6 +228,7 @@ uv run python -m seeder generate      # write the 20 files into canary/
 uv run python -m seeder hash          # offline check: canary/ and the manifest agree (L1.2's Done when)
 uv run python -m seeder seed          # live: put the 40 items in the tenant, write seed-manifest.json
 uv run python -m seeder verify        # live: re-read the 40 items and compare with the manifest
+uv run python -m seeder seed-real     # live: put real, non-canary files and mails in the tenant (L1.8)
 uv run python -m seeder check-worker-app  # live: what the Worker app can and can't reach (L1.5, W3.4)
 uv run python -m seeder record-graph-fixtures  # live: re-record worker/tests/fixtures/graph/ (W2.1)
 uv run python -m seeder record-graph-fixtures --state empty  # live: the restore targets, empty (W2.2)
@@ -238,6 +240,7 @@ uv run python -m seeder record-graph-fixtures --state empty  # live: the restore
 | `hash` | no | Checks that `seed-manifest.json` exists, is valid JSON and matches the schema; has exactly 40 entries whose ids, kinds and order match the catalog; that each file in `canary/` has the recorded `local_sha256` and `local_size` and that `stored_matches_local` is consistent; that each mail's `sent_body_sha256` equals the text-v1 hash of the catalog body and its subject and recipient match the catalog. Prints one line per entry and a summary (`40/40 entries reproduce the manifest hashes`) | 0 all reproduce; 1 any difference (each message names the entry, expected and actual); 2 manifest missing, unreadable or invalid (wrong count, order or schema) |
 | `seed` | yes | Signs in three times, sends the missing mails, uploads the missing files, reads all 40 back and writes the manifest. Step by step below | 0 manifest written; 1 a problem the output explains (missing canary file, duplicate subject, mail timeout); 2 sign-in or Graph error. No manifest is written unless it exits 0 |
 | `verify` | yes | Re-reads every item by its Graph id as the account that owns it (alice: mails 0001–0010 and the OneDrive files; bob: mails 0011–0020; admin: the SharePoint files). Compares subject, sender (case-insensitive), sent and received dates, `internet_message_id` and `body_sha256`; for files name and `content_sha256` by `content_rule` (and size for `bytes` files); an Office file whose bytes changed but whose content didn't is `ok`, with a note. Prints `ok`, `DIFF` or `MISSING` per entry and a summary (`40/40 entries in the tenant match the manifest`) | 0 all ok; 1 any DIFF or MISSING; 2 manifest missing or invalid, or a sign-in or Graph error |
+| `seed-real` | yes | Signs in three times (admin, alice, bob), finds and checks its two places, then uploads 7 files to the root of the RestoreTest site's default drive and 7 to the root of alice's OneDrive, and sends 6 mails each way between alice and bob. Never replaces a file or sends a subject twice. Details in "Real data for the random sample" below | 0 done; 1 a rule or a place refused (the output says which), nothing uploaded or sent; 2 manifest missing or invalid, a send refused (nothing uploaded or sent), or a sign-in or Graph error |
 | `check-worker-app` | yes | Signs in as the RestoreProof Worker app with its certificate (PFX from `--pfx`, default `%LOCALAPPDATA%\RestoreProof\lab\worker-graph.pfx`; password from Credential Manager). Checks the Graph token's roles are exactly `Files.SelectedOperations.Selected`, `Lists.SelectedOperations.Selected` and `Sites.Selected` and that its Exchange Online and SharePoint tokens carry none, signs in as alice (the seeder app) to confirm her canary folder exists, then sends one request per probe and prints `ok` or `UNEXPECTED` per row with the expected and actual status (the probe table is in `docs/security/graph-permissions.md`). Writes only W3.4's probes in the three restore targets, below; at a canary it sends nothing but GETs (the write refusal there is `entra/check-worker-grants.ps1`'s) | 0 all as expected; 1 anything unexpected; 2 a missing or unusable credential, or a sign-in error (the app's or alice's) |
 | `record-graph-fixtures` | yes | Records the Graph and Entra replies the Worker's GraphClient tests replay (W2.1) into `--out`, default `worker/tests/fixtures/graph/`. Signs in as the RestoreProof Worker app the way the Worker does: its own client assertion (PS256, header `x5t#S256`), certificate and password as for `check-worker-app`. Then sends six more token requests that must fail (an assertion signed by an unknown key, an unknown certificate, app and tenant, one expired and one not yet valid by an hour) and seven GETs (the restoretest inbox, alice's inbox, the tenant root site, `/users`, a bad and a missing token, an unknown user). Prints one line per file with the status and error code. With `--state empty\|one-item\|paged` (W2.2) it records the three restore targets instead, read the way the Worker's `TargetReader` reads them. Only reads. Details below | 0 all of the state's files written; 1 a reply had another status than its file name says, or not the content its state needs, nothing written; 2 a missing or unusable credential, a failed sign-in, a network error, a reply that holds something secret-looking, or a request that needs an item or link an earlier reply didn't give, nothing written |
 
@@ -247,14 +250,14 @@ Options:
 
 | Option | Commands | Meaning |
 |---|---|---|
-| `--client-id <id>` | `seed`, `verify` | The seeder app's client ID. Order: this option, then `RP_LAB_CLIENT_ID`, then `SEEDER_CLIENT_ID` in `seeder/tenant.py`. If all are empty the tool stops and points here |
+| `--client-id <id>` | `seed`, `seed-real`, `verify` | The seeder app's client ID. Order: this option, then `RP_LAB_CLIENT_ID`, then `SEEDER_CLIENT_ID` in `seeder/tenant.py`. If all are empty the tool stops and points here |
 | `--client-id <id>` | `check-worker-app` | The Worker app's client ID. Order: this option, then `RP_LAB_WORKER_CLIENT_ID`, then `WORKER_CLIENT_ID` in `seeder/tenant.py` |
 | `--client-id <id>` | `record-graph-fixtures` | As for `check-worker-app` |
 | `--pfx <path>` | `check-worker-app`, `record-graph-fixtures` | The Worker app's certificate, if not in the default place |
 | `--out <dir>` | `record-graph-fixtures` | Where to write the fixtures (default `worker/tests/fixtures/graph/` in the repo). Existing files of the same names are replaced; other files are left alone |
 | `--state auth\|empty\|one-item\|paged` | `record-graph-fixtures` | Which fixtures: `auth` (default) the 14 of W2.1; the others the restore targets in that state (W2.2), see below |
 | `--seeder-client-id <id>` | `check-worker-app` | The seeder app's client ID, for alice's sign-in. Same order as `--client-id` for `seed` |
-| `--auth browser\|device` | `seed`, `verify`, `check-worker-app` | `browser` (default) opens a browser window for each sign-in. `device` prints a code to enter at https://microsoft.com/devicelogin instead |
+| `--auth browser\|device` | `seed`, `seed-real`, `verify`, `check-worker-app` | `browser` (default) opens a browser window for each sign-in. `device` prints a code to enter at https://microsoft.com/devicelogin instead |
 | `--force` | `seed` | Send every mail again and replace every file, even if it is already there |
 | `--mail-timeout <seconds>` | `seed` | How long to wait for sent mails to arrive (default 600) |
 | `--canary-dir`, `--manifest` | all that use them | Other paths than `canary/` and `seed-manifest.json` (tests use these) |
@@ -523,6 +526,97 @@ subjects and the mailbox, and writes no manifest.
 files whose stored bytes differ from the local file (with both sizes), mails whose read-back
 body differs from what was sent (exactly, and after normalisation), mails in a folder other
 than Inbox, and a reminder that the Veeam backup (L1.3) must run after the seed.
+
+## Real data for the random sample (L1.8)
+
+The Worker's sampler takes half of each type from the canaries and half at random from real
+data (W2.6). The lab had no real files, so a run of 10 per type got 20 of 30 items: the random
+SharePoint and OneDrive halves were empty, and the random mail half depended on the folders
+drawn. `seed-real` fills that gap (`docs/decisions.md` 2026-10-03, W3.6 point 2; issue #152).
+It writes no manifest: the Worker takes a random item's expected values from Veeam.
+
+What it puts where (the names are in `lab/tenant.md`, "Real data for the random sample"):
+
+- **SharePoint:** 7 files in the root of the RestoreTest site's default drive (its
+  "Documents" library, `Shared Documents`), uploaded by the admin. No subfolders, so the
+  sampler sees the site as one unit holding all 7.
+- **OneDrive:** 7 files in the root of alice's OneDrive, in no folder, uploaded by alice.
+- **Mail:** 6 mails from alice to bob and 6 from bob to alice, each sent by its sender. Each
+  is then in the backup twice under one subject (Sent Items and Inbox). The sampler skips a
+  subject it has already taken, so 12 sends give 12 subjects.
+
+The run has six steps. Steps 1 to 3 only read; steps 4 to 6 write, with the sign-ins of
+steps 1 to 3 still cached:
+
+1. **admin.** Reads the RestoreTest site's default drive and its root folder, and checks them.
+2. **alice.** Reads her OneDrive and its root folder, and checks them. Looks for the 12
+   subjects in her mailbox.
+3. **bob.** Looks for the 12 subjects in his mailbox.
+4. **admin.** Uploads the SharePoint files.
+5. **alice.** Uploads the OneDrive files and sends her 6 mails to bob.
+6. **bob.** Sends his 6 mails to alice.
+
+**Where it refuses to write.** The seeder app's delegated scopes include
+`Sites.ReadWrite.All`, and `graph.upload_file` writes wherever it is pointed. So `seed-real`
+finds its places itself and checks them before any upload or send. It stops with
+`refused: ...` and exit 1, nothing written, when:
+
+- a drive is the RestoreTarget library's or the RestoreTest (canary) library's, by the drive
+  IDs in `lab/tenant.md` (compared ignoring case);
+- a drive is named `RestoreTarget` or `RestoreTest`, in any case;
+- a root folder is the OneDrive `RestoreTarget` or `RestoreTest` folder, by the item IDs in
+  `lab/tenant.md`;
+- a root folder has no `root` facet, so it is not a drive's root;
+- `/me/drive` signed in as alice is not her OneDrive's drive ID in `lab/tenant.md`.
+
+The sends are checked again, whatever the plan said: a mail goes only from alice to bob or
+from bob to alice, never to `restoretest@` or anyone else. Every mail is checked after step 3,
+before the first upload, and each again at its send. A mail that breaks this stops the run
+(`error: refused to send ...`, exit 2), nothing uploaded or sent.
+
+**The plan's rules.** Checked against `lab/seed-manifest.json` before any sign-in; a plan
+that breaks one stops with exit 1:
+
+- every name and subject is printable ASCII, with no space at either end, and not empty;
+- none contains `/`, `\` or `:`;
+- none starts with `rp-canary-`, in any case (the Worker's lister skips those);
+- none has the same name key as a canary file name or mail subject in the manifest;
+- names and subjects are distinct by name key within their type. The key is upper case: the
+  Worker's `name_key` for ASCII, the same rule SharePoint and OneDrive use for "the same
+  name";
+- files are txt, pdf, png, docx or xlsx, each under 1 MiB;
+- mails go from alice or bob, to the other one.
+
+**The files.** Made at run time, deterministically, through the canary generators
+(`generate.py`, standard library only, nothing compressed), so their bytes never differ from
+run to run. Mostly txt, pdf and png: the Worker compares their size with Veeam's. One xlsx in
+SharePoint and one docx in OneDrive, whose names alone are compared (SharePoint rewrites
+Office files). The xlsx's sheet is named `Sheet1`, not `Canary`, and the txt files carry no
+canary footer: no file calls itself a canary. Nothing is written to disk.
+
+**Running it again.** Safe. A file already in its place is not uploaded again ("already
+there, not replaced"), and uploads use `@microsoft.graph.conflictBehavior=fail`, so a file
+that appears meanwhile is never replaced either. A mail whose subject is already in alice's
+or bob's mailbox is not sent again. Copies in Deleted Items don't count. There is no
+`--force`. To change a file, delete it in the tenant first. A 409 counts as "already there"
+only when a re-read finds the file; otherwise it is an error (exit 2).
+
+**When the outcome is unknown.** An upload or a send that got no answer, or a 502, 503 or 504,
+is never sent again: Graph may have done it. The run stops (exit 2) and says to run `seed-real`
+again, which finds the file uploaded or the mail in Sent Items and doesn't write it twice.
+
+**Mail delivery** is not waited for: Exchange delivers within minutes, and the dry run below
+shows what the backup holds.
+
+**After seeding.**
+
+1. Run a Veeam backup: the nightly `RP-Lab-Full` job, or start it by hand.
+2. Run the read-only `[live][sample]` dry run (`docs/testing.md`, "Live sample") with a chosen
+   `RP_LIVE_RUN_ID` against the new restore point. Per type, `sample.<type>.random.pool_size`
+   must be at least 5 distinct names or subjects, and `containers_eligible` as expected.
+3. W3.6's Done-when run reuses both, since the pool depends on the run ID and the restore
+   point: `rpworker test --mail 10 --sp 10 --od 10 --run-id <the dry run's RP_LIVE_RUN_ID>
+   --point <its restore point ID>`.
 
 ## Mail body hash: normalisation rule `text-v1`
 

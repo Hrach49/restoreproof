@@ -9,6 +9,12 @@ fake answers them from `app_grants`, the resources the app was granted, the way 
 in the lab: 200 on a granted resource, 403 on any other one, and 404 on items a folder grant
 masks. APP_GRANTS is what L1.5 and W3.4 grant.
 
+Delegated drive lookups (seed-real, L1.8): a site's default drive (`/sites/{id}/drive`), the
+signed-in user's own drive (`/me/drive`), and a drive's root folder (`/drives/{id}/root`,
+`/me/drive/root`) come from `site_drive`, `my_drive`, `drive_names` and `drive_roots`, so a test can
+point any of them somewhere else. The RestoreTest site's default drive is its "Documents" library,
+SITE_DOCUMENTS_DRIVE_ID, reachable by the admin. A sendMail saves a copy in the sender's Sent Items.
+
 App-only writes (W3.4's probes, in the restore targets only) follow the same grants: a file
 uploaded into, or an item deleted in, a folder the app may write; a draft created in, or
 permanently deleted from, a mailbox it may write. Without write: 403 where the app may read, 404
@@ -36,6 +42,10 @@ from tests.office_fakes import sharepoint_rewrite
 
 BASE_TIME = datetime(2026, 9, 25, 10, 0, 0, tzinfo=timezone.utc)
 SHAREPOINT_ROOT_ID = "01SPROOTFOLDERREALID"
+# The RestoreTest site's default "Documents" library and the drives' root folders (seed-real, L1.8).
+SITE_DOCUMENTS_DRIVE_ID = "b!FAKERESTORETESTSITEDOCUMENTSDRIVE"
+SITE_DOCUMENTS_ROOT_ID = "01SITEDOCSROOTREALID"
+ONEDRIVE_ROOT_ID = "01ALICEONEDRIVEROOTREALID"
 
 _ITEM_BY_PATH = re.compile(r"^/drives/([^/]+)/items/([^/:]+):/([^/:]+):(/content)?$")
 _ITEM_BY_ID = re.compile(r"^/drives/([^/]+)/items/([^/:]+)(/content)?$")
@@ -48,6 +58,8 @@ _DRIVE = re.compile(r"^/drives/([^/]+)(?:/(root|items/[^/]+)(/children)?)?$")
 _APP_UPLOAD = re.compile(r"^/drives/([^/]+)/items/([^/:]+):/([^/:]+):/content$")
 _APP_ITEM = re.compile(r"^/drives/([^/]+)/items/([^/:]+)$")
 _APP_PERMANENT_DELETE = re.compile(r"^/users/([^/]+)/messages/([^/]+)/permanentDelete$")
+_SITE_DRIVE = re.compile(r"^/sites/([^/]+)/drive$")
+_DRIVE_ROOT = re.compile(r"^/drives/([^/]+)/root$")
 
 # Grant keys: "mailbox:<upn lower>", "site:<site id>", "folder:<drive id>/<item id>", "directory";
 # W3.4's writes: "mailbox-write:<upn lower>", "list-write:<drive id>" (a library's whole list),
@@ -128,16 +140,40 @@ class FakeTenant:
         self.item_names = dict(ITEM_NAMES)
         self.drive_access = dict(
             drive_access
-            or {tenant.SHAREPOINT_DRIVE_ID: tenant.ADMIN_UPN, tenant.ONEDRIVE_DRIVE_ID: tenant.ALICE_UPN}
+            or {
+                tenant.SHAREPOINT_DRIVE_ID: tenant.ADMIN_UPN,
+                tenant.ONEDRIVE_DRIVE_ID: tenant.ALICE_UPN,
+                SITE_DOCUMENTS_DRIVE_ID: tenant.ADMIN_UPN,
+            }
         )
         self.drives = {
             tenant.SHAREPOINT_DRIVE_ID: FakeDrive(
                 tenant.SHAREPOINT_DRIVE_ID, "sharepoint", {"root": SHAREPOINT_ROOT_ID, SHAREPOINT_ROOT_ID: SHAREPOINT_ROOT_ID}
             ),
             tenant.ONEDRIVE_DRIVE_ID: FakeDrive(
-                tenant.ONEDRIVE_DRIVE_ID, "onedrive", {tenant.ONEDRIVE_FOLDER_ID: tenant.ONEDRIVE_FOLDER_ID}
+                tenant.ONEDRIVE_DRIVE_ID,
+                "onedrive",
+                {tenant.ONEDRIVE_FOLDER_ID: tenant.ONEDRIVE_FOLDER_ID, ONEDRIVE_ROOT_ID: ONEDRIVE_ROOT_ID},
+            ),
+            SITE_DOCUMENTS_DRIVE_ID: FakeDrive(
+                SITE_DOCUMENTS_DRIVE_ID, "sharepoint", {SITE_DOCUMENTS_ROOT_ID: SITE_DOCUMENTS_ROOT_ID}
             ),
         }
+        # Delegated drive lookups (seed-real): what each answers.
+        self.site_drive = {tenant.SHAREPOINT_SITE_ID: SITE_DOCUMENTS_DRIVE_ID}  # site id -> default drive
+        self.my_drive = {tenant.ALICE_UPN.lower(): tenant.ONEDRIVE_DRIVE_ID}  # upn lower -> own drive
+        self.drive_names = {
+            SITE_DOCUMENTS_DRIVE_ID: "Documents",
+            tenant.SHAREPOINT_DRIVE_ID: "RestoreTest",
+            tenant.RESTORE_TARGET_DRIVE_ID: "RestoreTarget",
+            tenant.ONEDRIVE_DRIVE_ID: "OneDrive",
+        }
+        self.drive_roots = {
+            SITE_DOCUMENTS_DRIVE_ID: SITE_DOCUMENTS_ROOT_ID,
+            tenant.SHAREPOINT_DRIVE_ID: SHAREPOINT_ROOT_ID,
+            tenant.ONEDRIVE_DRIVE_ID: ONEDRIVE_ROOT_ID,
+        }
+        self.not_root: set[str] = set()  # root ids answered as a plain folder, without the "root" facet
         self.mailboxes: dict[str, list[dict]] = {}  # lower-case upn -> messages
         self.folders: dict[str, str] = {}  # folder id -> display name
         self.pending: list[dict] = []  # {"recipient", "message", "remaining"}
@@ -200,10 +236,11 @@ class FakeTenant:
                 return item_id, item
         return None
 
-    def put_item(self, drive_id: str, name: str, data: bytes) -> str:
-        """Put a file straight into a drive's canary folder."""
+    def put_item(self, drive_id: str, name: str, data: bytes, *, parent: str | None = None) -> str:
+        """Put a file straight into a drive's canary folder, or into `parent`."""
         drive = self.drives[drive_id]
-        parent = SHAREPOINT_ROOT_ID if drive.kind == "sharepoint" else tenant.ONEDRIVE_FOLDER_ID
+        if parent is None:
+            parent = SHAREPOINT_ROOT_ID if drive.kind == "sharepoint" else tenant.ONEDRIVE_FOLDER_ID
         found = self.item(drive_id, name)
         item_id = found[0] if found else self._next_id("01FAKEITEM")
         drive.items[item_id] = {"name": name, "parent": parent, "data": data, "modified": _iso(self._tick(), True)}
@@ -246,6 +283,25 @@ class FakeTenant:
             if m.group(1) not in self.folders:
                 return graph_error(404, "ErrorItemNotFound", "folder not found")
             return json_response(200, {"id": m.group(1), "displayName": self.folders[m.group(1)]})
+        if (m := _SITE_DRIVE.match(path)) and method == "GET":
+            self.calls["site_drive"] += 1
+            drive_id = self.site_drive.get(m.group(1))
+            if drive_id is None:
+                return graph_error(404, "itemNotFound", "site not found")
+            return json_response(200, self._drive_info(drive_id))
+        if path == "/me/drive" and method == "GET":
+            self.calls["my_drive"] += 1
+            drive_id = self.my_drive.get(account.lower())
+            if drive_id is None:
+                return graph_error(404, "itemNotFound", "drive not found")
+            return json_response(200, self._drive_info(drive_id))
+        if path == "/me/drive/root" and method == "GET":
+            drive_id = self.my_drive.get(account.lower())
+            if drive_id is None:
+                return graph_error(404, "itemNotFound", "drive not found")
+            return self._drive_root(account, drive_id)
+        if (m := _DRIVE_ROOT.match(path)) and method == "GET":
+            return self._drive_root(account, m.group(1))
         if m := _ITEM_BY_PATH.match(path):
             return self._item_by_path(account, method, m.group(1), m.group(2), m.group(3), bool(m.group(4)), query, body)
         if (m := _ITEM_BY_ID.match(path)) and method == "GET":
@@ -416,6 +472,11 @@ class FakeTenant:
             "parentFolderId": self.folder_id(recipient, "Inbox"),
             "body": {"contentType": "text", "content": self.body_transform(msg["body"]["content"])},
         }
+        if payload.get("saveToSentItems"):
+            copy = dict(message, id=self._next_id(f"AAMkImmutable-{account.split('@')[0]}-sent-"))
+            copy["receivedDateTime"] = message["sentDateTime"]
+            copy["parentFolderId"] = self.folder_id(account, "Sent Items")
+            self.mailboxes.setdefault(account.lower(), []).append(copy)
         if self.delivery_delay is not None:
             self.pending.append({"recipient": recipient.lower(), "message": message, "remaining": self.delivery_delay})
             self._deliver(recipient.lower(), count_call=False)
@@ -449,6 +510,20 @@ class FakeTenant:
         if self.drive_access.get(drive_id, "").lower() != account.lower():
             return graph_error(403, "accessDenied", "Access denied")
         return self.drives[drive_id]
+
+    def _drive_info(self, drive_id: str) -> dict:
+        kind = "business" if drive_id in self.my_drive.values() else "documentLibrary"
+        return {"id": drive_id, "name": self.drive_names.get(drive_id, "Documents"), "driveType": kind}
+
+    def _drive_root(self, account: str, drive_id: str) -> HttpResponse:
+        self.calls["drive_root"] += 1
+        drive = self._drive(account, drive_id)
+        if isinstance(drive, HttpResponse):
+            return drive
+        root_id = self.drive_roots[drive_id]
+        if root_id in self.not_root:
+            return json_response(200, {"id": root_id, "name": self.item_names.get(root_id, root_id), "folder": {}})
+        return json_response(200, {"id": root_id, "name": "root", "folder": {}, "root": {}})
 
     def _item_json(self, drive: FakeDrive, item_id: str) -> dict:
         item = drive.items[item_id]

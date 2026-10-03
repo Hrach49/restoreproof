@@ -284,8 +284,9 @@ def get_mail_folder_name(g: GraphClient, folder_id: str, owner: str) -> str:
 
 
 def send_mail(
-    g: GraphClient, *, subject: str, body_text: str, to_address: str, owner: str | None = None
+    g: GraphClient, *, subject: str, body_text: str, to_address: str, owner: str | None = None, rerun: str = "seed"
 ) -> None:
+    """`rerun` is the command an unknown outcome tells the owner to run again."""
     payload = {
         "message": {
             "subject": subject,
@@ -299,7 +300,7 @@ def send_mail(
         resp = g.post_json("/me/sendMail", payload, owner=owner, idempotent=False)
     except GraphOutcomeUnknown as exc:
         raise GraphOutcomeUnknown(
-            f"{exc}. {subject} may have been sent. Wait a few minutes, then run seed again: "
+            f"{exc}. {subject} may have been sent. Wait a few minutes, then run {rerun} again: "
             "it finds the mails already delivered, and those are not sent twice.",
             status=exc.status,
             method=exc.method,
@@ -327,9 +328,11 @@ def get_item(g: GraphClient, drive_id: str, item_id: str, owner: str) -> dict | 
 
 
 def upload_file(
-    g: GraphClient, drive_id: str, folder_id: str, name: str, data: bytes, *, replace: bool, owner: str
+    g: GraphClient, drive_id: str, folder_id: str, name: str, data: bytes, *, replace: bool, owner: str,
+    rerun: str = "seed",
 ) -> dict:
-    """Simple upload (fine below 250 MB). Returns the driveItem JSON."""
+    """Simple upload (fine below 250 MB). Returns the driveItem JSON. `rerun` is the command an
+    unknown outcome tells the owner to run again."""
     path = _item_path(drive_id, folder_id, name) + "/content"
     params = {"@microsoft.graph.conflictBehavior": "replace" if replace else "fail"}
     # Replacing is idempotent. Failing on a conflict is not: a retry after an upload that
@@ -338,7 +341,7 @@ def upload_file(
         return g.put_bytes(path, data, params=params, owner=owner, idempotent=replace)
     except GraphOutcomeUnknown as exc:
         raise GraphOutcomeUnknown(
-            f"{exc}. {name} may have been uploaded; run seed again: it finds the files already "
+            f"{exc}. {name} may have been uploaded; run {rerun} again: it finds the files already "
             "uploaded, and those are not uploaded twice.",
             status=exc.status,
             method=exc.method,

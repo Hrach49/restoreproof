@@ -748,6 +748,9 @@ struct Harness {
         env.connector_options.sleep = [](std::chrono::milliseconds) {};
         env.connector_options.jitter = [] { return 0.0; };
         env.make_download_http = [this]() -> std::unique_ptr<rp::IHttpClient> {
+            if (no_download_http) {
+                return nullptr;
+            }
             return std::make_unique<rp::test::ForwardingHttpClient>(targets.download);
         };
         env.make_run_id = [this] {
@@ -838,6 +841,9 @@ struct Harness {
                       const rp::RestoreCommandEnv&)>
         command = rp::run_restore_command;
     std::function<bool(const std::filesystem::path&, std::string_view)> write_summary;
+    // The download client's maker returns null: the run stops after its run
+    // line, before the clean before.
+    bool no_download_http = false;
     // The wall clock: the certificate check, Graph's sign-in and, for `test
     // --json`, started_at and ended_at (W3.6). Fixed at a time the lab's
     // certificate is valid.

@@ -25,7 +25,6 @@
 #include <ostream>
 #include <string>
 #include <string_view>
-#include <system_error>
 #include <vector>
 
 namespace rp {
@@ -100,9 +99,10 @@ std::string format_check_table(const verification::ExpectedSet& expected,
 }
 
 // The --json file's content (W3.6 point 5): every top-level key always there,
-// null where a step didn't run. What it holds of the tenant is listed in
+// null where a step didn't run; `exit_code` the process's as known when the
+// file is written. What it holds of the tenant is listed in
 // docs/verification.md.
-json summary_json(const RunSummary& run)
+json summary_json(const RunSummary& run, int exit_code)
 {
     const auto text_or_null = [](const std::optional<std::string>& text) {
         return text ? json(*text) : json();
@@ -126,15 +126,14 @@ json summary_json(const RunSummary& run)
     summary["status"] = run.verdict ? verification::to_json(*run.verdict) : json();
     summary["cleanup"] = run.cleanup ? to_json(*run.cleanup) : json();
     summary["timings"] = run.timings ? timing::to_json(*run.timings) : json();
-    summary["exit_code"] = run.exit_code;
+    summary["exit_code"] = exit_code;
     return summary;
 }
 
-// The --json path, checked before the secrets: a UTF-8 path, a plain file
-// name (no ':' naming an NTFS stream, nothing Windows refuses), no file there
-// yet, in a folder that exists. Throws ConfigError otherwise. Anything but a
-// clean "not found" counts as a file there (a device such as NUL, a file it
-// may not read): a path the writer can't use costs no run (W3.6 review).
+// The --json path, checked before the secrets: a UTF-8 path the writer could
+// write now (rp::check_new_file, which makes and drops the writer's own temp
+// file): a path the writer can't use costs no run (W3.6 review, PR #153
+// review). Throws ConfigError otherwise.
 std::filesystem::path check_json_path(std::string_view arg)
 {
     const std::string shown = "--json " + table_cell(arg) + ": ";
@@ -142,19 +141,19 @@ std::filesystem::path check_json_path(std::string_view arg)
     if (!path) {
         throw ConfigError("--json", shown + "not a UTF-8 path");
     }
-    if (!is_plain_file_name(path->filename().native())) {
+    switch (check_new_file(*path)) {
+    case NewFileCheck::ok:
+        return std::move(*path);
+    case NewFileCheck::not_a_file_name:
         throw ConfigError("--json", shown + "not a file name");
-    }
-    std::error_code ec;
-    if (std::filesystem::symlink_status(*path, ec).type() != std::filesystem::file_type::not_found) {
+    case NewFileCheck::exists:
         throw ConfigError("--json", shown + "the file already exists");
-    }
-    const std::filesystem::path folder =
-        path->has_parent_path() ? path->parent_path() : std::filesystem::path{L"."};
-    if (!std::filesystem::is_directory(folder, ec)) {
+    case NewFileCheck::no_folder:
         throw ConfigError("--json", shown + "the folder doesn't exist");
+    case NewFileCheck::cannot_write:
+        break;
     }
-    return std::move(*path);
+    throw ConfigError("--json", shown + "a file can't be written there");
 }
 
 } // namespace
@@ -177,6 +176,7 @@ int run_test_command(std::span<const std::string_view> args, std::ostream& out,
     }
     const std::optional<std::string_view> json_arg = options->value("--json");
     std::optional<std::filesystem::path> json_path;
+    std::shared_ptr<FixtureRecorder> recorder;
 
     Presentation presentation;
     presentation.command = "test";
@@ -185,13 +185,17 @@ int run_test_command(std::span<const std::string_view> args, std::ostream& out,
     if (json_arg) {
         presentation.after_config = [&] { json_path = check_json_path(*json_arg); };
         // The summary goes last, after the timings: its write never changes
-        // the status, only an exit code of 0 (W3.6 point 5).
+        // the status, only an exit code of 0 (W3.6 point 5). Its exit_code is
+        // the one the process ends with unless the write fails: lost output
+        // and an incomplete recording are in it (PR #153 review).
         presentation.on_run = [&](const RunSummary& run, int code, bool output_lost) {
             const std::string shown = table_cell(*json_arg);
             bool written = false;
             try {
                 const std::string text =
-                    summary_json(run).dump(2, ' ', false, json::error_handler_t::replace) + '\n';
+                    summary_json(run, recorded_exit_code(recorder.get(), code))
+                        .dump(2, ' ', false, json::error_handler_t::replace) +
+                    '\n';
                 written = env.write_summary ? env.write_summary(*json_path, text)
                                             : write_file_atomically(*json_path, text);
             } catch (...) {
@@ -208,7 +212,6 @@ int run_test_command(std::span<const std::string_view> args, std::ostream& out,
             return code;
         };
     }
-    std::shared_ptr<FixtureRecorder> recorder;
     const int code = run_pipeline(parsed, out, err, env, recorder, presentation);
     return finish_recording(recorder.get(), out, err, code);
 }

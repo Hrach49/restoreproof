@@ -867,9 +867,9 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
                     .restore = result ? &*result : nullptr,
                     .check = check,
                     .verdict = verdict ? &*verdict : nullptr,
-                    .cleanup = &cleanup,
-                    .timings = &timings,
-                    .exit_code = verdict ? verification::exit_code_of(*verdict) : exit_code::config};
+                    // The clean after runs only after the clean before.
+                    .cleanup = cleanup.before ? &cleanup : nullptr,
+                    .timings = &timings};
                 code = presentation.on_run(summary, code, output_lost);
             } catch (...) {
             }

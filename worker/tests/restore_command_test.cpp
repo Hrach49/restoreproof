@@ -3356,14 +3356,14 @@ TEST_CASE("restore: step timings: each way a run ends has its spans; the table e
          },
          three, rp::exit_code::service,
          {measured(1), measured(1), kNotRun, kNotRun, kNotRun, kNotRun, kNotRun, kNotRun, kNotRun,
-          kNotRun, measured(4)}},
+          kNotRun, measured(5)}},
         {"choose_sample throws",
          [](Harness& lab) {
              lab.fake.candidates_throw = [] { throw connector::TransientError("Veeam unreachable"); };
          },
          Args{"--mail", "2", "--sp", "0", "--od", "0"}, rp::exit_code::transient,
          {measured(1), measured(1), stopped(1), kNotRun, kNotRun, kNotRun, kNotRun, kNotRun,
-          kNotRun, kNotRun, measured(5)}},
+          kNotRun, kNotRun, measured(6)}},
         {"an empty sample",
          [](Harness& lab) { lab.dir.write("seed-manifest.json", trimmed_manifest(0, 1, 1)); },
          Args{"--mail", "1", "--sp", "0", "--od", "0"}, rp::exit_code::service,
@@ -3386,14 +3386,14 @@ TEST_CASE("restore: step timings: each way a run ends has its spans; the table e
          },
          three, rp::exit_code::service,
          {measured(1), measured(1), measured(1), measured(1), stopped(1), kNotReported,
-          kNotReported, kNotRun, stopped(1), kNotRun, measured(8)}},
+          kNotReported, kNotRun, stopped(1), kNotRun, measured(9)}},
         {"restore_sample throws, items may be in the targets",
          [](Harness& lab) {
              lab.fake.restore_throw = [] { throw connector::TransientError("Veeam unreachable"); };
          },
          three, rp::exit_code::transient,
-         {measured(1), measured(1), measured(1), measured(1), stopped(3), kNotReported,
-          kNotReported, kNotRun, stopped(3), measured(1), measured(10)}},
+         {measured(1), measured(1), measured(1), measured(1), stopped(1), kNotReported,
+          kNotReported, kNotRun, stopped(1), measured(1), measured(11)}},
         {"the check throws",
          [](Harness& lab) {
              lab.fake.answer = timed_restore(2s, 7s);
@@ -3401,7 +3401,7 @@ TEST_CASE("restore: step timings: each way a run ends has its spans; the table e
          },
          Args{"--mail", "0", "--sp", "1", "--od", "0"}, rp::exit_code::config,
          {measured(1), measured(1), measured(1), measured(1), measured(1), measured(2),
-          measured(7), stopped(4), stopped(5), measured(1), measured(12)}},
+          measured(7), stopped(2), stopped(3), measured(1), measured(13)}},
         {"a target's read back fails: not a stop",
          [](Harness& lab) {
              lab.fake.answer = timed_restore(2s, 7s);
@@ -3527,8 +3527,8 @@ TEST_CASE("restore: step timings: a clock that goes back makes no duration up, a
     }
 }
 
-TEST_CASE("restore: step timings: a clock that throws once the clean after is done leaves what is "
-          "still open as open, and changes no line, status or exit code",
+TEST_CASE("restore: step timings: a clock that throws once the clean after is done leaves total "
+          "open, and changes no line, status or exit code",
           "[restore_command][step_timer]")
 {
     constexpr SpanExpect kOpen{"not closed"};
@@ -3543,13 +3543,14 @@ TEST_CASE("restore: step timings: a clock that throws once the clean after is do
         {"a pass: total alone", [](Harness&) {}, rp::exit_code::ok,
          {measured(1), measured(1), measured(1), measured(1), measured(1), kNotReported,
           kNotReported, measured(9), measured(10), measured(1), kOpen}},
-        {"restore_sample throws, items may be in the targets: restore and recovery too",
+        {"restore_sample throws, items may be in the targets: restore and recovery stopped "
+         "before the clean after",
          [](Harness& lab) {
              lab.fake.restore_throw = [] { throw connector::TransientError("Veeam unreachable"); };
          },
          rp::exit_code::transient,
-         {measured(1), measured(1), measured(1), measured(1), kOpen, kNotReported, kNotReported,
-          kNotRun, kOpen, measured(1), kOpen}},
+         {measured(1), measured(1), measured(1), measured(1), stopped(1), kNotReported,
+          kNotReported, kNotRun, stopped(1), measured(1), kOpen}},
     };
     const Case& c = cases[GENERATE(range(std::size_t{0}, std::size_t{2}))];
     CAPTURE(c.name);
@@ -3566,7 +3567,7 @@ TEST_CASE("restore: step timings: a clock that throws once the clean after is do
     c.setup(lab);
     rp::RestoreCommandEnv env = lab.env();
     // Every reading after env.on_cleanup, which comes once the clean after
-    // has ended, throws: `total`'s end and stop_open's reading.
+    // has ended, throws: `total`'s end.
     bool broken = false;
     int thrown = 0;
     env.on_cleanup = [&broken, inner = env.on_cleanup](const rp::RunCleanup& cleanup) {
@@ -3601,6 +3602,145 @@ TEST_CASE("restore: step timings: a clock that throws once the clean after is do
     CHECK(lab.body(Run{code, out.str(), err.str()}) == steady.body(reference));
     CHECK_THAT(out.str(), EndsWith(expected_table(c.spans)));
     CHECK(lab.out_at_timings == std::vector<std::string>{out.str()});
+}
+
+// Review of W3.5, points 1 and 2: a reading taken for the timings alone
+// that throws leaves its span not run (a start) or not closed (an end), and
+// changes nothing else: not the clean before or after, not a line, not the
+// status, not the exit code. Readings of a pass on a 1 s clock: 0 starts
+// total and restore_point_lookup, 1 ends the lookup, 2-3 cleanup_before,
+// 4-5 sample_select, 6 starts target_snapshot, 7 and 8 are the restore's own
+// (its line needs them), 9-16 the check's, 17 ends verify and recovery, 18-19
+// cleanup_after, 20 ends total. The throwing reading never reaches the
+// harness's clock, so every later span keeps its length and total is one
+// tick shorter.
+TEST_CASE("restore: step timings: a clock that throws at a reading for the timings alone changes "
+          "nothing but that span",
+          "[restore_command][step_timer]")
+{
+    constexpr SpanExpect kOpen{"not closed"};
+    struct Case {
+        int reading;
+        SpansExpect spans;
+    };
+    const SpansExpect pass{measured(1), measured(1), measured(1), measured(1), measured(1),
+                           measured(4), measured(14), measured(9), measured(10), measured(1),
+                           measured(20)};
+    auto with = [&pass](std::initializer_list<std::pair<Span, SpanExpect>> changed,
+                        SpanExpect total) {
+        SpansExpect spans = pass;
+        for (const auto& [span, expect] : changed) {
+            spans[static_cast<std::size_t>(span)] = expect;
+        }
+        spans[static_cast<std::size_t>(Span::total)] = total;
+        return spans;
+    };
+    const std::vector<Case> cases{
+        {0, with({{Span::restore_point_lookup, kNotRun}}, kNotRun)},
+        {1, with({{Span::restore_point_lookup, kOpen}}, measured(19))},
+        {2, with({{Span::cleanup_before, kNotRun}}, measured(19))},
+        {3, with({{Span::cleanup_before, kOpen}}, measured(19))},
+        {4, with({{Span::sample_select, kNotRun}}, measured(19))},
+        {5, with({{Span::sample_select, kOpen}}, measured(19))},
+        {6, with({{Span::target_snapshot, kNotRun}}, measured(19))},
+        {17, with({{Span::verify, kOpen}, {Span::recovery, kOpen}}, measured(19))},
+        {18, with({{Span::cleanup_after, kNotRun}}, measured(19))},
+        {19, with({{Span::cleanup_after, kOpen}}, measured(19))},
+        {20, with({}, kOpen)},
+    };
+    const Case& c = cases[GENERATE(range(std::size_t{0}, std::size_t{11}))];
+    CAPTURE(c.reading);
+    const Args args{"--run-id", kRunId, "--mail", "2", "--sp", "1", "--od", "0"};
+    Harness steady;
+    steady.tick = 1s;
+    steady.fake.pool.mail = {carol_mail(1)};
+    steady.fake.answer = timed_restore(2s, 7s);
+    const Run reference = steady.run(args);
+    REQUIRE(reference.exit_code == rp::exit_code::ok);
+    REQUIRE(steady.timings.size() == 1);
+    check_spans(steady.timings[0], pass, 1s);
+
+    Harness lab;
+    lab.tick = 1s;
+    lab.fake.pool.mail = {carol_mail(1)};
+    lab.fake.answer = timed_restore(2s, 7s);
+    rp::RestoreCommandEnv env = lab.env();
+    int readings = 0;
+    int thrown = 0;
+    env.now = [&, inner = env.now] {
+        if (readings++ == c.reading) {
+            ++thrown;
+            throw std::runtime_error("SENTINEL-CLOCK");
+        }
+        return inner();
+    };
+    std::ostringstream out;
+    std::ostringstream err;
+    lab.fake.out = &out;
+    Args with_config = args;
+    const std::string path_arg = utf8(lab.config_path);
+    with_config.insert(with_config.end(), {"--config", path_arg});
+
+    const int code = rp::run_restore_command(with_config, out, err, env);
+    lab.fake.out = nullptr;
+
+    INFO(out.str());
+    INFO(err.str());
+    CHECK(thrown == 1);
+    CHECK(readings == 21);
+    CHECK(code == rp::exit_code::ok);
+    CHECK(err.str() == reference.err);
+    CHECK(err.str().find("SENTINEL-CLOCK") == std::string::npos);
+    CHECK(lab.body(Run{code, out.str(), err.str()}) == steady.body(reference));
+    // Both cleans ran, as in the reference.
+    REQUIRE(lab.cleanups.size() == 1);
+    CHECK(lab.cleanups[0].before.has_value());
+    CHECK(lab.cleanups[0].after.has_value());
+    REQUIRE(lab.timings.size() == 1);
+    check_spans(lab.timings[0], c.spans, 1s);
+    CHECK_THAT(out.str(), EndsWith(expected_table(c.spans)));
+}
+
+// Review of W3.5, point 5: with no env.now the timings run on the
+// connector's own clock, the one it measures each session's submit and wait
+// on, so `restore` always holds them.
+TEST_CASE("restore: step timings: without env.now they run on the connector's clock",
+          "[restore_command][step_timer]")
+{
+    Harness lab;
+    lab.fake.pool.mail = {carol_mail(1)};
+    rp::RestoreCommandEnv env = lab.env();
+    env.now = nullptr;
+    std::chrono::nanoseconds clock{0};
+    int connector_readings = 0;
+    env.connector_options.now = [&clock, &connector_readings] {
+        ++connector_readings;
+        clock += 1h;
+        return std::chrono::steady_clock::time_point{} + clock;
+    };
+    std::ostringstream out;
+    std::ostringstream err;
+    const std::string path_arg = utf8(lab.config_path);
+    const Args args{"--run-id", kRunId, "--mail", "2", "--sp", "1", "--od", "0", "--config",
+                    path_arg};
+
+    const int code = rp::run_restore_command(args, out, err, env);
+
+    INFO(out.str());
+    INFO(err.str());
+    CHECK(code == rp::exit_code::ok);
+    REQUIRE(lab.timings.size() == 1);
+    const auto& spans = lab.timings[0].spans;
+    for (const Span span : {Span::restore_point_lookup, Span::restore, Span::total}) {
+        CAPTURE(rp::timing::to_string(span));
+        const rp::timing::SpanTiming& timing = spans[static_cast<std::size_t>(span)];
+        CHECK(timing.state == SpanState::measured);
+        // Whole hours of the connector's clock, never steady_clock's.
+        REQUIRE(timing.duration);
+        CHECK(*timing.duration >= 1h);
+        CHECK(*timing.duration % 1h == std::chrono::nanoseconds{0});
+    }
+    CHECK(connector_readings >= 20);
 }
 
 TEST_CASE("restore: step timings: with stdout lost no table is printed, on stdout or stderr, and "

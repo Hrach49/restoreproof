@@ -103,7 +103,12 @@ struct RestoreCommandEnv {
     std::function<std::string()> make_run_id;
     // The steady clock the restore's own time, each checked item's ms (each
     // file's read, each comparison) and the step timings (W3.5) are measured
-    // by; null = steady_clock::now. Never a wall clock.
+    // by; null = connector_options.now, the clock the connector measures each
+    // session's submit and wait on, else steady_clock::now. Set both, if at
+    // all, to one clock: `restore` holds submit and wait only on one clock.
+    // Never a wall clock. A reading for the timings alone that throws
+    // changes nothing but its span; one the run needs (the restore's line,
+    // the check) stops it as an unexpected failure.
     std::function<std::chrono::steady_clock::time_point()> now;
     // Takes the run mutex without waiting (W3.4): the lock, held until the
     // command returns, or null when another run holds it. Null =
@@ -111,8 +116,9 @@ struct RestoreCommandEnv {
     // checks and before the --record folder and the connector are made. What
     // it throws is an unexpected failure (exit 1).
     std::function<std::unique_ptr<RunLock>()> take_run_lock;
-    // Given the run's cleanup once its last line is out, for every run that
-    // printed its run line; null = nothing. W4.1 writes it into the result.
+    // Given the run's cleanup once its line is out, before the step timings'
+    // table (on_timings is the last hook), for every run that printed its
+    // run line; null = nothing. W4.1 writes it into the result.
     std::function<void(const RunCleanup&)> on_cleanup;
     // Given the run's step timings (W3.5) once, after the table (or where it
     // would have been when stdout is lost), for every run that printed its
@@ -211,9 +217,12 @@ std::string format_elapsed(std::chrono::nanoseconds elapsed);
 // command's own; restore_submit and restore_wait are the sessions' reported
 // durations, summed (timing::sum_session_durations), "not reported" when
 // restore_sample threw. The spans overlap and don't add up to total. A span a
-// stop left open ends "stopped" with total; NOTE is empty for a measured span,
-// else "stopped", "not run", "not reported", "clock went back" or "not
-// closed" (only through a bug), and a span without a duration reads "-". The
+// stop left open ends "stopped" at one reading taken as the stop is handled,
+// before the status line and the clean after; total ends after the clean
+// after. NOTE is empty for a measured span, else "stopped", "not run", "not
+// reported", "clock went back" or "not closed" (a bug, or a clock that threw
+// at the span's end: such a reading changes nothing else), and a span
+// without a duration reads "-". The
 // table ends every run that printed its run line, after the cleanup after
 // line; none before it. It isn't printed when stdout is lost, a failing table
 // write changes nothing, and timings never change a status, a warning or an

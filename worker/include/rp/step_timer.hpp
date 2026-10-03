@@ -79,24 +79,39 @@ public:
     explicit StepTimer(Clock now);
 
     // One reading of the clock. Spans that share a boundary share one reading.
+    // Throws what the clock throws: for a reading the run needs anyway (the
+    // restore's own line, the check's ms).
     std::chrono::steady_clock::time_point now() const;
 
-    // not_run -> open at `at`; false otherwise.
-    bool start(Span span, std::chrono::steady_clock::time_point at) noexcept;
+    // One reading for the timings alone: nullopt when the clock throws, so
+    // a clock that fails never stops or changes a run.
+    std::optional<std::chrono::steady_clock::time_point> try_now() const noexcept;
+
+    // not_run -> open at `at`; false otherwise, and for nullopt (a reading
+    // that failed: the span stays not_run).
+    bool start(Span span, std::optional<std::chrono::steady_clock::time_point> at) noexcept;
 
     // open -> measured (stopped when `stopped`) with at - start, or
     // clock_backwards with no duration when `at` is before the start; false
-    // unless open.
-    bool end(Span span, std::chrono::steady_clock::time_point at, bool stopped = false) noexcept;
+    // unless open. For nullopt (a reading that failed) the span stays open
+    // for good, "not closed": nothing ends it later with a duration it never
+    // had. Returns false then too.
+    bool end(Span span, std::optional<std::chrono::steady_clock::time_point> at,
+             bool stopped = false) noexcept;
 
     // A duration measured elsewhere (the connector's): not_run -> measured,
     // not_reported for nullopt, clock_backwards for a negative one; false
     // unless not_run.
     bool report(Span span, std::optional<std::chrono::nanoseconds> duration) noexcept;
 
-    // Every open span ends `stopped` at `at` (clock_backwards when `at` is
-    // before its start).
-    void stop_open(std::chrono::steady_clock::time_point at) noexcept;
+    // Every open span but `keep` ends `stopped` at `at` (clock_backwards when
+    // `at` is before its start); for nullopt each stays open for good, as
+    // end's. A span whose end reading failed is left as it is.
+    void stop_open(std::optional<std::chrono::steady_clock::time_point> at,
+                   std::optional<Span> keep = std::nullopt) noexcept;
+
+    // One span's state, reading no clock; not_run for a Span outside the enum.
+    SpanState state(Span span) const noexcept;
 
     // Reads no clock: a span still open shows as open, with no duration.
     RunTimings timings() const noexcept;
@@ -105,6 +120,8 @@ private:
     struct Entry {
         SpanTiming timing;
         std::chrono::steady_clock::time_point started;
+        // Its end reading failed: open for good.
+        bool unclosable = false;
     };
 
     Clock now_;
@@ -114,12 +131,36 @@ private:
 // "H:MM:SS.mmm", cut to the millisecond, hours not capped; "-" for a negative one.
 std::string format_span(std::chrono::nanoseconds span);
 
-// The sessions' durations summed, for StepTimer::report: nullopt (not
+// Each session's `duration` summed in place, for StepTimer::report: nullopt (not
 // reported) when there are none or any session has none, then a negative
 // session's duration (clock went back) when any is negative, else the sum,
 // held at nanoseconds' largest value rather than wrapping.
+template <class Session>
 std::optional<std::chrono::nanoseconds> sum_session_durations(
-    const std::vector<std::optional<std::chrono::nanoseconds>>& sessions) noexcept;
+    const std::vector<Session>& sessions,
+    std::optional<std::chrono::nanoseconds> Session::*duration) noexcept
+{
+    using std::chrono::nanoseconds;
+    if (sessions.empty()) {
+        return std::nullopt;
+    }
+    for (const Session& session : sessions) {
+        if (!(session.*duration)) {
+            return std::nullopt;
+        }
+    }
+    constexpr nanoseconds kMax = nanoseconds::max();
+    nanoseconds sum{0};
+    for (const Session& session : sessions) {
+        const nanoseconds one = *(session.*duration);
+        if (one < nanoseconds{0}) {
+            return one;
+        }
+        // Both non-negative, so only the top can overflow.
+        sum = one > kMax - sum ? kMax : sum + one;
+    }
+    return sum;
+}
 
 // The table: a "STEP TIME NOTE" header, then all eleven spans in Span order,
 // one line each, ending in '\n'. TIME is format_span, or "-" without a usable

@@ -743,12 +743,13 @@ total                 0:00:05.000
   The spans overlap and don't add up to `total`. `TIME` is `H:MM:SS.mmm`, cut to the
   millisecond, on the same steady clock as the restore's line, never a wall clock. A span
   with no time reads `-`, and `NOTE` says why: `not run` (the run stopped before it, or the
-  clean after was skipped), `stopped` (the run stopped during it; like `total`, the time runs
-  to the end of the run, the status line and the clean after included, except
-  `target_snapshot`'s, which ends at its failed read), `not reported` (the connector didn't
+  clean after was skipped), `stopped` (the run stopped during it; its time runs to the
+  stop, read as the stop is handled, before the status line and the clean after), `not reported` (the connector didn't
   measure it, or the restore threw and its sessions' account was lost), `clock went back` (no
   time is ever made up). `NOTE` is empty for a span measured in full; `not closed` appears
-  only through a bug or a clock that fails as the run ends. A run that stops before its run
+  only through a bug or a clock that failed at the span's end: a clock reading taken for the
+  timings alone that fails leaves its span `not run` (at its start) or `not closed` (at its
+  end) and changes nothing else. A run that stops before its run
   line prints no table. When stdout is lost the table isn't printed, on stdout or stderr. The
   timings never change the status, a warning or the exit code, and a table that fails to write
   changes nothing either. The same spans are the result's `timings` object

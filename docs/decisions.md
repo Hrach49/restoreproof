@@ -7,6 +7,19 @@ Format: date, decision, reason, alternatives rejected.
 
 ---
 
+## 2026-10-03 — W3.5 review: a clock that fails changes nothing, and a stop ends its spans where it happens (proposed)
+
+The `/code-review` of the W3.5 branch found readings for the timings that could change a run, and stopped spans that ran on past their stop. Fixed on the branch, with tests (`tests/step_timer_test.cpp`, and in `tests/restore_command_test.cpp` "a clock that throws at a reading for the timings alone changes nothing but that span" and "without env.now they run on the connector's clock"):
+
+1. **A clock that throws at a reading for the timings alone changes nothing (amends build note 5).** Before, the readings at the boundaries of `restore_point_lookup`, `cleanup_before`, `sample_select`, `target_snapshot`'s start, `verify`/`recovery`'s end and `cleanup_after` used the throwing `StepTimer::now()` inside the run's `try`. A throw made the run `error internal`, or, around the clean after, skipped it and left the copies in the targets. Those readings now go through `StepTimer::try_now()` (`nullopt` when the clock throws). `start(span, nullopt)` leaves the span `not run`, and `end(span, nullopt)` leaves it open for good, `not closed`: no later end or stop gives it a duration it never had. The restore's own two readings (its line's time) and the check's stay on `now()`, as before W3.5: the run needs them.
+2. **A stop ends what it interrupted at its own reading (amends the approved entry's point 4 table).** Before, a span a stop left open ended with `total`, after the status line and the whole clean after, so a stopped `restore` or `verify` included the cleanup. `finish` now ends every open span but `total` `stopped` on one reading as soon as it handles a stop (`StepTimer::stop_open(at, keep)`); `total` still ends after the clean after. `target_snapshot` no longer has its own stop reading: the same rule ends it.
+3. **Submit and wait are `not reported` whenever the restore started and they weren't reported (amends build note 5).** The rule was "`restore` still open at the end". They are now reported from the sessions in place (`sum_session_durations(sessions, &RestoreSessionResult::submit_time)`, a template, no vectors built) before `restore` ends, nothing between that can throw, and `finish` marks them `not reported` on any stop once `restore` is no longer `not run`. The vector overload is gone.
+4. **One clock for `restore` and for submit and wait.** `RestoreCommandEnv::now` null now falls back to `connector_options.now`, the clock the connector measures each session on, then `steady_clock::now`. A caller that sets both must set one clock. In production both are null.
+5. **Smaller.** `StepTimer::state(Span)` reads one span (no copy of the table); the command's restore and check readings all go through the timer; `format_span` and the restore line's `H:MM:SS` share `format_hms` in `src/duration_text.hpp`.
+6. **Docs.** `docs/testing.md` "Restore by hand" no longer calls the clean after's line the last; `on_cleanup`'s comment says the table and `on_timings` come after it.
+
+---
+
 ## 2026-10-03 — W3.5 build notes: what the build settled beyond the approved entry (proposed)
 
 The build follows the W3.5 entry below: its span names and boundaries, states, NOTE words, `H:MM:SS.mmm`, the `timings` JSON, `on_timings`, and submit and wait measured per session and summed. What it adds or settles where the entry was silent:

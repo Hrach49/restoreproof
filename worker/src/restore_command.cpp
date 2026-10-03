@@ -19,6 +19,7 @@
 #include <rp/step_timer.hpp>
 
 #include "command_config.hpp"
+#include "duration_text.hpp"
 #include "path_utf8.hpp"
 #include "text_table.hpp"
 #include "text_util.hpp"
@@ -295,15 +296,6 @@ std::string cell_or_dash(std::string_view text)
     return text.empty() ? std::string{"-"} : table_cell(text);
 }
 
-// "H:MM:SS" for a whole number of seconds; a negative one is "-".
-std::string format_seconds(std::int64_t seconds)
-{
-    if (seconds < 0) {
-        return "-";
-    }
-    return std::format("{}:{:02}:{:02}", seconds / 3600, seconds / 60 % 60, seconds % 60);
-}
-
 // A session's end - start, cut to whole seconds; "-" when either doesn't read
 // or it's negative. Whole seconds and fractions are subtracted apart: two
 // times in nanoseconds can be further apart (1678 to 2261) than a signed
@@ -320,7 +312,7 @@ std::string session_elapsed(const connector::RestoreSessionResult& session)
     const std::int64_t whole = (end_s - start_s).count();
     // Each fraction is in [0 s, 1 s), so their difference is in (-1 s, 1 s).
     const bool fraction_back = (*end - end_s) < (*start - start_s);
-    return format_seconds(fraction_back ? whole - 1 : whole);
+    return format_hms(fraction_back ? whole - 1 : whole);
 }
 
 // Per type: how many items were selected, and how many of those (the first)
@@ -600,7 +592,7 @@ std::string format_elapsed(std::chrono::nanoseconds elapsed)
 {
     return elapsed < std::chrono::nanoseconds::zero()
                ? std::string{"-"}
-               : format_seconds(std::chrono::duration_cast<std::chrono::seconds>(elapsed).count());
+               : format_hms(std::chrono::duration_cast<std::chrono::seconds>(elapsed).count());
 }
 
 RestoreCommandEnv default_restore_command_env()
@@ -793,11 +785,14 @@ int run_restore(std::span<const std::string_view> args, std::ostream& out, std::
     // The steady clock everything here is timed by: the restore's line, each
     // checked item's ms, and the step timings (W3.5), read at the boundaries
     // of docs/decisions.md 2026-10-03 point 2. Spans that share a boundary
-    // share one reading.
-    const std::function<std::chrono::steady_clock::time_point()> now = [&env] {
-        return env.now ? env.now() : std::chrono::steady_clock::now();
+    // share one reading. env.now, else the connector's own clock, so the
+    // sessions' submit and wait are on the clock `restore` is on. A reading
+    // for the timings alone is try_now(): a clock that fails there changes
+    // no line, status or exit code.
+    timing::StepTimer timer(env.now ? env.now : env.connector_options.now);
+    const std::function<std::chrono::steady_clock::time_point()> now = [&timer] {
+        return timer.now();
     };
-    timing::StepTimer timer(now);
     // The clean after, its line (on `err` when stdout is lost) and its lines
     // on `err`, then env.on_cleanup. Never changes the exit code: a failure
     // here is one line on `err`.
@@ -812,9 +807,9 @@ int run_restore(std::span<const std::string_view> args, std::ostream& out, std::
             } else if (!cleaner) {
                 line = "cleanup after skipped: no Graph client\n";
             } else {
-                timer.start(timing::Span::cleanup_after, timer.now());
+                timer.start(timing::Span::cleanup_after, timer.try_now());
                 cleanup.after = cleaner->clean(graph::CleanupWhen::after_run);
-                timer.end(timing::Span::cleanup_after, timer.now());
+                timer.end(timing::Span::cleanup_after, timer.try_now());
                 line = format_cleanup(*cleanup.after, may_still_run);
             }
             (output_lost ? err : out) << line;
@@ -829,26 +824,28 @@ int run_restore(std::span<const std::string_view> args, std::ostream& out, std::
             err << "cleanup error: unexpected failure\n";
         }
     };
-    // W3.5: once the clean after is done, `total` ends and every span a stop
-    // left open ends `stopped`, on one reading; then the table, the last thing
-    // on stdout (none when stdout is lost), then env.on_timings. Timings
-    // decide nothing: a failure here changes no line, status or exit code.
-    const auto end_timings = [&](bool output_lost) noexcept {
-        try {
-            // restore_sample threw: its result, and with it each session's
-            // submit and wait, is lost. A POST may have gone out: not
-            // reported, never not run.
-            if (timer.timings().spans[static_cast<std::size_t>(timing::Span::restore)].state ==
-                timing::SpanState::open) {
-                timer.report(timing::Span::restore_submit, std::nullopt);
-                timer.report(timing::Span::restore_wait, std::nullopt);
-            }
-            const auto ended = timer.now();
-            timer.end(timing::Span::total, ended);
-            timer.stop_open(ended);
-        } catch (...) {
-            // The clock failed: what is still open shows as open.
+    // W3.5: when a stop ends the run, every span it left open but `total`
+    // ends `stopped` on one reading, taken as the stop is handled: before
+    // the status line and the clean after, which are no part of what it
+    // interrupted. Once the restore had started a POST may have gone out:
+    // its submit and wait, unless already reported, are not reported, never
+    // not run.
+    const auto stop_timings = [&]() noexcept {
+        if (timer.state(timing::Span::restore) != timing::SpanState::not_run) {
+            timer.report(timing::Span::restore_submit, std::nullopt);
+            timer.report(timing::Span::restore_wait, std::nullopt);
         }
+        timer.stop_open(timer.try_now(), timing::Span::total);
+    };
+    // W3.5: once the clean after is done, `total` ends (and anything still
+    // open, which only a bug leaves, ends `stopped`) on one reading; then the
+    // table, the last thing on stdout (none when stdout is lost), then
+    // env.on_timings. Timings decide nothing: a failure here changes no line,
+    // status or exit code.
+    const auto end_timings = [&](bool output_lost) noexcept {
+        const auto ended = timer.try_now();
+        timer.end(timing::Span::total, ended);
+        timer.stop_open(ended);
         const timing::RunTimings timings = timer.timings();
         if (!output_lost) {
             try {
@@ -873,6 +870,9 @@ int run_restore(std::span<const std::string_view> args, std::ostream& out, std::
     const auto finish = [&](std::optional<verification::RunStop> stop,
                             const verification::CheckResult* check, bool output_lost) noexcept {
         int code = exit_code::config;
+        if (stop) {
+            stop_timings();
+        }
         try {
             // Veeam may still be writing: a stop in the restore without the
             // connector's promise that nothing was sent.
@@ -982,7 +982,7 @@ int run_restore(std::span<const std::string_view> args, std::ostream& out, std::
         // W3.5: the run's first call to a service starts `total`. What came
         // before is local and untimed, and a run that stops before its run
         // line shows no timings.
-        const auto listing = timer.now();
+        const auto listing = timer.try_now();
         timer.start(timing::Span::total, listing);
         timer.start(timing::Span::restore_point_lookup, listing);
         const std::vector<connector::RestorePoint> points =
@@ -991,7 +991,7 @@ int run_restore(std::span<const std::string_view> args, std::ostream& out, std::
         if (!point) {
             return exit_code::service;
         }
-        timer.end(timing::Span::restore_point_lookup, timer.now());
+        timer.end(timing::Span::restore_point_lookup, timer.try_now());
         run_id = parsed.run_id ? std::string{*parsed.run_id}
                  : env.make_run_id ? env.make_run_id()
                                    : make_run_id();
@@ -1034,9 +1034,9 @@ int run_restore(std::span<const std::string_view> args, std::ostream& out, std::
         // snapshot is the second guard); a guard refusal stops it before
         // choose_sample opens any Veeam session, as layer 1 would, and layer 1
         // sees only the sampled types.
-        timer.start(timing::Span::cleanup_before, timer.now());
+        timer.start(timing::Span::cleanup_before, timer.try_now());
         cleanup.before = cleaner->clean(graph::CleanupWhen::before_run);
-        timer.end(timing::Span::cleanup_before, timer.now());
+        timer.end(timing::Span::cleanup_before, timer.try_now());
         out << format_cleanup(*cleanup.before, false);
         flush_or_throw(out);
         report_cleanup(err, *cleanup.before);
@@ -1049,11 +1049,11 @@ int run_restore(std::span<const std::string_view> args, std::ostream& out, std::
                           nullptr, false);
         }
 
-        timer.start(timing::Span::sample_select, timer.now());
+        timer.start(timing::Span::sample_select, timer.try_now());
         const sampling::Selection selection =
             sampling::choose_sample(*source, config.veeam_org_name, *point, targets,
                                     config.graph_tenant_id, plan, manifest, cursor, run_id);
-        timer.end(timing::Span::sample_select, timer.now());
+        timer.end(timing::Span::sample_select, timer.try_now());
         shortfalls = verification::shortfalls_of(selection.record);
         const connector::RestoreSpec spec{.client_ref = config.veeam_org_name,
                                           .restore_point = *point,
@@ -1078,17 +1078,16 @@ int run_restore(std::span<const std::string_view> args, std::ostream& out, std::
         // Graph as `graph list` reads them. A failure here stops the run
         // before anything is restored.
         verification::TargetsRead before;
-        timer.start(timing::Span::target_snapshot, timer.now());
+        timer.start(timing::Span::target_snapshot, timer.try_now());
         if (const std::exception_ptr failed = read_before(*graph_client, *download_http, targets,
                                                           spec, options.logger, before, err)) {
-            timer.end(timing::Span::target_snapshot, timer.now(), true);
             return finish(verification::stop_reason(failed, *phase), nullptr, false);
         }
 
         // The restore's own two readings bound `restore` (W3.5), and no other
         // reading falls between them; `recovery` runs from here to the last
         // item's verdict.
-        const auto started = now();
+        const auto started = timer.now();
         timer.end(timing::Span::target_snapshot, started);
         timer.start(timing::Span::restore, started);
         timer.start(timing::Span::recovery, started);
@@ -1097,20 +1096,19 @@ int run_restore(std::span<const std::string_view> args, std::ostream& out, std::
         result = source->restore_sample(spec);
         restoring_run.reset();
         phase = verification::RunPhase::check;
-        const auto restored_at = now();
+        const auto restored_at = timer.now();
         const auto elapsed = restored_at - started;
+        // Each session's submit and wait, summed: the time spent in each
+        // phase, or a state, never a partial number. Reported before
+        // `restore` ends, with nothing between that can throw.
+        timer.report(timing::Span::restore_submit,
+                     timing::sum_session_durations(result->sessions,
+                                                   &connector::RestoreSessionResult::submit_time));
+        timer.report(timing::Span::restore_wait,
+                     timing::sum_session_durations(result->sessions,
+                                                   &connector::RestoreSessionResult::wait_time));
         timer.end(timing::Span::restore, restored_at);
         timer.start(timing::Span::verify, restored_at);
-        // Each session's submit and wait, summed: the time spent in each
-        // phase, or a state, never a partial number.
-        std::vector<std::optional<std::chrono::nanoseconds>> submits;
-        std::vector<std::optional<std::chrono::nanoseconds>> waits;
-        for (const connector::RestoreSessionResult& session : result->sessions) {
-            submits.push_back(session.submit_time);
-            waits.push_back(session.wait_time);
-        }
-        timer.report(timing::Span::restore_submit, timing::sum_session_durations(submits));
-        timer.report(timing::Span::restore_wait, timing::sum_session_durations(waits));
 
         // Items may be in the targets now: say how it went. Output that is
         // lost from here on doesn't stop the check: the status still decides
@@ -1150,7 +1148,7 @@ int run_restore(std::span<const std::string_view> args, std::ostream& out, std::
                           output_lost);
         }
         // Every item's verdict came from that one call, after the reads.
-        const auto verified = now();
+        const auto verified = timer.try_now();
         timer.end(timing::Span::verify, verified);
         timer.end(timing::Span::recovery, verified);
         if (!output_lost) {

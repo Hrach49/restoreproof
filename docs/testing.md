@@ -376,9 +376,9 @@ targets; nothing was done`, exit 4). The targets needn't be empty first.
    refusing, the clean before's included), `stale_target` (an earlier run's copy the clean
    before couldn't delete) or `backup_infrastructure` (an item Veeam failed for an
    infrastructure reason); warnings go to stderr (`docs/verification.md`, "The status decision
-   table"). The last line is the clean after's: `cleanup after ok: ...` when all three targets
+   table"). Then comes the clean after's line: `cleanup after ok: ...` when all three targets
    were left empty; `incomplete` names what was left, skipped or refused, and never changes the
-   exit code.
+   exit code. The step timings' table (W3.5, `STEP TIME NOTE`, eleven rows) ends the output.
 5. Check with `rpworker graph list` that the targets are empty again (`0 item(s)` each and no
    `(... not listed)` line: the W3.4 Done-when). If not, see "When something is left" above.
    Remove the variables when done (`. ..\lab\entra\set-worker-env.ps1 -Clear`, and the two

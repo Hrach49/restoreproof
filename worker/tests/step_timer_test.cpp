@@ -17,6 +17,7 @@
 #include <cstdint>
 #include <limits>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -260,6 +261,101 @@ TEST_CASE("step timer: stop_open ends every open span stopped and leaves the res
     timer.stop_open(t0 + seconds{120});
     CHECK(timer.timings().spans[static_cast<std::size_t>(Span::total)].duration ==
           nanoseconds{seconds{60}});
+}
+
+TEST_CASE("step timer: stop_open leaves the span it keeps open", "[step_timer]")
+{
+    FakeClock fake;
+    StepTimer timer{fake.clock()};
+    REQUIRE(timer.start(Span::total, t0));
+    REQUIRE(timer.start(Span::restore, t0 + seconds{10}));
+
+    timer.stop_open(t0 + seconds{30}, Span::total);
+
+    CHECK(timer.state(Span::total) == SpanState::open);
+    CHECK(span_of(timer, Span::restore).duration == nanoseconds{seconds{20}});
+    CHECK(timer.state(Span::restore) == SpanState::stopped);
+    // Kept, not spoiled: it still ends with its own reading.
+    CHECK(timer.end(Span::total, t0 + seconds{90}));
+    CHECK(span_of(timer, Span::total).duration == nanoseconds{seconds{90}});
+    CHECK(fake.reads == 0);
+}
+
+// Review of W3.5, points 1 and 2: a clock that throws must never stop a run,
+// so the timings read it through try_now, and a failed reading leaves its
+// span as it was (a start) or open for good (an end), never closed later
+// with a duration it never had.
+TEST_CASE("step timer: try_now is nullopt when the clock throws, and never throws",
+          "[step_timer]")
+{
+    int reads = 0;
+    const StepTimer timer{[&reads]() -> TimePoint {
+        if (++reads == 2) {
+            throw std::runtime_error("SENTINEL-CLOCK");
+        }
+        return t0;
+    }};
+    CHECK(timer.try_now() == t0);
+    CHECK_FALSE(timer.try_now());
+    CHECK(timer.try_now() == t0);
+    CHECK(reads == 3);
+    // now() still throws what the clock throws.
+    reads = 1;
+    CHECK_THROWS_AS(timer.now(), std::runtime_error);
+}
+
+TEST_CASE("step timer: a failed reading starts nothing, and an end that fails leaves its span open "
+          "for good",
+          "[step_timer]")
+{
+    FakeClock fake;
+    StepTimer timer{fake.clock()};
+    SECTION("a start")
+    {
+        CHECK_FALSE(timer.start(Span::sample_select, std::nullopt));
+        CHECK(timer.state(Span::sample_select) == SpanState::not_run);
+        // The span can still be started.
+        CHECK(timer.start(Span::sample_select, t0));
+        CHECK(timer.state(Span::sample_select) == SpanState::open);
+    }
+    SECTION("an end")
+    {
+        REQUIRE(timer.start(Span::cleanup_after, t0));
+        CHECK_FALSE(timer.end(Span::cleanup_after, std::nullopt));
+        CHECK(timer.state(Span::cleanup_after) == SpanState::open);
+        // Nothing closes it later: not an end, not a stop.
+        CHECK_FALSE(timer.end(Span::cleanup_after, t0 + seconds{5}));
+        timer.stop_open(t0 + seconds{9});
+        const timing::SpanTiming span = span_of(timer, Span::cleanup_after);
+        CHECK(span.state == SpanState::open);
+        CHECK_FALSE(span.duration);
+    }
+    SECTION("a stop whose reading failed")
+    {
+        REQUIRE(timer.start(Span::restore, t0));
+        REQUIRE(timer.start(Span::recovery, t0));
+        REQUIRE(timer.start(Span::total, t0));
+        timer.stop_open(std::nullopt, Span::total);
+        // A later stop doesn't close them with its own reading.
+        timer.stop_open(t0 + seconds{60});
+        CHECK(timer.state(Span::restore) == SpanState::open);
+        CHECK(timer.state(Span::recovery) == SpanState::open);
+        CHECK(span_of(timer, Span::total).duration == nanoseconds{seconds{60}});
+    }
+    CHECK(fake.reads == 0);
+}
+
+TEST_CASE("step timer: state reads one span, not_run for a span outside the enum", "[step_timer]")
+{
+    FakeClock fake;
+    StepTimer timer{fake.clock()};
+    REQUIRE(timer.start(Span::verify, t0));
+    REQUIRE(timer.report(Span::restore_wait, std::nullopt));
+    CHECK(timer.state(Span::verify) == SpanState::open);
+    CHECK(timer.state(Span::restore_wait) == SpanState::not_reported);
+    CHECK(timer.state(Span::total) == SpanState::not_run);
+    CHECK(timer.state(static_cast<Span>(99)) == SpanState::not_run);
+    CHECK(fake.reads == 0);
 }
 
 TEST_CASE("step timer: a fresh timer has every span not_run", "[step_timer]")
@@ -542,7 +638,16 @@ TEST_CASE("step timer: a session sum is the sum, or a state, never a partial num
 
     FakeClock fake;
     StepTimer timer{fake.clock()};
-    CHECK(timer.report(Span::restore_wait, timing::sum_session_durations(row.sessions)));
+    // Read in place, from each session's own field.
+    struct Session {
+        int other = 0;
+        std::optional<nanoseconds> wait;
+    };
+    std::vector<Session> sessions;
+    for (const std::optional<nanoseconds>& wait : row.sessions) {
+        sessions.push_back({1, wait});
+    }
+    CHECK(timer.report(Span::restore_wait, timing::sum_session_durations(sessions, &Session::wait)));
     const timing::SpanTiming span = span_of(timer, Span::restore_wait);
     CHECK(span.state == row.state);
     CHECK(span.duration == row.duration);

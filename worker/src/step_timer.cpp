@@ -1,5 +1,6 @@
 #include <rp/step_timer.hpp>
 
+#include "duration_text.hpp"
 #include "text_table.hpp"
 
 #include <format>
@@ -80,30 +81,44 @@ TimePoint StepTimer::now() const
     return now_();
 }
 
-bool StepTimer::start(Span span, TimePoint at) noexcept
+std::optional<TimePoint> StepTimer::try_now() const noexcept
+{
+    try {
+        return now_();
+    } catch (...) {
+        return std::nullopt;
+    }
+}
+
+bool StepTimer::start(Span span, std::optional<TimePoint> at) noexcept
 {
     const std::size_t i = index_of(span);
-    if (i == kSpanCount || entries_[i].timing.state != SpanState::not_run) {
+    if (!at || i == kSpanCount || entries_[i].timing.state != SpanState::not_run) {
         return false;
     }
     entries_[i].timing.state = SpanState::open;
-    entries_[i].started = at;
+    entries_[i].started = *at;
     return true;
 }
 
-bool StepTimer::end(Span span, TimePoint at, bool stopped) noexcept
+bool StepTimer::end(Span span, std::optional<TimePoint> at, bool stopped) noexcept
 {
     const std::size_t i = index_of(span);
-    if (i == kSpanCount || entries_[i].timing.state != SpanState::open) {
+    if (i == kSpanCount || entries_[i].timing.state != SpanState::open ||
+        entries_[i].unclosable) {
+        return false;
+    }
+    if (!at) {
+        entries_[i].unclosable = true;
         return false;
     }
     SpanTiming& timing = entries_[i].timing;
-    if (at < entries_[i].started) {
+    if (*at < entries_[i].started) {
         timing.state = SpanState::clock_backwards;
         return true;
     }
     timing.state = stopped ? SpanState::stopped : SpanState::measured;
-    timing.duration = at - entries_[i].started;
+    timing.duration = *at - entries_[i].started;
     return true;
 }
 
@@ -125,11 +140,20 @@ bool StepTimer::report(Span span, std::optional<nanoseconds> duration) noexcept
     return true;
 }
 
-void StepTimer::stop_open(TimePoint at) noexcept
+void StepTimer::stop_open(std::optional<TimePoint> at, std::optional<Span> keep) noexcept
 {
     for (std::size_t i = 0; i < kSpanCount; ++i) {
-        end(static_cast<Span>(i), at, true);
+        const auto span = static_cast<Span>(i);
+        if (span != keep) {
+            end(span, at, true);
+        }
     }
+}
+
+SpanState StepTimer::state(Span span) const noexcept
+{
+    const std::size_t i = index_of(span);
+    return i < kSpanCount ? entries_[i].timing.state : SpanState::not_run;
 }
 
 RunTimings StepTimer::timings() const noexcept
@@ -147,31 +171,7 @@ std::string format_span(nanoseconds span)
         return "-";
     }
     const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(span).count();
-    return std::format("{}:{:02}:{:02}.{:03}", ms / 3'600'000, ms / 60'000 % 60, ms / 1000 % 60,
-                       ms % 1000);
-}
-
-std::optional<nanoseconds> sum_session_durations(
-    const std::vector<std::optional<nanoseconds>>& sessions) noexcept
-{
-    if (sessions.empty()) {
-        return std::nullopt;
-    }
-    for (const std::optional<nanoseconds>& session : sessions) {
-        if (!session) {
-            return std::nullopt;
-        }
-    }
-    constexpr nanoseconds kMax = nanoseconds::max();
-    nanoseconds sum{0};
-    for (const std::optional<nanoseconds>& session : sessions) {
-        if (*session < nanoseconds{0}) {
-            return session;
-        }
-        // Both non-negative, so only the top can overflow.
-        sum = *session > kMax - sum ? kMax : sum + *session;
-    }
-    return sum;
+    return format_hms(ms / 1000) + std::format(".{:03}", ms % 1000);
 }
 
 std::string format_timings(const RunTimings& timings)

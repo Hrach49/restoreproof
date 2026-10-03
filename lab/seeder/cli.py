@@ -1,4 +1,4 @@
-"""`python -m seeder {generate,hash,seed,verify,check-worker-app,record-graph-fixtures}`."""
+"""`python -m seeder {generate,hash,seed,seed-real,verify,check-worker-app,record-graph-fixtures}`."""
 
 import argparse
 import sys
@@ -12,6 +12,7 @@ from seeder.graph_fixtures import DEFAULT_OUT_DIR, STATES, FixtureError, run_rec
 from seeder.http import TransportError
 from seeder.manifest import ManifestError, run_hash
 from seeder.seed import run_seed
+from seeder.seed_real import RefusedError, run_seed_real
 from seeder.transport import RequestsTransport
 from seeder.verify import run_verify
 from seeder.worker_app import default_pfx_path, read_generic_credential, resolve_worker_client_id, run_check
@@ -21,12 +22,12 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m seeder",
         description=(
-            "Seed and check the RestoreProof canary set (L1.2) and the Worker app (L1.5), and record the "
-            "Worker's Graph fixtures (W2.1). See lab/README.md."
+            "Seed and check the RestoreProof canary set (L1.2) and the Worker app (L1.5), seed real data "
+            "for the random sample (L1.8), and record the Worker's Graph fixtures (W2.1). See lab/README.md."
         ),
     )
     sub = parser.add_subparsers(
-        dest="command", required=True, metavar="{generate,hash,seed,verify,check-worker-app,record-graph-fixtures}"
+        dest="command", required=True, metavar="{generate,hash,seed,seed-real,verify,check-worker-app,record-graph-fixtures}"
     )
 
     def paths(p: argparse.ArgumentParser, *, manifest: bool = True, canary: bool = True) -> None:
@@ -48,6 +49,11 @@ def _parser() -> argparse.ArgumentParser:
     seed.add_argument(
         "--mail-timeout", type=float, default=600, metavar="SECONDS", help="wait for mail delivery (default: 600)"
     )
+    real = sub.add_parser(
+        "seed-real", help="put real, non-canary files and mails in the tenant for the random sample (live, L1.8)"
+    )
+    paths(real, canary=False)
+    signin(real)
     verify = sub.add_parser("verify", help="re-read the 40 items and compare with the manifest (live)")
     paths(verify, canary=False)
     signin(verify)
@@ -119,6 +125,8 @@ def _run(args: argparse.Namespace) -> int:
             force=args.force,
             mail_timeout=args.mail_timeout,
         )
+    if args.command == "seed-real":
+        return run_seed_real(signin=signin, transport=transport, manifest_path=args.manifest)
     return run_verify(signin=signin, transport=transport, manifest_path=args.manifest)
 
 
@@ -129,7 +137,7 @@ def main(argv: list[str] | None = None) -> int:
         return exc.code if isinstance(exc.code, int) else 2
     try:
         return _run(args)
-    except (AuthError, GraphError, TransportError, FixtureError) as exc:
+    except (AuthError, GraphError, TransportError, FixtureError, RefusedError) as exc:
         _err(f"error: {exc}")
         return 2
     except ManifestError as exc:

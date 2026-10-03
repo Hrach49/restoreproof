@@ -71,10 +71,15 @@ std::unique_ptr<IHttpClient> recorded(std::unique_ptr<IHttpClient> client,
                                       std::string service,
                                       RecordedBody body = RecordedBody::content);
 
+// `code`, but exit_code::config for a command that succeeded with an
+// exchange not written (so far), or whose recording can't say. Without a
+// recorder, `code`. finish_recording's rule, for an exit code known before it
+// runs (W3.6's --json summary). Never throws.
+int recorded_exit_code(const FixtureRecorder* recorder, int code) noexcept;
+
 // After a command with --record: "recorded <n> exchange(s) in <dir>" on `out`
 // and one "record error: <problem>" line per exchange not written on `err`.
-// Returns `code`, but exit_code::config for a command that succeeded with an
-// exchange not written. Without a recorder, returns `code` and prints
+// Returns recorded_exit_code(recorder, code). Without a recorder, prints
 // nothing. Never throws.
 int finish_recording(const FixtureRecorder* recorder, std::ostream& out, std::ostream& err,
                      int code) noexcept;

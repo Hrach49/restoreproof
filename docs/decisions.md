@@ -7,6 +7,197 @@ Format: date, decision, reason, alternatives rejected.
 
 ---
 
+## 2026-10-03 — PR #153 review: the `--json` check makes the writer's temp file; device names refused; the summary's `exit_code` is the process's (proposed)
+
+The review of PR #153 found more `--json` paths that passed the check and failed only after the whole run, and two places where the summary said less than the truth. Fixed on the branch, with tests (`tests/atomic_file_test.cpp`, `tests/test_command_test.cpp`):
+
+1. **One check, the writer's own: `rp::check_new_file` in `src/atomic_file.hpp`.** In order: a plain name, nothing there, the folder there, then the writer's first step done for real: `CreateFileW` `CREATE_NEW` on a `<file>.<16 hex>.tmp` name, with `FILE_FLAG_DELETE_ON_CLOSE`, so nothing is left. `check_json_path` maps its answer to the texts and no longer re-derives the writer's rules. New text, exit 1: `config error: --json <file>: a file can't be written there`, for a folder the Worker may not write to, a read-only volume, or a name or path too long once the temp's 21 characters are added (a 240-character name fits 255, its temp name doesn't; there is no long-path manifest).
+2. **DOS device names aren't plain file names.** `CON`, `PRN`, `AUX`, `NUL`, `CONIN$`, `CONOUT$`, `COM0`–`COM9`, `LPT0`–`LPT9`, and COM/LPT with a superscript 1–3, in any ASCII case, alone or before the first `.` (spaces before it ignored). On Windows 10 Win32 answers "not found" for `PRN` or `aux.json` with no such device, so they passed as "no file yet"; with a printer or a COM port the summary could have gone to it. `NUL` now reads `not a file name`, not `the file already exists` (amends the W3.6 review point 3's example).
+3. **A name ending in `.` or a space isn't plain.** Win32 strips it: `--json run.json.` wrote `run.json` and printed `wrote run.json.`.
+4. **The summary's `exit_code` is the process's as known when the file is written.** It was the status's alone, so a pass whose stdout was lost, or whose `--record` recording was incomplete, said 0 for a process that exits 1. Now both are in it (`recorded_exit_code` in `src/command_config.hpp`, the rule `finish_recording` applies). Only the file's own failed write comes later, and then there is no file. `RunSummary::exit_code` is gone; the hook already gets the code. Amends W3.6 point 5's "`exit_code`: the status's code, before any change below".
+5. **`cleanup` is `null` when no clean ran.** It was always an object; now `null` when the run stopped after its run line but before the clean before (the clean after only runs after it), as the v0 rule says.
+
+Rejected: keeping the name rules and adding a length rule and an ACL check one by one; each is a guess at what `CreateFileW` will do, and making the temp file is the answer.
+
+---
+
+## 2026-10-03 — W3.6 review: a `--json` path the writer can't use is refused before the run (proposed)
+
+The reviews of the W3.6 branch found `--json` values that passed the up-front check and so cost a whole run, the restore into the tenant and the clean after included, before the write failed at the end. Fixed on the branch, with tests (`tests/test_command_test.cpp`, `tests/atomic_file_test.cpp`, `tests/cli_test.cpp`, and one exe test):
+
+1. **An empty `--json` value is a missing one: exit 64 with the usage line.** `parse_options` accepts an empty value, and the check took the empty path for "no file yet" in the working folder. Point 5 already makes a missing value 64, so there is no new text.
+2. **A new refusal, exit 1: `config error: --json <path>: not a file name` (amends point 5's list of three).** The file name must not be empty, `.` or `..`, and must hold no control character and none of `< > : " / \ | ? *`.
+   - A `:` names an NTFS stream. With `out.json:x` the writer's `CreateFileW` made an empty `out.json` to hold the stream and left it behind when the move failed. With `existing.json:x` it added a stream to a file already there and changed its time. Point 5 keeps the run ID out of the temp name for this reason, but the user's own name wasn't checked.
+   - The others are names Windows refuses. `std::filesystem` reports them as not found (MSVC maps `ERROR_INVALID_NAME` to `no_such_file_or_directory`), so they passed as "no file yet".
+   - A drive's `C:` is in the root name, not the file name, so it isn't affected.
+   - The rule is one function, `rp::is_plain_file_name` in `src/atomic_file.hpp`. The writer applies it too and refuses before it opens anything.
+3. **Anything but a clean "not found" counts as a file already there.** The check read `exists()` of `symlink_status`, which is false on any error. It now refuses unless the type is `not_found`, with `the file already exists`. That covers a device such as `NUL` and a file the Worker may not read. No new text.
+4. **A lost `wrote <file>` line still changes nothing.** Checked, no change: as with W3.5's timings table, a stdout that breaks at that line keeps the run's exit code.
+
+The tests the reviews asked for besides: the summary's table gains the rows restore's `[step_timer]` table has (a restore stopped with nothing restored, row 1, row 4, row 6, `stale_target`), and the stdout-lost case checks every key. The early stops before the run line gain the secrets, the cursor, no connector, an unknown `--point` and a `--record` folder that isn't new or empty. `started_at` and `ended_at` are tested on a clock that moves by a fraction of a millisecond (the cut, not a rounding) and on one that fails for those two readings (both `null`, nothing else changed). `restore --json` and `restore --seed` are usage errors in `restore`'s table and `cli_test.cpp`. CLAUDE.md's list of commands now ends with `test`.
+
+---
+
+## 2026-10-03 — W3.6: `rpworker test` runs the same pipeline as `restore`, with its own table and a `--json` file; its exit codes are `restore`'s, `--seed` is dropped, and the lab gets real files for 30 of 30 (approved as written)
+
+W3.6 (#41) adds `rpworker test --mail 10 --sp 10 --od 10 [--point latest] [--seed N]`. The issue lists clean before, restore point, sample, guard, restore, verify and clean after. It asks for a per-item table, the timing breakdown and the overall status, and `--json <file>` writes the run summary. The issue's Done when is "a live run against the tenant prints pass with 30/30 items".
+
+`rpworker restore` (W2.8, W3.1–W3.5) already runs that whole pipeline in `run_restore` (`src/restore_command.cpp`). It runs the steps in its own order: the restore point is looked up, the run line printed, then the clean before. W3.5's spans follow that order (`restore_point_lookup` before `cleanup_before`). `test` keeps `restore`'s order, whatever order the issue lists. The issue text is older than W2.6, W2.8 and W3.3, so this log wins on two points: the exit codes (point 1) and `--seed` (point 3).
+
+**Decision.**
+
+1. **`rpworker test` uses W3.3's `exit_code_of`: 0 pass, 5 fail, 1 to 4 error by its code, 64 usage. This replaces the guide's "0 pass, 1 fail, 3 error".** It is the mapping proposed in W3.3 point 6. Every code keeps the meaning it has in every other command:
+   - 1: config or internal.
+   - 2: auth (`backup_auth`, `graph_auth`, `graph_permission`).
+   - 3: transient.
+   - 4: any other `error`.
+
+   A failure before the run line exits with the same codes as `restore`: a mutex held by another run is 4, a config error is 1.
+
+2. **30 of 30 needs real, non-canary data in the lab. Seed it (a new L task, W2.6's open point), and keep the Done when as written.** With `--mail 10 --sp 10 --od 10`, each type takes ceil(10/2) = 5 canaries and floor(10/2) = 5 random items (W2.6 point 2). The manifest covers the canaries (20 mails, 10 SharePoint files, 10 OneDrive files). The random halves can't fill on today's restore points:
+   - **Mail:** 5 canaries plus up to 5 random. The pool size isn't recorded. The W2.8 and W3.4 live runs took 2 of 2 only because floor(5/2) = 2 were wanted. The draw looks into at most 3 folders in each of at most 2 productive mailboxes (`include/rp/connector.hpp:277-282`), and the folders drawn change with the seed.
+   - **SharePoint:** 5 plus 0. The backup holds no real files. SharePoint's containers are every site on the tenant host (`src/veeam_candidates.cpp:431-441`). In the RestoreTest site, `Shared Documents` is the only eligible library (`kSkippedLibraries` and the manifest's `list_id`).
+   - **OneDrive:** 5 plus 0. In alice's OneDrive the root holds only `RestoreTarget` and `RestoreTest`, and both are excluded. Whether any other OneDrive is in the restore point is an assumption. `RP-Lab-Full` backs up "all users, all SharePoint sites and OneDrives" (`docs/environment.md`), but a OneDrive that was never provisioned isn't there. The dry run below checks it (`containers_eligible`).
+
+   So today's best case is 20 of 30. A shortfall is a warning, never a status (W3.3 point 4), so that run would still print `pass`.
+
+   To seed:
+   - **SharePoint:** 6 to 8 files in the root of `Shared Documents` in the RestoreTest site, with no subfolders. That gives the site one unit, so every draw that tries the site sees all of them. Every draw tries it only while the backup holds 8 sites or fewer (`containers_tried = 8`) and no other site gives a candidate first. The dry run checks this.
+   - **OneDrive:** 6 to 8 files in the root of alice's OneDrive, in no folder. W2.6's open point proposed bob's OneDrive. Alice's is chosen because the evidence shows it in the backup (W2.5, W2.8) and its sign-in is already in `seed.py`. Bob's OneDrive is fine too if the dry run lists it. Root files work end to end: the root is a unit (`src/veeam_candidates.cpp:540-543`), guard layer 1's `first_folder` is empty for them, and an empty `top_folder` passes guard layer 2 (`src/target_guard_veeam.cpp:465`).
+   - **Mail:** about 6 messages from alice to bob and 6 from bob to alice, so both users' Inbox and Sent Items fill. Each sent mail is in the backup twice under one subject: once in the sender's Sent Items, once in the recipient's Inbox. The sampler skips a pick whose `name_key` it has already taken, so 12 sends give 12 usable subjects, not 24.
+   - **Names:** every name and subject distinct by `name_key` within its type. None starts with `rp-canary-` in any case: the lister's check is ASCII case-insensitive (`starts_with_i`, `src/veeam_candidates.cpp:67-81`), and the canary subjects are `RP-CANARY-…`. None equals a canary's name or subject in any case, and none contains `/`, `\` or `:`.
+   - **File types:** mostly txt, pdf and png, whose `metadata` check compares Veeam's size with the downloaded size. One or two docx or xlsx files are allowed (name only, `is_rewritten_office_file`). Every file stays under 64 MiB.
+   - **Tooling:** a `python -m seeder seed-real` command reusing `seed.py`'s delegated sign-in and upload helpers. It is written up in `lab/README.md`, the names are listed in `lab/tenant.md`, and no manifest is needed. `graph.upload_file` writes wherever it is pointed, and the delegated scopes include `Sites.ReadWrite.All` (`lab/seeder/auth.py:10`). So `seed-real` finds its places itself and checks them before any upload:
+     - SharePoint: the RestoreTest site's default drive (`/sites/{id}/drive`), its root only.
+     - OneDrive: `/me/drive/root`, signed in as alice.
+     - It refuses the RestoreTarget drive, the RestoreTest (canary) drive and the `RestoreTarget`/`RestoreTest` folder IDs listed in `lab/tenant.md`.
+     - It never replaces an existing file (`replace=False`).
+     - Mail goes only to alice and bob, never to `restoretest@`.
+     - A lab test covers each refusal.
+   - **After seeding:** a backup must run, either the nightly `RP-Lab-Full` job or one started by hand. Then run the read-only `[live][sample]` dry run with a chosen `RP_LIVE_RUN_ID` against the new restore point. It must show, per type, `sample.<type>.random.pool_size` of at least 5 distinct names or subjects, and `containers_eligible` as expected. The pool depends on the run ID (the folders drawn) and on the restore point. A run without `--run-id` makes a new ID and may draw other mailboxes or folders. So the Done-when run reuses both: `rpworker test --mail 10 --sp 10 --od 10 --run-id <the dry run's RP_LIVE_RUN_ID> --point <the dry run's restore point ID>`.
+   - **Worker grants:** no change. Candidates and their expected values come from Veeam, and guard layer 1 already allows these sources.
+
+   The Done when is read as: `status pass`, 30 items sent, 30 verified (`manifest` 15, `fields` 5, `metadata` 10), and no `shortfall` warning, on the command above.
+
+   **Fallback, only if the owner declines the seeding:** restate it as "pass, every canary verified, every random item taken verified, shortfalls named as warnings". That restatement leaves the random SharePoint and OneDrive restore and the `metadata` check unproven live.
+
+3. **Drop `--seed N`, and use `--run-id <id>` to repeat a sample.**
+   - **Where the seed comes from:** the first 4 bytes, big-endian, of SHA-256("restoreproof/sample-v1\n" + run_id) (`rp/sample_rng.hpp`).
+   - **Why no caller can pass one:** `SampleSelector::select` derives the seed from the run ID itself, "so no caller can pass one the run ID didn't give" (`rp/sample_selector.hpp:96`).
+   - **What repeats a draw:** the run ID, the manifest's SHA-256, the cursor and the restore point. The result records all four (W2.6 points 4 and 5).
+   - **Why `--seed` is dropped:** it would be a second input the result doesn't record. A seed can't be turned back into a run ID, and `--run-id` already fixes the seed.
+   - **What `test` takes instead:** `--run-id` and `--canary-cursor`, with `restore`'s rules. It prints `run <id>  seed <hex>` as `restore` does.
+
+4. **Keep both commands, over one shared pipeline.** `run_restore` becomes an internal `run_pipeline(PipelineArgs, out, err, env, recorder, Presentation)`. Each command keeps its own parser.
+
+   | | `restore` | `test` |
+   |---|---|---|
+   | Per-item table | restore rows (KIND SOURCE NAME OUTCOME SESSION ELAPSED MESSAGE), then check rows (KIND SOURCE NAME OUTCOME FIELDS DUP MS) | one table after the check, columns below. Veeam's per-item MESSAGE is not printed |
+   | Session rows and the `restore <status>: ...` line | printed | printed (Veeam's per-session view, no `details`, no tenant values) |
+   | `--json <file>` | no | yes (point 5) |
+   | Command label in the recording's source (`rpworker <ver> <label> --record`) | `restore` | `test` |
+
+   **`test`'s table columns:**
+   - **TYPE:** `kind`.
+   - **NAME:** the subject or file name, as stdout shows today.
+   - **EXPECTED:** `expected_kind`.
+   - **FOUND:** `yes` or `no`.
+   - **MATCH:** the checker's `outcome`.
+   - **VERDICT:** from `RunVerdict`: `verified`, `failed`, or `unchecked <code>`; `-` when rows 1 to 4 decided the run. An item the backup blamed on infrastructure then reads `unchecked backup_infrastructure`, never as a failure.
+   - **REASON:** fixed words only:
+     - a mismatch: its mismatched field names, joined;
+     - missing: `missing`;
+     - an error: its `error_code`;
+     - a match: `-`.
+
+     REASON never prints `ItemCheck::reason`. For an office-v1 file, that text carries the zip reader's error, which names a part inside the tenant file (`src/checker.cpp:153-154`, `src/office_v1.cpp:172-205`).
+   - **MS:** `ms` when found, else `-`.
+
+   These stay identical in both commands:
+   - the run line and header, the mutex and its refusal, and guard layers 1 and 2;
+   - the `cleanup before` and `cleanup after` lines, the `check: ...` count line, and the status line and its warnings;
+   - the eleven-row timings table and `on_cleanup`/`on_timings`;
+   - absent `--mail`/`--sp`/`--od` falling back to the config's `sample_*` ("items restored per test run", `docs/worker-config.md`; 5 each in `config.example.json`), so the Done-when run passes 10/10/10 on the command line, as the issue writes it;
+   - `--record`, `--point`, `--run-id`, `--canary-cursor`, `--manifest` and `--config`;
+   - the exit codes.
+
+   No `--seed` in either (point 3).
+
+5. **`--json <file>` writes an unsigned run summary, close to what W4.1 signs, for every run that printed its run line.**
+   - **Shape:** fixed top-level keys, with `null` for whatever didn't run:
+     - `format` (`"rp.run-summary.v0"`), `worker_version`, `command` (`"test"`), `run_id`.
+     - `started_at` and `ended_at`: `YYYY-MM-DDTHH:MM:SS.mmmZ` from `wall_now`, read where `total` starts and ends.
+     - `restore_point` `{id, backup_time_raw}` (Veeam's text, unparsed) and `veeam_org_name`.
+     - `sample`, `expected`, `check`, `status` (with `restore_sent`), `cleanup` and `timings`: each the existing `to_json`, unchanged.
+     - `restore`: a new `to_json(RestoreResult)`. It holds the status and the items sent and restored. It holds the sessions: ID, kind, result, `details`, items, and `started_at_raw`/`ended_at_raw` (the product's text, unparsed, the `0001-01-01T00:00:00Z` sentinel included). `details` appears only in the form of W3.3 build note 7 as amended by the W3.3 second review point 5, through the same filter `run_status.cpp` applies for `backup_session`, not a second copy. `items` is an array in index order, each `{index, kind, outcome, infrastructure, session_id}`, with no item name and no Veeam message.
+     - `exit_code`: the status's code, before any change below.
+
+     There is no `signature`, `tsa_token` or `bundle_sha256`. Until W4.1 the file is written pretty-printed; W4.1 brings the canonical form. A golden-shape test in `tests/test_command_test.cpp` on the Harness pins v0. It has one `GENERATE` row per way a run ends, and in each row every top-level key is present, with `null` where a step didn't run.
+   - **When:** after the timings table and `on_timings`, whatever the status (`error` and stops included). A run that ends before its run line writes no file, as it prints no status line today (W3.3 build note 8 stays open).
+   - **Last stdout lines:** on success `wrote <path>` is printed on stdout. This amends W3.5 point 4 for `test`: the timings table is no longer last. The last lines are now the table, then `wrote <path>`, then `recorded ...` with `--record`.
+   - **Refused before anything runs:** the path is checked after the config is read and before the Veeam secrets, so an exe test needs no env. That is before the manifest, the mutex, `--record` and any Veeam call. These are exit 1:
+     - `config error: --json <path>: not a UTF-8 path`
+     - `config error: --json <path>: the file already exists`
+     - `config error: --json <path>: the folder doesn't exist`
+
+     A missing or repeated value is 64 with the usage line. Only the `config error:` form, the UTF-8 check (`path_from_utf8`) and exit 1 are shared with `--record`. Its other rules are new and stricter than `--record`'s. `--record` takes an existing empty folder, creates missing folders (`create_directories`, Q2.1 point 2), and is opened after the mutex.
+   - **Atomic write:**
+     - The JSON is built first and dumped with `error_handler_t::replace`.
+     - It goes into a temp file in the same folder, `<file>.<16 random hex>.tmp`, opened with `CreateFileW` `CREATE_NEW`. The run ID is never part of that name: `check_run_id` allows `:`, which on NTFS would name an alternate data stream. A test covers a run ID that holds `:`.
+     - Then `FlushFileBuffers`, then `MoveFileExW` with `MOVEFILE_WRITE_THROUGH` and without `REPLACE_EXISTING`, so a file that appeared since the check is never overwritten.
+     - The temp file is deleted on any failure. `std::filesystem::rename` is not used because it replaces.
+   - **Testing the write:** the writer sits behind a `RestoreCommandEnv` hook, `write_summary`, which defaults to the atomic writer.
+     - The writer is tested on its own in a temp folder: a target that exists, a temp name that exists, a folder that doesn't exist, and a file that appears between the check and the move.
+     - The command's rules are tested through the hook in a `GENERATE` table: 0 becomes 1, any other code is kept, and the status never changes.
+   - **Content rules:** no secret. The file holds more tenant data than stdout, and `docs/verification.md` records this list:
+     - `expected.items` carries sender addresses and names, Internet message IDs, sent and received times, and random mails' subjects and file names.
+     - `sample.*.random.keys` carry mailbox addresses, folder names, mail subjects and received times, site and list IDs, folder paths, file names and OneDrive UPNs (`random_key`).
+     - `sample.*.random.containers_listed` carries mailbox addresses and, for an unresolved OneDrive, its URL.
+     - A `check` item's `reason` can carry the office-v1 reader's error text, which names a part of a tenant file. This is the one place `what()` text reaches the file. It is accepted here because it is W3.2's `check` object as approved (see Open).
+
+     These are written as designed: they are the objects W4.1 signs, the file is local, and the owner chose its path.
+   - **Write failure:** `json error: <path>: could not be written` on stderr. The status never changes. Exit 0 becomes 1, and any other code is kept. That is the same rule as `finish_recording` (Q2.1) and lost stdout (W2.8 second review point 4).
+
+**Reason.**
+- **One pipeline** means one guard, one mutex and one status table to trust and test. A second copy would drift.
+- **Shared exit codes** let a script read `test` and `restore` alike. In the guide's mapping, 1 and 3 already mean config and transient.
+- **A seed derived from the run ID** keeps a draw provable from what the result records.
+- **Seeding real files** is the only way to run the random SharePoint and OneDrive restore and the `metadata` check live for the first time. Restating the Done when would hide that, and a short run already says `pass`.
+- **The table's VERDICT and fixed REASON words** keep infrastructure from reading as a failure, and keep tenant file content off stdout.
+- **The `--json` file** follows the existing output-loss rule, so nothing new decides an exit code.
+
+**Alternatives rejected.**
+- *The guide's 0/1/3:* fail would collide with config, and auth and service errors would collapse into 3 (W2.8 point 6, W3.3 point 6).
+- *`--seed N` mapped to a run ID `seed-N`:* the printed seed would then be a hash and not N, and it couldn't be combined with `--run-id`.
+- *`--seed` fed into the sampler:* it undoes the rule in `sample_selector.hpp` that only the run ID gives the seed, and the result wouldn't record it.
+- *Restating the Done when only:* it leaves two paths untested.
+- *`test` defaulting to 10/10/10:* the config's `sample_*` are documented as a test run's sizes, and the command named for the service pipeline would ignore them.
+- *REASON printing `ItemCheck::reason`:* it would put a tenant file's part names on stdout.
+- *Holding the JSON to stdout's data (no `random.keys`, no sender or IMID):* W4.1 would need a second shape.
+- *Overwriting an existing `--json` file:* a scheduled script could lose an earlier run's summary.
+- *A temp name from the run ID:* `:` is allowed in a run ID and names an NTFS stream.
+- *`--json` on `restore` too:* nothing needs it yet.
+
+**Open.**
+- The Veeam session sweep (stopping our own `Working` sessions) that W3.4 handed to W3.6 is not settled here. A short entry comes before it is built.
+- W3.3 build note 8: a status and a JSON file for failures before the run line (`no_restore_point`).
+- `--keep`.
+- The seeding is L1.8 (#152), built in W3.6's PR.
+- W3.2's `to_json(ItemCheck)` keeps the office-v1 note in `reason` as approved (owner, 2026-10-03, approving this entry as written); a fixed word there is a later change if wanted.
+
+**Docs and code to change with the build:**
+- **Code:**
+  - `src/run_pipeline.{hpp,cpp}` (from `run_restore`), keeping the selection record, the restore point and `RunVerdict` for an end-of-run `on_run(RunSummary)` hook.
+  - `include/rp/test_command.hpp` and `src/test_command.cpp` (parser, table, `--json`).
+  - A `to_json(RestoreResult)`, and an atomic file writer in `src/` behind the `write_summary` env hook.
+  - The `test` branch in `src/cli.cpp`, and `kCliUsage` with its copies (`tests/restore_command_test.cpp` `kUsage`, `worker/CMakeLists.txt` `RP_USAGE`).
+- **Tests:**
+  - `tests/test_command_test.cpp` on the existing `Harness`: the golden shape, the table's VERDICT/REASON rows (an infrastructure item, an office-v1 mismatch), and the write-failure `GENERATE` table.
+  - Writer tests, including a run ID that holds `:`.
+  - Exe tests mirroring `restore`'s, plus the three `--json` refusals.
+- **Docs:** `docs/worker-config.md` ("`rpworker test`" and the exit-code table), `docs/testing.md` (the Done-when command with the dry run's run ID and restore point), `docs/verification.md` (the file's tenant data), the W3.5 output order for `test`, and CLAUDE.md.
+- **Lab:** `seed-real` with its refusals and tests, and `lab/README.md` and `lab/tenant.md`.
+
 ## 2026-10-03 — W3.5 review: a clock that fails changes nothing, and a stop ends its spans where it happens (proposed)
 
 The `/code-review` of the W3.5 branch found readings for the timings that could change a run, and stopped spans that ran on past their stop. Fixed on the branch, with tests (`tests/step_timer_test.cpp`, and in `tests/restore_command_test.cpp` "a clock that throws at a reading for the timings alone changes nothing but that span" and "without env.now they run on the connector's clock"):

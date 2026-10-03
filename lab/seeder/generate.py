@@ -188,7 +188,9 @@ def _docx(file: CanaryFile) -> bytes:
     )
 
 
-def _xlsx(file: CanaryFile) -> bytes:
+def _xlsx(file: CanaryFile, sheet_name: str = "Canary") -> bytes:
+    """`sheet_name` lets seed-real's files (L1.8) not call themselves canaries; the canary
+    files keep "Canary", so their bytes and hashes stay the same."""
     def text_cell(ref: str, text: str) -> str:
         return f'<c r="{ref}" t="inlineStr"><is><t xml:space="preserve">{escape(text)}</t></is></c>'
 
@@ -215,11 +217,12 @@ def _xlsx(file: CanaryFile) -> bytes:
         f"<sheetData>{sheet_data}</sheetData>"
         "</worksheet>"
     )
+    sheet_attr = escape(sheet_name, {'"': "&quot;"})
     workbook = (
         XML_DECL
         + '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
         'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
-        '<sheets><sheet name="Canary" sheetId="1" r:id="rId1"/></sheets>'
+        f'<sheets><sheet name="{sheet_attr}" sheetId="1" r:id="rId1"/></sheets>'
         "</workbook>"
     )
     workbook_rels = (

@@ -384,9 +384,55 @@ targets; nothing was done`, exit 4). The targets needn't be empty first.
    Remove the variables when done (`. ..\lab\entra\set-worker-env.ps1 -Clear`, and the two
    Veeam ones).
 
+### Test by hand (`rpworker test`, writes to the lab tenant)
+
+**This writes and deletes too.** `rpworker test` (W3.6, `docs/worker-config.md`, "`rpworker
+test`") runs the same pipeline as `rpworker restore`, with its own table after the check and an
+optional `--json` run summary. Its ctest exe tests all stop before any request. Check the same
+things first as for "Restore by hand": an elevated shell, no restore session still `Working`,
+no other RestoreProof run.
+
+The W3.6 Done-when is a live run that prints `status pass` with 30 of 30 items: 30 sent, 30
+verified (`manifest 15, fields 5, metadata 10`), and no `shortfall` warning
+(`docs/decisions.md` 2026-10-03, W3.6 point 2). The random SharePoint and OneDrive halves need
+real, non-canary files in the lab, so this comes after L1.8:
+
+1. Seed the real data: `python -m seeder seed-real` (L1.8, `lab/README.md`) puts files in the
+   root of the RestoreTest site's `Shared Documents` and of alice's OneDrive, and mails between
+   alice and bob. It never writes into a restore target or a canary location.
+2. Let a backup run: the nightly `RP-Lab-Full` job, or start it by hand in the Veeam console.
+   The new restore point must hold the seeded items.
+3. Run the read-only dry run ("Live sample" above) against that restore point with a run ID you
+   choose, and keep it:
+
+   ```powershell
+   $env:RP_LIVE = '1'
+   $env:RP_LIVE_RUN_ID = 'w36-done-when-1'
+   .\build\dev\rptests.exe "[sample][live]"
+   ```
+
+   Per type, `sample.<type>.random.pool_size` must be at least 5 distinct names or subjects, and
+   `containers_eligible` as expected. Note the restore point ID it printed. The pool depends on
+   the run ID (the folders it draws) and the restore point, so the run below reuses both.
+4. With the variables set as in "Restore by hand" step 2, run the test with that run ID and
+   restore point, and a summary file in a folder that exists:
+
+   ```powershell
+   .\build\dev\rpworker.exe test --mail 10 --sp 10 --od 10 --run-id w36-done-when-1 --point <the dry run's restore point ID> --config <your config.json> --manifest ..\lab\seed-manifest.json --json C:\restoreproof-runs\w36-done-when-1.json
+   ```
+
+   `--json` refuses a file that is already there (exit 1, before any Veeam call): pick a new
+   name each run. The output ends with the status line, the clean after's line, the step
+   timings' table and `wrote <file>`. Exit 0 is `pass`, 5 `fail`, 1 to 4 an `error` by its code,
+   as for `restore`. In the table after the check, `VERDICT` is `verified` for every row and
+   `REASON` `-`.
+5. Check with `rpworker graph list` that the targets are empty again, and keep the `--json`
+   file with the evidence. It holds tenant data (`docs/verification.md`, "The `--json` run
+   summary"): keep it out of the repository.
+
 ### Recording fixtures (`--record <dir>`)
 
-Q2.1: `rpworker veeam list`, `graph list [--hash]` and `restore` take `--record <dir>`, which
+Q2.1: `rpworker veeam list`, `graph list [--hash]`, `restore` and `test` take `--record <dir>`, which
 writes every exchange the command has with a service, scrubbed, as a fixture
 `FakeHttpClient` can serve (the format and rules: `docs/decisions.md` 2026-10-01, "Q2.1").
 Recording only watches: the command sends and prints what it would without it, then one more

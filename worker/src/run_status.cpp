@@ -344,20 +344,6 @@ ItemVerdict item_verdict(const RunFacts& facts, std::size_t i)
     return {Verdict::failed, {}};
 }
 
-// Whether a session's details read as the backup's counts, "<n> item(s)
-// processed", then optionally a parenthesis of counts of Veeam's own words,
-// e.g. "5 items processed (4 successes, 1 warning)". Any other text, inside
-// the parenthesis too, may name a tenant value (an item, an address), so it
-// never goes into a warning.
-bool is_counts(const std::string& details)
-{
-    static const std::string count =
-        R"(\d+ (successes|success|warnings?|failures?|errors?|skipped))";
-    static const std::regex counts(R"(\d+ items? processed( \()" + count + "(, " + count +
-                                   R"()*\))?)");
-    return std::regex_match(details, counts);
-}
-
 std::string or_dash(std::string text)
 {
     return text.empty() ? std::string{"-"} : text;
@@ -376,7 +362,7 @@ std::vector<StatusWarning> warnings_of(const RunFacts& facts,
             std::string message = std::format("{} session {}: {}", kind_name(session.kind),
                                               or_dash(one_line(session.id)),
                                               or_dash(one_line(session.result)));
-            if (is_counts(session.details)) {
+            if (is_backup_counts(session.details)) {
                 message += " (" + session.details + ")";
             }
             std::vector<std::size_t> indexes;
@@ -677,6 +663,46 @@ RunVerdict decide_status(const RunFacts& facts)
                                   n, n, verdict.verified_manifest, verdict.verified_fields,
                                   verdict.verified_metadata);
     return verdict;
+}
+
+bool is_backup_counts(std::string_view details)
+{
+    // Any other text, inside the parenthesis too, may name a tenant value (an
+    // item, an address), so it never goes into a warning or the result.
+    static const std::string count =
+        R"(\d+ (successes|success|warnings?|failures?|errors?|skipped))";
+    static const std::regex counts(R"(\d+ items? processed( \()" + count + "(, " + count +
+                                   R"()*\))?)");
+    return std::regex_match(details.begin(), details.end(), counts);
+}
+
+json to_json(const connector::RestoreResult& result)
+{
+    json sessions = json::array();
+    for (const connector::RestoreSessionResult& s : result.sessions) {
+        sessions.push_back({{"id", s.id},
+                            {"kind", connector::to_string(s.kind)},
+                            {"result", s.result},
+                            {"details", is_backup_counts(s.details) ? json(s.details) : json()},
+                            {"items_sent", s.items_sent},
+                            {"items_restored", s.items_restored},
+                            {"started_at_raw", s.started_at},
+                            {"ended_at_raw", s.ended_at}});
+    }
+    json items = json::array();
+    for (std::size_t i = 0; i < result.items.size(); ++i) {
+        const connector::ItemRestoreResult& item = result.items[i];
+        items.push_back({{"index", i},
+                         {"kind", connector::to_string(item.kind)},
+                         {"outcome", connector::to_string(item.outcome)},
+                         {"infrastructure", item.infrastructure},
+                         {"session_id", item.session_id}});
+    }
+    return {{"status", connector::to_string(result.status)},
+            {"items_sent", result.items_sent},
+            {"items_restored", result.items_restored},
+            {"sessions", std::move(sessions)},
+            {"items", std::move(items)}};
 }
 
 json to_json(const RunVerdict& verdict)

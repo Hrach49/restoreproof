@@ -57,6 +57,7 @@ add_library(rpcore STATIC
     src/sample_selector.cpp
     src/secrets.cpp
     src/sha256.cpp
+    src/step_timer.cpp
     src/target_guard.cpp
     src/target_guard_graph.cpp
     src/target_guard_veeam.cpp
@@ -147,6 +148,7 @@ add_executable(rptests
     tests/secrets_test.cpp
     tests/sha256_test.cpp
     tests/smoke.cpp
+    tests/step_timer_test.cpp
     tests/target_guard_test.cpp
     tests/target_guard_veeam_test.cpp
     tests/test_main.cpp

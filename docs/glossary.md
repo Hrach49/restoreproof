@@ -156,6 +156,18 @@ running in Veeam (`restore_may_still_run`). A target is clean when nothing stopp
 cleanup and nothing was left or skipped. Housekeeping, not a result: a `pass` with
 `cleanup_ok: false` is still a `pass`.
 
+**Span.** One named, timed step of a run (W3.5, `rp::timing::StepTimer`): eleven fixed names,
+from `restore_point_lookup` to `total`, printed as the table that ends `rpworker restore` and
+kept as the result's `timings` object. Measured on a steady clock, never a wall clock. Spans
+overlap and don't add up to `total`. A span without a duration says why: not run, stopped
+(the run stopped during it), not reported (the connector didn't measure it) or clock went
+back; no duration is ever made up. Timings never change a status or an exit code.
+
+**Recovery time.** The span `recovery`: from the start of the restore to the last sampled
+item's verdict, i.e. the restore plus reading the items back and checking them (W3.2 point 7,
+W3.5). It is how long getting the sampled items back took, not the whole run (`total`), and
+it says nothing about restoring anything beyond the sample.
+
 ## Evidence
 
 **Evidence bundle.** What one run leaves behind and uploads: the result JSON, plus

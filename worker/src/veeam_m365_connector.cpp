@@ -710,6 +710,9 @@ void RestoreRun::restore_call(const TypeWork& work, const std::vector<std::size_
     std::string text;
     VeeamClient::RestorePostOutcome outcome;
     std::chrono::system_clock::time_point posted;
+    // Step timings (W3.5): submit runs from the export to the session known,
+    // the duplicate check's re-looks included; wait is the poll alone.
+    const auto submit_start = c_.now();
     {
         const CredentialWipe wipe{pfx, text};
         try {
@@ -785,8 +788,10 @@ void RestoreRun::restore_call(const TypeWork& work, const std::vector<std::size_
     }
     }
     sessions_.know(id);
+    const auto submitted = c_.now();
 
     const vr::SessionState session = poll(id, work.kind);
+    const auto stopped = c_.now();
     // Stopped: ours runs no more. Only when the duplicate check listed it
     // alone does nothing else of ours run under the explore sessions; else
     // another candidate may, and they stay open (decisions point 8).
@@ -808,6 +813,8 @@ void RestoreRun::restore_call(const TypeWork& work, const std::vector<std::size_
     record.ended_at = one_line(session.end_time);
     record.items_sent = static_cast<int>(call.size());
     record.items_restored = static_cast<int>(std::min<std::int64_t>(stats.restored, std::numeric_limits<int>::max()));
+    record.submit_time = submitted - submit_start;
+    record.wait_time = stopped - submitted;
     result.session_ids.push_back(id);
     result.sessions.push_back(record);
     for (const std::string& line : verdict.log_lines) {

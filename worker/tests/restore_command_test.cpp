@@ -22,6 +22,7 @@
 #include <rp/restore_command.hpp>
 #include <rp/sample_rng.hpp>
 #include <rp/secrets.hpp>
+#include <rp/step_timer.hpp>
 #include <rp/text_v1.hpp>
 
 #include <nlohmann/json.hpp>
@@ -40,6 +41,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <format>
 #include <fstream>
 #include <functional>
 #include <iterator>
@@ -278,6 +280,23 @@ struct Run {
     std::string out;
     std::string err;
 };
+
+// W3.5: the step timings' table that ends stdout of every run with a run line,
+// a paragraph of its own, as the timings on_timings was given print it.
+std::string timings_table(const rp::timing::RunTimings& timings)
+{
+    return "\n" + rp::timing::format_timings(timings);
+}
+
+// `out` without that table: REQUIREs one run's timings and its table at the end.
+std::string without_timings(const std::string& out,
+                            const std::vector<rp::timing::RunTimings>& timings)
+{
+    REQUIRE(timings.size() == 1);
+    const std::string table = timings_table(timings[0]);
+    REQUIRE(out.ends_with(table));
+    return out.substr(0, out.size() - table.size());
+}
 
 // lab/seeder/catalog.py's MAIL_SENTENCES and MAIL_FOOTER: what a canary mail's
 // body holds, so a restored copy can carry it (its text-v1 hash is the
@@ -761,6 +780,10 @@ struct Harness {
             cleanups.push_back(cleanup);
             out_at_cleanup.push_back(fake.out ? fake.out->str() : "");
         };
+        env.on_timings = [this](const rp::timing::RunTimings& run_timings) {
+            timings.push_back(run_timings);
+            out_at_timings.push_back(fake.out ? fake.out->str() : "");
+        };
         return env;
     }
 
@@ -807,6 +830,9 @@ struct Harness {
         return log_stream.str();
     }
 
+    // The run's stdout up to its step timings' table (W3.5), which it REQUIREs.
+    std::string body(const Run& run) const { return without_timings(run.out, timings); }
+
     rp::test::TempDir dir;
     std::filesystem::path config_path;
     std::filesystem::path manifest_path;
@@ -836,6 +862,9 @@ struct Harness {
     std::vector<rp::RunCleanup> cleanups;
     std::vector<std::string> out_at_cleanup;
     std::vector<std::string> out_at_delete; // stdout as it stood at each delete
+    // W3.5: each run's step timings, and stdout as it stood then.
+    std::vector<rp::timing::RunTimings> timings;
+    std::vector<std::string> out_at_timings;
     std::string made_for_org;
     std::ostringstream log_stream;
     std::shared_ptr<spdlog::logger> logger;
@@ -914,8 +943,9 @@ const std::string kPassOfThree =
     "status pass: 3 of 3 item(s) verified: manifest 2, fields 1, metadata 0\n";
 
 // Exactly one stdout line starts with "status ", the run's (W3.3), and only
-// the clean after's line follows it (W3.4): a script reads the run's status
-// from it, never the restore's own line, which starts with "restore ".
+// the clean after's line (W3.4) and the step timings' table (W3.5), a header
+// and eleven rows, follow it: a script reads the run's status from it, never
+// the restore's own line, which starts with "restore ".
 void check_one_status_line(const std::string& out)
 {
     std::size_t status_lines = 0;
@@ -934,9 +964,13 @@ void check_one_status_line(const std::string& out)
         start = end == std::string::npos ? out.size() : end + 1;
     }
     CHECK(status_lines == 1);
-    REQUIRE(lines.size() >= 2);
-    CHECK(lines[lines.size() - 2].starts_with("status "));
-    CHECK(lines.back().starts_with("cleanup after "));
+    constexpr std::size_t kTableLines = 1 + rp::timing::kSpanCount;
+    REQUIRE(lines.size() >= 2 + kTableLines);
+    CHECK(lines[lines.size() - kTableLines - 2].starts_with("status "));
+    CHECK(lines[lines.size() - kTableLines - 1].starts_with("cleanup after "));
+    CHECK(lines[lines.size() - kTableLines].starts_with("STEP "));
+    CHECK(lines.back().starts_with("total "));
+    CHECK_THAT(out, ContainsSubstring("\n\nSTEP "));
 }
 
 } // namespace
@@ -1413,8 +1447,8 @@ TEST_CASE("restore: each failure of the restore has its exit code; the header is
     // (here the fake had put its copies in), and says Veeam may still be
     // writing: the state it leaves isn't ok.
     const bool sent = !c.status.ends_with("nothing was restored");
-    CHECK(run.out == expected_header() + "\nstatus error " + c.status + "\n" +
-                         (sent ? kCleanAfterStillRunning : kNothingRestored));
+    CHECK(lab.body(run) == expected_header() + "\nstatus error " + c.status + "\n" +
+                               (sent ? kCleanAfterStillRunning : kNothingRestored));
     REQUIRE(lab.cleanups.size() == 1);
     CHECK(lab.cleanups[0].restore_sent == sent);
     CHECK(lab.cleanups[0].restore_may_still_run == sent);
@@ -1469,7 +1503,7 @@ TEST_CASE("restore: a failure choosing the sample restores nothing; the run ID i
 
     CHECK(run.exit_code == c.code);
     CHECK(run.err == c.err);
-    CHECK(run.out == expected_intro() + "\nstatus error " + c.status + "\n" + kNothingRestored);
+    CHECK(lab.body(run) == expected_intro() + "\nstatus error " + c.status + "\n" + kNothingRestored);
     CHECK(lab.fake.candidate_calls == 1);
     CHECK(lab.fake.restore_calls == 0);
 }
@@ -1780,11 +1814,11 @@ TEST_CASE("restore: an empty sample restores nothing and is status error empty_s
     CHECK(run.exit_code == rp::exit_code::service);
     CHECK(run.err == warnings);
     CHECK_THAT(run.out, StartsWith(expected_intro() + cursor_line));
-    CHECK_THAT(run.out, EndsWith("\n"
-                                 "\n"
-                                 "status error empty_sample: the sample is empty: nothing to "
-                                 "restore\n" +
-                                 kNothingRestored));
+    CHECK_THAT(lab.body(run), EndsWith("\n"
+                                       "\n"
+                                       "status error empty_sample: the sample is empty: nothing to "
+                                       "restore\n" +
+                                       kNothingRestored));
     CHECK_THAT(run.out, !ContainsSubstring("restoring"));
     CHECK(lab.fake.restore_calls == 0);
     // W3.4: the targets were cleaned before, as in every run with a run line.
@@ -1804,12 +1838,13 @@ TEST_CASE("restore: a status line lost without a restore is said on stderr, with
     Harness whole;
     whole.dir.write("seed-manifest.json", trimmed_manifest(0, 1, 1));
     const Run full = whole.run(args);
-    REQUIRE(full.out.ends_with(status_line + kNothingRestored));
+    const std::string body = whole.body(full);
+    REQUIRE(body.ends_with(status_line + kNothingRestored));
 
     Harness lab;
     lab.dir.write("seed-manifest.json", trimmed_manifest(0, 1, 1));
     // Everything but the status line (and the cleanup line after it) fits.
-    RecordingStreamBuf buffer(full.out.size() - status_line.size() - kNothingRestored.size() + 5);
+    RecordingStreamBuf buffer(body.size() - status_line.size() - kNothingRestored.size() + 5);
     std::ostream out(&buffer);
 
     const auto [code, err] = lab.run_to(args, out);
@@ -1848,7 +1883,23 @@ TEST_CASE("restore: a succeeded restore prints the header, both tables and the s
               "  sess-sharepoint  sharepoint  Success  1 of 1    2026-09-30T10:01:10Z  2026-09-30T10:01:52.25Z  0:00:42\n"
               "\n"
               "restore succeeded: 3 of 3 item(s) restored in 0:02:03\n" +
-              kCheckOfThree + kPassOfThree + kCleanAfterOfThree);
+              kCheckOfThree + kPassOfThree + kCleanAfterOfThree +
+              // W3.5: one reading per boundary, 123 s a tick. The restore's
+              // two readings are its line's; verify holds the eight readings
+              // of the read back and the check (each item's ms) and its end.
+              "\n"
+              "STEP                  TIME         NOTE\n"
+              "restore_point_lookup  0:02:03.000\n"
+              "cleanup_before        0:02:03.000\n"
+              "sample_select         0:02:03.000\n"
+              "target_snapshot       0:02:03.000\n"
+              "restore               0:02:03.000\n"
+              "restore_submit        -            not reported\n"
+              "restore_wait          -            not reported\n"
+              "verify                0:18:27.000\n"
+              "recovery              0:20:30.000\n"
+              "cleanup_after         0:02:03.000\n"
+              "total                 0:41:00.000\n");
     check_one_status_line(run.out);
     // The header went out before the restore began.
     CHECK(lab.fake.out_at_restore == expected_header());
@@ -1867,7 +1918,9 @@ TEST_CASE("restore: a succeeded restore prints the header, both tables and the s
     REQUIRE(cleanup.after);
     CHECK(cleanup.after->mail.deleted == 2);
     CHECK(cleanup.after->sharepoint.deleted == 1);
-    CHECK(lab.out_at_cleanup.front() == run.out);
+    // The step timings' table (W3.5) comes after, and on_timings after it.
+    CHECK(lab.out_at_cleanup.front() == lab.body(run));
+    CHECK(lab.out_at_timings == std::vector<std::string>{run.out});
     CHECK_FALSE(lab.lock_held); // released when the command returned
     CHECK(lab.lock_calls == 1);
     CHECK(lab.lock_veeam_calls == 0);
@@ -1924,8 +1977,8 @@ TEST_CASE("restore: the backup's own status never decides the run's: a partial r
     CHECK_THAT(run.out, ContainsSubstring("\nrestore " + std::string{connector::to_string(status)} +
                                           ": " + std::to_string(count) +
                                           " of 2 item(s) restored in 0:02:03\n"));
-    CHECK_THAT(run.out, EndsWith("error\n\n" + status_line + "\n" +
-                                 clean_after_line(1, sp_missing ? 0 : 1, 0)));
+    CHECK_THAT(lab.body(run), EndsWith("error\n\n" + status_line + "\n" +
+                                       clean_after_line(1, sp_missing ? 0 : 1, 0)));
     check_one_status_line(run.out);
 }
 
@@ -1957,11 +2010,11 @@ TEST_CASE("restore: a failed restore whose item only an earlier run's copy match
     CHECK(run.err == "warning: backup_session: mail session sess-mail: Failed\n"
                      "warning: stale_copies: 1 copies from earlier runs in the restore targets "
                      "were ignored (mail 1, sharepoint 0, onedrive 0)\n");
-    CHECK(run.out.ends_with("check: 0 match, 0 mismatch, 0 missing, 1 error\n"
-                            "\n"
-                            "status error stale_target: 1 of 1 item(s) couldn't be checked "
-                            "(stale_target 1)\n" +
-                            clean_after_line(0, 0, 0)));
+    CHECK(lab.body(run).ends_with("check: 0 match, 0 mismatch, 0 missing, 1 error\n"
+                                  "\n"
+                                  "status error stale_target: 1 of 1 item(s) couldn't be checked "
+                                  "(stale_target 1)\n" +
+                                  clean_after_line(0, 0, 0)));
     check_one_status_line(run.out);
 }
 
@@ -2039,9 +2092,9 @@ TEST_CASE("restore: an item the backup failed for an infrastructure reason is un
     CHECK(run.err == err);
     CHECK_THAT(run.out, ContainsSubstring("\n  KIND        SOURCE  NAME"));
     CHECK_THAT(run.out, ContainsSubstring("\nrestore " + std::string{connector::to_string(status)}));
-    CHECK_THAT(run.out, EndsWith("error\n\n" + status_line + "\n" +
-                                 clean_after_line(empty_targets[0] ? 0 : 1,
-                                                  empty_targets[1] ? 0 : 1, 0)));
+    CHECK_THAT(lab.body(run), EndsWith("error\n\n" + status_line + "\n" +
+                                       clean_after_line(empty_targets[0] ? 0 : 1,
+                                                        empty_targets[1] ? 0 : 1, 0)));
 }
 
 TEST_CASE("restore: a restore that returns not_run is exit 4, never 5", "[restore_command]")
@@ -2057,7 +2110,8 @@ TEST_CASE("restore: a restore that returns not_run is exit 4, never 5", "[restor
     CHECK(run.err.empty());
     // Without items or sessions, only the status line follows the header.
     const std::string last = "restoring 1 item(s) ...\n";
-    CHECK(run.out.substr(run.out.find(last) + last.size()) ==
+    const std::string body = lab.body(run);
+    CHECK(body.substr(body.find(last) + last.size()) ==
           "\nrestore not_run: 0 of 0 item(s) restored in 0:02:03\n"
           "\n"
           "  KIND  SOURCE  NAME            OUTCOME  FIELDS  DUP  MS\n"
@@ -2279,7 +2333,7 @@ TEST_CASE("restore: each item's row: its source, outcome, session time and messa
     // Five items reported for three sent don't add up: error internal (W3.3, row 1).
     CHECK(run.exit_code == rp::exit_code::config);
     CHECK(run.err.empty());
-    const std::string tables = run.out.substr(expected_header().size());
+    const std::string tables = lab.body(run).substr(expected_header().size());
     CHECK(tables ==
           "\n"
           "  KIND        SOURCE  NAME              OUTCOME                  SESSION  ELAPSED  MESSAGE\n"
@@ -2495,8 +2549,8 @@ TEST_CASE("restore: a failure reading the targets before the restore stops the r
                                           "status error " +
                                           c.error_code +
                                           ": the run stopped before the restore: "));
-    CHECK_THAT(run.out, EndsWith(" (" + c.error_code + "); nothing was restored\n" +
-                                 kNothingRestored));
+    CHECK_THAT(lab.body(run), EndsWith(" (" + c.error_code + "); nothing was restored\n" +
+                                       kNothingRestored));
     CHECK(lab.fake.restore_calls == 0);
     CHECK(lab.graph_clients == 1);
 }
@@ -2566,11 +2620,11 @@ TEST_CASE("restore: an item missing or not matching is status fail, exit 5",
         CHECK(run.err.empty());
         CHECK_THAT(run.out, ContainsSubstring(
                                 "  sharepoint  canary  rp-canary-01.pdf  missing  -       -    -\n"));
-        CHECK(run.out.ends_with("check: 2 match, 0 mismatch, 1 missing, 0 error\n"
-                                "\n"
-                                "status fail: 1 of 3 item(s) didn't verify (1 missing, 0 "
-                                "mismatch)\n" +
-                                clean_after_line(2, 0, 0)));
+        CHECK(lab.body(run).ends_with("check: 2 match, 0 mismatch, 1 missing, 0 error\n"
+                                      "\n"
+                                      "status fail: 1 of 3 item(s) didn't verify (1 missing, 0 "
+                                      "mismatch)\n" +
+                                      clean_after_line(2, 0, 0)));
     }
     SECTION("a mismatch: a body and a time that differ")
     {
@@ -2584,9 +2638,9 @@ TEST_CASE("restore: an item missing or not matching is status fail, exit 5",
         CHECK_THAT(run.out,
                    ContainsSubstring("  mail  canary  RP-CANARY-0001  mismatch  "
                                      "received_at,internet_message_id,sha256  -    123000\n"));
-        CHECK(run.out.ends_with("\nstatus fail: 1 of 1 item(s) didn't verify (0 missing, 1 "
-                                "mismatch)\n" +
-                                clean_after_line(1, 0, 0)));
+        CHECK(lab.body(run).ends_with("\nstatus fail: 1 of 1 item(s) didn't verify (0 missing, 1 "
+                                      "mismatch)\n" +
+                                      clean_after_line(1, 0, 0)));
     }
 }
 
@@ -2613,11 +2667,11 @@ TEST_CASE("restore: a target that can't be read back makes its items unchecked, 
                    "  mail        canary  RP-CANARY-0001    match    -                 -    123000\n"
                    "  mail        random  real mail 01      match    -                 -    123000\n"
                    "  sharepoint  canary  rp-canary-01.pdf  error    graph_permission  -    -\n"));
-    CHECK(run.out.ends_with("check: 2 match, 0 mismatch, 0 missing, 1 error\n"
-                            "\n"
-                            "status error graph_permission: 1 of 3 item(s) couldn't be checked "
-                            "(graph_permission 1); 2 verified\n" +
-                            kCleanAfterOfThree));
+    CHECK(lab.body(run).ends_with("check: 2 match, 0 mismatch, 0 missing, 1 error\n"
+                                  "\n"
+                                  "status error graph_permission: 1 of 3 item(s) couldn't be checked "
+                                  "(graph_permission 1); 2 verified\n" +
+                                  kCleanAfterOfThree));
 }
 
 TEST_CASE("restore: copies earlier runs left are ignored and counted; a file only an earlier run "
@@ -2644,11 +2698,11 @@ TEST_CASE("restore: copies earlier runs left are ignored and counted; a file onl
                ContainsSubstring(
                    "  mail        canary  RP-CANARY-0001    match    -             -    123000\n"
                    "  sharepoint  canary  rp-canary-01.pdf  error    stale_target  -    -\n"));
-    CHECK(run.out.ends_with("check: 1 match, 0 mismatch, 0 missing, 1 error\n"
-                            "\n"
-                            "status error stale_target: 1 of 2 item(s) couldn't be checked "
-                            "(stale_target 1); 1 verified\n" +
-                            clean_after_line(1, 0, 0)));
+    CHECK(lab.body(run).ends_with("check: 1 match, 0 mismatch, 0 missing, 1 error\n"
+                                  "\n"
+                                  "status error stale_target: 1 of 2 item(s) couldn't be checked "
+                                  "(stale_target 1); 1 verified\n" +
+                                  clean_after_line(1, 0, 0)));
     // The earlier run's file was never downloaded.
     for (const rp::HttpRequest& request : lab.targets.graph.requests()) {
         CHECK(request.url.find("earlier-file") == std::string::npos);
@@ -2719,9 +2773,9 @@ TEST_CASE("restore: a failure in the check that isn't Graph's keeps the restore'
     CHECK(run.out.find("check:") == std::string::npos);
     // W3.4: the copies are deleted all the same; the restore's rows are the
     // evidence. The restore returned, so nothing of it still runs.
-    CHECK(run.out.ends_with("\nstatus error internal: the restored items couldn't be checked: an "
-                            "unexpected failure (internal)\n" +
-                            clean_after_line(1, 1, 0)));
+    CHECK(lab.body(run).ends_with("\nstatus error internal: the restored items couldn't be checked: an "
+                                  "unexpected failure (internal)\n" +
+                                  clean_after_line(1, 1, 0)));
     REQUIRE(lab.cleanups.size() == 1);
     CHECK(lab.cleanups[0].after.has_value());
     CHECK_FALSE(lab.cleanups[0].restore_may_still_run);
@@ -2751,9 +2805,9 @@ TEST_CASE("restore: two copies of one item: the newest is checked, and DUP says 
                      "was checked\n");
     CHECK_THAT(run.out,
                ContainsSubstring("  mail  canary  RP-CANARY-0001  match    -       2 copies  123000\n"));
-    CHECK(run.out.ends_with("\nstatus pass: 1 of 1 item(s) verified: manifest 1, fields 0, "
-                            "metadata 0\n" +
-                            clean_after_line(2, 0, 0)));
+    CHECK(lab.body(run).ends_with("\nstatus pass: 1 of 1 item(s) verified: manifest 1, fields 0, "
+                                  "metadata 0\n" +
+                                  clean_after_line(2, 0, 0)));
 }
 
 TEST_CASE("restore: a stdout that fails on the check's table says so, with the status's exit "
@@ -2918,14 +2972,14 @@ TEST_CASE("restore: a clean before the guard refuses stops the run before the sa
     const Run run = lab.run({"--run-id", kRunId, "--mail", "2", "--sp", "1", "--od", "1"});
 
     CHECK(run.exit_code == rp::exit_code::service);
-    CHECK(run.out == expected_run_lines() +
-                         "cleanup before incomplete: deleted 0 mail, 0 sharepoint, 0 onedrive; " +
-                         which +
-                         " target_guard\n"
-                         "\n"
-                         "status error target_guard: the run stopped before the restore: the "
-                         "restore-target guard refused (target_guard); nothing was restored\n" +
-                         kNothingRestored);
+    CHECK(lab.body(run) == expected_run_lines() +
+                               "cleanup before incomplete: deleted 0 mail, 0 sharepoint, 0 onedrive; " +
+                               which +
+                               " target_guard\n"
+                               "\n"
+                               "status error target_guard: the run stopped before the restore: the "
+                               "restore-target guard refused (target_guard); nothing was restored\n" +
+                               kNothingRestored);
     CHECK(run.err == "cleanup error: " + which +
                          ": the restore-target guard refused the target; nothing was deleted in it "
                          "(target_guard)\n"
@@ -2985,7 +3039,7 @@ TEST_CASE("restore: a clean before that fails otherwise lets the run go on; the 
     CHECK(run.err == "cleanup error: " + name + ": " + c.what + " (" + c.code + ")\n" +
                          "warning: cleanup: " + name + " not emptied before the run (left 0, "
                          "skipped 0, " + c.code + ")\n");
-    CHECK(run.out.ends_with(kCheckOfThree + kPassOfThree + kCleanAfterOfThree));
+    CHECK(lab.body(run).ends_with(kCheckOfThree + kPassOfThree + kCleanAfterOfThree));
     REQUIRE(lab.cleanups.size() == 1);
     CHECK(lab.cleanups[0].cleanup_ok());
 }
@@ -3014,9 +3068,9 @@ TEST_CASE("restore: leftovers are deleted before the run; the command's lines sa
                                    "cleanup before incomplete: deleted 1 mail, 1 sharepoint, 0 "
                                    "onedrive; skipped 1\n"
                                    "canary cursor "));
-    CHECK(run.out.ends_with(kCheckOfThree + kPassOfThree +
-                            "cleanup after incomplete: deleted 2 mail, 1 sharepoint, 0 onedrive; "
-                            "skipped 1\n"));
+    CHECK(lab.body(run).ends_with(kCheckOfThree + kPassOfThree +
+                                  "cleanup after incomplete: deleted 2 mail, 1 sharepoint, 0 onedrive; "
+                                  "skipped 1\n"));
     CHECK(run.err == "warning: cleanup: sharepoint not emptied before the run (left 0, skipped 1)\n"
                      "warning: cleanup: sharepoint not emptied after the run (left 0, skipped 1)\n");
     CHECK(lab.targets.deleted.contains("LeftoverMailId"));
@@ -3053,9 +3107,9 @@ TEST_CASE("restore: a clean after that fails leaves the status and exit code as 
     const Run run = lab.run({"--run-id", kRunId, "--mail", "2", "--sp", "1", "--od", "0"});
 
     CHECK(run.exit_code == rp::exit_code::ok);
-    CHECK(run.out.ends_with(kCheckOfThree + kPassOfThree +
-                            "cleanup after incomplete: deleted 2 mail, 0 sharepoint, 0 onedrive; "
-                            "left 0 mail, 1 sharepoint, 0 onedrive; sharepoint graph_permission\n"));
+    CHECK(lab.body(run).ends_with(kCheckOfThree + kPassOfThree +
+                                  "cleanup after incomplete: deleted 2 mail, 0 sharepoint, 0 onedrive; "
+                                  "left 0 mail, 1 sharepoint, 0 onedrive; sharepoint graph_permission\n"));
     CHECK(run.err == "cleanup error: sharepoint: Microsoft Graph refused a permission the cleanup "
                      "relies on (graph_permission)\n"
                      "warning: cleanup: sharepoint not emptied after the run (left 1, skipped 0, "
@@ -3100,6 +3154,664 @@ TEST_CASE("restore: cleanup_ok is the state the run leaves the targets in", "[re
         CHECK(written["after"] == rp::graph::to_json(*after));
     }
     CHECK(written.size() == 4);
+}
+
+// --- Step timings (W3.5) ------------------------------------------------------------
+
+namespace {
+
+using rp::timing::Span;
+using rp::timing::SpanState;
+
+// One span as a test expects it: the table's NOTE ("" for measured) and its
+// duration in ticks of the harness's clock (-1: none).
+struct SpanExpect {
+    std::string_view note;
+    int ticks = -1;
+};
+using SpansExpect = std::array<SpanExpect, rp::timing::kSpanCount>;
+
+constexpr SpanExpect kNotRun{"not run"};
+constexpr SpanExpect kNotReported{"not reported"};
+constexpr SpanExpect kWentBack{"clock went back"};
+constexpr SpanExpect measured(int ticks)
+{
+    return {"", ticks};
+}
+constexpr SpanExpect stopped(int ticks)
+{
+    return {"stopped", ticks};
+}
+
+SpanState state_of(std::string_view note)
+{
+    if (note.empty()) {
+        return SpanState::measured;
+    }
+    if (note == "stopped") {
+        return SpanState::stopped;
+    }
+    if (note == "not run") {
+        return SpanState::not_run;
+    }
+    if (note == "not reported") {
+        return SpanState::not_reported;
+    }
+    if (note == "clock went back") {
+        return SpanState::clock_backwards;
+    }
+    return SpanState::open;
+}
+
+// The table those spans print, laid out here by hand with a clock of 1 s
+// ticks: the run's last paragraph.
+std::string expected_table(const SpansExpect& spans)
+{
+    std::string text = "\nSTEP                  TIME         NOTE\n";
+    for (std::size_t i = 0; i < spans.size(); ++i) {
+        const std::string time =
+            spans[i].ticks < 0 ? std::string{"-"} : std::format("0:00:{:02}.000", spans[i].ticks);
+        std::string line = std::format("{:<22}{:<13}{}", rp::timing::to_string(static_cast<Span>(i)),
+                                       time, spans[i].note);
+        line.erase(line.find_last_not_of(' ') + 1);
+        text += line + '\n';
+    }
+    return text;
+}
+
+// Each span's state and duration as `spans` says, a tick being `tick`.
+void check_spans(const rp::timing::RunTimings& timings, const SpansExpect& spans,
+                 std::chrono::nanoseconds tick)
+{
+    for (std::size_t i = 0; i < spans.size(); ++i) {
+        CAPTURE(rp::timing::to_string(static_cast<Span>(i)));
+        CHECK(timings.spans[i].state == state_of(spans[i].note));
+        CHECK(timings.spans[i].duration ==
+              (spans[i].ticks < 0 ? std::nullopt
+                                  : std::optional<std::chrono::nanoseconds>{tick * spans[i].ticks}));
+    }
+}
+
+// restored(), each mail session's submit and wait 2 s and 7 s as the
+// connector measured them, the SharePoint session's as given.
+std::function<connector::RestoreResult(const connector::RestoreSpec&)> timed_restore(
+    std::optional<std::chrono::nanoseconds> sharepoint_submit,
+    std::optional<std::chrono::nanoseconds> sharepoint_wait)
+{
+    return [=](const connector::RestoreSpec& spec) {
+        connector::RestoreResult result = restored(spec);
+        for (connector::RestoreSessionResult& session : result.sessions) {
+            const bool mail = session.kind == connector::ItemKind::mail;
+            session.submit_time = mail ? std::optional{std::chrono::nanoseconds{2s}} : sharepoint_submit;
+            session.wait_time = mail ? std::optional{std::chrono::nanoseconds{7s}} : sharepoint_wait;
+        }
+        return result;
+    };
+}
+
+} // namespace
+
+TEST_CASE("restore: step timings: a run that stops before its run line prints no table and hands "
+          "on no timings",
+          "[restore_command][step_timer]")
+{
+    using Setup = std::function<void(Harness&)>;
+    struct Case {
+        std::string name;
+        Setup setup;
+        Args args;
+        int code;
+        // --record <a folder already holding a file>, added to `args`.
+        bool record_used = false;
+    };
+    const std::vector<Case> cases{
+        {"usage", [](Harness&) {}, Args{"--mail", "x"}, rp::exit_code::usage},
+        {"config", [](Harness& lab) { lab.load_secrets = [] { return rp::Secrets{}; }; }, Args{},
+         rp::exit_code::config},
+        {"manifest", [](Harness& lab) { lab.dir.write("seed-manifest.json", "{"); }, Args{},
+         rp::exit_code::config},
+        {"cursor", [](Harness&) {}, Args{"--canary-cursor", "99,0,0"}, rp::exit_code::usage},
+        {"run lock", [](Harness& lab) { lab.lock_taken = true; }, Args{}, rp::exit_code::service},
+        {"connector", [](Harness& lab) { lab.give_connector = false; }, Args{},
+         rp::exit_code::config},
+        {"listing the restore points",
+         [](Harness& lab) {
+             lab.fake.points_throw = [] { throw connector::TransientError("Veeam unreachable"); };
+         },
+         Args{}, rp::exit_code::transient},
+        {"no restore point", [](Harness& lab) { lab.fake.points.clear(); }, Args{},
+         rp::exit_code::service},
+        {"an unknown restore point", [](Harness&) {}, Args{"--point", "nope"},
+         rp::exit_code::service},
+        {"a --record folder neither new nor empty", [](Harness&) {}, Args{}, rp::exit_code::config,
+         true},
+    };
+    const Case& c = cases[GENERATE(range(std::size_t{0}, std::size_t{10}))];
+    CAPTURE(c.name);
+    Harness lab;
+    c.setup(lab);
+    Args args = c.args;
+    const std::filesystem::path rec = lab.dir.path() / "rec";
+    const std::string rec_arg = utf8(rec);
+    if (c.record_used) {
+        std::filesystem::create_directory(rec);
+        lab.dir.write("rec/earlier.json", "{}");
+        args.insert(args.end(), {"--record", rec_arg});
+    }
+
+    const Run run = lab.run(args);
+
+    CHECK(run.exit_code == c.code);
+    CHECK(run.out.empty());
+    CHECK(run.err.find("STEP") == std::string::npos);
+    CHECK(lab.timings.empty());
+    CHECK(lab.fake.restore_calls == 0);
+    if (c.record_used) {
+        CHECK_THAT(run.err, ContainsSubstring("the --record folder is not empty"));
+        CHECK(lab.fake.points_calls == 0);
+    }
+}
+
+TEST_CASE("restore: step timings: a run line made from a refused run ID shows no timings either",
+          "[restore_command][step_timer]")
+{
+    Harness lab;
+    rp::RestoreCommandEnv env = lab.env();
+    env.make_run_id = [] { return std::string{"not a run id"}; };
+    std::ostringstream out;
+    std::ostringstream err;
+    const std::string path_arg = utf8(lab.config_path);
+
+    const int code = rp::run_restore_command(Args{"--config", path_arg}, out, err, env);
+
+    CHECK(code == rp::exit_code::config);
+    CHECK(out.str().empty());
+    CHECK(lab.timings.empty());
+}
+
+TEST_CASE("restore: step timings: each way a run ends has its spans; the table ends stdout, after "
+          "the cleanup after line, and on_timings gets them once, after it",
+          "[restore_command][step_timer]")
+{
+    namespace gl = rp::test::graph_lab;
+    using Setup = std::function<void(Harness&)>;
+    const Args three{"--mail", "2", "--sp", "1", "--od", "0"};
+    struct Case {
+        std::string name;
+        Setup setup;
+        Args args;
+        int code;
+        // In Span order: restore_point_lookup, cleanup_before, sample_select,
+        // target_snapshot, restore, restore_submit, restore_wait, verify,
+        // recovery, cleanup_after, total.
+        SpansExpect spans;
+    };
+    const std::vector<Case> cases{
+        {"the clean before's guard refuses",
+         [](Harness& lab) {
+             json edited = rp::test::load_fixture_json("graph", "restoretarget-drive-200");
+             edited["body"]["name"] = "Dokumenty";
+             lab.targets.graph.on(rp::HttpMethod::get, gl::drive_url(),
+                                  {rp::test::to_response(edited)});
+         },
+         three, rp::exit_code::service,
+         {measured(1), measured(1), kNotRun, kNotRun, kNotRun, kNotRun, kNotRun, kNotRun, kNotRun,
+          kNotRun, measured(5)}},
+        {"choose_sample throws",
+         [](Harness& lab) {
+             lab.fake.candidates_throw = [] { throw connector::TransientError("Veeam unreachable"); };
+         },
+         Args{"--mail", "2", "--sp", "0", "--od", "0"}, rp::exit_code::transient,
+         {measured(1), measured(1), stopped(1), kNotRun, kNotRun, kNotRun, kNotRun, kNotRun,
+          kNotRun, kNotRun, measured(6)}},
+        {"an empty sample",
+         [](Harness& lab) { lab.dir.write("seed-manifest.json", trimmed_manifest(0, 1, 1)); },
+         Args{"--mail", "1", "--sp", "0", "--od", "0"}, rp::exit_code::service,
+         {measured(1), measured(1), measured(1), kNotRun, kNotRun, kNotRun, kNotRun, kNotRun,
+          kNotRun, kNotRun, measured(6)}},
+        {"the reads before fail",
+         [](Harness& lab) {
+             const rp::HttpResponse answer = rp::test::load_fixture("graph", "api-invalid-token-401");
+             lab.targets.fail = [answer](connector::ItemKind,
+                                         bool) -> std::optional<rp::HttpResponse> { return answer; };
+         },
+         three, rp::exit_code::auth,
+         {measured(1), measured(1), measured(1), stopped(1), kNotRun, kNotRun, kNotRun, kNotRun,
+          kNotRun, kNotRun, measured(8)}},
+        {"restore_sample throws, nothing restored",
+         [](Harness& lab) {
+             lab.fake.restore_throw = [] {
+                 throw connector::SafetyViolation("target guard: refused; nothing was restored");
+             };
+         },
+         three, rp::exit_code::service,
+         {measured(1), measured(1), measured(1), measured(1), stopped(1), kNotReported,
+          kNotReported, kNotRun, stopped(1), kNotRun, measured(9)}},
+        {"restore_sample throws, items may be in the targets",
+         [](Harness& lab) {
+             lab.fake.restore_throw = [] { throw connector::TransientError("Veeam unreachable"); };
+         },
+         three, rp::exit_code::transient,
+         {measured(1), measured(1), measured(1), measured(1), stopped(1), kNotReported,
+          kNotReported, kNotRun, stopped(1), measured(1), measured(11)}},
+        {"the check throws",
+         [](Harness& lab) {
+             lab.fake.answer = timed_restore(2s, 7s);
+             lab.targets.download_throw = [] { throw std::bad_alloc(); };
+         },
+         Args{"--mail", "0", "--sp", "1", "--od", "0"}, rp::exit_code::config,
+         {measured(1), measured(1), measured(1), measured(1), measured(1), measured(2),
+          measured(7), stopped(2), stopped(3), measured(1), measured(13)}},
+        {"a target's read back fails: not a stop",
+         [](Harness& lab) {
+             lab.fake.answer = timed_restore(2s, 7s);
+             const rp::HttpResponse denied = rp::test::load_fixture("graph", "site-403-accessdenied");
+             lab.targets.fail = [denied](connector::ItemKind kind,
+                                         bool after) -> std::optional<rp::HttpResponse> {
+                 return after && kind == connector::ItemKind::sharepoint ? std::optional{denied}
+                                                                          : std::nullopt;
+             };
+         },
+         three, rp::exit_code::auth,
+         {measured(1), measured(1), measured(1), measured(1), measured(1), measured(4),
+          measured(14), measured(5), measured(6), measured(1), measured(16)}},
+        {"a pass, each session's submit and wait summed",
+         [](Harness& lab) { lab.fake.answer = timed_restore(2s, 7s); }, three, rp::exit_code::ok,
+         {measured(1), measured(1), measured(1), measured(1), measured(1), measured(4),
+          measured(14), measured(9), measured(10), measured(1), measured(20)}},
+        {"a fail, the connector measuring nothing",
+         [](Harness& lab) {
+             lab.targets.after[kind_slot(connector::ItemKind::sharepoint)] = json::array();
+         },
+         three, rp::exit_code::restore,
+         {measured(1), measured(1), measured(1), measured(1), measured(1), kNotReported,
+          kNotReported, measured(5), measured(6), measured(1), measured(16)}},
+        {"one session the connector didn't measure",
+         [](Harness& lab) { lab.fake.answer = timed_restore(std::nullopt, std::nullopt); }, three,
+         rp::exit_code::ok,
+         {measured(1), measured(1), measured(1), measured(1), measured(1), kNotReported,
+          kNotReported, measured(9), measured(10), measured(1), measured(20)}},
+        {"one session's wait negative",
+         [](Harness& lab) { lab.fake.answer = timed_restore(2s, -1s); }, three, rp::exit_code::ok,
+         {measured(1), measured(1), measured(1), measured(1), measured(1), measured(4), kWentBack,
+          measured(9), measured(10), measured(1), measured(20)}},
+    };
+    const Case& c = cases[GENERATE(range(std::size_t{0}, std::size_t{12}))];
+    CAPTURE(c.name);
+    Harness lab;
+    lab.tick = 1s;
+    lab.fake.pool.mail = {carol_mail(1)};
+    c.setup(lab);
+    Args args = c.args;
+    args.insert(args.end(), {"--run-id", kRunId});
+
+    const Run run = lab.run(args);
+
+    INFO(run.out);
+    INFO(run.err);
+    CHECK(run.exit_code == c.code);
+    REQUIRE(lab.timings.size() == 1);
+    check_spans(lab.timings[0], c.spans, 1s);
+    CHECK_THAT(run.out, EndsWith(expected_table(c.spans)));
+    // The table comes after the cleanup after line, and on_timings after the
+    // table.
+    const std::string body = lab.body(run);
+    CHECK(body.substr(body.rfind('\n', body.size() - 2) + 1).starts_with("cleanup after "));
+    CHECK(lab.out_at_timings == std::vector<std::string>{run.out});
+    CHECK(run.err.find("STEP") == std::string::npos);
+    // Nothing is ever left open: a stop ends what it interrupted.
+    for (const rp::timing::SpanTiming& span : lab.timings[0].spans) {
+        CHECK(span.state != SpanState::open);
+    }
+}
+
+TEST_CASE("restore: step timings: a clock that goes back makes no duration up, and changes no "
+          "status",
+          "[restore_command][step_timer]")
+{
+    Harness lab;
+    lab.fake.pool.mail = {carol_mail(1)};
+    const Args args{"--run-id", kRunId, "--mail", "2", "--sp", "1", "--od", "0"};
+    SECTION("once, at the restore point lookup's end: that span alone")
+    {
+        int readings = 0;
+        rp::RestoreCommandEnv env = lab.env();
+        env.now = [&readings] {
+            const int n = readings++;
+            return std::chrono::steady_clock::time_point{} + 100s + (n == 1 ? -50s : n * 1s);
+        };
+        std::ostringstream out;
+        std::ostringstream err;
+        Args with_config = args;
+        const std::string path_arg = utf8(lab.config_path);
+        with_config.insert(with_config.end(), {"--config", path_arg});
+
+        const int code = rp::run_restore_command(with_config, out, err, env);
+
+        CHECK(code == rp::exit_code::ok);
+        REQUIRE(lab.timings.size() == 1);
+        check_spans(lab.timings[0],
+                    {kWentBack, measured(1), measured(1), measured(1), measured(1), kNotReported,
+                     kNotReported, measured(9), measured(10), measured(1), measured(20)},
+                    1s);
+        CHECK_THAT(out.str(), ContainsSubstring("\nrestore_point_lookup  -            clock went "
+                                                "back\n"));
+    }
+    SECTION("at every reading: no span measured, total included")
+    {
+        lab.tick = -1s;
+        lab.clock = 1000s;
+
+        const Run run = lab.run(args);
+
+        CHECK(run.exit_code == rp::exit_code::ok);
+        CHECK_THAT(run.out, ContainsSubstring("\nrestore succeeded: 3 of 3 item(s) restored in -\n"));
+        REQUIRE(lab.timings.size() == 1);
+        check_spans(lab.timings[0],
+                    {kWentBack, kWentBack, kWentBack, kWentBack, kWentBack, kNotReported,
+                     kNotReported, kWentBack, kWentBack, kWentBack, kWentBack},
+                    1s);
+        CHECK_THAT(run.out, EndsWith("\n"
+                                     "STEP                  TIME  NOTE\n"
+                                     "restore_point_lookup  -     clock went back\n"
+                                     "cleanup_before        -     clock went back\n"
+                                     "sample_select         -     clock went back\n"
+                                     "target_snapshot       -     clock went back\n"
+                                     "restore               -     clock went back\n"
+                                     "restore_submit        -     not reported\n"
+                                     "restore_wait          -     not reported\n"
+                                     "verify                -     clock went back\n"
+                                     "recovery              -     clock went back\n"
+                                     "cleanup_after         -     clock went back\n"
+                                     "total                 -     clock went back\n"));
+    }
+}
+
+TEST_CASE("restore: step timings: a clock that throws once the clean after is done leaves total "
+          "open, and changes no line, status or exit code",
+          "[restore_command][step_timer]")
+{
+    constexpr SpanExpect kOpen{"not closed"};
+    using Setup = std::function<void(Harness&)>;
+    struct Case {
+        std::string name;
+        Setup setup;
+        int code;
+        SpansExpect spans;
+    };
+    const std::vector<Case> cases{
+        {"a pass: total alone", [](Harness&) {}, rp::exit_code::ok,
+         {measured(1), measured(1), measured(1), measured(1), measured(1), kNotReported,
+          kNotReported, measured(9), measured(10), measured(1), kOpen}},
+        {"restore_sample throws, items may be in the targets: restore and recovery stopped "
+         "before the clean after",
+         [](Harness& lab) {
+             lab.fake.restore_throw = [] { throw connector::TransientError("Veeam unreachable"); };
+         },
+         rp::exit_code::transient,
+         {measured(1), measured(1), measured(1), measured(1), stopped(1), kNotReported,
+          kNotReported, kNotRun, stopped(1), measured(1), kOpen}},
+    };
+    const Case& c = cases[GENERATE(range(std::size_t{0}, std::size_t{2}))];
+    CAPTURE(c.name);
+    const Args args{"--run-id", kRunId, "--mail", "2", "--sp", "1", "--od", "0"};
+    Harness steady;
+    steady.tick = 1s;
+    steady.fake.pool.mail = {carol_mail(1)};
+    c.setup(steady);
+    const Run reference = steady.run(args);
+
+    Harness lab;
+    lab.tick = 1s;
+    lab.fake.pool.mail = {carol_mail(1)};
+    c.setup(lab);
+    rp::RestoreCommandEnv env = lab.env();
+    // Every reading after env.on_cleanup, which comes once the clean after
+    // has ended, throws: `total`'s end.
+    bool broken = false;
+    int thrown = 0;
+    env.on_cleanup = [&broken, inner = env.on_cleanup](const rp::RunCleanup& cleanup) {
+        inner(cleanup);
+        broken = true;
+    };
+    env.now = [&broken, &thrown, inner = env.now] {
+        if (broken) {
+            ++thrown;
+            throw std::runtime_error("SENTINEL-CLOCK");
+        }
+        return inner();
+    };
+    std::ostringstream out;
+    std::ostringstream err;
+    lab.fake.out = &out;
+    Args with_config = args;
+    const std::string path_arg = utf8(lab.config_path);
+    with_config.insert(with_config.end(), {"--config", path_arg});
+
+    const int code = rp::run_restore_command(with_config, out, err, env);
+    lab.fake.out = nullptr;
+
+    INFO(out.str());
+    INFO(err.str());
+    CHECK(thrown == 1);
+    CHECK(code == c.code);
+    CHECK(code == reference.exit_code);
+    CHECK(err.str() == reference.err);
+    REQUIRE(lab.timings.size() == 1);
+    check_spans(lab.timings[0], c.spans, 1s);
+    CHECK(lab.body(Run{code, out.str(), err.str()}) == steady.body(reference));
+    CHECK_THAT(out.str(), EndsWith(expected_table(c.spans)));
+    CHECK(lab.out_at_timings == std::vector<std::string>{out.str()});
+}
+
+// Review of W3.5, points 1 and 2: a reading taken for the timings alone
+// that throws leaves its span not run (a start) or not closed (an end), and
+// changes nothing else: not the clean before or after, not a line, not the
+// status, not the exit code. Readings of a pass on a 1 s clock: 0 starts
+// total and restore_point_lookup, 1 ends the lookup, 2-3 cleanup_before,
+// 4-5 sample_select, 6 starts target_snapshot, 7 and 8 are the restore's own
+// (its line needs them), 9-16 the check's, 17 ends verify and recovery, 18-19
+// cleanup_after, 20 ends total. The throwing reading never reaches the
+// harness's clock, so every later span keeps its length and total is one
+// tick shorter.
+TEST_CASE("restore: step timings: a clock that throws at a reading for the timings alone changes "
+          "nothing but that span",
+          "[restore_command][step_timer]")
+{
+    constexpr SpanExpect kOpen{"not closed"};
+    struct Case {
+        int reading;
+        SpansExpect spans;
+    };
+    const SpansExpect pass{measured(1), measured(1), measured(1), measured(1), measured(1),
+                           measured(4), measured(14), measured(9), measured(10), measured(1),
+                           measured(20)};
+    auto with = [&pass](std::initializer_list<std::pair<Span, SpanExpect>> changed,
+                        SpanExpect total) {
+        SpansExpect spans = pass;
+        for (const auto& [span, expect] : changed) {
+            spans[static_cast<std::size_t>(span)] = expect;
+        }
+        spans[static_cast<std::size_t>(Span::total)] = total;
+        return spans;
+    };
+    const std::vector<Case> cases{
+        {0, with({{Span::restore_point_lookup, kNotRun}}, kNotRun)},
+        {1, with({{Span::restore_point_lookup, kOpen}}, measured(19))},
+        {2, with({{Span::cleanup_before, kNotRun}}, measured(19))},
+        {3, with({{Span::cleanup_before, kOpen}}, measured(19))},
+        {4, with({{Span::sample_select, kNotRun}}, measured(19))},
+        {5, with({{Span::sample_select, kOpen}}, measured(19))},
+        {6, with({{Span::target_snapshot, kNotRun}}, measured(19))},
+        {17, with({{Span::verify, kOpen}, {Span::recovery, kOpen}}, measured(19))},
+        {18, with({{Span::cleanup_after, kNotRun}}, measured(19))},
+        {19, with({{Span::cleanup_after, kOpen}}, measured(19))},
+        {20, with({}, kOpen)},
+    };
+    const Case& c = cases[GENERATE(range(std::size_t{0}, std::size_t{11}))];
+    CAPTURE(c.reading);
+    const Args args{"--run-id", kRunId, "--mail", "2", "--sp", "1", "--od", "0"};
+    Harness steady;
+    steady.tick = 1s;
+    steady.fake.pool.mail = {carol_mail(1)};
+    steady.fake.answer = timed_restore(2s, 7s);
+    const Run reference = steady.run(args);
+    REQUIRE(reference.exit_code == rp::exit_code::ok);
+    REQUIRE(steady.timings.size() == 1);
+    check_spans(steady.timings[0], pass, 1s);
+
+    Harness lab;
+    lab.tick = 1s;
+    lab.fake.pool.mail = {carol_mail(1)};
+    lab.fake.answer = timed_restore(2s, 7s);
+    rp::RestoreCommandEnv env = lab.env();
+    int readings = 0;
+    int thrown = 0;
+    env.now = [&, inner = env.now] {
+        if (readings++ == c.reading) {
+            ++thrown;
+            throw std::runtime_error("SENTINEL-CLOCK");
+        }
+        return inner();
+    };
+    std::ostringstream out;
+    std::ostringstream err;
+    lab.fake.out = &out;
+    Args with_config = args;
+    const std::string path_arg = utf8(lab.config_path);
+    with_config.insert(with_config.end(), {"--config", path_arg});
+
+    const int code = rp::run_restore_command(with_config, out, err, env);
+    lab.fake.out = nullptr;
+
+    INFO(out.str());
+    INFO(err.str());
+    CHECK(thrown == 1);
+    CHECK(readings == 21);
+    CHECK(code == rp::exit_code::ok);
+    CHECK(err.str() == reference.err);
+    CHECK(err.str().find("SENTINEL-CLOCK") == std::string::npos);
+    CHECK(lab.body(Run{code, out.str(), err.str()}) == steady.body(reference));
+    // Both cleans ran, as in the reference.
+    REQUIRE(lab.cleanups.size() == 1);
+    CHECK(lab.cleanups[0].before.has_value());
+    CHECK(lab.cleanups[0].after.has_value());
+    REQUIRE(lab.timings.size() == 1);
+    check_spans(lab.timings[0], c.spans, 1s);
+    CHECK_THAT(out.str(), EndsWith(expected_table(c.spans)));
+}
+
+// Review of W3.5, point 5: with no env.now the timings run on the
+// connector's own clock, the one it measures each session's submit and wait
+// on, so `restore` always holds them.
+TEST_CASE("restore: step timings: without env.now they run on the connector's clock",
+          "[restore_command][step_timer]")
+{
+    Harness lab;
+    lab.fake.pool.mail = {carol_mail(1)};
+    rp::RestoreCommandEnv env = lab.env();
+    env.now = nullptr;
+    std::chrono::nanoseconds clock{0};
+    int connector_readings = 0;
+    env.connector_options.now = [&clock, &connector_readings] {
+        ++connector_readings;
+        clock += 1h;
+        return std::chrono::steady_clock::time_point{} + clock;
+    };
+    std::ostringstream out;
+    std::ostringstream err;
+    const std::string path_arg = utf8(lab.config_path);
+    const Args args{"--run-id", kRunId, "--mail", "2", "--sp", "1", "--od", "0", "--config",
+                    path_arg};
+
+    const int code = rp::run_restore_command(args, out, err, env);
+
+    INFO(out.str());
+    INFO(err.str());
+    CHECK(code == rp::exit_code::ok);
+    REQUIRE(lab.timings.size() == 1);
+    const auto& spans = lab.timings[0].spans;
+    for (const Span span : {Span::restore_point_lookup, Span::restore, Span::total}) {
+        CAPTURE(rp::timing::to_string(span));
+        const rp::timing::SpanTiming& timing = spans[static_cast<std::size_t>(span)];
+        CHECK(timing.state == SpanState::measured);
+        // Whole hours of the connector's clock, never steady_clock's.
+        REQUIRE(timing.duration);
+        CHECK(*timing.duration >= 1h);
+        CHECK(*timing.duration % 1h == std::chrono::nanoseconds{0});
+    }
+    CHECK(connector_readings >= 20);
+}
+
+TEST_CASE("restore: step timings: with stdout lost no table is printed, on stdout or stderr, and "
+          "on_timings still gets them",
+          "[restore_command][step_timer]")
+{
+    Harness lab;
+    lab.fake.pool.mail = {carol_mail(1)};
+    // The header fits; the tables don't.
+    RecordingStreamBuf buffer(expected_header().size() + 5);
+    std::ostream out(&buffer);
+
+    const auto [code, err] =
+        lab.run_to({"--run-id", kRunId, "--mail", "2", "--sp", "1", "--od", "0"}, out);
+
+    CHECK(code == rp::exit_code::config); // a pass whose output was lost, as before W3.5
+    CHECK(buffer.text.find("STEP") == std::string::npos);
+    CHECK(err.find("STEP") == std::string::npos);
+    CHECK_THAT(err, EndsWith(kCleanAfterOfThree));
+    REQUIRE(lab.timings.size() == 1);
+    CHECK(lab.timings[0].spans[static_cast<std::size_t>(Span::total)].state == SpanState::measured);
+    CHECK(lab.timings[0].spans[static_cast<std::size_t>(Span::cleanup_after)].state ==
+          SpanState::measured);
+}
+
+TEST_CASE("restore: step timings: a table that fails to write, or an on_timings that throws, "
+          "changes nothing",
+          "[restore_command][step_timer]")
+{
+    const Args args{"--run-id", kRunId, "--mail", "2", "--sp", "1", "--od", "0"};
+    Harness whole;
+    whole.fake.pool.mail = {carol_mail(1)};
+    const Run full = whole.run(args);
+    REQUIRE(full.exit_code == rp::exit_code::ok);
+    const std::string body = whole.body(full);
+
+    SECTION("the table's write fails")
+    {
+        Harness lab;
+        lab.fake.pool.mail = {carol_mail(1)};
+        // Everything up to the cleanup after line fits; the table doesn't.
+        RecordingStreamBuf buffer(body.size() + 5);
+        std::ostream out(&buffer);
+
+        const auto [code, err] = lab.run_to(args, out);
+
+        CHECK(code == rp::exit_code::ok);
+        CHECK(err.empty());
+        CHECK(buffer.text == body + "\nSTEP");
+        CHECK(lab.timings.size() == 1);
+    }
+    SECTION("on_timings throws")
+    {
+        Harness lab;
+        lab.fake.pool.mail = {carol_mail(1)};
+        rp::RestoreCommandEnv env = lab.env();
+        env.on_timings = [](const rp::timing::RunTimings&) {
+            throw std::runtime_error("SENTINEL-TIMINGS");
+        };
+        std::ostringstream out;
+        std::ostringstream err;
+        Args with_config = args;
+        const std::string path_arg = utf8(lab.config_path);
+        with_config.insert(with_config.end(), {"--config", path_arg});
+
+        const int code = rp::run_restore_command(with_config, out, err, env);
+
+        CHECK(code == rp::exit_code::ok);
+        CHECK(err.str().empty());
+        CHECK(out.str() == full.out);
+    }
 }
 
 // --- Through the real veeam_m365 connector -------------------------------------------
@@ -3161,6 +3873,9 @@ struct RealRig {
         env.take_run_lock = []() -> std::unique_ptr<rp::RunLock> {
             return std::make_unique<rp::RunLock>();
         };
+        env.on_timings = [this](const rp::timing::RunTimings& run_timings) {
+            timings.push_back(run_timings);
+        };
         return env;
     }
 
@@ -3218,10 +3933,14 @@ struct RealRig {
         return {code, out.str(), err.str()};
     }
 
+    // The run's stdout up to its step timings' table (W3.5), which it REQUIREs.
+    std::string body(const Run& run) const { return without_timings(run.out, timings); }
+
     rp::test::TempDir dir;
     std::filesystem::path config_path;
     vrl::RestoreRig rig;
     rp::test::FakeHttpClient download;
+    std::vector<rp::timing::RunTimings> timings; // W3.5: each run's
 };
 
 } // namespace
@@ -3268,7 +3987,7 @@ TEST_CASE("restore through veeam_m365: a wrong target is refused, exit 4, before
                      "target_guard)\n");
     CHECK_THAT(run.out,
                StartsWith("restore point " + vrl::kBackupTime + "  " + vrl::kRestorePointId));
-    CHECK_THAT(run.out,
+    CHECK_THAT(real.body(run),
                EndsWith("\nrun run-0001  seed " + seed_of(kRunId) +
                         "\n"
                         "cleanup before incomplete: deleted 0 mail, 0 sharepoint, 0 onedrive; "
@@ -3344,7 +4063,27 @@ TEST_CASE("restore through veeam_m365: a canary restored on the recorded run, ex
           "check: 1 match, 0 mismatch, 0 missing, 0 error\n"
           "\n"
           "status pass: 1 of 1 item(s) verified: manifest 1, fields 0, metadata 0\n"
-          "cleanup after ok: deleted 1 mail, 0 sharepoint, 0 onedrive\n");
+          "cleanup after ok: deleted 1 mail, 0 sharepoint, 0 onedrive\n"
+          "\n"
+          "STEP                  TIME         NOTE\n"
+          "restore_point_lookup  0:00:00.000\n"
+          "cleanup_before        0:00:00.000\n"
+          "sample_select         0:00:00.000\n"
+          "target_snapshot       0:00:00.000\n"
+          "restore               0:00:05.000\n"
+          "restore_submit        0:00:00.000\n"
+          "restore_wait          0:00:05.000\n"
+          "verify                0:00:00.000\n"
+          "recovery              0:00:05.000\n"
+          "cleanup_after         0:00:00.000\n"
+          "total                 0:00:05.000\n");
+    // W3.5: a pass leaves no span stopped, open or unmeasured; the connector
+    // reported its session's submit and wait on the rig's clock, which moves
+    // only on the poll's waits.
+    REQUIRE(real.timings.size() == 1);
+    for (const rp::timing::SpanTiming& span : real.timings[0].spans) {
+        CHECK(span.state == rp::timing::SpanState::measured);
+    }
     CHECK(real.rig.restore_posts().size() == 1);
     // The mailbox was read once without bodies before the restore, once with
     // them after it.
@@ -3388,7 +4127,9 @@ TEST_CASE("restore through veeam_m365 --record: every exchange written, the rest
                             "\n"
                             "status pass: 1 of 1 item(s) verified: manifest 1, fields 0, "
                             "metadata 0\n"
-                            "cleanup after ok: deleted 1 mail, 0 sharepoint, 0 onedrive\n"
+                            "cleanup after ok: deleted 1 mail, 0 sharepoint, 0 onedrive\n" +
+                            // W3.5: the step timings' table, then the recording's line.
+                            timings_table(real.timings.at(0)) +
                             "recorded " +
                             std::to_string(veeam.size() + graph.size()) + " exchange(s) in " +
                             utf8(rec) + "\n"));

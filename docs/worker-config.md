@@ -581,8 +581,8 @@ The flags come in any order, each at most once:
 | `--config <path>` | `%ProgramData%\RestoreProof\config.json` | As for every command. |
 
 With W2.4's recorded single-mail restore (`worker/tests/restore_command_test.cpp`, through the
-real connector; the restore point ID is the fixtures' made-up one, and the total time there is
-the test's clock):
+real connector; the restore point ID is the fixtures' made-up one, and the times there are the
+test's clock, which moves only while the restore is polled):
 
 ```
 restore point 2026-09-27T22:00:48.1447833Z  c2f0f2e7-177f-48ac-992b-93a50cf702e35e1c0a24-0000-4000-8000-000000000924  (veeam_org_name RestoreProofLab.onmicrosoft.com)
@@ -610,6 +610,19 @@ check: 1 match, 0 mismatch, 0 missing, 0 error
 
 status pass: 1 of 1 item(s) verified: manifest 1, fields 0, metadata 0
 cleanup after ok: deleted 1 mail, 0 sharepoint, 0 onedrive
+
+STEP                  TIME         NOTE
+restore_point_lookup  0:00:00.000
+cleanup_before        0:00:00.000
+sample_select         0:00:00.000
+target_snapshot       0:00:00.000
+restore               0:00:05.000
+restore_submit        0:00:00.000
+restore_wait          0:00:05.000
+verify                0:00:00.000
+recovery              0:00:05.000
+cleanup_after         0:00:00.000
+total                 0:00:05.000
 ```
 
 - **The header.** Its first two lines (the restore point, the run ID and seed) are printed as
@@ -639,7 +652,7 @@ cleanup after ok: deleted 1 mail, 0 sharepoint, 0 onedrive
   that only the run's status line starts with `status`), the restore's own status
   (`succeeded`, `partial`, `failed` or `not_run`, `worker/include/rp/connector.hpp`), items
   restored of sent, and the time the restore took. Times are `H:MM:SS`, cut to whole seconds.
-  It is Veeam's account, not the run's status, which comes last.
+  It is Veeam's account, not the run's status, which comes after the check.
 - **The check (W3.2)**: one row per sampled item, in the same order. `OUTCOME` is `match`,
   `mismatch`, `missing` or `error`; `FIELDS` names the fields that didn't match
   (`subject`, `sender_address`, `sender_name`, `sent_at`, `received_at`,
@@ -655,8 +668,8 @@ cleanup after ok: deleted 1 mail, 0 sharepoint, 0 onedrive
   `warning: stale_copies: <n> copies from earlier runs in the restore targets were ignored
   (mail <x>, sharepoint <y>, onedrive <z>)`. A target that couldn't be read back is one
   `check error: <message>` line on stderr, and its items are `error`.
-- **The run's status (W3.3)** ends every run once its first two lines are out, however it
-  ended: `status <pass|fail|error>[ <code>]: <message>`, its own paragraph, then each warning
+- **The run's status (W3.3)** comes in every run once its first two lines are out, however
+  it ended: `status <pass|fail|error>[ <code>]: <message>`, its own paragraph, then each warning
   as `warning: <code>: <message>` on stderr. The exit code is the status's: `pass` 0 (every
   sampled item verified), `fail` 5 (an item missing or a mismatch, its target read fine, not
   blamed on infrastructure), `error` 1 to 4 by its code (table below). The message is counts
@@ -668,7 +681,7 @@ cleanup after ok: deleted 1 mail, 0 sharepoint, 0 onedrive
   partial pass; a missing item beside one that couldn't be checked is `fail`. The decision
   table, the codes and the warnings: `docs/verification.md`, "The status decision table".
   Since W3.4 the status line is no longer the last stdout line: the clean after's line follows
-  it.
+  it, and since W3.5 the step timings' table follows that (below).
 - **The cleanup (W3.4).** Two lines on stdout, counts and codes only, never a name or an ID:
   the clean before's, right after the run line, and the clean after's, right after the status
   line and its warnings, so the decided status never waits on it:
@@ -692,7 +705,8 @@ cleanup after ok: deleted 1 mail, 0 sharepoint, 0 onedrive
   or a skipped entry's ID, go to stderr too, through `redact()`.
   - The clean after runs only when the status says a restore may have been sent
     (`restore_sent`); otherwise its line is `cleanup after skipped: nothing was restored`, so
-    every run that prints a status line ends with a `cleanup after` line. It runs after the
+    every run that prints a status line has a `cleanup after` line right before the step
+    timings' table, which ends the run (W3.5, below). It runs after the
     check, so nothing is deleted before it is read back, and also after a check that threw.
     When the restore stopped with an error that doesn't promise `nothing was restored` (a POST
     with no answer, a poll that gave up), it still runs, and its line ends `the restore may
@@ -707,6 +721,40 @@ cleanup after ok: deleted 1 mail, 0 sharepoint, 0 onedrive
     Any other cleanup failure, or leftovers, only shows in these lines: a `pass` whose clean
     after left something still exits 0. A failure of the clean after itself prints `cleanup
     error: unexpected failure` and keeps the exit code.
+- **Step timings (W3.5).** Every run that printed its run line ends stdout with one more
+  paragraph, after the `cleanup after` line: a table of eleven named spans, always all eleven,
+  in this order (`rp/step_timer.hpp`; `docs/decisions.md` 2026-10-03, W3.5):
+  - `restore_point_lookup`: listing the restore points and picking one;
+  - `cleanup_before`: the clean before;
+  - `sample_select`: choosing the sample, Veeam's browsing for the random half included;
+  - `target_snapshot`: reading the targets before the restore (W3.2);
+  - `restore`: the whole restore, the same time the `restore <status>: ...` line prints;
+  - `restore_submit` and `restore_wait`: the connector's own account, summed over its restore
+    sessions: exporting the credential, the guard's last check, the one POST and the duplicate
+    check; then Veeam running the restore, polled until it ended. The rest of `restore` is the
+    connector's preparation (explore sessions, browsing) and reading the results;
+  - `verify`: the restore's tables, the read back with hashing and the check;
+  - `recovery`: `restore` and `verify` together, from the restore's start to the last item's
+    verdict;
+  - `cleanup_after`: the clean after;
+  - `total`: from listing the restore points to the end of the clean after. What comes
+    before (arguments, config, secrets, manifest, the run mutex) is local and not timed.
+
+  The spans overlap and don't add up to `total`. `TIME` is `H:MM:SS.mmm`, cut to the
+  millisecond, on the same steady clock as the restore's line, never a wall clock. A span
+  with no time reads `-`, and `NOTE` says why: `not run` (the run stopped before it, or the
+  clean after was skipped), `stopped` (the run stopped during it; its time runs to the
+  stop, read as the stop is handled, before the status line and the clean after), `not reported` (the connector didn't
+  measure it, or the restore threw and its sessions' account was lost), `clock went back` (no
+  time is ever made up). `NOTE` is empty for a span measured in full; `not closed` appears
+  only through a bug or a clock that failed at the span's end: a clock reading taken for the
+  timings alone that fails leaves its span `not run` (at its start) or `not closed` (at its
+  end) and changes nothing else. A run that stops before its run
+  line prints no table. When stdout is lost the table isn't printed, on stdout or stderr. The
+  timings never change the status, a warning or the exit code, and a table that fails to write
+  changes nothing either. The same spans are the result's `timings` object
+  (`{"spans": {"<span>": {"ms": <n>[, "note": "stopped"]} | {"note": "<state>"} | null}}`,
+  whole milliseconds, `null` for a span that didn't run), which W4.1 writes into the result.
 - **If reading back or checking fails for a reason that isn't Graph's** (out of memory, a bug),
   the check's table isn't printed: `check error: unexpected failure`, then `restore error:
   the restore had started: items may be in the restore targets (run <run ID>)`, and `status
@@ -737,7 +785,7 @@ cleanup after ok: deleted 1 mail, 0 sharepoint, 0 onedrive
   ID>)`, and the status reads `the restore didn't complete: ...; items may be in the restore
   targets`; with that promise it reads `the restore didn't start: ...; nothing was restored`.
   The "had started" line (`restore_note` in the code) says what the restore did; the clean
-  after's line that ends the run says what is left (`the restore may still be running` when
+  after's line, after the status, says what is left (`the restore may still be running` when
   Veeam may still be writing). Check with `rpworker graph list`.
 - The output is UTF-8; control characters in Veeam's text are shown as spaces. Warnings go to
   stderr only.
@@ -754,7 +802,9 @@ status error target_guard: the run stopped before the restore: the restore-targe
 cleanup after skipped: nothing was restored
 ```
 
-with, on stderr, the log's `SECURITY: cleanup: the drive test_library_id names is
+then the step timings' table, with `restore_point_lookup`, `cleanup_before` and `total` timed
+and every other span `-`, `not run`,
+and, on stderr, the log's `SECURITY: cleanup: the drive test_library_id names is
 "Dokumenty", ...` line and
 
 ```

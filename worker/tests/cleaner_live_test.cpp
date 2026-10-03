@@ -42,7 +42,9 @@
 // of the Cleaner and the final listings is recorded there as `rpworker
 // restore --record` would (rp::FixtureRecorder, under graph/), the second
 // answers and those GETs included; the first answer of each doubled send is
-// not (the wrapper sits inside the recorder). The seeds are not recorded.
+// not (the wrapper sits inside the recorder). The seeds are not recorded. The
+// folder is opened before the first seed, so one that isn't new or empty fails
+// the test with nothing written.
 
 #include "../src/command_config.hpp"
 #include "graph_live_lab.hpp"
@@ -87,10 +89,13 @@ namespace {
 
 using nlohmann::json;
 
-// Sends the first file DELETE and the first mail permanentDelete through
-// `inner` twice and returns the second answer when the first was a 204;
-// every other request goes through once. The write still comes only from the
-// Cleaner, on an item it listed. Runs on the test's thread only.
+// Sends the first file DELETE and the first mail permanentDelete that Graph
+// answers 204 through `inner` twice and returns the second answer; every other
+// request goes through once. A first attempt answered otherwise (a 429 or 503
+// GraphClient retries, a 412 the next round lists again) or that throws
+// leaves the doubling to the next attempt, so a transient answer can't use it
+// up. The write still comes only from the Cleaner, on an item it listed. Runs
+// on the test's thread only.
 class SendFirstDeleteTwice final : public rp::IHttpClient {
 public:
     explicit SendFirstDeleteTwice(std::unique_ptr<rp::IHttpClient> inner)
@@ -107,11 +112,11 @@ public:
         if (!(file || mail) || done) {
             return inner_->send(request);
         }
-        done = true;
         const rp::HttpResponse first = inner_->send(request);
         if (first.status != 204) {
             return first;
         }
+        done = true;
         ++doubled_;
         return inner_->send(request);
     }
@@ -312,6 +317,13 @@ TEST_CASE("live cleanup: the Cleaner empties the three restore targets with fold
         "live_cleanup", std::make_shared<spdlog::sinks::ostream_sink_mt>(std::cout));
     logger->set_level(spdlog::level::info);
     const rp::Secrets secrets = rp::load_secrets_from_env();
+    // The recording folder is opened before any seed is sent: one that isn't
+    // new or empty throws here, with nothing written to the tenant yet.
+    const std::optional<std::string> record_dir = rp::test::get_env("RP_LIVE_RECORD_DIR");
+    const std::shared_ptr<rp::FixtureRecorder> recorder =
+        record_dir && !record_dir->empty()
+            ? rp::open_recording(*record_dir, "cleaner live test", secrets)
+            : nullptr;
 
     // Seed one item of the test's own in each target, so the Cleaner has
     // something to delete even when the targets are empty. Never anywhere
@@ -351,11 +363,6 @@ TEST_CASE("live cleanup: the Cleaner empties the three restore targets with fold
                                paths.onedrive_folder_id));
     CHECK((mail_seed && mail_seed->value("subject", "") == probe));
 
-    const std::optional<std::string> record_dir = rp::test::get_env("RP_LIVE_RECORD_DIR");
-    const std::shared_ptr<rp::FixtureRecorder> recorder =
-        record_dir && !record_dir->empty()
-            ? rp::open_recording(*record_dir, "cleaner live test", secrets)
-            : nullptr;
     auto twice = std::make_unique<SendFirstDeleteTwice>(rp::graph::make_graph_http_client(logger));
     const SendFirstDeleteTwice& doubler = *twice;
     const std::unique_ptr<rp::IHttpClient> http = rp::recorded(std::move(twice), recorder, "graph");

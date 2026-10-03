@@ -303,6 +303,9 @@ included, and requires zero entries: the W3.4 Done-when's "zero items and no ent
 unlisted". Set `RP_LIVE_RECORD_DIR` to a new or empty folder to record the Cleaner's and the
 last listings' Graph exchanges there (under `graph/`; the seeds are not recorded), the second
 answer of each doubled send included (the first is not: the wrapper sits inside the recorder).
+The folder is opened before the first seed, so one that isn't new or empty fails the test with
+nothing written. Only a first delete Graph answers 204 is doubled: a 429 or 503 GraphClient
+retries, or a 412, leaves the doubling to the next attempt.
 The 2026-10-02 run gave `w34-file-delete-404-itemnotfound.json` and
 `w34-mail-permanentdelete-403-cannotdeleteobject-repeat.json`; its 21:05 rerun the message
 GET's 200 behind the hand-shaped `w34-mail-get-200-purged-parentfolder.json`, whose
@@ -314,7 +317,7 @@ targets, delivered mail in `restoretest` too. From a VS 2022 Developer PowerShel
 ```powershell
 $env:RP_LIVE = '1'
 $env:RP_LIVE_RESTORE = '1'
-$env:RP_LIVE_RECORD_DIR = "$env:TEMP\rp-w34-cleaner-rec"   # optional, new or empty
+$env:RP_LIVE_RECORD_DIR = "$env:TEMP\rp-w34-cleaner-rec-$(Get-Date -Format yyyyMMddTHHmmss)"   # optional, new or empty
 ctest --preset dev -R "live cleanup" -V
 ```
 
@@ -331,7 +334,7 @@ copies from the hand cleanups before W3.4, is emptied once by hand; the Cleaner 
 Remove the variables when done:
 
 ```powershell
-Remove-Item Env:RP_LIVE, Env:RP_LIVE_RESTORE, Env:RP_LIVE_EVIDENCE_FILE -ErrorAction SilentlyContinue
+Remove-Item Env:RP_LIVE, Env:RP_LIVE_RESTORE, Env:RP_LIVE_EVIDENCE_FILE, Env:RP_LIVE_RECORD_DIR -ErrorAction SilentlyContinue
 . ..\lab\entra\set-worker-env.ps1 -Clear
 ```
 

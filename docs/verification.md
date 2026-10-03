@@ -438,20 +438,26 @@ line coverage like `target_guard` (`cleaner` in `worker/tools/coverage_gate.py`)
    `DELETE /drives/{drive}/items/{id}` with `If-Match: <eTag>` (to the site recycle bin, so a
    guard bug costs a recoverable delete). 204 counts `deleted`; a 404 Graph names as
    `itemNotFound`/`ErrorItemNotFound` counts `gone`; a 412 on a file (it changed since it was
-   listed, as SharePoint's Office rewrite does) leaves it for the next round. Writes are
+   listed, as SharePoint's Office rewrite does) leaves it for the next round. Any other
+   refusal of one delete (a locked or checked-out file, a labelled mail: a 403, 409, 423 or
+   any other answer that isn't transient or a refused token) is that item's: it is logged
+   with its code and the other listed items are still deleted. A transient error ends the
+   round and a 401 after a fresh token stops the target, as on a listing. Writes are
    retried like reads (5 attempts, a 401 gets one fresh token); a resent delete of one listed
    ID can only answer 204, 404 or 412.
 5. **List again**: what is still there is `left`, the entries kept out `skipped`.
 
 A second round runs only when the first ended with something left (a 412 included) or in a
-transient error; no other error gets one, and there is never a third. A listing reads at most
+transient error; no other error gets one, a refused delete with something left after it
+included, and there is never a third. A listing reads at most
 `kMaxListPages` pages (`list_pages`' bounded mode, the link past the last page checked but
 never fetched): a target that holds more is cleaned up to that, logs that it lists more, and
 ends with `left > 0` (the count of the last listing, so at most that many pages' worth), for
 the next round or the next run's clean before; never an error, which would stop every later
 clean at the same listing.
 
-**A target's code**, when it stopped: `target_guard`; `graph_auth`, `graph_permission`,
+**A target's code**, when it stopped, or when a delete Graph refused in its last round left it
+not emptied (the first such delete's code): `target_guard`; `graph_auth`, `graph_permission`,
 `graph_transient` (in both rounds) or `graph`, as the checker's `read_error_code`; `config`
 for an `rp::ConfigError` (a `CertificateError` on the token); `internal` for anything else,
 whose text is never copied. A 403 on a delete names the write grant it relies on

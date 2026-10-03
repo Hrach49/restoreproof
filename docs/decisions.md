@@ -7,6 +7,30 @@ Format: date, decision, reason, alternatives rejected.
 
 ---
 
+## 2026-10-03 — W3.4 PR review: one refused delete no longer stops its target (proposed)
+
+**Decision.** In the Cleaner's delete loop, a `GraphError` on one item that is neither a
+`TransientError` nor an `AuthError` (a locked or checked-out file's 423/409, a labelled mail's
+403, any answer `remove()` can't use) is that item's: it is logged with its code, the other
+listed items are still deleted, and the target is listed again. If something is left after
+that, the target's `error_code` is the first refused delete's code and there is no second
+round (Graph would refuse it again); if nothing is left, there is no error. A `TransientError`
+still ends the round and an `AuthError` (a 401 after a fresh token) still stops the target.
+The live cleanup test now doubles only a first delete Graph answered 204, and opens its
+`RP_LIVE_RECORD_DIR` before it seeds anything.
+
+**Reason.** The PR #149 review: Graph lists in a stable order, so one undeletable item stopped
+every later clean at the same place and copies piled up behind it (and went into the nightly
+backup). The live test's doubling was used up by a transient first answer, and a reused
+recording folder threw after the seeds were written, leaving them in the targets.
+
+**Alternatives rejected.** A second round for a refused delete — doubles the writes when a
+grant is missing, for an answer that won't change in seconds. Counting refused items in a new
+`TargetCleanup` field — the result's `cleanup` object would change shape for what `left` and
+the code already say.
+
+---
+
 ## 2026-10-02 — W3.4 build notes: what the build and its review settled beyond the approved entry (proposed)
 
 The W3.4 entry below was approved as written. These are the points where the build differs from its letter, or settles what it left open, after the build and its review. None widens a grant or changes a status, an exit code of a decided run, or what may be deleted.

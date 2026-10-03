@@ -1164,13 +1164,32 @@ _README_ROW = re.compile(r"^\| `([^`]+\.json)` \| ([^|]*?) \|")
 
 
 def readme_rows(text: str) -> list[tuple[str, str]]:
-    """(file, Source column) of every row of the README's "Files" table."""
-    return [(m.group(1), m.group(2)) for line in text.splitlines() if (m := _README_ROW.match(line))]
+    """(file, Source column) of every row of the README's "Files" table: a table whose header
+    starts `| Fixture |`. Rows of other tables (the recordings' files, kept elsewhere) are not
+    this folder's."""
+    rows = []
+    in_files = False
+    for line in text.splitlines():
+        if not line.startswith("|"):
+            in_files = False
+        elif line.startswith("| Fixture |"):
+            in_files = True
+        elif in_files and (m := _README_ROW.match(line)):
+            rows.append((m.group(1), m.group(2)))
+    return rows
 
 
 def test_readme_rows_parse():
     text = "| Fixture | Source | For |\n|---|---|---|\n| `a.json` | live: x `y` | z |\n| `b.json` | hand-written: stand-in q | r |\nno"
     assert readme_rows(text) == [("a.json", "live: x `y`"), ("b.json", "hand-written: stand-in q")]
+
+
+def test_readme_rows_skip_other_tables():
+    text = (
+        "| Fixture | Source | For |\n|---|---|---|\n| `a.json` | live: x | z |\n\n"
+        "| Recording file (`../elsewhere/`) | What it is | For |\n|---|---|---|\n| `034-get-...-x.json` | y | z |\n"
+    )
+    assert readme_rows(text) == [("a.json", "live: x")]
 
 
 def test_the_fixture_readme_lists_every_file():
@@ -1185,7 +1204,7 @@ def test_the_fixture_readme_lists_every_file():
     for name, source in rows:
         rec = json.loads((DEFAULT_OUT_DIR / name).read_text(encoding="utf-8"))
         kind = rec["source"].split(" ", 1)[0].rstrip(":")
-        assert source.split(" ", 1)[0].rstrip(":") == kind, f"{name}: README says {source!r}, the file {kind!r}"
+        assert source.split(" ", 1)[0].rstrip(":,") == kind, f"{name}: README says {source!r}, the file {kind!r}"
         if rec["source"].startswith(STAND_IN):
             assert source.startswith(STAND_IN), f"{name} is a stand-in; its README row must say so"
 

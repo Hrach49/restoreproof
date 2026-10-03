@@ -23,6 +23,7 @@ enable_testing()
 # rpcore: static library holding all Worker logic. rpworker (the exe) and
 # rptests both link it; coverage is measured on its sources (src/, include/).
 add_library(rpcore STATIC
+    src/atomic_file.cpp
     src/base64.cpp
     src/canary_manifest.cpp
     src/cert_export.cpp
@@ -52,6 +53,7 @@ add_library(rpcore STATIC
     src/restore_command.cpp
     src/retry_policy.cpp
     src/run_lock.cpp
+    src/run_pipeline.cpp
     src/run_status.cpp
     src/sample_rng.cpp
     src/sample_selector.cpp
@@ -61,6 +63,7 @@ add_library(rpcore STATIC
     src/target_guard.cpp
     src/target_guard_graph.cpp
     src/target_guard_veeam.cpp
+    src/test_command.cpp
     src/text_table.cpp
     src/text_v1.cpp
     src/utf16.cpp
@@ -103,6 +106,7 @@ add_executable(rpworker
 target_link_libraries(rpworker PRIVATE rpcore)
 
 add_executable(rptests
+    tests/atomic_file_test.cpp
     tests/base64_test.cpp
     tests/canary_manifest_test.cpp
     tests/cert_export_test.cpp
@@ -151,6 +155,7 @@ add_executable(rptests
     tests/step_timer_test.cpp
     tests/target_guard_test.cpp
     tests/target_guard_veeam_test.cpp
+    tests/test_command_test.cpp
     tests/test_main.cpp
     tests/text_table_test.cpp
     tests/text_util_test.cpp
@@ -170,7 +175,7 @@ add_executable(rptests
 # deps_test.cpp uses cpr and OpenSSL directly, so it links them itself.
 # tests/test_main.cpp is rptests' main: Catch2's, inside the network guard (Q2.1).
 target_link_libraries(rptests PRIVATE rpcore cpr::cpr OpenSSL::Crypto Catch2::Catch2)
-# restore_command_test.cpp's Catch2 tables outgrow an object file's 65,279
+# restore_command_test.cpp's and test_command_test.cpp's Catch2 tables outgrow an object file's 65,279
 # sections.
 target_compile_options(rptests PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/bigobj>)
 # cert_export_test.cpp deletes the CNG key file it makes (ncrypt).
@@ -213,7 +218,7 @@ endfunction()
 
 rp_add_exe_test("rpworker --version prints the project version"
     ARGS --version EXIT_CODE 0 STDOUT ${PROJECT_VERSION} STDERR "")
-set(RP_USAGE "usage: rpworker --version | rpworker config check [--config <path>] | rpworker veeam list [--config <path>] [--record <dir>] | rpworker graph list [--hash] [--config <path>] [--record <dir>] | rpworker restore [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--record <dir>]")
+set(RP_USAGE "usage: rpworker --version | rpworker config check [--config <path>] | rpworker veeam list [--config <path>] [--record <dir>] | rpworker graph list [--hash] [--config <path>] [--record <dir>] | rpworker restore [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--record <dir>] | rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--record <dir>] [--json <file>]")
 rp_add_exe_test("rpworker rejects unknown arguments"
     ARGS --no-such-option EXIT_CODE 64 STDOUT "" STDERR "${RP_USAGE}")
 rp_add_exe_test("rpworker config without a subcommand prints usage"
@@ -312,6 +317,62 @@ set_tests_properties(
     "rpworker restore needs RP_VEEAM_PASSWORD"
     "rpworker restore needs RP_GRAPH_CERT_PFX_BASE64"
     "rpworker restore opens the Graph certificate before any request"
+    PROPERTIES ENVIRONMENT
+    "RP_VEEAM_USERNAME=set-by-ctest;RP_VEEAM_PASSWORD=set-by-ctest;RP_GRAPH_CERT_PFX_BASE64=set-by-ctest;RP_GRAPH_CERT_PASSWORD=set-by-ctest")
+
+# test (W3.6) runs restore's pipeline, so it stops at the same places before any
+# request; its --json path is checked once the config is read and before the
+# secrets, so its refusals need no variables. A non-UTF-8 --json path can't come
+# through wmain, and an empty one can't come through a CMake list (rptests
+# covers both).
+rp_add_exe_test("rpworker test rejects an unknown flag"
+    ARGS test --seed 1 EXIT_CODE 64 STDOUT "" STDERR "${RP_USAGE}")
+rp_add_exe_test("rpworker test rejects a sample size above 100"
+    ARGS test --mail 101 EXIT_CODE 64 STDOUT "" STDERR "${RP_USAGE}")
+rp_add_exe_test("rpworker test --json needs a file"
+    ARGS test --json EXIT_CODE 64 STDOUT "" STDERR "${RP_USAGE}")
+rp_add_exe_test("rpworker test reports a missing config file"
+    ARGS test --config no-such-config.json EXIT_CODE 1 STDOUT ""
+    STDERR "config error: no-such-config.json: cannot read config file")
+rp_add_exe_test("rpworker test --json refuses a file that already exists"
+    ARGS test --config ${CMAKE_CURRENT_SOURCE_DIR}/config.example.json
+    --json ${CMAKE_CURRENT_SOURCE_DIR}/config.example.json
+    UNSET_ENV RP_VEEAM_USERNAME RP_VEEAM_PASSWORD RP_GRAPH_CERT_PFX_BASE64 RP_GRAPH_CERT_PASSWORD
+    EXIT_CODE 1 STDOUT ""
+    STDERR "config error: --json ${CMAKE_CURRENT_SOURCE_DIR}/config.example.json: the file already exists")
+rp_add_exe_test("rpworker test --json refuses a folder that doesn't exist"
+    ARGS test --config ${CMAKE_CURRENT_SOURCE_DIR}/config.example.json
+    --json ${CMAKE_CURRENT_SOURCE_DIR}/no-such-folder/run.json
+    UNSET_ENV RP_VEEAM_USERNAME RP_VEEAM_PASSWORD RP_GRAPH_CERT_PFX_BASE64 RP_GRAPH_CERT_PASSWORD
+    EXIT_CODE 1 STDOUT ""
+    STDERR "config error: --json ${CMAKE_CURRENT_SOURCE_DIR}/no-such-folder/run.json: the folder doesn't exist")
+rp_add_exe_test("rpworker test --json refuses a name that holds a colon"
+    ARGS test --config ${CMAKE_CURRENT_SOURCE_DIR}/config.example.json
+    --json ${CMAKE_CURRENT_SOURCE_DIR}/config.example.json:x
+    UNSET_ENV RP_VEEAM_USERNAME RP_VEEAM_PASSWORD RP_GRAPH_CERT_PFX_BASE64 RP_GRAPH_CERT_PASSWORD
+    EXIT_CODE 1 STDOUT ""
+    STDERR "config error: --json ${CMAKE_CURRENT_SOURCE_DIR}/config.example.json:x: not a file name")
+rp_add_exe_test("rpworker test needs RP_VEEAM_USERNAME"
+    ARGS test --config ${CMAKE_CURRENT_SOURCE_DIR}/config.example.json
+    UNSET_ENV RP_VEEAM_USERNAME RP_VEEAM_PASSWORD
+    EXIT_CODE 1 STDOUT "" STDERR "config error: RP_VEEAM_USERNAME is not set")
+rp_add_exe_test("rpworker test needs RP_VEEAM_PASSWORD"
+    ARGS test --config ${CMAKE_CURRENT_SOURCE_DIR}/config.example.json
+    UNSET_ENV RP_VEEAM_PASSWORD
+    EXIT_CODE 1 STDOUT "" STDERR "config error: RP_VEEAM_PASSWORD is not set")
+rp_add_exe_test("rpworker test needs RP_GRAPH_CERT_PFX_BASE64"
+    ARGS test --config ${CMAKE_CURRENT_SOURCE_DIR}/config.example.json
+    UNSET_ENV RP_GRAPH_CERT_PFX_BASE64 RP_GRAPH_CERT_PASSWORD
+    EXIT_CODE 1 STDOUT "" STDERR "config error: RP_GRAPH_CERT_PFX_BASE64 is not set")
+rp_add_exe_test("rpworker test opens the Graph certificate before any request"
+    ARGS test --config ${CMAKE_CURRENT_SOURCE_DIR}/config.example.json
+    EXIT_CODE 1 STDOUT ""
+    STDERR "config error: RP_GRAPH_CERT_PFX_BASE64 is not valid Base64 (one line of A-Z, a-z, 0-9, + and /, padded with =)")
+set_tests_properties(
+    "rpworker test needs RP_VEEAM_USERNAME"
+    "rpworker test needs RP_VEEAM_PASSWORD"
+    "rpworker test needs RP_GRAPH_CERT_PFX_BASE64"
+    "rpworker test opens the Graph certificate before any request"
     PROPERTIES ENVIRONMENT
     "RP_VEEAM_USERNAME=set-by-ctest;RP_VEEAM_PASSWORD=set-by-ctest;RP_GRAPH_CERT_PFX_BASE64=set-by-ctest;RP_GRAPH_CERT_PASSWORD=set-by-ctest")
 

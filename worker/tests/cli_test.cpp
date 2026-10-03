@@ -21,7 +21,10 @@ const std::string kUsage = "usage: rpworker --version | rpworker config check [-
                            "rpworker graph list [--hash] [--config <path>] [--record <dir>] | "
                            "rpworker restore [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] "
                            "[--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] "
-                           "[--config <path>] [--record <dir>]\n";
+                           "[--config <path>] [--record <dir>] | "
+                           "rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] "
+                           "[--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] "
+                           "[--config <path>] [--record <dir>] [--json <file>]\n";
 
 const std::string kConfigJson = R"({
     "cloud_url": "https://cloud.example.invalid",
@@ -57,7 +60,16 @@ TEST_CASE("rpworker prints usage to stderr and exits 64 for a command line it do
         Args{"veeam"},
         Args{"Veeam", "list"},
         Args{"veeam", "lst"},
-        Args{"veeam", "list", "--config"});
+        Args{"veeam", "list", "--config"},
+        // W3.6: `test` takes restore's options and --json (a file, never empty),
+        // never --seed; `restore` takes neither.
+        Args{"Test"},
+        Args{"test", "--seed", "1"},
+        Args{"test", "--json"},
+        Args{"test", "--json", ""},
+        Args{"test", "--json", "a.json", "--json", "b.json"},
+        Args{"restore", "--json", "a.json"},
+        Args{"restore", "--seed", "1"});
     CAPTURE(args);
 
     std::ostringstream out;

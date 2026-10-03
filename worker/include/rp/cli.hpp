@@ -12,43 +12,45 @@ namespace exit_code {
 inline constexpr int ok = 0;
 // config.json missing or invalid, a --config path that isn't UTF-8, a secret
 // variable unset or unreadable (the Graph certificate's included: a
-// graph::CertificateError is a ConfigError), for `rpworker restore` also a
+// graph::CertificateError is a ConfigError), for `rpworker restore` and `test` also a
 // canary manifest that doesn't load or isn't graph_tenant_id's and an unknown
 // connector, a --record folder that isn't new or empty (or can't be made),
 // a command that ran but whose --record recording isn't complete (an exchange
 // refused or not written; a command that failed keeps its own code), or any
 // unexpected failure (whose message is never shown), an exception no command
-// handled included. For `rpworker restore` also a run whose status is error
-// config or internal, and a pass whose output was lost.
+// handled included. For `rpworker restore` and `test` also a run whose status is
+// error config or internal, and a pass whose output was lost; for `test` also
+// a --json path refused (not UTF-8, a file already there, no such folder) and
+// a pass whose --json file couldn't be written.
 inline constexpr int config = 1;
 // The service refused the credentials, the account's role, the token or a
 // permission: Veeam's AuthError, Graph's AuthError and PermissionError (whose
-// message names the grant the call relies on). For `rpworker restore`: status
+// message names the grant the call relies on). For `restore` and `test`: status
 // error backup_auth, graph_auth or graph_permission.
 inline constexpr int auth = 2;
 // The service couldn't be reached or asked to try later: no connection, a
 // timeout, a TLS handshake failure, 502/503/504 (and Graph's 429 and other
-// 5xx) after the retries (Veeam's and Graph's TransientError). For `rpworker
-// restore`: status error backup_transient or graph_transient.
+// 5xx) after the retries (Veeam's and Graph's TransientError). For `restore`
+// and `test`: status error backup_transient or graph_transient.
 inline constexpr int transient = 3;
 // Any other error from the service (Veeam's or Graph's NotFoundError
 // included, a certificate that fails verification: TLS failures that aren't a
 // broken-off handshake, a failed download, and a restore target the guard
 // refuses: Graph's WrongTargetError, and the restore-target guard's
 // connector::SafetyViolation, rp/target_guard.hpp), or veeam_org_name not
-// among Veeam's organisations. For `rpworker restore` also: no restore
+// among Veeam's organisations. For `restore` and `test` also: no restore
 // points, a --point ID not found, and a run whose status is error with any
 // code not named under 1, 2 or 3 (rp/run_status.hpp: target_guard,
 // not_in_backup, backup, backup_infrastructure, graph, stale_target,
 // empty_sample, not_run, restore_contradiction).
 inline constexpr int service = 4;
-// `rpworker restore` only: the run's status is `fail` (W3.3, rp/run_status.hpp):
+// `rpworker restore` and `rpworker test` only: the run's status is `fail` (W3.3, rp/run_status.hpp):
 // an item is missing or a mismatch, its target read fine and the backup didn't
 // blame infrastructure for it. A result about the backup, not an error: a run
 // whose status is error ends as 1 to 4, whatever the restore itself reported
 // (docs/decisions.md 2026-10-01, W3.3).
 inline constexpr int restore = 5;
-// A command line rpworker doesn't understand; for `rpworker restore` also,
+// A command line rpworker doesn't understand; for `restore` and `test` also,
 // once the config or the manifest is read, every sample size 0 or a
 // --canary-cursor out of the manifest's range ("usage error: ..." on stderr
 // instead of the usage line).
@@ -62,16 +64,19 @@ inline constexpr std::string_view kCliUsage =
     "rpworker veeam list [--config <path>] [--record <dir>] | "
     "rpworker graph list [--hash] [--config <path>] [--record <dir>] | "
     "rpworker restore [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] "
-    "[--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--record <dir>]\n";
+    "[--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--record <dir>] | "
+    "rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] "
+    "[--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--record <dir>] "
+    "[--json <file>]\n";
 
 // rpworker's command line: `--version`, `config ...` (rp/config_check.hpp),
-// `veeam ...` (rp/veeam_command.hpp), `graph ...` (rp/graph_command.hpp) or
-// `restore ...` (rp/restore_command.hpp).
+// `veeam ...` (rp/veeam_command.hpp), `graph ...` (rp/graph_command.hpp),
+// `restore ...` (rp/restore_command.hpp) or `test ...` (rp/test_command.hpp).
 // `args` is argv without the program name, in UTF-8. Normal output goes to
 // `out`, usage and errors to `err`.
 // Returns the process exit code (rp::exit_code): 0 on success, 64 with
 // kCliUsage on `err` for a command line it doesn't understand (or, from
-// `restore`, 64 with a "usage error: ..." line for all-zero sample sizes or a
+// `restore` and `test`, 64 with a "usage error: ..." line for all-zero sample sizes or a
 // canary cursor out of range), and the command's own code when it fails. No exception escapes: one a command lets
 // out is "error: unexpected failure" on `err` and exit code 1, never a crash,
 // whose abort() would exit with 3 (exit_code::transient).

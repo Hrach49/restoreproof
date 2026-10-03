@@ -29,7 +29,10 @@ const std::string kUsage = "usage: rpworker --version | rpworker config check [-
                            "rpworker graph list [--hash] [--config <path>] [--record <dir>] | "
                            "rpworker restore [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] "
                            "[--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] "
-                           "[--config <path>] [--record <dir>]\n";
+                           "[--config <path>] [--record <dir>] | "
+                           "rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] "
+                           "[--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] "
+                           "[--config <path>] [--record <dir>] [--json <file>]\n";
 
 // Every key set; sample_od left out to show its default.
 const std::string kConfigJson = R"({

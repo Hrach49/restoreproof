@@ -11,6 +11,9 @@
 
 #include <nlohmann/json.hpp>
 
+#include <cstddef>
+#include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -36,6 +39,33 @@ std::vector<nlohmann::json> list_pages(GraphClient& graph, const std::string& fi
                                        const Grant& grant, const HttpHeaders& headers,
                                        const std::string& what, const NextLinkRule& next_rule,
                                        bool* past_limit = nullptr);
+
+// Q3.2: SharePoint doesn't refuse a listing the app lacks the grant for; it
+// answers 200 and leaves out what the app may not read (security trimming),
+// while the container's own folder.childCount still counts every child (live,
+// 2026-10-04: the RestoreTarget library's root said 1, its listing was empty).
+// An empty or short listing taken at face value turns a missing permission
+// into a `fail`, and a cleanup into "nothing to delete". So both readers of a
+// file target read the container's count first and hold the listing to it.
+
+// The RestoreTarget library's count: folder.childCount of
+// GET /drives/{drive}/root?$select=id,folder; nullopt when the reply has
+// none. Graph's errors are thrown as GraphClient throws them.
+std::optional<std::uint64_t> library_child_count(GraphClient& graph, const std::string& drive);
+
+// A folder facet's childCount, when it is a number of 0 or more.
+std::optional<std::uint64_t> child_count_of(const nlohmann::json& item);
+
+// How many entries `pages` (list_pages') list.
+std::size_t listed_entries(const std::vector<nlohmann::json>& pages);
+
+// Holds a listing of `listed` entries to its container's `child_count`, read
+// before the listing: more children than entries is a PermissionError naming
+// `grant` (so the run's code is graph_permission: `error`, never `fail`); no
+// count is a GraphError, since the listing can't be shown to be whole. More
+// entries than the count is fine: something was added in between.
+void check_listing_whole(const std::optional<std::uint64_t>& child_count, std::size_t listed,
+                         const Grant& grant, const std::string& what);
 
 // Whether `id`, the "id" of an entry Graph listed, may go in a URL path: 1 to
 // 512 ASCII letters, digits and "!-_=" (Exchange's IDs end in '=').

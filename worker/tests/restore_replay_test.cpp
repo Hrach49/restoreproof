@@ -184,6 +184,8 @@ struct Replay {
 
         veeam_files = veeam.serve_recording(dir / "veeam");
         graph_files = graph.serve_recording(dir / "graph");
+        // Recorded before Q3.2: the library root's count wasn't asked for then.
+        rp::test::graph_lab::serve_library_root(graph);
         // W3.4: the Cleaner's listings. A recording made before W3.4 doesn't
         // hold them: they are answered empty, so the clean before and after
         // delete nothing; its guard checks are the recorded ones.
@@ -201,6 +203,27 @@ struct Replay {
             if (cleanup == Cleanup::not_recorded) {
                 graph.on(rp::HttpMethod::get, cleanup_urls.back(),
                          {rp::test::graph_lab::page_of(json::array())});
+            }
+        }
+        // Q3.2: a listing is held to its container's count. The Cleaner's
+        // listings answered empty above would contradict the OneDrive folder's
+        // recorded count (3 once the restore ran), so with them the folder is
+        // answered as first recorded but counting no child: nothing a listing
+        // could be short of.
+        if (cleanup == Cleanup::not_recorded) {
+            const std::string folder = "GET /v1.0/drives/" +
+                                       config.at("test_onedrive_drive_id").get<std::string>() +
+                                       "/items/" +
+                                       config.at("test_onedrive_folder_id").get<std::string>() + "?";
+            for (const std::filesystem::path& file : recorded_files(dir / "graph")) {
+                json fixture = json::parse(read_file(file));
+                const std::string request = fixture.at("request").get<std::string>();
+                if (request.starts_with(folder)) {
+                    fixture["body"]["folder"]["childCount"] = 0;
+                    graph.on(rp::HttpMethod::get, kGraphHost + request.substr(4),
+                             {rp::test::to_response(fixture)});
+                    break;
+                }
             }
         }
         // When each restore POST went out: its duplicate check's startTimeFrom
@@ -615,7 +638,9 @@ void check_replayed_as_recorded(const Replay& replay)
         CHECK(replay.graph.count(rp::HttpMethod::get, url) == 4);
         listings += replay.graph.count(rp::HttpMethod::get, url);
     }
-    CHECK(replay.graph.requests().size() == replay.graph_files + listings + 6);
+    // Q3.2: and the library root's count, once per read of the library: the
+    // before snapshot, the after read and each clean.
+    CHECK(replay.graph.requests().size() == replay.graph_files + listings + 6 + 4);
     CHECK(replay.restore_posts() == 4);
     CHECK(replay.exporter->calls == 4);
     check_downloads_as_recorded(replay);
@@ -962,9 +987,18 @@ TEST_CASE("replay of the W3.4 live run: the clean before finds the targets empty
     // Every recorded exchange was asked for, and nothing else: the replay sent
     // exactly the live run's requests, its Cleaner's included, route by route.
     CHECK(replay.veeam.requests().size() == replay.veeam_files);
-    CHECK(replay.graph.requests().size() == replay.graph_files);
+    // Q3.2, after this recording: the library root's count, read before each
+    // listing that is held to it (the before snapshot, the after read, each
+    // clean's first), is the one route the recording doesn't hold. The OneDrive
+    // folder's count is in the recorded guard replies, and every recorded
+    // listing was as long as its count.
+    const std::string root_count =
+        "GET /v1.0/drives/" + lab_config().at("test_library_id").get<std::string>() +
+        "/root?$select=id,folder: sent 4, recorded 0";
+    CHECK(replay.graph.requests().size() == replay.graph_files + 4);
     CHECK(routes_not_as_recorded(replay.veeam, replay.dir / "veeam").empty());
-    CHECK(routes_not_as_recorded(replay.graph, replay.dir / "graph").empty());
+    CHECK(routes_not_as_recorded(replay.graph, replay.dir / "graph") ==
+          std::vector<std::string>{root_count});
     CHECK(replay.restore_posts() == 4);
     CHECK(replay.exporter->calls == 4);
     check_downloads_as_recorded(replay);

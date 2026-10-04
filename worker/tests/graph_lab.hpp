@@ -123,6 +123,27 @@ inline std::string library_children_url()
 {
     return kGraph + "/drives/" + lab_values().library_id + "/root" + kChildrenQuery;
 }
+// The library root's own count of its children (Q3.2, src/graph_paging.hpp),
+// which a listing of the library is held to.
+inline std::string library_root_url()
+{
+    return kGraph + "/drives/" + lab_values().library_id + "/root?$select=id,folder";
+}
+// The live reply for the root (restoretarget-root-200-one-child), saying `children`.
+inline HttpResponse library_root(std::uint64_t children)
+{
+    nlohmann::json body = load_fixture_json("graph", "restoretarget-root-200-one-child").at("body");
+    body["folder"]["childCount"] = children;
+    return make_response(200, body.dump());
+}
+// Any library root: no child the listing could be short of.
+inline constexpr const char* kLibraryRootPattern = "/v1.0/drives/*/root?$select=id,folder";
+// For a harness whose tests aren't about the count: a route of `on` for
+// library_root_url() still wins over this pattern.
+inline void serve_library_root(FakeHttpClient& graph)
+{
+    graph.on_path(HttpMethod::get, kLibraryRootPattern, {library_root(0)});
+}
 inline std::string folder_url()
 {
     return kGraph + "/drives/" + lab_values().onedrive_drive_id + "/items/" +
@@ -236,6 +257,9 @@ inline void serve_location(FakeHttpClient& graph, FakeHttpClient& download, cons
                            const HttpResponse& children)
 {
     graph.on(HttpMethod::get, at.guard_url, {load_fixture("graph", at.guard_fixture)});
+    if (at.type == rp::graph::ItemType::sharepoint) {
+        graph.on(HttpMethod::get, library_root_url(), {library_root(0)});
+    }
     graph.on(HttpMethod::get, at.children_url, {children});
     const std::string id = file_of(at).at("id").get<std::string>();
     graph.on(HttpMethod::get, content_url(at, id), {load_fixture("graph", at.content_fixture)});

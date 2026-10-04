@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 
 namespace rp::graph {
@@ -201,6 +202,10 @@ ResolvedOneDriveFolder check_restore_onedrive_folder(GraphClient& graph,
     }
     ResolvedOneDriveFolder resolved{*name,          drive_id, targets.onedrive_folder_id(),
                                     *site,          *web,     *site_url};
+    if (const auto count = facet->find("childCount");
+        count != facet->end() && count->is_number_unsigned()) {
+        resolved.child_count = count->get<std::uint64_t>();
+    }
     return resolved;
 }
 

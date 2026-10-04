@@ -129,6 +129,19 @@ generic, so a customer never sees the lab's names:
 | `kOneDriveGrant` | `Files.SelectedOperations.Selected write on the test OneDrive folder` | #2 |
 | `kListWriteGrant` | `Lists.SelectedOperations.Selected write on the test library` | #4 |
 
+**A refusal that isn't a 403 (Q3.2, 2026-10-04).** With the SharePoint roles revoked, SharePoint
+kept answering 200 for the RestoreTarget library and simply left its files out of the listing
+(security trimming), for the first minutes even serving everything from cached permissions. The
+Worker therefore reads the container's `folder.childCount` before each listing and treats fewer
+entries than counted as a `PermissionError` naming the grant:
+
+```text
+Graph listed 0 of the 1 entries in the RestoreTarget library: SharePoint leaves out what the app may not read instead of refusing the listing; the Worker app relies on Sites.Selected read on the test site; see docs/security/graph-permissions.md
+```
+
+Which grant the library really relies on is open (#154): with `Sites.Selected` alone revoked the
+list-level grant #4 was enough, so the text above may name the wrong one of the two.
+
 The OneDrive grant came with W2.2, which reads the folder. W3.4 renamed `kMailReadGrant` to
 `kMailGrant` and `kOneDriveReadGrant` to `kOneDriveGrant` with the texts above, and added
 `kListWriteGrant`, which the Cleaner's deletes in the library name (`docs/decisions.md`

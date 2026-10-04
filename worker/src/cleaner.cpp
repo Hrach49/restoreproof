@@ -70,6 +70,24 @@ struct Cleaner::Resolved {
     std::string folder_id;
     // A file target's own count of its children, read as it was resolved.
     std::optional<std::uint64_t> child_count;
+
+    // resolve()'s two file targets, each built in one expression from what the
+    // guard's check returned, so resolve() holds no local: OpenCppCoverage
+    // counts the closing line of a block that returns past a local with a
+    // destructor as code, and no run reaches it (this file is strict).
+
+    // The library: `drive` as the guard's check resolved it, and its own count.
+    static Resolved library(GraphClient& graph, const std::string& drive)
+    {
+        return {drive, {}, library_child_count(graph, drive)};
+    }
+
+    // The OneDrive folder, as the guard's check read it by the configured ID.
+    static Resolved onedrive_folder(const ResolvedOneDriveFolder& folder,
+                                    const connector::RestoreTargets& targets)
+    {
+        return {folder.drive_id, targets.onedrive_folder_id(), folder.child_count};
+    }
 };
 
 // What one listing found that may be deleted, and how many entries it left
@@ -227,15 +245,13 @@ Cleaner::Resolved Cleaner::resolve(const Target& target)
         return {check_restore_mailbox(graph_, targets_, kCleanupWording).address, {}};
     }
     if (target.kind == Target::Kind::sharepoint) {
-        std::string drive = check_restore_library(graph_, targets_, kCleanupWording).drive_id;
-        const std::optional<std::uint64_t> child_count = library_child_count(graph_, drive);
-        return {std::move(drive), {}, child_count};
+        return Resolved::library(graph_,
+                                 check_restore_library(graph_, targets_, kCleanupWording).drive_id);
     }
     // The check resolves the configured folder itself: its folder_id is
     // test_onedrive_folder_id, which it read by that ID and checked.
-    const ResolvedOneDriveFolder folder =
-        check_restore_onedrive_folder(graph_, targets_, kCleanupWording);
-    return {folder.drive_id, targets_.onedrive_folder_id(), folder.child_count};
+    return Resolved::onedrive_folder(
+        check_restore_onedrive_folder(graph_, targets_, kCleanupWording), targets_);
 }
 
 Cleaner::Listing Cleaner::list(const Target& target, const Resolved& resolved, bool whole)

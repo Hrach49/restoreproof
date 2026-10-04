@@ -13,6 +13,8 @@ find_package(httplib CONFIG REQUIRED)
 # office-v1 (W3.2) opens restored docx/xlsx packages; zlib is its only codec.
 find_package(libzip CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
+# The result is validated against its embedded schema before it is written (W4.1).
+find_package(nlohmann_json_schema_validator CONFIG REQUIRED)
 find_package(OpenSSL REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
 # Test-only, directly: office_v1_test.cpp deflates the packages it builds.
@@ -188,6 +190,8 @@ target_link_libraries(rptests PRIVATE httplib::httplib)
 # deps_test.cpp writes and reads a package with libzip; office_v1_test.cpp
 # deflates the packages it builds byte by byte (zlib).
 target_link_libraries(rptests PRIVATE libzip::zip ZLIB::ZLIB)
+# deps_test.cpp validates a document with the schema validator directly.
+target_link_libraries(rptests PRIVATE nlohmann_json_schema_validator::validator)
 # The source scan in http_client_test.cpp looks for code that turns TLS
 # verification off anywhere in the Worker.
 target_compile_definitions(rptests PRIVATE RP_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")

@@ -193,6 +193,31 @@ struct RunVerdict {
 // Rows 2 to 8 carry the warnings their facts give (StatusWarning).
 RunVerdict decide_status(const RunFacts& facts);
 
+// The verdict of a run whose result isn't valid restoreproof.result.v1, or
+// couldn't be built (docs/decisions.md 2026-10-04, W4.1 point 5): error
+// result_invalid, the Worker's own fault, with the message "the result isn't
+// valid restoreproof.result.v1; the run itself ended <pass|fail|error
+// <code>>", the words of `verdict` (its code only when it is one of
+// error_codes(); never its message). Keeps restore_sent (the clean after
+// still runs), the item count and the warnings; clears the failed and
+// unchecked items and the verified counts, as rows 1 to 4 leave them.
+RunVerdict result_invalid(const RunVerdict& verdict);
+
+// The vocabularies, which the result's schema is held to (W4.1 point 3).
+// Every code a verdict's error_code can carry, in the table's order:
+// config, internal, backup_auth, backup_transient, not_in_backup,
+// no_restore_point, target_guard, backup, graph_auth, graph_permission,
+// backup_infrastructure, graph, graph_transient, stale_target, empty_sample,
+// not_run, restore_contradiction, result_invalid.
+std::vector<std::string_view> error_codes();
+
+// The codes an UncheckedItem can carry, most severe first (row 7's order).
+std::vector<std::string_view> unchecked_item_codes();
+
+// StatusWarning's codes, in the order a verdict lists its warnings:
+// backup_session, backup_item, duplicate, shortfall, stale_copies.
+std::vector<std::string_view> warning_codes();
+
 // The result's "status" object: {"status", "error_code" (error only),
 // "message", "restore_sent", "counts": {"items", "verified", "failed", "unchecked"},
 // "verified": {"manifest", "fields", "metadata"}, "failed_items": [index...],
@@ -218,9 +243,10 @@ bool is_backup_counts(std::string_view details);
 nlohmann::json to_json(const connector::RestoreResult& result);
 
 // rpworker's exit code for an error code (rp::exit_code), from the one table
-// of codes the status line's texts and row 7's severity come from too: config
-// and internal 1; backup_auth, graph_auth and graph_permission 2;
-// backup_transient and graph_transient 3; any other 4.
+// of codes the status line's texts and row 7's severity come from too:
+// config, internal and result_invalid 1; backup_auth, graph_auth and
+// graph_permission 2; backup_transient and graph_transient 3; any other
+// (a code the table doesn't hold too) 4.
 int exit_code_of(std::string_view error_code) noexcept;
 
 // rpworker's exit code for a verdict: pass 0; fail 5 (exit_code::restore);

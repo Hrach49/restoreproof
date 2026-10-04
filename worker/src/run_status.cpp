@@ -35,6 +35,17 @@ using nlohmann::json;
 constexpr std::string_view kInternal = "internal";
 constexpr std::string_view kBackupInfrastructure = "backup_infrastructure";
 constexpr std::string_view kNotInBackup = "not_in_backup";
+constexpr std::string_view kRestoreContradiction = "restore_contradiction";
+constexpr std::string_view kResultInvalid = "result_invalid";
+
+// StatusWarning's codes, in the order a verdict lists them: warning_codes().
+constexpr std::string_view kBackupSession = "backup_session";
+constexpr std::string_view kBackupItem = "backup_item";
+constexpr std::string_view kDuplicate = "duplicate";
+constexpr std::string_view kShortfall = "shortfall";
+constexpr std::string_view kStaleCopies = "stale_copies";
+constexpr std::array<std::string_view, 5> kWarningCodes{kBackupSession, kBackupItem, kDuplicate,
+                                                        kShortfall, kStaleCopies};
 
 constexpr int kNoSeverity = -1;
 
@@ -42,8 +53,8 @@ constexpr int kNoSeverity = -1;
 // stop's status line (empty: never a stop's code), whether CheckResult's item
 // errors carry it, its rank among the unchecked items' codes (0 the most
 // severe; kNoSeverity: never an unchecked item's) and its exit code. Never a
-// tenant value. restore_contradiction, a row's own code, isn't here: like
-// any code not in the table, its exit code is exit_code::service.
+// tenant value. Every code a status carries is here (error_codes()); a code
+// that isn't exits with exit_code::service.
 struct ErrorCode {
     std::string_view code;
     std::string_view stop_text;
@@ -52,7 +63,7 @@ struct ErrorCode {
     int exit = exit_code::service;
 };
 
-constexpr std::array<ErrorCode, 16> kCodes{{
+constexpr std::array<ErrorCode, 18> kCodes{{
     {"config", "the configuration isn't usable", false, kNoSeverity, exit_code::config},
     {"internal", "an unexpected failure", false, kNoSeverity, exit_code::config},
     {"backup_auth", "the backup product refused the credentials", false, kNoSeverity,
@@ -76,6 +87,10 @@ constexpr std::array<ErrorCode, 16> kCodes{{
     {"stale_target", "", true, 7, exit_code::service},
     {"empty_sample", "", false, kNoSeverity, exit_code::service},
     {"not_run", "", false, kNoSeverity, exit_code::service},
+    // Row 6's own code.
+    {kRestoreContradiction, "", false, kNoSeverity, exit_code::service},
+    // result_invalid()'s: the Worker's own fault, as internal (W4.1 point 5).
+    {kResultInvalid, "", false, kNoSeverity, exit_code::config},
 }};
 
 // Every item error's code ranks, or row 7 would have nothing to pick; each
@@ -395,7 +410,8 @@ std::vector<StatusWarning> warnings_of(const RunFacts& facts,
                     indexes.push_back(i);
                 }
             }
-            warnings.push_back({"backup_session", std::move(message), std::move(indexes)});
+            warnings.push_back(
+                {std::string{kBackupSession}, std::move(message), std::move(indexes)});
         }
     }
     std::vector<std::size_t> unreported;
@@ -411,20 +427,20 @@ std::vector<StatusWarning> warnings_of(const RunFacts& facts,
         }
     }
     if (!unreported.empty()) {
-        warnings.push_back({"backup_item",
+        warnings.push_back({std::string{kBackupItem},
                             std::format("{} verified item(s) the backup didn't report restored",
                                         unreported.size()),
                             std::move(unreported)});
     }
     if (!duplicates.empty()) {
-        warnings.push_back({"duplicate",
+        warnings.push_back({std::string{kDuplicate},
                             std::format("{} item(s) had more than one restored copy; the newest "
                                         "was checked",
                                         duplicates.size()),
                             std::move(duplicates)});
     }
     for (const Shortfall& s : facts.shortfalls) {
-        warnings.push_back({"shortfall",
+        warnings.push_back({std::string{kShortfall},
                             std::format("{} {}: {} of {}", kind_name(s.kind), to_string(s.source),
                                         s.taken, s.wanted),
                             {}});
@@ -434,7 +450,7 @@ std::vector<StatusWarning> warnings_of(const RunFacts& facts,
         if (const std::size_t stale = c.stale_mail + c.stale_sharepoint + c.stale_onedrive;
             stale > 0) {
             warnings.push_back(
-                {"stale_copies",
+                {std::string{kStaleCopies},
                  std::format("{} copies from earlier runs in the restore targets were ignored "
                              "(mail {}, sharepoint {}, onedrive {})",
                              stale, c.stale_mail, c.stale_sharepoint, c.stale_onedrive),
@@ -488,18 +504,11 @@ bool restore_sent(const RunFacts& facts) noexcept
 // "<code> <n>, ..." for the unchecked items, in severity order.
 std::string unchecked_codes(const std::vector<UncheckedItem>& unchecked)
 {
-    std::vector<const ErrorCode*> ranked;
-    for (const ErrorCode& c : kCodes) {
-        if (c.severity != kNoSeverity) {
-            ranked.push_back(&c);
-        }
-    }
-    std::ranges::sort(ranked, {}, &ErrorCode::severity);
     std::string text;
-    for (const ErrorCode* c : ranked) {
-        const auto n = std::ranges::count(unchecked, c->code, &UncheckedItem::error_code);
+    for (const std::string_view code : unchecked_item_codes()) {
+        const auto n = std::ranges::count(unchecked, code, &UncheckedItem::error_code);
         if (n > 0) {
-            text += std::format("{}{} {}", text.empty() ? "" : ", ", c->code, n);
+            text += std::format("{}{} {}", text.empty() ? "" : ", ", code, n);
         }
     }
     return text;
@@ -662,7 +671,7 @@ RunVerdict decide_status(const RunFacts& facts)
     }
     // Row 6.
     if (facts.restore->status == RestoreStatus::failed && verdict.unchecked.empty()) {
-        return error_verdict(std::move(verdict), "restore_contradiction",
+        return error_verdict(std::move(verdict), kRestoreContradiction,
                              "the backup reported nothing restored, yet every item verified: the "
                              "evidence contradicts itself");
     }
@@ -686,6 +695,53 @@ RunVerdict decide_status(const RunFacts& facts)
                                   n, n, verdict.verified_manifest, verdict.verified_fields,
                                   verdict.verified_metadata);
     return verdict;
+}
+
+RunVerdict result_invalid(const RunVerdict& verdict)
+{
+    // Only words of the status's own: a code the table doesn't hold isn't
+    // repeated.
+    std::string ended{to_string(verdict.status)};
+    if (verdict.status == RunStatus::error && find_code(verdict.error_code)) {
+        ended += " " + verdict.error_code;
+    }
+    RunVerdict out;
+    out.restore_sent = verdict.restore_sent;
+    out.items = verdict.items;
+    out.warnings = verdict.warnings;
+    return error_verdict(
+        std::move(out), kResultInvalid,
+        "the result isn't valid restoreproof.result.v1; the run itself ended " + ended);
+}
+
+std::vector<std::string_view> error_codes()
+{
+    std::vector<std::string_view> codes;
+    for (const ErrorCode& c : kCodes) {
+        codes.push_back(c.code);
+    }
+    return codes;
+}
+
+std::vector<std::string_view> unchecked_item_codes()
+{
+    std::vector<const ErrorCode*> ranked;
+    for (const ErrorCode& c : kCodes) {
+        if (c.severity != kNoSeverity) {
+            ranked.push_back(&c);
+        }
+    }
+    std::ranges::sort(ranked, {}, &ErrorCode::severity);
+    std::vector<std::string_view> codes;
+    for (const ErrorCode* c : ranked) {
+        codes.push_back(c->code);
+    }
+    return codes;
+}
+
+std::vector<std::string_view> warning_codes()
+{
+    return {kWarningCodes.begin(), kWarningCodes.end()};
 }
 
 bool is_backup_counts(std::string_view details)

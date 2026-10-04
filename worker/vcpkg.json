@@ -12,6 +12,7 @@
       ]
     },
     "cpr",
+    "json-schema-validator",
     {
       "name": "libzip",
       "default-features": false

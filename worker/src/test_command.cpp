@@ -57,9 +57,9 @@ std::string verdict_cell(const verification::RunVerdict& verdict, std::size_t in
     return "verified";
 }
 
-// An item's REASON, fixed words only: never ItemCheck::reason, whose
-// office-v1 note names a part inside a tenant file. A missing item the
-// backup said the restore point doesn't hold is "not_in_backup" (Q3.1).
+// An item's REASON, fixed words only, shorter than ItemCheck::reason's. A
+// missing item the backup said the restore point doesn't hold is
+// "not_in_backup" (Q3.1).
 std::string reason_cell(const verification::ItemCheck& item,
                         const connector::RestoreResult* restore)
 {

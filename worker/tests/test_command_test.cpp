@@ -1346,6 +1346,9 @@ std::vector<std::pair<std::string, std::string>> shared_names()
         {message_id, "<RP-CANARY-0001@contoso.example>"},
         {"HrachyaHarutyunyan@", "admin@"},
         {kOrgName, "contoso.onmicrosoft.com"},
+        // The lab Veeam server's repository, the first half of a restore
+        // point's ID.
+        {kLabRepositoryId, "bbbbbbbb-0000-4000-8000-000000000001"},
     };
 }
 
@@ -1476,6 +1479,9 @@ TEST_CASE("test --json: the whole pipeline's result is shared/testdata/result-v1
         CAPTURE(word);
         CHECK(folded.find(word) == std::string::npos);
     }
+    // Nor of the lab's Veeam server: its repository's ID starts every
+    // restore point ID of the lab.
+    CHECK(folded.find(lower(kLabRepositoryId)) == std::string::npos);
 }
 
 // Hidden: run by name only, after a deliberate change to the result, to write

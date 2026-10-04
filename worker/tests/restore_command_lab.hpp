@@ -79,11 +79,12 @@ inline const std::string kUsage =
     "[--record <dir>] [--json <file>]\n";
 
 inline const std::string kOrgName = "RestoreProofLab.onmicrosoft.com";
-// Veeam's restore point IDs are two GUIDs run together. Made up.
-inline const std::string kNewestId =
-    "c2f0f2e7-177f-48ac-992b-93a50cf702e3" "5e1c0a24-0000-4000-8000-000000000930";
-inline const std::string kOlderId =
-    "c2f0f2e7-177f-48ac-992b-93a50cf702e3" "5e1c0a24-0000-4000-8000-000000000929";
+// Veeam's restore point IDs are two GUIDs run together: the backup
+// repository's ID, here the lab Veeam server's as its fixtures have it, and
+// the point's own, made up.
+inline const std::string kLabRepositoryId = "c2f0f2e7-177f-48ac-992b-93a50cf702e3";
+inline const std::string kNewestId = kLabRepositoryId + "5e1c0a24-0000-4000-8000-000000000930";
+inline const std::string kOlderId = kLabRepositoryId + "5e1c0a24-0000-4000-8000-000000000929";
 inline const std::string kNewestTime = "2026-09-29T22:00:45.6603083Z";
 inline const std::string kOlderTime = "2026-09-28T22:00:40Z";
 inline const std::string kRunId = "run-0001";

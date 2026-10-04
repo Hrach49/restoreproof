@@ -536,19 +536,25 @@ embeds.
 | `shared/schemas/result.v1.json` | the result's schema, the only copy | `worker/tests/result_schema_test.cpp` (`[result_schema]`): the embedded bytes are the file's, only the allowed keywords, the fifteen keys, the enums against the code | `cloud/tests/test_result_schema.py`: `check_schema`, `$schema` is draft 2020-12 |
 | `shared/testdata/canonical-json-v1.json` | `canonical-json-v1`: 33 `cases` (`input`, `canonical`, `sha256`) and 9 `rejects` (`input_text`, `reason`: `float`, `integer_out_of_range` or `non_ascii_key`) | `worker/tests/canonical_json_test.cpp` (`[canonical_json]`): every case and every reject; invalid UTF-8, which a JSON file can't hold, on bytes | `cloud/tests/test_canonical_json.py`: the accepted cases against `json.dumps(sort_keys=True, separators=(",", ":"), ensure_ascii=False)`; the rejects' shape only, until W4.3 brings a Python canonicaliser |
 | `shared/testdata/result-v1/valid.json` | a valid result, as canonical bytes | `worker/tests/test_command_test.cpp`: the pipeline's run reproduces it byte for byte | `test_result_schema.py`: valid, and equal to its own canonical dump |
-| `shared/testdata/result-v1/cases.json` | 155 documents, each `valid.json` with an RFC 6902 `patch` (add, remove, replace) and whether the schema accepts it (`valid`): 37 valid, 118 invalid | `result_schema_test.cpp`, one `GENERATE` row per case | `test_result_schema.py`, one parametrised test per case |
+| `shared/testdata/result-v1/cases.json` | 158 documents, each `valid.json` with an RFC 6902 `patch` (add, remove, replace) and whether the schema accepts it (`valid`): 39 valid, 119 invalid | `result_schema_test.cpp`, one `GENERATE` row per case | `test_result_schema.py`, one parametrised test per case |
 
 The Python tests find `shared/` by walking up from their own file, so they also run from
 mutmut's copy. The Worker tests read it through `RP_SHARED_DIR`. No case holds a float:
 Python's validator reads `1.0` as an integer and the C++ one doesn't, so the canonical form
-refuses floats before the schema is asked, and the float rows are C++-only tests.
+refuses floats before the schema is asked, and the float rows are C++-only tests. An integer
+too large for a signed 64-bit value (`2^64 - 1`) is in the file: the C++ validator library would
+read it as a negative number, so `rp::validate_result` refuses it itself, and both sides call
+it invalid.
 
 **`valid.json` is made by the Worker's own tests.** It is the `--json` file of one
 `rpworker test` run through the whole pipeline on the test Harness (`--mail 2 --sp 2 --od 2`,
 a fixed run ID and fixed clocks: a canary and a random item of each type, all verified), with
-the lab tenant's names replaced by placeholders (`shared_names()` in `test_command_test.cpp`)
-and `worker_version` pinned to `0.0.0`. A test fails when the pipeline no longer gives exactly
-that text, and when any lab name is left in it. After a deliberate change to the result,
+the lab tenant's names, and the lab Veeam server's repository ID that starts a restore point's
+ID, replaced by placeholders (`shared_names()` in `test_command_test.cpp`) and `worker_version`
+pinned to `0.0.0`. What stays of the lab: the canaries' hashes, the manifest's, and the restore
+point's time (`2026-09-29T22:00:45.6603083Z`, a real point's, kept for its seven-digit
+fraction). A test fails when the pipeline no longer gives exactly that text, and when any lab
+name or that repository ID is left in it. After a deliberate change to the result,
 write it again with the hidden test case, from `worker\`:
 
 ```powershell
@@ -559,7 +565,7 @@ Then read the diff, and run both sides: `ctest --preset dev -R "result"` and, fr
 `uv run pytest tests/test_result_schema.py`. The patches in `cases.json` point into `valid.json`
 by position (`/expected/items/1` is the random mail, `/check/items/3` the item restored twice):
 if the run's layout changed, the patches must follow, and the two counts pinned in
-`result_schema_test.cpp` (155 cases, 37 valid) with them. It also changes when
+`result_schema_test.cpp` (158 cases, 39 valid) with them. It also changes when
 `lab/seed-manifest.json` is re-seeded, since the canaries' hashes and the manifest's are in it.
 A change to the schema alone needs no C++ change to be tested: both suites run `cases.json`
 against it.

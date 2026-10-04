@@ -54,6 +54,8 @@ add_library(rpcore STATIC
     src/recording_http_client.cpp
     src/redact.cpp
     src/restore_command.cpp
+    src/result_builder.cpp
+    src/result_schema.cpp
     src/retry_policy.cpp
     src/run_lock.cpp
     src/run_pipeline.cpp
@@ -83,12 +85,28 @@ add_library(rpcore STATIC
 target_include_directories(rpcore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_definitions(rpcore PUBLIC RP_VERSION="${PROJECT_VERSION}")
 # PUBLIC: JSON values and loggers will appear in rpcore's headers.
-# PRIVATE: cpr, OpenSSL and libzip stay behind rpcore's own interfaces (HTTP
-# client, signer, office-v1), so callers don't see their headers.
+# PRIVATE: cpr, OpenSSL, libzip and the schema validator stay behind rpcore's
+# own interfaces (HTTP client, signer, office-v1, validate_result), so callers
+# don't see their headers.
 target_link_libraries(rpcore
     PUBLIC nlohmann_json::nlohmann_json spdlog::spdlog
-    PRIVATE cpr::cpr OpenSSL::Crypto libzip::zip
+    PRIVATE cpr::cpr OpenSSL::Crypto libzip::zip nlohmann_json_schema_validator::validator
 )
+# The result's schema (W4.1): shared/schemas/result.v1.json is the only copy,
+# embedded as a byte array the build generates, so the Worker never reads a
+# schema from disk. An edit to the file rebuilds; result_schema_test.cpp
+# compares the embedded bytes with the file.
+set(RP_RESULT_SCHEMA ${CMAKE_CURRENT_SOURCE_DIR}/../shared/schemas/result.v1.json)
+set(RP_RESULT_SCHEMA_CPP ${CMAKE_CURRENT_BINARY_DIR}/generated/result_schema_bytes.cpp)
+add_custom_command(
+    OUTPUT ${RP_RESULT_SCHEMA_CPP}
+    COMMAND ${CMAKE_COMMAND}
+        -DINPUT=${RP_RESULT_SCHEMA} -DOUTPUT=${RP_RESULT_SCHEMA_CPP} -DSYMBOL=kResultSchema
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_bytes.cmake
+    DEPENDS ${RP_RESULT_SCHEMA} ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_bytes.cmake
+    COMMENT "Embedding shared/schemas/result.v1.json"
+    VERBATIM)
+target_sources(rpcore PRIVATE ${RP_RESULT_SCHEMA_CPP})
 # C4062 (an enumerator not handled in a switch that has no default) is an
 # error in rpcore, so a value added to an enum such as HttpMethod can't fall
 # through to another value's behaviour unnoticed.
@@ -147,6 +165,8 @@ add_executable(rptests
     tests/redact_test.cpp
     tests/restore_command_test.cpp
     tests/restore_replay_test.cpp
+    tests/result_builder_test.cpp
+    tests/result_schema_test.cpp
     tests/retry_policy_test.cpp
     tests/run_lock_test.cpp
     tests/run_status_test.cpp

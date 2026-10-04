@@ -20,6 +20,7 @@
 #include <catch2/generators/catch_generators_range.hpp>
 
 #include <cstddef>
+#include <cstdint>
 #include <limits>
 #include <set>
 #include <string>
@@ -408,14 +409,124 @@ TEST_CASE("the result schema's enums are the code's words", "[result_schema]")
     }
 }
 
+// The `reason` pattern repeats three of the code's word lists: the item kinds,
+// read_error_code's codes and the mismatch fields. The enums beside it are
+// held to the code above; this holds the pattern to them, with the words the
+// checker joins them by (src/checker.cpp). A reason the pattern doesn't know
+// would end a real run `error result_invalid`.
+TEST_CASE("the result schema's reason pattern takes every reason the checker can write",
+          "[result_schema]")
+{
+    using rp::connector::ItemKind;
+    const auto list = [](const std::string& pointer) {
+        return at(pointer).get<std::vector<std::string>>();
+    };
+    const auto valid = [](const json& item) {
+        return validate_result(with("/check/items/0", item)).valid;
+    };
+
+    SECTION("a target that couldn't be read: every kind with every code but stale_target")
+    {
+        std::size_t reasons = 0;
+        for (const ItemKind kind : {ItemKind::mail, ItemKind::sharepoint, ItemKind::onedrive}) {
+            for (const std::string& code : list("/$defs/check_item/properties/error_code/enum")) {
+                if (code == "stale_target") {
+                    continue;
+                }
+                const std::string reason = "the " + std::string{rp::connector::to_string(kind)} +
+                                           " restore target couldn't be read (" + code + ")";
+                INFO(reason);
+                REQUIRE(valid({{"index", 0},
+                               {"outcome", "error"},
+                               {"found", false},
+                               {"reason", reason},
+                               {"error_code", code}}));
+                ++reasons;
+            }
+        }
+        REQUIRE(reasons == 15);
+    }
+
+    SECTION("fields that did not match: every field, alone and all together, with and without "
+            "the office-v1 note")
+    {
+        const std::vector<std::string> fields =
+            list("/$defs/check_item/properties/mismatches/items/enum");
+        REQUIRE(fields.size() == 8);
+        const std::string note = "; the restored package isn't valid office-v1 input";
+        const auto mismatch = [](const std::vector<std::string>& which, const std::string& reason) {
+            return json{{"index", 0},
+                        {"outcome", "mismatch"},
+                        {"found", true},
+                        {"mismatches", which},
+                        {"reason", reason},
+                        {"ms", 40}};
+        };
+        std::string all;
+        for (const std::string& field : fields) {
+            INFO(field);
+            const std::string reason = "fields did not match: " + field;
+            REQUIRE(valid(mismatch({field}, reason)));
+            REQUIRE(valid(mismatch({field}, reason + note)));
+            all += (all.empty() ? "" : ", ") + field;
+        }
+        INFO(all);
+        REQUIRE(valid(mismatch(fields, "fields did not match: " + all)));
+        REQUIRE(valid(mismatch(fields, "fields did not match: " + all + note)));
+    }
+
+    SECTION("the two reasons without a list")
+    {
+        REQUIRE(valid({{"index", 0},
+                       {"outcome", "missing"},
+                       {"found", false},
+                       {"reason", "no restored copy found"}}));
+        REQUIRE(valid({{"index", 0},
+                       {"outcome", "error"},
+                       {"found", false},
+                       {"reason", "only an earlier run's copy is in the target"},
+                       {"error_code", "stale_target"}}));
+    }
+
+    SECTION("a word of no list is refused")
+    {
+        const char* reason = GENERATE(
+            "the calendar restore target couldn't be read (graph)",
+            "the mail restore target couldn't be read (stale_target)",
+            "the mail restore target couldn't be read (backup)",
+            "fields did not match: body",
+            "fields did not match: subject,sent_at",
+            "fields did not match: subject; the restored package isn't valid office-v2 input");
+        INFO(reason);
+        // Each in the item its reason belongs to, valid but for the reason.
+        const bool fields = std::string_view{reason}.starts_with("fields");
+        const json item = fields ? json{{"index", 0},
+                                        {"outcome", "mismatch"},
+                                        {"found", true},
+                                        {"mismatches", {"subject"}},
+                                        {"reason", reason},
+                                        {"ms", 40}}
+                                 : json{{"index", 0},
+                                        {"outcome", "error"},
+                                        {"found", false},
+                                        {"reason", reason},
+                                        {"error_code", "graph"}};
+        json good = item;
+        good["reason"] = fields ? "fields did not match: subject"
+                                : "the mail restore target couldn't be read (graph)";
+        REQUIRE(valid(good));
+        REQUIRE_FALSE(valid(item));
+    }
+}
+
 TEST_CASE("the shared result documents validate as they say", "[result_schema]")
 {
     const json& cases = cases_file().at("cases");
     REQUIRE(cases_file().at("format") == std::string{rp::kResultFormat});
     // The file can't shrink unnoticed.
-    REQUIRE(cases.size() == 155);
+    REQUIRE(cases.size() == 158);
 
-    const std::size_t i = GENERATE(range(std::size_t{0}, std::size_t{155}));
+    const std::size_t i = GENERATE(range(std::size_t{0}, std::size_t{158}));
     const json& entry = cases.at(i);
     const std::string name = entry.at("name");
     INFO(name);
@@ -443,7 +554,7 @@ TEST_CASE("the shared result documents' names are unique and both kinds are ther
         REQUIRE(entry.size() == 3);
         REQUIRE(entry.at("patch").is_array());
     }
-    REQUIRE(valid == 37);
+    REQUIRE(valid == 39);
     REQUIRE(names.contains("base"));
     // valid.json is canonical-json-v1: one line, no trailing newline.
     const std::string text = rp::test::read_shared("testdata/result-v1/valid.json");
@@ -463,6 +574,37 @@ TEST_CASE("a float where the result schema wants an integer is invalid", "[resul
     const ResultValidation result = validate_result(with(pointer, 5.0));
     REQUIRE_FALSE(result.valid);
     REQUIRE(result.violations >= 1);
+}
+
+// The validator library (2.4.0) reads an unsigned instance into a signed 64-bit
+// value before it compares it with minimum and maximum: 2^64 - 1 would be -1
+// there, inside $defs/integer's range. validate_result refuses such a number
+// itself, as the schema and Python's validator do.
+TEST_CASE("an integer past the signed 64-bit range is invalid wherever the schema wants an integer",
+          "[result_schema]")
+{
+    const char* pointer = GENERATE("/check/items/0/ms", "/timings/spans/total/ms",
+                                   "/status/counts/items", "/expected/items/0/index");
+    const std::uint64_t value =
+        GENERATE(std::uint64_t{18446744073709551615ULL},  // -1 as a signed value
+                 std::uint64_t{18446744073709551615ULL} - 9007199254740990ULL, // -(2^53 - 1)
+                 std::uint64_t{9223372036854775808ULL});  // 2^63
+    INFO(pointer << " = " << value);
+    const ResultValidation result = validate_result(with(pointer, value));
+    REQUIRE_FALSE(result.valid);
+    REQUIRE(result.violations >= 1);
+    REQUIRE(result.first_pointer == pointer);
+}
+
+TEST_CASE("an integer past the signed 64-bit range is refused where the schema knows no key",
+          "[result_schema]")
+{
+    // No place the schema doesn't know is ever repeated.
+    const ResultValidation result =
+        validate_result(with("/unknown-b41e", std::uint64_t{18446744073709551615ULL}));
+    REQUIRE_FALSE(result.valid);
+    REQUIRE(result.violations >= 1);
+    REQUIRE(result.first_pointer.empty());
 }
 
 TEST_CASE("a document that isn't an object is not a result", "[result_schema]")

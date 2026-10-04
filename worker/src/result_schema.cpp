@@ -5,9 +5,13 @@
 #include <nlohmann/json-schema.hpp>
 
 #include <algorithm>
+#include <cstdint>
 #include <functional>
+#include <limits>
 #include <memory>
+#include <optional>
 #include <set>
+#include <string>
 #include <utility>
 
 namespace rp {
@@ -122,6 +126,37 @@ bool is_index(std::string_view part)
            std::ranges::all_of(part, [](char c) { return c >= '0' && c <= '9'; });
 }
 
+// The pointer of the first unsigned integer in `node` that a signed 64-bit
+// value can't hold, or nullopt. The validator library (2.4.0) reads an
+// unsigned instance into one before it compares it with `minimum` and
+// `maximum`, so 2^64 - 1 would be -1 there and pass $defs/integer. Every
+// integer of the schema ends at 2^53 - 1 and every object is closed, so such
+// a number is valid nowhere in a result.
+std::optional<std::string> oversized_integer(const json& node, const std::string& pointer)
+{
+    if (node.is_number_unsigned()) {
+        if (node.get<std::uint64_t>() >
+            static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
+            return pointer;
+        }
+    } else if (node.is_object()) {
+        for (const auto& [key, value] : node.items()) {
+            // A key with "~" or "/" would need escaping; known_result_pointer
+            // drops a pointer holding a key the schema doesn't know anyway.
+            if (auto found = oversized_integer(value, pointer + "/" + key)) {
+                return found;
+            }
+        }
+    } else if (node.is_array()) {
+        for (std::size_t i = 0; i < node.size(); ++i) {
+            if (auto found = oversized_integer(node[i], pointer + "/" + std::to_string(i))) {
+                return found;
+            }
+        }
+    }
+    return std::nullopt;
+}
+
 } // namespace
 
 namespace detail {
@@ -158,6 +193,9 @@ ResultValidation validate_result(const nlohmann::json& document) noexcept
         const Loaded& schema = loaded();
         if (!schema.validator) {
             return {false, 1, {}};
+        }
+        if (const auto oversized = oversized_integer(document, {})) {
+            return {false, 1, detail::known_result_pointer(*oversized)};
         }
         Violations violations;
         schema.validator->validate(document, violations);

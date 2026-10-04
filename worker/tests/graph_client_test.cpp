@@ -2549,3 +2549,13 @@ TEST_CASE("only graph_client.* and cleaner.* reach GraphClient's write member", 
     CHECK(allowed_hits.contains("include/rp/graph_client.hpp"));
     CHECK(allowed_hits.contains("src/graph_client.cpp"));
 }
+
+TEST_CASE("wait pauses on the client's own sleep", "[graph][client]")
+{
+    Lab lab;
+    const std::unique_ptr<GraphClient> client = lab.make_client();
+
+    client->wait(2s);
+
+    CHECK(lab.waits() == std::vector<std::chrono::milliseconds>{2s});
+}

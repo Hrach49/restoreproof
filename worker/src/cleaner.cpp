@@ -272,28 +272,23 @@ Cleaner::Listing Cleaner::list(const Target& target, const Resolved& resolved, b
     const bool library = target.kind == Target::Kind::sharepoint;
     const std::string& folder = resolved.folder_id;
     bool past_limit = false;
+    const std::string first =
+        library ? "/drives/" + container + "/root/children" + std::string{kFileQuery}
+                : "/drives/" + container + "/items/" + folder + "/children" +
+                      std::string{kFileQuery};
+    const Grant& grant = library ? kSitesReadGrant : kOneDriveGrant;
+    const NextLinkRule next_rule = [&](const std::vector<std::string>& path) {
+        return library ? is_library_root_path(path, container)
+                       : is_folder_path(path, container, folder);
+    };
+    // A listing cut at the page limit is short by design; any other that
+    // stays shorter than the container's count, read again, was trimmed.
     const std::vector<json> pages =
-        library ? list_pages(graph_, "/drives/" + container + "/root/children" +
-                                         std::string{kFileQuery},
-                             kSitesReadGrant, {}, what,
-                             [&container](const std::vector<std::string>& path) {
-                                 return is_library_root_path(path, container);
-                             },
-                             &past_limit)
-                : list_pages(graph_, "/drives/" + container + "/items/" + folder + "/children" +
-                                         std::string{kFileQuery},
-                             kOneDriveGrant, {}, what,
-                             [&container, &folder](const std::vector<std::string>& path) {
-                                 return is_folder_path(path, container, folder);
-                             },
-                             &past_limit);
+        whole ? list_whole(graph_, first, grant, what, next_rule, resolved.child_count,
+                           [&] { return resolve(target).child_count; }, &past_limit)
+              : list_pages(graph_, first, grant, {}, what, next_rule, &past_limit);
     if (past_limit) {
         log(spdlog::level::warn, past_limit_line(what));
-    } else if (whole) {
-        // A listing cut at the page limit is short by design; any other that
-        // is shorter than the container's count was trimmed.
-        check_listing_whole(resolved.child_count, listed_entries(pages),
-                            library ? kSitesReadGrant : kOneDriveGrant, what);
     }
     for (const json& page : pages) {
         for (const json& entry : page.at("value")) {

@@ -1892,3 +1892,33 @@ TEST_CASE("the listing after a round's deletes isn't held to the count read befo
     require_cleaned(result.sharepoint, recorded_count(Which::sharepoint));
     CHECK(result.ok());
 }
+
+TEST_CASE("a count that still counts what was just deleted is read again, never taken for a "
+          "trimmed listing",
+          "[cleaner][q3.2]")
+{
+    // PR #155 review: a round that starts right after deletes (an earlier
+    // round's, or the run before) may read a count that trails them.
+    const Which lagging = GENERATE(Which::sharepoint, Which::onedrive);
+    INFO(name_of(lagging));
+    Lab lab;
+    if (lagging == Which::sharepoint) {
+        lab.http.on(HttpMethod::get, library_root_url(), {library_root(1), library_root(0)});
+    } else {
+        json stale = load_fixture_json("graph", "onedrive-folder-200");
+        stale["body"]["folder"]["childCount"] = 1;
+        json fresh = stale;
+        fresh["body"]["folder"]["childCount"] = 0;
+        lab.http.on(HttpMethod::get, folder_url(), {to_response(stale), to_response(fresh)});
+    }
+
+    const CleanupResult result = lab.clean();
+
+    const TargetCleanup& t = of(result, lagging);
+    CHECK(t.error_code.empty());
+    CHECK(t.ok());
+    CHECK(t.rounds == 1);
+    CHECK(t.deleted == 0);
+    CHECK(result.ok());
+    CHECK(lab.writes().empty());
+}

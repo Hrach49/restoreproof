@@ -324,8 +324,9 @@ const connector::ItemRestoreResult* restore_item(const RunFacts& facts, std::siz
 }
 
 // Whether the restore point should hold item `i`, which the backup said it
-// doesn't: a canary, and the point taken strictly after the canaries were
-// seeded. Anything not known (a time that doesn't read) says no.
+// doesn't though it holds the item's container: a canary, and the point
+// taken strictly after the canaries were seeded. Anything not known (a time
+// that doesn't read) says no.
 bool point_should_hold(const RunFacts& facts, std::size_t i)
 {
     if (facts.expected->items[i].source != ItemSource::canary) {
@@ -357,8 +358,10 @@ ItemVerdict item_verdict(const RunFacts& facts, std::size_t i)
     if (restored && restored->outcome != ItemOutcome::restored && restored->infrastructure) {
         return {Verdict::unchecked, std::string{kBackupInfrastructure}};
     }
+    // A point without the item's whole container doesn't cover the item: a
+    // job or configuration matter, never the backup losing a canary.
     if (restored && restored->outcome == ItemOutcome::not_in_backup &&
-        !point_should_hold(facts, i)) {
+        (restored->container_missing || !point_should_hold(facts, i))) {
         return {Verdict::unchecked, std::string{kNotInBackup}};
     }
     return {Verdict::failed, {}};
@@ -716,6 +719,7 @@ json to_json(const connector::RestoreResult& result)
                          {"kind", connector::to_string(item.kind)},
                          {"outcome", connector::to_string(item.outcome)},
                          {"infrastructure", item.infrastructure},
+                         {"container_missing", item.container_missing},
                          {"session_id", item.session_id}});
     }
     return {{"status", connector::to_string(result.status)},

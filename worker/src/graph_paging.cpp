@@ -150,6 +150,27 @@ void check_listing_whole(const std::optional<std::uint64_t>& child_count, std::s
     }
 }
 
+std::vector<json> list_whole(GraphClient& graph, const std::string& first, const Grant& grant,
+                             const std::string& what, const NextLinkRule& next_rule,
+                             std::optional<std::uint64_t> child_count, const CountReader& recount,
+                             bool* past_limit)
+{
+    for (int recheck = 0;; ++recheck) {
+        std::vector<json> pages = list_pages(graph, first, grant, {}, what, next_rule, past_limit);
+        if (past_limit != nullptr && *past_limit) {
+            return pages;
+        }
+        const std::size_t listed = listed_entries(pages);
+        const bool is_short = child_count && *child_count > listed;
+        if (!is_short || recheck == kListingRechecks) {
+            check_listing_whole(child_count, listed, grant, what);
+            return pages;
+        }
+        graph.wait(kListingRecheckWait);
+        child_count = recount();
+    }
+}
+
 bool is_listed_id(std::string_view id) noexcept
 {
     constexpr std::string_view extra = "!-_=";

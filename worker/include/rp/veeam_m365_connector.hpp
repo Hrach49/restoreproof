@@ -130,8 +130,10 @@ public:
     //     (it, or its mailbox, folder, site, library or OneDrive, isn't in the
     //     restore point) is never sent: its result is
     //     ItemOutcome::not_in_backup with browsing's message, and the other
-    //     items go ahead (Q3.1). The test OneDrive missing from the point is
-    //     connector::Error;
+    //     items go ahead (Q3.1). When it is the item's whole mailbox, site
+    //     (Veeam's 404 for it) or OneDrive that has no match, the result's
+    //     container_missing is set: the point doesn't cover the item. The
+    //     test OneDrive missing from the point is connector::Error;
     //  5. one restore call per source container, same-named items in separate
     //     calls: the body built, the certificate exported, layer 2
     //     (rp/target_guard_veeam.hpp) on the exact path and text, then one

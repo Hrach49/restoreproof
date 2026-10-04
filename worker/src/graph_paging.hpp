@@ -11,8 +11,10 @@
 
 #include <nlohmann/json.hpp>
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -66,6 +68,30 @@ std::size_t listed_entries(const std::vector<nlohmann::json>& pages);
 // entries than the count is fine: something was added in between.
 void check_listing_whole(const std::optional<std::uint64_t>& child_count, std::size_t listed,
                          const Grant& grant, const std::string& what);
+
+// Reads a file target's count again, as the read before its listing did.
+using CountReader = std::function<std::optional<std::uint64_t>()>;
+
+// How often a listing shorter than its container's count is read again, and
+// the wait before each: 6 s in all before the listing is refused.
+inline constexpr int kListingRechecks = 3;
+inline constexpr std::chrono::milliseconds kListingRecheckWait{2000};
+
+// list_pages for a file target, held to its container's count
+// (check_listing_whole). A listing shorter than `child_count` isn't refused
+// at once (PR #155 review): the count may trail a delete (the clean before
+// the snapshot, a Cleaner round before the next), and an entry may go between
+// the two reads. The Worker waits kListingRecheckWait on the client's sleep,
+// reads the count again with `recount` and lists again, at most
+// kListingRechecks times; a listing still short then was trimmed: the
+// PermissionError. A missing count is the GraphError at once. A listing cut
+// at kMaxListPages (`past_limit` given and set) is short by design and isn't
+// held to the count.
+std::vector<nlohmann::json> list_whole(GraphClient& graph, const std::string& first,
+                                       const Grant& grant, const std::string& what,
+                                       const NextLinkRule& next_rule,
+                                       std::optional<std::uint64_t> child_count,
+                                       const CountReader& recount, bool* past_limit = nullptr);
 
 // Whether `id`, the "id" of an entry Graph listed, may go in a URL path: 1 to
 // 512 ASCII letters, digits and "!-_=" (Exchange's IDs end in '=').

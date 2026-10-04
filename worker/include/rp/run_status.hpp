@@ -160,9 +160,10 @@ struct RunVerdict {
 // `mismatch` while the backup said the item wasn't restored, for an
 // infrastructure reason -> unchecked, backup_infrastructure; `missing` or
 // `mismatch` while the backup said the restore point doesn't hold the item
-// (ItemOutcome::not_in_backup), unless it is a canary and the restore point
-// was taken after the expected set's canaries_seeded_at (both read, the
-// point strictly later) -> unchecked, not_in_backup; `missing` or `mismatch`
+// (ItemOutcome::not_in_backup), unless it is a canary whose container the
+// point holds (not container_missing) and the restore point was taken after
+// the expected set's canaries_seeded_at (both read, the point strictly
+// later) -> unchecked, not_in_backup; `missing` or `mismatch`
 // -> failed. The run, first fit wins:
 //  1. facts that don't add up -> error internal: no expected set and no stop;
 //     a restore without an expected set, or a check without a restore; an
@@ -212,7 +213,7 @@ bool is_backup_counts(std::string_view details);
 // is_backup_counts, else null), "items_sent", "items_restored",
 // "started_at_raw", "ended_at_raw" (the product's text, unparsed)}], "items":
 // [{"index" (its place in result.items), "kind", "outcome", "infrastructure",
-// "session_id"}]}. No item name and no Veeam message: those may name a tenant
+// "container_missing", "session_id"}]}. No item name and no Veeam message: those may name a tenant
 // value.
 nlohmann::json to_json(const connector::RestoreResult& result);
 

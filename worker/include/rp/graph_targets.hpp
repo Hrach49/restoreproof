@@ -150,8 +150,10 @@ private:
         std::string children_path;
         std::string location; // "the RestoreTarget library", "the test OneDrive folder"
         NextLinkRule next_rule;
-        // The container's own count, read before the listing (Q3.2).
+        // The container's own count, read before the listing (Q3.2), and
+        // the same read again, for a listing that comes back shorter.
         std::optional<std::uint64_t> child_count;
+        std::function<std::optional<std::uint64_t>()> recount;
     };
 
     std::vector<FoundItem> list_files(const FileTarget& target);

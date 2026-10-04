@@ -642,8 +642,8 @@ lengths, `index` equal to position, `status` against `check`), and the order of 
 mismatch `reason`.
 
 `shared/testdata/result-v1/` holds the documents both validators must judge alike: `valid.json`
-(a whole pipeline run of the Worker's tests, the lab's names replaced) and `cases.json` (155
-small changes to it, 37 valid and 118 invalid). `worker/tests/result_schema_test.cpp` and
+(a whole pipeline run of the Worker's tests, the lab's names replaced) and `cases.json` (158
+small changes to it, 39 valid and 119 invalid). `worker/tests/result_schema_test.cpp` and
 `cloud/tests/test_result_schema.py` run the same file (`docs/testing.md`, "The shared vectors
 and result documents").
 
@@ -659,6 +659,11 @@ and result documents").
    the finished result is built and validated again, and that text is the file.
 
 What is validated is the canonical text parsed back, so it is the written text that validated.
+`validate_result` refuses one thing itself, before the schema's validator is asked: an unsigned
+integer too large for a signed 64-bit value, one violation at its place. The validator library
+would read it as a negative number and could find it inside a range; every integer of the
+schema ends at 2^53 - 1, so the schema refuses it too (`docs/decisions.md`, build notes
+point 11).
 
 **The first time fails:** the result can't be built (a part's `to_json` throws), has no
 canonical form, or the schema refuses it. The verdict becomes `error result_invalid`, exit 1

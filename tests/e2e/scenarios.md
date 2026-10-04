@@ -14,7 +14,8 @@ must never be reported as `fail` (CLAUDE.md, "Status vocabulary").
 Both hold since 2026-10-04. Two scenarios found bugs, fixed test-first in the same PR: scenario 2
 (a canary missing from the backup was `error not_in_backup`, now `fail` naming it) and scenario 6
 (a listing SharePoint trimmed was a false `fail`, now `error graph_permission`). Scenario 6 also
-found that the Worker's SharePoint grants aren't what the docs say (#154).
+showed that SharePoint keeps serving revoked permissions for a while, and left open which grant
+the RestoreTarget library really needs (#154).
 
 ## Results
 

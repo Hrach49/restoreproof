@@ -135,8 +135,10 @@ about the backup: Veeam unreachable, Graph authentication or permission refused,
 `TargetGuard` violation, the Cloud unreachable at dispatch, an empty sample, a restore that
 sent nothing (`not_run`), an item that couldn't be checked (its target unreadable, only an
 earlier run's copy there: `stale_target`, or an item Veeam failed for an infrastructure
-reason: `backup_infrastructure`), or a restore Veeam called failed whose items all matched
-(`restore_contradiction`). Each `error` carries one `error_code` (the list is in
+reason: `backup_infrastructure`), a restore Veeam called failed whose items all matched
+(`restore_contradiction`), or a result the Worker built that isn't valid
+`restoreproof.result.v1` (`result_invalid`, the Worker's own fault). Each `error` carries one
+`error_code` (the list is in
 [verification.md](verification.md)). **Infrastructure problems are never reported as
 `fail`**, because a `fail` accuses the customer's backup of losing data.
 
@@ -169,6 +171,18 @@ W3.5). It is how long getting the sampled items back took, not the whole run (`t
 it says nothing about restoring anything beyond the sample.
 
 ## Evidence
+
+**Result (`restoreproof.result.v1`).** The one JSON document a run with a run line leaves
+(W4.1): fifteen keys, from `format` and `run_id` to `status`, `cleanup` and `timings`, `null`
+where a step didn't run. Built by `rp::ResultBuilder`, validated in the Worker against
+`shared/schemas/result.v1.json` before any status line is printed, and written by `rpworker
+test --json` as its canonical bytes. Unsigned until W4.3. See
+[verification.md](verification.md), "The result".
+
+**Canonical form (`canonical-json-v1`).** The one byte sequence of a result, the same from C++
+and Python: keys sorted by byte, no whitespace, UTF-8, integers only. A float, an integer
+outside ±(2^53 − 1), a non-ASCII key or invalid UTF-8 is refused, not written some way.
+`rp::canonical_json`; vectors in `shared/testdata/canonical-json-v1.json`.
 
 **Evidence bundle.** What one run leaves behind and uploads: the result JSON, plus
 `veeam-session.log` and `items.csv` (the per-item comparison with hashes). Canonicalised

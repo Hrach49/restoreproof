@@ -16,7 +16,8 @@ Status: Stage 1, Sprint 1. See `CLAUDE.md` for the working agreements.
 |---|---|
 | `worker/` | C++20 Worker: `rpcore` (logic), `rpworker` (exe), `rptests` (Catch2) |
 | `cloud/` | FastAPI backend, dashboard and reports (Python 3.12, uv) |
-| `shared/schemas/` | `result.v1.json` — the one bundle schema, used by both builds; `seed-manifest.v1.json` — the canary manifest's schema |
+| `shared/schemas/` | `result.v1.json` — the one result schema (`restoreproof.result.v1`), embedded into the Worker at build time and read by the Cloud by path; `seed-manifest.v1.json` — the canary manifest's schema |
+| `shared/testdata/` | Test vectors both builds run: `canonical-json-v1.json`, `result-v1/` (a valid result and changes to it), and the `text-v1` and `office-v1` vectors |
 | `lab/` | Test tenant notes, the canary seeder (`python -m seeder`, a uv project) and the canary seed manifest |
 | `docs/` | Decisions, glossary, API and security notes |
 | `tests/e2e/` | Manually tracked end-to-end scenarios |

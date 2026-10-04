@@ -140,7 +140,9 @@ Graph listed 0 of the 1 entries in the RestoreTarget library: SharePoint leaves 
 ```
 
 Which grant the library really relies on is open (#154): with `Sites.Selected` alone revoked the
-list-level grant #4 was enough, so the text above may name the wrong one of the two.
+run still passed, but only minutes after the revoke, when SharePoint may still have served cached
+permissions. Until that is rerun with a longer wait, the text above may name the wrong one of the
+two.
 
 The OneDrive grant came with W2.2, which reads the folder. W3.4 renamed `kMailReadGrant` to
 `kMailGrant` and `kOneDriveReadGrant` to `kOneDriveGrant` with the texts above, and added

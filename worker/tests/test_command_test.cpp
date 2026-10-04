@@ -2,25 +2,30 @@
 // `rpworker restore` runs (src/run_pipeline.hpp), so these tests run on
 // restore's Harness (restore_command_lab.hpp) and pin what differs: the
 // command line (no --seed, --json), the table after the check (VERDICT and
-// REASON in fixed words), the --json run summary's v0 shape for each way a
-// run ends, and a summary that can't be written. What both share (the guard,
-// the mutex, the status, the cleanup, the timings) is tested in
-// restore_command_test.cpp. No network, nothing live. The choices are the
-// 2026-10-03 W3.6 entry in docs/decisions.md.
+// REASON in fixed words), the --json file, restoreproof.result.v1 (W4.1), for
+// each way a run ends, a result that isn't valid and a file that can't be
+// written. What both share (the guard, the mutex, the status, the cleanup,
+// the timings) is tested in restore_command_test.cpp. No network, nothing
+// live. The choices are the 2026-10-03 W3.6 and 2026-10-04 W4.1 entries in
+// docs/decisions.md.
 
 #include "restore_command_lab.hpp"
+#include "result_lab.hpp"
 
 #include "../src/text_table.hpp"
 
+#include <rp/canonical_json.hpp>
 #include <rp/checker.hpp>
 #include <rp/cli.hpp>
 #include <rp/connector.hpp>
 #include <rp/restore_command.hpp>
+#include <rp/result_schema.hpp>
 #include <rp/run_status.hpp>
 #include <rp/step_timer.hpp>
 #include <rp/test_command.hpp>
 #include <rp/version.hpp>
 
+#include <nlohmann/json-schema.hpp>
 #include <nlohmann/json.hpp>
 
 #include <catch2/catch_test_macros.hpp>
@@ -33,6 +38,7 @@
 #include <cstddef>
 #include <filesystem>
 #include <format>
+#include <fstream>
 #include <functional>
 #include <new>
 #include <optional>
@@ -64,12 +70,18 @@ struct TestLab : Harness {
     std::filesystem::path json_path() const { return dir.path() / "run.json"; }
     std::string json_arg() const { return utf8(json_path()); }
 
-    // The --json file, parsed; REQUIREs it.
-    json summary() const
+    // The --json file, parsed; REQUIREs it, that it is exactly its own
+    // canonical text and that the embedded schema takes it.
+    json result() const
     {
         const std::optional<std::string> text = file_bytes(json_path());
         REQUIRE(text);
-        return json::parse(*text);
+        const json document = json::parse(*text);
+        REQUIRE(*text == rp::canonical_json(document));
+        const rp::ResultValidation validation = rp::validate_result(document);
+        INFO("first violation at \"" << validation.first_pointer << "\"");
+        REQUIRE(validation.valid);
+        return document;
     }
 
     // A --json run's stdout up to its timings' table, REQUIREing the table
@@ -107,11 +119,32 @@ std::string check_table(const std::vector<std::vector<std::string>>& rows)
     return "\n" + rp::format_table(table);
 }
 
-// The top-level keys of rp.run-summary.v0, every one always there.
-const std::set<std::string> kSummaryKeys{
-    "format",  "worker_version", "command", "run_id", "started_at", "ended_at",
-    "restore_point", "veeam_org_name", "sample", "expected", "restore", "check",
-    "status",  "cleanup",        "timings", "exit_code"};
+// The top-level keys of restoreproof.result.v1, every one always there.
+const std::set<std::string> kResultKeys{
+    "format",        "worker_version", "run_id", "started_at", "ended_at",
+    "connector",     "client",         "restore_point", "sample", "expected",
+    "restore",       "check",          "status", "cleanup",    "timings"};
+
+const std::string kNotValid =
+    ": the result isn't valid restoreproof.result.v1; no file was written\n";
+
+std::size_t count_of(const std::string& text, std::string_view part)
+{
+    std::size_t n = 0;
+    for (std::size_t at = text.find(part); at != std::string::npos;
+         at = text.find(part, at + part.size())) {
+        ++n;
+    }
+    return n;
+}
+
+// The wall clock a run reads once the clean after is done, for ended_at: the
+// year 10000, which the result's times can't hold.
+std::chrono::system_clock::time_point year_10000()
+{
+    using namespace std::chrono;
+    return sys_days{year{10000} / January / 1};
+}
 
 std::set<std::string> keys_of(const json& object)
 {
@@ -536,8 +569,8 @@ TEST_CASE("test: VERDICT and REASON: an infrastructure item is unchecked, never 
     CHECK_THAT(run.out, !ContainsSubstring("SENTINEL"));
 }
 
-TEST_CASE("test: an Office file that isn't a valid package is a sha256 mismatch; REASON never "
-          "shows the zip reader's words, the --json file's check keeps them",
+TEST_CASE("test: an Office file that isn't a valid package is a sha256 mismatch; neither REASON "
+          "nor the --json file shows the zip reader's words",
           "[test_command][json]")
 {
     TestLab lab;
@@ -553,21 +586,54 @@ TEST_CASE("test: an Office file that isn't a valid package is a sha256 mismatch;
     CHECK_THAT(run.out, ContainsSubstring(check_table({{"sharepoint", "rp-canary-02.docx",
                                                         "manifest", "yes", "mismatch", "failed",
                                                         "sha256", "246000"}})));
-    const json summary = lab.summary();
-    const json& item = summary.at("check").at("items").at(0);
+    const json result = lab.result();
+    const json& item = result.at("check").at("items").at(0);
     CHECK(item.at("mismatches") == json::array({"sha256"}));
-    const std::string reason = item.at("reason").get<std::string>();
-    CHECK_THAT(reason, ContainsSubstring("office-v1"));
-    CHECK(run.out.find(reason) == std::string::npos);
+    // Fixed words (W4.1 point 7).
+    CHECK(item.at("reason") ==
+          "fields did not match: sha256; the restored package isn't valid office-v1 input");
     CHECK(run.out.find("office-v1") == std::string::npos);
     CHECK(run.err.find("office-v1") == std::string::npos);
 }
 
-// --- --json: the run summary (rp.run-summary.v0) --------------------------------------
+// --- --json: the result (restoreproof.result.v1) --------------------------------------
 
-TEST_CASE("test --json: the v0 summary has every top-level key for each way a run ends, null "
-          "where a step didn't run; the file is written after the timings, then wrote <file>",
-          "[test_command][json]")
+TEST_CASE("test --json writes restoreproof.result.v1: valid by the embedded schema and by the "
+          "schema file, exactly its own canonical text, the fifteen keys",
+          "[test_command][json][result]")
+{
+    TestLab lab;
+    lab.fake.pool.mail = {carol_mail(1)};
+
+    const Run run = lab.run({"--run-id", kRunId, "--mail", "2", "--sp", "1", "--od", "0", "--json",
+                             lab.json_arg()});
+
+    INFO(run.err);
+    REQUIRE(run.exit_code == rp::exit_code::ok);
+    const std::optional<std::string> text = file_bytes(lab.json_path());
+    REQUIRE(text);
+    const json document = json::parse(*text);
+    // (a) Valid by the schema the Worker embeds, and by the file the Cloud reads.
+    const rp::ResultValidation embedded = rp::validate_result(document);
+    INFO("first violation at \"" << embedded.first_pointer << "\"");
+    CHECK(embedded.valid);
+    nlohmann::json_schema::json_validator from_file;
+    from_file.set_root_schema(json::parse(rp::test::read_shared("schemas/result.v1.json")));
+    CHECK_NOTHROW(from_file.validate(document));
+    // (b) canonical-json-v1: no whitespace, no trailing newline.
+    CHECK(*text == rp::canonical_json(document));
+    CHECK(text->find('\n') == std::string::npos);
+    CHECK_THAT(*text, StartsWith("{\"check\":{"));
+    CHECK(text->ends_with("}"));
+    // (c) The fifteen keys.
+    CHECK(keys_of(document) == kResultKeys);
+    CHECK(document.at("format") == "restoreproof.result.v1");
+    CHECK(document.at("status").at("status") == "pass");
+}
+
+TEST_CASE("test --json: the result is valid and has the fifteen keys for each way a run ends, "
+          "null where a step didn't run; the file is written after the timings, then wrote <file>",
+          "[test_command][json][result]")
 {
     namespace gl = rp::test::graph_lab;
     using Setup = std::function<void(TestLab&)>;
@@ -701,57 +767,271 @@ TEST_CASE("test --json: the v0 summary has every top-level key for each way a ru
     INFO(run.err);
     CHECK(run.exit_code == c.code);
     CHECK_THAT(run.err, !ContainsSubstring("json error"));
+    CHECK_THAT(run.err, !ContainsSubstring("result error"));
     // The timings' table, then the file's line, last.
     const std::string body = lab.json_body(run);
     CHECK_THAT(body, ContainsSubstring("\nstatus " + c.status + ": "));
-    const json summary = lab.summary();
-    CHECK(keys_of(summary) == kSummaryKeys);
-    for (const std::string& key : kSummaryKeys) {
+    // Canonical and valid by the embedded schema, whatever the ending.
+    const json result = lab.result();
+    CHECK(keys_of(result) == kResultKeys);
+    for (const std::string& key : kResultKeys) {
         CAPTURE(key);
-        CHECK(summary.at(key).is_null() == c.nulls.contains(key));
+        CHECK(result.at(key).is_null() == c.nulls.contains(key));
     }
-    CHECK(summary.at("format") == "rp.run-summary.v0");
-    CHECK(summary.at("worker_version") == std::string{rp::version()});
-    CHECK(summary.at("command") == "test");
-    CHECK(summary.at("run_id") == kRunId);
-    CHECK(summary.at("started_at") == "2026-09-28T12:00:00.000Z");
-    CHECK(summary.at("ended_at") == "2026-09-28T12:00:00.000Z");
-    CHECK(summary.at("restore_point") == json{{"id", kNewestId}, {"backup_time_raw", kNewestTime}});
-    CHECK(summary.at("veeam_org_name") == kOrgName);
-    CHECK(summary.at("exit_code") == c.code);
-    const json& status = summary.at("status");
+    CHECK(result.at("format") == "restoreproof.result.v1");
+    CHECK(result.at("worker_version") == std::string{rp::version()});
+    CHECK(result.at("run_id") == kRunId);
+    CHECK(result.at("started_at") == "2026-09-28T12:00:00.000Z");
+    CHECK(result.at("ended_at") == "2026-09-28T12:00:00.000Z");
+    CHECK(result.at("connector") == json{{"type", "veeam_m365"}, {"api", "1"}});
+    const gl::Lab_values& v = gl::lab_values();
+    CHECK(result.at("client") == json{{"client_id", nullptr},
+                                      {"tenant_id", kTenant},
+                                      {"veeam_org_name", kOrgName},
+                                      {"targets",
+                                       {{"mailbox", v.mailbox},
+                                        {"site_id", v.site_id},
+                                        {"library_id", v.library_id},
+                                        {"onedrive_drive_id", v.onedrive_drive_id},
+                                        {"onedrive_folder_id", v.folder_id}}}});
+    CHECK(result.at("restore_point") == json{{"id", kNewestId},
+                                             {"backup_time_raw", kNewestTime},
+                                             {"backup_time", "2026-09-29T22:00:45Z"}});
+    const json& status = result.at("status");
     const std::string first = c.status.substr(0, c.status.find(' '));
     CHECK(status.at("status") == first);
+    CHECK(status.contains("error_code") == (first == "error"));
     if (first == "error") {
         CHECK(status.at("error_code") == c.status.substr(c.status.find(' ') + 1));
     }
     REQUIRE(lab.cleanups.size() == 1);
     if (!c.nulls.contains("cleanup")) {
-        CHECK(summary.at("cleanup") == rp::to_json(lab.cleanups[0]));
+        // The finished result: the clean after and its two flags are in it.
+        CHECK(result.at("cleanup") == rp::to_json(lab.cleanups[0]));
     }
-    CHECK(summary.at("timings") == rp::timing::to_json(lab.timings.at(0)));
+    CHECK(result.at("timings") == rp::timing::to_json(lab.timings.at(0)));
     CHECK(status.at("restore_sent") == lab.cleanups[0].restore_sent);
-    if (!summary.at("sample").is_null()) {
-        CHECK(summary.at("sample").at("run_id") == kRunId);
+    if (!result.at("sample").is_null()) {
+        CHECK(result.at("sample").at("run_id") == kRunId);
     }
-    if (!summary.at("restore").is_null()) {
-        const json& restore = summary.at("restore");
+    if (!result.at("restore").is_null()) {
+        const json& restore = result.at("restore");
         // Row 1's restore lists one item it wasn't sent: written as reported.
         CHECK(restore.at("items").size() ==
               restore.at("items_sent").get<std::size_t>() + (c.name.ends_with("(row 1)") ? 1 : 0));
         // No item name in the restore object.
         CHECK(restore.dump().find("RP-CANARY") == std::string::npos);
     }
-    // Pretty-printed until W4.1 brings the canonical form.
+    // Nothing of the process: v0's command and exit_code are gone.
     const std::string text = *file_bytes(lab.json_path());
-    CHECK_THAT(text, StartsWith("{\n  \""));
-    CHECK(text.ends_with("}\n"));
+    CHECK(text.find("exit_code") == std::string::npos);
+    CHECK(text.find("\"command\"") == std::string::npos);
+    // canonical-json-v1: one line, no trailing newline.
+    CHECK_THAT(text, StartsWith("{\"check\":"));
+    CHECK(text.ends_with("}"));
+    CHECK(text.find('\n') == std::string::npos);
     // No secret.
     CHECK(text.find("Sentinel-Veeam-Password-9c2e") == std::string::npos);
     CHECK(text.find(rp::test::graph_lab::kPfxPassword) == std::string::npos);
 }
 
-TEST_CASE("test --json: a summary that isn't written changes no status; exit 0 becomes 1, any "
+// --- --json: a result that isn't valid ------------------------------------------------
+
+TEST_CASE("test: a result that isn't valid when the status is decided is error result_invalid, "
+          "exit 1: one status line, no item verdict, the clean after as the run's own status "
+          "had it, no --json file",
+          "[test_command][json][result]")
+{
+    using Setup = std::function<void(TestLab&)>;
+    struct Case {
+        std::string name;
+        Setup setup;
+        std::string result_error;
+        std::string ended; // "<pass|fail|error <code>>", the run's own status
+        bool restore_sent;
+        std::string cleanup;
+    };
+    const std::string at_connector =
+        "result error: 1 schema violation(s), first at /connector/type\n";
+    const std::vector<Case> cases{
+        // The one connector the result knows is veeam_m365.
+        {"a connector that names itself otherwise, a pass", [](TestLab&) {}, at_connector, "pass",
+         true, kCleanAfterOfThree},
+        {"a connector that names itself otherwise, a fail",
+         [](TestLab& lab) {
+             lab.targets.after[kind_slot(rp::connector::ItemKind::sharepoint)] = json::array();
+         },
+         at_connector, "fail", true, clean_after_line(2, 0, 0)},
+        {"a connector that names itself otherwise, a stop before the sample",
+         [](TestLab& lab) {
+             lab.fake.candidates_throw = [] {
+                 throw rp::connector::TransientError("Veeam unreachable");
+             };
+         },
+         at_connector, "error backup_transient", false, kNothingRestored},
+        {"a connector that names itself otherwise, a restore that may still run",
+         [](TestLab& lab) {
+             lab.fake.restore_throw = [] {
+                 throw rp::connector::TransientError("Veeam unreachable");
+             };
+         },
+         at_connector, "error backup_transient", true, kCleanAfterStillRunning},
+        {"the backup's words aren't UTF-8",
+         [](TestLab& lab) {
+             lab.fake.info.name = "veeam_m365";
+             lab.fake.answer = [](const rp::connector::RestoreSpec& spec) {
+                 rp::connector::RestoreResult result = restored(spec);
+                 result.sessions[0].result = "Succ\xC3";
+                 return result;
+             };
+         },
+         "result error: the result has no canonical form\n", "pass", true, kCleanAfterOfThree},
+    };
+    const Case& c = cases[GENERATE(range(std::size_t{0}, std::size_t{5}))];
+    CAPTURE(c.name);
+    TestLab lab;
+    lab.fake.pool.mail = {carol_mail(1)};
+    lab.fake.info.name = "fake";
+    c.setup(lab);
+    int writes = 0;
+    lab.write_summary = [&](const std::filesystem::path&, std::string_view) {
+        ++writes;
+        return true;
+    };
+
+    const Run run = lab.run({"--run-id", kRunId, "--mail", "2", "--sp", "1", "--od", "0", "--json",
+                             lab.json_arg()});
+
+    INFO(run.out);
+    INFO(run.err);
+    CHECK(run.exit_code == rp::exit_code::config);
+    // One status line, and it is the last word on the run: then the clean
+    // after, as the run's own status had it, then the timings.
+    const std::string status = "\nstatus error result_invalid: the result isn't valid "
+                               "restoreproof.result.v1; the run itself ended " +
+                               c.ended + "\n";
+    CHECK_THAT(lab.body(run), EndsWith(status + c.cleanup));
+    CHECK(count_of(run.out, "\nstatus ") == 1);
+    REQUIRE(lab.cleanups.size() == 1);
+    CHECK(lab.cleanups[0].restore_sent == c.restore_sent);
+    CHECK(lab.cleanups[0].after.has_value() == c.restore_sent);
+    // No item verdict: VERDICT reads "-", as when rows 1 to 4 decide.
+    CHECK_THAT(run.out, !ContainsSubstring("verified"));
+    CHECK_THAT(run.out, !ContainsSubstring("  failed  "));
+    CHECK_THAT(run.out, !ContainsSubstring("unchecked"));
+    if (c.ended == "pass") {
+        CHECK_THAT(run.out,
+                   ContainsSubstring(check_table({
+                       {"mail", "RP-CANARY-0001", "manifest", "yes", "match", "-", "-", "123000"},
+                       {"mail", "real mail 01", "fields", "yes", "match", "-", "-", "123000"},
+                       {"sharepoint", "rp-canary-01.pdf", "manifest", "yes", "match", "-", "-",
+                        "246000"},
+                   }) + kCheckLineOfThree + status));
+    }
+    // Said once on stderr, in fixed words, before the status line; then, at
+    // the end, that no file was written.
+    CHECK(count_of(run.err, "result error: ") == 1);
+    CHECK_THAT(run.err, ContainsSubstring(c.result_error));
+    CHECK_THAT(run.err, EndsWith("json error: " + lab.json_arg() + kNotValid));
+    CHECK_THAT(run.err, !ContainsSubstring("fake"));
+    CHECK_THAT(run.out, !ContainsSubstring("wrote "));
+    CHECK(writes == 0);
+    CHECK_FALSE(std::filesystem::exists(lab.json_path()));
+}
+
+TEST_CASE("test: without --json a result that isn't valid is still error result_invalid, and "
+          "nothing is said of a file",
+          "[test_command][result]")
+{
+    TestLab lab;
+    lab.fake.info.name = "fake";
+
+    const Run run = lab.run({"--run-id", kRunId, "--mail", "1", "--sp", "0", "--od", "0"});
+
+    CHECK(run.exit_code == rp::exit_code::config);
+    CHECK(run.err == "result error: 1 schema violation(s), first at /connector/type\n");
+    CHECK_THAT(lab.body(run),
+               EndsWith("\nstatus error result_invalid: the result isn't valid "
+                        "restoreproof.result.v1; the run itself ended pass\n" +
+                        clean_after_line(1, 0, 0)));
+}
+
+TEST_CASE("test --json: a result that is valid when the status is decided and isn't at the end "
+          "keeps its status line; no file, exit 0 becomes 1, any other code is kept",
+          "[test_command][json][result]")
+{
+    const auto [outcome, code] = GENERATE(table<std::string, int>({
+        {"pass", rp::exit_code::config},
+        {"fail", rp::exit_code::restore},
+    }));
+    CAPTURE(outcome);
+    TestLab lab;
+    lab.fake.pool.mail = {carol_mail(1)};
+    if (outcome == "fail") {
+        lab.targets.after[kind_slot(rp::connector::ItemKind::sharepoint)] = json::array();
+    }
+    // Only the reading for ended_at, once the clean after has handed on its
+    // counts, is past the year 9999.
+    lab.wall_now = [&lab] {
+        return lab.cleanups.empty() ? rp::test::graph_lab::kNow : year_10000();
+    };
+    int writes = 0;
+    lab.write_summary = [&](const std::filesystem::path&, std::string_view) {
+        ++writes;
+        return true;
+    };
+
+    const Run run = lab.run({"--run-id", kRunId, "--mail", "2", "--sp", "1", "--od", "0", "--json",
+                             lab.json_arg()});
+
+    INFO(run.out);
+    CHECK(run.exit_code == code);
+    CHECK(run.err == "result error: 1 schema violation(s), first at /ended_at\n"
+                     "json error: " +
+                         lab.json_arg() + kNotValid);
+    // The status line was out before the result was finished, and stays.
+    CHECK_THAT(lab.body(run), ContainsSubstring("\nstatus " + outcome + ": "));
+    CHECK_THAT(run.out, !ContainsSubstring("result_invalid"));
+    CHECK(count_of(run.out, "\nstatus ") == 1);
+    CHECK_THAT(run.out, !ContainsSubstring("wrote "));
+    CHECK(writes == 0);
+    CHECK_FALSE(std::filesystem::exists(lab.json_path()));
+}
+
+TEST_CASE("test --json: an end-of-run hook that throws makes exit 0 exit 1", "[test_command][json]")
+{
+    const Args args{"--run-id", kRunId, "--mail", "1", "--sp", "0", "--od", "0"};
+    // What the run prints before "wrote <file>": the same in any temp folder.
+    std::size_t before_wrote = 0;
+    {
+        TestLab lab;
+        Args with_json = args;
+        const std::string json_arg = lab.json_arg();
+        with_json.insert(with_json.end(), {"--json", json_arg});
+        const Run run = lab.run(with_json);
+        REQUIRE(run.exit_code == rp::exit_code::ok);
+        before_wrote = lab.json_body(run).size() + timings_table(lab.timings.at(0)).size();
+    }
+    TestLab lab;
+    Args with_json = args;
+    const std::string json_arg = lab.json_arg();
+    with_json.insert(with_json.end(), {"--json", json_arg});
+    // A stdout that takes everything up to the file's line, then throws: the
+    // hook's own write, after the file is written.
+    LimitedStreamBuf buffer(before_wrote);
+    std::ostream out(&buffer);
+    out.exceptions(std::ios::badbit | std::ios::failbit);
+
+    const auto [code, err] = lab.run_to(with_json, out);
+
+    CHECK(code == rp::exit_code::config);
+    CHECK(err.empty());
+    CHECK_THAT(buffer.text, ContainsSubstring("\nstatus pass: "));
+    CHECK_THAT(buffer.text, !ContainsSubstring("wrote "));
+    CHECK(lab.result().at("status").at("status") == "pass");
+}
+
+TEST_CASE("test --json: a result that isn't written changes no status; exit 0 becomes 1, any "
           "other code is kept",
           "[test_command][json]")
 {
@@ -767,9 +1047,11 @@ TEST_CASE("test --json: a summary that isn't written changes no status; exit 0 b
     TestLab lab;
     lab.fake.pool.mail = {carol_mail(1)};
     std::vector<std::filesystem::path> asked;
+    std::string given;
     lab.write_summary = [&, how = how](const std::filesystem::path& path,
                                        std::string_view text) -> bool {
         asked.push_back(path);
+        given = text;
         if (how == "throws") {
             throw std::runtime_error("SENTINEL-DISK");
         }
@@ -795,8 +1077,11 @@ TEST_CASE("test --json: a summary that isn't written changes no status; exit 0 b
     CHECK_THAT(run.err, !ContainsSubstring("SENTINEL"));
     CHECK_THAT(lab.body(run), ContainsSubstring("\nstatus " + outcome));
     CHECK_THAT(run.out, !ContainsSubstring("wrote "));
+    CHECK_THAT(run.err, !ContainsSubstring("result error"));
     REQUIRE(asked.size() == 1);
     CHECK(asked[0] == lab.json_path());
+    // The writer was handed the canonical text, nothing after it.
+    CHECK(given == rp::canonical_json(json::parse(given)));
     CHECK_FALSE(std::filesystem::exists(lab.json_path()));
 }
 
@@ -810,7 +1095,7 @@ TEST_CASE("test --json: a run ID that holds ':' never names the file or its temp
                              "--json", lab.json_arg()});
 
     CHECK(run.exit_code == rp::exit_code::ok);
-    CHECK(lab.summary().at("run_id") == "rp:20261003:a");
+    CHECK(lab.result().at("run_id") == "rp:20261003:a");
     std::set<std::string> names;
     for (const auto& entry : std::filesystem::directory_iterator(lab.dir.path())) {
         names.insert(utf8(entry.path().filename()));
@@ -832,8 +1117,8 @@ TEST_CASE("test --json: a file that appeared after the check is never overwritte
     CHECK(file_bytes(lab.json_path()) == "a scheduled script's");
 }
 
-TEST_CASE("test --json: with stdout lost the file is still written, without its line; the "
-          "summary's exit code is the process's, 1",
+TEST_CASE("test --json: with stdout lost the file is still written, without its line; the exit "
+          "code is 1 and the file doesn't say so",
           "[test_command][json]")
 {
     TestLab lab;
@@ -849,18 +1134,19 @@ TEST_CASE("test --json: with stdout lost the file is still written, without its 
     CHECK(code == rp::exit_code::config);
     CHECK_THAT(err, StartsWith("error: writing the output failed after the restore ran"));
     CHECK_THAT(buffer.text, !ContainsSubstring("wrote "));
-    const json summary = lab.summary();
-    CHECK(keys_of(summary) == kSummaryKeys);
-    for (const std::string& key : kSummaryKeys) {
+    const json result = lab.result();
+    CHECK(keys_of(result) == kResultKeys);
+    for (const std::string& key : kResultKeys) {
         CAPTURE(key);
-        CHECK_FALSE(summary.at(key).is_null());
+        CHECK_FALSE(result.at(key).is_null());
     }
-    CHECK(summary.at("exit_code") == rp::exit_code::config);
-    CHECK(summary.at("status").at("status") == "pass");
+    // A fact of this process, not of the run (W4.1 point 1): the run passed.
+    CHECK(result.at("status").at("status") == "pass");
+    CHECK_FALSE(result.at("status").contains("error_code"));
 }
 
-TEST_CASE("test --json --record: a recording that isn't complete makes a pass exit 1, and the "
-          "summary says 1",
+TEST_CASE("test --json --record: a recording that isn't complete makes a pass exit 1; the file "
+          "says pass and nothing of the recording",
           "[test_command][json][record]")
 {
     namespace gl = rp::test::graph_lab;
@@ -878,9 +1164,9 @@ TEST_CASE("test --json --record: a recording that isn't complete makes a pass ex
     CHECK(run.exit_code == rp::exit_code::config);
     CHECK_THAT(run.err, ContainsSubstring("record error: graph/"));
     CHECK_THAT(run.out, ContainsSubstring("\nstatus pass: "));
-    const json summary = lab.summary();
-    CHECK(summary.at("status").at("status") == "pass");
-    CHECK(summary.at("exit_code") == rp::exit_code::config);
+    const json result = lab.result();
+    CHECK(keys_of(result) == kResultKeys);
+    CHECK(result.at("status").at("status") == "pass");
 }
 
 TEST_CASE("test --json: started_at and ended_at are the wall clock where total starts and ends, "
@@ -912,15 +1198,15 @@ TEST_CASE("test --json: started_at and ended_at are the wall clock where total s
     const auto text = [](std::chrono::system_clock::time_point t) {
         return std::format("{:%Y-%m-%dT%H:%M:%S}Z", std::chrono::floor<std::chrono::milliseconds>(t));
     };
-    const json summary = lab.summary();
+    const json result = lab.result();
     // The certificate's check reads it first, before the connector.
     CHECK(*at_start == readings.at(1));
-    CHECK(summary.at("started_at") == "2026-09-28T12:00:01.000Z");
-    CHECK(summary.at("started_at") == text(*at_start));
+    CHECK(result.at("started_at") == "2026-09-28T12:00:01.000Z");
+    CHECK(result.at("started_at") == text(*at_start));
     // The last reading is ended_at's: after the clean after, nothing reads it later.
-    CHECK(summary.at("ended_at") == text(readings.back()));
+    CHECK(result.at("ended_at") == text(readings.back()));
     CHECK(readings.size() > 2);
-    CHECK(summary.at("started_at").get<std::string>() < summary.at("ended_at").get<std::string>());
+    CHECK(result.at("started_at").get<std::string>() < result.at("ended_at").get<std::string>());
 }
 
 TEST_CASE("test --json: a wall clock that fails for started_at and ended_at leaves them null and "
@@ -929,7 +1215,7 @@ TEST_CASE("test --json: a wall clock that fails for started_at and ended_at leav
 {
     TestLab lab;
     lab.wall_now = [&lab] {
-        // Throws only for the summary's two readings: at total's start and
+        // Throws only for the result's two readings: at total's start and
         // once the clean after has handed on its counts.
         if ((lab.make_connector_calls == 1 && lab.fake.points_calls == 0) || !lab.cleanups.empty()) {
             throw std::runtime_error("no clock");
@@ -943,11 +1229,10 @@ TEST_CASE("test --json: a wall clock that fails for started_at and ended_at leav
     CHECK(run.exit_code == rp::exit_code::ok);
     CHECK(run.err.empty());
     CHECK_THAT(lab.json_body(run), ContainsSubstring("\nstatus pass: "));
-    const json summary = lab.summary();
-    CHECK(summary.at("started_at").is_null());
-    CHECK(summary.at("ended_at").is_null());
-    CHECK(summary.at("status").at("status") == "pass");
-    CHECK(summary.at("exit_code") == rp::exit_code::ok);
+    const json result = lab.result();
+    CHECK(result.at("started_at").is_null());
+    CHECK(result.at("ended_at").is_null());
+    CHECK(result.at("status").at("status") == "pass");
 }
 
 TEST_CASE("test --json --record: wrote <file>, then the recording's line, last; the recording "
@@ -1022,4 +1307,187 @@ TEST_CASE("test: a read-back SharePoint trimmed is error graph_permission, exit 
     CHECK_THAT(run.err,
                ContainsSubstring("cleanup error: sharepoint: Microsoft Graph refused a permission "
                                  "the cleanup relies on (graph_permission)\n"));
+}
+
+// --- shared/testdata/result-v1/valid.json ---------------------------------------------
+
+namespace {
+
+std::string lower(std::string text)
+{
+    std::ranges::transform(text, text.begin(), [](char c) {
+        return c >= 'A' && c <= 'Z' ? static_cast<char>(c - 'A' + 'a') : c;
+    });
+    return text;
+}
+
+// The Harness runs on the lab tenant's own IDs and addresses (the Graph
+// fixtures and lab/seed-manifest.json are recorded from it), and shared/ holds
+// no tenant's: each is renamed here, in any ASCII case, before the text is
+// compared with the shared document.
+std::vector<std::pair<std::string, std::string>> shared_names()
+{
+    const rp::test::graph_lab::Lab_values& v = lab_values();
+    std::string message_id;
+    const json manifest = json::parse(lab_manifest_text());
+    for (const json& entry : manifest.at("entries")) {
+        if (entry.value("subject", "") == "RP-CANARY-0001") {
+            message_id = entry.at("internet_message_id").get<std::string>();
+        }
+    }
+    REQUIRE_FALSE(message_id.empty());
+    return {
+        {kTenant, "11111111-2222-3333-4444-555555555555"},
+        {v.site_id, "contoso.sharepoint.com,aaaaaaaa-0000-0000-0000-000000000001,"
+                    "aaaaaaaa-0000-0000-0000-000000000002"},
+        {v.library_id, "b!library"},
+        {v.onedrive_drive_id, "b!onedrive"},
+        {v.folder_id, "01FOLDER"},
+        {message_id, "<RP-CANARY-0001@contoso.example>"},
+        {"HrachyaHarutyunyan@", "admin@"},
+        {kOrgName, "contoso.onmicrosoft.com"},
+    };
+}
+
+// `value` with every string value renamed; keys are the schema's and stay.
+json renamed(const json& value, const std::vector<std::pair<std::string, std::string>>& names)
+{
+    if (value.is_string()) {
+        std::string text = value.get<std::string>();
+        for (const auto& [from, to] : names) {
+            const std::string needle = lower(from);
+            for (std::size_t at = lower(text).find(needle); at != std::string::npos;
+                 at = lower(text).find(needle, at + to.size())) {
+                text.replace(at, from.size(), to);
+            }
+        }
+        return text;
+    }
+    if (value.is_structured()) {
+        json out = value;
+        for (json& member : out) {
+            member = renamed(member, names);
+        }
+        return out;
+    }
+    return value;
+}
+
+// What shared/testdata/result-v1/valid.json holds: the --json file of a pass
+// through the whole pipeline, a canary and a random item of each type (the
+// SharePoint canary by office-v1, the random SharePoint file restored twice,
+// the random OneDrive file an Office one with a name outside ASCII), with the
+// lab's names renamed and the version pinned, as canonical-json-v1. The run
+// ID and both clocks are the Harness's, so the text is the same every time.
+std::string shared_result()
+{
+    using rp::connector::ItemKind;
+    TestLab lab;
+    // The manifest's hash is in the result: LF, however the checkout has it.
+    std::string manifest = lab_manifest_text();
+    std::erase(manifest, '\r');
+    lab.dir.write("seed-manifest.json", manifest);
+    lab.fake.pool.mail = {carol_mail(1)};
+    lab.fake.pool.sharepoint = {
+        {{lab_values().site_id, "b!madeUpSourceLibraryDrive", "/Projects", "report.pdf",
+          "0b5e1d2c-0000-4000-8000-00000000c0de"},
+         1234}};
+    lab.fake.pool.onedrive = {{{kCarol, "/Projects", "\xC3\x9C" "bersicht.docx"}, 9000}};
+    // What the draw looked into, as a connector that browses reports it.
+    lab.fake.pool.mail_browse = {.containers_eligible = 3,
+                                 .containers_listed = {kCarol},
+                                 .folders_listed = 2};
+    lab.fake.pool.sharepoint_browse = {.containers_eligible = 2,
+                                       .containers_listed = {lab_values().site_id},
+                                       .folders_listed = 4};
+    lab.fake.pool.onedrive_browse = {.containers_eligible = 3,
+                                     .containers_listed = {kCarol},
+                                     .containers_unresolved = 1,
+                                     .folders_listed = 1,
+                                     .short_of_containers = true};
+    lab.fake.answer = [&lab](const rp::connector::RestoreSpec& spec) {
+        rp::connector::RestoreResult result = restored(spec);
+        for (rp::connector::RestoreSessionResult& session : result.sessions) {
+            // The OneDrive session's details aren't the backup's counts: null.
+            session.details = session.kind == ItemKind::onedrive ? "see the session's log"
+                                                                 : "2 items processed (2 successes)";
+            session.submit_time = std::chrono::seconds{2};
+            session.wait_time = std::chrono::seconds{40};
+        }
+        json copies = lab.targets.mirror(ItemKind::sharepoint);
+        json again = copies.back();
+        again["id"] = "restored-sharepoint-again";
+        copies.push_back(again);
+        lab.targets.after[kind_slot(ItemKind::sharepoint)] = copies;
+        return result;
+    };
+
+    const Run run = lab.run({"--run-id", "rp-20261004T100000Z-0a1b2c3d", "--canary-cursor",
+                             "0,1,0", "--mail", "2", "--sp", "2", "--od", "2", "--json",
+                             lab.json_arg()});
+
+    INFO(run.out);
+    INFO(run.err);
+    REQUIRE(run.exit_code == rp::exit_code::ok);
+    json document = renamed(lab.result(), shared_names());
+    document["worker_version"] = "0.0.0";
+    return rp::canonical_json(document);
+}
+
+constexpr const char* kSharedResult = "testdata/result-v1/valid.json";
+
+} // namespace
+
+TEST_CASE("test --json: the whole pipeline's result is shared/testdata/result-v1/valid.json, byte "
+          "for byte, and names nothing of the lab tenant",
+          "[test_command][json][result]")
+{
+    const std::string text = shared_result();
+    const std::string file = rp::test::read_shared(kSharedResult);
+
+    // After a deliberate change to the result: rptests "[.write_shared_result]".
+    REQUIRE(text == file);
+    const json document = json::parse(file);
+    CHECK(file == rp::canonical_json(document));
+    CHECK(rp::validate_result(document).valid);
+    CHECK(keys_of(document) == kResultKeys);
+
+    // The run it is: one of every item shape, all verified.
+    CHECK(document.at("status").at("status") == "pass");
+    CHECK(document.at("status").at("counts").at("items") == 6);
+    CHECK(document.at("expected").at("counts") ==
+          json{{"manifest", 3}, {"fields", 1}, {"metadata", 2}});
+    CHECK(document.at("expected").at("items").at(2).at("sha256_rule") == "office-v1");
+    CHECK(document.at("expected").at("items").at(4).at("sha256_rule") == "bytes");
+    CHECK(document.at("check").at("items").at(3).at("copies") == 2);
+    CHECK(document.at("restore").at("sessions").size() == 3);
+    CHECK(document.at("restore").at("sessions").at(2).at("details").is_null());
+    CHECK(document.at("cleanup").at("after").at("sharepoint").at("deleted") == 3);
+    CHECK(document.at("timings").at("spans").at("restore_wait") == json{{"ms", 120000}});
+    CHECK(file.find("\xC3\x9C" "bersicht.docx") != std::string::npos);
+
+    // Nothing of the lab tenant, in any case.
+    const std::string folded = lower(file);
+    for (const auto& [name, unused] : shared_names()) {
+        CAPTURE(name);
+        CHECK(folded.find(lower(name)) == std::string::npos);
+    }
+    for (const char* word : {"restoreprooflab", "hrachya", "outlook.com"}) {
+        CAPTURE(word);
+        CHECK(folded.find(word) == std::string::npos);
+    }
+}
+
+// Hidden: run by name only, after a deliberate change to the result, to write
+// the shared document again; shared/testdata/result-v1/cases.json and the
+// Cloud's test read it.
+TEST_CASE("write shared/testdata/result-v1/valid.json from the whole pipeline's run",
+          "[.write_shared_result]")
+{
+    const std::string text = shared_result();
+    std::ofstream file(std::filesystem::path{RP_SHARED_DIR} / kSharedResult,
+                       std::ios::binary | std::ios::trunc);
+    file << text;
+    file.close();
+    REQUIRE(file);
 }

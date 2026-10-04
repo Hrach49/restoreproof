@@ -246,16 +246,6 @@ TEST_CASE("ResultBuilder: the full run's document", "[result_builder]")
     REQUIRE(rp::validate_result(built.document).valid);
 }
 
-TEST_CASE("ResultBuilder still makes shared/testdata/result-v1/valid.json, byte for byte",
-          "[result_builder]")
-{
-    const ResultFacts facts = full_result_facts();
-    const BuiltResult built = result_of(facts.parts());
-    const std::string file = rp::test::read_shared("testdata/result-v1/valid.json");
-    REQUIRE(built.canonical == file);
-    REQUIRE(file.find('\n') == std::string::npos);
-}
-
 TEST_CASE("ResultBuilder: a step that didn't run is null", "[result_builder]")
 {
     ResultFacts facts = full_result_facts();

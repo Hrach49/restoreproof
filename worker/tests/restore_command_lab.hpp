@@ -230,6 +230,9 @@ struct FakeConnector {
     // Called first in restore_sample, on the test's thread.
     std::function<void()> at_restore;
     std::function<connector::RestoreResult(const connector::RestoreSpec&)> answer = restored;
+    // What describe() says: the one connector result.v1 knows (W4.1), so a
+    // run's result is valid; a test sets another name to see it isn't.
+    connector::ConnectorInfo info{std::string{connector::kVeeamM365}, "1"};
     // What the command's stdout held when restore_sample was called.
     const std::ostringstream* out = nullptr;
     std::shared_ptr<spdlog::logger> logger;
@@ -246,7 +249,7 @@ class ForwardingConnector final : public connector::IConnector {
 public:
     explicit ForwardingConnector(FakeConnector& fake) : fake_(fake) {}
 
-    connector::ConnectorInfo describe() const override { return {"fake", "1"}; }
+    connector::ConnectorInfo describe() const override { return fake_.info; }
 
     std::vector<connector::RestorePoint> list_restore_points(const std::string& client_ref) override
     {

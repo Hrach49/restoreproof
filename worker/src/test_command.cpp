@@ -5,9 +5,6 @@
 #include <rp/config.hpp>
 #include <rp/expected_set.hpp>
 #include <rp/run_status.hpp>
-#include <rp/sample_selector.hpp>
-#include <rp/step_timer.hpp>
-#include <rp/version.hpp>
 
 #include "atomic_file.hpp"
 #include "command_config.hpp"
@@ -15,8 +12,6 @@
 #include "run_pipeline.hpp"
 #include "text_table.hpp"
 #include "text_util.hpp"
-
-#include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <filesystem>
@@ -32,9 +27,6 @@ namespace rp {
 namespace {
 
 namespace verification = rp::verification;
-using nlohmann::json;
-
-constexpr std::string_view kSummaryFormat = "rp.run-summary.v0";
 
 // An item's VERDICT: "-" unless the item verdicts decided the run (rows 5 to
 // 8 of the status table: every item verified, failed or unchecked).
@@ -105,38 +97,6 @@ std::string format_check_table(const verification::ExpectedSet& expected,
     return '\n' + format_table(rows);
 }
 
-// The --json file's content (W3.6 point 5): every top-level key always there,
-// null where a step didn't run; `exit_code` the process's as known when the
-// file is written. What it holds of the tenant is listed in
-// docs/verification.md.
-json summary_json(const RunSummary& run, int exit_code)
-{
-    const auto text_or_null = [](const std::optional<std::string>& text) {
-        return text ? json(*text) : json();
-    };
-    json summary = json::object();
-    summary["format"] = kSummaryFormat;
-    summary["worker_version"] = version();
-    summary["command"] = "test";
-    summary["run_id"] = run.run_id;
-    summary["started_at"] = text_or_null(run.started_at);
-    summary["ended_at"] = text_or_null(run.ended_at);
-    summary["restore_point"] =
-        run.restore_point ? json{{"id", run.restore_point->id},
-                                 {"backup_time_raw", run.restore_point->backup_time}}
-                          : json();
-    summary["veeam_org_name"] = run.veeam_org_name;
-    summary["sample"] = run.sample ? sampling::to_json(*run.sample) : json();
-    summary["expected"] = run.expected ? verification::to_json(*run.expected) : json();
-    summary["restore"] = run.restore ? verification::to_json(*run.restore) : json();
-    summary["check"] = run.check ? verification::to_json(*run.check) : json();
-    summary["status"] = run.verdict ? verification::to_json(*run.verdict) : json();
-    summary["cleanup"] = run.cleanup ? to_json(*run.cleanup) : json();
-    summary["timings"] = run.timings ? timing::to_json(*run.timings) : json();
-    summary["exit_code"] = exit_code;
-    return summary;
-}
-
 // The --json path, checked before the secrets: a UTF-8 path the writer could
 // write now (rp::check_new_file, which makes and drops the writer's own temp
 // file): a path the writer can't use costs no run (W3.6 review, PR #153
@@ -191,26 +151,29 @@ int run_test_command(std::span<const std::string_view> args, std::ostream& out,
     presentation.check_table = format_check_table;
     if (json_arg) {
         presentation.after_config = [&] { json_path = check_json_path(*json_arg); };
-        // The summary goes last, after the timings: its write never changes
-        // the status, only an exit code of 0 (W3.6 point 5). Its exit_code is
-        // the one the process ends with unless the write fails: lost output
-        // and an incomplete recording are in it (PR #153 review).
+        // The result goes last, after the timings: the file is exactly its
+        // canonical text (W4.1 points 1, 4 and 5). Neither a result that
+        // isn't valid, for which no file is written, nor a failed write ever
+        // changes the status, only an exit code of 0 (W3.6 point 5).
         presentation.on_run = [&](const RunSummary& run, int code, bool output_lost) {
             const std::string shown = table_cell(*json_arg);
+            const auto failed = [&](std::string_view why) {
+                err << "json error: " << shown << ": " << why << '\n';
+                return code == exit_code::ok ? exit_code::config : code;
+            };
+            if (!run.result) {
+                return failed("the result isn't valid restoreproof.result.v1; no file was "
+                              "written");
+            }
             bool written = false;
             try {
-                const std::string text =
-                    summary_json(run, recorded_exit_code(recorder.get(), code))
-                        .dump(2, ' ', false, json::error_handler_t::replace) +
-                    '\n';
-                written = env.write_summary ? env.write_summary(*json_path, text)
-                                            : write_file_atomically(*json_path, text);
+                written = env.write_summary ? env.write_summary(*json_path, *run.result)
+                                            : write_file_atomically(*json_path, *run.result);
             } catch (...) {
                 written = false;
             }
             if (!written) {
-                err << "json error: " << shown << ": could not be written\n";
-                return code == exit_code::ok ? exit_code::config : code;
+                return failed("could not be written");
             }
             if (!output_lost) {
                 out << "wrote " << shown << '\n';

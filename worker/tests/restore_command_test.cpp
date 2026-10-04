@@ -989,6 +989,64 @@ TEST_CASE("restore: a status line lost without a restore is said on stderr, with
     CHECK(lab.fake.restore_calls == 0);
 }
 
+// --- The result (W4.1) ---------------------------------------------------------------
+
+TEST_CASE("restore: a result that isn't valid restoreproof.result.v1 is error result_invalid, "
+          "exit 1: one status line, the clean after still run; restore writes no file",
+          "[restore_command][result]")
+{
+    Harness lab;
+    lab.fake.pool.mail = {carol_mail(1)};
+    // The one connector the result knows is veeam_m365.
+    lab.fake.info.name = "fake";
+
+    const Run run = lab.run({"--run-id", kRunId, "--mail", "2", "--sp", "1", "--od", "0"});
+
+    CHECK(run.exit_code == rp::exit_code::config);
+    CHECK(run.err == "result error: 1 schema violation(s), first at /connector/type\n");
+    const std::string body = lab.body(run);
+    CHECK_THAT(body, StartsWith(expected_header()));
+    // The restore's rows and the check's are as for the pass it was.
+    CHECK_THAT(body, EndsWith("\nrestore succeeded: 3 of 3 item(s) restored in 0:02:03\n" +
+                              kCheckOfThree +
+                              "\n"
+                              "status error result_invalid: the result isn't valid "
+                              "restoreproof.result.v1; the run itself ended pass\n" +
+                              kCleanAfterOfThree));
+    CHECK_THAT(run.out, !ContainsSubstring("status pass"));
+    REQUIRE(lab.cleanups.size() == 1);
+    CHECK(lab.cleanups[0].restore_sent);
+    CHECK(lab.cleanups[0].after.has_value());
+    CHECK(lab.fake.restore_calls == 1);
+}
+
+TEST_CASE("restore: the result is built and validated without --json: the wall clock is read "
+          "where total starts, and a time the result can't hold is error result_invalid",
+          "[restore_command][result]")
+{
+    using namespace std::chrono;
+    Harness lab;
+    int readings = 0;
+    lab.wall_now = [&]() -> system_clock::time_point {
+        // Only the reading for started_at: the connector made, no Veeam call yet.
+        if (lab.make_connector_calls == 1 && lab.fake.points_calls == 0) {
+            ++readings;
+            return sys_days{year{10000} / January / 1};
+        }
+        return rp::test::graph_lab::kNow;
+    };
+
+    const Run run = lab.run({"--run-id", kRunId, "--mail", "1", "--sp", "0", "--od", "0"});
+
+    CHECK(readings == 1);
+    CHECK(run.exit_code == rp::exit_code::config);
+    CHECK(run.err == "result error: 1 schema violation(s), first at /started_at\n");
+    CHECK_THAT(lab.body(run),
+               EndsWith("\nstatus error result_invalid: the result isn't valid "
+                        "restoreproof.result.v1; the run itself ended pass\n" +
+                        clean_after_line(1, 0, 0)));
+}
+
 // --- The restore ---------------------------------------------------------------------
 
 TEST_CASE("restore: a succeeded restore prints the header, both tables and the status, exit 0",

@@ -2,8 +2,8 @@
 
 // The result tests' hand-made run (W4.1): one of every item shape, restored,
 // matched and cleaned, so the document ResultBuilder makes from it holds every
-// part of restoreproof.result.v1. shared/testdata/result-v1/valid.json is its
-// canonical text.
+// part of restoreproof.result.v1. (shared/testdata/result-v1/valid.json is
+// the whole pipeline's own run, tests/test_command_test.cpp.)
 
 #include <rp/checker.hpp>
 #include <rp/connector.hpp>

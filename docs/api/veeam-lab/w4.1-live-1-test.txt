@@ -1,0 +1,69 @@
+restore point 2026-10-03T16:16:54.0154727Z  c2f0f2e7-177f-48ac-992b-93a50cf702e332f28a6a-67e7-46bf-844b-6b9f9ea7dc73  (veeam_org_name RestoreProofLab.onmicrosoft.com)
+run w41-done-when-1  seed 84c6277d
+cleanup before ok: deleted 0 mail, 0 sharepoint, 0 onedrive
+canary cursor 0,0,0 -> 5,5,5
+  KIND        REQUESTED  CANARIES  RANDOM  NOTE
+  mail        10         5 of 5    5 of 5
+  sharepoint  10         5 of 5    5 of 5
+  onedrive    10         5 of 5    5 of 5
+restoring 30 item(s) ...
+
+  SESSION                               KIND        RESULT   RESTORED  STARTED                       ENDED                         ELAPSED
+  889f04ba-a7d2-409b-8a43-bd12de6fc60e  mail        Success  5 of 5    2026-10-04T23:53:02.110071Z   2026-10-04T23:53:29.8883688Z  0:00:27
+  df545e86-c129-4c0a-8d29-d9d5860666e7  mail        Success  4 of 4    2026-10-04T23:53:32.6355941Z  2026-10-04T23:54:00.1151327Z  0:00:27
+  76ef20e2-63a0-4be9-93db-bf04a0d4abdf  mail        Success  1 of 1    2026-10-04T23:54:03.1762714Z  2026-10-04T23:54:30.1933651Z  0:00:27
+  3a1db060-d86d-438f-9b5e-bac03d5afe06  sharepoint  Success  10 of 10  2026-10-04T23:54:33.8780834Z  2026-10-04T23:55:25.8276392Z  0:00:51
+  e71a8bc7-5886-43fa-978d-93bfdca20a41  onedrive    Success  10 of 10  2026-10-04T23:55:29.8538202Z  2026-10-04T23:56:11.2674681Z  0:00:41
+
+restore succeeded: 30 of 30 item(s) restored in 0:03:19
+
+  TYPE        NAME                                EXPECTED  FOUND  MATCH  VERDICT   REASON  MS
+  mail        RP-CANARY-0001                      manifest  yes    match  verified  -       0
+  mail        RP-CANARY-0002                      manifest  yes    match  verified  -       0
+  mail        RP-CANARY-0003                      manifest  yes    match  verified  -       0
+  mail        RP-CANARY-0004                      manifest  yes    match  verified  -       0
+  mail        RP-CANARY-0005                      manifest  yes    match  verified  -       0
+  mail        Training session moved to Thursday  fields    yes    match  verified  -       0
+  mail        Quarterly numbers are in            fields    yes    match  verified  -       0
+  mail        Notes from the supplier call        fields    yes    match  verified  -       0
+  mail        RestoreProof W2.2 second mail 3n5w  fields    yes    match  verified  -       0
+  mail        Draft agenda for the offsite        fields    yes    match  verified  -       0
+  sharepoint  rp-canary-01.pdf                    manifest  yes    match  verified  -       343
+  sharepoint  rp-canary-02.docx                   manifest  yes    match  verified  -       364
+  sharepoint  rp-canary-03.xlsx                   manifest  yes    match  verified  -       355
+  sharepoint  rp-canary-04.txt                    manifest  yes    match  verified  -       345
+  sharepoint  rp-canary-05.png                    manifest  yes    match  verified  -       336
+  sharepoint  brand-colours-draft.png             metadata  yes    match  verified  -       466
+  sharepoint  supplier-contacts.txt               metadata  yes    match  verified  -       331
+  sharepoint  office-floor-plan.png               metadata  yes    match  verified  -       341
+  sharepoint  team-meeting-notes.txt              metadata  yes    match  verified  -       391
+  sharepoint  budget-summary.pdf                  metadata  yes    match  verified  -       452
+  onedrive    rp-canary-11.pdf                    manifest  yes    match  verified  -       320
+  onedrive    rp-canary-12.docx                   manifest  yes    match  verified  -       304
+  onedrive    rp-canary-13.xlsx                   manifest  yes    match  verified  -       313
+  onedrive    rp-canary-14.txt                    manifest  yes    match  verified  -       314
+  onedrive    rp-canary-15.png                    manifest  yes    match  verified  -       301
+  onedrive    expense-report-march.pdf            metadata  yes    match  verified  -       331
+  onedrive    reading-list.txt                    metadata  yes    match  verified  -       377
+  onedrive    travel-notes.txt                    metadata  yes    match  verified  -       351
+  onedrive    whiteboard-sketch.png               metadata  yes    match  verified  -       320
+  onedrive    holiday-photo.png                   metadata  yes    match  verified  -       342
+
+check: 30 match, 0 mismatch, 0 missing, 0 error
+
+status pass: 30 of 30 item(s) verified: manifest 15, fields 5, metadata 10
+cleanup after ok: deleted 10 mail, 10 sharepoint, 10 onedrive
+
+STEP                  TIME         NOTE
+restore_point_lookup  0:00:00.079
+cleanup_before        0:00:01.486
+sample_select         0:00:10.251
+target_snapshot       0:00:00.869
+restore               0:03:19.395
+restore_submit        0:00:01.083
+restore_wait          0:03:12.013
+verify                0:00:08.156
+recovery              0:03:27.551
+cleanup_after         0:00:05.696
+total                 0:03:46.157
+wrote C:\restoreproof-runs\w41-done-when-1.json

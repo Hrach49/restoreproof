@@ -1,0 +1,5 @@
+schema: valid
+canonical: True
+bytes: 22692 sha256: 40d9a0d644cc08b704a9e06e0253d565c0ee98131cf2a1217fa9709b5cd3ae7f
+keys: check, cleanup, client, connector, ended_at, expected, format, restore, restore_point, run_id, sample, started_at, status, timings, worker_version
+format: restoreproof.result.v1 | status: pass | connector: {'api': 'v8', 'type': 'veeam_m365'} | cleanup_ok: True

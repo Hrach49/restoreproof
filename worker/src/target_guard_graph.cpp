@@ -2,6 +2,7 @@
 
 #include <rp/config.hpp>
 
+#include "graph_paging.hpp"
 #include "json_fields.hpp"
 #include "text_util.hpp"
 #include "uuid.hpp"
@@ -10,6 +11,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 
 namespace rp::graph {
@@ -201,6 +203,7 @@ ResolvedOneDriveFolder check_restore_onedrive_folder(GraphClient& graph,
     }
     ResolvedOneDriveFolder resolved{*name,          drive_id, targets.onedrive_folder_id(),
                                     *site,          *web,     *site_url};
+    resolved.child_count = child_count_of(folder);
     return resolved;
 }
 

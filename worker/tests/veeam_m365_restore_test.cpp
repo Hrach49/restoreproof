@@ -231,8 +231,8 @@ TEST_CASE("restore_sample: an unknown client is an Error, never NotFoundError, b
           "explore",
           "[veeam_m365][w2.5]")
 {
-    // In restore_sample NotFoundError is a sampled item missing from the
-    // backup (a `fail` to be); a client Veeam doesn't know is the run's error.
+    // In restore_sample a sampled item missing from the backup is reported
+    // per item (Q3.1); a client Veeam doesn't know is the run's error.
     RestoreRig rig;
     rig.serve(mail_x1());
     connector::RestoreSpec spec = restore_spec({mail_x1_item()});
@@ -363,19 +363,6 @@ TEST_CASE("restore_sample: an item browsing can't pin down is refused, and the e
         std::string message;
     };
     const Row row = GENERATE_COPY(
-        Row{"no such message",
-            [=](RestoreRig& rig) {
-                rig.get(items, fixture(run.file("items"), [](json& b) {
-                            for (json& item : b["results"]) {
-                                if (item["subject"] == "RP-CANARY-0004") {
-                                    item["subject"] = "renamed";
-                                }
-                            }
-                        }));
-            },
-            "NotFoundError",
-            "veeam_m365: mail item 2 \"RP-CANARY-0004\": the message not found in the restore "
-            "point"},
         Row{"two messages of that subject",
             [=](RestoreRig& rig) {
                 rig.get(items, fixture(run.file("items"), [](json& b) {
@@ -394,20 +381,6 @@ TEST_CASE("restore_sample: an item browsing can't pin down is refused, and the e
                                        [](json& b) { b["results"][0]["subject"] = 7; }));
             },
             "Error", "veeam_m365: unexpected response from Veeam: \"subject\" isn't a string"},
-        Row{"no such mailbox",
-            [=](RestoreRig& rig) {
-                rig.get(paged("/v8/RestoreSessions/" + run.explore() + "/organization/mailboxes"),
-                        fixture(run.file("mailboxes"), [](json& b) {
-                            for (json& m : b["results"]) {
-                                if (m["email"] == kAlice) {
-                                    m["email"] = "someone@else";
-                                }
-                            }
-                        }));
-            },
-            "NotFoundError",
-            "veeam_m365: mail item 0 \"RP-CANARY-0002\": mailbox "
-            "\"alice@RestoreProofLab.onmicrosoft.com\" not found in the restore point"},
         Row{"received at another second",
             [=](RestoreRig& rig) {
                 rig.get(items, fixture(run.file("items"), [](json& b) {
@@ -473,21 +446,6 @@ TEST_CASE("restore_sample: a file browsing can't pin down is refused, and the ex
             "Error",
             "veeam_m365: sharepoint item 0 \"rp-canary-06.pdf\": the file read again has another "
             "ID or name"},
-        Row{"no library of that list", true,
-            [=](RestoreRig& rig) {
-                rig.get(paged(sites + "/Libraries"), fixture(sp.file("libraries"), [](json& b) {
-                            json kept = json::array();
-                            for (json& l : b["results"]) {
-                                if (!l["id"].get<std::string>().ends_with(kCanaryListId)) {
-                                    kept.push_back(l);
-                                }
-                            }
-                            b["results"] = kept;
-                        }));
-            },
-            "NotFoundError",
-            "veeam_m365: sharepoint item 0 \"rp-canary-06.pdf\": the library of list "
-            "\"7eb0f08a-f57b-418c-8ca6-f2ab81297666\" not found in the restore point"},
         Row{"a site Veeam answers for with another ID", true,
             [=](RestoreRig& rig) {
                 rig.get(sites, make_response(200, R"({"id":"other","name":"x","url":"y"})"));
@@ -495,20 +453,6 @@ TEST_CASE("restore_sample: a file browsing can't pin down is refused, and the ex
             "Error",
             "veeam_m365: sharepoint item 0 \"rp-canary-06.pdf\": Veeam answered for another site "
             "than its site_id"},
-        Row{"a folder of the file's name", true,
-            [=](RestoreRig& rig) {
-                rig.get(paged(sites + "/Documents?parentId=" + sp.container() + kCanaryListId),
-                        fixture(sp.file("documents"), [](json& b) {
-                            for (json& d : b["results"]) {
-                                if (d["name"] == "rp-canary-06.pdf") {
-                                    d["isFolder"] = true;
-                                }
-                            }
-                        }));
-            },
-            "NotFoundError",
-            "veeam_m365: sharepoint item 0 \"rp-canary-06.pdf\": the file not found in the "
-            "restore point"},
         Row{"an isFolder of another kind", true,
             [=](RestoreRig& rig) {
                 rig.get(paged(sites + "/Documents?parentId=" + sp.container() + kCanaryListId),
@@ -527,21 +471,7 @@ TEST_CASE("restore_sample: a file browsing can't pin down is refused, and the ex
             "veeam_m365: the restore target: the test OneDrive "
             "\"https://restoreprooflab-my.sharepoint.com/personal/"
             "alice_restoreprooflab_onmicrosoft_com\" isn't in the restore point (is it backed "
-            "up?); nothing was restored"},
-        Row{"no source folder of that name", false,
-            [=](RestoreRig& rig) {
-                rig.get(paged(onedrives + "/" + od.container() + "/Folders?parentId=root"),
-                        fixture(od.file("folders-root"), [](json& b) {
-                            for (json& f : b["results"]) {
-                                if (f["name"] == "RestoreTest") {
-                                    f["name"] = "Renamed";
-                                }
-                            }
-                        }));
-            },
-            "NotFoundError",
-            "veeam_m365: onedrive item 0 \"rp-canary-16.pdf\": folder \"RestoreTest\" not found "
-            "in the restore point"});
+            "up?); nothing was restored"});
     CAPTURE(row.name);
     RestoreRig rig;
     const Run run = row.sharepoint ? sp : od;
@@ -609,21 +539,243 @@ TEST_CASE("restore_sample: a user's archive mailbox is never taken for the mailb
     }
 }
 
-TEST_CASE("restore_sample: a OneDrive owner Veeam doesn't list", "[veeam_m365][w2.5]")
+// ---- an item the restore point doesn't hold: reported per item, never thrown (Q3.1) ------
+
+TEST_CASE("restore_sample: an item the restore point doesn't hold is not_in_backup, never sent, "
+          "and the explore session closed",
+          "[veeam_m365][q3.1]")
 {
+    const Run x5 = mail_x5();
+    const Run sp = sp_x1();
+    const Run od = od_x1();
+    const std::string sites =
+        "/v8/RestoreSessions/" + sp.explore() + "/Organization/Sites/" + sp.container();
+    const std::string onedrives = "/v8/RestoreSessions/" + od.explore() + "/Organization/OneDrives";
+    struct Row {
+        std::string name;
+        Run run;
+        std::function<void(RestoreRig&)> edit;
+        connector::RestoreSpec spec;
+        std::size_t items;
+        std::string message; // item 0's
+        // Whether it is the item's whole mailbox, site or OneDrive the point
+        // lacks: the point doesn't cover the item (PR #155 review).
+        bool container_missing;
+    };
+    connector::OneDriveSelector carol = od_x1_item();
+    carol.user = "carol@RestoreProofLab.onmicrosoft.com";
+    const Row row = GENERATE_COPY(
+        Row{"no such mailbox: each of its mails", x5,
+            [=](RestoreRig& rig) {
+                rig.get(paged("/v8/RestoreSessions/" + x5.explore() + "/organization/mailboxes"),
+                        fixture(x5.file("mailboxes"), [](json& b) {
+                            for (json& m : b["results"]) {
+                                if (m["email"] == kAlice) {
+                                    m["email"] = "someone@else";
+                                }
+                            }
+                        }));
+            },
+            restore_spec(mail_x5_items()), 5,
+            "veeam_m365: mail item 0 \"RP-CANARY-0002\": mailbox "
+            "\"alice@RestoreProofLab.onmicrosoft.com\" not found in the restore point",
+            true},
+        // Hand-written in the shape of Veeam's recorded 404s: what Veeam
+        // answers for a site the point doesn't hold wasn't recorded live.
+        Row{"no such site", sp,
+            [=](RestoreRig& rig) {
+                rig.get(sites, veeam_error(404, "Site does not exist", "ResourceNotFound"));
+            },
+            restore_spec({}, {sp_x1_item()}), 1,
+            "veeam_m365: sharepoint item 0 \"rp-canary-06.pdf\": the site \"" +
+                lab_values().site_id + "\" not found in the restore point",
+            true},
+        Row{"no library of that list", sp,
+            [=](RestoreRig& rig) {
+                rig.get(paged(sites + "/Libraries"), fixture(sp.file("libraries"), [](json& b) {
+                            json kept = json::array();
+                            for (json& l : b["results"]) {
+                                if (!l["id"].get<std::string>().ends_with(kCanaryListId)) {
+                                    kept.push_back(l);
+                                }
+                            }
+                            b["results"] = kept;
+                        }));
+            },
+            restore_spec({}, {sp_x1_item()}), 1,
+            "veeam_m365: sharepoint item 0 \"rp-canary-06.pdf\": the library of list "
+            "\"7eb0f08a-f57b-418c-8ca6-f2ab81297666\" not found in the restore point",
+            false},
+        Row{"a folder of the file's name", sp,
+            [=](RestoreRig& rig) {
+                rig.get(paged(sites + "/Documents?parentId=" + sp.container() + kCanaryListId),
+                        fixture(sp.file("documents"), [](json& b) {
+                            for (json& d : b["results"]) {
+                                if (d["name"] == "rp-canary-06.pdf") {
+                                    d["isFolder"] = true;
+                                }
+                            }
+                        }));
+            },
+            restore_spec({}, {sp_x1_item()}), 1,
+            "veeam_m365: sharepoint item 0 \"rp-canary-06.pdf\": the file not found in the "
+            "restore point",
+            false},
+        Row{"no source folder of that name", od,
+            [=](RestoreRig& rig) {
+                rig.get(paged(onedrives + "/" + od.container() + "/Folders?parentId=root"),
+                        fixture(od.file("folders-root"), [](json& b) {
+                            for (json& f : b["results"]) {
+                                if (f["name"] == "RestoreTest") {
+                                    f["name"] = "Renamed";
+                                }
+                            }
+                        }));
+            },
+            restore_spec({}, {}, {od_x1_item()}), 1,
+            "veeam_m365: onedrive item 0 \"rp-canary-16.pdf\": folder \"RestoreTest\" not found "
+            "in the restore point",
+            false},
+        Row{"a OneDrive owner Veeam doesn't list", od, [](RestoreRig&) {},
+            restore_spec({}, {}, {carol}), 1,
+            "veeam_m365: onedrive item 0 \"rp-canary-16.pdf\": the OneDrive of "
+            "\"carol@RestoreProofLab.onmicrosoft.com\" not found in the restore point",
+            true});
+    CAPTURE(row.name);
     RestoreRig rig;
-    const Run run = od_x1();
+    rig.serve(row.run);
+    row.edit(rig);
+
+    const connector::RestoreResult result = rig.restore(row.spec);
+
+    // Nothing restored, nothing sent: the backup's own account, item by item.
+    CHECK(result.status == connector::RestoreStatus::failed);
+    CHECK(result.sessions.empty());
+    CHECK(result.items_sent == 0);
+    CHECK(result.items_restored == 0);
+    REQUIRE(result.items.size() == row.items);
+    for (const connector::ItemRestoreResult& item : result.items) {
+        CHECK(item.outcome == connector::ItemOutcome::not_in_backup);
+        CHECK(item.session_id.empty());
+        CHECK_FALSE(item.infrastructure);
+        CHECK(item.container_missing == row.container_missing);
+    }
+    CHECK(result.items[0].message == row.message);
+    CHECK(rig.restore_posts().empty());
+    CHECK(rig.exporter->calls == 0);
+    CHECK(rig.stops(row.run.explore()) == 1);
+}
+
+TEST_CASE("restore_sample: a site the restore point doesn't hold is asked for once, whatever the "
+          "number of its items",
+          "[veeam_m365][q3.1]")
+{
+    const Run sp = sp_x1();
+    const std::string sites =
+        "/v8/RestoreSessions/" + sp.explore() + "/Organization/Sites/" + sp.container();
+    RestoreRig rig;
+    rig.serve(sp);
+    rig.get(sites, veeam_error(404, "Site does not exist", "ResourceNotFound"));
+    connector::SharePointSelector second = sp_x1_item();
+    second.name = "rp-canary-07.pdf";
+
+    const connector::RestoreResult result =
+        rig.restore(restore_spec({}, {sp_x1_item(), second}));
+
+    CHECK(result.status == connector::RestoreStatus::failed);
+    REQUIRE(result.items.size() == 2);
+    for (const connector::ItemRestoreResult& item : result.items) {
+        CHECK(item.outcome == connector::ItemOutcome::not_in_backup);
+        CHECK(item.container_missing);
+    }
+    CHECK(rig.gets(sites) == 1);
+    CHECK(rig.gets(paged(sites + "/Libraries")) == 0);
+    CHECK(rig.restore_posts().empty());
+    CHECK(rig.stops(sp.explore()) == 1);
+}
+
+TEST_CASE("restore_sample: a listing that comes back empty is fetched once, not once per item "
+          "missing under it",
+          "[veeam_m365][q3.1]")
+{
+    SECTION("a mailbox's folders")
+    {
+        const Run x5 = mail_x5();
+        const std::string folders = paged("/v8/RestoreSessions/" + x5.explore() +
+                                          "/organization/mailboxes/" + x5.container() +
+                                          "/folders?name=Inbox");
+        RestoreRig rig;
+        rig.serve(x5);
+        rig.get(folders,
+                fixture(x5.file("folder-inbox"), [](json& b) { b["results"] = json::array(); }));
+
+        const connector::RestoreResult result = rig.restore(restore_spec(mail_x5_items()));
+
+        REQUIRE(result.items.size() == 5);
+        for (const connector::ItemRestoreResult& item : result.items) {
+            CHECK(item.outcome == connector::ItemOutcome::not_in_backup);
+            // The mailbox is there: the point covers the items.
+            CHECK_FALSE(item.container_missing);
+        }
+        CHECK(rig.gets(folders) == 1);
+    }
+    SECTION("a library's documents")
+    {
+        const Run sp = sp_x1();
+        const std::string documents =
+            paged("/v8/RestoreSessions/" + sp.explore() + "/Organization/Sites/" + sp.container() +
+                  "/Documents?parentId=" + sp.container() + kCanaryListId);
+        RestoreRig rig;
+        rig.serve(sp);
+        rig.get(documents,
+                fixture(sp.file("documents"), [](json& b) { b["results"] = json::array(); }));
+        connector::SharePointSelector second = sp_x1_item();
+        second.name = "rp-canary-07.pdf";
+
+        const connector::RestoreResult result =
+            rig.restore(restore_spec({}, {sp_x1_item(), second}));
+
+        REQUIRE(result.items.size() == 2);
+        for (const connector::ItemRestoreResult& item : result.items) {
+            CHECK(item.outcome == connector::ItemOutcome::not_in_backup);
+            CHECK_FALSE(item.container_missing);
+        }
+        CHECK(rig.gets(documents) == 1);
+    }
+}
+
+TEST_CASE("restore_sample: beside an item the restore point doesn't hold, the others are still "
+          "restored",
+          "[veeam_m365][q3.1]")
+{
+    const Run run = mail_x1();
+    RestoreRig rig;
     rig.serve(run);
-    connector::OneDriveSelector item = od_x1_item();
-    item.user = "carol@RestoreProofLab.onmicrosoft.com";
+    // First in the spec, so the restored item's result lands at index 1.
+    const connector::MailSelector gone{kBob, "Inbox", "RP-CANARY-0099", "2026-09-24T22:14:46Z"};
 
-    const Caught thrown = caught_by([&] { rig.restore(restore_spec({}, {}, {item})); });
+    const connector::RestoreResult result = rig.restore(restore_spec({gone, mail_x1_item()}));
 
-    CHECK(thrown.kind == "NotFoundError");
-    CHECK(thrown.what == "veeam_m365: onedrive item 0 \"rp-canary-16.pdf\": the OneDrive of "
-                         "\"carol@RestoreProofLab.onmicrosoft.com\" not found in the restore "
-                         "point");
-    CHECK(rig.stops(run.explore()) == 1);
+    // One call, with the recorded body: the missing item never reaches Veeam.
+    const std::vector<HttpRequest> posts = rig.restore_posts();
+    REQUIRE(posts.size() == 1);
+    CHECK(posts[0].url == restore_url(run));
+    CHECK(posts[0].body == expected_body(run));
+    CHECK(result.status == connector::RestoreStatus::partial);
+    CHECK(result.items_sent == 1);
+    CHECK(result.items_restored == 1);
+    REQUIRE(result.sessions.size() == 1);
+    CHECK(result.sessions[0].items_sent == 1);
+    REQUIRE(result.items.size() == 2);
+    CHECK(result.items[0].outcome == connector::ItemOutcome::not_in_backup);
+    CHECK(result.items[0].name == "RP-CANARY-0099");
+    CHECK(result.items[0].session_id.empty());
+    CHECK(result.items[0].message == "veeam_m365: mail item 0 \"RP-CANARY-0099\": the message "
+                                     "not found in the restore point");
+    CHECK(result.items[1].outcome == connector::ItemOutcome::restored);
+    CHECK(result.items[1].name == "RP-CANARY-0011");
+    CHECK(result.items[1].session_id == result.sessions[0].id);
+    check_no_secrets(rig, result.log);
 }
 
 TEST_CASE("restore_sample: an explore POST that fails after Veeam may have opened the session: "
@@ -958,16 +1110,16 @@ TEST_CASE("restore_sample: an explore session that can't be closed keeps the run
     rig.serve(sp);
     const std::string sites =
         "/v8/RestoreSessions/" + sp.explore() + "/Organization/Sites/" + sp.container();
-    rig.get(paged(sites + "/Libraries"), make_response(200, R"({"results":[]})"));
+    rig.get(sites, make_response(200, R"({"id":"other","name":"x","url":"y"})"));
     rig.veeam.on(HttpMethod::post, url("/v8/RestoreSessions/" + mail.explore() + "/Stop"),
                  {veeam_error(500, "Internal error")});
 
     const Caught thrown =
         caught_by([&] { rig.restore(restore_spec(mail_x5_items(), {sp_x1_item()})); });
 
-    CHECK(thrown.kind == "NotFoundError");
-    CHECK_THAT(thrown.what, StartsWith("veeam_m365: sharepoint item 0 \"rp-canary-06.pdf\": the "
-                                       "library of list"));
+    CHECK(thrown.kind == "Error");
+    CHECK(thrown.what == "veeam_m365: sharepoint item 0 \"rp-canary-06.pdf\": Veeam answered for "
+                         "another site than its site_id");
     CHECK(rig.stops(mail.explore()) == 1);
     CHECK(rig.stops(sp.explore()) == 1);
     CHECK_THAT(rig.log(), ContainsSubstring("couldn't close explore session " + mail.explore()));

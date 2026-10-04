@@ -13,6 +13,7 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <cstdint>
 #include <exception>
 #include <optional>
 #include <utility>
@@ -67,6 +68,8 @@ struct Cleaner::Target {
 struct Cleaner::Resolved {
     std::string container;
     std::string folder_id;
+    // A file target's own count of its children, read as it was resolved.
+    std::optional<std::uint64_t> child_count;
 };
 
 // What one listing found that may be deleted, and how many entries it left
@@ -134,7 +137,7 @@ TargetCleanup Cleaner::clean_target(const Target& target, std::string_view phase
             try {
                 // Per round: resolve, list, delete what was listed, list again.
                 const Resolved resolved = resolve(target);
-                Listing listing = list(target, resolved);
+                Listing listing = list(target, resolved, true);
                 if (!listed) {
                     out.found = listing.items.size();
                     listed = true;
@@ -175,7 +178,8 @@ TargetCleanup Cleaner::clean_target(const Target& target, std::string_view phase
                                                      code + "): " + e.what());
                     }
                 }
-                listing = list(target, resolved);
+                // Not held to the count: it was read before this round's deletes.
+                listing = list(target, resolved, false);
                 out.left = listing.items.size();
                 out.skipped = listing.skipped;
                 if (out.left > 0) {
@@ -223,15 +227,18 @@ Cleaner::Resolved Cleaner::resolve(const Target& target)
         return {check_restore_mailbox(graph_, targets_, kCleanupWording).address, {}};
     }
     if (target.kind == Target::Kind::sharepoint) {
-        return {check_restore_library(graph_, targets_, kCleanupWording).drive_id, {}};
+        std::string drive = check_restore_library(graph_, targets_, kCleanupWording).drive_id;
+        const std::optional<std::uint64_t> child_count = library_child_count(graph_, drive);
+        return {std::move(drive), {}, child_count};
     }
     // The check resolves the configured folder itself: its folder_id is
     // test_onedrive_folder_id, which it read by that ID and checked.
-    return {check_restore_onedrive_folder(graph_, targets_, kCleanupWording).drive_id,
-            targets_.onedrive_folder_id()};
+    const ResolvedOneDriveFolder folder =
+        check_restore_onedrive_folder(graph_, targets_, kCleanupWording);
+    return {folder.drive_id, targets_.onedrive_folder_id(), folder.child_count};
 }
 
-Cleaner::Listing Cleaner::list(const Target& target, const Resolved& resolved)
+Cleaner::Listing Cleaner::list(const Target& target, const Resolved& resolved, bool whole)
 {
     const std::string what{target.location};
     const std::string& container = resolved.container;
@@ -265,21 +272,21 @@ Cleaner::Listing Cleaner::list(const Target& target, const Resolved& resolved)
     const bool library = target.kind == Target::Kind::sharepoint;
     const std::string& folder = resolved.folder_id;
     bool past_limit = false;
+    const std::string first =
+        library ? "/drives/" + container + "/root/children" + std::string{kFileQuery}
+                : "/drives/" + container + "/items/" + folder + "/children" +
+                      std::string{kFileQuery};
+    const Grant& grant = library ? kSitesReadGrant : kOneDriveGrant;
+    const NextLinkRule next_rule = [&](const std::vector<std::string>& path) {
+        return library ? is_library_root_path(path, container)
+                       : is_folder_path(path, container, folder);
+    };
+    // A listing cut at the page limit is short by design; any other that
+    // stays shorter than the container's count, read again, was trimmed.
     const std::vector<json> pages =
-        library ? list_pages(graph_, "/drives/" + container + "/root/children" +
-                                         std::string{kFileQuery},
-                             kSitesReadGrant, {}, what,
-                             [&container](const std::vector<std::string>& path) {
-                                 return is_library_root_path(path, container);
-                             },
-                             &past_limit)
-                : list_pages(graph_, "/drives/" + container + "/items/" + folder + "/children" +
-                                         std::string{kFileQuery},
-                             kOneDriveGrant, {}, what,
-                             [&container, &folder](const std::vector<std::string>& path) {
-                                 return is_folder_path(path, container, folder);
-                             },
-                             &past_limit);
+        whole ? list_whole(graph_, first, grant, what, next_rule, resolved.child_count,
+                           [&] { return resolve(target).child_count; }, &past_limit)
+              : list_pages(graph_, first, grant, {}, what, next_rule, &past_limit);
     if (past_limit) {
         log(spdlog::level::warn, past_limit_line(what));
     }

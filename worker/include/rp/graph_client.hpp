@@ -305,6 +305,11 @@ public:
     std::optional<nlohmann::json> find_json(std::string_view path_or_url, const Grant& grant,
                                             const HttpHeaders& headers = {});
 
+    // Waits `wait` on the client's own sleep (GraphClientOptions::sleep): a
+    // caller's pause between two reads (the listing recheck,
+    // src/graph_paging.hpp) is then a test's to record, never slept there.
+    void wait(std::chrono::milliseconds wait);
+
     // Deletes `item` (W3.4; only the Cleaner can make one). The path is built
     // here, from the item alone, in one of two shapes:
     //  - a mail: POST /users/{mailbox}/messages/{id}/permanentDelete, bodiless,

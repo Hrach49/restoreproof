@@ -1228,6 +1228,37 @@ TEST_CASE("restore: an item the backup failed for an infrastructure reason is un
                                                         empty_targets[1] ? 0 : 1, 0)));
 }
 
+TEST_CASE("restore: a canary the restore point doesn't hold fails the run when the point was "
+          "taken after the manifest was seeded; an older point is error not_in_backup, 4",
+          "[restore_command][q3.1]")
+{
+    // Q3.1 scenario 2: the issue's `fail`, naming the item, once the backup
+    // should hold it (docs/decisions.md 2026-10-03, Q3.1).
+    const auto [time, code, status_line] = GENERATE(table<std::string, int, std::string>({
+        {kNewestTime, rp::exit_code::restore,
+         "status fail: 1 of 1 item(s) didn't verify (1 missing, 0 mismatch)"},
+        {"2026-09-24T22:00:00Z", rp::exit_code::service,
+         "status error not_in_backup: 1 of 1 item(s) couldn't be checked (not_in_backup 1)"},
+    }));
+    CAPTURE(time);
+    Harness lab;
+    lab.fake.points = {point(kNewestId, time)};
+    lab.fake.answer = [](const connector::RestoreSpec& spec) { return not_in_point(spec); };
+    lab.targets.after[kind_slot(connector::ItemKind::mail)] = json::array();
+
+    const Run run = lab.run({"--run-id", kRunId, "--mail", "1", "--sp", "0", "--od", "0"});
+
+    CHECK(run.exit_code == code);
+    // No "the restore had started" note: the connector returned, item by item.
+    CHECK(run.err.empty());
+    CHECK_THAT(run.out, ContainsSubstring("\nrestore failed: 0 of 0 item(s) restored in "));
+    CHECK_THAT(run.out, ContainsSubstring("not_in_backup"));
+    CHECK_THAT(lab.body(run), EndsWith("check: 0 match, 0 mismatch, 1 missing, 0 error\n"
+                                       "\n" +
+                                       status_line + "\n" + clean_after_line(0, 0, 0)));
+    check_one_status_line(run.out);
+}
+
 TEST_CASE("restore: a restore that returns not_run is exit 4, never 5", "[restore_command]")
 {
     Harness lab;
@@ -2965,6 +2996,8 @@ struct RealRig {
               connector::ItemKind::onedrive}) {
             rig.lab.graph_http.on(rp::HttpMethod::get, TargetsLab::clean_listing_url(kind),
                                   {rp::test::graph_lab::page_of(json::array())});
+            // Q3.2: the library root's count, which each listing is held to.
+            rp::test::graph_lab::serve_library_root(rig.lab.graph_http);
         }
     }
 

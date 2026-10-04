@@ -201,6 +201,24 @@ inline connector::RestoreResult restored(const connector::RestoreSpec& spec)
     return result;
 }
 
+// A restore whose every item the restore point didn't hold (Q3.1): nothing
+// sent, no session, the backup's word per item.
+inline connector::RestoreResult not_in_point(const connector::RestoreSpec& spec)
+{
+    connector::RestoreResult result = restored(spec);
+    result.status = connector::RestoreStatus::failed;
+    result.session_ids.clear();
+    result.sessions.clear();
+    result.items_sent = 0;
+    result.items_restored = 0;
+    for (connector::ItemRestoreResult& item : result.items) {
+        item.outcome = connector::ItemOutcome::not_in_backup;
+        item.session_id.clear();
+        item.message = "veeam_m365: an item not found in the restore point";
+    }
+    return result;
+}
+
 // A connector that answers from what the test set. Called on the test's thread.
 struct FakeConnector {
     std::vector<connector::RestorePoint> points{point(kNewestId, kNewestTime),
@@ -389,6 +407,7 @@ struct TargetsLab {
         graph.on(rp::HttpMethod::get, gl::inbox_url(), {rp::test::load_fixture("graph", "mailbox-inbox-200")});
         graph.on(rp::HttpMethod::get, gl::drive_url(),
                  {rp::test::load_fixture("graph", "restoretarget-drive-200")});
+        gl::serve_library_root(graph);
         graph.on(rp::HttpMethod::get, gl::folder_url(),
                  {rp::test::load_fixture("graph", "onedrive-folder-200")});
         const auto serve = [this](const std::string& url, connector::ItemKind kind) {

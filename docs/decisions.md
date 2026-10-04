@@ -7,6 +7,63 @@ Format: date, decision, reason, alternatives rejected.
 
 ---
 
+## 2026-10-04 — PR #155 review: a missing container is never `fail`; a short listing is read again before it is refused (proposed)
+
+Amends the two entries below (Q3.1 points 1 and 2, Q3.2 point 1 and its Risk) after the review of PR #155.
+
+1. **A canary whose whole container isn't in the restore point is *unchecked*, never *failed*.** Q3.1 made every canary missing from a later point `fail`. But when the point holds no backup of the canary's mailbox, site or OneDrive at all (the job doesn't cover it, or it was taken out of the job), the point says nothing about the item: a job or configuration matter, which the status vocabulary forbids as `fail`. `connector::ItemRestoreResult` gains `container_missing`, set by `restore_sample` when it is the item's mailbox, site or OneDrive that has no match (`ContainerNotInPoint` in `src/veeam_m365_connector.cpp`); item rule I4 now also takes a `not_in_backup` item with `container_missing`, whatever its source and the point's date, so the run is `error not_in_backup`, exit 4. A folder or a library missing inside a container the point does hold stays an item-level miss (I5 for a canary in a later point): Veeam's jobs select mailboxes, sites and OneDrives, not folders, so that is data the backup should have. The result's `restore.items[]` carries `container_missing`.
+2. **A SharePoint site Veeam answers 404 for is a missing container, per item.** Until now that 404 ended the whole run as `error backup`, though the header listed the site among the per-item cases. The site is asked for once however many items it has. What Veeam answers for a site the point doesn't hold wasn't recorded live: the test's 404 is hand-written in the shape of the recorded `ResourceNotFound` replies. Any other answer (a 400, a 500) still ends the run as before. An explore session that expired answers 404 too and would read as a missing site; either way the items are *unchecked*, never *failed*.
+3. **A listing shorter than its container's count is read again before it is refused.** Q3.2's Risk: a `childCount` that trails a delete (the clean before the snapshot, a Cleaner round before the next), or an entry removed between the two reads, would read as a trimmed listing. `list_whole` in `src/graph_paging.hpp` now waits `kListingRecheckWait` (2 s, on the Graph client's own sleep, `GraphClient::wait`), reads the count again (the library's root; the OneDrive folder through the guard's check) and lists again, at most `kListingRechecks` (3) times. A listing still short after 6 s is the `PermissionError` as before, so a real trimmed listing costs 6 s and six requests more per reader. Whether SharePoint's count lags at all, and for how long, is still unmeasured; a lag past 6 s would still end `error graph_permission` (never `fail` or `pass`).
+4. **Smaller.** The browse caches of `restore_sample` keep an empty listing (`cached`), so the items missing under it don't each ask Veeam again; the guard's OneDrive check reads the folder's count with `child_count_of`, the one rule for it.
+
+**Alternatives rejected.**
+- *Keep a missing container `fail`:* a mailbox dropped from the job does leave it unprotected, but the run still ends non-zero (`error not_in_backup`) and says why; `fail` is kept for "the backup holds the container and lost the item".
+- *List the sites (`Sites?parentId=root`) instead of reading the 404:* independent of Veeam's error shape, but the listing leaves subsites out, and it changes the recorded request sequence of every SharePoint restore.
+- *Drop the count check after the Worker's own deletes:* that is exactly the clean after the trimmed read-back of scenario 6.
+
+Tests: `run_status_test.cpp` (I4g, I4h, `[restore_json]`), `veeam_m365_restore_test.cpp` (`[q3.1]`: `container_missing` per kind of missing item, the 404 site, the site asked for once, an empty listing fetched once), `graph_targets_test.cpp` and `cleaner_test.cpp` (`[q3.2]`: a trailing count read again; the trimmed listing refused after three rechecks), `graph_client_test.cpp` (`wait`).
+
+---
+
+## 2026-10-04 — Q3.2: a listing shorter than its container's count is a permission error, never an empty target (proposed)
+
+Found by Q3.2's scenario 6 (#43, `tests/e2e/scenarios.md`): with the Worker app's `Sites.Selected` and `Lists.SelectedOperations.Selected` roles revoked, `rpworker test --sp 1` ended **`status fail`** (run `rp-20261004T185609Z-6af4a76d`). SharePoint did not refuse anything. `GET /drives/{library}` and `GET /drives/{library}/root` answered 200, the root's `folder.childCount` counting the file Veeam had just restored, and `GET .../root/children` answered 200 with an empty `value`: security trimming. The Worker took the empty listing for a missing item (a `fail`, which the status vocabulary forbids for a permission problem), the clean after said `ok: deleted 0` with the file still there, and `graph list` said 0. (Minutes after the revoke the same run still passed: SharePoint serves cached permissions for a while. #154 tracks which grants the library really needs.)
+
+1. **A file listing is held to its container's own count.** `check_listing_whole` in `src/graph_paging.hpp`: when the container says it holds more children than Graph listed, the read throws a `PermissionError` naming the grant (`Graph listed <n> of the <m> entries in <target>: SharePoint leaves out what the app may not read instead of refusing the listing; ...`), so the code is `graph_permission`: `error`, exit 2, never `fail`. A container reply without a count is a `GraphError`: the listing can't be shown to be whole.
+2. **The count is read before the listing.** For the library: one new request, `GET /drives/{drive}/root?$select=id,folder` (`library_child_count`). For the OneDrive folder: the guard's own read already asks for the `folder` facet, so `ResolvedOneDriveFolder::child_count` costs nothing. Read first, a file added in between makes the listing longer than the count, which is fine; only fewer entries than counted is refused.
+3. **Both readers.** `TargetReader::list_sharepoint`/`list_onedrive` (the before snapshot, the after read, `graph list`) and the Cleaner's first listing of each round. The Cleaner's second listing of a round isn't checked: the count was read before that round's deletes. A listing cut at `kMaxListPages` is short by design and isn't checked either.
+4. **What the run says.** Before the restore the snapshot stops the run: `status error graph_permission: the run stopped before the restore: ...; nothing was restored`. After it, the type's items are `error` `graph_permission` (row 7), and the clean after reports `sharepoint graph_permission` instead of `ok`. Mail isn't affected: Exchange refuses with a 403.
+
+**Alternatives rejected.**
+- *Check the token's `roles` claim:* it says what Entra granted, not what SharePoint enforces (the cached passes above had no SharePoint role), and it wouldn't catch a grant removed on the list or folder itself.
+- *Treat an empty listing after a successful restore as `error`:* that is exactly the real `fail` (Veeam said restored, nothing arrived; W3.2 live run 2) and must stay one.
+- *`$expand=root` on the guard's drive read:* no extra request, but it changes a recorded guard request for every fixture and recording.
+
+**Risk.** If SharePoint's `childCount` ever lags behind a delete, a listing right after a clean would look short and the run would end `error graph_permission` wrongly (never `fail` or `pass`). The recordings show count and listing equal at every recorded moment, and the live reruns after this change are the check.
+
+Tests: `graph_targets_test.cpp` and `cleaner_test.cpp` (`[q3.2]`, on the two live replies recorded at the failure, `restoretarget-root-200-one-child.json` and `restoretarget-children-200-trimmed.json`), `test_command_test.cpp` (the whole run: restored, read-back trimmed, `error graph_permission`, never `fail`). The w34 live recording replays unchanged but for the one new library-root request.
+
+---
+
+## 2026-10-03 — Q3.1: an item the restore point doesn't hold is reported per item; a canary missing from a later point is `fail` (proposed)
+
+Closes the first "Open" point of W3.3. Q3.1's scenario 2 (#42: a canary mail permanently deleted, then backed up) wants `fail` naming the item; until now `restore_sample` threw one `NotFoundError` for the whole sample, so the run ended `error not_in_backup` with no item, and its message ("the restore didn't complete ... items may be in the restore targets") overstated it, since browsing fails before any restore is sent. The owner chose to fix it within Q3.1.
+
+1. **The connector reports it per item.** `connector::ItemOutcome` gains `not_in_backup`. `VeeamM365Connector::restore_sample` catches browsing's `connector::NotFoundError` per item (`resolve_item` in `src/veeam_m365_connector.cpp`: the item, or its mailbox, folder, site, library or OneDrive, has no match in the restore point), records that outcome with browsing's message, never sends the item, and restores the others. `restore_sample` no longer throws `connector::NotFoundError`; any other browsing error (several matches, a re-read that differs, the test OneDrive missing) still ends the run as before. `items_sent` counts what was sent. `veeam_restore::overall_status` gains `not_in_point`: nothing sent because nothing was in the point is `failed` (not `not_run`, which row 4 would make an `error`), and a run that missed some items is at best `partial`.
+2. **The status decides whether the backup should have held it.** New item rule I4 (the old I4 is now I5): `missing` or `mismatch` with the backup's `not_in_backup` is *unchecked* `not_in_backup` unless the item is a canary and the restore point was taken strictly after the manifest's `seeded_at`; then I5 makes it *failed* and the run `fail`. `seeded_at` is the seeder's time after the last canary was written (required by `seed-manifest.v1`; the loader now reads and checks it, `CanaryManifest::seeded_at`), carried as `ExpectedSet::canaries_seeded_at`; `RunFacts::restore_point_time` is the chosen point's `backupTime`. Both are read with `parse_veeam_time`; a time that doesn't read says "not shown to hold", never `fail`.
+3. **A random item missing is never `fail`.** Its pool was listed from the same restore point, so its absence is the backup product contradicting itself, not lost data: `error not_in_backup`.
+4. **`not_in_backup` ranks after `backup_infrastructure`** among the unchecked items' codes (`target_guard`, `graph_auth`, `graph_permission`, `backup_infrastructure`, `not_in_backup`, `graph`, `graph_transient`, `stale_target`): a backup-side reason, more specific than a Graph error.
+5. **Naming the item.** The status message still names nothing (counts only); the item is named by its row: `rpworker test`'s REASON reads `not_in_backup` (the check table now gets the restore result), `rpworker restore`'s OUTCOME `not_in_backup` with Veeam's lookup message, and the `--json` summary's `status.failed_items` and `restore.items[].outcome`.
+
+**Alternatives rejected.**
+- *Every missing canary is `fail`:* a restore point taken before the canaries were seeded can't hold them; that is a test-setup problem, not the backup's.
+- *Per-canary dates (`received_at`, `last_modified_at`):* finer, but the manifest's single `seeded_at` is later than all of them and needs no per-kind rule; it is the conservative bound.
+- *Keep throwing and parse the item from the message:* the status would depend on a message's wording.
+
+Tests: `run_status_test.cpp` (I1c, I2c, I4a–I4f, I5e–I5f, S1–S7), `veeam_m365_restore_test.cpp` (`[q3.1]`: each kind of missing item, and one missing beside one restored on W2.4's recorded single-mail restore), `veeam_restore_test.cpp` (`overall_status`), `canary_manifest_test.cpp` (`seeded_at`), `expected_set_test.cpp`, `restore_command_test.cpp` and `test_command_test.cpp` (the run's status line and the REASON cell, for a point after and before `seeded_at`). The live proof is Q3.1's scenario 2 (`tests/e2e/scenarios.md`).
+
+---
+
 ## 2026-10-03 — PR #153 review: the `--json` check makes the writer's temp file; device names refused; the summary's `exit_code` is the process's (proposed)
 
 The review of PR #153 found more `--json` paths that passed the check and failed only after the whole run, and two places where the summary said less than the truth. Fixed on the branch, with tests (`tests/atomic_file_test.cpp`, `tests/test_command_test.cpp`):

@@ -82,6 +82,8 @@ std::string_view to_string(ItemOutcome outcome) noexcept
         return "restored";
     case ItemOutcome::failed:
         return "failed";
+    case ItemOutcome::not_in_backup:
+        return "not_in_backup";
     case ItemOutcome::unknown:
         break;
     }

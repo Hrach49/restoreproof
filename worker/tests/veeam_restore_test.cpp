@@ -968,15 +968,19 @@ TEST_CASE("the session's log lines", "[veeam_restore]")
 
 TEST_CASE("the overall status", "[veeam_restore]")
 {
-    const auto [sessions, restored, all, status] =
-        GENERATE(table<std::size_t, std::int64_t, bool, RestoreStatus>({
-            {0, 0, true, RestoreStatus::not_run},
-            {1, 0, true, RestoreStatus::failed},
-            {2, 0, false, RestoreStatus::failed},
-            {1, 5, true, RestoreStatus::succeeded},
-            {3, 7, true, RestoreStatus::succeeded},
-            {1, 4, false, RestoreStatus::partial},
-            {2, 1, false, RestoreStatus::partial},
+    const auto [sessions, restored, all, not_in_point, status] =
+        GENERATE(table<std::size_t, std::int64_t, bool, std::size_t, RestoreStatus>({
+            {0, 0, true, 0, RestoreStatus::not_run},
+            {1, 0, true, 0, RestoreStatus::failed},
+            {2, 0, false, 0, RestoreStatus::failed},
+            {1, 5, true, 0, RestoreStatus::succeeded},
+            {3, 7, true, 0, RestoreStatus::succeeded},
+            {1, 4, false, 0, RestoreStatus::partial},
+            {2, 1, false, 0, RestoreStatus::partial},
+            // Q3.1: items the restore point doesn't hold were never sent.
+            {0, 0, true, 2, RestoreStatus::failed},
+            {1, 0, true, 1, RestoreStatus::failed},
+            {1, 4, true, 1, RestoreStatus::partial},
         }));
-    CHECK(vr::overall_status(sessions, restored, all) == status);
+    CHECK(vr::overall_status(sessions, restored, all, not_in_point) == status);
 }

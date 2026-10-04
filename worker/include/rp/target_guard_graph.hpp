@@ -15,6 +15,8 @@
 #include <rp/graph_client.hpp>
 #include <rp/graph_errors.hpp>
 
+#include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -58,6 +60,9 @@ struct ResolvedOneDriveFolder {
     std::string site_id;   // parentReference.siteId, a GUID: the OneDrive's site
     std::string web_id;    // sharepointIds.webId, a GUID: the OneDrive's web
     std::string site_url;  // sharepointIds.siteUrl, as Graph wrote it: the OneDrive's address
+    // folder.childCount when Graph gave one: what a listing of the folder is
+    // held to (Q3.2, src/graph_paging.hpp). The guard itself doesn't need it.
+    std::optional<std::uint64_t> child_count;
 };
 
 // What the mailbox check established: Graph let the Worker app read the Inbox

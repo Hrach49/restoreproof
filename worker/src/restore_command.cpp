@@ -34,7 +34,7 @@ namespace verification = rp::verification;
 // OUTCOME FIELDS DUP MS.
 std::string format_check_table(const verification::ExpectedSet& expected,
                                const verification::CheckResult& check,
-                               const verification::RunVerdict&)
+                               const verification::RunVerdict&, const connector::RestoreResult*)
 {
     if (check.items.empty()) {
         return {};

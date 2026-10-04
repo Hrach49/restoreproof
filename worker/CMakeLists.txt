@@ -26,6 +26,7 @@ add_library(rpcore STATIC
     src/atomic_file.cpp
     src/base64.cpp
     src/canary_manifest.cpp
+    src/canonical_json.cpp
     src/cert_export.cpp
     src/cert_pin.cpp
     src/checker.cpp
@@ -109,6 +110,7 @@ add_executable(rptests
     tests/atomic_file_test.cpp
     tests/base64_test.cpp
     tests/canary_manifest_test.cpp
+    tests/canonical_json_test.cpp
     tests/cert_export_test.cpp
     tests/cert_pin_test.cpp
     tests/checker_test.cpp

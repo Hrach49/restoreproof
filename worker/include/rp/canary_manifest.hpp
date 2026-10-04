@@ -58,6 +58,10 @@ struct CanaryFile {
 
 struct CanaryManifest {
     std::string tenant_id;
+    // "YYYY-MM-DDTHH:MM:SSZ": when every canary was in place (the seeder
+    // writes it after the last one). A restore point taken later holds them
+    // all, so one missing from it is the backup's failure (Q3.1).
+    std::string seeded_at;
     // Lower-case hex SHA-256 of the manifest file's bytes, for the result.
     std::string sha256;
     // Each kind in manifest order: the rotation's order.

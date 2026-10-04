@@ -46,6 +46,7 @@
 
 using namespace std::chrono_literals;
 using Catch::Matchers::ContainsSubstring;
+using Catch::Matchers::StartsWith;
 
 namespace {
 
@@ -93,6 +94,8 @@ struct Lab {
             rp::graph::load_client_certificate(pfx_base64(), kPfxPassword, kNow), options);
         // The guard's mailbox check, which list_mail runs first (W3.2), as recorded.
         serve_file(inbox_url(), "mailbox-inbox-200");
+        // The library root's count (Q3.2), for the tests that aren't about it.
+        serve_library_root(graph_http);
     }
 
     TargetReaderOptions reader_options()
@@ -513,7 +516,8 @@ TEST_CASE("empty file locations list as empty vectors", "[graph][targets]")
     CHECK(lab.gets(library_children_url()) == 1);
     CHECK(lab.gets(folder_url()) == 1);
     CHECK(lab.gets(folder_children_url()) == 1);
-    CHECK(lab.graph_gets().size() == 4);
+    // And the library root's count (Q3.2).
+    CHECK(lab.graph_gets().size() == 5);
     for (const HttpRequest& request : lab.graph_gets()) {
         CHECK_FALSE(request.headers.contains("Prefer"));
     }
@@ -693,7 +697,8 @@ TEST_CASE("bad listing replies are errors", "[graph][targets]")
 
         CHECK(caught.what ==
               "Graph's reply listing the RestoreTarget library has a bad @odata.nextLink");
-        CHECK(lab.graph_gets().size() == 2);
+        // The guard, the root's count (Q3.2) and the listing's one page.
+        CHECK(lab.graph_gets().size() == 3);
     }
     SECTION("a nextLink outside Graph's v1.0 root is the listing's own refusal")
     {
@@ -991,13 +996,15 @@ TEST_CASE("empty locations list as empty vectors, and list_all too", "[graph][ta
     CHECK(lab.reader().list_all().empty());
 
     const std::vector<HttpRequest> gets = lab.graph_gets();
-    REQUIRE(gets.size() == 6);
+    REQUIRE(gets.size() == 7);
     CHECK(gets[0].url == inbox_url());
     CHECK(gets[1].url == mail_list_url());
     CHECK(gets[2].url == drive_url());
-    CHECK(gets[3].url == library_children_url());
-    CHECK(gets[4].url == folder_url());
-    CHECK(gets[5].url == folder_children_url());
+    // Q3.2: the library root's count, before its listing.
+    CHECK(gets[3].url == library_root_url());
+    CHECK(gets[4].url == library_children_url());
+    CHECK(gets[5].url == folder_url());
+    CHECK(gets[6].url == folder_children_url());
     for (std::size_t i = 0; i < gets.size(); ++i) {
         CHECK(gets[i].headers.contains("Prefer") == (i == 1));
     }
@@ -1372,11 +1379,16 @@ TEST_CASE("without hash_items no file is downloaded and each keeps Graph's size"
     CHECK(items[0].sha256.empty());
     CHECK(items[0].sha256_rule.empty());
     CHECK(on_file_calls == 0);
-    // The guard and the listing, no /content GET, and nothing for the download client.
+    // The guard and the listing (for the library, its root's count between
+    // them, Q3.2), no /content GET, and nothing for the download client.
     const std::vector<HttpRequest> gets = lab.graph_gets();
-    REQUIRE(gets.size() == 2);
-    CHECK(gets[0].url == at.guard_url);
-    CHECK(gets[1].url == at.children_url);
+    const bool library = at.type == ItemType::sharepoint;
+    REQUIRE(gets.size() == (library ? 3u : 2u));
+    CHECK(gets.front().url == at.guard_url);
+    if (library) {
+        CHECK(gets[1].url == library_root_url());
+    }
+    CHECK(gets.back().url == at.children_url);
     CHECK(lab.gets(content_url(at, expected.id)) == 0);
     CHECK(lab.dl_http.requests().empty());
     CHECK_THAT(lab.log(), ContainsSubstring("info listed 1 item(s) in " + at.location));
@@ -1624,11 +1636,12 @@ TEST_CASE("the listings ask for exactly the fields W3.2 checks", "[graph][target
     CHECK(reader.list_all().empty());
 
     const std::vector<HttpRequest> gets = lab.graph_gets();
-    REQUIRE(gets.size() == 6);
+    REQUIRE(gets.size() == 7);
     CHECK(gets[1].url == mail);
     CHECK(gets[1].url == mail_list_url(hash));
-    CHECK(gets[3].url == library_children_url());
-    CHECK(gets[5].url == folder_children_url());
+    CHECK(gets[3].url == library_root_url()); // Q3.2
+    CHECK(gets[4].url == library_children_url());
+    CHECK(gets[6].url == folder_children_url());
 }
 
 TEST_CASE("a mail's sender name, sent and created times are read when Graph lists them",
@@ -1960,4 +1973,150 @@ TEST_CASE("the live test's line replaces control characters in Graph's text", "[
     file.sha256 = "cd";
     file.sha256_rule = "bytes";
     CHECK(rp::test::found_item_line(file) == "onedrive  01X  x [2J.txt  12  cd (bytes)");
+}
+
+// ---- Q3.2: a listing SharePoint trimmed is a missing permission, never an empty target ----
+
+TEST_CASE("a listing shorter than its container's own count is a PermissionError naming the "
+          "grant, never an empty or short target",
+          "[graph][targets][q3.2]")
+{
+    // Live, 2026-10-04 (Q3.2 scenario 6): with the app's SharePoint roles
+    // revoked, the library's drive and root still answered 200, the root
+    // counting the file Veeam had just restored, and the listing answered 200
+    // with nothing in it. Taken at face value that was a `fail`.
+    SECTION("the RestoreTarget library, as recorded")
+    {
+        Lab lab;
+        lab.serve_file(drive_url(), "restoretarget-drive-200");
+        lab.serve_file(library_root_url(), "restoretarget-root-200-one-child");
+        lab.serve_file(library_children_url(), "restoretarget-children-200-trimmed");
+        TargetReader reader = lab.reader();
+
+        const Caught caught = catch_error([&] { reader.list_sharepoint(); });
+
+        CHECK(caught.kind == "PermissionError");
+        CHECK(caught.grant == rp::graph::kSitesReadGrant.description);
+        CHECK(caught.what ==
+              "Graph listed 0 of the 1 entries in the RestoreTarget library: SharePoint leaves "
+              "out what the app may not read instead of refusing the listing; the Worker app "
+              "relies on Sites.Selected read on the test site; see "
+              "docs/security/graph-permissions.md");
+        // The count is read before the listing, and both again three times
+        // before the listing is refused (kListingRechecks).
+        const std::vector<HttpRequest> gets = lab.graph_gets();
+        REQUIRE(gets.size() == 9);
+        for (std::size_t i = 1; i < gets.size(); i += 2) {
+            CHECK(gets[i].url == library_root_url());
+            CHECK(gets[i + 1].url == library_children_url());
+        }
+    }
+    SECTION("the library's root without a count: the listing can't be shown to be whole")
+    {
+        Lab lab;
+        lab.serve_file(drive_url(), "restoretarget-drive-200");
+        json root = load_fixture_json("graph", "restoretarget-root-200-one-child");
+        root["body"].erase("folder");
+        lab.serve(library_root_url(), root);
+        lab.serve_file(library_children_url(), "restoretarget-children-200-one-item");
+        TargetReader reader = lab.reader();
+
+        const Caught caught = catch_error([&] { reader.list_sharepoint(); });
+
+        CHECK(caught.kind == "GraphError");
+        CHECK(caught.what == "Graph's reply for the RestoreTarget library has no "
+                             "folder.childCount; the Worker can't tell its listing is whole");
+    }
+    SECTION("the test OneDrive folder: its count comes with the guard's own read")
+    {
+        Lab lab;
+        json folder = load_fixture_json("graph", "onedrive-folder-200");
+        folder["body"]["folder"]["childCount"] = 2;
+        lab.serve(folder_url(), folder);
+        lab.serve_file(folder_children_url(), "onedrive-children-200-one-item");
+        TargetReader reader = lab.reader();
+
+        const Caught caught = catch_error([&] { reader.list_onedrive(); });
+
+        CHECK(caught.kind == "PermissionError");
+        CHECK(caught.grant == rp::graph::kOneDriveGrant.description);
+        CHECK_THAT(caught.what,
+                   StartsWith("Graph listed 1 of the 2 entries in the test OneDrive folder: "));
+    }
+    SECTION("the OneDrive folder without a count")
+    {
+        Lab lab;
+        json folder = load_fixture_json("graph", "onedrive-folder-200");
+        folder["body"]["folder"] = json::object();
+        lab.serve(folder_url(), folder);
+        lab.serve_file(folder_children_url(), "onedrive-children-200-one-item");
+        TargetReader reader = lab.reader();
+
+        const Caught caught = catch_error([&] { reader.list_onedrive(); });
+
+        CHECK(caught.kind == "GraphError");
+        CHECK_THAT(caught.what, StartsWith("Graph's reply for the test OneDrive folder has no "
+                                           "folder.childCount"));
+    }
+}
+
+TEST_CASE("a count that trails the listing is read again before the listing is refused",
+          "[graph][targets][q3.2]")
+{
+    // PR #155 review: a count that still counts a file just deleted (the clean
+    // before the snapshot), or an entry gone between the two reads, isn't a
+    // trimmed listing. Count and listing are read again.
+    SECTION("the RestoreTarget library")
+    {
+        Lab lab;
+        lab.serve_file(drive_url(), "restoretarget-drive-200");
+        lab.graph_http.on(HttpMethod::get, library_root_url(),
+                          {library_root(1), library_root(0)});
+        // An empty listing, as recorded.
+        lab.serve_file(library_children_url(), "restoretarget-children-200-trimmed");
+        TargetReader reader = lab.reader();
+
+        CHECK(reader.list_sharepoint().empty());
+
+        const std::vector<HttpRequest> gets = lab.graph_gets();
+        REQUIRE(gets.size() == 5);
+        CHECK(gets[3].url == library_root_url());
+        CHECK(gets[4].url == library_children_url());
+    }
+    SECTION("the test OneDrive folder, by the guard's read again")
+    {
+        Lab lab;
+        json stale = load_fixture_json("graph", "onedrive-folder-200");
+        stale["body"]["folder"]["childCount"] = 2;
+        json fresh = stale;
+        fresh["body"]["folder"]["childCount"] = 1;
+        lab.graph_http.on(HttpMethod::get, folder_url(), {to_response(stale), to_response(fresh)});
+        lab.serve_file(folder_children_url(), "onedrive-children-200-one-item");
+        TargetReaderOptions options = lab.reader_options();
+        options.hash_items = false;
+        TargetReader reader(*lab.graph, lab.dl_http,
+                            rp::connector::RestoreTargets::from_config(lab_config()), options);
+
+        CHECK(reader.list_onedrive().size() == 1);
+
+        CHECK(lab.gets(folder_url()) == 2);
+        CHECK(lab.gets(folder_children_url()) == 2);
+    }
+}
+
+TEST_CASE("a listing as long as its container's count, or longer, is read as before",
+          "[graph][targets][q3.2]")
+{
+    // Longer: a file added between the count and the listing.
+    const std::uint64_t counted = GENERATE(std::uint64_t{0}, std::uint64_t{1});
+    Lab lab;
+    lab.serve_file(drive_url(), "restoretarget-drive-200");
+    lab.graph_http.on(HttpMethod::get, library_root_url(), {library_root(counted)});
+    lab.serve_file(library_children_url(), "restoretarget-children-200-one-item");
+    TargetReaderOptions options = lab.reader_options();
+    options.hash_items = false;
+    TargetReader reader(*lab.graph, lab.dl_http,
+                        rp::connector::RestoreTargets::from_config(lab_config()), options);
+
+    CHECK(reader.list_sharepoint().size() == 1);
 }

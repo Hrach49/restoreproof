@@ -430,6 +430,8 @@ TEST_CASE("every sampled item has an expected record, in RestoreSpec order, with
     const std::size_t n = s.mail.size() + s.sharepoint.size() + s.onedrive.size();
     REQUIRE(set.items.size() == n);
     CHECK(set.manifest_sha256 == lab_manifest().sha256);
+    // When the manifest's canaries were in place: a restore point taken later holds them.
+    CHECK(set.canaries_seeded_at == "2026-09-24T22:38:54Z");
     // The spec's order: mail, SharePoint, OneDrive; per type the canaries,
     // then the random items, as the selection holds them.
     struct Part {

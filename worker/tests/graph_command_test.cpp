@@ -174,6 +174,7 @@ struct Harness {
     {
         serve_mail(load_fixture("graph", "mail-list-200-empty"));
         graph_http.on(HttpMethod::get, drive_url(), {load_fixture("graph", "restoretarget-drive-200")});
+        serve_library_root(graph_http);
         graph_http.on(HttpMethod::get, library_children_url(),
                       {load_fixture("graph", "restoretarget-children-200-empty")});
         graph_http.on(HttpMethod::get, folder_url(), {load_fixture("graph", "onedrive-folder-200")});
@@ -720,9 +721,11 @@ TEST_CASE("rpworker graph list prints three empty tables for empty targets", "[g
     CHECK(result.out == kEmptyOutput);
     CHECK(result.err.empty());
     // The mailbox's guard and listing, then each file target's; nothing downloaded.
+    // (Q3.2: the library root's count before its listing.)
     CHECK(lab.graph_gets() == std::vector<std::string>{inbox_url(), mail_list_url(hash),
-                                                       drive_url(), library_children_url(),
-                                                       folder_url(), folder_children_url()});
+                                                       drive_url(), library_root_url(),
+                                                       library_children_url(), folder_url(),
+                                                       folder_children_url()});
     CHECK(lab.dl_http.requests().empty());
     // The command's logger went to the Graph HTTP client too.
     CHECK(lab.make_graph_http_calls == 1);
@@ -755,8 +758,9 @@ TEST_CASE("rpworker graph list without --hash lists one item each and downloads 
         CAPTURE(url);
         CHECK_FALSE(url.ends_with("/content"));
     }
-    // The mailbox's check and listing, each file target's guard and listing.
-    CHECK(lab.graph_gets().size() == 6);
+    // The mailbox's check and listing, each file target's guard and listing,
+    // and the library root's count (Q3.2).
+    CHECK(lab.graph_gets().size() == 7);
     CHECK(lab.dl_http.requests().empty());
 }
 

@@ -8,6 +8,7 @@
 #include <rp/target_guard_graph.hpp>
 
 #include "text_util.hpp"
+#include "veeam_time.hpp"
 
 #include <algorithm>
 #include <array>
@@ -33,6 +34,7 @@ using nlohmann::json;
 
 constexpr std::string_view kInternal = "internal";
 constexpr std::string_view kBackupInfrastructure = "backup_infrastructure";
+constexpr std::string_view kNotInBackup = "not_in_backup";
 
 constexpr int kNoSeverity = -1;
 
@@ -57,7 +59,7 @@ constexpr std::array<ErrorCode, 16> kCodes{{
      exit_code::auth},
     {"backup_transient", "the backup product couldn't be reached or asked to try later", false,
      kNoSeverity, exit_code::transient},
-    {"not_in_backup", "the client or a sampled item isn't in the backup", false, kNoSeverity,
+    {"not_in_backup", "the client or a sampled item isn't in the backup", false, 4,
      exit_code::service},
     // In the vocabulary, not yet a stop's (docs/decisions.md, W3.3 build notes 8).
     {"no_restore_point", "no restore point to restore from", false, kNoSeverity,
@@ -68,10 +70,10 @@ constexpr std::array<ErrorCode, 16> kCodes{{
     {"graph_permission", "Microsoft Graph refused a permission the Worker relies on", true, 2,
      exit_code::auth},
     {"backup_infrastructure", "", false, 3, exit_code::service},
-    {"graph", "Microsoft Graph reported an error", true, 4, exit_code::service},
-    {"graph_transient", "Microsoft Graph couldn't be reached or asked to try later", true, 5,
+    {"graph", "Microsoft Graph reported an error", true, 5, exit_code::service},
+    {"graph_transient", "Microsoft Graph couldn't be reached or asked to try later", true, 6,
      exit_code::transient},
-    {"stale_target", "", true, 6, exit_code::service},
+    {"stale_target", "", true, 7, exit_code::service},
     {"empty_sample", "", false, kNoSeverity, exit_code::service},
     {"not_run", "", false, kNoSeverity, exit_code::service},
 }};
@@ -180,6 +182,7 @@ bool known(ItemOutcome outcome) noexcept
     case ItemOutcome::unknown:
     case ItemOutcome::restored:
     case ItemOutcome::failed:
+    case ItemOutcome::not_in_backup:
         return true;
     }
     return false;
@@ -320,6 +323,20 @@ const connector::ItemRestoreResult* restore_item(const RunFacts& facts, std::siz
     return &facts.restore->items[i];
 }
 
+// Whether the restore point should hold item `i`, which the backup said it
+// doesn't though it holds the item's container: a canary, and the point
+// taken strictly after the canaries were seeded. Anything not known (a time
+// that doesn't read) says no.
+bool point_should_hold(const RunFacts& facts, std::size_t i)
+{
+    if (facts.expected->items[i].source != ItemSource::canary) {
+        return false; // a random item's pool came from this very restore point
+    }
+    const std::optional<VeeamTime> seeded = parse_veeam_time(facts.expected->canaries_seeded_at);
+    const std::optional<VeeamTime> point = parse_veeam_time(facts.restore_point_time);
+    return seeded && point && *seeded < *point;
+}
+
 enum class Verdict { verified, failed, unchecked };
 
 struct ItemVerdict {
@@ -340,6 +357,12 @@ ItemVerdict item_verdict(const RunFacts& facts, std::size_t i)
     const connector::ItemRestoreResult* restored = restore_item(facts, i);
     if (restored && restored->outcome != ItemOutcome::restored && restored->infrastructure) {
         return {Verdict::unchecked, std::string{kBackupInfrastructure}};
+    }
+    // A point without the item's whole container doesn't cover the item: a
+    // job or configuration matter, never the backup losing a canary.
+    if (restored && restored->outcome == ItemOutcome::not_in_backup &&
+        (restored->container_missing || !point_should_hold(facts, i))) {
+        return {Verdict::unchecked, std::string{kNotInBackup}};
     }
     return {Verdict::failed, {}};
 }
@@ -696,6 +719,7 @@ json to_json(const connector::RestoreResult& result)
                          {"kind", connector::to_string(item.kind)},
                          {"outcome", connector::to_string(item.outcome)},
                          {"infrastructure", item.infrastructure},
+                         {"container_missing", item.container_missing},
                          {"session_id", item.session_id}});
     }
     return {{"status", connector::to_string(result.status)},

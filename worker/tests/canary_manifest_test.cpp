@@ -136,6 +136,8 @@ TEST_CASE("the canary manifest refuses an entry or field that breaks its rule",
 {
     const std::string schema = "canary manifest: /schema: must be \"seed-manifest.v1\"";
     const std::string tenant = "canary manifest: /tenant_id: must be a GUID";
+    const std::string seeded =
+        "canary manifest: /seeded_at: must be \"YYYY-MM-DDTHH:MM:SSZ\", a real date and time in UTC";
     const std::string received =
         at(0, "/received_at: must be \"YYYY-MM-DDTHH:MM:SSZ\", a real date and time in UTC");
     const std::string stored_size = at(kFirstSharePoint, "/stored_size: must be an integer of 0 or more");
@@ -164,6 +166,10 @@ TEST_CASE("the canary manifest refuses an entry or field that breaks its rule",
         {"schema a number", [](json& m) { m["schema"] = 1; }, schema},
         {"no tenant_id", [](json& m) { m.erase("tenant_id"); }, tenant},
         {"tenant_id a name", [](json& m) { m["tenant_id"] = "RestoreProofLab.onmicrosoft.com"; }, tenant},
+        {"no seeded_at", [](json& m) { m.erase("seeded_at"); }, seeded},
+        {"seeded_at a number", [](json& m) { m["seeded_at"] = 20260924; }, seeded},
+        {"seeded_at with a fraction", [](json& m) { m["seeded_at"] = "2026-09-24T22:38:54.5Z"; }, seeded},
+        {"seeded_at 31 September", [](json& m) { m["seeded_at"] = "2026-09-31T22:38:54Z"; }, seeded},
         {"no entries", [](json& m) { m.erase("entries"); }, "canary manifest: /entries: must be an array"},
         {"entries an object", [](json& m) { m["entries"] = json::object(); },
          "canary manifest: /entries: must be an array"},
@@ -348,6 +354,7 @@ TEST_CASE("the committed manifest loads: 20 mails, 10 SharePoint and 10 OneDrive
     const std::string text = manifest_text();
     const rp::sampling::CanaryManifest manifest = rp::sampling::load_canary_manifest(manifest_path());
     CHECK(manifest.tenant_id == manifest_json().at("tenant_id").get<std::string>());
+    CHECK(manifest.seeded_at == "2026-09-24T22:38:54Z");
     CHECK(manifest.sha256 == rp::sha256_hex(text));
     REQUIRE(manifest.mail.size() == 20);
     REQUIRE(manifest.sharepoint.size() == 10);

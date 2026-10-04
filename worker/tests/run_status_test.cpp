@@ -66,6 +66,7 @@ struct It {
     ItemKind kind = ItemKind::mail;
     ExpectedKind expected_kind = ExpectedKind::manifest;
     std::string session = "s-1";
+    bool container_missing = false;                // the point lacks the item's whole container
 };
 
 It match()
@@ -88,6 +89,20 @@ It error(const std::string& code)
     return It{.check = CheckOutcome::error, .code = code};
 }
 
+// Missing, and the backup said the restore point doesn't hold it: a canary
+// unless `expected_kind` says otherwise.
+It not_in_point(ExpectedKind expected_kind = ExpectedKind::manifest)
+{
+    return It{.check = CheckOutcome::missing,
+              .restored = ItemOutcome::not_in_backup,
+              .expected_kind = expected_kind,
+              .session = ""};
+}
+
+// The lab manifest's seeded_at, and a restore point taken after it.
+constexpr const char* kSeededAt = "2026-09-24T22:38:54Z";
+constexpr const char* kPointTime = "2026-10-03T16:16:54.0154727Z";
+
 // The facts of one run, owned, with RunFacts pointing into them.
 struct Run {
     verification::ExpectedSet expected;
@@ -98,11 +113,14 @@ struct Run {
     bool with_check = true;
     std::optional<RunStop> stop;
     std::vector<Shortfall> shortfalls;
+    // The restore point's backup time, as the backup product wrote it: after
+    // the manifest's seeded_at (kSeededAt) unless a row says otherwise.
+    std::string point_time = kPointTime;
 
     verification::RunFacts facts() const
     {
         return {with_expected ? &expected : nullptr, shortfalls, stop,
-                with_restore ? &restore : nullptr, with_check ? &check : nullptr};
+                with_restore ? &restore : nullptr, with_check ? &check : nullptr, point_time};
     }
 };
 
@@ -113,6 +131,7 @@ Run run_of(const std::vector<It>& items, RestoreStatus status = RestoreStatus::s
 {
     Run run;
     run.expected.manifest_sha256 = std::string(64, 'f');
+    run.expected.canaries_seeded_at = kSeededAt;
     run.restore.status = status;
     std::set<std::string> sessions;
     for (std::size_t i = 0; i < items.size(); ++i) {
@@ -131,6 +150,7 @@ Run run_of(const std::vector<It>& items, RestoreStatus status = RestoreStatus::s
         restored.session_id = it.session;
         restored.outcome = it.restored;
         restored.infrastructure = it.infrastructure;
+        restored.container_missing = it.container_missing;
         run.restore.items.push_back(restored);
         ++run.restore.items_sent;
         run.restore.items_restored += it.restored == ItemOutcome::restored ? 1 : 0;
@@ -574,6 +594,15 @@ std::vector<Row> item_rules()
                            RestoreStatus::partial, "Warning");
          },
          kError, "stale_target", {}, {{0, "stale_target"}}, {"backup_session"}},
+        {"I1c", "check error of an item the backup said isn't in the restore point: the check's "
+                "code",
+         [] {
+             It it = not_in_point();
+             it.check = CheckOutcome::error;
+             it.code = "graph_transient";
+             return run_of({it}, RestoreStatus::failed);
+         },
+         kError, "graph_transient", {}, {{0, "graph_transient"}}, {}},
         {"I2a", "match after an infrastructure failure: verified",
          [] {
              return run_of({It{.restored = ItemOutcome::failed, .infrastructure = true}},
@@ -583,6 +612,14 @@ std::vector<Row> item_rules()
         {"I2b", "match the backup said nothing of: verified",
          [] { return run_of({It{.restored = ItemOutcome::unknown}}); }, kPass, "", {}, {},
          {"backup_item"}},
+        {"I2c", "match of an item the backup said isn't in the restore point: verified",
+         [] {
+             It it = not_in_point();
+             it.check = CheckOutcome::match;
+             it.session = "s-1";
+             return run_of({it});
+         },
+         kPass, "", {}, {}, {"backup_item"}},
         {"I3a", "missing, failed for an infrastructure reason: unchecked",
          [] {
              return run_of({It{.check = CheckOutcome::missing,
@@ -599,30 +636,93 @@ std::vector<Row> item_rules()
                            RestoreStatus::partial);
          },
          kError, "backup_infrastructure", {}, {{0, "backup_infrastructure"}}, {}},
-        {"I4a", "missing, the backup said restored: failed", [] { return run_of({missing()}); },
+        {"I4a", "a random item not in the restore point: unchecked, its pool came from that point",
+         [] { return run_of({not_in_point(ExpectedKind::fields)}, RestoreStatus::failed); },
+         kError, "not_in_backup", {}, {{0, "not_in_backup"}}, {}},
+        {"I4b", "a canary not in a restore point taken before the manifest's seeded_at: unchecked",
+         [] {
+             Run r = run_of({not_in_point()}, RestoreStatus::failed);
+             r.point_time = "2026-09-24T22:00:00Z";
+             return r;
+         },
+         kError, "not_in_backup", {}, {{0, "not_in_backup"}}, {}},
+        {"I4c", "a canary not in a restore point taken at seeded_at itself: unchecked",
+         [] {
+             Run r = run_of({not_in_point()}, RestoreStatus::failed);
+             r.point_time = kSeededAt;
+             return r;
+         },
+         kError, "not_in_backup", {}, {{0, "not_in_backup"}}, {}},
+        {"I4d", "a canary not in a restore point whose time doesn't read: unchecked",
+         [] {
+             Run r = run_of({not_in_point()}, RestoreStatus::failed);
+             r.point_time = "yesterday";
+             return r;
+         },
+         kError, "not_in_backup", {}, {{0, "not_in_backup"}}, {}},
+        {"I4e", "a canary not in the restore point, no seeded_at known: unchecked",
+         [] {
+             Run r = run_of({not_in_point()}, RestoreStatus::failed);
+             r.expected.canaries_seeded_at.clear();
+             return r;
+         },
+         kError, "not_in_backup", {}, {{0, "not_in_backup"}}, {}},
+        {"I4f", "a mismatch the backup said isn't in the restore point, a random file: unchecked",
+         [] {
+             It it = not_in_point(ExpectedKind::metadata);
+             it.kind = ItemKind::sharepoint;
+             it.check = CheckOutcome::mismatch;
+             return run_of({it}, RestoreStatus::failed);
+         },
+         kError, "not_in_backup", {}, {{0, "not_in_backup"}}, {}},
+        {"I4g", "a canary whose mailbox, site or OneDrive isn't in a restore point taken after "
+                "seeded_at: unchecked, the point doesn't cover it",
+         [] {
+             It it = not_in_point();
+             it.container_missing = true;
+             return run_of({it}, RestoreStatus::failed);
+         },
+         kError, "not_in_backup", {}, {{0, "not_in_backup"}}, {}},
+        {"I4h", "beside a restored item: the canary whose container is missing unchecked, the "
+                "run error, never fail",
+         [] {
+             It it = not_in_point();
+             it.container_missing = true;
+             return run_of({match(), it}, RestoreStatus::partial);
+         },
+         kError, "not_in_backup", {}, {{1, "not_in_backup"}}, {}},
+        {"I5a", "missing, the backup said restored: failed", [] { return run_of({missing()}); },
          kFail, "", {0}, {}, {}},
-        {"I4b", "missing, failed not for infrastructure: failed",
+        {"I5b", "missing, failed not for infrastructure: failed",
          [] {
              return run_of({It{.check = CheckOutcome::missing, .restored = ItemOutcome::failed}},
                            RestoreStatus::partial);
          },
          kFail, "", {0}, {}, {}},
-        {"I4c", "missing, restored though the message reads as infrastructure: failed",
+        {"I5c", "missing, restored though the message reads as infrastructure: failed",
          [] {
              return run_of({It{.check = CheckOutcome::missing, .infrastructure = true}});
          },
          kFail, "", {0}, {}, {}},
-        {"I4d", "mismatch, unknown not for infrastructure: failed",
+        {"I5d", "mismatch, unknown not for infrastructure: failed",
          [] {
              return run_of({It{.check = CheckOutcome::mismatch, .restored = ItemOutcome::unknown}},
                            RestoreStatus::partial);
          },
          kFail, "", {0}, {}, {}},
+        {"I5e", "a canary not in a restore point taken after the manifest's seeded_at: failed",
+         [] { return run_of({not_in_point()}, RestoreStatus::failed); }, kFail, "", {0}, {}, {}},
+        {"I5f", "beside a restored item: the canary failed, the run fail",
+         [] { return run_of({match(), not_in_point()}, RestoreStatus::partial); }, kFail, "",
+         {1}, {}, {}},
     };
 }
 
 It unchecked_by(const std::string& code)
 {
+    if (code == "not_in_backup") {
+        return not_in_point(ExpectedKind::fields);
+    }
     if (code == "backup_infrastructure") {
         return It{.check = CheckOutcome::missing,
                   .restored = ItemOutcome::failed,
@@ -656,10 +756,11 @@ TEST_CASE("run status, item verdicts: error, match, infrastructure, failed, firs
 
 TEST_CASE("run status, severity: each unchecked code outranks the ones after it", "[run_status]")
 {
-    const std::vector<std::string> order{"target_guard",          "graph_auth", "graph_permission",
-                                         "backup_infrastructure", "graph",      "graph_transient",
-                                         "stale_target"};
-    const std::size_t step = GENERATE(range(std::size_t{0}, std::size_t{6}));
+    const std::vector<std::string> order{"target_guard",     "graph_auth",
+                                         "graph_permission", "backup_infrastructure",
+                                         "not_in_backup",    "graph",
+                                         "graph_transient",  "stale_target"};
+    const std::size_t step = GENERATE(range(std::size_t{0}, std::size_t{7}));
     INFO("S" << step + 1 << ": " << order[step] << " over " << order[step + 1]);
     // The weaker code first, then the stronger: the order of items doesn't matter.
     const Run run = run_of({unchecked_by(order[step + 1]), unchecked_by(order[step]), match()},
@@ -1179,6 +1280,8 @@ TEST_CASE("run status: the restore object holds counts, sessions and items, neve
         {ItemKind::mail, "SENTINEL-NAME-1", "s-mail", ItemOutcome::failed,
          "SENTINEL-MESSAGE Veeam could not reach Microsoft 365", true},
         {ItemKind::sharepoint, "SENTINEL-NAME-2", "s-sp", ItemOutcome::unknown, "", false},
+        {ItemKind::onedrive, "SENTINEL-NAME-3", "", ItemOutcome::not_in_backup,
+         "SENTINEL-MESSAGE the OneDrive not found in the restore point", false, true},
     };
 
     const json written = verification::to_json(result);
@@ -1195,11 +1298,13 @@ TEST_CASE("run status: the restore object holds counts, sessions and items, neve
              "started_at_raw": "2026-09-30T10:01:10Z", "ended_at_raw": "0001-01-01T00:00:00Z"}],
         "items": [
             {"index": 0, "kind": "mail", "outcome": "restored", "infrastructure": false,
-             "session_id": "s-mail"},
+             "container_missing": false, "session_id": "s-mail"},
             {"index": 1, "kind": "mail", "outcome": "failed", "infrastructure": true,
-             "session_id": "s-mail"},
+             "container_missing": false, "session_id": "s-mail"},
             {"index": 2, "kind": "sharepoint", "outcome": "unknown", "infrastructure": false,
-             "session_id": "s-sp"}]})json");
+             "container_missing": false, "session_id": "s-sp"},
+            {"index": 3, "kind": "onedrive", "outcome": "not_in_backup",
+             "infrastructure": false, "container_missing": true, "session_id": ""}]})json");
     CHECK(written == want);
     CHECK(written.dump().find("SENTINEL") == std::string::npos);
 }

@@ -290,6 +290,7 @@ struct Lab {
             rp::graph::load_client_certificate(pfx_base64(), kPfxPassword, kNow), options);
         http.on(HttpMethod::get, inbox_url(), {load_fixture("graph", "mailbox-inbox-200")});
         http.on(HttpMethod::get, drive_url(), {load_fixture("graph", "restoretarget-drive-200")});
+        serve_library_root(http);
         http.on(HttpMethod::get, folder_url(), {load_fixture("graph", "onedrive-folder-200")});
         for (const Which which : {Which::mail, Which::sharepoint, Which::onedrive}) {
             list(which, {empty_listing(which)});
@@ -1825,4 +1826,99 @@ TEST_CASE("to_json writes counts and codes, error_code only when set", "[cleaner
                              "rounds": 1, "error_code": "graph_permission"},
               "onedrive": {"found": 2, "deleted": 2, "gone": 0, "left": 0, "skipped": 1, "rounds": 2}
           })"));
+}
+
+// ---- Q3.2: a listing SharePoint trimmed is never "nothing to delete" -----------------------
+
+TEST_CASE("a file target that holds more than Graph listed is graph_permission: nothing is "
+          "deleted, and the target isn't reported clean",
+          "[cleaner][q3.2]")
+{
+    // Live, 2026-10-04 (Q3.2 scenario 6): without its SharePoint roles the app
+    // still got 200 for the library's drive and root (childCount 1) and an
+    // empty listing, so the clean after said "ok: deleted 0" with the restored
+    // file still there.
+    const Which trimmed = GENERATE(Which::sharepoint, Which::onedrive);
+    INFO(name_of(trimmed));
+    Lab lab;
+    for (const Which which : {Which::mail, Which::sharepoint, Which::onedrive}) {
+        if (which != trimmed) {
+            lab.serve_recorded(which);
+        }
+    }
+    if (trimmed == Which::sharepoint) {
+        lab.http.on(HttpMethod::get, library_root_url(),
+                    {load_fixture("graph", "restoretarget-root-200-one-child")});
+        lab.list(Which::sharepoint, {load_fixture("graph", "restoretarget-children-200-trimmed")});
+    } else {
+        json folder = load_fixture_json("graph", "onedrive-folder-200");
+        folder["body"]["folder"]["childCount"] = 1;
+        lab.http.on(HttpMethod::get, folder_url(), {to_response(folder)});
+        lab.list(Which::onedrive, {empty_listing(Which::onedrive)});
+    }
+
+    const CleanupResult result = lab.clean();
+
+    const TargetCleanup& t = of(result, trimmed);
+    require_stopped(t, "graph_permission");
+    CHECK(t.deleted == 0);
+    CHECK(t.rounds == 1); // a refusal gets no second round
+    CHECK(lab.writes_to(trimmed).empty());
+    CHECK_THAT(lab.log(), ContainsSubstring("Graph listed 0 of the 1 entries in "));
+    CHECK_THAT(lab.log(), ContainsSubstring("SharePoint leaves out what the app may not read"));
+    for (const Which other : {Which::mail, Which::sharepoint, Which::onedrive}) {
+        if (other != trimmed) {
+            require_cleaned(of(result, other), recorded_count(other));
+        }
+    }
+    CHECK_FALSE(result.ok());
+    lab.require_only_listed_writes();
+}
+
+TEST_CASE("the listing after a round's deletes isn't held to the count read before them",
+          "[cleaner][q3.2]")
+{
+    // The root counted the three files before they were deleted; the second
+    // listing is empty because they are gone.
+    Lab lab;
+    for (const Which which : {Which::mail, Which::sharepoint, Which::onedrive}) {
+        lab.serve_recorded(which);
+    }
+    lab.http.on(HttpMethod::get, library_root_url(),
+                {library_root(recorded_count(Which::sharepoint))});
+
+    const CleanupResult result = lab.clean();
+
+    require_cleaned(result.sharepoint, recorded_count(Which::sharepoint));
+    CHECK(result.ok());
+}
+
+TEST_CASE("a count that still counts what was just deleted is read again, never taken for a "
+          "trimmed listing",
+          "[cleaner][q3.2]")
+{
+    // PR #155 review: a round that starts right after deletes (an earlier
+    // round's, or the run before) may read a count that trails them.
+    const Which lagging = GENERATE(Which::sharepoint, Which::onedrive);
+    INFO(name_of(lagging));
+    Lab lab;
+    if (lagging == Which::sharepoint) {
+        lab.http.on(HttpMethod::get, library_root_url(), {library_root(1), library_root(0)});
+    } else {
+        json stale = load_fixture_json("graph", "onedrive-folder-200");
+        stale["body"]["folder"]["childCount"] = 1;
+        json fresh = stale;
+        fresh["body"]["folder"]["childCount"] = 0;
+        lab.http.on(HttpMethod::get, folder_url(), {to_response(stale), to_response(fresh)});
+    }
+
+    const CleanupResult result = lab.clean();
+
+    const TargetCleanup& t = of(result, lagging);
+    CHECK(t.error_code.empty());
+    CHECK(t.ok());
+    CHECK(t.rounds == 1);
+    CHECK(t.deleted == 0);
+    CHECK(result.ok());
+    CHECK(lab.writes().empty());
 }

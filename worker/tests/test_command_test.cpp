@@ -437,6 +437,29 @@ TEST_CASE("test: VERDICT and REASON: an infrastructure item is unchecked, never 
          {{"mail", "RP-CANARY-0001", "manifest", "no", "missing", "failed", "missing", "-"},
           {"sharepoint", "rp-canary-01.pdf", "manifest", "no", "missing",
            "unchecked backup_infrastructure", "missing", "-"}}},
+        {"a canary the restore point doesn't hold, the point taken after the manifest was seeded",
+         [](TestLab& lab) {
+             lab.fake.answer = [](const rp::connector::RestoreSpec& spec) {
+                 return not_in_point(spec);
+             };
+             lab.targets.after[0] = json::array();
+         },
+         Args{"--mail", "1", "--sp", "0", "--od", "0"},
+         rp::exit_code::restore,
+         {{"mail", "RP-CANARY-0001", "manifest", "no", "missing", "failed", "not_in_backup",
+           "-"}}},
+        {"a canary a restore point taken before the manifest was seeded doesn't hold",
+         [](TestLab& lab) {
+             lab.fake.points = {point(kNewestId, "2026-09-24T22:00:00Z")};
+             lab.fake.answer = [](const rp::connector::RestoreSpec& spec) {
+                 return not_in_point(spec);
+             };
+             lab.targets.after[0] = json::array();
+         },
+         Args{"--mail", "1", "--sp", "0", "--od", "0"},
+         rp::exit_code::service,
+         {{"mail", "RP-CANARY-0001", "manifest", "no", "missing", "unchecked not_in_backup",
+           "not_in_backup", "-"}}},
         {"a mail whose time, ID and body differ",
          [](TestLab& lab) {
              lab.targets.after[0] = json::array({graph_mail(
@@ -497,7 +520,7 @@ TEST_CASE("test: VERDICT and REASON: an infrastructure item is unchecked, never 
          rp::exit_code::service,
          {{"mail", "RP-CANARY-0001", "manifest", "no", "missing", "-", "missing", "-"}}},
     };
-    const Case& c = cases[GENERATE(range(std::size_t{0}, std::size_t{7}))];
+    const Case& c = cases[GENERATE(range(std::size_t{0}, std::size_t{9}))];
     CAPTURE(c.name);
     TestLab lab;
     c.setup(lab);
@@ -954,4 +977,49 @@ TEST_CASE("test --json --record: wrote <file>, then the recording's line, last; 
         ++files;
     }
     CHECK(files > 0);
+}
+
+TEST_CASE("test: a read-back SharePoint trimmed is error graph_permission, exit 2, never a fail "
+          "for the restored item it hid (Q3.2 scenario 6)",
+          "[test_command][q3.2]")
+{
+    // Live, 2026-10-04: the app's SharePoint roles revoked, Veeam restored the
+    // file, the library's root counted it (childCount 1) and the listing came
+    // back 200 and empty. That run said `status fail`, exit 5.
+    namespace gl = rp::test::graph_lab;
+    TestLab lab;
+    lab.targets.after[kind_slot(rp::connector::ItemKind::sharepoint)] = json::array();
+    lab.targets.graph.on(rp::HttpMethod::get, gl::library_root_url(),
+                         [&lab](const rp::HttpRequest&) {
+                             return gl::library_root(lab.targets.restored() ? 1 : 0);
+                         });
+
+    const Run run = lab.run({"--mail", "0", "--sp", "1", "--od", "0", "--run-id", kRunId});
+
+    INFO(run.out);
+    INFO(run.err);
+    CHECK(run.exit_code == rp::exit_code::auth);
+    CHECK_THAT(run.out, ContainsSubstring("\nrestore succeeded: 1 of 1 item(s) restored in "));
+    CHECK_THAT(run.out,
+               ContainsSubstring(check_table({{"sharepoint", "rp-canary-01.pdf", "manifest", "no",
+                                               "error", "unchecked graph_permission",
+                                               "graph_permission", "-"}}) +
+                                 "\ncheck: 0 match, 0 mismatch, 0 missing, 1 error\n"));
+    CHECK_THAT(run.out,
+               ContainsSubstring("\nstatus error graph_permission: 1 of 1 item(s) couldn't be "
+                                 "checked (graph_permission 1)\n"));
+    CHECK_THAT(run.out, !ContainsSubstring("status fail"));
+    // The clean after sees the same thing: it doesn't say the library is empty.
+    CHECK_THAT(run.out,
+               ContainsSubstring("\ncleanup after incomplete: deleted 0 mail, 0 sharepoint, 0 "
+                                 "onedrive; sharepoint graph_permission\n"));
+    CHECK_THAT(run.err,
+               ContainsSubstring("check error: Graph listed 0 of the 1 entries in the "
+                                 "RestoreTarget library: SharePoint leaves out what the app may "
+                                 "not read instead of refusing the listing; the Worker app relies "
+                                 "on Sites.Selected read on the test site; see "
+                                 "docs/security/graph-permissions.md\n"));
+    CHECK_THAT(run.err,
+               ContainsSubstring("cleanup error: sharepoint: Microsoft Graph refused a permission "
+                                 "the cleanup relies on (graph_permission)\n"));
 }

@@ -66,6 +66,7 @@ struct It {
     ItemKind kind = ItemKind::mail;
     ExpectedKind expected_kind = ExpectedKind::manifest;
     std::string session = "s-1";
+    bool container_missing = false;                // the point lacks the item's whole container
 };
 
 It match()
@@ -149,6 +150,7 @@ Run run_of(const std::vector<It>& items, RestoreStatus status = RestoreStatus::s
         restored.session_id = it.session;
         restored.outcome = it.restored;
         restored.infrastructure = it.infrastructure;
+        restored.container_missing = it.container_missing;
         run.restore.items.push_back(restored);
         ++run.restore.items_sent;
         run.restore.items_restored += it.restored == ItemOutcome::restored ? 1 : 0;
@@ -673,6 +675,22 @@ std::vector<Row> item_rules()
              return run_of({it}, RestoreStatus::failed);
          },
          kError, "not_in_backup", {}, {{0, "not_in_backup"}}, {}},
+        {"I4g", "a canary whose mailbox, site or OneDrive isn't in a restore point taken after "
+                "seeded_at: unchecked, the point doesn't cover it",
+         [] {
+             It it = not_in_point();
+             it.container_missing = true;
+             return run_of({it}, RestoreStatus::failed);
+         },
+         kError, "not_in_backup", {}, {{0, "not_in_backup"}}, {}},
+        {"I4h", "beside a restored item: the canary whose container is missing unchecked, the "
+                "run error, never fail",
+         [] {
+             It it = not_in_point();
+             it.container_missing = true;
+             return run_of({match(), it}, RestoreStatus::partial);
+         },
+         kError, "not_in_backup", {}, {{1, "not_in_backup"}}, {}},
         {"I5a", "missing, the backup said restored: failed", [] { return run_of({missing()}); },
          kFail, "", {0}, {}, {}},
         {"I5b", "missing, failed not for infrastructure: failed",
@@ -1262,6 +1280,8 @@ TEST_CASE("run status: the restore object holds counts, sessions and items, neve
         {ItemKind::mail, "SENTINEL-NAME-1", "s-mail", ItemOutcome::failed,
          "SENTINEL-MESSAGE Veeam could not reach Microsoft 365", true},
         {ItemKind::sharepoint, "SENTINEL-NAME-2", "s-sp", ItemOutcome::unknown, "", false},
+        {ItemKind::onedrive, "SENTINEL-NAME-3", "", ItemOutcome::not_in_backup,
+         "SENTINEL-MESSAGE the OneDrive not found in the restore point", false, true},
     };
 
     const json written = verification::to_json(result);
@@ -1278,11 +1298,13 @@ TEST_CASE("run status: the restore object holds counts, sessions and items, neve
              "started_at_raw": "2026-09-30T10:01:10Z", "ended_at_raw": "0001-01-01T00:00:00Z"}],
         "items": [
             {"index": 0, "kind": "mail", "outcome": "restored", "infrastructure": false,
-             "session_id": "s-mail"},
+             "container_missing": false, "session_id": "s-mail"},
             {"index": 1, "kind": "mail", "outcome": "failed", "infrastructure": true,
-             "session_id": "s-mail"},
+             "container_missing": false, "session_id": "s-mail"},
             {"index": 2, "kind": "sharepoint", "outcome": "unknown", "infrastructure": false,
-             "session_id": "s-sp"}]})json");
+             "container_missing": false, "session_id": "s-sp"},
+            {"index": 3, "kind": "onedrive", "outcome": "not_in_backup",
+             "infrastructure": false, "container_missing": true, "session_id": ""}]})json");
     CHECK(written == want);
     CHECK(written.dump().find("SENTINEL") == std::string::npos);
 }

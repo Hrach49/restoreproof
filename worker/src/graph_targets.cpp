@@ -89,10 +89,10 @@ std::vector<FoundItem> TargetReader::list_files(const FileTarget& target)
 {
     const std::string& location = target.location;
     unlisted_ = 0;
-    const std::vector<json> pages =
-        list_pages(graph_, target.children_path, *target.grant, {}, location, target.next_rule);
     // A listing SharePoint trimmed is a missing permission, never an empty target.
-    check_listing_whole(target.child_count, listed_entries(pages), *target.grant, location);
+    const std::vector<json> pages =
+        list_whole(graph_, target.children_path, *target.grant, location, target.next_rule,
+                   target.child_count, target.recount);
     std::vector<FoundItem> items;
     for (const json& page : pages) {
         for (const json& entry : page.at("value")) {
@@ -253,20 +253,23 @@ std::vector<FoundItem> TargetReader::list_sharepoint()
 {
     check_restore_library(graph_, targets_);
     const std::string& drive = targets_.library_id();
-    const std::optional<std::uint64_t> child_count = library_child_count(graph_, drive);
+    const auto count = [this, &drive] { return library_child_count(graph_, drive); };
     return list_files({ItemType::sharepoint, &kSitesReadGrant, drive,
                        "/drives/" + drive + "/root/children" + std::string{kChildrenQuery},
                        "the RestoreTarget library",
                        [&drive](const std::vector<std::string>& path) {
                            return is_library_root_path(path, drive);
                        },
-                       child_count});
+                       count(), count});
 }
 
 std::vector<FoundItem> TargetReader::list_onedrive()
 {
-    const std::optional<std::uint64_t> child_count =
-        check_restore_onedrive_folder(graph_, targets_).child_count;
+    // The guard's own read gives the folder's count.
+    const auto count = [this] {
+        return check_restore_onedrive_folder(graph_, targets_).child_count;
+    };
+    const std::optional<std::uint64_t> child_count = count();
     const std::string& drive = targets_.onedrive_drive_id();
     const std::string& folder = targets_.onedrive_folder_id();
     return list_files({ItemType::onedrive, &kOneDriveGrant, drive,
@@ -276,7 +279,7 @@ std::vector<FoundItem> TargetReader::list_onedrive()
                        [&drive, &folder](const std::vector<std::string>& path) {
                            return is_folder_path(path, drive, folder);
                        },
-                       child_count});
+                       child_count, count});
 }
 
 } // namespace rp::graph

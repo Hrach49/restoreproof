@@ -237,7 +237,7 @@ Each item gets one verdict; the first rule that fits wins.
 | I1 | the check says `error` | *unchecked*, with the check's code |
 | I2 | the check says `match` | *verified*, whatever the backup said about the item |
 | I3 | `missing` or `mismatch`, and the backup marked the item not restored with `infrastructure` | *unchecked*, `backup_infrastructure` |
-| I4 | `missing` or `mismatch`, the backup said the restore point doesn't hold the item (`not_in_backup`), and the point isn't shown to hold it: a random item, or a canary whose restore point wasn't taken strictly after the manifest's `seeded_at` (or either time doesn't read) | *unchecked*, `not_in_backup` |
+| I4 | `missing` or `mismatch`, the backup said the restore point doesn't hold the item (`not_in_backup`), and the point isn't shown to hold it: the point lacks the item's whole container (`container_missing`: its mailbox, site or OneDrive), or it is a random item, or a canary whose restore point wasn't taken strictly after the manifest's `seeded_at` (or either time doesn't read) | *unchecked*, `not_in_backup` |
 | I5 | `missing` or `mismatch` | *failed* |
 
 **An item the restore point doesn't hold (Q3.1, `docs/decisions.md` 2026-10-03).** The
@@ -247,7 +247,10 @@ later must hold each one: a canary missing from it is *failed* (I5), and the run
 naming it in its row (`rpworker test`'s REASON `not_in_backup`). A canary missing from an
 older point, or a random item (drawn from this very point's listing, so its absence is the
 backup product contradicting itself), is *unchecked* `not_in_backup` (I4): the test can't say
-the backup lost it.
+the backup lost it. The same holds when the point holds no backup of the item's whole mailbox,
+site or OneDrive (`container_missing`; PR #155 review, `docs/decisions.md` 2026-10-04): the
+point doesn't cover the item, a job or configuration matter, never a `fail`. A folder or a
+library missing inside a container the point does hold is still the item's own miss.
 
 A restored item's `infrastructure` flag counts for nothing (I5c): only an item the backup says
 it didn't restore can be excused.
@@ -396,7 +399,9 @@ value would make a restored item `missing`, a `fail`. So every listing of the Re
 library and of the OneDrive folder is held to the container's own `folder.childCount`, read
 first (`check_listing_whole`, `src/graph_paging.hpp`): fewer entries than counted is a
 `PermissionError`, code `graph_permission`, like any refused read: a stop before the restore,
-or the type's items `error` after it (I1, R7). `docs/decisions.md` 2026-10-04, Q3.2.
+or the type's items `error` after it (I1, R7). `docs/decisions.md` 2026-10-04, Q3.2. A short
+listing isn't refused at once: the count may trail a delete, so count and listing are read
+again after 2 s, up to three times (`list_whole`; the PR #155 review entry).
 
 ### In `rpworker restore`
 

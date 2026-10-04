@@ -1171,6 +1171,11 @@ json GraphClient::get_json(std::string_view path_or_url, const Grant& grant,
     return json_body(path_or_url, get(path_or_url, grant, headers));
 }
 
+void GraphClient::wait(milliseconds wait)
+{
+    options_.sleep(wait);
+}
+
 std::optional<json> GraphClient::find_json(std::string_view path_or_url, const Grant& grant,
                                            const HttpHeaders& headers)
 {

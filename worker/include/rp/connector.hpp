@@ -188,6 +188,10 @@ struct ItemRestoreResult {
     // Whether that message reads as the product failing to reach Microsoft
     // 365 or lacking permissions, not as the item being wrong.
     bool infrastructure = false;
+    // With not_in_backup: the restore point holds no backup of the item's
+    // whole source container (its mailbox, site or OneDrive), so the point
+    // doesn't cover the item and says nothing about it (PR #155 review).
+    bool container_missing = false;
 };
 
 // One restore session, as the backup product reported it.

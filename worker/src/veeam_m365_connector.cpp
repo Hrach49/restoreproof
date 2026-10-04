@@ -26,7 +26,6 @@
 #include <map>
 #include <memory>
 #include <optional>
-#include <set>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -108,10 +107,35 @@ struct TypeWork {
     // The tenant's names this type's messages may quote (source containers'
     // and folders' names and addresses): never read as Veeam's words.
     std::vector<std::string> tenant_texts;
-    // The spec items of this type the restore point doesn't hold, by their
-    // index in the type, with browsing's message: never sent (Q3.1).
-    std::vector<std::pair<std::size_t, std::string>> not_in_point;
+    // The spec items of this type the restore point doesn't hold: never sent
+    // (Q3.1).
+    struct NotInPoint {
+        std::size_t index = 0;          // in the type
+        std::string message;            // browsing's
+        bool container_missing = false; // its whole mailbox, site or OneDrive
+    };
+    std::vector<NotInPoint> not_in_point;
 };
+
+// The restore point holds no backup of an item's source container (its
+// mailbox, site or OneDrive): the point doesn't cover the item, which the
+// status never reads as the backup losing it (PR #155 review).
+class ContainerNotInPoint : public connector::NotFoundError {
+public:
+    using connector::NotFoundError::NotFoundError;
+};
+
+// exactly_one for an item's source container: no match is ContainerNotInPoint.
+template <class Match>
+const json& one_container(const std::vector<json>& list, const std::string& item,
+                          const std::string& looked_for, Match match)
+{
+    try {
+        return exactly_one(list, item, looked_for, std::move(match));
+    } catch (const connector::NotFoundError& e) {
+        throw ContainerNotInPoint(e.what());
+    }
+}
 
 // Resolves spec item `i` of `work`'s type with `resolve`: an item browsing
 // doesn't find (connector::NotFoundError, veeam_browse::exactly_one) is
@@ -122,9 +146,24 @@ void resolve_item(TypeWork& work, std::size_t i, Resolve&& resolve)
 {
     try {
         resolve();
+    } catch (const ContainerNotInPoint& e) {
+        work.not_in_point.push_back({i, e.what(), true});
     } catch (const connector::NotFoundError& e) {
-        work.not_in_point.emplace_back(i, e.what());
+        work.not_in_point.push_back({i, e.what(), false});
     }
+}
+
+// The listing at `key` of `cache`, fetched once: an empty one is kept too, so
+// the items missing under it don't each ask Veeam again.
+template <class Fetch>
+const std::vector<json>& cached(std::map<std::string, std::vector<json>>& cache,
+                                const std::string& key, Fetch&& fetch)
+{
+    auto it = cache.find(key);
+    if (it == cache.end()) {
+        it = cache.emplace(key, fetch()).first;
+    }
+    return it->second;
 }
 
 // Adds the string at `key` of a Veeam entry, if any, to `texts`.
@@ -331,7 +370,7 @@ TypeWork RestoreRun::resolve_mail()
             // A user's in-place archive is listed as a second entry with the same
             // email and isArchive true: a sample's mailbox is the primary one.
             const json& mailbox =
-                exactly_one(mailboxes, item, "mailbox " + shown_text(sel.mailbox), [&](const json& e) {
+                one_container(mailboxes, item, "mailbox " + shown_text(sel.mailbox), [&](const json& e) {
                     const std::string* email = text_at(e, "email");
                     const bool is_archive = veeam_browse::bool_at(e, "isArchive");
                     return email != nullptr && ascii_iequals(*email, sel.mailbox) && !is_archive;
@@ -345,22 +384,21 @@ TypeWork RestoreRun::resolve_mail()
                 throw vr::ShapeError("a mailbox ID that isn't a UUID");
             }
             const std::string mailbox_path = base + "/" + mailbox_id;
-            std::vector<json>& in_mailbox = folders[mailbox_id + "\n" + sel.folder];
-            if (in_mailbox.empty()) {
-                in_mailbox =
-                    c_.client.get_all(mailbox_path + "/folders?name=" + form_encode(sel.folder));
-            }
+            const std::vector<json>& in_mailbox =
+                cached(folders, mailbox_id + "\n" + sel.folder, [&] {
+                    return c_.client.get_all(mailbox_path + "/folders?name=" +
+                                             form_encode(sel.folder));
+                });
             const json& folder =
                 exactly_one(in_mailbox, item, "folder " + shown_text(sel.folder), [&](const json& e) {
                     const std::string* name = text_at(e, "name");
                     return name != nullptr && *name == sel.folder;
                 });
             const std::string& folder_id = id_of(folder);
-            std::vector<json>& listed = items[mailbox_id + "\n" + folder_id];
-            if (listed.empty()) {
-                listed = c_.client.get_all(mailbox_path + "/items?parentId=" +
-                                           form_encode(folder_id));
-            }
+            const std::vector<json>& listed = cached(items, mailbox_id + "\n" + folder_id, [&] {
+                return c_.client.get_all(mailbox_path + "/items?parentId=" +
+                                         form_encode(folder_id));
+            });
             const json& found = exactly_one(listed, item, "the message", [&](const json& e) {
                 const std::string* subject = text_at(e, "subject");
                 return subject != nullptr && *subject == sel.subject;
@@ -395,10 +433,9 @@ Resolved resolve_document(VeeamClient& client, const std::string& container_path
                           const std::string& parent, std::map<std::string, std::vector<json>>& cache,
                           const std::string& item, const std::string& name, std::int64_t size)
 {
-    std::vector<json>& listed = cache[container_path + "\n" + parent];
-    if (listed.empty()) {
-        listed = client.get_all(container_path + "/Documents?parentId=" + form_encode(parent));
-    }
+    const std::vector<json>& listed = cached(cache, container_path + "\n" + parent, [&] {
+        return client.get_all(container_path + "/Documents?parentId=" + form_encode(parent));
+    });
     const json& found = exactly_one(listed, item, "the file",
                                     [&](const json& e) { return is_file_named(e, name); });
     const std::string id = id_of(found);
@@ -437,11 +474,9 @@ std::string walk_folders(VeeamClient& client, const std::string& container_path,
                          std::string* top_folder = nullptr)
 {
     for (const std::string& segment : segments) {
-        std::vector<json>& listed = cache[container_path + "\n" + parent];
-        if (listed.empty()) {
-            listed = client.get_all(container_path + "/Folders?parentId=" +
-                                    form_encode(parent));
-        }
+        const std::vector<json>& listed = cached(cache, container_path + "\n" + parent, [&] {
+            return client.get_all(container_path + "/Folders?parentId=" + form_encode(parent));
+        });
         const json& folder =
             exactly_one(listed, item, "folder " + shown_text(segment), [&](const json& e) {
                 const std::string* name = text_at(e, "name");
@@ -461,7 +496,7 @@ TypeWork RestoreRun::resolve_sharepoint()
     work.kind = ItemKind::sharepoint;
     work.explore = sessions_.open(ItemKind::sharepoint);
     const std::string base = "/v8/RestoreSessions/" + work.explore + "/Organization/Sites/";
-    std::set<std::string> sites_checked;
+    std::map<std::string, bool> sites; // by ID: whether the restore point holds it
     std::map<std::string, std::vector<json>> libraries; // by site
     std::map<std::string, std::vector<json>> folders;   // by path and parent
     std::map<std::string, std::vector<json>> documents; // by path and parent
@@ -474,20 +509,35 @@ TypeWork RestoreRun::resolve_sharepoint()
                 throw connector::Error("veeam_m365: " + item + ": its site_id isn't a Graph site ID");
             }
             const std::string site_path = base + *site;
-            if (sites_checked.insert(*site).second) {
-                const json listed = c_.client.get_json(site_path);
-                const std::string* id = text_at(listed, "id");
-                if (id == nullptr || !ascii_iequals(*id, *site)) {
-                    throw connector::Error("veeam_m365: " + item +
-                                           ": Veeam answered for another site than its site_id");
+            auto known = sites.find(*site);
+            if (known == sites.end()) {
+                // Veeam's 404 for the site: the point doesn't hold it. An
+                // explore session gone answers 404 too; either way the item
+                // is unchecked, never failed.
+                std::optional<json> listed;
+                try {
+                    listed = c_.client.get_json(site_path);
+                } catch (const NotFoundError&) {
                 }
-                add_text(work.tenant_texts, listed, "name");
-                add_text(work.tenant_texts, listed, "url");
+                if (listed) {
+                    const std::string* id = text_at(*listed, "id");
+                    if (id == nullptr || !ascii_iequals(*id, *site)) {
+                        throw connector::Error(
+                            "veeam_m365: " + item +
+                            ": Veeam answered for another site than its site_id");
+                    }
+                    add_text(work.tenant_texts, *listed, "name");
+                    add_text(work.tenant_texts, *listed, "url");
+                }
+                known = sites.emplace(*site, listed.has_value()).first;
             }
-            std::vector<json>& in_site = libraries[*site];
-            if (in_site.empty()) {
-                in_site = c_.client.get_all(site_path + "/Libraries");
+            if (!known->second) {
+                throw ContainerNotInPoint("veeam_m365: " + item + ": the site " +
+                                          shown_text(sel.site_id) +
+                                          " not found in the restore point");
             }
+            const std::vector<json>& in_site = cached(
+                libraries, *site, [&] { return c_.client.get_all(site_path + "/Libraries"); });
             const std::string library = *site + ascii_lower(sel.list_id);
             exactly_one(in_site, item, "the library of list " + shown_text(sel.list_id),
                         [&](const json& e) { return ascii_iequals(id_of(e), library); });
@@ -551,7 +601,7 @@ TypeWork RestoreRun::resolve_onedrive()
                 throw connector::Error("veeam_m365: " + item + ": no OneDrive address for its owner");
             }
             const json& source =
-                exactly_one(onedrives, item, "the OneDrive of " + shown_text(sel.user), [&](const json& e) {
+                one_container(onedrives, item, "the OneDrive of " + shown_text(sel.user), [&](const json& e) {
                     const std::string* listed = text_at(e, "url");
                     return listed != nullptr && ascii_iequals(*listed, *url);
                 });
@@ -917,10 +967,12 @@ connector::RestoreResult RestoreRun::run()
     std::size_t not_in_point = 0;
     std::size_t sent = 0;
     for (const TypeWork& type : work) {
-        for (const auto& [index, message] : type.not_in_point) {
-            connector::ItemRestoreResult& item = result.items[item_offset(type.kind) + index];
+        for (const TypeWork::NotInPoint& missing : type.not_in_point) {
+            connector::ItemRestoreResult& item =
+                result.items[item_offset(type.kind) + missing.index];
             item.outcome = connector::ItemOutcome::not_in_backup;
-            item.message = one_line(message);
+            item.message = one_line(missing.message);
+            item.container_missing = missing.container_missing;
         }
         not_in_point += type.not_in_point.size();
         sent += type.items.size();

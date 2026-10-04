@@ -48,26 +48,18 @@ struct PipelineArgs {
 // into `parsed`.
 bool parse_pipeline_args(const CommandOptions& options, PipelineArgs& parsed);
 
-// What one run produced, handed on once at its end (W3.6 point 4; W4.1 signs
-// it). The pointers are borrowed for the call only; null where a step didn't
-// run.
+// What one run produced, handed on once at its end (W3.6 point 4, W4.1
+// points 1 and 5): the finished restoreproof.result.v1, built and validated
+// by the pipeline (rp::ResultBuilder) once the clean after and the timings
+// are done.
 struct RunSummary {
     std::string run_id;
-    // "YYYY-MM-DDTHH:MM:SS.mmmZ" from connector_options.wall_now (else the
-    // system clock), read where `total` starts and ends; nullopt when the
-    // clock failed.
-    std::optional<std::string> started_at;
-    std::optional<std::string> ended_at;
-    const connector::RestorePoint* restore_point = nullptr;
-    std::string veeam_org_name;
-    const sampling::SampleRecord* sample = nullptr;
-    const verification::ExpectedSet* expected = nullptr;
-    const connector::RestoreResult* restore = nullptr;
-    const verification::CheckResult* check = nullptr;
-    const verification::RunVerdict* verdict = nullptr; // null only after an unexpected failure
-    // Null when no clean ran: the run stopped before the clean before.
-    const RunCleanup* cleanup = nullptr;
-    const timing::RunTimings* timings = nullptr;
+    // The result's canonical text (rp::canonical_json), exactly what a file
+    // holds; borrowed for the call only. Null when there is no valid result:
+    // no verdict (an unexpected failure), a run that ended `error
+    // result_invalid`, or a finished result that couldn't be built or isn't
+    // valid by the schema. Never a cut-down one.
+    const std::string* result = nullptr;
 };
 
 // Where a command's output differs from the other's.
@@ -89,8 +81,10 @@ struct Presentation {
     std::function<void()> after_config;
     // Called once, last, by every run that printed its run line, after the
     // timings and env.on_timings, with `code` the exit code so far and
-    // whether stdout was lost; returns the exit code. What it throws keeps
-    // `code`. Null = nothing.
+    // whether stdout was lost; returns the exit code. When it throws, a
+    // `code` of 0 becomes 1 and any other is kept. Null = nothing, and the
+    // finished result isn't built: only the one validation before the
+    // status line runs.
     std::function<int(const RunSummary&, int code, bool output_lost)> on_run;
 };
 

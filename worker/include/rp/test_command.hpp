@@ -6,8 +6,9 @@
 // (src/run_pipeline.hpp). It WRITES to the tenant as `restore` does: into the
 // restore targets only, through restore_sample, and deletes there through
 // the Cleaner only. What differs from `restore` is its table and its --json
-// file. The choices are the 2026-10-03 W3.6 entry in docs/decisions.md;
-// usage and an example are in docs/worker-config.md ("rpworker test").
+// file. The choices are the 2026-10-03 W3.6 entry in docs/decisions.md and,
+// for the file, the 2026-10-04 W4.1 one; usage and an example are in
+// docs/worker-config.md ("rpworker test").
 
 #include <rp/restore_command.hpp>
 
@@ -48,19 +49,16 @@ namespace rp {
 //  - with --json <file>, after the step timings' table, "wrote <file>" on
 //    success, before --record's "recorded ..." line.
 //
-// --json <file> (W3.6 point 5) writes an unsigned run summary, pretty
-// printed, for every run that printed its run line, whatever its status:
-// {"format": "rp.run-summary.v0", "worker_version", "command": "test",
-// "run_id", "started_at", "ended_at" ("YYYY-MM-DDTHH:MM:SS.mmmZ" from
-// connector_options.wall_now where `total` starts and ends), "restore_point":
-// {"id", "backup_time_raw"}, "veeam_org_name", "sample", "expected",
-// "restore" (verification::to_json(RestoreResult)), "check", "status",
-// "cleanup" (null when no clean ran), "timings", "exit_code" (the exit code
-// as known when the file is written: the status's, but 1 for a pass whose
-// output was lost or whose --record recording isn't complete; only the
-// file's own failed write comes later, and then there is no file)}, every
-// key always there, null where a step didn't run. No secret; it holds more tenant data than
-// stdout (docs/verification.md). The path is checked once the config is
+// --json <file> (W3.6 point 5, W4.1) writes the run's unsigned result,
+// restoreproof.result.v1 (rp/result_builder.hpp; the schema is
+// shared/schemas/result.v1.json), for every run that printed its run line,
+// whatever its status: exactly its canonical text (rp::canonical_json: one
+// line, no whitespace, no trailing newline), fifteen keys, every one always
+// there, null where a step didn't run. The pipeline builds and validates it
+// once the clean after and the timings are done. Nothing of the process is in
+// it: a pass whose output was lost or whose --record recording isn't complete
+// shows only in the exit code and on `err`. No secret; it holds more tenant
+// data than stdout (docs/verification.md). The path is checked once the config is
 // read, before the secrets, the manifest, the mutex, --record and any Veeam
 // call; each refusal is exit 1:
 //   config error: --json <file>: not a UTF-8 path
@@ -76,8 +74,15 @@ namespace rp {
 // characters). An empty --json value is a usage error, as a missing one. The file is written through env.write_summary (by default never over a
 // file that appeared since). When it isn't written: "json error: <file>:
 // could not be written" on `err`; the status never changes, an exit code of
-// 0 becomes 1 and any other is kept. <file> is the --json value as given,
-// its control characters as spaces. No exception escapes.
+// 0 becomes 1 and any other is kept. A result that isn't valid is never
+// written, and no cut-down one is made up: "json error: <file>: the result
+// isn't valid restoreproof.result.v1; no file was written", by the same exit
+// code rule, for a run that ended `error result_invalid`
+// (rp/restore_command.hpp), for a finished result that isn't valid though
+// the one before the status line was (after its own "result error: ..."
+// line; the status line is out and stays), and for a run that has no status.
+// <file> is the --json value as given, its control characters as spaces. No
+// exception escapes.
 int run_test_command(std::span<const std::string_view> args, std::ostream& out,
                      std::ostream& err, const RestoreCommandEnv& env);
 

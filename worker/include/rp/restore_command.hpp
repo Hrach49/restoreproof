@@ -314,7 +314,7 @@ std::string format_elapsed(std::chrono::nanoseconds elapsed);
 //
 // Returns an rp::exit_code. Once the run line is out, it is the status's
 // (verification::exit_code_of): pass 0; fail 5 (exit_code::restore); error 1
-// for config and internal, 2 for backup_auth, graph_auth and
+// for config, internal and result_invalid, 2 for backup_auth, graph_auth and
 // graph_permission, 3 for backup_transient and graph_transient, 4 for any
 // other code (target_guard, not_in_backup, backup, backup_infrastructure,
 // graph, stale_target, empty_sample, not_run, restore_contradiction). Each
@@ -384,6 +384,17 @@ std::string format_elapsed(std::chrono::nanoseconds elapsed);
 //    <what()>" for a ConfigError, status error config), then "restore error:
 //    the restore had started: items may be in the restore targets (run <run
 //    ID>)", no check table: status error internal, 1.
+// W4.1: once the status is decided and before the check's table and the
+// status line, the run's restoreproof.result.v1 is built as it stands and
+// validated by the embedded schema (rp/result_builder.hpp), for `restore` and
+// `test` alike, with or without --json. A result that isn't valid makes the
+// run "status error result_invalid: the result isn't valid
+// restoreproof.result.v1; the run itself ended <pass|fail|error <code>>", 1,
+// after one line on `err`: "result error: <n> schema violation(s), first at
+// <JSON pointer>" (the pointer only when each of its parts is a key of the
+// schema or an index), "result error: the result has no canonical form" or
+// "result error: the result couldn't be built". The warnings and the clean
+// after are as for the status it replaced.
 // The backup's own status never decides: a partial restore whose items all
 // verify is a pass (0), a failed one whose items all match is error
 // restore_contradiction (4), an item it failed for an infrastructure reason

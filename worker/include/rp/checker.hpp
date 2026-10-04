@@ -49,7 +49,9 @@ std::string_view to_string(CheckOutcome outcome) noexcept;
 // office-v1 of one restored file (rp/office_v1.hpp): exactly one of the two set.
 struct OfficeHash {
     std::string sha256; // lower-case hex
-    std::string error;  // the OfficeContentError's message: not a valid package
+    // The OfficeContentError's message: not a valid package. It names a part
+    // inside a tenant file, so the check reads only whether it is set.
+    std::string error;
 };
 
 // One read of one target type: its items, or the infrastructure failure that stopped it.
@@ -122,8 +124,13 @@ struct ItemCheck {
     // The fields that didn't agree, in this order: subject, sender_address,
     // sender_name, sent_at, received_at, internet_message_id, size_bytes, sha256.
     std::vector<std::string> mismatches;
-    // One line; empty for a match. Never a tenant value (subject, name, sender,
-    // address, ID), but an office-v1 refusal's message, which names a part.
+    // One line of fixed words; empty for a match. Never a tenant value
+    // (subject, name, sender, address, ID) nor an exception's text: "the
+    // <kind> restore target couldn't be read (<code>)" (an error; the read's
+    // code), "only an earlier run's copy is in the target" (stale_target),
+    // "no restored copy found" (missing), or "fields did not match: <field>,
+    // ..." (a mismatch; `mismatches`), ending "; the restored package isn't
+    // valid office-v1 input" when office-v1 refused the copy.
     std::string reason;
     // More than one copy of this run's matched; the newest was compared.
     // Never changes the outcome (W3.3 decides).

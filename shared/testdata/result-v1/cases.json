@@ -400,6 +400,17 @@
       ]
     },
     {
+      "name": "check-ms-past-signed-64-bit",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/check/items/0/ms",
+          "value": 18446744073709551615
+        }
+      ]
+    },
+    {
       "name": "check-mismatch",
       "valid": true,
       "patch": [
@@ -415,6 +426,26 @@
               "sent_at"
             ],
             "reason": "fields did not match: subject, sent_at",
+            "ms": 40
+          }
+        }
+      ]
+    },
+    {
+      "name": "check-mismatch-size-bytes",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/check/items/2",
+          "value": {
+            "index": 2,
+            "outcome": "mismatch",
+            "found": true,
+            "mismatches": [
+              "size_bytes"
+            ],
+            "reason": "fields did not match: size_bytes",
             "ms": 40
           }
         }
@@ -469,6 +500,23 @@
             "found": false,
             "reason": "the onedrive restore target couldn't be read (graph_permission)",
             "error_code": "graph_permission"
+          }
+        }
+      ]
+    },
+    {
+      "name": "check-error-mail-target-graph-transient",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/check/items/0",
+          "value": {
+            "index": 0,
+            "outcome": "error",
+            "found": false,
+            "reason": "the mail restore target couldn't be read (graph_transient)",
+            "error_code": "graph_transient"
           }
         }
       ]

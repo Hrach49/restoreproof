@@ -35,7 +35,9 @@ struct ResultValidation {
 // Whether `document` is a restoreproof.result.v1 by the embedded schema. The
 // validator is built once, on the first call; thread-safe. Never throws: a
 // schema that can't be loaded, or anything the validator throws, is one
-// violation with no pointer.
+// violation with no pointer. An unsigned integer too large for a signed 64-bit
+// value is refused here, as one violation at its place, before the validator
+// is asked: the library would read it as a negative number.
 ResultValidation validate_result(const nlohmann::json& document) noexcept;
 
 } // namespace rp

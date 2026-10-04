@@ -2996,6 +2996,8 @@ struct RealRig {
               connector::ItemKind::onedrive}) {
             rig.lab.graph_http.on(rp::HttpMethod::get, TargetsLab::clean_listing_url(kind),
                                   {rp::test::graph_lab::page_of(json::array())});
+            // Q3.2: the library root's count, which each listing is held to.
+            rp::test::graph_lab::serve_library_root(rig.lab.graph_http);
         }
     }
 

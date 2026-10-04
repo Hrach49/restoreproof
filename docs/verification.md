@@ -388,6 +388,16 @@ into `result.v1.json`.
 }
 ```
 
+### A listing SharePoint trimmed (Q3.2)
+
+SharePoint doesn't always refuse a read the app lacks the grant for: it can answer 200 and leave
+the files out of a listing (live, 2026-10-04, Q3.2 scenario 6). An empty listing taken at face
+value would make a restored item `missing`, a `fail`. So every listing of the RestoreTarget
+library and of the OneDrive folder is held to the container's own `folder.childCount`, read
+first (`check_listing_whole`, `src/graph_paging.hpp`): fewer entries than counted is a
+`PermissionError`, code `graph_permission`, like any refused read: a stop before the restore,
+or the type's items `error` after it (I1, R7). `docs/decisions.md` 2026-10-04, Q3.2.
+
 ### In `rpworker restore`
 
 Once its run line is out, every ending prints `status <pass|fail|error>[ <code>]: <message>` on

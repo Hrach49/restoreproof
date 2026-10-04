@@ -117,8 +117,11 @@ private:
     TargetCleanup clean_target(const Target& target, std::string_view phase) noexcept;
     // The guard's check of the target; throws what the check throws.
     Resolved resolve(const Target& target);
-    // One listing of the resolved target: the ListedItems it may delete.
-    Listing list(const Target& target, const Resolved& resolved);
+    // One listing of the resolved target: the ListedItems it may delete. With
+    // `whole` (a round's first listing) a file listing is held to the
+    // container's count resolve() read (Q3.2): one SharePoint trimmed is a
+    // PermissionError, never "nothing to delete".
+    Listing list(const Target& target, const Resolved& resolved, bool whole);
     // Why a listed file entry may not be deleted (what the log calls it), or
     // nullopt.
     static std::optional<std::string_view> not_deletable(const nlohmann::json& entry,

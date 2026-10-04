@@ -1,0 +1,17 @@
+{
+  "source": "live 2026-10-04 (Q3.2 scenario 6, Sites.Selected and Lists.SelectedOperations.Selected revoked; token roles ['Files.SelectedOperations.Selected']): the RestoreTarget library's root while it held one restored file",
+  "request": "GET /v1.0/drives/b!XQgI_nDr6EKVpkcBib2Y65nzyk4OzJVNs_7NCRoJ5omdBuz_5GU6TJ2irAhs-dr6/root?$select=id,folder",
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/json; odata.metadata=minimal; odata.streaming=true; IEEE754Compatible=false; charset=utf-8",
+    "request-id": "dbf56c63-4526-4264-b7c9-c387c6877e47",
+    "client-request-id": "dbf56c63-4526-4264-b7c9-c387c6877e47"
+  },
+  "body": {
+    "@odata.context": "https://graph.microsoft.com/v1.0/$metadata#Collection(driveItem)/$entity",
+    "id": "01BLWRTHN6Y2GOVW7725BZO354PWSELRRZ",
+    "folder": {
+      "childCount": 1
+    }
+  }
+}

@@ -407,6 +407,7 @@ struct TargetsLab {
         graph.on(rp::HttpMethod::get, gl::inbox_url(), {rp::test::load_fixture("graph", "mailbox-inbox-200")});
         graph.on(rp::HttpMethod::get, gl::drive_url(),
                  {rp::test::load_fixture("graph", "restoretarget-drive-200")});
+        gl::serve_library_root(graph);
         graph.on(rp::HttpMethod::get, gl::folder_url(),
                  {rp::test::load_fixture("graph", "onedrive-folder-200")});
         const auto serve = [this](const std::string& url, connector::ItemKind kind) {

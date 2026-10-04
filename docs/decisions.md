@@ -7,6 +7,26 @@ Format: date, decision, reason, alternatives rejected.
 
 ---
 
+## 2026-10-04 — Q3.2: a listing shorter than its container's count is a permission error, never an empty target (proposed)
+
+Found by Q3.2's scenario 6 (#43, `tests/e2e/scenarios.md`): with the Worker app's `Sites.Selected` and `Lists.SelectedOperations.Selected` roles revoked, `rpworker test --sp 1` ended **`status fail`** (run `rp-20261004T185609Z-6af4a76d`). SharePoint did not refuse anything. `GET /drives/{library}` and `GET /drives/{library}/root` answered 200, the root's `folder.childCount` counting the file Veeam had just restored, and `GET .../root/children` answered 200 with an empty `value`: security trimming. The Worker took the empty listing for a missing item (a `fail`, which the status vocabulary forbids for a permission problem), the clean after said `ok: deleted 0` with the file still there, and `graph list` said 0. (Minutes after the revoke the same run still passed: SharePoint serves cached permissions for a while. #154 tracks which grants the library really needs.)
+
+1. **A file listing is held to its container's own count.** `check_listing_whole` in `src/graph_paging.hpp`: when the container says it holds more children than Graph listed, the read throws a `PermissionError` naming the grant (`Graph listed <n> of the <m> entries in <target>: SharePoint leaves out what the app may not read instead of refusing the listing; ...`), so the code is `graph_permission`: `error`, exit 2, never `fail`. A container reply without a count is a `GraphError`: the listing can't be shown to be whole.
+2. **The count is read before the listing.** For the library: one new request, `GET /drives/{drive}/root?$select=id,folder` (`library_child_count`). For the OneDrive folder: the guard's own read already asks for the `folder` facet, so `ResolvedOneDriveFolder::child_count` costs nothing. Read first, a file added in between makes the listing longer than the count, which is fine; only fewer entries than counted is refused.
+3. **Both readers.** `TargetReader::list_sharepoint`/`list_onedrive` (the before snapshot, the after read, `graph list`) and the Cleaner's first listing of each round. The Cleaner's second listing of a round isn't checked: the count was read before that round's deletes. A listing cut at `kMaxListPages` is short by design and isn't checked either.
+4. **What the run says.** Before the restore the snapshot stops the run: `status error graph_permission: the run stopped before the restore: ...; nothing was restored`. After it, the type's items are `error` `graph_permission` (row 7), and the clean after reports `sharepoint graph_permission` instead of `ok`. Mail isn't affected: Exchange refuses with a 403.
+
+**Alternatives rejected.**
+- *Check the token's `roles` claim:* it says what Entra granted, not what SharePoint enforces (the cached passes above had no SharePoint role), and it wouldn't catch a grant removed on the list or folder itself.
+- *Treat an empty listing after a successful restore as `error`:* that is exactly the real `fail` (Veeam said restored, nothing arrived; W3.2 live run 2) and must stay one.
+- *`$expand=root` on the guard's drive read:* no extra request, but it changes a recorded guard request for every fixture and recording.
+
+**Risk.** If SharePoint's `childCount` ever lags behind a delete, a listing right after a clean would look short and the run would end `error graph_permission` wrongly (never `fail` or `pass`). The recordings show count and listing equal at every recorded moment, and the live reruns after this change are the check.
+
+Tests: `graph_targets_test.cpp` and `cleaner_test.cpp` (`[q3.2]`, on the two live replies recorded at the failure, `restoretarget-root-200-one-child.json` and `restoretarget-children-200-trimmed.json`), `test_command_test.cpp` (the whole run: restored, read-back trimmed, `error graph_permission`, never `fail`). The w34 live recording replays unchanged but for the one new library-root request.
+
+---
+
 ## 2026-10-03 — Q3.1: an item the restore point doesn't hold is reported per item; a canary missing from a later point is `fail` (proposed)
 
 Closes the first "Open" point of W3.3. Q3.1's scenario 2 (#42: a canary mail permanently deleted, then backed up) wants `fail` naming the item; until now `restore_sample` threw one `NotFoundError` for the whole sample, so the run ended `error not_in_backup` with no item, and its message ("the restore didn't complete ... items may be in the restore targets") overstated it, since browsing fails before any restore is sent. The owner chose to fix it within Q3.1.

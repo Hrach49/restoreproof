@@ -75,4 +75,12 @@ std::optional<VeeamTime> parse_veeam_time(std::string_view text)
            std::chrono::nanoseconds{nanos};
 }
 
+std::optional<std::string> to_whole_seconds(std::string_view text)
+{
+    if (!parse_veeam_time(text)) {
+        return std::nullopt;
+    }
+    return std::string{text.substr(0, 19)} + "Z";
+}
+
 } // namespace rp

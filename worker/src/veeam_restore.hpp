@@ -64,12 +64,10 @@ std::string bare_account(std::string_view username);
 // "YYYY-MM-DDTHH:MM:SSZ" in UTC, cut (not rounded) to the second.
 std::string format_utc_seconds(std::chrono::system_clock::time_point time);
 
-// Veeam's UTC form as a time (veeam_time.hpp, shared with VeeamClient).
+// Veeam's UTC form as a time, and cut to the second (veeam_time.hpp, shared
+// with VeeamClient and the result's restore_point).
 using rp::parse_veeam_time;
-
-// A Veeam time cut (not rounded) to "YYYY-MM-DDTHH:MM:SSZ"; nullopt when it
-// isn't Veeam's UTC form.
-std::optional<std::string> to_whole_seconds(std::string_view text);
+using rp::to_whole_seconds;
 
 // Veeam's site ID for a Graph site ID "<host>,<site GUID>,<web GUID>": the two
 // GUIDs run together, lower case; nullopt when it isn't one.

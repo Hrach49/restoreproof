@@ -6,6 +6,7 @@ dependencies = []
 
 [dependency-groups]
 dev = [
+    "cryptography>=50",
     "jsonschema>=4.26.0",
     "mutmut>=3.8.0",
     "pytest>=8",

@@ -14,6 +14,7 @@ tests never touch Credential Manager's lab entry.
 
 import base64
 import hashlib
+import os
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -98,7 +99,7 @@ def check_public_key_out(path: Path, *, replace: bool, repo_dir: Path = REPO_DIR
     """Where --public-key-out may write: a file outside the repository, in a folder that is there."""
     resolved = path.resolve()  # symbolic links and ".." followed, so the rule sees the real place
     repo = repo_dir.resolve()
-    if resolved == repo or repo in resolved.parents:
+    if resolved == repo or repo in resolved.parents or _is_in_folder(resolved, repo):
         raise SigningKeyError(
             f"--public-key-out {resolved} is inside the repository ({repo}). "
             "Give a path outside it: the lab's public key isn't committed."
@@ -113,6 +114,20 @@ def check_public_key_out(path: Path, *, replace: bool, repo_dir: Path = REPO_DIR
             "--replace is given, which replaces the key and this file."
         )
     return resolved
+
+
+def _is_in_folder(path: Path, folder: Path) -> bool:
+    """Whether path is folder or below it, by file identity and not by text: one folder has
+    many names on Windows (an extended-length `\\\\?\\` path, the drive's admin share, a name
+    with a trailing space). Asks path and each folder above it; one that isn't there yet has
+    no identity and is passed over, so the nearest existing one and all above it decide."""
+    for candidate in (path, *path.parents):
+        try:
+            if os.path.samefile(candidate, folder):
+                return True
+        except OSError:  # not there, or not to be opened: not the folder
+            continue
+    return False
 
 
 def _write_public_key(path: Path, data: bytes, *, replace: bool) -> None:

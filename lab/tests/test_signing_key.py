@@ -80,32 +80,93 @@ def test_an_empty_existing_entry_is_an_entry_too(capsys):
     assert store.writes == []
 
 
+PEM_NAME = "worker-signing.pub.pem"
+SEP = chr(92)  # a backslash
+UNC = SEP * 2
+EXTENDED = UNC + "?" + SEP  # the extended-length prefix
+WINDOWS_ONLY = pytest.mark.skipif(sys.platform != "win32", reason="a Windows path form")
+# Where a test below could leave a file if the refusal it tests regressed.
+STRAY_PEMS = [REPO_DIR / PEM_NAME, REPO_DIR / "lab" / PEM_NAME, REPO_DIR / "docs" / PEM_NAME]
+
+
+def _admin_share(path):
+    """The same file through its drive's admin share, localhost's C$ for C:."""
+    return UNC + "localhost" + SEP + path.drive[0] + "$" + str(path)[len(path.drive) :]
+
+
+@pytest.fixture
+def nothing_written(monkeypatch):
+    """For the tests of a refused --public-key-out: a regression must neither write a file into
+    the working tree nor leave one there. The writer only records, and whatever is there after
+    the test is removed all the same."""
+    calls = []
+    monkeypatch.setattr(signing_key, "_write_public_key", lambda path, data, *, replace: calls.append(path))
+    try:
+        yield calls
+    finally:
+        for stray in STRAY_PEMS:
+            stray.unlink(missing_ok=True)
+
+
 @pytest.mark.parametrize(
     "inside",
     [
-        REPO_DIR / "worker-signing.pub.pem",
-        REPO_DIR / "lab" / "worker-signing.pub.pem",
-        REPO_DIR / "lab" / ".." / "docs" / "worker-signing.pub.pem",
-        REPO_DIR / "lab" / "no-such-folder" / "worker-signing.pub.pem",
+        str(REPO_DIR / PEM_NAME),
+        str(REPO_DIR / "lab" / PEM_NAME),
+        str(REPO_DIR / "lab" / ".." / "docs" / PEM_NAME),
+        str(REPO_DIR / "lab" / "no-such-folder" / PEM_NAME),
+        pytest.param(EXTENDED + str(REPO_DIR / PEM_NAME), marks=WINDOWS_ONLY),
+        pytest.param(EXTENDED + str(REPO_DIR / "lab" / PEM_NAME), marks=WINDOWS_ONLY),
+        pytest.param(EXTENDED + str(REPO_DIR / "lab" / "no-such-folder" / PEM_NAME), marks=WINDOWS_ONLY),
+        # A folder name with a trailing space: Windows opens the repository folder for it.
+        pytest.param(str(REPO_DIR) + " " + SEP + PEM_NAME, marks=WINDOWS_ONLY),
     ],
 )
-def test_a_public_key_file_inside_the_repository_is_refused_before_anything_is_stored(inside, capsys):
+def test_a_public_key_file_inside_the_repository_is_refused_before_anything_is_stored(inside, nothing_written, capsys):
     store = FakeStore()
-    try:
-        with pytest.raises(SigningKeyError, match="inside the repository"):
-            run(store, capsys, public_key_out=inside)
-        assert store.entries == {} and store.writes == []
-        assert not inside.exists()
-    finally:
-        inside.unlink(missing_ok=True)  # a regression must not leave a file in the working tree
+    with pytest.raises(SigningKeyError, match="inside the repository"):
+        run(store, capsys, public_key_out=signing_key.Path(inside))
+    assert store.entries == {} and store.writes == []
+    assert nothing_written == []
+    assert not any(stray.exists() for stray in STRAY_PEMS)
 
 
-def test_a_relative_public_key_file_is_read_against_the_working_folder(monkeypatch, capsys):
+@WINDOWS_ONLY
+@pytest.mark.parametrize("below", [(), ("lab",), ("lab", "no-such-folder")])
+def test_a_public_key_file_inside_the_repository_through_the_admin_share_is_refused(below, nothing_written, capsys):
+    share = _admin_share(REPO_DIR)
+    if not signing_key.Path(share).is_dir():
+        pytest.skip(f"the admin share {share} isn't reachable")
+    store = FakeStore()
+    with pytest.raises(SigningKeyError, match="inside the repository"):
+        run(store, capsys, public_key_out=signing_key.Path(SEP.join([share, *below, PEM_NAME])))
+    assert store.entries == {} and store.writes == []
+    assert nothing_written == []
+    assert not any(stray.exists() for stray in STRAY_PEMS)
+
+
+def test_a_folder_beside_the_repository_is_not_inside_it(tmp_path):
+    # File identity, not text: a sibling whose name starts like the repository's is outside.
+    repo = tmp_path / "repo"
+    sibling = tmp_path / "repo-keys"
+    repo.mkdir()
+    sibling.mkdir()
+    out = signing_key.check_public_key_out(sibling / "key.pem", replace=False, repo_dir=repo)
+    assert out == (sibling / "key.pem").resolve()
+    with pytest.raises(SigningKeyError, match="inside the repository"):
+        signing_key.check_public_key_out(repo / "sub" / "key.pem", replace=False, repo_dir=repo)
+    with pytest.raises(SigningKeyError, match="inside the repository"):
+        signing_key.check_public_key_out(repo, replace=False, repo_dir=repo)
+
+
+def test_a_relative_public_key_file_is_read_against_the_working_folder(monkeypatch, nothing_written, capsys):
     monkeypatch.chdir(REPO_DIR / "lab")
     store = FakeStore()
     with pytest.raises(SigningKeyError, match="inside the repository"):
-        run(store, capsys, public_key_out=signing_key.Path("worker-signing.pub.pem"))
+        run(store, capsys, public_key_out=signing_key.Path(PEM_NAME))
     assert store.writes == []
+    assert nothing_written == []
+    assert not (REPO_DIR / "lab" / PEM_NAME).exists()
 
 
 def test_a_public_key_file_in_a_folder_that_is_not_there_is_refused(tmp_path, capsys):
@@ -320,11 +381,12 @@ def test_cli_replace_and_public_key_out(cli_store, tmp_path, capsys):
     assert cli_store.entries[signing_key.CREDENTIAL_TARGET] == RFC_PRIVATE
 
 
-def test_cli_public_key_out_inside_the_repository_is_exit_2(cli_store, capsys):
-    inside = REPO_DIR / "lab" / "worker-signing.pub.pem"
+def test_cli_public_key_out_inside_the_repository_is_exit_2(cli_store, nothing_written, capsys):
+    inside = REPO_DIR / "lab" / PEM_NAME
     assert cli.main(["new-signing-key", "--public-key-out", str(inside)]) == 2
     assert "inside the repository" in capsys.readouterr().err
     assert cli_store.entries == {} and not inside.exists()
+    assert nothing_written == []
 
 
 def test_the_help_names_the_command(capsys):

@@ -28,7 +28,7 @@ struct SecretKey {
     bool colon_form;
 };
 
-constexpr std::array<SecretKey, 13> kSecretKeys{{
+constexpr std::array<SecretKey, 16> kSecretKeys{{
     {"client_secret", false, true},
     {"password", false, true},
     {"refresh_token", false, true},
@@ -52,7 +52,23 @@ constexpr std::array<SecretKey, 13> kSecretKeys{{
     // "applicationCertificateThumbprint" goes on past the name: not a match.
     {"applicationcertificate", false, true},
     {"applicationcertificatepassword", false, true},
+    // The Worker's signing key (W4.3): the variable that carries it
+    // (RP_SIGNING_KEY_BASE64=...) and the vault's name for it (W4.5).
+    // "signing_key_id" goes on past the name: not a match.
+    {"signing_key", false, true},
+    {"signing_key_base64", false, true},
+    {"signing_private_key", false, true},
 }};
+
+// A PEM block's header and footer (RFC 7468): "-----BEGIN <label>-----" and
+// "-----END <label>-----". A label that ends like this is a private key's,
+// of any kind ("PRIVATE KEY", "ENCRYPTED PRIVATE KEY", "RSA PRIVATE KEY").
+constexpr std::string_view kPemBegin = "-----BEGIN ";
+constexpr std::string_view kPemEnd = "-----END ";
+constexpr std::string_view kPemDashes = "-----";
+constexpr std::string_view kPrivateKeyLabel = "PRIVATE KEY";
+// No label is nearly this long, and a header is looked at no further.
+constexpr std::size_t kMaxPemLabel = 64;
 
 constexpr std::string_view kSchemeSeparator = "://";
 
@@ -499,12 +515,44 @@ std::optional<Replacement> match_bearer(std::string_view text, std::size_t name_
     return Replacement{from, to, kRedacted};
 }
 
-// The secret at `pos`, if one starts there: URL userinfo after "://", a raw
-// JWT, a bearer token, or a secret header or key (match_key_at).
+// A PEM private key block starting at `pos`: "-----BEGIN <label>-----", the
+// label upper-case letters and blanks ending in "PRIVATE KEY", up to and with
+// "-----END <label>-----" of the same label, whatever is between (line ends
+// as they are or escaped inside a JSON string). Without that footer the
+// block goes to the end of the text: over-redacting is preferred to leaking.
+std::optional<Replacement> match_private_key(std::string_view text, std::size_t pos)
+{
+    if (text.substr(pos, kPemBegin.size()) != kPemBegin) {
+        return std::nullopt;
+    }
+    const std::size_t label_from = pos + kPemBegin.size();
+    std::size_t label_to = label_from;
+    while (label_to < text.size() && label_to - label_from < kMaxPemLabel &&
+           ((text[label_to] >= 'A' && text[label_to] <= 'Z') || text[label_to] == ' ')) {
+        ++label_to;
+    }
+    const std::string_view label = text.substr(label_from, label_to - label_from);
+    if (!label.ends_with(kPrivateKeyLabel) || text.substr(label_to, kPemDashes.size()) != kPemDashes) {
+        return std::nullopt;
+    }
+    std::string footer{kPemEnd};
+    footer += label;
+    footer += kPemDashes;
+    const std::size_t end = text.find(footer, label_to + kPemDashes.size());
+    return Replacement{pos, end == std::string_view::npos ? text.size() : end + footer.size(),
+                       kRedacted};
+}
+
+// The secret at `pos`, if one starts there: URL userinfo after "://", a PEM
+// private key block, a raw JWT, a bearer token, or a secret header or key
+// (match_key_at).
 std::optional<Replacement> match_at(std::string_view text, std::size_t pos)
 {
     if (starts_with_name(text, pos, kSchemeSeparator)) {
         return match_userinfo(text, pos);
+    }
+    if (auto r = match_private_key(text, pos)) {
+        return r;
     }
     if (auto r = match_jwt(text, pos)) {
         return r;

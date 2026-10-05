@@ -388,7 +388,8 @@ targets; nothing was done`, exit 4). The targets needn't be empty first.
 
 **This writes and deletes too.** `rpworker test` (W3.6, `docs/worker-config.md`, "`rpworker
 test`") runs the same pipeline as `rpworker restore`, with its own table after the check and an
-optional `--json` file, the run's result (`restoreproof.result.v1`, W4.1). Its ctest exe tests all stop before any request. Check the same
+optional `--json` file, the run's result (`restoreproof.result.v1`, W4.1), or with `--evidence
+<dir>` the run's folder (W4.2). Its ctest exe tests all stop before any request. Check the same
 things first as for "Restore by hand": an elevated shell, no restore session still `Working`,
 no other RestoreProof run.
 
@@ -456,6 +457,37 @@ JSON paths, never the values.) To read the file, `python -m json.tool
 C:\restoreproof-runs\w41-done-when-1.json`; don't save a reformatted copy over it. Check
 with `rpworker graph list` that the targets are empty again. The file holds tenant data: it
 stays outside the repository, and only the output and the two lines above go into the evidence.
+
+**The W4.2 Done-when run.** W4.2's Done-when is "a run folder contains result.json, the log,
+items.csv and (optionally) a PNG, each hashed in the result" (`docs/decisions.md` 2026-10-05,
+W4.2). The unit tests show it on the recorded lab (`rptests "[evidence]"`); this is the same
+once against the live lab. Check the same things first as above, then, from `worker\`, in an
+elevated shell (the runs root is under `%ProgramData%`):
+
+```powershell
+.\build\dev\rpworker.exe test --mail 10 --sp 10 --od 10 --run-id w42-done-when-1 --config <your config.json> --manifest ..\lab\seed-manifest.json --evidence $env:ProgramData\RestoreProof\runs
+```
+
+The run ID must be new: a folder `runs\w42-done-when-1` that is already there stops the run
+before its run line (`evidence error: ...: the run folder already exists; nothing was done`).
+`--evidence` can't be combined with `--json`. The run ends `status pass: ...`, the clean
+after's line, the timings' table and `evidence C:\ProgramData\RestoreProof\runs\w42-done-when-1:
+result.json, items.csv, veeam-session.log`, exit 0, stderr empty. Then check the folder
+offline: `result.json` valid by the repository's schema and its own canonical form, the files
+beside it exactly the ones `attachments` lists, and each with the size and SHA-256 listed. From
+`cloud\`:
+
+```powershell
+uv run python -c "import hashlib,json,sys,pathlib; from jsonschema import Draft202012Validator; f=pathlib.Path(sys.argv[1]); b=(f/'result.json').read_bytes(); d=json.loads(b); s=json.loads(pathlib.Path('../shared/schemas/result.v1.json').read_bytes()); errs=sorted(Draft202012Validator(s).iter_errors(d), key=lambda e: e.json_path); print('schema:', 'valid' if not errs else [e.json_path for e in errs]); print('canonical:', json.dumps(d, sort_keys=True, separators=(',', ':'), ensure_ascii=False).encode('utf-8') == b); print('files:', {a['name'] for a in d['attachments']} == {p.name for p in f.iterdir()} - {'result.json'}); [print(a['name'], len(x) == a['size_bytes'], hashlib.sha256(x).hexdigest() == a['sha256']) for a in d['attachments'] for x in [(f/a['name']).read_bytes()]]" $env:ProgramData\RestoreProof\runs\w42-done-when-1
+```
+
+It must print `schema: valid`, `canonical: True`, `files: True` and `True True` after each
+attachment's name. With the default config `screenshot` is `{"state": "unavailable", "reason":
+"disabled"}` and there is no PNG: no screenshot is taken today, whatever the setting
+(`docs/verification.md`, "The run folder"). Check with `rpworker graph list` that the targets
+are empty again. The folder holds tenant names (`items.csv`, `veeam-session.log`,
+`result.json`): it stays where it is, outside the repository, and only the run's output, the
+`graph list` afterwards and the check's lines go into the evidence.
 
 ### Recording fixtures (`--record <dir>`)
 

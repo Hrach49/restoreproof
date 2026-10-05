@@ -1,22 +1,31 @@
 <#
 .SYNOPSIS
-    Sets the Worker's Graph certificate variables in this PowerShell session (W2.1).
+    Sets the Worker's Graph certificate and signing key variables in this PowerShell session
+    (W2.1, W4.3).
 
 .DESCRIPTION
     Until the Worker's DPAPI vault lands (W4.5), rpworker reads the RestoreProof Worker app's
-    certificate from two environment variables:
+    certificate and its signing key from three environment variables:
 
       RP_GRAPH_CERT_PFX_BASE64  the PFX file, Base64
       RP_GRAPH_CERT_PASSWORD    its password
+      RP_SIGNING_KEY_BASE64     the Ed25519 signing key: one line, Base64 of its PKCS#8 DER
 
-    This script fills them from where lab\entra\new-worker-app.ps1 keeps the certificate: the PFX
-    file %LOCALAPPDATA%\RestoreProof\lab\worker-graph.pfx and the password in Windows Credential
-    Manager (generic credential "RestoreProof Lab - Worker Graph app PFX"). It first checks that
-    the password opens the PFX. It never prints either value and never writes anything to disk:
-    the variables live only in this PowerShell process and go away when it ends.
+    This script fills the first two from where lab\entra\new-worker-app.ps1 keeps the certificate:
+    the PFX file %LOCALAPPDATA%\RestoreProof\lab\worker-graph.pfx and the password in Windows
+    Credential Manager (generic credential "RestoreProof Lab - Worker Graph app PFX"). It first
+    checks that the password opens the PFX.
+
+    The third comes from the generic credential "RestoreProof Lab - Worker signing key", which
+    `python -m seeder new-signing-key` (in lab\) makes. Only `rpworker test --evidence` needs it,
+    so when there is no such credential the script sets the other two, says that it skipped this
+    one and does not fail. An entry that isn't a signing key stops it before anything is set.
+
+    It never prints any of the values and never writes anything to disk: the variables live only
+    in this PowerShell process and go away when it ends.
 
     Dot-source it, so the variables stay in your session; run any other way, it refuses.
-    -Clear removes both variables again.
+    -Clear removes all three variables again.
 
 .EXAMPLE
     . lab\entra\set-worker-env.ps1
@@ -29,7 +38,8 @@ param(
     # keep their short names through the aliases.
     [Alias('Clear')][switch]$RpWorkerEnvClear,
     [Alias('PfxPath')][string]$RpWorkerEnvPfxPath = '',
-    [Alias('CredentialTarget')][string]$RpWorkerEnvCredentialTarget = ''
+    [Alias('CredentialTarget')][string]$RpWorkerEnvCredentialTarget = '',
+    [Alias('SigningKeyTarget')][string]$RpWorkerEnvSigningKeyTarget = ''
 )
 
 if ($MyInvocation.InvocationName -ne '.') {
@@ -39,25 +49,30 @@ if ($MyInvocation.InvocationName -ne '.') {
 }
 
 # A child scope: none of the script's own variables (the password above all) are left behind in
-# the dot-sourcing session. Only the two environment variables, which are process-wide, remain,
+# the dot-sourcing session. Only the three environment variables, which are process-wide, remain,
 # and the parameters' variables go in `finally`, on a failure too.
 try {
 & {
-    param([bool]$Clear, [string]$PfxPath, [string]$CredentialTarget)
+    param([bool]$Clear, [string]$PfxPath, [string]$CredentialTarget, [string]$SigningKeyTarget)
     $ErrorActionPreference = 'Stop'
     Set-StrictMode -Version Latest
 
     $CredTarget = 'RestoreProof Lab - Worker Graph app PFX'
     $PfxName = 'worker-graph.pfx'
     $SetupScript = 'lab\entra\new-worker-app.ps1'
+    $SigningKeyCredTarget = 'RestoreProof Lab - Worker signing key'
+    # What `python -m seeder new-signing-key` stores and the Worker takes: 64 characters of
+    # standard Base64, the 48 bytes of an Ed25519 key's PKCS#8 DER (16 fixed bytes, then the key).
+    $SigningKeyShape = '^MC4CAQAwBQYDK2VwBCIEI[A-P][A-Za-z0-9+/]{42}\z'
 
     if ($Clear) {
-        Remove-Item Env:RP_GRAPH_CERT_PFX_BASE64, Env:RP_GRAPH_CERT_PASSWORD -ErrorAction SilentlyContinue
-        Write-Host 'cleared RP_GRAPH_CERT_PFX_BASE64 and RP_GRAPH_CERT_PASSWORD for this session'
+        Remove-Item Env:RP_GRAPH_CERT_PFX_BASE64, Env:RP_GRAPH_CERT_PASSWORD, Env:RP_SIGNING_KEY_BASE64 -ErrorAction SilentlyContinue
+        Write-Host 'cleared RP_GRAPH_CERT_PFX_BASE64, RP_GRAPH_CERT_PASSWORD and RP_SIGNING_KEY_BASE64 for this session'
         return
     }
 
     if (-not $CredentialTarget) { $CredentialTarget = $CredTarget }
+    if (-not $SigningKeyTarget) { $SigningKeyTarget = $SigningKeyCredTarget }
     if (-not $PfxPath) { $PfxPath = Join-Path $env:LOCALAPPDATA "RestoreProof\lab\$PfxName" }
     if (-not (Test-Path -LiteralPath $PfxPath -PathType Leaf)) {
         throw "No certificate file at $PfxPath. Create it with $SetupScript (lab/README.md)."
@@ -115,10 +130,26 @@ public static class RpWorkerEnvCredential {
     }
     if (-not $hasKey) { throw "$PfxPath holds no private key. Re-create it with $SetupScript." }
 
+    # The signing key (W4.3). No entry is no error: only `rpworker test --evidence` signs. An
+    # entry of another shape is one, before anything is set, and its value is never shown.
+    $signingKey = [RpWorkerEnvCredential]::Read($SigningKeyTarget)
+    if ($null -ne $signingKey -and $signingKey -cnotmatch $SigningKeyShape) {
+        throw "The Credential Manager entry '$SigningKeyTarget' isn't an Ed25519 signing key (one line, Base64 of its PKCS#8 DER). Nothing was set. Make a new key in lab\ with: uv run python -m seeder new-signing-key --replace (every signature made with the old key is then orphaned)."
+    }
+
     $env:RP_GRAPH_CERT_PFX_BASE64 = [Convert]::ToBase64String($bytes)
     $env:RP_GRAPH_CERT_PASSWORD = $secret
-    Write-Host 'set RP_GRAPH_CERT_PFX_BASE64 and RP_GRAPH_CERT_PASSWORD for this session'
-} $RpWorkerEnvClear.IsPresent $RpWorkerEnvPfxPath $RpWorkerEnvCredentialTarget
+    if ($null -eq $signingKey) {
+        # A value left from an earlier call goes too: the session never holds a key that
+        # Credential Manager doesn't.
+        Remove-Item Env:RP_SIGNING_KEY_BASE64 -ErrorAction SilentlyContinue
+        Write-Host 'set RP_GRAPH_CERT_PFX_BASE64 and RP_GRAPH_CERT_PASSWORD for this session'
+        Write-Host "skipped RP_SIGNING_KEY_BASE64: Credential Manager has no '$SigningKeyTarget'. Only rpworker test --evidence needs it; make the key in lab\ with: uv run python -m seeder new-signing-key"
+    } else {
+        $env:RP_SIGNING_KEY_BASE64 = $signingKey
+        Write-Host 'set RP_GRAPH_CERT_PFX_BASE64, RP_GRAPH_CERT_PASSWORD and RP_SIGNING_KEY_BASE64 for this session'
+    }
+} $RpWorkerEnvClear.IsPresent $RpWorkerEnvPfxPath $RpWorkerEnvCredentialTarget $RpWorkerEnvSigningKeyTarget
 } finally {
-    Remove-Variable RpWorkerEnvClear, RpWorkerEnvPfxPath, RpWorkerEnvCredentialTarget -ErrorAction SilentlyContinue
+    Remove-Variable RpWorkerEnvClear, RpWorkerEnvPfxPath, RpWorkerEnvCredentialTarget, RpWorkerEnvSigningKeyTarget -ErrorAction SilentlyContinue
 }

@@ -24,7 +24,10 @@ inline constexpr int ok = 0;
 // a --json path refused (not UTF-8, a file already there, no such folder), a
 // pass whose --json file couldn't be written, and with --evidence a run ID
 // that can't name a folder, a run folder that is already there or can't be
-// made, and a pass whose run folder isn't complete.
+// made, and a pass whose run folder isn't complete. For `rpworker signer` (W4.3):
+// RP_SIGNING_KEY_BASE64 unset or not a key (`public-key`), a folder that can't
+// be opened or a --public-key file that can't be read or isn't an Ed25519
+// public key in PEM (`verify`), and an answer that didn't reach stdout.
 inline constexpr int config = 1;
 // The service refused the credentials, the account's role, the token or a
 // permission: Veeam's AuthError, Graph's AuthError and PermissionError (whose
@@ -48,11 +51,14 @@ inline constexpr int transient = 3;
 // backup_infrastructure, graph, stale_target, empty_sample, not_run,
 // restore_contradiction).
 inline constexpr int service = 4;
-// `rpworker restore` and `rpworker test` only: the run's status is `fail` (W3.3, rp/run_status.hpp):
-// an item is missing or a mismatch, its target read fine and the backup didn't
-// blame infrastructure for it. A result about the backup, not an error: a run
-// whose status is error ends as 1 to 4, whatever the restore itself reported
-// (docs/decisions.md 2026-10-01, W3.3).
+// The thing tested failed. For `rpworker restore` and `rpworker test`: the
+// run's status is `fail` (W3.3, rp/run_status.hpp): an item is missing or a
+// mismatch, its target read fine and the backup didn't blame infrastructure
+// for it. A result about the backup, not an error: a run whose status is error
+// ends as 1 to 4, whatever the restore itself reported (docs/decisions.md
+// 2026-10-01, W3.3). For `rpworker signer verify` (W4.3): the folder is not
+// verified, "not verified: <word>" on stdout: anything wrong inside the
+// folder, a missing file included (docs/decisions.md 2026-10-05, W4.3 point 4).
 inline constexpr int restore = 5;
 // A command line rpworker doesn't understand; for `restore` and `test` also,
 // once the config or the manifest is read, every sample size 0 or a
@@ -71,11 +77,13 @@ inline constexpr std::string_view kCliUsage =
     "[--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--record <dir>] | "
     "rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] "
     "[--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--record <dir>] "
-    "[--json <file> | --evidence <dir>]\n";
+    "[--json <file> | --evidence <dir>] | "
+    "rpworker signer public-key | rpworker signer verify <folder> --public-key <pem file>\n";
 
 // rpworker's command line: `--version`, `config ...` (rp/config_check.hpp),
 // `veeam ...` (rp/veeam_command.hpp), `graph ...` (rp/graph_command.hpp),
-// `restore ...` (rp/restore_command.hpp) or `test ...` (rp/test_command.hpp).
+// `restore ...` (rp/restore_command.hpp), `test ...` (rp/test_command.hpp) or
+// `signer ...` (rp/signer_command.hpp).
 // `args` is argv without the program name, in UTF-8. Normal output goes to
 // `out`, usage and errors to `err`.
 // Returns the process exit code (rp::exit_code): 0 on success, 64 with

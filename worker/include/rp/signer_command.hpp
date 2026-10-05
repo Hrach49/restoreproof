@@ -37,9 +37,12 @@ SignerCommandEnv default_signer_command_env();
 // missing or empty <folder> or --public-key value, either given twice).
 //
 // `public-key` prints to `out` the SubjectPublicKeyInfo PEM of the key in
-// RP_SIGNING_KEY_BASE64 (three lines) and then `key <key_id>`: what is
-// registered with the Cloud and handed to a verifier. Never the private key,
-// whose text is wiped before anything is printed. Exit 1 with one line on
+// RP_SIGNING_KEY_BASE64 (three lines) and nothing else, so that `out` is a key
+// file as it is: what is registered with the Cloud and handed to a verifier
+// (`signer verify --public-key`, verify_bundle.py). Then, on `err`, the line
+// `key <key_id>` (the W4.3 review moved it there: a verifier refuses a key
+// file with a line after the block). Never the private key, whose text is
+// wiped before anything is printed. Exit 1 with one line on
 // `err`: "config error: <message>" for a ConfigError from `load_secrets`,
 // "config error: RP_SIGNING_KEY_BASE64 is not set" and "config error:
 // RP_SIGNING_KEY_BASE64 is not an Ed25519 private key (Base64 of PKCS#8 DER)".
@@ -50,7 +53,9 @@ SignerCommandEnv default_signer_command_env();
 //  - "verified <bundle_sha256> key <key_id>", exit 0; before it, on `err`, one
 //    "note: not listed in the result: <name>" line per file of the folder that
 //    is neither result.json, signature.json nor a listed attachment (the name
-//    in ASCII, anything else as \xNN, \uNNNN or \UNNNNNNNN);
+//    in ASCII, anything else as \xNN, \uNNNN or \UNNNNNNNN, lower-case hex; a
+//    name that isn't valid UTF-16 is a note like any other, its lone surrogate
+//    written \udXXX);
 //  - "not verified: <word>", exit 5 (exit_code::restore), the word
 //    rp::to_string(VerifyWord): anything wrong inside the folder, a missing
 //    file included.
@@ -61,7 +66,8 @@ SignerCommandEnv default_signer_command_env();
 //  - "signer error: the --public-key path is not valid UTF-8";
 //  - "signer error: --public-key <file>: the file can't be read" (not there, a
 //    folder, or larger than kMaxPublicKeyFileBytes);
-//  - "signer error: --public-key <file>: not an Ed25519 public key in PEM";
+//  - "signer error: --public-key <file>: not an Ed25519 public key in PEM"
+//    (the one rule for a key file: rp/ed25519.hpp, public_key_from_pem);
 //  - "signer error: the folder's path is not valid UTF-8";
 //  - "signer error: <folder>: the folder can't be opened".
 //

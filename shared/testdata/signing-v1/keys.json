@@ -1,0 +1,19 @@
+{
+  "description": "Two fixed Ed25519 key pairs for the signing vectors (W4.3, docs/decisions.md 2026-10-05, point 6): RFC 8032 section 7.1's tests 1 and 2. They are published test keys, known to everyone, and must never sign anything real. `seed_hex` is the RFC's 32-byte SECRET KEY; `private_pkcs8_base64` is the key as the Worker's RP_SIGNING_KEY_BASE64 carries it (standard Base64 of the 48-byte PKCS#8 DER: the 16 bytes 302e020100300506032b657004220420, then the seed); `public_key_pem` is the SubjectPublicKeyInfo PEM a verifier is given (LF line ends); `key_id` is the SHA-256 of that key's SubjectPublicKeyInfo DER, 64 lower-case hex. bundle.json and cases.json name a key by its `name`.",
+  "keys": [
+    {
+      "name": "rfc8032-test-1",
+      "seed_hex": "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
+      "private_pkcs8_base64": "MC4CAQAwBQYDK2VwBCIEIJ1hsZ3v/VpguoRK9JLsLMREScVpezJpGXA7rAMcrn9g",
+      "public_key_pem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=\n-----END PUBLIC KEY-----\n",
+      "key_id": "06e3fd8fda29bb60ab59557de61edb0aecdb231134be30e75b455f8e1b792fa9"
+    },
+    {
+      "name": "rfc8032-test-2",
+      "seed_hex": "4ccd089b28ff96da9db6c346ec114e0f5b8a319f35aba624da8cf6ed4fb8a6fb",
+      "private_pkcs8_base64": "MC4CAQAwBQYDK2VwBCIEIEzNCJso/5banbbDRuwRTg9bijGfNaumJNqM9u1PuKb7",
+      "public_key_pem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAPUAXw+hDiVqStwqnTRt+vJyYLM8uxJaMwM1V8Sr0Zgw=\n-----END PUBLIC KEY-----\n",
+      "key_id": "deb2ded39dc26fce0e6085b6fc34bf6b5941913bbfe2ea614113cff9e004c170"
+    }
+  ]
+}

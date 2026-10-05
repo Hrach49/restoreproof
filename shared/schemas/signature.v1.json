@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://restoreproof.local/schemas/signature.v1.json",
+  "title": "RestoreProof signature v1",
+  "description": "restoreproof.signature.v1: signature.json, the file beside result.json that holds the result's signature (W4.3, docs/decisions.md 2026-10-05, point 2). Written as canonical-json-v1. Five keys, all always there, never a sixth. bundle_sha256 is the SHA-256 of result.json's bytes; signature is the Ed25519 signature over that digest's 32 raw bytes, in standard Base64 with padding (64 bytes, 88 characters); key_id is the SHA-256 of the signing key's public half as SubjectPublicKeyInfo DER. The file is not itself signed: a verifier takes the public key from its caller, never from here. The schema uses only keywords JSON Schema draft 7 and 2020-12 read alike.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "algorithm",
+    "bundle_sha256",
+    "format",
+    "key_id",
+    "signature"
+  ],
+  "properties": {
+    "algorithm": {
+      "const": "ed25519"
+    },
+    "bundle_sha256": {
+      "$ref": "#/$defs/sha256"
+    },
+    "format": {
+      "const": "restoreproof.signature.v1"
+    },
+    "key_id": {
+      "$ref": "#/$defs/sha256"
+    },
+    "signature": {
+      "type": "string",
+      "minLength": 88,
+      "maxLength": 88,
+      "pattern": "^[A-Za-z0-9+/]{85}[AQgw]==$"
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "minLength": 64,
+      "maxLength": 64,
+      "pattern": "^[0-9a-f]{64}$"
+    }
+  }
+}

@@ -1,0 +1,549 @@
+#include <rp/signer.hpp>
+
+#include <rp/base64.hpp>
+#include <rp/canonical_json.hpp>
+#include <rp/cert_export.hpp>
+#include <rp/evidence_builder.hpp>
+#include <rp/result_schema.hpp>
+#include <rp/sha256.hpp>
+
+#include <nlohmann/json.hpp>
+
+#include <openssl/crypto.h>
+
+#include <algorithm>
+#include <array>
+#include <span>
+#include <utility>
+
+// Held to 100% line coverage (worker/tools/coverage_gate.py): every line here
+// is one a test runs. The calls into OpenSSL whose failures no test can
+// provoke are in ed25519.cpp, behind rp::Ed25519.
+
+namespace rp {
+
+namespace {
+
+using nlohmann::json;
+
+// Ed25519's PKCS#8 header (RFC 8410): version 0, the algorithm 1.3.101.112,
+// and an OCTET STRING holding an OCTET STRING of 32 bytes, the seed.
+constexpr std::array<unsigned char, 16> kPkcs8Prefix = {0x30, 0x2e, 0x02, 0x01, 0x00, 0x30,
+                                                        0x05, 0x06, 0x03, 0x2b, 0x65, 0x70,
+                                                        0x04, 0x22, 0x04, 0x20};
+constexpr std::size_t kPkcs8Bytes = kPkcs8Prefix.size() + kEd25519SeedBytes;
+
+constexpr std::size_t kSha256HexChars = 64;
+
+// Overwrites the bytes when it goes out of scope, on every path.
+class Wipe {
+public:
+    explicit Wipe(std::vector<unsigned char>& bytes) noexcept : bytes_(bytes) {}
+    ~Wipe() { OPENSSL_cleanse(bytes_.data(), bytes_.size()); }
+    Wipe(const Wipe&) = delete;
+    Wipe& operator=(const Wipe&) = delete;
+
+private:
+    std::vector<unsigned char>& bytes_;
+};
+
+std::string to_hex(std::span<const unsigned char> bytes)
+{
+    constexpr char kHex[] = "0123456789abcdef";
+    std::string hex;
+    hex.reserve(bytes.size() * 2);
+    for (const unsigned char byte : bytes) {
+        hex += kHex[byte >> 4];
+        hex += kHex[byte & 0x0f];
+    }
+    return hex;
+}
+
+std::string_view as_text(const std::vector<unsigned char>& bytes) noexcept
+{
+    return {reinterpret_cast<const char*>(bytes.data()), bytes.size()};
+}
+
+bool is_sha256_hex(std::string_view text) noexcept
+{
+    return text.size() == kSha256HexChars &&
+           std::all_of(text.begin(), text.end(),
+                       [](char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'); });
+}
+
+// The most arrays and objects open at once in `bytes`, counted on the bytes
+// and outside strings, without parsing: what keeps a file of a hundred
+// thousand '[' from the parser. Counts as verify_bundle.py's nesting_depth.
+std::size_t nesting_depth(std::string_view bytes) noexcept
+{
+    std::size_t depth = 0;
+    std::size_t deepest = 0;
+    bool in_string = false;
+    bool escaped = false;
+    for (const char c : bytes) {
+        if (in_string) {
+            if (escaped) {
+                escaped = false;
+            } else if (c == '\\') {
+                escaped = true;
+            } else if (c == '"') {
+                in_string = false;
+            }
+        } else if (c == '"') {
+            in_string = true;
+        } else if (c == '[' || c == '{') {
+            ++depth;
+            deepest = std::max(deepest, depth);
+        } else if ((c == ']' || c == '}') && depth > 0) {
+            --depth;
+        }
+    }
+    return deepest;
+}
+
+// The document `bytes` is the canonical-json-v1 form of, or nullopt: nested
+// too deep, not JSON (whatever the parser calls it: a syntax error, bytes that
+// aren't UTF-8, a number it can't hold), a value the canonical form refuses (a
+// float, an integer past 2^53 - 1, a key that isn't ASCII), or a document whose
+// canonical form is other bytes (a BOM, another key order, a key twice, white
+// space, a trailing newline). One answer for all of it, so that the two
+// verifiers' parsers can't differ on the word.
+std::optional<json> parse_canonical(std::string_view bytes)
+{
+    std::optional<json> document;
+    if (nesting_depth(bytes) > kMaxJsonNesting) {
+        return document;
+    }
+    try {
+        document = json::parse(bytes);
+        if (canonical_json(*document) != bytes) {
+            document.reset();
+        }
+    } catch (const json::exception&) {
+        document.reset();
+    } catch (const CanonicalJsonError&) {
+        document.reset();
+    }
+    return document;
+}
+
+// The string at `key` of `object`, or empty when there is none.
+std::string string_at(const json& object, const char* key)
+{
+    const auto member = object.find(key);
+    if (member == object.end() || !member->is_string()) {
+        return {};
+    }
+    return member->get<std::string>();
+}
+
+// What a signature file says, once it is one.
+struct SignatureFile {
+    std::string bundle_sha256;
+    std::string key_id;
+    Ed25519Signature signature{};
+};
+
+// signature.json's rules, the ones shared/schemas/signature.v1.json states:
+// its own canonical form; an object of exactly the five keys; `format` and
+// `algorithm` the two fixed words; bundle_sha256 and key_id 64 lower-case hex;
+// `signature` strict Base64 (padded, no unused bit set, not URL-safe) of
+// exactly 64 bytes.
+std::optional<SignatureFile> parse_signature_file(std::string_view bytes)
+{
+    const std::optional<json> document = parse_canonical(bytes);
+    if (!document || !document->is_object() || document->size() != 5) {
+        return std::nullopt;
+    }
+    SignatureFile file;
+    file.bundle_sha256 = string_at(*document, "bundle_sha256");
+    file.key_id = string_at(*document, "key_id");
+    const std::optional<std::vector<unsigned char>> signature =
+        base64_decode(string_at(*document, "signature"));
+    if (string_at(*document, "format") != kSignatureFormat ||
+        string_at(*document, "algorithm") != kSignatureAlgorithm ||
+        !is_sha256_hex(file.bundle_sha256) || !is_sha256_hex(file.key_id) || !signature ||
+        signature->size() != file.signature.size()) {
+        return std::nullopt;
+    }
+    std::copy(signature->begin(), signature->end(), file.signature.begin());
+    return file;
+}
+
+// One file the result lists.
+struct Listed {
+    std::string name;
+    std::string sha256;
+    std::uintmax_t size_bytes = 0;
+};
+
+// The attachments of a document the schema took: none when it lists none.
+std::vector<Listed> listed_attachments(const json& document)
+{
+    std::vector<Listed> listed;
+    const json& attachments = document.at("attachments");
+    if (attachments.is_array()) {
+        for (const json& one : attachments) {
+            listed.push_back({one.at("name").get<std::string>(),
+                              one.at("sha256").get<std::string>(),
+                              one.at("size_bytes").get<std::uintmax_t>()});
+        }
+    }
+    return listed;
+}
+
+bool lists(const std::vector<Listed>& listed, std::string_view name)
+{
+    return std::any_of(listed.begin(), listed.end(),
+                       [name](const Listed& one) { return one.name == name; });
+}
+
+bool lists_a_name_twice(const std::vector<Listed>& listed)
+{
+    for (std::size_t i = 0; i < listed.size(); ++i) {
+        for (std::size_t j = i + 1; j < listed.size(); ++j) {
+            if (listed[i].name == listed[j].name) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+bool says_captured(const json& document)
+{
+    const json& screenshot = document.at("screenshot");
+    return screenshot.is_object() && screenshot.at("state") == "captured";
+}
+
+Verification failed(VerifyWord word)
+{
+    Verification out;
+    out.word = word;
+    return out;
+}
+
+// The checks of a result's bytes and a signature file's bytes (null: not
+// read), in their order; `listed` gets the result's attachments once the
+// result is known to be one.
+Verification check(std::string_view result, const std::string* signature_bytes,
+                   const PublicKey& key, std::vector<Listed>& listed)
+{
+    const std::optional<json> document = parse_canonical(result);
+    if (!document) {
+        return failed(VerifyWord::result_not_canonical);
+    }
+    if (!validate_result(*document).valid) {
+        return failed(VerifyWord::result_schema);
+    }
+    listed = listed_attachments(*document);
+    if (lists_a_name_twice(listed)) {
+        return failed(VerifyWord::attachment_twice);
+    }
+    if (says_captured(*document) && !lists(listed, kScreenshotName)) {
+        return failed(VerifyWord::screenshot_missing);
+    }
+    const std::optional<SignatureFile> signature =
+        signature_bytes != nullptr ? parse_signature_file(*signature_bytes) : std::nullopt;
+    if (!signature) {
+        return failed(VerifyWord::signature_file);
+    }
+    const std::array<unsigned char, 32> digest = sha256_bytes(result);
+    if (signature->bundle_sha256 != to_hex(digest)) {
+        return failed(VerifyWord::hash_mismatch);
+    }
+    if (signature->key_id != key.key_id()) {
+        return failed(VerifyWord::wrong_key);
+    }
+    if (!key.primitive().verify(key.der(), digest, signature->signature)) {
+        return failed(VerifyWord::signature_invalid);
+    }
+    Verification out;
+    out.word = VerifyWord::verified;
+    out.bundle_sha256 = signature->bundle_sha256;
+    out.key_id = signature->key_id;
+    return out;
+}
+
+// The word for one listed attachment as `read` finds it; `verified` when it is
+// the file the result lists.
+VerifyWord check_attachment(const FileReader& read, const Listed& attachment)
+{
+    // One larger than listed isn't read at all.
+    const FileRead file = read(attachment.name, attachment.size_bytes);
+    if (file.state == FileState::unreadable) {
+        return VerifyWord::attachment_missing;
+    }
+    if (file.state == FileState::too_large || file.bytes.size() != attachment.size_bytes) {
+        return VerifyWord::attachment_size;
+    }
+    if (sha256_hex(file.bytes) != attachment.sha256) {
+        return VerifyWord::attachment_hash;
+    }
+    return VerifyWord::verified;
+}
+
+struct WordText {
+    VerifyWord word;
+    std::string_view text;
+};
+
+// The one table of the words, in the checks' order after `verified`.
+constexpr std::array<WordText, 13> kWords = {{
+    {VerifyWord::verified, "verified"},
+    {VerifyWord::result_unreadable, "result_unreadable"},
+    {VerifyWord::result_not_canonical, "result_not_canonical"},
+    {VerifyWord::result_schema, "result_schema"},
+    {VerifyWord::attachment_twice, "attachment_twice"},
+    {VerifyWord::screenshot_missing, "screenshot_missing"},
+    {VerifyWord::signature_file, "signature_file"},
+    {VerifyWord::hash_mismatch, "hash_mismatch"},
+    {VerifyWord::wrong_key, "wrong_key"},
+    {VerifyWord::signature_invalid, "signature_invalid"},
+    {VerifyWord::attachment_missing, "attachment_missing"},
+    {VerifyWord::attachment_size, "attachment_size"},
+    {VerifyWord::attachment_hash, "attachment_hash"},
+}};
+
+} // namespace
+
+// --- the signing key ---------------------------------------------------------
+
+struct SigningKey::Impl {
+    const Ed25519* primitive = nullptr;
+    std::unique_ptr<Ed25519Key> key;
+    std::vector<unsigned char> public_der;
+    std::string public_pem;
+    std::string key_id;
+    std::vector<std::string> secret_shapes;
+
+    Impl() = default;
+    Impl(const Impl&) = delete;
+    Impl& operator=(const Impl&) = delete;
+    ~Impl()
+    {
+        for (std::string& shape : secret_shapes) {
+            secure_wipe(shape);
+        }
+    }
+};
+
+namespace {
+
+std::optional<SigningKey> parse_signing_key(std::string_view text, const Ed25519& primitive)
+{
+    std::optional<std::vector<unsigned char>> der = base64_decode(text);
+    if (!der) {
+        return std::nullopt;
+    }
+    const Wipe wipe(*der);
+    // No ASN.1 reader: the length and the sixteen bytes are the whole rule, so
+    // a key with anything after it, or of another algorithm, is refused here.
+    if (der->size() != kPkcs8Bytes ||
+        !std::equal(kPkcs8Prefix.begin(), kPkcs8Prefix.end(), der->begin())) {
+        return std::nullopt;
+    }
+    const std::span<const unsigned char, kEd25519SeedBytes> seed(
+        der->data() + kPkcs8Prefix.size(), kEd25519SeedBytes);
+    auto impl = std::make_unique<SigningKey::Impl>();
+    impl->primitive = &primitive;
+    impl->key = primitive.make_key(seed);
+    if (!impl->key) {
+        return std::nullopt;
+    }
+    impl->public_der = impl->key->public_key_der();
+    impl->public_pem = primitive.public_key_pem(impl->public_der);
+    if (impl->public_der.size() != kEd25519PublicDerBytes || impl->public_pem.empty()) {
+        return std::nullopt;
+    }
+    impl->key_id = sha256_hex(as_text(impl->public_der));
+    // Each made at its final size and moved in: no copy is left behind.
+    impl->secret_shapes.reserve(2);
+    impl->secret_shapes.push_back(base64_encode(seed));
+    impl->secret_shapes.push_back(to_hex(seed));
+    return SigningKey(std::move(impl));
+}
+
+std::optional<SignedResult> sign_canonical(std::string_view canonical, const SigningKey& key)
+{
+    if (!parse_canonical(canonical)) {
+        return std::nullopt;
+    }
+    const SigningKey::Impl& impl = key.impl();
+    const std::array<unsigned char, 32> digest = sha256_bytes(canonical);
+    const std::optional<Ed25519Signature> signature = impl.key->sign(digest);
+    // The self-check: a signature the key's own public half refuses is never
+    // handed out.
+    if (!signature || !impl.primitive->verify(impl.public_der, digest, *signature)) {
+        return std::nullopt;
+    }
+    SignedResult out;
+    out.bundle_sha256 = to_hex(digest);
+    out.key_id = impl.key_id;
+    out.signature_file = canonical_json(json{{"algorithm", kSignatureAlgorithm},
+                                             {"bundle_sha256", out.bundle_sha256},
+                                             {"format", kSignatureFormat},
+                                             {"key_id", out.key_id},
+                                             {"signature", base64_encode(*signature)}});
+    return out;
+}
+
+std::optional<std::vector<unsigned char>> public_der_of(std::string_view pem,
+                                                        const Ed25519& primitive)
+{
+    std::vector<unsigned char> der = primitive.public_key_from_pem(pem);
+    if (der.size() != kEd25519PublicDerBytes) {
+        return std::nullopt;
+    }
+    return der;
+}
+
+} // namespace
+
+std::optional<SigningKey> SigningKey::from_base64(std::string_view text,
+                                                  const Ed25519& primitive) noexcept
+{
+    try {
+        return parse_signing_key(text, primitive);
+    } catch (...) {
+        return std::nullopt;
+    }
+}
+
+SigningKey::SigningKey(std::unique_ptr<Impl> impl) noexcept : impl_(std::move(impl)) {}
+SigningKey::~SigningKey() = default;
+SigningKey::SigningKey(SigningKey&&) noexcept = default;
+SigningKey& SigningKey::operator=(SigningKey&&) noexcept = default;
+
+const std::string& SigningKey::public_key_pem() const noexcept
+{
+    return impl_->public_pem;
+}
+
+const std::string& SigningKey::key_id() const noexcept
+{
+    return impl_->key_id;
+}
+
+const std::vector<std::string>& SigningKey::secret_shapes() const noexcept
+{
+    return impl_->secret_shapes;
+}
+
+const SigningKey::Impl& SigningKey::impl() const noexcept
+{
+    return *impl_;
+}
+
+// --- a verifier's key --------------------------------------------------------
+
+PublicKey::PublicKey(std::vector<unsigned char> der, std::string key_id,
+                     const Ed25519& primitive) noexcept
+    : der_(std::move(der)), key_id_(std::move(key_id)), primitive_(&primitive)
+{
+}
+
+std::optional<PublicKey> PublicKey::from_pem(std::string_view pem,
+                                             const Ed25519& primitive) noexcept
+{
+    try {
+        std::optional<std::vector<unsigned char>> der = public_der_of(pem, primitive);
+        if (!der) {
+            return std::nullopt;
+        }
+        std::string key_id = sha256_hex(as_text(*der));
+        return PublicKey(std::move(*der), std::move(key_id), primitive);
+    } catch (...) {
+        return std::nullopt;
+    }
+}
+
+const std::string& PublicKey::key_id() const noexcept
+{
+    return key_id_;
+}
+
+const std::vector<unsigned char>& PublicKey::der() const noexcept
+{
+    return der_;
+}
+
+const Ed25519& PublicKey::primitive() const noexcept
+{
+    return *primitive_;
+}
+
+// --- the words ---------------------------------------------------------------
+
+std::string_view to_string(VerifyWord word) noexcept
+{
+    for (const WordText& one : kWords) {
+        if (one.word == word) {
+            return one.text;
+        }
+    }
+    return "unknown";
+}
+
+const std::vector<std::string>& verify_words()
+{
+    static const std::vector<std::string> words = [] {
+        std::vector<std::string> out;
+        for (const WordText& one : kWords) {
+            out.emplace_back(one.text);
+        }
+        return out;
+    }();
+    return words;
+}
+
+// --- the Signer --------------------------------------------------------------
+
+std::optional<SignedResult> Signer::sign(std::string_view canonical,
+                                         const SigningKey& key) noexcept
+{
+    try {
+        return sign_canonical(canonical, key);
+    } catch (...) {
+        return std::nullopt;
+    }
+}
+
+Verification Signer::verify(std::string_view result, std::string_view signature,
+                            const PublicKey& key)
+{
+    const std::string signature_bytes(signature);
+    std::vector<Listed> listed;
+    return check(result, &signature_bytes, key, listed);
+}
+
+Verification Signer::verify_folder(const FileReader& read,
+                                   const std::vector<std::string>& files, const PublicKey& key)
+{
+    const FileRead result = read(kResultFileName, kMaxResultFileBytes);
+    if (result.state != FileState::read) {
+        return failed(VerifyWord::result_unreadable);
+    }
+    const FileRead signature = read(kSignatureFileName, kMaxSignatureFileBytes);
+    std::vector<Listed> listed;
+    Verification verdict =
+        check(result.bytes, signature.state == FileState::read ? &signature.bytes : nullptr, key,
+              listed);
+    if (verdict.word != VerifyWord::verified) {
+        return verdict;
+    }
+    for (const Listed& attachment : listed) {
+        const VerifyWord word = check_attachment(read, attachment);
+        if (word != VerifyWord::verified) {
+            return failed(word);
+        }
+    }
+    for (const std::string& name : files) {
+        if (name != kResultFileName && name != kSignatureFileName && !lists(listed, name)) {
+            verdict.notes.push_back(name);
+        }
+    }
+    return verdict;
+}
+
+} // namespace rp

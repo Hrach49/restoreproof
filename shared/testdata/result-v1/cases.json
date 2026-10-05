@@ -2027,6 +2027,288 @@
           "value": "test"
         }
       ]
+    },
+    {
+      "name": "attachments-and-screenshot-null-without-a-run-folder",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/attachments",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/screenshot",
+          "value": null
+        }
+      ]
+    },
+    {
+      "name": "screenshot-captured-with-its-png",
+      "valid": true,
+      "patch": [
+        {
+          "op": "add",
+          "path": "/attachments/1",
+          "value": {
+            "name": "screenshot.png",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "size_bytes": 4096
+          }
+        },
+        {
+          "op": "replace",
+          "path": "/screenshot",
+          "value": {
+            "state": "captured"
+          }
+        }
+      ]
+    },
+    {
+      "name": "screenshot-unavailable-no-page",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/screenshot",
+          "value": {
+            "state": "unavailable",
+            "reason": "no_page"
+          }
+        }
+      ]
+    },
+    {
+      "name": "screenshot-unavailable-timeout",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/screenshot",
+          "value": {
+            "state": "unavailable",
+            "reason": "timeout"
+          }
+        }
+      ]
+    },
+    {
+      "name": "no-attachments",
+      "valid": false,
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/attachments"
+        }
+      ]
+    },
+    {
+      "name": "no-screenshot",
+      "valid": false,
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/screenshot"
+        }
+      ]
+    },
+    {
+      "name": "attachments-empty",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/attachments",
+          "value": []
+        }
+      ]
+    },
+    {
+      "name": "attachments-one-file",
+      "valid": false,
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/attachments/1"
+        }
+      ]
+    },
+    {
+      "name": "attachments-four-files",
+      "valid": false,
+      "patch": [
+        {
+          "op": "add",
+          "path": "/attachments/1",
+          "value": {
+            "name": "screenshot.png",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "size_bytes": 4096
+          }
+        },
+        {
+          "op": "add",
+          "path": "/attachments/1",
+          "value": {
+            "name": "screenshot.png",
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "size_bytes": 4096
+          }
+        }
+      ]
+    },
+    {
+      "name": "attachment-result-json-lists-itself",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/attachments/0/name",
+          "value": "result.json"
+        }
+      ]
+    },
+    {
+      "name": "attachment-sha256-upper-case",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/attachments/0/sha256",
+          "value": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        }
+      ]
+    },
+    {
+      "name": "attachment-size-negative",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/attachments/0/size_bytes",
+          "value": -1
+        }
+      ]
+    },
+    {
+      "name": "attachment-no-size",
+      "valid": false,
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/attachments/0/size_bytes"
+        }
+      ]
+    },
+    {
+      "name": "attachment-extra-key",
+      "valid": false,
+      "patch": [
+        {
+          "op": "add",
+          "path": "/attachments/0/path",
+          "value": "C:\\runs\\x\\items.csv"
+        }
+      ]
+    },
+    {
+      "name": "screenshot-a-bare-word",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/screenshot",
+          "value": "unavailable"
+        }
+      ]
+    },
+    {
+      "name": "screenshot-captured-with-a-reason",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/screenshot",
+          "value": {
+            "state": "captured",
+            "reason": "failed"
+          }
+        }
+      ]
+    },
+    {
+      "name": "screenshot-unavailable-without-a-reason",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/screenshot",
+          "value": {
+            "state": "unavailable"
+          }
+        }
+      ]
+    },
+    {
+      "name": "screenshot-unknown-reason",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/screenshot",
+          "value": {
+            "state": "unavailable",
+            "reason": "skipped"
+          }
+        }
+      ]
+    },
+    {
+      "name": "attachments-one-name-twice-the-schema-cannot-say",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/attachments/1/name",
+          "value": "items.csv"
+        }
+      ]
+    },
+    {
+      "name": "screenshot-captured-without-its-png-the-schema-cannot-say",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/screenshot",
+          "value": {
+            "state": "captured"
+          }
+        }
+      ]
+    },
+    {
+      "name": "screenshot-empty-object",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/screenshot",
+          "value": {}
+        }
+      ]
+    },
+    {
+      "name": "attachment-no-name",
+      "valid": false,
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/attachments/0/name"
+        }
+      ]
     }
   ]
 }

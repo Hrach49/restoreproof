@@ -32,7 +32,7 @@ const std::string kUsage = "usage: rpworker --version | rpworker config check [-
                            "[--config <path>] [--record <dir>] | "
                            "rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] "
                            "[--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] "
-                           "[--config <path>] [--record <dir>] [--json <file>]\n";
+                           "[--config <path>] [--record <dir>] [--json <file> | --evidence <dir>]\n";
 
 // Every key set; sample_od left out to show its default.
 const std::string kConfigJson = R"({
@@ -71,10 +71,12 @@ constexpr SecretMasks kNoSecrets{"(not set)", "(not set)", "(not set)", "(not se
 
 // The output of a successful check of kConfigJson at `path`, with the four
 // secret lines given and, when `ca_file` and `cert_sha256` are set,
-// veeam_ca_file and veeam_cert_sha256 added.
+// veeam_ca_file and veeam_cert_sha256 added. `screenshots` is
+// screenshots_enabled's line: the default, as kConfigJson doesn't set it.
 std::string expected_output(const std::filesystem::path& path, const SecretMasks& secrets,
                             std::string_view ca_file = "(not set)",
-                            std::string_view cert_sha256 = "(not set)")
+                            std::string_view cert_sha256 = "(not set)",
+                            std::string_view screenshots = "false")
 {
     return "config file: " + utf8(path) + "\n" +
            "cloud_url                 https://cloud.example.invalid\n"
@@ -96,6 +98,7 @@ std::string expected_output(const std::filesystem::path& path, const SecretMasks
            "veeam_ca_file             " +
            std::string{ca_file} + "\n" +
            "veeam_cert_sha256         " + std::string{cert_sha256} + "\n" +
+           "screenshots_enabled       " + std::string{screenshots} + "\n" +
            "secrets (environment variables; values are never shown):\n"
            "RP_VEEAM_USERNAME         " +
            std::string{secrets.user} + "\n" + "RP_VEEAM_PASSWORD         " +
@@ -345,6 +348,41 @@ TEST_CASE("rpworker config check prints veeam_cert_sha256 after veeam_ca_file", 
     REQUIRE(result.err.empty());
     REQUIRE(result.out ==
             expected_output(path, kNoSecrets, ca_arg, sha256));
+    REQUIRE(result.exit_code == 0);
+}
+
+TEST_CASE("rpworker config check reports a screenshots_enabled that isn't true or false",
+          "[config_check]")
+{
+    const rp::test::TempDir dir;
+    std::string text = kConfigJson;
+    text.insert(1, R"("screenshots_enabled": "true",)");
+    const std::string path_arg = utf8(dir.write("config.json", text));
+
+    PathSpy spy;
+    const Run result = run(Args{"check", "--config", path_arg}, spy.provider());
+    REQUIRE(result.exit_code == 1);
+    REQUIRE(result.out.empty());
+    REQUIRE(result.err == "config error: " + path_arg +
+                              ": config key \"screenshots_enabled\" must be true or false\n");
+}
+
+TEST_CASE("rpworker config check prints screenshots_enabled as true or false", "[config_check]")
+{
+    const rp::test::TempDir dir;
+    const std::string value = GENERATE("true", "false");
+    CAPTURE(value);
+    std::string text = kConfigJson;
+    text.insert(1, "\"screenshots_enabled\": " + value + ",");
+    const auto path = dir.write("config.json", text);
+    const rp::test::ScopedEnv user(rp::kEnvVeeamUsername, std::nullopt);
+    const rp::test::ScopedEnv password(rp::kEnvVeeamPassword, std::nullopt);
+    const rp::test::ScopedEnv pfx(rp::kEnvGraphCertPfxBase64, std::nullopt);
+    const rp::test::ScopedEnv pfx_password(rp::kEnvGraphCertPassword, std::nullopt);
+
+    const Run result = run(Args{"check"}, path);
+    REQUIRE(result.err.empty());
+    REQUIRE(result.out == expected_output(path, kNoSecrets, "(not set)", "(not set)", value));
     REQUIRE(result.exit_code == 0);
 }
 

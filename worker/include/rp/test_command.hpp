@@ -22,7 +22,7 @@ namespace rp {
 // UTF-8:
 //   [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>]
 //   [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>]
-//   [--record <dir>] [--json <file>]
+//   [--record <dir>] [--json <file> | --evidence <dir>]
 // in any order, each at most once, each with its value, by
 // run_restore_command's rules (an absent size is the config's sample_mail,
 // sample_sp or sample_od). There is no --seed: the run ID gives the seed, so
@@ -53,8 +53,9 @@ namespace rp {
 // restoreproof.result.v1 (rp/result_builder.hpp; the schema is
 // shared/schemas/result.v1.json), for every run that printed its run line,
 // whatever its status: exactly its canonical text (rp::canonical_json: one
-// line, no whitespace, no trailing newline), fifteen keys, every one always
-// there, null where a step didn't run. The pipeline builds and validates it
+// line, no whitespace, no trailing newline), seventeen keys, every one always
+// there, null where a step didn't run (`attachments` and `screenshot` always:
+// there is no run folder). The pipeline builds and validates it
 // once the clean after and the timings are done. Nothing of the process is in
 // it: a pass whose output was lost or whose --record recording isn't complete
 // shows only in the exit code and on `err`. No secret; it holds more tenant
@@ -81,8 +82,17 @@ namespace rp {
 // (rp/restore_command.hpp), for a finished result that isn't valid though
 // the one before the status line was (after its own "result error: ..."
 // line; the status line is out and stays), and for a run that has no status.
-// <file> is the --json value as given, its control characters as spaces. No
-// exception escapes.
+// <file> is the --json value as given, its control characters as spaces.
+//
+// --evidence <dir> (W4.2, docs/decisions.md 2026-10-05) writes the run folder
+// <dir>\<run_id>\ instead (rp::EvidenceBuilder; never with --json, a usage
+// error, as an empty value is): items.csv, veeam-session.log, screenshot.png
+// when one was captured, and result.json, the same result with each of the
+// other files in `attachments` (name, SHA-256, size) and `screenshot` saying
+// captured or why not. What it checks, when the folder is made, its lines
+// and its exit codes are on run_pipeline (src/run_pipeline.hpp). <dir> is
+// made if it isn't there; a folder for the run ID that is already there
+// stops the run before its run line. No exception escapes.
 int run_test_command(std::span<const std::string_view> args, std::ostream& out,
                      std::ostream& err, const RestoreCommandEnv& env);
 

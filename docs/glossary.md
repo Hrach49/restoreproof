@@ -173,10 +173,11 @@ it says nothing about restoring anything beyond the sample.
 ## Evidence
 
 **Result (`restoreproof.result.v1`).** The one JSON document a run with a run line leaves
-(W4.1): fifteen keys, from `format` and `run_id` to `status`, `cleanup` and `timings`, `null`
+(W4.1): seventeen keys, from `format` and `run_id` to `status`, `cleanup`, `timings`,
+`attachments` and `screenshot` (W4.2), `null`
 where a step didn't run. Built by `rp::ResultBuilder`, validated in the Worker against
 `shared/schemas/result.v1.json` before any status line is printed, and written by `rpworker
-test --json` as its canonical bytes. Unsigned until W4.3. See
+test --json` as its canonical bytes, or as `result.json` in a run folder. Unsigned until W4.3. See
 [verification.md](verification.md), "The result".
 
 **Canonical form (`canonical-json-v1`).** The one byte sequence of a result, the same from C++
@@ -184,8 +185,15 @@ and Python: keys sorted by byte, no whitespace, UTF-8, integers only. A float, a
 outside ±(2^53 − 1), a non-ASCII key or invalid UTF-8 is refused, not written some way.
 `rp::canonical_json`; vectors in `shared/testdata/canonical-json-v1.json`.
 
+**Run folder.** `<runs root>\<run_id>\` (W4.2, `rpworker test --evidence <dir>`): `items.csv`,
+`veeam-session.log`, `screenshot.png` when one was captured (none is, today), and
+`result.json`, written last and listing each of the others with its SHA-256 and size in
+`attachments`. A folder without `result.json` is a run with no result. See
+[verification.md](verification.md), "The run folder".
+
 **Evidence bundle.** What one run leaves behind and uploads: the result JSON, plus
-`veeam-session.log` and `items.csv` (the per-item comparison with hashes). Canonicalised
+`veeam-session.log` and `items.csv` (the per-item comparison, with the canaries' expected and
+found hashes). Canonicalised
 (sorted keys, no whitespace, UTF-8, ISO-8601 UTC), hashed as `bundle_sha256` with
 `signature` and `tsa_token` removed, Ed25519-signed and RFC 3161-timestamped. It is the
 artefact an auditor can verify offline with `shared/tools/verify_bundle.py`, without

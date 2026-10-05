@@ -25,6 +25,7 @@
 #include <rp/config.hpp>
 #include <rp/connector.hpp>
 #include <rp/connector_registry.hpp>
+#include <rp/evidence_builder.hpp>
 #include <rp/http_client.hpp>
 #include <rp/run_lock.hpp>
 #include <rp/secrets.hpp>
@@ -139,6 +140,14 @@ struct RestoreCommandEnv {
     // onto it, never over a file already there). What it throws is a
     // failure. `restore` never calls it.
     std::function<bool(const std::filesystem::path&, std::string_view)> write_summary;
+    // `rpworker test --evidence <dir>` only (W4.2, rp/evidence_builder.hpp):
+    // writes one new file of the run folder, whether it did; null = the atomic
+    // writer, as write_summary's. What it throws is a failure.
+    std::function<bool(const std::filesystem::path&, std::string_view)> write_evidence_file;
+    // The screenshot's capturer, asked only when the config's
+    // screenshots_enabled is true; null = rp::no_screenshot_page, which starts
+    // no browser. Whatever it answers or throws, the status is unchanged.
+    ScreenshotCapturer capture_screenshot;
 };
 
 // The real environment: rp::default_config_path, rp::load_secrets_from_env, the

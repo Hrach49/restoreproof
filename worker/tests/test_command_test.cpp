@@ -22,6 +22,7 @@
 #include <rp/restore_command.hpp>
 #include <rp/result_schema.hpp>
 #include <rp/run_status.hpp>
+#include <rp/sha256.hpp>
 #include <rp/step_timer.hpp>
 #include <rp/test_command.hpp>
 #include <rp/version.hpp>
@@ -73,9 +74,24 @@ struct TestLab : Harness {
 
     // The --json file, parsed; REQUIREs it, that it is exactly its own
     // canonical text and that the embedded schema takes it.
-    json result() const
+    json result() const { return result_in(json_path()); }
+
+    // W4.2: the --evidence root in the temp folder, its argument, a run's
+    // folder in it and that folder's result.json, REQUIREd as result()'s.
+    std::filesystem::path evidence_root() const { return dir.path() / "runs"; }
+    std::string evidence_arg() const { return utf8(evidence_root()); }
+    std::filesystem::path run_folder(const std::string& run_id = kRunId) const
     {
-        const std::optional<std::string> text = file_bytes(json_path());
+        return evidence_root() / run_id;
+    }
+    json evidence_result(const std::string& run_id = kRunId) const
+    {
+        return result_in(run_folder(run_id) / "result.json");
+    }
+
+    json result_in(const std::filesystem::path& file) const
+    {
+        const std::optional<std::string> text = file_bytes(file);
         REQUIRE(text);
         const json document = json::parse(*text);
         REQUIRE(*text == rp::canonical_json(document));
@@ -124,7 +140,8 @@ std::string check_table(const std::vector<std::vector<std::string>>& rows)
 const std::set<std::string> kResultKeys{
     "format",        "worker_version", "run_id", "started_at", "ended_at",
     "connector",     "client",         "restore_point", "sample", "expected",
-    "restore",       "check",          "status", "cleanup",    "timings"};
+    "restore",       "check",          "status", "cleanup",    "timings",
+    "attachments",   "screenshot"};
 
 const std::string kNotValid =
     ": the result isn't valid restoreproof.result.v1; no file was written\n";
@@ -202,6 +219,11 @@ TEST_CASE("test: a command line it doesn't understand is a usage error, before t
         {"--json"},
         {"--json", ""},
         {"--json", "a.json", "--json", "b.json"},
+        // W4.2: a runs root, never empty, and --json or --evidence, not both.
+        {"--evidence"},
+        {"--evidence", ""},
+        {"--evidence", "runs", "--evidence", "more"},
+        {"--evidence", "runs", "--json", "a.json"},
         {"--mail", "101"},
         {"--point", "nope!"},
         {"--run-id", "bad id"},
@@ -612,7 +634,7 @@ TEST_CASE("test: an Office file that isn't a valid package is a sha256 mismatch;
 // --- --json: the result (restoreproof.result.v1) --------------------------------------
 
 TEST_CASE("test --json writes restoreproof.result.v1: valid by the embedded schema and by the "
-          "schema file, exactly its own canonical text, the fifteen keys",
+          "schema file, exactly its own canonical text, the seventeen keys",
           "[test_command][json][result]")
 {
     TestLab lab;
@@ -636,15 +658,17 @@ TEST_CASE("test --json writes restoreproof.result.v1: valid by the embedded sche
     // (b) canonical-json-v1: no whitespace, no trailing newline.
     CHECK(*text == rp::canonical_json(document));
     CHECK(text->find('\n') == std::string::npos);
-    CHECK_THAT(*text, StartsWith("{\"check\":{"));
+    CHECK_THAT(*text, StartsWith("{\"attachments\":null,\"check\":{"));
     CHECK(text->ends_with("}"));
-    // (c) The fifteen keys.
+    // (c) The seventeen keys; no run folder, so nothing of one (W4.2).
     CHECK(keys_of(document) == kResultKeys);
+    CHECK(document.at("attachments").is_null());
+    CHECK(document.at("screenshot").is_null());
     CHECK(document.at("format") == "restoreproof.result.v1");
     CHECK(document.at("status").at("status") == "pass");
 }
 
-TEST_CASE("test --json: the result is valid and has the fifteen keys for each way a run ends, "
+TEST_CASE("test --json: the result is valid and has the seventeen keys for each way a run ends, "
           "null where a step didn't run; the file is written after the timings, then wrote <file>",
           "[test_command][json][result]")
 {
@@ -789,7 +813,9 @@ TEST_CASE("test --json: the result is valid and has the fifteen keys for each wa
     CHECK(keys_of(result) == kResultKeys);
     for (const std::string& key : kResultKeys) {
         CAPTURE(key);
-        CHECK(result.at(key).is_null() == c.nulls.contains(key));
+        // No run folder under --json: nothing of one (W4.2).
+        const bool of_folder = key == "attachments" || key == "screenshot";
+        CHECK(result.at(key).is_null() == (of_folder || c.nulls.contains(key)));
     }
     CHECK(result.at("format") == "restoreproof.result.v1");
     CHECK(result.at("worker_version") == std::string{rp::version()});
@@ -840,7 +866,7 @@ TEST_CASE("test --json: the result is valid and has the fifteen keys for each wa
     CHECK(text.find("exit_code") == std::string::npos);
     CHECK(text.find("\"command\"") == std::string::npos);
     // canonical-json-v1: one line, no trailing newline.
-    CHECK_THAT(text, StartsWith("{\"check\":"));
+    CHECK_THAT(text, StartsWith("{\"attachments\":null,\"check\":"));
     CHECK(text.ends_with("}"));
     CHECK(text.find('\n') == std::string::npos);
     // No secret.
@@ -1159,7 +1185,8 @@ TEST_CASE("test --json: with stdout lost the file is still written, without its 
     CHECK(keys_of(result) == kResultKeys);
     for (const std::string& key : kResultKeys) {
         CAPTURE(key);
-        CHECK_FALSE(result.at(key).is_null());
+        // No run folder under --json: nothing of one (W4.2).
+        CHECK(result.at(key).is_null() == (key == "attachments" || key == "screenshot"));
     }
     // A fact of this process, not of the run (W4.1 point 1): the run passed.
     CHECK(result.at("status").at("status") == "pass");
@@ -1397,7 +1424,9 @@ json renamed(const json& value, const std::vector<std::pair<std::string, std::st
     return value;
 }
 
-// What shared/testdata/result-v1/valid.json holds: the --json file of a pass
+// What shared/testdata/result-v1/valid.json holds: the run folder's
+// result.json (W4.2: with its two attachments, their hashes the Harness
+// run's own, and no screenshot: the setting is off) of a pass
 // through the whole pipeline, a canary and a random item of each type (the
 // SharePoint canary by office-v1, the random SharePoint file restored twice,
 // the random OneDrive file an Office one with a name outside ASCII), with the
@@ -1437,6 +1466,10 @@ std::string shared_result()
                                                                  : "2 items processed (2 successes)";
             session.submit_time = std::chrono::seconds{2};
             session.wait_time = std::chrono::seconds{40};
+            // W4.2: a line per session for veeam-session.log.
+            result.log += "session " + session.id + " (" +
+                          std::string{rp::connector::to_string(session.kind)} + "): Success, " +
+                          session.details + "\n";
         }
         json copies = lab.targets.mirror(ItemKind::sharepoint);
         json again = copies.back();
@@ -1447,13 +1480,14 @@ std::string shared_result()
     };
 
     const Run run = lab.run({"--run-id", "rp-20261004T100000Z-0a1b2c3d", "--canary-cursor",
-                             "0,1,0", "--mail", "2", "--sp", "2", "--od", "2", "--json",
-                             lab.json_arg()});
+                             "0,1,0", "--mail", "2", "--sp", "2", "--od", "2", "--evidence",
+                             lab.evidence_arg()});
 
     INFO(run.out);
     INFO(run.err);
     REQUIRE(run.exit_code == rp::exit_code::ok);
-    json document = renamed(lab.result(), shared_names());
+    json document =
+        renamed(lab.evidence_result("rp-20261004T100000Z-0a1b2c3d"), shared_names());
     document["worker_version"] = "0.0.0";
     return rp::canonical_json(document);
 }
@@ -1462,9 +1496,539 @@ constexpr const char* kSharedResult = "testdata/result-v1/valid.json";
 
 } // namespace
 
-TEST_CASE("test --json: the whole pipeline's result is shared/testdata/result-v1/valid.json, byte "
-          "for byte, and names nothing of the lab tenant",
-          "[test_command][json][result]")
+// --- --evidence: the run folder (W4.2) ------------------------------------------------
+
+namespace {
+
+const Args kThree{"--run-id", kRunId, "--mail", "2", "--sp", "1", "--od", "0"};
+
+// `args`, then --evidence <the temp root>.
+Run evidence_run(TestLab& lab, Args args = kThree)
+{
+    const std::string root = lab.evidence_arg();
+    // kThree's second mail is a random one: no shortfall warning.
+    if (lab.fake.pool.mail.empty()) {
+        lab.fake.pool.mail = {carol_mail(1)};
+    }
+    args.push_back("--evidence");
+    args.push_back(root);
+    return lab.run(args);
+}
+
+std::set<std::string> names_in(const std::filesystem::path& folder)
+{
+    std::set<std::string> names;
+    for (const auto& entry : std::filesystem::directory_iterator(folder)) {
+        names.insert(utf8(entry.path().filename()));
+    }
+    return names;
+}
+
+const std::set<std::string> kTextFiles{"items.csv", "veeam-session.log"};
+
+const std::string kPng = std::string{"\x89PNG\r\n\x1a\n"} + "a picture";
+
+} // namespace
+
+TEST_CASE("test --evidence: a --run-id that can't name a folder is a config error once the "
+          "config is read, before the secrets",
+          "[test_command][evidence]")
+{
+    const std::string run_id = GENERATE("rp:20261003:a", ".", "..", "CON", "aux.1", "run.");
+    CAPTURE(run_id);
+    TestLab lab;
+
+    const Run run = evidence_run(lab, {"--run-id", run_id, "--mail", "1"});
+
+    CHECK(run.exit_code == rp::exit_code::config);
+    CHECK(run.out.empty());
+    CHECK(run.err == "config error: --evidence: the run ID can't name a folder\n");
+    CHECK(lab.load_secrets_calls == 0);
+    CHECK(lab.lock_calls == 0);
+    CHECK(lab.make_connector_calls == 0);
+    CHECK_FALSE(std::filesystem::exists(lab.evidence_root()));
+}
+
+TEST_CASE("test --evidence: a root that isn't a UTF-8 path is a config error",
+          "[test_command][evidence]")
+{
+    TestLab lab;
+
+    const Run run = lab.run({"--evidence", "\xff", "--run-id", kRunId});
+
+    CHECK(run.exit_code == rp::exit_code::config);
+    CHECK(run.err == "config error: --evidence \xff: not a UTF-8 path\n");
+    CHECK(lab.load_secrets_calls == 0);
+}
+
+TEST_CASE("test --evidence: a run folder that is already there stops the run before its run "
+          "line; nothing is restored and nothing in it is touched",
+          "[test_command][evidence]")
+{
+    const std::string there = GENERATE("run-0001", "RUN-0001");
+    TestLab lab;
+    std::filesystem::create_directories(lab.evidence_root() / there);
+    lab.dir.write(std::filesystem::path{"runs"} / there / "result.json", "an earlier run's");
+
+    const Run run = evidence_run(lab);
+
+    CHECK(run.exit_code == rp::exit_code::config);
+    CHECK(run.out.empty());
+    CHECK(run.err == "evidence error: " + utf8(lab.run_folder()) +
+                         ": the run folder already exists; nothing was done\n");
+    CHECK(lab.fake.candidate_calls == 0);
+    CHECK(lab.fake.restore_calls == 0);
+    CHECK(lab.cleanups.empty());
+    CHECK(lab.timings.empty());
+    CHECK(names_in(lab.evidence_root() / there) == std::set<std::string>{"result.json"});
+    CHECK(file_bytes(lab.evidence_root() / there / "result.json") == "an earlier run's");
+}
+
+TEST_CASE("test --evidence: a run folder that can't be made stops the run before its run line",
+          "[test_command][evidence]")
+{
+    TestLab lab;
+
+    SECTION("the root is a file")
+    {
+        lab.dir.write("runs", "a file");
+
+        const Run run = evidence_run(lab);
+
+        CHECK(run.exit_code == rp::exit_code::config);
+        CHECK(run.out.empty());
+        CHECK(run.err == "evidence error: " + utf8(lab.run_folder()) +
+                             ": the run folder couldn't be made; nothing was done\n");
+    }
+    SECTION("the run ID the run made can't name a folder")
+    {
+        lab.generated_run_id = "rp:made";
+
+        const Run run = evidence_run(lab, {"--mail", "1"});
+
+        CHECK(run.exit_code == rp::exit_code::config);
+        CHECK(run.out.empty());
+        CHECK(run.err == "evidence error: the run ID can't name a folder; nothing was done\n");
+        CHECK_FALSE(std::filesystem::exists(lab.evidence_root()));
+    }
+    CHECK(lab.fake.restore_calls == 0);
+    CHECK(lab.cleanups.empty());
+}
+
+TEST_CASE("test --evidence: a run whose run line can't be printed leaves no folder",
+          "[test_command][evidence]")
+{
+    TestLab lab;
+    rp::test::FailingStreamBuf buffer;
+    std::ostream out(&buffer);
+    const std::string root = lab.evidence_arg();
+
+    const auto [code, err] =
+        lab.run_to({"--run-id", kRunId, "--mail", "1", "--evidence", root}, out);
+
+    CHECK(code != rp::exit_code::ok);
+    CHECK(lab.fake.restore_calls == 0);
+    CHECK(lab.timings.empty());
+    CHECK_FALSE(std::filesystem::exists(lab.run_folder()));
+    // Nor the runs root that was made for it.
+    CHECK_FALSE(std::filesystem::exists(lab.evidence_root()));
+}
+
+TEST_CASE("test --evidence: a file that can't be written changes no status; exit 0 becomes 1, "
+          "any other is kept, and there is no result.json",
+          "[test_command][evidence]")
+{
+    const auto [refused, outcome, code] = GENERATE(table<std::string, std::string, int>({
+        {"items.csv", "pass", rp::exit_code::config},
+        {"veeam-session.log", "pass", rp::exit_code::config},
+        {"result.json", "pass", rp::exit_code::config},
+        {"result.json", "fail", rp::exit_code::restore},
+    }));
+    CAPTURE(refused, outcome);
+    TestLab lab;
+    lab.fake.pool.mail = {carol_mail(1)};
+    if (outcome == "fail") {
+        lab.targets.after[kind_slot(rp::connector::ItemKind::sharepoint)] = json::array();
+    }
+    const std::string refused_name = refused;
+    lab.write_evidence_file = [&](const std::filesystem::path& path, std::string_view content) {
+        if (utf8(path.filename()) == refused_name) {
+            return false;
+        }
+        lab.dir.write(std::filesystem::relative(path, lab.dir.path()), content);
+        return true;
+    };
+
+    const Run run = evidence_run(lab);
+
+    INFO(run.out);
+    CHECK(run.exit_code == code);
+    CHECK(run.err == "evidence error: " + utf8(lab.run_folder() / refused) +
+                         ": could not be written\n");
+    CHECK_THAT(lab.body(run), ContainsSubstring("\nstatus " + outcome + ": "));
+    CHECK_THAT(run.out, !ContainsSubstring("evidence "));
+    CHECK_FALSE(std::filesystem::exists(lab.run_folder() / "result.json"));
+}
+
+TEST_CASE("test --evidence: an attachment missing or changed after it was hashed: no "
+          "result.json, the status unchanged, exit 0 becomes 1",
+          "[test_command][evidence]")
+{
+    const bool gone = GENERATE(false, true);
+    TestLab lab({{"screenshots_enabled", true}});
+    // The capturer runs once the text files are written and hashed.
+    lab.capture_screenshot =
+        [&](const rp::ScreenshotRequest& request) -> std::optional<rp::ScreenshotReason> {
+        const std::filesystem::path csv = request.png.parent_path() / "items.csv";
+        if (gone) {
+            std::filesystem::remove(csv);
+        } else {
+            std::ofstream(csv, std::ios::binary | std::ios::app) << "9,\"added later\"\n";
+        }
+        return rp::ScreenshotReason::no_browser;
+    };
+
+    const Run run = evidence_run(lab);
+
+    CHECK(run.exit_code == rp::exit_code::config);
+    CHECK(run.err == "evidence error: " + utf8(lab.run_folder() / "items.csv") +
+                         ": changed after it was hashed\n");
+    CHECK_THAT(lab.body(run), ContainsSubstring("\nstatus pass: "));
+    CHECK_FALSE(std::filesystem::exists(lab.run_folder() / "result.json"));
+}
+
+TEST_CASE("test --evidence: a run that ended result_invalid leaves the text files and no "
+          "result.json",
+          "[test_command][evidence][result]")
+{
+    TestLab lab({{"screenshots_enabled", true}});
+    lab.fake.info.name = "fake";
+    // No result to list a screenshot: none is asked for.
+    int captures = 0;
+    lab.capture_screenshot =
+        [&](const rp::ScreenshotRequest&) -> std::optional<rp::ScreenshotReason> {
+        ++captures;
+        return std::nullopt;
+    };
+
+    const Run run = evidence_run(lab);
+
+    CHECK(captures == 0);
+    CHECK(run.exit_code == rp::exit_code::config);
+    CHECK(run.err == "result error: 1 schema violation(s), first at /connector/type\n"
+                     "evidence error: " +
+                         utf8(lab.run_folder()) +
+                         ": the result isn't valid restoreproof.result.v1; no result.json was "
+                         "written\n");
+    CHECK_THAT(lab.body(run), ContainsSubstring("\nstatus error result_invalid: "));
+    CHECK(names_in(lab.run_folder()) == kTextFiles);
+    CHECK_THAT(*file_bytes(lab.run_folder() / "items.csv"),
+               ContainsSubstring("\"RP-CANARY-0001\""));
+}
+
+TEST_CASE("test --evidence: a result that isn't valid at the end keeps its status line; the "
+          "text files, no result.json, exit 0 becomes 1",
+          "[test_command][evidence][result]")
+{
+    TestLab lab;
+    lab.wall_now = [&lab] {
+        return lab.cleanups.empty() ? rp::test::graph_lab::kNow : year_10000();
+    };
+
+    const Run run = evidence_run(lab);
+
+    CHECK(run.exit_code == rp::exit_code::config);
+    CHECK(run.err == "result error: 1 schema violation(s), first at /ended_at\n"
+                     "evidence error: " +
+                         utf8(lab.run_folder()) +
+                         ": the result isn't valid restoreproof.result.v1; no result.json was "
+                         "written\n");
+    CHECK_THAT(lab.body(run), ContainsSubstring("\nstatus pass: "));
+    CHECK(names_in(lab.run_folder()) == kTextFiles);
+}
+
+TEST_CASE("test --evidence: a screenshot never changes the status or the exit code",
+          "[test_command][evidence][screenshot]")
+{
+    using Capturer = rp::ScreenshotCapturer;
+    const auto [name, enabled, capturer, expected] =
+        GENERATE(table<std::string, bool, Capturer, json>({
+            {"off: the capturer isn't asked", false,
+             [](const rp::ScreenshotRequest&) -> std::optional<rp::ScreenshotReason> {
+                 throw std::logic_error("asked");
+             },
+             json{{"state", "unavailable"}, {"reason", "disabled"}}},
+            {"on, the default capturer", true, Capturer{},
+             json{{"state", "unavailable"}, {"reason", "no_page"}}},
+            {"it throws", true,
+             [](const rp::ScreenshotRequest&) -> std::optional<rp::ScreenshotReason> {
+                 throw std::runtime_error("the browser crashed");
+             },
+             json{{"state", "unavailable"}, {"reason", "failed"}}},
+            {"it times out", true,
+             [](const rp::ScreenshotRequest&) -> std::optional<rp::ScreenshotReason> {
+                 return rp::ScreenshotReason::timeout;
+             },
+             json{{"state", "unavailable"}, {"reason", "timeout"}}},
+            {"it needs a sign-in", true,
+             [](const rp::ScreenshotRequest&) -> std::optional<rp::ScreenshotReason> {
+                 return rp::ScreenshotReason::login_required;
+             },
+             json{{"state", "unavailable"}, {"reason", "login_required"}}},
+            {"what it left isn't a PNG", true,
+             [](const rp::ScreenshotRequest& request) -> std::optional<rp::ScreenshotReason> {
+                 std::ofstream(request.png, std::ios::binary) << "<html>Sign in</html>";
+                 return std::nullopt;
+             },
+             json{{"state", "unavailable"}, {"reason", "failed"}}},
+        }));
+    CAPTURE(name);
+    TestLab lab({{"screenshots_enabled", enabled}});
+    lab.capture_screenshot = capturer;
+
+    const Run run = evidence_run(lab);
+
+    INFO(run.err);
+    CHECK(run.exit_code == rp::exit_code::ok);
+    CHECK(run.err.empty());
+    CHECK_THAT(run.out, ContainsSubstring("\nstatus pass: "));
+    const json result = lab.evidence_result();
+    CHECK(result.at("screenshot") == expected);
+    CHECK(result.at("attachments").size() == 2);
+    CHECK(result.at("status").at("warnings").empty());
+    CHECK(names_in(lab.run_folder()) ==
+          std::set<std::string>{"items.csv", "result.json", "veeam-session.log"});
+}
+
+TEST_CASE("test --evidence: a captured screenshot is the third attachment",
+          "[test_command][evidence][screenshot]")
+{
+    TestLab lab({{"screenshots_enabled", true}});
+    std::vector<std::string> asked_for;
+    lab.capture_screenshot =
+        [&](const rp::ScreenshotRequest& request) -> std::optional<rp::ScreenshotReason> {
+        asked_for = request.session_ids;
+        std::ofstream(request.png, std::ios::binary) << kPng;
+        return std::nullopt;
+    };
+
+    const Run run = evidence_run(lab);
+
+    CHECK(run.exit_code == rp::exit_code::ok);
+    const json result = lab.evidence_result();
+    CHECK(result.at("screenshot") == json{{"state", "captured"}});
+    REQUIRE(result.at("attachments").size() == 3);
+    CHECK(result.at("attachments").at(1) ==
+          json{{"name", "screenshot.png"},
+               {"sha256", rp::sha256_hex(kPng)},
+               {"size_bytes", kPng.size()}});
+    CHECK(file_bytes(lab.run_folder() / "screenshot.png") == kPng);
+    CHECK(asked_for == std::vector<std::string>{"sess-mail", "sess-sharepoint"});
+    CHECK_THAT(run.out, EndsWith("evidence " + utf8(lab.run_folder()) +
+                                 ": result.json, items.csv, veeam-session.log, "
+                                 "screenshot.png\n"));
+}
+
+TEST_CASE("test --evidence: a secret value in Veeam's words never reaches the run folder",
+          "[test_command][evidence][secrets]")
+{
+    TestLab lab;
+    lab.fake.answer = [](const rp::connector::RestoreSpec& spec) {
+        rp::connector::RestoreResult result = restored(spec);
+        result.log = "session sess-mail (mail): Success\n"
+                     "Failed proxy: sign-in of rp-veeam with Sentinel-Veeam-Password-9c2e failed\n"
+                     "Failed app: certificate password " +
+                     std::string{rp::test::graph_lab::kPfxPassword} + " refused\n";
+        return result;
+    };
+
+    const Run run = evidence_run(lab);
+
+    CHECK(run.exit_code == rp::exit_code::ok);
+    CHECK(file_bytes(lab.run_folder() / "veeam-session.log") ==
+          "session sess-mail (mail): Success\n[withheld: held a secret value]\n"
+          "[withheld: held a secret value]\n");
+    CHECK_THAT(*file_bytes(lab.run_folder() / "veeam-session.log"),
+               !ContainsSubstring(std::string{rp::test::graph_lab::kPfxPassword}));
+    for (const auto& entry : std::filesystem::directory_iterator(lab.run_folder())) {
+        CAPTURE(utf8(entry.path().filename()));
+        CHECK_THAT(*file_bytes(entry.path()), !ContainsSubstring("Sentinel-Veeam-Password"));
+    }
+    CHECK_THAT(lab.log(), ContainsSubstring("SECURITY: evidence: 2 line(s) held a secret value "
+                                            "and were withheld"));
+    CHECK_THAT(lab.log(), !ContainsSubstring("Sentinel-Veeam-Password"));
+    CHECK_THAT(run.out + run.err, !ContainsSubstring("Sentinel-Veeam-Password"));
+}
+
+TEST_CASE("test --evidence: a result that holds a secret value is never written: the text "
+          "files, no result.json, the status unchanged, exit 0 becomes 1",
+          "[test_command][evidence][secrets]")
+{
+    TestLab lab;
+    // A real mail whose subject holds the Veeam password: the result names
+    // every sampled item in expected.items.
+    rp::connector::MailCandidate mail = carol_mail(1);
+    mail.selector.subject = "fwd: Sentinel-Veeam-Password-9c2e";
+    lab.fake.pool.mail = {mail};
+
+    const Run run = evidence_run(lab);
+
+    INFO(run.out);
+    CHECK(run.exit_code == rp::exit_code::config);
+    CHECK(run.err == "evidence error: " + utf8(lab.run_folder()) +
+                         ": the result holds a secret value; no result.json was written\n");
+    CHECK_THAT(lab.body(run), ContainsSubstring("\nstatus pass: "));
+    CHECK_THAT(run.out, !ContainsSubstring("evidence "));
+    CHECK(names_in(lab.run_folder()) == kTextFiles);
+    for (const auto& entry : std::filesystem::directory_iterator(lab.run_folder())) {
+        CAPTURE(utf8(entry.path().filename()));
+        CHECK_THAT(*file_bytes(entry.path()), !ContainsSubstring("Sentinel-Veeam-Password"));
+    }
+    CHECK_THAT(lab.log(), ContainsSubstring("SECURITY: evidence: the result held a secret value; "
+                                            "no result.json was written"));
+    CHECK_THAT(lab.log(), !ContainsSubstring("Sentinel-Veeam-Password"));
+}
+
+TEST_CASE("test --evidence: a run with no restore session asks for no screenshot",
+          "[test_command][evidence][screenshot]")
+{
+    TestLab lab({{"screenshots_enabled", true}});
+    lab.fake.candidates_throw = [] { throw rp::connector::TransientError("Veeam unreachable"); };
+    lab.fake.pool.mail = {carol_mail(1)};
+    int captures = 0;
+    lab.capture_screenshot =
+        [&](const rp::ScreenshotRequest& request) -> std::optional<rp::ScreenshotReason> {
+        ++captures;
+        std::ofstream(request.png, std::ios::binary) << kPng;
+        return std::nullopt;
+    };
+
+    const Run run = evidence_run(lab);
+
+    CHECK(run.exit_code == rp::exit_code::transient);
+    CHECK(captures == 0);
+    const json result = lab.evidence_result();
+    CHECK(result.at("restore").is_null());
+    CHECK(result.at("screenshot") == json{{"state", "unavailable"}, {"reason", "no_page"}});
+    CHECK(names_in(lab.run_folder()) ==
+          std::set<std::string>{"items.csv", "result.json", "veeam-session.log"});
+}
+
+TEST_CASE("test --evidence: a run that stops before the sample still leaves its folder: the "
+          "header-only items.csv, an empty log and a valid result that lists them",
+          "[test_command][evidence]")
+{
+    TestLab lab;
+    lab.fake.candidates_throw = [] { throw rp::connector::TransientError("Veeam unreachable"); };
+    lab.fake.pool.mail = {carol_mail(1)};
+
+    const Run run = evidence_run(lab);
+
+    CHECK(run.exit_code == rp::exit_code::transient);
+    const json result = lab.evidence_result();
+    CHECK(result.at("status").at("error_code") == "backup_transient");
+    CHECK(result.at("expected").is_null());
+    CHECK(file_bytes(lab.run_folder() / "veeam-session.log") == "");
+    CHECK(file_bytes(lab.run_folder() / "items.csv") ==
+          "index,type,source,canary_id,name,expected_kind,sha256_rule,expected_sha256,"
+          "found_sha256,restore_outcome,found,outcome,mismatches,verdict,code,ms\n");
+    REQUIRE(result.at("attachments").size() == 2);
+    CHECK(result.at("attachments").at(1) ==
+          json{{"name", "veeam-session.log"}, {"sha256", rp::sha256_hex("")}, {"size_bytes", 0}});
+}
+
+// The Done-when (#45): a run folder contains result.json, the log, items.csv
+// and (optionally) a PNG, each hashed in the result.
+TEST_CASE("test --evidence: the run folder holds result.json, veeam-session.log and items.csv, "
+          "each attachment with the hash and size the result lists; then its line, last",
+          "[test_command][evidence][acceptance]")
+{
+    TestLab lab;
+    lab.fake.pool.mail = {carol_mail(1)};
+    const std::string veeam_log =
+        "session sess-mail (mail): Success, 2 items processed (2 successes)\n"
+        "Success RP-CANARY-0001: Item RP-CANARY-0001 was restored successfully (type: IPM.Note; "
+        "source: Alice Test\\Inbox; target: restoretest@RestoreProofLab.onmicrosoft.com\\Inbox)\n";
+    lab.fake.answer = [&](const rp::connector::RestoreSpec& spec) {
+        rp::connector::RestoreResult result = restored(spec);
+        result.log = veeam_log;
+        return result;
+    };
+
+    const Run run = evidence_run(lab);
+
+    INFO(run.out);
+    INFO(run.err);
+    REQUIRE(run.exit_code == rp::exit_code::ok);
+    CHECK(run.err.empty());
+    CHECK(names_in(lab.run_folder()) ==
+          std::set<std::string>{"items.csv", "result.json", "veeam-session.log"});
+    CHECK(names_in(lab.evidence_root()) == std::set<std::string>{kRunId});
+
+    // result.json: valid, canonical, the finished result (lab.evidence_result
+    // REQUIREs the first two).
+    const json result = lab.evidence_result();
+    CHECK(keys_of(result) == kResultKeys);
+    CHECK(result.at("run_id") == kRunId);
+    CHECK(result.at("status").at("status") == "pass");
+    CHECK(result.at("ended_at").is_string());
+    CHECK(result.at("cleanup").at("after").is_object());
+    CHECK(result.at("screenshot") == json{{"state", "unavailable"}, {"reason", "disabled"}});
+
+    // Each attachment hashed in the result, and no other file.
+    const json& attachments = result.at("attachments");
+    REQUIRE(attachments.size() == 2);
+    CHECK(attachments.at(0).at("name") == "items.csv");
+    CHECK(attachments.at(1).at("name") == "veeam-session.log");
+    for (const json& attachment : attachments) {
+        const std::optional<std::string> bytes =
+            file_bytes(lab.run_folder() / attachment.at("name").get<std::string>());
+        REQUIRE(bytes);
+        CHECK(attachment.at("sha256") == rp::sha256_hex(*bytes));
+        CHECK(attachment.at("size_bytes") == bytes->size());
+    }
+
+    // The log is Veeam's words as the connector gave them; the CSV a row per
+    // expected item, a found hash for the canaries only, equal to the
+    // manifest's since they matched.
+    CHECK(file_bytes(lab.run_folder() / "veeam-session.log") == veeam_log);
+    const std::string csv = *file_bytes(lab.run_folder() / "items.csv");
+    const json& expected = result.at("expected").at("items");
+    REQUIRE(expected.size() == 3);
+    const std::string mail_hash = expected.at(0).at("sha256").get<std::string>();
+    const std::string file_hash = expected.at(2).at("sha256").get<std::string>();
+    CHECK(csv ==
+          "index,type,source,canary_id,name,expected_kind,sha256_rule,expected_sha256,"
+          "found_sha256,restore_outcome,found,outcome,mismatches,verdict,code,ms\n"
+          "0,\"mail\",\"canary\",\"" + expected.at(0).at("canary_id").get<std::string>() +
+              "\",\"RP-CANARY-0001\",\"manifest\",\"text-v1\",\"" + mail_hash + "\",\"" + mail_hash +
+              "\",\"restored\",\"yes\",\"match\",\"\",\"verified\",\"\",123000\n"
+          "1,\"mail\",\"random\",\"\",\"real mail 01\",\"fields\",\"\",\"\",\"\",\"restored\","
+          "\"yes\",\"match\",\"\",\"verified\",\"\",123000\n"
+          "2,\"sharepoint\",\"canary\",\"" + expected.at(2).at("canary_id").get<std::string>() +
+              "\",\"rp-canary-01.pdf\",\"manifest\",\"bytes\",\"" + file_hash + "\",\"" +
+              file_hash + "\",\"restored\",\"yes\",\"match\",\"\",\"verified\",\"\",246000\n");
+
+    // The folder's line is the last on stdout, after the timings' table.
+    REQUIRE(lab.timings.size() == 1);
+    CHECK_THAT(run.out, EndsWith(timings_table(lab.timings[0]) + "evidence " +
+                                 utf8(lab.run_folder()) +
+                                 ": result.json, items.csv, veeam-session.log\n"));
+}
+
+TEST_CASE("test --evidence: a run ID the run made names its folder", "[test_command][evidence]")
+{
+    TestLab lab;
+
+    const Run run = evidence_run(lab, {"--mail", "1", "--sp", "0", "--od", "0"});
+
+    CHECK(run.exit_code == rp::exit_code::ok);
+    CHECK(lab.evidence_result(kGeneratedRunId).at("run_id") == kGeneratedRunId);
+}
+
+TEST_CASE("test --evidence: the whole pipeline's result is shared/testdata/result-v1/valid.json, "
+          "byte for byte, and names nothing of the lab tenant",
+          "[test_command][evidence][json][result]")
 {
     const std::string text = shared_result();
     const std::string file = rp::test::read_shared(kSharedResult);
@@ -1489,6 +2053,10 @@ TEST_CASE("test --json: the whole pipeline's result is shared/testdata/result-v1
     CHECK(document.at("cleanup").at("after").at("sharepoint").at("deleted") == 3);
     CHECK(document.at("timings").at("spans").at("restore_wait") == json{{"ms", 120000}});
     CHECK(file.find("\xC3\x9C" "bersicht.docx") != std::string::npos);
+    REQUIRE(document.at("attachments").size() == 2);
+    CHECK(document.at("attachments").at(0).at("name") == "items.csv");
+    CHECK(document.at("attachments").at(1).at("name") == "veeam-session.log");
+    CHECK(document.at("screenshot") == json{{"state", "unavailable"}, {"reason", "disabled"}});
 
     // Nothing of the lab tenant, in any case.
     const std::string folded = lower(file);

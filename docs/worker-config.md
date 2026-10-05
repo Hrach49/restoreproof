@@ -21,7 +21,7 @@ example, fill in your own values, and add those two keys if you need them.
 
 ## Settings
 
-Ten keys are required; the other eight are optional. Six of those have defaults; without
+Ten keys are required; the other nine are optional. Seven of those have defaults; without
 `veeam_ca_file` the Worker trusts the Windows certificate store, and without
 `veeam_cert_sha256` it checks the Veeam server's host name.
 
@@ -45,6 +45,7 @@ Ten keys are required; the other eight are optional. Six of those have defaults;
 | `log_level` | no | `"info"` | `trace`, `debug`, `info`, `warn`, `error`, `critical`, `off` | How much the Worker logs. Lowercase only. |
 | `veeam_ca_file` | no | (not set) | absolute path of a readable file: see below | PEM file with the CA certificate(s), or Veeam's self-signed certificate itself, that the Worker trusts for `veeam_url` instead of the Windows certificate store. TLS verification can't be turned off. |
 | `veeam_cert_sha256` | no | (not set) | 64 hexadecimal digits in any case, no separators; needs `veeam_ca_file`: see below | The SHA-256 of Veeam's REST certificate, as Windows shows it (`GetCertHashString('SHA256')`). `veeam_ca_file` must hold that certificate. With both set, the Worker trusts exactly that certificate's key and skips only the host-name check, which Veeam's default certificate can never pass. Not a secret. |
+| `screenshots_enabled` | no | `false` | `true` or `false`: see below | The client's screenshot setting: whether a run that writes a run folder asks for a picture of Veeam's restore session. Off by default. |
 
 At least one of `sample_mail`, `sample_sp` and `sample_od` must be above 0.
 
@@ -59,7 +60,8 @@ to U+2069), which can reorder how a line displays. Other non-ASCII text, such as
 The Worker checks the file when it loads it and stops at the first problem, in a fixed order:
 the file can't be read; it isn't valid JSON; it isn't a JSON object; a key looks like a secret;
 a key is unknown; then each setting in the order of the table above (for `veeam_cert_sha256`,
-its form first, then that `veeam_ca_file` is set); then the sample sizes together; then that
+its form first, then that `veeam_ca_file` is set; `screenshots_enabled` last); then the sample
+sizes together; then that
 the `veeam_ca_file` named can be opened for reading; last, when `veeam_cert_sha256` is set,
 that `veeam_ca_file` holds a certificate with that SHA-256, read the way the Worker's TLS
 connection reads it. Fix the reported problem and run
@@ -150,6 +152,16 @@ connection reads it. Fix the reported problem and run
   has a BEGIN CERTIFICATE line without its END CERTIFICATE line` and `veeam_ca_file holds a
   certificate block that can't be read`, each after `config key "veeam_cert_sha256": `. See
   "Veeam's default certificate" below.
+- **`screenshots_enabled` is `true` or `false`, and nothing else.** It is the file's only
+  boolean. JSON's own `true` and `false` are accepted; a string (`"true"`), a number (`1`) or
+  `null` is rejected with `config key "screenshots_enabled" must be true or false`. It is a
+  per-client setting, off by default, since a picture can't be passed through the redaction
+  that every logged string goes through. Until jobs exist (W4.8) the CLI reads it from
+  `config.json`; a job's value replaces it then. In W4.2 it changes only the reason the result
+  gives: the default capturer starts no browser and answers `unavailable` either way, with the
+  reason `disabled` when the key is `false` and `no_page` when it is `true`, because no Veeam
+  page shows a restore session without an interactive sign-in (`docs/decisions.md` 2026-10-05,
+  W4.2, points 2 to 4). A screenshot never changes a run's status, a warning or the exit code.
 - **Control characters are rejected** in every string setting, for the same reason: a newline,
   escape sequence or bidi override in a value could forge, hide or reorder lines of
   `config check` output.
@@ -354,6 +366,7 @@ sample_od                 5
 log_level                 info
 veeam_ca_file             C:\ProgramData\RestoreProof\veeam-rest.pem
 veeam_cert_sha256         9FB19E0E604C9BE49F83D8E508EFA8EA0986A952377C783E5035CEA2D772A213
+screenshots_enabled       false
 secrets (environment variables; values are never shown):
 RP_VEEAM_USERNAME         **** (set)
 RP_VEEAM_PASSWORD         **** (set)
@@ -362,7 +375,8 @@ RP_GRAPH_CERT_PASSWORD    **** (set)
 ```
 
 Without `veeam_ca_file` its line reads `veeam_ca_file             (not set)`, and likewise
-`veeam_cert_sha256         (not set)` without a pin.
+`veeam_cert_sha256         (not set)` without a pin. `screenshots_enabled` always has a line:
+`false` when the file doesn't set it.
 
 A secret prints only as `**** (set)` or `(not set)`: never any character of its value, nor its
 length.
@@ -843,7 +857,7 @@ lines are not shown.
 ```
 rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>]
               [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>]
-              [--record <dir>] [--json <file>]
+              [--record <dir>] [--json <file> | --evidence <dir>]
 ```
 
 **It writes to the tenant and deletes there, as `restore` does.** It is the whole test of a
@@ -855,7 +869,8 @@ the run line, the header, the guard, the cleanup lines, the status line and its 
 timings' table, `--record`, and the exit codes. The code is `rp::run_test_command` in
 `worker/include/rp/test_command.hpp`; the choices are `docs/decisions.md` 2026-10-03 (W3.6).
 
-- **Flags.** `restore`'s flags with `restore`'s rules, plus `--json <file>`. An absent size is
+- **Flags.** `restore`'s flags with `restore`'s rules, plus `--json <file>` or `--evidence <dir>`
+  (one or the other, below). An absent size is
   the config's `sample_mail`, `sample_sp` or `sample_od`. There is no `--seed`: the run ID
   gives the seed (`run <id>  seed <hex>`), so `--run-id` repeats a sample, with the same
   manifest, cursor and restore point (`--point`).
@@ -927,7 +942,7 @@ python -m json.tool C:\runs\run-0001.json
 python -m json.tool --no-ensure-ascii C:\runs\run-0001.json C:\runs\run-0001.pretty.json
 ```
 
-Its fifteen top-level keys are always all there, `null` where a step didn't run:
+Its seventeen top-level keys are always all there, `null` where a step didn't run:
 
 | Key | What it holds |
 |---|---|
@@ -940,6 +955,7 @@ Its fifteen top-level keys are always all there, `null` where a step didn't run:
 | `restore_point` | `{"id", "backup_time_raw", "backup_time"}`: Veeam's time text unparsed, and the same time cut to whole seconds (`YYYY-MM-DDTHH:MM:SSZ`, `null` when the text doesn't parse) |
 | `sample`, `expected`, `check`, `status`, `cleanup`, `timings` | the result objects as W2.6, W3.1, W3.2, W3.3, W3.4 and W3.5 write them (`docs/verification.md`). `sample` and `expected` are `null` when the run stopped before the sample was chosen, `check` when the check didn't run, `cleanup` when no clean ran (the run stopped before the clean before). `status` and `timings` are always objects |
 | `restore` | the restore's status, items sent and restored; its sessions (ID, kind, result, `details` only when they read as Veeam's counts, else `null`, items sent and restored, `started_at_raw`/`ended_at_raw` as Veeam wrote them); its items in order, `{index, kind, outcome, infrastructure, container_missing, session_id}`, with no item name and no Veeam message. `null` when there is no restore result |
+| `attachments`, `screenshot` | the run folder's other files and its screenshot (W4.2, `--evidence` below). Both `null` under `--json`: there is no run folder |
 
 There is no `command` and no `exit_code` (W3.6's `rp.run-summary.v0` had both): the file
 describes the run, not the process. A pass whose stdout was lost, or whose `--record`
@@ -995,6 +1011,104 @@ json error: <file>: could not be written
 
 on stderr, after the run's other lines. The status never changes. Exit 0 becomes 1; any other
 exit code is kept. `<file>` is the value as given, control characters shown as spaces.
+
+### `--evidence <dir>`
+
+Writes the run folder `<dir>\<run_id>\` (W4.2; `docs/verification.md`, "The run folder";
+`docs/decisions.md` 2026-10-05, W4.2). `<dir>` is the runs root and is made if it isn't there;
+there is no default, so nothing is written without the flag (the service will pass
+`%ProgramData%\RestoreProof\runs`, W4.8). `--evidence` and `--json` can't be given together
+(exit 64): the folder's `result.json` is the `--json` file. `restore` takes neither.
+
+| File | What it holds |
+|---|---|
+| `items.csv` | one row per sampled item: what was expected, what the restore and the check said, and for a canary the hash that was found |
+| `veeam-session.log` | Veeam's own lines about the restore sessions, as the connector read them: one per session and one per restore event. Empty when nothing was restored |
+| `screenshot.png` | only when a screenshot was captured (never, today: below) |
+| `result.json` | the result, as `--json` writes it, with each file above in `attachments` (`name`, `sha256`, `size_bytes`) and `screenshot` saying `captured` or why not. Written last |
+
+`result.json` doesn't list itself (a file can't hold its own hash). It is there only when the
+folder is complete: a folder without it is a run with no result.
+
+For example, `rpworker test --mail 2 --sp 1 --od 0 --run-id run-0001 --evidence C:\rp-runs`
+ends, after the timings' table:
+
+```
+evidence C:\rp-runs\run-0001: result.json, items.csv, veeam-session.log
+```
+
+and before `--record`'s `recorded ...` line.
+
+**Before the run.** Once the config is read and before the secrets:
+
+```
+config error: --evidence <dir>: not a UTF-8 path
+config error: --evidence: the run ID can't name a folder
+```
+
+The second is for a `--run-id` that isn't a plain file name: it holds a `:`, ends in `.`, is
+`.` or `..`, or is a DOS device's name (`CON`, `aux.1`; the list is under `--json` above). The
+folder's name is the run ID as it is, never an encoded form. A run ID the run makes itself
+(`rp-<time>-<8 hex>`) always can.
+
+Then, once the run ID is known and before the run line, the folder is made. If something is
+already at that path (a folder of the same letters in another case included), or it can't be
+made:
+
+```
+evidence error: <folder>: the run folder already exists; nothing was done
+evidence error: <folder>: the run folder couldn't be made; nothing was done
+```
+
+Exit 1, no run line, nothing restored and nothing deleted. A folder that is there is never
+written into: pick another run ID, or move the folder away. A run that stops here, or before
+its run line for any other reason, leaves no folder: not the run's, and not `<dir>` or a level
+above it when this run made them.
+
+**At the end**, after the clean after and the timings: the two text files are written, the
+screenshot is asked for, the finished result is built with what it lists and validated, each
+attachment is read back and compared with its hash, and `result.json` is written. What can go
+wrong is one line on stderr; the status never changes, exit 0 becomes 1 and any other exit
+code is kept:
+
+```
+evidence error: <file>: could not be written
+evidence error: <file>: changed after it was hashed
+evidence error: <folder>: the result isn't valid restoreproof.result.v1; no result.json was written
+evidence error: <folder>: the result holds a secret value; no result.json was written
+```
+
+The third is for a run that ended `error result_invalid`, or whose finished result isn't valid
+(after its `result error: ...` line): the two text files are there, `result.json` isn't.
+The last is for a result one of whose strings holds one of the run's secret values, in
+practice a sampled mail's subject or a file's name that contains the Veeam password or the
+Graph certificate's: the result names every sampled item and can't be cut, so it isn't
+written (`docs/verification.md`, "No secret in the folder").
+Files are written as `--json`'s is, never over one that is there.
+
+**The screenshot.** `screenshots_enabled` in `config.json` ("Settings" above) turns it on; it
+is off by default. Today no screenshot is ever taken: the only page of Veeam that shows a
+restore session, the Restore Portal, signs in through Microsoft's interactive page, and its
+certificate is one a browser can't be told to trust the way the Worker does. So the Worker
+starts no browser, and the result says why there is no picture:
+
+| `screenshot` | When |
+|---|---|
+| `{"state": "unavailable", "reason": "disabled"}` | `screenshots_enabled` is `false` or absent |
+| `{"state": "unavailable", "reason": "no_page"}` | `screenshots_enabled` is `true` |
+
+The result's schema also knows `captured` and the reasons `no_browser`, `login_required`,
+`timeout` and `failed`, for a capturer that starts a browser; none is built. A screenshot
+never changes a status, a warning or an exit code.
+
+**What the files hold of the tenant.** No secret: every line of the log has been through
+`redact()`, and a line or a row that holds one of the run's secret values (the Veeam password,
+the Graph certificate or its password) is written as `[withheld: held a secret value]`, with
+one `SECURITY:` line in the log. No mail body, no file content, and no hash of either unless
+the item is a canary. But tenant names: `items.csv` has the sampled items' subjects and file
+names (the ones the result holds), and `veeam-session.log` has Veeam's messages as they are,
+which name the item, its source folder or path and the restore target. Keep the folder out of
+the repository.
 
 ## `--record <dir>`
 

@@ -679,6 +679,61 @@ TEST_CASE("check: an office-v1 canary is compared with the after read's office h
     }
 }
 
+// W4.2 point 5: items.csv's found hash. A canary's content is ours; a real
+// mail's body hash is never kept, though the read back computes it.
+TEST_CASE("check: found_sha256 is the compared copy's hash by the expectation's rule, for an "
+          "item that carries a hash only, and never in the check object",
+          "[checker]")
+{
+    Scene scene;
+
+    SECTION("a match: the canaries' own hashes, nothing for a random item")
+    {
+        const CheckResult result = scene.run();
+        CHECK(result.items[0].found_sha256 == scene.expected.items[0].sha256);
+        CHECK(result.items[2].found_sha256 == scene.expected.items[2].sha256);
+        CHECK(result.items[4].found_sha256 == kHashA); // office-v1, not the bytes'
+        // The random mail's copy has a body hash (mail_copy gives it one).
+        REQUIRE_FALSE(scene.after.mail.items[1].sha256.empty());
+        REQUIRE_FALSE(scene.after.sharepoint.items[1].sha256.empty());
+        REQUIRE_FALSE(scene.after.onedrive.items[1].sha256.empty());
+        CHECK(result.items[1].found_sha256.empty());
+        CHECK(result.items[3].found_sha256.empty());
+        CHECK(result.items[5].found_sha256.empty());
+        CHECK(verification::to_json(result).dump().find(kHashA) == std::string::npos);
+        CHECK(verification::to_json(result).dump().find("found_sha256") == std::string::npos);
+    }
+    SECTION("a mismatch: what was found")
+    {
+        scene.after.mail.items[0].sha256 = kHashB;
+        scene.after.onedrive.office["o-4"] = {kHashB, ""};
+        CHECK(scene.run_one(0).found_sha256 == kHashB);
+        CHECK(scene.run_one(4).found_sha256 == kHashB);
+    }
+    SECTION("no hash by that rule: empty")
+    {
+        scene.after.sharepoint.items[0].sha256_rule = "text-v1";
+        scene.after.onedrive.office["o-4"] = {"", "office-v1: not a ZIP package"};
+        CHECK(scene.run_one(2).found_sha256.empty());
+        CHECK(scene.run_one(4).found_sha256.empty());
+        scene.after.onedrive.office.clear();
+        CHECK(scene.run_one(4).found_sha256.empty());
+    }
+    SECTION("not found: empty")
+    {
+        scene.after.mail.items.clear();
+        CHECK(scene.run_one(0).found_sha256.empty());
+    }
+    SECTION("a canary mail found by its subject alone may be a real mail: empty")
+    {
+        scene.after.mail.items[0].internet_message_id = "<someone-elses@tenant.example>";
+        const ItemCheck item = scene.run_one(0);
+        REQUIRE(item.found);
+        CHECK(item.mismatches == std::vector<std::string>{"internet_message_id"});
+        CHECK(item.found_sha256.empty());
+    }
+}
+
 TEST_CASE("check: an office-v1 reader's text leaves no trace in the reason or the check object",
           "[checker]")
 {

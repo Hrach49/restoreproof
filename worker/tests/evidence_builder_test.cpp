@@ -14,6 +14,7 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 #include <spdlog/sinks/ostream_sink.h>
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -601,4 +602,124 @@ TEST_CASE("the result's attachments and screenshot objects", "[evidence]")
     CHECK(rp::attachment_names() ==
           std::vector<std::string>{"items.csv", "screenshot.png", "veeam-session.log"});
     CHECK(rp::to_string(static_cast<ScreenshotReason>(99)) == "unknown");
+}
+
+// After the code review of 2026-10-05.
+
+TEST_CASE("a run folder too deep for the writer's own temp name is not made, and not left",
+          "[evidence]")
+{
+    TempDir dir;
+    const std::string run_id(20, 'r');
+    // The folder itself can be made (under 248 characters); the longest file
+    // in it with the writer's 21-character temp suffix can't (over 259).
+    std::filesystem::path root = dir.path();
+    while ((root / run_id).native().size() < 215) {
+        root /= std::string(std::min<std::size_t>(40, 229 - (root / run_id).native().size()), 'd');
+    }
+    REQUIRE((root / run_id).native().size() >= 215);
+    REQUIRE((root / run_id).native().size() < 240);
+    std::filesystem::path folder;
+
+    CHECK(EvidenceBuilder::make_run_folder(root, run_id, folder) == RunFolderCheck::cannot_make);
+    CHECK_FALSE(std::filesystem::exists(root / run_id));
+}
+
+TEST_CASE("a capturer's answer the result has no word for is `failed`", "[evidence][screenshot]")
+{
+    const ScreenshotReason answer =
+        GENERATE(ScreenshotReason::disabled, static_cast<ScreenshotReason>(99));
+    Lab lab;
+    lab.options.screenshots_enabled = true;
+    lab.options.capture = [&](const ScreenshotRequest&) -> std::optional<ScreenshotReason> {
+        return answer;
+    };
+
+    const EvidenceBuilder::Written written = lab.builder().write_attachments(facts_of(lab.run));
+
+    REQUIRE(written.evidence);
+    CHECK(written.evidence->screenshot.reason == ScreenshotReason::failed);
+}
+
+TEST_CASE("a folder a capturer left where the PNG should be is removed with what it holds",
+          "[evidence][screenshot]")
+{
+    Lab lab;
+    lab.options.screenshots_enabled = true;
+    lab.options.capture = [](const ScreenshotRequest& request) -> std::optional<ScreenshotReason> {
+        std::filesystem::create_directory(request.png);
+        std::ofstream(request.png / "profile.dat", std::ios::binary) << "a browser's";
+        return std::nullopt;
+    };
+
+    const EvidenceBuilder::Written written = lab.builder().write_attachments(facts_of(lab.run));
+
+    REQUIRE(written.evidence);
+    CHECK(written.evidence->screenshot.reason == ScreenshotReason::failed);
+    CHECK_FALSE(written.evidence->screenshot.captured);
+    CHECK(names_in(lab.folder) == std::set<std::string>{"items.csv", "veeam-session.log"});
+}
+
+TEST_CASE("a PNG of exactly the size allowed is an attachment", "[evidence][screenshot]")
+{
+    Lab lab;
+    lab.options.screenshots_enabled = true;
+    const std::string png =
+        kPng + std::string(static_cast<std::size_t>(rp::kMaxScreenshotBytes) - kPng.size(), 'x');
+    lab.options.capture = Lab::writes(png);
+
+    const EvidenceBuilder::Written written = lab.builder().write_attachments(facts_of(lab.run));
+
+    REQUIRE(written.evidence);
+    CHECK(written.evidence->screenshot.captured);
+    REQUIRE(written.evidence->attachments.size() == 3);
+    CHECK(written.evidence->attachments[1].size_bytes == rp::kMaxScreenshotBytes);
+}
+
+TEST_CASE("without a result to list it, no screenshot is asked for", "[evidence][screenshot]")
+{
+    Lab lab;
+    int captures = 0;
+    lab.options.screenshots_enabled = true;
+    lab.options.capture = [&](const ScreenshotRequest&) -> std::optional<ScreenshotReason> {
+        ++captures;
+        return std::nullopt;
+    };
+
+    const EvidenceBuilder::Written written =
+        lab.builder().write_attachments(facts_of(lab.run), false);
+
+    REQUIRE(written.evidence);
+    CHECK(captures == 0);
+    CHECK(written.evidence->attachments.size() == 2);
+    CHECK(names_in(lab.folder) == std::set<std::string>{"items.csv", "veeam-session.log"});
+}
+
+TEST_CASE("items.csv: a secret that a control character spells once written is withheld too",
+          "[evidence][secrets][csv]")
+{
+    ResultFacts run = rp::test::full_result_facts();
+    run.expected.items[1].mail->subject = "my\tpass";
+
+    const EvidenceText csv = EvidenceBuilder::items_csv(facts_of(run), {"my pass"});
+
+    CHECK(csv.withheld == 1);
+    CHECK_THAT(csv.text, !ContainsSubstring("my pass"));
+}
+
+TEST_CASE("the attachments' names are in order and each is there once", "[evidence]")
+{
+    Lab lab;
+    lab.options.screenshots_enabled = true;
+    lab.options.capture = Lab::writes(kPng);
+
+    const EvidenceBuilder::Written written = lab.builder().write_attachments(facts_of(lab.run));
+
+    REQUIRE(written.evidence);
+    std::vector<std::string> names;
+    for (const Attachment& attachment : written.evidence->attachments) {
+        names.push_back(attachment.name);
+    }
+    CHECK(names == rp::attachment_names());
+    CHECK(std::set<std::string>(names.begin(), names.end()).size() == names.size());
 }

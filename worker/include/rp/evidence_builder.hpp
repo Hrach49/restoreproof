@@ -189,10 +189,14 @@ public:
     // when the other failed), then, when both are written, asks for the
     // screenshot: not at all when screenshots are off (`disabled`); a capturer that throws, or says it
     // captured and left no file, one over kMaxScreenshotBytes or one that
-    // doesn't start with the PNG signature, is `failed`, and what it left at
-    // the path is removed. Each attachment's hash and size are of the bytes
-    // written (the screenshot's, of the bytes read). Never throws.
-    Written write_attachments(const EvidenceFacts& facts) noexcept;
+    // doesn't start with the PNG signature, is `failed`, as is a capturer
+    // that answers `disabled` or a value outside the enum; what an
+    // unavailable screenshot left at the path is removed. Without
+    // `with_screenshot` (a run with no valid result to list it) the capturer
+    // isn't asked. Each text file's hash and size are of the bytes handed to
+    // the writer, the screenshot's of the bytes read; write_result reads all
+    // of them back. Never throws.
+    Written write_attachments(const EvidenceFacts& facts, bool with_screenshot = true) noexcept;
 
     // Reads each attachment back and compares it with its hash and size
     // (`changed`, naming the first that differs or is gone), then writes

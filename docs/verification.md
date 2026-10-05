@@ -766,25 +766,32 @@ are in `docs/worker-config.md`, "`--evidence <dir>`". Nothing here changes a run
 
 1. The folder is made when the run ID is known, before the run line: one call that makes it
    or finds something there, so a folder is never taken over from another run. Every run with
-   a run line has had its folder from the start.
+   a run line has had its folder from the start. Until that line is out the folder is
+   `rp::RunFolder`'s, which takes it away again whichever way the run ends, and with it each
+   level of the runs root that was made for it (only while empty): a run refused here, or one
+   whose run line can't be printed, leaves nothing.
 2. At the end, after the clean after and the timings: `items.csv` and `veeam-session.log` are
    written (both always; each is tried even when the other failed).
 3. When both are written, the screenshot is asked for (below).
 4. Each attachment's SHA-256 and size are taken from the bytes that were written (the
    screenshot's from the bytes read back), and the finished result is built with
    `attachments` and `screenshot` and validated.
-5. Each attachment is read back and compared with its hash and size. One that is gone or
+5. The result's strings are looked through for the run's secret values ("No secret in the
+   folder" below). One that holds one stops here: `the result holds a secret value`, no
+   `result.json`.
+6. Each attachment is read back and compared with its hash and size. One that is gone or
    differs stops here: `changed after it was hashed`, no `result.json`.
-6. `result.json` is written, exactly the canonical text that validated.
+7. `result.json` is written, exactly the canonical text that validated.
 
 So `result.json` is there only when the folder is complete, and a folder without it is a run
-with no result: `error result_invalid`, a finished result that isn't valid, no verdict, a file
-that couldn't be written, or a process that ended in between. No cut-down result is written
+with no result: `error result_invalid`, a finished result that isn't valid or holds a secret
+value, no verdict, a file that couldn't be written, or a process that ended in between. No
+cut-down result is written
 for any of these (W4.1 point 5 stands). What the service reports to the Cloud for such a run
 is W4.8's question.
 
 W4.3 signs the result. Through `attachments` its signature then covers the other files; until
-then nothing but the read back in step 5 holds them.
+then nothing but the read back in step 6 holds them.
 
 ### `attachments` and `screenshot`
 
@@ -798,9 +805,9 @@ schema's keyword subset can't say "each name once" or "in this order"; the build
 |---|---|
 | `{"state": "captured"}` | `screenshot.png` is among the attachments |
 | `{"state": "unavailable", "reason": "disabled"}` | `screenshots_enabled` is off; the capturer wasn't asked |
-| `... "reason": "no_page"` | no page shows the restore session without an interactive sign-in |
+| `... "reason": "no_page"` | no page shows the restore session without an interactive sign-in; also a run with no restore session (it stopped before the restore, or the restore sent nothing), for which the capturer isn't asked |
 | `... "reason": "no_browser"`, `"login_required"`, `"timeout"` | a capturer's own answer |
-| `... "reason": "failed"` | the capturer threw, or said it captured and left no file, a file over 10 MiB, or one that doesn't start with the PNG signature; what it left is removed |
+| `... "reason": "failed"` | the capturer threw, or said it captured and left no file, a file over 10 MiB, one that can't be read whole (a read that stops short, or a file still growing), or one that doesn't start with the PNG signature; what it left is removed |
 
 **No screenshot is taken today.** The default capturer (`rp::no_screenshot_page`) answers
 `no_page` and starts no browser. Veeam's only page with restore sessions is the Restore
@@ -862,3 +869,17 @@ row that holds one keeps its `index`, has those words as its `name` and nothing 
 `SECURITY: evidence: <n> line(s) held a secret value and were withheld` line is logged. The
 restore's per-run PFX password never leaves the connector. W4.9's sentinel test is still to
 come.
+
+The result names every sampled item, so a subject or a file name that a CSV row was withheld
+for is in `expected.items` too, and the result can't be cut: it is validated, hashed and, from
+W4.3, signed as it is. So before `result.json` is written, every string of the finished result
+is looked through for the same values, as JSON reads them (in the text an escaped `"` or `\`
+would hide one). A result that holds one is not written: `evidence error: <folder>: the result
+holds a secret value; no result.json was written` on stderr, one `SECURITY: evidence: the
+result held a secret value; no result.json was written` log line, the status unchanged, exit 0
+becoming 1. The two text files stay, with their withheld lines.
+
+The match is on the whole value, anywhere in a string. A secret that is also a word of the
+result (a Veeam password of `pass` or `mail`) would therefore stop every run's `result.json`;
+a real password isn't one. Not covered: stdout, where `rpworker test`'s table shows each
+item's name as it is, and `--json`, which writes the result to a file the operator names.

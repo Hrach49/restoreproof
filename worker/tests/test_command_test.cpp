@@ -1630,6 +1630,8 @@ TEST_CASE("test --evidence: a run whose run line can't be printed leaves no fold
     CHECK(lab.fake.restore_calls == 0);
     CHECK(lab.timings.empty());
     CHECK_FALSE(std::filesystem::exists(lab.run_folder()));
+    // Nor the runs root that was made for it.
+    CHECK_FALSE(std::filesystem::exists(lab.evidence_root()));
 }
 
 TEST_CASE("test --evidence: a file that can't be written changes no status; exit 0 becomes 1, "
@@ -1856,6 +1858,60 @@ TEST_CASE("test --evidence: a secret value in Veeam's words never reaches the ru
                                             "and were withheld"));
     CHECK_THAT(lab.log(), !ContainsSubstring("Sentinel-Veeam-Password"));
     CHECK_THAT(run.out + run.err, !ContainsSubstring("Sentinel-Veeam-Password"));
+}
+
+TEST_CASE("test --evidence: a result that holds a secret value is never written: the text "
+          "files, no result.json, the status unchanged, exit 0 becomes 1",
+          "[test_command][evidence][secrets]")
+{
+    TestLab lab;
+    // A real mail whose subject holds the Veeam password: the result names
+    // every sampled item in expected.items.
+    rp::connector::MailCandidate mail = carol_mail(1);
+    mail.selector.subject = "fwd: Sentinel-Veeam-Password-9c2e";
+    lab.fake.pool.mail = {mail};
+
+    const Run run = evidence_run(lab);
+
+    INFO(run.out);
+    CHECK(run.exit_code == rp::exit_code::config);
+    CHECK(run.err == "evidence error: " + utf8(lab.run_folder()) +
+                         ": the result holds a secret value; no result.json was written\n");
+    CHECK_THAT(lab.body(run), ContainsSubstring("\nstatus pass: "));
+    CHECK_THAT(run.out, !ContainsSubstring("evidence "));
+    CHECK(names_in(lab.run_folder()) == kTextFiles);
+    for (const auto& entry : std::filesystem::directory_iterator(lab.run_folder())) {
+        CAPTURE(utf8(entry.path().filename()));
+        CHECK_THAT(*file_bytes(entry.path()), !ContainsSubstring("Sentinel-Veeam-Password"));
+    }
+    CHECK_THAT(lab.log(), ContainsSubstring("SECURITY: evidence: the result held a secret value; "
+                                            "no result.json was written"));
+    CHECK_THAT(lab.log(), !ContainsSubstring("Sentinel-Veeam-Password"));
+}
+
+TEST_CASE("test --evidence: a run with no restore session asks for no screenshot",
+          "[test_command][evidence][screenshot]")
+{
+    TestLab lab({{"screenshots_enabled", true}});
+    lab.fake.candidates_throw = [] { throw rp::connector::TransientError("Veeam unreachable"); };
+    lab.fake.pool.mail = {carol_mail(1)};
+    int captures = 0;
+    lab.capture_screenshot =
+        [&](const rp::ScreenshotRequest& request) -> std::optional<rp::ScreenshotReason> {
+        ++captures;
+        std::ofstream(request.png, std::ios::binary) << kPng;
+        return std::nullopt;
+    };
+
+    const Run run = evidence_run(lab);
+
+    CHECK(run.exit_code == rp::exit_code::transient);
+    CHECK(captures == 0);
+    const json result = lab.evidence_result();
+    CHECK(result.at("restore").is_null());
+    CHECK(result.at("screenshot") == json{{"state", "unavailable"}, {"reason", "no_page"}});
+    CHECK(names_in(lab.run_folder()) ==
+          std::set<std::string>{"items.csv", "result.json", "veeam-session.log"});
 }
 
 TEST_CASE("test --evidence: a run that stops before the sample still leaves its folder: the "

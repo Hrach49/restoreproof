@@ -9,6 +9,14 @@
 #include "result_lab.hpp"
 #include "test_support.hpp"
 
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
@@ -36,6 +44,7 @@ using rp::EvidenceFacts;
 using rp::EvidenceFailure;
 using rp::EvidenceOptions;
 using rp::EvidenceText;
+using rp::RunFolder;
 using rp::RunFolderCheck;
 using rp::ScreenshotReason;
 using rp::ScreenshotRequest;
@@ -76,8 +85,11 @@ struct Lab {
 
     Lab()
     {
-        REQUIRE(EvidenceBuilder::make_run_folder(dir.path() / "runs", "run-0001", folder) ==
+        RunFolder made;
+        REQUIRE(EvidenceBuilder::make_run_folder(dir.path() / "runs", "run-0001", made) ==
                 RunFolderCheck::ok);
+        made.keep();
+        folder = made.path();
         run.restore.log = "session s1 (mail): Success, 2 items processed (2 successes)\n"
                           "Success canary-mail-04: Item canary-mail-04 was restored successfully\n";
     }
@@ -113,12 +125,12 @@ TEST_CASE("a run ID that can't name a folder makes none", "[evidence]")
         GENERATE("a:b", ".", "..", "CON", "nul", "run.", "aux.txt", "COM1", "rp:20261003:a");
     CAPTURE(run_id);
     TempDir dir;
-    std::filesystem::path folder;
+    RunFolder folder;
 
     CHECK_FALSE(EvidenceBuilder::can_name_folder(run_id));
     CHECK(EvidenceBuilder::make_run_folder(dir.path(), run_id, folder) ==
           RunFolderCheck::not_a_folder_name);
-    CHECK(folder.empty());
+    CHECK(folder.path().empty());
     CHECK(names_in(dir.path()).empty());
 }
 
@@ -127,7 +139,7 @@ TEST_CASE("a run folder that is already there is never taken", "[evidence]")
     TempDir dir;
     std::filesystem::create_directory(dir.path() / "run-0001");
     dir.write("run-0001/items.csv", "an earlier run's");
-    std::filesystem::path folder;
+    RunFolder folder;
 
     SECTION("the same name")
     {
@@ -153,24 +165,26 @@ TEST_CASE("a runs root that can't be made is no run folder", "[evidence]")
 {
     TempDir dir;
     dir.write("runs", "a file where the root should be");
-    std::filesystem::path folder;
+    RunFolder folder;
 
     CHECK(EvidenceBuilder::make_run_folder(dir.path() / "runs", "run-0001", folder) ==
           RunFolderCheck::cannot_make);
+    CHECK(folder.path() == dir.path() / "runs" / "run-0001");
+    CHECK(bytes_of(dir.path() / "runs") == "a file where the root should be");
 }
 
 TEST_CASE("the run folder is made under a root that isn't there yet", "[evidence]")
 {
     TempDir dir;
-    std::filesystem::path folder;
+    RunFolder folder;
 
     CHECK(EvidenceBuilder::can_name_folder("rp-20260930T100000Z-0123abcd"));
     REQUIRE(EvidenceBuilder::make_run_folder(dir.path() / "a" / "runs",
                                              "rp-20260930T100000Z-0123abcd", folder) ==
             RunFolderCheck::ok);
-    CHECK(folder == dir.path() / "a" / "runs" / "rp-20260930T100000Z-0123abcd");
-    CHECK(std::filesystem::is_directory(folder));
-    CHECK(names_in(folder).empty());
+    CHECK(folder.path() == dir.path() / "a" / "runs" / "rp-20260930T100000Z-0123abcd");
+    CHECK(std::filesystem::is_directory(folder.path()));
+    CHECK(names_in(folder.path()).empty());
 }
 
 TEST_CASE("a text file that can't be written: no evidence, and the other is still tried",
@@ -611,18 +625,25 @@ TEST_CASE("a run folder too deep for the writer's own temp name is not made, and
 {
     TempDir dir;
     const std::string run_id(20, 'r');
-    // The folder itself can be made (under 248 characters); the longest file
-    // in it with the writer's 21-character temp suffix can't (over 259).
+    // A folder of exactly 230 characters, whatever the temp folder's own
+    // length: it can be made (under 248), and "\veeam-session.log" with the
+    // writer's temp suffix, 39 more, can't (over 259).
+    constexpr std::size_t kFolderLength = 230;
     std::filesystem::path root = dir.path();
-    while ((root / run_id).native().size() < 215) {
-        root /= std::string(std::min<std::size_t>(40, 229 - (root / run_id).native().size()), 'd');
+    for (std::size_t length = (root / run_id).native().size(); length != kFolderLength;
+         length = (root / run_id).native().size()) {
+        // Each level adds its separator too; never one that leaves a single
+        // character to go.
+        REQUIRE(length + 2 <= kFolderLength);
+        const std::size_t left = kFolderLength - length;
+        root /= std::string(left <= 42 ? left - 1 : 40, 'd');
     }
-    REQUIRE((root / run_id).native().size() >= 215);
-    REQUIRE((root / run_id).native().size() < 240);
-    std::filesystem::path folder;
+    RunFolder folder;
 
     CHECK(EvidenceBuilder::make_run_folder(root, run_id, folder) == RunFolderCheck::cannot_make);
     CHECK_FALSE(std::filesystem::exists(root / run_id));
+    // Nor the levels of the root made on the way: nothing was done.
+    CHECK(names_in(dir.path()).empty());
 }
 
 TEST_CASE("a capturer's answer the result has no word for is `failed`", "[evidence][screenshot]")
@@ -722,4 +743,195 @@ TEST_CASE("the attachments' names are in order and each is there once", "[eviden
     }
     CHECK(names == rp::attachment_names());
     CHECK(std::set<std::string>(names.begin(), names.end()).size() == names.size());
+}
+
+// After the code review of PR #157 (docs/decisions.md 2026-10-05, "W4.2 code
+// review").
+
+TEST_CASE("a run with no restore session has no page: the capturer isn't asked",
+          "[evidence][screenshot]")
+{
+    Lab lab;
+    int captures = 0;
+    lab.options.screenshots_enabled = true;
+    lab.options.capture = [&](const ScreenshotRequest& request) -> std::optional<ScreenshotReason> {
+        ++captures;
+        std::ofstream(request.png, std::ios::binary) << kPng;
+        return std::nullopt;
+    };
+    EvidenceFacts facts = facts_of(lab.run);
+
+    SECTION("no restore result")
+    {
+        facts.restore = nullptr;
+    }
+    SECTION("a restore result without a session")
+    {
+        lab.run.restore.session_ids.clear();
+    }
+
+    const EvidenceBuilder::Written written = lab.builder().write_attachments(facts);
+
+    REQUIRE(written.evidence);
+    CHECK(captures == 0);
+    CHECK_FALSE(written.evidence->screenshot.captured);
+    CHECK(written.evidence->screenshot.reason == ScreenshotReason::no_page);
+    CHECK(written.evidence->attachments.size() == 2);
+    CHECK(names_in(lab.folder) == std::set<std::string>{"items.csv", "veeam-session.log"});
+}
+
+TEST_CASE("a screenshot that can't be read whole is `failed`, never a shorter picture",
+          "[evidence][screenshot]")
+{
+    Lab lab;
+    lab.options.screenshots_enabled = true;
+    // The capturer leaves a PNG whose second half another handle holds
+    // locked: its size is known, and a read of it stops short.
+    constexpr DWORD kHalf = 32 * 1024;
+    const std::string png = kPng + std::string(2 * kHalf - kPng.size(), 'x');
+    HANDLE holder = INVALID_HANDLE_VALUE;
+    bool locked = false;
+    lab.options.capture = [&](const ScreenshotRequest& request) -> std::optional<ScreenshotReason> {
+        std::ofstream(request.png, std::ios::binary) << png;
+        holder = CreateFileW(request.png.c_str(), GENERIC_READ,
+                             FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                             OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (holder != INVALID_HANDLE_VALUE) {
+            OVERLAPPED from{};
+            from.Offset = kHalf;
+            locked = LockFileEx(holder, LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY, 0,
+                                kHalf, 0, &from) != 0;
+        }
+        return std::nullopt;
+    };
+
+    const EvidenceBuilder::Written written = lab.builder().write_attachments(facts_of(lab.run));
+
+    if (holder != INVALID_HANDLE_VALUE) {
+        CloseHandle(holder);
+    }
+    REQUIRE(locked);
+    REQUIRE(written.evidence);
+    CHECK_FALSE(written.evidence->screenshot.captured);
+    CHECK(written.evidence->screenshot.reason == ScreenshotReason::failed);
+    CHECK(written.evidence->attachments.size() == 2);
+    CHECK(names_in(lab.folder) == std::set<std::string>{"items.csv", "veeam-session.log"});
+}
+
+TEST_CASE("a run folder that isn't kept is taken away again, with the root made for it",
+          "[evidence]")
+{
+    TempDir dir;
+    const std::filesystem::path root = dir.path() / "a" / "runs";
+
+    SECTION("dropped as it goes: the folder and every level made for it")
+    {
+        {
+            RunFolder folder;
+            REQUIRE(EvidenceBuilder::make_run_folder(root, "run-0001", folder) ==
+                    RunFolderCheck::ok);
+            CHECK(std::filesystem::is_directory(root / "run-0001"));
+        }
+        CHECK(names_in(dir.path()).empty());
+    }
+    SECTION("kept: it stays")
+    {
+        {
+            RunFolder folder;
+            REQUIRE(EvidenceBuilder::make_run_folder(root, "run-0001", folder) ==
+                    RunFolderCheck::ok);
+            folder.keep();
+            folder.drop();
+            CHECK(folder.path() == root / "run-0001");
+        }
+        CHECK(std::filesystem::is_directory(root / "run-0001"));
+    }
+    SECTION("a level that was there before stays")
+    {
+        std::filesystem::create_directory(dir.path() / "a");
+        {
+            RunFolder folder;
+            REQUIRE(EvidenceBuilder::make_run_folder(root, "run-0001", folder) ==
+                    RunFolderCheck::ok);
+        }
+        CHECK(names_in(dir.path()) == std::set<std::string>{"a"});
+        CHECK(names_in(dir.path() / "a").empty());
+    }
+    SECTION("only what is empty goes: a level another run wrote into stays")
+    {
+        {
+            RunFolder folder;
+            REQUIRE(EvidenceBuilder::make_run_folder(root, "run-0001", folder) ==
+                    RunFolderCheck::ok);
+            std::filesystem::create_directory(root / "run-0002");
+        }
+        CHECK(names_in(root) == std::set<std::string>{"run-0002"});
+    }
+    SECTION("a folder that was there is another run's, and its root's levels were not made")
+    {
+        std::filesystem::create_directories(root / "run-0001");
+        {
+            RunFolder folder;
+            REQUIRE(EvidenceBuilder::make_run_folder(root, "run-0001", folder) ==
+                    RunFolderCheck::exists);
+        }
+        CHECK(std::filesystem::is_directory(root / "run-0001"));
+    }
+    SECTION("none made: nothing to drop")
+    {
+        RunFolder folder;
+        folder.drop();
+        CHECK(folder.path().empty());
+        CHECK(names_in(dir.path()).empty());
+    }
+}
+
+TEST_CASE("a result that holds a secret value is never written, and said once",
+          "[evidence][secrets]")
+{
+    Lab lab;
+    std::ostringstream log;
+    lab.options.logger = std::make_shared<spdlog::logger>(
+        "evidence", std::make_shared<spdlog::sinks::ostream_sink_mt>(log));
+    // As JSON writes it the secret's quotes are escaped: its text alone
+    // wouldn't show it.
+    lab.options.secrets = {"", "SENTINEL \"VEEAM\" PW"};
+    EvidenceBuilder builder = lab.builder();
+    const EvidenceBuilder::Written written = builder.write_attachments(facts_of(lab.run));
+    REQUIRE(written.evidence);
+    nlohmann::json result;
+    result["format"] = "restoreproof.result.v1";
+    result["expected"]["items"][0]["subject"] = "Quarterly figures";
+    result["expected"]["items"][1]["subject"] = "fwd: SENTINEL \"VEEAM\" PW";
+    REQUIRE(result.dump().find("SENTINEL \"VEEAM\" PW") == std::string::npos);
+
+    const std::optional<EvidenceError> error = builder.write_result(*written.evidence, result.dump());
+
+    REQUIRE(error);
+    CHECK(error->file == "result.json");
+    CHECK(error->cause == EvidenceFailure::holds_secret);
+    CHECK(names_in(lab.folder) == std::set<std::string>{"items.csv", "veeam-session.log"});
+    CHECK_THAT(log.str(), ContainsSubstring("SECURITY: evidence: the result held a secret value; "
+                                            "no result.json was written"));
+    CHECK_THAT(log.str(), !ContainsSubstring("SENTINEL"));
+}
+
+TEST_CASE("a result that holds no secret value is written as it is", "[evidence][secrets]")
+{
+    Lab lab;
+    std::ostringstream log;
+    lab.options.logger = std::make_shared<spdlog::logger>(
+        "evidence", std::make_shared<spdlog::sinks::ostream_sink_mt>(log));
+    lab.options.secrets = {"", "SENTINEL_VEEAM_PW"};
+    EvidenceBuilder builder = lab.builder();
+    const EvidenceBuilder::Written written = builder.write_attachments(facts_of(lab.run));
+    REQUIRE(written.evidence);
+    // A key or a number is never tenant text: only the strings are looked at.
+    const std::string canonical =
+        R"({"count":3,"items":[{"subject":"Quarterly figures"},null,true],"status":"pass"})";
+
+    REQUIRE_FALSE(builder.write_result(*written.evidence, canonical));
+
+    CHECK(bytes_of(lab.folder / "result.json") == canonical);
+    CHECK(log.str().empty());
 }

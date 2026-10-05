@@ -762,7 +762,11 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
     std::vector<verification::Shortfall> shortfalls;
     std::optional<connector::RestoreResult> result;
     std::optional<std::string> started_at;
-    // W4.2: the run's folder, made before the run line when --evidence is given.
+    // W4.2: the run's folder, made before the run line when --evidence is
+    // given. Until that line is out it is `new_folder`'s, which takes it away
+    // again whichever way the run ends; from then on the run has it
+    // (`evidence_folder`).
+    RunFolder new_folder;
     std::optional<std::filesystem::path> evidence_folder;
 
     // W3.4: the run mutex, and Graph for the cleanup and the check, made right
@@ -961,9 +965,13 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
             }
             if (const std::optional<EvidenceError> error =
                     builder.write_result(*written.evidence, *text)) {
-                failed(shown + '\\' + error->file, error->cause == EvidenceFailure::changed
-                                                       ? "changed after it was hashed"
-                                                       : "could not be written");
+                if (error->cause == EvidenceFailure::holds_secret) {
+                    failed(shown, "the result holds a secret value; no result.json was written");
+                } else {
+                    failed(shown + '\\' + error->file,
+                           error->cause == EvidenceFailure::changed ? "changed after it was hashed"
+                                                                    : "could not be written");
+                }
                 return code;
             }
             // The folder's line. Lost, it changes nothing: the files are
@@ -1108,12 +1116,6 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
     const auto stopped = [&] {
         const verification::RunStop stop = verification::stop_reason(
             std::current_exception(), phase.value_or(verification::RunPhase::before_restore));
-        if (!phase && evidence_folder) {
-            // W4.2: a run without its run line leaves no folder (it is
-            // empty: nothing is written into it before the end).
-            std::error_code ec;
-            std::filesystem::remove(*evidence_folder, ec);
-        }
         return phase ? finish(stop, nullptr, false) : verification::exit_code_of(stop.error_code);
     };
     const auto restore_failed = [&](const std::exception& e) {
@@ -1195,20 +1197,19 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
         // that writes. One that is there already is another run's: never
         // written into.
         if (evidence_root) {
-            std::filesystem::path folder;
             const RunFolderCheck made =
-                EvidenceBuilder::make_run_folder(*evidence_root, run_id, folder);
+                EvidenceBuilder::make_run_folder(*evidence_root, run_id, new_folder);
             if (made == RunFolderCheck::not_a_folder_name) {
                 err << "evidence error: the run ID can't name a folder; nothing was done\n";
                 return exit_code::config;
             }
             if (made != RunFolderCheck::ok) {
-                err << "evidence error: " << table_cell(path_to_utf8(folder)) << ": the run folder "
+                err << "evidence error: " << table_cell(path_to_utf8(new_folder.path()))
+                    << ": the run folder "
                     << (made == RunFolderCheck::exists ? "already exists" : "couldn't be made")
                     << "; nothing was done\n";
                 return exit_code::config;
             }
-            evidence_folder = std::move(folder);
         }
 
         // Once the run ID exists, before the sample is chosen (it browses
@@ -1218,6 +1219,13 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
         flush_or_throw(out);
         chosen = *point;
         phase = verification::RunPhase::before_restore;
+        // The run has its run line, and with it its folder: nothing is
+        // written into it before the end, so a run that ended before this
+        // line left none (and no level of the root made for it).
+        if (evidence_root) {
+            new_folder.keep();
+            evidence_folder = new_folder.path();
+        }
 
         // Graph for the cleanup and the check (W3.2, W3.4), one client for
         // both. `options` records Graph under "graph" with --record, the

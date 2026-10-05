@@ -1061,7 +1061,9 @@ evidence error: <folder>: the run folder couldn't be made; nothing was done
 ```
 
 Exit 1, no run line, nothing restored and nothing deleted. A folder that is there is never
-written into: pick another run ID, or move the folder away.
+written into: pick another run ID, or move the folder away. A run that stops here, or before
+its run line for any other reason, leaves no folder: not the run's, and not `<dir>` or a level
+above it when this run made them.
 
 **At the end**, after the clean after and the timings: the two text files are written, the
 screenshot is asked for, the finished result is built with what it lists and validated, each
@@ -1073,10 +1075,15 @@ code is kept:
 evidence error: <file>: could not be written
 evidence error: <file>: changed after it was hashed
 evidence error: <folder>: the result isn't valid restoreproof.result.v1; no result.json was written
+evidence error: <folder>: the result holds a secret value; no result.json was written
 ```
 
-The last is for a run that ended `error result_invalid`, or whose finished result isn't valid
+The third is for a run that ended `error result_invalid`, or whose finished result isn't valid
 (after its `result error: ...` line): the two text files are there, `result.json` isn't.
+The last is for a result one of whose strings holds one of the run's secret values, in
+practice a sampled mail's subject or a file's name that contains the Veeam password or the
+Graph certificate's: the result names every sampled item and can't be cut, so it isn't
+written (`docs/verification.md`, "No secret in the folder").
 Files are written as `--json`'s is, never over one that is there.
 
 **The screenshot.** `screenshots_enabled` in `config.json` ("Settings" above) turns it on; it

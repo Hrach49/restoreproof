@@ -42,7 +42,8 @@ inline constexpr std::uintmax_t kMaxScreenshotBytes = 10u * 1024u * 1024u;
 // Why there is no screenshot.
 enum class ScreenshotReason {
     disabled,       // screenshots_enabled is off: the capturer wasn't asked
-    no_page,        // no page shows the session without an interactive sign-in
+    no_page,        // no page shows the session without an interactive sign-in,
+                    // or the run has no restore session to show
     no_browser,
     login_required,
     timeout,
@@ -115,10 +116,43 @@ struct EvidenceText {
 
 enum class RunFolderCheck { ok, not_a_folder_name, exists, cannot_make };
 
+// The run folder make_run_folder made, the run's to take away again until it
+// is kept: destroyed (or dropped) before keep(), the folder is removed, and
+// then each level of the runs root that was made for it. Only an empty folder
+// is ever removed, so nothing another run wrote goes with it. A run keeps its
+// folder once its run line is out; whichever way it ends before that, nothing
+// is left (W4.2 code review, points 4 and 6).
+class RunFolder {
+public:
+    RunFolder() = default;
+    RunFolder(const RunFolder&) = delete;
+    RunFolder& operator=(const RunFolder&) = delete;
+    ~RunFolder() { drop(); }
+
+    // <root>\<run_id>, set whenever the run ID can name a folder (also when
+    // none was made); empty before that.
+    const std::filesystem::path& path() const noexcept { return path_; }
+
+    // The folder stays, and what was made for it.
+    void keep() noexcept { made_.clear(); }
+
+    // Removes what was made and isn't kept. Never throws.
+    void drop() noexcept;
+
+private:
+    friend class EvidenceBuilder;
+
+    std::filesystem::path path_;
+    // What make_run_folder made: the run folder, then the root's levels from
+    // the deepest up.
+    std::vector<std::filesystem::path> made_;
+};
+
 // Why a file of the run folder isn't as it should be.
 enum class EvidenceFailure {
-    not_written, // the writer refused or failed
-    changed      // an attachment missing, or not the bytes that were hashed
+    not_written,  // the writer refused or failed
+    changed,      // an attachment missing, or not the bytes that were hashed
+    holds_secret  // result.json only: one of its strings holds a secret value
 };
 
 struct EvidenceError {
@@ -170,13 +204,14 @@ public:
 
     // Makes <root>\<run_id>, and `root` first when it isn't there. `exists`
     // when anything is at that path already (another case of the same letters
-    // included): never written into, never replaced. `folder` is set to the
-    // path whenever the name is one. Never throws.
+    // included): never written into, never replaced. `folder` (an empty one)
+    // gets the path whenever the name is one, and with `ok` the folder itself,
+    // to keep or to drop. Anything but `ok` leaves nothing this call made, the
+    // root's levels included. Never throws.
     static RunFolderCheck make_run_folder(const std::filesystem::path& root,
-                                          std::string_view run_id,
-                                          std::filesystem::path& folder) noexcept;
+                                          std::string_view run_id, RunFolder& folder) noexcept;
 
-    // `folder` is one make_run_folder made.
+    // `folder` is one make_run_folder made, and the run kept.
     EvidenceBuilder(std::filesystem::path folder, EvidenceOptions options);
 
     struct Written {
@@ -187,21 +222,27 @@ public:
 
     // Writes items.csv and veeam-session.log (both always, each tried even
     // when the other failed), then, when both are written, asks for the
-    // screenshot: not at all when screenshots are off (`disabled`); a capturer that throws, or says it
-    // captured and left no file, one over kMaxScreenshotBytes or one that
-    // doesn't start with the PNG signature, is `failed`, as is a capturer
-    // that answers `disabled` or a value outside the enum; what an
-    // unavailable screenshot left at the path is removed. Without
+    // screenshot: not at all when screenshots are off (`disabled`), nor for a
+    // run with no restore session, which has no page to show (`no_page`); a
+    // capturer that throws, or says it captured and left no file, one over
+    // kMaxScreenshotBytes, one that can't be read whole (cut short, or still
+    // growing) or one that doesn't start with the PNG signature, is `failed`,
+    // as is a capturer that answers `disabled` or a value outside the enum;
+    // what an unavailable screenshot left at the path is removed. Without
     // `with_screenshot` (a run with no valid result to list it) the capturer
     // isn't asked. Each text file's hash and size are of the bytes handed to
     // the writer, the screenshot's of the bytes read; write_result reads all
     // of them back. Never throws.
     Written write_attachments(const EvidenceFacts& facts, bool with_screenshot = true) noexcept;
 
-    // Reads each attachment back and compares it with its hash and size
-    // (`changed`, naming the first that differs or is gone), then writes
-    // result.json, exactly `canonical` (`not_written`). nullopt = written.
-    // Never throws.
+    // Refuses a result one of whose strings holds one of the run's secret
+    // values (`holds_secret`, with one "SECURITY: evidence: ..." log line):
+    // the result names every sampled item, so a subject or a file name a row
+    // of items.csv was withheld for is in it too. The strings as JSON reads
+    // them, not the text, where an escape would hide one. Then reads each
+    // attachment back and compares it with its hash and size (`changed`,
+    // naming the first that differs or is gone), then writes result.json,
+    // exactly `canonical` (`not_written`). nullopt = written. Never throws.
     std::optional<EvidenceError> write_result(const Evidence& evidence,
                                               std::string_view canonical) noexcept;
 

@@ -533,10 +533,10 @@ embeds.
 
 | File | What | C++ test | Python test |
 |---|---|---|---|
-| `shared/schemas/result.v1.json` | the result's schema, the only copy | `worker/tests/result_schema_test.cpp` (`[result_schema]`): the embedded bytes are the file's, only the allowed keywords, the fifteen keys, the enums against the code | `cloud/tests/test_result_schema.py`: `check_schema`, `$schema` is draft 2020-12 |
+| `shared/schemas/result.v1.json` | the result's schema, the only copy | `worker/tests/result_schema_test.cpp` (`[result_schema]`): the embedded bytes are the file's, only the allowed keywords, the seventeen keys, the enums against the code | `cloud/tests/test_result_schema.py`: `check_schema`, `$schema` is draft 2020-12 |
 | `shared/testdata/canonical-json-v1.json` | `canonical-json-v1`: 33 `cases` (`input`, `canonical`, `sha256`) and 9 `rejects` (`input_text`, `reason`: `float`, `integer_out_of_range` or `non_ascii_key`) | `worker/tests/canonical_json_test.cpp` (`[canonical_json]`): every case and every reject; invalid UTF-8, which a JSON file can't hold, on bytes | `cloud/tests/test_canonical_json.py`: the accepted cases against `json.dumps(sort_keys=True, separators=(",", ":"), ensure_ascii=False)`; the rejects' shape only, until W4.3 brings a Python canonicaliser |
 | `shared/testdata/result-v1/valid.json` | a valid result, as canonical bytes | `worker/tests/test_command_test.cpp`: the pipeline's run reproduces it byte for byte | `test_result_schema.py`: valid, and equal to its own canonical dump |
-| `shared/testdata/result-v1/cases.json` | 158 documents, each `valid.json` with an RFC 6902 `patch` (add, remove, replace) and whether the schema accepts it (`valid`): 39 valid, 119 invalid | `result_schema_test.cpp`, one `GENERATE` row per case | `test_result_schema.py`, one parametrised test per case |
+| `shared/testdata/result-v1/cases.json` | 180 documents, each `valid.json` with an RFC 6902 `patch` (add, remove, replace) and whether the schema accepts it (`valid`): 45 valid, 135 invalid | `result_schema_test.cpp`, one `GENERATE` row per case | `test_result_schema.py`, one parametrised test per case |
 
 The Python tests find `shared/` by walking up from their own file, so they also run from
 mutmut's copy. The Worker tests read it through `RP_SHARED_DIR`. No case holds a float:
@@ -565,7 +565,7 @@ Then read the diff, and run both sides: `ctest --preset dev -R "result"` and, fr
 `uv run pytest tests/test_result_schema.py`. The patches in `cases.json` point into `valid.json`
 by position (`/expected/items/1` is the random mail, `/check/items/3` the item restored twice):
 if the run's layout changed, the patches must follow, and the two counts pinned in
-`result_schema_test.cpp` (158 cases, 39 valid) with them. It also changes when
+`result_schema_test.cpp` (180 cases, 45 valid) with them. It also changes when
 `lab/seed-manifest.json` is re-seeded, since the canaries' hashes and the manifest's are in it.
 A change to the schema alone needs no C++ change to be tested: both suites run `cases.json`
 against it.

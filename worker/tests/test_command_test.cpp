@@ -1615,6 +1615,23 @@ TEST_CASE("test --evidence: a run folder that can't be made stops the run before
     CHECK(lab.cleanups.empty());
 }
 
+TEST_CASE("test --evidence: a run whose run line can't be printed leaves no folder",
+          "[test_command][evidence]")
+{
+    TestLab lab;
+    rp::test::FailingStreamBuf buffer;
+    std::ostream out(&buffer);
+    const std::string root = lab.evidence_arg();
+
+    const auto [code, err] =
+        lab.run_to({"--run-id", kRunId, "--mail", "1", "--evidence", root}, out);
+
+    CHECK(code != rp::exit_code::ok);
+    CHECK(lab.fake.restore_calls == 0);
+    CHECK(lab.timings.empty());
+    CHECK_FALSE(std::filesystem::exists(lab.run_folder()));
+}
+
 TEST_CASE("test --evidence: a file that can't be written changes no status; exit 0 becomes 1, "
           "any other is kept, and there is no result.json",
           "[test_command][evidence]")
@@ -1682,11 +1699,19 @@ TEST_CASE("test --evidence: a run that ended result_invalid leaves the text file
           "result.json",
           "[test_command][evidence][result]")
 {
-    TestLab lab;
+    TestLab lab({{"screenshots_enabled", true}});
     lab.fake.info.name = "fake";
+    // No result to list a screenshot: none is asked for.
+    int captures = 0;
+    lab.capture_screenshot =
+        [&](const rp::ScreenshotRequest&) -> std::optional<rp::ScreenshotReason> {
+        ++captures;
+        return std::nullopt;
+    };
 
     const Run run = evidence_run(lab);
 
+    CHECK(captures == 0);
     CHECK(run.exit_code == rp::exit_code::config);
     CHECK(run.err == "result error: 1 schema violation(s), first at /connector/type\n"
                      "evidence error: " +
@@ -1798,8 +1823,8 @@ TEST_CASE("test --evidence: a captured screenshot is the third attachment",
     CHECK(file_bytes(lab.run_folder() / "screenshot.png") == kPng);
     CHECK(asked_for == std::vector<std::string>{"sess-mail", "sess-sharepoint"});
     CHECK_THAT(run.out, EndsWith("evidence " + utf8(lab.run_folder()) +
-                                 ": result.json, items.csv, screenshot.png, "
-                                 "veeam-session.log\n"));
+                                 ": result.json, items.csv, veeam-session.log, "
+                                 "screenshot.png\n"));
 }
 
 TEST_CASE("test --evidence: a secret value in Veeam's words never reaches the run folder",
@@ -1809,7 +1834,9 @@ TEST_CASE("test --evidence: a secret value in Veeam's words never reaches the ru
     lab.fake.answer = [](const rp::connector::RestoreSpec& spec) {
         rp::connector::RestoreResult result = restored(spec);
         result.log = "session sess-mail (mail): Success\n"
-                     "Failed proxy: sign-in of rp-veeam with Sentinel-Veeam-Password-9c2e failed\n";
+                     "Failed proxy: sign-in of rp-veeam with Sentinel-Veeam-Password-9c2e failed\n"
+                     "Failed app: certificate password " +
+                     std::string{rp::test::graph_lab::kPfxPassword} + " refused\n";
         return result;
     };
 
@@ -1817,12 +1844,15 @@ TEST_CASE("test --evidence: a secret value in Veeam's words never reaches the ru
 
     CHECK(run.exit_code == rp::exit_code::ok);
     CHECK(file_bytes(lab.run_folder() / "veeam-session.log") ==
-          "session sess-mail (mail): Success\n[withheld: held a secret value]\n");
+          "session sess-mail (mail): Success\n[withheld: held a secret value]\n"
+          "[withheld: held a secret value]\n");
+    CHECK_THAT(*file_bytes(lab.run_folder() / "veeam-session.log"),
+               !ContainsSubstring(std::string{rp::test::graph_lab::kPfxPassword}));
     for (const auto& entry : std::filesystem::directory_iterator(lab.run_folder())) {
         CAPTURE(utf8(entry.path().filename()));
         CHECK_THAT(*file_bytes(entry.path()), !ContainsSubstring("Sentinel-Veeam-Password"));
     }
-    CHECK_THAT(lab.log(), ContainsSubstring("SECURITY: evidence: 1 line(s) held a secret value "
+    CHECK_THAT(lab.log(), ContainsSubstring("SECURITY: evidence: 2 line(s) held a secret value "
                                             "and were withheld"));
     CHECK_THAT(lab.log(), !ContainsSubstring("Sentinel-Veeam-Password"));
     CHECK_THAT(run.out + run.err, !ContainsSubstring("Sentinel-Veeam-Password"));

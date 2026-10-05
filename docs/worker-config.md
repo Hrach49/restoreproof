@@ -857,7 +857,7 @@ lines are not shown.
 ```
 rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>]
               [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>]
-              [--record <dir>] [--json <file>]
+              [--record <dir>] [--json <file> | --evidence <dir>]
 ```
 
 **It writes to the tenant and deletes there, as `restore` does.** It is the whole test of a
@@ -869,7 +869,8 @@ the run line, the header, the guard, the cleanup lines, the status line and its 
 timings' table, `--record`, and the exit codes. The code is `rp::run_test_command` in
 `worker/include/rp/test_command.hpp`; the choices are `docs/decisions.md` 2026-10-03 (W3.6).
 
-- **Flags.** `restore`'s flags with `restore`'s rules, plus `--json <file>`. An absent size is
+- **Flags.** `restore`'s flags with `restore`'s rules, plus `--json <file>` or `--evidence <dir>`
+  (one or the other, below). An absent size is
   the config's `sample_mail`, `sample_sp` or `sample_od`. There is no `--seed`: the run ID
   gives the seed (`run <id>  seed <hex>`), so `--run-id` repeats a sample, with the same
   manifest, cursor and restore point (`--point`).
@@ -941,7 +942,7 @@ python -m json.tool C:\runs\run-0001.json
 python -m json.tool --no-ensure-ascii C:\runs\run-0001.json C:\runs\run-0001.pretty.json
 ```
 
-Its fifteen top-level keys are always all there, `null` where a step didn't run:
+Its seventeen top-level keys are always all there, `null` where a step didn't run:
 
 | Key | What it holds |
 |---|---|
@@ -954,6 +955,7 @@ Its fifteen top-level keys are always all there, `null` where a step didn't run:
 | `restore_point` | `{"id", "backup_time_raw", "backup_time"}`: Veeam's time text unparsed, and the same time cut to whole seconds (`YYYY-MM-DDTHH:MM:SSZ`, `null` when the text doesn't parse) |
 | `sample`, `expected`, `check`, `status`, `cleanup`, `timings` | the result objects as W2.6, W3.1, W3.2, W3.3, W3.4 and W3.5 write them (`docs/verification.md`). `sample` and `expected` are `null` when the run stopped before the sample was chosen, `check` when the check didn't run, `cleanup` when no clean ran (the run stopped before the clean before). `status` and `timings` are always objects |
 | `restore` | the restore's status, items sent and restored; its sessions (ID, kind, result, `details` only when they read as Veeam's counts, else `null`, items sent and restored, `started_at_raw`/`ended_at_raw` as Veeam wrote them); its items in order, `{index, kind, outcome, infrastructure, container_missing, session_id}`, with no item name and no Veeam message. `null` when there is no restore result |
+| `attachments`, `screenshot` | the run folder's other files and its screenshot (W4.2, `--evidence` below). Both `null` under `--json`: there is no run folder |
 
 There is no `command` and no `exit_code` (W3.6's `rp.run-summary.v0` had both): the file
 describes the run, not the process. A pass whose stdout was lost, or whose `--record`
@@ -1009,6 +1011,97 @@ json error: <file>: could not be written
 
 on stderr, after the run's other lines. The status never changes. Exit 0 becomes 1; any other
 exit code is kept. `<file>` is the value as given, control characters shown as spaces.
+
+### `--evidence <dir>`
+
+Writes the run folder `<dir>\<run_id>\` (W4.2; `docs/verification.md`, "The run folder";
+`docs/decisions.md` 2026-10-05, W4.2). `<dir>` is the runs root and is made if it isn't there;
+there is no default, so nothing is written without the flag (the service will pass
+`%ProgramData%\RestoreProof\runs`, W4.8). `--evidence` and `--json` can't be given together
+(exit 64): the folder's `result.json` is the `--json` file. `restore` takes neither.
+
+| File | What it holds |
+|---|---|
+| `items.csv` | one row per sampled item: what was expected, what the restore and the check said, and for a canary the hash that was found |
+| `veeam-session.log` | Veeam's own lines about the restore sessions, as the connector read them: one per session and one per restore event. Empty when nothing was restored |
+| `screenshot.png` | only when a screenshot was captured (never, today: below) |
+| `result.json` | the result, as `--json` writes it, with each file above in `attachments` (`name`, `sha256`, `size_bytes`) and `screenshot` saying `captured` or why not. Written last |
+
+`result.json` doesn't list itself (a file can't hold its own hash). It is there only when the
+folder is complete: a folder without it is a run with no result.
+
+For example, `rpworker test --mail 2 --sp 1 --od 0 --run-id run-0001 --evidence C:\rp-runs`
+ends, after the timings' table:
+
+```
+evidence C:\rp-runs\run-0001: result.json, items.csv, veeam-session.log
+```
+
+and before `--record`'s `recorded ...` line.
+
+**Before the run.** Once the config is read and before the secrets:
+
+```
+config error: --evidence <dir>: not a UTF-8 path
+config error: --evidence: the run ID can't name a folder
+```
+
+The second is for a `--run-id` that isn't a plain file name: it holds a `:`, ends in `.`, is
+`.` or `..`, or is a DOS device's name (`CON`, `aux.1`; the list is under `--json` above). The
+folder's name is the run ID as it is, never an encoded form. A run ID the run makes itself
+(`rp-<time>-<8 hex>`) always can.
+
+Then, once the run ID is known and before the run line, the folder is made. If something is
+already at that path (a folder of the same letters in another case included), or it can't be
+made:
+
+```
+evidence error: <folder>: the run folder already exists; nothing was done
+evidence error: <folder>: the run folder couldn't be made; nothing was done
+```
+
+Exit 1, no run line, nothing restored and nothing deleted. A folder that is there is never
+written into: pick another run ID, or move the folder away.
+
+**At the end**, after the clean after and the timings: the two text files are written, the
+screenshot is asked for, the finished result is built with what it lists and validated, each
+attachment is read back and compared with its hash, and `result.json` is written. What can go
+wrong is one line on stderr; the status never changes, exit 0 becomes 1 and any other exit
+code is kept:
+
+```
+evidence error: <file>: could not be written
+evidence error: <file>: changed after it was hashed
+evidence error: <folder>: the result isn't valid restoreproof.result.v1; no result.json was written
+```
+
+The last is for a run that ended `error result_invalid`, or whose finished result isn't valid
+(after its `result error: ...` line): the two text files are there, `result.json` isn't.
+Files are written as `--json`'s is, never over one that is there.
+
+**The screenshot.** `screenshots_enabled` in `config.json` ("Settings" above) turns it on; it
+is off by default. Today no screenshot is ever taken: the only page of Veeam that shows a
+restore session, the Restore Portal, signs in through Microsoft's interactive page, and its
+certificate is one a browser can't be told to trust the way the Worker does. So the Worker
+starts no browser, and the result says why there is no picture:
+
+| `screenshot` | When |
+|---|---|
+| `{"state": "unavailable", "reason": "disabled"}` | `screenshots_enabled` is `false` or absent |
+| `{"state": "unavailable", "reason": "no_page"}` | `screenshots_enabled` is `true` |
+
+The result's schema also knows `captured` and the reasons `no_browser`, `login_required`,
+`timeout` and `failed`, for a capturer that starts a browser; none is built. A screenshot
+never changes a status, a warning or an exit code.
+
+**What the files hold of the tenant.** No secret: every line of the log has been through
+`redact()`, and a line or a row that holds one of the run's secret values (the Veeam password,
+the Graph certificate or its password) is written as `[withheld: held a secret value]`, with
+one `SECURITY:` line in the log. No mail body, no file content, and no hash of either unless
+the item is a canary. But tenant names: `items.csv` has the sampled items' subjects and file
+names (the ones the result holds), and `veeam-session.log` has Veeam's messages as they are,
+which name the item, its source folder or path and the restore target. Keep the folder out of
+the repository.
 
 ## `--record <dir>`
 

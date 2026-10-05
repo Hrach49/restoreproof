@@ -570,13 +570,13 @@ Every run that printed its run line has one result: one JSON document, built by
 `rp::ResultBuilder` (`worker/include/rp/result_builder.hpp`) from what the run produced and
 validated by `rp::validate_result` (`rp/result_schema.hpp`) against
 `shared/schemas/result.v1.json`. `rpworker test --json <file>` writes it
-(`docs/worker-config.md`, "`--json <file>`"); W4.2 to W4.6 sign, timestamp and upload it. It
+(`docs/worker-config.md`, "`--json <file>`"), and `--evidence <dir>` writes it into the run's folder (W4.2, "The run folder" below); W4.3 to W4.6 sign, timestamp and upload it. It
 replaces W3.6's `rp.run-summary.v0`. The decisions are `docs/decisions.md` 2026-10-04, W4.1,
 approved as written, and its build notes.
 
-### The fifteen keys
+### The seventeen keys
 
-All fifteen are always there, and every object is closed: a key the schema doesn't name makes
+All seventeen are always there, and every object is closed: a key the schema doesn't name makes
 the result invalid.
 
 | Key | From | `null` when |
@@ -595,6 +595,8 @@ the result invalid.
 | `status` | `verification::to_json(RunVerdict)` (W3.3, above) | never: a run without a verdict has no result |
 | `cleanup` | `to_json(RunCleanup)` (W3.4, above) | the run stopped before the clean before; `cleanup.after` when no clean after ran |
 | `timings` | `timing::to_json(RunTimings)` (W3.5): `{"spans": {...}}`, all eleven | never; a span that didn't run is `null` |
+| `attachments` | `to_json(std::vector<Attachment>)` (W4.2, "The run folder" below): the run folder's files beside `result.json`, `[{name, sha256, size_bytes}]`, sorted by name | no run folder is written (`restore`, `test` without `--evidence`), and in the result as it is first validated |
+| `screenshot` | `to_json(Screenshot)` (W4.2): `{"state": "captured"}` or `{"state": "unavailable", "reason": <code>}` | as `attachments` |
 
 The item rows are `expected.items[i]`, `restore.items[i]` and `check.items[i]`, joined by
 `index`. Nothing is written twice: the status is `status.status`, the error code
@@ -602,7 +604,7 @@ The item rows are `expected.items[i]`, `restore.items[i]` and `check.items[i]`, 
 time `timings.spans.recovery`. There is no `command` and no `exit_code` (v0 had both): they
 are facts of one process, not of the run, so a lost stdout or an incomplete `--record`
 recording shows in the exit code and on stderr only. There is no `signature`, `tsa_token`,
-`bundle_sha256` or `worker_id` yet; W4.2 to W4.6 and W5.1 add theirs to the schema.
+`bundle_sha256` or `worker_id` yet; W4.3 to W4.6 and W5.1 add theirs to the schema.
 
 ### The canonical form (`canonical-json-v1`)
 
@@ -642,8 +644,9 @@ lengths, `index` equal to position, `status` against `check`), and the order of 
 mismatch `reason`.
 
 `shared/testdata/result-v1/` holds the documents both validators must judge alike: `valid.json`
-(a whole pipeline run of the Worker's tests, the lab's names replaced) and `cases.json` (158
-small changes to it, 39 valid and 119 invalid). `worker/tests/result_schema_test.cpp` and
+(a whole pipeline run of the Worker's tests, the lab's names replaced; since W4.2 the
+`result.json` of an `--evidence` run, so it lists two attachments) and `cases.json` (180
+small changes to it, 45 valid and 135 invalid). `worker/tests/result_schema_test.cpp` and
 `cloud/tests/test_result_schema.py` run the same file (`docs/testing.md`, "The shared vectors
 and result documents").
 
@@ -655,8 +658,11 @@ and result documents").
    decided and before the check's table and the status line. The clean after hasn't run then:
    `ended_at` and `cleanup.after` are `null`, `cleanup_ok` and `restore_may_still_run` hold
    their defaults and the open spans read `open`, all of which the schema allows.
-2. Only when a file is to be written (`test --json`): after the clean after and the timings,
-   the finished result is built and validated again, and that text is the file.
+   `attachments` and `screenshot` are `null` too: no file of the run folder is written yet.
+2. Only when a file is to be written (`test --json`, or `test --evidence`'s `result.json`):
+   after the clean after and the timings, the finished result is built and validated again,
+   and that text is the file. With `--evidence` the run folder's other files are written
+   first, so the result that is validated lists them.
 
 What is validated is the canonical text parsed back, so it is the written text that validated.
 `validate_result` refuses one thing itself, before the schema's validator is asked: an unsigned
@@ -738,4 +744,121 @@ W4.1 keeps them: the Cloud's item rows and the report's Failures section need th
 and the keys are what lets a draw be repeated. Today the file stays where the owner put it:
 keep it out of the repository. That ends with W4.6, which uploads the result; whether the
 random keys and `containers_listed` leave the network as they are, or are cut to counts and
-`pool_sha256` first, is open until then (`docs/decisions.md` 2026-10-04, W4.1, Open).
+`pool_sha256` first, is still open (`docs/decisions.md` 2026-10-04, W4.1, Open). It must be
+settled before W4.3 signs the first result, not before W4.6 uploads it: a signed result is
+never edited (`docs/decisions.md` 2026-10-05, W4.2 point 10).
+
+## The run folder (W4.2)
+
+`rpworker test --evidence <dir>` leaves one folder per run, `<dir>\<run_id>\`, made by
+`rp::EvidenceBuilder` (`worker/include/rp/evidence_builder.hpp`). The decisions are
+`docs/decisions.md` 2026-10-05, W4.2, approved as written; the command's lines and exit codes
+are in `docs/worker-config.md`, "`--evidence <dir>`". Nothing here changes a run's status.
+
+| File | From | Listed in `attachments` |
+|---|---|---|
+| `items.csv` | `EvidenceBuilder::items_csv`: the expected set, the restore result, the check and the verdict | always |
+| `veeam-session.log` | `EvidenceBuilder::session_log`: `connector::RestoreResult::log` | always |
+| `screenshot.png` | a capturer (`RestoreCommandEnv::capture_screenshot`), when it captured one | when it is there |
+| `result.json` | the finished result's canonical text | never: a file can't hold its own hash |
+
+### The order, and what a folder without `result.json` means
+
+1. The folder is made when the run ID is known, before the run line: one call that makes it
+   or finds something there, so a folder is never taken over from another run. Every run with
+   a run line has had its folder from the start.
+2. At the end, after the clean after and the timings: `items.csv` and `veeam-session.log` are
+   written (both always; each is tried even when the other failed).
+3. When both are written, the screenshot is asked for (below).
+4. Each attachment's SHA-256 and size are taken from the bytes that were written (the
+   screenshot's from the bytes read back), and the finished result is built with
+   `attachments` and `screenshot` and validated.
+5. Each attachment is read back and compared with its hash and size. One that is gone or
+   differs stops here: `changed after it was hashed`, no `result.json`.
+6. `result.json` is written, exactly the canonical text that validated.
+
+So `result.json` is there only when the folder is complete, and a folder without it is a run
+with no result: `error result_invalid`, a finished result that isn't valid, no verdict, a file
+that couldn't be written, or a process that ended in between. No cut-down result is written
+for any of these (W4.1 point 5 stands). What the service reports to the Cloud for such a run
+is W4.8's question.
+
+W4.3 signs the result. Through `attachments` its signature then covers the other files; until
+then nothing but the read back in step 5 holds them.
+
+### `attachments` and `screenshot`
+
+`attachments` is `null` without a run folder, else two or three `{name, sha256, size_bytes}`,
+sorted by `name`; `name` is one of `items.csv`, `screenshot.png`, `veeam-session.log`. The
+schema's keyword subset can't say "each name once" or "in this order"; the builder's tests do.
+
+`screenshot` is `null` without a run folder, else one of:
+
+| `screenshot` | Meaning |
+|---|---|
+| `{"state": "captured"}` | `screenshot.png` is among the attachments |
+| `{"state": "unavailable", "reason": "disabled"}` | `screenshots_enabled` is off; the capturer wasn't asked |
+| `... "reason": "no_page"` | no page shows the restore session without an interactive sign-in |
+| `... "reason": "no_browser"`, `"login_required"`, `"timeout"` | a capturer's own answer |
+| `... "reason": "failed"` | the capturer threw, or said it captured and left no file, a file over 10 MiB, or one that doesn't start with the PNG signature; what it left is removed |
+
+**No screenshot is taken today.** The default capturer (`rp::no_screenshot_page`) answers
+`no_page` and starts no browser. Veeam's only page with restore sessions is the Restore
+Portal: it signs in through Microsoft's interactive page, and the REST service's certificate
+is self-signed with no host name, which a browser shows as an error unless certificate checks
+are turned off, and they never are. The other reasons and `captured` are reached only by the
+tests' capturers. A picture drawn from the session's JSON was rejected: it would be the
+Worker's own rendering under Veeam's name.
+
+### `items.csv`
+
+UTF-8 without a BOM, LF, a header row, one row per expected item in `index` order:
+
+| Column | What it holds |
+|---|---|
+| `index` | the item's index: `expected.items[i]`, `restore.items[i]` and `check.items[i]` in the result |
+| `type`, `source` | `mail`, `sharepoint` or `onedrive`; `canary` or `random` |
+| `canary_id` | a canary's ID in the manifest; empty for a random item |
+| `name` | the expected subject or file name |
+| `expected_kind` | `manifest`, `fields` or `metadata` |
+| `sha256_rule`, `expected_sha256` | a `manifest` item's rule (`text-v1`, `bytes`, `office-v1`) and hash; empty otherwise |
+| `found_sha256` | the compared copy's hash by that rule, for an item that carries an expected hash only; empty otherwise, and when the copy has no hash by that rule |
+| `restore_outcome` | the backup's word for the item: `restored`, `failed`, `unknown`, `not_in_backup` |
+| `found`, `outcome`, `mismatches` | the check: `yes`/`no`; `match`, `mismatch`, `missing`, `error`; the mismatched fields joined by commas |
+| `verdict`, `code` | `verified`, `failed` or `unchecked` with its code, when the item verdicts decided the run; `-` otherwise (as `rpworker test`'s VERDICT) |
+| `ms` | the item's milliseconds when found |
+
+`index` and `ms` are bare numbers. Every other cell is in double quotes, a `"` inside doubled,
+each control character a space, so a row is one line whatever a subject holds. A cell of a
+step that didn't run is empty; a run that stopped before its sample has the header alone.
+
+- **A found hash only for a canary.** A canary's content is ours, so its hash says nothing of
+  the tenant. The SHA-256 of a real mail's body is never written, though the read back
+  computes it: a short body can be confirmed from its hash. A random item is checked by its
+  fields or its metadata, not by a hash, so there is none to show. `ItemCheck::found_sha256`
+  carries it; `check`'s `to_json` never writes it, and the result still holds no found value.
+- **A name can't run as a formula.** A `name` that starts with `=`, `+`, `-` or `@` is
+  written with a `'` before it. The CSV's `name` is for reading; the exact one is the
+  result's, joined by `index`.
+- No found subject, sender, time or Graph ID, no random key, no container, no Veeam message.
+
+### `veeam-session.log`
+
+`RestoreResult::log` as the connector made it, each line ending in LF: per restore session
+`session <id> (<kind>): <result>, <details>`, then one line per restore event and per event
+that isn't a success, `<status> <item name>: <Veeam's message>`. Each line was cut to one line
+of at most 500 bytes and passed through `redact()` by the connector. It is the one file of the
+folder in Veeam's own words, and it holds tenant names the result doesn't: Veeam's message
+names the item's source folder or path, a mailbox's display name and the target's address or
+URL, and a failure's message is free text. Empty when there is no restore result, also when
+`restore_sample` threw after a session ran.
+
+### No secret in the folder
+
+`redact()` masks keyed secrets, JWTs and `Bearer` tokens, not a bare secret in prose. So the
+builder is also given the run's secret values (the Veeam password, the Graph PFX and its
+password): a log line that holds one is written as `[withheld: held a secret value]`, a CSV
+row that holds one keeps its `index`, has those words as its `name` and nothing else, and one
+`SECURITY: evidence: <n> line(s) held a secret value and were withheld` line is logged. The
+restore's per-run PFX password never leaves the connector. W4.9's sentinel test is still to
+come.

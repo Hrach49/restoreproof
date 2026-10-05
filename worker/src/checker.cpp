@@ -239,7 +239,11 @@ public:
         out.copies = found.size();
         out.duplicate = found.size() > 1;
         out.mismatches = comparison.mismatches;
-        out.found_sha256 = comparison.found_sha256;
+        // A canary mail looked up by its subject alone may be a real mail
+        // with that subject: its body's hash is never kept (W4.2 point 5).
+        const bool ours = want.kind != ItemKind::mail || !want.mail->internet_message_id ||
+                          copy.internet_message_id == want.mail->internet_message_id;
+        out.found_sha256 = ours ? comparison.found_sha256 : std::string{};
         if (out.mismatches.empty()) {
             out.outcome = CheckOutcome::match;
         } else {

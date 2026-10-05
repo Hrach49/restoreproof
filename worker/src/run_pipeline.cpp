@@ -932,9 +932,11 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
             options.logger = env.connector_options.logger ? env.connector_options.logger
                                                           : make_command_logger();
             EvidenceBuilder builder(*evidence_folder, std::move(options));
+            // No screenshot for a run that has no valid result to list it.
             const EvidenceBuilder::Written written = builder.write_attachments(
                 {expected ? &*expected : nullptr, result ? &*result : nullptr, check,
-                 verdict ? &*verdict : nullptr});
+                 verdict ? &*verdict : nullptr},
+                verdict && !invalid);
             for (const EvidenceError& error : written.errors) {
                 failed(shown + '\\' + error.file, "could not be written");
             }
@@ -968,11 +970,11 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
             // written (W3.6 review point 4).
             if (!output_lost) {
                 try {
-                    out << "evidence " << shown << ": " << kResultFileName;
-                    for (const Attachment& attachment : written.evidence->attachments) {
-                        out << ", " << attachment.name;
-                    }
-                    out << '\n';
+                    out << "evidence " << shown << ": " << kResultFileName << ", "
+                        << kItemsCsvName << ", " << kSessionLogName
+                        << (written.evidence->screenshot.captured ? ", " : "")
+                        << (written.evidence->screenshot.captured ? kScreenshotName : "")
+                        << '\n';
                     out.flush();
                 } catch (...) {
                 }
@@ -1106,6 +1108,12 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
     const auto stopped = [&] {
         const verification::RunStop stop = verification::stop_reason(
             std::current_exception(), phase.value_or(verification::RunPhase::before_restore));
+        if (!phase && evidence_folder) {
+            // W4.2: a run without its run line leaves no folder (it is
+            // empty: nothing is written into it before the end).
+            std::error_code ec;
+            std::filesystem::remove(*evidence_folder, ec);
+        }
         return phase ? finish(stop, nullptr, false) : verification::exit_code_of(stop.error_code);
     };
     const auto restore_failed = [&](const std::exception& e) {
@@ -1184,8 +1192,8 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
         sampling::check_run_id(run_id); // env.make_run_id's: nothing printed if it fails
 
         // W4.2 point 8: the run's folder, before the run line and anything
-        // that writes. One that is there already is another run's (W4.8
-        // skips such a run): never written into.
+        // that writes. One that is there already is another run's: never
+        // written into.
         if (evidence_root) {
             std::filesystem::path folder;
             const RunFolderCheck made =

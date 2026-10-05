@@ -238,7 +238,7 @@
         {
           "op": "replace",
           "path": "/expected/items/1/subject",
-          "value": "line one\nline two\tü"
+          "value": "line one\nline two\t\u00fc"
         },
         {
           "op": "replace",
@@ -2262,6 +2262,51 @@
             "state": "unavailable",
             "reason": "skipped"
           }
+        }
+      ]
+    },
+    {
+      "name": "attachments-one-name-twice-the-schema-cannot-say",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/attachments/1/name",
+          "value": "items.csv"
+        }
+      ]
+    },
+    {
+      "name": "screenshot-captured-without-its-png-the-schema-cannot-say",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/screenshot",
+          "value": {
+            "state": "captured"
+          }
+        }
+      ]
+    },
+    {
+      "name": "screenshot-empty-object",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/screenshot",
+          "value": {}
+        }
+      ]
+    },
+    {
+      "name": "attachment-no-name",
+      "valid": false,
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/attachments/0/name"
         }
       ]
     }

@@ -215,8 +215,11 @@ EvidenceText EvidenceBuilder::items_csv(const EvidenceFacts& facts,
             check ? joined(check->mismatches, ",") : "",
             verdict,
             code};
-        const bool secret = std::ranges::any_of(
-            cells, [&](const std::string& cell) { return holds_secret(cell, secrets); });
+        // As given and as written: a control character becomes a space in
+        // the file, which could spell a secret the raw cell doesn't.
+        const bool secret = std::ranges::any_of(cells, [&](const std::string& cell) {
+            return holds_secret(cell, secrets) || holds_secret(without_controls(cell), secrets);
+        });
         if (secret) {
             std::vector<std::string> withheld(kTextCells);
             withheld[kNameCell] = kWithheld;
@@ -277,6 +280,13 @@ RunFolderCheck EvidenceBuilder::make_run_folder(const std::filesystem::path& roo
         // One call makes it or finds something there: no look first, so a
         // folder another run made in between is never taken for this run's.
         if (std::filesystem::create_directory(folder, ec) && !ec) {
+            // The writer's own first step for the longest name the folder
+            // will hold, now: a path too long for it, or a folder that can't
+            // be written into, is found before the restore, not after it.
+            if (check_new_file(folder / *path_from_utf8(kSessionLogName)) != NewFileCheck::ok) {
+                std::filesystem::remove(folder, ec);
+                return RunFolderCheck::cannot_make;
+            }
             return RunFolderCheck::ok;
         }
         const std::filesystem::file_status status = std::filesystem::symlink_status(folder, ec);
@@ -310,14 +320,15 @@ Screenshot EvidenceBuilder::capture(const connector::RestoreResult* restore,
         return {false, ScreenshotReason::disabled};
     }
     std::error_code ec;
+    std::filesystem::path png;
     try {
-        const std::filesystem::path png = folder_ / *path_from_utf8(kScreenshotName);
+        png = folder_ / *path_from_utf8(kScreenshotName);
         const ScreenshotRequest request{
             png, restore ? restore->session_ids : std::vector<std::string>{}};
         // Whatever isn't a PNG of the allowed size is no attachment and
         // doesn't stay in the folder.
         const auto unavailable = [&](ScreenshotReason reason) {
-            std::filesystem::remove(png, ec);
+            std::filesystem::remove_all(png, ec);
             return Screenshot{false, reason};
         };
         std::optional<ScreenshotReason> reason;
@@ -327,7 +338,11 @@ Screenshot EvidenceBuilder::capture(const connector::RestoreResult* restore,
             return unavailable(ScreenshotReason::failed);
         }
         if (reason) {
-            return unavailable(*reason);
+            // `disabled` is the builder's own word, and a value outside the
+            // enum is none the result knows.
+            const bool known = *reason != ScreenshotReason::disabled &&
+                               to_string(*reason) != "unknown";
+            return unavailable(known ? *reason : ScreenshotReason::failed);
         }
         const std::uintmax_t size = std::filesystem::file_size(png, ec);
         if (ec || size > kMaxScreenshotBytes) {
@@ -340,11 +355,13 @@ Screenshot EvidenceBuilder::capture(const connector::RestoreResult* restore,
         attachments.push_back(attachment_of(kScreenshotName, *bytes));
         return {true, ScreenshotReason::failed};
     } catch (...) {
+        std::filesystem::remove_all(png, ec);
         return {false, ScreenshotReason::failed};
     }
 }
 
-EvidenceBuilder::Written EvidenceBuilder::write_attachments(const EvidenceFacts& facts) noexcept
+EvidenceBuilder::Written EvidenceBuilder::write_attachments(const EvidenceFacts& facts,
+                                                            bool with_screenshot) noexcept
 {
     Written out;
     try {
@@ -367,7 +384,9 @@ EvidenceBuilder::Written EvidenceBuilder::write_attachments(const EvidenceFacts&
         // No screenshot beside a folder that is short of a text file: there
         // will be no result to list it.
         if (out.errors.empty()) {
-            const Screenshot screenshot = capture(facts.restore, attachments);
+            const Screenshot screenshot =
+                with_screenshot ? capture(facts.restore, attachments)
+                                : Screenshot{false, ScreenshotReason::failed};
             std::ranges::sort(attachments, {}, &Attachment::name);
             out.evidence = Evidence{std::move(attachments), screenshot};
         }

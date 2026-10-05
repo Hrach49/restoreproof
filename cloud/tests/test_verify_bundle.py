@@ -14,7 +14,9 @@ import base64
 import hashlib
 import importlib.util
 import json
+import os
 import re
+from collections import Counter
 from pathlib import Path
 
 import pytest
@@ -56,6 +58,26 @@ CASES_FILE = load_json("cases.json")
 CASES = {case["name"]: case for case in CASES_FILE["cases"]}
 FAILING = [case for case in CASES_FILE["cases"] if case["expect"] != "verified"]
 VERIFYING = [case for case in CASES_FILE["cases"] if case["expect"] == "verified"]
+KEY_FILES_FILE = load_json("key-files.json")
+KEY_FILES = KEY_FILES_FILE["key_files"]
+
+# How many cases expect each word: what worker/tests/signer_test.cpp pins too,
+# so a case dropped from cases.json is noticed on this side as well.
+CASES_PER_WORD = {
+    "verified": 1,
+    "result_unreadable": 1,
+    "result_not_canonical": 12,
+    "result_schema": 1,
+    "attachment_twice": 1,
+    "screenshot_missing": 1,
+    "signature_file": 10,
+    "hash_mismatch": 2,
+    "wrong_key": 2,
+    "signature_invalid": 4,
+    "attachment_missing": 1,
+    "attachment_size": 1,
+    "attachment_hash": 1,
+}
 
 VERIFIED_LINE = f"verified {BUNDLE['bundle_sha256']} key {BUNDLE['key_id']}\n"
 
@@ -129,6 +151,13 @@ def test_cases_file_is_about_this_bundle_and_these_keys():
     assert CASES_FILE["keys"] == "keys.json"
     assert len(CASES) == len(CASES_FILE["cases"]), "a case name twice"
     assert FAILING and VERIFYING
+
+
+def test_the_cases_are_the_38_and_so_many_of_each_word():
+    assert len(CASES_FILE["cases"]) == 38
+    assert sum(CASES_PER_WORD.values()) == 38
+    assert Counter(case["expect"] for case in CASES_FILE["cases"]) == CASES_PER_WORD
+    assert (len(FAILING), len(VERIFYING)) == (37, 1)
 
 
 @pytest.mark.parametrize("case", FAILING, ids=lambda case: case["name"])
@@ -388,6 +417,66 @@ def test_a_note_shows_an_odd_file_name_in_ascii(tmp_path, capsys):
     assert err == "note: not listed in the result: bericht-\\xfc.txt\n"
 
 
+# The Worker's rule for a name in a note (worker/src/signer_command.cpp,
+# `printable`): printable ASCII but the backslash as it is, anything else by its
+# code point in lower-case hex, \xNN below U+0100, \uNNNN below U+10000,
+# \UNNNNNNNN above; a surrogate without its pair is a code point of its own.
+@pytest.mark.parametrize(
+    ("name", "printed"),
+    [
+        ("items (2).csv", "items (2).csv"),
+        (" ~", " ~"),
+        ("a\\b", "a\\x5cb"),
+        ("a\tb", "a\\x09b"),
+        ("a\nb", "a\\x0ab"),
+        ("a\rb", "a\\x0db"),
+        ("\x00\x1f\x7f", "\\x00\\x1f\\x7f"),
+        ("\x80\xa0\xff", "\\x80\\xa0\\xff"),
+        ("bericht-\u00fc.txt", "bericht-\\xfc.txt"),
+        ("\u0100\u65e5\uffff", "\\u0100\\u65e5\\uffff"),
+        ("\U00010000\U0001f600\U0010ffff", "\\U00010000\\U0001f600\\U0010ffff"),
+        ("x\udc80y", "x\\udc80y"),
+        ("\ud800", "\\ud800"),
+        # A high and a low one side by side, each without its pair in the name
+        # as the folder gave it: never joined into one character.
+        ("\ud83d" + "\ude00", "\\ud83d\\ude00"),
+        ("\udfff\ud800", "\\udfff\\ud800"),
+    ],
+)
+def test_a_name_is_printed_by_the_workers_rule(name, printed):
+    assert vb._printable(name) == printed
+    assert printed.isascii() and printed.isprintable()
+
+
+def test_the_notes_for_odd_names_are_the_workers_lines_in_code_point_order(tmp_path, capsys):
+    # The line `rpworker signer verify` prints for each of these names, and in
+    # its order: by code point, so U+FF01 before U+1F600 (UTF-16 order would
+    # put the surrogate pair first) and the lone surrogate U+DC80 between.
+    folder = write_folder(tmp_path / "run")
+    names = ["\U0001f600.bin", "x\udc80y", "\u65e5\u672c.txt", "bericht-\u00fc.txt", "\udc80", "\uff01"]
+    for name in names:
+        try:
+            # Windows keeps a lone surrogate in a name; elsewhere it stands for
+            # the byte 0x80 (surrogateescape), which the listing gives back.
+            (folder / name).write_bytes(b"")
+        except (OSError, ValueError):  # pragma: no cover - a file system that has no such name
+            pytest.skip("this file system takes no such name")
+    assert sorted(os.listdir(folder))[-5:] == [
+        "x\udc80y", "\u65e5\u672c.txt", "\udc80", "\uff01", "\U0001f600.bin",
+    ]
+    code, out, err = run_main(capsys, folder, "--public-key", pem_file(tmp_path), "--schemas", SCHEMAS_DIR)
+    assert (code, out) == (0, VERIFIED_LINE)
+    assert err == (
+        "note: not listed in the result: bericht-\\xfc.txt\n"
+        "note: not listed in the result: x\\udc80y\n"
+        "note: not listed in the result: \\u65e5\\u672c.txt\n"
+        "note: not listed in the result: \\udc80\n"
+        "note: not listed in the result: \\uff01\n"
+        "note: not listed in the result: \\U0001f600.bin\n"
+    )
+    assert err.isascii()
+
+
 def test_no_output_line_uses_a_banned_word(tmp_path, capsys):
     lines = []
     for name in ("untouched", "signature-one-bit-changed"):
@@ -422,6 +511,133 @@ def test_a_file_given_as_the_folder_is_exit_2(tmp_path, capsys):
     code, out, err = run_main(
         capsys, folder / "result.json", "--public-key", pem_file(tmp_path), "--schemas", SCHEMAS_DIR
     )
+    assert_no_verdict(code, out, err)
+    assert err == "error: the folder can't be opened\n"
+
+
+def test_an_empty_folder_argument_is_exit_2_never_the_working_folder(tmp_path, capsys, monkeypatch):
+    folder = write_folder(tmp_path / "run")
+    key_file = pem_file(tmp_path)
+    monkeypatch.chdir(folder)
+    # The working folder itself verifies when it is named.
+    assert run_main(capsys, ".", "--public-key", key_file, "--schemas", SCHEMAS_DIR) == (0, VERIFIED_LINE, "")
+    code, out, err = run_main(capsys, "", "--public-key", key_file)
+    assert_no_verdict(code, out, err)
+    assert err == "error: the folder can't be opened\n"
+    code, out, err = run_main(capsys, "", "--public-key", key_file, "--schemas", SCHEMAS_DIR)
+    assert_no_verdict(code, out, err)
+    assert err == "error: the folder can't be opened\n"
+
+
+def test_verify_folder_takes_no_empty_folder_as_the_working_folder(tmp_path, schemas, monkeypatch):
+    monkeypatch.chdir(write_folder(tmp_path / "run"))
+    assert vb.verify_folder(".", public_key(), schemas).word == "verified"
+    assert vb.verify_folder(Path("."), public_key(), schemas).word == "verified"
+    with pytest.raises(vb.SetupError):
+        vb.verify_folder("", public_key(), schemas)
+
+
+def test_an_empty_public_key_value_is_exit_2(tmp_path, capsys, monkeypatch):
+    folder = write_folder(tmp_path / "run")
+    monkeypatch.chdir(tmp_path)
+    read = []
+    real = vb._read_file
+    monkeypatch.setattr(vb, "_read_file", lambda path, limit: (read.append(path.name), real(path, limit))[1])
+    code, out, err = run_main(capsys, folder, "--public-key", "", "--schemas", SCHEMAS_DIR)
+    assert_no_verdict(code, out, err)
+    assert err == "error: --public-key: the file can't be read\n"
+    assert read == ["result.v1.json", "signature.v1.json"]  # no file was tried as the key
+
+
+def test_an_empty_schemas_value_is_exit_2_never_the_working_folders_schemas(tmp_path, capsys, monkeypatch):
+    folder = write_folder(tmp_path / "run")
+    key_file = pem_file(tmp_path)
+    here = tmp_path / "schemas-here"
+    here.mkdir()
+    for name in ("result.v1.json", "signature.v1.json"):
+        (here / name).write_bytes((SCHEMAS_DIR / name).read_bytes())
+    monkeypatch.chdir(here)
+    assert run_main(capsys, folder, "--public-key", key_file, "--schemas", ".") == (0, VERIFIED_LINE, "")
+    code, out, err = run_main(capsys, folder, "--public-key", key_file, "--schemas", "")
+    assert_no_verdict(code, out, err)
+    assert err == "error: --schemas: the folder can't be opened\n"
+    with pytest.raises(vb.SetupError):
+        vb.load_schemas("")
+
+
+def test_a_folder_that_lists_and_cannot_be_read_from_is_exit_2_never_a_verdict(tmp_path, capsys, monkeypatch):
+    # What Python 3.14 does on Windows for `<folder> ` (a trailing space): the
+    # listing of that name succeeds and no file under it opens. Faked, so it
+    # holds on every interpreter: a listing that answers for a name nothing
+    # can be read under.
+    folder = write_folder(tmp_path / "run")
+    real_listdir = os.listdir
+    asked = []
+
+    def listing(path="."):
+        asked.append(str(path))
+        return real_listdir(folder)
+
+    monkeypatch.setattr(vb.os, "listdir", listing)
+    code, out, err = run_main(
+        capsys, tmp_path / "another-name", "--public-key", pem_file(tmp_path), "--schemas", SCHEMAS_DIR
+    )
+    monkeypatch.undo()
+    assert_no_verdict(code, out, err)
+    assert err == "error: the folder can't be opened\n"
+    assert asked == []  # not even listed
+
+
+def test_the_listing_and_every_read_use_the_one_resolved_folder(tmp_path, schemas, monkeypatch):
+    folder = write_folder(tmp_path / "run")
+    (tmp_path / "other").mkdir()
+    given = tmp_path / "other" / ".." / "run"
+    resolved = str(folder.resolve(strict=True))
+    listed, opened = [], []
+    real_listdir, real_open = os.listdir, open
+
+    def listing(path="."):
+        listed.append(str(path))
+        return real_listdir(path)
+
+    def opening(path, *args, **kwargs):
+        opened.append(str(path))
+        return real_open(path, *args, **kwargs)
+
+    key = public_key()
+    monkeypatch.setattr(vb.os, "listdir", listing)
+    monkeypatch.setattr(vb, "open", opening, raising=False)
+    verdict = vb.verify_folder(given, key, schemas)
+    monkeypatch.undo()
+    assert verdict.word == "verified"
+    assert listed == [resolved]
+    names = ["result.json", "signature.json", "items.csv", "veeam-session.log"]
+    assert opened == [os.path.join(resolved, name) for name in names]
+
+
+def test_a_folder_given_with_a_trailing_space_never_gets_a_failing_verdict(tmp_path, capsys):
+    # Windows opens `run ` as `run`; elsewhere there is no such folder. Either
+    # the one resolved folder is verified or nothing is: never `not verified`
+    # for a complete folder (which the listing and the reads of Python 3.14 on
+    # Windows, each asked with the name as given, would end in).
+    folder = write_folder(tmp_path / "run")
+    code, out, err = run_main(capsys, str(folder) + " ", "--public-key", pem_file(tmp_path), "--schemas", SCHEMAS_DIR)
+    if code == 0:
+        assert (out, err) == (VERIFIED_LINE, "")
+    else:
+        assert_no_verdict(code, out, err)
+        assert err == "error: the folder can't be opened\n"
+
+
+def test_a_folder_that_resolves_and_cannot_be_listed_is_exit_2(tmp_path, capsys, monkeypatch):
+    folder = write_folder(tmp_path / "run")
+
+    def refuse(_path="."):
+        raise PermissionError("no")
+
+    monkeypatch.setattr(vb.os, "listdir", refuse)
+    code, out, err = run_main(capsys, folder, "--public-key", pem_file(tmp_path), "--schemas", SCHEMAS_DIR)
+    monkeypatch.undo()
     assert_no_verdict(code, out, err)
     assert err == "error: the folder can't be opened\n"
 
@@ -470,6 +686,88 @@ def test_a_key_file_that_is_not_one_ed25519_public_key_is_exit_2(name, tmp_path,
     code, out, err = run_main(capsys, folder, "--public-key", key_file, "--schemas", SCHEMAS_DIR)
     assert_no_verdict(code, out, err)
     assert err == "error: --public-key: not an Ed25519 public key in PEM\n"
+
+
+# --- key-files.json: one rule for a public key file in both verifiers ---------
+
+
+def test_the_key_files_are_the_46_and_11_are_keys():
+    assert KEY_FILES_FILE["keys"] == "keys.json"
+    assert KEY_FILES_FILE["accepted_key_id"] == KEYS["rfc8032-test-1"]["key_id"]
+    assert len(KEY_FILES) == 46
+    assert len({row["name"] for row in KEY_FILES}) == 46, "a name twice"
+    assert sum(1 for row in KEY_FILES if row["accepted"]) == 11
+    assert sum(1 for row in KEY_FILES if not row["accepted"]) == 35
+    for row in KEY_FILES:
+        assert sorted(row) in (["accepted", "name", "text"], ["accepted", "base64", "name"]), row["name"]
+        assert type(row["accepted"]) is bool
+    assert [row["name"] for row in KEY_FILES if "base64" in row] == ["utf16-le-with-bom"]
+    # The identity key's ID is its own DER's, as the rule writes it.
+    identity = bytes.fromhex("302a300506032b6570032100") + b"\x01" + bytes(31)
+    assert hashlib.sha256(identity).hexdigest() == KEY_FILES_FILE["identity_key_id"]
+
+
+def key_id_of_row(row: dict) -> str:
+    return KEY_FILES_FILE["identity_key_id" if row["name"] == "small-order-identity-key" else "accepted_key_id"]
+
+
+@pytest.mark.parametrize("row", KEY_FILES, ids=lambda row: row["name"])
+def test_each_key_file_is_taken_or_refused_as_the_worker_does(row):
+    key = vb.public_key_from_pem(file_bytes(row))
+    if not row["accepted"]:
+        assert key is None
+        return
+    assert key is not None
+    assert key.key_id == key_id_of_row(row)
+    # The file's own 44 bytes, never a re-encoding.
+    assert len(key.der) == 44
+    assert key.der[:12].hex() == "302a300506032b6570032100"
+    assert hashlib.sha256(key.der).hexdigest() == key.key_id
+
+
+@pytest.mark.parametrize("row", KEY_FILES, ids=lambda row: row["name"])
+def test_each_key_file_through_main(row, tmp_path, capsys):
+    folder = write_folder(tmp_path / "run")
+    key_file = tmp_path / "key.pem"
+    key_file.write_bytes(file_bytes(row))
+    code, out, err = run_main(capsys, folder, "--public-key", key_file, "--schemas", SCHEMAS_DIR)
+    if not row["accepted"]:
+        assert_no_verdict(code, out, err)
+        assert err == "error: --public-key: not an Ed25519 public key in PEM\n"
+    elif key_id_of_row(row) == BUNDLE["key_id"]:
+        assert (code, out, err) == (0, VERIFIED_LINE, "")
+    else:  # a key, and not the bundle's
+        assert (code, out, err) == (1, "not verified: wrong_key\n", "")
+
+
+def test_the_library_is_not_asked_about_a_file_the_rule_refuses(monkeypatch):
+    asked = []
+    real = vb.Ed25519PublicKey.from_public_bytes
+
+    class Watched:
+        @staticmethod
+        def from_public_bytes(data):
+            asked.append(bytes(data))
+            return real(data)
+
+    monkeypatch.setattr(vb, "Ed25519PublicKey", Watched)
+    for row in KEY_FILES:
+        key = vb.public_key_from_pem(file_bytes(row))
+        assert (key is not None) == row["accepted"], row["name"]
+    # Asked once per accepted file, and only for the 32 bytes after the prefix.
+    assert len(asked) == 11
+    assert all(len(raw) == 32 for raw in asked)
+    assert not hasattr(vb, "serialization")  # no PEM or DER reader of the library
+
+
+def test_a_key_the_library_refuses_is_no_key(monkeypatch):
+    class Refusing:
+        @staticmethod
+        def from_public_bytes(_data):
+            raise ValueError("no")
+
+    monkeypatch.setattr(vb, "Ed25519PublicKey", Refusing)
+    assert vb.public_key_from_pem(KEYS["rfc8032-test-1"]["public_key_pem"].encode("ascii")) is None
 
 
 def test_a_key_file_that_is_not_there_is_exit_2(tmp_path, capsys):
@@ -680,5 +978,5 @@ def test_the_bundles_signature_file_is_canonical_valid_and_over_the_raw_digest(s
 
 def test_the_vector_files_are_lf():
     # .gitattributes keeps them LF, so both builds read the same bytes.
-    for name in ("keys.json", "ed25519.json", "bundle.json", "cases.json"):
+    for name in ("keys.json", "ed25519.json", "bundle.json", "cases.json", "key-files.json"):
         assert b"\r" not in (SIGNING_DIR / name).read_bytes(), name

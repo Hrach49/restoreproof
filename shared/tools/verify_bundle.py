@@ -11,7 +11,9 @@
 
 Exit 0 and `verified <bundle_sha256> key <key_id>`, exit 1 and
 `not verified: <word>`, exit 2 for a usage error, a folder, key or schema that
-can't be read, or anything unexpected (never a verdict).
+can't be read, or anything unexpected (never a verdict). An empty <folder>,
+--public-key or --schemas is such an error, never the working folder. The
+folder is resolved once, and that one path is listed and read from.
 
 One self-contained file (docs/decisions.md 2026-10-05, W4.3 point 5). It holds
 the Python side of canonical-json-v1, the form `result.json` and
@@ -55,13 +57,13 @@ import base64
 import hashlib
 import json
 import os
+import re
 import stat
 import sys
 from pathlib import Path
 from typing import NamedTuple
 
 from cryptography.exceptions import InvalidSignature, UnsupportedAlgorithm
-from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError
@@ -350,9 +352,18 @@ MAX_SIGNATURE_FILE_BYTES = 4096
 _MAX_KEY_FILE_BYTES = 64 * 1024
 _MAX_SCHEMA_FILE_BYTES = 16 * 1024 * 1024
 
-_PEM_BEGIN = b"-----BEGIN PUBLIC KEY-----"
-_PEM_END = b"-----END PUBLIC KEY-----"
+# A public key file once the white space around it is gone: the BEGIN line,
+# one or more lines of Base64 characters, the END line, each line but the last
+# ended by LF or CRLF. Nothing else matches: no header line, no blank line, no
+# space or tab, no lone CR, no text on an armour line.
+_PEM_WHITE_SPACE = b" \t\r\n"
+_PEM_BLOCK = re.compile(
+    rb"-----BEGIN PUBLIC KEY-----\r?\n((?:[A-Za-z0-9+/=]+\r?\n)+)-----END PUBLIC KEY-----"
+)
 _PUBLIC_DER_BYTES = 44  # an Ed25519 key's SubjectPublicKeyInfo
+# What the library writes before the key's 32 bytes: SEQUENCE(42) of
+# SEQUENCE(5) of the OID 1.3.101.112, then a BIT STRING(33) with no unused bits.
+_PUBLIC_DER_PREFIX = bytes.fromhex("302a300506032b6570032100")
 
 EXIT_VERIFIED = 0
 EXIT_NOT_VERIFIED = 1
@@ -393,25 +404,41 @@ class PublicKey:
         return True
 
 
+def _strict_base64(text: bytes) -> bytes | None:
+    """The bytes `text` is the standard Base64 of, or None: padded, `=` only at
+    the end, the unused bits zero, so no two texts decode to the same bytes."""
+    try:
+        data = base64.b64decode(text, validate=True)
+    except ValueError:  # binascii.Error among them
+        return None
+    return data if base64.b64encode(data) == text else None
+
+
 def public_key_from_pem(pem: bytes) -> PublicKey | None:
-    """The Ed25519 public key in `pem`, or None: one `PUBLIC KEY` block with
-    nothing around it but white space, as the Worker's PublicKey::from_pem."""
-    text = pem.strip(b" \t\r\n")
-    if (
-        not text.startswith(_PEM_BEGIN)
-        or not text.endswith(_PEM_END)
-        or text.find(b"-----BEGIN", 1) != -1
-        or b"\x00" in text
-    ):
+    """The Ed25519 public key in the key file `pem`, or None.
+
+    One rule, the Worker's PublicKey::from_pem's, held to it by
+    shared/testdata/signing-v1/key-files.json and checked here before the
+    library is asked anything: white space (space, tab, CR, LF) around; the
+    line `-----BEGIN PUBLIC KEY-----`; one or more body lines of standard
+    Base64 characters and nothing else; the line `-----END PUBLIC KEY-----`.
+    Inside the block a line ends with LF or CRLF only. The body lines joined
+    must be strict Base64 of exactly the 44 bytes of an Ed25519
+    SubjectPublicKeyInfo as the library writes it (302a300506032b6570032100,
+    then the key's 32 bytes). Those 44 bytes are the key's DER, never a
+    re-encoding. No PEM or DER reader of the library is used: each takes more.
+    """
+    if type(pem) is not bytes:
+        return None
+    block = _PEM_BLOCK.fullmatch(pem.strip(_PEM_WHITE_SPACE))
+    if block is None:
+        return None
+    der = _strict_base64(block.group(1).replace(b"\r", b"").replace(b"\n", b""))
+    if der is None or len(der) != _PUBLIC_DER_BYTES or not der.startswith(_PUBLIC_DER_PREFIX):
         return None
     try:
-        key = serialization.load_pem_public_key(text)
+        key = Ed25519PublicKey.from_public_bytes(der[len(_PUBLIC_DER_PREFIX) :])
     except (ValueError, TypeError, UnsupportedAlgorithm):
-        return None
-    if not isinstance(key, Ed25519PublicKey):
-        return None
-    der = key.public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)
-    if len(der) != _PUBLIC_DER_BYTES:
         return None
     return PublicKey(key, der)
 
@@ -451,6 +478,12 @@ def _read_file(path: Path, limit: int) -> tuple[str, bytes]:
     return _READ, data
 
 
+def _is_empty(path) -> bool:
+    """Whether `path` is the empty text. Path("") is ".", so this is asked
+    before a Path is made of what the caller gave."""
+    return len(os.fspath(path)) == 0
+
+
 def _load_schema(folder: Path, name: str) -> Draft202012Validator:
     state, raw = _read_file(folder / name, _MAX_SCHEMA_FILE_BYTES)
     if state != _READ:
@@ -467,7 +500,10 @@ def _load_schema(folder: Path, name: str) -> Draft202012Validator:
 
 def load_schemas(folder) -> Schemas:
     """result.v1.json and signature.v1.json of `folder`, or a SetupError: a
-    schema that can't be found is never a skipped check."""
+    schema that can't be found is never a skipped check. An empty `folder` is
+    no folder (not the working one)."""
+    if _is_empty(folder):
+        raise SetupError("--schemas: the folder can't be opened")
     folder = Path(folder)
     return Schemas(_load_schema(folder, RESULT_SCHEMA_FILE), _load_schema(folder, SIGNATURE_SCHEMA_FILE))
 
@@ -533,16 +569,32 @@ def _check_attachment(folder: Path, attachment: dict) -> str:
     return VERIFIED
 
 
+def _open_folder(folder) -> Path:
+    """The one path the folder is listed and read through: `folder` resolved,
+    which must be there and a folder. So a name the system lists and reads
+    differently (on Windows, one ending in a space) can't give a listing of
+    one place beside reads of another, which would end in a verdict."""
+    if _is_empty(folder):
+        raise SetupError("the folder can't be opened")
+    try:
+        resolved = Path(folder).resolve(strict=True)
+        if not stat.S_ISDIR(os.stat(resolved).st_mode):
+            raise NotADirectoryError
+    except (OSError, ValueError, RuntimeError):
+        raise SetupError("the folder can't be opened") from None
+    return resolved
+
+
 def verify_folder(folder, key: PublicKey, schemas: Schemas) -> Verification:
     """The same over a run folder: result.json (result_unreadable unless it is
     read), the checks of `verify` with signature.json (signature_file when it
     isn't read), then each listed attachment in the result's order:
     attachment_missing, attachment_size, attachment_hash. A SetupError when
-    `folder` isn't a folder that can be listed."""
-    folder = Path(folder)
+    `folder` is empty or isn't a folder that can be resolved and listed."""
+    folder = _open_folder(folder)
     try:
         names = sorted(os.listdir(folder))
-    except OSError:
+    except (OSError, ValueError):
         raise SetupError("the folder can't be opened") from None
     state, result = _read_file(folder / RESULT_FILE, MAX_RESULT_FILE_BYTES)
     if state != _READ:
@@ -575,6 +627,8 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def _read_public_key(path: str) -> PublicKey:
+    if _is_empty(path):
+        raise SetupError("--public-key: the file can't be read")
     state, pem = _read_file(Path(path), _MAX_KEY_FILE_BYTES)
     if state != _READ:
         raise SetupError("--public-key: the file can't be read")
@@ -585,11 +639,24 @@ def _read_public_key(path: str) -> PublicKey:
 
 
 def _printable(name: str) -> str:
-    """A file's name for a line of output: ASCII, anything else escaped."""
-    return "".join(
-        char if " " <= char <= "~" and char != "\\" else char.encode("unicode_escape", "backslashreplace").decode("ascii")
-        for char in name
-    )
+    """A file's name for a line of output, as the Worker's `signer verify`
+    writes it, byte for byte: printable ASCII but the backslash as it is,
+    anything else by its code point in lower-case hex, \\xNN below U+0100,
+    \\uNNNN below U+10000, \\UNNNNNNNN above. A surrogate without its pair (in a
+    Windows name, or standing for a byte that isn't UTF-8 elsewhere) is a code
+    point of its own, \\udXXX."""
+    parts = []
+    for char in name:
+        point = ord(char)
+        if 0x20 <= point <= 0x7E and char != "\\":
+            parts.append(char)
+        elif point < 0x100:
+            parts.append(f"\\x{point:02x}")
+        elif point < 0x10000:
+            parts.append(f"\\u{point:04x}")
+        else:
+            parts.append(f"\\U{point:08x}")
+    return "".join(parts)
 
 
 def _run(argv: list[str] | None) -> int:

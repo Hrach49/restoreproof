@@ -25,7 +25,9 @@ const std::string kUsage = "usage: rpworker --version | rpworker config check [-
                            "rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] "
                            "[--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] "
                            "[--config <path>] [--record <dir>] "
-                           "[--json <file> | --evidence <dir>]\n";
+                           "[--json <file> | --evidence <dir>] | "
+                           "rpworker signer public-key | "
+                           "rpworker signer verify <folder> --public-key <pem file>\n";
 
 const std::string kConfigJson = R"({
     "cloud_url": "https://cloud.example.invalid",
@@ -76,7 +78,15 @@ TEST_CASE("rpworker prints usage to stderr and exits 64 for a command line it do
         Args{"test", "--evidence", ""},
         Args{"test", "--evidence", "runs", "--json", "a.json"},
         Args{"restore", "--evidence", "runs"},
-        Args{"restore", "--seed", "1"});
+        Args{"restore", "--seed", "1"},
+        // W4.3: `signer public-key` alone, or `signer verify` with a folder
+        // and a key file.
+        Args{"signer"},
+        Args{"Signer", "public-key"},
+        Args{"signer", "public-key", "extra"},
+        Args{"signer", "verify"},
+        Args{"signer", "verify", "folder"},
+        Args{"signer", "new-key"});
     CAPTURE(args);
 
     std::ostringstream out;

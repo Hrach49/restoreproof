@@ -3,12 +3,12 @@
 #include <rp/sha256.hpp>
 
 #include "atomic_file.hpp"
+#include "file_read.hpp"
 #include "path_utf8.hpp"
 #include "target_guard_refuse.hpp"
 #include "text_util.hpp"
 
 #include <algorithm>
-#include <fstream>
 #include <string>
 #include <system_error>
 #include <utility>
@@ -106,26 +106,15 @@ std::string row(std::size_t index, const std::vector<std::string>& cells, std::s
 }
 
 // The file's bytes, or nullopt when it is larger than `limit` or can't be
-// read whole: exactly the size it says and nothing after, so a read that
-// stops short and a file still growing are no file, never a part of one.
+// read whole (read_whole_file: a read that stops short and a file still
+// growing are no file, never a part of one).
 std::optional<std::string> read_file(const std::filesystem::path& path, std::uintmax_t limit)
 {
-    std::error_code ec;
-    const std::uintmax_t size = std::filesystem::file_size(path, ec);
-    if (ec || size > limit) {
+    FileRead file = read_whole_file(path, limit);
+    if (file.state != FileState::read) {
         return std::nullopt;
     }
-    std::ifstream file(path, std::ios::binary);
-    if (!file) {
-        return std::nullopt;
-    }
-    std::string bytes(static_cast<std::size_t>(size), '\0');
-    file.read(bytes.data(), static_cast<std::streamsize>(bytes.size()));
-    if (static_cast<std::uintmax_t>(file.gcount()) != size ||
-        file.peek() != std::char_traits<char>::eof()) {
-        return std::nullopt;
-    }
-    return bytes;
+    return std::move(file.bytes);
 }
 
 Attachment attachment_of(std::string_view name, std::string_view bytes)

@@ -43,6 +43,7 @@ add_library(rpcore STATIC
     src/ed25519.cpp
     src/evidence_builder.cpp
     src/expected_set.cpp
+    src/file_read.cpp
     src/graph_client.cpp
     src/graph_command.cpp
     src/graph_download.cpp
@@ -66,6 +67,7 @@ add_library(rpcore STATIC
     src/sample_selector.cpp
     src/secrets.cpp
     src/sha256.cpp
+    src/signer.cpp
     src/step_timer.cpp
     src/target_guard.cpp
     src/target_guard_graph.cpp
@@ -149,6 +151,7 @@ add_executable(rptests
     tests/ed25519_test.cpp
     tests/evidence_builder_test.cpp
     tests/expected_set_test.cpp
+    tests/file_read_test.cpp
     tests/graph_client_live_test.cpp
     tests/graph_client_test.cpp
     tests/graph_command_live_test.cpp
@@ -179,6 +182,7 @@ add_executable(rptests
     tests/sample_selector_test.cpp
     tests/secrets_test.cpp
     tests/sha256_test.cpp
+    tests/signer_test.cpp
     tests/smoke.cpp
     tests/step_timer_test.cpp
     tests/target_guard_test.cpp

@@ -191,14 +191,16 @@ TEST_CASE("parse_config rejects secret-looking keys without echoing the value", 
     REQUIRE_THAT(e.what(), !ContainsSubstring("SENTINEL"));
 }
 
-TEST_CASE("none of the 18 known keys looks like a secret", "[config]")
+TEST_CASE("none of the 19 known keys looks like a secret", "[config]")
 {
-    // valid_doc() sets the 16 that need no file; veeam_ca_file and
-    // veeam_cert_sha256 make 18. It parses only if none trips the secret check.
+    // valid_doc() sets the 16 that need no file; veeam_ca_file,
+    // veeam_cert_sha256 and screenshots_enabled make 19. It parses only if
+    // none trips the secret check.
     json doc = valid_doc();
     doc["veeam_ca_file"] = kCaFile;
     doc["veeam_cert_sha256"] = kCertSha256;
-    REQUIRE(doc.size() == 18);
+    doc["screenshots_enabled"] = true;
+    REQUIRE(doc.size() == 19);
     REQUIRE_NOTHROW(rp::parse_config(doc.dump()));
 }
 
@@ -251,7 +253,8 @@ TEST_CASE("parse_config rejects unknown keys, case-sensitively", "[config]")
                                      "sample_size", "a.b-c_9", "x", std::string(64, 'k'),
                                      "Veeam_CA_File", "veeam_ca", "ca_file",
                                      "Veeam_Cert_SHA256", "veeam_cert_sha1",
-                                     "veeam_cert_thumbprint");
+                                     "veeam_cert_thumbprint", "Screenshots_Enabled",
+                                     "screenshot_enabled", "screenshots");
     CAPTURE(key);
     json doc = valid_doc();
     doc[key] = "value";
@@ -693,6 +696,44 @@ TEST_CASE("parse_config checks veeam_cert_sha256 before the sample sizes togethe
     REQUIRE(parse_error(doc.dump()).key() == "veeam_cert_sha256");
 }
 
+TEST_CASE("parse_config rejects a screenshots_enabled that isn't true or false, without echoing "
+          "it",
+          "[config]")
+{
+    // The config's one boolean (W4.2): JSON's true or false, nothing that only
+    // reads like one.
+    const json value = GENERATE(json("true"), json("false"), json("SENTINEL-b7d3"), json(""),
+                                json(1), json(0), json(1.0), json(nullptr), json::array(),
+                                json::array({true}), json::object());
+    CAPTURE(value.dump());
+    json doc = valid_doc();
+    doc["screenshots_enabled"] = value;
+
+    const rp::ConfigError e = parse_error(doc.dump());
+    REQUIRE(e.key() == "screenshots_enabled");
+    // An exact match also proves the value isn't echoed.
+    REQUIRE(std::string{e.what()} == "config key \"screenshots_enabled\" must be true or false");
+}
+
+TEST_CASE("parse_config checks screenshots_enabled after veeam_cert_sha256", "[config]")
+{
+    json doc = valid_doc();
+    doc["veeam_ca_file"] = kCaFile;
+    doc["veeam_cert_sha256"] = "not-a-hash";
+    doc["screenshots_enabled"] = "true";
+    REQUIRE(parse_error(doc.dump()).key() == "veeam_cert_sha256");
+}
+
+TEST_CASE("parse_config checks screenshots_enabled before the sample sizes together", "[config]")
+{
+    json doc = valid_doc();
+    doc["screenshots_enabled"] = "true";
+    doc["sample_mail"] = 0;
+    doc["sample_sp"] = 0;
+    doc["sample_od"] = 0;
+    REQUIRE(parse_error(doc.dump()).key() == "screenshots_enabled");
+}
+
 TEST_CASE("parse_config rejects a config that samples nothing", "[config]")
 {
     json doc = valid_doc();
@@ -806,11 +847,22 @@ TEST_CASE("parse_config accepts veeam_cert_sha256 in any case, with veeam_ca_fil
     REQUIRE(config.veeam_ca_file == kCaFile);
 }
 
+TEST_CASE("parse_config reads screenshots_enabled as written", "[config]")
+{
+    const bool value = GENERATE(true, false);
+    CAPTURE(value);
+    json doc = valid_doc();
+    doc["screenshots_enabled"] = value;
+
+    REQUIRE(rp::parse_config(doc.dump()).screenshots_enabled == value);
+}
+
 TEST_CASE("parse_config reads every key", "[config]")
 {
     json doc = valid_doc();
     doc["veeam_ca_file"] = kCaFile;
     doc["veeam_cert_sha256"] = kCertSha256;
+    doc["screenshots_enabled"] = true;
     const rp::Config config = rp::parse_config(doc.dump(2));
 
     REQUIRE(config.cloud_url == "https://cloud.example.invalid");
@@ -831,6 +883,7 @@ TEST_CASE("parse_config reads every key", "[config]")
     REQUIRE(config.log_level == "debug");
     REQUIRE(config.veeam_ca_file == kCaFile);
     REQUIRE(config.veeam_cert_sha256 == kCertSha256);
+    REQUIRE(config.screenshots_enabled);
 }
 
 TEST_CASE("parse_config fills in defaults for absent optional keys", "[config]")
@@ -847,6 +900,8 @@ TEST_CASE("parse_config fills in defaults for absent optional keys", "[config]")
     REQUIRE_FALSE(config.veeam_ca_file.has_value());
     // No pin: with a CA file, the host name would be checked as usual.
     REQUIRE_FALSE(config.veeam_cert_sha256.has_value());
+    // No screenshot unless the client's setting asks for one.
+    REQUIRE_FALSE(config.screenshots_enabled);
 }
 
 namespace {
@@ -1067,6 +1122,7 @@ TEST_CASE("config.example.json is a valid config of placeholders", "[config]")
     REQUIRE(config.sample_sp == 5);
     REQUIRE(config.sample_od == 5);
     REQUIRE(config.log_level == "info");
+    REQUIRE_FALSE(config.screenshots_enabled);
 }
 
 TEST_CASE("config.example.json sets every key but veeam_ca_file and veeam_cert_sha256",
@@ -1077,7 +1133,8 @@ TEST_CASE("config.example.json sets every key but veeam_ca_file and veeam_cert_s
     // a certificate in it); docs/worker-config.md documents both instead.
     std::ifstream file(std::filesystem::path(RP_CONFIG_EXAMPLE));
     const json doc = json::parse(file);
-    REQUIRE(doc.size() == 16);
+    REQUIRE(doc.size() == 17);
+    REQUIRE(doc.at("screenshots_enabled") == false);
     REQUIRE_FALSE(doc.contains("veeam_ca_file"));
     REQUIRE_FALSE(doc.contains("veeam_cert_sha256"));
 }

@@ -21,7 +21,7 @@ example, fill in your own values, and add those two keys if you need them.
 
 ## Settings
 
-Ten keys are required; the other eight are optional. Six of those have defaults; without
+Ten keys are required; the other nine are optional. Seven of those have defaults; without
 `veeam_ca_file` the Worker trusts the Windows certificate store, and without
 `veeam_cert_sha256` it checks the Veeam server's host name.
 
@@ -45,6 +45,7 @@ Ten keys are required; the other eight are optional. Six of those have defaults;
 | `log_level` | no | `"info"` | `trace`, `debug`, `info`, `warn`, `error`, `critical`, `off` | How much the Worker logs. Lowercase only. |
 | `veeam_ca_file` | no | (not set) | absolute path of a readable file: see below | PEM file with the CA certificate(s), or Veeam's self-signed certificate itself, that the Worker trusts for `veeam_url` instead of the Windows certificate store. TLS verification can't be turned off. |
 | `veeam_cert_sha256` | no | (not set) | 64 hexadecimal digits in any case, no separators; needs `veeam_ca_file`: see below | The SHA-256 of Veeam's REST certificate, as Windows shows it (`GetCertHashString('SHA256')`). `veeam_ca_file` must hold that certificate. With both set, the Worker trusts exactly that certificate's key and skips only the host-name check, which Veeam's default certificate can never pass. Not a secret. |
+| `screenshots_enabled` | no | `false` | `true` or `false`: see below | The client's screenshot setting: whether a run that writes a run folder asks for a picture of Veeam's restore session. Off by default. |
 
 At least one of `sample_mail`, `sample_sp` and `sample_od` must be above 0.
 
@@ -59,7 +60,8 @@ to U+2069), which can reorder how a line displays. Other non-ASCII text, such as
 The Worker checks the file when it loads it and stops at the first problem, in a fixed order:
 the file can't be read; it isn't valid JSON; it isn't a JSON object; a key looks like a secret;
 a key is unknown; then each setting in the order of the table above (for `veeam_cert_sha256`,
-its form first, then that `veeam_ca_file` is set); then the sample sizes together; then that
+its form first, then that `veeam_ca_file` is set; `screenshots_enabled` last); then the sample
+sizes together; then that
 the `veeam_ca_file` named can be opened for reading; last, when `veeam_cert_sha256` is set,
 that `veeam_ca_file` holds a certificate with that SHA-256, read the way the Worker's TLS
 connection reads it. Fix the reported problem and run
@@ -150,6 +152,16 @@ connection reads it. Fix the reported problem and run
   has a BEGIN CERTIFICATE line without its END CERTIFICATE line` and `veeam_ca_file holds a
   certificate block that can't be read`, each after `config key "veeam_cert_sha256": `. See
   "Veeam's default certificate" below.
+- **`screenshots_enabled` is `true` or `false`, and nothing else.** It is the file's only
+  boolean. JSON's own `true` and `false` are accepted; a string (`"true"`), a number (`1`) or
+  `null` is rejected with `config key "screenshots_enabled" must be true or false`. It is a
+  per-client setting, off by default, since a picture can't be passed through the redaction
+  that every logged string goes through. Until jobs exist (W4.8) the CLI reads it from
+  `config.json`; a job's value replaces it then. In W4.2 it changes only the reason the result
+  gives: the default capturer starts no browser and answers `unavailable` either way, with the
+  reason `disabled` when the key is `false` and `no_page` when it is `true`, because no Veeam
+  page shows a restore session without an interactive sign-in (`docs/decisions.md` 2026-10-05,
+  W4.2, points 2 to 4). A screenshot never changes a run's status, a warning or the exit code.
 - **Control characters are rejected** in every string setting, for the same reason: a newline,
   escape sequence or bidi override in a value could forge, hide or reorder lines of
   `config check` output.
@@ -354,6 +366,7 @@ sample_od                 5
 log_level                 info
 veeam_ca_file             C:\ProgramData\RestoreProof\veeam-rest.pem
 veeam_cert_sha256         9FB19E0E604C9BE49F83D8E508EFA8EA0986A952377C783E5035CEA2D772A213
+screenshots_enabled       false
 secrets (environment variables; values are never shown):
 RP_VEEAM_USERNAME         **** (set)
 RP_VEEAM_PASSWORD         **** (set)
@@ -362,7 +375,8 @@ RP_GRAPH_CERT_PASSWORD    **** (set)
 ```
 
 Without `veeam_ca_file` its line reads `veeam_ca_file             (not set)`, and likewise
-`veeam_cert_sha256         (not set)` without a pin.
+`veeam_cert_sha256         (not set)` without a pin. `screenshots_enabled` always has a line:
+`false` when the file doesn't set it.
 
 A secret prints only as `**** (set)` or `(not set)`: never any character of its value, nor its
 length.

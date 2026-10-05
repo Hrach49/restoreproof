@@ -88,6 +88,8 @@ constexpr StringField kLogLevel{"log_level", &Config::log_level, false, StringRu
 // Optional, so not StringFields: checked last, after log_level, in this order.
 constexpr std::string_view kCaFileKey = "veeam_ca_file";
 constexpr std::string_view kCertSha256Key = "veeam_cert_sha256";
+// The one boolean (W4.2), checked after them.
+constexpr std::string_view kScreenshotsKey = "screenshots_enabled";
 
 constexpr std::array<std::string_view, 7> kLogLevels{"trace", "debug", "info", "warn",
                                                       "error", "critical", "off"};
@@ -136,7 +138,7 @@ bool is_known_key(std::string_view key)
     const auto named = [key](const auto& field) { return field.key == key; };
     return std::any_of(kRequiredStrings.begin(), kRequiredStrings.end(), named) ||
            std::any_of(kIntFields.begin(), kIntFields.end(), named) || key == kLogLevel.key ||
-           key == kCaFileKey || key == kCertSha256Key;
+           key == kCaFileKey || key == kCertSha256Key || key == kScreenshotsKey;
 }
 
 bool looks_like_secret(std::string_view key)
@@ -354,6 +356,20 @@ void read_int(const json& doc, const IntField& field, Config& config)
     config.*field.member = it->get<int>();
 }
 
+// JSON's true or false only: a string "true" or a 1 is refused rather than
+// read as one, so a typo can't turn the screenshot on or off unnoticed.
+void read_screenshots_enabled(const json& doc, Config& config)
+{
+    const auto it = doc.find(kScreenshotsKey);
+    if (it == doc.end()) {
+        return;
+    }
+    if (!it->is_boolean()) {
+        throw key_error(kScreenshotsKey, "must be true or false");
+    }
+    config.screenshots_enabled = it->get<bool>();
+}
+
 // 1..max_size of ASCII letters, digits and the characters in `extra`.
 bool is_ascii_id(std::string_view text, std::string_view extra, std::size_t max_size)
 {
@@ -490,6 +506,7 @@ Config parse_config(std::string_view json_text)
     read_string(doc, kLogLevel, config);
     read_ca_file(doc, config);
     read_cert_sha256(doc, config);
+    read_screenshots_enabled(doc, config);
 
     if (config.sample_mail == 0 && config.sample_sp == 0 && config.sample_od == 0) {
         throw ConfigError("", "config keys \"sample_mail\", \"sample_sp\" and \"sample_od\" are "

@@ -495,10 +495,13 @@ are empty again. The folder holds tenant names (`items.csv`, `veeam-session.log`
 `result.json`): it stays where it is, outside the repository, and only the run's output, the
 `graph list` afterwards and the check's lines go into the evidence.
 
-**The W4.3 Done-when run. Not yet run.** W4.3's Done-when is "the C++ and the Python verifier
+**The W4.3 Done-when run.** W4.3's Done-when is "the C++ and the Python verifier
 agree on a real bundle" (`docs/decisions.md` 2026-10-05, W4.3 point 6). The shared vectors show
 it offline for 38 folders ("The shared signing vectors" below); this is the same on a live
-run's folder. It needs the owner's elevated shell and the lab's signing key:
+run's folder. Run on 2026-10-05 (`w43-done-when-1`: `status pass`, both tools printing the same
+line for the folder and for each of the five changed copies; evidence
+`docs/api/veeam-lab/w4.3-live-*`, build notes point 22). It needs an elevated shell and the
+lab's signing key:
 
 1. Make the lab's key once, from `lab\`, with the public PEM in a folder outside the
    repository (`lab/README.md`, "The signing key"), and note its `key <key_id>` line:

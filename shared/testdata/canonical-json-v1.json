@@ -1,0 +1,479 @@
+{
+  "form": "canonical-json-v1",
+  "description": "Test vectors for the result's canonical form canonical-json-v1 (rp::canonical_json, worker/include/rp/canonical_json.hpp; docs/decisions.md 2026-10-04 W4.1 point 4). For each case, canonical(input) == canonical, byte for byte, and sha256 is the lower-case hex SHA-256 of canonical encoded as UTF-8 without a BOM. input is written here with whitespace and its keys out of order. Each reject's input_text is JSON text (kept as text, so a loader can't turn 1.0 into 1) that must be refused for the rule reason names: float, integer_out_of_range (outside +-(2^53 - 1)) or non_ascii_key. In Python the accepted cases are json.dumps(input, sort_keys=True, separators=(',', ':'), ensure_ascii=False). Non-ASCII characters are written as JSON u-escapes.",
+  "cases": [
+    {
+      "name": "empty-object",
+      "input": {},
+      "canonical": "{}",
+      "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    },
+    {
+      "name": "empty-array",
+      "input": [],
+      "canonical": "[]",
+      "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    {
+      "name": "empty-string",
+      "input": "",
+      "canonical": "\"\"",
+      "sha256": "12ae32cb1ec02d01eda3581b127c1fee3b0dc53572ed6baf239721a03d82e126"
+    },
+    {
+      "name": "true",
+      "input": true,
+      "canonical": "true",
+      "sha256": "b5bea41b6c623f7c09f1bf24dcae58ebab3c0cdd90ad966bc43a45b44867e12b"
+    },
+    {
+      "name": "false",
+      "input": false,
+      "canonical": "false",
+      "sha256": "fcbcf165908dd18a9e49f7ff27810176db8e9f63b4352213741664245224f8aa"
+    },
+    {
+      "name": "null",
+      "input": null,
+      "canonical": "null",
+      "sha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
+    },
+    {
+      "name": "literals-in-containers",
+      "input": {
+        "t": true,
+        "n": null,
+        "f": false,
+        "list": [
+          null,
+          false,
+          true
+        ]
+      },
+      "canonical": "{\"f\":false,\"list\":[null,false,true],\"n\":null,\"t\":true}",
+      "sha256": "73ce4d798d3a21c476eb456417d13359ddcd2759ef6e3febee417fe3aab08529"
+    },
+    {
+      "name": "empty-containers-nested",
+      "input": {
+        "o": {},
+        "a": [],
+        "s": "",
+        "in": [
+          {},
+          [],
+          ""
+        ]
+      },
+      "canonical": "{\"a\":[],\"in\":[{},[],\"\"],\"o\":{},\"s\":\"\"}",
+      "sha256": "70fe80954b8a55a8e76a3dbf2ebd036e49c289f22011a9f898a270983eed8078"
+    },
+    {
+      "name": "whitespace-removed",
+      "input": {
+        "b": [
+          1,
+          2,
+          {
+            "d": "x y",
+            "c": " "
+          }
+        ],
+        "a": "kept  inside\tstrings"
+      },
+      "canonical": "{\"a\":\"kept  inside\\tstrings\",\"b\":[1,2,{\"c\":\" \",\"d\":\"x y\"}]}",
+      "sha256": "b4c95a37379a4961844951c55a1b8ba4a223727180ac74cab3231d6723321517"
+    },
+    {
+      "name": "key-order",
+      "input": {
+        "b": 1,
+        "aa": 2,
+        "a": 3,
+        "_": 4,
+        "B": 5,
+        "2": 6,
+        "10": 7,
+        "1": 8,
+        "": 9,
+        "ab": 10,
+        "a_": 11,
+        "aB": 12,
+        "A": 13,
+        "a1": 14,
+        "Z": 15,
+        "z": 16,
+        "~": 17,
+        " ": 18,
+        "-": 19
+      },
+      "canonical": "{\"\":9,\" \":18,\"-\":19,\"1\":8,\"10\":7,\"2\":6,\"A\":13,\"B\":5,\"Z\":15,\"_\":4,\"a\":3,\"a1\":14,\"aB\":12,\"a_\":11,\"aa\":2,\"ab\":10,\"b\":1,\"z\":16,\"~\":17}",
+      "sha256": "85f30c9ac1e960d55347204a06cd4b58d22438b2d8d7bcd562db575b75e898b9"
+    },
+    {
+      "name": "key-order-nested",
+      "input": {
+        "z": {
+          "b": {
+            "y": 1,
+            "x": 2
+          },
+          "a": [
+            {
+              "d": 1,
+              "c": 2
+            },
+            {
+              "b": 1,
+              "a": 2
+            }
+          ]
+        },
+        "a": {
+          "aa": 1,
+          "a": 2,
+          "aaa": 3
+        }
+      },
+      "canonical": "{\"a\":{\"a\":2,\"aa\":1,\"aaa\":3},\"z\":{\"a\":[{\"c\":2,\"d\":1},{\"a\":2,\"b\":1}],\"b\":{\"x\":2,\"y\":1}}}",
+      "sha256": "e5eba9019516f03000830d381447cf733569289f67fdd1d6c1017e36a83aff36"
+    },
+    {
+      "name": "key-prefixes",
+      "input": {
+        "item_count": 1,
+        "item": 2,
+        "items": 3,
+        "ite": 4,
+        "item_": 5,
+        "itemA": 6
+      },
+      "canonical": "{\"ite\":4,\"item\":2,\"itemA\":6,\"item_\":5,\"item_count\":1,\"items\":3}",
+      "sha256": "dfc519263b83006dfc23abda3e9e386ae0d3e4aadb435e82b103fb1221e5e16d"
+    },
+    {
+      "name": "keys-escaped",
+      "input": {
+        "q\"k": 1,
+        "back\\slash": 2,
+        "line\nfeed": 3,
+        "tab\t": 4,
+        "\u0001": 5,
+        "a/b": 6,
+        "\u007f": 7
+      },
+      "canonical": "{\"\\u0001\":5,\"a/b\":6,\"back\\\\slash\":2,\"line\\nfeed\":3,\"q\\\"k\":1,\"tab\\t\":4,\"\u007f\":7}",
+      "sha256": "2085438976c970b376a2b34c3a999c50d2a39460c6342885d9f6e004c5af4b35"
+    },
+    {
+      "name": "array-order-kept",
+      "input": [
+        "b",
+        "a",
+        "c",
+        "a",
+        3,
+        1,
+        2
+      ],
+      "canonical": "[\"b\",\"a\",\"c\",\"a\",3,1,2]",
+      "sha256": "980b526ebd5c1b1f16a373521f612f6eb69d81b89c41aa0c790f1bd8fa74f6c9"
+    },
+    {
+      "name": "control-characters",
+      "input": "\u0000\u0001\u0002\u0003\u0004\u0005\u0006\u0007\b\t\n\u000b\f\r\u000e\u000f\u0010\u0011\u0012\u0013\u0014\u0015\u0016\u0017\u0018\u0019\u001a\u001b\u001c\u001d\u001e\u001f",
+      "canonical": "\"\\u0000\\u0001\\u0002\\u0003\\u0004\\u0005\\u0006\\u0007\\b\\t\\n\\u000b\\f\\r\\u000e\\u000f\\u0010\\u0011\\u0012\\u0013\\u0014\\u0015\\u0016\\u0017\\u0018\\u0019\\u001a\\u001b\\u001c\\u001d\\u001e\\u001f\"",
+      "sha256": "f144bcffbdbaea0a670956fb0a3edd44ce6bc4dedc77c30cfc14f40034044739"
+    },
+    {
+      "name": "control-characters-each",
+      "input": [
+        "\u0000",
+        "\u0001",
+        "\u0002",
+        "\u0003",
+        "\u0004",
+        "\u0005",
+        "\u0006",
+        "\u0007",
+        "\b",
+        "\t",
+        "\n",
+        "\u000b",
+        "\f",
+        "\r",
+        "\u000e",
+        "\u000f",
+        "\u0010",
+        "\u0011",
+        "\u0012",
+        "\u0013",
+        "\u0014",
+        "\u0015",
+        "\u0016",
+        "\u0017",
+        "\u0018",
+        "\u0019",
+        "\u001a",
+        "\u001b",
+        "\u001c",
+        "\u001d",
+        "\u001e",
+        "\u001f"
+      ],
+      "canonical": "[\"\\u0000\",\"\\u0001\",\"\\u0002\",\"\\u0003\",\"\\u0004\",\"\\u0005\",\"\\u0006\",\"\\u0007\",\"\\b\",\"\\t\",\"\\n\",\"\\u000b\",\"\\f\",\"\\r\",\"\\u000e\",\"\\u000f\",\"\\u0010\",\"\\u0011\",\"\\u0012\",\"\\u0013\",\"\\u0014\",\"\\u0015\",\"\\u0016\",\"\\u0017\",\"\\u0018\",\"\\u0019\",\"\\u001a\",\"\\u001b\",\"\\u001c\",\"\\u001d\",\"\\u001e\",\"\\u001f\"]",
+      "sha256": "3ec6c9c4007a118a9c280641e2c87e9bfa3752a8616dfdef70463e29e1a7a5ae"
+    },
+    {
+      "name": "del",
+      "input": "a\u007fb",
+      "canonical": "\"a\u007fb\"",
+      "sha256": "373c8d06d55897183a658ec10f29e4f98a0c18f53e8d66cd4c1037caa00be0c2"
+    },
+    {
+      "name": "slash",
+      "input": "a/b </script>",
+      "canonical": "\"a/b </script>\"",
+      "sha256": "ba788df5a46148894eb744f3b2e9239f9d7649d221855132d9f848796a26f453"
+    },
+    {
+      "name": "quote",
+      "input": "say \"hi\"",
+      "canonical": "\"say \\\"hi\\\"\"",
+      "sha256": "aef1996098a3f76eca737487cf23b5cb02d934c4f61bde4e185931eed7834050"
+    },
+    {
+      "name": "backslash",
+      "input": "C:\\dir\\file \\n \\u0041",
+      "canonical": "\"C:\\\\dir\\\\file \\\\n \\\\u0041\"",
+      "sha256": "2263b09e35a04e547cbdd42e83be17db3fb1775792c6ff17992a5bf2f3dd99f2"
+    },
+    {
+      "name": "latin-e-acute",
+      "input": "caf\u00e9",
+      "canonical": "\"caf\u00e9\"",
+      "sha256": "28380feb8724d669bc8d4cf5b5a5bb1adbdc61b81ebd06f3fabc567b4f3b0fc5"
+    },
+    {
+      "name": "combining-not-composed",
+      "input": "e\u0301",
+      "canonical": "\"e\u0301\"",
+      "sha256": "3d68ce21f2899a475713cdbe7562ba9bdb6b1dfde8af1f221bdff4a0935b53b2"
+    },
+    {
+      "name": "line-separator-u2028",
+      "input": "a\u2028b",
+      "canonical": "\"a\u2028b\"",
+      "sha256": "86217f48f4443207effcf94b7836440050401eca7c2b8ca40372f0d0eab8e905"
+    },
+    {
+      "name": "paragraph-separator-u2029",
+      "input": "a\u2029b",
+      "canonical": "\"a\u2029b\"",
+      "sha256": "a461860d6d3afdd776cd563e2f0e1874fe0cec1dc3e17ed4999e11f6853cc20d"
+    },
+    {
+      "name": "bom-in-string",
+      "input": "\ufeffx",
+      "canonical": "\"\ufeffx\"",
+      "sha256": "781f3e79ff1e89cd24a3f968a7e4c3759880fd6570684bdf083960e293b0be2d"
+    },
+    {
+      "name": "astral",
+      "input": "\ud83d\ude00 and \ud800\udf48",
+      "canonical": "\"\ud83d\ude00 and \ud800\udf48\"",
+      "sha256": "b4640a39d28511d9753824f5e46f26c57bc22921fb47e3b2fce8a4bf5f4ec55e"
+    },
+    {
+      "name": "nested-arrays-of-strings",
+      "input": [
+        [
+          [
+            "a",
+            "b"
+          ],
+          []
+        ],
+        [
+          [
+            "c"
+          ],
+          [
+            "",
+            "d",
+            "\u00e9"
+          ]
+        ],
+        []
+      ],
+      "canonical": "[[[\"a\",\"b\"],[]],[[\"c\"],[\"\",\"d\",\"\u00e9\"]],[]]",
+      "sha256": "4bf82da6c86cdc5b4f33044eab88c25544e5f25774e7f0c4193a5976b8dae982"
+    },
+    {
+      "name": "integer-zero",
+      "input": 0,
+      "canonical": "0",
+      "sha256": "5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9"
+    },
+    {
+      "name": "integer-minus-one",
+      "input": -1,
+      "canonical": "-1",
+      "sha256": "1bad6b8cf97131fceab8543e81f7757195fbb1d36b376ee994ad1cf17699c464"
+    },
+    {
+      "name": "integer-max",
+      "input": 9007199254740991,
+      "canonical": "9007199254740991",
+      "sha256": "f40b423c2dd95ff2b2f027e22208f438cf7242862e5e746860e697308c9add26"
+    },
+    {
+      "name": "integer-min",
+      "input": -9007199254740991,
+      "canonical": "-9007199254740991",
+      "sha256": "4c933a456bb8f2e9894b2d0b26480439cd72d52fb8a27cbf8fd7f323f22c7815"
+    },
+    {
+      "name": "integers",
+      "input": [
+        0,
+        -1,
+        1,
+        10,
+        -10,
+        1000000,
+        4294967296,
+        9007199254740991,
+        -9007199254740991
+      ],
+      "canonical": "[0,-1,1,10,-10,1000000,4294967296,9007199254740991,-9007199254740991]",
+      "sha256": "fa346b6606c0524e42dfc2a1381db5cbcb5b19141def952d461b7ebced5a27cf"
+    },
+    {
+      "name": "result-shaped",
+      "input": {
+        "format": "restoreproof.result.v1",
+        "worker_version": "0.1.0",
+        "run_id": "rp-20261004T101500Z-0a1b2c3d",
+        "started_at": "2026-10-04T10:15:00.123Z",
+        "ended_at": null,
+        "restore_point": {
+          "id": "0123456789abcdef",
+          "backup_time_raw": "2026-10-03T22:00:45.6603083Z",
+          "backup_time": "2026-10-03T22:00:45Z"
+        },
+        "connector": {
+          "type": "veeam_m365",
+          "api": "v8"
+        },
+        "status": {
+          "status": "fail",
+          "error_code": null,
+          "message": "1 of 2 item(s) failed",
+          "restore_sent": true,
+          "failed_items": [
+            1
+          ],
+          "unchecked_items": [],
+          "warnings": []
+        },
+        "check": {
+          "items": [
+            {
+              "index": 0,
+              "outcome": "match",
+              "ms": 412,
+              "duplicate": false
+            },
+            {
+              "index": 1,
+              "outcome": "missing",
+              "ms": 0,
+              "reason": "no restored copy found"
+            }
+          ],
+          "counts": {
+            "match": 1,
+            "mismatch": 0,
+            "missing": 1,
+            "error": 0
+          }
+        },
+        "expected": {
+          "items": [
+            {
+              "index": 0,
+              "expected_kind": "manifest",
+              "name": "Bericht \u00dcbersicht.docx",
+              "sha256": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+            },
+            {
+              "index": 1,
+              "expected_kind": "fields",
+              "subject": "R\u00e9sum\u00e9 \u2014 \"final\"\t\ud83d\udcce"
+            }
+          ]
+        },
+        "timings": {
+          "spans": {
+            "total": {
+              "ms": 9007199254740991,
+              "state": "measured"
+            },
+            "verify": null
+          }
+        },
+        "cleanup": null
+      },
+      "canonical": "{\"check\":{\"counts\":{\"error\":0,\"match\":1,\"mismatch\":0,\"missing\":1},\"items\":[{\"duplicate\":false,\"index\":0,\"ms\":412,\"outcome\":\"match\"},{\"index\":1,\"ms\":0,\"outcome\":\"missing\",\"reason\":\"no restored copy found\"}]},\"cleanup\":null,\"connector\":{\"api\":\"v8\",\"type\":\"veeam_m365\"},\"ended_at\":null,\"expected\":{\"items\":[{\"expected_kind\":\"manifest\",\"index\":0,\"name\":\"Bericht \u00dcbersicht.docx\",\"sha256\":\"ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad\"},{\"expected_kind\":\"fields\",\"index\":1,\"subject\":\"R\u00e9sum\u00e9 \u2014 \\\"final\\\"\\t\ud83d\udcce\"}]},\"format\":\"restoreproof.result.v1\",\"restore_point\":{\"backup_time\":\"2026-10-03T22:00:45Z\",\"backup_time_raw\":\"2026-10-03T22:00:45.6603083Z\",\"id\":\"0123456789abcdef\"},\"run_id\":\"rp-20261004T101500Z-0a1b2c3d\",\"started_at\":\"2026-10-04T10:15:00.123Z\",\"status\":{\"error_code\":null,\"failed_items\":[1],\"message\":\"1 of 2 item(s) failed\",\"restore_sent\":true,\"status\":\"fail\",\"unchecked_items\":[],\"warnings\":[]},\"timings\":{\"spans\":{\"total\":{\"ms\":9007199254740991,\"state\":\"measured\"},\"verify\":null}},\"worker_version\":\"0.1.0\"}",
+      "sha256": "0d87b13f88e8cb86a5979d3fc6d9a0d4a78eca54ca53daeb78219f9158f56d1d"
+    }
+  ],
+  "rejects": [
+    {
+      "name": "float",
+      "input_text": "1.0",
+      "reason": "float"
+    },
+    {
+      "name": "float-fraction",
+      "input_text": "0.5",
+      "reason": "float"
+    },
+    {
+      "name": "float-exponent",
+      "input_text": "1e2",
+      "reason": "float"
+    },
+    {
+      "name": "float-nested",
+      "input_text": "{\"a\": [1, {\"b\": 2.0}]}",
+      "reason": "float"
+    },
+    {
+      "name": "integer-two-to-the-53",
+      "input_text": "9007199254740992",
+      "reason": "integer_out_of_range"
+    },
+    {
+      "name": "integer-minus-two-to-the-53",
+      "input_text": "-9007199254740992",
+      "reason": "integer_out_of_range"
+    },
+    {
+      "name": "integer-out-of-range-nested",
+      "input_text": "[{\"n\": 9007199254740992}]",
+      "reason": "integer_out_of_range"
+    },
+    {
+      "name": "non-ascii-key",
+      "input_text": "{\"\u00e9\": 1}",
+      "reason": "non_ascii_key"
+    },
+    {
+      "name": "non-ascii-key-nested",
+      "input_text": "[{\"a\": {\"stra\u00dfe\": null}}]",
+      "reason": "non_ascii_key"
+    }
+  ]
+}

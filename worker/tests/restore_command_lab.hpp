@@ -79,11 +79,12 @@ inline const std::string kUsage =
     "[--record <dir>] [--json <file>]\n";
 
 inline const std::string kOrgName = "RestoreProofLab.onmicrosoft.com";
-// Veeam's restore point IDs are two GUIDs run together. Made up.
-inline const std::string kNewestId =
-    "c2f0f2e7-177f-48ac-992b-93a50cf702e3" "5e1c0a24-0000-4000-8000-000000000930";
-inline const std::string kOlderId =
-    "c2f0f2e7-177f-48ac-992b-93a50cf702e3" "5e1c0a24-0000-4000-8000-000000000929";
+// Veeam's restore point IDs are two GUIDs run together: the backup
+// repository's ID, here the lab Veeam server's as its fixtures have it, and
+// the point's own, made up.
+inline const std::string kLabRepositoryId = "c2f0f2e7-177f-48ac-992b-93a50cf702e3";
+inline const std::string kNewestId = kLabRepositoryId + "5e1c0a24-0000-4000-8000-000000000930";
+inline const std::string kOlderId = kLabRepositoryId + "5e1c0a24-0000-4000-8000-000000000929";
 inline const std::string kNewestTime = "2026-09-29T22:00:45.6603083Z";
 inline const std::string kOlderTime = "2026-09-28T22:00:40Z";
 inline const std::string kRunId = "run-0001";
@@ -230,6 +231,9 @@ struct FakeConnector {
     // Called first in restore_sample, on the test's thread.
     std::function<void()> at_restore;
     std::function<connector::RestoreResult(const connector::RestoreSpec&)> answer = restored;
+    // What describe() says: the one connector result.v1 knows (W4.1), so a
+    // run's result is valid; a test sets another name to see it isn't.
+    connector::ConnectorInfo info{std::string{connector::kVeeamM365}, "1"};
     // What the command's stdout held when restore_sample was called.
     const std::ostringstream* out = nullptr;
     std::shared_ptr<spdlog::logger> logger;
@@ -246,7 +250,7 @@ class ForwardingConnector final : public connector::IConnector {
 public:
     explicit ForwardingConnector(FakeConnector& fake) : fake_(fake) {}
 
-    connector::ConnectorInfo describe() const override { return {"fake", "1"}; }
+    connector::ConnectorInfo describe() const override { return fake_.info; }
 
     std::vector<connector::RestorePoint> list_restore_points(const std::string& client_ref) override
     {
@@ -805,6 +809,8 @@ struct Harness {
         // W3.6: `test --json`'s writer; null, the atomic writer, into the
         // temp folder.
         env.write_summary = write_summary;
+        // W4.1: null, the real embedded schema's validator.
+        env.result_schema_ready = schema_ready;
         return env;
     }
 
@@ -890,6 +896,8 @@ struct Harness {
     // W3.4: the run mutex taken by another run, a failure taking it, whether
     // the command holds it, how often it asked, the Veeam calls made by then,
     // and each run's cleanup with stdout as it stood then.
+    // W4.1: whether the result's validator is there; null, the real one.
+    std::function<bool()> schema_ready;
     bool lock_taken = false;
     std::function<void()> lock_throw;
     bool lock_held = false;

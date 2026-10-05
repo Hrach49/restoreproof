@@ -13,6 +13,8 @@ find_package(httplib CONFIG REQUIRED)
 # office-v1 (W3.2) opens restored docx/xlsx packages; zlib is its only codec.
 find_package(libzip CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
+# The result is validated against its embedded schema before it is written (W4.1).
+find_package(nlohmann_json_schema_validator CONFIG REQUIRED)
 find_package(OpenSSL REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
 # Test-only, directly: office_v1_test.cpp deflates the packages it builds.
@@ -26,6 +28,7 @@ add_library(rpcore STATIC
     src/atomic_file.cpp
     src/base64.cpp
     src/canary_manifest.cpp
+    src/canonical_json.cpp
     src/cert_export.cpp
     src/cert_pin.cpp
     src/checker.cpp
@@ -51,6 +54,8 @@ add_library(rpcore STATIC
     src/recording_http_client.cpp
     src/redact.cpp
     src/restore_command.cpp
+    src/result_builder.cpp
+    src/result_schema.cpp
     src/retry_policy.cpp
     src/run_lock.cpp
     src/run_pipeline.cpp
@@ -80,12 +85,28 @@ add_library(rpcore STATIC
 target_include_directories(rpcore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_compile_definitions(rpcore PUBLIC RP_VERSION="${PROJECT_VERSION}")
 # PUBLIC: JSON values and loggers will appear in rpcore's headers.
-# PRIVATE: cpr, OpenSSL and libzip stay behind rpcore's own interfaces (HTTP
-# client, signer, office-v1), so callers don't see their headers.
+# PRIVATE: cpr, OpenSSL, libzip and the schema validator stay behind rpcore's
+# own interfaces (HTTP client, signer, office-v1, validate_result), so callers
+# don't see their headers.
 target_link_libraries(rpcore
     PUBLIC nlohmann_json::nlohmann_json spdlog::spdlog
-    PRIVATE cpr::cpr OpenSSL::Crypto libzip::zip
+    PRIVATE cpr::cpr OpenSSL::Crypto libzip::zip nlohmann_json_schema_validator::validator
 )
+# The result's schema (W4.1): shared/schemas/result.v1.json is the only copy,
+# embedded as a byte array the build generates, so the Worker never reads a
+# schema from disk. An edit to the file rebuilds; result_schema_test.cpp
+# compares the embedded bytes with the file.
+set(RP_RESULT_SCHEMA ${CMAKE_CURRENT_SOURCE_DIR}/../shared/schemas/result.v1.json)
+set(RP_RESULT_SCHEMA_CPP ${CMAKE_CURRENT_BINARY_DIR}/generated/result_schema_bytes.cpp)
+add_custom_command(
+    OUTPUT ${RP_RESULT_SCHEMA_CPP}
+    COMMAND ${CMAKE_COMMAND}
+        -DINPUT=${RP_RESULT_SCHEMA} -DOUTPUT=${RP_RESULT_SCHEMA_CPP} -DSYMBOL=kResultSchema
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_bytes.cmake
+    DEPENDS ${RP_RESULT_SCHEMA} ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_bytes.cmake
+    COMMENT "Embedding shared/schemas/result.v1.json"
+    VERBATIM)
+target_sources(rpcore PRIVATE ${RP_RESULT_SCHEMA_CPP})
 # C4062 (an enumerator not handled in a switch that has no default) is an
 # error in rpcore, so a value added to an enum such as HttpMethod can't fall
 # through to another value's behaviour unnoticed.
@@ -109,6 +130,7 @@ add_executable(rptests
     tests/atomic_file_test.cpp
     tests/base64_test.cpp
     tests/canary_manifest_test.cpp
+    tests/canonical_json_test.cpp
     tests/cert_export_test.cpp
     tests/cert_pin_test.cpp
     tests/checker_test.cpp
@@ -143,6 +165,8 @@ add_executable(rptests
     tests/redact_test.cpp
     tests/restore_command_test.cpp
     tests/restore_replay_test.cpp
+    tests/result_builder_test.cpp
+    tests/result_schema_test.cpp
     tests/retry_policy_test.cpp
     tests/run_lock_test.cpp
     tests/run_status_test.cpp
@@ -186,6 +210,8 @@ target_link_libraries(rptests PRIVATE httplib::httplib)
 # deps_test.cpp writes and reads a package with libzip; office_v1_test.cpp
 # deflates the packages it builds byte by byte (zlib).
 target_link_libraries(rptests PRIVATE libzip::zip ZLIB::ZLIB)
+# deps_test.cpp validates a document with the schema validator directly.
+target_link_libraries(rptests PRIVATE nlohmann_json_schema_validator::validator)
 # The source scan in http_client_test.cpp looks for code that turns TLS
 # verification off anywhere in the Worker.
 target_compile_definitions(rptests PRIVATE RP_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")

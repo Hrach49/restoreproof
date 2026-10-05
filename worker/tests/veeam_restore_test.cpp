@@ -6,6 +6,7 @@
 
 #include "../src/text_util.hpp"
 #include "../src/veeam_restore.hpp"
+#include "../src/veeam_time.hpp"
 #include "fake_http_client.hpp"
 
 #include <rp/connector.hpp>
@@ -157,8 +158,19 @@ TEST_CASE("a Veeam time cut to the second, as a sample's received_at", "[veeam_r
         {"2026-09-24T22:14:43.77087Z", "2026-09-24T22:14:43Z"},
         {"2026-09-24T22:14:43.9999999Z", "2026-09-24T22:14:43Z"},
         {"2026-09-24T22:14:43Z", "2026-09-24T22:14:43Z"},
+        {"2026-10-03T16:16:54.0154727Z", "2026-10-03T16:16:54Z"},
+        // Anything that isn't Veeam's UTC form: no time, never a guess.
         {"2026-09-24T22:14:43", std::nullopt},
+        {"2026-09-24T22:14:43+02:00", std::nullopt},
+        {"2026-09-24T22:14:43.12345678Z", std::nullopt},
+        {"2026-02-30T00:00:00Z", std::nullopt},
+        {"2026-09-24", std::nullopt},
+        {"", std::nullopt},
     }));
+    CAPTURE(text);
+    // It lives beside parse_veeam_time (veeam_time.hpp): the result's
+    // restore_point.backup_time reads it too (W4.1 point 1).
+    CHECK(rp::to_whole_seconds(text) == whole);
     CHECK(vr::to_whole_seconds(text) == whole);
 }
 

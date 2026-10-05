@@ -667,7 +667,15 @@ total                 0:00:05.000
   the check. Copies earlier runs left are ignored and counted in one warning on stderr:
   `warning: stale_copies: <n> copies from earlier runs in the restore targets were ignored
   (mail <x>, sharepoint <y>, onedrive <z>)`. A target that couldn't be read back is one
-  `check error: <message>` line on stderr, and its items are `error`.
+  `check error: <message>` line on stderr, and its items are `error`. A restored docx or xlsx
+  that office-v1 refuses is a `sha256` mismatch, and why it was refused is one line on stderr
+  only, never in the table or the result: `check note: <sharepoint|onedrive> <name>: not valid
+  office-v1 input: <the reader's text>`. So one of the reader's own limits (an encrypted part,
+  a part past 64 MiB, more than 10,000 entries) can be told from a broken file.
+- **The result's validator is checked first (W4.1).** After the config, the secrets and the
+  sample sizes, and before the manifest, the mutex and any Veeam call, the command loads the
+  validator from the embedded schema. If that fails: `error: the result schema couldn't be
+  loaded; nothing was done`, exit 1, with no run line and no status.
 - **The run's status (W3.3)** comes in every run once its first two lines are out, however
   it ended: `status <pass|fail|error>[ <code>]: <message>`, its own paragraph, then each warning
   as `warning: <code>: <message>` on stderr. The exit code is the status's: `pass` 0 (every
@@ -754,7 +762,17 @@ total                 0:00:05.000
   timings never change the status, a warning or the exit code, and a table that fails to write
   changes nothing either. The same spans are the result's `timings` object
   (`{"spans": {"<span>": {"ms": <n>[, "note": "stopped"]} | {"note": "<state>"} | null}}`,
-  whole milliseconds, `null` for a span that didn't run), which W4.1 writes into the result.
+  whole milliseconds, `null` for a span that didn't run).
+- **The result (W4.1).** Every run with a run line builds its result,
+  `restoreproof.result.v1`, right after the status is decided, and validates it against the
+  schema built into the Worker (`docs/verification.md`, "The result"). `restore` writes no
+  file, but a result that isn't valid is the Worker's own fault and is said before anything
+  says `pass`: one line on stderr, `result error: <n> schema violation(s), first at <JSON
+  pointer>` (or `result error: the result has no canonical form`, `result error: the result
+  couldn't be built`), then the check's table and `status error result_invalid: the result
+  isn't valid restoreproof.result.v1; the run itself ended <pass|fail|error <code>>`, exit 1.
+  The warnings, the clean after and the timings follow as for any run. The line never holds
+  a value or the validator's message, only a count and a place in the document.
 - **If reading back or checking fails for a reason that isn't Graph's** (out of memory, a bug),
   the check's table isn't printed: `check error: unexpected failure`, then `restore error:
   the restore had started: items may be in the restore targets (run <run ID>)`, and `status
@@ -841,7 +859,8 @@ timings' table, `--record`, and the exit codes. The code is `rp::run_test_comman
   the config's `sample_mail`, `sample_sp` or `sample_od`. There is no `--seed`: the run ID
   gives the seed (`run <id>  seed <hex>`), so `--run-id` repeats a sample, with the same
   manifest, cursor and restore point (`--point`).
-- **Exit codes.** `restore`'s: 0 pass, 5 fail, 1 to 4 an error by its code, 64 usage (see
+- **Exit codes.** `restore`'s: 0 pass, 5 fail, 1 to 4 an error by its code (`result_invalid`
+  is 1), 64 usage (see
   "Exit codes"). Not the guide's "0 pass, 1 fail, 3 error": 1 and 3 already mean config and
   transient.
 
@@ -859,8 +878,8 @@ What stdout shows differs from `restore` in two places only:
   | EXPECTED | `manifest` (a canary), `fields` (a random mail) or `metadata` (a random file) |
   | FOUND | `yes` when a copy of this run's was compared, else `no` |
   | MATCH | the check's outcome: `match`, `mismatch`, `missing` or `error` |
-  | VERDICT | `verified`, `failed` or `unchecked <code>`; `-` when the status table's rows 1 to 4 decided the run. An item Veeam failed for an infrastructure reason that the check doesn't find reads `unchecked backup_infrastructure`, never `failed` |
-  | REASON | fixed words only: a mismatch's field names joined by commas, `missing` (`not_in_backup` when the backup said the restore point doesn't hold the item, Q3.1), an error's code, `-` for a match. Never the check's own reason text, which for an Office file can name a part inside it |
+  | VERDICT | `verified`, `failed` or `unchecked <code>`; `-` when the status table's rows 1 to 4 decided the run, or the run is `error result_invalid`. An item Veeam failed for an infrastructure reason that the check doesn't find reads `unchecked backup_infrastructure`, never `failed` |
+  | REASON | fixed words only: a mismatch's field names joined by commas, `missing` (`not_in_backup` when the backup said the restore point doesn't hold the item, Q3.1), an error's code, `-` for a match. Shorter than the result's `check.items[].reason`, which since W4.1 is fixed words too |
   | MS | the item's milliseconds when found, else `-` |
 
 For example, `rpworker test --mail 2 --sp 1 --od 0 --run-id run-0001 --json C:\runs\run-0001.json`
@@ -893,26 +912,54 @@ With `--json`, the last lines are the timings' table, then `wrote <file>`, then 
 
 ### `--json <file>`
 
-Writes an unsigned run summary for every run that printed its run line, whatever its status
-(`error` and stops included). A run that stops before its run line (the mutex, no restore
-point, Veeam unreachable listing them, a config or manifest problem) writes no file, as it
-prints no status line. The file is UTF-8 JSON, pretty-printed until W4.1 brings the canonical
-form and signs it. Its top-level keys are always all there, `null` where a step didn't run:
+Writes the run's result, `restoreproof.result.v1` (W4.1; `docs/verification.md`, "The
+result"), for every run that printed its run line, whatever its status (`error` and stops
+included). A run that stops before its run line (the mutex, no restore point, Veeam
+unreachable listing them, a config or manifest problem) writes no file, as it prints no status
+line. The file is unsigned (W4.3 signs it).
+
+**The file is the result's canonical bytes** (`canonical-json-v1`): one line of UTF-8, keys
+sorted, no whitespace, no trailing newline, no BOM. Those are the bytes W4.3 hashes, so don't
+reformat the file in place. To read it:
+
+```powershell
+python -m json.tool C:\runs\run-0001.json
+python -m json.tool --no-ensure-ascii C:\runs\run-0001.json C:\runs\run-0001.pretty.json
+```
+
+Its fifteen top-level keys are always all there, `null` where a step didn't run:
 
 | Key | What it holds |
 |---|---|
-| `format` | `"rp.run-summary.v0"` |
-| `worker_version`, `command` | the Worker's version; `"test"` |
+| `format` | `"restoreproof.result.v1"` |
+| `worker_version` | the Worker's version |
 | `run_id` | the run ID |
-| `started_at`, `ended_at` | `YYYY-MM-DDTHH:MM:SS.mmmZ`, UTC, read where the `total` span starts and ends |
-| `restore_point` | `{"id", "backup_time_raw"}`, Veeam's text unparsed |
-| `veeam_org_name` | the organisation |
-| `sample`, `expected`, `check`, `status`, `cleanup`, `timings` | the result objects as W2.6, W3.1, W3.2, W3.3, W3.4 and W3.5 write them (`docs/verification.md`); `cleanup` is `null` when no clean ran (the run stopped before the clean before) |
-| `restore` | the restore's status, items sent and restored; its sessions (ID, kind, result, `details` only when they read as Veeam's counts, else `null`, items sent and restored, `started_at_raw`/`ended_at_raw` as Veeam wrote them); its items in order, `{index, kind, outcome, infrastructure, session_id}`, with no item name and no Veeam message |
-| `exit_code` | the exit code as known when the file is written: the status's, but 1 for a pass whose stdout was lost or whose `--record` recording isn't complete. Only the file's own failed write comes later, and then there is no file |
+| `started_at`, `ended_at` | `YYYY-MM-DDTHH:MM:SS.mmmZ`, UTC, read where the `total` span starts and ends; `null` when the wall clock failed there |
+| `connector` | `{"type", "api"}`: `veeam_m365` and its API version |
+| `client` | `{"client_id", "tenant_id", "veeam_org_name", "targets"}` from the config: `client_id` is `null` until jobs carry one (W4.10); `targets` is `{"mailbox", "site_id", "library_id", "onedrive_drive_id", "onedrive_folder_id"}` |
+| `restore_point` | `{"id", "backup_time_raw", "backup_time"}`: Veeam's time text unparsed, and the same time cut to whole seconds (`YYYY-MM-DDTHH:MM:SSZ`, `null` when the text doesn't parse) |
+| `sample`, `expected`, `check`, `status`, `cleanup`, `timings` | the result objects as W2.6, W3.1, W3.2, W3.3, W3.4 and W3.5 write them (`docs/verification.md`). `sample` and `expected` are `null` when the run stopped before the sample was chosen, `check` when the check didn't run, `cleanup` when no clean ran (the run stopped before the clean before). `status` and `timings` are always objects |
+| `restore` | the restore's status, items sent and restored; its sessions (ID, kind, result, `details` only when they read as Veeam's counts, else `null`, items sent and restored, `started_at_raw`/`ended_at_raw` as Veeam wrote them); its items in order, `{index, kind, outcome, infrastructure, container_missing, session_id}`, with no item name and no Veeam message. `null` when there is no restore result |
 
-There is no `signature`, `tsa_token` or `bundle_sha256` yet. The file holds no secret, but more
-tenant data than stdout: the list is in `docs/verification.md`, "The `--json` run summary".
+There is no `command` and no `exit_code` (W3.6's `rp.run-summary.v0` had both): the file
+describes the run, not the process. A pass whose stdout was lost, or whose `--record`
+recording isn't complete, still exits 1, and the file says `pass`. There is no top-level
+`veeam_org_name` either: it is in `client`. There is no `signature`, `tsa_token` or
+`bundle_sha256` yet. The file holds no secret, but more tenant data than stdout: the list is in
+`docs/verification.md`, "What of the tenant the result holds". Keep it out of the repository.
+
+**A result that isn't valid is never written.** The Worker validates the result against its
+built-in schema twice: when the status is decided (then the run is `error result_invalid`,
+exit 1; "`rpworker restore`" above), and again at the end, on the finished result, which is the
+text of the file. Either way stderr gets, after the run's other lines,
+
+```
+json error: <file>: the result isn't valid restoreproof.result.v1; no file was written
+```
+
+and no file is made. When only the second validation fails, the status line is already out and
+stays, a `result error: ...` line comes before the `json error` one, and exit 0 becomes 1; any
+other exit code is kept.
 
 The path is checked once the config is read and before the secrets, the manifest, the mutex,
 `--record` and any Veeam call. Each refusal is exit 1:
@@ -937,10 +984,10 @@ the writer's own temp file (below) and drops it at once: when that fails, `a fil
 written there` (a folder the Worker may not write to, a read-only volume, a name or path too
 long once the temp name's 21 characters are added), before the run rather than after it. A missing, empty or repeated `--json`
 value is exit 64 with the usage line. An existing file is never
-overwritten, by this check or later: the summary goes into a temp file in the same folder,
+overwritten, by this check or later: the result goes into a temp file in the same folder,
 `<file>.<16 random hex digits>.tmp`, is flushed to disk, and is then moved onto `<file>` in a
 way that fails if a file appeared there since (`worker/src/atomic_file.hpp`). The temp file is
-deleted on any failure. When the file isn't written:
+deleted on any failure. When a valid result's file can't be written:
 
 ```
 json error: <file>: could not be written
@@ -978,7 +1025,7 @@ The same for every `rpworker` command (`rp::exit_code` in `worker/include/rp/cli
 | Exit code | Meaning | stderr |
 |---|---|---|
 | 0 | Success. | (nothing) |
-| 1 | The config or a secret is missing or invalid, or something unexpected failed (an error no command handles ends here too, never in an `abort()`, whose exit code would be 3). For `graph list` this includes the certificate: `RP_GRAPH_CERT_PFX_BASE64` unset, a PFX that doesn't open with `RP_GRAPH_CERT_PASSWORD`, or a certificate that isn't valid now, all found before any request. For `restore`, also the same certificate problems as `graph list` (before any Veeam call; `RP_GRAPH_CERT_PASSWORD` unset is fine for a PFX without a password), the certificate failing as the check's reads before the restore sign in (nothing restored), a manifest that doesn't load, whose `tenant_id` isn't `graph_tenant_id` or that names a restore target (before any Veeam call), an unknown connector, a run whose status is `error config` or `error internal` (the facts not adding up, or the check failing for a reason that isn't Graph's), and stdout failing after a restore whose run passed. `test` exits as `restore` does; for `test` also a `--json` path that isn't UTF-8, isn't a plain file name, names a file already there or a folder that doesn't exist, or where a file can't be written (before the secrets), and a passing run whose `--json` file couldn't be written. With `--record`, a folder that isn't new or empty, and a command that succeeded but whose recording isn't complete. | `config error: <path>: <message>`, `config error: the --config path is not valid UTF-8`, `config error: the --manifest path is not valid UTF-8`, `config error: canary manifest: <message>`, `config error: cannot find the ProgramData folder`, `config error: environment variable <name> is not valid Unicode`, `config error: RP_VEEAM_USERNAME is not set` (then `RP_VEEAM_PASSWORD`), `config error: RP_GRAPH_CERT_PFX_BASE64 is not set` (or another message naming the certificate's variables), for `restore` `config error: unknown connector "<name>" (known: <names>)`, `check error: <message>; nothing was restored`, `check error: unexpected failure` and `error: writing the output failed after the restore ran (run <run ID>, restore ...); run status ...`, with `--record` `config error: <dir>: the --record folder is not empty` and `record error: <service>/<file>: refused: ...`, for `test` `config error: --json <file>: not a UTF-8 path` (`... not a file name`, `... the file already exists`, `... the folder doesn't exist`, `... a file can't be written there`) and `json error: <file>: could not be written`, `config error: unexpected failure` or `error: unexpected failure`; an unexpected failure's own message is never shown |
+| 1 | The config or a secret is missing or invalid, or something unexpected failed (an error no command handles ends here too, never in an `abort()`, whose exit code would be 3). For `graph list` this includes the certificate: `RP_GRAPH_CERT_PFX_BASE64` unset, a PFX that doesn't open with `RP_GRAPH_CERT_PASSWORD`, or a certificate that isn't valid now, all found before any request. For `restore`, also the same certificate problems as `graph list` (before any Veeam call; `RP_GRAPH_CERT_PASSWORD` unset is fine for a PFX without a password), the certificate failing as the check's reads before the restore sign in (nothing restored), a manifest that doesn't load, whose `tenant_id` isn't `graph_tenant_id` or that names a restore target (before any Veeam call), an unknown connector, a run whose status is `error config`, `error internal` (the facts not adding up, or the check failing for a reason that isn't Graph's) or `error result_invalid` (the result the Worker built isn't valid `restoreproof.result.v1`, W4.1), and stdout failing after a restore whose run passed. `test` exits as `restore` does; for `test` also a `--json` path that isn't UTF-8, isn't a plain file name, names a file already there or a folder that doesn't exist, or where a file can't be written (before the secrets), and a passing run whose `--json` file couldn't be written or whose finished result isn't valid (no file). With `--record`, a folder that isn't new or empty, and a command that succeeded but whose recording isn't complete. | `config error: <path>: <message>`, `config error: the --config path is not valid UTF-8`, `config error: the --manifest path is not valid UTF-8`, `config error: canary manifest: <message>`, `config error: cannot find the ProgramData folder`, `config error: environment variable <name> is not valid Unicode`, `config error: RP_VEEAM_USERNAME is not set` (then `RP_VEEAM_PASSWORD`), `config error: RP_GRAPH_CERT_PFX_BASE64 is not set` (or another message naming the certificate's variables), for `restore` `config error: unknown connector "<name>" (known: <names>)`, `check error: <message>; nothing was restored`, `check error: unexpected failure` and `error: writing the output failed after the restore ran (run <run ID>, restore ...); run status ...`, with `--record` `config error: <dir>: the --record folder is not empty` and `record error: <service>/<file>: refused: ...`, for `test` `config error: --json <file>: not a UTF-8 path` (`... not a file name`, `... the file already exists`, `... the folder doesn't exist`, `... a file can't be written there`) `json error: <file>: could not be written` and `json error: <file>: the result isn't valid restoreproof.result.v1; no file was written`, for `restore` and `test` `result error: <n> schema violation(s), first at <JSON pointer>` (`result error: the result has no canonical form`, `result error: the result couldn't be built`), `config error: unexpected failure` or `error: unexpected failure`; an unexpected failure's own message is never shown |
 | 2 | The service refused the sign-in, the account's role, the token or a permission: Veeam's credentials or role; Entra refusing the Worker app's sign-in; Graph refusing the token, or denying a call for want of a grant (the message names the grant, see `docs/security/graph-permissions.md`); for `restore` and `test`, a run whose status is `error backup_auth`, `graph_auth` or `graph_permission`: on the check's reads before the restore (nothing restored) or after it (the item couldn't be checked). | `veeam error: <message>`, `graph error: <message>`, `restore error: <message>` or `check error: <message>; nothing was restored` |
 | 3 | The service couldn't be reached or asked to try later: no connection, a timeout, a TLS handshake that broke off, or a 502, 503 or 504 (for Graph also a 429 or another 5xx) after the retries; for `restore` and `test`, a run whose status is `error backup_transient` or `graph_transient`, before the restore or after it. | `veeam error: <message>`, `graph error: <message>`, `restore error: <message>` or `check error: <message>; nothing was restored` |
 | 4 | Any other error from the service. Veeam: an unknown organisation, a bad request, an unexpected answer, or no organisation named `veeam_org_name`; also Veeam's certificate failing verification, which a retry won't fix: `veeam_ca_file` doesn't hold Veeam's certificate or its CA, or Veeam's certificate was renewed and no longer matches `veeam_cert_sha256` (see "Veeam's default certificate"). Graph: the mailbox, drive or folder not found, a mailbox, drive or folder the guard refuses (not the RestoreTarget the config says; a 403 on the test mailbox's Inbox included), a download that failed, an unexpected answer. `restore` and `test`: another RestoreProof run holding the run mutex, no restore points or a `--point` ID that isn't one of them (before the run line), and a run whose status is `error` with any other code: `target_guard` (the restore-target guard refusing, in the clean before or later, nothing restored), `not_in_backup` (the organisation not in Veeam, or an item not in the restore point that it can't be shown to hold: a random item, or a canary in a point taken before the manifest's `seeded_at`; a canary missing from a later point is `fail`, Q3.1), `backup` (a restore session of the Veeam account still `Working`, the restore credential's export failing when not elevated, any other error of the restore), `empty_sample`, `not_run`, `restore_contradiction`, `backup_infrastructure` (an item Veeam failed for an infrastructure reason that the check didn't find), `graph` (any other Graph error, before the restore or reading an item back), `stale_target` (only an earlier run's copy of an item is there). | `veeam error: <message>` (`... TLS failure: ...` for a certificate), `veeam error: organisation <name> (veeam_org_name) not found in Veeam`, `graph error: <message>`, `restore error: <message>` (`restore error: target guard: ...` for the guard), `restore error: another RestoreProof run is using the restore targets; nothing was done`, `restore error: no restore points for veeam_org_name`, `restore error: restore point <id> not found for veeam_org_name`, `cleanup error: <target>: the restore-target guard refused the target; nothing was deleted in it (target_guard)`, `check error: <message>; nothing was restored`, or a `check error: <message>` per target that couldn't be read back; after an error of a restore that had started, also `restore error: the restore had started: items may be in the restore targets (run <run ID>)`; for a run, the status line is on stdout and its warnings follow on stderr |

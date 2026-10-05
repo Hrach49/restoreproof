@@ -1,0 +1,2032 @@
+{
+  "format": "restoreproof.result.v1",
+  "description": "Documents the Worker's C++ validator and Python's Draft202012Validator must judge alike against shared/schemas/result.v1.json. `base` is a valid result as canonical-json-v1 (one line, no trailing newline); each case is base with its RFC 6902 patch applied, and `valid` says whether the schema accepts it. No case holds a floating-point number: Python reads 1.0 as an integer and the C++ validator doesn't, so the canonical form refuses floats before the schema is asked.",
+  "base": "valid.json",
+  "cases": [
+    {
+      "name": "base",
+      "valid": true,
+      "patch": []
+    },
+    {
+      "name": "sample-null",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/sample",
+          "value": null
+        }
+      ]
+    },
+    {
+      "name": "expected-null",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/expected",
+          "value": null
+        }
+      ]
+    },
+    {
+      "name": "restore-null",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/restore",
+          "value": null
+        }
+      ]
+    },
+    {
+      "name": "check-null",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/check",
+          "value": null
+        }
+      ]
+    },
+    {
+      "name": "cleanup-null",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/cleanup",
+          "value": null
+        }
+      ]
+    },
+    {
+      "name": "started-at-null",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/started_at",
+          "value": null
+        }
+      ]
+    },
+    {
+      "name": "ended-at-null",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/ended_at",
+          "value": null
+        }
+      ]
+    },
+    {
+      "name": "backup-time-null",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/restore_point/backup_time",
+          "value": null
+        }
+      ]
+    },
+    {
+      "name": "cleanup-before-null",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/cleanup/before",
+          "value": null
+        }
+      ]
+    },
+    {
+      "name": "cleanup-after-null",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/cleanup/after",
+          "value": null
+        }
+      ]
+    },
+    {
+      "name": "cleanup-target-error-code",
+      "valid": true,
+      "patch": [
+        {
+          "op": "add",
+          "path": "/cleanup/after/mail/error_code",
+          "value": "graph_transient"
+        }
+      ]
+    },
+    {
+      "name": "span-null",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/timings/spans/cleanup_after",
+          "value": null
+        }
+      ]
+    },
+    {
+      "name": "span-measured",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/timings/spans/total",
+          "value": {
+            "ms": 0
+          }
+        }
+      ]
+    },
+    {
+      "name": "span-stopped",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/timings/spans/restore",
+          "value": {
+            "ms": 5,
+            "note": "stopped"
+          }
+        }
+      ]
+    },
+    {
+      "name": "span-open",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/timings/spans/total",
+          "value": {
+            "note": "open"
+          }
+        }
+      ]
+    },
+    {
+      "name": "span-not-reported",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/timings/spans/restore_wait",
+          "value": {
+            "note": "not_reported"
+          }
+        }
+      ]
+    },
+    {
+      "name": "span-clock-backwards",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/timings/spans/verify",
+          "value": {
+            "note": "clock_backwards"
+          }
+        }
+      ]
+    },
+    {
+      "name": "random-mail-without-sender-name-and-sent-at",
+      "valid": true,
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/expected/items/1/sender_name"
+        },
+        {
+          "op": "remove",
+          "path": "/expected/items/1/sent_at"
+        }
+      ]
+    },
+    {
+      "name": "random-file-size-at-the-integer-limit",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/expected/items/3/size_bytes",
+          "value": 9007199254740991
+        }
+      ]
+    },
+    {
+      "name": "tenant-text-is-not-held-to-a-pattern",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/expected/items/1/subject",
+          "value": "line one\nline two\t\u00fc"
+        },
+        {
+          "op": "replace",
+          "path": "/client/veeam_org_name",
+          "value": ""
+        }
+      ]
+    },
+    {
+      "name": "error-run",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/status",
+          "value": {
+            "status": "error",
+            "error_code": "backup_transient",
+            "message": "the backup server couldn't be reached before the restore; nothing was restored",
+            "restore_sent": false,
+            "counts": {
+              "items": 0,
+              "verified": 0,
+              "failed": 0,
+              "unchecked": 0
+            },
+            "verified": {
+              "manifest": 0,
+              "fields": 0,
+              "metadata": 0
+            },
+            "failed_items": [],
+            "unchecked_items": [],
+            "warnings": []
+          }
+        },
+        {
+          "op": "replace",
+          "path": "/sample",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/expected",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/restore",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/check",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/ended_at",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/cleanup/after",
+          "value": null
+        }
+      ]
+    },
+    {
+      "name": "error-result-invalid",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/status/status",
+          "value": "error"
+        },
+        {
+          "op": "add",
+          "path": "/status/error_code",
+          "value": "result_invalid"
+        }
+      ]
+    },
+    {
+      "name": "fail-run",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/check/items/0",
+          "value": {
+            "index": 0,
+            "outcome": "missing",
+            "found": false,
+            "reason": "no restored copy found"
+          }
+        },
+        {
+          "op": "replace",
+          "path": "/status/status",
+          "value": "fail"
+        },
+        {
+          "op": "replace",
+          "path": "/status/failed_items",
+          "value": [
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "name": "unchecked-item",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/status/status",
+          "value": "error"
+        },
+        {
+          "op": "add",
+          "path": "/status/error_code",
+          "value": "graph_transient"
+        },
+        {
+          "op": "replace",
+          "path": "/status/unchecked_items",
+          "value": [
+            {
+              "index": 2,
+              "error_code": "graph_transient"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "client-id-string",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/client/client_id",
+          "value": "client-0001"
+        }
+      ]
+    },
+    {
+      "name": "check-ms-negative",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/check/items/0/ms",
+          "value": -5
+        }
+      ]
+    },
+    {
+      "name": "check-ms-past-signed-64-bit",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/check/items/0/ms",
+          "value": 18446744073709551615
+        }
+      ]
+    },
+    {
+      "name": "check-mismatch",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/check/items/0",
+          "value": {
+            "index": 0,
+            "outcome": "mismatch",
+            "found": true,
+            "mismatches": [
+              "subject",
+              "sent_at"
+            ],
+            "reason": "fields did not match: subject, sent_at",
+            "ms": 40
+          }
+        }
+      ]
+    },
+    {
+      "name": "check-mismatch-size-bytes",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/check/items/2",
+          "value": {
+            "index": 2,
+            "outcome": "mismatch",
+            "found": true,
+            "mismatches": [
+              "size_bytes"
+            ],
+            "reason": "fields did not match: size_bytes",
+            "ms": 40
+          }
+        }
+      ]
+    },
+    {
+      "name": "check-mismatch-office-v1",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/check/items/2",
+          "value": {
+            "index": 2,
+            "outcome": "mismatch",
+            "found": true,
+            "mismatches": [
+              "sha256"
+            ],
+            "reason": "fields did not match: sha256; the restored package isn't valid office-v1 input",
+            "ms": 40
+          }
+        }
+      ]
+    },
+    {
+      "name": "check-missing",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/check/items/0",
+          "value": {
+            "index": 0,
+            "outcome": "missing",
+            "found": false,
+            "reason": "no restored copy found"
+          }
+        }
+      ]
+    },
+    {
+      "name": "check-error-target-not-read",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/check/items/4",
+          "value": {
+            "index": 4,
+            "outcome": "error",
+            "found": false,
+            "reason": "the onedrive restore target couldn't be read (graph_permission)",
+            "error_code": "graph_permission"
+          }
+        }
+      ]
+    },
+    {
+      "name": "check-error-mail-target-graph-transient",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/check/items/0",
+          "value": {
+            "index": 0,
+            "outcome": "error",
+            "found": false,
+            "reason": "the mail restore target couldn't be read (graph_transient)",
+            "error_code": "graph_transient"
+          }
+        }
+      ]
+    },
+    {
+      "name": "check-error-stale-target",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/check/items/0",
+          "value": {
+            "index": 0,
+            "outcome": "error",
+            "found": false,
+            "reason": "only an earlier run's copy is in the target",
+            "error_code": "stale_target"
+          }
+        }
+      ]
+    },
+    {
+      "name": "warning-backup-session-with-the-backup-words",
+      "valid": true,
+      "patch": [
+        {
+          "op": "add",
+          "path": "/status/warnings/-",
+          "value": {
+            "code": "backup_session",
+            "message": "mail session 5a1c: Warning (2 items processed (1 success, 1 warning))",
+            "indexes": [
+              0,
+              1
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "session-result-is-the-backup-word",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/restore/sessions/0/result",
+          "value": "A word Veeam adds later (5)"
+        },
+        {
+          "op": "replace",
+          "path": "/restore/sessions/0/started_at_raw",
+          "value": ""
+        },
+        {
+          "op": "replace",
+          "path": "/restore/sessions/0/id",
+          "value": ""
+        }
+      ]
+    },
+    {
+      "name": "restore-item-not-in-backup",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/restore/items/1/outcome",
+          "value": "not_in_backup"
+        },
+        {
+          "op": "replace",
+          "path": "/restore/items/1/container_missing",
+          "value": true
+        }
+      ]
+    },
+    {
+      "name": "run-id-every-character-class",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/run_id",
+          "value": "Az09._:-"
+        }
+      ]
+    },
+    {
+      "name": "restore-point-raw-text-is-kept-as-it-is",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/restore_point/backup_time_raw",
+          "value": "not a time"
+        },
+        {
+          "op": "replace",
+          "path": "/restore_point/backup_time",
+          "value": null
+        }
+      ]
+    },
+    {
+      "name": "no-format",
+      "valid": false,
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/format"
+        }
+      ]
+    },
+    {
+      "name": "no-worker-version",
+      "valid": false,
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/worker_version"
+        }
+      ]
+    },
+    {
+      "name": "no-run-id",
+      "valid": false,
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/run_id"
+        }
+      ]
+    },
+    {
+      "name": "no-started-at",
+      "valid": false,
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/started_at"
+        }
+      ]
+    },
+    {
+      "name": "no-ended-at",
+      "valid": false,
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/ended_at"
+        }
+      ]
+    },
+    {
+      "name": "no-connector",
+      "valid": false,
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/connector"
+        }
+      ]
+    },
+    {
+      "name": "no-client",
+      "valid": false,
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/client"
+        }
+      ]
+    },
+    {
+      "name": "no-restore-point",
+      "valid": false,
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/restore_point"
+        }
+      ]
+    },
+    {
+      "name": "no-sample",
+      "valid": false,
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/sample"
+        }
+      ]
+    },
+    {
+      "name": "no-expected",
+      "valid": false,
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/expected"
+        }
+      ]
+    },
+    {
+      "name": "no-restore",
+      "valid": false,
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/restore"
+        }
+      ]
+    },
+    {
+      "name": "no-check",
+      "valid": false,
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/check"
+        }
+      ]
+    },
+    {
+      "name": "no-status",
+      "valid": false,
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/status"
+        }
+      ]
+    },
+    {
+      "name": "no-cleanup",
+      "valid": false,
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/cleanup"
+        }
+      ]
+    },
+    {
+      "name": "no-timings",
+      "valid": false,
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/timings"
+        }
+      ]
+    },
+    {
+      "name": "extra-top-level-key",
+      "valid": false,
+      "patch": [
+        {
+          "op": "add",
+          "path": "/exit_code",
+          "value": 0
+        }
+      ]
+    },
+    {
+      "name": "format-v2",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/format",
+          "value": "restoreproof.result.v2"
+        }
+      ]
+    },
+    {
+      "name": "format-v0",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/format",
+          "value": "rp.run-summary.v0"
+        }
+      ]
+    },
+    {
+      "name": "status-passed",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/status/status",
+          "value": "passed"
+        }
+      ]
+    },
+    {
+      "name": "connector-type-fake",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/connector/type",
+          "value": "fake"
+        }
+      ]
+    },
+    {
+      "name": "run-id-number",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/run_id",
+          "value": 7
+        }
+      ]
+    },
+    {
+      "name": "count-as-string",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/status/counts/items",
+          "value": "6"
+        }
+      ]
+    },
+    {
+      "name": "items-as-object",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/expected/items",
+          "value": {}
+        }
+      ]
+    },
+    {
+      "name": "started-at-offset",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/started_at",
+          "value": "2026-10-04T12:00:00.125+02:00"
+        }
+      ]
+    },
+    {
+      "name": "started-at-without-z",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/started_at",
+          "value": "2026-10-04T10:00:00.125"
+        }
+      ]
+    },
+    {
+      "name": "started-at-two-fraction-digits",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/started_at",
+          "value": "2026-10-04T10:00:00.12Z"
+        }
+      ]
+    },
+    {
+      "name": "started-at-whole-seconds",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/started_at",
+          "value": "2026-10-04T10:00:00Z"
+        }
+      ]
+    },
+    {
+      "name": "started-at-trailing-newline",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/started_at",
+          "value": "2026-10-04T10:00:00.125Z\n"
+        }
+      ]
+    },
+    {
+      "name": "started-at-second-line",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/started_at",
+          "value": "x\n2026-10-04T10:00:00.125Z"
+        }
+      ]
+    },
+    {
+      "name": "ended-at-lower-case-t",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/ended_at",
+          "value": "2026-10-04t10:04:09.500Z"
+        }
+      ]
+    },
+    {
+      "name": "item-time-with-milliseconds",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/expected/items/0/received_at",
+          "value": "2026-09-25T09:00:01.000Z"
+        }
+      ]
+    },
+    {
+      "name": "item-time-trailing-newline",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/expected/items/0/received_at",
+          "value": "2026-09-25T09:00:01Z\n"
+        }
+      ]
+    },
+    {
+      "name": "backup-time-with-fraction",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/restore_point/backup_time",
+          "value": "2026-10-03T22:00:45.6603083Z"
+        }
+      ]
+    },
+    {
+      "name": "run-id-inner-newline",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/run_id",
+          "value": "run\n1"
+        }
+      ]
+    },
+    {
+      "name": "run-id-trailing-newline",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/run_id",
+          "value": "run-1\n"
+        }
+      ]
+    },
+    {
+      "name": "run-id-leading-newline",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/run_id",
+          "value": "\nrun-1"
+        }
+      ]
+    },
+    {
+      "name": "run-id-space",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/run_id",
+          "value": "run 1"
+        }
+      ]
+    },
+    {
+      "name": "run-id-empty",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/run_id",
+          "value": ""
+        }
+      ]
+    },
+    {
+      "name": "run-id-129-characters",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/run_id",
+          "value": "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr"
+        }
+      ]
+    },
+    {
+      "name": "sample-run-id-trailing-newline",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/sample/run_id",
+          "value": "run-1\n"
+        }
+      ]
+    },
+    {
+      "name": "worker-version-trailing-newline",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/worker_version",
+          "value": "0.0.0\n"
+        }
+      ]
+    },
+    {
+      "name": "status-error-without-error-code",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/status/status",
+          "value": "error"
+        }
+      ]
+    },
+    {
+      "name": "status-pass-with-error-code",
+      "valid": false,
+      "patch": [
+        {
+          "op": "add",
+          "path": "/status/error_code",
+          "value": "internal"
+        }
+      ]
+    },
+    {
+      "name": "status-fail-with-error-code",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/status/status",
+          "value": "fail"
+        },
+        {
+          "op": "add",
+          "path": "/status/error_code",
+          "value": "internal"
+        }
+      ]
+    },
+    {
+      "name": "status-unknown-error-code",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/status/status",
+          "value": "error"
+        },
+        {
+          "op": "add",
+          "path": "/status/error_code",
+          "value": "job_invalid"
+        }
+      ]
+    },
+    {
+      "name": "status-null",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/status",
+          "value": null
+        }
+      ]
+    },
+    {
+      "name": "status-extra-key",
+      "valid": false,
+      "patch": [
+        {
+          "op": "add",
+          "path": "/status/exit_code",
+          "value": 0
+        }
+      ]
+    },
+    {
+      "name": "warning-unknown-code",
+      "valid": false,
+      "patch": [
+        {
+          "op": "add",
+          "path": "/status/warnings/-",
+          "value": {
+            "code": "note",
+            "message": "x",
+            "indexes": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "unchecked-item-unknown-code",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/status/unchecked_items",
+          "value": [
+            {
+              "index": 0,
+              "error_code": "config"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "span-ms-with-note-open",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/timings/spans/total",
+          "value": {
+            "ms": 1,
+            "note": "open"
+          }
+        }
+      ]
+    },
+    {
+      "name": "span-empty-object",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/timings/spans/total",
+          "value": {}
+        }
+      ]
+    },
+    {
+      "name": "span-stopped-without-ms",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/timings/spans/total",
+          "value": {
+            "note": "stopped"
+          }
+        }
+      ]
+    },
+    {
+      "name": "span-unknown-note",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/timings/spans/total",
+          "value": {
+            "note": "not_run"
+          }
+        }
+      ]
+    },
+    {
+      "name": "span-negative-ms",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/timings/spans/total",
+          "value": {
+            "ms": -1
+          }
+        }
+      ]
+    },
+    {
+      "name": "span-missing",
+      "valid": false,
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/timings/spans/recovery"
+        }
+      ]
+    },
+    {
+      "name": "span-unknown-name",
+      "valid": false,
+      "patch": [
+        {
+          "op": "add",
+          "path": "/timings/spans/upload",
+          "value": null
+        }
+      ]
+    },
+    {
+      "name": "timings-null",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/timings",
+          "value": null
+        }
+      ]
+    },
+    {
+      "name": "negative-count",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/status/counts/items",
+          "value": -1
+        }
+      ]
+    },
+    {
+      "name": "integer-above-the-limit",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/expected/items/3/size_bytes",
+          "value": 9007199254740992
+        }
+      ]
+    },
+    {
+      "name": "reason-free-text",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/check/items/0",
+          "value": {
+            "index": 0,
+            "outcome": "missing",
+            "found": false,
+            "reason": "zip: part word/document.xml is encrypted"
+          }
+        }
+      ]
+    },
+    {
+      "name": "reason-second-line",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/check/items/0",
+          "value": {
+            "index": 0,
+            "outcome": "missing",
+            "found": false,
+            "reason": "no restored copy found\nx"
+          }
+        }
+      ]
+    },
+    {
+      "name": "reason-first-line-free-text",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/check/items/0",
+          "value": {
+            "index": 0,
+            "outcome": "missing",
+            "found": false,
+            "reason": "x\nno restored copy found"
+          }
+        }
+      ]
+    },
+    {
+      "name": "reason-trailing-newline",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/check/items/0",
+          "value": {
+            "index": 0,
+            "outcome": "missing",
+            "found": false,
+            "reason": "no restored copy found\n"
+          }
+        }
+      ]
+    },
+    {
+      "name": "reason-office-v1-with-the-reader-text",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/check/items/2",
+          "value": {
+            "index": 2,
+            "outcome": "mismatch",
+            "found": true,
+            "mismatches": [
+              "sha256"
+            ],
+            "reason": "fields did not match: sha256; the restored package isn't valid office-v1 input (word/document.xml)",
+            "ms": 40
+          }
+        }
+      ]
+    },
+    {
+      "name": "reason-unknown-field",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/check/items/0",
+          "value": {
+            "index": 0,
+            "outcome": "mismatch",
+            "found": true,
+            "mismatches": [
+              "subject"
+            ],
+            "reason": "fields did not match: body",
+            "ms": 40
+          }
+        }
+      ]
+    },
+    {
+      "name": "check-match-with-a-reason",
+      "valid": false,
+      "patch": [
+        {
+          "op": "add",
+          "path": "/check/items/0/reason",
+          "value": "no restored copy found"
+        }
+      ]
+    },
+    {
+      "name": "check-match-without-ms",
+      "valid": false,
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/check/items/0/ms"
+        }
+      ]
+    },
+    {
+      "name": "check-missing-with-found-true",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/check/items/0",
+          "value": {
+            "index": 0,
+            "outcome": "missing",
+            "found": true,
+            "reason": "no restored copy found"
+          }
+        }
+      ]
+    },
+    {
+      "name": "check-missing-without-a-reason",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/check/items/0",
+          "value": {
+            "index": 0,
+            "outcome": "missing",
+            "found": false
+          }
+        }
+      ]
+    },
+    {
+      "name": "check-error-without-its-code",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/check/items/0",
+          "value": {
+            "index": 0,
+            "outcome": "error",
+            "found": false,
+            "reason": "only an earlier run's copy is in the target"
+          }
+        }
+      ]
+    },
+    {
+      "name": "check-unknown-error-code",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/check/items/0",
+          "value": {
+            "index": 0,
+            "outcome": "error",
+            "found": false,
+            "reason": "only an earlier run's copy is in the target",
+            "error_code": "backup_infrastructure"
+          }
+        }
+      ]
+    },
+    {
+      "name": "check-unknown-outcome",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/check/items/0/outcome",
+          "value": "verified"
+        }
+      ]
+    },
+    {
+      "name": "check-unknown-mismatch-field",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/check/items/0",
+          "value": {
+            "index": 0,
+            "outcome": "mismatch",
+            "found": true,
+            "mismatches": [
+              "body"
+            ],
+            "reason": "fields did not match: subject",
+            "ms": 40
+          }
+        }
+      ]
+    },
+    {
+      "name": "check-duplicate-without-copies",
+      "valid": false,
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/check/items/3/copies"
+        }
+      ]
+    },
+    {
+      "name": "check-copies-without-duplicate",
+      "valid": false,
+      "patch": [
+        {
+          "op": "add",
+          "path": "/check/items/0/copies",
+          "value": 2
+        }
+      ]
+    },
+    {
+      "name": "check-duplicate-false",
+      "valid": false,
+      "patch": [
+        {
+          "op": "add",
+          "path": "/check/items/0/duplicate",
+          "value": false
+        }
+      ]
+    },
+    {
+      "name": "check-found-value",
+      "valid": false,
+      "patch": [
+        {
+          "op": "add",
+          "path": "/check/items/0/found_sha256",
+          "value": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        }
+      ]
+    },
+    {
+      "name": "sha256-upper-case",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/expected/items/0/sha256",
+          "value": "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC"
+        }
+      ]
+    },
+    {
+      "name": "sha256-63-characters",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/expected/items/0/sha256",
+          "value": "ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        }
+      ]
+    },
+    {
+      "name": "manifest-sha256-empty",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/expected/manifest_sha256",
+          "value": ""
+        }
+      ]
+    },
+    {
+      "name": "seed-upper-case",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/sample/seed",
+          "value": "6138257D"
+        }
+      ]
+    },
+    {
+      "name": "sample-unknown-algorithm",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/sample/algorithm",
+          "value": "sample-v2"
+        }
+      ]
+    },
+    {
+      "name": "expected-mail-with-a-file-name",
+      "valid": false,
+      "patch": [
+        {
+          "op": "add",
+          "path": "/expected/items/0/name",
+          "value": "x.txt"
+        }
+      ]
+    },
+    {
+      "name": "expected-file-with-a-subject",
+      "valid": false,
+      "patch": [
+        {
+          "op": "add",
+          "path": "/expected/items/2/subject",
+          "value": "x"
+        }
+      ]
+    },
+    {
+      "name": "expected-mail-without-received-at",
+      "valid": false,
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/expected/items/1/received_at"
+        }
+      ]
+    },
+    {
+      "name": "expected-canary-without-its-hash",
+      "valid": false,
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/expected/items/0/sha256"
+        }
+      ]
+    },
+    {
+      "name": "expected-canary-with-a-key",
+      "valid": false,
+      "patch": [
+        {
+          "op": "add",
+          "path": "/expected/items/0/key",
+          "value": [
+            "a",
+            "b",
+            "c",
+            "d"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "expected-random-with-a-hash",
+      "valid": false,
+      "patch": [
+        {
+          "op": "add",
+          "path": "/expected/items/1/sha256",
+          "value": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        },
+        {
+          "op": "add",
+          "path": "/expected/items/1/sha256_rule",
+          "value": "text-v1"
+        }
+      ]
+    },
+    {
+      "name": "expected-random-without-its-key",
+      "valid": false,
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/expected/items/1/key"
+        }
+      ]
+    },
+    {
+      "name": "expected-random-as-canary",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/expected/items/1/source",
+          "value": "canary"
+        }
+      ]
+    },
+    {
+      "name": "expected-mail-as-metadata",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/expected/items/1/expected_kind",
+          "value": "metadata"
+        }
+      ]
+    },
+    {
+      "name": "expected-file-as-fields",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/expected/items/3/expected_kind",
+          "value": "fields"
+        }
+      ]
+    },
+    {
+      "name": "expected-mail-with-a-file-rule",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/expected/items/0/sha256_rule",
+          "value": "bytes"
+        }
+      ]
+    },
+    {
+      "name": "expected-file-with-the-mail-rule",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/expected/items/4/sha256_rule",
+          "value": "text-v1"
+        }
+      ]
+    },
+    {
+      "name": "expected-office-v1-with-a-size",
+      "valid": false,
+      "patch": [
+        {
+          "op": "add",
+          "path": "/expected/items/2/size_bytes",
+          "value": 10
+        }
+      ]
+    },
+    {
+      "name": "expected-null-sender-name",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/expected/items/1/sender_name",
+          "value": null
+        }
+      ]
+    },
+    {
+      "name": "expected-unknown-kind",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/expected/items/0/kind",
+          "value": "teams"
+        }
+      ]
+    },
+    {
+      "name": "mail-key-of-three",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/expected/items/1/key",
+          "value": [
+            "a",
+            "b",
+            "c"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "onedrive-key-of-four",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/expected/items/5/key",
+          "value": [
+            "a",
+            "b",
+            "c",
+            "d"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "sample-mail-key-of-three",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/sample/mail/random/keys",
+          "value": [
+            [
+              "a",
+              "b",
+              "c"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "name": "sample-onedrive-key-of-four",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/sample/onedrive/random/keys",
+          "value": [
+            [
+              "a",
+              "b",
+              "c",
+              "d"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "name": "sample-key-with-a-number",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/sample/mail/random/keys",
+          "value": [
+            [
+              "a",
+              "b",
+              "c",
+              4
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "name": "restore-unknown-status",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/restore/status",
+          "value": "Success"
+        }
+      ]
+    },
+    {
+      "name": "restore-unknown-item-outcome",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/restore/items/0/outcome",
+          "value": "skipped"
+        }
+      ]
+    },
+    {
+      "name": "restore-item-with-a-name",
+      "valid": false,
+      "patch": [
+        {
+          "op": "add",
+          "path": "/restore/items/0/name",
+          "value": "x"
+        }
+      ]
+    },
+    {
+      "name": "restore-session-details-number",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/restore/sessions/0/details",
+          "value": 2
+        }
+      ]
+    },
+    {
+      "name": "cleanup-unknown-error-code",
+      "valid": false,
+      "patch": [
+        {
+          "op": "add",
+          "path": "/cleanup/after/mail/error_code",
+          "value": "backup"
+        }
+      ]
+    },
+    {
+      "name": "cleanup-without-cleanup-ok",
+      "valid": false,
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/cleanup/cleanup_ok"
+        }
+      ]
+    },
+    {
+      "name": "cleanup-negative-count",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/cleanup/after/mail/left",
+          "value": -1
+        }
+      ]
+    },
+    {
+      "name": "restore-point-null",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/restore_point",
+          "value": null
+        }
+      ]
+    },
+    {
+      "name": "restore-point-without-backup-time",
+      "valid": false,
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/restore_point/backup_time"
+        }
+      ]
+    },
+    {
+      "name": "client-scope",
+      "valid": false,
+      "patch": [
+        {
+          "op": "add",
+          "path": "/client/scope",
+          "value": "same_tenant"
+        }
+      ]
+    },
+    {
+      "name": "client-id-number",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/client/client_id",
+          "value": 1
+        }
+      ]
+    },
+    {
+      "name": "client-without-client-id",
+      "valid": false,
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/client/client_id"
+        }
+      ]
+    },
+    {
+      "name": "client-targets-extra-key",
+      "valid": false,
+      "patch": [
+        {
+          "op": "add",
+          "path": "/client/targets/site_url",
+          "value": "https://x"
+        }
+      ]
+    },
+    {
+      "name": "client-veeam-org-name-at-the-top",
+      "valid": false,
+      "patch": [
+        {
+          "op": "add",
+          "path": "/veeam_org_name",
+          "value": "contoso.onmicrosoft.com"
+        }
+      ]
+    },
+    {
+      "name": "signature-not-in-the-schema-yet",
+      "valid": false,
+      "patch": [
+        {
+          "op": "add",
+          "path": "/signature",
+          "value": "x"
+        }
+      ]
+    },
+    {
+      "name": "command-dropped",
+      "valid": false,
+      "patch": [
+        {
+          "op": "add",
+          "path": "/command",
+          "value": "test"
+        }
+      ]
+    }
+  ]
+}

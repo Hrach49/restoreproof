@@ -19,7 +19,8 @@ inline constexpr int ok = 0;
 // refused or not written; a command that failed keeps its own code), or any
 // unexpected failure (whose message is never shown), an exception no command
 // handled included. For `rpworker restore` and `test` also a run whose status is
-// error config or internal, and a pass whose output was lost; for `test` also
+// error config, internal or result_invalid (a result that isn't valid
+// restoreproof.result.v1), and a pass whose output was lost; for `test` also
 // a --json path refused (not UTF-8, a file already there, no such folder) and
 // a pass whose --json file couldn't be written.
 inline constexpr int config = 1;
@@ -40,9 +41,10 @@ inline constexpr int transient = 3;
 // connector::SafetyViolation, rp/target_guard.hpp), or veeam_org_name not
 // among Veeam's organisations. For `restore` and `test` also: no restore
 // points, a --point ID not found, and a run whose status is error with any
-// code not named under 1, 2 or 3 (rp/run_status.hpp: target_guard,
-// not_in_backup, backup, backup_infrastructure, graph, stale_target,
-// empty_sample, not_run, restore_contradiction).
+// code not named under 1, 2 or 3 (rp/run_status.hpp's error_codes():
+// not_in_backup, no_restore_point, target_guard, backup,
+// backup_infrastructure, graph, stale_target, empty_sample, not_run,
+// restore_contradiction).
 inline constexpr int service = 4;
 // `rpworker restore` and `rpworker test` only: the run's status is `fail` (W3.3, rp/run_status.hpp):
 // an item is missing or a mismatch, its target read fine and the backup didn't

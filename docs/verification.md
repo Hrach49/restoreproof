@@ -270,6 +270,14 @@ The first row that fits wins.
 | R7 | any item *unchecked* | error | the most severe item code |
 | R8 | every item *verified* | **pass** | — |
 
+One more `error` is decided after the table, never by it: `result_invalid` (W4.1). Once a row
+has given the verdict, the pipeline builds the result from it and validates it; a result that
+isn't valid `restoreproof.result.v1` replaces the verdict through
+`verification::result_invalid(verdict)`: status `error`, code `result_invalid`, whatever the row
+said. It keeps `restore_sent` (the clean after still runs), the item count and the warnings, and
+clears the verified, failed and unchecked items, as R1 to R4 leave them. See "The result"
+below. The test rows are V1 to V7.
+
 R1, the facts that don't add up: no expected set and no stop; a restore result without an
 expected set, or a check without a restore result; an expected item not at its index; a
 restore of an empty sample, or a sample of items with neither a restore result nor a stop; a
@@ -306,7 +314,12 @@ How the backup's own status reads (decision point 4):
 
 One flat vocabulary, the same in every phase, with `rpworker`'s exit code. In the code it is
 one table (`kCodes` in `src/run_status.cpp`: each code's stop text, whether the checker gives
-it, its severity rank and its exit code); a Graph exception's code is the checker's
+it, its severity rank and its exit code). Every code a status can carry has a row there,
+eighteen since W4.1: `restore_contradiction`, R6's own code, was outside the table before (exit
+4 then as now), and `result_invalid` is new. Neither can be a stop's code or a check item's:
+given as one, it is R1's `internal`. Three public lists give the vocabulary to the result's
+schema, and a test holds the schema's enums to them: `error_codes()` (the table's order),
+`unchecked_item_codes()` (most severe first) and `warning_codes()`. A Graph exception's code is the checker's
 `read_error_code` wherever it is thrown, the restore-target guard's layer 1 inside
 `restore_sample` included, which lets Graph's errors out as Graph's.
 
@@ -324,6 +337,7 @@ it, its severity rank and its exit code); a Graph exception's code is the checke
 | `empty_sample` | R3 | 4 |
 | `not_run` | R4 | 4 |
 | `restore_contradiction` | R6 | 4 |
+| `result_invalid` | the result built from the run isn't valid `restoreproof.result.v1`, or couldn't be built (`result_invalid()`, after the table); the Worker's own fault, as `internal` | 1 |
 | `graph_auth` / `graph_permission` | `graph::AuthError` / `graph::PermissionError` | 2 |
 | `graph_transient` | `graph::TransientError` | 3 |
 | `graph` | any other `graph::GraphError` | 4 |
@@ -348,6 +362,7 @@ address or Graph ID) and never an exception's `what()`, which goes to stderr onl
 | R6 | `the backup reported nothing restored, yet every item verified: the evidence contradicts itself` |
 | R7 | `<u> of <n> item(s) couldn't be checked (<code> <k>, ...)[; <v> verified]` |
 | R8 | `<n> of <n> item(s) verified: manifest <a>, fields <b>, metadata <c>` |
+| `result_invalid` | `the result isn't valid restoreproof.result.v1; the run itself ended <pass\|fail\|error <code>>`: the replaced verdict's status and code, never its message (a code outside the table isn't repeated: `... ended error`) |
 
 ### Warnings
 
@@ -375,8 +390,8 @@ only) is always there. `counts.items` is always the expected set's size (0 witho
 other counts, `verified` and the item lists are the item verdicts of rows R5 to R8; for R1 to
 R4 nothing got as far as a verdict, so they are 0 and the lists empty. `restore_sent` is whether
 a restore may have been sent, so items may be in the restore targets (W3.4's cleanup): a restore
-result that isn't `not_run`, or a stop in the restore without `nothing_restored`. W4.1 adopts it
-into `result.v1.json`.
+result that isn't `not_run`, or a stop in the restore without `nothing_restored`. It is the
+result's `status` key ("The result" below), the one section that is never `null`.
 
 ```json
 {
@@ -549,25 +564,178 @@ sessions still `Working` is W3.6's, with the same Cleaner and placements in `rpw
 W3.5 times the two cleans as the spans `cleanup_before` and `cleanup_after` (`docs/decisions.md`
 2026-10-03, W3.5; `cleanup_after` stays `not run` when the clean after is skipped).
 
-## The `--json` run summary (W3.6)
+## The result (`restoreproof.result.v1`, W4.1)
 
-`rpworker test --json <file>` writes the run summary `rp.run-summary.v0` (`docs/worker-config.md`,
-"`--json <file>`"; `docs/decisions.md` 2026-10-03, W3.6 point 5). It holds the objects above as
-they are (`sample`, `expected`, `check`, `status`, `cleanup`, `timings`), plus `restore`
-(`verification::to_json(RestoreResult)` in `rp/run_status.hpp`: counts, sessions and items, no
-item name and no Veeam message; a session's `details` only when `is_backup_counts`, the filter
-the `backup_session` warning uses). It holds no secret, but more tenant data than stdout:
+Every run that printed its run line has one result: one JSON document, built by
+`rp::ResultBuilder` (`worker/include/rp/result_builder.hpp`) from what the run produced and
+validated by `rp::validate_result` (`rp/result_schema.hpp`) against
+`shared/schemas/result.v1.json`. `rpworker test --json <file>` writes it
+(`docs/worker-config.md`, "`--json <file>`"); W4.2 to W4.6 sign, timestamp and upload it. It
+replaces W3.6's `rp.run-summary.v0`. The decisions are `docs/decisions.md` 2026-10-04, W4.1,
+approved as written, and its build notes.
 
-- `expected.items`: sender addresses and names, Internet message IDs, sent and received times,
-  and the random mails' subjects and file names;
-- `sample.*.random.keys`: mailbox addresses, folder names, mail subjects and received times,
-  site and list IDs, folder paths, file names and OneDrive UPNs (`random_key`);
-- `sample.*.random.containers_listed`: mailbox addresses and, for an unresolved OneDrive, its
-  URL;
-- a `check` item's `reason`: for an Office file that isn't a valid package, the office-v1
-  reader's error text, which names a part of the tenant file. This is the one place an
-  exception's text reaches the file. It is W3.2's `check` object as approved; stdout's REASON
-  column shows only fixed words.
+### The fifteen keys
 
-These are written as designed: they are the objects W4.1 signs, the file is local, and the
-owner chose its path. Keep the file out of the repository.
+All fifteen are always there, and every object is closed: a key the schema doesn't name makes
+the result invalid.
+
+| Key | From | `null` when |
+|---|---|---|
+| `format` | `"restoreproof.result.v1"` (`rp::kResultFormat`) | never |
+| `worker_version` | `rp::version()` | never |
+| `run_id` | the run ID (`--run-id`, or the one the run made) | never |
+| `started_at`, `ended_at` | the wall clock where the `total` span starts and ends, `YYYY-MM-DDTHH:MM:SS.mmmZ`, UTC | the wall clock failed at that reading; `ended_at` also in the result as it is first validated (below) |
+| `connector` | `{type, api}` from `IConnector::describe()`, read once when the connector is made: `type` is its name (`veeam_m365`, the only one the schema knows), `api` its version | never |
+| `client` | the config: `client_id` (`null` until jobs carry one, W4.10), `tenant_id` (`graph_tenant_id`), `veeam_org_name`, and `targets` `{mailbox, site_id, library_id, onedrive_drive_id, onedrive_folder_id}` (`test_mailbox`, `test_site_id`, `test_library_id`, `test_onedrive_drive_id`, `test_onedrive_folder_id`) | never (`client_id` always, today) |
+| `restore_point` | `{id, backup_time_raw, backup_time}`: the chosen point's ID, Veeam's time text as it is (what an explore session needs), and that time cut to whole seconds, `YYYY-MM-DDTHH:MM:SSZ` (`to_whole_seconds`, `src/veeam_time.hpp`) | never; `backup_time` when Veeam's text doesn't parse |
+| `sample` | `sampling::to_json(SampleRecord)` (W2.6) | the run stopped before the sample was chosen |
+| `expected` | `verification::to_json(ExpectedSet)` (W3.1, above) | the run stopped before the expected set was built |
+| `restore` | `verification::to_json(RestoreResult)` in `rp/run_status.hpp`: status, items sent and restored, sessions (ID, kind, result, `details` only when `is_backup_counts`, else `null`, `started_at_raw`/`ended_at_raw`), items `{index, kind, outcome, infrastructure, container_missing, session_id}`; no item name, no Veeam message | there is no restore result (nothing was sent, or `restore_sample` threw) |
+| `check` | `verification::to_json(CheckResult)` (W3.2, above) | the check didn't run |
+| `status` | `verification::to_json(RunVerdict)` (W3.3, above) | never: a run without a verdict has no result |
+| `cleanup` | `to_json(RunCleanup)` (W3.4, above) | the run stopped before the clean before; `cleanup.after` when no clean after ran |
+| `timings` | `timing::to_json(RunTimings)` (W3.5): `{"spans": {...}}`, all eleven | never; a span that didn't run is `null` |
+
+The item rows are `expected.items[i]`, `restore.items[i]` and `check.items[i]`, joined by
+`index`. Nothing is written twice: the status is `status.status`, the error code
+`status.error_code`, the seed `sample.seed`, `cleanup_ok` is `cleanup.cleanup_ok`, the recovery
+time `timings.spans.recovery`. There is no `command` and no `exit_code` (v0 had both): they
+are facts of one process, not of the run, so a lost stdout or an incomplete `--record`
+recording shows in the exit code and on stderr only. There is no `signature`, `tsa_token`,
+`bundle_sha256` or `worker_id` yet; W4.2 to W4.6 and W5.1 add theirs to the schema.
+
+### The canonical form (`canonical-json-v1`)
+
+`rp::canonical_json` (`worker/include/rp/canonical_json.hpp`) gives the result's bytes, and the
+`--json` file is exactly those bytes:
+
+- object keys sorted by byte, `,` and `:` with no whitespace, no trailing newline;
+- strings as UTF-8, with JSON's short escapes and lower-case `\u00xx` for the other control
+  characters; nothing else is escaped;
+- integers only, within ±(2^53 − 1);
+- refused, by throwing `CanonicalJsonError` with fixed words: a floating-point number, an
+  integer outside that range, an object key that isn't ASCII, a string that isn't valid UTF-8
+  (never replaced by U+FFFD), a value that isn't JSON.
+
+With those rules Python's `json.dumps(value, sort_keys=True, separators=(",", ":"),
+ensure_ascii=False)` gives the same bytes. The vectors are
+`shared/testdata/canonical-json-v1.json` (33 accepted cases with their text and SHA-256, 9
+refusals), run by `worker/tests/canonical_json_test.cpp` and, the accepted ones, by
+`cloud/tests/test_canonical_json.py`.
+
+### The schema
+
+`shared/schemas/result.v1.json` is the only copy. The Worker's build embeds its bytes
+(`worker/cmake/embed_bytes.cmake` writes a byte array into the build folder), so the Worker
+never reads a schema from disk; a test compares the embedded bytes with the file. The Cloud
+reads the file by path. It says draft 2020-12 and uses only keywords draft 7 and 2020-12 read
+alike, because the Worker's validator (`json-schema-validator` 2.4.0) is draft 7 and Python's
+is 2020-12; a Worker test walks the schema and fails on any other keyword. No `format`
+keyword: times are `pattern`s, and a time with an offset or without `Z` doesn't validate.
+Patterns are only on strings the Worker makes; Veeam's words and tenant text get a `maxLength`
+and nothing else, so an unknown Veeam word can't make a result invalid. The schema's enums are
+held to the code by a test (`run_status`'s three lists, the kinds, outcomes, span names and
+cleanup codes).
+
+What the schema can't say, and so doesn't check: any rule across objects (counts against array
+lengths, `index` equal to position, `status` against `check`), and the order of the fields in a
+mismatch `reason`.
+
+`shared/testdata/result-v1/` holds the documents both validators must judge alike: `valid.json`
+(a whole pipeline run of the Worker's tests, the lab's names replaced) and `cases.json` (158
+small changes to it, 39 valid and 119 invalid). `worker/tests/result_schema_test.cpp` and
+`cloud/tests/test_result_schema.py` run the same file (`docs/testing.md`, "The shared vectors
+and result documents").
+
+### Validation, and `result_invalid`
+
+**When.** Twice at most.
+
+1. In every run of `restore` and `test`, with or without `--json`, right after the status is
+   decided and before the check's table and the status line. The clean after hasn't run then:
+   `ended_at` and `cleanup.after` are `null`, `cleanup_ok` and `restore_may_still_run` hold
+   their defaults and the open spans read `open`, all of which the schema allows.
+2. Only when a file is to be written (`test --json`): after the clean after and the timings,
+   the finished result is built and validated again, and that text is the file.
+
+What is validated is the canonical text parsed back, so it is the written text that validated.
+`validate_result` refuses one thing itself, before the schema's validator is asked: an unsigned
+integer too large for a signed 64-bit value, one violation at its place. The validator library
+would read it as a negative number and could find it inside a range; every integer of the
+schema ends at 2^53 - 1, so the schema refuses it too (`docs/decisions.md`, build notes
+point 11).
+
+**The first time fails:** the result can't be built (a part's `to_json` throws), has no
+canonical form, or the schema refuses it. The verdict becomes `error result_invalid`, exit 1
+(the status table's "Error codes" above). stderr gets one of these lines, before anything on
+stdout says `pass`:
+
+```
+result error: <n> schema violation(s), first at <JSON pointer>
+result error: <n> schema violation(s)
+result error: the result has no canonical form
+result error: the result couldn't be built
+```
+
+The pointer is there only when each of its parts is a property name of the schema or an array
+index; never the validator's message, never a value. The run goes on: the check's table (in
+`test`, VERDICT `-` in every row), one status line, for a run that would have passed
+
+```
+status error result_invalid: the result isn't valid restoreproof.result.v1; the run itself ended pass
+```
+
+then the warnings, the clean after when a restore was sent, and the timings.
+
+**The second time fails** (the first passed): new since then are only `cleanup.after` with its
+two flags, the closed spans and `ended_at`, all Worker-made, so this is a Worker bug (or a
+wall clock past the year 9999, which is how the test reaches it). The status line is already
+out and stays. stderr gets the `result error` line, and exit 0 becomes 1; any other exit code
+is kept.
+
+**No file.** An invalid result is never written under this format, and no cut-down one is
+made up. With `--json`, in both cases, after the timings:
+
+```
+json error: <file>: the result isn't valid restoreproof.result.v1; no file was written
+```
+
+The same line stands for a run with no verdict at all (the status table itself threw: `error:
+unexpected failure`, exit 1).
+
+### A check item's `reason`
+
+Fixed words, held by the schema to four forms. A `match` has no `reason`.
+
+| Outcome | `reason` |
+|---|---|
+| `error`, the target's read failed | `the <mail\|sharepoint\|onedrive> restore target couldn't be read (<code>)`, the code one of `graph_auth`, `graph_permission`, `graph_transient`, `target_guard`, `graph` |
+| `error` `stale_target` | `only an earlier run's copy is in the target` |
+| `missing` | `no restored copy found` |
+| `mismatch` | `fields did not match: <field>, ...` (the fields of `mismatches`, in its order), ending `; the restored package isn't valid office-v1 input` when office-v1 refused the copy |
+
+Until W4.1 the office-v1 tail carried the zip reader's own text in a parenthesis, which names
+a part inside a tenant file: the one place an exception's text reached the file. It doesn't
+any more; the check reads `OfficeHash::error` only as set or not. The reader's text goes to
+stderr alone, one line per refused file after the read back (`check note: <sharepoint|onedrive>
+<name>: not valid office-v1 input: <text>`, through `redact()`), so one of the reader's own
+limits can be told from a broken file (`docs/decisions.md` 2026-10-05, "W4.1 code review").
+
+### What of the tenant the result holds
+
+No secret, and no exception's text. But more tenant data than stdout:
+
+- `client`: the tenant ID, the organisation's name, the test mailbox's address and the four
+  target IDs;
+- `expected.items`: subjects, sender addresses and names, Internet message IDs, sent and
+  received times, and file names;
+- `sample.*.random.keys`: mailbox addresses, folder names and paths, mail subjects and
+  received times, site and list IDs, file names and OneDrive UPNs (`random_key`);
+- `sample.*.random.containers_listed`: the mailboxes, sites and OneDrives the draw looked
+  into, sampled or not (for an unresolved OneDrive, its URL).
+
+W4.1 keeps them: the Cloud's item rows and the report's Failures section need the item names,
+and the keys are what lets a draw be repeated. Today the file stays where the owner put it:
+keep it out of the repository. That ends with W4.6, which uploads the result; whether the
+random keys and `containers_listed` leave the network as they are, or are cut to counts and
+`pool_sha256` first, is open until then (`docs/decisions.md` 2026-10-04, W4.1, Open).

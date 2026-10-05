@@ -4,7 +4,8 @@
 // row for row: R<n><x> is row n of the run table in docs/verification.md
 // ("The status decision table"), I<n><x> rule n of the item verdicts, S<n> a
 // step of the severity order, E<n> an exception type of the error-code table,
-// X<n> an exit code. Failure paths first: facts that don't add up, stops, then
+// X<n> an exit code, V<n> a verdict result_invalid() replaces (W4.1 point 5).
+// Failure paths first: facts that don't add up, stops, then
 // fail before error before pass. The choices are the 2026-10-01 W3.3 entry in
 // docs/decisions.md.
 
@@ -27,6 +28,7 @@
 #include <catch2/generators/catch_generators_range.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <algorithm>
 #include <cstddef>
 #include <exception>
 #include <functional>
@@ -34,6 +36,7 @@
 #include <set>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -234,11 +237,39 @@ Unchecked unchecked_of(const verification::RunVerdict& verdict)
     return out;
 }
 
+bool listed(const std::vector<std::string_view>& codes, std::string_view code)
+{
+    return std::ranges::find(codes, code) != codes.end();
+}
+
+// Whatever a verdict carries is in run_status's public lists, which the
+// result's schema is held to (W4.1 point 3).
+void check_vocabulary(const verification::RunVerdict& verdict)
+{
+    if (verdict.status == RunStatus::error) {
+        CHECK(listed(verification::error_codes(), verdict.error_code));
+    } else {
+        CHECK(verdict.error_code.empty());
+    }
+    for (const verification::UncheckedItem& item : verdict.unchecked) {
+        CHECK(listed(verification::unchecked_item_codes(), item.error_code));
+        CHECK(listed(verification::error_codes(), item.error_code));
+    }
+    for (const verification::StatusWarning& w : verdict.warnings) {
+        CHECK(listed(verification::warning_codes(), w.code));
+    }
+}
+
 void check_row(const Row& row)
 {
     INFO(row.id << ": " << row.what);
     const Run run = row.make();
     const verification::RunVerdict verdict = verification::decide_status(run.facts());
+    check_vocabulary(verdict);
+    CHECK(listed(verification::error_codes(), row.code) == (row.status == RunStatus::error));
+    for (const std::string& code : row.warnings) {
+        CHECK(listed(verification::warning_codes(), code));
+    }
     CHECK(verdict.status == row.status);
     CHECK(verdict.error_code == row.code);
     CHECK(verdict.failed == row.failed);
@@ -827,6 +858,7 @@ TEST_CASE("run status, error codes: each exception type is its code, in every ph
     const RunStop stop = verification::stop_reason(error, phase);
     CHECK(stop.phase == phase);
     CHECK(stop.error_code == row.code);
+    CHECK(listed(verification::error_codes(), row.code));
     // None of these promises that nothing was restored.
     CHECK_FALSE(stop.nothing_restored);
     CHECK(row.known == (row.code != "internal"));
@@ -1024,6 +1056,7 @@ TEST_CASE("run status: each warning's message and indexes, never an item's name 
     const verification::RunVerdict verdict = verification::decide_status(run.facts());
     REQUIRE(verdict.status == kPass);
     REQUIRE(verdict.warnings.size() == 6);
+    check_vocabulary(verdict);
     CHECK(verdict.warnings[0].code == "backup_session");
     CHECK(verdict.warnings[0].message ==
           "mail session s-2: Warning (2 items processed (1 failure))");
@@ -1205,6 +1238,8 @@ TEST_CASE("run status: the exit code of each status and error code", "[run_statu
         {"X17", RunStatus::error, "restore_contradiction", rp::exit_code::service},
         {"X18", RunStatus::error, "graph", rp::exit_code::service},
         {"X19", RunStatus::error, "stale_target", rp::exit_code::service},
+        // The Worker's own fault, as internal (W4.1 point 5).
+        {"X20", RunStatus::error, "result_invalid", rp::exit_code::config},
     }));
     INFO(row.id << ": " << row.code);
     verification::RunVerdict verdict;
@@ -1213,12 +1248,245 @@ TEST_CASE("run status: the exit code of each status and error code", "[run_statu
     CHECK(verification::exit_code_of(verdict) == row.exit);
     if (row.status == RunStatus::error) {
         CHECK(verification::exit_code_of(row.code) == row.exit);
+        // Each from the table, not the fallback for a code it doesn't know.
+        CHECK(listed(verification::error_codes(), row.code));
     }
+}
+
+TEST_CASE("run status: the exit-code rows name every error code", "[run_status]")
+{
+    // X3 to X20 above, by hand: a code added to the table needs its X row.
+    const std::set<std::string_view> rows{
+        "config",           "internal",         "backup_auth",           "graph_auth",
+        "graph_permission", "backup_transient", "graph_transient",       "not_in_backup",
+        "no_restore_point", "target_guard",     "backup",                "backup_infrastructure",
+        "empty_sample",     "not_run",          "restore_contradiction", "graph",
+        "stale_target",     "result_invalid"};
+    const std::vector<std::string_view> codes = verification::error_codes();
+    CHECK(std::set<std::string_view>(codes.begin(), codes.end()) == rows);
 }
 
 TEST_CASE("run status: a code outside the vocabulary exits 4", "[run_status]")
 {
     CHECK(verification::exit_code_of("teapot") == rp::exit_code::service);
+}
+
+// --- The code lists and result_invalid (W4.1 points 3 and 5) -------------------------
+
+TEST_CASE("run status: a code that is never a stop's is error internal as a stop's or an item's",
+          "[run_status]")
+{
+    // result_invalid and restore_contradiction are in the table for their
+    // exit codes and the schema's enum, never for a stop or a check item.
+    const std::string code = GENERATE("result_invalid", "restore_contradiction");
+    CAPTURE(code);
+    const RunPhase phase =
+        GENERATE(RunPhase::before_restore, RunPhase::restore, RunPhase::check);
+    Run stopped = phase == RunPhase::check     ? run_of({match()})
+                  : phase == RunPhase::restore ? sample_only({match()})
+                                               : stop_only(phase, code);
+    stopped.with_check = false;
+    stopped.stop = RunStop{phase, code};
+    verification::RunVerdict verdict = verification::decide_status(stopped.facts());
+    CHECK(verdict.status == kError);
+    CHECK(verdict.error_code == "internal");
+    CHECK(verdict.message ==
+          "the run's results don't add up: the stop's code isn't one the status knows");
+
+    verdict = verification::decide_status(run_of({match(), error(code)}).facts());
+    CHECK(verdict.status == kError);
+    CHECK(verdict.error_code == "internal");
+    CHECK(verdict.unchecked.empty());
+}
+
+TEST_CASE("run status: the public lists of error, unchecked-item and warning codes",
+          "[run_status]")
+{
+    SECTION("error_codes: every code a status can carry, the table in its order, each once")
+    {
+        const std::vector<std::string_view> want{
+            "config",           "internal",              "backup_auth",
+            "backup_transient", "not_in_backup",         "no_restore_point",
+            "target_guard",     "backup",                "graph_auth",
+            "graph_permission", "backup_infrastructure", "graph",
+            "graph_transient",  "stale_target",          "empty_sample",
+            "not_run",          "restore_contradiction", "result_invalid"};
+        const std::vector<std::string_view> codes = verification::error_codes();
+        CHECK(codes == want);
+        CHECK(std::set<std::string_view>(codes.begin(), codes.end()).size() == codes.size());
+    }
+    SECTION("unchecked_item_codes: the codes an unchecked item carries, most severe first")
+    {
+        const std::vector<std::string_view> want{
+            "target_guard",  "graph_auth", "graph_permission", "backup_infrastructure",
+            "not_in_backup", "graph",      "graph_transient",  "stale_target"};
+        CHECK(verification::unchecked_item_codes() == want);
+        for (const std::string_view code : want) {
+            CHECK(listed(verification::error_codes(), code));
+        }
+    }
+    SECTION("warning_codes: in the order a verdict lists its warnings")
+    {
+        const std::vector<std::string_view> want{"backup_session", "backup_item", "duplicate",
+                                                 "shortfall", "stale_copies"};
+        CHECK(verification::warning_codes() == want);
+        // Never a status: no warning code is an error code.
+        for (const std::string_view code : want) {
+            CHECK_FALSE(listed(verification::error_codes(), code));
+        }
+    }
+    SECTION("row 6's code is the table's")
+    {
+        const verification::RunVerdict verdict = verification::decide_status(
+            run_of({It{.restored = ItemOutcome::failed}}, RestoreStatus::failed, "Failed").facts());
+        REQUIRE(verdict.error_code == "restore_contradiction");
+        CHECK(listed(verification::error_codes(), verdict.error_code));
+        CHECK(verification::exit_code_of(verdict) == rp::exit_code::service);
+    }
+}
+
+TEST_CASE("run status: result_invalid replaces a verdict whose result didn't validate",
+          "[run_status]")
+{
+    struct InvalidRow {
+        std::string id;
+        std::function<Run()> make;
+        std::string ended; // the run's own end, in the message
+        bool restore_sent;
+        std::size_t items;
+        std::vector<std::string> warnings;
+    };
+    const InvalidRow row = GENERATE(values<InvalidRow>({
+        {"V1 a fail, items unchecked beside",
+         [] {
+             Run r = run_of({missing(), error("graph"), match(), It{.duplicate = true}});
+             r.check.stale_mail = 2;
+             return r;
+         },
+         "fail", true, 4, {"duplicate", "stale_copies"}},
+        {"V2 an error of row 7", [] { return run_of({error("stale_target"), match()}); },
+         "error stale_target", true, 2, {}},
+        {"V3 an error of row 6",
+         [] {
+             return run_of({It{.restored = ItemOutcome::failed}}, RestoreStatus::failed, "Failed");
+         },
+         "error restore_contradiction", true, 1, {"backup_session", "backup_item"}},
+        {"V4 a stop before the sample",
+         [] { return stop_only(RunPhase::before_restore, "backup_transient"); },
+         "error backup_transient", false, 0, {}},
+        {"V5 a stop in the restore that promised nothing",
+         [] {
+             Run r = with_stop(sample_only({match(), match()}), RunPhase::restore, "target_guard");
+             r.stop->nothing_restored = true;
+             r.shortfalls = {{ItemKind::onedrive, ItemSource::random, 1, 0}};
+             return r;
+         },
+         "error target_guard", false, 2, {"shortfall"}},
+        {"V6 facts that don't add up",
+         [] {
+             Run r = run_of({match()});
+             r.with_check = false;
+             return r;
+         },
+         "error internal", true, 1, {}},
+        {"V7 a pass",
+         [] {
+             return run_of({match(), It{.expected_kind = ExpectedKind::fields},
+                            It{.kind = ItemKind::sharepoint,
+                               .expected_kind = ExpectedKind::metadata}});
+         },
+         "pass", true, 3, {}},
+    }));
+    INFO(row.id);
+    const Run run = row.make();
+    const verification::RunVerdict before = verification::decide_status(run.facts());
+    REQUIRE(before.restore_sent == row.restore_sent);
+    REQUIRE(before.items == row.items);
+    REQUIRE(warning_codes(before) == row.warnings);
+
+    const verification::RunVerdict verdict = verification::result_invalid(before);
+
+    CHECK(verdict.status == kError);
+    CHECK(verdict.error_code == "result_invalid");
+    CHECK(verdict.message ==
+          "the result isn't valid restoreproof.result.v1; the run itself ended " + row.ended);
+    CHECK(verification::exit_code_of(verdict) == rp::exit_code::config);
+    check_vocabulary(verdict);
+    // Kept: whether items may be in the targets (the clean after still
+    // runs), the item count and the warnings, each as it was.
+    CHECK(verdict.restore_sent == row.restore_sent);
+    CHECK(verdict.items == row.items);
+    REQUIRE(verdict.warnings.size() == before.warnings.size());
+    for (std::size_t i = 0; i < before.warnings.size(); ++i) {
+        CHECK(verdict.warnings[i].code == before.warnings[i].code);
+        CHECK(verdict.warnings[i].message == before.warnings[i].message);
+        CHECK(verdict.warnings[i].indexes == before.warnings[i].indexes);
+    }
+    // Cleared: the item verdicts, as rows 1 to 4 leave them, so
+    // `rpworker test`'s VERDICT column reads "-" (its rule: the three counts
+    // don't add up to the items, or there are none).
+    CHECK(verdict.failed.empty());
+    CHECK(verdict.unchecked.empty());
+    CHECK(verdict.verified_manifest == 0);
+    CHECK(verdict.verified_fields == 0);
+    CHECK(verdict.verified_metadata == 0);
+    CHECK(verdict.verified() == 0);
+
+    const json out = verification::to_json(verdict);
+    json warnings = json::array();
+    for (const verification::StatusWarning& w : before.warnings) {
+        warnings.push_back({{"code", w.code}, {"message", w.message}, {"indexes", w.indexes}});
+    }
+    const json want = {
+        {"status", "error"},
+        {"error_code", "result_invalid"},
+        {"message",
+         "the result isn't valid restoreproof.result.v1; the run itself ended " + row.ended},
+        {"restore_sent", row.restore_sent},
+        {"counts", {{"items", row.items}, {"verified", 0}, {"failed", 0}, {"unchecked", 0}}},
+        {"verified", {{"manifest", 0}, {"fields", 0}, {"metadata", 0}}},
+        {"failed_items", json::array()},
+        {"unchecked_items", json::array()},
+        {"warnings", warnings}};
+    CHECK(out == want);
+}
+
+TEST_CASE("run status: result_invalid's message holds only the status's own words",
+          "[run_status]")
+{
+    const std::string prefix =
+        "the result isn't valid restoreproof.result.v1; the run itself ended ";
+    verification::RunVerdict verdict;
+    verdict.message = "Alice's plan.docx";
+    SECTION("a code outside the table isn't repeated")
+    {
+        verdict.error_code = "Budget Q3.xlsx";
+        CHECK(verification::result_invalid(verdict).message == prefix + "error");
+    }
+    SECTION("an error without a code")
+    {
+        CHECK(verification::result_invalid(verdict).message == prefix + "error");
+    }
+    SECTION("a pass or a fail never names a code, whatever the verdict holds")
+    {
+        verdict.error_code = "graph";
+        verdict.status = RunStatus::pass;
+        CHECK(verification::result_invalid(verdict).message == prefix + "pass");
+        verdict.status = RunStatus::fail;
+        CHECK(verification::result_invalid(verdict).message == prefix + "fail");
+    }
+    SECTION("a second time: the first one's code")
+    {
+        verdict.error_code = "graph";
+        const verification::RunVerdict once = verification::result_invalid(verdict);
+        CHECK(once.message == prefix + "error graph");
+        CHECK(verification::result_invalid(once).message == prefix + "error result_invalid");
+    }
+    SECTION("a status outside the enum")
+    {
+        verdict.status = static_cast<RunStatus>(9);
+        CHECK(verification::result_invalid(verdict).message == prefix + "unknown");
+    }
 }
 
 TEST_CASE("run status: the names of statuses and phases", "[run_status]")

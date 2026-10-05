@@ -388,7 +388,7 @@ targets; nothing was done`, exit 4). The targets needn't be empty first.
 
 **This writes and deletes too.** `rpworker test` (W3.6, `docs/worker-config.md`, "`rpworker
 test`") runs the same pipeline as `rpworker restore`, with its own table after the check and an
-optional `--json` run summary. Its ctest exe tests all stop before any request. Check the same
+optional `--json` file, the run's result (`restoreproof.result.v1`, W4.1). Its ctest exe tests all stop before any request. Check the same
 things first as for "Restore by hand": an elevated shell, no restore session still `Working`,
 no other RestoreProof run.
 
@@ -415,7 +415,7 @@ real, non-canary files in the lab, so this comes after L1.8:
    `containers_eligible` as expected. Note the restore point ID it printed. The pool depends on
    the run ID (the folders it draws) and the restore point, so the run below reuses both.
 4. With the variables set as in "Restore by hand" step 2, run the test with that run ID and
-   restore point, and a summary file in a folder that exists:
+   restore point, and a `--json` file in a folder that exists:
 
    ```powershell
    .\build\dev\rpworker.exe test --mail 10 --sp 10 --od 10 --run-id w36-done-when-1 --point <the dry run's restore point ID> --config <your config.json> --manifest ..\lab\seed-manifest.json --json C:\restoreproof-runs\w36-done-when-1.json
@@ -427,8 +427,35 @@ real, non-canary files in the lab, so this comes after L1.8:
    as for `restore`. In the table after the check, `VERDICT` is `verified` for every row and
    `REASON` `-`.
 5. Check with `rpworker graph list` that the targets are empty again, and keep the `--json`
-   file with the evidence. It holds tenant data (`docs/verification.md`, "The `--json` run
-   summary"): keep it out of the repository.
+   file with the evidence. It holds tenant data (`docs/verification.md`, "What of the tenant
+   the result holds"): keep it out of the repository.
+
+**The W4.1 Done-when run.** W4.1's Done-when is "`rpworker test --json` writes a file that
+validates against the schema" (`docs/decisions.md` 2026-10-04, W4.1). The unit tests show it
+on the recorded lab; this is the same thing once against the live lab. Check the same things
+first as above (an elevated shell, no restore session still `Working`, no other RestoreProof
+run, the variables of "Restore by hand" step 2), then, from `worker\`:
+
+```powershell
+.\build\dev\rpworker.exe test --mail 10 --sp 10 --od 10 --run-id w41-done-when-1 --config <your config.json> --manifest ..\lab\seed-manifest.json --json C:\restoreproof-runs\w41-done-when-1.json
+```
+
+The folder must exist, must be outside the repository, and the file must be new. The run ends
+`status pass: ...`, the clean after's line, the timings' table and `wrote
+C:\restoreproof-runs\w41-done-when-1.json`, exit 0 (`$LASTEXITCODE`). stderr must hold no
+`result error:` and no `json error:` line. Then validate the written file offline, with
+Python's validator against the repository's schema, and check that it is its own canonical
+form. From `cloud\` (its dev group has `jsonschema`):
+
+```powershell
+uv run python -c "import json,sys,pathlib; from jsonschema import Draft202012Validator; b=pathlib.Path(sys.argv[1]).read_bytes(); d=json.loads(b); s=json.loads(pathlib.Path('../shared/schemas/result.v1.json').read_bytes()); errs=sorted(Draft202012Validator(s).iter_errors(d), key=lambda e: e.json_path); print('schema:', 'valid' if not errs else [e.json_path for e in errs]); print('canonical:', json.dumps(d, sort_keys=True, separators=(',', ':'), ensure_ascii=False).encode('utf-8') == b)" C:\restoreproof-runs\w41-done-when-1.json
+```
+
+It must print `schema: valid` and `canonical: True`. (On an invalid file it prints where, as
+JSON paths, never the values.) To read the file, `python -m json.tool
+C:\restoreproof-runs\w41-done-when-1.json`; don't save a reformatted copy over it. Check
+with `rpworker graph list` that the targets are empty again. The file holds tenant data: it
+stays outside the repository, and only the output and the two lines above go into the evidence.
 
 ### Recording fixtures (`--record <dir>`)
 
@@ -497,6 +524,51 @@ The Q2.1 "Done when" is also checked once by hand, with no network at all:
    run `ctest --preset dev` from `worker/`. Every test passes and the `[live]` ones show as
    skipped.
 4. Turn the adapters back on (right-click → **Enable**).
+
+### The shared vectors and result documents (W4.1)
+
+Three sets of files under `shared/` are read by both builds, so C++ and Python are shown to
+agree. All are LF on every checkout (`.gitattributes`); the schema's bytes are what the Worker
+embeds.
+
+| File | What | C++ test | Python test |
+|---|---|---|---|
+| `shared/schemas/result.v1.json` | the result's schema, the only copy | `worker/tests/result_schema_test.cpp` (`[result_schema]`): the embedded bytes are the file's, only the allowed keywords, the fifteen keys, the enums against the code | `cloud/tests/test_result_schema.py`: `check_schema`, `$schema` is draft 2020-12 |
+| `shared/testdata/canonical-json-v1.json` | `canonical-json-v1`: 33 `cases` (`input`, `canonical`, `sha256`) and 9 `rejects` (`input_text`, `reason`: `float`, `integer_out_of_range` or `non_ascii_key`) | `worker/tests/canonical_json_test.cpp` (`[canonical_json]`): every case and every reject; invalid UTF-8, which a JSON file can't hold, on bytes | `cloud/tests/test_canonical_json.py`: the accepted cases against `json.dumps(sort_keys=True, separators=(",", ":"), ensure_ascii=False)`; the rejects' shape only, until W4.3 brings a Python canonicaliser |
+| `shared/testdata/result-v1/valid.json` | a valid result, as canonical bytes | `worker/tests/test_command_test.cpp`: the pipeline's run reproduces it byte for byte | `test_result_schema.py`: valid, and equal to its own canonical dump |
+| `shared/testdata/result-v1/cases.json` | 158 documents, each `valid.json` with an RFC 6902 `patch` (add, remove, replace) and whether the schema accepts it (`valid`): 39 valid, 119 invalid | `result_schema_test.cpp`, one `GENERATE` row per case | `test_result_schema.py`, one parametrised test per case |
+
+The Python tests find `shared/` by walking up from their own file, so they also run from
+mutmut's copy. The Worker tests read it through `RP_SHARED_DIR`. No case holds a float:
+Python's validator reads `1.0` as an integer and the C++ one doesn't, so the canonical form
+refuses floats before the schema is asked, and the float rows are C++-only tests. An integer
+too large for a signed 64-bit value (`2^64 - 1`) is in the file: the C++ validator library would
+read it as a negative number, so `rp::validate_result` refuses it itself, and both sides call
+it invalid.
+
+**`valid.json` is made by the Worker's own tests.** It is the `--json` file of one
+`rpworker test` run through the whole pipeline on the test Harness (`--mail 2 --sp 2 --od 2`,
+a fixed run ID and fixed clocks: a canary and a random item of each type, all verified), with
+the lab tenant's names, and the lab Veeam server's repository ID that starts a restore point's
+ID, replaced by placeholders (`shared_names()` in `test_command_test.cpp`) and `worker_version`
+pinned to `0.0.0`. What stays of the lab: the canaries' hashes, the manifest's, and the restore
+point's time (`2026-09-29T22:00:45.6603083Z`, a real point's, kept for its seven-digit
+fraction). A test fails when the pipeline no longer gives exactly that text, and when any lab
+name or that repository ID is left in it. After a deliberate change to the result,
+write it again with the hidden test case, from `worker\`:
+
+```powershell
+.\build\dev\rptests.exe "[.write_shared_result]"
+```
+
+Then read the diff, and run both sides: `ctest --preset dev -R "result"` and, from `cloud\`,
+`uv run pytest tests/test_result_schema.py`. The patches in `cases.json` point into `valid.json`
+by position (`/expected/items/1` is the random mail, `/check/items/3` the item restored twice):
+if the run's layout changed, the patches must follow, and the two counts pinned in
+`result_schema_test.cpp` (158 cases, 39 valid) with them. It also changes when
+`lab/seed-manifest.json` is re-seeded, since the canaries' hashes and the manifest's are in it.
+A change to the schema alone needs no C++ change to be tested: both suites run `cases.json`
+against it.
 
 ### Running the gates locally
 

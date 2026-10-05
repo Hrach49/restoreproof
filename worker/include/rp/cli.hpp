@@ -21,8 +21,10 @@ inline constexpr int ok = 0;
 // handled included. For `rpworker restore` and `test` also a run whose status is
 // error config, internal or result_invalid (a result that isn't valid
 // restoreproof.result.v1), and a pass whose output was lost; for `test` also
-// a --json path refused (not UTF-8, a file already there, no such folder) and
-// a pass whose --json file couldn't be written.
+// a --json path refused (not UTF-8, a file already there, no such folder), a
+// pass whose --json file couldn't be written, and with --evidence a run ID
+// that can't name a folder, a run folder that is already there or can't be
+// made, and a pass whose run folder isn't complete.
 inline constexpr int config = 1;
 // The service refused the credentials, the account's role, the token or a
 // permission: Veeam's AuthError, Graph's AuthError and PermissionError (whose
@@ -69,7 +71,7 @@ inline constexpr std::string_view kCliUsage =
     "[--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--record <dir>] | "
     "rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] "
     "[--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--record <dir>] "
-    "[--json <file>]\n";
+    "[--json <file> | --evidence <dir>]\n";
 
 // rpworker's command line: `--version`, `config ...` (rp/config_check.hpp),
 // `veeam ...` (rp/veeam_command.hpp), `graph ...` (rp/graph_command.hpp),

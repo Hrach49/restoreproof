@@ -5,6 +5,7 @@
 #include <rp/cleaner.hpp>
 #include <rp/cli.hpp>
 #include <rp/client_assertion.hpp>
+#include <rp/evidence_builder.hpp>
 #include <rp/expected_set.hpp>
 #include <rp/graph_client.hpp>
 #include <rp/graph_download.hpp>
@@ -611,6 +612,22 @@ void read_after(graph::GraphClient& client, IHttpClient& download,
     refusals("onedrive", after.onedrive);
 }
 
+// The --evidence root (W4.2 point 8), checked before the secrets: a UTF-8
+// path, and a --run-id that can name the run's folder in it. Throws
+// ConfigError otherwise. Whether the folder can be made is found when it is.
+std::filesystem::path check_evidence_root(std::string_view arg,
+                                          std::optional<std::string_view> run_id)
+{
+    std::optional<std::filesystem::path> root = path_from_utf8(arg);
+    if (!root) {
+        throw ConfigError("--evidence", "--evidence " + table_cell(arg) + ": not a UTF-8 path");
+    }
+    if (run_id && !EvidenceBuilder::can_name_folder(*run_id)) {
+        throw ConfigError("--evidence", "--evidence: the run ID can't name a folder");
+    }
+    return std::move(*root);
+}
+
 } // namespace
 
 bool parse_pipeline_args(const CommandOptions& options, PipelineArgs& parsed)
@@ -678,11 +695,15 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
     Config config;
     Secrets secrets;
     std::optional<graph::ClientCertificate> certificate;
+    std::optional<std::filesystem::path> evidence_root;
     try {
         config_path = command_config_path(parsed.config, env.default_config_path);
         config = load_config(config_path);
         if (presentation.after_config) {
             presentation.after_config();
+        }
+        if (parsed.evidence) {
+            evidence_root = check_evidence_root(*parsed.evidence, parsed.run_id);
         }
         secrets = env.load_secrets();
         require_veeam_secrets(secrets);
@@ -741,6 +762,12 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
     std::vector<verification::Shortfall> shortfalls;
     std::optional<connector::RestoreResult> result;
     std::optional<std::string> started_at;
+    // W4.2: the run's folder, made before the run line when --evidence is
+    // given. Until that line is out it is `new_folder`'s, which takes it away
+    // again whichever way the run ends; from then on the run has it
+    // (`evidence_folder`).
+    RunFolder new_folder;
+    std::optional<std::filesystem::path> evidence_folder;
 
     // W3.4: the run mutex, and Graph for the cleanup and the check, made right
     // after the run line and kept here so finish() can clean after a restore
@@ -841,7 +868,8 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
     // Never throws: whatever fails is a ResultError.
     const auto build_result = [&](const verification::RunVerdict& verdict,
                                   const verification::CheckResult* check,
-                                  const timing::RunTimings& timings) noexcept
+                                  const timing::RunTimings& timings,
+                                  const Evidence* evidence = nullptr) noexcept
         -> std::variant<BuiltResult, ResultError> {
         try {
             ResultParts parts;
@@ -871,10 +899,103 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
             // The clean after runs only after the clean before.
             parts.cleanup = cleanup.before ? &cleanup : nullptr;
             parts.timings = &timings;
+            parts.attachments = evidence ? &evidence->attachments : nullptr;
+            parts.screenshot = evidence ? &evidence->screenshot : nullptr;
             return ResultBuilder::build(parts);
         } catch (...) {
             return ResultError{ResultFailure::build_failed, 0, {}};
         }
+    };
+    // W4.2 point 9: the run folder's files, last. The two text files (always,
+    // also for a run with no valid result), the screenshot's answer, then the
+    // finished result with what it lists, validated, each attachment read
+    // back against its hash, and result.json. Nothing here changes the
+    // status: what fails is one line on `err` and an exit code of 0 becoming
+    // 1 (the W3.6 rule). Returns the exit code.
+    const auto write_evidence = [&](const std::optional<verification::RunVerdict>& verdict,
+                                    bool invalid, const verification::CheckResult* check,
+                                    const timing::RunTimings& timings, int code,
+                                    bool output_lost) noexcept {
+        const auto failed = [&](std::string_view what, std::string_view why) {
+            err << "evidence error: " << what << ": " << why << '\n';
+            code = code == exit_code::ok ? exit_code::config : code;
+        };
+        try {
+            const std::string shown = table_cell(path_to_utf8(*evidence_folder));
+            EvidenceOptions options;
+            options.screenshots_enabled = config.screenshots_enabled;
+            options.capture = env.capture_screenshot;
+            options.write_file = env.write_evidence_file;
+            for (const std::optional<std::string>* secret :
+                 {&secrets.veeam_password, &secrets.graph_cert_pfx_base64,
+                  &secrets.graph_cert_password}) {
+                if (*secret) {
+                    options.secrets.push_back(**secret);
+                }
+            }
+            options.logger = env.connector_options.logger ? env.connector_options.logger
+                                                          : make_command_logger();
+            EvidenceBuilder builder(*evidence_folder, std::move(options));
+            // No screenshot for a run that has no valid result to list it.
+            const EvidenceBuilder::Written written = builder.write_attachments(
+                {expected ? &*expected : nullptr, result ? &*result : nullptr, check,
+                 verdict ? &*verdict : nullptr},
+                verdict && !invalid);
+            for (const EvidenceError& error : written.errors) {
+                failed(shown + '\\' + error.file, "could not be written");
+            }
+            if (!written.evidence) {
+                return code;
+            }
+            std::optional<std::string> text;
+            if (verdict && !invalid) {
+                std::variant<BuiltResult, ResultError> finished =
+                    build_result(*verdict, check, timings, &*written.evidence);
+                if (const ResultError* error = std::get_if<ResultError>(&finished)) {
+                    // The status line is out and stays.
+                    err << format_result_error(*error);
+                } else {
+                    text = std::move(std::get<BuiltResult>(finished).canonical);
+                }
+            }
+            if (!text) {
+                failed(shown, "the result isn't valid restoreproof.result.v1; no result.json was "
+                              "written");
+                return code;
+            }
+            if (const std::optional<EvidenceError> error =
+                    builder.write_result(*written.evidence, *text)) {
+                if (error->cause == EvidenceFailure::holds_secret) {
+                    failed(shown, "the result holds a secret value; no result.json was written");
+                } else {
+                    failed(shown + '\\' + error->file,
+                           error->cause == EvidenceFailure::changed ? "changed after it was hashed"
+                                                                    : "could not be written");
+                }
+                return code;
+            }
+            // The folder's line. Lost, it changes nothing: the files are
+            // written (W3.6 review point 4).
+            if (!output_lost) {
+                try {
+                    out << "evidence " << shown << ": " << kResultFileName << ", "
+                        << kItemsCsvName << ", " << kSessionLogName
+                        << (written.evidence->screenshot.captured ? ", " : "")
+                        << (written.evidence->screenshot.captured ? kScreenshotName : "")
+                        << '\n';
+                    out.flush();
+                } catch (...) {
+                }
+            }
+        } catch (...) {
+            // Never an exit code without its line.
+            try {
+                err << "error: unexpected failure\n";
+            } catch (...) {
+            }
+            code = code == exit_code::ok ? exit_code::config : code;
+        }
+        return code;
     };
     // The run's status is decided, then the result is built and validated as
     // it stands (W4.1 point 5: ended_at and cleanup.after null, the open
@@ -959,6 +1080,9 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
             code = exit_code::config;
         }
         const timing::RunTimings timings = end_timings(output_lost);
+        if (evidence_folder) {
+            return write_evidence(verdict, invalid, check, timings, code, output_lost);
+        }
         if (presentation.on_run) {
             try {
                 std::optional<std::string> text;
@@ -1069,6 +1193,25 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
                                    : make_run_id();
         sampling::check_run_id(run_id); // env.make_run_id's: nothing printed if it fails
 
+        // W4.2 point 8: the run's folder, before the run line and anything
+        // that writes. One that is there already is another run's: never
+        // written into.
+        if (evidence_root) {
+            const RunFolderCheck made =
+                EvidenceBuilder::make_run_folder(*evidence_root, run_id, new_folder);
+            if (made == RunFolderCheck::not_a_folder_name) {
+                err << "evidence error: the run ID can't name a folder; nothing was done\n";
+                return exit_code::config;
+            }
+            if (made != RunFolderCheck::ok) {
+                err << "evidence error: " << table_cell(path_to_utf8(new_folder.path()))
+                    << ": the run folder "
+                    << (made == RunFolderCheck::exists ? "already exists" : "couldn't be made")
+                    << "; nothing was done\n";
+                return exit_code::config;
+            }
+        }
+
         // Once the run ID exists, before the sample is chosen (it browses
         // Veeam) and the restore (it takes minutes): a run that fails from
         // here on still shows its run ID and seed, and ends with its status.
@@ -1076,6 +1219,13 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
         flush_or_throw(out);
         chosen = *point;
         phase = verification::RunPhase::before_restore;
+        // The run has its run line, and with it its folder: nothing is
+        // written into it before the end, so a run that ended before this
+        // line left none (and no level of the root made for it).
+        if (evidence_root) {
+            new_folder.keep();
+            evidence_folder = new_folder.path();
+        }
 
         // Graph for the cleanup and the check (W3.2, W3.4), one client for
         // both. `options` records Graph under "graph" with --record, the

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://restoreproof.local/schemas/result.v1.json",
   "title": "RestoreProof result v1",
-  "description": "restoreproof.result.v1: what one restore test did and found (W4.1, docs/decisions.md 2026-10-04). Written as canonical-json-v1. All fifteen keys are always there; sample, expected, restore, check and cleanup are null where the step didn't run. The schema uses only keywords JSON Schema draft 7 and 2020-12 read alike, and every object is closed.",
+  "description": "restoreproof.result.v1: what one restore test did and found (W4.1, docs/decisions.md 2026-10-04; attachments and screenshot W4.2, 2026-10-05). Written as canonical-json-v1. All seventeen keys are always there; sample, expected, restore, check and cleanup are null where the step didn't run, attachments and screenshot where no run folder is written. The schema uses only keywords JSON Schema draft 7 and 2020-12 read alike, and every object is closed.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -20,7 +20,9 @@
     "check",
     "status",
     "cleanup",
-    "timings"
+    "timings",
+    "attachments",
+    "screenshot"
   ],
   "properties": {
     "format": {
@@ -221,9 +223,103 @@
     },
     "timings": {
       "$ref": "#/$defs/timings"
+    },
+    "attachments": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/attachments"
+        }
+      ]
+    },
+    "screenshot": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/screenshot"
+        }
+      ]
     }
   },
   "$defs": {
+    "attachment": {
+      "description": "One file beside result.json in the run folder: its name, the SHA-256 of its bytes and their count.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "sha256",
+        "size_bytes"
+      ],
+      "properties": {
+        "name": {
+          "enum": [
+            "items.csv",
+            "screenshot.png",
+            "veeam-session.log"
+          ]
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "size_bytes": {
+          "$ref": "#/$defs/count"
+        }
+      }
+    },
+    "attachments": {
+      "description": "The run folder's files beside result.json, sorted by name: items.csv and veeam-session.log always, screenshot.png when one was captured. result.json isn't listed: it can't hold its own hash.",
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 3,
+      "items": {
+        "$ref": "#/$defs/attachment"
+      }
+    },
+    "screenshot": {
+      "description": "Captured (screenshot.png is among the attachments), or unavailable with why. Never changes the status.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "state"
+          ],
+          "properties": {
+            "state": {
+              "const": "captured"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "state",
+            "reason"
+          ],
+          "properties": {
+            "state": {
+              "const": "unavailable"
+            },
+            "reason": {
+              "enum": [
+                "disabled",
+                "no_page",
+                "no_browser",
+                "login_required",
+                "timeout",
+                "failed"
+              ]
+            }
+          }
+        }
+      ]
+    },
     "count": {
       "type": "integer",
       "minimum": 0,

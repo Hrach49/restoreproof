@@ -24,7 +24,8 @@ const std::string kUsage = "usage: rpworker --version | rpworker config check [-
                            "[--config <path>] [--record <dir>] | "
                            "rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] "
                            "[--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] "
-                           "[--config <path>] [--record <dir>] [--json <file>]\n";
+                           "[--config <path>] [--record <dir>] "
+                           "[--json <file> | --evidence <dir>]\n";
 
 const std::string kConfigJson = R"({
     "cloud_url": "https://cloud.example.invalid",
@@ -69,6 +70,12 @@ TEST_CASE("rpworker prints usage to stderr and exits 64 for a command line it do
         Args{"test", "--json", ""},
         Args{"test", "--json", "a.json", "--json", "b.json"},
         Args{"restore", "--json", "a.json"},
+        // W4.2: --evidence (a folder, never empty) or --json, not both;
+        // `restore` takes neither.
+        Args{"test", "--evidence"},
+        Args{"test", "--evidence", ""},
+        Args{"test", "--evidence", "runs", "--json", "a.json"},
+        Args{"restore", "--evidence", "runs"},
         Args{"restore", "--seed", "1"});
     CAPTURE(args);
 

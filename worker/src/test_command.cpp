@@ -131,16 +131,20 @@ int run_test_command(std::span<const std::string_view> args, std::ostream& out,
     PipelineArgs parsed;
     const std::optional<CommandOptions> options =
         parse_options(args, {"--mail", "--sp", "--od", "--point", "--run-id", "--canary-cursor",
-                             "--manifest", "--config", "--record", "--json"});
-    // An empty --json value is a missing one: no file can have that name.
-    const auto json_empty = [&] {
-        const std::optional<std::string_view> value = options->value("--json");
-        return value && value->empty();
+                             "--manifest", "--config", "--record", "--json", "--evidence"});
+    // An empty --json or --evidence value is a missing one: no file or folder
+    // can have that name. And one or the other (W4.2 point 7): the run
+    // folder's result.json is the --json file.
+    const auto files_wrong = [&] {
+        const std::optional<std::string_view> json = options->value("--json");
+        const std::optional<std::string_view> evidence = options->value("--evidence");
+        return (json && json->empty()) || (evidence && evidence->empty()) || (json && evidence);
     };
-    if (!options || !parse_pipeline_args(*options, parsed) || json_empty()) {
+    if (!options || !parse_pipeline_args(*options, parsed) || files_wrong()) {
         err << kCliUsage;
         return exit_code::usage;
     }
+    parsed.evidence = options->value("--evidence");
     const std::optional<std::string_view> json_arg = options->value("--json");
     std::optional<std::filesystem::path> json_path;
     std::shared_ptr<FixtureRecorder> recorder;

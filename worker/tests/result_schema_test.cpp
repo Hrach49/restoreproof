@@ -535,14 +535,67 @@ TEST_CASE("the result schema's reason pattern takes every reason the checker can
     }
 }
 
+// W4.3 point 1: the names of the containers a draw looked into are of mailboxes,
+// sites and OneDrives the run didn't test, so the result holds their count only.
+TEST_CASE("the result counts the containers a draw looked into and never names them",
+          "[result_schema]")
+{
+    const std::string kind = GENERATE("mail", "sharepoint", "onedrive");
+    INFO(kind);
+    const json::json_pointer random("/sample/" + kind + "/random");
+    const json names = json::array({"carol@contoso.example"});
+    REQUIRE(validate_result(base_document()).valid);
+    REQUIRE(base_document().at(random).at("containers_drawn") == 1);
+
+    SECTION("the old array of names beside the count")
+    {
+        json document = base_document();
+        document[random]["containers_listed"] = names;
+        REQUIRE_FALSE(validate_result(document).valid);
+    }
+    SECTION("the old array of names in place of the count")
+    {
+        json document = base_document();
+        document[random].erase("containers_drawn");
+        document[random]["containers_listed"] = names;
+        REQUIRE_FALSE(validate_result(document).valid);
+    }
+    SECTION("the count as an array of names")
+    {
+        json document = base_document();
+        document[random]["containers_drawn"] = names;
+        const ResultValidation result = validate_result(document);
+        REQUIRE_FALSE(result.valid);
+        REQUIRE(result.first_pointer == random.to_string() + "/containers_drawn");
+    }
+    SECTION("no count")
+    {
+        json document = base_document();
+        document[random].erase("containers_drawn");
+        REQUIRE_FALSE(validate_result(document).valid);
+    }
+    SECTION("a count below zero")
+    {
+        json document = base_document();
+        document[random]["containers_drawn"] = -1;
+        REQUIRE_FALSE(validate_result(document).valid);
+    }
+    SECTION("no container, or several")
+    {
+        json document = base_document();
+        document[random]["containers_drawn"] = GENERATE(0, 8);
+        REQUIRE(validate_result(document).valid);
+    }
+}
+
 TEST_CASE("the shared result documents validate as they say", "[result_schema]")
 {
     const json& cases = cases_file().at("cases");
     REQUIRE(cases_file().at("format") == std::string{rp::kResultFormat});
     // The file can't shrink unnoticed.
-    REQUIRE(cases.size() == 180);
+    REQUIRE(cases.size() == 183);
 
-    const std::size_t i = GENERATE(range(std::size_t{0}, std::size_t{180}));
+    const std::size_t i = GENERATE(range(std::size_t{0}, std::size_t{183}));
     const json& entry = cases.at(i);
     const std::string name = entry.at("name");
     INFO(name);

@@ -80,9 +80,7 @@ int run_public_key(std::ostream& out, std::ostream& err, const SignerCommandEnv&
 // The name is one list_folder gave: a surrogate that has no pair in the file's
 // name (NTFS allows it) is a code point of its own there and is written as
 // \udXXX, never joined with what stands beside it.
-// (verify_bundle.py writes its notes the same way, byte for byte, but for the
-// short forms of a backslash, a tab and a line end, which no file name on
-// Windows holds.)
+// (verify_bundle.py writes its notes the same way, byte for byte.)
 std::string printable(std::string_view name)
 {
     std::string text;

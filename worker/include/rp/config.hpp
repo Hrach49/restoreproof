@@ -31,6 +31,7 @@ namespace rp {
 //   log_level                no        "info"   trace, debug, info, warn, error, critical, off
 //   veeam_ca_file            no        (none)   absolute path of a readable file (3)
 //   veeam_cert_sha256        no        (none)   64 hex digits; needs veeam_ca_file (4)
+//   screenshots_enabled      no        false    true or false (6)
 //
 // (1) Printable ASCII only, with no user name, password, query or fragment:
 //     `config check` prints it.
@@ -60,6 +61,11 @@ namespace rp {
 //     (rp::is_uuid): the tenant's ID and the Worker app's Application
 //     (client) ID. Not a domain name nor an app name: both go into Entra and
 //     Graph URLs.
+// (6) The client's screenshot setting (W4.2), the config's one boolean: JSON's
+//     true or false, not "true" nor 1. Whether a run that writes a run folder
+//     asks the screenshot capturer for a picture of the restore session; off
+//     by default, since a picture can't go through redact(). The CLI's local
+//     value: a job's replaces it when jobs exist (W4.8).
 // No string value may contain a control character: ASCII (below 0x20, 0x7F),
 // C1 (U+0080-U+009F), U+2028, U+2029 or a bidi control (U+200E, U+200F,
 // U+202A-U+202E, U+2066-U+2069, U+061C).
@@ -87,6 +93,7 @@ struct Config {
     // As written in the file (either case); nullopt when absent (the host
     // name is checked).
     std::optional<std::string> veeam_cert_sha256;
+    bool screenshots_enabled = false;
 };
 
 // A config file that can't be read, isn't valid JSON or breaks a rule above,

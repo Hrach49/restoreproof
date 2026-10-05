@@ -14,5 +14,6 @@
     "sample_mail": 5,
     "sample_sp": 5,
     "sample_od": 5,
-    "log_level": "info"
+    "log_level": "info",
+    "screenshots_enabled": false
 }

@@ -1,5 +1,6 @@
 #include <rp/evidence_builder.hpp>
 
+#include <rp/cert_export.hpp>
 #include <rp/sha256.hpp>
 
 #include "atomic_file.hpp"
@@ -432,8 +433,16 @@ EvidenceBuilder::Written EvidenceBuilder::write_attachments(const EvidenceFacts&
     return out;
 }
 
+EvidenceBuilder::~EvidenceBuilder()
+{
+    for (std::string& secret : options_.secrets) {
+        secure_wipe(secret);
+    }
+}
+
 std::optional<EvidenceError> EvidenceBuilder::write_result(const Evidence& evidence,
-                                                           std::string_view canonical) noexcept
+                                                           std::string_view canonical,
+                                                           SignedResult* signature) noexcept
 {
     try {
         if (!options_.secrets.empty() &&
@@ -452,8 +461,32 @@ std::optional<EvidenceError> EvidenceBuilder::write_result(const Evidence& evide
                 return EvidenceError{attachment.name, EvidenceFailure::changed};
             }
         }
+        // W4.3: the signature of the bytes that are about to be written, in
+        // its own file first, so result.json still means the folder is
+        // complete.
+        std::optional<SignedResult> made;
+        try {
+            if (options_.sign) {
+                made = options_.sign(canonical);
+            }
+        } catch (...) {
+            made.reset();
+        }
+        if (!made) {
+            return EvidenceError{std::string{kResultFileName}, EvidenceFailure::not_signed};
+        }
+        if (!write(kSignatureFileName, made->signature_file)) {
+            return EvidenceError{std::string{kSignatureFileName}, EvidenceFailure::not_written};
+        }
         if (!write(kResultFileName, canonical)) {
+            // No signature beside no result. A crash between the two writes
+            // can still leave one.
+            std::error_code ec;
+            std::filesystem::remove(folder_ / *path_from_utf8(kSignatureFileName), ec);
             return EvidenceError{std::string{kResultFileName}, EvidenceFailure::not_written};
+        }
+        if (signature) {
+            *signature = std::move(*made);
         }
         return std::nullopt;
     } catch (...) {

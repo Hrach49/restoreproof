@@ -1,8 +1,8 @@
 # Worker configuration
 
 How the Worker is configured: the settings file, the secrets, and how to check both with
-`rpworker config check`, then how `rpworker veeam list`, `rpworker graph list` and `rpworker
-restore` use them, and the exit codes of every `rpworker` command. The contract is in `worker/include/rp/config.hpp` and
+`rpworker config check`, then how `rpworker veeam list`, `rpworker graph list`, `rpworker
+restore`, `rpworker test` and `rpworker signer` use them, and the exit codes of every `rpworker` command. The contract is in `worker/include/rp/config.hpp` and
 `worker/include/rp/secrets.hpp`; where this page and the code disagree, the code wins.
 
 ## Where the file lives
@@ -250,6 +250,7 @@ secrets are read from these environment variables, whose names are defined once 
 | `RP_VEEAM_PASSWORD` | That account's password. |
 | `RP_GRAPH_CERT_PFX_BASE64` | The Worker app's certificate with its private key: the PFX file as one line of standard Base64. See "Microsoft Graph app" below. |
 | `RP_GRAPH_CERT_PASSWORD` | The PFX's password. Unset only if the PFX has none. |
+| `RP_SIGNING_KEY_BASE64` | The Worker's Ed25519 signing key (W4.3): one line of standard Base64 of the private key's PKCS#8 DER. See "The signing key" below. |
 
 Any of them may be unset for now. W1.0 chose admin mode (`docs/decisions.md`, 2026-09-26):
 
@@ -257,6 +258,8 @@ Any of them may be unset for now. W1.0 chose admin mode (`docs/decisions.md`, 20
   lab);
 - `RP_GRAPH_CERT_PFX_BASE64` and `RP_GRAPH_CERT_PASSWORD` are the certificate of the
   Worker's own Graph app (W2.1);
+- `RP_SIGNING_KEY_BASE64` is the key `rpworker test --evidence` signs the result with (W4.3);
+  only that command and `rpworker signer public-key` need it;
 - the Entra application certificate that restore requests must carry has no variable yet. W2.4
   used Veeam's own organisation app in the lab, exporting its certificate per run; which
   credential the Worker carries, and how it is stored, is open until a spike before W4.5
@@ -276,15 +279,57 @@ $env:RP_VEEAM_USERNAME = '...'
 $env:RP_VEEAM_PASSWORD = '...'
 $env:RP_GRAPH_CERT_PFX_BASE64 = [Convert]::ToBase64String([IO.File]::ReadAllBytes('C:\path\to\worker-graph.pfx'))
 $env:RP_GRAPH_CERT_PASSWORD = '...'
+$env:RP_SIGNING_KEY_BASE64 = '...'
 ```
 
 In the lab, dot-source `lab/entra/set-worker-env.ps1` (`. .\lab\entra\set-worker-env.ps1`)
-instead: it sets the two Graph variables from the lab's PFX and Credential Manager without
-printing either, and `-Clear` removes them.
+instead: it sets the two Graph variables from the lab's PFX and Credential Manager, and the
+signing key from its own Credential Manager entry when there is one (`lab/README.md`, "The
+signing key"), without printing any of them, and `-Clear` removes all three.
 
 A Windows service does not see a user's session variables. Until the vault lands, a Worker
 running as a service would need them set at machine level, where any local administrator can
 read them.
+
+### The signing key
+
+`RP_SIGNING_KEY_BASE64` is the private half of the Ed25519 key pair that signs a run folder's
+result (W4.3; `docs/verification.md`, "The signature"; `docs/decisions.md` 2026-10-05, W4.3
+point 3). The value is one line of standard Base64, 64 characters, of the key's PKCS#8 DER (48
+bytes: the 16 bytes `302e020100300506032b657004220420`, then the 32-byte seed). It is the body
+line of the PEM that `openssl genpkey -algorithm ed25519` writes, without the two armour
+lines. No `rpworker` command makes or prints a private key; in the lab `python -m seeder
+new-signing-key` makes the pair and keeps the line in Credential Manager (`lab/README.md`).
+W4.5's vault will hold the same value as `signing_private_key`, and W7.1's installer will
+make it.
+
+- **When it is required.** Only `rpworker test --evidence <dir>`, which always signs, and
+  `rpworker signer public-key`. Every other command reads the variable with the other secrets
+  and never parses or needs it: `restore`, `test` without `--evidence` (`--json` included),
+  `veeam list`, `graph list` and `config check` run with it unset or holding something that
+  isn't a key, and `signer verify` reads no secret at all.
+- **When it is checked.** With `--evidence`, right after the Graph certificate is checked:
+  before the schema check, the manifest, the run mutex and any Veeam call. Exit 1, no run
+  line, nothing done:
+
+  ```
+  config error: RP_SIGNING_KEY_BASE64 is not set; --evidence signs the result
+  config error: RP_SIGNING_KEY_BASE64 is not an Ed25519 private key (Base64 of PKCS#8 DER)
+  ```
+
+  The second is for anything but strict Base64 of exactly those 48 bytes: Base64 with a line
+  break or without padding, 47 or 49 bytes, another algorithm's header, an RSA key, the PEM
+  with its armour lines. Neither line ever shows the value.
+- **`config check`** prints `RP_SIGNING_KEY_BASE64     **** (set)` or `(not set)` and doesn't
+  look at the value.
+- **Never logged.** `redact()` masks the key names `signing_key`, `signing_key_base64` and
+  `signing_private_key` and any `-----BEGIN ... PRIVATE KEY-----` block. The key's text and
+  the two other shapes its seed could leak in (Base64, hex) are among the run's secret values
+  that the run folder's files are checked against; a `--record` recorder checks its fixtures
+  against the text. The run wipes its copies of the key when it ends; the process's own
+  environment holds the variable until the process ends, which only the vault changes.
+- **The public half** is what a verifier is given, and what is registered with the Cloud
+  (C5.5): `rpworker signer public-key` prints it ("`rpworker signer`" below).
 
 ## Microsoft Graph app
 
@@ -372,6 +417,7 @@ RP_VEEAM_USERNAME         **** (set)
 RP_VEEAM_PASSWORD         **** (set)
 RP_GRAPH_CERT_PFX_BASE64  **** (set)
 RP_GRAPH_CERT_PASSWORD    **** (set)
+RP_SIGNING_KEY_BASE64     **** (set)
 ```
 
 Without `veeam_ca_file` its line reads `veeam_ca_file             (not set)`, and likewise
@@ -379,7 +425,7 @@ Without `veeam_ca_file` its line reads `veeam_ca_file             (not set)`, an
 `false` when the file doesn't set it.
 
 A secret prints only as `**** (set)` or `(not set)`: never any character of its value, nor its
-length.
+length. None is opened or parsed here: a signing key that isn't a key still reads `**** (set)`.
 
 An error looks like this:
 
@@ -923,7 +969,8 @@ wrote C:\runs\run-0001.json
 ```
 
 With `--json`, the last lines are the timings' table, then `wrote <file>`, then `--record`'s
-`recorded ...` line. (For `restore` the timings' table stays last but for `recorded ...`.)
+`recorded ...` line; with `--evidence`, the timings' table, then `signed ...` and `evidence
+...` (below), then `recorded ...`. (For `restore` the timings' table stays last but for `recorded ...`.)
 
 ### `--json <file>`
 
@@ -931,11 +978,16 @@ Writes the run's result, `restoreproof.result.v1` (W4.1; `docs/verification.md`,
 result"), for every run that printed its run line, whatever its status (`error` and stops
 included). A run that stops before its run line (the mutex, no restore point, Veeam
 unreachable listing them, a config or manifest problem) writes no file, as it prints no status
-line. The file is unsigned (W4.3 signs it).
+line.
+
+**`--json` is never signed.** It needs no signing key and writes no `signature.json`: it is
+one file with no folder to hold a signature beside it, and its bytes aren't covered by the
+result's secret check. A signed result is `--evidence`'s `result.json` (below).
 
 **The file is the result's canonical bytes** (`canonical-json-v1`): one line of UTF-8, keys
-sorted, no whitespace, no trailing newline, no BOM. Those are the bytes W4.3 hashes, so don't
-reformat the file in place. To read it:
+sorted, no whitespace, no trailing newline, no BOM. They are the bytes `--evidence` would hash
+and sign as `result.json`, and a verifier refuses a result that isn't its own canonical form,
+so don't reformat the file in place. To read it:
 
 ```powershell
 python -m json.tool C:\runs\run-0001.json
@@ -955,13 +1007,14 @@ Its seventeen top-level keys are always all there, `null` where a step didn't ru
 | `restore_point` | `{"id", "backup_time_raw", "backup_time"}`: Veeam's time text unparsed, and the same time cut to whole seconds (`YYYY-MM-DDTHH:MM:SSZ`, `null` when the text doesn't parse) |
 | `sample`, `expected`, `check`, `status`, `cleanup`, `timings` | the result objects as W2.6, W3.1, W3.2, W3.3, W3.4 and W3.5 write them (`docs/verification.md`). `sample` and `expected` are `null` when the run stopped before the sample was chosen, `check` when the check didn't run, `cleanup` when no clean ran (the run stopped before the clean before). `status` and `timings` are always objects |
 | `restore` | the restore's status, items sent and restored; its sessions (ID, kind, result, `details` only when they read as Veeam's counts, else `null`, items sent and restored, `started_at_raw`/`ended_at_raw` as Veeam wrote them); its items in order, `{index, kind, outcome, infrastructure, container_missing, session_id}`, with no item name and no Veeam message. `null` when there is no restore result |
-| `attachments`, `screenshot` | the run folder's other files and its screenshot (W4.2, `--evidence` below). Both `null` under `--json`: there is no run folder |
+| `attachments`, `screenshot` | the run folder's files that the result covers and its screenshot (W4.2, `--evidence` below). Both `null` under `--json`: there is no run folder |
 
 There is no `command` and no `exit_code` (W3.6's `rp.run-summary.v0` had both): the file
 describes the run, not the process. A pass whose stdout was lost, or whose `--record`
 recording isn't complete, still exits 1, and the file says `pass`. There is no top-level
 `veeam_org_name` either: it is in `client`. There is no `signature`, `tsa_token` or
-`bundle_sha256` yet. The file holds no secret, but more tenant data than stdout: the list is in
+`bundle_sha256`: a signature is a file beside the result, never a key of it
+(`docs/verification.md`, "The signature"). The file holds no secret, but more tenant data than stdout: the list is in
 `docs/verification.md`, "What of the tenant the result holds". Keep it out of the repository.
 
 **A result that isn't valid is never written.** The Worker validates the result against its
@@ -1015,7 +1068,9 @@ exit code is kept. `<file>` is the value as given, control characters shown as s
 ### `--evidence <dir>`
 
 Writes the run folder `<dir>\<run_id>\` (W4.2; `docs/verification.md`, "The run folder";
-`docs/decisions.md` 2026-10-05, W4.2). `<dir>` is the runs root and is made if it isn't there;
+`docs/decisions.md` 2026-10-05, W4.2) and signs its result (W4.3; `docs/verification.md`, "The
+signature"; `docs/decisions.md` 2026-10-05, W4.3). It always signs: there is no flag for an
+unsigned folder, so it needs `RP_SIGNING_KEY_BASE64` ("The signing key" above). `<dir>` is the runs root and is made if it isn't there;
 there is no default, so nothing is written without the flag (the service will pass
 `%ProgramData%\RestoreProof\runs`, W4.8). `--evidence` and `--json` can't be given together
 (exit 64): the folder's `result.json` is the `--json` file. `restore` takes neither.
@@ -1025,19 +1080,26 @@ there is no default, so nothing is written without the flag (the service will pa
 | `items.csv` | one row per sampled item: what was expected, what the restore and the check said, and for a canary the hash that was found |
 | `veeam-session.log` | Veeam's own lines about the restore sessions, as the connector read them: one per session and one per restore event. Empty when nothing was restored |
 | `screenshot.png` | only when a screenshot was captured (never, today: below) |
-| `result.json` | the result, as `--json` writes it, with each file above in `attachments` (`name`, `sha256`, `size_bytes`) and `screenshot` saying `captured` or why not. Written last |
+| `signature.json` | the result's signature, `restoreproof.signature.v1`: five keys, `algorithm`, `bundle_sha256` (the SHA-256 of `result.json`'s bytes), `format`, `key_id` (the SHA-256 of the signing key's public half) and `signature` (Ed25519 over that hash's 32 bytes, Base64). Written just before `result.json` |
+| `result.json` | the result, as `--json` writes it, with each of the first three files in `attachments` (`name`, `sha256`, `size_bytes`) and `screenshot` saying `captured` or why not. Written last |
 
-`result.json` doesn't list itself (a file can't hold its own hash). It is there only when the
-folder is complete: a folder without it is a run with no result.
+`result.json` lists neither itself (a file can't hold its own hash) nor `signature.json`
+(which depends on that hash). It is there only when the folder is complete and signed: a
+folder without it is a run with no result.
 
 For example, `rpworker test --mail 2 --sp 1 --od 0 --run-id run-0001 --evidence C:\rp-runs`
 ends, after the timings' table:
 
 ```
-evidence C:\rp-runs\run-0001: result.json, items.csv, veeam-session.log
+signed <bundle_sha256> key <key_id>
+evidence C:\rp-runs\run-0001: result.json, signature.json, items.csv, veeam-session.log
 ```
 
-and before `--record`'s `recorded ...` line.
+and before `--record`'s `recorded ...` line. Both lines are printed only once `result.json` is
+written, the folder's last. `<bundle_sha256>` and `<key_id>` are 64 lower-case hex each, the
+two values in `signature.json`; `Get-FileHash result.json` gives the first, `rpworker signer
+public-key`'s `key` line the second. With a screenshot the folder's line ends `,
+screenshot.png`.
 
 **Before the run.** Once the config is read and before the secrets:
 
@@ -1050,6 +1112,15 @@ The second is for a `--run-id` that isn't a plain file name: it holds a `:`, end
 `.` or `..`, or is a DOS device's name (`CON`, `aux.1`; the list is under `--json` above). The
 folder's name is the run ID as it is, never an encoded form. A run ID the run makes itself
 (`rp-<time>-<8 hex>`) always can.
+
+Then the secrets are read and the Graph certificate checked, as for every run, and right after
+that the signing key is parsed, before the schema check, the manifest, the mutex and any Veeam
+call. Exit 1, no run line, no folder:
+
+```
+config error: RP_SIGNING_KEY_BASE64 is not set; --evidence signs the result
+config error: RP_SIGNING_KEY_BASE64 is not an Ed25519 private key (Base64 of PKCS#8 DER)
+```
 
 Then, once the run ID is known and before the run line, the folder is made. If something is
 already at that path (a folder of the same letters in another case included), or it can't be
@@ -1066,17 +1137,27 @@ its run line for any other reason, leaves no folder: not the run's, and not `<di
 above it when this run made them.
 
 **At the end**, after the clean after and the timings: the two text files are written, the
-screenshot is asked for, the finished result is built with what it lists and validated, each
-attachment is read back and compared with its hash, and `result.json` is written. What can go
-wrong is one line on stderr; the status never changes, exit 0 becomes 1 and any other exit
-code is kept:
+screenshot is asked for, the finished result is built with what it lists and validated, its
+strings are looked through for the run's secret values, each attachment is read back and
+compared with its hash, the result's bytes are signed, `signature.json` is written and then
+`result.json`. What can go wrong is one line on stderr; the status never changes, exit 0
+becomes 1 and any other exit code is kept:
 
 ```
 evidence error: <file>: could not be written
 evidence error: <file>: changed after it was hashed
 evidence error: <folder>: the result isn't valid restoreproof.result.v1; no result.json was written
 evidence error: <folder>: the result holds a secret value; no result.json was written
+evidence error: <folder>: the result couldn't be signed; no result.json was written
 ```
+
+`<file>` in the first line can be `<folder>\signature.json`: then no `result.json` is written
+either. When `result.json` itself can't be written, the `signature.json` just written is
+removed again. The last line is for a signature that couldn't be made or didn't verify under
+the key's own public half; it leaves the two text files (and a screenshot, if one was taken),
+no `signature.json` and no `result.json`. A run that ended `fail` or `error` with a valid
+result is signed exactly as a `pass` is; a run that ended `error result_invalid` has no
+result to sign.
 
 The third is for a run that ended `error result_invalid`, or whose finished result isn't valid
 (after its `result error: ...` line): the two text files are there, `result.json` isn't.
@@ -1103,12 +1184,110 @@ never changes a status, a warning or an exit code.
 
 **What the files hold of the tenant.** No secret: every line of the log has been through
 `redact()`, and a line or a row that holds one of the run's secret values (the Veeam password,
-the Graph certificate or its password) is written as `[withheld: held a secret value]`, with
+the Graph certificate or its password, the signing key in any of three shapes) is written as `[withheld: held a secret value]`, with
 one `SECURITY:` line in the log. No mail body, no file content, and no hash of either unless
 the item is a canary. But tenant names: `items.csv` has the sampled items' subjects and file
 names (the ones the result holds), and `veeam-session.log` has Veeam's messages as they are,
 which name the item, its source folder or path and the restore target. Keep the folder out of
 the repository.
+
+## `rpworker signer`
+
+```
+rpworker signer public-key
+rpworker signer verify <folder> --public-key <pem file>
+```
+
+Two read-only commands for the signature of a run folder (W4.3; `docs/verification.md`, "The
+signature"; `docs/decisions.md` 2026-10-05, W4.3 point 4 and its build notes). Neither reads
+`config.json`, calls a service or writes a file. The code is `rp::run_signer_command` in
+`worker/include/rp/signer_command.hpp`. Anything else after `signer` is the usage line, exit
+64.
+
+### `signer public-key`
+
+Prints the public half of the key in `RP_SIGNING_KEY_BASE64`: the "public key exported as PEM
+for registration" (C5.5), and the file a verifier is given. It never prints the private key.
+
+stdout is the key's SubjectPublicKeyInfo PEM and nothing else, three lines:
+
+```
+-----BEGIN PUBLIC KEY-----
+<60 Base64 characters>
+-----END PUBLIC KEY-----
+```
+
+stderr, once the PEM is out, is one line, `key <key_id>`: the SHA-256 of the key's 44 DER
+bytes in lower-case hex, the `key_id` of every `signature.json` the key makes. So stdout is a
+key file as it is:
+
+```powershell
+.\build\dev\rpworker.exe signer public-key | Set-Content -Encoding ascii C:\restoreproof-runs\worker-signing.pub.pem
+```
+
+(In Windows PowerShell 5.1 a plain `>` writes UTF-16, which a verifier refuses as a key file;
+`Set-Content -Encoding ascii` writes the bytes it needs. PowerShell 7's `>` is fine.)
+
+| Exit code | When | stderr |
+|---|---|---|
+| 0 | the PEM is on stdout | `key <key_id>` |
+| 1 | the variable is unset or empty | `config error: RP_SIGNING_KEY_BASE64 is not set` |
+| 1 | it isn't a key | `config error: RP_SIGNING_KEY_BASE64 is not an Ed25519 private key (Base64 of PKCS#8 DER)` |
+| 1 | a secret variable isn't valid Unicode | `config error: environment variable <name> is not valid Unicode` |
+| 1 | stdout couldn't be written | `signer error: the answer couldn't be written`, and no `key` line |
+| 64 | any word after `public-key` | the usage line |
+
+### `signer verify <folder> --public-key <pem file>`
+
+The C++ verifier over a run folder. It needs no config and no secret: the public key comes
+from the caller's file, never from the folder. `shared/tools/verify_bundle.py` runs the same
+checks in the same order with the same words (`docs/testing.md`, "Verify a run folder by
+hand").
+
+stdout is one line:
+
+```
+verified <bundle_sha256> key <key_id>
+not verified: <word>
+```
+
+`<word>` is the first check that failed, one of twelve: `result_unreadable`,
+`result_not_canonical`, `result_schema`, `attachment_twice`, `screenshot_missing`,
+`signature_file`, `hash_mismatch`, `wrong_key`, `signature_invalid`, `attachment_missing`,
+`attachment_size`, `attachment_hash` (what each means: `docs/verification.md`, "The checks,
+and the thirteen words"). Anything wrong inside the folder is a word, a missing `result.json`
+or `signature.json` included.
+
+With `verified` only, stderr has one line per name in the folder that the result doesn't
+list, before the verdict's line and sorted: `note: not listed in the result: <name>`. A note
+is never a failure. A character of the name that isn't printable ASCII, and a backslash, is
+written as `\xNN`, `\uNNNN` or `\UNNNNNNNN`.
+
+| Exit code | When | stderr |
+|---|---|---|
+| 0 | `verified ...` | the notes, if any |
+| 5 | `not verified: <word>` | (nothing) |
+| 1 | the key file's path isn't UTF-8 | `signer error: the --public-key path is not valid UTF-8` |
+| 1 | the key file isn't there, can't be read whole or is over 64 KiB | `signer error: --public-key <file>: the file can't be read` |
+| 1 | it isn't a key file | `signer error: --public-key <file>: not an Ed25519 public key in PEM` |
+| 1 | the folder's path isn't UTF-8 | `signer error: the folder's path is not valid UTF-8` |
+| 1 | `<folder>` isn't a folder that can be opened | `signer error: <folder>: the folder can't be opened` |
+| 1 | the verdict couldn't be written to stdout | `signer error: the answer couldn't be written` |
+| 64 | `<folder>` or `--public-key <file>` missing, empty or given twice, or any other word | the usage line |
+
+The key file is checked before the folder. `<folder>` and `--public-key <pem file>` may come
+in either order. With exit 1 nothing is on stdout: a failure of the verifier is never a
+verdict.
+
+**The key file** is one `-----BEGIN PUBLIC KEY-----` block of an Ed25519 key with only white
+space around it: what `signer public-key` prints, what `new-signing-key --public-key-out`
+writes, and nothing looser (no text before or after the block, no header line, no blank line
+inside it, LF or CRLF line ends, no BOM, not UTF-16). The whole rule is in
+`docs/verification.md`, "The public key file".
+
+**The answer is only as good as the key file.** `signature.json` isn't itself signed, so a
+folder signed with another key verifies against that other key's file. Give the verifier the
+key you already trust, and compare `key <key_id>` with what the Worker printed.
 
 ## `--record <dir>`
 
@@ -1139,15 +1318,15 @@ The same for every `rpworker` command (`rp::exit_code` in `worker/include/rp/cli
 | Exit code | Meaning | stderr |
 |---|---|---|
 | 0 | Success. | (nothing) |
-| 1 | The config or a secret is missing or invalid, or something unexpected failed (an error no command handles ends here too, never in an `abort()`, whose exit code would be 3). For `graph list` this includes the certificate: `RP_GRAPH_CERT_PFX_BASE64` unset, a PFX that doesn't open with `RP_GRAPH_CERT_PASSWORD`, or a certificate that isn't valid now, all found before any request. For `restore`, also the same certificate problems as `graph list` (before any Veeam call; `RP_GRAPH_CERT_PASSWORD` unset is fine for a PFX without a password), the certificate failing as the check's reads before the restore sign in (nothing restored), a manifest that doesn't load, whose `tenant_id` isn't `graph_tenant_id` or that names a restore target (before any Veeam call), an unknown connector, a run whose status is `error config`, `error internal` (the facts not adding up, or the check failing for a reason that isn't Graph's) or `error result_invalid` (the result the Worker built isn't valid `restoreproof.result.v1`, W4.1), and stdout failing after a restore whose run passed. `test` exits as `restore` does; for `test` also a `--json` path that isn't UTF-8, isn't a plain file name, names a file already there or a folder that doesn't exist, or where a file can't be written (before the secrets), and a passing run whose `--json` file couldn't be written or whose finished result isn't valid (no file). With `--record`, a folder that isn't new or empty, and a command that succeeded but whose recording isn't complete. | `config error: <path>: <message>`, `config error: the --config path is not valid UTF-8`, `config error: the --manifest path is not valid UTF-8`, `config error: canary manifest: <message>`, `config error: cannot find the ProgramData folder`, `config error: environment variable <name> is not valid Unicode`, `config error: RP_VEEAM_USERNAME is not set` (then `RP_VEEAM_PASSWORD`), `config error: RP_GRAPH_CERT_PFX_BASE64 is not set` (or another message naming the certificate's variables), for `restore` `config error: unknown connector "<name>" (known: <names>)`, `check error: <message>; nothing was restored`, `check error: unexpected failure` and `error: writing the output failed after the restore ran (run <run ID>, restore ...); run status ...`, with `--record` `config error: <dir>: the --record folder is not empty` and `record error: <service>/<file>: refused: ...`, for `test` `config error: --json <file>: not a UTF-8 path` (`... not a file name`, `... the file already exists`, `... the folder doesn't exist`, `... a file can't be written there`) `json error: <file>: could not be written` and `json error: <file>: the result isn't valid restoreproof.result.v1; no file was written`, for `restore` and `test` `result error: <n> schema violation(s), first at <JSON pointer>` (`result error: the result has no canonical form`, `result error: the result couldn't be built`), `config error: unexpected failure` or `error: unexpected failure`; an unexpected failure's own message is never shown |
+| 1 | The config or a secret is missing or invalid, or something unexpected failed (an error no command handles ends here too, never in an `abort()`, whose exit code would be 3). For `graph list` this includes the certificate: `RP_GRAPH_CERT_PFX_BASE64` unset, a PFX that doesn't open with `RP_GRAPH_CERT_PASSWORD`, or a certificate that isn't valid now, all found before any request. For `restore`, also the same certificate problems as `graph list` (before any Veeam call; `RP_GRAPH_CERT_PASSWORD` unset is fine for a PFX without a password), the certificate failing as the check's reads before the restore sign in (nothing restored), a manifest that doesn't load, whose `tenant_id` isn't `graph_tenant_id` or that names a restore target (before any Veeam call), an unknown connector, a run whose status is `error config`, `error internal` (the facts not adding up, or the check failing for a reason that isn't Graph's) or `error result_invalid` (the result the Worker built isn't valid `restoreproof.result.v1`, W4.1), and stdout failing after a restore whose run passed. `test` exits as `restore` does; for `test` also a `--json` path that isn't UTF-8, isn't a plain file name, names a file already there or a folder that doesn't exist, or where a file can't be written (before the secrets), and a passing run whose `--json` file couldn't be written or whose finished result isn't valid (no file). With `--record`, a folder that isn't new or empty, and a command that succeeded but whose recording isn't complete. For `test --evidence` also (W4.3) `RP_SIGNING_KEY_BASE64` unset or not an Ed25519 private key (before the schema check, the manifest and any Veeam call), and a passing run whose result couldn't be signed or whose `signature.json` couldn't be written (no `result.json`). For `signer public-key`, the key unset or not a key; for `signer verify`, a key file that can't be read or isn't an Ed25519 public key in PEM, or a `<folder>` that can't be opened; for both, an answer that couldn't be written to stdout. | `config error: <path>: <message>`, `config error: the --config path is not valid UTF-8`, `config error: the --manifest path is not valid UTF-8`, `config error: canary manifest: <message>`, `config error: cannot find the ProgramData folder`, `config error: environment variable <name> is not valid Unicode`, `config error: RP_VEEAM_USERNAME is not set` (then `RP_VEEAM_PASSWORD`), `config error: RP_GRAPH_CERT_PFX_BASE64 is not set` (or another message naming the certificate's variables), for `restore` `config error: unknown connector "<name>" (known: <names>)`, `check error: <message>; nothing was restored`, `check error: unexpected failure` and `error: writing the output failed after the restore ran (run <run ID>, restore ...); run status ...`, with `--record` `config error: <dir>: the --record folder is not empty` and `record error: <service>/<file>: refused: ...`, for `test` `config error: --json <file>: not a UTF-8 path` (`... not a file name`, `... the file already exists`, `... the folder doesn't exist`, `... a file can't be written there`) `json error: <file>: could not be written` and `json error: <file>: the result isn't valid restoreproof.result.v1; no file was written`, for `test --evidence` `config error: RP_SIGNING_KEY_BASE64 is not set; --evidence signs the result` (`config error: RP_SIGNING_KEY_BASE64 is not an Ed25519 private key (Base64 of PKCS#8 DER)`) and the `evidence error: ...` lines ("`--evidence <dir>`"), for `signer` the `signer error: ...` lines ("`rpworker signer`"), for `restore` and `test` `result error: <n> schema violation(s), first at <JSON pointer>` (`result error: the result has no canonical form`, `result error: the result couldn't be built`), `config error: unexpected failure` or `error: unexpected failure`; an unexpected failure's own message is never shown |
 | 2 | The service refused the sign-in, the account's role, the token or a permission: Veeam's credentials or role; Entra refusing the Worker app's sign-in; Graph refusing the token, or denying a call for want of a grant (the message names the grant, see `docs/security/graph-permissions.md`); for `restore` and `test`, a run whose status is `error backup_auth`, `graph_auth` or `graph_permission`: on the check's reads before the restore (nothing restored) or after it (the item couldn't be checked). | `veeam error: <message>`, `graph error: <message>`, `restore error: <message>` or `check error: <message>; nothing was restored` |
 | 3 | The service couldn't be reached or asked to try later: no connection, a timeout, a TLS handshake that broke off, or a 502, 503 or 504 (for Graph also a 429 or another 5xx) after the retries; for `restore` and `test`, a run whose status is `error backup_transient` or `graph_transient`, before the restore or after it. | `veeam error: <message>`, `graph error: <message>`, `restore error: <message>` or `check error: <message>; nothing was restored` |
 | 4 | Any other error from the service. Veeam: an unknown organisation, a bad request, an unexpected answer, or no organisation named `veeam_org_name`; also Veeam's certificate failing verification, which a retry won't fix: `veeam_ca_file` doesn't hold Veeam's certificate or its CA, or Veeam's certificate was renewed and no longer matches `veeam_cert_sha256` (see "Veeam's default certificate"). Graph: the mailbox, drive or folder not found, a mailbox, drive or folder the guard refuses (not the RestoreTarget the config says; a 403 on the test mailbox's Inbox included), a download that failed, an unexpected answer. `restore` and `test`: another RestoreProof run holding the run mutex, no restore points or a `--point` ID that isn't one of them (before the run line), and a run whose status is `error` with any other code: `target_guard` (the restore-target guard refusing, in the clean before or later, nothing restored), `not_in_backup` (the organisation not in Veeam, or an item not in the restore point that it can't be shown to hold: a random item, or a canary in a point taken before the manifest's `seeded_at`; a canary missing from a later point is `fail`, Q3.1), `backup` (a restore session of the Veeam account still `Working`, the restore credential's export failing when not elevated, any other error of the restore), `empty_sample`, `not_run`, `restore_contradiction`, `backup_infrastructure` (an item Veeam failed for an infrastructure reason that the check didn't find), `graph` (any other Graph error, before the restore or reading an item back), `stale_target` (only an earlier run's copy of an item is there). | `veeam error: <message>` (`... TLS failure: ...` for a certificate), `veeam error: organisation <name> (veeam_org_name) not found in Veeam`, `graph error: <message>`, `restore error: <message>` (`restore error: target guard: ...` for the guard), `restore error: another RestoreProof run is using the restore targets; nothing was done`, `restore error: no restore points for veeam_org_name`, `restore error: restore point <id> not found for veeam_org_name`, `cleanup error: <target>: the restore-target guard refused the target; nothing was deleted in it (target_guard)`, `check error: <message>; nothing was restored`, or a `check error: <message>` per target that couldn't be read back; after an error of a restore that had started, also `restore error: the restore had started: items may be in the restore targets (run <run ID>)`; for a run, the status line is on stdout and its warnings follow on stderr |
-| 5 | `restore` and `test` only: the run's status is `fail` (W3.3): an item is missing or doesn't match, its target read fine and Veeam didn't blame infrastructure for it, whatever Veeam's own status says (`status fail: ...` on stdout). A result about the backup, not an error: a run that couldn't run at all or couldn't tell is `error`, 1 to 4. | (nothing but the run's warnings) |
-| 64 | The command line isn't understood (for `test` also `--seed`, which it doesn't take). For `restore` and `test` also, once the config or the manifest is read: every sample size 0, or a `--canary-cursor` out of the manifest's range. | the usage line; for `restore`, `usage error: every sample size is 0 (--mail, --sp, --od, or config's sample_mail, sample_sp, sample_od): nothing to restore` or `usage error: --canary-cursor: the <kind> cursor must be below <n>, the manifest's <kind> canaries` (`... must be 0: the manifest has no <kind> canaries`) |
+| 5 | The thing tested failed. `restore` and `test`: the run's status is `fail` (W3.3): an item is missing or doesn't match, its target read fine and Veeam didn't blame infrastructure for it, whatever Veeam's own status says (`status fail: ...` on stdout). A result about the backup, not an error: a run that couldn't run at all or couldn't tell is `error`, 1 to 4. `signer verify` (W4.3): the folder is not verified (`not verified: <word>` on stdout): anything wrong inside the folder, a missing file included. A folder or a key file that can't be read at all is 1. | (nothing but the run's warnings) |
+| 64 | The command line isn't understood (for `test` also `--seed`, which it doesn't take, and `--json` with `--evidence`; for `signer verify` a missing, empty or repeated `<folder>` or `--public-key <pem file>`). For `restore` and `test` also, once the config or the manifest is read: every sample size 0, or a `--canary-cursor` out of the manifest's range. | the usage line; for `restore`, `usage error: every sample size is 0 (--mail, --sp, --od, or config's sample_mail, sample_sp, sample_od): nothing to restore` or `usage error: --canary-cursor: the <kind> cursor must be below <n>, the manifest's <kind> canaries` (`... must be 0: the manifest has no <kind> canaries`) |
 
 The usage line is:
 
 ```
-usage: rpworker --version | rpworker config check [--config <path>] | rpworker veeam list [--config <path>] [--record <dir>] | rpworker graph list [--hash] [--config <path>] [--record <dir>] | rpworker restore [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--record <dir>] | rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--record <dir>] [--json <file>]
+usage: rpworker --version | rpworker config check [--config <path>] | rpworker veeam list [--config <path>] [--record <dir>] | rpworker graph list [--hash] [--config <path>] [--record <dir>] | rpworker restore [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--record <dir>] | rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--record <dir>] [--json <file> | --evidence <dir>] | rpworker signer public-key | rpworker signer verify <folder> --public-key <pem file>
 ```

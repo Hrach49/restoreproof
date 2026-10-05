@@ -9,7 +9,7 @@
 
 #include <algorithm>
 #include <fstream>
-#include <iterator>
+#include <string>
 #include <system_error>
 #include <utility>
 
@@ -33,6 +33,17 @@ bool holds_secret(std::string_view text, const std::vector<std::string>& secrets
 {
     return std::ranges::any_of(secrets, [&](const std::string& secret) {
         return !secret.empty() && text.find(secret) != std::string_view::npos;
+    });
+}
+
+// Whether a string anywhere in `value` holds one of `secrets`.
+bool result_holds_secret(const json& value, const std::vector<std::string>& secrets)
+{
+    if (value.is_string()) {
+        return holds_secret(value.get_ref<const std::string&>(), secrets);
+    }
+    return value.is_structured() && std::ranges::any_of(value, [&](const json& child) {
+        return result_holds_secret(child, secrets);
     });
 }
 
@@ -94,15 +105,24 @@ std::string row(std::size_t index, const std::vector<std::string>& cells, std::s
     return out;
 }
 
-// The file's bytes, or nullopt when it can't be read.
-std::optional<std::string> read_file(const std::filesystem::path& path)
+// The file's bytes, or nullopt when it is larger than `limit` or can't be
+// read whole: exactly the size it says and nothing after, so a read that
+// stops short and a file still growing are no file, never a part of one.
+std::optional<std::string> read_file(const std::filesystem::path& path, std::uintmax_t limit)
 {
+    std::error_code ec;
+    const std::uintmax_t size = std::filesystem::file_size(path, ec);
+    if (ec || size > limit) {
+        return std::nullopt;
+    }
     std::ifstream file(path, std::ios::binary);
     if (!file) {
         return std::nullopt;
     }
-    std::string bytes{std::istreambuf_iterator<char>(file), {}};
-    if (file.bad()) {
+    std::string bytes(static_cast<std::size_t>(size), '\0');
+    file.read(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+    if (static_cast<std::uintmax_t>(file.gcount()) != size ||
+        file.peek() != std::char_traits<char>::eof()) {
         return std::nullopt;
     }
     return bytes;
@@ -266,33 +286,58 @@ bool EvidenceBuilder::can_name_folder(std::string_view run_id) noexcept
     }
 }
 
+void RunFolder::drop() noexcept
+{
+    // remove() takes an empty folder only: one that holds something stays,
+    // and so does every level above it.
+    for (const std::filesystem::path& level : made_) {
+        std::error_code ec;
+        std::filesystem::remove(level, ec);
+    }
+    made_.clear();
+}
+
 RunFolderCheck EvidenceBuilder::make_run_folder(const std::filesystem::path& root,
                                                 std::string_view run_id,
-                                                std::filesystem::path& folder) noexcept
+                                                RunFolder& folder) noexcept
 {
     try {
         if (!can_name_folder(run_id)) {
             return RunFolderCheck::not_a_folder_name;
         }
-        folder = root / *path_from_utf8(run_id);
+        folder.path_ = root / *path_from_utf8(run_id);
         std::error_code ec;
+        // The root's levels that aren't there yet, from the deepest up: this
+        // call's to make, and to take away again.
+        for (std::filesystem::path level = root;
+             level.has_relative_path() &&
+             !std::filesystem::exists(std::filesystem::symlink_status(level, ec));
+             level = level.parent_path()) {
+            folder.made_.push_back(level);
+        }
         std::filesystem::create_directories(root, ec);
         // One call makes it or finds something there: no look first, so a
         // folder another run made in between is never taken for this run's.
-        if (std::filesystem::create_directory(folder, ec) && !ec) {
+        if (std::filesystem::create_directory(folder.path_, ec) && !ec) {
+            folder.made_.insert(folder.made_.begin(), folder.path_);
             // The writer's own first step for the longest name the folder
             // will hold, now: a path too long for it, or a folder that can't
             // be written into, is found before the restore, not after it.
-            if (check_new_file(folder / *path_from_utf8(kSessionLogName)) != NewFileCheck::ok) {
-                std::filesystem::remove(folder, ec);
-                return RunFolderCheck::cannot_make;
+            if (check_new_file(folder.path_ / *path_from_utf8(kSessionLogName)) ==
+                NewFileCheck::ok) {
+                return RunFolderCheck::ok;
             }
-            return RunFolderCheck::ok;
+            folder.drop();
+            return RunFolderCheck::cannot_make;
         }
-        const std::filesystem::file_status status = std::filesystem::symlink_status(folder, ec);
+        // What is at that path is another's, and never among what is dropped.
+        folder.drop();
+        const std::filesystem::file_status status =
+            std::filesystem::symlink_status(folder.path_, ec);
         return std::filesystem::exists(status) ? RunFolderCheck::exists
                                                : RunFolderCheck::cannot_make;
     } catch (...) {
+        folder.drop();
         return RunFolderCheck::cannot_make;
     }
 }
@@ -319,12 +364,16 @@ Screenshot EvidenceBuilder::capture(const connector::RestoreResult* restore,
     if (!options_.screenshots_enabled) {
         return {false, ScreenshotReason::disabled};
     }
+    // No restore session, no page that shows one: a capturer asked anyway
+    // could only photograph something else.
+    if (!restore || restore->session_ids.empty()) {
+        return {false, ScreenshotReason::no_page};
+    }
     std::error_code ec;
     std::filesystem::path png;
     try {
         png = folder_ / *path_from_utf8(kScreenshotName);
-        const ScreenshotRequest request{
-            png, restore ? restore->session_ids : std::vector<std::string>{}};
+        const ScreenshotRequest request{png, restore->session_ids};
         // Whatever isn't a PNG of the allowed size is no attachment and
         // doesn't stay in the folder.
         const auto unavailable = [&](ScreenshotReason reason) {
@@ -344,11 +393,8 @@ Screenshot EvidenceBuilder::capture(const connector::RestoreResult* restore,
                                to_string(*reason) != "unknown";
             return unavailable(known ? *reason : ScreenshotReason::failed);
         }
-        const std::uintmax_t size = std::filesystem::file_size(png, ec);
-        if (ec || size > kMaxScreenshotBytes) {
-            return unavailable(ScreenshotReason::failed);
-        }
-        const std::optional<std::string> bytes = read_file(png);
+        // The size allowed is held to the bytes that are hashed.
+        const std::optional<std::string> bytes = read_file(png, kMaxScreenshotBytes);
         if (!bytes || !bytes->starts_with(kPngSignature)) {
             return unavailable(ScreenshotReason::failed);
         }
@@ -401,10 +447,17 @@ std::optional<EvidenceError> EvidenceBuilder::write_result(const Evidence& evide
                                                            std::string_view canonical) noexcept
 {
     try {
+        if (!options_.secrets.empty() &&
+            result_holds_secret(json::parse(canonical), options_.secrets)) {
+            log_security(options_.logger,
+                         "evidence: the result held a secret value; no result.json was written");
+            return EvidenceError{std::string{kResultFileName}, EvidenceFailure::holds_secret};
+        }
         for (const Attachment& attachment : evidence.attachments) {
             const std::optional<std::filesystem::path> name = path_from_utf8(attachment.name);
+            // One larger than was hashed isn't read at all.
             const std::optional<std::string> bytes =
-                name ? read_file(folder_ / *name) : std::nullopt;
+                name ? read_file(folder_ / *name, attachment.size_bytes) : std::nullopt;
             if (!bytes || bytes->size() != attachment.size_bytes ||
                 sha256_hex(*bytes) != attachment.sha256) {
                 return EvidenceError{attachment.name, EvidenceFailure::changed};

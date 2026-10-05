@@ -76,7 +76,7 @@ inline const std::string kUsage =
     "[--record <dir>] | "
     "rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] "
     "[--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] "
-    "[--record <dir>] [--json <file>]\n";
+    "[--record <dir>] [--json <file> | --evidence <dir>]\n";
 
 inline const std::string kOrgName = "RestoreProofLab.onmicrosoft.com";
 // Veeam's restore point IDs are two GUIDs run together: the backup
@@ -778,7 +778,7 @@ struct Harness {
         };
         env.make_run_id = [this] {
             ++run_id_calls;
-            return kGeneratedRunId;
+            return generated_run_id;
         };
         env.now = [this] {
             const std::chrono::steady_clock::time_point t =
@@ -811,6 +811,10 @@ struct Harness {
         env.write_summary = write_summary;
         // W4.1: null, the real embedded schema's validator.
         env.result_schema_ready = schema_ready;
+        // W4.2: `test --evidence`'s writer (null, the atomic one) and the
+        // screenshot's capturer (null, the default: no page).
+        env.write_evidence_file = write_evidence_file;
+        env.capture_screenshot = capture_screenshot;
         return env;
     }
 
@@ -866,6 +870,10 @@ struct Harness {
                       const rp::RestoreCommandEnv&)>
         command = rp::run_restore_command;
     std::function<bool(const std::filesystem::path&, std::string_view)> write_summary;
+    std::function<bool(const std::filesystem::path&, std::string_view)> write_evidence_file;
+    rp::ScreenshotCapturer capture_screenshot;
+    // The run ID a run without --run-id makes.
+    std::string generated_run_id{kGeneratedRunId};
     // The download client's maker returns null: the run stops after its run
     // line, before the clean before.
     bool no_download_http = false;

@@ -66,6 +66,8 @@ json ResultBuilder::document(const ResultParts& parts)
     result["status"] = verification::to_json(*parts.verdict);
     result["cleanup"] = parts.cleanup ? to_json(*parts.cleanup) : json();
     result["timings"] = timing::to_json(parts.timings ? *parts.timings : timing::RunTimings{});
+    result["attachments"] = parts.attachments ? to_json(*parts.attachments) : json();
+    result["screenshot"] = parts.screenshot ? to_json(*parts.screenshot) : json();
     return result;
 }
 

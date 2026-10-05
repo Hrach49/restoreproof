@@ -137,6 +137,11 @@ struct ItemCheck {
     bool duplicate = false;
     std::size_t copies = 0;  // this run's copies that matched the lookup
     std::string graph_id;    // the copy compared; never written to JSON
+    // The compared copy's SHA-256 by the expectation's own rule, only when the
+    // expectation carries a hash (a canary: its content is ours) and the copy
+    // has one by that rule; empty otherwise. For items.csv (W4.2 point 5);
+    // never written to JSON, and never a real mail's or file's.
+    std::string found_sha256;
     std::int64_t ms = 0;     // the copy's FoundItem::read_ms + this item's comparison
     std::string error_code;  // outcome error only: the read's code, or "stale_target"
 };

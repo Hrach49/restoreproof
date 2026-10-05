@@ -1,5 +1,5 @@
 // ResultBuilder (W4.1, docs/decisions.md 2026-10-04, points 1, 5 and 6): the
-// fifteen keys from a run's parts, the canonical text, and that text parsed
+// seventeen keys from a run's parts, the canonical text, and that text parsed
 // back and validated. The failures come back as fixed words, never as an
 // exception or its text.
 
@@ -206,7 +206,8 @@ TEST_CASE("ResultBuilder: the full run's document", "[result_builder]")
     const std::set<std::string> wanted = {
         "format",        "worker_version", "run_id",   "started_at", "ended_at",
         "connector",     "client",         "restore_point", "sample", "expected",
-        "restore",       "check",          "status",   "cleanup",    "timings"};
+        "restore",       "check",          "status",   "cleanup",    "timings",
+        "attachments",   "screenshot"};
     std::set<std::string> keys;
     for (const auto& [key, unused] : document.items()) {
         keys.insert(key);
@@ -270,7 +271,7 @@ TEST_CASE("ResultBuilder: a step that didn't run is null", "[result_builder]")
         parts.ended_at.reset();
     }
     const BuiltResult built = result_of(parts);
-    REQUIRE(built.document.size() == 15);
+    REQUIRE(built.document.size() == 17);
     REQUIRE(built.document.at(key).is_null());
 }
 
@@ -288,8 +289,9 @@ TEST_CASE("ResultBuilder: a run that stopped before its sample", "[result_builde
 
     const BuiltResult built = result_of(parts);
     const json& document = built.document;
-    REQUIRE(document.size() == 15);
-    for (const char* key : {"sample", "expected", "restore", "check", "cleanup", "ended_at"}) {
+    REQUIRE(document.size() == 17);
+    for (const char* key : {"sample", "expected", "restore", "check", "cleanup", "ended_at",
+                            "attachments", "screenshot"}) {
         INFO(key);
         REQUIRE(document.at(key).is_null());
     }
@@ -391,4 +393,50 @@ TEST_CASE("ResultBuilder: what the checker and the status table really give vali
     REQUIRE(built.document.at("status") == v::to_json(facts.verdict));
     REQUIRE(built.document.at("status").at("status") ==
             (as_result_invalid ? "error" : decided));
+}
+
+TEST_CASE("ResultBuilder: the run folder's attachments and screenshot, null without one (W4.2)",
+          "[result_builder]")
+{
+    const ResultFacts facts = full_result_facts();
+    ResultParts parts = facts.parts();
+
+    const BuiltResult without = result_of(parts);
+    REQUIRE(without.document.at("attachments").is_null());
+    REQUIRE(without.document.at("screenshot").is_null());
+
+    const std::vector<rp::Attachment> attachments{{"items.csv", std::string(64, 'a'), 1234},
+                                                  {"veeam-session.log", std::string(64, 'b'), 0}};
+    const rp::Screenshot screenshot{false, rp::ScreenshotReason::no_page};
+    parts.attachments = &attachments;
+    parts.screenshot = &screenshot;
+
+    const BuiltResult with = result_of(parts);
+    REQUIRE(with.document.size() == 17);
+    REQUIRE(with.document.at("attachments") == rp::to_json(attachments));
+    REQUIRE(with.document.at("screenshot") ==
+            json{{"state", "unavailable"}, {"reason", "no_page"}});
+    REQUIRE(with.canonical.starts_with("{\"attachments\":[{\"name\":\"items.csv\",\"sha256\":\""));
+}
+
+TEST_CASE("ResultBuilder: attachments the schema doesn't take are a schema error (W4.2)",
+          "[result_builder]")
+{
+    const ResultFacts facts = full_result_facts();
+    ResultParts parts = facts.parts();
+    const rp::Screenshot screenshot{true, rp::ScreenshotReason::failed};
+    parts.screenshot = &screenshot;
+    // One file is no run folder; a name it doesn't know; a hash that isn't one.
+    const std::vector<rp::Attachment> attachments = GENERATE(
+        std::vector<rp::Attachment>{{"items.csv", std::string(64, 'a'), 1}},
+        std::vector<rp::Attachment>{{"items.csv", std::string(64, 'a'), 1},
+                                    {"result.json", std::string(64, 'b'), 1}},
+        std::vector<rp::Attachment>{{"items.csv", std::string(64, 'A'), 1},
+                                    {"veeam-session.log", std::string(64, 'b'), 1}});
+    parts.attachments = &attachments;
+
+    const std::variant<BuiltResult, ResultError> built = ResultBuilder::build(parts);
+
+    REQUIRE(std::holds_alternative<ResultError>(built));
+    REQUIRE(std::get<ResultError>(built).cause == ResultFailure::schema);
 }

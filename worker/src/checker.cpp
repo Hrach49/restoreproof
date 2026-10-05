@@ -110,6 +110,7 @@ const FoundItem* newest(const std::vector<const FoundItem*>& copies,
 struct Comparison {
     std::vector<std::string> mismatches;
     std::string note;
+    std::string found_sha256; // ItemCheck's
 };
 
 void compare_mail(const ExpectedMail& want, const FoundItem& got, Comparison& out)
@@ -146,6 +147,9 @@ void compare_hash(const ExpectedItem& want, const FoundItem& got, const TargetRe
     }
     bool agrees = false;
     if (want.sha256_rule == rp::kTextV1 || want.sha256_rule == kBytes) {
+        if (got.sha256_rule == want.sha256_rule) {
+            out.found_sha256 = got.sha256;
+        }
         agrees = got.sha256_rule == want.sha256_rule && got.sha256 == want.sha256;
     } else if (want.sha256_rule == kOfficeV1) {
         const auto it = read.office.find(got.id);
@@ -153,8 +157,9 @@ void compare_hash(const ExpectedItem& want, const FoundItem& got, const TargetRe
             // Fixed words: the reader's text names a part inside a tenant
             // file, and the result is signed and uploaded (W4.1 point 7).
             out.note = "; the restored package isn't valid office-v1 input";
-        } else {
-            agrees = it != read.office.end() && it->second.sha256 == want.sha256;
+        } else if (it != read.office.end()) {
+            out.found_sha256 = it->second.sha256;
+            agrees = it->second.sha256 == want.sha256;
         }
     } else {
         throw std::logic_error("check: an expected hash rule it doesn't know");
@@ -234,6 +239,7 @@ public:
         out.copies = found.size();
         out.duplicate = found.size() > 1;
         out.mismatches = comparison.mismatches;
+        out.found_sha256 = comparison.found_sha256;
         if (out.mismatches.empty()) {
             out.outcome = CheckOutcome::match;
         } else {

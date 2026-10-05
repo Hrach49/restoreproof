@@ -247,7 +247,7 @@
   },
   "$defs": {
     "attachment": {
-      "description": "One file beside result.json in the run folder: its name, the SHA-256 of its bytes and their count.",
+      "description": "One file of the run folder that the result covers: its name, the SHA-256 of its bytes and their count.",
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -272,7 +272,7 @@
       }
     },
     "attachments": {
-      "description": "The run folder's files beside result.json, sorted by name: items.csv and veeam-session.log always, screenshot.png when one was captured. result.json isn't listed: it can't hold its own hash.",
+      "description": "One entry per file of the run folder that the result covers, sorted by name: items.csv and veeam-session.log always, screenshot.png when one was captured. result.json and signature.json are never listed: the result can't hold its own hash, and the signature depends on it.",
       "type": "array",
       "minItems": 2,
       "maxItems": 3,

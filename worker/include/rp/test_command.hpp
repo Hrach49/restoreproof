@@ -87,9 +87,14 @@ namespace rp {
 // --evidence <dir> (W4.2, docs/decisions.md 2026-10-05) writes the run folder
 // <dir>\<run_id>\ instead (rp::EvidenceBuilder; never with --json, a usage
 // error, as an empty value is): items.csv, veeam-session.log, screenshot.png
-// when one was captured, and result.json, the same result with each of the
-// other files in `attachments` (name, SHA-256, size) and `screenshot` saying
-// captured or why not. What it checks, when the folder is made, its lines
+// when one was captured, and result.json, the same result with each of
+// those files in `attachments` (name, SHA-256, size) and `screenshot` saying
+// captured or why not. It always signs (W4.3): the key in
+// RP_SIGNING_KEY_BASE64 is parsed before anything is done, and
+// signature.json (rp/signer.hpp), an Ed25519 signature over the SHA-256 of
+// result.json's bytes, is written just before result.json and never listed
+// in it. --json stays unsigned and needs no key, as `restore` and a `test`
+// without either. What it checks, when the folder is made, its lines
 // and its exit codes are on run_pipeline (src/run_pipeline.hpp). <dir> is
 // made if it isn't there; a folder for the run ID that is already there
 // stops the run before its run line. No exception escapes.

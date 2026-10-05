@@ -1,6 +1,7 @@
 #include "run_pipeline.hpp"
 
 #include <rp/canary_manifest.hpp>
+#include <rp/cert_export.hpp>
 #include <rp/checker.hpp>
 #include <rp/cleaner.hpp>
 #include <rp/cli.hpp>
@@ -18,6 +19,8 @@
 #include <rp/run_lock.hpp>
 #include <rp/run_status.hpp>
 #include <rp/sample_rng.hpp>
+#include <rp/secrets.hpp>
+#include <rp/signer.hpp>
 #include <rp/target_guard_graph.hpp>
 #include <rp/sample_selector.hpp>
 #include <rp/step_timer.hpp>
@@ -612,6 +615,63 @@ void read_after(graph::GraphClient& client, IHttpClient& download,
     refusals("onedrive", after.onedrive);
 }
 
+// The run's signing key (W4.3 point 3): the text RP_SIGNING_KEY_BASE64
+// carried and, for a run that signs, the key parsed from it, in one holder
+// that wipes both on every way out of the run, the returns before the run
+// line included. The text stays in the run's Secrets until take() moves it
+// here (wiped there), which the pipeline does before the connector is made,
+// so the connector's copy of the secrets never holds it; a holder that goes
+// before that wipes it where it is.
+class RunSigningKey {
+public:
+    // `secrets` must outlive the holder.
+    explicit RunSigningKey(Secrets& secrets) noexcept : secrets_(secrets) {}
+    RunSigningKey(const RunSigningKey&) = delete;
+    RunSigningKey& operator=(const RunSigningKey&) = delete;
+    ~RunSigningKey()
+    {
+        take();
+        secure_wipe(text_);
+    }
+
+    // The key the secrets carry, parsed (rp::SigningKey::from_base64). Throws
+    // ConfigError, naming the variable and never its value, when it is unset
+    // or isn't a key. Only a run that signs calls it.
+    void parse()
+    {
+        const std::string name{kEnvSigningKeyBase64};
+        const std::optional<std::string>& text = secrets_.signing_key_base64;
+        if (!text || text->empty()) {
+            throw ConfigError(name, name + " is not set; --evidence signs the result");
+        }
+        key_ = SigningKey::from_base64(*text);
+        if (!key_) {
+            throw ConfigError(name,
+                              name + " is not an Ed25519 private key (Base64 of PKCS#8 DER)");
+        }
+    }
+
+    // Moves the text out of the Secrets, which no longer hold it.
+    void take() noexcept
+    {
+        if (secrets_.signing_key_base64) {
+            text_.swap(*secrets_.signing_key_base64);
+            secure_wipe(*secrets_.signing_key_base64);
+            secrets_.signing_key_base64.reset();
+        }
+    }
+
+    // Empty until take(), and when the variable wasn't set.
+    const std::string& text() const noexcept { return text_; }
+    // Null unless parse() made one.
+    const SigningKey* key() const noexcept { return key_ ? &*key_ : nullptr; }
+
+private:
+    Secrets& secrets_;
+    std::string text_;
+    std::optional<SigningKey> key_;
+};
+
 // The --evidence root (W4.2 point 8), checked before the secrets: a UTF-8
 // path, and a --run-id that can name the run's folder in it. Throws
 // ConfigError otherwise. Whether the folder can be made is found when it is.
@@ -694,6 +754,9 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
     std::filesystem::path config_path;
     Config config;
     Secrets secrets;
+    // After `secrets`, so it goes first: whichever way the run ends, the
+    // signing key's text is wiped, here or where it still is.
+    RunSigningKey signing(secrets);
     std::optional<graph::ClientCertificate> certificate;
     std::optional<std::filesystem::path> evidence_root;
     try {
@@ -710,6 +773,12 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
         // restore_sample opens it only after the sample is chosen, which
         // browses Veeam. An unset password is none, as for `graph list`.
         certificate = check_graph_certificate(secrets, env.connector_options);
+        // W4.3: --evidence always signs, so a run that couldn't is refused
+        // here, before the schema, the manifest, the mutex and any Veeam
+        // call. No other run parses the key or needs it.
+        if (parsed.evidence) {
+            signing.parse();
+        }
     } catch (const ConfigError& e) {
         return report(err, "config error: ", e, exit_code::config);
     } catch (...) {
@@ -909,7 +978,8 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
     // W4.2 point 9: the run folder's files, last. The two text files (always,
     // also for a run with no valid result), the screenshot's answer, then the
     // finished result with what it lists, validated, each attachment read
-    // back against its hash, and result.json. Nothing here changes the
+    // back against its hash, the result signed with the run's key (W4.3:
+    // signature.json), and result.json. Nothing here changes the
     // status: what fails is one line on `err` and an exit code of 0 becoming
     // 1 (the W3.6 rule). Returns the exit code.
     const auto write_evidence = [&](const std::optional<verification::RunVerdict>& verdict,
@@ -926,12 +996,20 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
             options.screenshots_enabled = config.screenshots_enabled;
             options.capture = env.capture_screenshot;
             options.write_file = env.write_evidence_file;
-            for (const std::optional<std::string>* secret :
-                 {&secrets.veeam_password, &secrets.graph_cert_pfx_base64,
-                  &secrets.graph_cert_password}) {
-                if (*secret) {
-                    options.secrets.push_back(**secret);
-                }
+            // The run's secret values: the Secrets', the signing key's text,
+            // which is no longer among them, and the other shapes the key
+            // could leak in. The builder wipes its copy when it goes.
+            options.secrets = secret_values(secrets);
+            if (!signing.text().empty()) {
+                options.secrets.push_back(signing.text());
+            }
+            if (const SigningKey* key = signing.key()) {
+                options.secrets.insert(options.secrets.end(), key->secret_shapes().begin(),
+                                       key->secret_shapes().end());
+                options.sign = [&env, key](std::string_view canonical) {
+                    return env.sign_result ? env.sign_result(canonical, *key)
+                                           : Signer::sign(canonical, *key);
+                };
             }
             options.logger = env.connector_options.logger ? env.connector_options.logger
                                                           : make_command_logger();
@@ -963,10 +1041,13 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
                               "written");
                 return code;
             }
+            SignedResult signature;
             if (const std::optional<EvidenceError> error =
-                    builder.write_result(*written.evidence, *text)) {
+                    builder.write_result(*written.evidence, *text, &signature)) {
                 if (error->cause == EvidenceFailure::holds_secret) {
                     failed(shown, "the result holds a secret value; no result.json was written");
+                } else if (error->cause == EvidenceFailure::not_signed) {
+                    failed(shown, "the result couldn't be signed; no result.json was written");
                 } else {
                     failed(shown + '\\' + error->file,
                            error->cause == EvidenceFailure::changed ? "changed after it was hashed"
@@ -974,12 +1055,16 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
                 }
                 return code;
             }
-            // The folder's line. Lost, it changes nothing: the files are
-            // written (W3.6 review point 4).
+            // The signature's line (W4.3) and the folder's, both only now
+            // that result.json is written, the folder's last. Lost, they
+            // change nothing: the files are written (W3.6 review point 4).
             if (!output_lost) {
                 try {
-                    out << "evidence " << shown << ": " << kResultFileName << ", "
-                        << kItemsCsvName << ", " << kSessionLogName
+                    out << "signed " << signature.bundle_sha256 << " key " << signature.key_id
+                        << '\n'
+                        << "evidence " << shown << ": " << kResultFileName << ", "
+                        << kSignatureFileName << ", " << kItemsCsvName << ", "
+                        << kSessionLogName
                         << (written.evidence->screenshot.captured ? ", " : "")
                         << (written.evidence->screenshot.captured ? kScreenshotName : "")
                         << '\n';
@@ -1157,6 +1242,10 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
         // Only now, the last check before the connector: a run stopped by
         // the checks above makes no folder and prints no recording line.
         recorder = open_recording(parsed.record, presentation.command, secrets);
+        // W4.3: the recorder has its copy of every secret value; from here
+        // on the Secrets, which the connector copies, are without the
+        // signing key's text.
+        signing.take();
 
         connector::ConnectorOptions options = recorder
                                                   ? record_connector(env.connector_options, recorder)

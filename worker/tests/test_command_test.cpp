@@ -18,6 +18,7 @@
 #include <rp/checker.hpp>
 #include <rp/cli.hpp>
 #include <rp/connector.hpp>
+#include <rp/office_v1.hpp>
 #include <rp/restore_command.hpp>
 #include <rp/result_schema.hpp>
 #include <rp/run_status.hpp>
@@ -570,7 +571,7 @@ TEST_CASE("test: VERDICT and REASON: an infrastructure item is unchecked, never 
 }
 
 TEST_CASE("test: an Office file that isn't a valid package is a sha256 mismatch; neither REASON "
-          "nor the --json file shows the zip reader's words",
+          "nor the --json file shows the zip reader's words, only stderr does",
           "[test_command][json]")
 {
     TestLab lab;
@@ -593,7 +594,19 @@ TEST_CASE("test: an Office file that isn't a valid package is a sha256 mismatch;
     CHECK(item.at("reason") ==
           "fields did not match: sha256; the restored package isn't valid office-v1 input");
     CHECK(run.out.find("office-v1") == std::string::npos);
-    CHECK(run.err.find("office-v1") == std::string::npos);
+    // Why the reader refused it, said once, on stderr only: one of its own
+    // limits must be told from a broken file.
+    std::string refusal;
+    try {
+        rp::office_v1_sha256("not a zip", "docx");
+    } catch (const rp::OfficeContentError& e) {
+        refusal = e.what();
+    }
+    REQUIRE_FALSE(refusal.empty());
+    CHECK(run.err == "check note: sharepoint rp-canary-02.docx: not valid office-v1 input: " +
+                         refusal + "\n");
+    CHECK(result.dump().find(refusal) == std::string::npos);
+    CHECK(run.out.find(refusal) == std::string::npos);
 }
 
 // --- --json: the result (restoreproof.result.v1) --------------------------------------
@@ -998,8 +1011,12 @@ TEST_CASE("test --json: a result that is valid when the status is decided and is
     CHECK_FALSE(std::filesystem::exists(lab.json_path()));
 }
 
-TEST_CASE("test --json: an end-of-run hook that throws makes exit 0 exit 1", "[test_command][json]")
+TEST_CASE("test --json: a `wrote` line that can't be written changes nothing, whether the stream "
+          "throws or only fails: the file is written, exit 0 stays, stderr is empty",
+          "[test_command][json]")
 {
+    const bool throwing = GENERATE(true, false);
+    CAPTURE(throwing);
     const Args args{"--run-id", kRunId, "--mail", "1", "--sp", "0", "--od", "0"};
     // What the run prints before "wrote <file>": the same in any temp folder.
     std::size_t before_wrote = 0;
@@ -1016,15 +1033,19 @@ TEST_CASE("test --json: an end-of-run hook that throws makes exit 0 exit 1", "[t
     Args with_json = args;
     const std::string json_arg = lab.json_arg();
     with_json.insert(with_json.end(), {"--json", json_arg});
-    // A stdout that takes everything up to the file's line, then throws: the
-    // hook's own write, after the file is written.
+    // A stdout that takes everything up to the file's line, then fails: the
+    // hook's own write, after the file is written. std::cout only sets its
+    // state; a stream told to throws.
     LimitedStreamBuf buffer(before_wrote);
     std::ostream out(&buffer);
-    out.exceptions(std::ios::badbit | std::ios::failbit);
+    if (throwing) {
+        out.exceptions(std::ios::badbit | std::ios::failbit);
+    }
 
     const auto [code, err] = lab.run_to(with_json, out);
 
-    CHECK(code == rp::exit_code::config);
+    // W3.6 review point 4, as for the timings' table.
+    CHECK(code == rp::exit_code::ok);
     CHECK(err.empty());
     CHECK_THAT(buffer.text, ContainsSubstring("\nstatus pass: "));
     CHECK_THAT(buffer.text, !ContainsSubstring("wrote "));

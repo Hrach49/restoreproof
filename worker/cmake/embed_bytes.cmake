@@ -4,6 +4,10 @@
 # DEPENDS on INPUT, so an edit rebuilds (W4.1, docs/decisions.md 2026-10-04,
 # point 2):
 #   cmake -DINPUT=<file> -DOUTPUT=<file.cpp> -DSYMBOL=<name> -P embed_bytes.cmake
+# The project's own minimum, so a script run with -P is read by the same
+# policies (CMP0010: a wrong escape is an error, not a warning).
+cmake_minimum_required(VERSION 3.25)
+
 foreach(arg INPUT OUTPUT SYMBOL)
     if(NOT DEFINED ${arg} OR "${${arg}}" STREQUAL "")
         message(FATAL_ERROR "embed_bytes: -D${arg}=... is required")
@@ -16,9 +20,9 @@ if(hex_length EQUAL 0)
     message(FATAL_ERROR "embed_bytes: ${INPUT} is empty")
 endif()
 # Sixteen bytes a line.
-string(REGEX REPLACE "([0-9a-f][0-9a-f])" "0x\1," bytes "${hex}")
+string(REGEX REPLACE "([0-9a-f][0-9a-f])" "0x\\1," bytes "${hex}")
 string(REGEX REPLACE "(0x[0-9a-f][0-9a-f],0x[0-9a-f][0-9a-f],0x[0-9a-f][0-9a-f],0x[0-9a-f][0-9a-f],0x[0-9a-f][0-9a-f],0x[0-9a-f][0-9a-f],0x[0-9a-f][0-9a-f],0x[0-9a-f][0-9a-f],0x[0-9a-f][0-9a-f],0x[0-9a-f][0-9a-f],0x[0-9a-f][0-9a-f],0x[0-9a-f][0-9a-f],0x[0-9a-f][0-9a-f],0x[0-9a-f][0-9a-f],0x[0-9a-f][0-9a-f],0x[0-9a-f][0-9a-f],)"
-    "    \1\n" bytes "${bytes}")
+    "    \\1\n" bytes "${bytes}")
 
 get_filename_component(input_name "${INPUT}" NAME)
 file(WRITE "${OUTPUT}"

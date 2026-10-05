@@ -716,7 +716,10 @@ Fixed words, held by the schema to four forms. A `match` has no `reason`.
 
 Until W4.1 the office-v1 tail carried the zip reader's own text in a parenthesis, which names
 a part inside a tenant file: the one place an exception's text reached the file. It doesn't
-any more; `OfficeHash::error` is read only as set or not.
+any more; the check reads `OfficeHash::error` only as set or not. The reader's text goes to
+stderr alone, one line per refused file after the read back (`check note: <sharepoint|onedrive>
+<name>: not valid office-v1 input: <text>`, through `redact()`), so one of the reader's own
+limits can be told from a broken file (`docs/decisions.md` 2026-10-05, "W4.1 code review").
 
 ### What of the tenant the result holds
 

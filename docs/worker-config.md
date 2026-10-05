@@ -667,7 +667,15 @@ total                 0:00:05.000
   the check. Copies earlier runs left are ignored and counted in one warning on stderr:
   `warning: stale_copies: <n> copies from earlier runs in the restore targets were ignored
   (mail <x>, sharepoint <y>, onedrive <z>)`. A target that couldn't be read back is one
-  `check error: <message>` line on stderr, and its items are `error`.
+  `check error: <message>` line on stderr, and its items are `error`. A restored docx or xlsx
+  that office-v1 refuses is a `sha256` mismatch, and why it was refused is one line on stderr
+  only, never in the table or the result: `check note: <sharepoint|onedrive> <name>: not valid
+  office-v1 input: <the reader's text>`. So one of the reader's own limits (an encrypted part,
+  a part past 64 MiB, more than 10,000 entries) can be told from a broken file.
+- **The result's validator is checked first (W4.1).** After the config, the secrets and the
+  sample sizes, and before the manifest, the mutex and any Veeam call, the command loads the
+  validator from the embedded schema. If that fails: `error: the result schema couldn't be
+  loaded; nothing was done`, exit 1, with no run line and no status.
 - **The run's status (W3.3)** comes in every run once its first two lines are out, however
   it ended: `status <pass|fail|error>[ <code>]: <message>`, its own paragraph, then each warning
   as `warning: <code>: <message>` on stderr. The exit code is the status's: `pass` 0 (every

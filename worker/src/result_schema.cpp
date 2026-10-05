@@ -9,6 +9,7 @@
 #include <functional>
 #include <limits>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <set>
 #include <string>
@@ -50,33 +51,43 @@ void collect_property_names(const json& node, Names& names)
     }
 }
 
-// The embedded schema, loaded once. `validator` is null when the schema
-// couldn't be loaded: not JSON, or refused by the validator (a pattern its
-// regex engine can't compile throws std::regex_error there).
+// The embedded schema, loaded. The validator can fail to load: the schema not
+// JSON, or refused by the validator (a pattern its regex engine can't compile
+// throws std::regex_error there), or no memory.
 struct Loaded {
-    std::unique_ptr<nlohmann::json_schema::json_validator> validator;
+    nlohmann::json_schema::json_validator validator;
     Names names;
 };
 
-Loaded load() noexcept
+std::shared_ptr<const Loaded> load() noexcept
 {
-    Loaded loaded;
     try {
         json schema = json::parse(result_schema_text());
-        collect_property_names(schema, loaded.names);
-        auto validator = std::make_unique<nlohmann::json_schema::json_validator>();
-        validator->set_root_schema(std::move(schema));
-        loaded.validator = std::move(validator);
+        auto loaded = std::make_shared<Loaded>();
+        collect_property_names(schema, loaded->names);
+        loaded->validator.set_root_schema(std::move(schema));
+        return loaded;
     } catch (...) {
-        loaded.validator.reset();
+        return nullptr;
     }
-    return loaded;
 }
 
-const Loaded& loaded() noexcept
+// The loaded schema, kept once it has loaded; null when it couldn't be. A
+// failure isn't kept: the next call tries again, so a process that was once
+// short of memory isn't without a validator for the rest of its life.
+std::shared_ptr<const Loaded> loaded() noexcept
 {
-    static const Loaded once = load();
-    return once;
+    static std::mutex mutex;
+    static std::shared_ptr<const Loaded> kept;
+    try {
+        const std::scoped_lock lock(mutex);
+        if (!kept) {
+            kept = load();
+        }
+        return kept;
+    } catch (...) {
+        return nullptr;
+    }
 }
 
 // Whether `deeper` is a pointer below `pointer`.
@@ -163,7 +174,12 @@ namespace detail {
 
 std::string known_result_pointer(std::string_view pointer)
 {
-    const Names& names = loaded().names;
+    // With no schema loaded no part is known: no pointer.
+    const std::shared_ptr<const Loaded> schema = loaded();
+    if (!schema) {
+        return {};
+    }
+    const Names& names = schema->names;
     std::string_view rest = pointer;
     while (!rest.empty()) {
         if (rest.front() != '/') {
@@ -187,18 +203,23 @@ std::string_view result_schema_text()
     return {reinterpret_cast<const char*>(detail::kResultSchemaBytes), detail::kResultSchemaSize};
 }
 
+bool result_schema_ready() noexcept
+{
+    return loaded() != nullptr;
+}
+
 ResultValidation validate_result(const nlohmann::json& document) noexcept
 {
     try {
-        const Loaded& schema = loaded();
-        if (!schema.validator) {
+        const std::shared_ptr<const Loaded> schema = loaded();
+        if (!schema) {
             return {false, 1, {}};
         }
         if (const auto oversized = oversized_integer(document, {})) {
             return {false, 1, detail::known_result_pointer(*oversized)};
         }
         Violations violations;
-        schema.validator->validate(document, violations);
+        schema->validator.validate(document, violations);
         if (violations.count() == 0) {
             return {true, 0, {}};
         }

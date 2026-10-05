@@ -607,6 +607,13 @@ TEST_CASE("an integer past the signed 64-bit range is refused where the schema k
     REQUIRE(result.first_pointer.empty());
 }
 
+TEST_CASE("the embedded result schema loads into a validator", "[result_schema]")
+{
+    CHECK(rp::result_schema_ready());
+    CHECK(rp::result_schema_ready());
+    CHECK(validate_result(base_document()).valid);
+}
+
 TEST_CASE("a document that isn't an object is not a result", "[result_schema]")
 {
     const json document = GENERATE(json(), json::array(), json("restoreproof.result.v1"),

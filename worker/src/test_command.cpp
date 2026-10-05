@@ -175,9 +175,15 @@ int run_test_command(std::span<const std::string_view> args, std::ostream& out,
             if (!written) {
                 return failed("could not be written");
             }
+            // The file's line. Lost, it changes nothing, like the timings'
+            // table (W3.6 review point 4): the file is written. That holds
+            // for a stream that throws as for one that only sets its state.
             if (!output_lost) {
-                out << "wrote " << shown << '\n';
-                out.flush();
+                try {
+                    out << "wrote " << shown << '\n';
+                    out.flush();
+                } catch (...) {
+                }
             }
             return code;
         };

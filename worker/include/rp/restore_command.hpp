@@ -118,6 +118,12 @@ struct RestoreCommandEnv {
     // checks and before the --record folder and the connector are made. What
     // it throws is an unexpected failure (exit 1).
     std::function<std::unique_ptr<RunLock>()> take_run_lock;
+    // Whether the result's validator is there (W4.1); null =
+    // rp::result_schema_ready. Asked once, after the config, the secrets and
+    // the sample sizes and before the manifest, the run mutex and any Veeam
+    // call: false is "error: the result schema couldn't be loaded; nothing
+    // was done", exit 1, no run line.
+    std::function<bool()> result_schema_ready;
     // Given the run's cleanup once its line is out, before the step timings'
     // table (on_timings is the last hook), for every run that printed its
     // run line; null = nothing. W4.1 writes it into the result.
@@ -128,7 +134,7 @@ struct RestoreCommandEnv {
     // result as `timings`. What it throws is ignored: timings decide nothing.
     std::function<void(const timing::RunTimings&)> on_timings;
     // `rpworker test --json <file>` only (W3.6, rp/test_command.hpp): writes
-    // the run summary's text to the file, whether it did. Null = the atomic
+    // the result's canonical text (W4.1) to the file, whether it did. Null = the atomic
     // writer (src/atomic_file.hpp: a temp file beside it, flushed, moved
     // onto it, never over a file already there). What it throws is a
     // failure. `restore` never calls it.

@@ -2123,6 +2123,33 @@ TEST_CASE("restore: a run mutex another run holds stops the command before any V
     CHECK_FALSE(std::filesystem::exists(rec));
 }
 
+TEST_CASE("restore: a result schema that can't be loaded stops the command before the run mutex "
+          "and any Veeam call, with no run line, exit 1",
+          "[restore_command][result]")
+{
+    const bool throws = GENERATE(false, true);
+    CAPTURE(throws);
+    Harness lab;
+    lab.schema_ready = [throws]() -> bool {
+        if (throws) {
+            throw std::runtime_error("SENTINEL");
+        }
+        return false;
+    };
+
+    const Run run = lab.run({"--run-id", kRunId, "--mail", "1"});
+
+    CHECK(run.exit_code == rp::exit_code::config);
+    CHECK(run.out.empty());
+    CHECK(run.err == (throws ? "error: unexpected failure\n"
+                             : "error: the result schema couldn't be loaded; nothing was done\n"));
+    CHECK(lab.lock_calls == 0);
+    CHECK(lab.make_connector_calls == 0);
+    CHECK(lab.fake.points_calls == 0);
+    CHECK(lab.targets.graph.requests().empty());
+    CHECK(lab.cleanups.empty());
+}
+
 TEST_CASE("restore: a run mutex its last holder never released refuses this run once, saying so",
           "[restore_command][cleanup]")
 {

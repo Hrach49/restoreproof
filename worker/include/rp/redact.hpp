@@ -32,15 +32,23 @@ bool is_secret_header(std::string_view name) noexcept;
 //    (a bare '\r' doesn't end it);
 //  - key=value, key one of client_secret, password, refresh_token,
 //    access_token, authorization, tempauth, sig, client_assertion, id_token,
-//    pfx, pfx_base64 (URL query strings and fragments, form bodies, log
-//    lines; blanks allowed around '='): the value up to '&', '#', '"', ',' or whitespace, but for
-//    authorization up to the end of the line;
-//  - "key: value" for client_secret, password, refresh_token, access_token
-//    and pfx_base64 only: the value up to the end of the line;
+//    pfx, pfx_base64, applicationCertificate, applicationCertificatePassword,
+//    signing_key, signing_key_base64, signing_private_key (URL query strings
+//    and fragments, form bodies, log lines; blanks allowed around '='): the
+//    value up to '&', '#', '"', ',' or whitespace, but for authorization up
+//    to the end of the line;
+//  - "key: value" for client_secret, password, refresh_token, access_token,
+//    pfx_base64, the two applicationCertificate names and the three signing
+//    key names only: the value up to the end of the line;
 //  - in both forms a value starting with a quote (' or ") goes up to its
 //    matching quote, backslash escapes honoured, and keeps its quotes;
-//  - JSON object keys, any of the eleven key=value names, at any nesting: the
+//  - JSON object keys, any of the key=value names, at any nesting: the
 //    whole value, of any type, becomes the string "[REDACTED]";
+//  - a PEM private key block (W4.3), "-----BEGIN <label>-----" whose label
+//    ends in "PRIVATE KEY" (PRIVATE KEY, ENCRYPTED PRIVATE KEY, RSA PRIVATE
+//    KEY, ...): the whole block up to and with its "-----END <label>-----",
+//    or to the end of the text without one. A PUBLIC KEY or CERTIFICATE
+//    block stays;
 //  - URL userinfo, "scheme://user:password@host": everything between "://"
 //    and the last '@' before the first '/', '?' or '#';
 //  - a raw JWT anywhere: "eyJ" (case matters) not run into a preceding

@@ -1,0 +1,38 @@
+W4.3 Done-when, live, 2026-10-05: run w43-done-when-1, the folder and five changed copies, both verifiers
+result.json  22347 bytes  sha256 2cd2cd0010b4d3bc02d6af1943beb80a5fef81c3a1c5a38db420c2e54559a8f4
+  items.csv  5749
+  result.json  22347
+  signature.json  322
+  veeam-session.log  7490
+
+0 the folder as written
+  rpworker signer verify : verified 2cd2cd0010b4d3bc02d6af1943beb80a5fef81c3a1c5a38db420c2e54559a8f4 key 9dfab6eadaa1d04a22dcc966aac7a53bcff8bbe0077232485f6143cd9c4d0ca5  (exit 0)
+  verify_bundle.py       : verified 2cd2cd0010b4d3bc02d6af1943beb80a5fef81c3a1c5a38db420c2e54559a8f4 key 9dfab6eadaa1d04a22dcc966aac7a53bcff8bbe0077232485f6143cd9c4d0ca5  (exit 0)
+  same stdout line: True; the expected line: True
+
+1 one digit of an item's hash in result.json
+  rpworker signer verify : not verified: hash_mismatch  (exit 5)
+  verify_bundle.py       : not verified: hash_mismatch  (exit 1)
+  same stdout line: True; the expected line: True
+
+2 one Base64 character of signature changed, its shape kept
+  rpworker signer verify : not verified: signature_invalid  (exit 5)
+  verify_bundle.py       : not verified: signature_invalid  (exit 1)
+  same stdout line: True; the expected line: True
+
+3 one byte of items.csv
+  rpworker signer verify : not verified: attachment_hash  (exit 5)
+  verify_bundle.py       : not verified: attachment_hash  (exit 1)
+  same stdout line: True; the expected line: True
+
+4 veeam-session.log removed
+  rpworker signer verify : not verified: attachment_missing  (exit 5)
+  verify_bundle.py       : not verified: attachment_missing  (exit 1)
+  same stdout line: True; the expected line: True
+
+5 nothing changed; RFC 8032's test key given
+  rpworker signer verify : not verified: wrong_key  (exit 5)
+  verify_bundle.py       : not verified: wrong_key  (exit 1)
+  same stdout line: True; the expected line: True
+
+all six agree and are as expected: True

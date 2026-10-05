@@ -32,8 +32,16 @@ struct ResultValidation {
     std::string first_pointer;
 };
 
-// Whether `document` is a restoreproof.result.v1 by the embedded schema. The
-// validator is built once, on the first call; thread-safe. Never throws: a
+// Whether the validator is there: it is built from the embedded schema on the
+// first call of this or of validate_result, and kept once built; a failure
+// (no memory, a pattern the regex engine refuses) isn't kept, and the next
+// call tries again. Thread-safe; never throws. A run asks this before it
+// restores anything, so a Worker that can't validate its result says so
+// first and not as a schema violation after the restore.
+bool result_schema_ready() noexcept;
+
+// Whether `document` is a restoreproof.result.v1 by the embedded schema
+// (loaded as result_schema_ready says); thread-safe. Never throws: a
 // schema that can't be loaded, or anything the validator throws, is one
 // violation with no pointer. An unsigned integer too large for a signed 64-bit
 // value is refused here, as one violation at its place, before the validator

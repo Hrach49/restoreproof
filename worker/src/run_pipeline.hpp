@@ -81,8 +81,10 @@ struct Presentation {
     std::function<void()> after_config;
     // Called once, last, by every run that printed its run line, after the
     // timings and env.on_timings, with `code` the exit code so far and
-    // whether stdout was lost; returns the exit code. When it throws, a
-    // `code` of 0 becomes 1 and any other is kept. Null = nothing, and the
+    // whether stdout was lost; returns the exit code. When it throws,
+    // "error: unexpected failure" goes on `err`, a `code` of 0 becomes 1 and
+    // any other is kept; `test --json`'s hook catches what its own writes
+    // throw, so only a bug gets here. Null = nothing, and the
     // finished result isn't built: only the one validation before the
     // status line runs.
     std::function<int(const RunSummary&, int code, bool output_lost)> on_run;

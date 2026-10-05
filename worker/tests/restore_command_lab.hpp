@@ -809,6 +809,8 @@ struct Harness {
         // W3.6: `test --json`'s writer; null, the atomic writer, into the
         // temp folder.
         env.write_summary = write_summary;
+        // W4.1: null, the real embedded schema's validator.
+        env.result_schema_ready = schema_ready;
         return env;
     }
 
@@ -894,6 +896,8 @@ struct Harness {
     // W3.4: the run mutex taken by another run, a failure taking it, whether
     // the command holds it, how often it asked, the Veeam calls made by then,
     // and each run's cleanup with stdout as it stood then.
+    // W4.1: whether the result's validator is there; null, the real one.
+    std::function<bool()> schema_ready;
     bool lock_taken = false;
     std::function<void()> lock_throw;
     bool lock_held = false;

@@ -11,7 +11,9 @@
 #include <rp/graph_errors.hpp>
 #include <rp/graph_targets.hpp>
 #include <rp/http_client.hpp>
+#include <rp/redact.hpp>
 #include <rp/result_builder.hpp>
+#include <rp/result_schema.hpp>
 #include <rp/run_lock.hpp>
 #include <rp/run_status.hpp>
 #include <rp/sample_rng.hpp>
@@ -559,8 +561,9 @@ std::exception_ptr read_before(graph::GraphClient& client, IHttpClient& download
 // The after read (W3.2): the targets the spec has items for, each mail body
 // hashed, and each file `hash_file` takes (this run's copies of expected
 // files, verification::hash_filter) downloaded and hashed, a docx or xlsx by
-// office-v1 too; every other file, an earlier run's leftover included, is
-// listed only. A type whose read fails with a Graph error keeps its error
+// office-v1 too (a package it refuses: one "check note: ..." line on `err`
+// with the reader's text); every other file, an earlier run's leftover
+// included, is listed only. A type whose read fails with a Graph error keeps its error
 // code (verification::read_error_code), and its line goes on `err`; anything
 // else (an rp::ConfigError included) is thrown.
 void read_after(graph::GraphClient& client, IHttpClient& download,
@@ -591,6 +594,21 @@ void read_after(graph::GraphClient& client, IHttpClient& download,
     read(!spec.mail.empty(), after.mail, [&] { return reader.list_mail(); });
     read(!spec.sharepoint.empty(), after.sharepoint, [&] { return reader.list_sharepoint(); });
     read(!spec.onedrive.empty(), after.onedrive, [&] { return reader.list_onedrive(); });
+    // Why office-v1 refused a restored package, here only: the check's reason
+    // is fixed words (W4.1 point 7: the result is signed and uploaded), and
+    // without the reader's own text one of its limits (a part too large, an
+    // encrypted part) can't be told from a broken file.
+    const auto refusals = [&](std::string_view kind, const verification::TargetRead& target) {
+        for (const graph::FoundItem& file : target.items) {
+            const auto it = target.office.find(file.id);
+            if (it != target.office.end() && !it->second.error.empty()) {
+                err << "check note: " << kind << ' ' << cell_or_dash(file.name.value_or(""))
+                    << ": not valid office-v1 input: " << redact(it->second.error) << '\n';
+            }
+        }
+    };
+    refusals("sharepoint", after.sharepoint);
+    refusals("onedrive", after.onedrive);
 }
 
 } // namespace
@@ -685,6 +703,17 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
         err << "usage error: every sample size is 0 (--mail, --sp, --od, or config's "
                "sample_mail, sample_sp, sample_od): nothing to restore\n";
         return exit_code::usage;
+    }
+    // W4.1: a Worker that can't validate its result finds out here, not after
+    // the restore, where it would read as a schema violation.
+    try {
+        if (!(env.result_schema_ready ? env.result_schema_ready() : result_schema_ready())) {
+            err << "error: the result schema couldn't be loaded; nothing was done\n";
+            return exit_code::config;
+        }
+    } catch (...) {
+        err << "error: unexpected failure\n";
+        return exit_code::config;
     }
     const sampling::CanaryCursor cursor = parsed.cursor.value_or(sampling::CanaryCursor{});
 
@@ -946,6 +975,11 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
                 const RunSummary summary{.run_id = run_id, .result = text ? &*text : nullptr};
                 code = presentation.on_run(summary, code, output_lost);
             } catch (...) {
+                // Never an exit code without its line.
+                try {
+                    err << "error: unexpected failure\n";
+                } catch (...) {
+                }
                 code = code == exit_code::ok ? exit_code::config : code;
             }
         }

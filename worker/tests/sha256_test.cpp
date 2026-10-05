@@ -3,6 +3,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
 
+#include <array>
 #include <string>
 #include <utility>
 
@@ -17,4 +18,19 @@ TEST_CASE("sha256_hex gives the lower-case hex SHA-256 of the bytes", "[sha256]"
     }));
     CAPTURE(hex);
     CHECK(rp::sha256_hex(bytes) == hex);
+}
+
+// The same rows: the 32 bytes are the ones the hex shows, in its order.
+TEST_CASE("sha256_bytes gives the digest's 32 bytes, the ones sha256_hex shows", "[sha256]")
+{
+    const std::string bytes =
+        GENERATE(std::string{}, std::string{"abc"}, std::string("\0\x01\xff", 3));
+    const std::array<unsigned char, 32> digest = rp::sha256_bytes(bytes);
+    constexpr char kHex[] = "0123456789abcdef";
+    std::string hex;
+    for (const unsigned char byte : digest) {
+        hex += kHex[byte >> 4];
+        hex += kHex[byte & 0x0f];
+    }
+    CHECK(hex == rp::sha256_hex(bytes));
 }

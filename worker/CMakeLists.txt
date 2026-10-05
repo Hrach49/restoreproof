@@ -40,6 +40,7 @@ add_library(rpcore STATIC
     src/config_check.cpp
     src/connector.cpp
     src/connector_registry.cpp
+    src/ed25519.cpp
     src/evidence_builder.cpp
     src/expected_set.cpp
     src/graph_client.cpp
@@ -145,6 +146,7 @@ add_executable(rptests
     tests/connector_registry_test.cpp
     tests/connector_test.cpp
     tests/deps_test.cpp
+    tests/ed25519_test.cpp
     tests/evidence_builder_test.cpp
     tests/expected_set_test.cpp
     tests/graph_client_live_test.cpp

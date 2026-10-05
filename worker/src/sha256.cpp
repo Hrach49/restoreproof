@@ -22,4 +22,13 @@ std::string sha256_hex(std::string_view bytes)
     return hex;
 }
 
+std::array<unsigned char, 32> sha256_bytes(std::string_view bytes)
+{
+    std::array<unsigned char, 32> digest{};
+    unsigned int length = 0;
+    // Unreachable in tests, as above.
+    if (EVP_Digest(bytes.data(), bytes.size(), digest.data(), &length, EVP_sha256(), nullptr) != 1 || length != digest.size()) throw std::runtime_error("SHA-256 failed");
+    return digest;
+}
+
 } // namespace rp

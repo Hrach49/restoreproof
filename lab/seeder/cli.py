@@ -1,4 +1,4 @@
-"""`python -m seeder {generate,hash,seed,seed-real,verify,check-worker-app,record-graph-fixtures}`."""
+"""`python -m seeder {generate,hash,seed,seed-real,verify,check-worker-app,record-graph-fixtures,new-signing-key}`."""
 
 import argparse
 import sys
@@ -13,6 +13,8 @@ from seeder.http import TransportError
 from seeder.manifest import ManifestError, run_hash
 from seeder.seed import run_seed
 from seeder.seed_real import RefusedError, run_seed_real
+from seeder.signing_key import CREDENTIAL_TARGET as SIGNING_KEY_TARGET
+from seeder.signing_key import SigningKeyError, WindowsCredentialStore, run_new_signing_key
 from seeder.transport import RequestsTransport
 from seeder.verify import run_verify
 from seeder.worker_app import default_pfx_path, read_generic_credential, resolve_worker_client_id, run_check
@@ -23,11 +25,12 @@ def _parser() -> argparse.ArgumentParser:
         prog="python -m seeder",
         description=(
             "Seed and check the RestoreProof canary set (L1.2) and the Worker app (L1.5), seed real data "
-            "for the random sample (L1.8), and record the Worker's Graph fixtures (W2.1). See lab/README.md."
+            "for the random sample (L1.8), record the Worker's Graph fixtures (W2.1), and make the lab's "
+            "signing key (W4.3). See lab/README.md."
         ),
     )
     sub = parser.add_subparsers(
-        dest="command", required=True, metavar="{generate,hash,seed,seed-real,verify,check-worker-app,record-graph-fixtures}"
+        dest="command", required=True, metavar="{generate,hash,seed,seed-real,verify,check-worker-app,record-graph-fixtures,new-signing-key}"
     )
 
     def paths(p: argparse.ArgumentParser, *, manifest: bool = True, canary: bool = True) -> None:
@@ -81,6 +84,21 @@ def _parser() -> argparse.ArgumentParser:
         "--client-id", help="Worker app client ID (else RP_LAB_WORKER_CLIENT_ID, else tenant.py)"
     )
     fixtures.add_argument("--pfx", type=Path, help=f"the app's certificate (default: {default_pfx_path()})")
+    signing = sub.add_parser(
+        "new-signing-key",
+        help=(
+            "make the lab's Ed25519 signing key pair: the private key into Credential Manager "
+            f"('{SIGNING_KEY_TARGET}'), the public PEM and its key ID on stdout (offline, W4.3)"
+        ),
+    )
+    signing.add_argument(
+        "--replace",
+        action="store_true",
+        help="replace the key that is there; every signature made with the old key is orphaned",
+    )
+    signing.add_argument(
+        "--public-key-out", type=Path, metavar="FILE", help="also write the public PEM to FILE, outside the repository"
+    )
     return parser
 
 
@@ -93,6 +111,10 @@ def _run(args: argparse.Namespace) -> int:
         return run_generate(args.canary_dir)
     if args.command == "hash":
         return run_hash(args.manifest, args.canary_dir)
+    if args.command == "new-signing-key":
+        return run_new_signing_key(
+            store=WindowsCredentialStore(), replace=args.replace, public_key_out=args.public_key_out
+        )
     if args.command == "record-graph-fixtures":
         return run_record(
             client_id=resolve_worker_client_id(args.client_id),
@@ -137,7 +159,7 @@ def main(argv: list[str] | None = None) -> int:
         return exc.code if isinstance(exc.code, int) else 2
     try:
         return _run(args)
-    except (AuthError, GraphError, TransportError, FixtureError, RefusedError) as exc:
+    except (AuthError, GraphError, TransportError, FixtureError, RefusedError, SigningKeyError) as exc:
         _err(f"error: {exc}")
         return 2
     except ManifestError as exc:

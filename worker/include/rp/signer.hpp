@@ -88,7 +88,10 @@ private:
 // an auditor's PEM file. Never taken from the folder that is checked.
 class PublicKey {
 public:
-    // The Ed25519 public key in `pem` (one "PUBLIC KEY" block), or nullopt.
+    // The Ed25519 public key in the file `pem`, or nullopt: one "PUBLIC KEY"
+    // block by the one strict rule of Ed25519::public_key_from_pem
+    // (rp/ed25519.hpp), which verify_bundle.py holds too, row for row
+    // (shared/testdata/signing-v1/key-files.json).
     // `primitive` must outlive the key. Never throws.
     static std::optional<PublicKey>
     from_pem(std::string_view pem, const Ed25519& primitive = openssl_ed25519()) noexcept;

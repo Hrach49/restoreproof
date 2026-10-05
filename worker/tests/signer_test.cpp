@@ -650,6 +650,54 @@ TEST_CASE("PublicKey::from_pem takes the PEM a signing key gives", "[signer][key
     CHECK(key2().key_id() != kKey1Id);
 }
 
+// shared/testdata/signing-v1/key-files.json: the one rule for a public key
+// file, row by row. verify_bundle.py runs the same rows
+// (cloud/tests/test_verify_bundle.py), so the two readers take the same files.
+TEST_CASE("PublicKey::from_pem takes and refuses every shared key file as the file says",
+          "[signer][key][vectors]")
+{
+    const json file = json::parse(rp::test::read_shared("testdata/signing-v1/key-files.json"));
+    const json& rows = file.at("key_files");
+    REQUIRE(rows.size() == 46);
+    const std::string key1_id = file.at("accepted_key_id").get<std::string>();
+    const std::string identity_id = file.at("identity_key_id").get<std::string>();
+    CHECK(key1_id == kKey1Id);
+    std::set<std::string> names;
+    int accepted = 0;
+
+    for (const json& row : rows) {
+        const std::string name = row.at("name").get<std::string>();
+        CAPTURE(name);
+        names.insert(name);
+        // Exactly one of the two carriers.
+        REQUIRE(row.contains("text") != row.contains("base64"));
+        std::string bytes;
+        if (row.contains("text")) {
+            bytes = row.at("text").get<std::string>();
+        } else {
+            const std::optional<std::vector<unsigned char>> decoded =
+                rp::base64_decode(row.at("base64").get<std::string>());
+            REQUIRE(decoded);
+            bytes.assign(decoded->begin(), decoded->end());
+        }
+
+        const std::optional<PublicKey> key = PublicKey::from_pem(bytes);
+        CHECK(key.has_value() == row.at("accepted").get<bool>());
+        if (row.at("accepted").get<bool>()) {
+            ++accepted;
+        }
+        if (key) {
+            // The key the file holds, by the bytes it holds: nothing normalised.
+            CHECK(key->key_id() ==
+                  (name == "small-order-identity-key" ? identity_id : key1_id));
+            CHECK(key->der().size() == rp::kEd25519PublicDerBytes);
+        }
+    }
+    CHECK(names.size() == rows.size());
+    CHECK(accepted == 11);
+    CHECK(file.at("description").get<std::string>().find("C5.5") != std::string::npos);
+}
+
 TEST_CASE("PublicKey::from_pem refuses what isn't an Ed25519 public key", "[signer][key]")
 {
     CHECK_FALSE(PublicKey::from_pem(""));

@@ -354,6 +354,85 @@ TEST_CASE("public_key_from_pem refuses everything but one Ed25519 public key", "
     }
 }
 
+// The W4.3 review's rule: the bytes between the armour lines are the key's 44
+// bytes exactly, in strict Base64, and the block is three kinds of line and
+// nothing else. shared/testdata/signing-v1/key-files.json holds every row
+// (tests/signer_test.cpp runs them); these are the ones the old reader took.
+TEST_CASE("public_key_from_pem takes only the key's own 44 bytes in the block", "[ed25519]")
+{
+    const Ed25519& ed = rp::openssl_ed25519();
+    const std::vector<unsigned char> der = spki_of(vectors().at(0));
+    const std::string body = rp::base64_encode(der);
+    const std::string begin = "-----BEGIN PUBLIC KEY-----";
+    const std::string end = "-----END PUBLIC KEY-----";
+    const auto pem_of = [&](std::span<const unsigned char> bytes) {
+        return begin + "\n" + rp::base64_encode(bytes) + "\n" + end + "\n";
+    };
+    REQUIRE(ed.public_key_from_pem(pem_of(der)) == der);
+
+    SECTION("a byte after the key")
+    {
+        std::vector<unsigned char> longer = der;
+        longer.push_back(0x00);
+        CHECK(ed.public_key_from_pem(pem_of(longer)).empty());
+    }
+    SECTION("the BIT STRING's unused bits set to 1")
+    {
+        std::vector<unsigned char> unused = der;
+        unused[11] = 0x01;
+        CHECK(ed.public_key_from_pem(pem_of(unused)).empty());
+    }
+    SECTION("a long-form length")
+    {
+        std::vector<unsigned char> long_form = {0x30, 0x81, 0x2a};
+        long_form.insert(long_form.end(), der.begin() + 2, der.end());
+        CHECK(ed.public_key_from_pem(pem_of(long_form)).empty());
+    }
+    SECTION("Base64 with a pad bit set")
+    {
+        REQUIRE(body.ends_with("o="));
+        CHECK(ed.public_key_from_pem(begin + "\n" + body.substr(0, body.size() - 2) + "p=\n" +
+                                     end + "\n")
+                  .empty());
+    }
+    SECTION("the body wrapped at another column is the same key")
+    {
+        CHECK(ed.public_key_from_pem(begin + "\n" + body.substr(0, 32) + "\n" + body.substr(32) +
+                                     "\n" + end + "\n") == der);
+        CHECK(ed.public_key_from_pem(begin + "\r\n" + body.substr(0, body.size() - 1) +
+                                     "\r\n=\r\n" + end) == der);
+    }
+    SECTION("a lone CR is no line end")
+    {
+        CHECK(ed.public_key_from_pem(begin + "\r" + body + "\r" + end + "\r").empty());
+        CHECK(ed.public_key_from_pem(begin + "\n" + body + "\r" + end + "\n").empty());
+        // Around the block it is white space.
+        CHECK(ed.public_key_from_pem("\r" + pem_of(der) + "\r") == der);
+    }
+    SECTION("no line end between the lines")
+    {
+        CHECK(ed.public_key_from_pem(begin + body + end).empty());
+        CHECK(ed.public_key_from_pem(begin + body + "\n" + end).empty());
+        CHECK(ed.public_key_from_pem(begin + "\n" + body + end).empty());
+    }
+    SECTION("a header line, a blank line, a space, no body")
+    {
+        CHECK(ed.public_key_from_pem(begin + "\nComment: x\n\n" + body + "\n" + end + "\n")
+                  .empty());
+        CHECK(ed.public_key_from_pem(begin + "\n\n" + body + "\n" + end + "\n").empty());
+        CHECK(ed.public_key_from_pem(begin + "\n" + body + "\n " + end + "\n").empty());
+        CHECK(ed.public_key_from_pem(begin + " \n" + body + "\n" + end + "\n").empty());
+        CHECK(ed.public_key_from_pem(begin + "\n" + body.substr(0, 32) + " " + body.substr(32) +
+                                     "\n" + end + "\n")
+                  .empty());
+        CHECK(ed.public_key_from_pem(begin + "\n" + end + "\n").empty());
+        CHECK(ed.public_key_from_pem(begin).empty());
+        CHECK(ed.public_key_from_pem(begin + "\n").empty());
+        CHECK(ed.public_key_from_pem(begin + "\n" + body).empty());
+        CHECK(ed.public_key_from_pem(begin + "\n" + body + "\n").empty());
+    }
+}
+
 TEST_CASE("the real primitive is one object", "[ed25519]")
 {
     CHECK(&rp::openssl_ed25519() == &rp::openssl_ed25519());

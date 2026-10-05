@@ -1,0 +1,9 @@
+schema: valid
+canonical: True
+keys: 17 status: pass screenshot: {"reason": "disabled", "state": "unavailable"}
+files beside result.json == attachments: True ['items.csv', 'veeam-session.log']
+items.csv: size 5746 ok, sha256 e8f8f9b5a3e356622d490e296ea3766f282c86d7ff2903e4bded5a1b79889758 ok
+veeam-session.log: size 7371 ok, sha256 eaa9955c78483872a4abc2052e66cc1499fbf764288e22ea8a0ddcc6c48f44e0 ok
+result.json: size 22606 sha256 25b4b558e56c45b053a2c80e339164d4b86971e2ba7d3a8361cd84822fdcdf0a
+items.csv: rows 30 canary rows 15 rows with a found hash 15 found == expected in all of them: True
+veeam-session.log: lines 34 session lines 4 withheld 0

@@ -403,11 +403,15 @@ std::optional<std::vector<unsigned char>> public_der_of(std::string_view pem,
 std::optional<SigningKey> SigningKey::from_base64(std::string_view text,
                                                   const Ed25519& primitive) noexcept
 {
+    // One return after the handler: a function that returns from both the
+    // block and its handler has a closing line no run reaches.
+    std::optional<SigningKey> key;
     try {
-        return parse_signing_key(text, primitive);
+        key = parse_signing_key(text, primitive);
     } catch (...) {
-        return std::nullopt;
+        key.reset();
     }
+    return key;
 }
 
 SigningKey::SigningKey(std::unique_ptr<Impl> impl) noexcept : impl_(std::move(impl)) {}
@@ -446,16 +450,17 @@ PublicKey::PublicKey(std::vector<unsigned char> der, std::string key_id,
 std::optional<PublicKey> PublicKey::from_pem(std::string_view pem,
                                              const Ed25519& primitive) noexcept
 {
+    std::optional<PublicKey> key;
     try {
         std::optional<std::vector<unsigned char>> der = public_der_of(pem, primitive);
-        if (!der) {
-            return std::nullopt;
+        if (der) {
+            std::string key_id = sha256_hex(as_text(*der));
+            key = PublicKey(std::move(*der), std::move(key_id), primitive);
         }
-        std::string key_id = sha256_hex(as_text(*der));
-        return PublicKey(std::move(*der), std::move(key_id), primitive);
     } catch (...) {
-        return std::nullopt;
+        key.reset();
     }
+    return key;
 }
 
 const std::string& PublicKey::key_id() const noexcept
@@ -502,11 +507,13 @@ const std::vector<std::string>& verify_words()
 std::optional<SignedResult> Signer::sign(std::string_view canonical,
                                          const SigningKey& key) noexcept
 {
+    std::optional<SignedResult> made;
     try {
-        return sign_canonical(canonical, key);
+        made = sign_canonical(canonical, key);
     } catch (...) {
-        return std::nullopt;
+        made.reset();
     }
+    return made;
 }
 
 Verification Signer::verify(std::string_view result, std::string_view signature,

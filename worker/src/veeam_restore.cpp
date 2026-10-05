@@ -149,14 +149,6 @@ std::string format_utc_seconds(std::chrono::system_clock::time_point time)
            two_digits(static_cast<unsigned>(clock.seconds().count())) + "Z";
 }
 
-std::optional<std::string> to_whole_seconds(std::string_view text)
-{
-    if (!parse_veeam_time(text)) {
-        return std::nullopt;
-    }
-    return std::string{text.substr(0, 19)} + "Z";
-}
-
 std::optional<std::string> veeam_site_id(std::string_view graph_site_id)
 {
     const std::optional<GraphSiteId> parsed = parse_graph_site_id(graph_site_id);

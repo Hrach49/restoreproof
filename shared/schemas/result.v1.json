@@ -1,0 +1,1758 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://restoreproof.local/schemas/result.v1.json",
+  "title": "RestoreProof result v1",
+  "description": "restoreproof.result.v1: what one restore test did and found (W4.1, docs/decisions.md 2026-10-04). Written as canonical-json-v1. All fifteen keys are always there; sample, expected, restore, check and cleanup are null where the step didn't run. The schema uses only keywords JSON Schema draft 7 and 2020-12 read alike, and every object is closed.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "format",
+    "worker_version",
+    "run_id",
+    "started_at",
+    "ended_at",
+    "connector",
+    "client",
+    "restore_point",
+    "sample",
+    "expected",
+    "restore",
+    "check",
+    "status",
+    "cleanup",
+    "timings"
+  ],
+  "properties": {
+    "format": {
+      "const": "restoreproof.result.v1"
+    },
+    "worker_version": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[0-9A-Za-z.+-]+$",
+      "not": {
+        "pattern": "\n"
+      }
+    },
+    "run_id": {
+      "$ref": "#/$defs/run_id"
+    },
+    "started_at": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/time_milliseconds"
+        }
+      ]
+    },
+    "ended_at": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/time_milliseconds"
+        }
+      ]
+    },
+    "connector": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "api"
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "veeam_m365"
+          ]
+        },
+        "api": {
+          "type": "string",
+          "maxLength": 64
+        }
+      }
+    },
+    "client": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "client_id",
+        "tenant_id",
+        "veeam_org_name",
+        "targets"
+      ],
+      "properties": {
+        "client_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 128
+        },
+        "tenant_id": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "veeam_org_name": {
+          "type": "string",
+          "maxLength": 1024
+        },
+        "targets": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "mailbox",
+            "site_id",
+            "library_id",
+            "onedrive_drive_id",
+            "onedrive_folder_id"
+          ],
+          "properties": {
+            "mailbox": {
+              "type": "string",
+              "maxLength": 1024
+            },
+            "site_id": {
+              "type": "string",
+              "maxLength": 1024
+            },
+            "library_id": {
+              "type": "string",
+              "maxLength": 1024
+            },
+            "onedrive_drive_id": {
+              "type": "string",
+              "maxLength": 1024
+            },
+            "onedrive_folder_id": {
+              "type": "string",
+              "maxLength": 1024
+            }
+          }
+        }
+      }
+    },
+    "restore_point": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "backup_time_raw",
+        "backup_time"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 1024
+        },
+        "backup_time_raw": {
+          "type": "string",
+          "maxLength": 1024
+        },
+        "backup_time": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/time_seconds"
+            }
+          ]
+        }
+      }
+    },
+    "sample": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/sample"
+        }
+      ]
+    },
+    "expected": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/expected"
+        }
+      ]
+    },
+    "restore": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/restore"
+        }
+      ]
+    },
+    "check": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/check"
+        }
+      ]
+    },
+    "status": {
+      "$ref": "#/$defs/status"
+    },
+    "cleanup": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/cleanup"
+        }
+      ]
+    },
+    "timings": {
+      "$ref": "#/$defs/timings"
+    }
+  },
+  "$defs": {
+    "count": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "integer": {
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
+    },
+    "sha256": {
+      "type": "string",
+      "minLength": 64,
+      "maxLength": 64,
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "time_seconds": {
+      "description": "UTC, whole seconds: YYYY-MM-DDTHH:MM:SSZ.",
+      "type": "string",
+      "minLength": 20,
+      "maxLength": 20,
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"
+    },
+    "time_milliseconds": {
+      "description": "UTC, milliseconds: YYYY-MM-DDTHH:MM:SS.mmmZ.",
+      "type": "string",
+      "minLength": 24,
+      "maxLength": 24,
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$"
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9._:-]+$",
+      "not": {
+        "pattern": "\n"
+      }
+    },
+    "kind": {
+      "enum": [
+        "mail",
+        "sharepoint",
+        "onedrive"
+      ]
+    },
+    "sample_kind_key4": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requested",
+        "canary",
+        "random"
+      ],
+      "properties": {
+        "requested": {
+          "$ref": "#/$defs/count"
+        },
+        "canary": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "cursor",
+            "cursor_next",
+            "wanted",
+            "ids"
+          ],
+          "properties": {
+            "cursor": {
+              "$ref": "#/$defs/count"
+            },
+            "cursor_next": {
+              "$ref": "#/$defs/count"
+            },
+            "wanted": {
+              "$ref": "#/$defs/count"
+            },
+            "ids": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "maxLength": 1024
+              }
+            }
+          }
+        },
+        "random": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "wanted",
+            "taken",
+            "pool_size",
+            "pool_sha256",
+            "keys",
+            "containers_eligible",
+            "containers_listed",
+            "containers_unresolved",
+            "folders_listed",
+            "short_of_containers"
+          ],
+          "properties": {
+            "wanted": {
+              "$ref": "#/$defs/count"
+            },
+            "taken": {
+              "$ref": "#/$defs/count"
+            },
+            "pool_size": {
+              "$ref": "#/$defs/count"
+            },
+            "pool_sha256": {
+              "$ref": "#/$defs/sha256"
+            },
+            "keys": {
+              "type": "array",
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 4096
+                },
+                "minItems": 4,
+                "maxItems": 4
+              }
+            },
+            "containers_eligible": {
+              "$ref": "#/$defs/count"
+            },
+            "containers_listed": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "maxLength": 4096
+              }
+            },
+            "containers_unresolved": {
+              "$ref": "#/$defs/count"
+            },
+            "folders_listed": {
+              "$ref": "#/$defs/count"
+            },
+            "short_of_containers": {
+              "type": "boolean"
+            }
+          }
+        }
+      }
+    },
+    "sample_kind_key3": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requested",
+        "canary",
+        "random"
+      ],
+      "properties": {
+        "requested": {
+          "$ref": "#/$defs/count"
+        },
+        "canary": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "cursor",
+            "cursor_next",
+            "wanted",
+            "ids"
+          ],
+          "properties": {
+            "cursor": {
+              "$ref": "#/$defs/count"
+            },
+            "cursor_next": {
+              "$ref": "#/$defs/count"
+            },
+            "wanted": {
+              "$ref": "#/$defs/count"
+            },
+            "ids": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "maxLength": 1024
+              }
+            }
+          }
+        },
+        "random": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "wanted",
+            "taken",
+            "pool_size",
+            "pool_sha256",
+            "keys",
+            "containers_eligible",
+            "containers_listed",
+            "containers_unresolved",
+            "folders_listed",
+            "short_of_containers"
+          ],
+          "properties": {
+            "wanted": {
+              "$ref": "#/$defs/count"
+            },
+            "taken": {
+              "$ref": "#/$defs/count"
+            },
+            "pool_size": {
+              "$ref": "#/$defs/count"
+            },
+            "pool_sha256": {
+              "$ref": "#/$defs/sha256"
+            },
+            "keys": {
+              "type": "array",
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 4096
+                },
+                "minItems": 3,
+                "maxItems": 3
+              }
+            },
+            "containers_eligible": {
+              "$ref": "#/$defs/count"
+            },
+            "containers_listed": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "maxLength": 4096
+              }
+            },
+            "containers_unresolved": {
+              "$ref": "#/$defs/count"
+            },
+            "folders_listed": {
+              "$ref": "#/$defs/count"
+            },
+            "short_of_containers": {
+              "type": "boolean"
+            }
+          }
+        }
+      }
+    },
+    "sample": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "algorithm",
+        "run_id",
+        "seed",
+        "manifest_sha256",
+        "mail",
+        "sharepoint",
+        "onedrive"
+      ],
+      "properties": {
+        "algorithm": {
+          "const": "sample-v1"
+        },
+        "run_id": {
+          "$ref": "#/$defs/run_id"
+        },
+        "seed": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 8,
+          "pattern": "^[0-9a-f]{8}$"
+        },
+        "manifest_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "mail": {
+          "$ref": "#/$defs/sample_kind_key4"
+        },
+        "sharepoint": {
+          "$ref": "#/$defs/sample_kind_key4"
+        },
+        "onedrive": {
+          "$ref": "#/$defs/sample_kind_key3"
+        }
+      },
+      "description": "How the sample was chosen: per type the canaries taken from the rotation cursor and the random draw. A random key is [mailbox, folder, subject, received_at] for a mail, [site_id, list_id, folder_path, name] for a SharePoint file and [user, folder_path, name] for a OneDrive file."
+    },
+    "expected_item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "index",
+        "kind",
+        "source",
+        "expected_kind"
+      ],
+      "properties": {
+        "index": {
+          "$ref": "#/$defs/count"
+        },
+        "kind": {
+          "$ref": "#/$defs/kind"
+        },
+        "source": {
+          "enum": [
+            "canary",
+            "random"
+          ]
+        },
+        "expected_kind": {
+          "enum": [
+            "manifest",
+            "fields",
+            "metadata"
+          ]
+        },
+        "canary_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "key": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 4096
+          },
+          "minItems": 3,
+          "maxItems": 4
+        },
+        "subject": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "sender_address": {
+          "type": "string",
+          "maxLength": 1024
+        },
+        "sender_name": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "sent_at": {
+          "$ref": "#/$defs/time_seconds"
+        },
+        "received_at": {
+          "$ref": "#/$defs/time_seconds"
+        },
+        "internet_message_id": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "size_bytes": {
+          "$ref": "#/$defs/count"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "sha256_rule": {
+          "enum": [
+            "text-v1",
+            "bytes",
+            "office-v1"
+          ]
+        }
+      },
+      "description": "One sampled item's expectation. A key whose value isn't known is left out, never null. manifest: a canary, with the manifest's hash and its rule; fields: a random mail; metadata: a random file.",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "mail"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "required": [
+              "subject",
+              "received_at"
+            ],
+            "properties": {
+              "expected_kind": {
+                "enum": [
+                  "manifest",
+                  "fields"
+                ]
+              },
+              "sha256_rule": {
+                "const": "text-v1"
+              }
+            },
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "name"
+                  ]
+                },
+                {
+                  "required": [
+                    "size_bytes"
+                  ]
+                }
+              ]
+            }
+          },
+          "else": {
+            "required": [
+              "name"
+            ],
+            "properties": {
+              "expected_kind": {
+                "enum": [
+                  "manifest",
+                  "metadata"
+                ]
+              },
+              "sha256_rule": {
+                "enum": [
+                  "bytes",
+                  "office-v1"
+                ]
+              }
+            },
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "subject"
+                  ]
+                },
+                {
+                  "required": [
+                    "sender_address"
+                  ]
+                },
+                {
+                  "required": [
+                    "sender_name"
+                  ]
+                },
+                {
+                  "required": [
+                    "sent_at"
+                  ]
+                },
+                {
+                  "required": [
+                    "received_at"
+                  ]
+                },
+                {
+                  "required": [
+                    "internet_message_id"
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "onedrive"
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          "then": {
+            "properties": {
+              "key": {
+                "maxItems": 3
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "key": {
+                "minItems": 4
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "expected_kind": {
+                "const": "manifest"
+              }
+            },
+            "required": [
+              "expected_kind"
+            ]
+          },
+          "then": {
+            "required": [
+              "canary_id",
+              "sha256",
+              "sha256_rule"
+            ],
+            "properties": {
+              "source": {
+                "const": "canary"
+              }
+            },
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "key"
+                  ]
+                },
+                {
+                  "required": [
+                    "sender_name"
+                  ]
+                }
+              ]
+            }
+          },
+          "else": {
+            "required": [
+              "key"
+            ],
+            "properties": {
+              "source": {
+                "const": "random"
+              }
+            },
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "canary_id"
+                  ]
+                },
+                {
+                  "required": [
+                    "sha256"
+                  ]
+                },
+                {
+                  "required": [
+                    "sha256_rule"
+                  ]
+                },
+                {
+                  "required": [
+                    "sender_address"
+                  ]
+                },
+                {
+                  "required": [
+                    "internet_message_id"
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "allOf": [
+              {
+                "properties": {
+                  "kind": {
+                    "const": "mail"
+                  }
+                },
+                "required": [
+                  "kind"
+                ]
+              },
+              {
+                "properties": {
+                  "expected_kind": {
+                    "const": "manifest"
+                  }
+                },
+                "required": [
+                  "expected_kind"
+                ]
+              }
+            ]
+          },
+          "then": {
+            "required": [
+              "sender_address",
+              "sent_at",
+              "internet_message_id"
+            ]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "sha256_rule": {
+                "const": "office-v1"
+              }
+            },
+            "required": [
+              "sha256_rule"
+            ]
+          },
+          "then": {
+            "not": {
+              "required": [
+                "size_bytes"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "sha256_rule": {
+                "const": "bytes"
+              }
+            },
+            "required": [
+              "sha256_rule"
+            ]
+          },
+          "then": {
+            "required": [
+              "size_bytes"
+            ]
+          }
+        }
+      ]
+    },
+    "expected": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "manifest_sha256",
+        "counts",
+        "items"
+      ],
+      "properties": {
+        "manifest_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "counts": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "manifest",
+            "fields",
+            "metadata"
+          ],
+          "properties": {
+            "manifest": {
+              "$ref": "#/$defs/count"
+            },
+            "fields": {
+              "$ref": "#/$defs/count"
+            },
+            "metadata": {
+              "$ref": "#/$defs/count"
+            }
+          }
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/expected_item"
+          }
+        }
+      }
+    },
+    "restore": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "items_sent",
+        "items_restored",
+        "sessions",
+        "items"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "not_run",
+            "succeeded",
+            "partial",
+            "failed"
+          ]
+        },
+        "items_sent": {
+          "$ref": "#/$defs/count"
+        },
+        "items_restored": {
+          "$ref": "#/$defs/count"
+        },
+        "sessions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "kind",
+              "result",
+              "details",
+              "items_sent",
+              "items_restored",
+              "started_at_raw",
+              "ended_at_raw"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "maxLength": 1024
+              },
+              "kind": {
+                "$ref": "#/$defs/kind"
+              },
+              "result": {
+                "type": "string",
+                "maxLength": 1024
+              },
+              "details": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "maxLength": 1024
+              },
+              "items_sent": {
+                "$ref": "#/$defs/count"
+              },
+              "items_restored": {
+                "$ref": "#/$defs/count"
+              },
+              "started_at_raw": {
+                "type": "string",
+                "maxLength": 1024
+              },
+              "ended_at_raw": {
+                "type": "string",
+                "maxLength": 1024
+              }
+            }
+          }
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "index",
+              "kind",
+              "outcome",
+              "infrastructure",
+              "container_missing",
+              "session_id"
+            ],
+            "properties": {
+              "index": {
+                "$ref": "#/$defs/count"
+              },
+              "kind": {
+                "$ref": "#/$defs/kind"
+              },
+              "outcome": {
+                "enum": [
+                  "unknown",
+                  "restored",
+                  "failed",
+                  "not_in_backup"
+                ]
+              },
+              "infrastructure": {
+                "type": "boolean"
+              },
+              "container_missing": {
+                "type": "boolean"
+              },
+              "session_id": {
+                "type": "string",
+                "maxLength": 1024
+              }
+            }
+          }
+        }
+      },
+      "description": "What the backup product reported. Its own words (a session's result, details, times and IDs) are kept as text and never decide the status."
+    },
+    "check_item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "index",
+        "outcome",
+        "found"
+      ],
+      "properties": {
+        "index": {
+          "$ref": "#/$defs/count"
+        },
+        "outcome": {
+          "enum": [
+            "match",
+            "mismatch",
+            "missing",
+            "error"
+          ]
+        },
+        "found": {
+          "type": "boolean"
+        },
+        "mismatches": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "subject",
+              "sender_address",
+              "sender_name",
+              "sent_at",
+              "received_at",
+              "internet_message_id",
+              "size_bytes",
+              "sha256"
+            ]
+          },
+          "minItems": 1,
+          "maxItems": 8
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300,
+          "pattern": "^(the (mail|sharepoint|onedrive) restore target couldn't be read [(](graph_auth|graph_permission|graph_transient|target_guard|graph)[)]|only an earlier run's copy is in the target|no restored copy found|fields did not match: (subject|sender_address|sender_name|sent_at|received_at|internet_message_id|size_bytes|sha256)(, (subject|sender_address|sender_name|sent_at|received_at|internet_message_id|size_bytes|sha256))*(; the restored package isn't valid office-v1 input)?)$",
+          "not": {
+            "pattern": "\n"
+          }
+        },
+        "duplicate": {
+          "const": true
+        },
+        "copies": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 9007199254740991
+        },
+        "error_code": {
+          "enum": [
+            "graph_auth",
+            "graph_permission",
+            "graph_transient",
+            "target_guard",
+            "graph",
+            "stale_target"
+          ]
+        },
+        "ms": {
+          "$ref": "#/$defs/integer"
+        }
+      },
+      "description": "What the check found for one expected item. No found value is ever written. ms (the copy's read plus its comparison) is there when a copy was compared and can be negative when the clock went back.",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "const": "match"
+              }
+            },
+            "required": [
+              "outcome"
+            ]
+          },
+          "then": {
+            "required": [
+              "ms"
+            ],
+            "properties": {
+              "found": {
+                "const": true
+              }
+            },
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "mismatches"
+                  ]
+                },
+                {
+                  "required": [
+                    "reason"
+                  ]
+                },
+                {
+                  "required": [
+                    "error_code"
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "const": "mismatch"
+              }
+            },
+            "required": [
+              "outcome"
+            ]
+          },
+          "then": {
+            "required": [
+              "mismatches",
+              "reason",
+              "ms"
+            ],
+            "properties": {
+              "found": {
+                "const": true
+              }
+            },
+            "not": {
+              "required": [
+                "error_code"
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "const": "missing"
+              }
+            },
+            "required": [
+              "outcome"
+            ]
+          },
+          "then": {
+            "required": [
+              "reason"
+            ],
+            "properties": {
+              "found": {
+                "const": false
+              }
+            },
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "mismatches"
+                  ]
+                },
+                {
+                  "required": [
+                    "error_code"
+                  ]
+                },
+                {
+                  "required": [
+                    "ms"
+                  ]
+                },
+                {
+                  "required": [
+                    "duplicate"
+                  ]
+                },
+                {
+                  "required": [
+                    "copies"
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "outcome": {
+                "const": "error"
+              }
+            },
+            "required": [
+              "outcome"
+            ]
+          },
+          "then": {
+            "required": [
+              "reason",
+              "error_code"
+            ],
+            "properties": {
+              "found": {
+                "const": false
+              }
+            },
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "mismatches"
+                  ]
+                },
+                {
+                  "required": [
+                    "ms"
+                  ]
+                },
+                {
+                  "required": [
+                    "duplicate"
+                  ]
+                },
+                {
+                  "required": [
+                    "copies"
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "duplicate"
+            ]
+          },
+          "then": {
+            "required": [
+              "copies"
+            ]
+          },
+          "else": {
+            "not": {
+              "required": [
+                "copies"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "counts",
+        "stale_copies",
+        "items"
+      ],
+      "properties": {
+        "counts": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "match",
+            "mismatch",
+            "missing",
+            "error"
+          ],
+          "properties": {
+            "match": {
+              "$ref": "#/$defs/count"
+            },
+            "mismatch": {
+              "$ref": "#/$defs/count"
+            },
+            "missing": {
+              "$ref": "#/$defs/count"
+            },
+            "error": {
+              "$ref": "#/$defs/count"
+            }
+          }
+        },
+        "stale_copies": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "mail",
+            "sharepoint",
+            "onedrive"
+          ],
+          "properties": {
+            "mail": {
+              "$ref": "#/$defs/count"
+            },
+            "sharepoint": {
+              "$ref": "#/$defs/count"
+            },
+            "onedrive": {
+              "$ref": "#/$defs/count"
+            }
+          }
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/check_item"
+          }
+        }
+      }
+    },
+    "status": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "message",
+        "restore_sent",
+        "counts",
+        "verified",
+        "failed_items",
+        "unchecked_items",
+        "warnings"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "pass",
+            "fail",
+            "error"
+          ]
+        },
+        "error_code": {
+          "enum": [
+            "config",
+            "internal",
+            "backup_auth",
+            "backup_transient",
+            "not_in_backup",
+            "no_restore_point",
+            "target_guard",
+            "backup",
+            "graph_auth",
+            "graph_permission",
+            "backup_infrastructure",
+            "graph",
+            "graph_transient",
+            "stale_target",
+            "empty_sample",
+            "not_run",
+            "restore_contradiction",
+            "result_invalid"
+          ]
+        },
+        "message": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "restore_sent": {
+          "type": "boolean"
+        },
+        "counts": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "items",
+            "verified",
+            "failed",
+            "unchecked"
+          ],
+          "properties": {
+            "items": {
+              "$ref": "#/$defs/count"
+            },
+            "verified": {
+              "$ref": "#/$defs/count"
+            },
+            "failed": {
+              "$ref": "#/$defs/count"
+            },
+            "unchecked": {
+              "$ref": "#/$defs/count"
+            }
+          }
+        },
+        "verified": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "manifest",
+            "fields",
+            "metadata"
+          ],
+          "properties": {
+            "manifest": {
+              "$ref": "#/$defs/count"
+            },
+            "fields": {
+              "$ref": "#/$defs/count"
+            },
+            "metadata": {
+              "$ref": "#/$defs/count"
+            }
+          }
+        },
+        "failed_items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/count"
+          }
+        },
+        "unchecked_items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "index",
+              "error_code"
+            ],
+            "properties": {
+              "index": {
+                "$ref": "#/$defs/count"
+              },
+              "error_code": {
+                "enum": [
+                  "target_guard",
+                  "graph_auth",
+                  "graph_permission",
+                  "backup_infrastructure",
+                  "not_in_backup",
+                  "graph",
+                  "graph_transient",
+                  "stale_target"
+                ]
+              }
+            }
+          }
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "code",
+              "message",
+              "indexes"
+            ],
+            "properties": {
+              "code": {
+                "enum": [
+                  "backup_session",
+                  "backup_item",
+                  "duplicate",
+                  "shortfall",
+                  "stale_copies"
+                ]
+              },
+              "message": {
+                "type": "string",
+                "maxLength": 4096
+              },
+              "indexes": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/count"
+                }
+              }
+            }
+          }
+        }
+      },
+      "description": "The run's status (docs/verification.md, the status decision table). error_code is there exactly when status is error.",
+      "if": {
+        "properties": {
+          "status": {
+            "const": "error"
+          }
+        },
+        "required": [
+          "status"
+        ]
+      },
+      "then": {
+        "required": [
+          "error_code"
+        ]
+      },
+      "else": {
+        "not": {
+          "required": [
+            "error_code"
+          ]
+        }
+      }
+    },
+    "cleanup_target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "found",
+        "deleted",
+        "gone",
+        "left",
+        "skipped",
+        "rounds"
+      ],
+      "properties": {
+        "found": {
+          "$ref": "#/$defs/count"
+        },
+        "deleted": {
+          "$ref": "#/$defs/count"
+        },
+        "gone": {
+          "$ref": "#/$defs/count"
+        },
+        "left": {
+          "$ref": "#/$defs/count"
+        },
+        "skipped": {
+          "$ref": "#/$defs/count"
+        },
+        "rounds": {
+          "$ref": "#/$defs/count"
+        },
+        "error_code": {
+          "enum": [
+            "target_guard",
+            "graph_auth",
+            "graph_permission",
+            "graph_transient",
+            "graph",
+            "config",
+            "internal"
+          ]
+        }
+      }
+    },
+    "cleanup_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mail",
+        "sharepoint",
+        "onedrive"
+      ],
+      "properties": {
+        "mail": {
+          "$ref": "#/$defs/cleanup_target"
+        },
+        "sharepoint": {
+          "$ref": "#/$defs/cleanup_target"
+        },
+        "onedrive": {
+          "$ref": "#/$defs/cleanup_target"
+        }
+      }
+    },
+    "cleanup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cleanup_ok",
+        "restore_may_still_run",
+        "before",
+        "after"
+      ],
+      "properties": {
+        "cleanup_ok": {
+          "type": "boolean"
+        },
+        "restore_may_still_run": {
+          "type": "boolean"
+        },
+        "before": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/cleanup_result"
+            }
+          ]
+        },
+        "after": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/cleanup_result"
+            }
+          ]
+        }
+      }
+    },
+    "span": {
+      "description": "null: the step didn't run. {ms}: measured. {ms, note stopped}: ended early by a stop. {note}: no duration (still open, not reported by the connector, or the clock went back).",
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "ms"
+          ],
+          "properties": {
+            "ms": {
+              "$ref": "#/$defs/count"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "ms",
+            "note"
+          ],
+          "properties": {
+            "ms": {
+              "$ref": "#/$defs/count"
+            },
+            "note": {
+              "const": "stopped"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "note"
+          ],
+          "properties": {
+            "note": {
+              "enum": [
+                "open",
+                "not_reported",
+                "clock_backwards"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "timings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "spans"
+      ],
+      "properties": {
+        "spans": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "restore_point_lookup",
+            "cleanup_before",
+            "sample_select",
+            "target_snapshot",
+            "restore",
+            "restore_submit",
+            "restore_wait",
+            "verify",
+            "recovery",
+            "cleanup_after",
+            "total"
+          ],
+          "properties": {
+            "restore_point_lookup": {
+              "$ref": "#/$defs/span"
+            },
+            "cleanup_before": {
+              "$ref": "#/$defs/span"
+            },
+            "sample_select": {
+              "$ref": "#/$defs/span"
+            },
+            "target_snapshot": {
+              "$ref": "#/$defs/span"
+            },
+            "restore": {
+              "$ref": "#/$defs/span"
+            },
+            "restore_submit": {
+              "$ref": "#/$defs/span"
+            },
+            "restore_wait": {
+              "$ref": "#/$defs/span"
+            },
+            "verify": {
+              "$ref": "#/$defs/span"
+            },
+            "recovery": {
+              "$ref": "#/$defs/span"
+            },
+            "cleanup_after": {
+              "$ref": "#/$defs/span"
+            },
+            "total": {
+              "$ref": "#/$defs/span"
+            }
+          }
+        }
+      }
+    }
+  }
+}

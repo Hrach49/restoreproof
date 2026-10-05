@@ -11,12 +11,16 @@
 #include <rp/graph_errors.hpp>
 #include <rp/graph_targets.hpp>
 #include <rp/http_client.hpp>
+#include <rp/redact.hpp>
+#include <rp/result_builder.hpp>
+#include <rp/result_schema.hpp>
 #include <rp/run_lock.hpp>
 #include <rp/run_status.hpp>
 #include <rp/sample_rng.hpp>
 #include <rp/target_guard_graph.hpp>
 #include <rp/sample_selector.hpp>
 #include <rp/step_timer.hpp>
+#include <rp/version.hpp>
 
 #include "duration_text.hpp"
 #include "path_utf8.hpp"
@@ -42,6 +46,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <variant>
 #include <vector>
 
 namespace rp {
@@ -349,8 +354,8 @@ graph::ClientCertificate check_graph_certificate(const Secrets& secrets,
         secrets, wall_now, std::make_shared<spdlog::logger>("rp-restore-certificate"));
 }
 
-// The wall clock's "YYYY-MM-DDTHH:MM:SS.mmmZ" now, for the run summary;
-// nullopt when the clock fails: it decides nothing.
+// The wall clock's "YYYY-MM-DDTHH:MM:SS.mmmZ" now, for the result's
+// started_at and ended_at; nullopt when the clock fails: it decides nothing.
 std::optional<std::string> wall_text(const connector::ConnectorOptions& options) noexcept
 {
     try {
@@ -369,6 +374,24 @@ std::string format_status(const verification::RunVerdict& verdict)
     return std::format("\nstatus {}{}: {}\n", verification::to_string(verdict.status),
                        verdict.error_code.empty() ? "" : " " + verdict.error_code,
                        verdict.message);
+}
+
+// Why a result isn't one (W4.1 point 5), one line for `err`: counts, fixed
+// words and a place in the document, never the validator's message, a value
+// or an exception's text.
+std::string format_result_error(const ResultError& error)
+{
+    switch (error.cause) {
+    case ResultFailure::schema:
+        return std::format("result error: {} schema violation(s){}\n", error.violations,
+                           error.first_pointer.empty() ? std::string{}
+                                                       : ", first at " + error.first_pointer);
+    case ResultFailure::not_canonical:
+        return "result error: the result has no canonical form\n";
+    case ResultFailure::build_failed:
+        break;
+    }
+    return "result error: the result couldn't be built\n";
 }
 
 // A clean's three targets, by the names its lines give them, in that order.
@@ -538,8 +561,9 @@ std::exception_ptr read_before(graph::GraphClient& client, IHttpClient& download
 // The after read (W3.2): the targets the spec has items for, each mail body
 // hashed, and each file `hash_file` takes (this run's copies of expected
 // files, verification::hash_filter) downloaded and hashed, a docx or xlsx by
-// office-v1 too; every other file, an earlier run's leftover included, is
-// listed only. A type whose read fails with a Graph error keeps its error
+// office-v1 too (a package it refuses: one "check note: ..." line on `err`
+// with the reader's text); every other file, an earlier run's leftover
+// included, is listed only. A type whose read fails with a Graph error keeps its error
 // code (verification::read_error_code), and its line goes on `err`; anything
 // else (an rp::ConfigError included) is thrown.
 void read_after(graph::GraphClient& client, IHttpClient& download,
@@ -570,6 +594,21 @@ void read_after(graph::GraphClient& client, IHttpClient& download,
     read(!spec.mail.empty(), after.mail, [&] { return reader.list_mail(); });
     read(!spec.sharepoint.empty(), after.sharepoint, [&] { return reader.list_sharepoint(); });
     read(!spec.onedrive.empty(), after.onedrive, [&] { return reader.list_onedrive(); });
+    // Why office-v1 refused a restored package, here only: the check's reason
+    // is fixed words (W4.1 point 7: the result is signed and uploaded), and
+    // without the reader's own text one of its limits (a part too large, an
+    // encrypted part) can't be told from a broken file.
+    const auto refusals = [&](std::string_view kind, const verification::TargetRead& target) {
+        for (const graph::FoundItem& file : target.items) {
+            const auto it = target.office.find(file.id);
+            if (it != target.office.end() && !it->second.error.empty()) {
+                err << "check note: " << kind << ' ' << cell_or_dash(file.name.value_or(""))
+                    << ": not valid office-v1 input: " << redact(it->second.error) << '\n';
+            }
+        }
+    };
+    refusals("sharepoint", after.sharepoint);
+    refusals("onedrive", after.onedrive);
 }
 
 } // namespace
@@ -665,6 +704,17 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
                "sample_mail, sample_sp, sample_od): nothing to restore\n";
         return exit_code::usage;
     }
+    // W4.1: a Worker that can't validate its result finds out here, not after
+    // the restore, where it would read as a schema violation.
+    try {
+        if (!(env.result_schema_ready ? env.result_schema_ready() : result_schema_ready())) {
+            err << "error: the result schema couldn't be loaded; nothing was done\n";
+            return exit_code::config;
+        }
+    } catch (...) {
+        err << "error: unexpected failure\n";
+        return exit_code::config;
+    }
     const sampling::CanaryCursor cursor = parsed.cursor.value_or(sampling::CanaryCursor{});
 
     // Set while restore_sample runs: unless its error promises nothing was
@@ -680,9 +730,10 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
 
     // W3.3: once the run line is out (`phase` set), every ending is a status
     // (rp/run_status.hpp). What it is decided from outlives the try block, so
-    // the catch blocks below can decide it too, and the run summary (W3.6)
-    // can hand it on.
+    // the catch blocks below can decide it too, and the result (W4.1) can be
+    // built from it. The connector says what it is once, as it is made.
     std::optional<verification::RunPhase> phase;
+    std::optional<connector::ConnectorInfo> connector_info;
     std::string run_id;
     std::optional<connector::RestorePoint> chosen;
     std::optional<sampling::Selection> selection;
@@ -760,16 +811,13 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
     // W3.5: once the clean after is done, `total` ends (and anything still
     // open, which only a bug leaves, ends `stopped`) on one reading; then the
     // table (none when stdout is lost), then env.on_timings. Timings decide
-    // nothing: a failure here changes no line, status or exit code. For a
-    // command with an end-of-run hook, the wall clock is read beside that
-    // reading for the run summary's ended_at (and beside total's start for
-    // its started_at).
+    // nothing: a failure here changes no line, status or exit code. The wall
+    // clock is read beside that reading for the result's ended_at (and beside
+    // total's start for its started_at), for every run with a run line.
     std::optional<std::string> ended_at;
     const auto end_timings = [&](bool output_lost) noexcept {
         const auto ended = timer.try_now();
-        if (presentation.on_run) {
-            ended_at = wall_text(env.connector_options);
-        }
+        ended_at = wall_text(env.connector_options);
         timer.end(timing::Span::total, ended);
         timer.stop_open(ended);
         const timing::RunTimings timings = timer.timings();
@@ -788,18 +836,66 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
         }
         return timings;
     };
-    // The check's table (the command's own) and its count line, then the
+    // W4.1: restoreproof.result.v1 from what the run has so far, its
+    // canonical text validated by the embedded schema (rp::ResultBuilder).
+    // Never throws: whatever fails is a ResultError.
+    const auto build_result = [&](const verification::RunVerdict& verdict,
+                                  const verification::CheckResult* check,
+                                  const timing::RunTimings& timings) noexcept
+        -> std::variant<BuiltResult, ResultError> {
+        try {
+            ResultParts parts;
+            parts.worker_version = std::string{version()};
+            parts.run_id = run_id;
+            parts.started_at = started_at;
+            parts.ended_at = ended_at;
+            if (connector_info) {
+                parts.connector = *connector_info;
+            }
+            parts.client = {.tenant_id = config.graph_tenant_id,
+                            .veeam_org_name = config.veeam_org_name,
+                            .mailbox = config.test_mailbox,
+                            .site_id = config.test_site_id,
+                            .library_id = config.test_library_id,
+                            .onedrive_drive_id = config.test_onedrive_drive_id,
+                            .onedrive_folder_id = config.test_onedrive_folder_id};
+            if (chosen) {
+                parts.restore_point_id = chosen->id;
+                parts.restore_point_time = chosen->backup_time;
+            }
+            parts.sample = selection ? &selection->record : nullptr;
+            parts.expected = expected ? &*expected : nullptr;
+            parts.restore = result ? &*result : nullptr;
+            parts.check = check;
+            parts.verdict = &verdict;
+            // The clean after runs only after the clean before.
+            parts.cleanup = cleanup.before ? &cleanup : nullptr;
+            parts.timings = &timings;
+            return ResultBuilder::build(parts);
+        } catch (...) {
+            return ResultError{ResultFailure::build_failed, 0, {}};
+        }
+    };
+    // The run's status is decided, then the result is built and validated as
+    // it stands (W4.1 point 5: ended_at and cleanup.after null, the open
+    // spans `open`): a result that isn't valid makes the run `error
+    // result_invalid`, said on `err`, before anything says pass. Then the
+    // check's table (the command's own) and its count line, then the
     // status line, then each warning on `err`; the exit code is the status's.
     // With `output_lost` (or the check's table or the status line failing
     // too) the output is incomplete: after a restore that says so, with the
     // run and the restore's own account, and a pass becomes 1. Then the clean
     // after (W3.4), only when the status says a restore was sent: the verdict
-    // never waits on housekeeping. Then the step timings (W3.5). Then the
-    // command's end-of-run hook (W3.6), last.
+    // never waits on housekeeping. Then the step timings (W3.5). Then, for a
+    // command with an end-of-run hook (W3.6), the finished result is built
+    // and validated again and handed to the hook, last: no result when that
+    // fails (said on `err`), when the run ended result_invalid or when there
+    // is no verdict.
     const auto finish = [&](std::optional<verification::RunStop> stop,
                             const verification::CheckResult* check, bool output_lost) noexcept {
         int code = exit_code::config;
         std::optional<verification::RunVerdict> verdict;
+        bool invalid = false;
         if (stop) {
             stop_timings();
         }
@@ -812,6 +908,13 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
                 {expected ? &*expected : nullptr, shortfalls, std::move(stop),
                  result ? &*result : nullptr, check,
                  chosen ? chosen->backup_time : std::string{}});
+            const std::variant<BuiltResult, ResultError> provisional =
+                build_result(*verdict, check, timer.timings());
+            if (const ResultError* error = std::get_if<ResultError>(&provisional)) {
+                invalid = true;
+                verdict = verification::result_invalid(*verdict);
+                err << format_result_error(*error);
+            }
             code = verification::exit_code_of(*verdict);
             if (check && !output_lost) {
                 try {
@@ -858,22 +961,26 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
         const timing::RunTimings timings = end_timings(output_lost);
         if (presentation.on_run) {
             try {
-                const RunSummary summary{
-                    .run_id = run_id,
-                    .started_at = started_at,
-                    .ended_at = ended_at,
-                    .restore_point = chosen ? &*chosen : nullptr,
-                    .veeam_org_name = config.veeam_org_name,
-                    .sample = selection ? &selection->record : nullptr,
-                    .expected = expected ? &*expected : nullptr,
-                    .restore = result ? &*result : nullptr,
-                    .check = check,
-                    .verdict = verdict ? &*verdict : nullptr,
-                    // The clean after runs only after the clean before.
-                    .cleanup = cleanup.before ? &cleanup : nullptr,
-                    .timings = &timings};
+                std::optional<std::string> text;
+                if (verdict && !invalid) {
+                    std::variant<BuiltResult, ResultError> finished =
+                        build_result(*verdict, check, timings);
+                    if (const ResultError* error = std::get_if<ResultError>(&finished)) {
+                        // The status line is out and stays.
+                        err << format_result_error(*error);
+                    } else {
+                        text = std::move(std::get<BuiltResult>(finished).canonical);
+                    }
+                }
+                const RunSummary summary{.run_id = run_id, .result = text ? &*text : nullptr};
                 code = presentation.on_run(summary, code, output_lost);
             } catch (...) {
+                // Never an exit code without its line.
+                try {
+                    err << "error: unexpected failure\n";
+                } catch (...) {
+                }
+                code = code == exit_code::ok ? exit_code::config : code;
             }
         }
         return code;
@@ -941,14 +1048,13 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
         if (!source) {
             throw std::logic_error("no connector");
         }
+        connector_info = source->describe();
 
         // W3.5: the run's first call to a service starts `total`. What came
         // before is local and untimed, and a run that stops before its run
         // line shows no timings.
         const auto listing = timer.try_now();
-        if (presentation.on_run) {
-            started_at = wall_text(env.connector_options);
-        }
+        started_at = wall_text(env.connector_options);
         timer.start(timing::Span::total, listing);
         timer.start(timing::Span::restore_point_lookup, listing);
         const std::vector<connector::RestorePoint> points =

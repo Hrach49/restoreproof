@@ -150,8 +150,9 @@ void compare_hash(const ExpectedItem& want, const FoundItem& got, const TargetRe
     } else if (want.sha256_rule == kOfficeV1) {
         const auto it = read.office.find(got.id);
         if (it != read.office.end() && !it->second.error.empty()) {
-            out.note = "; the restored package isn't valid office-v1 input (" +
-                       one_line(it->second.error) + ")";
+            // Fixed words: the reader's text names a part inside a tenant
+            // file, and the result is signed and uploaded (W4.1 point 7).
+            out.note = "; the restored package isn't valid office-v1 input";
         } else {
             agrees = it != read.office.end() && it->second.sha256 == want.sha256;
         }

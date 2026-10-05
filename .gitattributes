@@ -5,3 +5,8 @@ lab/canary/** binary
 lab/seed-manifest.json text eol=lf
 shared/testdata/office-content-v1/*.docx binary
 shared/testdata/office-content-v1/*.xlsx binary
+# The result schema is embedded into the Worker as bytes and read by the Cloud
+# by path, and the shared vectors are read by both builds (W4.1): keep them LF
+# on every checkout.
+shared/schemas/*.json text eol=lf
+shared/testdata/**/*.json text eol=lf

@@ -3,6 +3,7 @@
 // network access.
 
 #include <cpr/cpr.h>
+#include <nlohmann/json-schema.hpp>
 #include <nlohmann/json.hpp>
 #include <openssl/evp.h>
 #include <spdlog/logger.h>
@@ -26,6 +27,21 @@ TEST_CASE("nlohmann-json parses and dumps with sorted keys and no whitespace", "
     REQUIRE(doc.at("status") == "pass");
     REQUIRE(doc.at("items") == 40);
     REQUIRE(doc.dump() == R"({"items":40,"status":"pass"})");
+}
+
+TEST_CASE("json-schema-validator accepts and refuses by a schema", "[deps]")
+{
+    // What restoreproof.result.v1's schema leans on (W4.1): a $ref into $defs,
+    // a closed object and an enum.
+    nlohmann::json_schema::json_validator validator;
+    validator.set_root_schema(nlohmann::json::parse(R"({
+        "type": "object", "additionalProperties": false, "required": ["status"],
+        "properties": {"status": {"$ref": "#/$defs/status"}},
+        "$defs": {"status": {"enum": ["pass", "fail", "error"]}}})"));
+
+    REQUIRE_NOTHROW(validator.validate(nlohmann::json{{"status", "pass"}}));
+    REQUIRE_THROWS(validator.validate(nlohmann::json{{"status", "passed"}}));
+    REQUIRE_THROWS(validator.validate(nlohmann::json{{"status", "pass"}, {"items", 40}}));
 }
 
 TEST_CASE("spdlog writes a formatted message to an ostream sink", "[deps]")

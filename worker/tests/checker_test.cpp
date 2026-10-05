@@ -5,6 +5,7 @@
 // earlier run's copy, each field that doesn't agree. The choices are the
 // 2026-10-01 W3.2 entry in docs/decisions.md.
 
+#include <rp/canonical_json.hpp>
 #include <rp/checker.hpp>
 #include <rp/config.hpp>
 #include <rp/connector.hpp>
@@ -662,9 +663,51 @@ TEST_CASE("check: an office-v1 canary is compared with the after read's office h
         const ItemCheck item = scene.run_one(4);
         CHECK(item.outcome == CheckOutcome::mismatch);
         CHECK(item.mismatches == std::vector<std::string>{"sha256"});
-        CHECK(item.reason == "fields did not match: sha256; the restored package isn't valid "
-                             "office-v1 input (office-v1: not a ZIP package second line)");
+        // Fixed words: the reader's text, which names a part inside a tenant
+        // file, is never in the reason (W4.1 point 7).
+        CHECK(item.reason ==
+              "fields did not match: sha256; the restored package isn't valid office-v1 input");
         CHECK(item.error_code.empty());
+    }
+    SECTION("the size too: the office-v1 note ends the list of fields")
+    {
+        scene.expected.items[4].file->size_bytes = 7;
+        scene.after.onedrive.items[0].size_bytes = 8;
+        scene.after.onedrive.office["o-4"] = {"", "office-v1: not a ZIP package"};
+        CHECK(scene.run_one(4).reason == "fields did not match: size_bytes, sha256; the restored "
+                                         "package isn't valid office-v1 input");
+    }
+}
+
+TEST_CASE("check: an office-v1 reader's text leaves no trace in the reason or the check object",
+          "[checker]")
+{
+    // What the zip reader says may name a part of the tenant's file, and its
+    // bytes needn't be UTF-8: the result is signed and uploaded, so neither
+    // may reach it (docs/decisions.md 2026-10-04, W4.1 point 7).
+    const std::string text = GENERATE(
+        std::string{"office-v1: word/Contoso merger plan.xml is stored twice"},
+        std::string{"office-v1: part \xff" "budget\xfe" ".xml: bad CRC"},
+        std::string{"office-v1: (alice@contoso.example)\r\nsecond line"});
+    Scene scene;
+    scene.after.onedrive.office["o-4"] = {"", text};
+
+    const verification::CheckResult result = scene.run();
+
+    REQUIRE(result.items.size() > 4);
+    CHECK(result.items[4].outcome == CheckOutcome::mismatch);
+    CHECK(result.items[4].reason ==
+          "fields did not match: sha256; the restored package isn't valid office-v1 input");
+    const json out = verification::to_json(result);
+    CHECK(out["items"][4]["reason"] ==
+          "fields did not match: sha256; the restored package isn't valid office-v1 input");
+    // The strict dump: a byte that isn't UTF-8 would throw.
+    std::string dumped;
+    REQUIRE_NOTHROW(dumped = rp::canonical_json(out));
+    for (const char* trace : {"Contoso", "merger", "budget", "alice", "stored twice", "CRC",
+                              "second line", "\xff", "("}) {
+        CAPTURE(trace);
+        CHECK(dumped.find(trace) == std::string::npos);
     }
 }
 

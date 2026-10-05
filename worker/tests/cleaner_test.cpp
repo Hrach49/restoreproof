@@ -1875,6 +1875,47 @@ TEST_CASE("a file target that holds more than Graph listed is graph_permission: 
     lab.require_only_listed_writes();
 }
 
+TEST_CASE("a library whose own count can't be read is never listed or deleted in, and the others "
+          "are cleaned",
+          "[cleaner][q3.2]")
+{
+    // The count is read as the target is resolved, after the guard's check of
+    // the drive: Graph refusing or failing that one read stops the target
+    // before its listing.
+    struct Row {
+        const char* name;
+        std::function<HttpResponse(const HttpRequest&)> root;
+        const char* code;
+    };
+    const Row row = GENERATE(
+        Row{"a 403", [](const HttpRequest&) { return load_fixture("graph", "site-403-accessdenied"); },
+            "graph_permission"},
+        Row{"an exception the Worker doesn't know",
+            [](const HttpRequest&) -> HttpResponse {
+                throw std::runtime_error("sentinel-root-41c9");
+            },
+            "internal"});
+    INFO(row.name);
+    Lab lab;
+    for (const Which which : {Which::mail, Which::sharepoint, Which::onedrive}) {
+        lab.serve_recorded(which);
+    }
+    lab.http.on(HttpMethod::get, library_root_url(), row.root);
+
+    const CleanupResult result = lab.clean();
+
+    require_stopped(result.sharepoint, row.code);
+    CHECK(result.sharepoint.found == 0);
+    CHECK(result.sharepoint.deleted == 0);
+    CHECK(lab.gets(listing_url(Which::sharepoint)) == 0);
+    CHECK(lab.writes_to(Which::sharepoint).empty());
+    CHECK_THAT(lab.log(), !ContainsSubstring("sentinel-root-41c9"));
+    require_cleaned(result.mail, recorded_count(Which::mail));
+    require_cleaned(result.onedrive, recorded_count(Which::onedrive));
+    CHECK_FALSE(result.ok());
+    lab.require_only_listed_writes();
+}
+
 TEST_CASE("the listing after a round's deletes isn't held to the count read before them",
           "[cleaner][q3.2]")
 {

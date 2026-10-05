@@ -4,6 +4,7 @@
 #include "path_utf8.hpp"
 
 #include <algorithm>
+#include <cstddef>
 #include <fstream>
 #include <system_error>
 #include <utility>
@@ -44,6 +45,50 @@ FileReader folder_reader(std::filesystem::path folder)
     };
 }
 
+namespace {
+
+void append_code_point(std::string& text, char32_t point)
+{
+    if (point < 0x80) {
+        text += static_cast<char>(point);
+    } else if (point < 0x800) {
+        text += static_cast<char>(0xC0 | (point >> 6));
+        text += static_cast<char>(0x80 | (point & 0x3F));
+    } else if (point < 0x10000) {
+        text += static_cast<char>(0xE0 | (point >> 12));
+        text += static_cast<char>(0x80 | ((point >> 6) & 0x3F));
+        text += static_cast<char>(0x80 | (point & 0x3F));
+    } else {
+        text += static_cast<char>(0xF0 | (point >> 18));
+        text += static_cast<char>(0x80 | ((point >> 12) & 0x3F));
+        text += static_cast<char>(0x80 | ((point >> 6) & 0x3F));
+        text += static_cast<char>(0x80 | (point & 0x3F));
+    }
+}
+
+// A file name's UTF-16 units as UTF-8; a surrogate without its pair as the
+// three bytes of its own code point (see list_folder). path::u8string() would
+// throw for such a name, and rp::utf16_to_utf8 has no answer for it.
+std::string name_to_utf8(std::wstring_view name)
+{
+    std::string text;
+    for (std::size_t i = 0; i < name.size(); ++i) {
+        char32_t point = static_cast<char16_t>(name[i]);
+        const bool high = point >= 0xD800 && point < 0xDC00;
+        if (high && i + 1 < name.size()) {
+            const char32_t low = static_cast<char16_t>(name[i + 1]);
+            if (low >= 0xDC00 && low < 0xE000) {
+                point = 0x10000 + ((point - 0xD800) << 10) + (low - 0xDC00);
+                ++i;
+            }
+        }
+        append_code_point(text, point);
+    }
+    return text;
+}
+
+} // namespace
+
 std::optional<std::vector<std::string>> list_folder(const std::filesystem::path& folder)
 {
     std::error_code ec;
@@ -53,13 +98,53 @@ std::optional<std::vector<std::string>> list_folder(const std::filesystem::path&
     }
     std::vector<std::string> names;
     for (; entry != std::filesystem::directory_iterator{}; entry.increment(ec)) {
-        names.push_back(path_to_utf8(entry->path().filename()));
+        names.push_back(name_to_utf8(entry->path().filename().native()));
     }
     if (ec) {
         return std::nullopt;
     }
     std::sort(names.begin(), names.end());
     return names;
+}
+
+std::u32string name_code_points(std::string_view name)
+{
+    constexpr char32_t kNotACharacter = 0xFFFD;
+    // The smallest code point each length may hold: a shorter form exists below it.
+    constexpr char32_t kSmallest[] = {0, 0x80, 0x800, 0x10000};
+    std::u32string points;
+    std::size_t i = 0;
+    while (i < name.size()) {
+        const auto lead = static_cast<unsigned char>(name[i]);
+        // How many bytes follow the first, and the bits the first one carries.
+        std::size_t more = 0;
+        char32_t point = lead;
+        if (lead >= 0xF0) {
+            more = 3;
+            point = lead & 0x07u;
+        } else if (lead >= 0xE0) {
+            more = 2;
+            point = lead & 0x0Fu;
+        } else if (lead >= 0xC0) {
+            more = 1;
+            point = lead & 0x1Fu;
+        }
+        // 80 to BF never starts a character, F8 and above never appear.
+        bool sound = (lead < 0x80 || lead >= 0xC0) && lead < 0xF8 && name.size() - i > more;
+        for (std::size_t k = 1; sound && k <= more; ++k) {
+            const auto next = static_cast<unsigned char>(name[i + k]);
+            sound = (next & 0xC0u) == 0x80u;
+            point = (point << 6) | (next & 0x3Fu);
+        }
+        if (sound && point >= kSmallest[more] && point <= 0x10FFFF) {
+            points += point;
+            i += more + 1;
+        } else {
+            points += kNotACharacter;
+            ++i;
+        }
+    }
+    return points;
 }
 
 } // namespace rp

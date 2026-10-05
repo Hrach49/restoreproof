@@ -237,16 +237,17 @@ TEST_CASE("signer public-key: any other failure is let out, for run_cli to repor
     CHECK(err.str().empty());
 }
 
-TEST_CASE("signer public-key prints the public key's PEM and then its key ID, never the "
-          "private key",
+TEST_CASE("signer public-key prints the public key's PEM alone on stdout and its key ID on "
+          "stderr, never the private key",
           "[signer_command]")
 {
     SECTION("RFC 8032 test 1")
     {
         const Ran ran = run({"public-key"}, std::string{rp::test::kSigningKey1Base64});
         CHECK(ran.code == 0);
-        CHECK(ran.err.empty());
-        CHECK(ran.out == kKey1Pem + "key " + kKey1Id + "\n");
+        // stdout is a key file as it is: `signer public-key > worker.pub.pem`.
+        CHECK(ran.out == kKey1Pem);
+        CHECK(ran.err == "key " + kKey1Id + "\n");
         CHECK(ran.secrets_asked == 1);
 
         // Neither the variable's text nor the seed in another shape.
@@ -257,19 +258,38 @@ TEST_CASE("signer public-key prints the public key's PEM and then its key ID, ne
             CHECK_THAT(ran.out, !ContainsSubstring(shape));
         }
         CHECK_THAT(ran.out, !ContainsSubstring("PRIVATE"));
+        CHECK_THAT(ran.err, !ContainsSubstring(std::string{rp::test::kSigningKey1Base64}));
+        for (const std::string& shape : key.secret_shapes()) {
+            CHECK_THAT(ran.err, !ContainsSubstring(shape));
+        }
 
-        // What it prints is the key a verifier takes.
-        const std::optional<rp::PublicKey> pub =
-            rp::PublicKey::from_pem(ran.out.substr(0, kKey1Pem.size()));
+        // What it prints is the key a verifier takes: the whole of stdout, as
+        // a file, given to `signer verify` on the shared bundle.
+        const std::optional<rp::PublicKey> pub = rp::PublicKey::from_pem(ran.out);
         REQUIRE(pub);
         CHECK(pub->key_id() == kKey1Id);
+        const TempDir keys;
+        const std::string file = utf8(keys.write("exported.pem", ran.out));
+        const TempDir dir;
+        write_bundle(dir);
+        const Ran verified = run({"verify", utf8(dir.path()), "--public-key", file});
+        CHECK(verified.code == 0);
+        CHECK(verified.out == verified_line());
+        CHECK(verified.err.empty());
+        // And as a console redirect writes it, with CRLF line ends.
+        std::string crlf;
+        for (const char c : ran.out) {
+            crlf += c == '\n' ? std::string{"\r\n"} : std::string{c};
+        }
+        const std::string crlf_file = utf8(keys.write("exported-crlf.pem", crlf));
+        CHECK(run({"verify", utf8(dir.path()), "--public-key", crlf_file}).out == verified_line());
     }
     SECTION("RFC 8032 test 2")
     {
         const Ran ran = run({"public-key"}, rp::test::signing_key2_base64());
         CHECK(ran.code == 0);
-        CHECK(ran.err.empty());
-        CHECK(ran.out == kKey2Pem + "key " + kKey2Id + "\n");
+        CHECK(ran.out == kKey2Pem);
+        CHECK(ran.err == "key " + kKey2Id + "\n");
     }
 }
 
@@ -286,6 +306,7 @@ TEST_CASE("signer public-key: an answer that didn't reach stdout isn't one", "[s
     std::ostringstream err;
     const Args args{"public-key"};
     CHECK(rp::run_signer_command(args, out, err, env) == 1);
+    // No `key <key_id>` line for a key that wasn't printed.
     CHECK(err.str() == "signer error: the answer couldn't be written\n");
 }
 
@@ -351,7 +372,8 @@ TEST_CASE("signer verify: a key file that can't be read or isn't a public key is
             "-----BEGIN PRIVATE KEY-----\n" + std::string{rp::test::kSigningKey1Base64} +
                 "\n-----END PRIVATE KEY-----\n",
             std::string{rp::test::kSigningKey1Base64},
-            // Two keys, and `signer public-key`'s whole output.
+            // Two keys, and the key with a line after it (what `signer
+            // public-key` printed to stdout before the W4.3 review).
             kKey1Pem + kKey2Pem,
             kKey1Pem + "key " + kKey1Id + "\n",
             // The body cut by one group.
@@ -496,17 +518,16 @@ TEST_CASE("signer verify: the signed folder is `verified <bundle_sha256> key <ke
         CHECK(ran.code == 0);
         CHECK(ran.out == verified_line());
     }
-    SECTION("the key `signer public-key` printed, cut from its output")
+    SECTION("the key `signer public-key` printed: its whole stdout as the key file")
     {
         const Ran printed = run({"public-key"}, std::string{rp::test::kSigningKey1Base64});
         REQUIRE(printed.code == 0);
-        const std::size_t end = printed.out.find("key ");
-        REQUIRE(end != std::string::npos);
-        const std::string file = utf8(keys.write("printed.pem", printed.out.substr(0, end)));
+        const std::string file = utf8(keys.write("printed.pem", printed.out));
         const Ran ran = run({"verify", folder, "--public-key", file});
         CHECK(ran.code == 0);
         CHECK(ran.out == verified_line());
-        CHECK(printed.out.substr(end) == "key " + kKey1Id + "\n");
+        CHECK(ran.err.empty());
+        CHECK(printed.err == "key " + kKey1Id + "\n");
     }
     SECTION("an answer that didn't reach stdout isn't one")
     {
@@ -548,6 +569,117 @@ TEST_CASE("signer verify: a file the result doesn't list is a note on stderr, ne
                      "note: not listed in the result: \\xe9.txt\n"
                      "note: not listed in the result: \\u20ac.txt\n"
                      "note: not listed in the result: \\U0001f600.txt\n");
+}
+
+// A name NTFS takes and UTF-16 doesn't: still a note, and the line is the one
+// verify_bundle.py prints for the same folder (a lone surrogate as \udXXX).
+TEST_CASE("signer verify: an unlisted file whose name isn't valid UTF-16 is a note, the folder "
+          "still verified",
+          "[signer_command]")
+{
+    const TempDir keys;
+    const std::string key = utf8(keys.write("key.pem", kKey1Pem));
+    const TempDir dir;
+    write_bundle(dir);
+    const std::wstring low_alone = {L'x', wchar_t{0xDC80}, L'y'};
+
+    SECTION("one such file")
+    {
+        if (!rp::test::create_empty_file(dir.path() / low_alone)) {
+            SKIP("this file system refuses a file name that isn't valid UTF-16");
+        }
+        const Ran ran = run({"verify", utf8(dir.path()), "--public-key", key});
+        CHECK(ran.code == 0);
+        CHECK(ran.out == verified_line());
+        CHECK(ran.err == "note: not listed in the result: x\\udc80y\n");
+    }
+    SECTION("a high surrogate with no low one after it, at the end and before a letter")
+    {
+        const std::wstring high_last = {L'a', wchar_t{0xD800}};
+        const std::wstring high_then_letter = {wchar_t{0xD83D}, L'b'};
+        const std::wstring low_then_high = {wchar_t{0xDE00}, wchar_t{0xD83D}};
+        const std::wstring pair_then_high = {wchar_t{0xD83D}, wchar_t{0xDE00}, wchar_t{0xD83D}};
+        for (const std::wstring& name :
+             {low_alone, high_last, high_then_letter, low_then_high, pair_then_high}) {
+            if (!rp::test::create_empty_file(dir.path() / name)) {
+                SKIP("this file system refuses a file name that isn't valid UTF-16");
+            }
+        }
+        const Ran ran = run({"verify", utf8(dir.path()), "--public-key", key});
+        CHECK(ran.code == 0);
+        CHECK(ran.out == verified_line());
+        CHECK(ran.err == "note: not listed in the result: a\\ud800\n"
+                         "note: not listed in the result: x\\udc80y\n"
+                         "note: not listed in the result: \\ud83db\n"
+                         "note: not listed in the result: \\ude00\\ud83d\n"
+                         "note: not listed in the result: \\U0001f600\\ud83d\n");
+    }
+    SECTION("through run_cli: no unexpected failure")
+    {
+        if (!rp::test::create_empty_file(dir.path() / low_alone)) {
+            SKIP("this file system refuses a file name that isn't valid UTF-16");
+        }
+        std::ostringstream out;
+        std::ostringstream err;
+        const std::string folder = utf8(dir.path());
+        const Args args{"signer", "verify", folder, "--public-key", key};
+        CHECK(rp::run_cli(args, out, err) == 0);
+        CHECK(out.str() == verified_line());
+        CHECK(err.str() == "note: not listed in the result: x\\udc80y\n");
+    }
+}
+
+// shared/testdata/signing-v1/key-files.json through the command: a file the
+// rule takes gets a verdict line, one it refuses the one error line and exit 1.
+TEST_CASE("signer verify takes and refuses the shared key files as PublicKey::from_pem does",
+          "[signer_command][vectors]")
+{
+    const json rows =
+        json::parse(rp::test::read_shared("testdata/signing-v1/key-files.json")).at("key_files");
+    REQUIRE(rows.size() == 46);
+    const TempDir keys;
+    const TempDir dir;
+    write_bundle(dir);
+    const std::string folder = utf8(dir.path());
+    int accepted = 0;
+    int refused = 0;
+
+    for (const json& row : rows) {
+        const std::string name = row.at("name").get<std::string>();
+        CAPTURE(name);
+        std::string bytes;
+        if (row.contains("text")) {
+            bytes = row.at("text").get<std::string>();
+        } else {
+            const std::optional<std::vector<unsigned char>> decoded =
+                rp::base64_decode(row.at("base64").get<std::string>());
+            REQUIRE(decoded);
+            bytes.assign(decoded->begin(), decoded->end());
+        }
+        const std::string file = utf8(keys.write(name + ".pem", bytes));
+
+        const Ran ran = run({"verify", folder, "--public-key", file});
+        if (!row.at("accepted").get<bool>()) {
+            ++refused;
+            CHECK(ran.code == 1);
+            CHECK(ran.out.empty());
+            CHECK(ran.err ==
+                  "signer error: --public-key " + file + ": not an Ed25519 public key in PEM\n");
+        } else if (name == "small-order-identity-key") {
+            // A key, and not the one that signed: a verdict, as for any other key.
+            ++accepted;
+            CHECK(ran.code == 5);
+            CHECK(ran.out == "not verified: wrong_key\n");
+            CHECK(ran.err.empty());
+        } else {
+            ++accepted;
+            CHECK(ran.code == 0);
+            CHECK(ran.out == verified_line());
+            CHECK(ran.err.empty());
+        }
+    }
+    CHECK(accepted == 11);
+    CHECK(refused == 35);
 }
 
 // Each case of the shared vectors in a folder of its own, through the command:
@@ -631,8 +763,8 @@ TEST_CASE("rpworker signer runs both commands", "[signer_command][cli]")
                                          std::string{rp::test::kSigningKey1Base64});
         const Args args{"signer", "public-key"};
         CHECK(rp::run_cli(args, out, err) == 0);
-        CHECK(out.str() == kKey1Pem + "key " + kKey1Id + "\n");
-        CHECK(err.str().empty());
+        CHECK(out.str() == kKey1Pem);
+        CHECK(err.str() == "key " + kKey1Id + "\n");
     }
     SECTION("signer public-key, the variable unset")
     {

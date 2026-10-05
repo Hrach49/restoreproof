@@ -7,7 +7,6 @@
 
 #include "file_read.hpp"
 #include "path_utf8.hpp"
-#include "utf16.hpp"
 
 #include <cstddef>
 #include <filesystem>
@@ -63,25 +62,32 @@ int run_public_key(std::ostream& out, std::ostream& err, const SignerCommandEnv&
             << " is not an Ed25519 private key (Base64 of PKCS#8 DER)\n";
         return exit_code::config;
     }
-    // The public half only: the PEM ends its own last line.
-    out << key->public_key_pem() << "key " << key->key_id() << '\n';
-    return answered(out, err, exit_code::ok);
+    // The public half only, and nothing else on `out`: what it holds is a key
+    // file as it is (`rpworker signer public-key > worker.pub.pem`), which a
+    // verifier refuses with any line after the block. The key's ID goes to
+    // `err`, once the key is out.
+    out << key->public_key_pem();
+    const int code = answered(out, err, exit_code::ok);
+    if (code == exit_code::ok) {
+        err << "key " << key->key_id() << '\n';
+    }
+    return code;
 }
 
 // A file's name for a note: printable ASCII as it is, a backslash and anything
-// else by its code point, so no name can end a line or start another.
-// (verify_bundle.py writes its notes the same way, but for the short forms of
-// a backslash, a tab and a line end, which no file name on Windows holds.)
+// else by its code point in lower-case hex (\xNN below U+0100, \uNNNN below
+// U+10000, \UNNNNNNNN above), so no name can end a line or start another.
+// The name is one list_folder gave: a surrogate that has no pair in the file's
+// name (NTFS allows it) is a code point of its own there and is written as
+// \udXXX, never joined with what stands beside it.
+// (verify_bundle.py writes its notes the same way, byte for byte, but for the
+// short forms of a backslash, a tab and a line end, which no file name on
+// Windows holds.)
 std::string printable(std::string_view name)
 {
-    // list_folder's names are UTF-8, so the conversion never fails here.
-    const std::wstring wide = utf8_to_utf16(name).value_or(std::wstring{});
     std::string text;
-    for (std::size_t i = 0; i < wide.size(); ++i) {
-        unsigned long c = static_cast<unsigned long>(wide[i]);
-        if (c >= 0xD800 && c < 0xDC00) {
-            c = 0x10000 + ((c - 0xD800) << 10) + (static_cast<unsigned long>(wide[++i]) - 0xDC00);
-        }
+    for (const char32_t point : name_code_points(name)) {
+        const auto c = static_cast<unsigned long>(point);
         if (c >= ' ' && c <= '~' && c != '\\') {
             text += static_cast<char>(c);
         } else if (c < 0x100) {

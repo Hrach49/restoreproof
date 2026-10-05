@@ -65,11 +65,12 @@ struct SecretMasks {
     std::string_view password;
     std::string_view pfx;
     std::string_view pfx_password;
+    std::string_view signing_key = "(not set)";
 };
 
 constexpr SecretMasks kNoSecrets{"(not set)", "(not set)", "(not set)", "(not set)"};
 
-// The output of a successful check of kConfigJson at `path`, with the four
+// The output of a successful check of kConfigJson at `path`, with the five
 // secret lines given and, when `ca_file` and `cert_sha256` are set,
 // veeam_ca_file and veeam_cert_sha256 added. `screenshots` is
 // screenshots_enabled's line: the default, as kConfigJson doesn't set it.
@@ -104,7 +105,8 @@ std::string expected_output(const std::filesystem::path& path, const SecretMasks
            std::string{secrets.user} + "\n" + "RP_VEEAM_PASSWORD         " +
            std::string{secrets.password} + "\n" + "RP_GRAPH_CERT_PFX_BASE64  " +
            std::string{secrets.pfx} + "\n" + "RP_GRAPH_CERT_PASSWORD    " +
-           std::string{secrets.pfx_password} + "\n";
+           std::string{secrets.pfx_password} + "\n" + "RP_SIGNING_KEY_BASE64     " +
+           std::string{secrets.signing_key} + "\n";
 }
 
 struct Run {
@@ -208,6 +210,7 @@ TEST_CASE("rpworker config check prints every setting and masks the secrets", "[
     const rp::test::ScopedEnv password(rp::kEnvVeeamPassword, "password-0c41");
     const rp::test::ScopedEnv pfx(rp::kEnvGraphCertPfxBase64, std::nullopt);
     const rp::test::ScopedEnv pfx_password(rp::kEnvGraphCertPassword, std::nullopt);
+    const rp::test::ScopedEnv signing_key(rp::kEnvSigningKeyBase64, std::nullopt);
 
     PathSpy spy;
     const Run result = run(Args{"check", "--config", path_arg}, spy.provider());
@@ -227,11 +230,13 @@ TEST_CASE("rpworker config check reads the default path without --config", "[con
     // the certificate, it only says whether the variable is set.
     const rp::test::ScopedEnv pfx(rp::kEnvGraphCertPfxBase64, "pfx-0c41");
     const rp::test::ScopedEnv pfx_password(rp::kEnvGraphCertPassword, "pfx-password-0c41");
+    const rp::test::ScopedEnv signing_key(rp::kEnvSigningKeyBase64, "key-0c41");
 
     const Run result = run(Args{"check"}, path);
     REQUIRE(result.err.empty());
     REQUIRE(result.out ==
-            expected_output(path, {"(not set)", "(not set)", "**** (set)", "**** (set)"}));
+            expected_output(
+                path, {"(not set)", "(not set)", "**** (set)", "**** (set)", "**** (set)"}));
     REQUIRE(result.exit_code == 0);
 }
 
@@ -243,6 +248,7 @@ TEST_CASE("rpworker config check never prints a secret's value", "[config_check]
     const rp::test::ScopedEnv password(rp::kEnvVeeamPassword, "SENTINEL-PASSWORD-91e7");
     const rp::test::ScopedEnv pfx(rp::kEnvGraphCertPfxBase64, "SENTINEL-PFX-91e7");
     const rp::test::ScopedEnv pfx_password(rp::kEnvGraphCertPassword, "SENTINEL-PFX-PASSWORD-91e7");
+    const rp::test::ScopedEnv signing_key(rp::kEnvSigningKeyBase64, "SENTINEL-KEY-91e7");
 
     const Run result = run(Args{"check"}, path);
     REQUIRE(result.exit_code == 0);
@@ -253,6 +259,7 @@ TEST_CASE("rpworker config check never prints a secret's value", "[config_check]
     REQUIRE_THAT(all, ContainsSubstring("RP_VEEAM_PASSWORD         **** (set)\n"));
     REQUIRE_THAT(all, ContainsSubstring("RP_GRAPH_CERT_PFX_BASE64  **** (set)\n"));
     REQUIRE_THAT(all, ContainsSubstring("RP_GRAPH_CERT_PASSWORD    **** (set)\n"));
+    REQUIRE_THAT(all, ContainsSubstring("RP_SIGNING_KEY_BASE64     **** (set)\n"));
 }
 
 TEST_CASE("rpworker config check never prints a password in a URL", "[config_check]")
@@ -281,6 +288,7 @@ TEST_CASE("rpworker config check --config reads a UTF-8 path outside the ANSI co
     const rp::test::ScopedEnv password(rp::kEnvVeeamPassword, std::nullopt);
     const rp::test::ScopedEnv pfx(rp::kEnvGraphCertPfxBase64, std::nullopt);
     const rp::test::ScopedEnv pfx_password(rp::kEnvGraphCertPassword, std::nullopt);
+    const rp::test::ScopedEnv signing_key(rp::kEnvSigningKeyBase64, std::nullopt);
 
     PathSpy spy;
     const Run result = run(Args{"check", "--config", path_arg}, spy.provider());
@@ -321,6 +329,7 @@ TEST_CASE("rpworker config check prints veeam_ca_file, outside the ANSI code pag
     const rp::test::ScopedEnv password(rp::kEnvVeeamPassword, std::nullopt);
     const rp::test::ScopedEnv pfx(rp::kEnvGraphCertPfxBase64, std::nullopt);
     const rp::test::ScopedEnv pfx_password(rp::kEnvGraphCertPassword, std::nullopt);
+    const rp::test::ScopedEnv signing_key(rp::kEnvSigningKeyBase64, std::nullopt);
 
     const Run result = run(Args{"check"}, path);
     REQUIRE(result.err.empty());
@@ -343,6 +352,7 @@ TEST_CASE("rpworker config check prints veeam_cert_sha256 after veeam_ca_file", 
     const rp::test::ScopedEnv password(rp::kEnvVeeamPassword, std::nullopt);
     const rp::test::ScopedEnv pfx(rp::kEnvGraphCertPfxBase64, std::nullopt);
     const rp::test::ScopedEnv pfx_password(rp::kEnvGraphCertPassword, std::nullopt);
+    const rp::test::ScopedEnv signing_key(rp::kEnvSigningKeyBase64, std::nullopt);
 
     const Run result = run(Args{"check"}, path);
     REQUIRE(result.err.empty());
@@ -379,6 +389,7 @@ TEST_CASE("rpworker config check prints screenshots_enabled as true or false", "
     const rp::test::ScopedEnv password(rp::kEnvVeeamPassword, std::nullopt);
     const rp::test::ScopedEnv pfx(rp::kEnvGraphCertPfxBase64, std::nullopt);
     const rp::test::ScopedEnv pfx_password(rp::kEnvGraphCertPassword, std::nullopt);
+    const rp::test::ScopedEnv signing_key(rp::kEnvSigningKeyBase64, std::nullopt);
 
     const Run result = run(Args{"check"}, path);
     REQUIRE(result.err.empty());
@@ -508,6 +519,7 @@ TEST_CASE("rpworker config check prints no secret on any error path", "[config_c
     const rp::test::ScopedEnv password(rp::kEnvVeeamPassword, "SENTINEL-ENV-PASSWORD-7a64");
     const rp::test::ScopedEnv pfx(rp::kEnvGraphCertPfxBase64, "SENTINEL-ENV-PFX-7a64");
     const rp::test::ScopedEnv pfx_password(rp::kEnvGraphCertPassword, "SENTINEL-ENV-PFXPW-7a64");
+    const rp::test::ScopedEnv signing_key(rp::kEnvSigningKeyBase64, "SENTINEL-ENV-KEY-7a64");
 
     const Run result = run(Args{"check"}, path);
     REQUIRE(result.exit_code == 1);

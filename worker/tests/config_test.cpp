@@ -185,9 +185,9 @@ TEST_CASE("parse_config rejects secret-looking keys without echoing the value", 
     REQUIRE(std::string{e.what()} ==
             "config key \"" + key +
                 "\" looks like a secret; secrets don't belong in config.json. Set "
-                "RP_VEEAM_USERNAME, RP_VEEAM_PASSWORD, RP_GRAPH_CERT_PFX_BASE64 or "
-                "RP_GRAPH_CERT_PASSWORD in the environment instead (they move to the DPAPI "
-                "vault in W4.5)");
+                "RP_VEEAM_USERNAME, RP_VEEAM_PASSWORD, RP_GRAPH_CERT_PFX_BASE64, "
+                "RP_GRAPH_CERT_PASSWORD or RP_SIGNING_KEY_BASE64 in the environment instead "
+                "(they move to the DPAPI vault in W4.5)");
     REQUIRE_THAT(e.what(), !ContainsSubstring("SENTINEL"));
 }
 
@@ -320,9 +320,9 @@ TEST_CASE("parse_config rejects a secret-looking key without printing an unsafe 
     REQUIRE(e.key().empty());
     REQUIRE(std::string{e.what()} ==
             "config has a key that looks like a secret; secrets don't belong in config.json. Set "
-            "RP_VEEAM_USERNAME, RP_VEEAM_PASSWORD, RP_GRAPH_CERT_PFX_BASE64 or "
-            "RP_GRAPH_CERT_PASSWORD in the environment instead (they move to the DPAPI vault in "
-            "W4.5)");
+            "RP_VEEAM_USERNAME, RP_VEEAM_PASSWORD, RP_GRAPH_CERT_PFX_BASE64, "
+            "RP_GRAPH_CERT_PASSWORD or RP_SIGNING_KEY_BASE64 in the environment instead (they "
+            "move to the DPAPI vault in W4.5)");
 }
 
 TEST_CASE("parse_config prints a secret-looking key of 64 safe characters", "[config]")

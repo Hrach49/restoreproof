@@ -40,6 +40,10 @@ struct PipelineArgs {
     std::optional<std::string_view> manifest;
     std::optional<std::string_view> config;
     std::optional<std::string_view> record;
+    // `test --evidence <dir>` (W4.2): the runs root, in which the run makes
+    // its folder <dir>\<run_id>. Not one of parse_pipeline_args' options: the
+    // command that takes it sets it.
+    std::optional<std::string_view> evidence;
 };
 
 // Whether each of those options in `options` (--mail --sp --od --point
@@ -90,6 +94,29 @@ struct Presentation {
     std::function<int(const RunSummary&, int code, bool output_lost)> on_run;
 };
 
+// With args.evidence (W4.2, docs/decisions.md 2026-10-05; rp::EvidenceBuilder):
+//  - once the config is read and before the secrets, "config error:
+//    --evidence <dir>: not a UTF-8 path" or, for a --run-id that isn't a plain
+//    file name, "config error: --evidence: the run ID can't name a folder",
+//    exit 1;
+//  - once the run ID is known and before the run line, the run folder is
+//    made; if it can't be, "evidence error: <folder>: the run folder already
+//    exists; nothing was done" (or "... couldn't be made; ..."; for a made-up
+//    run ID that can't name one, "evidence error: the run ID can't name a
+//    folder; nothing was done"), exit 1, no run line;
+//  - last, where on_run would be called (which then isn't): items.csv and
+//    veeam-session.log are written, the screenshot asked for
+//    (env.capture_screenshot, config's screenshots_enabled), the finished
+//    result built with `attachments` and `screenshot` and validated, each
+//    attachment read back against its hash, and result.json written, exactly
+//    the canonical text; then "evidence <folder>: result.json, items.csv,
+//    veeam-session.log[, screenshot.png]" on `out`. On `err`, each with an
+//    exit code of 0 becoming 1 and the status unchanged: "evidence error:
+//    <file>: could not be written", "evidence error: <file>: changed after it
+//    was hashed", or, for a run with no valid result (after the text files
+//    are written), "evidence error: <folder>: the result isn't valid
+//    restoreproof.result.v1; no result.json was written".
+//
 // The run but for what --record wrote, which the command prints last:
 // `recorder` is set once the recording is open. Returns an rp::exit_code.
 // No exception escapes.

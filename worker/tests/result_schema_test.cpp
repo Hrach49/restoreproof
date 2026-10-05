@@ -11,6 +11,7 @@
 
 #include <rp/canonical_json.hpp>
 #include <rp/connector_registry.hpp>
+#include <rp/evidence_builder.hpp>
 #include <rp/sample_rng.hpp>
 
 #include <nlohmann/json.hpp>
@@ -251,14 +252,15 @@ TEST_CASE("the result schema keeps to the allowed keywords", "[result_schema]")
     REQUIRE(root.at("additionalProperties") == false);
 }
 
-TEST_CASE("the result schema's top level is the fifteen keys, all required", "[result_schema]")
+TEST_CASE("the result schema's top level is the seventeen keys, all required", "[result_schema]")
 {
     const std::vector<std::string> keys = {
         "format",        "worker_version", "run_id",   "started_at", "ended_at",
         "connector",     "client",         "restore_point", "sample", "expected",
-        "restore",       "check",          "status",   "cleanup",    "timings"};
+        "restore",       "check",          "status",   "cleanup",    "timings",
+        "attachments",   "screenshot"};
     const std::set<std::string> wanted(keys.begin(), keys.end());
-    REQUIRE(wanted.size() == 15);
+    REQUIRE(wanted.size() == 17);
 
     std::set<std::string> properties;
     const json top = at("/properties");
@@ -268,13 +270,13 @@ TEST_CASE("the result schema's top level is the fifteen keys, all required", "[r
     REQUIRE(properties == wanted);
     const std::vector<std::string> required = at("/required");
     REQUIRE(std::set<std::string>(required.begin(), required.end()) == wanted);
-    REQUIRE(required.size() == 15);
+    REQUIRE(required.size() == 17);
 
     // status and timings are objects, never null; no scope until W4.11.
     REQUIRE(at("/properties/status") == json{{"$ref", "#/$defs/status"}});
     REQUIRE(at("/properties/timings") == json{{"$ref", "#/$defs/timings"}});
     REQUIRE_FALSE(at("/properties/client/properties").contains("scope"));
-    for (const char* later : {"signature", "tsa_token", "tsa_error", "attachments", "worker_id",
+    for (const char* later : {"signature", "tsa_token", "tsa_error", "worker_id",
                               "bundle_sha256", "command", "exit_code", "veeam_org_name"}) {
         INFO(later);
         REQUIRE_FALSE(properties.contains(later));
@@ -383,6 +385,20 @@ TEST_CASE("the result schema's enums are the code's words", "[result_schema]")
         REQUIRE(list("/$defs/cleanup_target/properties/error_code/enum") ==
                 std::vector<std::string>{"target_guard", "graph_auth", "graph_permission",
                                          "graph_transient", "graph", "config", "internal"});
+    }
+
+    SECTION("the attachments' names and the screenshot's states and reasons (W4.2)")
+    {
+        REQUIRE(list("/$defs/attachment/properties/name/enum") == rp::attachment_names());
+        REQUIRE(at("/$defs/screenshot/oneOf/0/properties/state/const") ==
+                rp::to_json(rp::Screenshot{true, rp::ScreenshotReason::failed}).at("state"));
+        REQUIRE(at("/$defs/screenshot/oneOf/1/properties/state/const") ==
+                rp::to_json(rp::Screenshot{false, rp::ScreenshotReason::failed}).at("state"));
+        REQUIRE(list("/$defs/screenshot/oneOf/1/properties/reason/enum") ==
+                rp::screenshot_reasons());
+        // items.csv and veeam-session.log always, screenshot.png when captured.
+        REQUIRE(at("/$defs/attachments/minItems") == 2);
+        REQUIRE(at("/$defs/attachments/maxItems") == rp::attachment_names().size());
     }
 
     SECTION("the spans and their notes")
@@ -524,9 +540,9 @@ TEST_CASE("the shared result documents validate as they say", "[result_schema]")
     const json& cases = cases_file().at("cases");
     REQUIRE(cases_file().at("format") == std::string{rp::kResultFormat});
     // The file can't shrink unnoticed.
-    REQUIRE(cases.size() == 158);
+    REQUIRE(cases.size() == 176);
 
-    const std::size_t i = GENERATE(range(std::size_t{0}, std::size_t{158}));
+    const std::size_t i = GENERATE(range(std::size_t{0}, std::size_t{176}));
     const json& entry = cases.at(i);
     const std::string name = entry.at("name");
     INFO(name);
@@ -554,7 +570,7 @@ TEST_CASE("the shared result documents' names are unique and both kinds are ther
         REQUIRE(entry.size() == 3);
         REQUIRE(entry.at("patch").is_array());
     }
-    REQUIRE(valid == 39);
+    REQUIRE(valid == 43);
     REQUIRE(names.contains("base"));
     // valid.json is canonical-json-v1: one line, no trailing newline.
     const std::string text = rp::test::read_shared("testdata/result-v1/valid.json");

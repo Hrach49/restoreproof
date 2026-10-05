@@ -7,6 +7,7 @@
 
 #include <rp/checker.hpp>
 #include <rp/connector.hpp>
+#include <rp/evidence_builder.hpp>
 #include <rp/expected_set.hpp>
 #include <rp/restore_command.hpp>
 #include <rp/run_status.hpp>
@@ -61,6 +62,10 @@ struct ResultParts {
     const RunCleanup* cleanup = nullptr; // null when no clean ran
     // Null reads as a run that timed nothing: every span null.
     const timing::RunTimings* timings = nullptr;
+    // The run folder's files beside result.json, and its screenshot (W4.2);
+    // both null when no run folder is written.
+    const std::vector<Attachment>* attachments = nullptr;
+    const Screenshot* screenshot = nullptr;
 };
 
 // A valid result: the document and the text that validated.
@@ -90,13 +95,14 @@ struct ResultError {
 
 class ResultBuilder {
 public:
-    // The fifteen keys, always all: format, worker_version, run_id,
+    // The seventeen keys, always all: format, worker_version, run_id,
     // started_at, ended_at, connector {type, api}, client {client_id (null
     // until jobs carry one, W4.10), tenant_id, veeam_org_name, targets
     // {mailbox, site_id, library_id, onedrive_drive_id, onedrive_folder_id}},
     // restore_point {id, backup_time_raw, backup_time}, sample, expected,
-    // restore, check, status, cleanup, timings; sample, expected, restore,
-    // check and cleanup null where their pointer is. Not validated. Throws
+    // restore, check, status, cleanup, timings, attachments, screenshot;
+    // sample, expected, restore, check, cleanup, attachments and screenshot
+    // null where their pointer is. Not validated. Throws
     // std::logic_error("result: no verdict") without a verdict, and whatever
     // a part's to_json throws.
     static nlohmann::json document(const ResultParts& parts);

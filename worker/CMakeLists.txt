@@ -40,6 +40,7 @@ add_library(rpcore STATIC
     src/config_check.cpp
     src/connector.cpp
     src/connector_registry.cpp
+    src/evidence_builder.cpp
     src/expected_set.cpp
     src/graph_client.cpp
     src/graph_command.cpp
@@ -144,6 +145,7 @@ add_executable(rptests
     tests/connector_registry_test.cpp
     tests/connector_test.cpp
     tests/deps_test.cpp
+    tests/evidence_builder_test.cpp
     tests/expected_set_test.cpp
     tests/graph_client_live_test.cpp
     tests/graph_client_test.cpp
@@ -244,7 +246,7 @@ endfunction()
 
 rp_add_exe_test("rpworker --version prints the project version"
     ARGS --version EXIT_CODE 0 STDOUT ${PROJECT_VERSION} STDERR "")
-set(RP_USAGE "usage: rpworker --version | rpworker config check [--config <path>] | rpworker veeam list [--config <path>] [--record <dir>] | rpworker graph list [--hash] [--config <path>] [--record <dir>] | rpworker restore [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--record <dir>] | rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--record <dir>] [--json <file>]")
+set(RP_USAGE "usage: rpworker --version | rpworker config check [--config <path>] | rpworker veeam list [--config <path>] [--record <dir>] | rpworker graph list [--hash] [--config <path>] [--record <dir>] | rpworker restore [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--record <dir>] | rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--record <dir>] [--json <file> | --evidence <dir>]")
 rp_add_exe_test("rpworker rejects unknown arguments"
     ARGS --no-such-option EXIT_CODE 64 STDOUT "" STDERR "${RP_USAGE}")
 rp_add_exe_test("rpworker config without a subcommand prints usage"
@@ -378,6 +380,18 @@ rp_add_exe_test("rpworker test --json refuses a name that holds a colon"
     UNSET_ENV RP_VEEAM_USERNAME RP_VEEAM_PASSWORD RP_GRAPH_CERT_PFX_BASE64 RP_GRAPH_CERT_PASSWORD
     EXIT_CODE 1 STDOUT ""
     STDERR "config error: --json ${CMAKE_CURRENT_SOURCE_DIR}/config.example.json:x: not a file name")
+# W4.2: --evidence takes a runs root, never with --json; a --run-id that can't
+# name the run's folder is refused once the config is read, before the secrets.
+rp_add_exe_test("rpworker test --evidence needs a folder"
+    ARGS test --evidence EXIT_CODE 64 STDOUT "" STDERR "${RP_USAGE}")
+rp_add_exe_test("rpworker test takes --json or --evidence, not both"
+    ARGS test --json run.json --evidence runs EXIT_CODE 64 STDOUT "" STDERR "${RP_USAGE}")
+rp_add_exe_test("rpworker test --evidence refuses a run ID that can't name a folder"
+    ARGS test --config ${CMAKE_CURRENT_SOURCE_DIR}/config.example.json
+    --evidence ${CMAKE_CURRENT_BINARY_DIR}/no-such-runs --run-id rp:1
+    UNSET_ENV RP_VEEAM_USERNAME RP_VEEAM_PASSWORD RP_GRAPH_CERT_PFX_BASE64 RP_GRAPH_CERT_PASSWORD
+    EXIT_CODE 1 STDOUT ""
+    STDERR "config error: --evidence: the run ID can't name a folder")
 rp_add_exe_test("rpworker test needs RP_VEEAM_USERNAME"
     ARGS test --config ${CMAKE_CURRENT_SOURCE_DIR}/config.example.json
     UNSET_ENV RP_VEEAM_USERNAME RP_VEEAM_PASSWORD

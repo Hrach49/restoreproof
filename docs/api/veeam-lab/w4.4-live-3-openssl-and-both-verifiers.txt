@@ -1,0 +1,54 @@
+W4.4 Done-when, live, 2026-10-06: run w44-done-when-1 (stderr empty, exit 0), its timestamp.tst checked with OpenSSL 3.5.5 alone and by both verifiers, then four changed copies
+result.json SHA-256 (Get-FileHash): 4a7e8cffe0170186eb63d6ddecaac1d8e15376b7249f2ea3379997d2da4c66fd
+timestamp.tst: 5998 bytes
+
+--- openssl ts -verify -digest <bundle_sha256> -in timestamp.tst -token_in -CAfile shared/tsa/tsa-ca.pem
+Verification: OK
+--- openssl ts -verify -data result.json -in timestamp.tst -token_in -CAfile shared/tsa/tsa-ca.pem
+Verification: OK
+--- openssl ts -reply -in timestamp.tst -token_in -text (status, policy, hash, serial, time)
+Version: 1
+Policy OID: 2.16.840.1.114412.7.1
+Hash Algorithm: sha256
+Serial number: 0x642299237BCCFB79C373EBD7D263E197
+Time stamp: Oct  6 21:19:24 2026 GMT
+Accuracy: unspecified
+Nonce: 0xB7DB1361F74EC27A
+TSA: unspecified
+--- a wrong digest
+Verification: FAILED
+
+=== the folder, with --tsa-ca
+rpworker signer verify   : verified 4a7e8cffe0170186eb63d6ddecaac1d8e15376b7249f2ea3379997d2da4c66fd key 9dfab6eadaa1d04a22dcc966aac7a53bcff8bbe0077232485f6143cd9c4d0ca5 timestamp 2026-10-06T21:19:24Z   (exit 0)
+verify_bundle.py         : verified 4a7e8cffe0170186eb63d6ddecaac1d8e15376b7249f2ea3379997d2da4c66fd key 9dfab6eadaa1d04a22dcc966aac7a53bcff8bbe0077232485f6143cd9c4d0ca5 timestamp 2026-10-06T21:19:24Z   (exit 0)
+same line: True
+
+=== the folder, without --tsa-ca
+rpworker signer verify   : verified 4a7e8cffe0170186eb63d6ddecaac1d8e15376b7249f2ea3379997d2da4c66fd key 9dfab6eadaa1d04a22dcc966aac7a53bcff8bbe0077232485f6143cd9c4d0ca5 timestamp unchecked   (exit 0)
+    stderr: note: timestamp.tst was not checked: no --tsa-ca
+verify_bundle.py         : verified 4a7e8cffe0170186eb63d6ddecaac1d8e15376b7249f2ea3379997d2da4c66fd key 9dfab6eadaa1d04a22dcc966aac7a53bcff8bbe0077232485f6143cd9c4d0ca5 timestamp unchecked   (exit 0)
+    stderr: note: timestamp.tst was not checked: no --tsa-ca
+same line: True
+
+=== copy 1: a DigiCert token over another hash
+rpworker signer verify   : not verified: timestamp_mismatch   (exit 5)
+verify_bundle.py         : not verified: timestamp_mismatch   (exit 1)
+same line: True
+
+=== copy 2: one bit of the token's signature changed
+rpworker signer verify   : not verified: timestamp_invalid   (exit 5)
+verify_bundle.py         : not verified: timestamp_invalid   (exit 1)
+same line: True
+
+=== copy 3: the token removed
+rpworker signer verify   : verified 4a7e8cffe0170186eb63d6ddecaac1d8e15376b7249f2ea3379997d2da4c66fd key 9dfab6eadaa1d04a22dcc966aac7a53bcff8bbe0077232485f6143cd9c4d0ca5 timestamp none   (exit 0)
+    stderr: note: not timestamped
+verify_bundle.py         : verified 4a7e8cffe0170186eb63d6ddecaac1d8e15376b7249f2ea3379997d2da4c66fd key 9dfab6eadaa1d04a22dcc966aac7a53bcff8bbe0077232485f6143cd9c4d0ca5 timestamp none   (exit 0)
+    stderr: note: not timestamped
+same line: True
+
+=== copy 4: the test root given as --tsa-ca
+rpworker signer verify   : not verified: timestamp_invalid   (exit 5)
+verify_bundle.py         : not verified: timestamp_invalid   (exit 1)
+same line: True
+

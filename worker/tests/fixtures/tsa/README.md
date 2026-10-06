@@ -14,6 +14,7 @@ recording's `tsa/` folder (`RecordedBody::base64`); `FakeHttpClient` decodes
 | File | What | From |
 |---|---|---|
 | `digicert-granted.json` | a granted answer of DigiCert's public TSA with its token | recorded by hand on 2026-10-06 with `openssl ts -query` and curl, before `--record` knew the format |
+| `digicert-w44-live.json` | the W4.4 live Done-when run's own exchange with DigiCert's TSA (run `w44-done-when-1`, 2026-10-06): the query holds the SHA-256 of that run's `result.json` and a nonce | `rpworker test --evidence --record`, its `tsa/001-post-root.json` as written |
 | `rejection.json` | PKIStatus 2, no token: `30 05 30 03 02 01 02` | hand-written |
 | `html-200.json` | a maintenance page with status 200 | hand-written |
 | `503.json` | 503 | hand-written |

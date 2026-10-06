@@ -541,6 +541,21 @@ lab's signing key:
    and the `graph list` afterwards. The folders and the lab's public key stay outside the
    repository.
 
+**The W4.4 Done-when run.** W4.4's Done-when is "openssl ts -verify on the extracted token
+succeeds against the bundle hash" (`docs/decisions.md` 2026-10-06, W4.4); the token is the
+folder's `timestamp.tst`, so there is nothing to extract. Run on 2026-10-06 (`w44-done-when-1`:
+`status pass`, `timestamped 2026-10-06T21:19:24Z`; evidence `docs/api/veeam-lab/w4.4-live-*`,
+build notes point 15). The same command as W4.3's run above with a new run ID (and `--record
+<a new folder outside the repository>` to keep the TSA's exchange): it must end `signed ...`,
+`timestamped <time>` and an `evidence` line that lists `timestamp.tst`, exit 0, stderr empty.
+Then steps 3 to 5 of "Verify a run folder by hand" below, with `--tsa-ca
+shared	sa	sa-ca.pem` for both tools: `Verification: OK` from OpenSSL for `-digest` and for
+`-data`, and one line from both verifiers whose third field is the token's time. To see a run
+without a TSA, copy the config, set `tsa_url` to `http://127.0.0.1:9/` and `tsa_ca_file` to the
+full path of `shared	sa	sa-ca.pem`, and run again with another run ID: the same status and
+exit code, one `timestamp warning: ... tsa_unreachable after 3 attempt(s)` on stderr, a folder
+without `timestamp.tst`, about 90 s later than usual.
+
 ### Verify a run folder by hand (W4.3)
 
 Read-only, offline, no config and no secret. The two tools must agree on the stdout line

@@ -71,13 +71,18 @@ TimestampOutcome attempt(const TimestamperOptions& options,
     if (request.body.empty()) {
         return out;
     }
-    HttpResponse response;
+    // One return after the handler, none inside it.
+    std::optional<HttpResponse> answered;
     try {
-        response = options.http->send(request);
+        answered = options.http->send(request);
     } catch (const HttpError&) {
+        answered.reset();
+    }
+    if (!answered) {
         out.error = timestamp_code::kUnreachable;
         return out;
     }
+    const HttpResponse& response = *answered;
     if (response.status != 200) {
         out.error = timestamp_code::kHttpStatus;
         return out;

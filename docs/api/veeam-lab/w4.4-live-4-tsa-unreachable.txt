@@ -1,0 +1,44 @@
+W4.4, live, 2026-10-06: run w44-tsa-down-1, the same run with tsa_url http://127.0.0.1:9/ (a closed port) and tsa_ca_file shared\tsa\tsa-ca.pem
+exit 0; the process ended 277 s after it started, the timings' total is 0:03:06.925: about 90 s for the three attempts and the waits of 30 s and 60 s
+
+--- stderr (all of it)
+timestamp warning: C:\ProgramData\RestoreProof\runs\w44-tsa-down-1: not timestamped: tsa_unreachable after 3 attempt(s)
+
+--- stdout, from the status line on
+status pass: 30 of 30 item(s) verified: manifest 15, fields 5, metadata 10
+cleanup after ok: deleted 10 mail, 10 sharepoint, 10 onedrive
+
+STEP                  TIME         NOTE
+restore_point_lookup  0:00:00.090
+cleanup_before        0:00:03.673
+sample_select         0:00:07.123
+target_snapshot       0:00:02.407
+restore               0:02:40.413
+restore_submit        0:00:01.060
+restore_wait          0:02:31.723
+verify                0:00:07.520
+recovery              0:02:47.933
+cleanup_after         0:00:05.567
+total                 0:03:06.925
+signed 17bc200f801694e5c21baabfc84cc637a9d15177d071e35a5feae38199daa2dd key 9dfab6eadaa1d04a22dcc966aac7a53bcff8bbe0077232485f6143cd9c4d0ca5
+evidence C:\ProgramData\RestoreProof\runs\w44-tsa-down-1: result.json, signature.json, items.csv, veeam-session.log
+
+--- the folder
+items.csv  5741
+result.json  21954
+signature.json  322
+veeam-session.log  7363
+
+--- graph list after
+Mail (restoretest@RestoreProofLab.onmicrosoft.com, Inbox): 0 item(s)
+SharePoint (RestoreTarget library): 0 item(s)
+OneDrive (RestoreTarget folder): 0 item(s)
+0 item(s) in the three restore targets
+
+--- both verifiers, with --tsa-ca
+rpworker signer verify (exit 0):
+  verified 17bc200f801694e5c21baabfc84cc637a9d15177d071e35a5feae38199daa2dd key 9dfab6eadaa1d04a22dcc966aac7a53bcff8bbe0077232485f6143cd9c4d0ca5 timestamp none
+  note: not timestamped
+verify_bundle.py (exit 0):
+  note: not timestamped
+  verified 17bc200f801694e5c21baabfc84cc637a9d15177d071e35a5feae38199daa2dd key 9dfab6eadaa1d04a22dcc966aac7a53bcff8bbe0077232485f6143cd9c4d0ca5 timestamp none

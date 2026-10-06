@@ -29,6 +29,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -467,7 +468,13 @@ TEST_CASE("a sleep that throws ends nothing", "[timestamper]")
 TEST_CASE("DigiCert's recorded answer is taken under the pinned root, for good",
           "[timestamper][fixtures]")
 {
-    const nlohmann::json fixture = rp::test::load_fixture_json("tsa", "digicert-granted");
+    // By hand before --record knew the format, and the W4.4 live run's own
+    // exchange as `rpworker test --evidence --record` wrote it.
+    const auto [name, stamped_at] = GENERATE(
+        std::pair<const char*, const char*>{"digicert-granted", "2026-10-06T13:29:05Z"},
+        std::pair<const char*, const char*>{"digicert-w44-live", "2026-10-06T21:19:24Z"});
+    CAPTURE(name);
+    const nlohmann::json fixture = rp::test::load_fixture_json("tsa", name);
     // The request that was really sent: its nonce and its digest are the ones
     // the recorded answer is right for.
     const Sent recorded = sent_in(rp::test::request_body_of(fixture));
@@ -486,7 +493,7 @@ TEST_CASE("DigiCert's recorded answer is taken under the pinned root, for good",
 
     REQUIRE(outcome.stamped());
     CHECK(outcome.attempts == 1);
-    CHECK(rp::timestamp_time_text(outcome.gen_time) == "2026-10-06T13:29:05Z");
+    CHECK(rp::timestamp_time_text(outcome.gen_time) == stamped_at);
     // What the Timestamper built is, byte for byte, what OpenSSL's own tool sent.
     CHECK(http.requests().front().body == rp::test::request_body_of(fixture));
     // The token is the response's own last bytes: DigiCert's certificate set

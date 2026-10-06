@@ -21,7 +21,8 @@ inline constexpr std::string_view kEnvGraphCertPassword = "RP_GRAPH_CERT_PASSWOR
 // The Worker's signing key (W4.3): one line of standard Base64 of an Ed25519
 // private key's PKCS#8 DER, the body line of the PEM OpenSSL writes.
 // rp::SigningKey::from_base64 (rp/signer.hpp) parses it, and only `rpworker
-// test --evidence` does: every other command reads it and never looks at it.
+// test --evidence` and `rpworker signer public-key` do: every other command
+// reads it and never looks at it.
 inline constexpr std::string_view kEnvSigningKeyBase64 = "RP_SIGNING_KEY_BASE64";
 
 inline constexpr std::array<std::string_view, 5> kSecretEnvVars{
@@ -49,9 +50,12 @@ Secrets load_secrets_from_env();
 // The run's secret values, each as it is: the Veeam password, the Graph PFX's
 // Base64, its password and the signing key's text, those that are set and not
 // empty, in that order. The user name is no secret. The one list a --record
-// recorder and a run folder check what they write against. Never decodes a
-// value (with --record it runs for commands that never check the key), and
-// never throws but for no memory.
+// recorder and a run folder check what they write against; a run that has
+// taken the key's text out of `secrets` (rpworker test --evidence, after the
+// recording is opened) adds the text and its shapes for the folder itself.
+// Never decodes a value (with --record it runs for commands that never check
+// the key), and never throws but for no memory. The caller wipes the list, or
+// hands it to a FixtureRecorder, which does.
 std::vector<std::string> secret_values(const Secrets& secrets);
 
 // Throws ConfigError, key() and message naming the variable ("RP_VEEAM_USERNAME

@@ -89,10 +89,19 @@ private:
 // an auditor's PEM file. Never taken from the folder that is checked.
 class PublicKey {
 public:
-    // The Ed25519 public key in the file `pem`, or nullopt: one "PUBLIC KEY"
-    // block by the one strict rule of Ed25519::public_key_from_pem
-    // (rp/ed25519.hpp), which verify_bundle.py holds too, row for row
-    // (shared/testdata/signing-v1/key-files.json).
+    // The Ed25519 public key in the file `pem`, or nullopt unless it is a
+    // public key file by the one rule both verifiers hold, row for row
+    // (shared/testdata/signing-v1/key-files.json; verify_bundle.py's
+    // public_key_from_pem): optional white space (space, tab, CR, LF); the
+    // line "-----BEGIN PUBLIC KEY-----"; one or more body lines of standard
+    // Base64 characters only; the line "-----END PUBLIC KEY-----"; optional
+    // white space. Line ends LF or CRLF (a lone CR is refused); no header
+    // line, no blank line, no text on the armour lines, no space in the body.
+    // The body lines joined must be strict Base64 (rp::base64_decode: padded,
+    // no pad bit set) of exactly the 44 bytes of an Ed25519
+    // SubjectPublicKeyInfo (Ed25519::is_public_key). The key's DER is those
+    // bytes, never a re-encoding. The rule is the Signer's own, in the strict
+    // signer.cpp; the primitive is asked about the 44 bytes only.
     // `primitive` must outlive the key. Never throws.
     static std::optional<PublicKey>
     from_pem(std::string_view pem, const Ed25519& primitive = openssl_ed25519()) noexcept;

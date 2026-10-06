@@ -8,7 +8,7 @@ import hashlib
 
 NORMALIZATION_ID = "text-v1"
 
-_BOM = "﻿"
+_BOM = "\ufeff"
 
 
 def normalize_body(text: str) -> str:

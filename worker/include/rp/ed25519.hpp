@@ -60,21 +60,12 @@ public:
     // public key.
     virtual std::string public_key_pem(std::span<const unsigned char> public_key_der) const = 0;
 
-    // The SubjectPublicKeyInfo DER of the public key the file `pem` holds, or
-    // empty unless it is a public key file by the one rule both verifiers
-    // hold (shared/testdata/signing-v1/key-files.json; verify_bundle.py's
-    // public_key_from_pem): optional white space (space, tab, CR, LF); the
-    // line "-----BEGIN PUBLIC KEY-----"; one or more body lines of standard
-    // Base64 characters only; the line "-----END PUBLIC KEY-----"; optional
-    // white space. Line ends LF or CRLF (a lone CR is refused); no header
-    // line, no blank line, no text on the armour lines, no space in the body.
-    // The body lines joined must be strict Base64 (rp::base64_decode: padded,
-    // no pad bit set) of exactly the 44 bytes of an Ed25519
-    // SubjectPublicKeyInfo as the library itself writes it: nothing after
-    // them, no other length form, no other algorithm. What is returned is
-    // those bytes, never a re-encoding. A small-order key is a key here:
-    // refusing one is left to whoever registers it (C5.5).
-    virtual std::vector<unsigned char> public_key_from_pem(std::string_view pem) const = 0;
+    // Whether `public_key_der` is an Ed25519 SubjectPublicKeyInfo as the
+    // library itself writes it: exactly its 44 bytes, nothing after them, no
+    // other length form, no other algorithm. A small-order key is a key here:
+    // refusing one is left to whoever registers it (C5.5). The rule for a
+    // public key *file* is not here but the Signer's (PublicKey::from_pem).
+    virtual bool is_public_key(std::span<const unsigned char> public_key_der) const = 0;
 };
 
 // The real primitive, over OpenSSL: one object for the process, thread-safe.

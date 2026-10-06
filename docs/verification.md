@@ -1044,13 +1044,14 @@ header, an RSA key, other Base64). No ASN.1 reader is used, so the library makes
 the seed that can't be wiped. The decoded bytes are wiped before it returns.
 
 With `--evidence` the key is parsed right after the Graph certificate is checked, before the
-schema check, the manifest, the run mutex and any Veeam call; no other command parses it or
-needs it. The pipeline takes the key's text out of the run's `Secrets` (wiped there) before
+schema check, the manifest, the run mutex and any Veeam call; the only other command that
+parses it is `rpworker signer public-key`. The pipeline takes the key's text out of the run's `Secrets` (wiped there) before
 the connector is made, so the connector's copy of the secrets never holds it, and keeps it
 with the parsed key in one holder that wipes both on every way out of the run. What stays: a
 `--record` recorder keeps its copy of the text until its last check, as for every secret, and
-the process's own environment holds the variable until the process ends. No test observes the
-wipes themselves.
+the process's own environment holds the variable until the process ends. The list of secret
+values a recorder is made with is taken by it: each value is moved in or wiped, on a refused
+folder too, which a test sees. No test observes the other wipes.
 
 ### The checks, and the thirteen words
 

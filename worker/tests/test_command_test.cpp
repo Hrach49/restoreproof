@@ -45,6 +45,7 @@
 #include <format>
 #include <fstream>
 #include <functional>
+#include <limits>
 #include <new>
 #include <optional>
 #include <set>
@@ -176,10 +177,12 @@ std::set<std::string> keys_of(const json& object)
     return keys;
 }
 
-// A stdout that takes `limit` bytes, then fails.
+// A stdout that takes `limit` bytes, then fails, until lift() takes the limit
+// away again.
 class LimitedStreamBuf : public std::streambuf {
 public:
     explicit LimitedStreamBuf(std::size_t limit) : limit_(limit) {}
+    void lift() { limit_ = std::numeric_limits<std::size_t>::max(); }
     std::string text;
 
 protected:
@@ -1183,7 +1186,11 @@ TEST_CASE("test --json: with stdout lost the file is still written, without its 
 
     CHECK(code == rp::exit_code::config);
     CHECK_THAT(err, StartsWith("error: writing the output failed after the restore ran"));
+    // The stream is bad from its first short write on, so the buffer can't
+    // show a line written all the same; stderr, where the pipeline sends what
+    // it must still say, can.
     CHECK_THAT(buffer.text, !ContainsSubstring("wrote "));
+    CHECK_THAT(err, !ContainsSubstring("wrote "));
     const json result = lab.result();
     CHECK(keys_of(result) == kResultKeys);
     for (const std::string& key : kResultKeys) {
@@ -2445,13 +2452,33 @@ TEST_CASE("test --evidence: with stdout lost the folder is still signed and writ
     Args args = kThree;
     args.push_back("--evidence");
     args.push_back(root);
+    // A stream whose first short write set badbit takes nothing more, so the
+    // buffer alone could never show the two lines (PR #158 review, finding
+    // 14). The stream comes back right before they would be written: signing
+    // is write_result's last step before them.
+    int signs = 0;
+    lab.sign_result = [&](std::string_view canonical, const rp::SigningKey& key) {
+        ++signs;
+        out.clear();
+        buffer.lift();
+        return rp::Signer::sign(canonical, key);
+    };
 
     const auto [code, err] = lab.run_to(args, out);
 
     INFO(buffer.text);
     INFO(err);
     CHECK(code == rp::exit_code::config);
+    CHECK(signs == 1);
+    // The control: from the signing on, the buffer stores what it is given.
+    out << "probe";
+    out.flush();
+    CHECK_THAT(buffer.text, EndsWith("probe"));
     CHECK_THAT(buffer.text, !ContainsSubstring("signed "));
+    CHECK_THAT(buffer.text, !ContainsSubstring("evidence "));
+    // Nor are they sent to stderr in stdout's place.
+    CHECK_THAT(err, !ContainsSubstring("signed "));
+    CHECK_THAT(err, !ContainsSubstring("evidence "));
     CHECK(names_in(lab.run_folder()) == kSignedFolder);
     CHECK(rp::to_string(verify_folder(lab.run_folder()).word) == "verified");
 }

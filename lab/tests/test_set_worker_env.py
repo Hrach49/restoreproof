@@ -4,6 +4,7 @@ PFX and Credential Manager, never prints or writes them."""
 
 import base64
 import datetime as dt
+import os
 import re
 import shutil
 import subprocess
@@ -23,6 +24,7 @@ SCRIPT = LAB_DIR / "entra" / "set-worker-env.ps1"
 PASSWORD_SENTINEL = "pfx-password-SENTINEL-DO-NOT-LEAK"
 # RFC 8032 section 7.1, test 1: a published key, in the shape RP_SIGNING_KEY_BASE64 holds.
 KEY_SENTINEL = "MC4CAQAwBQYDK2VwBCIEIJ1hsZ3v/VpguoRK9JLsLMREScVpezJpGXA7rAMcrn9g"
+WORKER_VARS = ("RP_GRAPH_CERT_PFX_BASE64", "RP_GRAPH_CERT_PASSWORD", signing_key.ENV_VAR)
 HAVE_PWSH = shutil.which("pwsh") is not None
 WINDOWS_PWSH = sys.platform == "win32" and HAVE_PWSH
 
@@ -31,9 +33,18 @@ def script_text() -> str:
     return SCRIPT.read_text(encoding="utf-8")
 
 
+def clean_env() -> dict[str, str]:
+    """The caller's environment without the Worker's three variables (Windows names ignore case)."""
+    return {name: value for name, value in os.environ.items() if name.upper() not in WORKER_VARS}
+
+
 def run_pwsh(command: str) -> subprocess.CompletedProcess:
     return subprocess.run(
-        ["pwsh", "-NoProfile", "-NonInteractive", "-Command", command], capture_output=True, text=True, timeout=120
+        ["pwsh", "-NoProfile", "-NonInteractive", "-Command", command],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        env=clean_env(),
     )
 
 
@@ -137,6 +148,18 @@ def test_run_without_dot_sourcing_it_refuses_and_sets_nothing():
     result = run_pwsh(f"& '{SCRIPT}'; \"exit=$LASTEXITCODE set=$(Test-Path env:RP_GRAPH_CERT_PASSWORD)\"")
     assert "exit=1 set=False" in result.stdout
     assert "Dot-source this script" in result.stderr
+
+
+@pytest.mark.skipif(not HAVE_PWSH, reason="PowerShell 7 not installed")
+def test_the_child_shell_never_sees_the_callers_worker_variables(monkeypatch):
+    # A developer runs these tests in the shell set-worker-env.ps1 was dot-sourced in: what a
+    # test reads as "set" must be what its own script set.
+    for name in WORKER_VARS:
+        monkeypatch.setenv(name, "from-the-callers-shell")
+    result = run_pwsh(
+        "\"set: $(Test-Path env:RP_GRAPH_CERT_PASSWORD) $(Test-Path env:RP_GRAPH_CERT_PFX_BASE64) $(Test-Path env:RP_SIGNING_KEY_BASE64)\""
+    )
+    assert "set: False False False" in result.stdout, result.stdout + result.stderr
 
 
 # ---- end to end on Windows, with a throwaway PFX and credential ----------------------------
@@ -380,3 +403,21 @@ def test_an_entry_that_is_not_a_signing_key_sets_nothing_and_is_not_shown(lab_pf
     assert "set: False False False" in out
     assert "left: []" in out
     assert entry not in out.split("error:", 1)[1] + result.stderr
+
+
+@pytest.mark.skipif(not WINDOWS_PWSH, reason="Credential Manager, Windows only")
+def test_an_entry_that_is_not_a_signing_key_takes_an_earlier_key_out_of_the_session(lab_pfx):
+    # The session never holds a key Credential Manager doesn't: after "Nothing was set", a key
+    # from an earlier call must not be what `rpworker test --evidence` signs with.
+    body = f"""
+        $env:RP_SIGNING_KEY_BASE64 = '{KEY_SENTINEL}'
+        try {{ . '{SCRIPT}' -PfxPath '{lab_pfx}' -CredentialTarget $target -SigningKeyTarget $keyTarget; 'no error' }}
+        catch {{ "error: $($_.Exception.Message)" }}
+        "key: $(Test-Path env:RP_SIGNING_KEY_BASE64)"
+    """
+    result = run_pwsh(with_credential(PASSWORD_SENTINEL, body, key="not-a-key-SENTINEL"))
+    out = result.stdout
+    assert "isn't an Ed25519 signing key" in out, out + result.stderr
+    assert "Nothing was set" in out
+    assert "key: False" in out
+    assert KEY_SENTINEL not in out + result.stderr

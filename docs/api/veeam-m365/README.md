@@ -37,11 +37,14 @@ POST is never resent: without an answer the script looks for the session it may 
 and adopts exactly one, or exits 3. When it gives up on a restore that may still be running
 (exit 3 after the POST), it leaves that restore session and its explore session alone and says
 so: wait until the restore session reads `Stopped`, then run `08-sweep-sessions.ps1`. The restore credential is Veeam's own organisation app: its
-certificate is exported from `Cert:\LocalMachine\My` to a temporary PFX in `%TEMP%` with a
-random one-time password, read into memory and deleted at once, so the script needs an
-**elevated** shell (`docs/decisions.md`, W2.4). `-WhatIf` sends no restore POST, exports nothing and
-saves nothing, and runs unelevated; it still signs in and opens, browses and stops an explore
-session, so run it only while no real run is going.
+certificate is exported from `Cert:\LocalMachine\My` in memory with a random one-time
+password, no file written (W4.12; `docs/decisions.md`, W2.4 and 2026-10-07), so the script
+needs an account that can read the certificate's private key: an **elevated** shell,
+LocalSystem, or an account granted read on the key file. `-WhatIf` sends no restore POST,
+exports nothing and saves nothing, and runs unelevated; it still signs in and opens, browses
+and stops an explore session, so run it only while no real run is going. `VeeamLab.ps1` takes
+rp-veeam's password from `RP_VEEAM_PASSWORD` when that is set (a service account has no
+Credential Manager entry of the user's), else from Credential Manager.
 
 ## Before you run them
 

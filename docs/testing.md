@@ -247,9 +247,10 @@ Before running it:
 
 1. **Use an elevated shell.** The restore credential is Veeam's organisation app certificate,
    exported from `LocalMachine\My` in memory for each restore call, and reading its private key
-   needs administrator rights. Start `Developer PowerShell for VS 2022` with right-click, **Run
-   as administrator**. Without elevation the test fails at the first restore call with a
-   certificate export error, before anything is restored.
+   needs administrator rights (or, as the Worker's service will have, a Read ACE on the key
+   file: W4.12, `docs/decisions.md` 2026-10-07). Start `Developer PowerShell for VS 2022` with
+   right-click, **Run as administrator**. Without elevation the test fails at the first restore
+   call with a certificate export error, before anything is restored.
 2. **Make sure the restore targets are empty.** Run the live cleanup test (below), then
    `rpworker graph list` (above, and `docs/worker-config.md`) and check that the `restoretest`
    Inbox, the RestoreTarget library and alice's `/RestoreTarget` folder show `0 item(s)` and no
@@ -341,6 +342,22 @@ Remove-Item Env:RP_LIVE, Env:RP_LIVE_RESTORE, Env:RP_LIVE_EVIDENCE_FILE, Env:RP_
 . ..\lab\entra\set-worker-env.ps1 -Clear
 ```
 
+### The restore credential under a service account (W4.12's probe)
+
+`rpworker` exports Veeam's organisation app certificate from `LocalMachine\My` in memory for
+each restore call (`rp::make_local_machine_cert_exporter`). Spike W4.12 (#135,
+`docs/decisions.md` 2026-10-07) ran that export from a Windows service as LocalSystem and as a
+virtual account, `NT SERVICE\<service name>`, which needs one Read ACE on the certificate's key
+file and nothing else. The hidden test case `rptests "[spike_cert_export]"`
+(`worker/tests/cert_export_test.cpp`) is what the spike ran under each account: with
+`RP_SPIKE_THUMBPRINT` set to a thumbprint of the real `LocalMachine\My`, it prints one line with
+what the Worker's exporter says of that certificate (`exported in memory: PFX <n> Base64
+characters, password 44 characters; nothing written`, or `refused: <the exporter's message>`),
+never a byte of the export. Without the variable it does nothing. It runs only when named;
+`ctest --preset dev` never runs it. The spike's evidence, with the three refusals `rpworker
+doctor` will have to name (a thumbprint no certificate has, a key that isn't exportable, an
+expired certificate) and the denied-ACL case, is `docs/api/veeam-lab/w4.12-*`.
+
 ### Restore by hand (`rpworker restore`, writes to the lab tenant)
 
 **This writes too.** `rpworker restore` (W2.8, `docs/worker-config.md`) chooses a sample and
@@ -348,7 +365,8 @@ restores it into the three restore targets, like the live test above, but from t
 line. ctest's `rpworker restore` exe tests all stop before any request (the arguments, the
 config, the secrets), so nothing writes unless you run it by hand. Since W3.4 it also
 deletes: it empties the three targets before it samples and again after its status line
-(`docs/worker-config.md`, "`rpworker restore`"). Before running it, check: an elevated shell,
+(`docs/worker-config.md`, "`rpworker restore`"). Before running it, check: an elevated shell
+(or an account with read access to Veeam's certificate's key file, as the service has: W4.12),
 no restore session still `Working`, and no other RestoreProof run on this machine (the run
 mutex refuses a second one: `restore error: another RestoreProof run is using the restore
 targets; nothing was done`, exit 4). The targets needn't be empty first.

@@ -75,12 +75,14 @@ pwsh -File 10-restore.ps1 -Type mail|sp|od -Item <manifest id>[,<id>...] [-Tag x
   (§8), so run it alone.
 - `-SaveEvidence` refuses (exit 64) while evidence of the same type and `-Tag` exists, so a
   re-run never mixes its files with an earlier run's.
-- It needs an elevated shell (the certificate export, §7), except with `-WhatIf`.
+- It needs an account that can read the certificate's private key (the export, §7): an
+  administrator, LocalSystem, or one granted read on the key file (W4.12,
+  `docs/decisions.md` 2026-10-07), except with `-WhatIf`.
 - Exit codes: 0 Veeam says restored (or `-WhatIf`: the guard passed); 1 the restore finished,
   not a success; 2 refused before any POST (guard, preflight, resolving an item), or a 4xx on the
   POST (nothing started); 3 no verdict (timeout, a POST without an answer, a duplicate check
   that doesn't confirm exactly the returned session, statistics or events unreadable or of an
-  unexpected shape); 64 usage (also: not elevated without `-WhatIf`). Arguments bind by name
+  unexpected shape); 64 usage (also: the private key can't be opened, without `-WhatIf`). Arguments bind by name
   only, and `-TimeoutMinutes` is 1 to 45; PowerShell's own parameter errors exit 1 before the
   script runs.
 
@@ -451,9 +453,11 @@ Veeam`, thumbprint `AC3220B5…F783A7`, in `Cert:\LocalMachine\My`). Per run, `G
 
 1. checks the certificate has a private key and hasn't expired;
 2. makes a one-time password from 32 random bytes;
-3. exports the certificate to `%TEMP%\rp-w24-<guid>.pfx` (refusing a path inside the repo);
-4. reads the file into memory as Base64 and deletes it in a `finally` (an undeletable file is an
-   error that says so);
+3. exports the certificate in memory, `X509Certificate2.Export(Pfx, password)`, as Base64, and
+   clears the bytes (since W4.12; until then to `%TEMP%\rp-w24-<guid>.pfx`, read back and deleted
+   in a `finally`). A key the account can't read or export is a refusal (exit 2) that says so;
+   the script checks the key opens before it signs in (exit 64);
+4. *(gone: there is no file to delete)*;
 5. registers both values with the evidence scrubber. With `RP_LAB_SECRET_DIR` set, as in the
    documented run ([`veeam-m365/README.md`](veeam-m365/README.md)), the one-time password (not
    the PFX) also gets a DPAPI copy in that folder, outside the repo, for `audit-evidence.ps1`.

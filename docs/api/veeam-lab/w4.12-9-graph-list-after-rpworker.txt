@@ -1,0 +1,9 @@
+W4.12 (#135) step 9: rpworker graph list --hash after step 8 (as the user), 2026-10-06T23:23:23Z
+Mail (restoretest@RestoreProofLab.onmicrosoft.com, Inbox): 0 item(s)
+
+SharePoint (RestoreTarget library): 0 item(s)
+
+OneDrive (RestoreTarget folder): 0 item(s)
+
+0 item(s) in the three restore targets
+exit code 0

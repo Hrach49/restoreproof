@@ -4,6 +4,7 @@
 // nothing here reaches the network.
 
 #include "fake_http_client.hpp"
+#include "result_lab.hpp"
 #include "tsa_lab.hpp"
 
 #include <rp/retry_policy.hpp>
@@ -404,7 +405,7 @@ TEST_CASE("one debug line per attempt, with the code or granted and never a body
     REQUIRE(lab.timestamper().stamp(kDigestAbc).stamped());
 
     std::string lines = log.str();
-    std::erase(lines, '');
+    std::erase(lines, '\r');
     CHECK(lines == "timestamp: attempt 1 of 3: tsa_response_malformed\n"
                        "timestamp: attempt 2 of 3: granted\n");
 }
@@ -459,4 +460,79 @@ TEST_CASE("a sleep that throws ends nothing", "[timestamper]")
     CHECK(outcome.error == rp::timestamp_code::kInternal);
     CHECK(outcome.attempts == 3);
     CHECK(calls == 1);
+}
+
+// --- The recorded fixtures (tests/fixtures/tsa/) --------------------------------
+
+TEST_CASE("DigiCert's recorded answer is taken under the pinned root, for good",
+          "[timestamper][fixtures]")
+{
+    const nlohmann::json fixture = rp::test::load_fixture_json("tsa", "digicert-granted");
+    // The request that was really sent: its nonce and its digest are the ones
+    // the recorded answer is right for.
+    const Sent recorded = sent_in(rp::test::request_body_of(fixture));
+    REQUIRE(recorded.digest.size() == 32);
+    FakeHttpClient http;
+    http.on(HttpMethod::post, std::string{rp::kDefaultTsaUrl},
+            {rp::test::to_response(fixture)});
+    rp::TimestamperOptions options;
+    options.url = std::string{rp::kDefaultTsaUrl};
+    options.ca_pem = rp::test::read_shared("tsa/tsa-ca.pem");
+    options.http = &http;
+    options.nonce = [&recorded]() -> std::optional<std::uint64_t> { return recorded.nonce; };
+
+    const TimestampOutcome outcome =
+        rp::Timestamper(std::move(options)).stamp(as_digest(recorded.digest));
+
+    REQUIRE(outcome.stamped());
+    CHECK(outcome.attempts == 1);
+    CHECK(rp::timestamp_time_text(outcome.gen_time) == "2026-10-06T13:29:05Z");
+    // What the Timestamper built is, byte for byte, what OpenSSL's own tool sent.
+    CHECK(http.requests().front().body == rp::test::request_body_of(fixture));
+    // The token is the response's own last bytes: DigiCert's certificate set
+    // isn't in DER's order, and a re-encoding would not be its token.
+    CHECK(rp::test::to_response(fixture).body.ends_with(outcome.token));
+    CHECK(outcome.token.size() == 5998);
+
+    // Under another root, or over another hash, the same answer is refused.
+    SECTION("the test root instead")
+    {
+        rp::TimestamperOptions other;
+        other.url = std::string{rp::kDefaultTsaUrl};
+        other.ca_pem = tsa().root_pem();
+        other.http = &http;
+        other.nonce = [&recorded]() -> std::optional<std::uint64_t> { return recorded.nonce; };
+        CHECK(rp::Timestamper(std::move(other)).stamp(as_digest(recorded.digest)).error ==
+              rp::timestamp_code::kUntrusted);
+    }
+    SECTION("another hash")
+    {
+        rp::TimestamperOptions other;
+        other.url = std::string{rp::kDefaultTsaUrl};
+        other.ca_pem = rp::test::read_shared("tsa/tsa-ca.pem");
+        other.http = &http;
+        other.nonce = [&recorded]() -> std::optional<std::uint64_t> { return recorded.nonce; };
+        CHECK(rp::Timestamper(std::move(other)).stamp(kDigestAbc).error ==
+              rp::timestamp_code::kImprint);
+    }
+}
+
+TEST_CASE("the hand-written TSA answers are each their code", "[timestamper][fixtures]")
+{
+    struct FixtureRow {
+        const char* name;
+        std::string_view code;
+    };
+    const FixtureRow row = GENERATE(FixtureRow{"rejection", rp::timestamp_code::kRejected},
+                                    FixtureRow{"html-200", rp::timestamp_code::kMalformed},
+                                    FixtureRow{"503", rp::timestamp_code::kHttpStatus},
+                                    FixtureRow{"empty-200", rp::timestamp_code::kMalformed});
+    CAPTURE(row.name);
+    Lab lab;
+    lab.http.on(HttpMethod::post, kUrl, {rp::test::load_fixture("tsa", row.name)});
+
+    const TimestampOutcome outcome = lab.timestamper().stamp(kDigestAbc);
+
+    CHECK(outcome.error == row.code);
+    CHECK(outcome.attempts == 3);
 }

@@ -60,6 +60,7 @@ add_library(rpcore STATIC
     src/result_builder.cpp
     src/result_schema.cpp
     src/retry_policy.cpp
+    src/rfc3161.cpp
     src/run_lock.cpp
     src/run_pipeline.cpp
     src/run_status.cpp
@@ -176,6 +177,7 @@ add_executable(rptests
     tests/result_builder_test.cpp
     tests/result_schema_test.cpp
     tests/retry_policy_test.cpp
+    tests/rfc3161_test.cpp
     tests/run_lock_test.cpp
     tests/run_status_test.cpp
     tests/sample_rng_test.cpp

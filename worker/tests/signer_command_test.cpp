@@ -10,6 +10,9 @@
 #include <rp/signer.hpp>
 #include <rp/signer_command.hpp>
 
+#include "../src/file_read.hpp"
+#include "../src/result_schema_detail.hpp"
+#include "deep_folder.hpp"
 #include "result_lab.hpp"
 #include "signing_lab.hpp"
 #include "test_support.hpp"
@@ -20,6 +23,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <filesystem>
 #include <optional>
 #include <sstream>
@@ -626,6 +630,214 @@ TEST_CASE("signer verify: an unlisted file whose name isn't valid UTF-16 is a no
         CHECK(rp::run_cli(args, out, err) == 0);
         CHECK(out.str() == verified_line());
         CHECK(err.str() == "note: not listed in the result: x\\udc80y\n");
+    }
+}
+
+// --- signer verify: the folder as the disk has it ------------------------------------
+
+// rpworker.exe has no long-path manifest, so a file whose full path is past
+// 260 characters didn't open: an intact folder got `attachment_missing`,
+// `signature_file` or `result_unreadable`, by how long its path was, where
+// verify_bundle.py said `verified`.
+TEST_CASE("signer verify: a signed folder whose files are past MAX_PATH is verified like any "
+          "other",
+          "[signer_command]")
+{
+    const TempDir keys;
+    const std::string key = utf8(keys.write("key.pem", kKey1Pem));
+    const TempDir dir;
+    const rp::test::DeepFolder deep(dir);
+    const json bundle = json::parse(rp::test::read_shared(kBundleFile));
+    for (const auto& [file, content] : bundle.at("files").items()) {
+        deep.write(file, content.get<std::string>());
+    }
+    const std::string folder = utf8(deep.path());
+    // Every one of the four, the shortest name included.
+    REQUIRE(folder.size() + std::string{"\\items.csv"}.size() > 260);
+
+    SECTION("untouched")
+    {
+        const Ran ran = run({"verify", folder, "--public-key", key});
+        CHECK(ran.code == 0);
+        CHECK(ran.out == verified_line());
+        CHECK(ran.err.empty());
+    }
+    SECTION("with forward slashes")
+    {
+        std::string slashed = folder;
+        std::replace(slashed.begin(), slashed.end(), '\\', '/');
+        const Ran ran = run({"verify", slashed, "--public-key", key});
+        CHECK(ran.code == 0);
+        CHECK(ran.out == verified_line());
+    }
+    SECTION("a file that isn't listed is still a note")
+    {
+        deep.write("manifest.json", "{}");
+        const Ran ran = run({"verify", folder, "--public-key", key});
+        CHECK(ran.code == 0);
+        CHECK(ran.out == verified_line());
+        CHECK(ran.err == "note: not listed in the result: manifest.json\n");
+    }
+    SECTION("what is wrong inside it has its own word")
+    {
+        deep.remove("veeam-session.log");
+        const Ran missing = run({"verify", folder, "--public-key", key});
+        CHECK(missing.code == 5);
+        CHECK(missing.out == "not verified: attachment_missing\n");
+        deep.write("items.csv", "another file");
+        const Ran size = run({"verify", folder, "--public-key", key});
+        CHECK(size.code == 5);
+        CHECK(size.out == "not verified: attachment_size\n");
+    }
+}
+
+// What the caller named and nothing else: Windows drops blanks and dots at the
+// end of a path, so ` ` or `...` would be the folder above, and `run ` the
+// folder `run`. The Worker names the folder as a file inside it would, where
+// they stay.
+TEST_CASE("signer verify: a folder name of blanks or dots, or with a space after it, is no "
+          "folder: never the one above or beside it",
+          "[signer_command]")
+{
+    const TempDir keys;
+    const std::string key = utf8(keys.write("key.pem", kKey1Pem));
+    // A signed folder, and one inside it: whichever a wrong reading of the
+    // name would open, it would verify.
+    const TempDir dir;
+    write_bundle(dir);
+    std::filesystem::create_directory(dir.path() / "run");
+    const json bundle = json::parse(rp::test::read_shared(kBundleFile));
+    for (const auto& [file, content] : bundle.at("files").items()) {
+        dir.write(std::filesystem::path{"run"} / file, content.get<std::string>());
+    }
+    const std::string top = utf8(dir.path());
+    REQUIRE(run({"verify", top + "\\run", "--public-key", key}).out == verified_line());
+
+    const std::string folder = GENERATE_COPY(top + "\\ ", top + "\\...", top + "\\. ",
+                                             top + "\\.. ", top + "\\run\\ ", top + "\\run\\...",
+                                             top + " ", top + "\\run ", top + "/run ");
+    CAPTURE(folder);
+    const Ran ran = run({"verify", folder, "--public-key", key});
+    CHECK(ran.code == 1);
+    CHECK(ran.out.empty());
+    CHECK(ran.err == "signer error: " + folder + ": the folder can't be opened\n");
+}
+
+// MSVC gives a folder a size, 4096 on NTFS once it holds a few names, which
+// was asked against the listed size before anything was opened: such a folder
+// was `attachment_size` here and `attachment_missing` in verify_bundle.py.
+TEST_CASE("signer verify: a listed attachment that is a folder is attachment_missing, whatever "
+          "the folder holds",
+          "[signer_command]")
+{
+    const TempDir keys;
+    const std::string key = utf8(keys.write("key.pem", kKey1Pem));
+    const TempDir dir;
+    write_bundle(dir);
+    REQUIRE(std::filesystem::remove(dir.path() / "items.csv"));
+    std::filesystem::create_directory(dir.path() / "items.csv");
+    const int files = GENERATE(0, 1, 5, 40);
+    CAPTURE(files);
+    for (int i = 0; i < files; ++i) {
+        dir.write(std::filesystem::path{"items.csv"} /
+                      ("a-file-with-a-name-long-enough-" + std::to_string(i) + ".txt"),
+                  "x");
+    }
+
+    const Ran ran = run({"verify", utf8(dir.path()), "--public-key", key});
+    CHECK(ran.code == 5);
+    CHECK(ran.out == "not verified: attachment_missing\n");
+    CHECK(ran.err.empty());
+}
+
+// NTFS opens ITEMS.CSV for items.csv; a file system that tells the two apart
+// has no items.csv. The folder's own list of names decides, so the answer is
+// the same on both (and verify_bundle.py's), and no file is verified and
+// "not listed in the result" in one answer.
+TEST_CASE("signer verify: a file under another case of its name is not that file",
+          "[signer_command]")
+{
+    struct Row {
+        const char* name;
+        const char* stored_as;
+        const char* word;
+    };
+    const Row row = GENERATE(values<Row>({
+        {"items.csv", "ITEMS.CSV", "attachment_missing"},
+        {"veeam-session.log", "Veeam-Session.log", "attachment_missing"},
+        {"result.json", "RESULT.JSON", "result_unreadable"},
+        {"signature.json", "Signature.json", "signature_file"},
+    }));
+    CAPTURE(row.name);
+    const TempDir keys;
+    const std::string key = utf8(keys.write("key.pem", kKey1Pem));
+    const TempDir dir;
+    write_bundle(dir);
+    std::filesystem::rename(dir.path() / row.name, dir.path() / row.stored_as);
+    const std::optional<std::vector<std::string>> names = rp::list_folder(dir.path());
+    REQUIRE(names);
+    REQUIRE(std::find(names->begin(), names->end(), row.stored_as) != names->end());
+    REQUIRE(std::find(names->begin(), names->end(), row.name) == names->end());
+
+    const Ran ran = run({"verify", utf8(dir.path()), "--public-key", key});
+    CHECK(ran.code == 5);
+    CHECK(ran.out == std::string{"not verified: "} + row.word + "\n");
+    CHECK(ran.err.empty());
+}
+
+// The embedded validator can fail to load (no memory): rp::validate_result
+// then says "not valid" for any document, which is no fact about the folder.
+TEST_CASE("signer verify: a result that couldn't be checked against its schema is exit 1, never "
+          "a word",
+          "[signer_command]")
+{
+    const TempDir keys;
+    const std::string key = utf8(keys.write("key.pem", kKey1Pem));
+    const TempDir dir;
+    write_bundle(dir);
+    const std::string folder = utf8(dir.path());
+    struct Unavailable {
+        Unavailable() { rp::detail::set_result_validator_unavailable(true); }
+        ~Unavailable() { rp::detail::set_result_validator_unavailable(false); }
+    };
+
+    SECTION("the signed folder: no verdict")
+    {
+        Ran ran;
+        {
+            const Unavailable unavailable;
+            ran = run({"verify", folder, "--public-key", key});
+        }
+        CHECK(ran.code == 1);
+        CHECK(ran.out.empty());
+        CHECK(ran.err == "signer error: the result couldn't be checked against its schema\n");
+        // With the validator back, the same folder is verified.
+        CHECK(run({"verify", folder, "--public-key", key}).out == verified_line());
+    }
+    SECTION("through run_cli")
+    {
+        std::ostringstream out;
+        std::ostringstream err;
+        const Args args{"signer", "verify", folder, "--public-key", key};
+        int code = -1;
+        {
+            const Unavailable unavailable;
+            code = rp::run_cli(args, out, err);
+        }
+        CHECK(code == 1);
+        CHECK(out.str().empty());
+        CHECK(err.str() == "signer error: the result couldn't be checked against its schema\n");
+    }
+    SECTION("a folder refused before the schema is asked still has its word")
+    {
+        REQUIRE(std::filesystem::remove(dir.path() / "result.json"));
+        Ran ran;
+        {
+            const Unavailable unavailable;
+            ran = run({"verify", folder, "--public-key", key});
+        }
+        CHECK(ran.code == 5);
+        CHECK(ran.out == "not verified: result_unreadable\n");
     }
 }
 

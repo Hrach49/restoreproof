@@ -821,6 +821,63 @@ TEST_CASE("redact masks a PEM private key block whole, whatever kind of key it s
     })));
 }
 
+// A key rule ends an unquoted value at the first blank or at the line's end,
+// which is inside "-----BEGIN PRIVATE KEY-----" or right after it: the block
+// that starts in such a value goes with it, to its END line.
+TEST_CASE("redact masks a PEM private key block that is the value of a secret name",
+          "[redact][signing]")
+{
+    check_row(GENERATE(values<Row>({
+        {"signing_private_key=-----BEGIN PRIVATE KEY-----\n"
+         "MC4CAQAwBQYDK2VwBCIEIJ1hsZ3v/VpguoRK9JLsLMREScVpezJpGXA7rAMcrn9g\n"
+         "-----END PRIVATE KEY-----\nnext",
+         "signing_private_key=[REDACTED]\nnext"},
+        {"RP_SIGNING_KEY_BASE64=-----BEGIN PRIVATE KEY-----\r\nMC4C\r\n"
+         "-----END PRIVATE KEY-----\r\n",
+         "RP_SIGNING_KEY_BASE64=[REDACTED]\r\n"},
+        {"signing_key: -----BEGIN PRIVATE KEY-----\nMC4C\n-----END PRIVATE KEY-----\n",
+         "signing_key: [REDACTED]\n"},
+        {"signing_key_base64 = -----BEGIN PRIVATE KEY-----\nMC4C\n-----END PRIVATE KEY-----",
+         "signing_key_base64 = [REDACTED]"},
+        {"password: -----BEGIN RSA PRIVATE KEY-----\nMIIE\nAAAA\n-----END RSA PRIVATE KEY----- x",
+         "password: [REDACTED] x"},
+        {"client_secret=-----BEGIN EC PRIVATE KEY-----\nCCCC\n-----END EC PRIVATE KEY-----&a=1",
+         "client_secret=[REDACTED]&a=1"},
+        // Further along the value's line, and behind a header's scheme.
+        {"signing_key: see -----BEGIN PRIVATE KEY-----\nMC4C\n-----END PRIVATE KEY-----\n",
+         "signing_key: [REDACTED]\n"},
+        {"Authorization: Bearer -----BEGIN PRIVATE KEY-----\nMC4C\n-----END PRIVATE KEY-----\n",
+         "Authorization: [REDACTED]\n"},
+        {"got Bearer -----BEGIN PRIVATE KEY-----\nMC4C\n-----END PRIVATE KEY-----\n",
+         "got Bearer [REDACTED]\n"},
+        // No END line: to the end of the text, as for a block on its own.
+        {"signing_key=-----BEGIN PRIVATE KEY-----\nMC4CAQAw", "signing_key=[REDACTED]"},
+        // A public key as such a value loses its first word only, as before.
+        {"signing_key=-----BEGIN PUBLIC KEY-----\nMCow\n-----END PUBLIC KEY-----\n",
+         "signing_key=[REDACTED] PUBLIC KEY-----\nMCow\n-----END PUBLIC KEY-----\n"},
+        // A quoted value ends at its quote; a block after it is masked by itself.
+        {"password=\"x\" -----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n",
+         "password=\"[REDACTED]\" [REDACTED]\n"},
+    })));
+}
+
+// A label isn't letters only (ED25519), and a PGP block's doesn't end in
+// "PRIVATE KEY": any label that holds the two words is a private key's.
+TEST_CASE("redact masks a private key block whose label has digits or goes on after the words",
+          "[redact][signing]")
+{
+    check_row(GENERATE(values<Row>({
+        {"-----BEGIN ED25519 PRIVATE KEY-----\nMC4C\n-----END ED25519 PRIVATE KEY-----\n",
+         "[REDACTED]\n"},
+        {"-----BEGIN PGP PRIVATE KEY BLOCK-----\n\nlQOYBF\n=AbCd\n"
+         "-----END PGP PRIVATE KEY BLOCK-----\nnext",
+         "[REDACTED]\nnext"},
+        {"key: -----BEGIN X25519 PRIVATE KEY-----\nMC4C", "key: [REDACTED]"},
+        {"-----BEGIN PGP PUBLIC KEY BLOCK-----\nmQEN\n-----END PGP PUBLIC KEY BLOCK-----\n",
+         "-----BEGIN PGP PUBLIC KEY BLOCK-----\nmQEN\n-----END PGP PUBLIC KEY BLOCK-----\n"},
+    })));
+}
+
 TEST_CASE("redact reads a megabyte of PEM headers without an end in one pass", "[redact][signing]")
 {
     std::string text;

@@ -1272,12 +1272,21 @@ written as `\xNN`, `\uNNNN` or `\UNNNNNNNN`.
 | 1 | it isn't a key file | `signer error: --public-key <file>: not an Ed25519 public key in PEM` |
 | 1 | the folder's path isn't UTF-8 | `signer error: the folder's path is not valid UTF-8` |
 | 1 | `<folder>` isn't a folder that can be opened | `signer error: <folder>: the folder can't be opened` |
+| 1 | the Worker's own schema validator couldn't be loaded or failed (no memory) | `signer error: the result couldn't be checked against its schema` |
 | 1 | the verdict couldn't be written to stdout | `signer error: the answer couldn't be written` |
 | 64 | `<folder>` or `--public-key <file>` missing, empty or given twice, or any other word | the usage line |
 
 The key file is checked before the folder. `<folder>` and `--public-key <pem file>` may come
 in either order. With exit 1 nothing is on stdout: a failure of the verifier is never a
 verdict.
+
+**The folder as the disk has it.** The folder is listed once and read through one path in
+Windows' extended-length form, so a folder whose files are past 260 characters (`MAX_PATH`) is
+read like any other. A file is there only when the listing has its name byte for byte:
+`ITEMS.CSV` is not `items.csv`, although NTFS would open it, and such a folder is `not
+verified: attachment_missing`. A listed name that is a folder is `attachment_missing` too. A
+`<folder>` of blanks or dots only (` `, `...`), or with a space after its name (`run `), is no
+folder and never the one above or beside it, which Windows would otherwise open.
 
 **The key file** is one `-----BEGIN PUBLIC KEY-----` block of an Ed25519 key with only white
 space around it: what `signer public-key` prints, what `new-signing-key --public-key-out`

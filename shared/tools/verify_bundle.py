@@ -10,10 +10,16 @@
     uv run verify_bundle.py <folder> --public-key <pem file> [--schemas <dir>]
 
 Exit 0 and `verified <bundle_sha256> key <key_id>`, exit 1 and
-`not verified: <word>`, exit 2 for a usage error, a folder, key or schema that
-can't be read, or anything unexpected (never a verdict). An empty <folder>,
---public-key or --schemas is such an error, never the working folder. The
-folder is resolved once, and that one path is listed and read from.
+`not verified: <word>`, exit 2 for a usage error (an option given twice is
+one), a folder, key or schema that can't be read, a missing package, a verdict
+that couldn't be written to stdout, or anything unexpected (never a verdict).
+An empty <folder>, --public-key or --schemas is such an error, never the
+working folder; so is, on Windows, a folder name of blanks and dots only, which
+Windows would read as the folder above it. The folder is resolved once, and
+that one path is listed and read from; on Windows it is in the extended-length
+form, so a file past 260 characters is read like any other. A file is there
+only when the folder lists its name byte for byte: ITEMS.CSV is not items.csv,
+whatever the file system would open.
 
 One self-contained file (docs/decisions.md 2026-10-05, W4.3 point 5). It holds
 the Python side of canonical-json-v1, the form `result.json` and
@@ -56,6 +62,7 @@ import argparse
 import base64
 import hashlib
 import json
+import ntpath
 import os
 import re
 import stat
@@ -63,10 +70,19 @@ import sys
 from pathlib import Path
 from typing import NamedTuple
 
-from cryptography.exceptions import InvalidSignature, UnsupportedAlgorithm
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
-from jsonschema import Draft202012Validator
-from jsonschema.exceptions import SchemaError
+try:
+    from cryptography.exceptions import InvalidSignature, UnsupportedAlgorithm
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+    from jsonschema import Draft202012Validator
+    from jsonschema.exceptions import SchemaError
+except ImportError as missing:
+    if __name__ != "__main__":
+        raise
+    # Run with plain `python` where the two packages aren't installed. Left to
+    # Python, the traceback's exit status is 1, which is "not verified".
+    package = (missing.name or "?").partition(".")[0]
+    sys.stderr.write(f"error: a package the script needs isn't installed ({package}); run it with `uv run`\n")
+    sys.exit(2)  # EXIT_ERROR
 
 __all__ = [
     "EXIT_ERROR",
@@ -556,10 +572,11 @@ def verify(result: bytes, signature: bytes | None, key: PublicKey, schemas: Sche
     return _check(result, signature, key, schemas)[0]
 
 
-def _check_attachment(folder: Path, attachment: dict) -> str:
-    """The word for one listed attachment; VERIFIED when it is the file the
-    result lists. One larger than listed isn't read at all."""
-    state, data = _read_file(folder / attachment["name"], attachment["size_bytes"])
+def _check_attachment(read, attachment: dict) -> str:
+    """The word for one listed attachment as `read(name, limit)` finds it;
+    VERIFIED when it is the file the result lists. One larger than listed isn't
+    read at all."""
+    state, data = read(attachment["name"], attachment["size_bytes"])
     if state == _UNREADABLE:
         return "attachment_missing"
     if state == _TOO_LARGE or len(data) != attachment["size_bytes"]:
@@ -569,15 +586,48 @@ def _check_attachment(folder: Path, attachment: dict) -> str:
     return VERIFIED
 
 
+_WINDOWS = os.name == "nt"
+
+
+def _names_nothing(folder: str) -> bool:
+    """Whether the last part of the Windows path `folder` is blanks and dots
+    only, and neither `.` nor `..`. Windows drops such a part, so ` ` and `...`
+    would be the working folder and `.. ` the one above it: a folder the caller
+    never named. (`rpworker signer verify` opens none of them either.)"""
+    last = re.split(r"[\\/]", ntpath.splitdrive(folder)[1])[-1]
+    return last not in ("", ".", "..") and last.strip(" .") == ""
+
+
+def _extended(folder: str) -> str:
+    r"""The Windows path `folder`, absolute, in the extended-length form
+    (\\?\C:\runs\one, \\?\UNC\server\share\one), which has no limit of 260
+    characters: a file that is there opens however long the folder's path is,
+    with or without the system's long-path setting. One that is already
+    extended, or a device's, is left as it is."""
+    full = ntpath.abspath(folder)
+    if full.startswith(("\\\\?\\", "\\\\.\\")):
+        return full
+    if full.startswith("\\\\"):
+        return "\\\\?\\UNC\\" + full[2:]
+    return "\\\\?\\" + full
+
+
 def _open_folder(folder) -> Path:
     """The one path the folder is listed and read through: `folder` resolved,
     which must be there and a folder. So a name the system lists and reads
     differently (on Windows, one ending in a space) can't give a listing of
-    one place beside reads of another, which would end in a verdict."""
+    one place beside reads of another, which would end in a verdict. On
+    Windows the path is the extended one (_extended), and a name Windows would
+    drop altogether is no folder (_names_nothing)."""
     if _is_empty(folder):
         raise SetupError("the folder can't be opened")
     try:
-        resolved = Path(folder).resolve(strict=True)
+        given = os.fsdecode(folder)
+        if _WINDOWS:
+            if _names_nothing(given):
+                raise NotADirectoryError
+            given = _extended(given)
+        resolved = Path(given).resolve(strict=True)
         if not stat.S_ISDIR(os.stat(resolved).st_mode):
             raise NotADirectoryError
     except (OSError, ValueError, RuntimeError):
@@ -589,22 +639,34 @@ def verify_folder(folder, key: PublicKey, schemas: Schemas) -> Verification:
     """The same over a run folder: result.json (result_unreadable unless it is
     read), the checks of `verify` with signature.json (signature_file when it
     isn't read), then each listed attachment in the result's order:
-    attachment_missing, attachment_size, attachment_hash. A SetupError when
-    `folder` is empty or isn't a folder that can be resolved and listed."""
+    attachment_missing, attachment_size, attachment_hash. A file is there only
+    when the folder's listing has its name, byte for byte; any other name isn't
+    read. A SetupError when `folder` is empty or isn't a folder that can be
+    resolved and listed."""
     folder = _open_folder(folder)
     try:
         names = sorted(os.listdir(folder))
     except (OSError, ValueError):
         raise SetupError("the folder can't be opened") from None
-    state, result = _read_file(folder / RESULT_FILE, MAX_RESULT_FILE_BYTES)
+    there = frozenset(names)
+
+    def read(name: str, limit: int) -> tuple[str, bytes]:
+        # A file system that ignores case would open ITEMS.CSV for items.csv,
+        # and one that doesn't has no such file: the listing decides, so both
+        # give one word, the Worker's.
+        if name not in there:
+            return _UNREADABLE, b""
+        return _read_file(folder / name, limit)
+
+    state, result = read(RESULT_FILE, MAX_RESULT_FILE_BYTES)
     if state != _READ:
         return _failed("result_unreadable")
-    state, signature = _read_file(folder / SIGNATURE_FILE, MAX_SIGNATURE_FILE_BYTES)
+    state, signature = read(SIGNATURE_FILE, MAX_SIGNATURE_FILE_BYTES)
     verdict, listed = _check(result, signature if state == _READ else None, key, schemas)
     if verdict.word != VERIFIED:
         return verdict
     for attachment in listed:
-        word = _check_attachment(folder, attachment)
+        word = _check_attachment(read, attachment)
         if word != VERIFIED:
             return _failed(word)
     covered = {RESULT_FILE, SIGNATURE_FILE} | {attachment["name"] for attachment in listed}
@@ -614,6 +676,18 @@ def verify_folder(folder, key: PublicKey, schemas: Schemas) -> Verification:
 # --- the command ---------------------------------------------------------------
 
 
+class _Once(argparse.Action):
+    """An option's one value. Given again it is a usage error: argparse would
+    keep the last, so a key or a schema folder a caller put first could be
+    replaced by an argument passed on after it. (`rpworker signer verify`
+    refuses a second --public-key too.)"""
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        if getattr(namespace, self.dest) is not None:
+            parser.error(f"argument {option_string}: given more than once")
+        setattr(namespace, self.dest, values)
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="verify_bundle.py",
@@ -621,8 +695,12 @@ def _parser() -> argparse.ArgumentParser:
         allow_abbrev=False,
     )
     parser.add_argument("folder", help="the run folder: result.json, signature.json and the attachments")
-    parser.add_argument("--public-key", required=True, metavar="<pem file>", help="the Worker's Ed25519 public key, PEM")
-    parser.add_argument("--schemas", metavar="<dir>", help="the folder holding result.v1.json and signature.v1.json")
+    parser.add_argument(
+        "--public-key", required=True, action=_Once, metavar="<pem file>", help="the Worker's Ed25519 public key, PEM"
+    )
+    parser.add_argument(
+        "--schemas", action=_Once, metavar="<dir>", help="the folder holding result.v1.json and signature.v1.json"
+    )
     return parser
 
 
@@ -697,5 +775,23 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_ERROR
 
 
+def _exit_code(code: int) -> int:
+    """The process's exit code after `main` answered `code`: `code` itself once
+    stdout holds nothing more. Text that still can't be written (the reader of
+    a pipe has gone) would fail again in the interpreter's own flush at exit,
+    which makes the exit status 120; stdout is pointed at the null device
+    instead, so what is left goes nowhere, and the code is 2."""
+    try:
+        sys.stdout.flush()
+        return code
+    except Exception:  # noqa: BLE001 - whatever the stream raises
+        pass
+    try:
+        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+    except Exception:  # noqa: BLE001 - no descriptor to point elsewhere
+        pass
+    return EXIT_ERROR
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(_exit_code(main()))

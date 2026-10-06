@@ -19,6 +19,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -160,6 +161,15 @@ struct Verification {
     std::vector<std::string> notes;
 };
 
+// Thrown by Signer::verify and verify_folder when a check couldn't be made at
+// all: the result's schema couldn't be loaded, or the validator itself failed
+// (rp::ResultValidation::not_checked). Never a word: a failure of the verifier
+// is never a verdict. `rpworker signer verify` answers it with exit 1.
+class VerifierFailure : public std::runtime_error {
+public:
+    VerifierFailure();
+};
+
 // What a reader says of one file.
 enum class FileState {
     read,       // `bytes` is the whole file
@@ -193,6 +203,7 @@ public:
     // (rp::validate_result), attachment_twice, screenshot_missing,
     // signature_file, hash_mismatch, wrong_key, signature_invalid; else
     // `verified` with the hash and the key's ID. The attachments aren't read.
+    // Throws VerifierFailure when the schema check couldn't be made.
     static Verification verify(std::string_view result, std::string_view signature,
                                const PublicKey& key);
 
@@ -201,9 +212,12 @@ public:
     // checks above with signature.json (signature_file when it isn't read),
     // then each listed attachment in the result's order: attachment_missing
     // (not read), attachment_size (larger than listed, so not read, or
-    // shorter), attachment_hash. `files` are the folder's names, for the
-    // notes. What `read` or the primitive throws is let through: a failure of
-    // the verifier is never a verdict.
+    // shorter), attachment_hash. `files` are the folder's names: a file is
+    // asked of `read` only when its name is among them byte for byte (so
+    // ITEMS.CSV isn't items.csv, whatever the file system would open), and
+    // the others are the notes. What `read` or the primitive throws is let
+    // through, and a schema check that couldn't be made is a VerifierFailure:
+    // a failure of the verifier is never a verdict.
     static Verification verify_folder(const FileReader& read,
                                       const std::vector<std::string>& files,
                                       const PublicKey& key);

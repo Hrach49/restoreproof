@@ -584,8 +584,9 @@ own.
    ```
 
    The same line, and 0, or `not verified: <word>` and 1. Exit 2 with an `error: ...` line
-   means the folder, the key or a schema couldn't be read, or the command line was wrong: no
-   verdict. It finds the two schemas in `shared/schemas/` beside itself; `--schemas <dir>`
+   means the folder, the key or a schema couldn't be read, the command line was wrong (an
+   option given twice included), a package is missing (run with plain `python` instead of `uv
+   run`) or the verdict couldn't be written to stdout: no verdict. It finds the two schemas in `shared/schemas/` beside itself; `--schemas <dir>`
    names another folder holding `result.v1.json` and `signature.v1.json`. Away from the
    repository an auditor needs the script, the two schema files, the Worker's public PEM and
    the folder with every listed attachment.

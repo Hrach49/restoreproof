@@ -599,6 +599,36 @@ TEST_CASE("the embedded result schema loads into a validator", "[result_schema]"
     CHECK(validate_result(base_document()).valid);
 }
 
+// A validator that couldn't be loaded answers "not valid" like a document with
+// one fault, and says that it is no answer: a verifier must not read it as one.
+TEST_CASE("a validator that can't be loaded checks nothing, and says so", "[result_schema]")
+{
+    REQUIRE(validate_result(base_document()).valid);
+    CHECK_FALSE(validate_result(base_document()).not_checked);
+    json unknown_status = base_document();
+    unknown_status["status"]["status"] = "maybe";
+    CHECK_FALSE(validate_result(unknown_status).valid);
+    CHECK_FALSE(validate_result(unknown_status).not_checked);
+
+    rp::detail::set_result_validator_unavailable(true);
+    const bool ready = rp::result_schema_ready();
+    const ResultValidation good = validate_result(base_document());
+    const ResultValidation bad = validate_result(unknown_status);
+    rp::detail::set_result_validator_unavailable(false);
+
+    CHECK_FALSE(ready);
+    for (const ResultValidation& result : {good, bad}) {
+        CHECK_FALSE(result.valid);
+        CHECK(result.not_checked);
+        CHECK(result.violations == 1);
+        CHECK(result.first_pointer.empty());
+    }
+    // And it is there again afterwards: a failure isn't kept.
+    CHECK(rp::result_schema_ready());
+    CHECK(validate_result(base_document()).valid);
+    CHECK_FALSE(validate_result(base_document()).not_checked);
+}
+
 TEST_CASE("a document that isn't an object is not a result", "[result_schema]")
 {
     const json document = GENERATE(json(), json::array(), json("restoreproof.result.v1"),

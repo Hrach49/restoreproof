@@ -233,7 +233,13 @@ Verification check(std::string_view result, const std::string* signature_bytes,
     if (!document) {
         return failed(VerifyWord::result_not_canonical);
     }
-    if (!validate_result(*document).valid) {
+    const ResultValidation validation = validate_result(*document);
+    // "Not valid" from a validator that couldn't check says nothing of the
+    // result: no word for it.
+    if (validation.not_checked) {
+        throw VerifierFailure();
+    }
+    if (!validation.valid) {
         return failed(VerifyWord::result_schema);
     }
     listed = listed_attachments(*document);
@@ -480,6 +486,11 @@ const Ed25519& PublicKey::primitive() const noexcept
 
 // --- the words ---------------------------------------------------------------
 
+VerifierFailure::VerifierFailure()
+    : std::runtime_error("the result couldn't be checked against its schema")
+{
+}
+
 std::string_view to_string(VerifyWord word) noexcept
 {
     for (const WordText& one : kWords) {
@@ -524,9 +535,20 @@ Verification Signer::verify(std::string_view result, std::string_view signature,
     return check(result, &signature_bytes, key, listed);
 }
 
-Verification Signer::verify_folder(const FileReader& read,
+Verification Signer::verify_folder(const FileReader& reader,
                                    const std::vector<std::string>& files, const PublicKey& key)
 {
+    // A file is there under its own name, byte for byte, or it isn't there: a
+    // name the folder doesn't list isn't asked for. A file system that ignores
+    // case would open ITEMS.CSV for items.csv, and one that doesn't has no
+    // such file; this way both give one word.
+    const FileReader read = [&reader, &files](std::string_view name,
+                                              std::uintmax_t limit) -> FileRead {
+        if (std::find(files.begin(), files.end(), name) == files.end()) {
+            return {};
+        }
+        return reader(name, limit);
+    };
     const FileRead result = read(kResultFileName, kMaxResultFileBytes);
     if (result.state != FileState::read) {
         return failed(VerifyWord::result_unreadable);

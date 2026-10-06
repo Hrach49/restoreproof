@@ -69,12 +69,18 @@ SignerCommandEnv default_signer_command_env();
 //  - "signer error: --public-key <file>: not an Ed25519 public key in PEM"
 //    (the one rule for a key file: rp/ed25519.hpp, public_key_from_pem);
 //  - "signer error: the folder's path is not valid UTF-8";
-//  - "signer error: <folder>: the folder can't be opened".
+//  - "signer error: <folder>: the folder can't be opened";
+//  - "signer error: the result couldn't be checked against its schema" (the
+//    embedded validator couldn't be loaded or failed: rp::VerifierFailure).
+// The folder is listed and read through rp::extended_folder (src/file_read.hpp),
+// so a file past MAX_PATH is read like any other; a file is there only when
+// the folder lists its name byte for byte.
 //
 // For both, an answer that didn't reach `out` isn't one: "signer error: the
 // answer couldn't be written" and exit 1. No exception is caught here but a
-// ConfigError from `load_secrets`: what the reader, the primitive or a stream
-// throws is run_cli's "error: unexpected failure", exit 1, never a verdict.
+// ConfigError from `load_secrets` and a VerifierFailure: what the reader, the
+// primitive or a stream throws is run_cli's "error: unexpected failure", exit
+// 1, never a verdict.
 int run_signer_command(std::span<const std::string_view> args, std::ostream& out,
                        std::ostream& err, const SignerCommandEnv& env);
 

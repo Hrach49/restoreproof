@@ -14,6 +14,11 @@ namespace rp {
 FileRead read_whole_file(const std::filesystem::path& path, std::uintmax_t limit)
 {
     std::error_code ec;
+    // A file only, and asked first: a folder has a size too (on NTFS its
+    // index's), which would be held against the limit and called too large.
+    if (!std::filesystem::is_regular_file(path, ec)) {
+        return {};
+    }
     const std::uintmax_t size = std::filesystem::file_size(path, ec);
     if (ec) {
         return {};
@@ -43,6 +48,31 @@ FileReader folder_reader(std::filesystem::path folder)
         }
         return read_whole_file(folder / *file, limit);
     };
+}
+
+std::filesystem::path extended_folder(const std::filesystem::path& folder)
+{
+    constexpr std::wstring_view kExtended = LR"(\\?\)";
+    constexpr std::wstring_view kDevice = LR"(\\.\)";
+    constexpr std::wstring_view kShare = LR"(\\)";
+    constexpr std::wstring_view kExtendedShare = LR"(\\?\UNC\)";
+    // Made absolute as a file of the folder is, and the file's name taken off
+    // again: Windows then reads the folder's name as it does on every open of
+    // `folder\name`, where blanks and dots at its end stay. Made absolute by
+    // itself it would lose them, and ` ` would be the working folder.
+    std::error_code ec;
+    const std::filesystem::path file = std::filesystem::absolute(folder / L"x", ec);
+    if (ec || !file.has_parent_path()) {
+        return folder;
+    }
+    const std::wstring full = file.parent_path().native();
+    if (full.starts_with(kExtended) || full.starts_with(kDevice)) {
+        return full;
+    }
+    if (full.starts_with(kShare)) {
+        return std::wstring{kExtendedShare} + full.substr(kShare.size());
+    }
+    return std::wstring{kExtended} + full;
 }
 
 namespace {

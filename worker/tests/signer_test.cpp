@@ -7,6 +7,7 @@
 #include <rp/signer.hpp>
 
 #include "../src/file_read.hpp"
+#include "../src/result_schema_detail.hpp"
 #include "result_lab.hpp"
 #include "schema_walk.hpp"
 #include "signing_lab.hpp"
@@ -1038,7 +1039,8 @@ TEST_CASE("a file the result doesn't list is a note, never a failure", "[signer]
           std::vector<std::string>{"Items.csv", "manifest.json", "timestamp.tsr"});
     // The notes are of the names given, in their order; none is read.
     const Verification given = Signer::verify_folder(
-        folder.reader(), {"zz", "result.json", "aa", "signature.json", "items.csv"}, key1());
+        folder.reader(),
+        {"zz", "result.json", "aa", "signature.json", "items.csv", "veeam-session.log"}, key1());
     CHECK(given.notes == std::vector<std::string>{"zz", "aa"});
     for (const auto& [name, limit] : *folder.asked) {
         CHECK(name != "manifest.json");
@@ -1060,8 +1062,8 @@ TEST_CASE("result_unreadable is only: not there, not read, too large", "[signer]
     {
         folder.files.erase("result.json");
         CHECK(word_of(folder) == VerifyWord::result_unreadable);
-        // Nothing else is read then.
-        CHECK(folder.asked->size() == 1);
+        // Nothing is read then: a name the folder doesn't list isn't asked for.
+        CHECK(folder.asked->empty());
     }
     SECTION("too large: never parsed, though it is a result")
     {
@@ -1270,7 +1272,7 @@ TEST_CASE("verify_folder lets a reader's or the primitive's failure through: nev
     const rp::FileReader broken = [](std::string_view, std::uintmax_t) -> FileRead {
         throw std::runtime_error("the disk went away");
     };
-    CHECK_THROWS_AS(Signer::verify_folder(broken, {}, key1()), std::runtime_error);
+    CHECK_THROWS_AS(Signer::verify_folder(broken, folder.names(), key1()), std::runtime_error);
 
     const FakeEd25519 fake;
     const PublicKey key = rp::test::public_key_of(rp::test::signing_key(), fake);
@@ -1283,6 +1285,87 @@ TEST_CASE("verify_folder lets a reader's or the primitive's failure through: nev
     fake.fault = Ed25519Fault::check_false;
     CHECK(Signer::verify_folder(folder.reader(), folder.names(), key).word ==
           VerifyWord::signature_invalid);
+}
+
+// A file system that ignores case (NTFS, by default) opens ITEMS.CSV when
+// items.csv is asked for; one that doesn't has no such file. The folder's own
+// list of names decides, so the word is the same on both, and no file is
+// "verified" and "not listed in the result" at once.
+TEST_CASE("a file is there only under its own name, byte for byte, whatever the reader opens",
+          "[signer][verify]")
+{
+    // The reader finds all four files, as NTFS would under any case of a name.
+    const MemoryFolder folder = bundle_folder();
+    const auto verdict_for = [&folder](const std::vector<std::string>& names) {
+        return Signer::verify_folder(folder.reader(), names, key1());
+    };
+    REQUIRE(verdict_for({"items.csv", "result.json", "signature.json", "veeam-session.log"})
+                .word == VerifyWord::verified);
+    folder.asked->clear();
+
+    SECTION("the result")
+    {
+        const Verification verdict =
+            verdict_for({"RESULT.JSON", "items.csv", "signature.json", "veeam-session.log"});
+        CHECK(verdict.word == VerifyWord::result_unreadable);
+        CHECK(verdict.notes.empty());
+    }
+    SECTION("the signature file")
+    {
+        CHECK(verdict_for({"Signature.json", "items.csv", "result.json", "veeam-session.log"})
+                  .word == VerifyWord::signature_file);
+    }
+    SECTION("an attachment")
+    {
+        const Verification verdict =
+            verdict_for({"ITEMS.CSV", "result.json", "signature.json", "veeam-session.log"});
+        CHECK(verdict.word == VerifyWord::attachment_missing);
+        CHECK(verdict.notes.empty());
+        // And it wasn't read to find that out.
+        for (const auto& [name, limit] : *folder.asked) {
+            CHECK(name != "items.csv");
+        }
+    }
+    SECTION("the second attachment")
+    {
+        CHECK(verdict_for({"items.csv", "result.json", "signature.json", "veeam-session.LOG"})
+                  .word == VerifyWord::attachment_missing);
+    }
+    SECTION("no names at all: nothing is there")
+    {
+        CHECK(verdict_for({}).word == VerifyWord::result_unreadable);
+        CHECK(folder.asked->empty());
+    }
+}
+
+// rp::validate_result answers "not valid" when it couldn't check at all (the
+// schema not loaded, no memory). That is no fact about the folder.
+TEST_CASE("a result that couldn't be checked against its schema is the verifier's failure, "
+          "never a word",
+          "[signer][verify]")
+{
+    const MemoryFolder folder = bundle_folder();
+    const std::string result = folder.files.at("result.json");
+    const std::string signature = folder.files.at("signature.json");
+    struct Unavailable {
+        Unavailable() { rp::detail::set_result_validator_unavailable(true); }
+        ~Unavailable() { rp::detail::set_result_validator_unavailable(false); }
+    };
+    {
+        const Unavailable unavailable;
+        CHECK_THROWS_AS(Signer::verify(result, signature, key1()), rp::VerifierFailure);
+        CHECK_THROWS_AS(Signer::verify_folder(folder.reader(), folder.names(), key1()),
+                        rp::VerifierFailure);
+        // What is refused before the schema is asked still has its word.
+        CHECK(Signer::verify(result + "\n", signature, key1()).word ==
+              VerifyWord::result_not_canonical);
+        CHECK(word_of(MemoryFolder{}) == VerifyWord::result_unreadable);
+        // Signing asks no schema.
+        CHECK(Signer::sign(result, rp::test::signing_key()));
+    }
+    CHECK(word_of(folder) == VerifyWord::verified);
+    CHECK(std::string{rp::VerifierFailure().what()} ==
+          "the result couldn't be checked against its schema");
 }
 
 // --- the shared vectors --------------------------------------------------------------

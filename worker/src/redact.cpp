@@ -61,8 +61,9 @@ constexpr std::array<SecretKey, 16> kSecretKeys{{
 }};
 
 // A PEM block's header and footer (RFC 7468): "-----BEGIN <label>-----" and
-// "-----END <label>-----". A label that ends like this is a private key's,
-// of any kind ("PRIVATE KEY", "ENCRYPTED PRIVATE KEY", "RSA PRIVATE KEY").
+// "-----END <label>-----". A label that holds these words is a private key's,
+// of any kind ("PRIVATE KEY", "ENCRYPTED PRIVATE KEY", "RSA PRIVATE KEY",
+// "ED25519 PRIVATE KEY", "PGP PRIVATE KEY BLOCK").
 constexpr std::string_view kPemBegin = "-----BEGIN ";
 constexpr std::string_view kPemEnd = "-----END ";
 constexpr std::string_view kPemDashes = "-----";
@@ -516,10 +517,11 @@ std::optional<Replacement> match_bearer(std::string_view text, std::size_t name_
 }
 
 // A PEM private key block starting at `pos`: "-----BEGIN <label>-----", the
-// label upper-case letters and blanks ending in "PRIVATE KEY", up to and with
-// "-----END <label>-----" of the same label, whatever is between (line ends
-// as they are or escaped inside a JSON string). Without that footer the
-// block goes to the end of the text: over-redacting is preferred to leaking.
+// label upper-case letters, digits and blanks holding "PRIVATE KEY" ("ED25519
+// PRIVATE KEY", "PGP PRIVATE KEY BLOCK"), up to and with "-----END
+// <label>-----" of the same label, whatever is between (line ends as they are
+// or escaped inside a JSON string). Without that footer the block goes to the
+// end of the text: over-redacting is preferred to leaking.
 std::optional<Replacement> match_private_key(std::string_view text, std::size_t pos)
 {
     if (text.substr(pos, kPemBegin.size()) != kPemBegin) {
@@ -528,11 +530,13 @@ std::optional<Replacement> match_private_key(std::string_view text, std::size_t 
     const std::size_t label_from = pos + kPemBegin.size();
     std::size_t label_to = label_from;
     while (label_to < text.size() && label_to - label_from < kMaxPemLabel &&
-           ((text[label_to] >= 'A' && text[label_to] <= 'Z') || text[label_to] == ' ')) {
+           ((text[label_to] >= 'A' && text[label_to] <= 'Z') ||
+            (text[label_to] >= '0' && text[label_to] <= '9') || text[label_to] == ' ')) {
         ++label_to;
     }
     const std::string_view label = text.substr(label_from, label_to - label_from);
-    if (!label.ends_with(kPrivateKeyLabel) || text.substr(label_to, kPemDashes.size()) != kPemDashes) {
+    if (label.find(kPrivateKeyLabel) == std::string_view::npos ||
+        text.substr(label_to, kPemDashes.size()) != kPemDashes) {
         return std::nullopt;
     }
     std::string footer{kPemEnd};
@@ -543,9 +547,25 @@ std::optional<Replacement> match_private_key(std::string_view text, std::size_t 
                        kRedacted};
 }
 
+// `r`, a bearer token's or a secret value's replacement, going on to the end
+// of a PEM private key block that starts inside it. Such a value ends at a
+// blank or at the line's end, which is inside "-----BEGIN PRIVATE KEY-----" or
+// right after it; the scan would go on behind the header, and the key's own
+// lines would stay as they are.
+Replacement through_private_key(std::string_view text, Replacement r)
+{
+    for (std::size_t p = r.from; p < r.to; ++p) {
+        if (const auto block = match_private_key(text, p); block && block->to > r.to) {
+            r.to = block->to;
+            break;
+        }
+    }
+    return r;
+}
+
 // The secret at `pos`, if one starts there: URL userinfo after "://", a PEM
 // private key block, a raw JWT, a bearer token, or a secret header or key
-// (match_key_at).
+// (match_key_at), the last two with the private key block that starts in them.
 std::optional<Replacement> match_at(std::string_view text, std::size_t pos)
 {
     if (starts_with_name(text, pos, kSchemeSeparator)) {
@@ -562,10 +582,13 @@ std::optional<Replacement> match_at(std::string_view text, std::size_t pos)
     }
     if (starts_with_name(text, pos, kBearer)) {
         if (auto r = match_bearer(text, pos + kBearer.size())) {
-            return r;
+            return through_private_key(text, *r);
         }
     }
-    return match_key_at(text, pos);
+    if (auto r = match_key_at(text, pos)) {
+        return through_private_key(text, *r);
+    }
+    return std::nullopt;
 }
 
 } // namespace

@@ -155,21 +155,34 @@ int run_verify(const VerifyArgs& args, std::ostream& out, std::ostream& err)
         err << "signer error: the folder's path is not valid UTF-8\n";
         return exit_code::config;
     }
-    const std::optional<std::vector<std::string>> names = list_folder(*folder);
+    // The one path the folder is listed and read through, with no MAX_PATH:
+    // a file that is there must open, however long the folder's path is.
+    const std::filesystem::path opened = extended_folder(*folder);
+    const std::optional<std::vector<std::string>> names = list_folder(opened);
     if (!names) {
         err << "signer error: " << args.folder << ": the folder can't be opened\n";
         return exit_code::config;
     }
 
-    const Verification verdict = Signer::verify_folder(folder_reader(*folder), *names, *key);
-    if (verdict.word != VerifyWord::verified) {
-        out << "not verified: " << to_string(verdict.word) << '\n';
+    // One return after the handler (see signer.cpp).
+    std::optional<Verification> verdict;
+    try {
+        verdict = Signer::verify_folder(folder_reader(opened), *names, *key);
+    } catch (const VerifierFailure&) {
+        verdict.reset();
+    }
+    if (!verdict) {
+        err << "signer error: the result couldn't be checked against its schema\n";
+        return exit_code::config;
+    }
+    if (verdict->word != VerifyWord::verified) {
+        out << "not verified: " << to_string(verdict->word) << '\n';
         return answered(out, err, exit_code::restore);
     }
-    for (const std::string& name : verdict.notes) {
+    for (const std::string& name : verdict->notes) {
         err << "note: not listed in the result: " << printable(name) << '\n';
     }
-    out << "verified " << verdict.bundle_sha256 << " key " << verdict.key_id << '\n';
+    out << "verified " << verdict->bundle_sha256 << " key " << verdict->key_id << '\n';
     return answered(out, err, exit_code::ok);
 }
 

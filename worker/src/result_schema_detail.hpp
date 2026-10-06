@@ -14,4 +14,11 @@ namespace rp::detail {
 // doesn't name is never repeated, whatever it looks like.
 std::string known_result_pointer(std::string_view pointer);
 
+// For tests only, and off unless one turns it on: while `unavailable`, the
+// validator counts as one that couldn't be loaded, as after an allocation
+// failure. result_schema_ready() is false then and validate_result answers
+// `not_checked`. It can only make the Worker refuse; nothing under src/,
+// include/ or app/ calls it.
+void set_result_validator_unavailable(bool unavailable) noexcept;
+
 } // namespace rp::detail

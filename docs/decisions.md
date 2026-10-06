@@ -7,7 +7,7 @@ Format: date, decision, reason, alternatives rejected.
 
 ---
 
-## 2026-10-06 — W4.4: the timestamp is the bare RFC 3161 token in `timestamp.tst`, over the result's own hash, from a TSA trusted through one pinned root; a missing token is "not timestamped", never a status (recorded before the build; awaiting the owner's approval)
+## 2026-10-06 — W4.4: the timestamp is the bare RFC 3161 token in `timestamp.tst`, over the result's own hash, from a TSA trusted through one pinned root; a missing token is "not timestamped", never a status (recorded before the build; the owner approved it as written)
 
 W4.4 (#47) timestamps the signed result. Done when: "Openssl ts -verify on the extracted token succeeds against the bundle hash." This entry works from issue #47, the Sprint Task Guide (W4.4, and W4.5 to W4.9, W7.2, C5.1, C5.7, C6.4, Q6.1 where they name the timestamp), the W4.3 entry's point 2 and its build notes, and the code. No code is written yet. One sub-agent investigated and measured; what it measured is marked as measured, and what nobody measured is listed at the end.
 

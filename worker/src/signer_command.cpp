@@ -102,21 +102,28 @@ std::string printable(std::string_view name)
 struct VerifyArgs {
     std::string_view folder;
     std::string_view key_file;
+    std::optional<std::string_view> tsa_ca_file; // W4.4; nullopt = none given
 };
 
-// `<folder> --public-key <pem file>`, the two in either order, each once and
-// not empty; nullopt for anything else. --public-key takes the word after it,
-// whatever that word is.
+// `<folder> --public-key <pem file> [--tsa-ca <pem file>]`, in any order, each
+// once and not empty; nullopt for anything else. An option takes the word
+// after it, whatever that word is.
 std::optional<VerifyArgs> parse_verify_args(std::span<const std::string_view> args)
 {
     std::optional<std::string_view> folder;
     std::optional<std::string_view> key_file;
+    std::optional<std::string_view> tsa_ca_file;
     for (std::size_t i = 0; i < args.size(); ++i) {
         if (args[i] == "--public-key") {
             if (key_file || i + 1 == args.size()) {
                 return std::nullopt;
             }
             key_file = args[++i];
+        } else if (args[i] == "--tsa-ca") {
+            if (tsa_ca_file || i + 1 == args.size() || args[i + 1].empty()) {
+                return std::nullopt;
+            }
+            tsa_ca_file = args[++i];
         } else {
             if (folder) {
                 return std::nullopt;
@@ -127,7 +134,7 @@ std::optional<VerifyArgs> parse_verify_args(std::span<const std::string_view> ar
     if (!folder || folder->empty() || !key_file || key_file->empty()) {
         return std::nullopt;
     }
-    return VerifyArgs{*folder, *key_file};
+    return VerifyArgs{*folder, *key_file, tsa_ca_file};
 }
 
 // `rpworker signer verify <folder> --public-key <pem file>`. The key comes
@@ -150,6 +157,27 @@ int run_verify(const VerifyArgs& args, std::ostream& out, std::ostream& err)
             << ": not an Ed25519 public key in PEM\n";
         return exit_code::config;
     }
+    // W4.4: what a timestamp is verified under comes from the caller too,
+    // never from the folder. A file that can't be one is this command's own
+    // failure, never a word.
+    TimestampTrust tsa;
+    if (args.tsa_ca_file) {
+        const std::optional<std::filesystem::path> ca_path = path_from_utf8(*args.tsa_ca_file);
+        if (!ca_path) {
+            err << "signer error: the --tsa-ca path is not valid UTF-8\n";
+            return exit_code::config;
+        }
+        FileRead ca = read_whole_file(*ca_path, kMaxPublicKeyFileBytes);
+        if (ca.state != FileState::read) {
+            err << "signer error: --tsa-ca " << *args.tsa_ca_file << ": the file can't be read\n";
+            return exit_code::config;
+        }
+        if (tsa.primitive->certificates_in(ca.bytes) == 0) {
+            err << "signer error: --tsa-ca " << *args.tsa_ca_file << ": no certificate in PEM\n";
+            return exit_code::config;
+        }
+        tsa.ca_pem = std::move(ca.bytes);
+    }
     const std::optional<std::filesystem::path> folder = path_from_utf8(args.folder);
     if (!folder) {
         err << "signer error: the folder's path is not valid UTF-8\n";
@@ -167,7 +195,7 @@ int run_verify(const VerifyArgs& args, std::ostream& out, std::ostream& err)
     // One return after the handler (see signer.cpp).
     std::optional<Verification> verdict;
     try {
-        verdict = Signer::verify_folder(folder_reader(opened), *names, *key);
+        verdict = Signer::verify_folder(folder_reader(opened), *names, *key, tsa);
     } catch (const VerifierFailure&) {
         verdict.reset();
     }
@@ -182,7 +210,15 @@ int run_verify(const VerifyArgs& args, std::ostream& out, std::ostream& err)
     for (const std::string& name : verdict->notes) {
         err << "note: not listed in the result: " << printable(name) << '\n';
     }
-    out << "verified " << verdict->bundle_sha256 << " key " << verdict->key_id << '\n';
+    // W4.4: a folder without a token is verified, and said to be without
+    // one; so is a token nobody was given a CA for.
+    if (verdict->timestamp == TimestampState::none) {
+        err << "note: not timestamped\n";
+    } else if (verdict->timestamp == TimestampState::unchecked) {
+        err << "note: " << kTimestampFileName << " was not checked: no --tsa-ca\n";
+    }
+    out << "verified " << verdict->bundle_sha256 << " key " << verdict->key_id << " timestamp "
+        << timestamp_field(*verdict) << '\n';
     return answered(out, err, exit_code::ok);
 }
 

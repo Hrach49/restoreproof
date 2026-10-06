@@ -34,7 +34,7 @@ const std::string kUsage = "usage: rpworker --version | rpworker config check [-
                            "[--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] "
                            "[--config <path>] [--record <dir>] [--json <file> | --evidence <dir>] | "
                            "rpworker signer public-key | "
-                           "rpworker signer verify <folder> --public-key <pem file>\n";
+                           "rpworker signer verify <folder> --public-key <pem file> [--tsa-ca <pem file>]\n";
 
 // Every key set; sample_od left out to show its default.
 const std::string kConfigJson = R"({

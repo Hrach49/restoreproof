@@ -27,7 +27,7 @@ const std::string kUsage = "usage: rpworker --version | rpworker config check [-
                            "[--config <path>] [--record <dir>] "
                            "[--json <file> | --evidence <dir>] | "
                            "rpworker signer public-key | "
-                           "rpworker signer verify <folder> --public-key <pem file>\n";
+                           "rpworker signer verify <folder> --public-key <pem file> [--tsa-ca <pem file>]\n";
 
 const std::string kConfigJson = R"({
     "cloud_url": "https://cloud.example.invalid",

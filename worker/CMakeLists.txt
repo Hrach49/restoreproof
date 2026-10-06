@@ -76,6 +76,7 @@ add_library(rpcore STATIC
     src/target_guard_veeam.cpp
     src/test_command.cpp
     src/text_table.cpp
+    src/timestamper.cpp
     src/text_v1.cpp
     src/utf16.cpp
     src/veeam_browse.cpp
@@ -194,6 +195,7 @@ add_executable(rptests
     tests/test_command_test.cpp
     tests/test_main.cpp
     tests/text_table_test.cpp
+    tests/timestamper_test.cpp
     tests/text_util_test.cpp
     tests/text_v1_test.cpp
     tests/veeam_browse_test.cpp

@@ -24,6 +24,7 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 
@@ -234,6 +235,83 @@ private:
     TsaKeyPtr tsa_key_;
     TsaCertPtr root_;
     TsaCertPtr tsa_;
+};
+
+// Where a FakeRfc3161 fails. Everything else it hands to the real primitive.
+enum class Rfc3161Fault {
+    none,
+    request_empty,
+    request_throws,
+    response_throws,
+    token_none,
+    token_throws,
+    verify_false,
+    verify_throws,
+    nonce_none,
+    certificates_none,
+    certificates_throws
+};
+
+class FakeRfc3161 final : public Rfc3161 {
+public:
+    mutable Rfc3161Fault fault = Rfc3161Fault::none;
+
+    explicit FakeRfc3161(Rfc3161Fault at = Rfc3161Fault::none) : fault(at) {}
+
+    std::string request(std::span<const unsigned char, kSha256Bytes> digest,
+                        std::uint64_t nonce) const override
+    {
+        if (fault == Rfc3161Fault::request_throws) {
+            throw std::runtime_error("request");
+        }
+        return fault == Rfc3161Fault::request_empty ? std::string{}
+                                                    : openssl_rfc3161().request(digest, nonce);
+    }
+
+    std::optional<TimestampResponse> parse_response(std::string_view der) const override
+    {
+        if (fault == Rfc3161Fault::response_throws) {
+            throw 42; // not a std::exception
+        }
+        return openssl_rfc3161().parse_response(der);
+    }
+
+    std::optional<TimestampTokenInfo> parse_token(std::string_view der) const override
+    {
+        if (fault == Rfc3161Fault::token_throws) {
+            throw std::runtime_error("parse_token");
+        }
+        if (fault == Rfc3161Fault::token_none) {
+            return std::nullopt;
+        }
+        return openssl_rfc3161().parse_token(der);
+    }
+
+    bool verify_token(std::string_view token, std::string_view ca_pem) const override
+    {
+        if (fault == Rfc3161Fault::verify_throws) {
+            throw std::runtime_error("verify_token");
+        }
+        return fault != Rfc3161Fault::verify_false &&
+               openssl_rfc3161().verify_token(token, ca_pem);
+    }
+
+    std::optional<std::uint64_t> random_nonce() const override
+    {
+        if (fault == Rfc3161Fault::nonce_none) {
+            return std::nullopt;
+        }
+        return openssl_rfc3161().random_nonce();
+    }
+
+    std::size_t certificates_in(std::string_view pem) const override
+    {
+        if (fault == Rfc3161Fault::certificates_throws) {
+            throw std::runtime_error("certificates_in");
+        }
+        return fault == Rfc3161Fault::certificates_none ? 0
+                                                        : openssl_rfc3161().certificates_in(pem);
+    }
 };
 
 // SHA-256 of "abc" (FIPS 180-2), and of the empty text: two digests to stamp.

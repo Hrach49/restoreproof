@@ -70,6 +70,10 @@ public:
     // is met. Revocation isn't checked. False for anything else.
     virtual bool verify_token(std::string_view token, std::string_view ca_pem) const = 0;
 
+    // A new random nonce for a request, or nullopt when the library's random
+    // source gives none.
+    virtual std::optional<std::uint64_t> random_nonce() const = 0;
+
     // How many certificates the PEM text `pem` holds; 0 when none or when the
     // text can't be read as PEM certificates to its end.
     virtual std::size_t certificates_in(std::string_view pem) const = 0;

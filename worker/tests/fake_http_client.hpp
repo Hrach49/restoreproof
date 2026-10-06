@@ -12,6 +12,7 @@
 // body is empty, a string is raw text and anything else is JSON. `rpworker
 // ... --record <dir>` writes the same format (rp/recording_http_client.hpp).
 
+#include <rp/base64.hpp>
 #include <rp/http_client.hpp>
 #include <rp/recording_http_client.hpp>
 
@@ -29,6 +30,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -52,6 +54,17 @@ inline nlohmann::json load_fixture_json(std::string_view service, std::string_vi
     return nlohmann::json::parse(std::string{std::istreambuf_iterator<char>(file), {}});
 }
 
+// The bytes of a fixture's Base64 text. Throws std::runtime_error for text
+// that isn't strict Base64.
+inline std::string fixture_bytes(const std::string& base64)
+{
+    const std::optional<std::vector<unsigned char>> bytes = base64_decode(base64);
+    if (!bytes) {
+        throw std::runtime_error("the fixture's Base64 can't be decoded");
+    }
+    return std::string(bytes->begin(), bytes->end());
+}
+
 // A fixture (as load_fixture_json gives it, perhaps edited) as a response.
 // Throws std::runtime_error for a recorded one that holds only its body's size
 // and SHA-256 (a download's): there are no bytes to send.
@@ -70,7 +83,22 @@ HttpResponse to_response(const Json& fixture)
     response.body = body.is_null()     ? ""
                     : body.is_string() ? body.template get<std::string>()
                                        : body.dump();
+    // A binary body (W4.4, a TSA's answer): "body" null and the bytes in
+    // "body_base64".
+    if (fixture.contains("body_base64")) {
+        response.body = fixture_bytes(fixture.at("body_base64").template get<std::string>());
+    }
     return response;
+}
+
+// The request body a binary fixture recorded ("request_body_base64": a
+// timestamp query, a hash and a nonce), or empty when it holds none.
+template <typename Json>
+std::string request_body_of(const Json& fixture)
+{
+    return fixture.contains("request_body_base64")
+               ? fixture_bytes(fixture.at("request_body_base64").template get<std::string>())
+               : std::string{};
 }
 
 inline HttpResponse load_fixture(std::string_view service, std::string_view name)

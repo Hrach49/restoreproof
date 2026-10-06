@@ -1,5 +1,6 @@
 #include <rp/recording_http_client.hpp>
 
+#include <rp/base64.hpp>
 #include <rp/cert_export.hpp>
 #include <rp/config.hpp>
 #include <rp/redact.hpp>
@@ -15,6 +16,7 @@
 #include <format>
 #include <fstream>
 #include <optional>
+#include <span>
 #include <system_error>
 #include <utility>
 
@@ -415,8 +417,10 @@ ScrubbedExchange scrub(std::size_t index, std::string_view source, const HttpReq
     }
     doc["headers"] = std::move(headers);
 
-    // A digest body is never looked at beyond its size and hash.
-    if (response.body.empty()) {
+    // A digest body is never looked at beyond its size and hash; a binary
+    // exchange's two bodies are added below, after the text's rules.
+    const bool binary = body == RecordedBody::base64;
+    if (response.body.empty() || binary) {
         doc["body"] = nullptr;
     } else if (body == RecordedBody::digest || !utf8_to_utf16(response.body)) {
         doc["body"] = nullptr;
@@ -427,18 +431,42 @@ ScrubbedExchange scrub(std::size_t index, std::string_view source, const HttpReq
     } else {
         doc["body"] = redact(response.body);
     }
-    if (request.parts.empty()) {
+    if (request.parts.empty() && !binary) {
         if (std::optional<ordered_json> json = parse_structured(request.body)) {
             doc["request_body"] = scrub_json(std::move(*json));
         }
     }
 
     out.text = dump(doc, 2) + "\n";
-    if (const std::optional<std::string_view> rule = broken_rule(out.text, secrets, one_time)) {
+    std::optional<std::string_view> rule = broken_rule(out.text, secrets, one_time);
+    if (!rule && binary) {
+        // Base64 of DER can look like a JWT by chance, so the two bodies are
+        // held to the known secrets as the bytes they are, and to nothing else.
+        const auto held = [&](const std::string& secret) {
+            return holds_secret(response.body, secret) || holds_secret(request.body, secret);
+        };
+        if (std::ranges::any_of(secrets, held) || std::ranges::any_of(one_time, held)) {
+            rule = "it holds a known secret";
+        }
+    }
+    if (rule) {
         // The refused text holds a secret: no copy of it outlives the refusal.
         wipe_strings(doc);
         secure_wipe(out.text);
         throw RecordRefused(std::string{"refused: "} + std::string{*rule});
+    }
+    if (binary) {
+        const auto base64_of = [](const std::string& bytes) {
+            return base64_encode(std::span<const unsigned char>(
+                reinterpret_cast<const unsigned char*>(bytes.data()), bytes.size()));
+        };
+        if (!response.body.empty()) {
+            doc["body_base64"] = base64_of(response.body);
+        }
+        if (!request.body.empty() && request.parts.empty()) {
+            doc["request_body_base64"] = base64_of(request.body);
+        }
+        out.text = dump(doc, 2) + "\n";
     }
     return out;
 }

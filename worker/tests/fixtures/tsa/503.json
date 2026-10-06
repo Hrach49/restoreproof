@@ -1,0 +1,10 @@
+{
+  "source": "hand-written (tests/fixtures/tsa/README.md)",
+  "request": "POST /",
+  "status": 503,
+  "headers": {
+    "Content-Type": "text/plain",
+    "Retry-After": "30"
+  },
+  "body": "Service Unavailable"
+}

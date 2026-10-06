@@ -10,3 +10,6 @@ shared/testdata/office-content-v1/*.xlsx binary
 # on every checkout.
 shared/schemas/*.json text eol=lf
 shared/testdata/**/*.json text eol=lf
+# The pinned TSA root is embedded into the Worker as bytes and handed to
+# `openssl ts -verify` by an auditor (W4.4): keep it LF on every checkout.
+shared/tsa/*.pem text eol=lf

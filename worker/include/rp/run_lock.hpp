@@ -2,7 +2,9 @@
 
 // One run at a time on the restore targets (W3.4, docs/decisions.md
 // 2026-10-02 point 8): `rpworker restore` takes a machine-wide named mutex
-// before its first Veeam call and holds it until it exits, so one run's
+// before its first Veeam call and holds it until its clean after is over (the
+// timings, the result and the run folder's files, the wait for a TSA included,
+// come after and need no target), so one run's
 // cleanup can never delete another run's copies between that run's restore and
 // its read-back (its items would read `missing`: a false `fail`). The two
 // [live][writes] tests take it too; `graph list`, which only reads, doesn't.

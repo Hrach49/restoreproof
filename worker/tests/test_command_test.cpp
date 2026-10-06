@@ -2694,6 +2694,32 @@ TEST_CASE("test --evidence: no token from the TSA is a warning; the folder is co
     CHECK(rp::to_string(verify_folder(lab.run_folder()).word) == "verified");
 }
 
+TEST_CASE("test --evidence: the run mutex is held through the clean after and released before the "
+          "TSA is asked",
+          "[test_command][evidence][timestamp][cleanup]")
+{
+    // The wait for a TSA that is down is a minute and a half: the restore
+    // targets are idle by then, and the next run must not be refused for it.
+    TestLab lab;
+    lab.fake.pool.mail = {carol_mail(1)};
+    std::vector<bool> held_at_delete;
+    std::vector<bool> held_at_tsa;
+    lab.targets.at_delete = [&] { held_at_delete.push_back(lab.lock_held); };
+    lab.tsa_answer = [&](const rp::HttpRequest&) {
+        held_at_tsa.push_back(lab.lock_held);
+        return rp::test::make_response(503, "busy", "text/plain");
+    };
+
+    const Run run = lab.run(EvidenceRun(lab).args);
+
+    CHECK(run.exit_code == rp::exit_code::ok);
+    CHECK(run.err == not_timestamped(lab, "tsa_http_status"));
+    REQUIRE_FALSE(held_at_delete.empty());
+    CHECK(std::ranges::all_of(held_at_delete, [](bool held) { return held; }));
+    CHECK(held_at_tsa == std::vector<bool>{false, false, false});
+    CHECK(lab.lock_calls == 1);
+}
+
 TEST_CASE("test --evidence: a token that can't be written is a warning too",
           "[test_command][evidence][timestamp]")
 {

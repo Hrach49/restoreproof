@@ -236,3 +236,23 @@ TEST_CASE("secret_values gives each set secret value as it is, the user name nev
         CHECK(rp::secret_values(secrets) == std::vector<std::string>{"not base64 !!"});
     }
 }
+
+TEST_CASE("secret_values leaves room for what its caller adds, so no value moves", "[secrets]")
+{
+    // A value short enough to live inside its string object: a list that
+    // grew would leave its bytes behind in the block it left, never wiped.
+    const rp::Secrets secrets{"rp-veeam", "pw-71c0", "pfx-71c0", "pfx-pw-71c0", "key-71c0"};
+    const std::size_t room = GENERATE(std::size_t{0}, std::size_t{3});
+
+    std::vector<std::string> values = rp::secret_values(secrets, room);
+    REQUIRE(values.size() == 4);
+    const std::string* const first = values.data();
+    const char* const first_bytes = values.front().data();
+    for (std::size_t i = 0; i < room; ++i) {
+        values.emplace_back("added");
+    }
+
+    CHECK(values.capacity() >= 4 + room);
+    CHECK(values.data() == first);
+    CHECK(values.front().data() == first_bytes);
+}

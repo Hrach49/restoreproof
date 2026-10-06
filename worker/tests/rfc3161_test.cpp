@@ -299,6 +299,26 @@ TEST_CASE("certificates_in counts the certificates of a PEM text", "[rfc3161]")
     // A block that is cut off is no certificate file.
     const std::string pem = tsa().root_pem();
     CHECK(ts().certificates_in(pem + pem.substr(0, pem.size() / 2)) == 0);
+    // Text outside the blocks is a comment.
+    CHECK(ts().certificates_in("the test root\n" + pem + "its end\n") == 1);
+}
+
+TEST_CASE("a PEM text with a block that isn't a certificate is no CA file", "[rfc3161]")
+{
+    // The library's own certificate reader skips a block of another label: a
+    // file that also holds a key would count as its certificates.
+    const std::string root = tsa().root_pem();
+    const std::string key = tsa().tsa_key_pem_text();
+    const std::string old_label =
+        "-----BEGIN X509 CERTIFICATE-----" +
+        root.substr(root.find('\n'), root.rfind("-----END") - root.find('\n')) +
+        "-----END X509 CERTIFICATE-----\n";
+    const std::string text = GENERATE_COPY(root + key, key + root, root + key + root,
+                                           root + old_label);
+    CAPTURE(text);
+
+    CHECK(ts().certificates_in(text) == 0);
+    CHECK_FALSE(ts().verify_token(tsa().token(kDigestAbc), text));
 }
 
 TEST_CASE("timestamp_time_text is the time in UTC to the second", "[rfc3161]")

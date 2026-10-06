@@ -55,8 +55,11 @@ Secrets load_secrets_from_env();
 // recording is opened) adds the text and its shapes for the folder itself.
 // Never decodes a value (with --record it runs for commands that never check
 // the key), and never throws but for no memory. The caller wipes the list, or
-// hands it to a FixtureRecorder, which does.
-std::vector<std::string> secret_values(const Secrets& secrets);
+// hands it to a FixtureRecorder, which does. A caller that adds values says
+// how many as `room`: the list has that much capacity beyond its own, so
+// adding them moves no value (a list that grew would leave the short values'
+// bytes behind in the block it left, never wiped).
+std::vector<std::string> secret_values(const Secrets& secrets, std::size_t room = 0);
 
 // Throws ConfigError, key() and message naming the variable ("RP_VEEAM_USERNAME
 // is not set", then RP_VEEAM_PASSWORD), unless both Veeam secrets are set and

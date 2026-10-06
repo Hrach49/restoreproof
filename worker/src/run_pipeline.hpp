@@ -94,11 +94,19 @@ struct Presentation {
     std::function<int(const RunSummary&, int code, bool output_lost)> on_run;
 };
 
-// With args.evidence (W4.2, docs/decisions.md 2026-10-05; rp::EvidenceBuilder):
+// With args.evidence (W4.2 and W4.3, docs/decisions.md 2026-10-05;
+// rp::EvidenceBuilder, rp::Signer):
 //  - once the config is read and before the secrets, "config error:
 //    --evidence <dir>: not a UTF-8 path" or, for a --run-id that isn't a plain
 //    file name, "config error: --evidence: the run ID can't name a folder",
 //    exit 1;
+//  - right after the Graph certificate is checked, before the schema, the
+//    manifest, the run mutex and any Veeam call, the signing key is parsed
+//    (rp::SigningKey::from_base64): "config error: RP_SIGNING_KEY_BASE64 is
+//    not set; --evidence signs the result" or "config error:
+//    RP_SIGNING_KEY_BASE64 is not an Ed25519 private key (Base64 of PKCS#8
+//    DER)", exit 1, no run line. A run without args.evidence never parses
+//    the key nor needs it;
 //  - once the run ID is known and before the run line, the run folder is
 //    made; if it can't be, "evidence error: <folder>: the run folder already
 //    exists; nothing was done" (or "... couldn't be made; ..."; for a made-up
@@ -108,14 +116,25 @@ struct Presentation {
 //    veeam-session.log are written, the screenshot asked for
 //    (env.capture_screenshot, config's screenshots_enabled), the finished
 //    result built with `attachments` and `screenshot` and validated, each
-//    attachment read back against its hash, and result.json written, exactly
-//    the canonical text; then "evidence <folder>: result.json, items.csv,
+//    attachment read back against its hash, the canonical text signed
+//    (env.sign_result, the run's key) and signature.json written, and
+//    result.json written, exactly the canonical text; then, both only once
+//    result.json is written, "signed <bundle_sha256> key <key_id>" and
+//    "evidence <folder>: result.json, signature.json, items.csv,
 //    veeam-session.log[, screenshot.png]" on `out`. On `err`, each with an
 //    exit code of 0 becoming 1 and the status unchanged: "evidence error:
-//    <file>: could not be written", "evidence error: <file>: changed after it
-//    was hashed", or, for a run with no valid result (after the text files
-//    are written), "evidence error: <folder>: the result isn't valid
-//    restoreproof.result.v1; no result.json was written".
+//    <file>: could not be written" (signature.json too; a signature.json
+//    written before a result.json that couldn't be is removed again),
+//    "evidence error: <file>: changed after it was hashed", "evidence error:
+//    <folder>: the result holds a secret value; no result.json was written",
+//    "evidence error: <folder>: the result couldn't be signed; no result.json
+//    was written", or, for a run with no valid result (after the text files
+//    are written; such a run is not signed), "evidence error: <folder>: the
+//    result isn't valid restoreproof.result.v1; no result.json was written".
+//
+// Whatever the command, the signing key's text is taken out of the run's
+// Secrets (wiped there) before the connector is made, and wiped with the
+// parsed key on every way out of the run.
 //
 // The run but for what --record wrote, which the command prints last:
 // `recorder` is set once the recording is open. Returns an rp::exit_code.

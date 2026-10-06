@@ -5,6 +5,7 @@
 #include <nlohmann/json-schema.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <limits>
@@ -75,10 +76,17 @@ std::shared_ptr<const Loaded> load() noexcept
 // The loaded schema, kept once it has loaded; null when it couldn't be. A
 // failure isn't kept: the next call tries again, so a process that was once
 // short of memory isn't without a validator for the rest of its life.
+// detail::set_result_validator_unavailable's switch: a test's stand-in for a
+// load that failed.
+std::atomic<bool> g_unavailable{false};
+
 std::shared_ptr<const Loaded> loaded() noexcept
 {
     static std::mutex mutex;
     static std::shared_ptr<const Loaded> kept;
+    if (g_unavailable.load()) {
+        return nullptr;
+    }
     try {
         const std::scoped_lock lock(mutex);
         if (!kept) {
@@ -196,6 +204,11 @@ std::string known_result_pointer(std::string_view pointer)
     return std::string{pointer};
 }
 
+void set_result_validator_unavailable(bool unavailable) noexcept
+{
+    g_unavailable.store(unavailable);
+}
+
 } // namespace detail
 
 std::string_view result_schema_text()
@@ -213,7 +226,7 @@ ResultValidation validate_result(const nlohmann::json& document) noexcept
     try {
         const std::shared_ptr<const Loaded> schema = loaded();
         if (!schema) {
-            return {false, 1, {}};
+            return {false, 1, {}, true};
         }
         if (const auto oversized = oversized_integer(document, {})) {
             return {false, 1, detail::known_result_pointer(*oversized)};
@@ -225,8 +238,9 @@ ResultValidation validate_result(const nlohmann::json& document) noexcept
         }
         return {false, violations.count(), detail::known_result_pointer(violations.first())};
     } catch (...) {
-        // Whatever the validator threw: its text may quote the document.
-        return {false, 1, {}};
+        // Whatever the validator threw: its text may quote the document. Not
+        // an answer about the document either.
+        return {false, 1, {}, true};
     }
 }
 

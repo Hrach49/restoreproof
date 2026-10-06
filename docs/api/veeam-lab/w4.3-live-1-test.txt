@@ -1,0 +1,70 @@
+restore point 2026-10-03T16:16:54.0154727Z  c2f0f2e7-177f-48ac-992b-93a50cf702e332f28a6a-67e7-46bf-844b-6b9f9ea7dc73  (veeam_org_name RestoreProofLab.onmicrosoft.com)
+run w43-done-when-1  seed 9bfb078b
+cleanup before ok: deleted 0 mail, 0 sharepoint, 0 onedrive
+canary cursor 0,0,0 -> 5,5,5
+  KIND        REQUESTED  CANARIES  RANDOM  NOTE
+  mail        10         5 of 5    5 of 5
+  sharepoint  10         5 of 5    5 of 5
+  onedrive    10         5 of 5    5 of 5
+restoring 30 item(s) ...
+
+  SESSION                               KIND        RESULT   RESTORED  STARTED                       ENDED                         ELAPSED
+  7eabb2fd-e4f2-4ae7-a6dc-f81f6c5fc834  mail        Success  5 of 5    2026-10-05T16:10:10.4214962Z  2026-10-05T16:10:38.3899969Z  0:00:27
+  98b8e4c4-dad6-4ef4-af8b-4e9a7c6cdedd  mail        Success  3 of 3    2026-10-05T16:10:41.0784405Z  2026-10-05T16:11:13.5501106Z  0:00:32
+  c841801f-7502-46a4-bdf2-ebcc88036d6a  mail        Success  2 of 2    2026-10-05T16:11:16.6757982Z  2026-10-05T16:11:48.7492101Z  0:00:32
+  a8a91bc9-aaea-41ff-9f70-5e226ca85dcc  sharepoint  Success  10 of 10  2026-10-05T16:11:52.3894211Z  2026-10-05T16:12:49.2535284Z  0:00:56
+  0386c8da-a9fd-4a1b-867c-8f5505df1ca9  onedrive    Success  10 of 10  2026-10-05T16:12:53.4273389Z  2026-10-05T16:13:34.6363158Z  0:00:41
+
+restore succeeded: 30 of 30 item(s) restored in 0:03:35
+
+  TYPE        NAME                                                    EXPECTED  FOUND  MATCH  VERDICT   REASON  MS
+  mail        RP-CANARY-0001                                          manifest  yes    match  verified  -       0
+  mail        RP-CANARY-0002                                          manifest  yes    match  verified  -       0
+  mail        RP-CANARY-0003                                          manifest  yes    match  verified  -       0
+  mail        RP-CANARY-0004                                          manifest  yes    match  verified  -       0
+  mail        RP-CANARY-0005                                          manifest  yes    match  verified  -       0
+  mail        sub                                                     fields    yes    match  verified  -       0
+  mail        Veeam Download Details: Veeam Backup for Microsoft 365  fields    yes    match  verified  -       0
+  mail        RestoreProof W2.2 second mail 3n5w                      fields    yes    match  verified  -       0
+  mail        Lunch on Friday                                         fields    yes    match  verified  -       0
+  mail        Holiday cover in August                                 fields    yes    match  verified  -       0
+  sharepoint  rp-canary-01.pdf                                        manifest  yes    match  verified  -       327
+  sharepoint  rp-canary-02.docx                                       manifest  yes    match  verified  -       383
+  sharepoint  rp-canary-03.xlsx                                       manifest  yes    match  verified  -       309
+  sharepoint  rp-canary-04.txt                                        manifest  yes    match  verified  -       359
+  sharepoint  rp-canary-05.png                                        manifest  yes    match  verified  -       366
+  sharepoint  supplier-contacts.txt                                   metadata  yes    match  verified  -       457
+  sharepoint  office-floor-plan.png                                   metadata  yes    match  verified  -       326
+  sharepoint  project-brief.pdf                                       metadata  yes    match  verified  -       379
+  sharepoint  team-meeting-notes.txt                                  metadata  yes    match  verified  -       411
+  sharepoint  brand-colours-draft.png                                 metadata  yes    match  verified  -       401
+  onedrive    rp-canary-11.pdf                                        manifest  yes    match  verified  -       354
+  onedrive    rp-canary-12.docx                                       manifest  yes    match  verified  -       344
+  onedrive    rp-canary-13.xlsx                                       manifest  yes    match  verified  -       356
+  onedrive    rp-canary-14.txt                                        manifest  yes    match  verified  -       365
+  onedrive    rp-canary-15.png                                        manifest  yes    match  verified  -       423
+  onedrive    whiteboard-sketch.png                                   metadata  yes    match  verified  -       318
+  onedrive    course-certificate.pdf                                  metadata  yes    match  verified  -       425
+  onedrive    holiday-photo.png                                       metadata  yes    match  verified  -       361
+  onedrive    travel-notes.txt                                        metadata  yes    match  verified  -       321
+  onedrive    reading-list.txt                                        metadata  yes    match  verified  -       356
+
+check: 30 match, 0 mismatch, 0 missing, 0 error
+
+status pass: 30 of 30 item(s) verified: manifest 15, fields 5, metadata 10
+cleanup after ok: deleted 10 mail, 10 sharepoint, 10 onedrive
+
+STEP                  TIME         NOTE
+restore_point_lookup  0:00:00.092
+cleanup_before        0:00:01.556
+sample_select         0:00:06.633
+target_snapshot       0:00:00.894
+restore               0:03:35.175
+restore_submit        0:00:01.167
+restore_wait          0:03:27.330
+verify                0:00:08.481
+recovery              0:03:43.656
+cleanup_after         0:00:07.302
+total                 0:04:00.305
+signed 2cd2cd0010b4d3bc02d6af1943beb80a5fef81c3a1c5a38db420c2e54559a8f4 key 9dfab6eadaa1d04a22dcc966aac7a53bcff8bbe0077232485f6143cd9c4d0ca5
+evidence C:\ProgramData\RestoreProof\runs\w43-done-when-1: result.json, signature.json, items.csv, veeam-session.log

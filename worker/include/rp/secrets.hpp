@@ -4,6 +4,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace rp {
 
@@ -17,9 +18,15 @@ inline constexpr std::string_view kEnvVeeamPassword = "RP_VEEAM_PASSWORD";
 // rp::graph::certificate_from_secrets (rp/client_assertion.hpp) opens them.
 inline constexpr std::string_view kEnvGraphCertPfxBase64 = "RP_GRAPH_CERT_PFX_BASE64";
 inline constexpr std::string_view kEnvGraphCertPassword = "RP_GRAPH_CERT_PASSWORD";
+// The Worker's signing key (W4.3): one line of standard Base64 of an Ed25519
+// private key's PKCS#8 DER, the body line of the PEM OpenSSL writes.
+// rp::SigningKey::from_base64 (rp/signer.hpp) parses it, and only `rpworker
+// test --evidence` does: every other command reads it and never looks at it.
+inline constexpr std::string_view kEnvSigningKeyBase64 = "RP_SIGNING_KEY_BASE64";
 
-inline constexpr std::array<std::string_view, 4> kSecretEnvVars{
-    kEnvVeeamUsername, kEnvVeeamPassword, kEnvGraphCertPfxBase64, kEnvGraphCertPassword};
+inline constexpr std::array<std::string_view, 5> kSecretEnvVars{
+    kEnvVeeamUsername, kEnvVeeamPassword, kEnvGraphCertPfxBase64, kEnvGraphCertPassword,
+    kEnvSigningKeyBase64};
 
 // Each field is empty when its variable is unset or set to "". Which ones a
 // run needs depends on the Veeam auth mode (W1.0), so loading never fails on
@@ -29,13 +36,23 @@ struct Secrets {
     std::optional<std::string> veeam_password;
     std::optional<std::string> graph_cert_pfx_base64;
     std::optional<std::string> graph_cert_password;
+    std::optional<std::string> signing_key_base64;
 };
 
 // Reads kSecretEnvVars from the process environment, as UTF-8. Throws
 // ConfigError (rp/config.hpp), whose key() is the variable's name and whose
 // message never contains the value, when a value isn't valid Unicode (an
-// unpaired surrogate): it can't be converted without changing the secret.
+// unpaired surrogate): it can't be converted without changing the secret. The
+// UTF-16 buffer each variable is read into is zeroed before it goes.
 Secrets load_secrets_from_env();
+
+// The run's secret values, each as it is: the Veeam password, the Graph PFX's
+// Base64, its password and the signing key's text, those that are set and not
+// empty, in that order. The user name is no secret. The one list a --record
+// recorder and a run folder check what they write against. Never decodes a
+// value (with --record it runs for commands that never check the key), and
+// never throws but for no memory.
+std::vector<std::string> secret_values(const Secrets& secrets);
 
 // Throws ConfigError, key() and message naming the variable ("RP_VEEAM_USERNAME
 // is not set", then RP_VEEAM_PASSWORD), unless both Veeam secrets are set and

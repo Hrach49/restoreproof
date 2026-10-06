@@ -24,7 +24,7 @@ How we test, what CI enforces, and the once-per-sprint mutation run. Set up in L
 
 | Guard | Where | Rule |
 |---|---|---|
-| Worker coverage | `.github/workflows/worker.yml`, OpenCppCoverage + `worker/tools/coverage_gate.py` | 80% line on `rpcore` (`worker/src/`, `worker/include/`) plus `rpworker`'s `main()` (`worker/app/`); 100% **line** on vault, signer, target_guard, run_status and cleaner (the vault and signer once they exist), meaning any file with a path part named or prefixed `vault`, `signer`, `target_guard`, `run_status` or `cleaner` (`src/signer/ed25519.cpp`, `src/vault_dpapi.cpp`; W2.7's `src/target_guard.cpp`, `src/target_guard_graph.cpp`, `src/target_guard_veeam.cpp` and their headers; W3.3's `src/run_status.cpp`, the status decision table; W3.4's `src/cleaner.cpp` and `include/rp/cleaner.hpp`, the only Worker code that deletes in the tenant); every `.cpp` on disk under `src/`, `include/` and `app/` must appear in the report, so a file no test links into `rptests` (or, for `app/`, that ctest's runs of `rpworker.exe` don't reach) fails (headers of declarations may be absent) |
+| Worker coverage | `.github/workflows/worker.yml`, OpenCppCoverage + `worker/tools/coverage_gate.py` | 80% line on `rpcore` (`worker/src/`, `worker/include/`) plus `rpworker`'s `main()` (`worker/app/`); 100% **line** on vault, signer, target_guard, run_status and cleaner (the vault once it exists), meaning any file with a path part named or prefixed `vault`, `signer`, `target_guard`, `run_status` or `cleaner` (`src/vault_dpapi.cpp`; W4.3's `src/signer.cpp`, the Signer, and `src/signer_command.cpp`, the two `rpworker signer` commands, with their headers, while `src/ed25519.cpp`, the calls into OpenSSL under the Signer, is deliberately outside: the library's failure lines for a valid key can't be reached by a test, and folding them onto their calls' own lines would hide them, `docs/decisions.md` 2026-10-05 W4.3 point 4; W2.7's `src/target_guard.cpp`, `src/target_guard_graph.cpp`, `src/target_guard_veeam.cpp` and their headers; W3.3's `src/run_status.cpp`, the status decision table; W3.4's `src/cleaner.cpp` and `include/rp/cleaner.hpp`, the only Worker code that deletes in the tenant); every `.cpp` on disk under `src/`, `include/` and `app/` must appear in the report, so a file no test links into `rptests` (or, for `app/`, that ctest's runs of `rpworker.exe` don't reach) fails (headers of declarations may be absent) |
 | Cloud coverage | `.github/workflows/cloud.yml`, pytest-cov | 80% on `app/`, measured as coverage's combined line + branch figure; 100% line + branch on `app/auth`, `app/results.py` and `app/repo` (skipped while absent), checked by `cloud/tools/check_coverage.py` |
 | Lab tests and canary hashes | `.github/workflows/lab.yml` | `lab/`'s pytest suite passes (offline, fake Graph tenant), and `python -m seeder hash` reproduces every hash in `lab/seed-manifest.json` from the committed `lab/canary/` files and the catalog (L1.2's Done when). No coverage floor |
 | No test, no merge | `.github/workflows/pr-guards.yml`, `.github/scripts/tests_touched.py` | Each side needs its own tests: a PR that changes `worker/src/`, `worker/include/` or `worker/app/` must add or change a C++ file (`.cpp`, `.hpp`, `.h`) under `worker/tests/`, and one that changes `cloud/app/` must add or change a `.py` under `cloud/tests/`. Deleting a test, editing fixtures or editing `tests/e2e/scenarios.md` doesn't count |
@@ -140,9 +140,12 @@ To run the four Graph ones on the dev laptop (the PFX and its Credential Manager
    . .\lab\entra\set-worker-env.ps1
    ```
 
-   It prints `set RP_GRAPH_CERT_PFX_BASE64 and RP_GRAPH_CERT_PASSWORD for this session` and
-   nothing else. A red error names what is missing (the PFX file or the Credential Manager
-   entry) and sets nothing.
+   It prints `set RP_GRAPH_CERT_PFX_BASE64 and RP_GRAPH_CERT_PASSWORD for this session` and,
+   while the lab has no signing key, a second line starting `skipped RP_SIGNING_KEY_BASE64:`;
+   with a key (W4.3, `lab/README.md`, "The signing key") the one line `set
+   RP_GRAPH_CERT_PFX_BASE64, RP_GRAPH_CERT_PASSWORD and RP_SIGNING_KEY_BASE64 for this session`.
+   The live tests need no signing key. A red error names what is missing (the PFX file or the
+   Credential Manager entry) and sets nothing.
 4. Turn the live tests on for this session and run the Graph ones:
 
    ```powershell
@@ -389,7 +392,7 @@ targets; nothing was done`, exit 4). The targets needn't be empty first.
 **This writes and deletes too.** `rpworker test` (W3.6, `docs/worker-config.md`, "`rpworker
 test`") runs the same pipeline as `rpworker restore`, with its own table after the check and an
 optional `--json` file, the run's result (`restoreproof.result.v1`, W4.1), or with `--evidence
-<dir>` the run's folder (W4.2). Its ctest exe tests all stop before any request. Check the same
+<dir>` the run's folder (W4.2), signed (W4.3). Its ctest exe tests all stop before any request. Check the same
 things first as for "Restore by hand": an elevated shell, no restore session still `Working`,
 no other RestoreProof run.
 
@@ -461,7 +464,9 @@ stays outside the repository, and only the output and the two lines above go int
 **The W4.2 Done-when run.** W4.2's Done-when is "a run folder contains result.json, the log,
 items.csv and (optionally) a PNG, each hashed in the result" (`docs/decisions.md` 2026-10-05,
 W4.2). The unit tests show it on the recorded lab (`rptests "[evidence]"`); this is the same
-once against the live lab. Check the same things first as above, then, from `worker\`, in an
+once against the live lab. It was run on 2026-10-05, before W4.3: since then `--evidence` also
+needs the signing key and signs (the W4.3 run below), and the lines here are as a run prints
+them now. Check the same things first as above, then, from `worker\`, in an
 elevated shell (the runs root is under `%ProgramData%`):
 
 ```powershell
@@ -471,14 +476,15 @@ elevated shell (the runs root is under `%ProgramData%`):
 The run ID must be new: a folder `runs\w42-done-when-1` that is already there stops the run
 before its run line (`evidence error: ...: the run folder already exists; nothing was done`).
 `--evidence` can't be combined with `--json`. The run ends `status pass: ...`, the clean
-after's line, the timings' table and `evidence C:\ProgramData\RestoreProof\runs\w42-done-when-1:
-result.json, items.csv, veeam-session.log`, exit 0, stderr empty. Then check the folder
+after's line, the timings' table, `signed <bundle_sha256> key <key_id>` and `evidence
+C:\ProgramData\RestoreProof\runs\w42-done-when-1: result.json, signature.json, items.csv,
+veeam-session.log`, exit 0, stderr empty. Then check the folder
 offline: `result.json` valid by the repository's schema and its own canonical form, the files
-beside it exactly the ones `attachments` lists, and each with the size and SHA-256 listed. From
-`cloud\`:
+beside it and `signature.json` exactly the ones `attachments` lists, and each with the size and
+SHA-256 listed. From `cloud\`:
 
 ```powershell
-uv run python -c "import hashlib,json,sys,pathlib; from jsonschema import Draft202012Validator; f=pathlib.Path(sys.argv[1]); b=(f/'result.json').read_bytes(); d=json.loads(b); s=json.loads(pathlib.Path('../shared/schemas/result.v1.json').read_bytes()); errs=sorted(Draft202012Validator(s).iter_errors(d), key=lambda e: e.json_path); print('schema:', 'valid' if not errs else [e.json_path for e in errs]); print('canonical:', json.dumps(d, sort_keys=True, separators=(',', ':'), ensure_ascii=False).encode('utf-8') == b); print('files:', {a['name'] for a in d['attachments']} == {p.name for p in f.iterdir()} - {'result.json'}); [print(a['name'], len(x) == a['size_bytes'], hashlib.sha256(x).hexdigest() == a['sha256']) for a in d['attachments'] for x in [(f/a['name']).read_bytes()]]" $env:ProgramData\RestoreProof\runs\w42-done-when-1
+uv run python -c "import hashlib,json,sys,pathlib; from jsonschema import Draft202012Validator; f=pathlib.Path(sys.argv[1]); b=(f/'result.json').read_bytes(); d=json.loads(b); s=json.loads(pathlib.Path('../shared/schemas/result.v1.json').read_bytes()); errs=sorted(Draft202012Validator(s).iter_errors(d), key=lambda e: e.json_path); print('schema:', 'valid' if not errs else [e.json_path for e in errs]); print('canonical:', json.dumps(d, sort_keys=True, separators=(',', ':'), ensure_ascii=False).encode('utf-8') == b); print('files:', {a['name'] for a in d['attachments']} == {p.name for p in f.iterdir()} - {'result.json', 'signature.json'}); [print(a['name'], len(x) == a['size_bytes'], hashlib.sha256(x).hexdigest() == a['sha256']) for a in d['attachments'] for x in [(f/a['name']).read_bytes()]]" $env:ProgramData\RestoreProof\runs\w42-done-when-1
 ```
 
 It must print `schema: valid`, `canonical: True`, `files: True` and `True True` after each
@@ -488,6 +494,117 @@ attachment's name. With the default config `screenshot` is `{"state": "unavailab
 are empty again. The folder holds tenant names (`items.csv`, `veeam-session.log`,
 `result.json`): it stays where it is, outside the repository, and only the run's output, the
 `graph list` afterwards and the check's lines go into the evidence.
+
+**The W4.3 Done-when run.** W4.3's Done-when is "the C++ and the Python verifier
+agree on a real bundle" (`docs/decisions.md` 2026-10-05, W4.3 point 6). The shared vectors show
+it offline for 38 folders ("The shared signing vectors" below); this is the same on a live
+run's folder. Run on 2026-10-05 (`w43-done-when-1`: `status pass`, both tools printing the same
+line for the folder and for each of the five changed copies; evidence
+`docs/api/veeam-lab/w4.3-live-*`, build notes point 22). It needs an elevated shell and the
+lab's signing key:
+
+1. Make the lab's key once, from `lab\`, with the public PEM in a folder outside the
+   repository (`lab/README.md`, "The signing key"), and note its `key <key_id>` line:
+
+   ```powershell
+   uv run python -m seeder new-signing-key --public-key-out C:\restoreproof-runs\worker-signing.pub.pem
+   ```
+
+2. In the elevated shell, from the repository's root, `. .\lab\entra\set-worker-env.ps1` must
+   print the three-variable line. Then from `worker\`:
+
+   ```powershell
+   .\build\dev\rpworker.exe test --mail 10 --sp 10 --od 10 --run-id w43-done-when-1 --point <restore point ID> --config <your config.json> --manifest ..\lab\seed-manifest.json --evidence $env:ProgramData\RestoreProof\runs
+   ```
+
+   It must end `status pass: ...`, the clean after's line, the timings' table, `signed
+   <bundle_sha256> key <key_id>` with step 1's key ID, and `evidence ...: result.json,
+   signature.json, items.csv, veeam-session.log`, exit 0, stderr empty.
+3. Verify the folder with both tools ("Verify a run folder by hand" below): both must print
+   the same `verified <bundle_sha256> key <key_id>` line, with the hash `Get-FileHash` gives
+   for `result.json`.
+4. Copy the folder five times, outside the repository, and change one thing in each; both
+   tools must print the same line each time:
+
+   | Change | Both print |
+   |---|---|
+   | one digit of an item's hash in `result.json` | `not verified: hash_mismatch` |
+   | one Base64 character of `signature` in `signature.json`, its length and its last three characters kept | `not verified: signature_invalid` |
+   | one byte of `items.csv` | `not verified: attachment_hash` |
+   | `veeam-session.log` removed | `not verified: attachment_missing` |
+   | nothing; RFC 8032's test key given as `--public-key` (the `public_key_pem` of `rfc8032-test-1` in `shared/testdata/signing-v1/keys.json`, written to a file with LF line ends) | `not verified: wrong_key` |
+
+   Change the two JSON files with an editor that adds no newline at the end and no BOM: either
+   makes the file `result_not_canonical` or `signature_file` instead.
+5. Check with `rpworker graph list` that the targets are empty again. Evidence
+   `docs/api/veeam-lab/w4.3-live-*`: the run's output, both tools' lines for the six folders
+   and the `graph list` afterwards. The folders and the lab's public key stay outside the
+   repository.
+
+### Verify a run folder by hand (W4.3)
+
+Read-only, offline, no config and no secret. The two tools must agree on the stdout line
+(`docs/verification.md`, "The checks, and the thirteen words"); their exit codes are their
+own.
+
+1. **The public key.** The file the Worker's key was exported to: `new-signing-key
+   --public-key-out <file>` in the lab, or, in a shell that has `RP_SIGNING_KEY_BASE64` (from
+   `worker\`, PowerShell 7):
+
+   ```powershell
+   .\build\dev\rpworker.exe signer public-key > C:\restoreproof-runs\worker-signing.pub.pem
+   ```
+
+   stdout is the PEM alone, three lines; the `key <key_id>` line goes to the console (stderr).
+   In Windows PowerShell 5.1 `>` writes UTF-16, which is no key file: use `| Set-Content
+   -Encoding ascii <file>` there. Take the key from where you trust it, never from the run
+   folder.
+2. **The hash.** `bundle_sha256` is `result.json`'s own SHA-256:
+
+   ```powershell
+   (Get-FileHash $env:ProgramData\RestoreProof\runs\<run_id>\result.json -Algorithm SHA256).Hash.ToLower()
+   ```
+
+3. **The Worker's verifier**, from `worker\`:
+
+   ```powershell
+   .\build\dev\rpworker.exe signer verify $env:ProgramData\RestoreProof\runs\<run_id> --public-key C:\restoreproof-runs\worker-signing.pub.pem
+   $LASTEXITCODE
+   ```
+
+   `verified <bundle_sha256> key <key_id>` and 0, or `not verified: <word>` and 5. Exit 1 with a
+   `signer error: ...` line means the folder or the key file couldn't be read: no verdict.
+4. **The auditor's verifier**, from the repository's root. It is one file; `uv` reads its
+   dependencies from the file's own header (`cryptography`, `jsonschema`, Python 3.12 or
+   later) and downloads them on the first run:
+
+   ```powershell
+   uv run shared/tools/verify_bundle.py $env:ProgramData\RestoreProof\runs\<run_id> --public-key C:\restoreproof-runs\worker-signing.pub.pem
+   $LASTEXITCODE
+   ```
+
+   The same line, and 0, or `not verified: <word>` and 1. Exit 2 with an `error: ...` line
+   means the folder, the key or a schema couldn't be read, the command line was wrong (an
+   option given twice included), a package is missing (run with plain `python` instead of `uv
+   run`) or the verdict couldn't be written to stdout: no verdict. It finds the two schemas in `shared/schemas/` beside itself; `--schemas <dir>`
+   names another folder holding `result.v1.json` and `signature.v1.json`. Away from the
+   repository an auditor needs the script, the two schema files, the Worker's public PEM and
+   the folder with every listed attachment.
+5. **The key's ID** is the SHA-256 of the 44 bytes the PEM's Base64 line decodes to; it must
+   be the `key_id` in `signature.json` and in both `verified` lines:
+
+   ```powershell
+   $der = [Convert]::FromBase64String(((Get-Content C:\restoreproof-runs\worker-signing.pub.pem | Where-Object { $_ -notmatch '^-----' }) -join ''))
+   -join ([Security.Cryptography.SHA256]::Create().ComputeHash($der) | ForEach-Object { $_.ToString('x2') })
+   ```
+
+A name in the folder that the result doesn't list is a `note: not listed in the result:
+<name>` line on stderr from both, and still `verified`. A relative folder whose name starts
+with `-` is an option to the script: give it as `.\-name` or by its full path. To try the
+tools without a live run, write the four files of `shared/testdata/signing-v1/bundle.json`
+(`files`, each string's UTF-8 with nothing added) into an empty folder and give the
+`public_key_pem` of `rfc8032-test-1` from `keys.json`: both print `verified 572bf1f9...81bf key
+06e3fd8f...2fa9`.
 
 ### Recording fixtures (`--record <dir>`)
 
@@ -566,9 +683,9 @@ embeds.
 | File | What | C++ test | Python test |
 |---|---|---|---|
 | `shared/schemas/result.v1.json` | the result's schema, the only copy | `worker/tests/result_schema_test.cpp` (`[result_schema]`): the embedded bytes are the file's, only the allowed keywords, the seventeen keys, the enums against the code | `cloud/tests/test_result_schema.py`: `check_schema`, `$schema` is draft 2020-12 |
-| `shared/testdata/canonical-json-v1.json` | `canonical-json-v1`: 33 `cases` (`input`, `canonical`, `sha256`) and 9 `rejects` (`input_text`, `reason`: `float`, `integer_out_of_range` or `non_ascii_key`) | `worker/tests/canonical_json_test.cpp` (`[canonical_json]`): every case and every reject; invalid UTF-8, which a JSON file can't hold, on bytes | `cloud/tests/test_canonical_json.py`: the accepted cases against `json.dumps(sort_keys=True, separators=(",", ":"), ensure_ascii=False)`; the rejects' shape only, until W4.3 brings a Python canonicaliser |
+| `shared/testdata/canonical-json-v1.json` | `canonical-json-v1`: 33 `cases` (`input`, `canonical`, `sha256`) and 9 `rejects` (`input_text`, `reason`: `float`, `integer_out_of_range` or `non_ascii_key`) | `worker/tests/canonical_json_test.cpp` (`[canonical_json]`): every case and every reject; invalid UTF-8, which a JSON file can't hold, on bytes | `cloud/tests/test_canonical_json.py`, since W4.3 on the Python canonicaliser in `shared/tools/verify_bundle.py` (`parse_strict`, `canonical_json`), loaded by path: the 33 cases byte for byte, the 9 rejects by their reason, and what a vector's JSON text can't hold built in the test (a duplicate key, a BOM, `NaN`, invalid UTF-8, a lone surrogate, 33 levels of nesting) |
 | `shared/testdata/result-v1/valid.json` | a valid result, as canonical bytes | `worker/tests/test_command_test.cpp`: the pipeline's run reproduces it byte for byte | `test_result_schema.py`: valid, and equal to its own canonical dump |
-| `shared/testdata/result-v1/cases.json` | 180 documents, each `valid.json` with an RFC 6902 `patch` (add, remove, replace) and whether the schema accepts it (`valid`): 45 valid, 135 invalid | `result_schema_test.cpp`, one `GENERATE` row per case | `test_result_schema.py`, one parametrised test per case |
+| `shared/testdata/result-v1/cases.json` | 183 documents, each `valid.json` with an RFC 6902 `patch` (add, remove, replace) and whether the schema accepts it (`valid`): 45 valid, 138 invalid (the three newest hold W4.3's cut of `containers_listed` to the count `containers_drawn`). Both sides pin the two counts | `result_schema_test.cpp`, one `GENERATE` row per case | `test_result_schema.py`, one parametrised test per case |
 
 The Python tests find `shared/` by walking up from their own file, so they also run from
 mutmut's copy. The Worker tests read it through `RP_SHARED_DIR`. No case holds a float:
@@ -597,10 +714,67 @@ Then read the diff, and run both sides: `ctest --preset dev -R "result"` and, fr
 `uv run pytest tests/test_result_schema.py`. The patches in `cases.json` point into `valid.json`
 by position (`/expected/items/1` is the random mail, `/check/items/3` the item restored twice):
 if the run's layout changed, the patches must follow, and the two counts pinned in
-`result_schema_test.cpp` (180 cases, 45 valid) with them. It also changes when
+`result_schema_test.cpp` and `test_result_schema.py` (183 cases, 45 valid) with them. Then
+write the signing vectors again too (below): their `result.json` is made from `valid.json`. It also changes when
 `lab/seed-manifest.json` is re-seeded, since the canaries' hashes and the manifest's are in it.
 A change to the schema alone needs no C++ change to be tested: both suites run `cases.json`
 against it.
+
+### The shared signing vectors (W4.3)
+
+`shared/testdata/signing-v1/` holds what the Worker's Signer and `shared/tools/verify_bundle.py`
+must answer alike (`docs/decisions.md` 2026-10-05, W4.3 point 6 and its build notes;
+`docs/verification.md`, "The signature"). JSON only, so the LF rule of `.gitattributes` covers
+the folder: a signed folder kept as files would change its hashes with a line-ending
+conversion, texts inside JSON don't. Every key in it is one of RFC 8032's published test keys,
+known to everyone: never a secret, and never to sign anything real.
+
+| File | What | Written by |
+|---|---|---|
+| `keys.json` | two key pairs, RFC 8032 section 7.1's tests 1 and 2 (`rfc8032-test-1`, `rfc8032-test-2`): `seed_hex`, `private_pkcs8_base64` (as `RP_SIGNING_KEY_BASE64` carries a key), `public_key_pem`, `key_id` | `rptests "[.write_shared_signing]"` |
+| `ed25519.json` | RFC 8032 section 7.1's tests 1 to 3 for the primitive: seed, public key, message, signature, all hex. Ed25519 is deterministic, so a build must reproduce each signature byte for byte, not only accept it | by hand, from the RFC |
+| `bundle.json` | one signed run folder as texts: `result.json` (`result-v1/valid.json` with its `attachments` replaced by two small made-up files), `signature.json`, `items.csv`, `veeam-session.log`, with the `bundle_sha256` and `key_id` both verifiers must print | `rptests "[.write_shared_signing]"` |
+| `cases.json` | 38 changes to that folder, each with the one word expected: a file's bytes replaced (as text, or as Base64 for bytes that aren't UTF-8 or start with a BOM), a file removed, or another public key given. 37 fail, one is the untouched folder, `verified` | `rptests "[.write_shared_signing]"` |
+| `key-files.json` | 46 public key files, 11 accepted and 35 refused, with the one rule both verifiers hold for a key file (`docs/verification.md`, "The public key file") | a one-off script that isn't committed (the W4.3 review); changed by hand |
+
+The 38 cases by word, pinned on both sides: `result_unreadable` 1, `result_not_canonical` 12,
+`result_schema` 1, `attachment_twice` 1, `screenshot_missing` 1, `signature_file` 10,
+`hash_mismatch` 2, `wrong_key` 2, `signature_invalid` 4, `attachment_missing` 1,
+`attachment_size` 1, `attachment_hash` 1, `verified` 1. A check item holds no hash, so
+`result-check-item-one-digit` changes one digit of an item's `ms`.
+
+**Both builds run every case.** Each writes the folder into a temp directory per case and
+compares the word.
+
+- Worker: `worker/tests/signer_test.cpp` (`Signer::verify_folder` over a folder in memory;
+  the key files through `PublicKey::from_pem`; `bundle.json`, `keys.json` and `cases.json`
+  compared byte for byte with what the code makes), `worker/tests/signer_command_test.cpp`
+  (the same 38 cases and 46 key files through `rpworker signer verify` on disk, with the
+  stdout line and the exit code), `worker/tests/ed25519_test.cpp` (`ed25519.json` on the real
+  primitive).
+- Cloud: `cloud/tests/test_verify_bundle.py` loads the script by path, walking up to `shared/`
+  as the schema tests do, and runs the 38 cases through `verify_folder`, the command's stdout
+  line and exit code through `main`, the 46 key files through `public_key_from_pem` and
+  through `main`, `ed25519.json` and `keys.json` on `cryptography`. It holds the set of words
+  the cases expect equal to the set the script can answer.
+
+The script is outside `--cov=app` and mutmut, so no gate holds its coverage; `cryptography` is
+in Cloud's dev group for these tests.
+
+After a deliberate change to the result, the signature file or the cases, write the three
+Worker-made files again with the hidden test case, from `worker\`, after `valid.json` if that
+changed too:
+
+```powershell
+.\build\dev\rptests.exe "[.write_shared_result]"
+.\build\dev\rptests.exe "[.write_shared_signing]"
+```
+
+It fails if the bundle's signature has neither `+` nor `/` (the URL-safe case needs one of
+them to change). Then read the diff and run both sides: `.\build\dev\rptests.exe
+"[signer],[signer_command],[ed25519]"` and, from `cloud\`, `uv run pytest tests/test_verify_bundle.py tests/test_canonical_json.py`. A new case
+moves the pinned counts in `signer_test.cpp`, `signer_command_test.cpp` and
+`test_verify_bundle.py`; a new key file moves the 46 and its two parts there too.
 
 ### Running the gates locally
 

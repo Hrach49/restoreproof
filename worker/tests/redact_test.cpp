@@ -740,3 +740,149 @@ TEST_CASE("the JWT start and base64url alphabet are the ones the recorder shares
         CHECK_FALSE(rp::is_base64url(c));
     }
 }
+
+// --- W4.3: the signing key --------------------------------------------------------------
+// The only key here is RFC 8032's published test key 1, never a secret.
+
+TEST_CASE("redact leaves what a signed run prints and a signature file holds readable",
+          "[redact][signing]")
+{
+    const std::string_view text = GENERATE(values<std::string_view>({
+        "signed 5f0c2e6b key 21fe31dfa154a261626bf854046fd2271b7bed4b6abe45aa58877ef47f9721b9",
+        R"({"algorithm":"ed25519","bundle_sha256":"5f0c","format":"restoreproof.signature.v1","key_id":"21fe","signature":"5VZDAMNg=="})",
+        "config error: RP_SIGNING_KEY_BASE64 is not set; --evidence signs the result",
+        "config error: RP_SIGNING_KEY_BASE64 is not an Ed25519 private key (Base64 of PKCS#8 DER)",
+        "RP_SIGNING_KEY_BASE64     **** (set)",
+        // A longer name, a name used as a value, the words in prose.
+        "signing_key_id=21fe31df",
+        "kind=signing_key",
+        "the signing key: rfc8032-test-1",
+        // A public key is no secret, nor is a certificate.
+        "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=\n"
+        "-----END PUBLIC KEY-----\n",
+        "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n",
+        // Not a PEM header: no closing dashes, lower case, no label.
+        "-----BEGIN PRIVATE KEY",
+        "-----BEGIN private key-----",
+        "-----BEGIN -----",
+        "----- PRIVATE KEY-----",
+    }));
+    CAPTURE(text);
+    CHECK(rp::redact(text) == text);
+}
+
+TEST_CASE("redact treats signing_key, signing_key_base64 and signing_private_key as secret key "
+          "names",
+          "[redact][signing]")
+{
+    check_row(GENERATE(values<Row>({
+        {"RP_SIGNING_KEY_BASE64=MC4CAQAwBQYDK2VwBCIEIJ1hsZ3v/VpguoRK9JLsLMREScVpezJpGXA7rAMcrn9g",
+         "RP_SIGNING_KEY_BASE64=[REDACTED]"},
+        {"signing_key=MC4CAQAw&a=1", "signing_key=[REDACTED]&a=1"},
+        {"signing_private_key = MC4CAQAw next", "signing_private_key = [REDACTED] next"},
+        {"signing_key: MC4CAQAw", "signing_key: [REDACTED]"},
+        {"signing_key_base64: MC4CAQAw", "signing_key_base64: [REDACTED]"},
+        {"vault signing_private_key: MC4CAQAw", "vault signing_private_key: [REDACTED]"},
+        {R"({"signing_key":"MC4C","key_id":"21fe"})", R"({"signing_key":"[REDACTED]","key_id":"21fe"})"},
+        {R"({"Signing_Key_Base64" : "MC4C+/=="})", R"({"Signing_Key_Base64" : "[REDACTED]"})"},
+        {R"({"signing_private_key":{"der":"MC4C"},"n":1})",
+         R"({"signing_private_key":"[REDACTED]","n":1})"},
+    })));
+}
+
+TEST_CASE("redact masks a PEM private key block whole, whatever kind of key it says it is",
+          "[redact][signing]")
+{
+    check_row(GENERATE(values<Row>({
+        {"-----BEGIN PRIVATE KEY-----\n"
+         "MC4CAQAwBQYDK2VwBCIEIJ1hsZ3v/VpguoRK9JLsLMREScVpezJpGXA7rAMcrn9g\n"
+         "-----END PRIVATE KEY-----\n",
+         "[REDACTED]\n"},
+        {"key file:\r\n-----BEGIN PRIVATE KEY-----\r\nMC4C\r\n-----END PRIVATE KEY-----\r\nnext",
+         "key file:\r\n[REDACTED]\r\nnext"},
+        {"-----BEGIN ENCRYPTED PRIVATE KEY-----\nMIGb\n-----END ENCRYPTED PRIVATE KEY-----",
+         "[REDACTED]"},
+        {"-----BEGIN RSA PRIVATE KEY-----\nMIIE\nAAAA\n-----END RSA PRIVATE KEY----- tail",
+         "[REDACTED] tail"},
+        {"-----BEGIN OPENSSH PRIVATE KEY-----\nb3Bl\n-----END OPENSSH PRIVATE KEY-----",
+         "[REDACTED]"},
+        // On one line, and with its line ends escaped inside a JSON string.
+        {"-----BEGIN PRIVATE KEY-----MC4C-----END PRIVATE KEY-----", "[REDACTED]"},
+        {R"({"pem":"-----BEGIN PRIVATE KEY-----\nMC4C\n-----END PRIVATE KEY-----\n","n":1})",
+         R"({"pem":"[REDACTED]\n","n":1})"},
+        // Two blocks, a public key between them left as it is.
+        {"-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n"
+         "-----BEGIN PUBLIC KEY-----\nBBBB\n-----END PUBLIC KEY-----\n"
+         "-----BEGIN EC PRIVATE KEY-----\nCCCC\n-----END EC PRIVATE KEY-----\n",
+         "[REDACTED]\n-----BEGIN PUBLIC KEY-----\nBBBB\n-----END PUBLIC KEY-----\n[REDACTED]\n"},
+        // No end, or another block's end: masked to the end of the text.
+        {"log: -----BEGIN PRIVATE KEY-----\nMC4CAQAw", "log: [REDACTED]"},
+        {"-----BEGIN PRIVATE KEY-----\nMC4C\n-----END PUBLIC KEY-----\nrest", "[REDACTED]"},
+    })));
+}
+
+// A key rule ends an unquoted value at the first blank or at the line's end,
+// which is inside "-----BEGIN PRIVATE KEY-----" or right after it: the block
+// that starts in such a value goes with it, to its END line.
+TEST_CASE("redact masks a PEM private key block that is the value of a secret name",
+          "[redact][signing]")
+{
+    check_row(GENERATE(values<Row>({
+        {"signing_private_key=-----BEGIN PRIVATE KEY-----\n"
+         "MC4CAQAwBQYDK2VwBCIEIJ1hsZ3v/VpguoRK9JLsLMREScVpezJpGXA7rAMcrn9g\n"
+         "-----END PRIVATE KEY-----\nnext",
+         "signing_private_key=[REDACTED]\nnext"},
+        {"RP_SIGNING_KEY_BASE64=-----BEGIN PRIVATE KEY-----\r\nMC4C\r\n"
+         "-----END PRIVATE KEY-----\r\n",
+         "RP_SIGNING_KEY_BASE64=[REDACTED]\r\n"},
+        {"signing_key: -----BEGIN PRIVATE KEY-----\nMC4C\n-----END PRIVATE KEY-----\n",
+         "signing_key: [REDACTED]\n"},
+        {"signing_key_base64 = -----BEGIN PRIVATE KEY-----\nMC4C\n-----END PRIVATE KEY-----",
+         "signing_key_base64 = [REDACTED]"},
+        {"password: -----BEGIN RSA PRIVATE KEY-----\nMIIE\nAAAA\n-----END RSA PRIVATE KEY----- x",
+         "password: [REDACTED] x"},
+        {"client_secret=-----BEGIN EC PRIVATE KEY-----\nCCCC\n-----END EC PRIVATE KEY-----&a=1",
+         "client_secret=[REDACTED]&a=1"},
+        // Further along the value's line, and behind a header's scheme.
+        {"signing_key: see -----BEGIN PRIVATE KEY-----\nMC4C\n-----END PRIVATE KEY-----\n",
+         "signing_key: [REDACTED]\n"},
+        {"Authorization: Bearer -----BEGIN PRIVATE KEY-----\nMC4C\n-----END PRIVATE KEY-----\n",
+         "Authorization: [REDACTED]\n"},
+        {"got Bearer -----BEGIN PRIVATE KEY-----\nMC4C\n-----END PRIVATE KEY-----\n",
+         "got Bearer [REDACTED]\n"},
+        // No END line: to the end of the text, as for a block on its own.
+        {"signing_key=-----BEGIN PRIVATE KEY-----\nMC4CAQAw", "signing_key=[REDACTED]"},
+        // A public key as such a value loses its first word only, as before.
+        {"signing_key=-----BEGIN PUBLIC KEY-----\nMCow\n-----END PUBLIC KEY-----\n",
+         "signing_key=[REDACTED] PUBLIC KEY-----\nMCow\n-----END PUBLIC KEY-----\n"},
+        // A quoted value ends at its quote; a block after it is masked by itself.
+        {"password=\"x\" -----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n",
+         "password=\"[REDACTED]\" [REDACTED]\n"},
+    })));
+}
+
+// A label isn't letters only (ED25519), and a PGP block's doesn't end in
+// "PRIVATE KEY": any label that holds the two words is a private key's.
+TEST_CASE("redact masks a private key block whose label has digits or goes on after the words",
+          "[redact][signing]")
+{
+    check_row(GENERATE(values<Row>({
+        {"-----BEGIN ED25519 PRIVATE KEY-----\nMC4C\n-----END ED25519 PRIVATE KEY-----\n",
+         "[REDACTED]\n"},
+        {"-----BEGIN PGP PRIVATE KEY BLOCK-----\n\nlQOYBF\n=AbCd\n"
+         "-----END PGP PRIVATE KEY BLOCK-----\nnext",
+         "[REDACTED]\nnext"},
+        {"key: -----BEGIN X25519 PRIVATE KEY-----\nMC4C", "key: [REDACTED]"},
+        {"-----BEGIN PGP PUBLIC KEY BLOCK-----\nmQEN\n-----END PGP PUBLIC KEY BLOCK-----\n",
+         "-----BEGIN PGP PUBLIC KEY BLOCK-----\nmQEN\n-----END PGP PUBLIC KEY BLOCK-----\n"},
+    })));
+}
+
+TEST_CASE("redact reads a megabyte of PEM headers without an end in one pass", "[redact][signing]")
+{
+    std::string text;
+    while (text.size() < 1'000'000) {
+        text += "-----BEGIN PRIVATE KEY-----\nMC4C\n";
+    }
+    CHECK(rp::redact(text) == "[REDACTED]");
+}

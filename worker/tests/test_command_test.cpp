@@ -11,7 +11,9 @@
 
 #include "restore_command_lab.hpp"
 #include "result_lab.hpp"
+#include "signing_lab.hpp"
 
+#include "../src/file_read.hpp"
 #include "../src/text_table.hpp"
 
 #include <rp/canonical_json.hpp>
@@ -23,6 +25,7 @@
 #include <rp/result_schema.hpp>
 #include <rp/run_status.hpp>
 #include <rp/sha256.hpp>
+#include <rp/signer.hpp>
 #include <rp/step_timer.hpp>
 #include <rp/test_command.hpp>
 #include <rp/version.hpp>
@@ -1525,8 +1528,36 @@ std::set<std::string> names_in(const std::filesystem::path& folder)
 }
 
 const std::set<std::string> kTextFiles{"items.csv", "veeam-session.log"};
+// W4.3: a complete folder, signed.
+const std::set<std::string> kSignedFolder{"items.csv", "result.json", "signature.json",
+                                          "veeam-session.log"};
 
 const std::string kPng = std::string{"\x89PNG\r\n\x1a\n"} + "a picture";
+
+// What `rpworker signer verify` will say of the folder under the Harness's
+// public key (RFC 8032's test key 1): the stage-2 folder verifier on the
+// folder's own files.
+rp::Verification verify_folder(const std::filesystem::path& folder,
+                               std::string_view key_base64 = rp::test::kSigningKey1Base64)
+{
+    const rp::SigningKey key = rp::test::signing_key(key_base64);
+    const rp::PublicKey public_key = rp::test::public_key_of(key);
+    const std::optional<std::vector<std::string>> names = rp::list_folder(folder);
+    REQUIRE(names);
+    return rp::Signer::verify_folder(rp::folder_reader(folder), *names, public_key);
+}
+
+// The two lines that end a signed run's stdout: the signature's, with the
+// SHA-256 of result.json as it is on disk and the Harness key's ID, then the
+// folder's.
+std::string signed_lines(const std::filesystem::path& folder, bool screenshot = false)
+{
+    const std::optional<std::string> result = file_bytes(folder / "result.json");
+    REQUIRE(result);
+    return "signed " + rp::sha256_hex(*result) + " key " + rp::test::signing_key().key_id() +
+           "\nevidence " + utf8(folder) + ": result.json, signature.json, items.csv, " +
+           "veeam-session.log" + (screenshot ? ", screenshot.png" : "") + "\n";
+}
 
 } // namespace
 
@@ -1641,6 +1672,9 @@ TEST_CASE("test --evidence: a file that can't be written changes no status; exit
     const auto [refused, outcome, code] = GENERATE(table<std::string, std::string, int>({
         {"items.csv", "pass", rp::exit_code::config},
         {"veeam-session.log", "pass", rp::exit_code::config},
+        // W4.3: the signature's file, written before the result's.
+        {"signature.json", "pass", rp::exit_code::config},
+        {"signature.json", "fail", rp::exit_code::restore},
         {"result.json", "pass", rp::exit_code::config},
         {"result.json", "fail", rp::exit_code::restore},
     }));
@@ -1667,7 +1701,11 @@ TEST_CASE("test --evidence: a file that can't be written changes no status; exit
                          ": could not be written\n");
     CHECK_THAT(lab.body(run), ContainsSubstring("\nstatus " + outcome + ": "));
     CHECK_THAT(run.out, !ContainsSubstring("evidence "));
+    CHECK_THAT(run.out, !ContainsSubstring("signed "));
     CHECK_FALSE(std::filesystem::exists(lab.run_folder() / "result.json"));
+    // Nor a signature beside no result: one written before a result.json
+    // that then couldn't be is removed again.
+    CHECK_FALSE(std::filesystem::exists(lab.run_folder() / "signature.json"));
 }
 
 TEST_CASE("test --evidence: an attachment missing or changed after it was hashed: no "
@@ -1710,10 +1748,18 @@ TEST_CASE("test --evidence: a run that ended result_invalid leaves the text file
         ++captures;
         return std::nullopt;
     };
+    // W4.3: nor is anything signed.
+    int signs = 0;
+    lab.sign_result = [&](std::string_view canonical, const rp::SigningKey& key) {
+        ++signs;
+        return rp::Signer::sign(canonical, key);
+    };
 
     const Run run = evidence_run(lab);
 
     CHECK(captures == 0);
+    CHECK(signs == 0);
+    CHECK_THAT(run.out, !ContainsSubstring("signed "));
     CHECK(run.exit_code == rp::exit_code::config);
     CHECK(run.err == "result error: 1 schema violation(s), first at /connector/type\n"
                      "evidence error: " +
@@ -1734,6 +1780,11 @@ TEST_CASE("test --evidence: a result that isn't valid at the end keeps its statu
     lab.wall_now = [&lab] {
         return lab.cleanups.empty() ? rp::test::graph_lab::kNow : year_10000();
     };
+    int signs = 0;
+    lab.sign_result = [&](std::string_view canonical, const rp::SigningKey& key) {
+        ++signs;
+        return rp::Signer::sign(canonical, key);
+    };
 
     const Run run = evidence_run(lab);
 
@@ -1745,6 +1796,7 @@ TEST_CASE("test --evidence: a result that isn't valid at the end keeps its statu
                          "written\n");
     CHECK_THAT(lab.body(run), ContainsSubstring("\nstatus pass: "));
     CHECK(names_in(lab.run_folder()) == kTextFiles);
+    CHECK(signs == 0);
 }
 
 TEST_CASE("test --evidence: a screenshot never changes the status or the exit code",
@@ -1796,8 +1848,7 @@ TEST_CASE("test --evidence: a screenshot never changes the status or the exit co
     CHECK(result.at("screenshot") == expected);
     CHECK(result.at("attachments").size() == 2);
     CHECK(result.at("status").at("warnings").empty());
-    CHECK(names_in(lab.run_folder()) ==
-          std::set<std::string>{"items.csv", "result.json", "veeam-session.log"});
+    CHECK(names_in(lab.run_folder()) == kSignedFolder);
 }
 
 TEST_CASE("test --evidence: a captured screenshot is the third attachment",
@@ -1824,9 +1875,11 @@ TEST_CASE("test --evidence: a captured screenshot is the third attachment",
                {"size_bytes", kPng.size()}});
     CHECK(file_bytes(lab.run_folder() / "screenshot.png") == kPng);
     CHECK(asked_for == std::vector<std::string>{"sess-mail", "sess-sharepoint"});
-    CHECK_THAT(run.out, EndsWith("evidence " + utf8(lab.run_folder()) +
-                                 ": result.json, items.csv, veeam-session.log, "
-                                 "screenshot.png\n"));
+    CHECK_THAT(run.out, EndsWith(signed_lines(lab.run_folder(), true)));
+    // The screenshot is under the signature too.
+    CHECK(rp::to_string(verify_folder(lab.run_folder()).word) == "verified");
+    std::ofstream(lab.run_folder() / "screenshot.png", std::ios::binary | std::ios::app) << "x";
+    CHECK(rp::to_string(verify_folder(lab.run_folder()).word) == "attachment_size");
 }
 
 TEST_CASE("test --evidence: a secret value in Veeam's words never reaches the run folder",
@@ -1910,8 +1963,7 @@ TEST_CASE("test --evidence: a run with no restore session asks for no screenshot
     const json result = lab.evidence_result();
     CHECK(result.at("restore").is_null());
     CHECK(result.at("screenshot") == json{{"state", "unavailable"}, {"reason", "no_page"}});
-    CHECK(names_in(lab.run_folder()) ==
-          std::set<std::string>{"items.csv", "result.json", "veeam-session.log"});
+    CHECK(names_in(lab.run_folder()) == kSignedFolder);
 }
 
 TEST_CASE("test --evidence: a run that stops before the sample still leaves its folder: the "
@@ -1961,8 +2013,7 @@ TEST_CASE("test --evidence: the run folder holds result.json, veeam-session.log 
     INFO(run.err);
     REQUIRE(run.exit_code == rp::exit_code::ok);
     CHECK(run.err.empty());
-    CHECK(names_in(lab.run_folder()) ==
-          std::set<std::string>{"items.csv", "result.json", "veeam-session.log"});
+    CHECK(names_in(lab.run_folder()) == kSignedFolder);
     CHECK(names_in(lab.evidence_root()) == std::set<std::string>{kRunId});
 
     // result.json: valid, canonical, the finished result (lab.evidence_result
@@ -2009,11 +2060,11 @@ TEST_CASE("test --evidence: the run folder holds result.json, veeam-session.log 
               "\",\"rp-canary-01.pdf\",\"manifest\",\"bytes\",\"" + file_hash + "\",\"" +
               file_hash + "\",\"restored\",\"yes\",\"match\",\"\",\"verified\",\"\",246000\n");
 
-    // The folder's line is the last on stdout, after the timings' table.
+    // The signature's line and then the folder's are the last on stdout,
+    // after the timings' table (W4.3).
     REQUIRE(lab.timings.size() == 1);
-    CHECK_THAT(run.out, EndsWith(timings_table(lab.timings[0]) + "evidence " +
-                                 utf8(lab.run_folder()) +
-                                 ": result.json, items.csv, veeam-session.log\n"));
+    CHECK_THAT(run.out,
+               EndsWith(timings_table(lab.timings[0]) + signed_lines(lab.run_folder())));
 }
 
 TEST_CASE("test --evidence: a run ID the run made names its folder", "[test_command][evidence]")
@@ -2085,4 +2136,427 @@ TEST_CASE("write shared/testdata/result-v1/valid.json from the whole pipeline's 
     file << text;
     file.close();
     REQUIRE(file);
+}
+
+// --- --evidence signs the result (W4.3, docs/decisions.md 2026-10-05) ------------------
+// The Harness's signing key is RFC 8032's published test key 1.
+
+// The Done-when (#46), offline: a whole run's folder verifies under the
+// Worker's public key, and no longer does once a byte of an item's hash is
+// changed.
+TEST_CASE("test --evidence: the run folder is signed: it verifies under the public key, and "
+          "fails with hash_mismatch after one digit of an item's hash is changed",
+          "[test_command][evidence][signing][acceptance]")
+{
+    TestLab lab;
+    // Neither line is out before result.json is written.
+    std::optional<std::string> out_at_result;
+    std::vector<std::string> written;
+    lab.write_evidence_file = [&](const std::filesystem::path& path, std::string_view content) {
+        written.push_back(utf8(path.filename()));
+        if (written.back() == "result.json") {
+            out_at_result = lab.fake.out->str();
+        }
+        lab.dir.write(std::filesystem::relative(path, lab.dir.path()), content);
+        return true;
+    };
+
+    const Run run = evidence_run(lab);
+
+    INFO(run.out);
+    INFO(run.err);
+    REQUIRE(run.exit_code == rp::exit_code::ok);
+    CHECK(run.err.empty());
+    CHECK(written == std::vector<std::string>{"items.csv", "veeam-session.log",
+                                              "signature.json", "result.json"});
+    REQUIRE(names_in(lab.run_folder()) == kSignedFolder);
+    REQUIRE(out_at_result);
+    CHECK_THAT(*out_at_result, !ContainsSubstring("signed "));
+    CHECK_THAT(*out_at_result, !ContainsSubstring("evidence "));
+
+    // signature.json: its five keys, over the bytes of result.json as they
+    // are on disk, by the Harness's key.
+    const std::string result_text = *file_bytes(lab.run_folder() / "result.json");
+    const std::string signature_text = *file_bytes(lab.run_folder() / "signature.json");
+    const json signature = json::parse(signature_text);
+    CHECK(signature_text == rp::canonical_json(signature));
+    CHECK(keys_of(signature) ==
+          std::set<std::string>{"algorithm", "bundle_sha256", "format", "key_id", "signature"});
+    CHECK(signature.at("format") == "restoreproof.signature.v1");
+    CHECK(signature.at("algorithm") == "ed25519");
+    CHECK(signature.at("bundle_sha256") == rp::sha256_hex(result_text));
+    CHECK(signature.at("key_id") == rp::test::signing_key().key_id());
+
+    // The result never lists the signature, nor holds any of its fields.
+    const json result = lab.evidence_result();
+    CHECK(keys_of(result) == kResultKeys);
+    REQUIRE(result.at("attachments").size() == 2);
+    CHECK_THAT(result_text, !ContainsSubstring("signature"));
+
+    // The two lines, last on stdout.
+    REQUIRE(lab.timings.size() == 1);
+    CHECK_THAT(run.out,
+               EndsWith(timings_table(lab.timings[0]) + signed_lines(lab.run_folder())));
+
+    // The folder verifier's answer, as `rpworker signer verify` will give it.
+    const rp::Verification verified = verify_folder(lab.run_folder());
+    CHECK(rp::to_string(verified.word) == "verified");
+    CHECK(verified.bundle_sha256 == rp::sha256_hex(result_text));
+    CHECK(verified.key_id == rp::test::signing_key().key_id());
+    CHECK(verified.notes.empty());
+    // Under another key it is that key's word.
+    CHECK(rp::to_string(verify_folder(lab.run_folder(), rp::test::signing_key2_base64()).word) ==
+          "wrong_key");
+
+    // One digit of an item's hash changed: the file is still canonical and
+    // still a valid result, and no longer the bytes that were signed.
+    const std::string hash = result.at("expected").at("items").at(0).at("sha256");
+    std::string edited = result_text;
+    const std::size_t at = edited.find(hash);
+    REQUIRE(at != std::string::npos);
+    edited[at] = edited[at] == '0' ? '1' : '0';
+    REQUIRE(rp::validate_result(json::parse(edited)).valid);
+    std::ofstream(lab.run_folder() / "result.json", std::ios::binary | std::ios::trunc) << edited;
+    CHECK(rp::to_string(verify_folder(lab.run_folder()).word) == "hash_mismatch");
+}
+
+TEST_CASE("test --evidence: a signing key that is unset or isn't one stops the run before its "
+          "run line, before the schema, the manifest, the mutex and any Veeam call",
+          "[test_command][evidence][signing]")
+{
+    using Key = std::optional<std::string>;
+    const std::string not_set =
+        "config error: RP_SIGNING_KEY_BASE64 is not set; --evidence signs the result\n";
+    const std::string not_a_key = "config error: RP_SIGNING_KEY_BASE64 is not an Ed25519 "
+                                  "private key (Base64 of PKCS#8 DER)\n";
+    const std::string seed{rp::test::kSigningSeed1Hex};
+    const auto [name, key, line] = GENERATE_COPY(table<std::string, Key, std::string>({
+        {"unset", std::nullopt, not_set},
+        {"empty", std::string{}, not_set},
+        {"not Base64", std::string{"SENTINEL not base64 !!"}, not_a_key},
+        {"47 bytes", rp::test::pkcs8_base64(seed.substr(2)), not_a_key},
+        {"49 bytes", rp::test::pkcs8_base64(seed + "00"), not_a_key},
+        // X25519's header: another algorithm's key of the same length.
+        {"another algorithm",
+         rp::base64_encode(rp::test::bytes_from_hex("302e020100300506032b656e04220420" + seed)),
+         not_a_key},
+        {"the bare seed", rp::base64_encode(rp::test::bytes_from_hex(seed)), not_a_key},
+        {"the PEM, not its body line",
+         "-----BEGIN PRIVATE KEY-----\n" + std::string{rp::test::kSigningKey1Base64} +
+             "\n-----END PRIVATE KEY-----\n",
+         not_a_key},
+        {"a line end after it", std::string{rp::test::kSigningKey1Base64} + "\n", not_a_key},
+    }));
+    CAPTURE(name);
+    TestLab lab;
+    const Key value = key;
+    lab.load_secrets = [value] {
+        return rp::Secrets{"rp-veeam", "Sentinel-Veeam-Password-9c2e",
+                           rp::test::graph_lab::pfx_base64(),
+                           std::string{rp::test::graph_lab::kPfxPassword}, value};
+    };
+    int schema_asked = 0;
+    lab.schema_ready = [&] {
+        ++schema_asked;
+        return true;
+    };
+    // Said before a manifest that doesn't load, too.
+    lab.dir.write("seed-manifest.json", "{");
+
+    const Run run = evidence_run(lab);
+
+    CHECK(run.exit_code == rp::exit_code::config);
+    CHECK(run.out.empty());
+    CHECK(run.err == line);
+    CHECK(lab.load_secrets_calls == 1);
+    CHECK(schema_asked == 0);
+    CHECK(lab.lock_calls == 0);
+    CHECK(lab.make_connector_calls == 0);
+    CHECK(lab.fake.points_calls == 0);
+    CHECK(lab.timings.empty());
+    CHECK_FALSE(std::filesystem::exists(lab.evidence_root()));
+    CHECK_THAT(lab.log(), !ContainsSubstring("SENTINEL"));
+}
+
+TEST_CASE("test --evidence: the signing key is looked at only after the Graph certificate",
+          "[test_command][evidence][signing]")
+{
+    TestLab lab;
+    lab.load_secrets = [] {
+        return rp::Secrets{"rp-veeam", "Sentinel-Veeam-Password-9c2e", std::nullopt,
+                           std::nullopt, std::nullopt};
+    };
+
+    const Run run = evidence_run(lab);
+
+    CHECK(run.exit_code == rp::exit_code::config);
+    CHECK(run.out.empty());
+    CHECK(run.err == "config error: RP_GRAPH_CERT_PFX_BASE64 is not set\n");
+}
+
+TEST_CASE("without --evidence the signing key is never parsed nor required, and nothing is "
+          "signed",
+          "[test_command][signing]")
+{
+    using Key = std::optional<std::string>;
+    const std::string command = GENERATE("restore", "test", "test --json");
+    const Key key = GENERATE(Key{}, Key{"NOT-A-KEY-7f3a !"});
+    CAPTURE(command, key.has_value());
+    TestLab lab;
+    if (command == "restore") {
+        lab.command = rp::run_restore_command;
+    }
+    lab.fake.pool.mail = {carol_mail(1)};
+    lab.load_secrets = [key] {
+        return rp::Secrets{"rp-veeam", "Sentinel-Veeam-Password-9c2e",
+                           rp::test::graph_lab::pfx_base64(),
+                           std::string{rp::test::graph_lab::kPfxPassword}, key};
+    };
+    int signs = 0;
+    lab.sign_result = [&](std::string_view, const rp::SigningKey&) -> std::optional<rp::SignedResult> {
+        ++signs;
+        return std::nullopt;
+    };
+    Args args = kThree;
+    const std::string json_arg = lab.json_arg();
+    if (command == "test --json") {
+        args.push_back("--json");
+        args.push_back(json_arg);
+    }
+
+    const Run run = lab.run(args);
+
+    INFO(run.err);
+    CHECK(run.exit_code == rp::exit_code::ok);
+    CHECK(run.err.empty());
+    CHECK(signs == 0);
+    CHECK_THAT(run.out, !ContainsSubstring("signed "));
+    CHECK_THAT(run.out + run.err + lab.log(), !ContainsSubstring("NOT-A-KEY"));
+    // --json is one file, unsigned: no signature beside it.
+    CHECK(std::filesystem::exists(lab.json_path()) == (command == "test --json"));
+    CHECK_FALSE(std::filesystem::exists(lab.dir.path() / "signature.json"));
+    // The connector's copy of the secrets never holds the key's text.
+    REQUIRE(lab.connector_secrets);
+    CHECK_FALSE(lab.connector_secrets->signing_key_base64);
+    CHECK(lab.connector_secrets->veeam_password == "Sentinel-Veeam-Password-9c2e");
+}
+
+TEST_CASE("test --evidence: the connector's copy of the secrets never holds the signing key",
+          "[test_command][evidence][signing]")
+{
+    TestLab lab;
+
+    const Run run = evidence_run(lab);
+
+    CHECK(run.exit_code == rp::exit_code::ok);
+    REQUIRE(lab.connector_secrets);
+    CHECK_FALSE(lab.connector_secrets->signing_key_base64);
+    CHECK(lab.connector_secrets->graph_cert_pfx_base64 == rp::test::graph_lab::pfx_base64());
+}
+
+TEST_CASE("test --evidence: a result that can't be signed changes no status; exit 0 becomes 1, "
+          "any other is kept; the text files, no signature.json and no result.json",
+          "[test_command][evidence][signing]")
+{
+    const auto [outcome, code] = GENERATE(table<std::string, int>({
+        {"pass", rp::exit_code::config},
+        {"fail", rp::exit_code::restore},
+    }));
+    const bool throws = GENERATE(false, true);
+    CAPTURE(outcome, throws);
+    TestLab lab;
+    lab.fake.pool.mail = {carol_mail(1)};
+    if (outcome == "fail") {
+        lab.targets.after[kind_slot(rp::connector::ItemKind::sharepoint)] = json::array();
+    }
+    std::vector<std::string> signed_texts;
+    lab.sign_result = [&](std::string_view canonical,
+                          const rp::SigningKey& key) -> std::optional<rp::SignedResult> {
+        // The run's own key, and the text that would have been written.
+        signed_texts.emplace_back(canonical);
+        if (key.key_id() != rp::test::signing_key().key_id()) {
+            signed_texts.emplace_back("another key");
+        }
+        if (throws) {
+            throw std::runtime_error("SENTINEL the key store");
+        }
+        return std::nullopt;
+    };
+
+    const Run run = evidence_run(lab);
+
+    INFO(run.out);
+    CHECK(run.exit_code == code);
+    CHECK(run.err == "evidence error: " + utf8(lab.run_folder()) +
+                         ": the result couldn't be signed; no result.json was written\n");
+    CHECK_THAT(lab.body(run), ContainsSubstring("\nstatus " + outcome + ": "));
+    CHECK_THAT(run.out, !ContainsSubstring("evidence "));
+    CHECK_THAT(run.out, !ContainsSubstring("signed "));
+    CHECK(names_in(lab.run_folder()) == kTextFiles);
+    REQUIRE(signed_texts.size() == 1);
+    const json asked = json::parse(signed_texts[0]);
+    CHECK(signed_texts[0] == rp::canonical_json(asked));
+    CHECK(rp::validate_result(asked).valid);
+    CHECK(asked.at("status").at("status") == outcome);
+}
+
+TEST_CASE("test --evidence: a run that ended fail or error with a valid result is signed "
+          "exactly as a pass is",
+          "[test_command][evidence][signing]")
+{
+    const auto [status, code] = GENERATE(table<std::string, int>({
+        {"fail", rp::exit_code::restore},
+        {"error", rp::exit_code::transient},
+    }));
+    CAPTURE(status);
+    TestLab lab;
+    lab.fake.pool.mail = {carol_mail(1)};
+    if (status == "fail") {
+        lab.targets.after[kind_slot(rp::connector::ItemKind::sharepoint)] = json::array();
+    } else {
+        lab.fake.candidates_throw = [] {
+            throw rp::connector::TransientError("Veeam unreachable");
+        };
+    }
+
+    const Run run = evidence_run(lab);
+
+    INFO(run.out);
+    CHECK(run.exit_code == code);
+    CHECK(lab.evidence_result().at("status").at("status") == status);
+    CHECK(names_in(lab.run_folder()) == kSignedFolder);
+    CHECK_THAT(run.out, EndsWith(signed_lines(lab.run_folder())));
+    const rp::Verification verified = verify_folder(lab.run_folder());
+    CHECK(rp::to_string(verified.word) == "verified");
+    CHECK(verified.bundle_sha256 ==
+          rp::sha256_hex(*file_bytes(lab.run_folder() / "result.json")));
+}
+
+TEST_CASE("test --evidence: with stdout lost the folder is still signed and written, without "
+          "its two lines",
+          "[test_command][evidence][signing]")
+{
+    TestLab lab;
+    lab.fake.pool.mail = {carol_mail(1)};
+    // The header fits; the tables don't.
+    LimitedStreamBuf buffer(expected_header().size() + 5);
+    std::ostream out(&buffer);
+    const std::string root = lab.evidence_arg();
+    Args args = kThree;
+    args.push_back("--evidence");
+    args.push_back(root);
+
+    const auto [code, err] = lab.run_to(args, out);
+
+    INFO(buffer.text);
+    INFO(err);
+    CHECK(code == rp::exit_code::config);
+    CHECK_THAT(buffer.text, !ContainsSubstring("signed "));
+    CHECK(names_in(lab.run_folder()) == kSignedFolder);
+    CHECK(rp::to_string(verify_folder(lab.run_folder()).word) == "verified");
+}
+
+// Point 3's sentinel: the key, as the variable carries it and as its seed
+// would leak (Base64, hex), in no file of the folder, no --record fixture, no
+// log line and neither stream, also when Veeam's words and a Graph answer
+// hold it.
+TEST_CASE("test --evidence --record: the signing key is in no file of the run folder, no "
+          "fixture, no log line and neither stream",
+          "[test_command][evidence][signing][secrets][record]")
+{
+    namespace gl = rp::test::graph_lab;
+    const std::string key_text{rp::test::kSigningKey1Base64};
+    const std::string seed_hex{rp::test::kSigningSeed1Hex};
+    const std::string seed_base64 = rp::base64_encode(rp::test::bytes_from_hex(seed_hex));
+    const std::vector<std::string> shapes{key_text, seed_base64, seed_hex};
+    TestLab lab;
+    lab.fake.pool.mail = {carol_mail(1)};
+    lab.fake.answer = [&](const rp::connector::RestoreSpec& spec) {
+        rp::connector::RestoreResult result = restored(spec);
+        result.log = "session sess-mail (mail): Success\n"
+                     "Warning agent: environment RP_SIGNING_KEY_BASE64 " + key_text + "\n"
+                     "Warning agent: seed " + seed_base64 + "\n"
+                     "Warning agent: seed " + seed_hex + "\n";
+        return result;
+    };
+    // An exchange that holds the key's text: the recorder refuses its file.
+    json edited = rp::test::load_fixture_json("graph", "restoretarget-drive-200");
+    edited["body"]["description"] = key_text;
+    lab.targets.graph.on(rp::HttpMethod::get, gl::drive_url(), {rp::test::to_response(edited)});
+    const std::filesystem::path rec = lab.dir.path() / "rec";
+    const std::string rec_arg = utf8(rec);
+    Args args = kThree;
+    args.push_back("--record");
+    args.push_back(rec_arg);
+
+    const Run run = evidence_run(lab, args);
+
+    INFO(run.out);
+    INFO(run.err);
+    // The recording isn't complete: a pass exits 1.
+    CHECK(run.exit_code == rp::exit_code::config);
+    CHECK_THAT(run.err, ContainsSubstring("record error: graph/"));
+    CHECK_THAT(run.out, ContainsSubstring("\nstatus pass: "));
+    // The signature's line, the folder's, then the recording's, last.
+    CHECK_THAT(run.out, ContainsSubstring(signed_lines(lab.run_folder()) + "recorded "));
+    CHECK(names_in(lab.run_folder()) == kSignedFolder);
+    CHECK(rp::to_string(verify_folder(lab.run_folder()).word) == "verified");
+    CHECK(file_bytes(lab.run_folder() / "veeam-session.log") ==
+          "session sess-mail (mail): Success\n[withheld: held a secret value]\n"
+          "[withheld: held a secret value]\n[withheld: held a secret value]\n");
+    CHECK_THAT(lab.log(), ContainsSubstring("SECURITY: evidence: 3 line(s) held a secret value "
+                                            "and were withheld"));
+
+    std::size_t files = 0;
+    for (const std::filesystem::path& root : {lab.run_folder(), rec}) {
+        for (const auto& entry : std::filesystem::recursive_directory_iterator(root)) {
+            if (!entry.is_regular_file()) {
+                continue;
+            }
+            ++files;
+            const std::string bytes = *file_bytes(entry.path());
+            for (const std::string& shape : shapes) {
+                CAPTURE(utf8(entry.path()), shape.size());
+                CHECK(bytes.find(shape) == std::string::npos);
+            }
+        }
+    }
+    // The folder's four files and the recording's fixtures were looked at.
+    CHECK(files > 8);
+    const std::string said = run.out + run.err + lab.log();
+    for (const std::string& shape : shapes) {
+        CAPTURE(shape.size());
+        CHECK(said.find(shape) == std::string::npos);
+    }
+}
+
+TEST_CASE("test --evidence: a result that holds the signing key in any of its shapes is never "
+          "written nor signed",
+          "[test_command][evidence][signing][secrets]")
+{
+    const std::string seed_hex{rp::test::kSigningSeed1Hex};
+    const std::string shape =
+        GENERATE_COPY(std::string{rp::test::kSigningKey1Base64},
+                      rp::base64_encode(rp::test::bytes_from_hex(seed_hex)), seed_hex);
+    TestLab lab;
+    rp::connector::MailCandidate mail = carol_mail(1);
+    mail.selector.subject = "fwd: " + shape;
+    lab.fake.pool.mail = {mail};
+    int signs = 0;
+    lab.sign_result = [&](std::string_view canonical, const rp::SigningKey& key) {
+        ++signs;
+        return rp::Signer::sign(canonical, key);
+    };
+
+    const Run run = evidence_run(lab);
+
+    CHECK(run.exit_code == rp::exit_code::config);
+    CHECK(run.err == "evidence error: " + utf8(lab.run_folder()) +
+                         ": the result holds a secret value; no result.json was written\n");
+    CHECK(signs == 0);
+    CHECK(names_in(lab.run_folder()) == kTextFiles);
+    for (const auto& entry : std::filesystem::directory_iterator(lab.run_folder())) {
+        CAPTURE(utf8(entry.path().filename()));
+        CHECK(file_bytes(entry.path())->find(shape) == std::string::npos);
+    }
 }

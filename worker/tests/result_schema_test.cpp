@@ -8,6 +8,7 @@
 
 #include "../src/result_schema_detail.hpp"
 #include "result_lab.hpp"
+#include "schema_walk.hpp"
 
 #include <rp/canonical_json.hpp>
 #include <rp/connector_registry.hpp>
@@ -33,6 +34,7 @@ namespace {
 
 using nlohmann::json;
 using rp::ResultValidation;
+using rp::test::problems_of;
 using rp::validate_result;
 
 constexpr const char* kSchemaFile = "schemas/result.v1.json";
@@ -46,92 +48,6 @@ json schema()
 json at(const std::string& pointer)
 {
     return schema().at(json::json_pointer(pointer));
-}
-
-// --- the keyword walk -------------------------------------------------------
-
-// Point 3's list: what draft 7 (the C++ validator) and 2020-12 (Python's)
-// read alike.
-const std::set<std::string> kKeywords = {
-    "$schema", "$id",       "title",     "description", "type",       "enum",
-    "const",   "properties", "required", "additionalProperties",      "items",
-    "minItems", "maxItems", "minLength", "maxLength",   "pattern",    "minimum",
-    "maximum", "allOf",     "anyOf",     "oneOf",       "not",        "if",
-    "then",    "else",      "$defs",     "$ref"};
-
-// Every problem of the schema at `where`: a keyword outside the list, a $ref
-// with a sibling, `items` that isn't one schema, an object type left open, a
-// pattern with a backslash class. Descends through schema positions only, so
-// a property of the result named `format`, `items`, `type` or `status` is
-// never read as a keyword.
-void walk(const json& node, const std::string& where, std::vector<std::string>& problems)
-{
-    if (!node.is_object()) {
-        problems.push_back(where + ": not an object schema");
-        return;
-    }
-    if (node.contains("$ref") && node.size() != 1) {
-        problems.push_back(where + ": a $ref with a sibling");
-    }
-    if (node.contains("type") && node.at("type") == "object" &&
-        (!node.contains("additionalProperties") || node.at("additionalProperties") != false)) {
-        problems.push_back(where + ": an object left open");
-    }
-    for (const auto& [key, value] : node.items()) {
-        const std::string here = where + "/" + key;
-        if (!kKeywords.contains(key)) {
-            problems.push_back(here + ": not an allowed keyword");
-            continue;
-        }
-        if (key == "properties" || key == "$defs") {
-            if (!value.is_object()) {
-                problems.push_back(here + ": not an object");
-                continue;
-            }
-            for (const auto& [name, member] : value.items()) {
-                walk(member, here + "/" + name, problems);
-            }
-        } else if (key == "items" || key == "not" || key == "if" || key == "then" ||
-                   key == "else") {
-            walk(value, here, problems);
-        } else if (key == "allOf" || key == "anyOf" || key == "oneOf") {
-            if (!value.is_array() || value.empty()) {
-                problems.push_back(here + ": not a list of schemas");
-                continue;
-            }
-            for (std::size_t i = 0; i < value.size(); ++i) {
-                walk(value[i], here + "/" + std::to_string(i), problems);
-            }
-        } else if (key == "additionalProperties") {
-            if (value.is_object()) {
-                walk(value, here, problems);
-            } else if (!value.is_boolean()) {
-                problems.push_back(here + ": neither a schema nor a boolean");
-            }
-        } else if (key == "pattern") {
-            if (!value.is_string()) {
-                problems.push_back(here + ": not a string");
-                continue;
-            }
-            const std::string& pattern = value.get_ref<const std::string&>();
-            for (std::size_t i = 0; i + 1 < pattern.size(); ++i) {
-                if (pattern[i] == '\\') {
-                    if (std::string_view{"dDwWsSbB"}.find(pattern[i + 1]) !=
-                        std::string_view::npos) {
-                        problems.push_back(here + ": a backslash class");
-                    }
-                    ++i; // an escaped backslash escapes nothing after it
-                }
-            }
-        }
-    }
-}
-
-std::vector<std::string> problems_of(const json& root)
-{
-    std::vector<std::string> problems;
-    walk(root, "", problems);
-    return problems;
 }
 
 std::vector<std::string> strings(std::vector<std::string_view> views)
@@ -535,14 +451,67 @@ TEST_CASE("the result schema's reason pattern takes every reason the checker can
     }
 }
 
+// W4.3 point 1: the names of the containers a draw looked into are of mailboxes,
+// sites and OneDrives the run didn't test, so the result holds their count only.
+TEST_CASE("the result counts the containers a draw looked into and never names them",
+          "[result_schema]")
+{
+    const std::string kind = GENERATE("mail", "sharepoint", "onedrive");
+    INFO(kind);
+    const json::json_pointer random("/sample/" + kind + "/random");
+    const json names = json::array({"carol@contoso.example"});
+    REQUIRE(validate_result(base_document()).valid);
+    REQUIRE(base_document().at(random).at("containers_drawn") == 1);
+
+    SECTION("the old array of names beside the count")
+    {
+        json document = base_document();
+        document[random]["containers_listed"] = names;
+        REQUIRE_FALSE(validate_result(document).valid);
+    }
+    SECTION("the old array of names in place of the count")
+    {
+        json document = base_document();
+        document[random].erase("containers_drawn");
+        document[random]["containers_listed"] = names;
+        REQUIRE_FALSE(validate_result(document).valid);
+    }
+    SECTION("the count as an array of names")
+    {
+        json document = base_document();
+        document[random]["containers_drawn"] = names;
+        const ResultValidation result = validate_result(document);
+        REQUIRE_FALSE(result.valid);
+        REQUIRE(result.first_pointer == random.to_string() + "/containers_drawn");
+    }
+    SECTION("no count")
+    {
+        json document = base_document();
+        document[random].erase("containers_drawn");
+        REQUIRE_FALSE(validate_result(document).valid);
+    }
+    SECTION("a count below zero")
+    {
+        json document = base_document();
+        document[random]["containers_drawn"] = -1;
+        REQUIRE_FALSE(validate_result(document).valid);
+    }
+    SECTION("no container, or several")
+    {
+        json document = base_document();
+        document[random]["containers_drawn"] = GENERATE(0, 8);
+        REQUIRE(validate_result(document).valid);
+    }
+}
+
 TEST_CASE("the shared result documents validate as they say", "[result_schema]")
 {
     const json& cases = cases_file().at("cases");
     REQUIRE(cases_file().at("format") == std::string{rp::kResultFormat});
     // The file can't shrink unnoticed.
-    REQUIRE(cases.size() == 180);
+    REQUIRE(cases.size() == 183);
 
-    const std::size_t i = GENERATE(range(std::size_t{0}, std::size_t{180}));
+    const std::size_t i = GENERATE(range(std::size_t{0}, std::size_t{183}));
     const json& entry = cases.at(i);
     const std::string name = entry.at("name");
     INFO(name);
@@ -628,6 +597,36 @@ TEST_CASE("the embedded result schema loads into a validator", "[result_schema]"
     CHECK(rp::result_schema_ready());
     CHECK(rp::result_schema_ready());
     CHECK(validate_result(base_document()).valid);
+}
+
+// A validator that couldn't be loaded answers "not valid" like a document with
+// one fault, and says that it is no answer: a verifier must not read it as one.
+TEST_CASE("a validator that can't be loaded checks nothing, and says so", "[result_schema]")
+{
+    REQUIRE(validate_result(base_document()).valid);
+    CHECK_FALSE(validate_result(base_document()).not_checked);
+    json unknown_status = base_document();
+    unknown_status["status"]["status"] = "maybe";
+    CHECK_FALSE(validate_result(unknown_status).valid);
+    CHECK_FALSE(validate_result(unknown_status).not_checked);
+
+    rp::detail::set_result_validator_unavailable(true);
+    const bool ready = rp::result_schema_ready();
+    const ResultValidation good = validate_result(base_document());
+    const ResultValidation bad = validate_result(unknown_status);
+    rp::detail::set_result_validator_unavailable(false);
+
+    CHECK_FALSE(ready);
+    for (const ResultValidation& result : {good, bad}) {
+        CHECK_FALSE(result.valid);
+        CHECK(result.not_checked);
+        CHECK(result.violations == 1);
+        CHECK(result.first_pointer.empty());
+    }
+    // And it is there again afterwards: a failure isn't kept.
+    CHECK(rp::result_schema_ready());
+    CHECK(validate_result(base_document()).valid);
+    CHECK_FALSE(validate_result(base_document()).not_checked);
 }
 
 TEST_CASE("a document that isn't an object is not a result", "[result_schema]")

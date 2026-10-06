@@ -81,17 +81,10 @@ std::shared_ptr<FixtureRecorder> open_recording(std::optional<std::string_view> 
     if (!dir) {
         throw ConfigError("--record", "the --record path is not valid UTF-8");
     }
-    std::vector<std::string> known;
-    for (const std::optional<std::string>* secret :
-         {&secrets.veeam_password, &secrets.graph_cert_pfx_base64, &secrets.graph_cert_password}) {
-        if (*secret) {
-            known.push_back(**secret);
-        }
-    }
     return std::make_shared<FixtureRecorder>(
         std::move(*dir), "rpworker " + std::string{version()} + " " + std::string{command} +
                              " --record",
-        known);
+        secret_values(secrets));
 }
 
 std::unique_ptr<IHttpClient> recorded(std::unique_ptr<IHttpClient> client,

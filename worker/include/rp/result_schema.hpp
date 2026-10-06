@@ -30,6 +30,12 @@ struct ResultValidation {
     // otherwise, so no key of the document that the schema doesn't know is
     // ever repeated.
     std::string first_pointer;
+    // True when this is no answer about the document at all: the schema
+    // couldn't be loaded, or the validator threw (no memory). `valid` is false
+    // and `violations` 1 then, as for a document with one fault, so whoever
+    // must tell a document that isn't a result from a check that wasn't made
+    // (a verifier: rp/signer.hpp) reads this.
+    bool not_checked = false;
 };
 
 // Whether the validator is there: it is built from the embedded schema on the
@@ -43,7 +49,7 @@ bool result_schema_ready() noexcept;
 // Whether `document` is a restoreproof.result.v1 by the embedded schema
 // (loaded as result_schema_ready says); thread-safe. Never throws: a
 // schema that can't be loaded, or anything the validator throws, is one
-// violation with no pointer. An unsigned integer too large for a signed 64-bit
+// violation with no pointer and `not_checked` set. An unsigned integer too large for a signed 64-bit
 // value is refused here, as one violation at its place, before the validator
 // is asked: the library would read it as a negative number.
 ResultValidation validate_result(const nlohmann::json& document) noexcept;

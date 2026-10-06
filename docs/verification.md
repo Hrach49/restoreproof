@@ -570,7 +570,9 @@ Every run that printed its run line has one result: one JSON document, built by
 `rp::ResultBuilder` (`worker/include/rp/result_builder.hpp`) from what the run produced and
 validated by `rp::validate_result` (`rp/result_schema.hpp`) against
 `shared/schemas/result.v1.json`. `rpworker test --json <file>` writes it
-(`docs/worker-config.md`, "`--json <file>`"), and `--evidence <dir>` writes it into the run's folder (W4.2, "The run folder" below); W4.3 to W4.6 sign, timestamp and upload it. It
+(`docs/worker-config.md`, "`--json <file>`"), and `--evidence <dir>` writes it into the run's
+folder (W4.2, "The run folder" below) and signs it there (W4.3, "The signature" below); W4.4
+to W4.6 timestamp and upload it. It
 replaces W3.6's `rp.run-summary.v0`. The decisions are `docs/decisions.md` 2026-10-04, W4.1,
 approved as written, and its build notes.
 
@@ -595,7 +597,7 @@ the result invalid.
 | `status` | `verification::to_json(RunVerdict)` (W3.3, above) | never: a run without a verdict has no result |
 | `cleanup` | `to_json(RunCleanup)` (W3.4, above) | the run stopped before the clean before; `cleanup.after` when no clean after ran |
 | `timings` | `timing::to_json(RunTimings)` (W3.5): `{"spans": {...}}`, all eleven | never; a span that didn't run is `null` |
-| `attachments` | `to_json(std::vector<Attachment>)` (W4.2, "The run folder" below): the run folder's files beside `result.json`, `[{name, sha256, size_bytes}]`, sorted by name | no run folder is written (`restore`, `test` without `--evidence`), and in the result as it is first validated |
+| `attachments` | `to_json(std::vector<Attachment>)` (W4.2, "The run folder" below): the run folder's files that the result covers (never `result.json` or `signature.json`), `[{name, sha256, size_bytes}]`, sorted by name | no run folder is written (`restore`, `test` without `--evidence`), and in the result as it is first validated |
 | `screenshot` | `to_json(Screenshot)` (W4.2): `{"state": "captured"}` or `{"state": "unavailable", "reason": <code>}` | as `attachments` |
 
 The item rows are `expected.items[i]`, `restore.items[i]` and `check.items[i]`, joined by
@@ -604,7 +606,11 @@ The item rows are `expected.items[i]`, `restore.items[i]` and `check.items[i]`, 
 time `timings.spans.recovery`. There is no `command` and no `exit_code` (v0 had both): they
 are facts of one process, not of the run, so a lost stdout or an incomplete `--record`
 recording shows in the exit code and on stderr only. There is no `signature`, `tsa_token`,
-`bundle_sha256` or `worker_id` yet; W4.3 to W4.6 and W5.1 add theirs to the schema.
+`bundle_sha256` or `worker_id`, and no signature field will come: the signature is a file
+beside the result, and nothing is removed from the result before it is hashed (W4.3, "The
+signature" below; the shared case `signature-not-in-the-schema-yet` stays invalid). The
+timestamp will be a file of its own too (W4.4). `worker_id`, if W5.1 wants it signed, would be
+one more nullable key.
 
 ### The canonical form (`canonical-json-v1`)
 
@@ -622,8 +628,10 @@ recording shows in the exit code and on stderr only. There is no `signature`, `t
 With those rules Python's `json.dumps(value, sort_keys=True, separators=(",", ":"),
 ensure_ascii=False)` gives the same bytes. The vectors are
 `shared/testdata/canonical-json-v1.json` (33 accepted cases with their text and SHA-256, 9
-refusals), run by `worker/tests/canonical_json_test.cpp` and, the accepted ones, by
-`cloud/tests/test_canonical_json.py`.
+refusals), run by `worker/tests/canonical_json_test.cpp` and by
+`cloud/tests/test_canonical_json.py`, which since W4.3 runs them on the Python canonicaliser in
+`shared/tools/verify_bundle.py` (`parse_strict`, `canonical_json`): the accepted cases byte for
+byte, the refusals by their reason.
 
 ### The schema
 
@@ -645,8 +653,8 @@ mismatch `reason`.
 
 `shared/testdata/result-v1/` holds the documents both validators must judge alike: `valid.json`
 (a whole pipeline run of the Worker's tests, the lab's names replaced; since W4.2 the
-`result.json` of an `--evidence` run, so it lists two attachments) and `cases.json` (180
-small changes to it, 45 valid and 135 invalid). `worker/tests/result_schema_test.cpp` and
+`result.json` of an `--evidence` run, so it lists two attachments) and `cases.json` (183
+small changes to it, 45 valid and 138 invalid). `worker/tests/result_schema_test.cpp` and
 `cloud/tests/test_result_schema.py` run the same file (`docs/testing.md`, "The shared vectors
 and result documents").
 
@@ -736,17 +744,26 @@ No secret, and no exception's text. But more tenant data than stdout:
 - `expected.items`: subjects, sender addresses and names, Internet message IDs, sent and
   received times, and file names;
 - `sample.*.random.keys`: mailbox addresses, folder names and paths, mail subjects and
-  received times, site and list IDs, file names and OneDrive UPNs (`random_key`);
-- `sample.*.random.containers_listed`: the mailboxes, sites and OneDrives the draw looked
-  into, sampled or not (for an unresolved OneDrive, its URL).
+  received times, site and list IDs, file names and OneDrive UPNs (`random_key`). Each random
+  item's key is there a second time, as `expected.items[].key`.
 
-W4.1 keeps them: the Cloud's item rows and the report's Failures section need the item names,
-and the keys are what lets a draw be repeated. Today the file stays where the owner put it:
-keep it out of the repository. That ends with W4.6, which uploads the result; whether the
-random keys and `containers_listed` leave the network as they are, or are cut to counts and
-`pool_sha256` first, is still open (`docs/decisions.md` 2026-10-04, W4.1, Open). It must be
-settled before W4.3 signs the first result, not before W4.6 uploads it: a signed result is
-never edited (`docs/decisions.md` 2026-10-05, W4.2 point 10).
+The Cloud's item rows and the report's Failures section need the item names, and a random
+item's key is the one record of where it came from (mailbox, folder, site, path) when a
+failure has to be traced. Today the file stays where the owner put it: keep it out of the
+repository. That ends with W4.6, which uploads the result.
+
+**No container the run didn't sample is named.** Until W4.3 the result also held
+`sample.*.random.containers_listed`: up to eight mailboxes, sites and OneDrives per type that
+the draw looked into, sampled or not (for a OneDrive whose owner didn't resolve, its URL).
+W4.3 cut it to a count before the first signature, since a signed result is never edited:
+`sample.<kind>.random.containers_drawn` is how many containers the draw looked into, an
+integer, never their names. Nothing read the names, and they aren't what repeats a draw (the
+seed and the restore point give the same containers again, and `pool_sha256` shows the pool
+was the same). `containers_unresolved` still counts the OneDrives whose owner didn't resolve.
+The keys stay, both copies. This closes W4.1's Open point on the random keys and
+`containers_listed` (`docs/decisions.md` 2026-10-05, W4.3 point 1). The format changed in
+place, as it did for W4.2's two keys: no v1 result had been signed or uploaded, and the
+unsigned lab results of W4.1's and W4.2's Done-when runs no longer validate.
 
 ## The run folder (W4.2)
 
@@ -760,7 +777,11 @@ are in `docs/worker-config.md`, "`--evidence <dir>`". Nothing here changes a run
 | `items.csv` | `EvidenceBuilder::items_csv`: the expected set, the restore result, the check and the verdict | always |
 | `veeam-session.log` | `EvidenceBuilder::session_log`: `connector::RestoreResult::log` | always |
 | `screenshot.png` | a capturer (`RestoreCommandEnv::capture_screenshot`), when it captured one | when it is there |
+| `signature.json` | `rp::Signer::sign` over the result's canonical text (W4.3, "The signature" below) | never: it depends on the result's hash |
 | `result.json` | the finished result's canonical text | never: a file can't hold its own hash |
+
+`attachments` has one entry per file the result covers; `result.json` and `signature.json`
+are never listed.
 
 ### The order, and what a folder without `result.json` means
 
@@ -781,23 +802,32 @@ are in `docs/worker-config.md`, "`--evidence <dir>`". Nothing here changes a run
    `result.json`.
 6. Each attachment is read back and compared with its hash and size. One that is gone or
    differs stops here: `changed after it was hashed`, no `result.json`.
-7. `result.json` is written, exactly the canonical text that validated.
+7. The canonical text is signed with the run's key (W4.3). No signature stops here: `the
+   result couldn't be signed`, no `signature.json`, no `result.json`.
+8. `signature.json` is written. If it can't be: `could not be written`, no `result.json`.
+9. `result.json` is written last, exactly the canonical text that validated and was signed. If
+   it can't be, `signature.json` is removed again.
 
-So `result.json` is there only when the folder is complete, and a folder without it is a run
-with no result: `error result_invalid`, a finished result that isn't valid or holds a secret
-value, no verdict, a file that couldn't be written, or a process that ended in between. No
-cut-down result is written
+So `result.json` is there only when the folder is complete and signed, and a folder without it
+is a run with no result: `error result_invalid`, a finished result that isn't valid or holds a
+secret value, no verdict, a result that couldn't be signed, a file that couldn't be written, or
+a process that ended in between (between steps 8 and 9 that leaves a `signature.json` beside no
+result). No cut-down result is written
 for any of these (W4.1 point 5 stands). What the service reports to the Cloud for such a run
 is W4.8's question.
 
-W4.3 signs the result. Through `attachments` its signature then covers the other files; until
-then nothing but the read back in step 6 holds them.
+Through `attachments` the signature covers the other files: their names, hashes and sizes are
+inside the signed bytes. That `result.json` means complete is a statement about the Worker's
+order of writing, not a protection: until W4.5 sets the folder's ACL another local user can
+remove or add a file, so W4.6 and the Cloud require both files and run the verifier.
 
 ### `attachments` and `screenshot`
 
 `attachments` is `null` without a run folder, else two or three `{name, sha256, size_bytes}`,
 sorted by `name`; `name` is one of `items.csv`, `screenshot.png`, `veeam-session.log`. The
-schema's keyword subset can't say "each name once" or "in this order"; the builder's tests do.
+schema's keyword subset can't say "each name once" or "in this order"; the builder's tests do,
+and a verifier answers `attachment_twice` for a name listed twice and `screenshot_missing` for
+`captured` without `screenshot.png` listed ("The signature" below).
 
 `screenshot` is `null` without a run folder, else one of:
 
@@ -864,15 +894,19 @@ URL, and a failure's message is free text. Empty when there is no restore result
 
 `redact()` masks keyed secrets, JWTs and `Bearer` tokens, not a bare secret in prose. So the
 builder is also given the run's secret values (the Veeam password, the Graph PFX and its
-password): a log line that holds one is written as `[withheld: held a secret value]`, a CSV
+password, and since W4.3 the signing key's text with the two other shapes its seed could leak
+in, Base64 and hex; `rp::secret_values` in `rp/secrets.hpp` is the one list of the first four,
+which a `--record` recorder checks its fixtures against too): a log line that holds one is written as `[withheld: held a secret value]`, a CSV
 row that holds one keeps its `index`, has those words as its `name` and nothing else, and one
 `SECURITY: evidence: <n> line(s) held a secret value and were withheld` line is logged. The
-restore's per-run PFX password never leaves the connector. W4.9's sentinel test is still to
-come.
+restore's per-run PFX password never leaves the connector. The builder wipes its copy of the
+values when it goes. A test puts the signing key into Veeam's words and a Graph answer and
+finds it in no file of the folder, no fixture, no log line and neither stream; W4.9's sentinel
+test for every secret is still to come.
 
 The result names every sampled item, so a subject or a file name that a CSV row was withheld
-for is in `expected.items` too, and the result can't be cut: it is validated, hashed and, from
-W4.3, signed as it is. So before `result.json` is written, every string of the finished result
+for is in `expected.items` too, and the result can't be cut: it is validated, hashed and
+signed as it is. So before `result.json` is written, every string of the finished result
 is looked through for the same values, as JSON reads them (in the text an escaped `"` or `\`
 would hide one). A result that holds one is not written: `evidence error: <folder>: the result
 holds a secret value; no result.json was written` on stderr, one `SECURITY: evidence: the
@@ -882,4 +916,241 @@ becoming 1. The two text files stay, with their withheld lines.
 The match is on the whole value, anywhere in a string. A secret that is also a word of the
 result (a Veeam password of `pass` or `mail`) would therefore stop every run's `result.json`;
 a real password isn't one. Not covered: stdout, where `rpworker test`'s table shows each
-item's name as it is, and `--json`, which writes the result to a file the operator names.
+item's name as it is, and `--json`, which writes the result to a file the operator names
+(one reason `--json` is never signed).
+
+## The signature (W4.3)
+
+`rpworker test --evidence <dir>` signs the result: an Ed25519 signature over the SHA-256 of
+`result.json`'s bytes, kept in `signature.json` beside it, never in the result. `rp::Signer`
+(`worker/include/rp/signer.hpp`, `src/signer.cpp`) signs and verifies over the primitive
+`rp::Ed25519` (`rp/ed25519.hpp`; the calls into OpenSSL are `src/ed25519.cpp`). The two
+verifiers are `rpworker signer verify <folder> --public-key <pem file>` and
+`shared/tools/verify_bundle.py`, and `shared/testdata/signing-v1/` holds them to one answer
+(`docs/testing.md`, "The shared signing vectors"). The decisions are `docs/decisions.md`
+2026-10-05, W4.3, approved as written, and its build notes; the commands' lines and exit codes
+are in `docs/worker-config.md`, "`--evidence <dir>`" and "`rpworker signer`". Signing never
+changes a run's status. `--json` is never signed: it is one file with no folder to hold a
+signature beside it, and its bytes aren't covered by the result's secret check.
+
+### What is hashed and signed
+
+- **`bundle_sha256`** is the SHA-256 of `result.json`'s bytes, 64 lower-case hex. Those bytes
+  are the result's `canonical-json-v1` form, and nothing is removed before hashing: the result
+  has no signature field. For a folder the Worker wrote it is the file's own SHA-256
+  (`Get-FileHash result.json`, or `sha256sum` in Git Bash).
+- **The Ed25519 message** is the 32 raw digest bytes: the bytes `bundle_sha256` shows as hex,
+  not the hex text.
+- **`signature`** is standard Base64 with padding: 64 bytes, 88 characters.
+- **`Signer::sign(canonical, key)`** takes the text `write_result` is about to write, and
+  answers the signature file's text with its `bundle_sha256` and `key_id`, or nothing. It
+  refuses text that isn't its own canonical form, and verifies its new signature with the
+  key's public half before it answers. It never throws.
+
+### `signature.json`
+
+Written as its own canonical bytes (322 of them): five keys, all always there, never a sixth.
+
+```
+{"algorithm":"ed25519","bundle_sha256":"<64 hex>","format":"restoreproof.signature.v1","key_id":"<64 hex>","signature":"<88 Base64>"}
+```
+
+| Key | What it holds |
+|---|---|
+| `algorithm` | `"ed25519"` |
+| `bundle_sha256` | the SHA-256 of `result.json`'s bytes, 64 lower-case hex |
+| `format` | `"restoreproof.signature.v1"` |
+| `key_id` | the SHA-256 of the signing key's public half as SubjectPublicKeyInfo DER (44 bytes), 64 lower-case hex: `openssl pkey -pubin -outform DER \| sha256sum` (Git Bash) gives it from the public PEM |
+| `signature` | the Ed25519 signature over the digest's 32 raw bytes, standard Base64 |
+
+**Its schema is a second file, `shared/schemas/signature.v1.json`:** closed, five required
+keys, in the same keyword subset as the result's: `const` for `format` and `algorithm`, the
+64-hex definition twice, and for `signature` `minLength` = `maxLength` = 88 with
+`^[A-Za-z0-9+/]{85}[AQgw]==$`, which takes every 64-byte value's Base64 and nothing with a
+non-zero pad bit, a URL-safe character or no padding. `result.v1.json` gained no key. Python
+validates a signature file against the schema file. The Worker has no second embedded
+validator: it checks the same rules in code (`parse_signature_file` in `signer.cpp`), a Worker
+test validates a Worker-made file against the schema file and runs the keyword walker over it,
+and the shared cases hold the two to one answer.
+
+There is no timestamp in it. A closed five-key format can't take a `tsa_token` later, so W4.4's
+token will be a file of its own; it is over `bundle_sha256` and touches no signed byte.
+
+### The trust rule
+
+`signature.json` is not itself signed, and anyone can sign a result with a key of their own.
+So a verifier takes the public key from its caller (the Cloud's registered key, an auditor's
+PEM file), never from the folder, and answers `wrong_key` when `key_id` isn't that key's. A
+verifier is only as good as the key it is given: OpenSSL takes a small-order public key and
+then accepts forgeries under it, so refusing such a key is the job of whoever registers one
+(C5.5).
+
+### A file on disk must be canonical
+
+Both verifiers require `result.json`'s bytes to equal the canonical form of what they parse
+to, and refuse otherwise: `result_not_canonical`. A file with its keys re-ordered is refused,
+not re-serialised: a verifier that re-serialises would accept bytes nobody signed, a key
+written twice among them (both JSON parsers keep the last of two equal keys, silently). What
+the Worker shows instead is that a document built in two key orders has one canonical text
+and so one hash.
+
+One word covers everything that keeps the bytes from being the canonical form of a document,
+whichever parser notices it first and however: not UTF-8, a BOM, not JSON, `NaN`, a float, a
+number too large, a lone surrogate, a duplicate key, another key order, a trailing newline.
+The two parsers draw their lines in different places (`nlohmann::json` skips a BOM and refuses
+`NaN` at the parse; Python's `json` does the reverse), so two words would let the verifiers
+disagree. `result_unreadable` means only that the file isn't there, can't be read whole or is
+over the size limit. `signature.json` has the same rule under the one word `signature_file`.
+
+**The limits.** Before either parser sees the bytes, both verifiers count the nesting outside
+strings and refuse more than 32 levels (`kMaxJsonNesting`, `MAX_NESTING`; a result has far
+fewer), which is also what keeps the C++ verifier from a stack overflow. `result.json` is read
+up to 16 MiB (`kMaxResultFileBytes`) and `signature.json` up to 4096 bytes
+(`kMaxSignatureFileBytes`); a larger one isn't read and is `result_unreadable` or
+`signature_file`. An attachment is read up to its listed size; a longer one isn't read and is
+`attachment_size`. The caller's key file is read up to 64 KiB.
+
+### The order of writing, and what a signed folder is
+
+In `EvidenceBuilder::write_result`: the secret scan, each attachment read back against its
+hash, the signature made, `signature.json` written, `result.json` written last ("The run
+folder" above, steps 5 to 9). A signed folder is `items.csv`, `veeam-session.log`,
+`screenshot.png` if one was taken, `signature.json` and `result.json`. The Worker writes
+`result.json` only after `signature.json`, so in a folder only the Worker has written,
+`result.json` means complete and signed.
+
+**What a failed signing leaves.** The attachments (the two text files, and a screenshot if one
+was taken), no `signature.json`, no `result.json`: the folder of a run with no result, as for
+`result_invalid`. stderr has `evidence error: <folder>: the result couldn't be signed; no
+result.json was written` (`EvidenceFailure::not_signed`: the signer answered nothing, threw, or
+there was none), or `evidence error: <folder>\signature.json: could not be written`. Neither
+changes the status; exit 0 becomes 1. If `signature.json` was written and `result.json` then
+can't be, the Worker removes `signature.json` again; a crash between the two writes can still
+leave it.
+
+**What is signed, and what never is.** A run that ended `fail` or `error` with a valid result
+is signed exactly as a `pass` is. A run that ended `result_invalid` is not signed: it has no
+`result.json`. Nothing is ever re-signed: the folder of a run ID can't be made twice and the
+writer replaces nothing.
+
+### The key
+
+The private key is the secret `RP_SIGNING_KEY_BASE64` until the vault (W4.5): one line of
+standard Base64 of the key's PKCS#8 DER, 64 characters (`docs/worker-config.md`, "Secrets").
+`rp::SigningKey::from_base64` takes strict Base64 of exactly 48 bytes that start with
+Ed25519's 16 bytes of PKCS#8 header (`302e020100300506032b657004220420`) and hands the 32
+after them, the seed, to the primitive; anything else is refused (47 or 49 bytes, another
+header, an RSA key, other Base64). No ASN.1 reader is used, so the library makes no copy of
+the seed that can't be wiped. The decoded bytes are wiped before it returns.
+
+With `--evidence` the key is parsed right after the Graph certificate is checked, before the
+schema check, the manifest, the run mutex and any Veeam call; no other command parses it or
+needs it. The pipeline takes the key's text out of the run's `Secrets` (wiped there) before
+the connector is made, so the connector's copy of the secrets never holds it, and keeps it
+with the parsed key in one holder that wipes both on every way out of the run. What stays: a
+`--record` recorder keeps its copy of the text until its last check, as for every secret, and
+the process's own environment holds the variable until the process ends. No test observes the
+wipes themselves.
+
+### The checks, and the thirteen words
+
+Both verifiers run the same checks in the same order; the first that fails gives the answer,
+one word. `Signer::verify_folder` and `verify_bundle.py`'s `verify_folder`; the list is
+`rp::verify_words()` and `WORDS` with `VERIFIED`, which tests hold equal to the words the
+shared cases expect.
+
+| # | Word | When |
+|---|---|---|
+| 1 | `result_unreadable` | `result.json` isn't there, can't be read whole, or is over 16 MiB |
+| 2 | `result_not_canonical` | anything else that keeps its bytes from being the canonical form of a document (above), more than 32 levels of nesting included |
+| 3 | `result_schema` | canonical, and not a `restoreproof.result.v1` |
+| 4 | `attachment_twice` | one name is listed twice in `attachments` |
+| 5 | `screenshot_missing` | `screenshot` says `captured` and `screenshot.png` isn't listed |
+| 6 | `signature_file` | `signature.json` isn't there, can't be read, is over 4096 bytes, isn't canonical, or isn't its five keys and their shapes: every length, case and Base64 fault of `bundle_sha256`, `key_id` and `signature` is this word |
+| 7 | `hash_mismatch` | its `bundle_sha256` isn't the SHA-256 of `result.json`'s bytes |
+| 8 | `wrong_key` | its `key_id` isn't the caller's key's |
+| 9 | `signature_invalid` | 64 well-formed bytes that Ed25519 refuses under the caller's key |
+| 10 | `attachment_missing` | a listed file isn't there or can't be read |
+| 11 | `attachment_size` | a listed file isn't the listed size (a longer one isn't read) |
+| 12 | `attachment_hash` | a listed file's SHA-256 isn't the listed one |
+| 13 | `verified` | none of the above |
+
+Checks 10 to 12 run per listed attachment, in the result's order, after the signature is
+known to be good. The canonical form comes before the schema because Python's `integer` takes
+`1.0`. Checks 4 and 5 are the two things the schema can't say. `Signer::verify` runs checks 2
+to 9 on a result's and a signature file's bytes and reads no attachment.
+
+**A file is there under its own name, or it isn't there** (the code review of 2026-10-06).
+Both verifiers list the folder once and read a file only when the listing has its name byte
+for byte; any other name isn't asked for. NTFS opens `ITEMS.CSV` when `items.csv` is asked
+for, and a file system that tells the two apart has no `items.csv`: with the listing deciding,
+such a folder is `attachment_missing` on both (`result_unreadable` for `RESULT.JSON`,
+`signature_file` for `Signature.json`), never `verified` beside a note that the same file
+isn't listed. A listed name that is a folder is `attachment_missing` in both tools whatever
+the folder holds: each asks whether it is a file before it asks for its size.
+
+**However long the folder's path is.** Both read the folder through one absolute path in
+Windows' extended-length form (`\\?\C:\...`, `\\?\UNC\server\share\...`), which has no limit
+of 260 characters: `rp::extended_folder` in `src/file_read.hpp`, `_extended` in the script. A
+file that is there opens, with or without the system's long-path setting; before, the Worker
+called an intact folder at a long path `attachment_missing`, `signature_file` or
+`result_unreadable`.
+
+The line both print on stdout is `verified <bundle_sha256> key <key_id>` or `not verified:
+<word>`. That line is the contract between the two; the exit codes are each tool's own (the
+Worker's 0 and 5, the script's 0 and 1).
+
+**Notes.** A name in the folder that the result doesn't list (W4.6's `manifest.json`, W4.4's
+token, a subfolder) is never a failure. With `verified` only, each is one line on stderr before
+the verdict's line, sorted by code point: `note: not listed in the result: <name>`. The name
+is printable ASCII as it is but for the backslash; anything else is its code point in
+lower-case hex, `\xNN` below U+0100, `\uNNNN` below U+10000, `\UNNNNNNNN` above, so no name
+can end a line or start another. A Windows name holding a surrogate without its pair is
+listed too, the surrogate as `\udXXX`.
+
+**A failure of the verifier is never a verdict.** A folder that can't be opened, a key file
+that can't be read or isn't a key, a schema that can't be loaded, and anything unexpected end
+with an error line and the tool's error exit code (the Worker's 1, the script's 2), and
+nothing on stdout. Since the code review of 2026-10-06 that holds for these too:
+
+- **The Worker's embedded validator.** `rp::validate_result` answers "not valid" when it
+  couldn't check at all (the schema not loaded, no memory), and sets
+  `ResultValidation::not_checked`. The Signer throws `rp::VerifierFailure` for it instead of
+  answering `result_schema`, and `signer verify` prints `signer error: the result couldn't be
+  checked against its schema`, exit 1.
+- **A folder nobody named.** Windows drops blanks and dots at the end of a path, so ` `, `...`
+  or `.. ` would be the working folder or the one above it. The Worker names the folder as a
+  file inside it would, where such a name stays what it is; the script refuses a last part of
+  blanks and dots only (other than `.` and `..`). Both: the folder can't be opened.
+- **An option given twice** to the script is a usage error, exit 2, as in the Worker (64):
+  argparse would have kept the last `--public-key` or `--schemas`.
+- **The script without its packages** (plain `python`, not `uv run`) prints one `error:` line
+  and exits 2, not Python's 1 for a traceback, which is the "not verified" code.
+- **A verdict that can't be written** (the reader of a pipe gone) is exit 2 from the script as
+  a program too; the interpreter's own flush at exit made it 120.
+
+### The public key file
+
+One rule, the same in `rp::PublicKey::from_pem` and in the script's `public_key_from_pem`;
+neither uses a PEM or DER reader of its library, since each library's takes more and they
+differ. A key file is, in this order:
+
+1. optional white space (space, tab, CR, LF);
+2. the line `-----BEGIN PUBLIC KEY-----`;
+3. one or more body lines, each of one or more standard Base64 characters (`A-Z`, `a-z`, `0-9`,
+   `+`, `/`, `=`) and nothing else;
+4. the line `-----END PUBLIC KEY-----`;
+5. optional white space, and nothing more.
+
+Inside the block a line ends with LF or CRLF only; a lone CR is refused. No header line, no
+blank line, no space or tab, no text on the BEGIN or END line. The body lines joined must be
+strict standard Base64 (padded, `=` only at the end, the unused bits zero) of exactly the 44
+bytes of an Ed25519 SubjectPublicKeyInfo as the library itself writes it: the twelve bytes
+`302a300506032b6570032100`, then the 32-byte key. No byte after it, no other length form, no
+other algorithm. Those 44 bytes are the key's DER, never a re-encoding, and `key_id` is their
+SHA-256. Where the body is wrapped doesn't matter. A file with a BOM, in UTF-16, with two
+blocks or with a `key <key_id>` line after the block is refused. A small-order key is a
+well-formed key and is accepted ("The trust rule" above).
+
+`shared/testdata/signing-v1/key-files.json` holds the rule as 46 files, 11 accepted and 35
+refused, run by both builds. `rpworker signer public-key` prints such a file on stdout.

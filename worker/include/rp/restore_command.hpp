@@ -148,6 +148,14 @@ struct RestoreCommandEnv {
     // screenshots_enabled is true; null = rp::no_screenshot_page, which starts
     // no browser. Whatever it answers or throws, the status is unchanged.
     ScreenshotCapturer capture_screenshot;
+    // `rpworker test --evidence <dir>` only (W4.3, rp/signer.hpp): signs the
+    // result's canonical text, the bytes result.json is about to be written
+    // with, with the run's key (the one RP_SIGNING_KEY_BASE64 carries, parsed
+    // before anything is done); null = rp::Signer::sign. nullopt, or anything
+    // thrown, is a result that couldn't be signed: no result.json, the status
+    // unchanged.
+    std::function<std::optional<SignedResult>(std::string_view canonical, const SigningKey& key)>
+        sign_result;
 };
 
 // The real environment: rp::default_config_path, rp::load_secrets_from_env, the

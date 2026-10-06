@@ -62,8 +62,9 @@ struct ResultParts {
     const RunCleanup* cleanup = nullptr; // null when no clean ran
     // Null reads as a run that timed nothing: every span null.
     const timing::RunTimings* timings = nullptr;
-    // The run folder's files beside result.json, and its screenshot (W4.2);
-    // both null when no run folder is written.
+    // The run folder's files the result covers (not result.json, nor W4.3's
+    // signature.json), and its screenshot (W4.2); both null when no run
+    // folder is written.
     const std::vector<Attachment>* attachments = nullptr;
     const Screenshot* screenshot = nullptr;
 };

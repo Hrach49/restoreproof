@@ -346,7 +346,8 @@ struct BrowseRecord {
     // Taken from the restore point alone, so a replay of the run finds the same.
     std::size_t containers_eligible = 0;
     // Mailbox address, Graph site ID or OneDrive owner, in the order looked
-    // into; a OneDrive whose owner didn't resolve by its address.
+    // into; a OneDrive whose owner didn't resolve by its address. The result
+    // holds only how many there are ("containers_drawn"), never the names.
     std::vector<std::string> containers_listed;
     // Drawn containers the backup product can't be asked to restore from
     // today (Veeam: a OneDrive that no single organisation user owns now, the

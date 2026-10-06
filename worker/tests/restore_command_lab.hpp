@@ -10,6 +10,7 @@
 
 #include "fake_http_client.hpp"
 #include "graph_lab.hpp"
+#include "signing_lab.hpp"
 #include "target_guard_lab.hpp"
 #include "test_support.hpp"
 #include "veeam_restore_lab.hpp"
@@ -76,7 +77,8 @@ inline const std::string kUsage =
     "[--record <dir>] | "
     "rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] "
     "[--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] "
-    "[--record <dir>] [--json <file> | --evidence <dir>]\n";
+    "[--record <dir>] [--json <file> | --evidence <dir>] | "
+    "rpworker signer public-key | rpworker signer verify <folder> --public-key <pem file>\n";
 
 inline const std::string kOrgName = "RestoreProofLab.onmicrosoft.com";
 // Veeam's restore point IDs are two GUIDs run together: the backup
@@ -745,10 +747,11 @@ struct Harness {
             ++load_secrets_calls;
             return load_secrets();
         };
-        env.make_connector = [this](const rp::Config& config, const rp::Secrets&,
+        env.make_connector = [this](const rp::Config& config, const rp::Secrets& secrets,
                                     const connector::ConnectorOptions& options)
             -> std::unique_ptr<connector::IConnector> {
             ++make_connector_calls;
+            connector_secrets = secrets;
             made_for_org = config.veeam_org_name;
             fake.logger = options.logger;
             if (connector_throw) {
@@ -815,6 +818,8 @@ struct Harness {
         // screenshot's capturer (null, the default: no page).
         env.write_evidence_file = write_evidence_file;
         env.capture_screenshot = capture_screenshot;
+        // W4.3: the result's signer; null, rp::Signer::sign.
+        env.sign_result = sign_result;
         return env;
     }
 
@@ -872,6 +877,8 @@ struct Harness {
     std::function<bool(const std::filesystem::path&, std::string_view)> write_summary;
     std::function<bool(const std::filesystem::path&, std::string_view)> write_evidence_file;
     rp::ScreenshotCapturer capture_screenshot;
+    std::function<std::optional<rp::SignedResult>(std::string_view, const rp::SigningKey&)>
+        sign_result;
     // The run ID a run without --run-id makes.
     std::string generated_run_id{kGeneratedRunId};
     // The download client's maker returns null: the run stops after its run
@@ -887,11 +894,16 @@ struct Harness {
     std::filesystem::path config_path;
     std::filesystem::path manifest_path;
     FakeConnector fake;
+    // The signing key is RFC 8032's published test key 1 (W4.3), never a
+    // secret: only `test --evidence` parses it.
     std::function<rp::Secrets()> load_secrets = [] {
         return rp::Secrets{"rp-veeam", "Sentinel-Veeam-Password-9c2e",
                            rp::test::graph_lab::pfx_base64(),
-                           std::string{rp::test::graph_lab::kPfxPassword}};
+                           std::string{rp::test::graph_lab::kPfxPassword},
+                           std::string{rp::test::kSigningKey1Base64}};
     };
+    // The secrets the connector's maker was handed.
+    std::optional<rp::Secrets> connector_secrets;
     std::function<void()> connector_throw;
     bool give_connector = true;
     std::chrono::nanoseconds clock{0};

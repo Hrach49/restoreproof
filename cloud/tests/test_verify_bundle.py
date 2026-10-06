@@ -1202,3 +1202,11 @@ def test_the_script_run_as_a_program_exits_with_its_verdicts_code(name, code, tm
     assert done.stderr == b""
     out = done.stdout.decode("utf-8").replace("\r\n", "\n")
     assert out == (VERIFIED_LINE if code == 0 else "not verified: signature_invalid\n")
+
+
+def test_the_scripts_source_is_printable_ascii():
+    # The PR #158 review: a raw U+FEFF between two quotes can't be seen in an editor or a diff,
+    # and an editor may drop it. An auditor reads this file; every character in it shows.
+    source = (shared_dir() / "tools" / "verify_bundle.py").read_text(encoding="utf-8")
+    odd = sorted({f"U+{ord(c):04X}" for c in source if c not in "\r\n" and not " " <= c <= "~"})
+    assert odd == []

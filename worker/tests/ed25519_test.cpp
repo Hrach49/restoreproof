@@ -9,6 +9,7 @@
 #include "test_certs.hpp"
 
 #include <rp/base64.hpp>
+#include <rp/signer.hpp>
 
 #include <nlohmann/json.hpp>
 
@@ -112,6 +113,16 @@ std::string pem_of_named_key(const char* type)
 {
     const rp::test::KeyPtr key(EVP_PKEY_Q_keygen(nullptr, nullptr, type), &EVP_PKEY_free);
     return public_pem(key.get());
+}
+
+// The rule for a public key file is the Signer's (PublicKey::from_pem, in the
+// strict signer.cpp), which asks the primitive about the file's 44 bytes only
+// (PR #158 review, finding 15). These cases run it over the real primitive:
+// the bytes of the key the file holds, or none.
+std::vector<unsigned char> der_from_pem(std::string_view pem)
+{
+    const std::optional<rp::PublicKey> key = rp::PublicKey::from_pem(pem);
+    return key ? key->der() : std::vector<unsigned char>{};
 }
 
 } // namespace
@@ -247,7 +258,7 @@ TEST_CASE("the public key's PEM is what OpenSSL writes and reads back to the sam
     const std::string pem = ed.public_key_pem(der);
     CHECK(pem == "-----BEGIN PUBLIC KEY-----\n" + rp::base64_encode(der) +
                      "\n-----END PUBLIC KEY-----\n");
-    CHECK(ed.public_key_from_pem(pem) == der);
+    CHECK(der_from_pem(pem) == der);
 }
 
 // RFC 8032 test 1, as measured with OpenSSL when the entry was written.
@@ -260,6 +271,49 @@ TEST_CASE("RFC 8032 test 1's public PEM has the measured body", "[ed25519]")
           "-----END PUBLIC KEY-----\n");
 }
 
+TEST_CASE("is_public_key takes only Ed25519's 44 bytes of DER", "[ed25519]")
+{
+    const Ed25519& ed = rp::openssl_ed25519();
+    const json test = vectors().at(0);
+    std::vector<unsigned char> der = spki_of(test);
+    REQUIRE(ed.is_public_key(der));
+
+    SECTION("no key at all")
+    {
+        CHECK_FALSE(ed.is_public_key({}));
+    }
+    SECTION("the raw 32 bytes without their header")
+    {
+        CHECK_FALSE(ed.is_public_key(hex_of(test, "public_key_hex")));
+    }
+    SECTION("a byte after the key")
+    {
+        der.push_back(0x00);
+        CHECK_FALSE(ed.is_public_key(der));
+    }
+    SECTION("cut short")
+    {
+        der.pop_back();
+        CHECK_FALSE(ed.is_public_key(der));
+    }
+    SECTION("X25519's algorithm (the same length)")
+    {
+        der[8] = 0x6e;
+        CHECK_FALSE(ed.is_public_key(der));
+    }
+    SECTION("the BIT STRING's unused bits set to 1")
+    {
+        der[11] = 0x01;
+        CHECK_FALSE(ed.is_public_key(der));
+    }
+    SECTION("every RFC 8032 test key")
+    {
+        for (const json& other : vectors()) {
+            CHECK(ed.is_public_key(spki_of(other)));
+        }
+    }
+}
+
 TEST_CASE("public_key_pem refuses bytes that aren't an Ed25519 public key", "[ed25519]")
 {
     const Ed25519& ed = rp::openssl_ed25519();
@@ -270,21 +324,21 @@ TEST_CASE("public_key_pem refuses bytes that aren't an Ed25519 public key", "[ed
     CHECK(ed.public_key_pem(der) == "");
 }
 
-TEST_CASE("public_key_from_pem takes CRLF line ends and blank lines around the block",
+TEST_CASE("a public key file: PublicKey::from_pem takes CRLF line ends and blank lines around the block",
           "[ed25519]")
 {
     const Ed25519& ed = rp::openssl_ed25519();
     const std::vector<unsigned char> der = spki_of(vectors().at(0));
     const std::string body = rp::base64_encode(der);
-    CHECK(ed.public_key_from_pem("-----BEGIN PUBLIC KEY-----\r\n" + body +
+    CHECK(der_from_pem("-----BEGIN PUBLIC KEY-----\r\n" + body +
                                  "\r\n-----END PUBLIC KEY-----\r\n") == der);
-    CHECK(ed.public_key_from_pem("\n-----BEGIN PUBLIC KEY-----\n" + body +
+    CHECK(der_from_pem("\n-----BEGIN PUBLIC KEY-----\n" + body +
                                  "\n-----END PUBLIC KEY-----\n\n") == der);
-    CHECK(ed.public_key_from_pem("-----BEGIN PUBLIC KEY-----\n" + body +
+    CHECK(der_from_pem("-----BEGIN PUBLIC KEY-----\n" + body +
                                  "\n-----END PUBLIC KEY-----") == der);
 }
 
-TEST_CASE("public_key_from_pem refuses everything but one Ed25519 public key", "[ed25519]")
+TEST_CASE("a public key file: PublicKey::from_pem refuses everything but one Ed25519 public key", "[ed25519]")
 {
     const Ed25519& ed = rp::openssl_ed25519();
     const json tests = vectors();
@@ -293,45 +347,45 @@ TEST_CASE("public_key_from_pem refuses everything but one Ed25519 public key", "
 
     SECTION("nothing")
     {
-        CHECK(ed.public_key_from_pem("").empty());
+        CHECK(der_from_pem("").empty());
     }
     SECTION("garbage")
     {
-        CHECK(ed.public_key_from_pem("not a key").empty());
-        CHECK(ed.public_key_from_pem(std::string("\0\xff\x01", 3)).empty());
+        CHECK(der_from_pem("not a key").empty());
+        CHECK(der_from_pem(std::string("\0\xff\x01", 3)).empty());
     }
     SECTION("the bare Base64 line without its armour")
     {
-        CHECK(ed.public_key_from_pem(rp::base64_encode(spki_of(tests.at(0)))).empty());
+        CHECK(der_from_pem(rp::base64_encode(spki_of(tests.at(0)))).empty());
     }
     SECTION("a body that isn't a key")
     {
-        CHECK(ed.public_key_from_pem("-----BEGIN PUBLIC KEY-----\nAAAA\n"
+        CHECK(der_from_pem("-----BEGIN PUBLIC KEY-----\nAAAA\n"
                                      "-----END PUBLIC KEY-----\n")
                   .empty());
     }
     SECTION("an RSA public key")
     {
-        CHECK(ed.public_key_from_pem(public_pem(rp::test::shared_rsa2048_key().get())).empty());
+        CHECK(der_from_pem(public_pem(rp::test::shared_rsa2048_key().get())).empty());
     }
     SECTION("an X25519 public key")
     {
-        CHECK(ed.public_key_from_pem(pem_of_named_key("X25519")).empty());
+        CHECK(der_from_pem(pem_of_named_key("X25519")).empty());
     }
     SECTION("an Ed448 public key")
     {
-        CHECK(ed.public_key_from_pem(pem_of_named_key("ED448")).empty());
+        CHECK(der_from_pem(pem_of_named_key("ED448")).empty());
     }
     SECTION("an Ed25519 private key")
     {
         const rp::test::KeyPtr key(EVP_PKEY_Q_keygen(nullptr, nullptr, "ED25519"),
                                    &EVP_PKEY_free);
-        CHECK(ed.public_key_from_pem(private_pem(key.get())).empty());
+        CHECK(der_from_pem(private_pem(key.get())).empty());
     }
     SECTION("a block that says it is encrypted")
     {
         // The library would ask the console for the password.
-        CHECK(ed.public_key_from_pem("-----BEGIN PUBLIC KEY-----\n"
+        CHECK(der_from_pem("-----BEGIN PUBLIC KEY-----\n"
                                      "Proc-Type: 4,ENCRYPTED\n"
                                      "DEK-Info: AES-256-CBC,000102030405060708090A0B0C0D0E0F\n\n" +
                                      rp::base64_encode(spki_of(tests.at(0))) +
@@ -340,17 +394,17 @@ TEST_CASE("public_key_from_pem refuses everything but one Ed25519 public key", "
     }
     SECTION("two keys")
     {
-        CHECK(ed.public_key_from_pem(good + ed.public_key_pem(spki_of(tests.at(1)))).empty());
+        CHECK(der_from_pem(good + ed.public_key_pem(spki_of(tests.at(1)))).empty());
     }
     SECTION("text after the key")
     {
-        CHECK(ed.public_key_from_pem(good + "x").empty());
+        CHECK(der_from_pem(good + "x").empty());
     }
     SECTION("a NUL inside the text")
     {
         std::string text = good;
         text.insert(text.size() - 1, 1, '\0');
-        CHECK(ed.public_key_from_pem(text).empty());
+        CHECK(der_from_pem(text).empty());
     }
 }
 
@@ -358,7 +412,7 @@ TEST_CASE("public_key_from_pem refuses everything but one Ed25519 public key", "
 // bytes exactly, in strict Base64, and the block is three kinds of line and
 // nothing else. shared/testdata/signing-v1/key-files.json holds every row
 // (tests/signer_test.cpp runs them); these are the ones the old reader took.
-TEST_CASE("public_key_from_pem takes only the key's own 44 bytes in the block", "[ed25519]")
+TEST_CASE("a public key file: PublicKey::from_pem takes only the key's own 44 bytes in the block", "[ed25519]")
 {
     const Ed25519& ed = rp::openssl_ed25519();
     const std::vector<unsigned char> der = spki_of(vectors().at(0));
@@ -368,68 +422,68 @@ TEST_CASE("public_key_from_pem takes only the key's own 44 bytes in the block", 
     const auto pem_of = [&](std::span<const unsigned char> bytes) {
         return begin + "\n" + rp::base64_encode(bytes) + "\n" + end + "\n";
     };
-    REQUIRE(ed.public_key_from_pem(pem_of(der)) == der);
+    REQUIRE(der_from_pem(pem_of(der)) == der);
 
     SECTION("a byte after the key")
     {
         std::vector<unsigned char> longer = der;
         longer.push_back(0x00);
-        CHECK(ed.public_key_from_pem(pem_of(longer)).empty());
+        CHECK(der_from_pem(pem_of(longer)).empty());
     }
     SECTION("the BIT STRING's unused bits set to 1")
     {
         std::vector<unsigned char> unused = der;
         unused[11] = 0x01;
-        CHECK(ed.public_key_from_pem(pem_of(unused)).empty());
+        CHECK(der_from_pem(pem_of(unused)).empty());
     }
     SECTION("a long-form length")
     {
         std::vector<unsigned char> long_form = {0x30, 0x81, 0x2a};
         long_form.insert(long_form.end(), der.begin() + 2, der.end());
-        CHECK(ed.public_key_from_pem(pem_of(long_form)).empty());
+        CHECK(der_from_pem(pem_of(long_form)).empty());
     }
     SECTION("Base64 with a pad bit set")
     {
         REQUIRE(body.ends_with("o="));
-        CHECK(ed.public_key_from_pem(begin + "\n" + body.substr(0, body.size() - 2) + "p=\n" +
+        CHECK(der_from_pem(begin + "\n" + body.substr(0, body.size() - 2) + "p=\n" +
                                      end + "\n")
                   .empty());
     }
     SECTION("the body wrapped at another column is the same key")
     {
-        CHECK(ed.public_key_from_pem(begin + "\n" + body.substr(0, 32) + "\n" + body.substr(32) +
+        CHECK(der_from_pem(begin + "\n" + body.substr(0, 32) + "\n" + body.substr(32) +
                                      "\n" + end + "\n") == der);
-        CHECK(ed.public_key_from_pem(begin + "\r\n" + body.substr(0, body.size() - 1) +
+        CHECK(der_from_pem(begin + "\r\n" + body.substr(0, body.size() - 1) +
                                      "\r\n=\r\n" + end) == der);
     }
     SECTION("a lone CR is no line end")
     {
-        CHECK(ed.public_key_from_pem(begin + "\r" + body + "\r" + end + "\r").empty());
-        CHECK(ed.public_key_from_pem(begin + "\n" + body + "\r" + end + "\n").empty());
+        CHECK(der_from_pem(begin + "\r" + body + "\r" + end + "\r").empty());
+        CHECK(der_from_pem(begin + "\n" + body + "\r" + end + "\n").empty());
         // Around the block it is white space.
-        CHECK(ed.public_key_from_pem("\r" + pem_of(der) + "\r") == der);
+        CHECK(der_from_pem("\r" + pem_of(der) + "\r") == der);
     }
     SECTION("no line end between the lines")
     {
-        CHECK(ed.public_key_from_pem(begin + body + end).empty());
-        CHECK(ed.public_key_from_pem(begin + body + "\n" + end).empty());
-        CHECK(ed.public_key_from_pem(begin + "\n" + body + end).empty());
+        CHECK(der_from_pem(begin + body + end).empty());
+        CHECK(der_from_pem(begin + body + "\n" + end).empty());
+        CHECK(der_from_pem(begin + "\n" + body + end).empty());
     }
     SECTION("a header line, a blank line, a space, no body")
     {
-        CHECK(ed.public_key_from_pem(begin + "\nComment: x\n\n" + body + "\n" + end + "\n")
+        CHECK(der_from_pem(begin + "\nComment: x\n\n" + body + "\n" + end + "\n")
                   .empty());
-        CHECK(ed.public_key_from_pem(begin + "\n\n" + body + "\n" + end + "\n").empty());
-        CHECK(ed.public_key_from_pem(begin + "\n" + body + "\n " + end + "\n").empty());
-        CHECK(ed.public_key_from_pem(begin + " \n" + body + "\n" + end + "\n").empty());
-        CHECK(ed.public_key_from_pem(begin + "\n" + body.substr(0, 32) + " " + body.substr(32) +
+        CHECK(der_from_pem(begin + "\n\n" + body + "\n" + end + "\n").empty());
+        CHECK(der_from_pem(begin + "\n" + body + "\n " + end + "\n").empty());
+        CHECK(der_from_pem(begin + " \n" + body + "\n" + end + "\n").empty());
+        CHECK(der_from_pem(begin + "\n" + body.substr(0, 32) + " " + body.substr(32) +
                                      "\n" + end + "\n")
                   .empty());
-        CHECK(ed.public_key_from_pem(begin + "\n" + end + "\n").empty());
-        CHECK(ed.public_key_from_pem(begin).empty());
-        CHECK(ed.public_key_from_pem(begin + "\n").empty());
-        CHECK(ed.public_key_from_pem(begin + "\n" + body).empty());
-        CHECK(ed.public_key_from_pem(begin + "\n" + body + "\n").empty());
+        CHECK(der_from_pem(begin + "\n" + end + "\n").empty());
+        CHECK(der_from_pem(begin).empty());
+        CHECK(der_from_pem(begin + "\n").empty());
+        CHECK(der_from_pem(begin + "\n" + body).empty());
+        CHECK(der_from_pem(begin + "\n" + body + "\n").empty());
     }
 }
 

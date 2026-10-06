@@ -751,7 +751,8 @@ compares the word.
   compared byte for byte with what the code makes), `worker/tests/signer_command_test.cpp`
   (the same 38 cases and 46 key files through `rpworker signer verify` on disk, with the
   stdout line and the exit code), `worker/tests/ed25519_test.cpp` (`ed25519.json` on the real
-  primitive).
+  primitive, `is_public_key` on the 44 bytes, and more key files through `PublicKey::from_pem`,
+  whose rule for the file's text is in the strict `signer.cpp`).
 - Cloud: `cloud/tests/test_verify_bundle.py` loads the script by path, walking up to `shared/`
   as the schema tests do, and runs the 38 cases through `verify_folder`, the command's stdout
   line and exit code through `main`, the 46 key files through `public_key_from_pem` and

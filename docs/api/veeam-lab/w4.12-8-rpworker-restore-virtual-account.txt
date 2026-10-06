@@ -1,0 +1,51 @@
+W4.12 (#135) step 8, the Done-when: rpworker restore --mail 1 --sp 0 --od 0 --run-id w412-done-when-1 as NT SERVICE\RpSpikeProbe (the Worker's own pipeline: run mutex, clean before, target guard, rp::CertificateExporter from LocalMachine\My in memory, restore_sample, the check, clean after), started 2026-10-06T23:21:46Z. The config is a copy of the lab's (no secrets; the account can't read the user's profile); the four secret variables came over the pipe.
+--- host.log
+host identity: NT SERVICE\RpSpikeProbe session 0
+secrets: 4 variable(s) taken from the pipe
+command: C:\restoreproof\worker\build\dev\rpworker.exe restore --mail 1 --sp 0 --od 0 --run-id w412-done-when-1 --config C:\ProgramData\RestoreProof\spike-w4.12\config.json --manifest C:\restoreproof\lab\seed-manifest.json
+child exit code: 0
+--- stdout
+restore point 2026-10-05T01:14:32.2221915Z  c2f0f2e7-177f-48ac-992b-93a50cf702e345a44e25-0a57-4ab8-9999-a3d0c0df61ef  (veeam_org_name RestoreProofLab.onmicrosoft.com)
+run w412-done-when-1  seed e806ff32
+cleanup before ok: deleted 0 mail, 0 sharepoint, 0 onedrive
+canary cursor 0,0,0 -> 1,0,0
+  KIND        REQUESTED  CANARIES  RANDOM  NOTE
+  mail        1          1 of 1    0 of 0
+  sharepoint  0          0 of 0    0 of 0
+  onedrive    0          0 of 0    0 of 0
+restoring 1 item(s) ...
+
+  KIND  SOURCE  NAME            OUTCOME   SESSION                               ELAPSED  MESSAGE
+  mail  canary  RP-CANARY-0001  restored  3a58a111-b478-49ca-8790-042133a08648  0:00:23  Item RP-CANARY-0001 was restored successfully (type: IPM.Note; source: Alice Test\Inbox; target: restoretest@RestoreProofLab.onmicrosoft.com\<null>\Inbox)
+
+  SESSION                               KIND  RESULT   RESTORED  STARTED                       ENDED                         ELAPSED
+  3a58a111-b478-49ca-8790-042133a08648  mail  Success  1 of 1    2026-10-06T23:21:50.5087341Z  2026-10-06T23:22:14.2873641Z  0:00:23
+
+restore succeeded: 1 of 1 item(s) restored in 0:00:26
+
+  KIND  SOURCE  NAME            OUTCOME  FIELDS  DUP  MS
+  mail  canary  RP-CANARY-0001  match    -       -    0
+
+check: 1 match, 0 mismatch, 0 missing, 0 error
+
+status pass: 1 of 1 item(s) verified: manifest 1, fields 0, metadata 0
+cleanup after ok: deleted 1 mail, 0 sharepoint, 0 onedrive
+
+STEP                  TIME         NOTE
+restore_point_lookup  0:00:00.107
+cleanup_before        0:00:01.532
+sample_select         0:00:00.005
+target_snapshot       0:00:00.121
+restore               0:00:26.656
+restore_submit        0:00:00.243
+restore_wait          0:00:25.291
+verify                0:00:00.171
+recovery              0:00:26.827
+cleanup_after         0:00:01.166
+total                 0:00:29.814
+--- stderr
+--- exit code 0
+--- files written under C:\ProgramData\Microsoft\Crypto (key containers), the spike out folder and C:\Windows\Temp during the run (the host's own output files left out): 2
+C:\ProgramData\Microsoft\Crypto\SystemKeys\532790bac33c5ee726ce1fd6baeb7e9e_979c0e2f-70cd-4490-8214-782eeb81f138 1601 B 2026-10-06T23:22:01.0550444Z
+C:\ProgramData\Microsoft\Crypto\SystemKeys\7d415b664df2fcd153b6745617b22d2b_979c0e2f-70cd-4490-8214-782eeb81f138 1601 B 2026-10-06T23:22:01.0700146Z
+--- .pfx/.p12 files written under C:\ProgramData, C:\Windows\Temp or the user's Temp during the run: 0

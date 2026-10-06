@@ -3,8 +3,10 @@
 # - TLS: the Veeam REST leaf certificate is trusted by its exact SHA-256 (pinned). Nothing else is
 #   accepted, and verification is never switched off. Veeam's default certificate has no SAN, so no
 #   host name verifies against it (docs/api/veeam-feasibility.md §5.1).
-# - Secrets: rp-veeam's password is read from Windows Credential Manager at run time. It and every
-#   token live only in this process's memory. If $env:RP_LAB_SECRET_DIR is set, a DPAPI copy of each
+# - Secrets: rp-veeam's password is read from Windows Credential Manager at run time, or from
+#   $env:RP_VEEAM_PASSWORD when that is set (W4.12: a process running as a service account has no
+#   Credential Manager entry of the user's; the variable is the one the Worker reads too). It and
+#   every token live only in this process's memory. If $env:RP_LAB_SECRET_DIR is set, a DPAPI copy of each
 #   is also written there, so audit-evidence.ps1 can check saved evidence against the literal values
 #   later; delete that folder when done.
 # - Evidence: Save-Evidence writes one scrubbed JSON per call to docs/api/veeam-lab/ (format in its
@@ -198,7 +200,8 @@ function Save-Evidence([string]$Name, $r, [string]$Note) {
 
 # Password grant for rp-veeam. Keeps the tokens in memory and returns the exchange.
 function Connect-VeeamAdmin {
-    $pw = Read-CredManPassword $script:CredTarget
+    $pw = if ($env:RP_VEEAM_PASSWORD) { Register-Secret $env:RP_VEEAM_PASSWORD; $env:RP_VEEAM_PASSWORD }
+          else { Read-CredManPassword $script:CredTarget }
     $r = Invoke-Veeam -Method POST -Path '/v8/token' -NoAuth -Form ([ordered]@{
         grant_type = 'password'; username = $script:VeeamUser; password = $pw; disable_antiforgery_token = 'true' })
     $pw = $null

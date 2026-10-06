@@ -1,0 +1,22 @@
+W4.12 (#135) probe 4: the failure cases for rpworker doctor, as NT SERVICE\RpSpikeProbe, 2026-10-06T23:08:13Z.
+The two throwaway certificates were made in Cert:\LocalMachine\My with New-SelfSignedCertificate (RSA 2048, Microsoft Software Key Storage Provider) and deleted at the end of the spike; the non-exportable one's key file got the same Read ACE as Veeam's, so the refusal is about the export policy, not the ACL (the denied-ACL case is probe 2). Veeam's own certificate was not touched.
+BF257E38FAB25ADB753DE8D1081B2678BDAB6293 CN=RestoreProof W4.12 spike expired (throwaway) NotAfter=2026-09-26 23:02:09Z key=12ca019e0239ba88082465eeae09da8c_979c0e2f-70cd-4490-8214-782eeb81f138 policy=AllowPlaintextExport
+2183002CB1927D3996F55F5AB8B227D970B571DF CN=RestoreProof W4.12 spike non-exportable (throwaway) NotAfter=2027-10-06 23:12:09Z key=fee039ee167c29f3716853c441994879_979c0e2f-70cd-4490-8214-782eeb81f138 policy=None
+--- stdout
+identity: NT SERVICE\RpSpikeProbe
+--- case: missing (no such thumbprint)  (0123456789ABCDEF0123456789ABCDEF01234567)
+  store: no such certificate
+  worker: spike export 0123456789ABCDEF0123456789ABCDEF01234567: refused: certificate 0123456789ABCDEF0123456789ABCDEF01234567 in LocalMachine\My: not found
+  worker: All tests passed (41 assertions in 1 test case)
+--- case: not exportable  (2183002CB1927D3996F55F5AB8B227D970B571DF)
+  store: CN=RestoreProof W4.12 spike non-exportable (throwaway), valid to 2027-10-06 23:12:09Z, HasPrivateKey True
+  worker: spike export 2183002CB1927D3996F55F5AB8B227D970B571DF: refused: certificate 2183002CB1927D3996F55F5AB8B227D970B571DF in LocalMachine\My: its private key isn't exportable (error 0x8009000B)
+  worker: All tests passed (41 assertions in 1 test case)
+  .NET Export: MethodInvocationException: Exception calling "Export" with "2" argument(s): "Key not valid for use in specified state." (HResult 0x80131501)
+--- case: expired  (BF257E38FAB25ADB753DE8D1081B2678BDAB6293)
+  store: CN=RestoreProof W4.12 spike expired (throwaway), valid to 2026-09-26 23:02:09Z, HasPrivateKey True
+  worker: spike export BF257E38FAB25ADB753DE8D1081B2678BDAB6293: refused: certificate BF257E38FAB25ADB753DE8D1081B2678BDAB6293 in LocalMachine\My: expired at 2026-09-26T23:02:09Z
+  worker: All tests passed (41 assertions in 1 test case)
+  .NET Export: MethodInvocationException: Exception calling "Export" with "2" argument(s): "Keyset does not exist" (HResult 0x80131501)
+--- stderr
+--- exit code 0

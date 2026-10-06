@@ -191,3 +191,27 @@ config (`%LOCALAPPDATA%\RestoreProof\lab\config.json`) and `--record`, on the re
 
 Runs 1 and 2b's `--record` folders are replayed by `worker/tests/` (W3.2). None of these files
 holds a credential. The 11 copies stay in the targets until removed by hand (W3.4).
+
+## W4.12 spike: the restore credential under a service account
+
+W4.12 (#135, `docs/decisions.md` 2026-10-07), 2026-10-06 23:06Z–23:24Z: the Worker's export of
+Veeam's organisation app certificate from `LocalMachine\My`, tried from a Windows service as
+LocalSystem and as a virtual account, then one mail restore as the virtual account through
+`10-restore.ps1` and one through `rpworker restore`. Text files, as the console showed them;
+each was checked against the session's secret values and for token, PFX and PEM shapes before
+it was written (`w4.12-harness/spike-lib.ps1`, `Save-SpikeEvidence`): no hits. The commands
+print no credential; the probes print lengths only.
+
+| File | What it is |
+|---|---|
+| [`w4.12-1-probe-localsystem.txt`](w4.12-1-probe-localsystem.txt) | the probe as LocalSystem: `GET /v8/Organizations`, the certificate found by the reported thumbprint, the app ID checked, the key opened, exported in memory by .NET and by the Worker's exporter |
+| [`w4.12-2-probe-virtual-account-denied.txt`](w4.12-2-probe-virtual-account-denied.txt) | the same as `NT SERVICE\RpSpikeProbe` with the key file's default ACL: the key can't be opened (`0x80090016`) |
+| [`w4.12-3-probe-virtual-account-granted.txt`](w4.12-3-probe-virtual-account-granted.txt) | the same after one `icacls ... /grant "NT SERVICE\RpSpikeProbe:(R)"` on the key file: identical to LocalSystem's |
+| [`w4.12-4-failure-cases.txt`](w4.12-4-failure-cases.txt) | as the virtual account, the Worker's exporter on a thumbprint no certificate has, a throwaway non-exportable certificate and a throwaway expired one: the three refusals `rpworker doctor` will name |
+| [`w4.12-5-restore-script-virtual-account.txt`](w4.12-5-restore-script-virtual-account.txt) | `10-restore.ps1 -Type mail -Item RP-CANARY-0011` as the virtual account, the export in memory: `Success`, 22 s; nothing written under the key container folders or temp |
+| [`w4.12-6-graph-list-hash-after-script.txt`](w4.12-6-graph-list-hash-after-script.txt) | `rpworker graph list --hash` right after: the one mail with the manifest's `body_sha256` |
+| [`w4.12-7-cleanup-and-graph-list.txt`](w4.12-7-cleanup-and-graph-list.txt) | the live cleanup test emptying the targets, then `graph list`: 0 |
+| [`w4.12-8-rpworker-restore-virtual-account.txt`](w4.12-8-rpworker-restore-virtual-account.txt) | the Done-when: `rpworker restore --mail 1 --sp 0 --od 0 --run-id w412-done-when-1` as the virtual account: 1 of 1, `status pass`, exit 0, cleaned after; two key files Veeam's own service wrote under `SystemKeys` noted |
+| [`w4.12-9-graph-list-after-rpworker.txt`](w4.12-9-graph-list-after-rpworker.txt) | `rpworker graph list --hash` after it: 0 in all three targets |
+| [`w4.12-10-teardown.txt`](w4.12-10-teardown.txt) | the service, the ACEs, the throwaway certificates and the spike folder taken away again, and what the machine holds after |
+| [`w4.12-harness/`](w4.12-harness/) | how it was run: `RpSpikeHost.cs` (the temporary service that runs one command as its account, the secrets over a named pipe), `spike-lib.ps1` (the elevated shell's side: the service, the pipe, the evidence writer), `spike-probe.ps1`, `spike-failures.ps1`. Kept as text; not run by any test |

@@ -1,0 +1,40 @@
+W4.12 (#135) step 5: one mail restore through docs/api/veeam-m365/10-restore.ps1 (in-memory export, W4.12 revision) as NT SERVICE\RpSpikeProbe, started 2026-10-06T23:08:13Z. The elevated shell held the run mutex Global\RestoreProof-restore-targets for the restore and the read-back.
+--- host.log
+host identity: NT SERVICE\RpSpikeProbe session 0
+secrets: 4 variable(s) taken from the pipe
+command: C:\Program Files\PowerShell\7\pwsh.exe -NoProfile -NonInteractive -File C:\restoreproof\docs\api\veeam-m365\10-restore.ps1 -Type mail -Item RP-CANARY-0011 -Tag w412
+child exit code: 0
+--- stdout
+W2.4 restore: mail, RP-CANARY-0011
+GET /v8/RestoreSessions?limit=200 -> 200 (65 ms)
+GET /v8/Organizations -> 200 (6 ms)
+latest restore point: c2f0f2e7-177f-48ac-992b-93a50cf702e345a44e25-0a57-4ab8-9999-a3d0c0df61ef backupTime 2026-10-05T01:14:32.2221915Z
+POST /v8/Organizations/ff96d072-29e2-4cb4-a155-2590f5473176/explore -> 201 (227 ms)
+explore session: 0544944a-af84-467c-8811-c994e259e449
+GET /v8/RestoreSessions/0544944a-af84-467c-8811-c994e259e449/organization/mailboxes?limit=1000 -> 200 (23 ms)
+GET /v8/RestoreSessions/0544944a-af84-467c-8811-c994e259e449/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/folders?name=Inbox -> 200 (53 ms)
+GET /v8/RestoreSessions/0544944a-af84-467c-8811-c994e259e449/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/items?parentId=AAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAQwAAA&limit=1000 -> 200 (58 ms)
+GET /v8/RestoreSessions/0544944a-af84-467c-8811-c994e259e449/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/items/LgAAAEYAAAAWAAAAAAAAALHG_0e11qNDildcDmYJVDMBAEDG1MoVNbFOhC0f6EbSmhcAAAAAAQwAAAAAAACxxv9HtdajQ4pXXA5mCVQzBwBAxtTKFTWxToQtH-hG0poXAAAAAAEMAABAxtTKFTWxToQtH-hG0poXAAAAADwfAABAxtTKFTWxToQtH-hG0poXAAAAABBN -> 200 (4 ms)
+  RP-CANARY-0011: item found, received 2026-09-24T22:14:46Z
+  guard self-test: 12 mutations refused by the guard
+restore call: POST /v8/RestoreSessions/{restoreSessionId}/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/items/restoreTo
+  body: {"mailbox":"restoretest@RestoreProofLab.onmicrosoft.com","folder":"Inbox","items":"[1 item(s)]","changedItems":true,"deletedItems":true,"markRestoredAsUnread":false,"excludeDrafts":false,"excludeDeletedItems":false,"excludeInPlaceHoldItems":true,"excludeLitigationHoldItems":true,"officeRegion":"Worldwide","officeOrganizationName":"RestoreProofLab.onmicrosoft.com","applicationId":"1fd2609d-1242-43fe-94b5-d58688a90bd6","applicationCertificate":"[not exported yet]","applicationCertificatePassword":"[not exported yet]","impersonationAccountName":"restoretest@RestoreProofLab.onmicrosoft.com"}
+  certificate exported in memory (3508 Base64 chars); nothing written to disk
+POST /v8/RestoreSessions/{restoreSessionId}/organization/mailboxes/12af7578-24c6-48e4-a3a5-3174bda4f4d4/items/restoreTo -> 200 (127 ms)
+restore session: d41987ae-a0c9-44b1-ad98-00ebde628f4b
+GET /v8/RestoreSessions?startTimeFrom=2026-10-06T23:07:16Z&orderBy=CreationTime&orderAsc=false&limit=50 -> 200 (12 ms)
+  duplicate check: 1 new session(s) of ours; exactly this one: True
+restore session d41987ae-a0c9-44b1-ad98-00ebde628f4b : state=Stopped result=Success details="1 item processed (1 success)" (22 s)
+GET /v8/RestoreSessions/d41987ae-a0c9-44b1-ad98-00ebde628f4b/Statistics -> 200 (19 ms)
+  statistics: total=1 restored=1 failed=0 skipped=0
+GET /v8/RestoreSessions/d41987ae-a0c9-44b1-ad98-00ebde628f4b/Events?limit=100 -> 200 (20 ms)
+  event Restore/Success: Item RP-CANARY-0011 was restored successfully (type: IPM.Note; source: Bob Test\Inbox; target: restoretest@RestoreProofLab.onmicrosoft.com\<null>\Inbox)
+VERDICT: Veeam says restored (1 item(s), restore session d41987ae-a0c9-44b1-ad98-00ebde628f4b)
+  Veeam's log: C:\ProgramData\Veeam\Backup365\Logs\RestoreREST\restore_2026_10_07_01_08_22_d41987aea0c944b1ad9800ebde628f4b_ff96d07229e24cb4a1552590f5473176.log (0 bytes; not committed)
+stopped session 0544944a-af84-467c-8811-c994e259e449 -> 204
+logout -> 204
+--- stderr
+--- exit code 0
+--- files written under C:\ProgramData\Microsoft\Crypto (key containers), the spike out folder and C:\Windows\Temp since the run started (the host's own output files left out): 0
+
+--- .pfx/.p12 files written under C:\ProgramData, C:\Windows\Temp or the user's Temp since the run started: 0

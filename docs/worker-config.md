@@ -623,12 +623,14 @@ delete are still ignored and counted by the check. The code is `rp::run_restore_
 
 It needs:
 
-- **an elevated shell** (Run as administrator): the restore credential, Veeam's organisation
-  app certificate, is exported in memory per restore call from `LocalMachine\My`, which needs
-  the machine's private key (`docs/decisions.md` 2026-09-30, W2.5, point 1). Without
-  elevation the export fails after the guard has passed and the explore sessions are open,
-  before anything is sent: `restore error: veeam_m365: <why the export failed>; the restore
-  was not sent`, exit 4;
+- **an account that can read the certificate's private key**: the restore credential, Veeam's
+  organisation app certificate, is exported in memory per restore call from `LocalMachine\My`
+  (`docs/decisions.md` 2026-09-30, W2.5, point 1). By hand that means an elevated shell (Run as
+  administrator); the Worker's service runs as a virtual account with a Read ACE on the key
+  file (W4.12, `docs/decisions.md` 2026-10-07). Without it the export fails after the guard has
+  passed and the explore sessions are open, before anything is sent: `restore error:
+  veeam_m365: certificate <thumbprint> in LocalMachine\My: its private key can't be opened
+  (error 0x80090016); ...; the restore was not sent`, exit 4;
 - `RP_VEEAM_USERNAME` and `RP_VEEAM_PASSWORD` (`config error: <name> is not set`, exit 1),
   then the Worker app's certificate for the guard's Graph reads: `RP_GRAPH_CERT_PFX_BASE64`
   and, unless the PFX has none, `RP_GRAPH_CERT_PASSWORD`. The certificate is opened and

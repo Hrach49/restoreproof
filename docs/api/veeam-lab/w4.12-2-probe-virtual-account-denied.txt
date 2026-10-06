@@ -1,0 +1,31 @@
+W4.12 (#135) probe 2: as the virtual account NT SERVICE\RpSpikeProbe, no access granted to the key file, 2026-10-06T23:07:14Z
+key file ACL before: C:\ProgramData\Microsoft\Crypto\RSA\MachineKeys\76c3cba9ff326aabc15dd987a090ecaf_979c0e2f-70cd-4490-8214-782eeb81f138 NT AUTHORITY\SYSTEM:(F) |                                                                                                                       BUILTIN\Administrators:(RX)
+--- host.log
+host identity: NT SERVICE\RpSpikeProbe session 0
+secrets: 4 variable(s) taken from the pipe
+command: C:\Program Files\PowerShell\7\pwsh.exe -NoProfile -NonInteractive -File C:\ProgramData\RestoreProof\spike-w4.12\scripts\spike-probe.ps1
+child exit code: 0
+--- stdout
+identity: NT SERVICE\RpSpikeProbe  (SID S-1-5-80-3703184301-2764460003-1150913816-848772467-1377575194)
+member of Administrators: False
+session: 0  pwsh 7.4.20
+groups: Everyone; BUILTIN\Users; NT AUTHORITY\SERVICE; NT AUTHORITY\Authenticated Users; NT SERVICE\ALL SERVICES
+TEMP: C:\ProgramData\RestoreProof\spike-w4.12\out
+Veeam sign-in: ok as DESKTOP-P55CDUM\rp-veeam
+GET /v8/Organizations -> 200 (12 ms)
+exchangeOnlineSettings:   applicationId 1fd2609d-1242-43fe-94b5-d58688a90bd6  thumbprint AC3220B58A2B4C438DA13816C2DD1E25D1F783A7
+sharePointOnlineSettings: applicationId 1fd2609d-1242-43fe-94b5-d58688a90bd6  thumbprint AC3220B58A2B4C438DA13816C2DD1E25D1F783A7
+app ID check: ok (1fd2609d-1242-43fe-94b5-d58688a90bd6 in both settings)
+certificate: found in Cert:\LocalMachine\My: CN=RestoreProof Lab Veeam, valid 2026-09-25 18:43:36Z to 2028-09-25 18:53:36Z, HasPrivateKey True
+private key: can't be opened: MethodInvocationException: Exception calling "GetRSAPrivateKey" with "1" argument(s): "Keyset does not exist" (HResult 0x80131501)
+--- the Worker exporter (rptests "[spike_cert_export]")
+  Filters: [spike_cert_export]
+  Randomness seeded to: 3964822950
+  spike export AC3220B58A2B4C438DA13816C2DD1E25D1F783A7: refused: certificate AC3220B58A2B4C438DA13816C2DD1E25D1F783A7 in LocalMachine\My: its private key can't be opened (error 0x80090016); run elevated or as LocalSystem, which a machine key needs
+  ===============================================================================
+  All tests passed (41 assertions in 1 test case)
+  
+  rptests exit code: 0
+probe done
+--- stderr
+--- exit code 0

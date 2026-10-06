@@ -2756,12 +2756,13 @@ TEST_CASE("only --evidence asks the TSA: restore, test and test --json never do"
     lab.fake.pool.mail = {carol_mail(1)};
     // Nor do they read its CA file: one that holds no certificate stops nothing.
     std::ofstream(lab.dir.path() / "tsa-ca.pem", std::ios::binary | std::ios::trunc) << "x";
+    const std::string json_arg = lab.json_arg();
     Args args = kThree;
     SECTION("test") {}
     SECTION("test --json")
     {
         args.push_back("--json");
-        args.push_back(lab.json_arg());
+        args.push_back(json_arg);
     }
     SECTION("restore")
     {

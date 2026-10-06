@@ -79,7 +79,7 @@ inline const std::string kUsage =
     "rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] "
     "[--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] "
     "[--record <dir>] [--json <file> | --evidence <dir>] | "
-    "rpworker signer public-key | rpworker signer verify <folder> --public-key <pem file>\n";
+    "rpworker signer public-key | rpworker signer verify <folder> --public-key <pem file> [--tsa-ca <pem file>]\n";
 
 inline const std::string kOrgName = "RestoreProofLab.onmicrosoft.com";
 // Veeam's restore point IDs are two GUIDs run together: the backup

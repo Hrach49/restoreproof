@@ -237,6 +237,60 @@ private:
     TsaCertPtr tsa_;
 };
 
+// A request's DER from the library's own object.
+inline std::string tsa_request_der(TS_REQ* request)
+{
+    unsigned char* raw = nullptr;
+    const int size = i2d_TS_REQ(request, &raw);
+    REQUIRE(size > 0);
+    std::string der(reinterpret_cast<const char*>(raw), static_cast<std::size_t>(size));
+    OPENSSL_free(raw);
+    return der;
+}
+
+// The token `tsa` gives a request that doesn't ask for its certificate: one
+// no verifier can find the signer of.
+inline std::string token_without_certificate(const TestTsa& tsa,
+                                             std::span<const unsigned char, kSha256Bytes> digest)
+{
+    const std::string request = openssl_rfc3161().request(digest, 0x0102030405060708ULL);
+    const unsigned char* p = reinterpret_cast<const unsigned char*>(request.data());
+    const std::unique_ptr<TS_REQ, decltype(&TS_REQ_free)> parsed(
+        d2i_TS_REQ(nullptr, &p, static_cast<long>(request.size())), &TS_REQ_free);
+    REQUIRE(parsed);
+    REQUIRE(TS_REQ_set_cert_req(parsed.get(), 0) == 1);
+    const std::optional<TimestampResponse> response =
+        openssl_rfc3161().parse_response(tsa.respond(tsa_request_der(parsed.get())));
+    REQUIRE(response);
+    REQUIRE_FALSE(response->token.empty());
+    return response->token;
+}
+
+// A token of `tsa` whose imprint is SHA-512 (of nothing in particular).
+inline std::string sha512_token(const TestTsa& tsa)
+{
+    const std::unique_ptr<TS_REQ, decltype(&TS_REQ_free)> request(TS_REQ_new(), &TS_REQ_free);
+    REQUIRE(TS_REQ_set_version(request.get(), 1) == 1);
+    const std::unique_ptr<TS_MSG_IMPRINT, decltype(&TS_MSG_IMPRINT_free)> imprint(
+        TS_MSG_IMPRINT_new(), &TS_MSG_IMPRINT_free);
+    X509_ALGOR* algorithm = X509_ALGOR_new();
+    REQUIRE(X509_ALGOR_set0(algorithm, OBJ_nid2obj(NID_sha512), V_ASN1_NULL, nullptr) == 1);
+    REQUIRE(TS_MSG_IMPRINT_set_algo(imprint.get(), algorithm) == 1);
+    X509_ALGOR_free(algorithm);
+    unsigned char digest[64];
+    for (unsigned char& byte : digest) {
+        byte = 0x5a;
+    }
+    REQUIRE(TS_MSG_IMPRINT_set_msg(imprint.get(), digest, sizeof digest) == 1);
+    REQUIRE(TS_REQ_set_msg_imprint(request.get(), imprint.get()) == 1);
+    REQUIRE(TS_REQ_set_cert_req(request.get(), 1) == 1);
+    const std::optional<TimestampResponse> response =
+        openssl_rfc3161().parse_response(tsa.respond(tsa_request_der(request.get())));
+    REQUIRE(response);
+    REQUIRE_FALSE(response->token.empty());
+    return response->token;
+}
+
 // Where a FakeRfc3161 fails. Everything else it hands to the real primitive.
 enum class Rfc3161Fault {
     none,

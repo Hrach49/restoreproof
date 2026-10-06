@@ -13,6 +13,7 @@
 // reader handed in.
 
 #include <rp/ed25519.hpp>
+#include <rp/rfc3161.hpp>
 
 #include <cstddef>
 #include <cstdint>
@@ -148,7 +149,13 @@ enum class VerifyWord {
     signature_invalid,    // 64 well-formed bytes the primitive refuses under that key
     attachment_missing,   // a listed file isn't there or can't be read
     attachment_size,      // not the listed size
-    attachment_hash       // not the listed SHA-256
+    attachment_hash,      // not the listed SHA-256
+    // W4.4, verify_folder only, after every attachment:
+    timestamp_file,     // timestamp.tst is listed and can't be read, is too
+                        // large or isn't exactly one TimeStampToken
+    timestamp_mismatch, // its imprint isn't SHA-256 or isn't the result's hash
+    timestamp_invalid   // it doesn't verify under the caller's CA: the
+                        // signature, the signer or its chain at the token's time
 };
 
 // The word as both verifiers print it; "unknown" for a value outside the enum.
@@ -158,17 +165,41 @@ std::string_view to_string(VerifyWord word) noexcept;
 // what a test holds the shared vectors and the Python verifier's set to.
 const std::vector<std::string>& verify_words();
 
+// What a verified folder's timestamp is (W4.4).
+enum class TimestampState {
+    none,      // no timestamp.tst in the folder: not timestamped
+    unchecked, // one is there, its form and imprint hold, and the caller gave
+               // no CA to verify it under
+    checked    // it verifies under the caller's CA
+};
+
+// What a verifier is given to check a timestamp with: the PEM certificates a
+// token must chain to, from the caller (`--tsa-ca`), never from the folder.
+struct TimestampTrust {
+    std::optional<std::string> ca_pem; // nullopt = none given
+    const Rfc3161* primitive = &openssl_rfc3161();
+};
+
 struct Verification {
     VerifyWord word = VerifyWord::result_unreadable;
     // Both set with `verified` only.
     std::string bundle_sha256;
     std::string key_id;
     // With `verified` only, from verify_folder: each name of the folder that
-    // isn't result.json, signature.json or a listed attachment (W4.6's
-    // manifest.json, W4.4's token), in the order given. A note, never a
+    // isn't result.json, signature.json, timestamp.tst or a listed
+    // attachment (W4.6's manifest.json), in the order given. A note, never a
     // failure.
     std::vector<std::string> notes;
+    // With `verified` only, from verify_folder (W4.4): the folder's timestamp,
+    // and with `checked` and `unchecked` the token's own time (genTime,
+    // seconds since 1970 UTC; with `unchecked` nobody vouches for it).
+    TimestampState timestamp = TimestampState::none;
+    std::int64_t timestamp_time = 0;
 };
+
+// The third field of a verifier's `verified` line: the token's time as
+// YYYY-MM-DDTHH:MM:SSZ when it was checked, else "none" or "unchecked".
+std::string timestamp_field(const Verification& verdict);
 
 // Thrown by Signer::verify and verify_folder when a check couldn't be made at
 // all: the result's schema couldn't be loaded, or the validator itself failed
@@ -227,9 +258,19 @@ public:
     // the others are the notes. What `read` or the primitive throws is let
     // through, and a schema check that couldn't be made is a VerifierFailure:
     // a failure of the verifier is never a verdict.
+    //
+    // Then, W4.4, the timestamp, when `files` has timestamp.tst (byte for
+    // byte): timestamp_file unless it is read whole within
+    // kMaxTimestampFileBytes and is exactly one TimeStampToken;
+    // timestamp_mismatch unless its imprint is SHA-256 and the result's own
+    // hash, the bytes the signature signs; then, when `tsa` carries a CA,
+    // timestamp_invalid unless the token verifies under it at the token's own
+    // time (Rfc3161::verify_token). Without a CA the token is `unchecked`,
+    // without a token the folder is `none`: both are `verified`.
+    // timestamp.tst is never a note.
     static Verification verify_folder(const FileReader& read,
                                       const std::vector<std::string>& files,
-                                      const PublicKey& key);
+                                      const PublicKey& key, const TimestampTrust& tsa = {});
 };
 
 } // namespace rp

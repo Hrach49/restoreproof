@@ -6,6 +6,7 @@
 #include <openssl/objects.h>
 #include <openssl/pem.h>
 #include <openssl/pkcs7.h>
+#include <openssl/rand.h>
 #include <openssl/ts.h>
 #include <openssl/x509.h>
 #include <openssl/x509_vfy.h>
@@ -277,6 +278,16 @@ public:
         } catch (...) {
             return false;
         }
+    }
+
+    std::optional<std::uint64_t> random_nonce() const override
+    {
+        const ClearOpenSslErrors clear_errors;
+        std::uint64_t nonce = 0;
+        if (RAND_bytes(reinterpret_cast<unsigned char*>(&nonce), sizeof nonce) != 1) {
+            return std::nullopt;
+        }
+        return nonce;
     }
 
     std::size_t certificates_in(std::string_view pem) const override

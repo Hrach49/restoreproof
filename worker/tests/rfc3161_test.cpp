@@ -310,6 +310,15 @@ TEST_CASE("timestamp_time_text is the time in UTC to the second", "[rfc3161]")
     CHECK(rp::timestamp_time_text(4102444799) == "2099-12-31T23:59:59Z");
 }
 
+TEST_CASE("random_nonce gives a new nonce each time", "[rfc3161]")
+{
+    const std::optional<std::uint64_t> a = ts().random_nonce();
+    const std::optional<std::uint64_t> b = ts().random_nonce();
+    REQUIRE(a);
+    REQUIRE(b);
+    CHECK(*a != *b);
+}
+
 TEST_CASE("the real RFC 3161 primitive is one object", "[rfc3161]")
 {
     CHECK(&rp::openssl_rfc3161() == &rp::openssl_rfc3161());

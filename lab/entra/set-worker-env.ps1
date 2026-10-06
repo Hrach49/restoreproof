@@ -19,7 +19,8 @@
     The third comes from the generic credential "RestoreProof Lab - Worker signing key", which
     `python -m seeder new-signing-key` (in lab\) makes. Only `rpworker test --evidence` needs it,
     so when there is no such credential the script sets the other two, says that it skipped this
-    one and does not fail. An entry that isn't a signing key stops it before anything is set.
+    one and does not fail. An entry that isn't a signing key stops it before anything is set, and
+    takes an RP_SIGNING_KEY_BASE64 left from an earlier call out of the session.
 
     It never prints any of the values and never writes anything to disk: the variables live only
     in this PowerShell process and go away when it ends.
@@ -134,6 +135,8 @@ public static class RpWorkerEnvCredential {
     # entry of another shape is one, before anything is set, and its value is never shown.
     $signingKey = [RpWorkerEnvCredential]::Read($SigningKeyTarget)
     if ($null -ne $signingKey -and $signingKey -cnotmatch $SigningKeyShape) {
+        # A key left from an earlier call goes here too, or the next run would sign with it.
+        Remove-Item Env:RP_SIGNING_KEY_BASE64 -ErrorAction SilentlyContinue
         throw "The Credential Manager entry '$SigningKeyTarget' isn't an Ed25519 signing key (one line, Base64 of its PKCS#8 DER). Nothing was set. Make a new key in lab\ with: uv run python -m seeder new-signing-key --replace (every signature made with the old key is then orphaned)."
     }
 

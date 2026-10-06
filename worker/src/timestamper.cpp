@@ -12,6 +12,17 @@
 
 namespace rp {
 
+namespace detail {
+// shared/tsa/tsa-ca.pem, embedded at build time (cmake/embed_bytes.cmake).
+extern const unsigned char kTsaRootBytes[];
+extern const std::size_t kTsaRootSize;
+} // namespace detail
+
+std::string_view default_tsa_ca_pem() noexcept
+{
+    return {reinterpret_cast<const char*>(detail::kTsaRootBytes), detail::kTsaRootSize};
+}
+
 namespace {
 
 constexpr std::array<std::chrono::milliseconds, kTimestampAttempts - 1> kWaits = {

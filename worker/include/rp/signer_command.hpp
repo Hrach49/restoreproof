@@ -34,7 +34,7 @@ SignerCommandEnv default_signer_command_env();
 // `rpworker signer ...`. `args` is what follows "signer" on the command line,
 // in UTF-8. Returns an rp::exit_code; 64 with rp::kCliUsage on `err` for
 // arguments it doesn't understand (another subcommand, a word too many, a
-// missing or empty <folder> or --public-key value, either given twice).
+// missing or empty <folder>, --public-key or --tsa-ca value, any given twice).
 //
 // `public-key` prints to `out` the SubjectPublicKeyInfo PEM of the key in
 // RP_SIGNING_KEY_BASE64 (three lines) and nothing else, so that `out` is a key
@@ -47,15 +47,21 @@ SignerCommandEnv default_signer_command_env();
 // "config error: RP_SIGNING_KEY_BASE64 is not set" and "config error:
 // RP_SIGNING_KEY_BASE64 is not an Ed25519 private key (Base64 of PKCS#8 DER)".
 //
-// `verify <folder> --public-key <pem file>` (the two in either order) checks
-// the run folder with Signer::verify_folder against the key in the file, and
-// prints one line to `out`:
-//  - "verified <bundle_sha256> key <key_id>", exit 0; before it, on `err`, one
+// `verify <folder> --public-key <pem file> [--tsa-ca <pem file>]` (in any
+// order) checks the run folder with Signer::verify_folder against the key in
+// the file and, W4.4, its timestamp against the certificates of --tsa-ca
+// (PEM, at most kMaxPublicKeyFileBytes; "signer error: --tsa-ca <file>: the
+// file can't be read" / "... no certificate in PEM", exit 1), and prints one
+// line to `out`:
+//  - "verified <bundle_sha256> key <key_id> timestamp <time|none|unchecked>",
+//    exit 0 (rp::timestamp_field); before it, on `err`, one
 //    "note: not listed in the result: <name>" line per file of the folder that
-//    is neither result.json, signature.json nor a listed attachment (the name
-//    in ASCII, anything else as \xNN, \uNNNN or \UNNNNNNNN, lower-case hex; a
-//    name that isn't valid UTF-16 is a note like any other, its lone surrogate
-//    written \udXXX);
+//    is neither result.json, signature.json, timestamp.tst nor a listed
+//    attachment (the name in ASCII, anything else as \xNN, \uNNNN or
+//    \UNNNNNNNN, lower-case hex; a name that isn't valid UTF-16 is a note
+//    like any other, its lone surrogate written \udXXX), then "note: not
+//    timestamped" for a folder without timestamp.tst, or "note:
+//    timestamp.tst was not checked: no --tsa-ca";
 //  - "not verified: <word>", exit 5 (exit_code::restore), the word
 //    rp::to_string(VerifyWord): anything wrong inside the folder, a missing
 //    file included.

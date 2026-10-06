@@ -114,6 +114,21 @@ add_custom_command(
     COMMENT "Embedding shared/schemas/result.v1.json"
     VERBATIM)
 target_sources(rpcore PRIVATE ${RP_RESULT_SCHEMA_CPP})
+# The default TSA's root (W4.4): shared/tsa/tsa-ca.pem is the only copy,
+# embedded the same way, so a token of the default TSA is checked against a
+# root the Worker carries, never one from disk or the Windows store. A test
+# compares the embedded bytes with the file.
+set(RP_TSA_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../shared/tsa/tsa-ca.pem)
+set(RP_TSA_ROOT_CPP ${CMAKE_CURRENT_BINARY_DIR}/generated/tsa_root_bytes.cpp)
+add_custom_command(
+    OUTPUT ${RP_TSA_ROOT_CPP}
+    COMMAND ${CMAKE_COMMAND}
+        -DINPUT=${RP_TSA_ROOT} -DOUTPUT=${RP_TSA_ROOT_CPP} -DSYMBOL=kTsaRoot
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_bytes.cmake
+    DEPENDS ${RP_TSA_ROOT} ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_bytes.cmake
+    COMMENT "Embedding shared/tsa/tsa-ca.pem"
+    VERBATIM)
+target_sources(rpcore PRIVATE ${RP_TSA_ROOT_CPP})
 # C4062 (an enumerator not handled in a switch that has no default) is an
 # error in rpcore, so a value added to an enum such as HttpMethod can't fall
 # through to another value's behaviour unnoticed.

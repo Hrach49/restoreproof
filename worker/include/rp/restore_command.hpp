@@ -156,6 +156,15 @@ struct RestoreCommandEnv {
     // unchanged.
     std::function<std::optional<SignedResult>(std::string_view canonical, const SigningKey& key)>
         sign_result;
+    // `rpworker test --evidence <dir>` only (W4.4, rp/timestamper.hpp): makes
+    // the HTTP client the TSA is asked through, once, when the result is
+    // signed; null = an rp::HttpClient with connector_options' logger. With
+    // --record its exchanges go under "tsa", both bodies as Base64. The
+    // Timestamper waits between its attempts with connector_options.sleep
+    // (null = std::this_thread::sleep_for).
+    std::function<std::unique_ptr<IHttpClient>()> make_tsa_http;
+    // The nonce of each timestamp request; null = a random one.
+    std::function<std::optional<std::uint64_t>()> timestamp_nonce;
 };
 
 // The real environment: rp::default_config_path, rp::load_secrets_from_env, the

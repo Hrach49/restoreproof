@@ -62,6 +62,11 @@ inline constexpr std::string_view kInternal = "timestamp_internal";
 inline constexpr std::string_view kNotWritten = "timestamp_not_written";
 } // namespace timestamp_code
 
+// The default TSA's root as PEM: shared/tsa/tsa-ca.pem (DigiCert Trusted Root
+// G4), embedded at build time. What a token is checked against when the
+// config names no tsa_ca_file.
+std::string_view default_tsa_ca_pem() noexcept;
+
 // Every code above, in that order: what a test holds the docs' list to.
 const std::vector<std::string>& timestamp_codes();
 

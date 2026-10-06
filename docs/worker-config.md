@@ -45,6 +45,8 @@ Ten keys are required; the other nine are optional. Seven of those have defaults
 | `log_level` | no | `"info"` | `trace`, `debug`, `info`, `warn`, `error`, `critical`, `off` | How much the Worker logs. Lowercase only. |
 | `veeam_ca_file` | no | (not set) | absolute path of a readable file: see below | PEM file with the CA certificate(s), or Veeam's self-signed certificate itself, that the Worker trusts for `veeam_url` instead of the Windows certificate store. TLS verification can't be turned off. |
 | `veeam_cert_sha256` | no | (not set) | 64 hexadecimal digits in any case, no separators; needs `veeam_ca_file`: see below | The SHA-256 of Veeam's REST certificate, as Windows shows it (`GetCertHashString('SHA256')`). `veeam_ca_file` must hold that certificate. With both set, the Worker trusts exactly that certificate's key and skips only the host-name check, which Veeam's default certificate can never pass. Not a secret. |
+| `tsa_url` | no | (not set: `http://timestamp.digicert.com`) | an `http://` or `https://` URL, no user name, password, query or fragment; needs `tsa_ca_file` | The RFC 3161 timestamp authority `rpworker test --evidence` asks (W4.4). Plain HTTP is allowed for this key alone: see "The timestamp authority" below. |
+| `tsa_ca_file` | no | (not set: the embedded DigiCert root) | absolute path of a readable file | PEM file with the certificate(s) a timestamp token must chain to. Without it, the root embedded from `shared/tsa/tsa-ca.pem`. |
 | `screenshots_enabled` | no | `false` | `true` or `false`: see below | The client's screenshot setting: whether a run that writes a run folder asks for a picture of Veeam's restore session. Off by default. |
 
 At least one of `sample_mail`, `sample_sp` and `sample_od` must be above 0.
@@ -171,6 +173,32 @@ connection reads it. Fix the reported problem and run
   must not be able to report `pass`.
 - Numbers must be JSON integers: `"300"`, `300.0`, `true` and `null` are wrong types.
 - Duplicate keys are not detected; the last one wins.
+
+### The timestamp authority (W4.4)
+
+`rpworker test --evidence` asks an RFC 3161 timestamp authority for a token over the result's
+hash (`docs/verification.md`, "The timestamp"). No other command does, and none reads these
+two keys' file.
+
+- **Without the keys** the Worker asks DigiCert's public TSA, `http://timestamp.digicert.com`,
+  and trusts its tokens through the one root it carries (DigiCert Trusted Root G4,
+  `shared/tsa/tsa-ca.pem`, embedded at build time).
+- **`tsa_url` may be `http://`.** It is the one key that may: public TSAs often have no HTTPS
+  endpoint (DigiCert's has none). Nothing is switched off: an `https://` URL is verified
+  against the Windows certificate store like every other call, and with `http://` there is no
+  TLS to verify. A token's integrity never comes from the transport: its signature, its chain
+  to `tsa_ca_file`, the nonce and the imprint are checked before it is written, and the
+  request holds only a hash and a nonce.
+- **`tsa_url` needs `tsa_ca_file`**, so a TSA you name never borrows the default's root:
+  `config key "tsa_url" needs tsa_ca_file: ...`. `tsa_ca_file` alone replaces the root for the
+  default TSA.
+- **`tsa_ca_file`** is an absolute path like `veeam_ca_file`; `load_config` checks it can be
+  opened. `rpworker test --evidence` also reads it before anything is done: `config error:
+  config key "tsa_ca_file" names a file that can't be read` or `... names a file that holds no
+  certificate (PEM)`, exit 1, no run line.
+- A TSA that can't be reached, or whose answer can't be taken, never fails a run: one
+  `timestamp warning:` line, and the folder is complete without `timestamp.tst`. With the TSA
+  down a run ends up to two minutes later (three attempts, waits of 30 s and 60 s).
 
 ## Veeam's default certificate
 
@@ -1083,20 +1111,26 @@ there is no default, so nothing is written without the flag (the service will pa
 | `signature.json` | the result's signature, `restoreproof.signature.v1`: five keys, `algorithm`, `bundle_sha256` (the SHA-256 of `result.json`'s bytes), `format`, `key_id` (the SHA-256 of the signing key's public half) and `signature` (Ed25519 over that hash's 32 bytes, Base64). Written just before `result.json` |
 | `result.json` | the result, as `--json` writes it, with each of the first three files in `attachments` (`name`, `sha256`, `size_bytes`) and `screenshot` saying `captured` or why not. Written last |
 
-`result.json` lists neither itself (a file can't hold its own hash) nor `signature.json`
-(which depends on that hash). It is there only when the folder is complete and signed: a
-folder without it is a run with no result.
+`result.json` lists neither itself (a file can't hold its own hash) nor `signature.json` and
+`timestamp.tst` (which depend on that hash). It is there only when the folder is complete:
+signed, and the timestamp attempt over, with `timestamp.tst` beside it (W4.4: a TSA's RFC 3161
+token over the result's hash) or without. A folder without `result.json` is a run with no
+result.
 
 For example, `rpworker test --mail 2 --sp 1 --od 0 --run-id run-0001 --evidence C:\rp-runs`
 ends, after the timings' table:
 
 ```
 signed <bundle_sha256> key <key_id>
-evidence C:\rp-runs\run-0001: result.json, signature.json, items.csv, veeam-session.log
+timestamped 2026-10-06T13:29:05Z
+evidence C:\rp-runs\run-0001: result.json, signature.json, timestamp.tst, items.csv, veeam-session.log
 ```
 
-and before `--record`'s `recorded ...` line. Both lines are printed only once `result.json` is
-written, the folder's last. `<bundle_sha256>` and `<key_id>` are 64 lower-case hex each, the
+and before `--record`'s `recorded ...` line. The lines are printed only once `result.json` is
+written, the folder's last. `timestamped <time>` (W4.4) is the TSA's token's own time, UTC; a
+run that got no token has neither that line nor `timestamp.tst` in the list, and one line on
+stderr instead, `timestamp warning: <folder>: not timestamped: <code> after <n> attempt(s)`
+(the codes: `docs/verification.md`, "The timestamp"). Its status and exit code are unchanged. `<bundle_sha256>` and `<key_id>` are 64 lower-case hex each, the
 two values in `signature.json`; `Get-FileHash result.json` gives the first, `rpworker signer
 public-key`'s `key` line the second. With a screenshot the folder's line ends `,
 screenshot.png`.
@@ -1237,25 +1271,36 @@ key file as it is:
 | 1 | stdout couldn't be written | `signer error: the answer couldn't be written`, and no `key` line |
 | 64 | any word after `public-key` | the usage line |
 
-### `signer verify <folder> --public-key <pem file>`
+### `signer verify <folder> --public-key <pem file> [--tsa-ca <pem file>]`
 
 The C++ verifier over a run folder. It needs no config and no secret: the public key comes
-from the caller's file, never from the folder. `shared/tools/verify_bundle.py` runs the same
+from the caller's file, never from the folder, and so do the certificates a timestamp is
+checked against (`--tsa-ca`, W4.4). `shared/tools/verify_bundle.py` runs the same
 checks in the same order with the same words (`docs/testing.md`, "Verify a run folder by
 hand").
 
 stdout is one line:
 
 ```
-verified <bundle_sha256> key <key_id>
+verified <bundle_sha256> key <key_id> timestamp <time | none | unchecked>
 not verified: <word>
 ```
 
-`<word>` is the first check that failed, one of twelve: `result_unreadable`,
+`<word>` is the first check that failed, one of fifteen: `result_unreadable`,
 `result_not_canonical`, `result_schema`, `attachment_twice`, `screenshot_missing`,
 `signature_file`, `hash_mismatch`, `wrong_key`, `signature_invalid`, `attachment_missing`,
-`attachment_size`, `attachment_hash` (what each means: `docs/verification.md`, "The checks,
-and the thirteen words"). Anything wrong inside the folder is a word, a missing `result.json`
+`attachment_size`, `attachment_hash`, and for the timestamp `timestamp_file`,
+`timestamp_mismatch`, `timestamp_invalid` (what each means: `docs/verification.md`, "The
+checks, and the thirteen words" and "The timestamp").
+
+The third field of `verified` (W4.4): the token's own time, `YYYY-MM-DDTHH:MM:SSZ`, when
+`timestamp.tst` verifies under the certificates of `--tsa-ca`; `none` when the folder has no
+`timestamp.tst` (stderr: `note: not timestamped`); `unchecked` when it has one and no
+`--tsa-ca` was given (stderr: `note: timestamp.tst was not checked: no --tsa-ca`). For a
+folder stamped by the default TSA the CA file is `shared\tsa\tsa-ca.pem`. A `--tsa-ca` file
+that can't be read (`signer error: --tsa-ca <file>: the file can't be read`) or holds no
+certificate (`... no certificate in PEM`) is exit 1; the option without a value, empty or
+twice is usage, 64. Anything wrong inside the folder is a word, a missing `result.json`
 or `signature.json` included.
 
 With `verified` only, stderr has one line per name in the folder that the result doesn't
@@ -1313,7 +1358,9 @@ and `DELETE`s under `graph` (W3.4). How to record and replay: `docs/testing.md`,
   there, is exit 1 before any request: `config error: <dir>: the --record folder is not empty`
   (`... the --record path is not a folder`, `... the --record folder can't be made`,
   `config error: the --record path is not valid UTF-8`).
-- One subfolder per service, `veeam`, `graph` and `download`, and one file per exchange,
+- One subfolder per service, `veeam`, `graph`, `download` and, for `test --evidence`, `tsa`
+  (W4.4: the timestamp query and its answer, both binary, as Base64 in `request_body_base64`
+  and `body_base64`), and one file per exchange,
   `<nnn>-<method>-<path>.json`, numbered in the order sent.
 - An exchange that still holds a secret after scrubbing is not written: `record error:
   <service>/<file>: refused: <which rule>` on stderr, one line each (`... could not be

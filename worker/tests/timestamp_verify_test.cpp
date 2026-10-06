@@ -364,6 +364,9 @@ TEST_CASE("the words are the documented sixteen, the timestamp's three last", "[
 
 // --- The shared vectors -------------------------------------------------------------
 
+// Defined with its test, below.
+std::vector<std::size_t> still_verified_offsets(const std::string& token, const std::string& ca);
+
 namespace {
 
 // keys.json: the published test TSA. Its tokens are in cases.json.
@@ -481,6 +484,17 @@ ordered_json cases_json(const TestTsa& one)
             {"bundle", "../signing-v1/bundle.json"},
             {"signing_keys", "../signing-v1/keys.json"},
             {"keys", "keys.json"},
+            {"one_bit_changes",
+             {{"description",
+               "The case `token`'s timestamp.tst with the lowest bit of one byte flipped, for "
+               "every byte in turn, under the CA `root`: the folder is `verified` at the offsets "
+               "of `still_verified` and at no other. Those bytes are covered by no signature. "
+               "Both verifiers must find exactly this list; which of the three words a refused "
+               "change gets is not held equal (the two ASN.1 readers differ on a few bytes of a "
+               "certificate)."},
+              {"of", "token"},
+              {"token_bytes", good.size()},
+              {"still_verified", still_verified_offsets(good, one.root_pem())}}},
             {"cases", cases}};
 }
 
@@ -597,6 +611,50 @@ TEST_CASE("the folder verifier answers every shared timestamp case with its word
             CHECK(rp::timestamp_field(verdict) == one.at("timestamp").get<std::string>());
         }
     }
+}
+
+// One bit of each byte of the stamped folder's token flipped in turn: the
+// offsets at which the folder is still `verified`. Those bytes are covered by
+// no signature (the SignedData's and the signer info's version, an
+// algorithm's NULL parameters, the signer info's signature algorithm, which
+// OpenSSL doesn't read); at every other offset the token is refused.
+// cases.json lists them, and verify_bundle.py must find exactly the same.
+std::vector<std::size_t> still_verified_offsets(const std::string& token, const std::string& ca)
+{
+    std::vector<std::size_t> offsets;
+    MemoryFolder folder = signed_folder();
+    const PublicKey key = key1();
+    const TimestampTrust with = trust(ca);
+    for (std::size_t at = 0; at < token.size(); ++at) {
+        folder.files["timestamp.tst"] = flipped(token, at);
+        if (Signer::verify_folder(folder.reader(), folder.names(), key, with).word ==
+            VerifyWord::verified) {
+            offsets.push_back(at);
+        }
+    }
+    return offsets;
+}
+
+TEST_CASE("one bit changed anywhere in the shared token: verified only at the listed offsets, "
+          "which no signature covers",
+          "[signer][timestamp][vectors]")
+{
+    const json keys = json::parse(rp::test::read_shared(kKeysFile));
+    const json file = json::parse(rp::test::read_shared(kCasesFile));
+    const json& changes = file.at("one_bit_changes");
+    REQUIRE(changes.at("of") == "token");
+    const std::optional<std::vector<unsigned char>> token = rp::base64_decode(
+        file.at("cases").back().at("files").at("timestamp.tst").at("base64").get<std::string>());
+    REQUIRE(token);
+    REQUIRE(changes.at("token_bytes") == token->size());
+
+    const std::vector<std::size_t> offsets = still_verified_offsets(
+        std::string(token->begin(), token->end()), keys.at("root_pem").get<std::string>());
+
+    CHECK(offsets == changes.at("still_verified").get<std::vector<std::size_t>>());
+    // A handful of bytes, none of them in the TSTInfo, a certificate, the
+    // signed attributes or the signature.
+    CHECK(offsets.size() < 20);
 }
 
 // Hidden: run by name only, once, or after a deliberate change to the token's

@@ -82,7 +82,9 @@ CASES_PER_WORD = {
     "attachment_hash": 1,
 }
 
-VERIFIED_LINE = f"verified {BUNDLE['bundle_sha256']} key {BUNDLE['key_id']}\n"
+VERIFIED_LINE = f"verified {BUNDLE['bundle_sha256']} key {BUNDLE['key_id']} timestamp none\n"
+# W4.4: the bundle has no timestamp.tst, and a verified folder without one says so.
+NOT_STAMPED = "note: not timestamped\n"
 
 # The thirteen words of the entry's point 5, `verified` and the failures in the
 # checks' order.
@@ -100,6 +102,9 @@ FAILURE_WORDS = [
     "attachment_size",
     "attachment_hash",
 ]
+# W4.4's three, after them: their cases are timestamp-v1's
+# (tests/test_verify_bundle_timestamp.py).
+TIMESTAMP_WORDS = ["timestamp_file", "timestamp_mismatch", "timestamp_invalid"]
 
 
 def file_bytes(change: dict) -> bytes:
@@ -186,12 +191,12 @@ def test_each_verifying_case_is_verified(case, tmp_path, schemas):
 
 def test_the_vectors_expect_exactly_the_words_the_script_can_answer():
     expected = {case["expect"] for case in CASES_FILE["cases"]}
-    assert expected == set(vb.WORDS) | {vb.VERIFIED}
+    assert expected == set(FAILURE_WORDS) | {vb.VERIFIED}
 
 
 def test_the_words_are_the_entrys_in_the_checks_order():
     assert vb.VERIFIED == "verified"
-    assert list(vb.WORDS) == FAILURE_WORDS
+    assert list(vb.WORDS) == FAILURE_WORDS + TIMESTAMP_WORDS
 
 
 @pytest.mark.parametrize(
@@ -387,15 +392,15 @@ def test_main_prints_the_verified_line_and_exits_0(tmp_path, capsys):
     folder = write_folder(tmp_path / "run")
     code, out, err = run_main(capsys, folder, "--public-key", pem_file(tmp_path), "--schemas", SCHEMAS_DIR)
     assert out == VERIFIED_LINE
-    assert re.fullmatch(r"verified [0-9a-f]{64} key [0-9a-f]{64}\n", out)
-    assert err == ""
+    assert re.fullmatch(r"verified [0-9a-f]{64} key [0-9a-f]{64} timestamp none\n", out)
+    assert err == NOT_STAMPED
     assert code == 0
 
 
 def test_main_finds_the_schemas_beside_the_script_by_default(tmp_path, capsys):
     folder = write_folder(tmp_path / "run")
     code, out, err = run_main(capsys, folder, "--public-key", pem_file(tmp_path))
-    assert (code, out, err) == (0, VERIFIED_LINE, "")
+    assert (code, out, err) == (0, VERIFIED_LINE, NOT_STAMPED)
     assert vb.default_schemas_dir() == SCHEMAS_DIR
 
 
@@ -408,6 +413,7 @@ def test_main_notes_each_unlisted_file_on_stderr(tmp_path, capsys):
     assert err == (
         "note: not listed in the result: manifest.json\n"
         "note: not listed in the result: tsa-token.tsr\n"
+        "note: not timestamped\n"
     )
     assert code == 0
 
@@ -417,7 +423,7 @@ def test_a_note_shows_an_odd_file_name_in_ascii(tmp_path, capsys):
     (folder / "bericht-ü.txt").write_bytes(b"")
     code, out, err = run_main(capsys, folder, "--public-key", pem_file(tmp_path), "--schemas", SCHEMAS_DIR)
     assert (code, out) == (0, VERIFIED_LINE)
-    assert err == "note: not listed in the result: bericht-\\xfc.txt\n"
+    assert err == "note: not listed in the result: bericht-\\xfc.txt\n" + NOT_STAMPED
 
 
 # The Worker's rule for a name in a note (worker/src/signer_command.cpp,
@@ -476,6 +482,7 @@ def test_the_notes_for_odd_names_are_the_workers_lines_in_code_point_order(tmp_p
         "note: not listed in the result: \\udc80\n"
         "note: not listed in the result: \\uff01\n"
         "note: not listed in the result: \\U0001f600.bin\n"
+        "note: not timestamped\n"
     )
     assert err.isascii()
 
@@ -523,7 +530,7 @@ def test_an_empty_folder_argument_is_exit_2_never_the_working_folder(tmp_path, c
     key_file = pem_file(tmp_path)
     monkeypatch.chdir(folder)
     # The working folder itself verifies when it is named.
-    assert run_main(capsys, ".", "--public-key", key_file, "--schemas", SCHEMAS_DIR) == (0, VERIFIED_LINE, "")
+    assert run_main(capsys, ".", "--public-key", key_file, "--schemas", SCHEMAS_DIR) == (0, VERIFIED_LINE, NOT_STAMPED)
     code, out, err = run_main(capsys, "", "--public-key", key_file)
     assert_no_verdict(code, out, err)
     assert err == "error: the folder can't be opened\n"
@@ -560,7 +567,7 @@ def test_an_empty_schemas_value_is_exit_2_never_the_working_folders_schemas(tmp_
     for name in ("result.v1.json", "signature.v1.json"):
         (here / name).write_bytes((SCHEMAS_DIR / name).read_bytes())
     monkeypatch.chdir(here)
-    assert run_main(capsys, folder, "--public-key", key_file, "--schemas", ".") == (0, VERIFIED_LINE, "")
+    assert run_main(capsys, folder, "--public-key", key_file, "--schemas", ".") == (0, VERIFIED_LINE, NOT_STAMPED)
     code, out, err = run_main(capsys, folder, "--public-key", key_file, "--schemas", "")
     assert_no_verdict(code, out, err)
     assert err == "error: --schemas: the folder can't be opened\n"
@@ -627,7 +634,7 @@ def test_a_folder_given_with_a_trailing_space_never_gets_a_failing_verdict(tmp_p
     folder = write_folder(tmp_path / "run")
     code, out, err = run_main(capsys, str(folder) + " ", "--public-key", pem_file(tmp_path), "--schemas", SCHEMAS_DIR)
     if code == 0:
-        assert (out, err) == (VERIFIED_LINE, "")
+        assert (out, err) == (VERIFIED_LINE, NOT_STAMPED)
     else:
         assert_no_verdict(code, out, err)
         assert err == "error: the folder can't be opened\n"
@@ -739,7 +746,7 @@ def test_each_key_file_through_main(row, tmp_path, capsys):
         assert_no_verdict(code, out, err)
         assert err == "error: --public-key: not an Ed25519 public key in PEM\n"
     elif key_id_of_row(row) == BUNDLE["key_id"]:
-        assert (code, out, err) == (0, VERIFIED_LINE, "")
+        assert (code, out, err) == (0, VERIFIED_LINE, NOT_STAMPED)
     else:  # a key, and not the bundle's
         assert (code, out, err) == (1, "not verified: wrong_key\n", "")
 
@@ -853,7 +860,7 @@ def test_a_verdict_that_cannot_be_printed_is_exit_2(name, tmp_path, capsys, monk
     code = vb.main([str(folder), "--public-key", str(key_file), "--schemas", str(SCHEMAS_DIR)])
     monkeypatch.undo()
     assert code == 2
-    assert capsys.readouterr().err == "error: unexpected failure (OSError)\n"
+    assert capsys.readouterr().err == (NOT_STAMPED if name == "untouched" else "") + "error: unexpected failure (OSError)\n"
 
 
 def test_verify_checks_the_two_files_bytes_without_a_folder(schemas):
@@ -1040,7 +1047,7 @@ def test_a_folder_name_of_blanks_or_dots_is_exit_2_never_the_folder_above_it(nam
     inner = write_folder(outer / "run")
     key_file = pem_file(tmp_path)
     monkeypatch.chdir(inner)
-    assert run_main(capsys, ".", "--public-key", key_file, "--schemas", SCHEMAS_DIR) == (0, VERIFIED_LINE, "")
+    assert run_main(capsys, ".", "--public-key", key_file, "--schemas", SCHEMAS_DIR) == (0, VERIFIED_LINE, NOT_STAMPED)
     code, out, err = run_main(capsys, name, "--public-key", key_file, "--schemas", SCHEMAS_DIR)
     assert_no_verdict(code, out, err)
     assert err == "error: the folder can't be opened\n"
@@ -1054,9 +1061,9 @@ def test_the_working_folder_and_the_one_above_are_still_named_by_their_dots(tmp_
     key_file = pem_file(tmp_path)
     monkeypatch.chdir(inner)
     for name in (".", "./", "../run", "..\\run" if os.name == "nt" else "../run/"):
-        assert run_main(capsys, name, "--public-key", key_file, "--schemas", SCHEMAS_DIR) == (0, VERIFIED_LINE, "")
+        assert run_main(capsys, name, "--public-key", key_file, "--schemas", SCHEMAS_DIR) == (0, VERIFIED_LINE, NOT_STAMPED)
     code, out, err = run_main(capsys, "..", "--public-key", key_file, "--schemas", SCHEMAS_DIR)
-    assert (code, out, err) == (0, VERIFIED_LINE, "note: not listed in the result: run\n")
+    assert (code, out, err) == (0, VERIFIED_LINE, "note: not listed in the result: run\n" + NOT_STAMPED)
 
 
 @pytest.mark.parametrize(
@@ -1109,7 +1116,7 @@ def test_a_folder_whose_files_are_past_260_characters_is_verified_like_any_other
                 file.write(text.encode("utf-8"))
         assert len(str(deep / "items.csv")) > 260
         key_file = pem_file(tmp_path)
-        assert run_main(capsys, deep, "--public-key", key_file, "--schemas", SCHEMAS_DIR) == (0, VERIFIED_LINE, "")
+        assert run_main(capsys, deep, "--public-key", key_file, "--schemas", SCHEMAS_DIR) == (0, VERIFIED_LINE, NOT_STAMPED)
         os.remove(os.path.join(extended(deep), "veeam-session.log"))
         assert run_main(capsys, deep, "--public-key", key_file, "--schemas", SCHEMAS_DIR) == (
             1,
@@ -1137,7 +1144,7 @@ def test_a_windows_path_in_its_extended_form(full, expected):
     assert vb._extended(full) == expected
 
 
-@pytest.mark.parametrize("missing", ["cryptography", "jsonschema"])
+@pytest.mark.parametrize("missing", ["asn1crypto", "cryptography", "jsonschema"])
 def test_the_script_without_one_of_its_packages_is_exit_2_never_a_verdicts_exit_code(missing, tmp_path):
     # Run with plain `python` and not `uv run`, the import fails; Python's own
     # exit status for a traceback is 1, which is "not verified".
@@ -1186,7 +1193,11 @@ def test_the_script_whose_stdout_is_gone_exits_2_not_pythons_120(name, tmp_path)
         os.close(write_end)
     err = done.stderr.decode("utf-8").replace("\r\n", "\n")
     assert done.returncode == 2
-    assert err in ("error: unexpected failure (OSError)\n", "error: unexpected failure (BrokenPipeError)\n")
+    noted = NOT_STAMPED if name == "untouched" else ""
+    assert err in (
+        noted + "error: unexpected failure (OSError)\n",
+        noted + "error: unexpected failure (BrokenPipeError)\n",
+    )
 
 
 @pytest.mark.parametrize(("name", "code"), [("untouched", 0), ("signature-one-bit-changed", 1)])
@@ -1199,7 +1210,7 @@ def test_the_script_run_as_a_program_exits_with_its_verdicts_code(name, code, tm
         check=False,
     )
     assert done.returncode == code
-    assert done.stderr == b""
+    assert done.stderr.replace(b"\r\n", b"\n") == (NOT_STAMPED.encode() if code == 0 else b"")
     out = done.stdout.decode("utf-8").replace("\r\n", "\n")
     assert out == (VERIFIED_LINE if code == 0 else "not verified: signature_invalid\n")
 

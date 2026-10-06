@@ -1,16 +1,18 @@
 # /// script
 # requires-python = ">=3.12"
 # dependencies = [
+#     "asn1crypto>=1.5,<2",
 #     "cryptography>=50,<51",
 #     "jsonschema>=4.26,<5",
 # ]
 # ///
 """Checks a RestoreProof run folder against the Worker's public key.
 
-    uv run verify_bundle.py <folder> --public-key <pem file> [--schemas <dir>]
+    uv run verify_bundle.py <folder> --public-key <pem file> [--tsa-ca <pem file>]
+                            [--schemas <dir>]
 
-Exit 0 and `verified <bundle_sha256> key <key_id>`, exit 1 and
-`not verified: <word>`, exit 2 for a usage error (an option given twice is
+Exit 0 and `verified <bundle_sha256> key <key_id> timestamp <time | none |
+unchecked>`, exit 1 and `not verified: <word>`, exit 2 for a usage error (an option given twice is
 one), a folder, key or schema that can't be read, a missing package, a verdict
 that couldn't be written to stdout, or anything unexpected (never a verdict).
 An empty <folder>, --public-key or --schemas is such an error, never the
@@ -49,17 +51,37 @@ The folder's checks, first failure wins, one word each (`WORDS`, in this order):
     attachment_missing    a listed file isn't there or can't be read
     attachment_size       not the listed size
     attachment_hash       not the listed SHA-256
+    timestamp_file        timestamp.tst is there and can't be read, is over 64
+                          KiB or isn't exactly one RFC 3161 TimeStampToken
+    timestamp_mismatch    its imprint isn't SHA-256 or isn't result.json's hash
+    timestamp_invalid     it doesn't verify under --tsa-ca: the signature, the
+                          signer or its chain at the token's own time
 
 The public key always comes from --public-key, never from the folder: the
 signature file isn't itself signed, so the answer is only as good as that key.
 A file in the folder that the result doesn't list is a `note:` line on stderr,
 never a failure. The Worker's `rpworker signer verify` runs the same checks in
-the same order with the same words; shared/testdata/signing-v1/ holds the two
-to one answer.
+the same order with the same words; shared/testdata/signing-v1/ and
+shared/testdata/timestamp-v1/ hold the two to one answer.
+
+The timestamp (W4.4, docs/decisions.md 2026-10-06) is timestamp.tst, the bare
+token of a timestamp authority over the SHA-256 of result.json's bytes, the
+bytes the signature signs; `openssl ts -verify -data result.json -in
+timestamp.tst -token_in -CAfile <root>` checks it too. It is the third field of
+the `verified` line: the token's own time (UTC) when it verifies under the
+certificates of --tsa-ca, which come from the caller like the key and never
+from the folder; `none` when the folder has no timestamp.tst (still verified:
+the run wasn't timestamped); `unchecked` when it has one and no --tsa-ca was
+given. A token's certificates are held to the token's own time, not to today,
+and revocation isn't checked. The signer must be among the token's
+certificates, be named by its ESSCertID, carry a critical extended key usage of
+timeStamping alone, and chain, each certificate issued by the next, to a
+certificate of --tsa-ca.
 """
 
 import argparse
 import base64
+import datetime
 import hashlib
 import json
 import ntpath
@@ -71,14 +93,20 @@ from pathlib import Path
 from typing import NamedTuple
 
 try:
+    from asn1crypto import cms, tsp
+    from cryptography import x509
     from cryptography.exceptions import InvalidSignature, UnsupportedAlgorithm
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import ec, padding, rsa
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+    from cryptography.hazmat.primitives.serialization import Encoding
+    from cryptography.x509.oid import ExtendedKeyUsageOID
     from jsonschema import Draft202012Validator
     from jsonschema.exceptions import SchemaError
 except ImportError as missing:
     if __name__ != "__main__":
         raise
-    # Run with plain `python` where the two packages aren't installed. Left to
+    # Run with plain `python` where the packages aren't installed. Left to
     # Python, the traceback's exit status is 1, which is "not verified".
     package = (missing.name or "?").partition(".")[0]
     sys.stderr.write(f"error: a package the script needs isn't installed ({package}); run it with `uv run`\n")
@@ -92,8 +120,12 @@ __all__ = [
     "MAX_RESULT_FILE_BYTES",
     "MAX_SAFE_INTEGER",
     "MAX_SIGNATURE_FILE_BYTES",
+    "MAX_TIMESTAMP_FILE_BYTES",
     "NOT_CANONICAL",
     "SLUGS",
+    "TIMESTAMP_FILE",
+    "TIMESTAMP_NONE",
+    "TIMESTAMP_UNCHECKED",
     "VERIFIED",
     "WORDS",
     "PublicKey",
@@ -103,6 +135,7 @@ __all__ = [
     "Verification",
     "canonical_fault",
     "canonical_json",
+    "check_timestamp",
     "default_schemas_dir",
     "is_canonical",
     "load_schemas",
@@ -337,7 +370,7 @@ def is_canonical(raw: bytes) -> bool:
 VERIFIED = "verified"
 
 # Every word after `not verified: `, in the checks' order. With VERIFIED, the
-# thirteen answers; the Worker's rp::verify_words() is the same list.
+# sixteen answers; the Worker's rp::verify_words() is the same list.
 WORDS = (
     "result_unreadable",
     "result_not_canonical",
@@ -351,10 +384,14 @@ WORDS = (
     "attachment_missing",
     "attachment_size",
     "attachment_hash",
+    "timestamp_file",
+    "timestamp_mismatch",
+    "timestamp_invalid",
 )
 
 RESULT_FILE = "result.json"
 SIGNATURE_FILE = "signature.json"
+TIMESTAMP_FILE = "timestamp.tst"
 SCREENSHOT_FILE = "screenshot.png"
 RESULT_SCHEMA_FILE = "result.v1.json"
 SIGNATURE_SCHEMA_FILE = "signature.v1.json"
@@ -363,6 +400,13 @@ SIGNATURE_SCHEMA_FILE = "signature.v1.json"
 # kMaxResultFileBytes and kMaxSignatureFileBytes (rp/signer.hpp).
 MAX_RESULT_FILE_BYTES = 16 * 1024 * 1024
 MAX_SIGNATURE_FILE_BYTES = 4096
+# A timestamp.tst larger than this isn't read: the Worker's
+# kMaxTimestampFileBytes (rp/rfc3161.hpp). Real tokens are 4 to 8 KB.
+MAX_TIMESTAMP_FILE_BYTES = 64 * 1024
+
+# The third field of the `verified` line when it isn't a time.
+TIMESTAMP_NONE = "none"
+TIMESTAMP_UNCHECKED = "unchecked"
 
 # The caller's own files. A PEM of one Ed25519 public key is 113 bytes.
 _MAX_KEY_FILE_BYTES = 64 * 1024
@@ -398,8 +442,13 @@ class Verification(NamedTuple):
     bundle_sha256: str = ""  # with VERIFIED only
     key_id: str = ""  # with VERIFIED only
     # With VERIFIED only, from verify_folder: each name in the folder that isn't
-    # result.json, signature.json or a listed attachment, sorted.
+    # result.json, signature.json, timestamp.tst or a listed attachment, sorted.
     notes: tuple[str, ...] = ()
+    # With VERIFIED only, from verify_folder: the line's third field. The
+    # token's time, YYYY-MM-DDTHH:MM:SSZ, when it verified under the caller's
+    # CA; TIMESTAMP_UNCHECKED when there is a token and no CA was given;
+    # TIMESTAMP_NONE when the folder has no timestamp.tst.
+    timestamp: str = TIMESTAMP_NONE
 
 
 class PublicKey:
@@ -457,6 +506,252 @@ def public_key_from_pem(pem: bytes) -> PublicKey | None:
     except (ValueError, TypeError, UnsupportedAlgorithm):
         return None
     return PublicKey(key, der)
+
+
+# --- the timestamp (W4.4) --------------------------------------------------------
+
+_DER = Encoding.DER
+_UTC = datetime.timezone.utc
+
+# How deep a chain from the token's signer to the caller's CA may be.
+_MAX_CHAIN = 8
+
+_HASHES = {"sha256": hashes.SHA256, "sha384": hashes.SHA384, "sha512": hashes.SHA512}
+# ESSCertID (RFC 2634) names the signer by SHA-1; ESSCertIDv2 (RFC 5035) by the
+# hash it says, SHA-256 unless it says another.
+_ESS_HASHES = {"sha1": hashlib.sha1, "sha256": hashlib.sha256, "sha384": hashlib.sha384, "sha512": hashlib.sha512}
+
+
+class _Token(NamedTuple):
+    """One TimeStampToken, read and not yet verified."""
+
+    signed: object  # the CMS SignedData
+    certificates: list  # the token's certificates, each read
+    content: bytes  # the TSTInfo's DER, what the signer's messageDigest covers
+    sha256: bool  # the imprint's algorithm is SHA-256
+    imprint: bytes
+    gen_time: object  # an aware datetime, fractions cut
+
+
+def _parse_token(raw: bytes) -> _Token | None:
+    """`raw` as exactly one TimeStampToken, or None: a CMS SignedData with one
+    signer whose content is a TSTInfo of version 1, and no byte after it. A
+    whole TimeStampResp is none. All of it is read here, its certificates
+    included, as OpenSSL's reader does: bytes that are no token are
+    timestamp_file whatever part of the token they are in, never
+    timestamp_invalid further on."""
+    try:
+        outer = cms.ContentInfo.load(raw, strict=True)
+        if outer["content_type"].native != "signed_data":
+            return None
+        signed = outer["content"]
+        inner = signed["encap_content_info"]
+        if inner["content_type"].native != "tst_info" or len(signed["signer_infos"]) != 1:
+            return None
+        content = bytes(inner["content"])
+        info = tsp.TSTInfo.load(content, strict=True)
+        if info["version"].native != "v1":
+            return None
+        imprint = info["message_imprint"]
+        gen_time = info["gen_time"].native
+        if gen_time.tzinfo is None:
+            return None
+        # Every field the checks go by, read once: asn1crypto reads a field
+        # only when it is asked for. Not an algorithm's parameters, which
+        # OpenSSL takes as they are.
+        signer_info = signed["signer_infos"][0]
+        for algorithm in [*signed["digest_algorithms"], signer_info["digest_algorithm"]]:
+            algorithm["algorithm"].native  # noqa: B018
+        signer_info["version"].native  # noqa: B018
+        signer_info["sid"].chosen.native  # noqa: B018
+        signer_info["signature_algorithm"]["algorithm"].native  # noqa: B018
+        signer_info["signature"].native  # noqa: B018
+        for attribute in signer_info["signed_attrs"]:
+            attribute["type"].native  # noqa: B018
+            for value in attribute["values"]:
+                value.dump()
+        for field in ("policy", "serial_number", "accuracy", "ordering", "nonce", "tsa", "extensions"):
+            info[field].native  # noqa: B018
+        certificates = [
+            x509.load_der_x509_certificate(choice.chosen.dump())
+            for choice in signed["certificates"]
+            if choice.name == "certificate"
+        ]
+        return _Token(
+            signed,
+            certificates,
+            content,
+            imprint["hash_algorithm"]["algorithm"].native == "sha256",
+            imprint["hashed_message"].native,
+            gen_time.replace(microsecond=0),
+        )
+    except Exception:  # noqa: BLE001 - whatever a library makes of bytes that are no token
+        return None
+
+
+def _is_timestamp_signer(certificate) -> bool:
+    """Whether `certificate` may sign a timestamp, by OpenSSL's rule
+    (X509_PURPOSE_TIMESTAMP_SIGN): an extended key usage that is critical and
+    timeStamping alone; a key usage, when there is one, with digitalSignature
+    or nonRepudiation (contentCommitment)."""
+    try:
+        usage = certificate.extensions.get_extension_for_class(x509.ExtendedKeyUsage)
+    except x509.ExtensionNotFound:
+        return False
+    if not usage.critical or list(usage.value) != [ExtendedKeyUsageOID.TIME_STAMPING]:
+        return False
+    try:
+        key_usage = certificate.extensions.get_extension_for_class(x509.KeyUsage).value
+    except x509.ExtensionNotFound:
+        return True
+    return key_usage.digital_signature or key_usage.content_commitment
+
+
+def _is_ca(certificate) -> bool:
+    try:
+        return certificate.extensions.get_extension_for_class(x509.BasicConstraints).value.ca
+    except x509.ExtensionNotFound:
+        return False
+
+
+def _der(certificate) -> bytes:
+    return certificate.public_bytes(_DER)
+
+
+def _chains(signer, others: list, anchors: list, at) -> bool:
+    """Whether `signer` chains to one of `anchors`: each certificate valid at
+    `at` and issued by the next, which is a CA, at most _MAX_CHAIN deep. A
+    certificate that is itself one of the anchors ends the chain wherever it
+    is met. `others` are the token's own certificates: they may stand between,
+    never at the end."""
+    trusted = {_der(anchor) for anchor in anchors}
+    current = signer
+    for _ in range(_MAX_CHAIN + 1):
+        if not current.not_valid_before_utc <= at <= current.not_valid_after_utc:
+            return False
+        if _der(current) in trusted:
+            return True
+        issuer = None
+        for candidate in [*anchors, *others]:
+            try:
+                current.verify_directly_issued_by(candidate)
+            except (ValueError, TypeError, InvalidSignature, UnsupportedAlgorithm):
+                continue
+            issuer = candidate
+            break
+        if issuer is None or not _is_ca(issuer):
+            return False
+        current = issuer
+    return False
+
+
+def _names_signer(attributes: dict, signer_der: bytes) -> bool:
+    """Whether the token's ESSCertID names the signer: at least one of
+    signingCertificate and signingCertificateV2 is among the signed attributes,
+    and the first certificate ID of each that is there is the signer's hash."""
+    found = False
+    for name in ("signing_certificate", "signing_certificate_v2"):
+        if name not in attributes:
+            continue
+        first = attributes[name]["certs"][0]
+        algorithm = "sha1" if name == "signing_certificate" else first["hash_algorithm"]["algorithm"].native
+        if algorithm not in _ESS_HASHES or _ESS_HASHES[algorithm](signer_der).digest() != first["cert_hash"].native:
+            return False
+        found = True
+    return found
+
+
+def _signature_holds(signer, signer_info, signed_bytes: bytes) -> bool:
+    """Whether the signer's signature is over `signed_bytes`: RSA PKCS #1 v1.5
+    for an RSA key and ECDSA for an EC one, with the signer's digest algorithm
+    (SHA-256, SHA-384 or SHA-512). The signer info's own signature algorithm
+    isn't signed and isn't read: OpenSSL goes by the key and the digest too."""
+    hash_name = signer_info["digest_algorithm"]["algorithm"].native
+    if hash_name not in _HASHES:
+        return False
+    signature = signer_info["signature"].native
+    key = signer.public_key()
+    try:
+        if isinstance(key, rsa.RSAPublicKey):
+            key.verify(signature, signed_bytes, padding.PKCS1v15(), _HASHES[hash_name]())
+        elif isinstance(key, ec.EllipticCurvePublicKey):
+            key.verify(signature, signed_bytes, ec.ECDSA(_HASHES[hash_name]()))
+        else:
+            return False
+    except InvalidSignature:
+        return False
+    return True
+
+
+def _token_verifies(token: _Token, ca_pem: bytes) -> bool:
+    """Whether the token's signature verifies and its signer chains to a
+    certificate of `ca_pem`, at the token's own time. Anything the libraries
+    refuse on the way is False, never an exception: a token that can't be
+    checked is not a verified one."""
+    try:
+        anchors = x509.load_pem_x509_certificates(ca_pem)
+        certificates = token.certificates
+        signer_info = token.signed["signer_infos"][0]
+        sid = signer_info["sid"]
+        if sid.name != "issuer_and_serial_number":
+            return False
+        issuer = sid.chosen["issuer"].dump()
+        serial = sid.chosen["serial_number"].native
+        signers = [
+            certificate
+            for certificate in certificates
+            if certificate.serial_number == serial and certificate.issuer.public_bytes() == issuer
+        ]
+        if len(signers) != 1:
+            return False
+        signer = signers[0]
+        digest_name = signer_info["digest_algorithm"]["algorithm"].native
+        # The SignedData's own list of digest algorithms isn't signed, and
+        # OpenSSL still needs the signer's among them.
+        listed = [algorithm["algorithm"].native for algorithm in token.signed["digest_algorithms"]]
+        if digest_name not in listed or any(name not in _ESS_HASHES for name in listed):
+            return False
+        attributes = {}
+        for attribute in signer_info["signed_attrs"]:
+            if len(attribute["values"]) != 1 or attribute["type"].native in attributes:
+                return False
+            attributes[attribute["type"].native] = attribute["values"][0]
+        if (
+            digest_name not in _HASHES
+            or attributes["content_type"].native != "tst_info"
+            or attributes["message_digest"].native != hashlib.new(digest_name, token.content).digest()
+            or not _names_signer(attributes, _der(signer))
+            or not _is_timestamp_signer(signer)
+        ):
+            return False
+        # What is signed is the attributes as a SET OF, not under their
+        # context tag.
+        signed_bytes = b"\x31" + signer_info["signed_attrs"].dump()[1:]
+        if not _signature_holds(signer, signer_info, signed_bytes):
+            return False
+        others = [certificate for certificate in certificates if certificate is not signer]
+        return _chains(signer, others, anchors, token.gen_time)
+    except Exception:  # noqa: BLE001 - whatever a library makes of a token's bytes
+        return False
+
+
+def check_timestamp(raw: bytes, digest: bytes, ca_pem: bytes | None) -> tuple[str, str]:
+    """The word for the token `raw` over `digest`, the SHA-256 of result.json's
+    bytes, and with VERIFIED the line's third field: timestamp_file unless
+    `raw` is exactly one TimeStampToken; timestamp_mismatch unless its imprint
+    is SHA-256 and `digest`; then, with `ca_pem`, timestamp_invalid unless it
+    verifies under those certificates at its own time, else its time; without
+    `ca_pem`, TIMESTAMP_UNCHECKED."""
+    token = _parse_token(raw)
+    if token is None:
+        return "timestamp_file", ""
+    if not token.sha256 or token.imprint != digest:
+        return "timestamp_mismatch", ""
+    if ca_pem is None:
+        return VERIFIED, TIMESTAMP_UNCHECKED
+    if not _token_verifies(token, ca_pem):
+        return "timestamp_invalid", ""
+    return VERIFIED, token.gen_time.astimezone(_UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 class Schemas(NamedTuple):
@@ -635,14 +930,16 @@ def _open_folder(folder) -> Path:
     return resolved
 
 
-def verify_folder(folder, key: PublicKey, schemas: Schemas) -> Verification:
+def verify_folder(folder, key: PublicKey, schemas: Schemas, tsa_ca: bytes | None = None) -> Verification:
     """The same over a run folder: result.json (result_unreadable unless it is
     read), the checks of `verify` with signature.json (signature_file when it
     isn't read), then each listed attachment in the result's order:
-    attachment_missing, attachment_size, attachment_hash. A file is there only
-    when the folder's listing has its name, byte for byte; any other name isn't
-    read. A SetupError when `folder` is empty or isn't a folder that can be
-    resolved and listed."""
+    attachment_missing, attachment_size, attachment_hash; then, when the folder
+    has timestamp.tst, the timestamp (check_timestamp) with `tsa_ca`, the
+    caller's PEM certificates or None. A file is there only when the folder's
+    listing has its name, byte for byte; any other name isn't read. A
+    SetupError when `folder` is empty or isn't a folder that can be resolved
+    and listed."""
     folder = _open_folder(folder)
     try:
         names = sorted(os.listdir(folder))
@@ -669,8 +966,17 @@ def verify_folder(folder, key: PublicKey, schemas: Schemas) -> Verification:
         word = _check_attachment(read, attachment)
         if word != VERIFIED:
             return _failed(word)
-    covered = {RESULT_FILE, SIGNATURE_FILE} | {attachment["name"] for attachment in listed}
-    return verdict._replace(notes=tuple(name for name in names if name not in covered))
+    # The timestamp last: evidence about a result that is known good by now.
+    stamped = TIMESTAMP_NONE
+    if TIMESTAMP_FILE in there:
+        state, token = read(TIMESTAMP_FILE, MAX_TIMESTAMP_FILE_BYTES)
+        if state != _READ:
+            return _failed("timestamp_file")
+        word, stamped = check_timestamp(token, hashlib.sha256(result).digest(), tsa_ca)
+        if word != VERIFIED:
+            return _failed(word)
+    covered = {RESULT_FILE, SIGNATURE_FILE, TIMESTAMP_FILE} | {attachment["name"] for attachment in listed}
+    return verdict._replace(notes=tuple(name for name in names if name not in covered), timestamp=stamped)
 
 
 # --- the command ---------------------------------------------------------------
@@ -699,6 +1005,12 @@ def _parser() -> argparse.ArgumentParser:
         "--public-key", required=True, action=_Once, metavar="<pem file>", help="the Worker's Ed25519 public key, PEM"
     )
     parser.add_argument(
+        "--tsa-ca",
+        action=_Once,
+        metavar="<pem file>",
+        help="the certificate(s) a timestamp must chain to, PEM; without it a timestamp isn't checked",
+    )
+    parser.add_argument(
         "--schemas", action=_Once, metavar="<dir>", help="the folder holding result.v1.json and signature.v1.json"
     )
     return parser
@@ -714,6 +1026,20 @@ def _read_public_key(path: str) -> PublicKey:
     if key is None:
         raise SetupError("--public-key: not an Ed25519 public key in PEM")
     return key
+
+
+def _read_tsa_ca(path: str) -> bytes:
+    """The caller's CA file: PEM with at least one certificate."""
+    if _is_empty(path):
+        raise SetupError("--tsa-ca: the file can't be read")
+    state, pem = _read_file(Path(path), _MAX_KEY_FILE_BYTES)
+    if state != _READ:
+        raise SetupError("--tsa-ca: the file can't be read")
+    try:
+        x509.load_pem_x509_certificates(pem)
+    except (ValueError, TypeError):
+        raise SetupError("--tsa-ca: no certificate in PEM") from None
+    return pem
 
 
 def _printable(name: str) -> str:
@@ -742,7 +1068,8 @@ def _run(argv: list[str] | None) -> int:
     try:
         schemas = load_schemas(args.schemas if args.schemas is not None else default_schemas_dir())
         key = _read_public_key(args.public_key)
-        verdict = verify_folder(args.folder, key, schemas)
+        tsa_ca = _read_tsa_ca(args.tsa_ca) if args.tsa_ca is not None else None
+        verdict = verify_folder(args.folder, key, schemas, tsa_ca)
     except SetupError as problem:
         print(f"error: {problem}", file=sys.stderr)
         return EXIT_ERROR
@@ -752,9 +1079,13 @@ def _run(argv: list[str] | None) -> int:
     try:
         for name in verdict.notes:
             print(f"note: not listed in the result: {_printable(name)}", file=sys.stderr)
+        if verdict.timestamp == TIMESTAMP_NONE:
+            print("note: not timestamped", file=sys.stderr)
+        elif verdict.timestamp == TIMESTAMP_UNCHECKED:
+            print(f"note: {TIMESTAMP_FILE} was not checked: no --tsa-ca", file=sys.stderr)
     except Exception:  # noqa: BLE001 - a lost stderr changes nothing
         pass
-    print(f"verified {verdict.bundle_sha256} key {verdict.key_id}")
+    print(f"verified {verdict.bundle_sha256} key {verdict.key_id} timestamp {verdict.timestamp}")
     return EXIT_VERIFIED
 
 

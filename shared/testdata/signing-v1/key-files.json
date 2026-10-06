@@ -1,0 +1,238 @@
+{
+  "description": "Public key files both verifiers must take or refuse alike (W4.3 review, 2026-10-05): the Worker's rp::PublicKey::from_pem (`rpworker signer verify --public-key`) and shared/tools/verify_bundle.py's public_key_from_pem. THE RULE. A key file is, in this order: optional white space (space, tab, CR, LF); the line `-----BEGIN PUBLIC KEY-----`; one or more body lines, each of one or more standard Base64 characters (A-Z, a-z, 0-9, `+`, `/`, `=`) and nothing else; the line `-----END PUBLIC KEY-----`; optional white space (space, tab, CR, LF); nothing more. Inside the block a line ends with LF or CRLF only (a lone CR is refused), every line but the END line must have its line end, the END line needs none. No header lines, no blank line, no text on the BEGIN or END line, no space or tab inside the block. The body lines joined, with no separator, must be strict standard Base64 (RFC 4648 section 4: padded with `=` to a multiple of four, `=` only at the end, the unused bits of the last character zero) of EXACTLY the 44 bytes of an Ed25519 SubjectPublicKeyInfo in DER as the library itself writes it (the twelve bytes 302a300506032b6570032100, then the 32-byte key): no byte after it, no other length form, no unused bits, no other algorithm. Where the body's lines are wrapped does not matter. A small-order key (the identity point, `small-order-identity-key`) is a well-formed key and is ACCEPTED here: refusing such a key is left to whoever registers one (C5.5; docs/decisions.md 2026-10-05 W4.3 point 2, the trust rule). LAYOUT. `key_files` is a list of rows {\"name\", \"text\" or \"base64\", \"accepted\"}: the file's bytes are the UTF-8 of `text` (nothing added), or the bytes `base64` encodes in standard Base64 (for bytes that are not text); `accepted` says whether both readers must return a key. Every accepted row but `small-order-identity-key` is RFC 8032 test 1's public key (keys.json `rfc8032-test-1`, `key_id` in `accepted_key_id`); the identity key's ID is `identity_key_id`. The private key in `ed25519-private-key-rfc8032-test-1` is the RFC's published test key, never a secret; the RSA key was made for this file and its private half thrown away.",
+  "keys": "keys.json",
+  "accepted_key_id": "06e3fd8fda29bb60ab59557de61edb0aecdb231134be30e75b455f8e1b792fa9",
+  "identity_key_id": "d0fbfbb4f059a24b42b1b553b6d79c0586599e84d2033429b92e9b968cb39b4c",
+  "key_files": [
+    {
+      "name": "as-keys-json-has-it",
+      "text": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=\n-----END PUBLIC KEY-----\n",
+      "accepted": true
+    },
+    {
+      "name": "crlf-line-ends",
+      "text": "-----BEGIN PUBLIC KEY-----\r\nMCowBQYDK2VwAyEA11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=\r\n-----END PUBLIC KEY-----\r\n",
+      "accepted": true
+    },
+    {
+      "name": "crlf-and-lf-mixed",
+      "text": "-----BEGIN PUBLIC KEY-----\r\nMCowBQYDK2VwAyEA11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=\n-----END PUBLIC KEY-----\r\n",
+      "accepted": true
+    },
+    {
+      "name": "no-final-newline",
+      "text": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=\n-----END PUBLIC KEY-----",
+      "accepted": true
+    },
+    {
+      "name": "body-wrapped-into-two-lines",
+      "text": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA11qYAYKxCrfVS/7T\nyWQHOg7hcvPapiMlrwIaaPcHURo=\n-----END PUBLIC KEY-----\n",
+      "accepted": true
+    },
+    {
+      "name": "body-wrapped-into-two-lines-crlf",
+      "text": "-----BEGIN PUBLIC KEY-----\r\nMCowBQYDK2VwAyEA11qY\r\nAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=\r\n-----END PUBLIC KEY-----\r\n",
+      "accepted": true
+    },
+    {
+      "name": "padding-on-a-line-of-its-own",
+      "text": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo\n=\n-----END PUBLIC KEY-----\n",
+      "accepted": true
+    },
+    {
+      "name": "blank-lines-before-and-after",
+      "text": "\n\n-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=\n-----END PUBLIC KEY-----\n\n\n",
+      "accepted": true
+    },
+    {
+      "name": "spaces-tabs-and-line-ends-before-and-after",
+      "text": " \t\r\n-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=\n-----END PUBLIC KEY-----\n \t\r\n ",
+      "accepted": true
+    },
+    {
+      "name": "a-lone-cr-before-and-after-the-block",
+      "text": "\r-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=\n-----END PUBLIC KEY-----\n\r",
+      "accepted": true
+    },
+    {
+      "name": "small-order-identity-key",
+      "text": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\n-----END PUBLIC KEY-----\n",
+      "accepted": true
+    },
+    {
+      "name": "empty-file",
+      "text": "",
+      "accepted": false
+    },
+    {
+      "name": "white-space-only",
+      "text": " \t\r\n\n",
+      "accepted": false
+    },
+    {
+      "name": "lone-cr-line-ends",
+      "text": "-----BEGIN PUBLIC KEY-----\rMCowBQYDK2VwAyEA11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=\r-----END PUBLIC KEY-----\r",
+      "accepted": false
+    },
+    {
+      "name": "whole-block-on-one-line",
+      "text": "-----BEGIN PUBLIC KEY-----MCowBQYDK2VwAyEA11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=-----END PUBLIC KEY-----",
+      "accepted": false
+    },
+    {
+      "name": "body-on-the-begin-line",
+      "text": "-----BEGIN PUBLIC KEY-----MCowBQYDK2VwAyEA11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=\n-----END PUBLIC KEY-----\n",
+      "accepted": false
+    },
+    {
+      "name": "end-on-the-body-line",
+      "text": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=-----END PUBLIC KEY-----\n",
+      "accepted": false
+    },
+    {
+      "name": "rfc1421-header-line",
+      "text": "-----BEGIN PUBLIC KEY-----\nComment: x\n\nMCowBQYDK2VwAyEA11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=\n-----END PUBLIC KEY-----\n",
+      "accepted": false
+    },
+    {
+      "name": "blank-line-inside-the-body",
+      "text": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA11qYAYKxCrfVS/7T\n\nyWQHOg7hcvPapiMlrwIaaPcHURo=\n-----END PUBLIC KEY-----\n",
+      "accepted": false
+    },
+    {
+      "name": "blank-line-after-the-begin-line",
+      "text": "-----BEGIN PUBLIC KEY-----\n\nMCowBQYDK2VwAyEA11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=\n-----END PUBLIC KEY-----\n",
+      "accepted": false
+    },
+    {
+      "name": "no-body-line",
+      "text": "-----BEGIN PUBLIC KEY-----\n-----END PUBLIC KEY-----\n",
+      "accepted": false
+    },
+    {
+      "name": "space-inside-the-body",
+      "text": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA11qYAYKxCrfVS/7T yWQHOg7hcvPapiMlrwIaaPcHURo=\n-----END PUBLIC KEY-----\n",
+      "accepted": false
+    },
+    {
+      "name": "space-at-the-end-of-a-body-line",
+      "text": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo= \n-----END PUBLIC KEY-----\n",
+      "accepted": false
+    },
+    {
+      "name": "tab-at-the-start-of-a-body-line",
+      "text": "-----BEGIN PUBLIC KEY-----\n\tMCowBQYDK2VwAyEA11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=\n-----END PUBLIC KEY-----\n",
+      "accepted": false
+    },
+    {
+      "name": "space-after-the-begin-line",
+      "text": "-----BEGIN PUBLIC KEY----- \nMCowBQYDK2VwAyEA11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=\n-----END PUBLIC KEY-----\n",
+      "accepted": false
+    },
+    {
+      "name": "space-before-the-end-line",
+      "text": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=\n -----END PUBLIC KEY-----\n",
+      "accepted": false
+    },
+    {
+      "name": "text-before-begin",
+      "text": "public key:\n-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=\n-----END PUBLIC KEY-----\n",
+      "accepted": false
+    },
+    {
+      "name": "key-id-line-after-end",
+      "text": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=\n-----END PUBLIC KEY-----\nkey 06e3fd8fda29bb60ab59557de61edb0aecdb231134be30e75b455f8e1b792fa9\n",
+      "accepted": false
+    },
+    {
+      "name": "two-blocks",
+      "text": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=\n-----END PUBLIC KEY-----\n-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=\n-----END PUBLIC KEY-----\n",
+      "accepted": false
+    },
+    {
+      "name": "utf8-bom",
+      "text": "\ufeff-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=\n-----END PUBLIC KEY-----\n",
+      "accepted": false
+    },
+    {
+      "name": "utf16-le-with-bom",
+      "base64": "//4tAC0ALQAtAC0AQgBFAEcASQBOACAAUABVAEIATABJAEMAIABLAEUAWQAtAC0ALQAtAC0ADQAKAE0AQwBvAHcAQgBRAFkARABLADIAVgB3AEEAeQBFAEEAMQAxAHEAWQBBAFkASwB4AEMAcgBmAFYAUwAvADcAVAB5AFcAUQBIAE8AZwA3AGgAYwB2AFAAYQBwAGkATQBsAHIAdwBJAGEAYQBQAGMASABVAFIAbwA9AA0ACgAtAC0ALQAtAC0ARQBOAEQAIABQAFUAQgBMAEkAQwAgAEsARQBZAC0ALQAtAC0ALQANAAoA",
+      "accepted": false
+    },
+    {
+      "name": "nul-after-the-block",
+      "text": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=\n-----END PUBLIC KEY-----\n\u0000",
+      "accepted": false
+    },
+    {
+      "name": "lower-case-armour",
+      "text": "-----begin public key-----\nMCowBQYDK2VwAyEA11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=\n-----end public key-----\n",
+      "accepted": false
+    },
+    {
+      "name": "ed25519-public-key-label",
+      "text": "-----BEGIN ED25519 PUBLIC KEY-----\nMCowBQYDK2VwAyEA11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=\n-----END ED25519 PUBLIC KEY-----\n",
+      "accepted": false
+    },
+    {
+      "name": "four-dashes",
+      "text": "----BEGIN PUBLIC KEY----\nMCowBQYDK2VwAyEA11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=\n----END PUBLIC KEY----\n",
+      "accepted": false
+    },
+    {
+      "name": "bare-base64-without-armour",
+      "text": "MCowBQYDK2VwAyEA11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=\n",
+      "accepted": false
+    },
+    {
+      "name": "url-safe-base64",
+      "text": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo=\n-----END PUBLIC KEY-----\n",
+      "accepted": false
+    },
+    {
+      "name": "base64-without-padding",
+      "text": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo\n-----END PUBLIC KEY-----\n",
+      "accepted": false
+    },
+    {
+      "name": "base64-nonzero-pad-bits",
+      "text": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURp=\n-----END PUBLIC KEY-----\n",
+      "accepted": false
+    },
+    {
+      "name": "der-plus-one-zero-byte",
+      "text": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURoA\n-----END PUBLIC KEY-----\n",
+      "accepted": false
+    },
+    {
+      "name": "der-cut-by-one-byte",
+      "text": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHUQ==\n-----END PUBLIC KEY-----\n",
+      "accepted": false
+    },
+    {
+      "name": "bit-string-unused-bits-1",
+      "text": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEB11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=\n-----END PUBLIC KEY-----\n",
+      "accepted": false
+    },
+    {
+      "name": "long-form-length",
+      "text": "-----BEGIN PUBLIC KEY-----\nMIEqMAUGAytlcAMhANdamAGCsQq31Uv+08lkBzoO4XLz2qYjJa8CGmj3B1Ea\n-----END PUBLIC KEY-----\n",
+      "accepted": false
+    },
+    {
+      "name": "rsa-2048-public-key",
+      "text": "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAviVOgwYBz1SO02Ifr78g\nqlIM9fP4IK4gVM/cjmGETA3xs+g6qj5dykDjv3UEHj7yyrx4bHIsAG5b+tEath06\nMxXNRVKCafiV3RB8rNZuKwrp07Id7/MPmEAq0dXb6T858m+XrgVhBlUgXMdLLam/\nnxqs1KTQDqn6GDlAgIOuBzrsVvAhg6qcbEnWNDaqUsTeYzY9Or1ZN1g85dLh3N94\nducWumV8pRFoWactNEWoydIwnb4eHARp7xcgGUpQ7WWTMO9Kq9Wklqt2Lh3k0FqK\nKoBlkk5+I09j665eknqPG7TPndmiKSgFvwiAQ9MN/RM1ZYRFlQh0rhwd9pwufewM\nOwIDAQAB\n-----END PUBLIC KEY-----\n",
+      "accepted": false
+    },
+    {
+      "name": "x25519-public-key",
+      "text": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VuAyEA11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=\n-----END PUBLIC KEY-----\n",
+      "accepted": false
+    },
+    {
+      "name": "ed25519-private-key-rfc8032-test-1",
+      "text": "-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEIJ1hsZ3v/VpguoRK9JLsLMREScVpezJpGXA7rAMcrn9g\n-----END PRIVATE KEY-----\n",
+      "accepted": false
+    }
+  ]
+}

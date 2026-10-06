@@ -2309,6 +2309,42 @@
           "path": "/attachments/0/name"
         }
       ]
+    },
+    {
+      "name": "sample-containers-listed-still-there",
+      "valid": false,
+      "patch": [
+        {
+          "op": "add",
+          "path": "/sample/mail/random/containers_listed",
+          "value": [
+            "carol@contoso.example"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "sample-containers-drawn-an-array-of-names",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/sample/onedrive/random/containers_drawn",
+          "value": [
+            "carol@contoso.example"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "sample-no-containers-drawn",
+      "valid": false,
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/sample/sharepoint/random/containers_drawn"
+        }
+      ]
     }
   ]
 }

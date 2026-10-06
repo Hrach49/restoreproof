@@ -64,6 +64,20 @@ private:
     std::filesystem::path path_;
 };
 
+// Makes an empty file by its wide name, which may hold what isn't valid UTF-16
+// (a lone surrogate: NTFS takes any 16-bit units). False when the file system
+// refuses the name.
+inline bool create_empty_file(const std::filesystem::path& file)
+{
+    const HANDLE handle = CreateFileW(file.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW,
+                                      FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (handle == INVALID_HANDLE_VALUE) {
+        return false;
+    }
+    CloseHandle(handle);
+    return true;
+}
+
 // UTF-8 to UTF-16 and back, for the wide Windows APIs. Test data is always
 // valid, so a failed conversion fails the test.
 inline std::wstring widen(std::string_view utf8)

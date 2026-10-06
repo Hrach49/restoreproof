@@ -247,7 +247,7 @@
   },
   "$defs": {
     "attachment": {
-      "description": "One file beside result.json in the run folder: its name, the SHA-256 of its bytes and their count.",
+      "description": "One file of the run folder that the result covers: its name, the SHA-256 of its bytes and their count.",
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -272,7 +272,7 @@
       }
     },
     "attachments": {
-      "description": "The run folder's files beside result.json, sorted by name: items.csv and veeam-session.log always, screenshot.png when one was captured. result.json isn't listed: it can't hold its own hash.",
+      "description": "One entry per file of the run folder that the result covers, sorted by name: items.csv and veeam-session.log always, screenshot.png when one was captured. result.json and signature.json are never listed: the result can't hold its own hash, and the signature depends on it.",
       "type": "array",
       "minItems": 2,
       "maxItems": 3,
@@ -416,7 +416,7 @@
             "pool_sha256",
             "keys",
             "containers_eligible",
-            "containers_listed",
+            "containers_drawn",
             "containers_unresolved",
             "folders_listed",
             "short_of_containers"
@@ -449,12 +449,8 @@
             "containers_eligible": {
               "$ref": "#/$defs/count"
             },
-            "containers_listed": {
-              "type": "array",
-              "items": {
-                "type": "string",
-                "maxLength": 4096
-              }
+            "containers_drawn": {
+              "$ref": "#/$defs/count"
             },
             "containers_unresolved": {
               "$ref": "#/$defs/count"
@@ -519,7 +515,7 @@
             "pool_sha256",
             "keys",
             "containers_eligible",
-            "containers_listed",
+            "containers_drawn",
             "containers_unresolved",
             "folders_listed",
             "short_of_containers"
@@ -552,12 +548,8 @@
             "containers_eligible": {
               "$ref": "#/$defs/count"
             },
-            "containers_listed": {
-              "type": "array",
-              "items": {
-                "type": "string",
-                "maxLength": 4096
-              }
+            "containers_drawn": {
+              "$ref": "#/$defs/count"
             },
             "containers_unresolved": {
               "$ref": "#/$defs/count"
@@ -610,7 +602,7 @@
           "$ref": "#/$defs/sample_kind_key3"
         }
       },
-      "description": "How the sample was chosen: per type the canaries taken from the rotation cursor and the random draw. A random key is [mailbox, folder, subject, received_at] for a mail, [site_id, list_id, folder_path, name] for a SharePoint file and [user, folder_path, name] for a OneDrive file."
+      "description": "How the sample was chosen: per type the canaries taken from the rotation cursor and the random draw. A random key is [mailbox, folder, subject, received_at] for a mail, [site_id, list_id, folder_path, name] for a SharePoint file and [user, folder_path, name] for a OneDrive file. containers_drawn is how many containers the draw looked into, never their names."
     },
     "expected_item": {
       "type": "object",

@@ -1,12 +1,19 @@
 // W4.2 (docs/decisions.md 2026-10-05): the run folder, its two text files,
-// the screenshot's seam and result.json, on a temp folder. The whole
-// pipeline's evidence run is in test_command_test.cpp.
+// the screenshot's seam and result.json, on a temp folder; W4.3: the
+// signature beside it, signature.json, written just before result.json. The
+// whole pipeline's evidence run is in test_command_test.cpp. The only key
+// here is RFC 8032's published test key 1.
 
 #include <rp/evidence_builder.hpp>
 
+#include <rp/canonical_json.hpp>
 #include <rp/sha256.hpp>
+#include <rp/signer.hpp>
+
+#include "../src/file_read.hpp"
 
 #include "result_lab.hpp"
+#include "signing_lab.hpp"
 #include "test_support.hpp"
 
 #ifndef WIN32_LEAN_AND_MEAN
@@ -26,11 +33,13 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <memory>
 #include <optional>
 #include <set>
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -48,6 +57,7 @@ using rp::RunFolder;
 using rp::RunFolderCheck;
 using rp::ScreenshotReason;
 using rp::ScreenshotRequest;
+using rp::SignedResult;
 using rp::test::ResultFacts;
 using rp::test::TempDir;
 
@@ -76,15 +86,24 @@ EvidenceFacts facts_of(const ResultFacts& run)
     return {&run.expected, &run.restore, &run.check, &run.verdict};
 }
 
-// A run folder in a temp root, and a builder on it.
+// The real Signer with `key`, as the pipeline hands it to the builder.
+rp::ResultSigner signer_with(std::shared_ptr<rp::SigningKey> key)
+{
+    return [key](std::string_view canonical) { return rp::Signer::sign(canonical, *key); };
+}
+
+// A run folder in a temp root, and a builder on it that signs with test key 1.
 struct Lab {
     TempDir dir;
     std::filesystem::path folder;
     EvidenceOptions options;
     ResultFacts run = rp::test::full_result_facts();
+    std::shared_ptr<rp::SigningKey> key =
+        std::make_shared<rp::SigningKey>(rp::test::signing_key());
 
     Lab()
     {
+        options.sign = signer_with(key);
         RunFolder made;
         REQUIRE(EvidenceBuilder::make_run_folder(dir.path() / "runs", "run-0001", made) ==
                 RunFolderCheck::ok);
@@ -257,25 +276,68 @@ TEST_CASE("an attachment missing or changed after it was hashed: no result.json"
     CHECK_FALSE(std::filesystem::exists(lab.folder / "result.json"));
 }
 
-TEST_CASE("a result.json that can't be written says so", "[evidence]")
+TEST_CASE("a signature.json that can't be written says so, and result.json isn't tried",
+          "[evidence][signing]")
 {
     const bool throws = GENERATE(false, true);
     Lab lab;
     const EvidenceBuilder::Written written = lab.builder().write_attachments(facts_of(lab.run));
     REQUIRE(written.evidence);
-    lab.options.write_file = [&](const std::filesystem::path&, std::string_view) -> bool {
+    std::vector<std::string> asked;
+    lab.options.write_file = [&](const std::filesystem::path& path, std::string_view) -> bool {
+        asked.push_back(path.filename().string());
         if (throws) {
             throw std::runtime_error("disk");
         }
         return false;
     };
+    SignedResult signature;
 
     const std::optional<EvidenceError> error =
-        lab.builder().write_result(*written.evidence, "{}");
+        lab.builder().write_result(*written.evidence, "{}", &signature);
+
+    REQUIRE(error);
+    CHECK(error->file == "signature.json");
+    CHECK(error->cause == EvidenceFailure::not_written);
+    CHECK(asked == std::vector<std::string>{"signature.json"});
+    CHECK(names_in(lab.folder) == std::set<std::string>{"items.csv", "veeam-session.log"});
+    CHECK(signature.bundle_sha256.empty());
+}
+
+TEST_CASE("a result.json that can't be written after signature.json was: the signature is "
+          "removed again",
+          "[evidence][signing]")
+{
+    const bool throws = GENERATE(false, true);
+    Lab lab;
+    const EvidenceBuilder::Written written = lab.builder().write_attachments(facts_of(lab.run));
+    REQUIRE(written.evidence);
+    std::vector<std::string> asked;
+    bool signature_was_there = false;
+    lab.options.write_file = [&](const std::filesystem::path& path, std::string_view content) {
+        asked.push_back(path.filename().string());
+        if (path.filename() == "result.json") {
+            signature_was_there = std::filesystem::exists(lab.folder / "signature.json");
+            if (throws) {
+                throw std::runtime_error("disk");
+            }
+            return false;
+        }
+        lab.dir.write(std::filesystem::relative(path, lab.dir.path()), content);
+        return true;
+    };
+    SignedResult signature;
+
+    const std::optional<EvidenceError> error =
+        lab.builder().write_result(*written.evidence, "{}", &signature);
 
     REQUIRE(error);
     CHECK(error->file == "result.json");
     CHECK(error->cause == EvidenceFailure::not_written);
+    CHECK(asked == std::vector<std::string>{"signature.json", "result.json"});
+    CHECK(signature_was_there);
+    CHECK(names_in(lab.folder) == std::set<std::string>{"items.csv", "veeam-session.log"});
+    CHECK(signature.bundle_sha256.empty());
 }
 
 TEST_CASE("result.json is never written over one that is there", "[evidence]")
@@ -289,8 +351,11 @@ TEST_CASE("result.json is never written over one that is there", "[evidence]")
     const std::optional<EvidenceError> error = builder.write_result(*written.evidence, "{}");
 
     REQUIRE(error);
+    CHECK(error->file == "result.json");
     CHECK(error->cause == EvidenceFailure::not_written);
     CHECK(bytes_of(lab.folder / "result.json") == "another's");
+    // Nor does this run's signature stay beside another's result.
+    CHECK_FALSE(std::filesystem::exists(lab.folder / "signature.json"));
 }
 
 TEST_CASE("screenshots off: the capturer isn't asked", "[evidence][screenshot]")
@@ -594,8 +659,10 @@ TEST_CASE("the attachments are the folder's files, each with its hash and size",
     REQUIRE_FALSE(builder.write_result(evidence, "{\"format\":\"x\"}"));
 
     CHECK(bytes_of(lab.folder / "result.json") == "{\"format\":\"x\"}");
+    // The signature is in the folder and never among the attachments.
     std::set<std::string> all(names.begin(), names.end());
     all.insert("result.json");
+    all.insert("signature.json");
     CHECK(names_in(lab.folder) == all);
     CHECK(builder.folder() == lab.folder);
 }
@@ -934,4 +1001,186 @@ TEST_CASE("a result that holds no secret value is written as it is", "[evidence]
 
     CHECK(bytes_of(lab.folder / "result.json") == canonical);
     CHECK(log.str().empty());
+}
+
+// --- W4.3: the signature (docs/decisions.md 2026-10-05, points 2 to 4) -------------------
+
+TEST_CASE("a result that can't be signed: the attachments stay, no signature.json, no "
+          "result.json",
+          "[evidence][signing]")
+{
+    using rp::test::Ed25519Fault;
+    using rp::test::FakeEd25519;
+    Lab lab;
+    FakeEd25519 primitive;
+    std::vector<std::string> written_names;
+    lab.options.write_file = [&](const std::filesystem::path& path, std::string_view content) {
+        written_names.push_back(path.filename().string());
+        lab.dir.write(std::filesystem::relative(path, lab.dir.path()), content);
+        return true;
+    };
+
+    SECTION("no signer")
+    {
+        lab.options.sign = nullptr;
+    }
+    SECTION("the signer answers nothing")
+    {
+        lab.options.sign = [](std::string_view) -> std::optional<SignedResult> {
+            return std::nullopt;
+        };
+    }
+    SECTION("the signer throws")
+    {
+        lab.options.sign = [](std::string_view) -> std::optional<SignedResult> {
+            throw std::runtime_error("the key store");
+        };
+    }
+    SECTION("the primitive fails at one of its calls")
+    {
+        const Ed25519Fault fault =
+            GENERATE(Ed25519Fault::sign_none, Ed25519Fault::sign_throws, Ed25519Fault::sign_other,
+                     Ed25519Fault::check_false, Ed25519Fault::check_throws);
+        CAPTURE(static_cast<int>(fault));
+        lab.options.sign = signer_with(std::make_shared<rp::SigningKey>(
+            rp::test::signing_key(rp::test::kSigningKey1Base64, primitive)));
+        primitive.fault = fault;
+    }
+
+    EvidenceBuilder builder = lab.builder();
+    const EvidenceBuilder::Written written = builder.write_attachments(facts_of(lab.run));
+    REQUIRE(written.evidence);
+    written_names.clear();
+    SignedResult signature;
+
+    const std::optional<EvidenceError> error =
+        builder.write_result(*written.evidence, "{\"format\":\"x\"}", &signature);
+
+    REQUIRE(error);
+    CHECK(error->file == "result.json");
+    CHECK(error->cause == EvidenceFailure::not_signed);
+    CHECK(written_names.empty());
+    CHECK(names_in(lab.folder) == std::set<std::string>{"items.csv", "veeam-session.log"});
+    CHECK(signature.signature_file.empty());
+}
+
+TEST_CASE("the result is signed as it is written: signature.json, then result.json, and the "
+          "folder verifies under the key's public half",
+          "[evidence][signing][acceptance]")
+{
+    Lab lab;
+    std::vector<std::string> order;
+    std::vector<std::string> signed_texts;
+    lab.options.sign = [&, real = signer_with(lab.key)](std::string_view canonical) {
+        // Asked once the attachments are written, before either JSON file.
+        order.push_back("sign");
+        signed_texts.emplace_back(canonical);
+        return real(canonical);
+    };
+    lab.options.write_file = [&](const std::filesystem::path& path, std::string_view content) {
+        order.push_back(path.filename().string());
+        lab.dir.write(std::filesystem::relative(path, lab.dir.path()), content);
+        return true;
+    };
+    EvidenceBuilder builder = lab.builder();
+    const EvidenceBuilder::Written written = builder.write_attachments(facts_of(lab.run));
+    REQUIRE(written.evidence);
+    // A whole valid result that lists the folder's two attachments.
+    nlohmann::json document = nlohmann::json::parse(
+        rp::test::read_shared("testdata/result-v1/valid.json"));
+    document["attachments"] = rp::to_json(written.evidence->attachments);
+    const std::string canonical = rp::canonical_json(document);
+    SignedResult signature;
+
+    REQUIRE_FALSE(builder.write_result(*written.evidence, canonical, &signature));
+
+    CHECK(order == std::vector<std::string>{"items.csv", "veeam-session.log", "sign",
+                                            "signature.json", "result.json"});
+    CHECK(signed_texts == std::vector<std::string>{canonical});
+    CHECK(names_in(lab.folder) == std::set<std::string>{"items.csv", "result.json",
+                                                        "signature.json", "veeam-session.log"});
+    CHECK(bytes_of(lab.folder / "result.json") == canonical);
+    CHECK(bytes_of(lab.folder / "signature.json") == signature.signature_file);
+    CHECK(signature.bundle_sha256 == rp::sha256_hex(canonical));
+    CHECK(signature.key_id == lab.key->key_id());
+    // The attachments never list the signature, which depends on the result's hash.
+    CHECK_THAT(canonical, !ContainsSubstring("signature.json"));
+
+    const rp::PublicKey public_key = rp::test::public_key_of(*lab.key);
+    const rp::Verification verified = rp::Signer::verify_folder(
+        rp::folder_reader(lab.folder), *rp::list_folder(lab.folder), public_key);
+    CHECK(rp::to_string(verified.word) == "verified");
+    CHECK(verified.bundle_sha256 == signature.bundle_sha256);
+    CHECK(verified.key_id == signature.key_id);
+    CHECK(verified.notes.empty());
+
+    // One byte of an attachment changed afterwards, and it no longer does.
+    std::string csv = *bytes_of(lab.folder / "items.csv");
+    csv.back() = 'X';
+    std::ofstream(lab.folder / "items.csv", std::ios::binary | std::ios::trunc) << csv;
+    CHECK(rp::to_string(rp::Signer::verify_folder(rp::folder_reader(lab.folder),
+                                                  *rp::list_folder(lab.folder), public_key)
+                            .word) == "attachment_hash");
+}
+
+TEST_CASE("nothing is signed that won't be written: a secret in the result, an attachment "
+          "that changed",
+          "[evidence][signing]")
+{
+    Lab lab;
+    int signs = 0;
+    lab.options.sign = [&, real = signer_with(lab.key)](std::string_view canonical) {
+        ++signs;
+        return real(canonical);
+    };
+    lab.options.secrets = {"SENTINEL_VEEAM_PW"};
+    EvidenceBuilder builder = lab.builder();
+    const EvidenceBuilder::Written written = builder.write_attachments(facts_of(lab.run));
+    REQUIRE(written.evidence);
+    std::optional<EvidenceError> error;
+
+    SECTION("the result holds a secret value")
+    {
+        error = builder.write_result(*written.evidence, R"({"subject":"SENTINEL_VEEAM_PW"})");
+
+        REQUIRE(error);
+        CHECK(error->cause == EvidenceFailure::holds_secret);
+    }
+    SECTION("an attachment is gone")
+    {
+        std::filesystem::remove(lab.folder / "items.csv");
+
+        error = builder.write_result(*written.evidence, "{}");
+
+        REQUIRE(error);
+        CHECK(error->cause == EvidenceFailure::changed);
+    }
+    CHECK(signs == 0);
+    CHECK_FALSE(std::filesystem::exists(lab.folder / "signature.json"));
+    CHECK_FALSE(std::filesystem::exists(lab.folder / "result.json"));
+}
+
+TEST_CASE("the signature's name is not an attachment's, and is shorter than the longest name "
+          "the run folder is probed with",
+          "[evidence][signing]")
+{
+    const std::vector<std::string>& names = rp::attachment_names();
+    CHECK(std::ranges::find(names, std::string{rp::kSignatureFileName}) == names.end());
+    CHECK(rp::kSignatureFileName.size() < rp::kSessionLogName.size());
+}
+
+TEST_CASE("the real Signer signs only text that is its own canonical form", "[evidence][signing]")
+{
+    Lab lab;
+    EvidenceBuilder builder = lab.builder();
+    const EvidenceBuilder::Written written = builder.write_attachments(facts_of(lab.run));
+    REQUIRE(written.evidence);
+
+    const std::optional<EvidenceError> error =
+        builder.write_result(*written.evidence, "{\"b\":1,\"a\":2}");
+
+    REQUIRE(error);
+    CHECK(error->file == "result.json");
+    CHECK(error->cause == EvidenceFailure::not_signed);
+    CHECK(names_in(lab.folder) == std::set<std::string>{"items.csv", "veeam-session.log"});
 }

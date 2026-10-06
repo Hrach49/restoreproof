@@ -177,8 +177,9 @@ it says nothing about restoring anything beyond the sample.
 `attachments` and `screenshot` (W4.2), `null`
 where a step didn't run. Built by `rp::ResultBuilder`, validated in the Worker against
 `shared/schemas/result.v1.json` before any status line is printed, and written by `rpworker
-test --json` as its canonical bytes, or as `result.json` in a run folder. Unsigned until W4.3. See
-[verification.md](verification.md), "The result".
+test --json` as its canonical bytes, or as `result.json` in a run folder. The `--json` file is
+never signed; a run folder's `result.json` always is, by the `signature.json` beside it (W4.3).
+The result itself has no signature field. See [verification.md](verification.md), "The result".
 
 **Canonical form (`canonical-json-v1`).** The one byte sequence of a result, the same from C++
 and Python: keys sorted by byte, no whitespace, UTF-8, integers only. A float, an integer
@@ -186,27 +187,56 @@ outside ±(2^53 − 1), a non-ASCII key or invalid UTF-8 is refused, not written
 `rp::canonical_json`; vectors in `shared/testdata/canonical-json-v1.json`.
 
 **Run folder.** `<runs root>\<run_id>\` (W4.2, `rpworker test --evidence <dir>`): `items.csv`,
-`veeam-session.log`, `screenshot.png` when one was captured (none is, today), and
-`result.json`, written last and listing each of the others with its SHA-256 and size in
-`attachments`. A folder without `result.json` is a run with no result. See
+`veeam-session.log`, `screenshot.png` when one was captured (none is, today), `signature.json`
+(W4.3) and `result.json`, written last. The result lists each of the first three with its
+SHA-256 and size in `attachments`; it lists neither itself nor `signature.json`. A folder
+without `result.json` is a run with no result; one with it is complete and signed. See
 [verification.md](verification.md), "The run folder".
 
-**Evidence bundle.** What one run leaves behind and uploads: the result JSON, plus
+**Evidence bundle.** What one run leaves behind and uploads: the run folder. The result JSON,
 `veeam-session.log` and `items.csv` (the per-item comparison, with the canaries' expected and
-found hashes). Canonicalised
-(sorted keys, no whitespace, UTF-8, ISO-8601 UTC), hashed as `bundle_sha256` with
-`signature` and `tsa_token` removed, Ed25519-signed and RFC 3161-timestamped. It is the
-artefact an auditor can verify offline with `shared/tools/verify_bundle.py`, without
-trusting us. Failed runs are never edited or re-signed.
+found hashes), a screenshot when there is one, and `signature.json`. The result is written in
+its canonical form (sorted keys, no whitespace, UTF-8, ISO-8601 UTC), those bytes are hashed
+as `bundle_sha256`, and the hash is Ed25519-signed (W4.3); the RFC 3161 timestamp over the
+same hash is still to come (W4.4). The other files are under the signature through the
+result's `attachments`. It is the artefact an auditor can check offline with
+`shared/tools/verify_bundle.py` and the Worker's public key, without trusting us: the script
+says `verified` or `not verified: <word>`. Failed runs are never edited or re-signed. The
+guide also says "bundle" for the result JSON alone; no zip is ever made.
 
-**Signing key.** The Ed25519 key pair generated on the Worker at setup. The private key never
-leaves the DPAPI vault; the public key is registered with the Cloud so bundles from that
-worker can be verified. Signing proves *which worker* produced a bundle; the RFC 3161
-timestamp proves *when* it existed.
+**Signature (`signature.json`).** The file beside `result.json` that holds the result's
+signature (W4.3), format `restoreproof.signature.v1`: five keys, `algorithm` (`ed25519`),
+`bundle_sha256`, `format`, `key_id` and `signature` (64 bytes as standard Base64, 88
+characters), written in canonical form; schema `shared/schemas/signature.v1.json`. The
+signature is never a field of the result, and nothing is removed from the result before it is
+hashed. The file is not itself signed, so a verifier takes the public key from its caller,
+never from the folder. See [verification.md](verification.md), "The signature".
+
+**`bundle_sha256`.** The SHA-256 of `result.json`'s bytes, 64 lower-case hex: for a folder the
+Worker wrote, what `Get-FileHash result.json` prints. The Ed25519 signature is over its 32 raw
+bytes, not the hex text. In `signature.json`, in `rpworker test --evidence`'s `signed
+<bundle_sha256> key <key_id>` line and in both verifiers' `verified` line.
+
+**`key_id`.** The name of a signing key: the SHA-256 of its public half as SubjectPublicKeyInfo
+DER (44 bytes), 64 lower-case hex. In `signature.json`; a verifier answers `wrong_key` when it
+isn't the ID of the key it was given. `rpworker signer public-key` prints it as `key <key_id>`
+on stderr.
+
+**Signing key.** The Worker's Ed25519 key pair. The private key signs each run folder's result;
+the public key, as a PEM file, is what a verifier is given and what is registered with the
+Cloud so bundles from that Worker can be verified (C5.5). Today (W4.3) the private key is the
+secret `RP_SIGNING_KEY_BASE64`, one line of Base64 in an environment variable, and in the lab
+it is made by `python -m seeder new-signing-key` and kept in Windows Credential Manager. Only
+from W4.5 does it live in the DPAPI vault and never leave it, and only from W7.1 is it
+generated on the Worker at setup. It is never logged, printed or written to a file by the
+Worker. Signing proves *which Worker* produced a bundle; the RFC 3161 timestamp will prove
+*when* it existed.
 
 **RFC 3161 timestamp token (`tsa_token`).** A third-party Time Stamping Authority's signature
 over the bundle hash, proving the bundle existed at that time — not merely that our server
-says so.
+says so. Not built yet (W4.4). It will be a file of its own in the run folder, not a field of
+the result or a sixth key of `signature.json`: it arrives after the signature and touches no
+signed byte. `tsa_token` is the guide's name for it; W4.4 names the file.
 
 ## Tokens
 

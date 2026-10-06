@@ -40,8 +40,10 @@ add_library(rpcore STATIC
     src/config_check.cpp
     src/connector.cpp
     src/connector_registry.cpp
+    src/ed25519.cpp
     src/evidence_builder.cpp
     src/expected_set.cpp
+    src/file_read.cpp
     src/graph_client.cpp
     src/graph_command.cpp
     src/graph_download.cpp
@@ -65,6 +67,8 @@ add_library(rpcore STATIC
     src/sample_selector.cpp
     src/secrets.cpp
     src/sha256.cpp
+    src/signer.cpp
+    src/signer_command.cpp
     src/step_timer.cpp
     src/target_guard.cpp
     src/target_guard_graph.cpp
@@ -145,8 +149,10 @@ add_executable(rptests
     tests/connector_registry_test.cpp
     tests/connector_test.cpp
     tests/deps_test.cpp
+    tests/ed25519_test.cpp
     tests/evidence_builder_test.cpp
     tests/expected_set_test.cpp
+    tests/file_read_test.cpp
     tests/graph_client_live_test.cpp
     tests/graph_client_test.cpp
     tests/graph_command_live_test.cpp
@@ -177,6 +183,8 @@ add_executable(rptests
     tests/sample_selector_test.cpp
     tests/secrets_test.cpp
     tests/sha256_test.cpp
+    tests/signer_command_test.cpp
+    tests/signer_test.cpp
     tests/smoke.cpp
     tests/step_timer_test.cpp
     tests/target_guard_test.cpp
@@ -246,7 +254,7 @@ endfunction()
 
 rp_add_exe_test("rpworker --version prints the project version"
     ARGS --version EXIT_CODE 0 STDOUT ${PROJECT_VERSION} STDERR "")
-set(RP_USAGE "usage: rpworker --version | rpworker config check [--config <path>] | rpworker veeam list [--config <path>] [--record <dir>] | rpworker graph list [--hash] [--config <path>] [--record <dir>] | rpworker restore [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--record <dir>] | rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--record <dir>] [--json <file> | --evidence <dir>]")
+set(RP_USAGE "usage: rpworker --version | rpworker config check [--config <path>] | rpworker veeam list [--config <path>] [--record <dir>] | rpworker graph list [--hash] [--config <path>] [--record <dir>] | rpworker restore [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--record <dir>] | rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--record <dir>] [--json <file> | --evidence <dir>] | rpworker signer public-key | rpworker signer verify <folder> --public-key <pem file>")
 rp_add_exe_test("rpworker rejects unknown arguments"
     ARGS --no-such-option EXIT_CODE 64 STDOUT "" STDERR "${RP_USAGE}")
 rp_add_exe_test("rpworker config without a subcommand prints usage"
@@ -415,6 +423,52 @@ set_tests_properties(
     "rpworker test opens the Graph certificate before any request"
     PROPERTIES ENVIRONMENT
     "RP_VEEAM_USERNAME=set-by-ctest;RP_VEEAM_PASSWORD=set-by-ctest;RP_GRAPH_CERT_PFX_BASE64=set-by-ctest;RP_GRAPH_CERT_PASSWORD=set-by-ctest")
+
+# signer (W4.3) reads no config. public-key stops at the signing key's variable,
+# which the first test removes and the second sets to something that is no key.
+# verify needs a key file before it looks at the folder: RFC 8032 test 1's
+# public key (shared/testdata/signing-v1/keys.json), written into the build
+# tree, beside a run folder with nothing in it.
+set(RP_SIGNER_TEST_KEY ${CMAKE_CURRENT_BINARY_DIR}/signer-exe-test/rfc8032-test-1.pub.pem)
+file(WRITE ${RP_SIGNER_TEST_KEY}
+    "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=\n-----END PUBLIC KEY-----\n")
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/signer-exe-test/empty-run)
+rp_add_exe_test("rpworker signer without a subcommand prints usage"
+    ARGS signer EXIT_CODE 64 STDOUT "" STDERR "${RP_USAGE}")
+rp_add_exe_test("rpworker signer rejects an unknown subcommand"
+    ARGS signer new-key EXIT_CODE 64 STDOUT "" STDERR "${RP_USAGE}")
+rp_add_exe_test("rpworker signer verify needs a folder and a key file"
+    ARGS signer verify ${CMAKE_CURRENT_BINARY_DIR}/signer-exe-test/empty-run
+    EXIT_CODE 64 STDOUT "" STDERR "${RP_USAGE}")
+rp_add_exe_test("rpworker signer verify --public-key needs a file"
+    ARGS signer verify ${CMAKE_CURRENT_BINARY_DIR}/signer-exe-test/empty-run --public-key
+    EXIT_CODE 64 STDOUT "" STDERR "${RP_USAGE}")
+rp_add_exe_test("rpworker signer public-key needs RP_SIGNING_KEY_BASE64"
+    ARGS signer public-key UNSET_ENV RP_SIGNING_KEY_BASE64
+    EXIT_CODE 1 STDOUT "" STDERR "config error: RP_SIGNING_KEY_BASE64 is not set")
+rp_add_exe_test("rpworker signer public-key refuses a value that is no key"
+    ARGS signer public-key
+    EXIT_CODE 1 STDOUT ""
+    STDERR "config error: RP_SIGNING_KEY_BASE64 is not an Ed25519 private key (Base64 of PKCS#8 DER)")
+set_tests_properties(
+    "rpworker signer public-key needs RP_SIGNING_KEY_BASE64"
+    "rpworker signer public-key refuses a value that is no key"
+    PROPERTIES ENVIRONMENT "RP_SIGNING_KEY_BASE64=set-by-ctest")
+rp_add_exe_test("rpworker signer verify reports a key file that can't be read"
+    ARGS signer verify ${CMAKE_CURRENT_BINARY_DIR}/signer-exe-test/empty-run
+    --public-key no-such-key.pem
+    EXIT_CODE 1 STDOUT ""
+    STDERR "signer error: --public-key no-such-key.pem: the file can't be read")
+rp_add_exe_test("rpworker signer verify reports a folder that can't be opened"
+    ARGS signer verify ${CMAKE_CURRENT_BINARY_DIR}/signer-exe-test/no-such-run
+    --public-key ${RP_SIGNER_TEST_KEY}
+    EXIT_CODE 1 STDOUT ""
+    STDERR "signer error: ${CMAKE_CURRENT_BINARY_DIR}/signer-exe-test/no-such-run: the folder can't be opened")
+# Exit 5: the folder was read and isn't a signed run folder.
+rp_add_exe_test("rpworker signer verify answers a folder with no result in it with a word"
+    ARGS signer verify ${CMAKE_CURRENT_BINARY_DIR}/signer-exe-test/empty-run
+    --public-key ${RP_SIGNER_TEST_KEY}
+    EXIT_CODE 5 STDOUT "not verified: result_unreadable" STDERR "")
 
 # The checker itself must fail on a wrong exit code or wrong output, or the two
 # tests above would prove nothing.

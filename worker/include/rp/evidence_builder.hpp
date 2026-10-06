@@ -2,15 +2,18 @@
 
 // The run folder (W4.2, docs/decisions.md 2026-10-05): <runs root>\<run_id>\
 // with result.json, veeam-session.log, items.csv and, when one was captured,
-// screenshot.png. Each file beside result.json is an attachment the result
-// lists with its SHA-256 and size, so W4.3's signature over the result covers
-// them; result.json is written last, and only a valid result, so a folder
-// that holds it is complete. Nothing here changes a run's status.
+// screenshot.png. Each of those beside result.json is an attachment the result
+// lists with its SHA-256 and size, so the signature over the result covers
+// them. Since W4.3 (docs/decisions.md 2026-10-05, point 2) the result is
+// signed as it is written: signature.json (rp/signer.hpp), which the result
+// never lists, then result.json, last, and only a valid result, so a folder
+// that holds it is complete, and signed. Nothing here changes a run's status.
 
 #include <rp/checker.hpp>
 #include <rp/connector.hpp>
 #include <rp/expected_set.hpp>
 #include <rp/run_status.hpp>
+#include <rp/signer.hpp>
 
 #include <nlohmann/json.hpp>
 #include <spdlog/logger.h>
@@ -75,7 +78,8 @@ using ScreenshotCapturer = std::function<std::optional<ScreenshotReason>(const S
 // interactively and has a certificate a browser can't be given the pin for.
 std::optional<ScreenshotReason> no_screenshot_page(const ScreenshotRequest& request) noexcept;
 
-// One file beside result.json.
+// One file of the run folder that the result covers: never result.json, nor
+// signature.json (W4.3).
 struct Attachment {
     std::string name;
     std::string sha256; // of the file's bytes, 64 lower-case hex
@@ -152,7 +156,8 @@ private:
 enum class EvidenceFailure {
     not_written,  // the writer refused or failed
     changed,      // an attachment missing, or not the bytes that were hashed
-    holds_secret  // result.json only: one of its strings holds a secret value
+    holds_secret, // result.json only: one of its strings holds a secret value
+    not_signed    // result.json only: the signer gave no signature for it (W4.3)
 };
 
 struct EvidenceError {
@@ -160,14 +165,23 @@ struct EvidenceError {
     EvidenceFailure cause = EvidenceFailure::not_written;
 };
 
+// Signs the result's canonical text, the bytes result.json is about to be
+// written with: rp::Signer::sign with the run's key. nullopt = it couldn't be
+// signed; what it throws is that too.
+using ResultSigner = std::function<std::optional<SignedResult>(std::string_view canonical)>;
+
 struct EvidenceOptions {
     // The client's setting (config's screenshots_enabled; a job's, W4.8).
     bool screenshots_enabled = false;
     ScreenshotCapturer capture; // null = no_screenshot_page
     // Writes a new file, whether it did; null = rp::write_file_atomically.
     std::function<bool(const std::filesystem::path&, std::string_view)> write_file;
-    // The run's secret values; an empty one is ignored.
+    // The run's secret values; an empty one is ignored. The builder wipes its
+    // copy (rp::secure_wipe) when it goes.
     std::vector<std::string> secrets;
+    // The result's signer (W4.3); null = nothing can be signed, and so no
+    // result.json is written.
+    ResultSigner sign;
     // One "SECURITY: evidence: ..." line when something was withheld.
     std::shared_ptr<spdlog::logger> logger;
 };
@@ -213,6 +227,10 @@ public:
 
     // `folder` is one make_run_folder made, and the run kept.
     EvidenceBuilder(std::filesystem::path folder, EvidenceOptions options);
+    // Wipes its copy of the run's secret values.
+    ~EvidenceBuilder();
+    EvidenceBuilder(const EvidenceBuilder&) = delete;
+    EvidenceBuilder& operator=(const EvidenceBuilder&) = delete;
 
     struct Written {
         // What the result lists; nullopt when a text file couldn't be written.
@@ -241,10 +259,17 @@ public:
     // of items.csv was withheld for is in it too. The strings as JSON reads
     // them, not the text, where an escape would hide one. Then reads each
     // attachment back and compares it with its hash and size (`changed`,
-    // naming the first that differs or is gone), then writes result.json,
-    // exactly `canonical` (`not_written`). nullopt = written. Never throws.
+    // naming the first that differs or is gone). Then, W4.3, asks the signer
+    // for the signature of exactly `canonical` (`not_signed`, the file
+    // result.json, when there is no signer, or it answers nothing or
+    // throws), writes signature.json (`not_written`, naming it) and, last,
+    // result.json, exactly `canonical` (`not_written`); when that one can't
+    // be written, signature.json is removed again, so no signature stays
+    // beside no result. nullopt = both written, and `signature`, when given,
+    // is what the signer made (untouched otherwise). Never throws.
     std::optional<EvidenceError> write_result(const Evidence& evidence,
-                                              std::string_view canonical) noexcept;
+                                              std::string_view canonical,
+                                              SignedResult* signature = nullptr) noexcept;
 
     const std::filesystem::path& folder() const noexcept { return folder_; }
 

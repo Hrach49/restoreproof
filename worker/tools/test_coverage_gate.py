@@ -164,6 +164,8 @@ class GateTest(unittest.TestCase):
             r"include\rp\run_status.hpp",
             r"src\cleaner.cpp",
             r"include\rp\cleaner.hpp",
+            r"src\timestamper.cpp",
+            r"include\rp\timestamper.hpp",
         ):
             with self.subTest(name=name):
                 xml = cobertura((r"src\big.cpp", covered(1000)), (name, mixed(1, 1)))
@@ -230,7 +232,7 @@ class GateTest(unittest.TestCase):
     def test_absent_strict_files_are_skipped_with_a_note(self):
         code, _, summary = self.run_gate(cobertura((r"src\a.cpp", covered(10))))
         self.assertEqual(code, 0)
-        for name in ("vault", "signer", "target_guard", "run_status", "cleaner"):
+        for name in ("vault", "signer", "target_guard", "run_status", "cleaner", "timestamper"):
             self.assertIn(f"`{name}`", summary)
         self.assertIn("not present yet", summary)
 

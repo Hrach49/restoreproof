@@ -9,6 +9,7 @@
 #include <rp/canonical_json.hpp>
 #include <rp/sha256.hpp>
 #include <rp/signer.hpp>
+#include <rp/timestamper.hpp>
 
 #include "../src/file_read.hpp"
 
@@ -30,12 +31,15 @@
 #include <spdlog/sinks/ostream_sink.h>
 
 #include <algorithm>
+#include <array>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iterator>
 #include <memory>
 #include <optional>
 #include <set>
+#include <span>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -1183,4 +1187,287 @@ TEST_CASE("the real Signer signs only text that is its own canonical form", "[ev
     CHECK(error->file == "result.json");
     CHECK(error->cause == EvidenceFailure::not_signed);
     CHECK(names_in(lab.folder) == std::set<std::string>{"items.csv", "veeam-session.log"});
+}
+
+// --- W4.4: the timestamp ---------------------------------------------------------
+
+namespace {
+
+const std::string kToken = std::string("\x30\x82\x01\x00", 4) + "a token's bytes" + "\xff";
+
+rp::TimestampOutcome stamped(std::string token = kToken)
+{
+    rp::TimestampOutcome outcome;
+    outcome.token = std::move(token);
+    outcome.gen_time = 1791288000;
+    outcome.attempts = 1;
+    return outcome;
+}
+
+rp::TimestampOutcome not_stamped(std::string_view code)
+{
+    rp::TimestampOutcome outcome;
+    outcome.error = code;
+    outcome.attempts = 3;
+    return outcome;
+}
+
+const std::set<std::string> kSignedFiles = {"items.csv", "result.json", "signature.json",
+                                            "veeam-session.log"};
+
+// A lab whose writer writes and records, and whose timestamper is `answer`.
+struct StampLab : Lab {
+    std::vector<std::string> order;
+    std::vector<std::vector<unsigned char>> asked;
+
+    explicit StampLab(std::function<rp::TimestampOutcome()> answer)
+    {
+        options.sign = [this, real = signer_with(key)](std::string_view canonical) {
+            order.push_back("sign");
+            return real(canonical);
+        };
+        options.timestamp = [this, answer](std::span<const unsigned char, 32> digest) {
+            order.push_back("timestamp");
+            asked.emplace_back(digest.begin(), digest.end());
+            return answer();
+        };
+        options.write_file = [this](const std::filesystem::path& path, std::string_view content) {
+            order.push_back(path.filename().string());
+            dir.write(std::filesystem::relative(path, dir.path()), content);
+            return true;
+        };
+    }
+};
+
+} // namespace
+
+TEST_CASE("the TSA gave no token: the folder is complete without one, and the code is handed on",
+          "[evidence][timestamp]")
+{
+    const std::string_view code = GENERATE(rp::timestamp_code::kUnreachable,
+                                           rp::timestamp_code::kUntrusted,
+                                           rp::timestamp_code::kRejected);
+    StampLab lab([code] { return not_stamped(code); });
+    EvidenceBuilder builder = lab.builder();
+    const EvidenceBuilder::Written written = builder.write_attachments(facts_of(lab.run));
+    REQUIRE(written.evidence);
+    SignedResult signature;
+    rp::TimestampOutcome timestamp;
+
+    REQUIRE_FALSE(builder.write_result(*written.evidence, "{}", &signature, &timestamp));
+
+    CHECK(lab.order == std::vector<std::string>{"items.csv", "veeam-session.log", "sign",
+                                                "timestamp", "signature.json", "result.json"});
+    CHECK(names_in(lab.folder) == kSignedFiles);
+    CHECK_FALSE(timestamp.stamped());
+    CHECK(timestamp.error == code);
+    CHECK(timestamp.attempts == 3);
+    CHECK(signature.bundle_sha256 == rp::sha256_hex("{}"));
+}
+
+TEST_CASE("a timestamper that throws or answers nothing is timestamp_internal, and the folder "
+          "is still complete",
+          "[evidence][timestamp]")
+{
+    const bool throws = GENERATE(false, true);
+    StampLab lab([throws]() -> rp::TimestampOutcome {
+        if (throws) {
+            throw std::runtime_error("tsa");
+        }
+        return {};
+    });
+    EvidenceBuilder builder = lab.builder();
+    const EvidenceBuilder::Written written = builder.write_attachments(facts_of(lab.run));
+    REQUIRE(written.evidence);
+    rp::TimestampOutcome timestamp = stamped();
+
+    REQUIRE_FALSE(builder.write_result(*written.evidence, "{}", nullptr, &timestamp));
+
+    CHECK(names_in(lab.folder) == kSignedFiles);
+    CHECK_FALSE(timestamp.stamped());
+    CHECK(timestamp.error == rp::timestamp_code::kInternal);
+}
+
+TEST_CASE("a token that can't be written is timestamp_not_written; result.json is still "
+          "written",
+          "[evidence][timestamp]")
+{
+    const bool throws = GENERATE(false, true);
+    StampLab lab([] { return stamped(); });
+    lab.options.write_file = [&](const std::filesystem::path& path, std::string_view content) {
+        lab.order.push_back(path.filename().string());
+        if (path.filename() == "timestamp.tst") {
+            if (throws) {
+                throw std::runtime_error("disk");
+            }
+            return false;
+        }
+        lab.dir.write(std::filesystem::relative(path, lab.dir.path()), content);
+        return true;
+    };
+    EvidenceBuilder builder = lab.builder();
+    const EvidenceBuilder::Written written = builder.write_attachments(facts_of(lab.run));
+    REQUIRE(written.evidence);
+    rp::TimestampOutcome timestamp;
+
+    REQUIRE_FALSE(builder.write_result(*written.evidence, "{}", nullptr, &timestamp));
+
+    CHECK(lab.order == std::vector<std::string>{"items.csv", "veeam-session.log", "sign",
+                                                "timestamp", "signature.json", "timestamp.tst",
+                                                "result.json"});
+    CHECK(names_in(lab.folder) == kSignedFiles);
+    CHECK_FALSE(timestamp.stamped());
+    CHECK(timestamp.token.empty());
+    CHECK(timestamp.gen_time == 0);
+    CHECK(timestamp.error == rp::timestamp_code::kNotWritten);
+    CHECK(timestamp.attempts == 1);
+}
+
+TEST_CASE("a token over the size allowed is never handed to the writer", "[evidence][timestamp]")
+{
+    StampLab lab([] { return stamped(std::string(rp::kMaxTimestampFileBytes + 1, 'T')); });
+    EvidenceBuilder builder = lab.builder();
+    const EvidenceBuilder::Written written = builder.write_attachments(facts_of(lab.run));
+    REQUIRE(written.evidence);
+    rp::TimestampOutcome timestamp;
+
+    REQUIRE_FALSE(builder.write_result(*written.evidence, "{}", nullptr, &timestamp));
+
+    CHECK(names_in(lab.folder) == kSignedFiles);
+    CHECK(std::ranges::find(lab.order, "timestamp.tst") == lab.order.end());
+    CHECK(timestamp.error == rp::timestamp_code::kNotWritten);
+}
+
+TEST_CASE("a result.json that can't be written after the token was: neither the token nor the "
+          "signature stays",
+          "[evidence][timestamp]")
+{
+    StampLab lab([] { return stamped(); });
+    bool both_were_there = false;
+    lab.options.write_file = [&](const std::filesystem::path& path, std::string_view content) {
+        lab.order.push_back(path.filename().string());
+        if (path.filename() == "result.json") {
+            both_were_there = std::filesystem::exists(lab.folder / "signature.json") &&
+                              std::filesystem::exists(lab.folder / "timestamp.tst");
+            return false;
+        }
+        lab.dir.write(std::filesystem::relative(path, lab.dir.path()), content);
+        return true;
+    };
+    EvidenceBuilder builder = lab.builder();
+    const EvidenceBuilder::Written written = builder.write_attachments(facts_of(lab.run));
+    REQUIRE(written.evidence);
+    SignedResult signature;
+    rp::TimestampOutcome timestamp;
+
+    const std::optional<EvidenceError> error =
+        builder.write_result(*written.evidence, "{}", &signature, &timestamp);
+
+    REQUIRE(error);
+    CHECK(error->file == "result.json");
+    CHECK(error->cause == EvidenceFailure::not_written);
+    CHECK(both_were_there);
+    CHECK(names_in(lab.folder) == std::set<std::string>{"items.csv", "veeam-session.log"});
+    // Nothing is handed on for a folder that isn't complete.
+    CHECK(signature.bundle_sha256.empty());
+    CHECK_FALSE(timestamp.stamped());
+    CHECK(timestamp.attempts == 0);
+}
+
+TEST_CASE("a signature.json that can't be written: the token isn't written either",
+          "[evidence][timestamp]")
+{
+    StampLab lab([] { return stamped(); });
+    lab.options.write_file = [&](const std::filesystem::path& path, std::string_view) {
+        lab.order.push_back(path.filename().string());
+        return false;
+    };
+    EvidenceBuilder builder = lab.builder();
+    Evidence evidence;
+    rp::TimestampOutcome timestamp;
+
+    const std::optional<EvidenceError> error =
+        builder.write_result(evidence, "{}", nullptr, &timestamp);
+
+    REQUIRE(error);
+    CHECK(error->file == "signature.json");
+    CHECK(lab.order == std::vector<std::string>{"sign", "timestamp", "signature.json"});
+    CHECK(names_in(lab.folder).empty());
+    CHECK(timestamp.attempts == 0);
+}
+
+TEST_CASE("the TSA is never asked about a result that won't be written", "[evidence][timestamp]")
+{
+    StampLab lab([] { return stamped(); });
+    Evidence evidence;
+    std::string canonical = "{}";
+    SECTION("it can't be signed")
+    {
+        lab.options.sign = [](std::string_view) -> std::optional<SignedResult> {
+            return std::nullopt;
+        };
+    }
+    SECTION("it holds a secret value")
+    {
+        lab.options.secrets = {"SENTINEL-SECRET"};
+        canonical = R"({"note":"SENTINEL-SECRET"})";
+    }
+    SECTION("an attachment is gone")
+    {
+        evidence.attachments.push_back({"items.csv", std::string(64, '0'), 1});
+    }
+
+    REQUIRE(lab.builder().write_result(evidence, canonical));
+
+    CHECK(lab.asked.empty());
+    CHECK(names_in(lab.folder).empty());
+}
+
+TEST_CASE("the result is timestamped as it is written: sign, the TSA, signature.json, "
+          "timestamp.tst, and result.json last",
+          "[evidence][timestamp][acceptance]")
+{
+    StampLab lab([] { return stamped(); });
+    EvidenceBuilder builder = lab.builder();
+    const EvidenceBuilder::Written written = builder.write_attachments(facts_of(lab.run));
+    REQUIRE(written.evidence);
+    const std::string canonical = R"({"a":1})";
+    SignedResult signature;
+    rp::TimestampOutcome timestamp;
+
+    REQUIRE_FALSE(builder.write_result(*written.evidence, canonical, &signature, &timestamp));
+
+    CHECK(lab.order == std::vector<std::string>{"items.csv", "veeam-session.log", "sign",
+                                                "timestamp", "signature.json", "timestamp.tst",
+                                                "result.json"});
+    // The TSA is asked about the bytes result.json holds: the hash the
+    // signature signs.
+    const std::array<unsigned char, 32> digest = rp::sha256_bytes(canonical);
+    REQUIRE(lab.asked.size() == 1);
+    CHECK(lab.asked.front() == std::vector<unsigned char>(digest.begin(), digest.end()));
+    CHECK(rp::test::hex_from_bytes(lab.asked.front()) == signature.bundle_sha256);
+    CHECK(names_in(lab.folder) == std::set<std::string>{"items.csv", "result.json",
+                                                        "signature.json", "timestamp.tst",
+                                                        "veeam-session.log"});
+    CHECK(bytes_of(lab.folder / "timestamp.tst") == kToken);
+    CHECK(bytes_of(lab.folder / "result.json") == canonical);
+    CHECK(timestamp.stamped());
+    CHECK(timestamp.token == kToken);
+    CHECK(timestamp.gen_time == 1791288000);
+    CHECK(timestamp.error.empty());
+    CHECK(rp::kTimestampFileName == "timestamp.tst");
+}
+
+TEST_CASE("without a timestamper none is asked and no token is written", "[evidence][timestamp]")
+{
+    Lab lab;
+    Evidence evidence;
+    rp::TimestampOutcome timestamp = stamped();
+
+    REQUIRE_FALSE(lab.builder().write_result(evidence, "{}", nullptr, &timestamp));
+
+    CHECK(names_in(lab.folder) == std::set<std::string>{"result.json", "signature.json"});
+    CHECK_FALSE(timestamp.stamped());
+    CHECK(timestamp.error.empty());
+    CHECK(timestamp.attempts == 0);
 }

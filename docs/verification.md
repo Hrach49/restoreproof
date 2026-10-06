@@ -511,7 +511,8 @@ whose text is never copied. A 403 on a delete names the write grant it relies on
 
 - **One run at a time.** Before its first Veeam call the command takes the machine-wide named
   mutex `Global\RestoreProof-restore-targets` without waiting (`rp/run_lock.hpp`) and holds it
-  until it exits; a second run is refused with exit 4 and no run line. Without it, one run's
+  until its clean after is over (what follows, the wait for a TSA included, needs no target);
+  a second run is refused with exit 4 and no run line. Without it, one run's
   cleanup could delete another's copies between that run's restore and its read-back: a false
   `fail`.
 - **Before**: right after the run line and before the sample is chosen, every run cleans all
@@ -778,10 +779,11 @@ are in `docs/worker-config.md`, "`--evidence <dir>`". Nothing here changes a run
 | `veeam-session.log` | `EvidenceBuilder::session_log`: `connector::RestoreResult::log` | always |
 | `screenshot.png` | a capturer (`RestoreCommandEnv::capture_screenshot`), when it captured one | when it is there |
 | `signature.json` | `rp::Signer::sign` over the result's canonical text (W4.3, "The signature" below) | never: it depends on the result's hash |
+| `timestamp.tst` | `rp::Timestamper`: a TSA's RFC 3161 token over the same hash (W4.4, "The timestamp" below), when the TSA gave one | never: it depends on the result's hash |
 | `result.json` | the finished result's canonical text | never: a file can't hold its own hash |
 
-`attachments` has one entry per file the result covers; `result.json` and `signature.json`
-are never listed.
+`attachments` has one entry per file the result covers; `result.json`, `signature.json` and
+`timestamp.tst` are never listed.
 
 ### The order, and what a folder without `result.json` means
 
@@ -804,15 +806,20 @@ are never listed.
    differs stops here: `changed after it was hashed`, no `result.json`.
 7. The canonical text is signed with the run's key (W4.3). No signature stops here: `the
    result couldn't be signed`, no `signature.json`, no `result.json`.
-8. `signature.json` is written. If it can't be: `could not be written`, no `result.json`.
-9. `result.json` is written last, exactly the canonical text that validated and was signed. If
-   it can't be, `signature.json` is removed again.
+8. The TSA is asked for a token over the SHA-256 of that text (W4.4), at most three times.
+   No token stops nothing: it is a warning, and the folder is complete without one.
+9. `signature.json` is written. If it can't be: `could not be written`, no `result.json`.
+10. `timestamp.tst` is written when there is a token. One that can't be written is a warning
+    too (`timestamp_not_written`).
+11. `result.json` is written last, exactly the canonical text that validated and was signed. If
+    it can't be, `signature.json` and `timestamp.tst` are removed again.
 
-So `result.json` is there only when the folder is complete and signed, and a folder without it
+So `result.json` is there only when the folder is complete: signed, and the timestamp attempt
+over, with a token beside it or without one. A folder without it
 is a run with no result: `error result_invalid`, a finished result that isn't valid or holds a
 secret value, no verdict, a result that couldn't be signed, a file that couldn't be written, or
-a process that ended in between (between steps 8 and 9 that leaves a `signature.json` beside no
-result). No cut-down result is written
+a process that ended in between (between steps 9 and 11 that leaves a `signature.json`, and
+perhaps a `timestamp.tst`, beside no result). No cut-down result is written
 for any of these (W4.1 point 5 stands). What the service reports to the Cloud for such a run
 is W4.8's question.
 
@@ -1055,6 +1062,8 @@ folder too, which a test sees. No test observes the other wipes.
 
 ### The checks, and the thirteen words
 
+(Sixteen since W4.4: the timestamp's three come after these, "The timestamp" below.)
+
 Both verifiers run the same checks in the same order; the first that fails gives the answer,
 one word. `Signer::verify_folder` and `verify_bundle.py`'s `verify_folder`; the list is
 `rp::verify_words()` and `WORDS` with `VERIFIED`, which tests hold equal to the words the
@@ -1097,7 +1106,8 @@ file that is there opens, with or without the system's long-path setting; before
 called an intact folder at a long path `attachment_missing`, `signature_file` or
 `result_unreadable`.
 
-The line both print on stdout is `verified <bundle_sha256> key <key_id>` or `not verified:
+The line both print on stdout is `verified <bundle_sha256> key <key_id> timestamp <time |
+none | unchecked>` (the third field since W4.4, "The timestamp" below) or `not verified:
 <word>`. That line is the contract between the two; the exit codes are each tool's own (the
 Worker's 0 and 5, the script's 0 and 1).
 
@@ -1130,7 +1140,7 @@ nothing on stdout. Since the code review of 2026-10-06 that holds for these too:
 - **A verdict that can't be written** (the reader of a pipe gone) is exit 2 from the script as
   a program too; the interpreter's own flush at exit made it 120.
 
-### The public key file
+### The public key file (W4.3)
 
 One rule, the same in `rp::PublicKey::from_pem` and in the script's `public_key_from_pem`;
 neither uses a PEM or DER reader of its library, since each library's takes more and they
@@ -1155,3 +1165,146 @@ well-formed key and is accepted ("The trust rule" above).
 
 `shared/testdata/signing-v1/key-files.json` holds the rule as 46 files, 11 accepted and 35
 refused, run by both builds. `rpworker signer public-key` prints such a file on stdout.
+
+## The timestamp (W4.4)
+
+`rpworker test --evidence <dir>` asks a timestamp authority (TSA) for an RFC 3161 token over
+the result's hash and keeps it as `timestamp.tst` beside `result.json`. The decisions are
+`docs/decisions.md` 2026-10-06, W4.4, approved as written, and its build notes; the config
+keys, the command's lines and `--tsa-ca` are in `docs/worker-config.md`. A timestamp never
+changes a run's status or exit code, and nothing that is signed is rewritten for it.
+
+### What is stamped
+
+`timestamp.tst` is the bare DER TimeStampToken as the TSA sent it: a CMS SignedData whose
+content is the TSTInfo. No wrapper, no JSON, no schema. Its message imprint is SHA-256 with,
+as the hashed message, the 32 raw bytes `bundle_sha256` shows as hex: the SHA-256 of
+`result.json`'s bytes, the same 32 bytes the Ed25519 signature signs. So the stamped datum is
+`result.json` itself, and an auditor needs nothing of ours to check it:
+
+```
+openssl ts -verify -data result.json -in timestamp.tst -token_in -CAfile tsa-ca.pem
+openssl ts -verify -digest <bundle_sha256> -in timestamp.tst -token_in -CAfile tsa-ca.pem
+```
+
+(`-token_in` because the file is the token, not the TSA's whole response. `openssl ts
+-verify` checks the certificates at today's date; after the TSA's certificate has expired, add
+`-attime <the token's time as seconds since 1970>`.) The token's time, policy, serial number
+and the TSA's name are inside it, under the TSA's signature; nothing about the timestamp is
+written anywhere else. The token is at most 64 KiB (`rp::kMaxTimestampFileBytes`; real ones
+are 4 to 8 KB).
+
+### The TSA, and how it is trusted
+
+By default the Worker asks DigiCert's public TSA, `http://timestamp.digicert.com`
+(`rp::kDefaultTsaUrl`), and holds its tokens to one root, DigiCert Trusted Root G4, which it
+carries: `shared/tsa/tsa-ca.pem` (SHA-256 of the certificate
+`552f7bdcf1a7af9e6ce672017f4f12abf77240c78e761ac203d1d9d20ac89988`, valid to 2038-01-15),
+embedded at build time like the result's schema. The config's `tsa_url` and `tsa_ca_file`
+name another TSA and the PEM certificates its tokens must chain to; a `tsa_url` needs its
+`tsa_ca_file`, so another TSA never borrows the default's root. The anchor never comes from the
+Windows store (hundreds of CAs, different per machine) and never from the token.
+
+**Plain HTTP.** DigiCert's TSA has no HTTPS endpoint. The TLS rule is untouched: an `https`
+`tsa_url` is verified like every other call, and with `http` there is no TLS to verify, so
+nothing is switched off. A token's integrity never comes from the transport: its signature,
+its chain to the pinned root, the nonce and the imprint are all checked before the file is
+written. The request holds a hash and a nonce and no secret. Someone on the path can only deny
+service, which is "not timestamped".
+
+**The request** (`rp::Rfc3161::request`): version 1, a SHA-256 imprint, `certReq` true, a new
+random 64-bit nonce for each attempt, no policy asked for. It is a POST with `Content-Type:
+application/timestamp-query`, a 10 s timeout.
+
+**The answer is taken only when**, in this order (`rp::Timestamper::stamp`): HTTP 200; at most
+64 KiB; exactly one TimeStampResp; status granted (0), never `grantedWithMods`; a token that is
+exactly one TimeStampToken; the nonce that was sent; a SHA-256 imprint equal to the result's
+hash; and the token verifies under the CA at the token's own time (`rp::Rfc3161::verify_token`,
+the same check the verifiers make). Three attempts in all, with waits of 30 s and 60 s, about
+two minutes at worst; every kind of failure is tried again and the last one's code is the
+answer.
+
+**What "verifies" means** (`Rfc3161::verify_token` over OpenSSL's `TS_RESP_verify_token`, and
+the script's `_token_verifies`): the signer's certificate is among the token's own
+certificates and is named by the token's ESSCertID (v1 or v2); its extended key usage is
+critical and `timeStamping` alone; the signature is over the signed attributes, whose
+`messageDigest` is the TSTInfo's hash; and the signer chains, each certificate issued by the
+next and each valid at the token's time, to a certificate of the caller's CA file (a
+certificate of that file ends the chain wherever it is met). Revocation isn't checked, and the
+policy OID and an accuracy aren't required. Long-term validation (the TSA's certificate
+expiring in 2037, archive timestamps) is out of scope.
+
+### No token
+
+A TSA failure is a warning on stderr and nothing else:
+
+```
+timestamp warning: <folder>: not timestamped: <code> after <n> attempt(s)
+```
+
+| Code | When |
+|---|---|
+| `tsa_unreachable` | no HTTP answer (connect, timeout, a dropped connection) |
+| `tsa_http_status` | an answer whose status isn't 200 |
+| `tsa_token_too_large` | a body over 64 KiB |
+| `tsa_response_malformed` | not one TimeStampResp, or granted with no token, or a token that isn't one |
+| `tsa_rejected` | a status other than granted |
+| `tsa_nonce_mismatch` | not the nonce that was sent |
+| `tsa_imprint_mismatch` | not a SHA-256 imprint of the result's hash |
+| `tsa_untrusted` | the token doesn't verify under the CA |
+| `timestamp_internal` | the request couldn't be made, or the primitive or the HTTP client failed in a way that is neither's answer |
+| `timestamp_not_written` | there was a token and the file couldn't be written |
+
+(`rp::timestamp_codes()`.) The status line, the exit code, the result and the signature are
+those of the same run with a TSA: the folder is complete without `timestamp.tst`, and both
+verifiers call it `verified ... timestamp none`. There is no error file in the folder: nothing
+there but `result.json` is signed, so a file saying "the TSA failed" could be added or removed
+by whoever removes a token. `EvidenceBuilder::write_result` hands the outcome on to its caller
+(W4.6 puts it into the outbox manifest as `tsa_error`).
+
+A clock that disagrees with the TSA's is said and changes nothing either: `timestamp warning:
+the TSA's time and this machine's clock differ by <n> s` when they are more than 120 s apart.
+The token is the better clock; no verifier compares the token's time with the result's own
+times.
+
+### What the verifiers check, and the three words
+
+After the last attachment, when the folder's listing has `timestamp.tst` (byte for byte:
+`TIMESTAMP.TST` is one more unlisted file and no timestamp):
+
+| # | Word | When |
+|---|---|---|
+| 14 | `timestamp_file` | the file can't be read whole, is over 64 KiB, or isn't exactly one TimeStampToken: bytes after it, the TSA's whole response, not one signer, no TSTInfo, a version other than 1 |
+| 15 | `timestamp_mismatch` | its imprint isn't SHA-256 or isn't `result.json`'s hash |
+| 16 | `timestamp_invalid` | it doesn't verify under the caller's CA (above): the signature, the signer, or its chain at the token's time |
+
+Checks 14 and 15 are made whoever asks; check 16 needs `--tsa-ca <pem file>`, the PEM
+certificates a token must chain to, which like the public key come from the caller and never
+from the folder. One word covers everything cryptographic, because OpenSSL reports the
+signature and the chain as one step and two words would have the two libraries draw the line
+in different places.
+
+The third field of the `verified` line says what was established:
+
+| Field | Meaning | stderr |
+|---|---|---|
+| the token's time, `YYYY-MM-DDTHH:MM:SSZ` | the token verifies under `--tsa-ca` | nothing |
+| `none` | the folder has no `timestamp.tst`: the run wasn't timestamped | `note: not timestamped` |
+| `unchecked` | there is a token, its form and imprint hold, and no `--tsa-ca` was given | `note: timestamp.tst was not checked: no --tsa-ca` |
+
+A `--tsa-ca` file that can't be read or holds no certificate is the tool's own error (the
+Worker's exit 1, the script's 2), never a word. Both tools hold the file to one rule: every PEM
+block in it is a `CERTIFICATE` that reads as one; a block of another label (a key, a CRL) or one
+that is cut off makes it no CA file, and text outside the blocks is a comment. `timestamp.tst` is never a `not listed` note.
+
+**Where the two verifiers may differ.** The Worker checks through OpenSSL; the script reads the
+token with `asn1crypto` and checks the signature and walks the chain with `cryptography`, with
+no name constraints, path length or policy processing. `shared/testdata/timestamp-v1/` holds
+them to one word on its 23 cases and to one list of the single-bit changes of a token that
+still verify (12 of 897 bytes, none covered by a signature: two version numbers, two
+algorithms' NULL parameters, and the signer info's signature algorithm, which neither reads).
+For the other changes both say "not verified", and on 17 of them (measured on one token) not
+with the same word: the script's readers refuse a few bytes of a certificate as no token
+(`timestamp_file`) that OpenSSL reads and then fails to verify (`timestamp_invalid`). No
+vector holds a signer without the timestamping key usage: OpenSSL's own responder refuses to
+make one; the script's rule for it has tests of its own.

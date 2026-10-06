@@ -188,17 +188,18 @@ outside ±(2^53 − 1), a non-ASCII key or invalid UTF-8 is refused, not written
 
 **Run folder.** `<runs root>\<run_id>\` (W4.2, `rpworker test --evidence <dir>`): `items.csv`,
 `veeam-session.log`, `screenshot.png` when one was captured (none is, today), `signature.json`
-(W4.3) and `result.json`, written last. The result lists each of the first three with its
-SHA-256 and size in `attachments`; it lists neither itself nor `signature.json`. A folder
-without `result.json` is a run with no result; one with it is complete and signed. See
+(W4.3), `timestamp.tst` when the TSA gave a token (W4.4) and `result.json`, written last. The
+result lists each of the first three with its SHA-256 and size in `attachments`; it lists
+neither itself nor `signature.json` nor `timestamp.tst`. A folder without `result.json` is a
+run with no result; one with it is complete: signed, and timestamped or not. See
 [verification.md](verification.md), "The run folder".
 
 **Evidence bundle.** What one run leaves behind and uploads: the run folder. The result JSON,
 `veeam-session.log` and `items.csv` (the per-item comparison, with the canaries' expected and
 found hashes), a screenshot when there is one, and `signature.json`. The result is written in
 its canonical form (sorted keys, no whitespace, UTF-8, ISO-8601 UTC), those bytes are hashed
-as `bundle_sha256`, and the hash is Ed25519-signed (W4.3); the RFC 3161 timestamp over the
-same hash is still to come (W4.4). The other files are under the signature through the
+as `bundle_sha256`, and the hash is Ed25519-signed (W4.3) and timestamped by an RFC 3161
+authority (W4.4, `timestamp.tst`). The other files are under the signature through the
 result's `attachments`. It is the artefact an auditor can check offline with
 `shared/tools/verify_bundle.py` and the Worker's public key, without trusting us: the script
 says `verified` or `not verified: <word>`. Failed runs are never edited or re-signed. The
@@ -211,6 +212,20 @@ characters), written in canonical form; schema `shared/schemas/signature.v1.json
 signature is never a field of the result, and nothing is removed from the result before it is
 hashed. The file is not itself signed, so a verifier takes the public key from its caller,
 never from the folder. See [verification.md](verification.md), "The signature".
+
+**Timestamp (`timestamp.tst`).** The file beside `result.json` that holds an RFC 3161
+TimeStampToken (W4.4): a timestamp authority's signed statement that the SHA-256 of
+`result.json`'s bytes existed at the token's time. The bare DER token as the TSA sent it, no
+wrapper; `openssl ts -verify -data result.json -in timestamp.tst -token_in -CAfile <root>`
+checks it. By default from DigiCert's public TSA, trusted through the one root in
+`shared/tsa/tsa-ca.pem`. A folder without it is "not timestamped": a TSA failure is a warning,
+never a status. Both verifiers check it against the caller's `--tsa-ca` and print its time as
+the third field of their `verified` line (`none`, `unchecked`). See
+[verification.md](verification.md), "The timestamp".
+
+**TSA.** Timestamp authority: a service that signs "this hash existed at this time" (RFC
+3161). Config's `tsa_url` and `tsa_ca_file`; `rp::Timestamper` asks it, `rp::Rfc3161` reads
+and verifies its tokens.
 
 **`bundle_sha256`.** The SHA-256 of `result.json`'s bytes, 64 lower-case hex: for a folder the
 Worker wrote, what `Get-FileHash result.json` prints. The Ed25519 signature is over its 32 raw

@@ -22,6 +22,9 @@
 #include <rp/connector.hpp>
 #include <rp/office_v1.hpp>
 #include <rp/restore_command.hpp>
+#include <rp/retry_policy.hpp>
+#include <rp/timestamper.hpp>
+#include <rp/rfc3161.hpp>
 #include <rp/result_schema.hpp>
 #include <rp/run_status.hpp>
 #include <rp/sha256.hpp>
@@ -1153,7 +1156,8 @@ TEST_CASE("test --json: a run ID that holds ':' never names the file or its temp
     for (const auto& entry : std::filesystem::directory_iterator(lab.dir.path())) {
         names.insert(utf8(entry.path().filename()));
     }
-    CHECK(names == std::set<std::string>{"config.json", "run.json", "seed-manifest.json"});
+    CHECK(names == std::set<std::string>{"config.json", "run.json", "seed-manifest.json",
+                                           "tsa-ca.pem"});
 }
 
 TEST_CASE("test --json: a file that appeared after the check is never overwritten",
@@ -1536,8 +1540,13 @@ std::set<std::string> names_in(const std::filesystem::path& folder)
 
 const std::set<std::string> kTextFiles{"items.csv", "veeam-session.log"};
 // W4.3: a complete folder, signed.
+const std::set<std::string> kUnstampedFolder{"items.csv", "result.json", "signature.json",
+                                             "veeam-session.log"};
+// W4.4: and timestamped.
 const std::set<std::string> kSignedFolder{"items.csv", "result.json", "signature.json",
-                                          "veeam-session.log"};
+                                          "timestamp.tst", "veeam-session.log"};
+// The Harness's TSA stamps the Harness's wall clock.
+const std::string kStampedAt = "2026-09-28T12:00:00Z";
 
 const std::string kPng = std::string{"\x89PNG\r\n\x1a\n"} + "a picture";
 
@@ -1557,12 +1566,17 @@ rp::Verification verify_folder(const std::filesystem::path& folder,
 // The two lines that end a signed run's stdout: the signature's, with the
 // SHA-256 of result.json as it is on disk and the Harness key's ID, then the
 // folder's.
-std::string signed_lines(const std::filesystem::path& folder, bool screenshot = false)
+// With `stamped_at` (W4.4) the timestamp's line between them and its file in
+// the list; empty for a run that got no token.
+std::string signed_lines(const std::filesystem::path& folder, bool screenshot = false,
+                         const std::string& stamped_at = kStampedAt)
 {
     const std::optional<std::string> result = file_bytes(folder / "result.json");
     REQUIRE(result);
     return "signed " + rp::sha256_hex(*result) + " key " + rp::test::signing_key().key_id() +
-           "\nevidence " + utf8(folder) + ": result.json, signature.json, items.csv, " +
+           "\n" + (stamped_at.empty() ? "" : "timestamped " + stamped_at + "\n") + "evidence " +
+           utf8(folder) + ": result.json, signature.json, " +
+           (stamped_at.empty() ? "" : "timestamp.tst, ") + "items.csv, " +
            "veeam-session.log" + (screenshot ? ", screenshot.png" : "") + "\n";
 }
 
@@ -2174,8 +2188,8 @@ TEST_CASE("test --evidence: the run folder is signed: it verifies under the publ
     INFO(run.err);
     REQUIRE(run.exit_code == rp::exit_code::ok);
     CHECK(run.err.empty());
-    CHECK(written == std::vector<std::string>{"items.csv", "veeam-session.log",
-                                              "signature.json", "result.json"});
+    CHECK(written == std::vector<std::string>{"items.csv", "veeam-session.log", "signature.json",
+                                              "timestamp.tst", "result.json"});
     REQUIRE(names_in(lab.run_folder()) == kSignedFolder);
     REQUIRE(out_at_result);
     CHECK_THAT(*out_at_result, !ContainsSubstring("signed "));
@@ -2586,4 +2600,340 @@ TEST_CASE("test --evidence: a result that holds the signing key in any of its sh
         CAPTURE(utf8(entry.path().filename()));
         CHECK(file_bytes(entry.path())->find(shape) == std::string::npos);
     }
+}
+
+// --- W4.4: the timestamp -----------------------------------------------------------
+
+namespace {
+
+// kThree with --evidence <the lab's root>. Args are views: the root's text
+// lives here, for as long as the run.
+struct EvidenceRun {
+    explicit EvidenceRun(const TestLab& lab) : root(lab.evidence_arg())
+    {
+        args.push_back("--evidence");
+        args.push_back(root);
+    }
+    std::string root;
+    Args args = kThree;
+};
+
+std::string not_timestamped(const TestLab& lab, std::string_view code, int attempts = 3)
+{
+    return "timestamp warning: " + utf8(lab.run_folder()) + ": not timestamped: " +
+           std::string{code} + " after " + std::to_string(attempts) + " attempt(s)\n";
+}
+
+} // namespace
+
+// Failure paths first: whatever the TSA does, the run is the run it was.
+TEST_CASE("test --evidence: no token from the TSA is a warning; the folder is complete without "
+          "one and the status, the exit code and the result are the same run's",
+          "[test_command][evidence][timestamp]")
+{
+    struct Row {
+        const char* name;
+        std::string code;
+        std::function<rp::HttpResponse(const rp::HttpRequest&)> answer;
+    };
+    const Row row = GENERATE_COPY(
+        Row{"unreachable", "tsa_unreachable",
+            [](const rp::HttpRequest&) -> rp::HttpResponse {
+                throw rp::HttpError("POST http://tsa.test/stamp: could not connect",
+                                    rp::TransportError::connect, 0, 1);
+            }},
+        Row{"503", "tsa_http_status",
+            [](const rp::HttpRequest&) {
+                return rp::test::make_response(503, "busy", "text/plain");
+            }},
+        Row{"a malformed answer", "tsa_response_malformed",
+            [](const rp::HttpRequest&) {
+                return rp::test::make_response(200, "<html>maintenance</html>", "text/html");
+            }},
+        Row{"a rejection", "tsa_rejected",
+            [](const rp::HttpRequest&) {
+                return rp::test::make_response(200, rp::test::TestTsa::rejection(),
+                                               "application/timestamp-reply");
+            }},
+        Row{"a token over another hash", "tsa_imprint_mismatch",
+            [](const rp::HttpRequest&) {
+                static const rp::test::TestTsa other_request;
+                return rp::test::make_response(
+                    200,
+                    other_request.respond(rp::openssl_rfc3161().request(rp::test::kDigestAbc, 8)),
+                    "application/timestamp-reply");
+            }},
+        Row{"an untrusted TSA", "tsa_untrusted", [](const rp::HttpRequest& request) {
+                static const rp::test::TestTsa other("another test root (not a secret)");
+                return rp::test::make_response(200, other.respond(request.body),
+                                               "application/timestamp-reply");
+            }});
+    CAPTURE(row.name);
+    // The same run with a TSA that answers, to compare with.
+    TestLab with;
+    with.fake.pool.mail = {carol_mail(1)};
+    const Run stamped = with.run(EvidenceRun(with).args);
+    REQUIRE(stamped.exit_code == rp::exit_code::ok);
+
+    TestLab lab;
+    lab.fake.pool.mail = {carol_mail(1)};
+    lab.tsa_answer = row.answer;
+    lab.timestamp_nonce = [] { return std::optional<std::uint64_t>{8}; };
+
+    const Run run = lab.run(EvidenceRun(lab).args);
+
+    CHECK(run.exit_code == stamped.exit_code);
+    CHECK(run.err == not_timestamped(lab, row.code));
+    CHECK(names_in(lab.run_folder()) == kUnstampedFolder);
+    CHECK_THAT(run.out, EndsWith(signed_lines(lab.run_folder(), false, "")));
+    CHECK_THAT(run.out, !ContainsSubstring("timestamped "));
+    CHECK_THAT(run.out, ContainsSubstring("\nstatus pass: "));
+    // The result is the same document: nothing in it knows of the TSA.
+    CHECK(lab.evidence_result() == with.evidence_result());
+    CHECK(lab.tsa_http.requests().size() == 3);
+    CHECK(rp::to_string(verify_folder(lab.run_folder()).word) == "verified");
+}
+
+TEST_CASE("test --evidence: the run mutex is held through the clean after and released before the "
+          "TSA is asked",
+          "[test_command][evidence][timestamp][cleanup]")
+{
+    // The wait for a TSA that is down is a minute and a half: the restore
+    // targets are idle by then, and the next run must not be refused for it.
+    TestLab lab;
+    lab.fake.pool.mail = {carol_mail(1)};
+    std::vector<bool> held_at_delete;
+    std::vector<bool> held_at_tsa;
+    lab.targets.at_delete = [&] { held_at_delete.push_back(lab.lock_held); };
+    lab.tsa_answer = [&](const rp::HttpRequest&) {
+        held_at_tsa.push_back(lab.lock_held);
+        return rp::test::make_response(503, "busy", "text/plain");
+    };
+
+    const Run run = lab.run(EvidenceRun(lab).args);
+
+    CHECK(run.exit_code == rp::exit_code::ok);
+    CHECK(run.err == not_timestamped(lab, "tsa_http_status"));
+    REQUIRE_FALSE(held_at_delete.empty());
+    CHECK(std::ranges::all_of(held_at_delete, [](bool held) { return held; }));
+    CHECK(held_at_tsa == std::vector<bool>{false, false, false});
+    CHECK(lab.lock_calls == 1);
+}
+
+TEST_CASE("test --evidence: a token that can't be written is a warning too",
+          "[test_command][evidence][timestamp]")
+{
+    TestLab lab;
+    lab.fake.pool.mail = {carol_mail(1)};
+    lab.write_evidence_file = [&lab](const std::filesystem::path& path, std::string_view content) {
+        if (path.filename() == "timestamp.tst") {
+            return false;
+        }
+        lab.dir.write(std::filesystem::relative(path, lab.dir.path()), content);
+        return true;
+    };
+
+    const Run run = lab.run(EvidenceRun(lab).args);
+
+    CHECK(run.exit_code == rp::exit_code::ok);
+    CHECK(run.err == not_timestamped(lab, "timestamp_not_written", 1));
+    CHECK(names_in(lab.run_folder()) == kUnstampedFolder);
+    CHECK_THAT(run.out, EndsWith(signed_lines(lab.run_folder(), false, "")));
+}
+
+TEST_CASE("test --evidence: a tsa_ca_file that holds no certificate is a config error before "
+          "anything is done",
+          "[test_command][evidence][timestamp]")
+{
+    TestLab lab;
+    const std::string what = GENERATE("empty", "a key", "gone");
+    CAPTURE(what);
+    const std::filesystem::path ca = lab.dir.path() / "tsa-ca.pem";
+    if (what == "gone") {
+        // There when the config was read, a folder now: nothing to read.
+        std::filesystem::remove(ca);
+    } else {
+        std::ofstream(ca, std::ios::binary | std::ios::trunc)
+            << (what == "empty" ? std::string{} : lab.tsa.tsa_key_pem_text());
+    }
+
+    const Run run = lab.run(EvidenceRun(lab).args);
+
+    CHECK(run.exit_code == rp::exit_code::config);
+    CHECK(run.out.empty());
+    if (what == "gone") {
+        CHECK_THAT(run.err, StartsWith("config error: "));
+        CHECK_THAT(run.err,
+                   EndsWith("config key \"tsa_ca_file\" names a file that can't be read\n"));
+    } else {
+        CHECK(run.err == "config error: config key \"tsa_ca_file\" names a file that holds no "
+                         "certificate (PEM)\n");
+    }
+    CHECK(lab.make_connector_calls == 0);
+    CHECK(lab.lock_calls == 0);
+    CHECK(lab.tsa_clients == 0);
+    CHECK_FALSE(std::filesystem::exists(lab.evidence_root()));
+}
+
+TEST_CASE("only --evidence asks the TSA: restore, test and test --json never do",
+          "[test_command][timestamp]")
+{
+    TestLab lab;
+    lab.fake.pool.mail = {carol_mail(1)};
+    // Nor do they read its CA file: one that holds no certificate stops nothing.
+    std::ofstream(lab.dir.path() / "tsa-ca.pem", std::ios::binary | std::ios::trunc) << "x";
+    const std::string json_arg = lab.json_arg();
+    Args args = kThree;
+    SECTION("test") {}
+    SECTION("test --json")
+    {
+        args.push_back("--json");
+        args.push_back(json_arg);
+    }
+    SECTION("restore")
+    {
+        lab.command = rp::run_restore_command;
+    }
+
+    const Run run = lab.run(args);
+
+    CHECK(run.exit_code == rp::exit_code::ok);
+    CHECK(run.err.empty());
+    CHECK(lab.tsa_clients == 0);
+    CHECK(lab.tsa_http.requests().empty());
+    CHECK_THAT(run.out, !ContainsSubstring("timestamped"));
+}
+
+// The happy path.
+TEST_CASE("test --evidence: the folder is timestamped: timestamp.tst is the TSA's token over "
+          "result.json's own hash, and its line comes between the signature's and the folder's",
+          "[test_command][evidence][timestamp][acceptance]")
+{
+    TestLab lab;
+    lab.fake.pool.mail = {carol_mail(1)};
+    std::vector<std::string> written;
+    lab.write_evidence_file = [&](const std::filesystem::path& path, std::string_view content) {
+        written.push_back(path.filename().string());
+        lab.dir.write(std::filesystem::relative(path, lab.dir.path()), content);
+        return true;
+    };
+
+    const Run run = lab.run(EvidenceRun(lab).args);
+
+    CHECK(run.exit_code == rp::exit_code::ok);
+    CHECK(run.err.empty());
+    REQUIRE(names_in(lab.run_folder()) == kSignedFolder);
+    CHECK(written == std::vector<std::string>{"items.csv", "veeam-session.log", "signature.json",
+                                              "timestamp.tst", "result.json"});
+    const std::string result = *file_bytes(lab.run_folder() / "result.json");
+    const std::string token = *file_bytes(lab.run_folder() / "timestamp.tst");
+    CHECK_THAT(run.out, EndsWith(timings_table(lab.timings[0]) +
+                                 "signed " + rp::sha256_hex(result) + " key " +
+                                 rp::test::signing_key().key_id() + "\ntimestamped " + kStampedAt +
+                                 "\nevidence " + utf8(lab.run_folder()) +
+                                 ": result.json, signature.json, timestamp.tst, items.csv, "
+                                 "veeam-session.log\n"));
+
+    // One request, as the Timestamper sends it.
+    CHECK(lab.tsa_clients == 1);
+    const std::vector<rp::HttpRequest> requests = lab.tsa_http.requests();
+    REQUIRE(requests.size() == 1);
+    CHECK(requests.front().url == "http://tsa.test/stamp");
+    CHECK(requests.front().content_type == "application/timestamp-query");
+
+    // The token: one TimeStampToken over the SHA-256 of result.json's bytes,
+    // which verifies under the test root and under no other.
+    const std::optional<rp::TimestampTokenInfo> info = rp::openssl_rfc3161().parse_token(token);
+    REQUIRE(info);
+    CHECK(info->sha256);
+    CHECK(rp::test::hex_from_bytes(info->imprint) == rp::sha256_hex(result));
+    CHECK(rp::timestamp_time_text(info->gen_time) == kStampedAt);
+    CHECK(rp::openssl_rfc3161().verify_token(token, lab.tsa.root_pem()));
+    CHECK_FALSE(rp::openssl_rfc3161().verify_token(token, rp::default_tsa_ca_pem()));
+
+    // Neither the result nor the signature knows of it.
+    CHECK_THAT(result, !ContainsSubstring("timestamp"));
+    CHECK_THAT(result, !ContainsSubstring("tsa"));
+    CHECK(json::parse(*file_bytes(lab.run_folder() / "signature.json")).size() == 5);
+    CHECK(keys_of(lab.evidence_result()).size() == 17);
+}
+
+TEST_CASE("test --evidence: a run that ends fail or error is timestamped as a pass is",
+          "[test_command][evidence][timestamp]")
+{
+    TestLab lab;
+    lab.fake.pool.mail = {carol_mail(1)};
+    // The restored mail's body isn't the canary's.
+    lab.targets.after[0] = json::array();
+
+    const Run run = lab.run(EvidenceRun(lab).args);
+
+    CHECK(run.exit_code != rp::exit_code::ok);
+    CHECK(names_in(lab.run_folder()) == kSignedFolder);
+    CHECK_THAT(run.out, ContainsSubstring("\ntimestamped " + kStampedAt + "\n"));
+}
+
+TEST_CASE("test --evidence: a clock more than two minutes from the TSA's is said, and the token "
+          "is taken all the same",
+          "[test_command][evidence][timestamp]")
+{
+    const int apart = GENERATE(-300, -121, 121, 86400);
+    TestLab lab;
+    lab.fake.pool.mail = {carol_mail(1)};
+    lab.tsa.time += apart;
+
+    const Run run = lab.run(EvidenceRun(lab).args);
+
+    CHECK(run.exit_code == rp::exit_code::ok);
+    CHECK(run.err == "timestamp warning: the TSA's time and this machine's clock differ by " +
+                         std::to_string(apart < 0 ? -apart : apart) + " s\n");
+    CHECK(names_in(lab.run_folder()) == kSignedFolder);
+}
+
+TEST_CASE("test --evidence: two minutes from the TSA's clock is not said",
+          "[test_command][evidence][timestamp]")
+{
+    const int apart = GENERATE(-120, -80, 0, 120);
+    TestLab lab;
+    lab.fake.pool.mail = {carol_mail(1)};
+    lab.tsa.time += apart;
+
+    const Run run = lab.run(EvidenceRun(lab).args);
+
+    CHECK(run.exit_code == rp::exit_code::ok);
+    CHECK(run.err.empty());
+}
+
+TEST_CASE("test --evidence --record: the TSA's exchange is the recording's tsa folder, both "
+          "bodies as Base64, and replays",
+          "[test_command][evidence][timestamp][record]")
+{
+    TestLab lab;
+    lab.fake.pool.mail = {carol_mail(1)};
+    const std::filesystem::path recording = lab.dir.path() / "rec";
+    const EvidenceRun evidence(lab);
+    const std::string record_arg = utf8(recording);
+    Args args = evidence.args;
+    args.push_back("--record");
+    args.push_back(record_arg);
+
+    const Run run = lab.run(args);
+
+    CHECK(run.exit_code == rp::exit_code::ok);
+    CHECK(run.err.empty());
+    REQUIRE(std::filesystem::is_directory(recording / "tsa"));
+    std::vector<std::filesystem::path> files;
+    for (const auto& entry : std::filesystem::directory_iterator(recording / "tsa")) {
+        files.push_back(entry.path());
+    }
+    REQUIRE(files.size() == 1);
+    CHECK(files.front().filename() == "001-post-stamp.json");
+    const json fixture = json::parse(*file_bytes(files.front()));
+    CHECK(fixture.at("request") == "POST /stamp");
+    CHECK(fixture.at("status") == 200);
+    CHECK(fixture.at("body").is_null());
+    // The answer's last bytes are the token the folder holds.
+    const std::string answer = rp::test::to_response(fixture).body;
+    CHECK(answer.ends_with(*file_bytes(lab.run_folder() / "timestamp.tst")));
+    CHECK(rp::test::request_body_of(fixture) == lab.tsa_http.requests().front().body);
 }

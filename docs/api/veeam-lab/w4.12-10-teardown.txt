@@ -1,0 +1,14 @@
+W4.12 (#135) step 10: taking the temporary things away again, 2026-10-06T23:27:37Z
+service: service RpSpikeProbe deleted
+service now: gone
+Veeam key file ACL now: NT AUTHORITY\SYSTEM=FullControl; BUILTIN\Administrators=ReadAndExecute, Synchronize
+throwaway certificate BF257E38FAB25ADB753DE8D1081B2678BDAB6293 removed with its key: True
+throwaway certificate 2183002CB1927D3996F55F5AB8B227D970B571DF removed with its key: True
+throwaway key files left under Crypto\Keys: 0
+LocalMachine\My now: F4D590BB CN=Veeam Software, O=Veeam Software, OU=Veeam Software; AC3220B5 CN=RestoreProof Lab Veeam; 9E498EC6 CN=RestoreProof Lab Restore Portal; 895C6325 CN=Veeam Software, O=Veeam Software, OU=Veeam Software; 26F8C9B2 CN=RestoreProof Lab Veeam Operator Auth
+profile folder C:\Users\RpSpikeProbe: none
+ProgramData\RestoreProof ACL: NT AUTHORITY\SYSTEM=FullControl; BUILTIN\Administrators=FullControl; CREATOR OWNER=268435456; BUILTIN\Users=ReadAndExecute, Synchronize; BUILTIN\Users=Write
+spike folder C:\ProgramData\RestoreProof\spike-w4.12 removed: True
+ProgramData\RestoreProof now holds: runs
+harness kept as text in docs/api/veeam-lab/w4.12-harness/: RpSpikeHost.cs, spike-failures.ps1, spike-lib.ps1, spike-probe.ps1
+pwsh/rpworker/rptests processes in session 0: 0

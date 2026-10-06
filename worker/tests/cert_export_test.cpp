@@ -19,6 +19,7 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <chrono>
+#include <iostream>
 #include <memory>
 #include <string>
 #include <utility>
@@ -238,6 +239,41 @@ TEST_CASE("Windows reads the export back with its key, still exportable", "[cert
     const rp::ExportedPfx second =
         rp::cert_export_detail::export_from_store(store.get(), lab.thumbprint, now, "x");
     CHECK_FALSE(second.pfx_base64.empty());
+}
+
+// --- The W4.12 spike's probe (#135) --------------------------------------------
+//
+// Hidden: it runs only when named, `rptests "[spike_cert_export]"`, from a
+// process running as a candidate service account, with RP_SPIKE_THUMBPRINT
+// naming a certificate of the real LocalMachine\My. It prints what the
+// Worker's own exporter says of that certificate, which is what `rpworker
+// doctor` will say later: one line, never a byte of the export or the
+// password, only their lengths. Without the variable it does nothing.
+TEST_CASE("spike: what the Worker's exporter says of RP_SPIKE_THUMBPRINT in LocalMachine\\My",
+          "[.][spike_cert_export]")
+{
+    wchar_t wide[64]{};
+    const DWORD length = GetEnvironmentVariableW(L"RP_SPIKE_THUMBPRINT", wide, 64);
+    if (length == 0 || length >= 64) {
+        WARN("RP_SPIKE_THUMBPRINT is not set: nothing probed");
+        return;
+    }
+    std::string thumbprint;
+    for (DWORD i = 0; i < length; ++i) {
+        REQUIRE(wide[i] < 128);
+        thumbprint += static_cast<char>(wide[i]);
+    }
+    const auto exporter = rp::make_local_machine_cert_exporter();
+    try {
+        const rp::ExportedPfx pfx = exporter->export_pfx(thumbprint);
+        std::cout << "spike export " << thumbprint << ": exported in memory: PFX "
+                  << pfx.pfx_base64.size() << " Base64 characters, password " << pfx.password.size()
+                  << " characters; nothing written\n";
+        CHECK(pfx.password.size() == 44);
+    } catch (const rp::CertExportError& e) {
+        std::cout << "spike export " << thumbprint << ": refused: " << e.what() << "\n";
+        SUCCEED();
+    }
 }
 
 TEST_CASE("to_time_point reads a FILETIME on the system clock", "[cert_export]")

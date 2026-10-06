@@ -6,15 +6,18 @@
 # before the POST: restoretest's Inbox, the RestoreTarget library, alice's OneDrive /RestoreTarget.
 # Never the canary library or folder, never the original location, never overwrite.
 # The restore credential is Veeam's own organisation app (docs/decisions.md, W2.4): its certificate is
-# exported from Cert:\LocalMachine\My (elevated shell) to a temporary PFX in %TEMP% with a random
-# one-time password, read into memory and deleted at once. Nothing of it reaches disk in the repo.
+# exported from Cert:\LocalMachine\My in memory (X509Certificate2.Export) under a random one-time
+# password; no file is written (W4.12; before it, a temporary PFX in %TEMP%, deleted at once). The
+# private key must be readable by the account running the script: an administrator, LocalSystem, or
+# an account with read access to the key file (W4.12, docs/decisions.md 2026-10-07).
 # -WhatIf sends no restore POST and exports nothing: it still signs in, opens (and stops) an explore
 # session, browses, builds the body and runs the guard. It saves no evidence and exits 0 if the guard passed.
 # Exit codes: 0 Veeam says restored (or -WhatIf: guard passed); 1 restore finished, not a success;
 # 2 refused before any POST (guard, preflight, resolve, or a 4xx on the POST: nothing started);
 # 3 no verdict (timeout, POST without an answer, a duplicate check that doesn't confirm exactly the
-# returned session, statistics or events unreadable or of an unexpected shape); 64 usage (also: not
-# elevated without -WhatIf). PowerShell's own parameter-binding errors exit 1 before the script runs.
+# returned session, statistics or events unreadable or of an unexpected shape); 64 usage (also: the
+# certificate's private key can't be opened, without -WhatIf). PowerShell's own parameter-binding
+# errors exit 1 before the script runs.
 # A restore that may still be running when the script gives up (exit 3 after the POST) is left alone,
 # and so is the explore session it came from: see the message it prints.
 [CmdletBinding(PositionalBinding = $false)]
@@ -342,24 +345,17 @@ function New-RestoreBody($res) {
     , $b
 }
 
-# Veeam's organisation app certificate as Base64 PFX, through a temporary file outside the repo.
+# Veeam's organisation app certificate as Base64 PFX, exported in memory (W4.12): no temporary file.
 function Get-RestoreCredential {
     $cert = Get-Item "Cert:\LocalMachine\My\$VeeamAppThumb"
     if (-not $cert.HasPrivateKey -or $cert.NotAfter -le (Get-Date)) { Refuse 'Veeam app certificate: no private key or expired' }
     $bytes = [byte[]]::new(32); [Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
     $pw = [Convert]::ToBase64String($bytes); Register-Secret $pw
-    $pfx = Join-Path ([IO.Path]::GetTempPath()) "rp-w24-$([guid]::NewGuid().ToString('N')).pfx"
-    $repo = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
-    if ($pfx.StartsWith($repo, 'OrdinalIgnoreCase')) { Refuse 'the temporary PFX would be inside the repo' }
-    try {
-        Export-PfxCertificate -Cert $cert -FilePath $pfx -Password (ConvertTo-SecureString $pw -AsPlainText -Force) | Out-Null
-        $b64 = [Convert]::ToBase64String([IO.File]::ReadAllBytes($pfx))
-        $script:Known.Add($b64)   # scrubbed like any secret; no DPAPI copy of the key material
-    } finally {
-        Remove-Item -LiteralPath $pfx -Force -ErrorAction SilentlyContinue
-        if (Test-Path -LiteralPath $pfx) { throw "the temporary PFX $pfx could not be deleted: delete it by hand" }
-    }
-    "  certificate exported to a temporary PFX, read ($($b64.Length) Base64 chars) and deleted" | Out-Host
+    try { $pfx = $cert.Export([System.Security.Cryptography.X509Certificates.X509ContentType]::Pfx, $pw) }
+    catch { Refuse "Veeam app certificate: the in-memory export failed ($($_.Exception.Message.Trim())): its private key must be readable by this account and exportable" }
+    $b64 = [Convert]::ToBase64String($pfx); [Array]::Clear($pfx, 0, $pfx.Length)
+    $script:Known.Add($b64)   # scrubbed like any secret; no DPAPI copy of the key material
+    "  certificate exported in memory ($($b64.Length) Base64 chars); nothing written to disk" | Out-Host
     [pscustomobject]@{ Pfx = $b64; Password = $pw }
 }
 
@@ -398,8 +394,12 @@ $entries = @(foreach ($id in $Item) {
     if (-not (Same $e[0].kind $kind)) { "usage: $id is a $($e[0].kind), not $kind" | Out-Host; exit 64 }
     $e[0]
 })
-if (-not $WhatIf -and -not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
-        [Security.Principal.WindowsBuiltInRole]::Administrator)) { "run elevated: the certificate export needs it (or use -WhatIf)"; exit 64 }
+if (-not $WhatIf) {
+    # The export needs the private key readable by this account (W4.12: an administrator, LocalSystem, or
+    # an account granted read on the key file) and exportable. Checked before any session is opened.
+    try { $null = [System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey((Get-Item "Cert:\LocalMachine\My\$VeeamAppThumb")).KeySize }
+    catch { "the Veeam app certificate's private key can't be opened as $([Security.Principal.WindowsIdentity]::GetCurrent().Name): $($_.Exception.Message.Trim()). Run elevated, or grant this account read access to the key file (or use -WhatIf)"; exit 64 }
+}
 "W2.4 restore: $Type, $($Item -join ', ')$(if ($WhatIf) { ' (WhatIf: nothing is exported or posted)' })"
 
 $script:Posted = $false; $script:RestoreOpen = $false

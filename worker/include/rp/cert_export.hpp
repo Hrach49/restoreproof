@@ -58,9 +58,11 @@ public:
 };
 
 // The exporter for LocalMachine\My, opened read-only on each export. Reading
-// a machine key needs an elevated process or LocalSystem, and the key must be
-// exportable (W4.12 #135 decides the service account). `wall_now` decides
-// whether the certificate is valid; null = system_clock::now.
+// a machine key needs read access to its key file: an elevated process,
+// LocalSystem, or the Worker's service account, a virtual account with one
+// Read ACE on that file (W4.12 #135, docs/decisions.md 2026-10-07), and the
+// key must be exportable. `wall_now` decides whether the certificate is
+// valid; null = system_clock::now.
 std::shared_ptr<CertificateExporter> make_local_machine_cert_exporter(
     std::function<std::chrono::system_clock::time_point()> wall_now = {});
 

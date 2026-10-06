@@ -1,0 +1,11 @@
+W4.12 (#135) step 6: rpworker graph list --hash after step 5 (as the user, the mutex still held), 2026-10-06T23:21:16Z. lab/seed-manifest.json's body_sha256 for RP-CANARY-0011: dfef80f3a5abafeacc055aa9619ae12798bbd95e62ac280fb5b2b2a9bf387989
+Mail (restoretest@RestoreProofLab.onmicrosoft.com, Inbox): 1 item(s)
+  RECEIVED              SENDER                                              SUBJECT         ID                                                                    SHA256                                                            RULE
+  2026-09-24T22:14:46Z  HrachyaHarutyunyan@RestoreProofLab.onmicrosoft.com  RP-CANARY-0011  AAkALgAAAAAAHYQDEapmEc2byACqAC-EWg0Apy-rvAUfAU_pqKwuzmFBWgAABfrVyQAA  dfef80f3a5abafeacc055aa9619ae12798bbd95e62ac280fb5b2b2a9bf387989  text-v1
+
+SharePoint (RestoreTarget library): 0 item(s)
+
+OneDrive (RestoreTarget folder): 0 item(s)
+
+1 item(s) in the three restore targets
+exit code 0

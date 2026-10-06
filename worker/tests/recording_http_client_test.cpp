@@ -6,6 +6,7 @@
 #include "fake_http_client.hpp"
 #include "test_support.hpp"
 
+#include <rp/base64.hpp>
 #include <rp/config.hpp>
 #include <rp/recording_http_client.hpp>
 #include <rp/sha256.hpp>
@@ -857,4 +858,148 @@ TEST_CASE("a recorder that refuses its folder leaves nothing in the list either"
     REQUIRE_THROWS_AS(rp::FixtureRecorder(dir.path(), kSource, std::move(list)), rp::ConfigError);
 
     check_wiped(list);
+}
+
+// --- W4.4: a binary exchange, the TSA's (RecordedBody::base64) -----------------
+
+namespace {
+
+const std::string kTsa = "http://tsa.test/stamp";
+
+HttpRequest tsa_request(std::string body)
+{
+    HttpRequest req;
+    req.method = HttpMethod::post;
+    req.url = kTsa;
+    req.body = std::move(body);
+    req.content_type = "application/timestamp-query";
+    return req;
+}
+
+// The one fixture file of a service folder.
+ordered_json only_fixture(const std::filesystem::path& dir)
+{
+    std::vector<std::filesystem::path> files;
+    for (const auto& entry : std::filesystem::directory_iterator(dir)) {
+        files.push_back(entry.path());
+    }
+    REQUIRE(files.size() == 1);
+    std::ifstream file(files.front(), std::ios::binary);
+    return ordered_json::parse(std::string{std::istreambuf_iterator<char>(file), {}});
+}
+
+// Bytes that aren't UTF-8 and whose Base64 starts like a JWT ("eyJ" and more
+// than 37 base64url characters): what DER can be by chance.
+std::string jwt_shaped_bytes()
+{
+    const std::string text = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9eyJzdWIiOiIxMjM0NTY3ODkwIn0";
+    const std::optional<std::vector<unsigned char>> bytes = rp::base64_decode(text.substr(0, 60) + "/w==");
+    REQUIRE(bytes);
+    return std::string(bytes->begin(), bytes->end());
+}
+
+} // namespace
+
+TEST_CASE("a binary exchange keeps both bodies as Base64 and replays byte for byte",
+          "[record][tsa]")
+{
+    const std::string query = std::string("\x30\x03\x02\x01\x01", 5) + std::string(1, '\0') + "\xff";
+    const std::string reply = std::string("\x30\x82\x00\x01", 4) + std::string(3, '\0') + "\xfe\xff";
+    rp::test::TempDir dir;
+    auto recorder = std::make_shared<rp::FixtureRecorder>(dir.path() / "rec", kSource,
+                                                          std::vector<std::string>{});
+    rp::test::FakeHttpClient live;
+    live.on(HttpMethod::post, kTsa, {make_response(200, reply, "application/timestamp-reply")});
+    rp::RecordingHttpClient client(std::make_unique<rp::test::ForwardingHttpClient>(live),
+                                   recorder, "tsa", RecordedBody::base64);
+
+    CHECK(client.send(tsa_request(query)).body == reply);
+
+    REQUIRE(recorder->written() == 1);
+    const ordered_json fixture = only_fixture(dir.path() / "rec" / "tsa");
+    CHECK(fixture.at("request") == "POST /stamp");
+    CHECK(fixture.at("status") == 200);
+    CHECK(fixture.at("headers").at("Content-Type") == "application/timestamp-reply");
+    CHECK(fixture.at("body").is_null());
+    CHECK(fixture.at("body_base64") ==
+          rp::base64_encode(std::vector<unsigned char>(reply.begin(), reply.end())));
+    CHECK(fixture.at("request_body_base64") ==
+          rp::base64_encode(std::vector<unsigned char>(query.begin(), query.end())));
+    CHECK_FALSE(fixture.contains("body_sha256"));
+    CHECK_FALSE(fixture.contains("request_body"));
+
+    rp::test::FakeHttpClient replay;
+    CHECK(replay.serve_recording(dir.path() / "rec" / "tsa") == 1);
+    const HttpResponse again = replay.send(tsa_request(query));
+    CHECK(again.status == 200);
+    CHECK(again.body == reply);
+    CHECK(rp::test::request_body_of(fixture) == query);
+}
+
+TEST_CASE("a binary exchange with empty bodies has neither Base64 key", "[record][tsa]")
+{
+    const rp::ScrubbedExchange scrubbed = rp::scrub_exchange(
+        1, kSource, tsa_request(""), make_response(503, "", ""), RecordedBody::base64, {});
+    const ordered_json fixture = ordered_json::parse(scrubbed.text);
+    CHECK(fixture.at("body").is_null());
+    CHECK_FALSE(fixture.contains("body_base64"));
+    CHECK_FALSE(fixture.contains("request_body_base64"));
+}
+
+TEST_CASE("Base64 that happens to look like a JWT doesn't refuse a binary exchange",
+          "[record][tsa]")
+{
+    const std::string bytes = jwt_shaped_bytes();
+    // As text in an ordinary exchange the same characters are refused.
+    REQUIRE_THROWS_AS(
+        rp::scrub_exchange(
+            1, kSource, tsa_request(""),
+            make_response(200, rp::base64_encode(std::vector<unsigned char>(bytes.begin(),
+                                                                           bytes.end())),
+                          "text/plain"),
+            RecordedBody::content, {}),
+        rp::RecordRefused);
+
+    const rp::ScrubbedExchange scrubbed = rp::scrub_exchange(
+        1, kSource, tsa_request(bytes), make_response(200, bytes, "application/timestamp-reply"),
+        RecordedBody::base64, {});
+
+    CHECK_THAT(scrubbed.text, ContainsSubstring("eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9"));
+}
+
+TEST_CASE("a binary exchange whose bytes hold a known secret is refused", "[record][tsa]")
+{
+    const std::string secret = "SENTINEL-KNOWN-SECRET";
+    const std::string with_secret = std::string("\x30\x82", 2) + secret + "\xff";
+    const std::string clean = std::string("\x30\x03\x02\x01\x01", 5);
+
+    SECTION("in the answer")
+    {
+        CHECK_THROWS_AS(rp::scrub_exchange(1, kSource, tsa_request(clean),
+                                           make_response(200, with_secret, "application/x"),
+                                           RecordedBody::base64, {secret}),
+                        rp::RecordRefused);
+    }
+    SECTION("in the request")
+    {
+        CHECK_THROWS_AS(rp::scrub_exchange(1, kSource, tsa_request(with_secret),
+                                           make_response(200, clean, "application/x"),
+                                           RecordedBody::base64, {secret}),
+                        rp::RecordRefused);
+    }
+    SECTION("as a one-time secret")
+    {
+        CHECK_THROWS_AS(rp::scrub_exchange(1, kSource, tsa_request(clean),
+                                           make_response(200, with_secret, "application/x"),
+                                           RecordedBody::base64, {}, {secret}),
+                        rp::RecordRefused);
+    }
+    SECTION("the rest of the file is still held to every rule")
+    {
+        HttpResponse resp = make_response(200, clean, "application/x");
+        resp.headers["WWW-Authenticate"] = secret;
+        CHECK_THROWS_AS(rp::scrub_exchange(1, kSource, tsa_request(clean), resp,
+                                           RecordedBody::base64, {secret}),
+                        rp::RecordRefused);
+    }
 }

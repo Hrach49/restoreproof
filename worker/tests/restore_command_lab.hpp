@@ -8,6 +8,7 @@
 // same pipeline, so both test files share it. No network, nothing live, and
 // no Catch2 assertion in a fake's handler.
 
+#include "tsa_lab.hpp"
 #include "fake_http_client.hpp"
 #include "graph_lab.hpp"
 #include "signing_lab.hpp"
@@ -78,7 +79,7 @@ inline const std::string kUsage =
     "rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] "
     "[--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] "
     "[--record <dir>] [--json <file> | --evidence <dir>] | "
-    "rpworker signer public-key | rpworker signer verify <folder> --public-key <pem file>\n";
+    "rpworker signer public-key | rpworker signer verify <folder> --public-key <pem file> [--tsa-ca <pem file>]\n";
 
 inline const std::string kOrgName = "RestoreProofLab.onmicrosoft.com";
 // Veeam's restore point IDs are two GUIDs run together: the backup
@@ -719,11 +720,26 @@ struct TargetsLab {
 // A temp folder with config.json and the lab's manifest beside it, the fake
 // connector, Graph and the downloads on TargetsLab, secrets, a clock and a
 // run ID the test chose.
+inline constexpr std::string_view kTsaUrl = "http://tsa.test/stamp";
+
 struct Harness {
     explicit Harness(const json& config_edit = json::object())
     {
         json config = config_values();
+        // W4.4: the TSA is the test-only one, its root in a file of its own:
+        // a test never asks DigiCert, nor trusts the test root by default.
+        config["tsa_url"] = std::string{kTsaUrl};
+        config["tsa_ca_file"] = utf8(dir.write("tsa-ca.pem", tsa.root_pem()));
         config.update(config_edit);
+        tsa.time = std::chrono::system_clock::to_time_t(rp::test::graph_lab::kNow);
+        tsa_http.on(rp::HttpMethod::post, std::string{kTsaUrl},
+                    [this](const rp::HttpRequest& request) {
+                        if (tsa_answer) {
+                            return tsa_answer(request);
+                        }
+                        return rp::test::make_response(200, tsa.respond(request.body),
+                                                       "application/timestamp-reply");
+                    });
         config_path = dir.write("config.json", config.dump(2));
         manifest_path = dir.write("seed-manifest.json", lab_manifest_text());
         auto sink = std::make_shared<spdlog::sinks::ostream_sink_mt>(log_stream);
@@ -820,6 +836,12 @@ struct Harness {
         env.capture_screenshot = capture_screenshot;
         // W4.3: the result's signer; null, rp::Signer::sign.
         env.sign_result = sign_result;
+        // W4.4: the TSA's client, on the fake.
+        env.make_tsa_http = [this]() -> std::unique_ptr<rp::IHttpClient> {
+            ++tsa_clients;
+            return std::make_unique<rp::test::ForwardingHttpClient>(tsa_http);
+        };
+        env.timestamp_nonce = timestamp_nonce;
         return env;
     }
 
@@ -879,6 +901,20 @@ struct Harness {
     rp::ScreenshotCapturer capture_screenshot;
     std::function<std::optional<rp::SignedResult>(std::string_view, const rp::SigningKey&)>
         sign_result;
+    // W4.4: the test-only TSA (its keys the same for every Harness, made
+    // once), the client the run asks it through, and an answer in its place.
+    // It stamps the Harness's wall clock's time unless `tsa.time` is changed.
+    static const rp::test::TestTsa& shared_tsa()
+    {
+        static const rp::test::TestTsa one;
+        return one;
+    }
+    rp::test::TestTsa tsa{shared_tsa().root_pem(), shared_tsa().tsa_cert_pem_text(),
+                          shared_tsa().tsa_key_pem_text()};
+    rp::test::FakeHttpClient tsa_http;
+    std::function<rp::HttpResponse(const rp::HttpRequest&)> tsa_answer;
+    std::function<std::optional<std::uint64_t>()> timestamp_nonce;
+    int tsa_clients = 0;
     // The run ID a run without --run-id makes.
     std::string generated_run_id{kGeneratedRunId};
     // The download client's maker returns null: the run stops after its run

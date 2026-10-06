@@ -88,7 +88,10 @@ constexpr StringField kLogLevel{"log_level", &Config::log_level, false, StringRu
 // Optional, so not StringFields: checked last, after log_level, in this order.
 constexpr std::string_view kCaFileKey = "veeam_ca_file";
 constexpr std::string_view kCertSha256Key = "veeam_cert_sha256";
-// The one boolean (W4.2), checked after them.
+// The TSA's (W4.4), checked after them, the URL first.
+constexpr std::string_view kTsaUrlKey = "tsa_url";
+constexpr std::string_view kTsaCaFileKey = "tsa_ca_file";
+// The one boolean (W4.2), checked last.
 constexpr std::string_view kScreenshotsKey = "screenshots_enabled";
 
 constexpr std::array<std::string_view, 7> kLogLevels{"trace", "debug", "info", "warn",
@@ -138,7 +141,8 @@ bool is_known_key(std::string_view key)
     const auto named = [key](const auto& field) { return field.key == key; };
     return std::any_of(kRequiredStrings.begin(), kRequiredStrings.end(), named) ||
            std::any_of(kIntFields.begin(), kIntFields.end(), named) || key == kLogLevel.key ||
-           key == kCaFileKey || key == kCertSha256Key || key == kScreenshotsKey;
+           key == kCaFileKey || key == kCertSha256Key || key == kTsaUrlKey ||
+           key == kTsaCaFileKey || key == kScreenshotsKey;
 }
 
 bool looks_like_secret(std::string_view key)
@@ -165,14 +169,13 @@ std::string secret_key_problem()
            " in the environment instead (they move to the DPAPI vault in W4.5)";
 }
 
-// "https://" in any case, then a host: at least one character that isn't '/'.
-// No user name or password (an '@' before the path) and no query or fragment,
-// so a credential can't hide in the URL and get printed by `config check`;
-// printable ASCII (0x21-0x7E) only, so a look-alike such as a fullwidth @
-// can't stand in for the real one.
-bool is_https_url(std::string_view value)
+// `scheme` ("https://") in any case, then a host: at least one character that
+// isn't '/'. No user name or password (an '@' before the path) and no query
+// or fragment, so a credential can't hide in the URL and get printed by
+// `config check`; printable ASCII (0x21-0x7E) only, so a look-alike such as a
+// fullwidth @ can't stand in for the real one.
+bool is_url_of(std::string_view scheme, std::string_view value)
 {
-    constexpr std::string_view scheme = "https://";
     const auto printable_ascii = [](char c) { return c >= 0x21 && c <= 0x7E; };
     if (!std::all_of(value.begin(), value.end(), printable_ascii) ||
         value.size() <= scheme.size() || value[scheme.size()] == '/' ||
@@ -186,6 +189,11 @@ bool is_https_url(std::string_view value)
     return std::equal(scheme.begin(), scheme.end(), value.begin(), [](char a, char b) {
         return a == std::tolower(static_cast<unsigned char>(b));
     });
+}
+
+bool is_https_url(std::string_view value)
+{
+    return is_url_of("https://", value);
 }
 
 // Control and invisible formatting characters that could forge, hide or
@@ -312,6 +320,34 @@ void read_ca_file(const json& doc, Config& config)
                                     "\\\\server\\share\\veeam-ca.pem");
     }
     config.veeam_ca_file = *value;
+}
+
+// The TSA's two keys (W4.4). The URL may be http: a public TSA often has no
+// https endpoint, and a token's integrity never comes from the transport (it
+// is checked against tsa_ca_file before it is written). A TSA that is named
+// must bring its own CA file: the embedded root is the default TSA's alone.
+void read_tsa(const json& doc, Config& config)
+{
+    const std::string* url = find_string(doc, kTsaUrlKey, false);
+    const std::string* ca_file = find_string(doc, kTsaCaFileKey, false);
+    if (url != nullptr) {
+        if (!is_url_of("http://", *url) && !is_url_of("https://", *url)) {
+            throw key_error(kTsaUrlKey, "must be an http:// or https:// URL with no user name, "
+                                        "password, query or fragment");
+        }
+        if (ca_file == nullptr) {
+            throw key_error(kTsaUrlKey, "needs tsa_ca_file: set it to a PEM file holding the "
+                                        "certificate(s) that TSA's tokens chain to");
+        }
+        config.tsa_url = *url;
+    }
+    if (ca_file != nullptr) {
+        if (!is_absolute_path(*ca_file)) {
+            throw key_error(kTsaCaFileKey, "must be an absolute path, such as "
+                                           "C:\\ProgramData\\RestoreProof\\tsa-ca.pem");
+        }
+        config.tsa_ca_file = *ca_file;
+    }
 }
 
 // After read_ca_file: the pin names a certificate that veeam_ca_file holds,
@@ -506,6 +542,7 @@ Config parse_config(std::string_view json_text)
     read_string(doc, kLogLevel, config);
     read_ca_file(doc, config);
     read_cert_sha256(doc, config);
+    read_tsa(doc, config);
     read_screenshots_enabled(doc, config);
 
     if (config.sample_mail == 0 && config.sample_sp == 0 && config.sample_od == 0) {
@@ -537,6 +574,13 @@ Config load_config(const std::filesystem::path& path)
         const std::optional<std::filesystem::path> ca_path = path_from_utf8(*config.veeam_ca_file);
         if (!ca_path || !std::ifstream(*ca_path, std::ios::binary)) {
             const ConfigError e = key_error(kCaFileKey, "names a file that can't be read");
+            throw ConfigError(e.key(), prefix + e.what());
+        }
+    }
+    if (config.tsa_ca_file) {
+        const std::optional<std::filesystem::path> ca_path = path_from_utf8(*config.tsa_ca_file);
+        if (!ca_path || !std::ifstream(*ca_path, std::ios::binary)) {
+            const ConfigError e = key_error(kTsaCaFileKey, "names a file that can't be read");
             throw ConfigError(e.key(), prefix + e.what());
         }
     }

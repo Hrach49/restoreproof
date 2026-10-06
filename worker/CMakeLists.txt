@@ -60,6 +60,7 @@ add_library(rpcore STATIC
     src/result_builder.cpp
     src/result_schema.cpp
     src/retry_policy.cpp
+    src/rfc3161.cpp
     src/run_lock.cpp
     src/run_pipeline.cpp
     src/run_status.cpp
@@ -75,6 +76,7 @@ add_library(rpcore STATIC
     src/target_guard_veeam.cpp
     src/test_command.cpp
     src/text_table.cpp
+    src/timestamper.cpp
     src/text_v1.cpp
     src/utf16.cpp
     src/veeam_browse.cpp
@@ -112,6 +114,21 @@ add_custom_command(
     COMMENT "Embedding shared/schemas/result.v1.json"
     VERBATIM)
 target_sources(rpcore PRIVATE ${RP_RESULT_SCHEMA_CPP})
+# The default TSA's root (W4.4): shared/tsa/tsa-ca.pem is the only copy,
+# embedded the same way, so a token of the default TSA is checked against a
+# root the Worker carries, never one from disk or the Windows store. A test
+# compares the embedded bytes with the file.
+set(RP_TSA_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../shared/tsa/tsa-ca.pem)
+set(RP_TSA_ROOT_CPP ${CMAKE_CURRENT_BINARY_DIR}/generated/tsa_root_bytes.cpp)
+add_custom_command(
+    OUTPUT ${RP_TSA_ROOT_CPP}
+    COMMAND ${CMAKE_COMMAND}
+        -DINPUT=${RP_TSA_ROOT} -DOUTPUT=${RP_TSA_ROOT_CPP} -DSYMBOL=kTsaRoot
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_bytes.cmake
+    DEPENDS ${RP_TSA_ROOT} ${CMAKE_CURRENT_SOURCE_DIR}/cmake/embed_bytes.cmake
+    COMMENT "Embedding shared/tsa/tsa-ca.pem"
+    VERBATIM)
+target_sources(rpcore PRIVATE ${RP_TSA_ROOT_CPP})
 # C4062 (an enumerator not handled in a switch that has no default) is an
 # error in rpcore, so a value added to an enum such as HttpMethod can't fall
 # through to another value's behaviour unnoticed.
@@ -176,6 +193,7 @@ add_executable(rptests
     tests/result_builder_test.cpp
     tests/result_schema_test.cpp
     tests/retry_policy_test.cpp
+    tests/rfc3161_test.cpp
     tests/run_lock_test.cpp
     tests/run_status_test.cpp
     tests/sample_rng_test.cpp
@@ -192,6 +210,8 @@ add_executable(rptests
     tests/test_command_test.cpp
     tests/test_main.cpp
     tests/text_table_test.cpp
+    tests/timestamp_verify_test.cpp
+    tests/timestamper_test.cpp
     tests/text_util_test.cpp
     tests/text_v1_test.cpp
     tests/veeam_browse_test.cpp
@@ -254,7 +274,7 @@ endfunction()
 
 rp_add_exe_test("rpworker --version prints the project version"
     ARGS --version EXIT_CODE 0 STDOUT ${PROJECT_VERSION} STDERR "")
-set(RP_USAGE "usage: rpworker --version | rpworker config check [--config <path>] | rpworker veeam list [--config <path>] [--record <dir>] | rpworker graph list [--hash] [--config <path>] [--record <dir>] | rpworker restore [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--record <dir>] | rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--record <dir>] [--json <file> | --evidence <dir>] | rpworker signer public-key | rpworker signer verify <folder> --public-key <pem file>")
+set(RP_USAGE "usage: rpworker --version | rpworker config check [--config <path>] | rpworker veeam list [--config <path>] [--record <dir>] | rpworker graph list [--hash] [--config <path>] [--record <dir>] | rpworker restore [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--record <dir>] | rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--record <dir>] [--json <file> | --evidence <dir>] | rpworker signer public-key | rpworker signer verify <folder> --public-key <pem file> [--tsa-ca <pem file>]")
 rp_add_exe_test("rpworker rejects unknown arguments"
     ARGS --no-such-option EXIT_CODE 64 STDOUT "" STDERR "${RP_USAGE}")
 rp_add_exe_test("rpworker config without a subcommand prints usage"

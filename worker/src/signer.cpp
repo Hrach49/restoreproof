@@ -298,7 +298,7 @@ struct WordText {
 };
 
 // The one table of the words, in the checks' order after `verified`.
-constexpr std::array<WordText, 13> kWords = {{
+constexpr std::array<WordText, 16> kWords = {{
     {VerifyWord::verified, "verified"},
     {VerifyWord::result_unreadable, "result_unreadable"},
     {VerifyWord::result_not_canonical, "result_not_canonical"},
@@ -312,6 +312,9 @@ constexpr std::array<WordText, 13> kWords = {{
     {VerifyWord::attachment_missing, "attachment_missing"},
     {VerifyWord::attachment_size, "attachment_size"},
     {VerifyWord::attachment_hash, "attachment_hash"},
+    {VerifyWord::timestamp_file, "timestamp_file"},
+    {VerifyWord::timestamp_mismatch, "timestamp_mismatch"},
+    {VerifyWord::timestamp_invalid, "timestamp_invalid"},
 }};
 
 } // namespace
@@ -621,8 +624,17 @@ Verification Signer::verify(std::string_view result, std::string_view signature,
     return check(result, &signature_bytes, key, listed);
 }
 
+std::string timestamp_field(const Verification& verdict)
+{
+    if (verdict.timestamp == TimestampState::checked) {
+        return timestamp_time_text(verdict.timestamp_time);
+    }
+    return verdict.timestamp == TimestampState::unchecked ? "unchecked" : "none";
+}
+
 Verification Signer::verify_folder(const FileReader& reader,
-                                   const std::vector<std::string>& files, const PublicKey& key)
+                                   const std::vector<std::string>& files, const PublicKey& key,
+                                   const TimestampTrust& tsa)
 {
     // A file is there under its own name, byte for byte, or it isn't there: a
     // name the folder doesn't list isn't asked for. A file system that ignores
@@ -653,8 +665,29 @@ Verification Signer::verify_folder(const FileReader& reader,
             return failed(word);
         }
     }
+    // W4.4: the timestamp last, evidence about a result that is known good
+    // by now. Its form and its imprint are held whoever asks; whether it
+    // verifies needs the caller's CA.
+    if (std::find(files.begin(), files.end(), kTimestampFileName) != files.end()) {
+        const FileRead token = read(kTimestampFileName, kMaxTimestampFileBytes);
+        const std::optional<TimestampTokenInfo> info =
+            token.state == FileState::read ? tsa.primitive->parse_token(token.bytes) : std::nullopt;
+        if (!info) {
+            return failed(VerifyWord::timestamp_file);
+        }
+        // The bytes the signature signs: the SHA-256 of result.json's bytes.
+        if (!info->sha256 || !std::ranges::equal(info->imprint, sha256_bytes(result.bytes))) {
+            return failed(VerifyWord::timestamp_mismatch);
+        }
+        if (tsa.ca_pem && !tsa.primitive->verify_token(token.bytes, *tsa.ca_pem)) {
+            return failed(VerifyWord::timestamp_invalid);
+        }
+        verdict.timestamp = tsa.ca_pem ? TimestampState::checked : TimestampState::unchecked;
+        verdict.timestamp_time = info->gen_time;
+    }
     for (const std::string& name : files) {
-        if (name != kResultFileName && name != kSignatureFileName && !lists(listed, name)) {
+        if (name != kResultFileName && name != kSignatureFileName && name != kTimestampFileName &&
+            !lists(listed, name)) {
             verdict.notes.push_back(name);
         }
     }

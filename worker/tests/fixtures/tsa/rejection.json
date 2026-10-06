@@ -1,0 +1,10 @@
+{
+  "source": "hand-written (tests/fixtures/tsa/README.md)",
+  "request": "POST /",
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/timestamp-reply"
+  },
+  "body": null,
+  "body_base64": "MAUwAwIBAg=="
+}

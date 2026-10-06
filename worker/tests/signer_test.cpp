@@ -501,13 +501,14 @@ json key_named(const json& keys, const std::string& name)
 
 // --- the words -----------------------------------------------------------------
 
-TEST_CASE("the verifier's words are the entry's thirteen, in the checks' order", "[signer]")
+TEST_CASE("the verifier's words are W4.3's thirteen and W4.4's three, in the checks' order",
+          "[signer]")
 {
     const std::vector<std::string> words = {
         "verified",          "result_unreadable",  "result_not_canonical", "result_schema",
         "attachment_twice",  "screenshot_missing", "signature_file",       "hash_mismatch",
         "wrong_key",         "signature_invalid",  "attachment_missing",   "attachment_size",
-        "attachment_hash"};
+        "attachment_hash",   "timestamp_file",     "timestamp_mismatch",   "timestamp_invalid"};
     CHECK(rp::verify_words() == words);
     for (std::size_t i = 0; i < words.size(); ++i) {
         CAPTURE(words[i]);
@@ -515,7 +516,7 @@ TEST_CASE("the verifier's words are the entry's thirteen, in the checks' order",
     }
     CHECK(rp::to_string(VerifyWord::verified) == "verified");
     CHECK(rp::to_string(VerifyWord::attachment_hash) == "attachment_hash");
-    CHECK(rp::to_string(static_cast<VerifyWord>(13)) == "unknown");
+    CHECK(rp::to_string(static_cast<VerifyWord>(16)) == "unknown");
     CHECK(rp::to_string(static_cast<VerifyWord>(-1)) == "unknown");
     // A verdict nobody set is never `verified`.
     CHECK(Verification{}.word == VerifyWord::result_unreadable);
@@ -1492,8 +1493,11 @@ TEST_CASE("the shared cases expect every word, each failure at least once", "[si
         names.insert(one.at("name").get<std::string>());
         ++count[one.at("expect").get<std::string>()];
     }
+    // W4.3's thirteen: the timestamp's three are timestamp-v1's
+    // (tests/timestamp_verify_test.cpp).
     const std::vector<std::string>& words = rp::verify_words();
-    CHECK(expected == std::set<std::string>(words.begin(), words.end()));
+    REQUIRE(words.size() == 16);
+    CHECK(expected == std::set<std::string>(words.begin(), words.begin() + 13));
     CHECK(names.size() == cases.size());
     // The entry's list (point 6), and the second key given to the untouched folder.
     CHECK(count == std::map<std::string, int>{{"result_unreadable", 1},

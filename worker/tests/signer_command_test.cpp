@@ -49,7 +49,7 @@ const std::string kUsage =
     "rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] "
     "[--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] "
     "[--record <dir>] [--json <file> | --evidence <dir>] | "
-    "rpworker signer public-key | rpworker signer verify <folder> --public-key <pem file>\n";
+    "rpworker signer public-key | rpworker signer verify <folder> --public-key <pem file> [--tsa-ca <pem file>]\n";
 
 constexpr const char* kKeysFile = "testdata/signing-v1/keys.json";
 constexpr const char* kBundleFile = "testdata/signing-v1/bundle.json";
@@ -119,7 +119,7 @@ std::string bundle_sha256()
 
 std::string verified_line(const std::string& key_id = kKey1Id)
 {
-    return "verified " + bundle_sha256() + " key " + key_id + "\n";
+    return "verified " + bundle_sha256() + " key " + key_id + " timestamp none\n";
 }
 
 std::string pem_of(const json& keys, const std::string& name)
@@ -279,7 +279,7 @@ TEST_CASE("signer public-key prints the public key's PEM alone on stdout and its
         const Ran verified = run({"verify", utf8(dir.path()), "--public-key", file});
         CHECK(verified.code == 0);
         CHECK(verified.out == verified_line());
-        CHECK(verified.err.empty());
+        CHECK(verified.err == "note: not timestamped\n");
         // And as a console redirect writes it, with CRLF line ends.
         std::string crlf;
         for (const char c : ran.out) {
@@ -494,8 +494,8 @@ TEST_CASE("signer verify: the signed folder is `verified <bundle_sha256> key <ke
         CHECK(ran.code == 0);
         CHECK(ran.out == verified_line());
         CHECK(ran.out == "verified 572bf1f9f884217782d8b6c13db88f16257eafa5fea5b707d53aac0252fa81bf "
-                         "key 06e3fd8fda29bb60ab59557de61edb0aecdb231134be30e75b455f8e1b792fa9\n");
-        CHECK(ran.err.empty());
+                         "key 06e3fd8fda29bb60ab59557de61edb0aecdb231134be30e75b455f8e1b792fa9 timestamp none\n");
+        CHECK(ran.err == "note: not timestamped\n");
         CHECK(ran.secrets_asked == 0);
     }
     SECTION("the key, then the folder")
@@ -503,7 +503,7 @@ TEST_CASE("signer verify: the signed folder is `verified <bundle_sha256> key <ke
         const Ran ran = run({"verify", "--public-key", key, folder});
         CHECK(ran.code == 0);
         CHECK(ran.out == verified_line());
-        CHECK(ran.err.empty());
+        CHECK(ran.err == "note: not timestamped\n");
     }
     SECTION("an environment with no secrets at all")
     {
@@ -530,7 +530,7 @@ TEST_CASE("signer verify: the signed folder is `verified <bundle_sha256> key <ke
         const Ran ran = run({"verify", folder, "--public-key", file});
         CHECK(ran.code == 0);
         CHECK(ran.out == verified_line());
-        CHECK(ran.err.empty());
+        CHECK(ran.err == "note: not timestamped\n");
         CHECK(printed.err == "key " + kKey1Id + "\n");
     }
     SECTION("an answer that didn't reach stdout isn't one")
@@ -540,7 +540,7 @@ TEST_CASE("signer verify: the signed folder is `verified <bundle_sha256> key <ke
         std::ostringstream err;
         const Args args{"verify", folder, "--public-key", key};
         CHECK(rp::run_signer_command(args, out, err, rp::SignerCommandEnv{}) == 1);
-        CHECK(err.str() == "signer error: the answer couldn't be written\n");
+        CHECK(err.str() == "note: not timestamped\n" "signer error: the answer couldn't be written\n");
     }
 }
 
@@ -572,7 +572,7 @@ TEST_CASE("signer verify: a file the result doesn't list is a note on stderr, ne
                      "note: not listed in the result: token.tsr\n"
                      "note: not listed in the result: \\xe9.txt\n"
                      "note: not listed in the result: \\u20ac.txt\n"
-                     "note: not listed in the result: \\U0001f600.txt\n");
+                     "note: not listed in the result: \\U0001f600.txt\n" "note: not timestamped\n");
 }
 
 // A name NTFS takes and UTF-16 doesn't: still a note, and the line is the one
@@ -595,7 +595,7 @@ TEST_CASE("signer verify: an unlisted file whose name isn't valid UTF-16 is a no
         const Ran ran = run({"verify", utf8(dir.path()), "--public-key", key});
         CHECK(ran.code == 0);
         CHECK(ran.out == verified_line());
-        CHECK(ran.err == "note: not listed in the result: x\\udc80y\n");
+        CHECK(ran.err == "note: not listed in the result: x\\udc80y\n" "note: not timestamped\n");
     }
     SECTION("a high surrogate with no low one after it, at the end and before a letter")
     {
@@ -616,7 +616,7 @@ TEST_CASE("signer verify: an unlisted file whose name isn't valid UTF-16 is a no
                          "note: not listed in the result: x\\udc80y\n"
                          "note: not listed in the result: \\ud83db\n"
                          "note: not listed in the result: \\ude00\\ud83d\n"
-                         "note: not listed in the result: \\U0001f600\\ud83d\n");
+                         "note: not listed in the result: \\U0001f600\\ud83d\n" "note: not timestamped\n");
     }
     SECTION("through run_cli: no unexpected failure")
     {
@@ -629,7 +629,7 @@ TEST_CASE("signer verify: an unlisted file whose name isn't valid UTF-16 is a no
         const Args args{"signer", "verify", folder, "--public-key", key};
         CHECK(rp::run_cli(args, out, err) == 0);
         CHECK(out.str() == verified_line());
-        CHECK(err.str() == "note: not listed in the result: x\\udc80y\n");
+        CHECK(err.str() == "note: not listed in the result: x\\udc80y\n" "note: not timestamped\n");
     }
 }
 
@@ -660,7 +660,7 @@ TEST_CASE("signer verify: a signed folder whose files are past MAX_PATH is verif
         const Ran ran = run({"verify", folder, "--public-key", key});
         CHECK(ran.code == 0);
         CHECK(ran.out == verified_line());
-        CHECK(ran.err.empty());
+        CHECK(ran.err == "note: not timestamped\n");
     }
     SECTION("with forward slashes")
     {
@@ -676,7 +676,7 @@ TEST_CASE("signer verify: a signed folder whose files are past MAX_PATH is verif
         const Ran ran = run({"verify", folder, "--public-key", key});
         CHECK(ran.code == 0);
         CHECK(ran.out == verified_line());
-        CHECK(ran.err == "note: not listed in the result: manifest.json\n");
+        CHECK(ran.err == "note: not listed in the result: manifest.json\n" "note: not timestamped\n");
     }
     SECTION("what is wrong inside it has its own word")
     {
@@ -887,7 +887,7 @@ TEST_CASE("signer verify takes and refuses the shared key files as PublicKey::fr
             ++accepted;
             CHECK(ran.code == 0);
             CHECK(ran.out == verified_line());
-            CHECK(ran.err.empty());
+            CHECK(ran.err == "note: not timestamped\n");
         }
     }
     CHECK(accepted == 11);
@@ -929,7 +929,7 @@ TEST_CASE("signer verify answers every shared case with its line and exit code",
         const std::string expect = one.at("expect").get<std::string>();
 
         const Ran ran = run({"verify", utf8(dir.path()), "--public-key", key});
-        CHECK(ran.err.empty());
+        CHECK(ran.err == (expect == "verified" ? "note: not timestamped\n" : ""));
         if (expect == "verified") {
             ++verified;
             CHECK(ran.code == 0);
@@ -959,7 +959,7 @@ TEST_CASE("rpworker signer runs both commands", "[signer_command][cli]")
         const Args args{"signer", "verify", folder, "--public-key", key};
         CHECK(rp::run_cli(args, out, err) == 0);
         CHECK(out.str() == verified_line());
-        CHECK(err.str().empty());
+        CHECK(err.str() == "note: not timestamped\n");
     }
     SECTION("signer verify, not verified: exit 5")
     {
@@ -993,6 +993,157 @@ TEST_CASE("rpworker signer runs both commands", "[signer_command][cli]")
         lost.exceptions(std::ios::badbit);
         const Args args{"signer", "verify", folder, "--public-key", key};
         CHECK(rp::run_cli(args, lost, err) == 1);
-        CHECK(err.str() == "error: unexpected failure\n");
+        CHECK(err.str() == "note: not timestamped\n" "error: unexpected failure\n");
+    }
+}
+
+// --- W4.4: --tsa-ca and the line's third field ---------------------------------------
+
+namespace {
+
+constexpr const char* kTimestampKeys = "testdata/timestamp-v1/keys.json";
+constexpr const char* kTimestampCases = "testdata/timestamp-v1/cases.json";
+
+// The PEM a timestamp case's `tsa_ca` names in timestamp-v1/keys.json.
+std::string tsa_ca_named(const json& keys, const std::string& which)
+{
+    if (which == "both_roots") {
+        return keys.at("other_root_pem").get<std::string>() + keys.at("root_pem").get<std::string>();
+    }
+    return keys.at(which == "tsa_certificate" ? "tsa_certificate_pem" : which + "_pem")
+        .get<std::string>();
+}
+
+} // namespace
+
+TEST_CASE("signer verify: --tsa-ca without a value, empty or given twice is usage",
+          "[signer_command][timestamp]")
+{
+    const Args args = GENERATE(
+        Args{"verify", "folder", "--public-key", "key.pem", "--tsa-ca"},
+        Args{"verify", "folder", "--public-key", "key.pem", "--tsa-ca", ""},
+        Args{"verify", "folder", "--public-key", "key.pem", "--tsa-ca", "a.pem", "--tsa-ca",
+             "b.pem"},
+        Args{"verify", "--tsa-ca", "a.pem", "--public-key", "key.pem"},
+        Args{"verify", "folder", "--tsa-ca", "a.pem"});
+
+    const Ran ran = run(args);
+
+    CHECK(ran.code == 64);
+    CHECK(ran.out.empty());
+    CHECK(ran.err == kUsage);
+}
+
+TEST_CASE("signer verify: a --tsa-ca file that can't be read or holds no certificate is exit 1, "
+          "never a verdict",
+          "[signer_command][timestamp]")
+{
+    const TempDir keys;
+    const std::string key = utf8(keys.write("key.pem", kKey1Pem));
+    const TempDir dir;
+    write_bundle(dir);
+    const std::string folder = utf8(dir.path());
+
+    SECTION("not there")
+    {
+        const std::string ca = utf8(keys.path() / "no-such-ca.pem");
+        const Ran ran = run({"verify", folder, "--public-key", key, "--tsa-ca", ca});
+        CHECK(ran.code == 1);
+        CHECK(ran.out.empty());
+        CHECK(ran.err == "signer error: --tsa-ca " + ca + ": the file can't be read\n");
+    }
+    SECTION("a folder")
+    {
+        const std::string ca = utf8(keys.path());
+        const Ran ran = run({"verify", folder, "--public-key", key, "--tsa-ca", ca});
+        CHECK(ran.code == 1);
+        CHECK(ran.err == "signer error: --tsa-ca " + ca + ": the file can't be read\n");
+    }
+    SECTION("too large")
+    {
+        const std::string ca =
+            utf8(keys.write("big.pem", std::string(rp::kMaxPublicKeyFileBytes + 1, 'A')));
+        const Ran ran = run({"verify", folder, "--public-key", key, "--tsa-ca", ca});
+        CHECK(ran.code == 1);
+        CHECK(ran.err == "signer error: --tsa-ca " + ca + ": the file can't be read\n");
+    }
+    SECTION("no certificate in it")
+    {
+        const std::string content = GENERATE(std::string{}, std::string{"not a certificate\n"},
+                                             kKey1Pem);
+        const std::string ca = utf8(keys.write("ca.pem", content));
+        const Ran ran = run({"verify", folder, "--public-key", key, "--tsa-ca", ca});
+        CHECK(ran.code == 1);
+        CHECK(ran.out.empty());
+        CHECK(ran.err == "signer error: --tsa-ca " + ca + ": no certificate in PEM\n");
+    }
+    SECTION("not valid UTF-8")
+    {
+        const Ran ran = run({"verify", folder, "--public-key", key, "--tsa-ca", "\xff.pem"});
+        CHECK(ran.code == 1);
+        CHECK(ran.err == "signer error: the --tsa-ca path is not valid UTF-8\n");
+    }
+}
+
+TEST_CASE("signer verify answers every shared timestamp case with its line, its note and its "
+          "exit code",
+          "[signer_command][timestamp][vectors]")
+{
+    const json signing_keys = json::parse(rp::test::read_shared(kKeysFile));
+    const json keys = json::parse(rp::test::read_shared(kTimestampKeys));
+    const json cases = json::parse(rp::test::read_shared(kTimestampCases)).at("cases");
+    REQUIRE(cases.size() == 23);
+    const TempDir key_files;
+    const std::string key = utf8(key_files.write("key.pem", pem_of(signing_keys, "rfc8032-test-1")));
+
+    for (const json& one : cases) {
+        const std::string name = one.at("name").get<std::string>();
+        CAPTURE(name);
+        const TempDir dir;
+        write_bundle(dir);
+        for (const auto& [file, change] : one.at("files").items()) {
+            if (change.contains("text")) {
+                dir.write(file, change.at("text").get<std::string>());
+            } else {
+                const std::optional<std::vector<unsigned char>> bytes =
+                    rp::base64_decode(change.at("base64").get<std::string>());
+                REQUIRE(bytes);
+                dir.write(file, std::string{bytes->begin(), bytes->end()});
+            }
+        }
+        const std::string folder = utf8(dir.path());
+        Args args{"verify", folder, "--public-key", key};
+        std::string ca;
+        if (!one.at("tsa_ca").is_null()) {
+            const std::string which = one.at("tsa_ca").get<std::string>();
+            ca = utf8(key_files.write(which + ".pem", tsa_ca_named(keys, which)));
+            args.push_back("--tsa-ca");
+            args.push_back(ca);
+        }
+        const std::string expect = one.at("expect").get<std::string>();
+
+        const Ran ran = run(args);
+
+        if (expect != "verified") {
+            CHECK(ran.code == 5);
+            CHECK(ran.out == "not verified: " + expect + "\n");
+            CHECK(ran.err.empty());
+            continue;
+        }
+        const std::string field = one.at("timestamp").get<std::string>();
+        CHECK(ran.code == 0);
+        CHECK(ran.out == "verified " + bundle_sha256() + " key " + kKey1Id + " timestamp " +
+                             field + "\n");
+        const std::string other_name =
+            one.at("files").contains("TIMESTAMP.TST")
+                ? std::string{"note: not listed in the result: TIMESTAMP.TST\n"}
+                : std::string{};
+        if (field == "none") {
+            CHECK(ran.err == other_name + "note: not timestamped\n");
+        } else if (field == "unchecked") {
+            CHECK(ran.err == "note: timestamp.tst was not checked: no --tsa-ca\n");
+        } else {
+            CHECK(ran.err.empty());
+        }
     }
 }

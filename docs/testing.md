@@ -24,7 +24,7 @@ How we test, what CI enforces, and the once-per-sprint mutation run. Set up in L
 
 | Guard | Where | Rule |
 |---|---|---|
-| Worker coverage | `.github/workflows/worker.yml`, OpenCppCoverage + `worker/tools/coverage_gate.py` | 80% line on `rpcore` (`worker/src/`, `worker/include/`) plus `rpworker`'s `main()` (`worker/app/`); 100% **line** on vault, signer, target_guard, run_status and cleaner (the vault once it exists), meaning any file with a path part named or prefixed `vault`, `signer`, `target_guard`, `run_status` or `cleaner` (`src/vault_dpapi.cpp`; W4.3's `src/signer.cpp`, the Signer, and `src/signer_command.cpp`, the two `rpworker signer` commands, with their headers, while `src/ed25519.cpp`, the calls into OpenSSL under the Signer, is deliberately outside: the library's failure lines for a valid key can't be reached by a test, and folding them onto their calls' own lines would hide them, `docs/decisions.md` 2026-10-05 W4.3 point 4; W2.7's `src/target_guard.cpp`, `src/target_guard_graph.cpp`, `src/target_guard_veeam.cpp` and their headers; W3.3's `src/run_status.cpp`, the status decision table; W3.4's `src/cleaner.cpp` and `include/rp/cleaner.hpp`, the only Worker code that deletes in the tenant); every `.cpp` on disk under `src/`, `include/` and `app/` must appear in the report, so a file no test links into `rptests` (or, for `app/`, that ctest's runs of `rpworker.exe` don't reach) fails (headers of declarations may be absent) |
+| Worker coverage | `.github/workflows/worker.yml`, OpenCppCoverage + `worker/tools/coverage_gate.py` | 80% line on `rpcore` (`worker/src/`, `worker/include/`) plus `rpworker`'s `main()` (`worker/app/`); 100% **line** on vault, signer, target_guard, run_status, cleaner and timestamper (the vault once it exists), meaning any file with a path part named or prefixed `vault`, `signer`, `target_guard`, `run_status`, `cleaner` or `timestamper` (W4.4's `src/timestamper.cpp`, which decides which RFC 3161 token is written, while `src/rfc3161.cpp`, the calls into OpenSSL under it, is outside like `src/ed25519.cpp`; `src/vault_dpapi.cpp`; W4.3's `src/signer.cpp`, the Signer, and `src/signer_command.cpp`, the two `rpworker signer` commands, with their headers, while `src/ed25519.cpp`, the calls into OpenSSL under the Signer, is deliberately outside: the library's failure lines for a valid key can't be reached by a test, and folding them onto their calls' own lines would hide them, `docs/decisions.md` 2026-10-05 W4.3 point 4; W2.7's `src/target_guard.cpp`, `src/target_guard_graph.cpp`, `src/target_guard_veeam.cpp` and their headers; W3.3's `src/run_status.cpp`, the status decision table; W3.4's `src/cleaner.cpp` and `include/rp/cleaner.hpp`, the only Worker code that deletes in the tenant); every `.cpp` on disk under `src/`, `include/` and `app/` must appear in the report, so a file no test links into `rptests` (or, for `app/`, that ctest's runs of `rpworker.exe` don't reach) fails (headers of declarations may be absent) |
 | Cloud coverage | `.github/workflows/cloud.yml`, pytest-cov | 80% on `app/`, measured as coverage's combined line + branch figure; 100% line + branch on `app/auth`, `app/results.py` and `app/repo` (skipped while absent), checked by `cloud/tools/check_coverage.py` |
 | Lab tests and canary hashes | `.github/workflows/lab.yml` | `lab/`'s pytest suite passes (offline, fake Graph tenant), and `python -m seeder hash` reproduces every hash in `lab/seed-manifest.json` from the committed `lab/canary/` files and the catalog (L1.2's Done when). No coverage floor |
 | No test, no merge | `.github/workflows/pr-guards.yml`, `.github/scripts/tests_touched.py` | Each side needs its own tests: a PR that changes `worker/src/`, `worker/include/` or `worker/app/` must add or change a C++ file (`.cpp`, `.hpp`, `.h`) under `worker/tests/`, and one that changes `cloud/app/` must add or change a `.py` under `cloud/tests/`. Deleting a test, editing fixtures or editing `tests/e2e/scenarios.md` doesn't count |
@@ -541,6 +541,21 @@ lab's signing key:
    and the `graph list` afterwards. The folders and the lab's public key stay outside the
    repository.
 
+**The W4.4 Done-when run.** W4.4's Done-when is "openssl ts -verify on the extracted token
+succeeds against the bundle hash" (`docs/decisions.md` 2026-10-06, W4.4); the token is the
+folder's `timestamp.tst`, so there is nothing to extract. Run on 2026-10-06 (`w44-done-when-1`:
+`status pass`, `timestamped 2026-10-06T21:19:24Z`; evidence `docs/api/veeam-lab/w4.4-live-*`,
+build notes point 15). The same command as W4.3's run above with a new run ID (and `--record
+<a new folder outside the repository>` to keep the TSA's exchange): it must end `signed ...`,
+`timestamped <time>` and an `evidence` line that lists `timestamp.tst`, exit 0, stderr empty.
+Then steps 3 to 5 of "Verify a run folder by hand" below, with `--tsa-ca
+shared	sa	sa-ca.pem` for both tools: `Verification: OK` from OpenSSL for `-digest` and for
+`-data`, and one line from both verifiers whose third field is the token's time. To see a run
+without a TSA, copy the config, set `tsa_url` to `http://127.0.0.1:9/` and `tsa_ca_file` to the
+full path of `shared	sa	sa-ca.pem`, and run again with another run ID: the same status and
+exit code, one `timestamp warning: ... tsa_unreachable after 3 attempt(s)` on stderr, a folder
+without `timestamp.tst`, about 90 s later than usual.
+
 ### Verify a run folder by hand (W4.3)
 
 Read-only, offline, no config and no secret. The two tools must agree on the stdout line
@@ -572,11 +587,15 @@ own.
    $LASTEXITCODE
    ```
 
-   `verified <bundle_sha256> key <key_id>` and 0, or `not verified: <word>` and 5. Exit 1 with a
-   `signer error: ...` line means the folder or the key file couldn't be read: no verdict.
+   `verified <bundle_sha256> key <key_id> timestamp <time | none | unchecked>` and 0, or `not
+   verified: <word>` and 5. Exit 1 with a `signer error: ...` line means the folder, the key
+   file or the `--tsa-ca` file couldn't be read: no verdict. Add `--tsa-ca
+   ..\shared\tsa\tsa-ca.pem` (the default TSA's root) to have the timestamp checked: the third
+   field is then the token's own time; without it a folder that has a token says `unchecked`.
 4. **The auditor's verifier**, from the repository's root. It is one file; `uv` reads its
-   dependencies from the file's own header (`cryptography`, `jsonschema`, Python 3.12 or
-   later) and downloads them on the first run:
+   dependencies from the file's own header (`asn1crypto`, `cryptography`, `jsonschema`, Python
+   3.12 or later) and downloads them on the first run. It takes `--tsa-ca <pem file>` too
+   (`--tsa-ca shared/tsa/tsa-ca.pem`):
 
    ```powershell
    uv run shared/tools/verify_bundle.py $env:ProgramData\RestoreProof\runs\<run_id> --public-key C:\restoreproof-runs\worker-signing.pub.pem
@@ -590,7 +609,21 @@ own.
    names another folder holding `result.v1.json` and `signature.v1.json`. Away from the
    repository an auditor needs the script, the two schema files, the Worker's public PEM and
    the folder with every listed attachment.
-5. **The key's ID** is the SHA-256 of the 44 bytes the PEM's Base64 line decodes to; it must
+5. **The timestamp, with OpenSSL alone** (W4.4; Git for Windows has `openssl` in
+   `C:\Program Files\Git\mingw64\bin`). `timestamp.tst` is the TSA's token over `result.json`'s
+   own hash, so no tool of ours is needed, from the run folder:
+
+   ```powershell
+   openssl ts -verify -data result.json -in timestamp.tst -token_in -CAfile C:\restoreproof\shared\tsa\tsa-ca.pem
+   openssl ts -verify -digest <bundle_sha256> -in timestamp.tst -token_in -CAfile C:\restoreproof\shared\tsa\tsa-ca.pem
+   openssl ts -reply -in timestamp.tst -token_in -text
+   ```
+
+   `Verification: OK` twice; the third prints the token's time, policy and serial number.
+   OpenSSL checks the TSA's certificates at today's date: once they have expired, add `-attime
+   <seconds since 1970 of the token's time>`. Both of our verifiers check them at the token's
+   own time.
+6. **The key's ID** is the SHA-256 of the 44 bytes the PEM's Base64 line decodes to; it must
    be the `key_id` in `signature.json` and in both `verified` lines:
 
    ```powershell
@@ -604,7 +637,7 @@ with `-` is an option to the script: give it as `.\-name` or by its full path. T
 tools without a live run, write the four files of `shared/testdata/signing-v1/bundle.json`
 (`files`, each string's UTF-8 with nothing added) into an empty folder and give the
 `public_key_pem` of `rfc8032-test-1` from `keys.json`: both print `verified 572bf1f9...81bf key
-06e3fd8f...2fa9`.
+06e3fd8f...2fa9 timestamp none`, and `note: not timestamped` on stderr.
 
 ### Recording fixtures (`--record <dir>`)
 
@@ -719,6 +752,41 @@ write the signing vectors again too (below): their `result.json` is made from `v
 `lab/seed-manifest.json` is re-seeded, since the canaries' hashes and the manifest's are in it.
 A change to the schema alone needs no C++ change to be tested: both suites run `cases.json`
 against it.
+
+### The TSA fixtures and the shared timestamp vectors (W4.4)
+
+**Fixtures, `worker/tests/fixtures/tsa/`** (its `README.md` lists them). A TSA's exchange is
+binary both ways, so a fixture has `"body": null`, the answer's bytes in `"body_base64"` and
+the query in `"request_body_base64"` (a hash and a nonce, no secret); `FakeHttpClient` decodes
+the first on replay and `rp::test::request_body_of` gives back the second. `rpworker test
+--evidence <dir> --record <dir>` writes that format into the recording's `tsa/` folder
+(`RecordedBody::base64`): the two Base64 fields skip `redact()` and the JWT-shape rule, which
+Base64 of DER would break by chance, and the bytes themselves are checked against the known
+secrets instead. `digicert-granted.json` is a real answer of DigiCert's TSA; a test replays it
+through the Timestamper with the nonce and the digest of the recorded request and verifies the
+token under `shared/tsa/tsa-ca.pem`. It never expires: a chain is checked at the token's own
+time.
+
+**The test-only TSA, `worker/tests/tsa_lab.hpp`.** `rp::test::TestTsa` is a root, a TSA
+certificate under it and OpenSSL's own responder with a fixed time; `FakeRfc3161` is the
+primitive with a fault switched on. The Harness of the command tests
+(`tests/restore_command_lab.hpp`) has one behind `http://tsa.test/stamp`, with its root in a
+`tsa-ca.pem` beside the config, so every `test --evidence` run in the tests is timestamped and
+none asks DigiCert; `lab.tsa_answer` puts another answer in its place.
+
+**Vectors, `shared/testdata/timestamp-v1/`.** `keys.json` is the published test TSA (a root, a
+TSA certificate with its private key, a second root): made for these vectors, never a secret,
+trusted by nothing but a test. `cases.json` has 23 cases over `signing-v1`'s signed folder,
+each with the files to add (`timestamp.tst` as Base64), which CA the verifier is given
+(`tsa_ca`, or none) and the word, and for `verified` the line's third field; and
+`one_bit_changes`, the offsets at which the token still verifies with one bit flipped (bytes no
+signature covers), which both verifiers must find exactly. Both builds run them: the Worker in
+`tests/timestamp_verify_test.cpp` (`Signer::verify_folder` on disk and in memory) and
+`tests/signer_command_test.cpp` (`rpworker signer verify --tsa-ca`: the line, the note, the
+exit code), the Cloud in `cloud/tests/test_verify_bundle_timestamp.py` (`verify_folder`, the
+command, and DigiCert's recorded token). The two files are written once by the hidden `rptests
+"[.write_shared_timestamp]"` with a new TSA; ECDSA makes every run's tokens different, so
+unlike `signing-v1` no test regenerates them: they are verified, never compared with a new run.
 
 ### The shared signing vectors (W4.3)
 

@@ -22,11 +22,13 @@
 #include <rp/secrets.hpp>
 #include <rp/signer.hpp>
 #include <rp/target_guard_graph.hpp>
+#include <rp/timestamper.hpp>
 #include <rp/sample_selector.hpp>
 #include <rp/step_timer.hpp>
 #include <rp/version.hpp>
 
 #include "duration_text.hpp"
+#include "file_read.hpp"
 #include "path_utf8.hpp"
 #include "text_table.hpp"
 #include "text_util.hpp"
@@ -49,6 +51,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -675,6 +678,50 @@ private:
 // The --evidence root (W4.2 point 8), checked before the secrets: a UTF-8
 // path, and a --run-id that can name the run's folder in it. Throws
 // ConfigError otherwise. Whether the folder can be made is found when it is.
+// The TSA a run with --evidence asks (W4.4): its URL and the PEM
+// certificates a token must chain to.
+struct TsaSettings {
+    std::string url;
+    std::string ca_pem;
+};
+
+// The TSA's time and the Worker's clock further apart than this is said
+// (W7.2's threshold), never refused.
+constexpr std::chrono::seconds kClockSkewWarning{120};
+
+// A CA file larger than this isn't one.
+constexpr std::uintmax_t kMaxTsaCaFileBytes = 64u * 1024u;
+
+// Config's tsa_url and tsa_ca_file, or the default TSA and the embedded root.
+// Throws ConfigError (key tsa_ca_file) for a CA file that can't be read whole
+// or holds no certificate: a run that could take no token says so before
+// anything is done, not after the restore.
+TsaSettings tsa_settings(const Config& config)
+{
+    constexpr std::string_view key = "tsa_ca_file";
+    TsaSettings out;
+    out.url = config.tsa_url.value_or(std::string{kDefaultTsaUrl});
+    out.ca_pem = std::string{default_tsa_ca_pem()};
+    if (config.tsa_ca_file) {
+        const std::optional<std::filesystem::path> path = path_from_utf8(*config.tsa_ca_file);
+        FileRead read;
+        if (path) {
+            read = read_whole_file(*path, kMaxTsaCaFileBytes);
+        }
+        if (read.state != FileState::read) {
+            throw ConfigError(std::string{key},
+                              "config key \"tsa_ca_file\" names a file that can't be read");
+        }
+        out.ca_pem = std::move(read.bytes);
+    }
+    if (openssl_rfc3161().certificates_in(out.ca_pem) == 0) {
+        throw ConfigError(std::string{key},
+                          "config key \"tsa_ca_file\" names a file that holds no "
+                          "certificate (PEM)");
+    }
+    return out;
+}
+
 std::filesystem::path check_evidence_root(std::string_view arg,
                                           std::optional<std::string_view> run_id)
 {
@@ -759,6 +806,8 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
     RunSigningKey signing(secrets);
     std::optional<graph::ClientCertificate> certificate;
     std::optional<std::filesystem::path> evidence_root;
+    // W4.4: set with --evidence only; no other run asks a TSA.
+    std::optional<TsaSettings> tsa;
     try {
         config_path = command_config_path(parsed.config, env.default_config_path);
         config = load_config(config_path);
@@ -778,6 +827,8 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
         // call. No other run parses the key or needs it.
         if (parsed.evidence) {
             signing.parse();
+            // W4.4: and the certificates its timestamp will be held to.
+            tsa = tsa_settings(config);
         }
     } catch (const ConfigError& e) {
         return report(err, "config error: ", e, exit_code::config);
@@ -998,8 +1049,9 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
             options.write_file = env.write_evidence_file;
             // The run's secret values: the Secrets', the signing key's text,
             // which is no longer among them, and the other shapes the key
-            // could leak in. The builder wipes its copy when it goes.
-            options.secrets = secret_values(secrets);
+            // could leak in. The builder wipes its copy when it goes. Room
+            // for the three added here, so the list never grows.
+            options.secrets = secret_values(secrets, 3);
             if (!signing.text().empty()) {
                 options.secrets.push_back(signing.text());
             }
@@ -1013,6 +1065,35 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
             }
             options.logger = env.connector_options.logger ? env.connector_options.logger
                                                           : make_command_logger();
+            // W4.4: the TSA, asked once the result is signed. Its client is
+            // made only now; with --record its exchanges are the recording's
+            // "tsa" folder, both bodies as Base64.
+            std::unique_ptr<IHttpClient> tsa_http;
+            std::optional<Timestamper> timestamper;
+            if (tsa && options.sign) {
+                HttpClientOptions http_options;
+                http_options.logger = options.logger;
+                tsa_http = recorded(env.make_tsa_http ? env.make_tsa_http()
+                                                      : std::make_unique<HttpClient>(http_options),
+                                    recorder, "tsa", RecordedBody::base64);
+                TimestamperOptions stamp_options;
+                stamp_options.url = tsa->url;
+                stamp_options.ca_pem = tsa->ca_pem;
+                stamp_options.http = tsa_http.get();
+                stamp_options.nonce = env.timestamp_nonce;
+                stamp_options.sleep = env.connector_options.sleep;
+                if (!stamp_options.sleep) {
+                    stamp_options.sleep = [](std::chrono::milliseconds wait) {
+                        std::this_thread::sleep_for(wait);
+                    };
+                }
+                stamp_options.logger = options.logger;
+                timestamper.emplace(std::move(stamp_options));
+                options.timestamp = [&timestamper](
+                                        std::span<const unsigned char, kSha256Bytes> digest) {
+                    return timestamper->stamp(digest);
+                };
+            }
             EvidenceBuilder builder(*evidence_folder, std::move(options));
             // No screenshot for a run that has no valid result to list it.
             const EvidenceBuilder::Written written = builder.write_attachments(
@@ -1042,8 +1123,9 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
                 return code;
             }
             SignedResult signature;
+            TimestampOutcome timestamp;
             if (const std::optional<EvidenceError> error =
-                    builder.write_result(*written.evidence, *text, &signature)) {
+                    builder.write_result(*written.evidence, *text, &signature, &timestamp)) {
                 if (error->cause == EvidenceFailure::holds_secret) {
                     failed(shown, "the result holds a secret value; no result.json was written");
                 } else if (error->cause == EvidenceFailure::not_signed) {
@@ -1055,15 +1137,40 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
                 }
                 return code;
             }
-            // The signature's line (W4.3) and the folder's, both only now
-            // that result.json is written, the folder's last. Lost, they
-            // change nothing: the files are written (W3.6 review point 4).
+            // W4.4: no token is a warning, never the run's failure: the
+            // status, the exit code and the folder stay. Nor is a clock that
+            // disagrees with the TSA's one: the token is the better clock.
+            if (!timestamp.stamped() && !timestamp.error.empty()) {
+                err << "timestamp warning: " << shown << ": not timestamped: " << timestamp.error
+                    << " after " << timestamp.attempts << " attempt(s)\n";
+            } else if (timestamp.stamped()) {
+                const auto now = env.connector_options.wall_now
+                                     ? env.connector_options.wall_now()
+                                     : std::chrono::system_clock::now();
+                const std::int64_t apart =
+                    std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch())
+                        .count() -
+                    timestamp.gen_time;
+                if (apart > kClockSkewWarning.count() || apart < -kClockSkewWarning.count()) {
+                    err << "timestamp warning: the TSA's time and this machine's clock differ by "
+                        << (apart < 0 ? -apart : apart) << " s\n";
+                }
+            }
+            // The signature's line (W4.3), the timestamp's (W4.4) and the
+            // folder's, all only now that result.json is written, the
+            // folder's last. Lost, they change nothing: the files are written
+            // (W3.6 review point 4).
             if (!output_lost) {
                 try {
                     out << "signed " << signature.bundle_sha256 << " key " << signature.key_id
-                        << '\n'
-                        << "evidence " << shown << ": " << kResultFileName << ", "
-                        << kSignatureFileName << ", " << kItemsCsvName << ", "
+                        << '\n';
+                    if (timestamp.stamped()) {
+                        out << "timestamped " << timestamp_time_text(timestamp.gen_time) << '\n';
+                    }
+                    out << "evidence " << shown << ": " << kResultFileName << ", "
+                        << kSignatureFileName << ", "
+                        << (timestamp.stamped() ? kTimestampFileName : std::string_view{})
+                        << (timestamp.stamped() ? ", " : "") << kItemsCsvName << ", "
                         << kSessionLogName
                         << (written.evidence->screenshot.captured ? ", " : "")
                         << (written.evidence->screenshot.captured ? kScreenshotName : "")
@@ -1164,6 +1271,11 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
             err << "error: unexpected failure\n";
             code = exit_code::config;
         }
+        // The run is done with the restore targets: the mutex goes now, not
+        // when the command returns. What is left is local, and with
+        // --evidence a wait for the TSA of up to a minute and a half (W4.4),
+        // during which the next run must not be refused.
+        run_lock.reset();
         const timing::RunTimings timings = end_timings(output_lost);
         if (evidence_folder) {
             return write_evidence(verdict, invalid, check, timings, code, output_lost);
@@ -1223,7 +1335,8 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
             return exit_code::usage;
         }
         // W3.4: one run at a time on the restore targets, held until the
-        // command returns: another run's cleanup could otherwise delete this
+        // clean after is over (`finish`), or until the command returns when
+        // the run ends before that: another run's cleanup could otherwise delete this
         // run's copies before they are read back (a false fail). Before the
         // --record folder and any Veeam call: a run refused here does nothing.
         try {

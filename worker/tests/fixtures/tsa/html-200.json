@@ -1,0 +1,9 @@
+{
+  "source": "hand-written (tests/fixtures/tsa/README.md)",
+  "request": "POST /",
+  "status": 200,
+  "headers": {
+    "Content-Type": "text/html"
+  },
+  "body": "<html><body>The service is under maintenance.</body></html>"
+}

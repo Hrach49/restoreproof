@@ -30,6 +30,14 @@ enum class RecordedBody {
     // Only its size and SHA-256 ("body": null, "body_size", "body_sha256"),
     // never a byte of it: downloaded file contents.
     digest,
+    // A binary exchange, a TSA's (W4.4): "body": null and the response's
+    // bytes as standard Base64 in "body_base64", the request's in
+    // "request_body_base64" (a timestamp query holds a hash and a nonce, no
+    // secret). Neither field goes through redact() or the JWT-shape rule,
+    // which Base64 of DER would break by chance; the bytes themselves are
+    // checked against the known secrets instead, and the rest of the file is
+    // held to every rule as always.
+    base64,
 };
 
 // The shortest known secret the recorder looks for in what it writes: a

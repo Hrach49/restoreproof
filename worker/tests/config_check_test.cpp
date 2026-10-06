@@ -34,7 +34,7 @@ const std::string kUsage = "usage: rpworker --version | rpworker config check [-
                            "[--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] "
                            "[--config <path>] [--record <dir>] [--json <file> | --evidence <dir>] | "
                            "rpworker signer public-key | "
-                           "rpworker signer verify <folder> --public-key <pem file>\n";
+                           "rpworker signer verify <folder> --public-key <pem file> [--tsa-ca <pem file>]\n";
 
 // Every key set; sample_od left out to show its default.
 const std::string kConfigJson = R"({
@@ -79,7 +79,9 @@ constexpr SecretMasks kNoSecrets{"(not set)", "(not set)", "(not set)", "(not se
 std::string expected_output(const std::filesystem::path& path, const SecretMasks& secrets,
                             std::string_view ca_file = "(not set)",
                             std::string_view cert_sha256 = "(not set)",
-                            std::string_view screenshots = "false")
+                            std::string_view screenshots = "false",
+                            std::string_view tsa_url = "(not set)",
+                            std::string_view tsa_ca_file = "(not set)")
 {
     return "config file: " + utf8(path) + "\n" +
            "cloud_url                 https://cloud.example.invalid\n"
@@ -101,6 +103,8 @@ std::string expected_output(const std::filesystem::path& path, const SecretMasks
            "veeam_ca_file             " +
            std::string{ca_file} + "\n" +
            "veeam_cert_sha256         " + std::string{cert_sha256} + "\n" +
+           "tsa_url                   " + std::string{tsa_url} + "\n" +
+           "tsa_ca_file               " + std::string{tsa_ca_file} + "\n" +
            "screenshots_enabled       " + std::string{screenshots} + "\n" +
            "secrets (environment variables; values are never shown):\n"
            "RP_VEEAM_USERNAME         " +
@@ -377,6 +381,28 @@ TEST_CASE("rpworker config check reports a screenshots_enabled that isn't true o
     REQUIRE(result.out.empty());
     REQUIRE(result.err == "config error: " + path_arg +
                               ": config key \"screenshots_enabled\" must be true or false\n");
+}
+
+TEST_CASE("rpworker config check prints the TSA's URL and CA file when they are set",
+          "[config_check][tsa]")
+{
+    const rp::test::TempDir dir;
+    const std::string ca = utf8(dir.write("tsa-ca.pem", "-----BEGIN CERTIFICATE-----\n"));
+    nlohmann::json doc = nlohmann::json::parse(kConfigJson);
+    doc["tsa_url"] = "http://tsa.example.invalid/stamp";
+    doc["tsa_ca_file"] = ca;
+    const auto path = dir.write("config.json", doc.dump());
+    const rp::test::ScopedEnv user(rp::kEnvVeeamUsername, std::nullopt);
+    const rp::test::ScopedEnv password(rp::kEnvVeeamPassword, std::nullopt);
+    const rp::test::ScopedEnv pfx(rp::kEnvGraphCertPfxBase64, std::nullopt);
+    const rp::test::ScopedEnv pfx_password(rp::kEnvGraphCertPassword, std::nullopt);
+    const rp::test::ScopedEnv signing_key(rp::kEnvSigningKeyBase64, std::nullopt);
+
+    const Run result = run(Args{"check"}, path);
+    REQUIRE(result.err.empty());
+    REQUIRE(result.out == expected_output(path, kNoSecrets, "(not set)", "(not set)", "false",
+                                          "http://tsa.example.invalid/stamp", ca));
+    REQUIRE(result.exit_code == 0);
 }
 
 TEST_CASE("rpworker config check prints screenshots_enabled as true or false", "[config_check]")

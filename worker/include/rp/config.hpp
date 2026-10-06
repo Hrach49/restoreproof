@@ -31,6 +31,8 @@ namespace rp {
 //   log_level                no        "info"   trace, debug, info, warn, error, critical, off
 //   veeam_ca_file            no        (none)   absolute path of a readable file (3)
 //   veeam_cert_sha256        no        (none)   64 hex digits; needs veeam_ca_file (4)
+//   tsa_url                  no        (none)   http:// or https:// URL (1); needs tsa_ca_file (7)
+//   tsa_ca_file              no        (none)   absolute path of a readable file (7)
 //   screenshots_enabled      no        false    true or false (6)
 //
 // (1) Printable ASCII only, with no user name, password, query or fragment:
@@ -66,6 +68,15 @@ namespace rp {
 //     asks the screenshot capturer for a picture of the restore session; off
 //     by default, since a picture can't go through redact(). The CLI's local
 //     value: a job's replaces it when jobs exist (W4.8).
+// (7) The timestamp authority (W4.4). Without tsa_url the Worker asks
+//     http://timestamp.digicert.com and trusts its tokens through the root
+//     embedded from shared/tsa/tsa-ca.pem. tsa_url may be http: nothing is
+//     switched off (an https URL is verified against the Windows store like
+//     any other), and a token's integrity never comes from the transport: its
+//     signature, its chain to tsa_ca_file, the nonce and the imprint are
+//     checked before it is written. tsa_ca_file is a PEM file of the
+//     certificate(s) a token must chain to, an absolute path as (3); a tsa_url
+//     that is set needs it, so another TSA never borrows the default's root.
 // No string value may contain a control character: ASCII (below 0x20, 0x7F),
 // C1 (U+0080-U+009F), U+2028, U+2029 or a bidi control (U+200E, U+200F,
 // U+202A-U+202E, U+2066-U+2069, U+061C).
@@ -94,6 +105,11 @@ struct Config {
     // name is checked).
     std::optional<std::string> veeam_cert_sha256;
     bool screenshots_enabled = false;
+    // W4.4. nullopt when absent: the default TSA (rp::kDefaultTsaUrl,
+    // rp/timestamper.hpp) and the root embedded from shared/tsa/tsa-ca.pem.
+    std::optional<std::string> tsa_url;
+    // UTF-8; nullopt when absent.
+    std::optional<std::string> tsa_ca_file;
 };
 
 // A config file that can't be read, isn't valid JSON or breaks a rule above,

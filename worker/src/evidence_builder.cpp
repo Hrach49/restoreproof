@@ -442,7 +442,8 @@ EvidenceBuilder::~EvidenceBuilder()
 
 std::optional<EvidenceError> EvidenceBuilder::write_result(const Evidence& evidence,
                                                            std::string_view canonical,
-                                                           SignedResult* signature) noexcept
+                                                           SignedResult* signature,
+                                                           TimestampOutcome* timestamp) noexcept
 {
     try {
         if (!options_.secrets.empty() &&
@@ -475,18 +476,43 @@ std::optional<EvidenceError> EvidenceBuilder::write_result(const Evidence& evide
         if (!made) {
             return EvidenceError{std::string{kResultFileName}, EvidenceFailure::not_signed};
         }
+        // W4.4: the TSA is asked about the same bytes' hash, once they are
+        // signed and before anything of the three is written, so the wait
+        // is over when result.json appears. No token is never the run's
+        // failure: the folder is then complete without one.
+        TimestampOutcome stamp;
+        if (options_.timestamp) {
+            try {
+                stamp = options_.timestamp(sha256_bytes(canonical));
+            } catch (...) {
+                stamp = TimestampOutcome{};
+            }
+            if (!stamp.stamped() && stamp.error.empty()) {
+                stamp.error = timestamp_code::kInternal;
+            }
+        }
         if (!write(kSignatureFileName, made->signature_file)) {
             return EvidenceError{std::string{kSignatureFileName}, EvidenceFailure::not_written};
         }
+        if (stamp.stamped() && (stamp.token.size() > kMaxTimestampFileBytes ||
+                                !write(kTimestampFileName, stamp.token))) {
+            stamp.token.clear();
+            stamp.gen_time = 0;
+            stamp.error = timestamp_code::kNotWritten;
+        }
         if (!write(kResultFileName, canonical)) {
-            // No signature beside no result. A crash between the two writes
-            // can still leave one.
+            // No signature and no token beside no result. A crash between
+            // the writes can still leave them.
             std::error_code ec;
             std::filesystem::remove(folder_ / *path_from_utf8(kSignatureFileName), ec);
+            std::filesystem::remove(folder_ / *path_from_utf8(kTimestampFileName), ec);
             return EvidenceError{std::string{kResultFileName}, EvidenceFailure::not_written};
         }
         if (signature) {
             *signature = std::move(*made);
+        }
+        if (timestamp) {
+            *timestamp = std::move(stamp);
         }
         return std::nullopt;
     } catch (...) {

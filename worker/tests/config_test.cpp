@@ -1179,3 +1179,143 @@ TEST_CASE("parse_graph_site_id splits a site ID, the host in lower case", "[conf
     CHECK(site->web == "0a1b2c3d-0000-4000-8000-00000000abce");
     CHECK_FALSE(rp::parse_graph_site_id("host"));
 }
+
+// --- W4.4: the TSA's URL and its CA file ------------------------------------------
+
+TEST_CASE("without tsa_url and tsa_ca_file the config has neither", "[config][tsa]")
+{
+    const rp::Config config = rp::parse_config(valid_doc().dump());
+    CHECK_FALSE(config.tsa_url);
+    CHECK_FALSE(config.tsa_ca_file);
+}
+
+TEST_CASE("parse_config takes an http or an https tsa_url with its tsa_ca_file", "[config][tsa]")
+{
+    const std::string url = GENERATE("http://timestamp.sectigo.com", "https://freetsa.org/tsr",
+                                     "HTTP://tsa.example:8080/stamp", "http://127.0.0.1:9/");
+    json doc = valid_doc();
+    doc["tsa_url"] = url;
+    doc["tsa_ca_file"] = "C:\\ProgramData\\RestoreProof\\tsa-ca.pem";
+    const rp::Config config = rp::parse_config(doc.dump());
+    CHECK(config.tsa_url == url);
+    CHECK(config.tsa_ca_file == "C:\\ProgramData\\RestoreProof\\tsa-ca.pem");
+}
+
+TEST_CASE("parse_config rejects a tsa_url that isn't an http or https URL, without echoing it",
+          "[config][tsa]")
+{
+    const std::string url = GENERATE(
+        "ftp://tsa.example/stamp", "tsa.example", "http://", "http:///stamp", "file:///c:/tsa",
+        "http://user@tsa.example/", "http://user:SENTINEL@tsa.example/",
+        "http://tsa.example/stamp?key=SENTINEL", "http://tsa.example/stamp#SENTINEL",
+        "http://tsa.example/st amp", "http://ts\xD0\xB0.example/", " http://tsa.example/");
+    CAPTURE(url);
+    json doc = valid_doc();
+    doc["tsa_url"] = url;
+    doc["tsa_ca_file"] = "C:\\tsa-ca.pem";
+
+    const rp::ConfigError e = parse_error(doc.dump());
+
+    CHECK(e.key() == "tsa_url");
+    CHECK(std::string{e.what()} ==
+          "config key \"tsa_url\" must be an http:// or https:// URL with no user name, "
+          "password, query or fragment");
+}
+
+TEST_CASE("a tsa_url needs its tsa_ca_file: another TSA never borrows the default's root",
+          "[config][tsa]")
+{
+    json doc = valid_doc();
+    doc["tsa_url"] = "http://timestamp.sectigo.com";
+
+    const rp::ConfigError e = parse_error(doc.dump());
+
+    CHECK(e.key() == "tsa_url");
+    CHECK(std::string{e.what()} ==
+          "config key \"tsa_url\" needs tsa_ca_file: set it to a PEM file holding the "
+          "certificate(s) that TSA's tokens chain to");
+}
+
+TEST_CASE("a tsa_ca_file alone replaces the root for the default TSA", "[config][tsa]")
+{
+    json doc = valid_doc();
+    doc["tsa_ca_file"] = "C:\\tsa-ca.pem";
+    const rp::Config config = rp::parse_config(doc.dump());
+    CHECK_FALSE(config.tsa_url);
+    CHECK(config.tsa_ca_file == "C:\\tsa-ca.pem");
+}
+
+TEST_CASE("parse_config rejects a tsa_ca_file that isn't an absolute path", "[config][tsa]")
+{
+    const std::string value = GENERATE("tsa-ca.pem", ".\\tsa-ca.pem", "\\tsa-ca.pem", "C:tsa.pem");
+    json doc = valid_doc();
+    doc["tsa_ca_file"] = value;
+
+    const rp::ConfigError e = parse_error(doc.dump());
+
+    CHECK(e.key() == "tsa_ca_file");
+    CHECK(std::string{e.what()} ==
+          "config key \"tsa_ca_file\" must be an absolute path, such as "
+          "C:\\ProgramData\\RestoreProof\\tsa-ca.pem");
+}
+
+TEST_CASE("the TSA keys are strings, and empty is refused", "[config][tsa]")
+{
+    const std::string key = GENERATE("tsa_url", "tsa_ca_file");
+    json doc = valid_doc();
+    doc["tsa_ca_file"] = "C:\\tsa-ca.pem";
+    SECTION("another JSON type")
+    {
+        doc[key] = 1;
+        CHECK(parse_error(doc.dump()).key() == key);
+    }
+    SECTION("empty")
+    {
+        doc[key] = "";
+        CHECK(parse_error(doc.dump()).key() == key);
+    }
+}
+
+TEST_CASE("the TSA keys are checked after veeam_cert_sha256 and before screenshots_enabled",
+          "[config][tsa]")
+{
+    json doc = valid_doc();
+    doc["tsa_url"] = "ftp://tsa.example";
+    doc["screenshots_enabled"] = "yes";
+    CHECK(parse_error(doc.dump()).key() == "tsa_url");
+    doc["veeam_cert_sha256"] = "not a hash";
+    doc["veeam_ca_file"] = kCaFile;
+    CHECK(parse_error(doc.dump()).key() == "veeam_cert_sha256");
+}
+
+TEST_CASE("load_config rejects a tsa_ca_file that can't be opened", "[config][tsa]")
+{
+    const rp::test::TempDir dir;
+    std::filesystem::create_directory(dir.path() / "ca-dir.pem");
+    const std::filesystem::path ca =
+        GENERATE_REF(dir.path() / "missing.pem", dir.path() / "ca-dir.pem");
+    json doc = valid_doc();
+    doc["tsa_ca_file"] = utf8(ca);
+    const auto path = dir.write("config.json", doc.dump());
+
+    const rp::ConfigError e = load_error(path);
+
+    CHECK(e.key() == "tsa_ca_file");
+    CHECK(std::string{e.what()} ==
+          utf8(path) + ": config key \"tsa_ca_file\" names a file that can't be read");
+}
+
+TEST_CASE("load_config takes a tsa_ca_file that is there", "[config][tsa]")
+{
+    const rp::test::TempDir dir;
+    const auto ca = dir.write("tsa-ca.pem", "-----BEGIN CERTIFICATE-----\n");
+    json doc = valid_doc();
+    doc["tsa_url"] = "http://tsa.example/stamp";
+    doc["tsa_ca_file"] = utf8(ca);
+    const auto path = dir.write("config.json", doc.dump());
+
+    const rp::Config config = rp::load_config(path);
+
+    CHECK(config.tsa_url == "http://tsa.example/stamp");
+    CHECK(config.tsa_ca_file == utf8(ca));
+}

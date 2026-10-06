@@ -6,6 +6,7 @@ dependencies = []
 
 [dependency-groups]
 dev = [
+    "asn1crypto>=1.5,<2",
     "cryptography>=50",
     "jsonschema>=4.26.0",
     "mutmut>=3.8.0",

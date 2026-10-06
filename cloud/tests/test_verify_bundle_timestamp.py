@@ -63,6 +63,22 @@ def stamped_folder(tmp_path):
     return write_folder(tmp_path / "run", BY_NAME["token"]["files"])
 
 
+def mixed_ca(parts: str) -> bytes:
+    """A CA file of the named parts, "root+key": the test root, a block of
+    another label, the root under its old label, half a block, a comment."""
+    root = TSA_KEYS["root_pem"]
+    text = {
+        "root": root,
+        "key": "-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n",
+        "old label": root.replace("BEGIN CERTIFICATE", "BEGIN X509 CERTIFICATE").replace(
+            "END CERTIFICATE", "END X509 CERTIFICATE"
+        ),
+        "half": root[: len(root) // 2],
+        "comment": "the test root\n",
+    }
+    return "".join(text[part] for part in parts.split("+")).encode("ascii")
+
+
 # --- the shared cases: failures first ----------------------------------------
 
 
@@ -315,17 +331,38 @@ def test_main_prints_the_tokens_time_as_the_third_field(tmp_path, capsys):
         (b"", "--tsa-ca: no certificate in PEM"),
         (b"not a certificate\n", "--tsa-ca: no certificate in PEM"),
         (b"-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n", "--tsa-ca: no certificate in PEM"),
+        # Every block is a certificate, as for the Worker: a block of another
+        # label, or one that is cut off, and the file is no CA file.
+        ("root+key", "--tsa-ca: no certificate in PEM"),
+        ("key+root", "--tsa-ca: no certificate in PEM"),
+        ("root+old label", "--tsa-ca: no certificate in PEM"),
+        ("root+half", "--tsa-ca: no certificate in PEM"),
     ],
 )
 def test_a_tsa_ca_file_that_cannot_be_one_is_exit_2_never_a_verdict(content, message, tmp_path, capsys):
     folder = stamped_folder(tmp_path)
     ca = tmp_path / "ca.pem"
     if content is not None:
-        ca.write_bytes(content)
+        ca.write_bytes(mixed_ca(content) if isinstance(content, str) else content)
     code, out, err = run_main(
         capsys, folder, "--public-key", pem_file(tmp_path), "--schemas", SCHEMAS_DIR, "--tsa-ca", ca
     )
     assert (code, out, err) == (2, "", f"error: {message}\n")
+
+
+@pytest.mark.parametrize("parts", ["root+key", "key+root", "root+old label", "root+half"])
+def test_a_ca_text_with_a_block_that_is_no_certificate_verifies_no_token(parts):
+    assert vb.check_timestamp(GOOD_TOKEN, DIGEST, mixed_ca(parts)) == ("timestamp_invalid", "")
+
+
+def test_text_outside_the_blocks_of_a_ca_file_is_a_comment(tmp_path, capsys):
+    assert vb.check_timestamp(GOOD_TOKEN, DIGEST, mixed_ca("comment+root+comment")) == ("verified", STAMPED_AT)
+    ca = tmp_path / "ca.pem"
+    ca.write_bytes(mixed_ca("comment+root+comment"))
+    code, _, err = run_main(
+        capsys, stamped_folder(tmp_path), "--public-key", pem_file(tmp_path), "--schemas", SCHEMAS_DIR, "--tsa-ca", ca
+    )
+    assert (code, err) == (0, "")
 
 
 def test_an_empty_tsa_ca_value_is_exit_2(tmp_path, capsys):

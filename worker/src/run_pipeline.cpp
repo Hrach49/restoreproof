@@ -1049,8 +1049,9 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
             options.write_file = env.write_evidence_file;
             // The run's secret values: the Secrets', the signing key's text,
             // which is no longer among them, and the other shapes the key
-            // could leak in. The builder wipes its copy when it goes.
-            options.secrets = secret_values(secrets);
+            // could leak in. The builder wipes its copy when it goes. Room
+            // for the three added here, so the list never grows.
+            options.secrets = secret_values(secrets, 3);
             if (!signing.text().empty()) {
                 options.secrets.push_back(signing.text());
             }
@@ -1270,6 +1271,11 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
             err << "error: unexpected failure\n";
             code = exit_code::config;
         }
+        // The run is done with the restore targets: the mutex goes now, not
+        // when the command returns. What is left is local, and with
+        // --evidence a wait for the TSA of up to a minute and a half (W4.4),
+        // during which the next run must not be refused.
+        run_lock.reset();
         const timing::RunTimings timings = end_timings(output_lost);
         if (evidence_folder) {
             return write_evidence(verdict, invalid, check, timings, code, output_lost);
@@ -1329,7 +1335,8 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
             return exit_code::usage;
         }
         // W3.4: one run at a time on the restore targets, held until the
-        // command returns: another run's cleanup could otherwise delete this
+        // clean after is over (`finish`), or until the command returns when
+        // the run ends before that: another run's cleanup could otherwise delete this
         // run's copies before they are read back (a false fail). Before the
         // --record folder and any Veeam call: a run refused here does nothing.
         try {

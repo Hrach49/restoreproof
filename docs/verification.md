@@ -511,7 +511,8 @@ whose text is never copied. A 403 on a delete names the write grant it relies on
 
 - **One run at a time.** Before its first Veeam call the command takes the machine-wide named
   mutex `Global\RestoreProof-restore-targets` without waiting (`rp/run_lock.hpp`) and holds it
-  until it exits; a second run is refused with exit 4 and no run line. Without it, one run's
+  until its clean after is over (what follows, the wait for a TSA included, needs no target);
+  a second run is refused with exit 4 and no run line. Without it, one run's
   cleanup could delete another's copies between that run's restore and its read-back: a false
   `fail`.
 - **Before**: right after the run line and before the sample is chosen, every run cleans all
@@ -1292,7 +1293,9 @@ The third field of the `verified` line says what was established:
 | `unchecked` | there is a token, its form and imprint hold, and no `--tsa-ca` was given | `note: timestamp.tst was not checked: no --tsa-ca` |
 
 A `--tsa-ca` file that can't be read or holds no certificate is the tool's own error (the
-Worker's exit 1, the script's 2), never a word. `timestamp.tst` is never a `not listed` note.
+Worker's exit 1, the script's 2), never a word. Both tools hold the file to one rule: every PEM
+block in it is a `CERTIFICATE` that reads as one; a block of another label (a key, a CRL) or one
+that is cut off makes it no CA file, and text outside the blocks is a comment. `timestamp.tst` is never a `not listed` note.
 
 **Where the two verifiers may differ.** The Worker checks through OpenSSL; the script reads the
 token with `asn1crypto` and checks the signature and walks the chain with `cryptography`, with

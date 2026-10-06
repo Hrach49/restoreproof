@@ -90,8 +90,30 @@ Pkcs7Ptr token_of(std::string_view der)
     return token;
 }
 
+// One PEM block as the library's reader hands it out, freed when it goes.
+struct PemBlock {
+    char* name = nullptr;
+    char* header = nullptr;
+    unsigned char* data = nullptr;
+    long size = 0;
+    PemBlock() = default;
+    PemBlock(const PemBlock&) = delete;
+    PemBlock& operator=(const PemBlock&) = delete;
+    ~PemBlock()
+    {
+        OPENSSL_free(name);
+        OPENSSL_free(header);
+        OPENSSL_free(data);
+    }
+};
+
 // The certificates of `pem`, every block of it one, or an empty store's worth
-// (count 0) when a block isn't a certificate or text is left over.
+// (count 0) when a block isn't a certificate: one of another label (a key, a
+// CRL, the old "X509 CERTIFICATE"), one with a header, one whose bytes aren't
+// exactly one certificate, one that is cut off. The blocks are read one by
+// one here: PEM_read_bio_X509 skips a block of another label, so a file that
+// also held a key would count as its certificates. Text outside the blocks
+// is a comment.
 std::size_t add_certificates(std::string_view pem, X509_STORE* store)
 {
     if (!fits(pem)) {
@@ -103,17 +125,25 @@ std::size_t add_certificates(std::string_view pem, X509_STORE* store)
     }
     std::size_t count = 0;
     for (;;) {
-        const CertPtr cert(PEM_read_bio_X509(bio.get(), nullptr, nullptr, nullptr), &X509_free);
-        if (!cert) {
+        PemBlock block;
+        if (PEM_read_bio(bio.get(), &block.name, &block.header, &block.data, &block.size) != 1) {
             break;
+        }
+        if (std::string_view{block.name} != PEM_STRING_X509 || block.header[0] != '\0') {
+            return 0;
+        }
+        const unsigned char* p = block.data;
+        const CertPtr cert(d2i_X509(nullptr, &p, block.size), &X509_free);
+        if (!cert || p != block.data + block.size) {
+            return 0;
         }
         if (store != nullptr && X509_STORE_add_cert(store, cert.get()) != 1) {
             return 0;
         }
         ++count;
     }
-    // The reader stops at the first thing that isn't a certificate: only "no
-    // more PEM in the text" is an end, and only when the text is used up.
+    // The reader stops at the first block it can't read: only "no more PEM
+    // in the text" is an end, and only when the text is used up.
     const unsigned long error = ERR_peek_last_error();
     const bool at_end = ERR_GET_LIB(error) == ERR_LIB_PEM &&
                         ERR_GET_REASON(error) == PEM_R_NO_START_LINE && BIO_eof(bio.get()) == 1;

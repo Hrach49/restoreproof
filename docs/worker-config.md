@@ -195,7 +195,8 @@ two keys' file.
 - **`tsa_ca_file`** is an absolute path like `veeam_ca_file`; `load_config` checks it can be
   opened. `rpworker test --evidence` also reads it before anything is done: `config error:
   config key "tsa_ca_file" names a file that can't be read` or `... names a file that holds no
-  certificate (PEM)`, exit 1, no run line.
+  certificate (PEM)`, exit 1, no run line. Every PEM block in the file must be a `CERTIFICATE`:
+  one that also holds a key or a CRL holds no certificate.
 - A TSA that can't be reached, or whose answer can't be taken, never fails a run: one
   `timestamp warning:` line, and the folder is complete without `timestamp.tst`. With the TSA
   down a run ends up to two minutes later (three attempts, waits of 30 s and 60 s).
@@ -643,7 +644,8 @@ It needs:
 - **no other RestoreProof run on this machine** (W3.4). After the config, the secrets, the
   manifest and the cursor are checked, and before the `--record` folder is made or Veeam is
   called, the command takes the machine-wide named mutex `Global\RestoreProof-restore-targets`
-  without waiting, and holds it until it exits (`worker/include/rp/run_lock.hpp`). If another
+  without waiting, and holds it until its clean after is over
+  (`worker/include/rp/run_lock.hpp`). If another
   run holds it, or Windows refuses to open it (another user's run made it): `restore error:
   another RestoreProof run is using the restore targets; nothing was done`, exit 4, with no
   run line and no status. If its last holder ended without releasing it (a crashed run), this

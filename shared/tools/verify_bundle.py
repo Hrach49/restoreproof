@@ -589,6 +589,26 @@ def _parse_token(raw: bytes) -> _Token | None:
         return None
 
 
+_PEM_BEGIN = re.compile(rb"-----BEGIN ([^\r\n]*?)-----")
+
+
+def _ca_certificates(pem: bytes) -> list | None:
+    """The certificates of a CA file's text, or None when it isn't one: every
+    PEM block in it is a CERTIFICATE that reads as one, and there is at least
+    one. A block of another label (a key, a CRL, the old X509 CERTIFICATE) or
+    one that is cut off makes the whole text no CA file, as for the Worker;
+    the library's own reader would skip it. Text outside the blocks is a
+    comment."""
+    labels = _PEM_BEGIN.findall(pem)
+    if not labels or any(label != b"CERTIFICATE" for label in labels):
+        return None
+    try:
+        certificates = x509.load_pem_x509_certificates(pem)
+    except (ValueError, TypeError):
+        return None
+    return certificates if len(certificates) == len(labels) else None
+
+
 def _is_timestamp_signer(certificate) -> bool:
     """Whether `certificate` may sign a timestamp, by OpenSSL's rule
     (X509_PURPOSE_TIMESTAMP_SIGN): an extended key usage that is critical and
@@ -689,7 +709,9 @@ def _token_verifies(token: _Token, ca_pem: bytes) -> bool:
     refuse on the way is False, never an exception: a token that can't be
     checked is not a verified one."""
     try:
-        anchors = x509.load_pem_x509_certificates(ca_pem)
+        anchors = _ca_certificates(ca_pem)
+        if anchors is None:
+            return False
         certificates = token.certificates
         signer_info = token.signed["signer_infos"][0]
         sid = signer_info["sid"]
@@ -1029,16 +1051,15 @@ def _read_public_key(path: str) -> PublicKey:
 
 
 def _read_tsa_ca(path: str) -> bytes:
-    """The caller's CA file: PEM with at least one certificate."""
+    """The caller's CA file: PEM whose every block is a certificate, at least
+    one (_ca_certificates)."""
     if _is_empty(path):
         raise SetupError("--tsa-ca: the file can't be read")
     state, pem = _read_file(Path(path), _MAX_KEY_FILE_BYTES)
     if state != _READ:
         raise SetupError("--tsa-ca: the file can't be read")
-    try:
-        x509.load_pem_x509_certificates(pem)
-    except (ValueError, TypeError):
-        raise SetupError("--tsa-ca: no certificate in PEM") from None
+    if _ca_certificates(pem) is None:
+        raise SetupError("--tsa-ca: no certificate in PEM")
     return pem
 
 

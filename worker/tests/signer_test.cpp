@@ -699,6 +699,46 @@ TEST_CASE("PublicKey::from_pem takes and refuses every shared key file as the fi
     CHECK(file.at("description").get<std::string>().find("C5.5") != std::string::npos);
 }
 
+// PR #158 review, finding 15: the rule for the file's text is the Signer's own
+// (strict, held to 100%), not the primitive's. A primitive that takes
+// everything changes only the two rows whose 44 bytes aren't Ed25519's.
+TEST_CASE("PublicKey::from_pem holds the key file's rule itself, whatever the primitive says",
+          "[signer][key][vectors]")
+{
+    const json file = json::parse(rp::test::read_shared("testdata/signing-v1/key-files.json"));
+    const FakeEd25519 permissive(Ed25519Fault::is_key_any);
+    const std::set<std::string> primitive_only = {"bit-string-unused-bits-1", "x25519-public-key"};
+    int refused = 0;
+    int taken = 0;
+
+    for (const json& row : file.at("key_files")) {
+        const std::string name = row.at("name").get<std::string>();
+        CAPTURE(name);
+        std::string bytes;
+        if (row.contains("text")) {
+            bytes = row.at("text").get<std::string>();
+        } else {
+            const std::optional<std::vector<unsigned char>> decoded =
+                rp::base64_decode(row.at("base64").get<std::string>());
+            REQUIRE(decoded);
+            bytes.assign(decoded->begin(), decoded->end());
+        }
+        const bool expected =
+            row.at("accepted").get<bool>() || primitive_only.contains(name);
+
+        const std::optional<PublicKey> key = PublicKey::from_pem(bytes, permissive);
+
+        CHECK(key.has_value() == expected);
+        ++(expected ? taken : refused);
+        if (key) {
+            // The file's own 44 bytes.
+            CHECK(key->der().size() == rp::kEd25519PublicDerBytes);
+        }
+    }
+    CHECK(refused == 33);
+    CHECK(taken == 13);
+}
+
 TEST_CASE("PublicKey::from_pem refuses what isn't an Ed25519 public key", "[signer][key]")
 {
     CHECK_FALSE(PublicKey::from_pem(""));
@@ -709,9 +749,9 @@ TEST_CASE("PublicKey::from_pem refuses what isn't an Ed25519 public key", "[sign
     REQUIRE(PEM_write_bio_PUBKEY(bio.get(), rsa.get()) == 1);
     CHECK_FALSE(PublicKey::from_pem(rp::test::bio_to_string(bio.get())));
 
-    const FakeEd25519 short_der(Ed25519Fault::from_pem_short);
-    CHECK_FALSE(PublicKey::from_pem(kKey1Pem, short_der));
-    const FakeEd25519 throwing(Ed25519Fault::from_pem_throws);
+    const FakeEd25519 no_key(Ed25519Fault::is_key_false);
+    CHECK_FALSE(PublicKey::from_pem(kKey1Pem, no_key));
+    const FakeEd25519 throwing(Ed25519Fault::is_key_throws);
     CHECK_FALSE(PublicKey::from_pem(kKey1Pem, throwing));
     const FakeEd25519 sound;
     const std::optional<PublicKey> key = PublicKey::from_pem(kKey1Pem, sound);
@@ -1534,7 +1574,11 @@ TEST_CASE("write shared/testdata/signing-v1/ from what the code makes", "[.write
     // The URL-safe case needs one: change a made-up attachment's text until
     // the signature has it.
     REQUIRE(signature.find_first_of("+/") != std::string::npos);
-    write_shared(kKeysFile, file_text(keys_json()));
-    write_shared(kBundleFile, file_text(bundle));
-    write_shared(kCasesFile, file_text(cases_json()));
+    // All three texts first: a throw while one is made leaves the set as it was.
+    const std::string keys_text = file_text(keys_json());
+    const std::string bundle_text = file_text(bundle);
+    const std::string cases_text = file_text(cases_json());
+    write_shared(kKeysFile, keys_text);
+    write_shared(kBundleFile, bundle_text);
+    write_shared(kCasesFile, cases_text);
 }

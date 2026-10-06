@@ -1,7 +1,5 @@
 #include <rp/ed25519.hpp>
 
-#include <rp/base64.hpp>
-
 #include <openssl/bio.h>
 #include <openssl/crypto.h>
 #include <openssl/err.h>
@@ -29,9 +27,6 @@ namespace {
 using KeyPtr = std::unique_ptr<EVP_PKEY, decltype(&EVP_PKEY_free)>;
 using BioPtr = std::unique_ptr<BIO, decltype(&BIO_free)>;
 using CtxPtr = std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)>;
-
-constexpr std::string_view kPemBegin = "-----BEGIN PUBLIC KEY-----";
-constexpr std::string_view kPemEnd = "-----END PUBLIC KEY-----";
 
 // Leaves OpenSSL's error queue (per thread) empty on the way out, so a refused
 // key here can't show up later as someone else's TLS error.
@@ -75,79 +70,6 @@ KeyPtr public_key_of(std::span<const unsigned char> der)
         return none;
     }
     return key;
-}
-
-bool is_space(char c) noexcept
-{
-    return c == ' ' || c == '\t' || c == '\r' || c == '\n';
-}
-
-bool is_base64_char(char c) noexcept
-{
-    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
-           c == '+' || c == '/' || c == '=';
-}
-
-// Takes one line end, LF or CRLF, off the front of `text`; false when it
-// doesn't start with one (a CR alone is none).
-bool take_line_end(std::string_view& text) noexcept
-{
-    if (text.starts_with("\r\n")) {
-        text.remove_prefix(2);
-        return true;
-    }
-    if (text.starts_with('\n')) {
-        text.remove_prefix(1);
-        return true;
-    }
-    return false;
-}
-
-// The one rule for a public key file (the W4.3 review; the rows of
-// shared/testdata/signing-v1/key-files.json, which verify_bundle.py holds
-// too). The body lines of `pem` joined, or nullopt unless `pem` is, in this
-// order: optional white space (space, tab, CR, LF); the line
-// "-----BEGIN PUBLIC KEY-----"; one or more lines of one or more Base64
-// characters each; the line "-----END PUBLIC KEY-----"; optional white space.
-// Inside the block a line ends with LF or CRLF and with nothing else, so no
-// header line, no blank line, no space and no text beside the armour. Whether
-// the body is Base64 of a key is the caller's to say.
-std::optional<std::string> pem_body(std::string_view pem)
-{
-    while (!pem.empty() && is_space(pem.front())) {
-        pem.remove_prefix(1);
-    }
-    while (!pem.empty() && is_space(pem.back())) {
-        pem.remove_suffix(1);
-    }
-    if (!pem.starts_with(kPemBegin)) {
-        return std::nullopt;
-    }
-    pem.remove_prefix(kPemBegin.size());
-    std::string body;
-    // Each turn takes a line end and then the END line, which must be all
-    // that is left, or one body line.
-    for (;;) {
-        if (!take_line_end(pem)) {
-            return std::nullopt;
-        }
-        if (pem == kPemEnd) {
-            break;
-        }
-        std::size_t length = 0;
-        while (length < pem.size() && is_base64_char(pem[length])) {
-            ++length;
-        }
-        if (length == 0) {
-            return std::nullopt;
-        }
-        body.append(pem.substr(0, length));
-        pem.remove_prefix(length);
-    }
-    if (body.empty()) {
-        return std::nullopt;
-    }
-    return body;
 }
 
 class OpenSslKey final : public Ed25519Key {
@@ -244,25 +166,13 @@ public:
         }
     }
 
-    std::vector<unsigned char> public_key_from_pem(std::string_view pem) const override
+    bool is_public_key(std::span<const unsigned char> public_key_der) const override
     {
         try {
-            // No PEM reader of the library: it skips lines before the block,
-            // stops after it, takes header lines and DER with bytes after the
-            // key, and hands back a key it has re-encoded. The bytes in the
-            // file are the key's own 44 or the file is no key.
-            const std::optional<std::string> body = pem_body(pem);
-            if (!body) {
-                return {};
-            }
-            std::optional<std::vector<unsigned char>> der = base64_decode(*body);
             const ClearOpenSslErrors clear_errors;
-            if (!der || !public_key_of(*der)) {
-                return {};
-            }
-            return std::move(*der);
+            return public_key_of(public_key_der) != nullptr;
         } catch (...) {
-            return {};
+            return false;
         }
     }
 };

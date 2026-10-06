@@ -230,7 +230,7 @@ def parse_strict(raw: bytes):
         text = raw.decode("utf-8", errors="strict")
     except UnicodeError:
         raise Refusal("invalid_utf8") from None
-    if text.startswith("﻿"):
+    if text.startswith("\ufeff"):
         raise Refusal("not_json")
     try:
         return json.loads(

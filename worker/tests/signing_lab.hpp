@@ -103,8 +103,9 @@ enum class Ed25519Fault {
     sign_other, // a good signature of another message
     check_false,
     check_throws,
-    from_pem_short, // 43 bytes
-    from_pem_throws
+    is_key_false,
+    is_key_throws,
+    is_key_any // a primitive that takes whatever it is asked about
 };
 
 class FakeEd25519 final : public Ed25519 {
@@ -146,16 +147,16 @@ public:
                                                 : openssl_ed25519().public_key_pem(public_key_der);
     }
 
-    std::vector<unsigned char> public_key_from_pem(std::string_view pem) const override
+    bool is_public_key(std::span<const unsigned char> public_key_der) const override
     {
-        if (fault == Ed25519Fault::from_pem_throws) {
+        if (fault == Ed25519Fault::is_key_throws) {
             throw 42; // not a std::exception
         }
-        std::vector<unsigned char> der = openssl_ed25519().public_key_from_pem(pem);
-        if (fault == Ed25519Fault::from_pem_short && !der.empty()) {
-            der.pop_back();
+        if (fault == Ed25519Fault::is_key_any) {
+            return true;
         }
-        return der;
+        return fault != Ed25519Fault::is_key_false &&
+               openssl_ed25519().is_public_key(public_key_der);
     }
 
 private:

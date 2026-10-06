@@ -120,3 +120,12 @@ def test_inline_normalisation(text, expected):
 def test_hash_is_lower_case_hex():
     value = body_sha256("RP")
     assert len(value) == 64 and value == value.lower()
+
+
+def test_the_modules_source_is_printable_ascii():
+    # A raw U+FEFF between two quotes can't be seen in an editor or a diff (PR #158 review).
+    from seeder import normalize
+
+    source = open(normalize.__file__, encoding="utf-8").read()
+    odd = sorted({f"U+{ord(c):04X}" for c in source if c not in "\r\n" and not " " <= c <= "~"})
+    assert odd == []

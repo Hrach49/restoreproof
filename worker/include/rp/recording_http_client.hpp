@@ -133,8 +133,10 @@ public:
     // `source` goes into every file's "source". `known_secrets` (the Veeam
     // password, the Graph certificate and its password, ...) must never be
     // written; empty ones and ones shorter than kMinRecordedSecret are left out.
+    // The list is taken: its values are moved in or wiped (secure_wipe), so
+    // the caller's vector holds no secret afterwards, also when this throws.
     FixtureRecorder(std::filesystem::path dir, std::string source,
-                    const std::vector<std::string>& known_secrets);
+                    std::vector<std::string>&& known_secrets);
     // Wipes (secure_wipe) every secret it knows.
     ~FixtureRecorder();
     FixtureRecorder(const FixtureRecorder&) = delete;

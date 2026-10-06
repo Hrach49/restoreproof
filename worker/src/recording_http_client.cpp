@@ -528,9 +528,20 @@ ScrubbedExchange scrub_exchange(std::size_t index, std::string_view source,
 }
 
 FixtureRecorder::FixtureRecorder(std::filesystem::path dir, std::string source,
-                                 const std::vector<std::string>& known_secrets)
+                                 std::vector<std::string>&& known_secrets)
     : dir_(std::move(dir)), source_(std::move(source))
 {
+    // The caller's list goes on every way out, a refused folder too: what
+    // isn't moved into secrets_ is wiped where it is.
+    struct WipeList {
+        std::vector<std::string>& list;
+        ~WipeList()
+        {
+            for (std::string& secret : list) {
+                secure_wipe(secret);
+            }
+        }
+    } wipe_list{known_secrets};
     const std::string shown = path_to_utf8(dir_);
     std::error_code ec;
     const std::filesystem::file_status status = std::filesystem::status(dir_, ec);
@@ -550,10 +561,10 @@ FixtureRecorder::FixtureRecorder(std::filesystem::path dir, std::string source,
             throw ConfigError("--record", shown + ": the --record folder can't be made");
         }
     }
-    for (const std::string& secret : known_secrets) {
+    for (std::string& secret : known_secrets) {
         if (secret.size() >= kMinRecordedSecret &&
             std::ranges::find(secrets_, secret) == secrets_.end()) {
-            secrets_.push_back(secret);
+            secrets_.push_back(std::move(secret));
         }
     }
 }

@@ -59,6 +59,8 @@ Secrets load_secrets_from_env()
 std::vector<std::string> secret_values(const Secrets& secrets)
 {
     std::vector<std::string> values;
+    // No growth: a reallocation would leave the short values' bytes behind.
+    values.reserve(4);
     for (const std::optional<std::string>* secret :
          {&secrets.veeam_password, &secrets.graph_cert_pfx_base64, &secrets.graph_cert_password,
           &secrets.signing_key_base64}) {

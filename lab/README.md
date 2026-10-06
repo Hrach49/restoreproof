@@ -220,8 +220,9 @@ Without one it does not fail, since only `rpworker test --evidence` signs: it se
 certificate variables, removes an `RP_SIGNING_KEY_BASE64` left from an earlier call, and prints
 `set RP_GRAPH_CERT_PFX_BASE64 and RP_GRAPH_CERT_PASSWORD for this session` and a second line
 starting `skipped RP_SIGNING_KEY_BASE64:` that names the missing entry and `new-signing-key`.
-An entry that is there but isn't a signing key stops it before anything is set; the message
-never shows the entry's value.
+An entry that is there but isn't a signing key stops it before anything is set and
+removes an `RP_SIGNING_KEY_BASE64` left from an earlier call too; the message never shows the
+entry's value.
 
 It writes nothing to disk: the variables live in that PowerShell process only (and in the
 programs it starts, such as `rpworker` and `ctest`) and are gone when the window closes.

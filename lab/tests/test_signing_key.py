@@ -3,6 +3,7 @@ goes into Credential Manager only; stdout gets the public PEM and `key <key_id>`
 Every test here uses a fake store, but the last one, which writes a throwaway entry of its own."""
 
 import base64
+import contextlib
 import hashlib
 import sys
 import uuid
@@ -94,18 +95,58 @@ def _admin_share(path):
     return UNC + "localhost" + SEP + path.drive[0] + "$" + str(path)[len(path.drive) :]
 
 
+@contextlib.contextmanager
+def stray_guard(paths):
+    """Yields a callable that lists the files among `paths` the block made or changed. On the way
+    out those it made are removed and those it changed get their bytes back; a file that was
+    there before is never deleted."""
+    paths = list(paths)
+    before = {path: path.read_bytes() for path in paths if path.is_file()}
+
+    def new():
+        return [path for path in paths if path.exists() and before.get(path) != path.read_bytes()]
+
+    try:
+        yield new
+    finally:
+        for path in new():
+            if path in before:
+                path.write_bytes(before[path])
+            else:
+                path.unlink()
+
+
+def test_the_stray_guard_keeps_a_file_that_was_there(tmp_path):
+    # A developer's own worker-signing.pub.pem in the working tree is not a test's to delete.
+    theirs = tmp_path / "theirs.pem"
+    changed = tmp_path / "changed.pem"
+    made = tmp_path / "made.pem"
+    theirs.write_bytes(b"the developer's file")
+    changed.write_bytes(b"before")
+    with stray_guard([theirs, changed, made, tmp_path / "never.pem"]) as new:
+        assert new() == []
+        changed.write_bytes(b"after")
+        made.write_bytes(b"a regression's file")
+        assert new() == [changed, made]
+    assert theirs.read_bytes() == b"the developer's file"
+    assert changed.read_bytes() == b"before"
+    assert not made.exists()
+
+
 @pytest.fixture
-def nothing_written(monkeypatch):
+def new_strays():
+    with stray_guard(STRAY_PEMS) as new:
+        yield new
+
+
+@pytest.fixture
+def nothing_written(monkeypatch, new_strays):
     """For the tests of a refused --public-key-out: a regression must neither write a file into
-    the working tree nor leave one there. The writer only records, and whatever is there after
-    the test is removed all the same."""
+    the working tree nor leave one there. The writer only records, and a file the test made is
+    removed all the same; one that was there before is the developer's and stays as it was."""
     calls = []
     monkeypatch.setattr(signing_key, "_write_public_key", lambda path, data, *, replace: calls.append(path))
-    try:
-        yield calls
-    finally:
-        for stray in STRAY_PEMS:
-            stray.unlink(missing_ok=True)
+    return calls
 
 
 @pytest.mark.parametrize(
@@ -122,18 +163,18 @@ def nothing_written(monkeypatch):
         pytest.param(str(REPO_DIR) + " " + SEP + PEM_NAME, marks=WINDOWS_ONLY),
     ],
 )
-def test_a_public_key_file_inside_the_repository_is_refused_before_anything_is_stored(inside, nothing_written, capsys):
+def test_a_public_key_file_inside_the_repository_is_refused_before_anything_is_stored(inside, nothing_written, new_strays, capsys):
     store = FakeStore()
     with pytest.raises(SigningKeyError, match="inside the repository"):
         run(store, capsys, public_key_out=signing_key.Path(inside))
     assert store.entries == {} and store.writes == []
     assert nothing_written == []
-    assert not any(stray.exists() for stray in STRAY_PEMS)
+    assert new_strays() == []
 
 
 @WINDOWS_ONLY
 @pytest.mark.parametrize("below", [(), ("lab",), ("lab", "no-such-folder")])
-def test_a_public_key_file_inside_the_repository_through_the_admin_share_is_refused(below, nothing_written, capsys):
+def test_a_public_key_file_inside_the_repository_through_the_admin_share_is_refused(below, nothing_written, new_strays, capsys):
     share = _admin_share(REPO_DIR)
     if not signing_key.Path(share).is_dir():
         pytest.skip(f"the admin share {share} isn't reachable")
@@ -142,7 +183,7 @@ def test_a_public_key_file_inside_the_repository_through_the_admin_share_is_refu
         run(store, capsys, public_key_out=signing_key.Path(SEP.join([share, *below, PEM_NAME])))
     assert store.entries == {} and store.writes == []
     assert nothing_written == []
-    assert not any(stray.exists() for stray in STRAY_PEMS)
+    assert new_strays() == []
 
 
 def test_a_folder_beside_the_repository_is_not_inside_it(tmp_path):
@@ -159,14 +200,14 @@ def test_a_folder_beside_the_repository_is_not_inside_it(tmp_path):
         signing_key.check_public_key_out(repo, replace=False, repo_dir=repo)
 
 
-def test_a_relative_public_key_file_is_read_against_the_working_folder(monkeypatch, nothing_written, capsys):
+def test_a_relative_public_key_file_is_read_against_the_working_folder(monkeypatch, nothing_written, new_strays, capsys):
     monkeypatch.chdir(REPO_DIR / "lab")
     store = FakeStore()
     with pytest.raises(SigningKeyError, match="inside the repository"):
         run(store, capsys, public_key_out=signing_key.Path(PEM_NAME))
     assert store.writes == []
     assert nothing_written == []
-    assert not (REPO_DIR / "lab" / PEM_NAME).exists()
+    assert new_strays() == []
 
 
 def test_a_public_key_file_in_a_folder_that_is_not_there_is_refused(tmp_path, capsys):

@@ -14,6 +14,7 @@
 #include <rp/expected_set.hpp>
 #include <rp/run_status.hpp>
 #include <rp/signer.hpp>
+#include <rp/timestamper.hpp>
 
 #include <nlohmann/json.hpp>
 #include <spdlog/logger.h>
@@ -170,6 +171,12 @@ struct EvidenceError {
 // signed; what it throws is that too.
 using ResultSigner = std::function<std::optional<SignedResult>(std::string_view canonical)>;
 
+// Asks a TSA for a token over `digest`, the SHA-256 of the bytes result.json
+// is about to be written with (W4.4): rp::Timestamper::stamp. What it throws
+// is no token (timestamp_internal).
+using ResultTimestamper =
+    std::function<TimestampOutcome(std::span<const unsigned char, kSha256Bytes> digest)>;
+
 struct EvidenceOptions {
     // The client's setting (config's screenshots_enabled; a job's, W4.8).
     bool screenshots_enabled = false;
@@ -182,6 +189,9 @@ struct EvidenceOptions {
     // The result's signer (W4.3); null = nothing can be signed, and so no
     // result.json is written.
     ResultSigner sign;
+    // The result's timestamper (W4.4); null = no TSA is asked and no
+    // timestamp.tst is written (the builder's own tests).
+    ResultTimestamper timestamp;
     // One "SECURITY: evidence: ..." line when something was withheld.
     std::shared_ptr<spdlog::logger> logger;
 };
@@ -262,14 +272,23 @@ public:
     // naming the first that differs or is gone). Then, W4.3, asks the signer
     // for the signature of exactly `canonical` (`not_signed`, the file
     // result.json, when there is no signer, or it answers nothing or
-    // throws), writes signature.json (`not_written`, naming it) and, last,
-    // result.json, exactly `canonical` (`not_written`); when that one can't
-    // be written, signature.json is removed again, so no signature stays
-    // beside no result. nullopt = both written, and `signature`, when given,
-    // is what the signer made (untouched otherwise). Never throws.
+    // throws). Then, W4.4, asks the timestamper for a token over the SHA-256
+    // of `canonical`; no token is never a failure here. Then writes
+    // signature.json (`not_written`, naming it), timestamp.tst when there is
+    // a token (one that can't be written, or is over kMaxTimestampFileBytes,
+    // is no token: timestamp_not_written) and, last, result.json, exactly
+    // `canonical` (`not_written`); when that one can't be written,
+    // signature.json and timestamp.tst are removed again, so neither stays
+    // beside no result. So result.json there means: signed, and the
+    // timestamp attempt over, with a token beside it or without one.
+    // nullopt = written; `signature`, when given, is then what the signer
+    // made, and `timestamp` the token as it was written, or why there is
+    // none (attempts 0 when no timestamper was asked); both are untouched
+    // otherwise. Never throws.
     std::optional<EvidenceError> write_result(const Evidence& evidence,
                                               std::string_view canonical,
-                                              SignedResult* signature = nullptr) noexcept;
+                                              SignedResult* signature = nullptr,
+                                              TimestampOutcome* timestamp = nullptr) noexcept;
 
     const std::filesystem::path& folder() const noexcept { return folder_; }
 

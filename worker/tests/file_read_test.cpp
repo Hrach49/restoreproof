@@ -3,10 +3,12 @@
 
 #include "../src/file_read.hpp"
 
+#include "deep_folder.hpp"
 #include "test_support.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <cstdint>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -14,6 +16,7 @@
 
 using rp::FileRead;
 using rp::FileState;
+using rp::test::DeepFolder;
 using rp::test::TempDir;
 
 TEST_CASE("read_whole_file gives a file's bytes as they are", "[file_read]")
@@ -168,4 +171,77 @@ TEST_CASE("list_folder of an empty folder is an empty list, of no folder nothing
     CHECK(none->empty());
     CHECK_FALSE(rp::list_folder(dir.path() / "no-such-folder"));
     CHECK_FALSE(rp::list_folder(dir.write("a-file", "x")));
+}
+
+// MSVC's file_size answers for a folder too (on NTFS the size of its index:
+// 4096 once it holds more than a few names), so a limit asked before the open
+// would call a folder "too large", which a verifier reads as attachment_size
+// where verify_bundle.py says attachment_missing.
+TEST_CASE("read_whole_file says unreadable for a folder, whatever it holds and whatever the limit",
+          "[file_read]")
+{
+    const TempDir dir;
+    std::filesystem::create_directories(dir.path() / "items.csv");
+    for (int i = 0; i < 40; ++i) {
+        dir.write("items.csv/a-file-with-a-name-long-enough-" + std::to_string(i) + ".txt", "x");
+    }
+    for (const std::uintmax_t limit : {std::uintmax_t{0}, std::uintmax_t{75}, std::uintmax_t{4095},
+                                       std::uintmax_t{1} << 20}) {
+        CAPTURE(limit);
+        const FileRead read = rp::read_whole_file(dir.path() / "items.csv", limit);
+        CHECK(read.state == FileState::unreadable);
+        CHECK(read.bytes.empty());
+    }
+    CHECK(rp::folder_reader(dir.path())("items.csv", 75).state == FileState::unreadable);
+}
+
+TEST_CASE("extended_folder is the folder's absolute path in the extended-length form",
+          "[file_read]")
+{
+    const auto extended = [](const wchar_t* folder) {
+        return rp::extended_folder(std::filesystem::path{folder}).native();
+    };
+    CHECK(extended(LR"(C:\runs\one)") == LR"(\\?\C:\runs\one)");
+    // Separators as Windows reads them, none left at the end.
+    CHECK(extended(L"C:/runs//one/") == LR"(\\?\C:\runs\one)");
+    CHECK(extended(LR"(C:\runs\.\two\..\one)") == LR"(\\?\C:\runs\one)");
+    CHECK(extended(LR"(C:\)") == LR"(\\?\C:\)");
+    // A share.
+    CHECK(extended(LR"(\\server\share\runs\one)") == LR"(\\?\UNC\server\share\runs\one)");
+    // Already one, or a device path: as it is.
+    CHECK(extended(LR"(\\?\C:\runs\one)") == LR"(\\?\C:\runs\one)");
+    CHECK(extended(LR"(\\?\UNC\server\share\runs)") == LR"(\\?\UNC\server\share\runs)");
+    CHECK(extended(LR"(\\.\C:\runs\one)") == LR"(\\.\C:\runs\one)");
+    // A relative one from the working folder.
+    const std::filesystem::path here = std::filesystem::current_path();
+    CHECK(extended(L"runs") == rp::extended_folder(here / "runs").native());
+    CHECK(extended(L"runs").starts_with(LR"(\\?\)"));
+    // The folder is named as a file inside it would name it, so a space at the
+    // end of its name stays: `run ` is not `run`, and a blank name is no
+    // folder, never the one above it.
+    CHECK(extended(LR"(C:\runs\one )") == LR"(\\?\C:\runs\one )");
+    CHECK(extended(LR"(C:\runs\ )") == LR"(\\?\C:\runs\ )");
+}
+
+TEST_CASE("a folder's files past MAX_PATH are listed and read through its extended path",
+          "[file_read]")
+{
+    const TempDir dir;
+    const DeepFolder deep(dir);
+    deep.write("result.json", "{}");
+    deep.write("veeam-session.log", "a line\n");
+    REQUIRE((deep.path() / "result.json").native().size() > 260);
+
+    const std::filesystem::path folder = rp::extended_folder(deep.path());
+    const std::optional<std::vector<std::string>> names = rp::list_folder(folder);
+    REQUIRE(names);
+    CHECK(*names == std::vector<std::string>{"result.json", "veeam-session.log"});
+    const rp::FileReader read = rp::folder_reader(folder);
+    CHECK(read("result.json", 10).state == FileState::read);
+    CHECK(read("result.json", 10).bytes == "{}");
+    CHECK(read("veeam-session.log", 100).bytes == "a line\n");
+    CHECK(read("veeam-session.log", 3).state == FileState::too_large);
+    CHECK(read("items.csv", 100).state == FileState::unreadable);
+    // Still nothing outside it.
+    CHECK(read("..\\result.json", 10).state == FileState::unreadable);
 }

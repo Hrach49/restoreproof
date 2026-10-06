@@ -17,7 +17,9 @@
 namespace rp {
 
 // The file's bytes: `too_large` when it is larger than `limit` (nothing is
-// read), `unreadable` when it isn't there or can't be read whole, exactly the
+// read), `unreadable` when it isn't there, isn't a file (a folder is
+// `unreadable` whatever it holds, never `too_large`: verify_bundle.py's
+// _read_file asks in the same order) or can't be read whole, exactly the
 // size it says and nothing after, so a read that stops short and a file still
 // growing are no file, never a part of one. Never throws but for no memory.
 FileRead read_whole_file(const std::filesystem::path& path, std::uintmax_t limit);
@@ -26,6 +28,18 @@ FileRead read_whole_file(const std::filesystem::path& path, std::uintmax_t limit
 // (rp::is_plain_file_name: no separator, no ':', not "..") or isn't UTF-8 is
 // `unreadable`, so nothing outside the folder is ever opened.
 FileReader folder_reader(std::filesystem::path folder);
+
+// `folder` as the one path its files are listed and read through: absolute and
+// in Windows' extended-length form (\\?\C:\runs\one, \\?\UNC\server\share\one),
+// which has no MAX_PATH. rpworker.exe has no long-path manifest, so without it
+// a file whose full path is past 260 characters doesn't open, and a verifier
+// would call a file that is there missing. The folder's name is read as
+// Windows reads it in `folder\name`: a name of blanks or dots, or with a space
+// after it, stays what it is (no such folder), never the folder above or
+// beside it. A path that is already extended, or a device's, is left as it is;
+// one that can't be made absolute is returned as given. Never throws but for
+// no memory.
+std::filesystem::path extended_folder(const std::filesystem::path& folder);
 
 // The names of everything in `folder` (files and folders alike, not what is
 // inside those), as UTF-8 and sorted by byte, or nullopt when `folder` isn't a

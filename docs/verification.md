@@ -1080,6 +1080,22 @@ known to be good. The canonical form comes before the schema because Python's `i
 `1.0`. Checks 4 and 5 are the two things the schema can't say. `Signer::verify` runs checks 2
 to 9 on a result's and a signature file's bytes and reads no attachment.
 
+**A file is there under its own name, or it isn't there** (the code review of 2026-10-06).
+Both verifiers list the folder once and read a file only when the listing has its name byte
+for byte; any other name isn't asked for. NTFS opens `ITEMS.CSV` when `items.csv` is asked
+for, and a file system that tells the two apart has no `items.csv`: with the listing deciding,
+such a folder is `attachment_missing` on both (`result_unreadable` for `RESULT.JSON`,
+`signature_file` for `Signature.json`), never `verified` beside a note that the same file
+isn't listed. A listed name that is a folder is `attachment_missing` in both tools whatever
+the folder holds: each asks whether it is a file before it asks for its size.
+
+**However long the folder's path is.** Both read the folder through one absolute path in
+Windows' extended-length form (`\\?\C:\...`, `\\?\UNC\server\share\...`), which has no limit
+of 260 characters: `rp::extended_folder` in `src/file_read.hpp`, `_extended` in the script. A
+file that is there opens, with or without the system's long-path setting; before, the Worker
+called an intact folder at a long path `attachment_missing`, `signature_file` or
+`result_unreadable`.
+
 The line both print on stdout is `verified <bundle_sha256> key <key_id>` or `not verified:
 <word>`. That line is the contract between the two; the exit codes are each tool's own (the
 Worker's 0 and 5, the script's 0 and 1).
@@ -1093,9 +1109,25 @@ can end a line or start another. A Windows name holding a surrogate without its 
 listed too, the surrogate as `\udXXX`.
 
 **A failure of the verifier is never a verdict.** A folder that can't be opened, a key file
-that can't be read or isn't a key, a schema the script can't load, and anything unexpected end
+that can't be read or isn't a key, a schema that can't be loaded, and anything unexpected end
 with an error line and the tool's error exit code (the Worker's 1, the script's 2), and
-nothing on stdout.
+nothing on stdout. Since the code review of 2026-10-06 that holds for these too:
+
+- **The Worker's embedded validator.** `rp::validate_result` answers "not valid" when it
+  couldn't check at all (the schema not loaded, no memory), and sets
+  `ResultValidation::not_checked`. The Signer throws `rp::VerifierFailure` for it instead of
+  answering `result_schema`, and `signer verify` prints `signer error: the result couldn't be
+  checked against its schema`, exit 1.
+- **A folder nobody named.** Windows drops blanks and dots at the end of a path, so ` `, `...`
+  or `.. ` would be the working folder or the one above it. The Worker names the folder as a
+  file inside it would, where such a name stays what it is; the script refuses a last part of
+  blanks and dots only (other than `.` and `..`). Both: the folder can't be opened.
+- **An option given twice** to the script is a usage error, exit 2, as in the Worker (64):
+  argparse would have kept the last `--public-key` or `--schemas`.
+- **The script without its packages** (plain `python`, not `uv run`) prints one `error:` line
+  and exits 2, not Python's 1 for a traceback, which is the "not verified" code.
+- **A verdict that can't be written** (the reader of a pipe gone) is exit 2 from the script as
+  a program too; the interpreter's own flush at exit made it 120.
 
 ### The public key file
 

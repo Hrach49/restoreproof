@@ -16,6 +16,9 @@ import importlib.util
 import json
 import os
 import re
+import shutil
+import subprocess
+import sys
 from collections import Counter
 from pathlib import Path
 
@@ -592,7 +595,8 @@ def test_the_listing_and_every_read_use_the_one_resolved_folder(tmp_path, schema
     folder = write_folder(tmp_path / "run")
     (tmp_path / "other").mkdir()
     given = tmp_path / "other" / ".." / "run"
-    resolved = str(folder.resolve(strict=True))
+    # On Windows in the extended-length form, which has no 260-character limit.
+    resolved = extended(folder.resolve(strict=True))
     listed, opened = [], []
     real_listdir, real_open = os.listdir, open
 
@@ -980,3 +984,221 @@ def test_the_vector_files_are_lf():
     # .gitattributes keeps them LF, so both builds read the same bytes.
     for name in ("keys.json", "ed25519.json", "bundle.json", "cases.json", "key-files.json"):
         assert b"\r" not in (SIGNING_DIR / name).read_bytes(), name
+
+
+# --- the code review of 2026-10-06: where the two verifiers answered differently,
+# --- or a failure of the script read as a verdict ------------------------------
+
+SCRIPT = shared_dir() / "tools" / "verify_bundle.py"
+
+
+def extended(path) -> str:
+    """`path` as Windows takes it whatever its length; as it is elsewhere."""
+    return "\\\\?\\" + str(path) if os.name == "nt" else str(path)
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["--public-key", "{other}", "--public-key", "{key}", "--schemas", "{schemas}"],
+        ["--public-key", "{key}", "--public-key", "{other}", "--schemas", "{schemas}"],
+        ["--public-key", "{key}", "--public-key", "{key}", "--schemas", "{schemas}"],
+        ["--public-key", "{key}", "--schemas", "{lax}", "--schemas", "{schemas}"],
+        ["--public-key", "{key}", "--schemas", "{schemas}", "--schemas", "{lax}"],
+        ["--public-key", "{key}", "--schemas", "{schemas}", "--schemas", "{schemas}"],
+    ],
+)
+def test_an_option_given_twice_is_a_usage_error_never_the_last_one(argv, tmp_path, capsys):
+    # argparse keeps the last value of a repeated option: a caller that puts its
+    # own key first and passes further arguments on would have it replaced, and
+    # a folder signed with the other key would read `verified`. The Worker
+    # refuses a second --public-key with its usage line.
+    folder = write_folder(tmp_path / "run")
+    lax = tmp_path / "lax"
+    lax.mkdir()
+    (lax / "result.v1.json").write_bytes(b"{}")
+    (lax / "signature.v1.json").write_bytes(b"{}")
+    values = {
+        "key": str(pem_file(tmp_path)),
+        "other": str(pem_file(tmp_path, "rfc8032-test-2")),
+        "schemas": str(SCHEMAS_DIR),
+        "lax": str(lax),
+    }
+    code, out, err = run_main(capsys, folder, *[arg.format(**values) for arg in argv])
+    assert_no_verdict(code, out, err)
+    assert err.startswith("usage: verify_bundle.py")
+    assert "given more than once" in err
+
+
+@pytest.mark.parametrize("name", [" ", "  ", "...", ". ", ".. ", ". .", "./ ", ".\\...", "../run/ "])
+def test_a_folder_name_of_blanks_or_dots_is_exit_2_never_the_folder_above_it(name, tmp_path, capsys, monkeypatch):
+    # Windows drops blanks and dots at the end of a path, so each of these
+    # would be the working folder or the one above it: a verdict about a folder
+    # the caller never named. Both are signed folders here, so a wrong reading
+    # of the name would verify.
+    outer = write_folder(tmp_path / "run")
+    inner = write_folder(outer / "run")
+    key_file = pem_file(tmp_path)
+    monkeypatch.chdir(inner)
+    assert run_main(capsys, ".", "--public-key", key_file, "--schemas", SCHEMAS_DIR) == (0, VERIFIED_LINE, "")
+    code, out, err = run_main(capsys, name, "--public-key", key_file, "--schemas", SCHEMAS_DIR)
+    assert_no_verdict(code, out, err)
+    assert err == "error: the folder can't be opened\n"
+    with pytest.raises(vb.SetupError):
+        vb.verify_folder(name, public_key(), vb.load_schemas(SCHEMAS_DIR))
+
+
+def test_the_working_folder_and_the_one_above_are_still_named_by_their_dots(tmp_path, capsys, monkeypatch):
+    outer = write_folder(tmp_path / "run")
+    inner = write_folder(outer / "run")
+    key_file = pem_file(tmp_path)
+    monkeypatch.chdir(inner)
+    for name in (".", "./", "../run", "..\\run" if os.name == "nt" else "../run/"):
+        assert run_main(capsys, name, "--public-key", key_file, "--schemas", SCHEMAS_DIR) == (0, VERIFIED_LINE, "")
+    code, out, err = run_main(capsys, "..", "--public-key", key_file, "--schemas", SCHEMAS_DIR)
+    assert (code, out, err) == (0, VERIFIED_LINE, "note: not listed in the result: run\n")
+
+
+@pytest.mark.parametrize(
+    ("name", "stored_as", "word"),
+    [
+        ("items.csv", "ITEMS.CSV", "attachment_missing"),
+        ("veeam-session.log", "Veeam-Session.log", "attachment_missing"),
+        ("result.json", "RESULT.JSON", "result_unreadable"),
+        ("signature.json", "Signature.json", "signature_file"),
+    ],
+)
+def test_a_file_under_another_case_of_its_name_is_not_that_file(name, stored_as, word, tmp_path, capsys):
+    # A file system that ignores case opens ITEMS.CSV for items.csv; one that
+    # doesn't has no items.csv. The folder's own list of names decides, so the
+    # word is the same on both, and the Worker's: never `verified` beside a
+    # note that the same file isn't listed.
+    folder = write_folder(tmp_path / "run")
+    os.rename(folder / name, folder / stored_as)
+    assert stored_as in os.listdir(folder)
+    assert name not in os.listdir(folder)
+    code, out, err = run_main(capsys, folder, "--public-key", pem_file(tmp_path), "--schemas", SCHEMAS_DIR)
+    assert (code, out, err) == (1, f"not verified: {word}\n", "")
+    assert vb.verify_folder(folder, public_key(), vb.load_schemas(SCHEMAS_DIR)).notes == ()
+
+
+def test_a_file_the_folder_does_not_list_is_not_read(tmp_path, schemas, monkeypatch):
+    folder = write_folder(tmp_path / "run")
+    names = [name for name in os.listdir(folder) if name != "items.csv"]
+    read = []
+    real = vb._read_file
+    monkeypatch.setattr(vb.os, "listdir", lambda _path=".": list(names))
+    monkeypatch.setattr(vb, "_read_file", lambda path, limit: (read.append(path.name), real(path, limit))[1])
+    verdict = vb.verify_folder(folder, public_key(), schemas)
+    monkeypatch.undo()
+    assert verdict.word == "attachment_missing"
+    assert read == ["result.json", "signature.json"]
+
+
+def test_a_folder_whose_files_are_past_260_characters_is_verified_like_any_other(tmp_path, capsys):
+    # rpworker.exe opened no file past MAX_PATH and called an intact folder
+    # `attachment_missing`; the script did the same where Windows' long paths
+    # are switched off. Both read the folder through its extended path now.
+    deep = tmp_path / "deep"
+    while len(str(deep)) < 245:
+        deep = deep / "twenty-characters-ab"
+    os.makedirs(extended(deep))
+    try:
+        for name, text in BUNDLE["files"].items():
+            with open(os.path.join(extended(deep), name), "wb") as file:
+                file.write(text.encode("utf-8"))
+        assert len(str(deep / "items.csv")) > 260
+        key_file = pem_file(tmp_path)
+        assert run_main(capsys, deep, "--public-key", key_file, "--schemas", SCHEMAS_DIR) == (0, VERIFIED_LINE, "")
+        os.remove(os.path.join(extended(deep), "veeam-session.log"))
+        assert run_main(capsys, deep, "--public-key", key_file, "--schemas", SCHEMAS_DIR) == (
+            1,
+            "not verified: attachment_missing\n",
+            "",
+        )
+    finally:
+        shutil.rmtree(extended(tmp_path / "deep"), ignore_errors=True)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="the extended-length form is Windows'")
+@pytest.mark.parametrize(
+    ("full", "expected"),
+    [
+        ("C:\\runs\\one", "\\\\?\\C:\\runs\\one"),
+        ("C:/runs//one/", "\\\\?\\C:\\runs\\one"),
+        ("C:\\runs\\two\\..\\one", "\\\\?\\C:\\runs\\one"),
+        ("\\\\server\\share\\runs\\one", "\\\\?\\UNC\\server\\share\\runs\\one"),
+        ("\\\\?\\C:\\runs\\one", "\\\\?\\C:\\runs\\one"),
+        ("\\\\?\\UNC\\server\\share\\runs", "\\\\?\\UNC\\server\\share\\runs"),
+        ("\\\\.\\C:\\runs\\one", "\\\\.\\C:\\runs\\one"),
+    ],
+)
+def test_a_windows_path_in_its_extended_form(full, expected):
+    assert vb._extended(full) == expected
+
+
+@pytest.mark.parametrize("missing", ["cryptography", "jsonschema"])
+def test_the_script_without_one_of_its_packages_is_exit_2_never_a_verdicts_exit_code(missing, tmp_path):
+    # Run with plain `python` and not `uv run`, the import fails; Python's own
+    # exit status for a traceback is 1, which is "not verified".
+    folder = write_folder(tmp_path / "run")
+    runner = (
+        "import runpy, sys\n"
+        f"sys.modules[{missing!r}] = None\n"
+        "sys.argv = sys.argv[1:]\n"
+        "runpy.run_path(sys.argv[0], run_name='__main__')\n"
+    )
+    done = subprocess.run(
+        [sys.executable, "-c", runner, str(SCRIPT), str(folder), "--public-key", str(pem_file(tmp_path))],
+        capture_output=True,
+        timeout=120,
+        check=False,
+    )
+    err = done.stderr.decode("utf-8").replace("\r\n", "\n")
+    assert done.returncode == 2
+    assert done.stdout == b""
+    assert err == f"error: a package the script needs isn't installed ({missing}); run it with `uv run`\n"
+
+
+def test_the_script_as_a_module_without_a_package_is_an_import_error_not_an_exit(monkeypatch):
+    monkeypatch.setitem(sys.modules, "jsonschema", None)
+    with pytest.raises(ImportError):
+        load_verify_bundle()
+
+
+@pytest.mark.parametrize("name", ["untouched", "signature-one-bit-changed"])
+def test_the_script_whose_stdout_is_gone_exits_2_not_pythons_120(name, tmp_path):
+    # main() returns 2 when the verdict can't be flushed, but the text stays in
+    # stdout's buffer: the interpreter's own flush at exit failed again and
+    # made the exit status 120, outside the script's 0, 1 and 2.
+    folder = write_folder(tmp_path / "run", CASES[name]["files"])
+    read_end, write_end = os.pipe()
+    os.close(read_end)  # nobody reads: every write to the pipe fails
+    try:
+        done = subprocess.run(
+            [sys.executable, str(SCRIPT), str(folder), "--public-key", str(pem_file(tmp_path))],
+            stdout=write_end,
+            stderr=subprocess.PIPE,
+            timeout=120,
+            check=False,
+        )
+    finally:
+        os.close(write_end)
+    err = done.stderr.decode("utf-8").replace("\r\n", "\n")
+    assert done.returncode == 2
+    assert err in ("error: unexpected failure (OSError)\n", "error: unexpected failure (BrokenPipeError)\n")
+
+
+@pytest.mark.parametrize(("name", "code"), [("untouched", 0), ("signature-one-bit-changed", 1)])
+def test_the_script_run_as_a_program_exits_with_its_verdicts_code(name, code, tmp_path):
+    folder = write_folder(tmp_path / "run", CASES[name]["files"])
+    done = subprocess.run(
+        [sys.executable, str(SCRIPT), str(folder), "--public-key", str(pem_file(tmp_path))],
+        capture_output=True,
+        timeout=120,
+        check=False,
+    )
+    assert done.returncode == code
+    assert done.stderr == b""
+    out = done.stdout.decode("utf-8").replace("\r\n", "\n")
+    assert out == (VERIFIED_LINE if code == 0 else "not verified: signature_invalid\n")

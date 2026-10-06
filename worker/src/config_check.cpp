@@ -89,7 +89,8 @@ int run_config_command(std::span<const std::string_view> args, std::ostream& out
     // PFX (rp::graph::certificate_from_secrets does, before any Graph call).
     print_setting(out, kEnvGraphCertPfxBase64, mask_secret(secrets.graph_cert_pfx_base64));
     print_setting(out, kEnvGraphCertPassword, mask_secret(secrets.graph_cert_password));
-    // Nor is the signing key parsed (W4.3): only `test --evidence` does that.
+    // Nor is the signing key parsed (W4.3): only `test --evidence` and `signer
+    // public-key` do that.
     print_setting(out, kEnvSigningKeyBase64, mask_secret(secrets.signing_key_base64));
     return exit_code::ok;
 }

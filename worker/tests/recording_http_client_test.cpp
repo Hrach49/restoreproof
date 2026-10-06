@@ -802,3 +802,59 @@ TEST_CASE("a request's path is what its recorded request line holds after the me
     CAPTURE(url);
     CHECK(rp::request_path(url) == path);
 }
+
+// --- PR #158 review, finding 10: the list of secrets it is given ---------------
+
+namespace {
+
+// A list as secret_values() makes it: a long value, one short enough to live
+// inside its string, one below kMinRecordedSecret (left out) and the long
+// one a second time (left out too).
+std::vector<std::string> list_of_secrets()
+{
+    return {std::string(100, 'L'), "short-SENTINEL", "abc", std::string(100, 'L')};
+}
+
+// Every element empty and, for the ones the recorder never moved from, the
+// bytes they held zero.
+void check_wiped(const std::vector<std::string>& list)
+{
+    REQUIRE(list.size() == 4);
+    for (std::size_t i = 0; i < list.size(); ++i) {
+        CAPTURE(i);
+        CHECK(list[i].empty());
+    }
+    for (const std::size_t i : {std::size_t{1}, std::size_t{2}, std::size_t{3}}) {
+        CAPTURE(i);
+        const char* data = list[i].data();
+        bool zero = true;
+        for (std::size_t at = 0; at < list[i].capacity(); ++at) {
+            zero = zero && data[at] == '\0';
+        }
+        CHECK(zero);
+    }
+}
+
+} // namespace
+
+TEST_CASE("a recorder leaves nothing in the list of secrets it was given", "[record][secrets]")
+{
+    rp::test::TempDir dir;
+    std::vector<std::string> list = list_of_secrets();
+
+    rp::FixtureRecorder recorder(dir.path() / "rec", kSource, std::move(list));
+
+    check_wiped(list);
+}
+
+TEST_CASE("a recorder that refuses its folder leaves nothing in the list either",
+          "[record][secrets]")
+{
+    rp::test::TempDir dir;
+    dir.write("old.json", "{}");
+    std::vector<std::string> list = list_of_secrets();
+
+    REQUIRE_THROWS_AS(rp::FixtureRecorder(dir.path(), kSource, std::move(list)), rp::ConfigError);
+
+    check_wiped(list);
+}

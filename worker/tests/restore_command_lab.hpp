@@ -80,7 +80,9 @@ inline const std::string kUsage =
     "[--record <dir>] | "
     "rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] "
     "[--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--vault <file>] "
-    "[--record <dir>] [--json <file> | --evidence <dir>] | "
+    "[--record <dir>] [--json <file> | --evidence <dir> [--outbox <root>]] | "
+    "rpworker outbox flush [--config <path>] [--outbox <root>] [--record <dir>] | "
+    "rpworker outbox list [--outbox <root>] | "
     "rpworker signer public-key [--vault <file>] | "
     "rpworker signer verify <folder> --public-key <pem file> [--tsa-ca <pem file>]\n";
 
@@ -852,6 +854,8 @@ struct Harness {
             return std::make_unique<rp::test::ForwardingHttpClient>(tsa_http);
         };
         env.timestamp_nonce = timestamp_nonce;
+        // W4.6: the outbox's file calls; null, the real ones, in the temp folder.
+        env.outbox_files = outbox_files;
         return env;
     }
 
@@ -925,6 +929,7 @@ struct Harness {
     std::function<rp::HttpResponse(const rp::HttpRequest&)> tsa_answer;
     std::function<std::optional<std::uint64_t>()> timestamp_nonce;
     int tsa_clients = 0;
+    rp::OutboxFiles outbox_files;
     // The run ID a run without --run-id makes.
     std::string generated_run_id{kGeneratedRunId};
     // The download client's maker returns null: the run stops after its run

@@ -91,6 +91,8 @@ constexpr std::string_view kCertSha256Key = "veeam_cert_sha256";
 // The TSA's (W4.4), checked after them, the URL first.
 constexpr std::string_view kTsaUrlKey = "tsa_url";
 constexpr std::string_view kTsaCaFileKey = "tsa_ca_file";
+// The Cloud's CA file (W4.6), checked after them.
+constexpr std::string_view kCloudCaFileKey = "cloud_ca_file";
 // The one boolean (W4.2), checked last.
 constexpr std::string_view kScreenshotsKey = "screenshots_enabled";
 
@@ -142,7 +144,7 @@ bool is_known_key(std::string_view key)
     return std::any_of(kRequiredStrings.begin(), kRequiredStrings.end(), named) ||
            std::any_of(kIntFields.begin(), kIntFields.end(), named) || key == kLogLevel.key ||
            key == kCaFileKey || key == kCertSha256Key || key == kTsaUrlKey ||
-           key == kTsaCaFileKey || key == kScreenshotsKey;
+           key == kTsaCaFileKey || key == kCloudCaFileKey || key == kScreenshotsKey;
 }
 
 bool looks_like_secret(std::string_view key)
@@ -351,6 +353,21 @@ void read_tsa(const json& doc, Config& config)
     }
 }
 
+// The Cloud's CA file (W4.6): what cloud_url's certificate must chain to, in
+// place of the Windows store. cloud_url stays https, whatever this holds.
+void read_cloud_ca_file(const json& doc, Config& config)
+{
+    const std::string* value = find_string(doc, kCloudCaFileKey, false);
+    if (value == nullptr) {
+        return;
+    }
+    if (!is_absolute_path(*value)) {
+        throw key_error(kCloudCaFileKey, "must be an absolute path, such as "
+                                         "C:\\ProgramData\\RestoreProof\\cloud-ca.pem");
+    }
+    config.cloud_ca_file = *value;
+}
+
 // After read_ca_file: the pin names a certificate that veeam_ca_file holds,
 // so it means nothing without it. Whether the file really holds it is
 // load_config's check, since parse_config never opens files.
@@ -544,6 +561,7 @@ Config parse_config(std::string_view json_text)
     read_ca_file(doc, config);
     read_cert_sha256(doc, config);
     read_tsa(doc, config);
+    read_cloud_ca_file(doc, config);
     read_screenshots_enabled(doc, config);
 
     if (config.sample_mail == 0 && config.sample_sp == 0 && config.sample_od == 0) {
@@ -582,6 +600,13 @@ Config load_config(const std::filesystem::path& path)
         const std::optional<std::filesystem::path> ca_path = path_from_utf8(*config.tsa_ca_file);
         if (!ca_path || !std::ifstream(*ca_path, std::ios::binary)) {
             const ConfigError e = key_error(kTsaCaFileKey, "names a file that can't be read");
+            throw ConfigError(e.key(), prefix + e.what());
+        }
+    }
+    if (config.cloud_ca_file) {
+        const std::optional<std::filesystem::path> ca_path = path_from_utf8(*config.cloud_ca_file);
+        if (!ca_path || !std::ifstream(*ca_path, std::ios::binary)) {
+            const ConfigError e = key_error(kCloudCaFileKey, "names a file that can't be read");
             throw ConfigError(e.key(), prefix + e.what());
         }
     }

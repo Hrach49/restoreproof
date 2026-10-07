@@ -16,6 +16,7 @@
 #include <rp/redact.hpp>
 #include <rp/result_builder.hpp>
 #include <rp/result_schema.hpp>
+#include <rp/outbox.hpp>
 #include <rp/run_lock.hpp>
 #include <rp/run_status.hpp>
 #include <rp/sample_rng.hpp>
@@ -808,6 +809,9 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
     RunSigningKey signing(secrets);
     std::optional<graph::ClientCertificate> certificate;
     std::optional<std::filesystem::path> evidence_root;
+    // W4.6: set with --evidence --outbox only: where the finished run folder
+    // is queued.
+    std::optional<std::filesystem::path> outbox_root;
     // W4.4: set with --evidence only; no other run asks a TSA.
     std::optional<TsaSettings> tsa;
     try {
@@ -818,6 +822,13 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
         }
         if (parsed.evidence) {
             evidence_root = check_evidence_root(*parsed.evidence, parsed.run_id);
+        }
+        if (parsed.outbox) {
+            outbox_root = path_from_utf8(*parsed.outbox);
+            if (!outbox_root) {
+                throw ConfigError("--outbox",
+                                  "--outbox " + table_cell(*parsed.outbox) + ": not a UTF-8 path");
+            }
         }
         // W4.5: the vault, read once; nothing after this reads a secret from
         // anywhere else.
@@ -1181,6 +1192,31 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
                         << '\n';
                     out.flush();
                 } catch (...) {
+                }
+            }
+            // W4.6: the folder is complete and its lines are out: queued by
+            // one rename, then its manifest, the only file written in it from
+            // here on. A folder that can't be queued stays where and as it
+            // is; the status stays too.
+            if (outbox_root) {
+                Outbox outbox({*outbox_root, env.outbox_files, nullptr});
+                const QueueOutcome queued =
+                    outbox.queue(*evidence_folder, run_id,
+                                 env.connector_options.wall_now ? env.connector_options.wall_now()
+                                                                : std::chrono::system_clock::now(),
+                                 timestamp.stamped(), timestamp.error);
+                const bool in_outbox = queued.result == QueueResult::queued ||
+                                       queued.result == QueueResult::queued_without_manifest;
+                if (in_outbox && !output_lost) {
+                    try {
+                        out << "queued " << table_cell(path_to_utf8(queued.folder)) << '\n';
+                        out.flush();
+                    } catch (...) {
+                    }
+                }
+                if (queued.result != QueueResult::queued) {
+                    err << outbox.queue_error(queued, *evidence_folder) << '\n';
+                    code = code == exit_code::ok ? exit_code::config : code;
                 }
             }
         } catch (...) {

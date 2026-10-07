@@ -45,6 +45,7 @@ add_library(rpcore STATIC
     src/evidence_builder.cpp
     src/expected_set.cpp
     src/file_read.cpp
+    src/folder_ops.cpp
     src/graph_client.cpp
     src/graph_command.cpp
     src/graph_download.cpp
@@ -55,6 +56,8 @@ add_library(rpcore STATIC
     src/http_client.cpp
     src/name_key.cpp
     src/office_v1.cpp
+    src/outbox.cpp
+    src/outbox_command.cpp
     src/recording_http_client.cpp
     src/redact.cpp
     src/restore_command.cpp
@@ -78,6 +81,7 @@ add_library(rpcore STATIC
     src/test_command.cpp
     src/text_table.cpp
     src/timestamper.cpp
+    src/uploader.cpp
     src/text_v1.cpp
     src/utf16.cpp
     src/vault.cpp
@@ -175,6 +179,7 @@ add_executable(rptests
     tests/evidence_builder_test.cpp
     tests/expected_set_test.cpp
     tests/file_read_test.cpp
+    tests/folder_ops_test.cpp
     tests/graph_client_live_test.cpp
     tests/graph_client_test.cpp
     tests/graph_command_live_test.cpp
@@ -191,6 +196,8 @@ add_executable(rptests
     tests/live_seed_test.cpp
     tests/name_key_test.cpp
     tests/office_v1_test.cpp
+    tests/outbox_command_test.cpp
+    tests/outbox_test.cpp
     tests/recording_http_client_test.cpp
     tests/redact_test.cpp
     tests/restore_command_test.cpp
@@ -217,6 +224,7 @@ add_executable(rptests
     tests/text_table_test.cpp
     tests/timestamp_verify_test.cpp
     tests/timestamper_test.cpp
+    tests/uploader_test.cpp
     tests/text_util_test.cpp
     tests/text_v1_test.cpp
     tests/vault_command_test.cpp
@@ -284,7 +292,7 @@ endfunction()
 
 rp_add_exe_test("rpworker --version prints the project version"
     ARGS --version EXIT_CODE 0 STDOUT ${PROJECT_VERSION} STDERR "")
-set(RP_USAGE "usage: rpworker --version | rpworker config check [--config <path>] [--vault <file>] | rpworker vault set|remove <name> [--vault <file>] | rpworker vault list|test [--vault <file>] | rpworker vault grant <account> [--vault <file>] | rpworker veeam list [--config <path>] [--vault <file>] [--record <dir>] | rpworker graph list [--hash] [--config <path>] [--vault <file>] [--record <dir>] | rpworker restore [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--vault <file>] [--record <dir>] | rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--vault <file>] [--record <dir>] [--json <file> | --evidence <dir>] | rpworker signer public-key [--vault <file>] | rpworker signer verify <folder> --public-key <pem file> [--tsa-ca <pem file>]")
+set(RP_USAGE "usage: rpworker --version | rpworker config check [--config <path>] [--vault <file>] | rpworker vault set|remove <name> [--vault <file>] | rpworker vault list|test [--vault <file>] | rpworker vault grant <account> [--vault <file>] | rpworker veeam list [--config <path>] [--vault <file>] [--record <dir>] | rpworker graph list [--hash] [--config <path>] [--vault <file>] [--record <dir>] | rpworker restore [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--vault <file>] [--record <dir>] | rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--vault <file>] [--record <dir>] [--json <file> | --evidence <dir> [--outbox <root>]] | rpworker outbox flush [--config <path>] [--outbox <root>] [--record <dir>] | rpworker outbox list [--outbox <root>] | rpworker signer public-key [--vault <file>] | rpworker signer verify <folder> --public-key <pem file> [--tsa-ca <pem file>]")
 rp_add_exe_test("rpworker rejects unknown arguments"
     ARGS --no-such-option EXIT_CODE 64 STDOUT "" STDERR "${RP_USAGE}")
 rp_add_exe_test("rpworker config without a subcommand prints usage"
@@ -560,6 +568,49 @@ rp_add_exe_test("rpworker signer verify answers a folder with no result in it wi
     ARGS signer verify ${CMAKE_CURRENT_BINARY_DIR}/signer-exe-test/empty-run
     --public-key ${RP_SIGNER_TEST_KEY}
     EXIT_CODE 5 STDOUT "not verified: result_unreadable" STDERR "")
+
+# outbox (W4.6): `list` reads no config and no vault; an empty root, and one
+# that isn't there, hold nothing. `flush` reads the config for cloud_url and,
+# with nothing queued, asks no one.
+set(RP_OUTBOX_EXE ${CMAKE_CURRENT_BINARY_DIR}/outbox-exe-test)
+file(REMOVE_RECURSE ${RP_OUTBOX_EXE})
+file(MAKE_DIRECTORY ${RP_OUTBOX_EXE}/empty-root)
+file(WRITE ${RP_OUTBOX_EXE}/config.json [=[{
+    "cloud_url": "https://cloud.example.invalid",
+    "veeam_url": "https://veeam.example.invalid:4443",
+    "veeam_org_name": "example.onmicrosoft.com",
+    "graph_tenant_id": "00000000-0000-0000-0000-000000000001",
+    "graph_client_id": "00000000-0000-0000-0000-000000000002",
+    "test_mailbox": "restoretest@example.onmicrosoft.com",
+    "test_site_id": "example.sharepoint.com,00000000-0000-4000-8000-000000000001,00000000-0000-4000-8000-000000000002",
+    "test_library_id": "b!library-id",
+    "test_onedrive_drive_id": "b!drive-id",
+    "test_onedrive_folder_id": "folder-id"
+}]=])
+rp_add_exe_test("rpworker outbox without a subcommand prints usage"
+    ARGS outbox EXIT_CODE 64 STDOUT "" STDERR "${RP_USAGE}")
+rp_add_exe_test("rpworker outbox rejects an unknown subcommand"
+    ARGS outbox send EXIT_CODE 64 STDOUT "" STDERR "${RP_USAGE}")
+rp_add_exe_test("rpworker outbox list rejects a word too many"
+    ARGS outbox list ${RP_OUTBOX_EXE}/empty-root EXIT_CODE 64 STDOUT "" STDERR "${RP_USAGE}")
+rp_add_exe_test("rpworker outbox list --outbox needs a root"
+    ARGS outbox list --outbox EXIT_CODE 64 STDOUT "" STDERR "${RP_USAGE}")
+rp_add_exe_test("rpworker outbox flush rejects --vault"
+    ARGS outbox flush --vault ${RP_VAULT_MISSING} EXIT_CODE 64 STDOUT "" STDERR "${RP_USAGE}")
+rp_add_exe_test("rpworker test --outbox needs --evidence"
+    ARGS test --outbox ${RP_OUTBOX_EXE}/empty-root EXIT_CODE 64 STDOUT "" STDERR "${RP_USAGE}")
+rp_add_exe_test("rpworker outbox list on an empty root"
+    ARGS outbox list --outbox ${RP_OUTBOX_EXE}/empty-root
+    EXIT_CODE 0 STDOUT "0 queued, 0 sent" STDERR "")
+rp_add_exe_test("rpworker outbox list on a root that isn't there"
+    ARGS outbox list --outbox ${RP_OUTBOX_EXE}/no-such-root
+    EXIT_CODE 0 STDOUT "0 queued, 0 sent" STDERR "")
+rp_add_exe_test("rpworker outbox flush reports a missing config file"
+    ARGS outbox flush --config no-such-config.json --outbox ${RP_OUTBOX_EXE}/empty-root
+    EXIT_CODE 1 STDOUT "" STDERR "config error: no-such-config.json: cannot read config file")
+rp_add_exe_test("rpworker outbox flush with nothing queued"
+    ARGS outbox flush --config ${RP_OUTBOX_EXE}/config.json --outbox ${RP_OUTBOX_EXE}/empty-root
+    EXIT_CODE 0 STDOUT "0 queued, 0 sent" STDERR "")
 
 # The checker itself must fail on a wrong exit code or wrong output, or the two
 # tests above would prove nothing.

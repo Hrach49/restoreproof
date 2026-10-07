@@ -36,7 +36,9 @@ const std::string kUsage =
     "[--record <dir>] | "
     "rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] "
     "[--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--vault <file>] "
-    "[--record <dir>] [--json <file> | --evidence <dir>] | "
+    "[--record <dir>] [--json <file> | --evidence <dir> [--outbox <root>]] | "
+    "rpworker outbox flush [--config <path>] [--outbox <root>] [--record <dir>] | "
+    "rpworker outbox list [--outbox <root>] | "
     "rpworker signer public-key [--vault <file>] | "
     "rpworker signer verify <folder> --public-key <pem file> [--tsa-ca <pem file>]\n";
 
@@ -84,7 +86,8 @@ std::string expected_settings(const std::filesystem::path& path, std::string_vie
                               std::string_view cert_sha256 = "(not set)",
                               std::string_view screenshots = "false",
                               std::string_view tsa_url = "(not set)",
-                              std::string_view tsa_ca_file = "(not set)")
+                              std::string_view tsa_ca_file = "(not set)",
+                              std::string_view cloud_ca_file = "(not set)")
 {
     return "config file: " + utf8(path) + "\n" +
            "cloud_url                 https://cloud.example.invalid\n"
@@ -107,6 +110,7 @@ std::string expected_settings(const std::filesystem::path& path, std::string_vie
            std::string{ca_file} + "\n" + "veeam_cert_sha256         " + std::string{cert_sha256} +
            "\n" + "tsa_url                   " + std::string{tsa_url} + "\n" +
            "tsa_ca_file               " + std::string{tsa_ca_file} + "\n" +
+           "cloud_ca_file             " + std::string{cloud_ca_file} + "\n" +
            "screenshots_enabled       " + std::string{screenshots} + "\n";
 }
 
@@ -468,6 +472,24 @@ TEST_CASE("rpworker config check prints the TSA's URL and CA file when they are 
     REQUIRE(result.err.empty());
     REQUIRE(result.out == expected_settings(path, "(not set)", "(not set)", "false",
                                             "http://tsa.example.invalid/stamp", ca) +
+                              expected_secrets(lab.vault, kNoSecrets));
+    REQUIRE(result.exit_code == 0);
+}
+
+TEST_CASE("rpworker config check prints the Cloud's CA file when it is set",
+          "[config_check][outbox]")
+{
+    Lab lab;
+    const std::string ca = utf8(lab.dir.write("cloud-ca.pem", "-----BEGIN CERTIFICATE-----\n"));
+    nlohmann::json doc = nlohmann::json::parse(kConfigJson);
+    doc["cloud_ca_file"] = ca;
+    const auto path = lab.dir.write("config.json", doc.dump());
+    lab.default_config = [path] { return path; };
+
+    const Run result = lab.run(Args{"check"});
+    REQUIRE(result.err.empty());
+    REQUIRE(result.out == expected_settings(path, "(not set)", "(not set)", "false", "(not set)",
+                                            "(not set)", ca) +
                               expected_secrets(lab.vault, kNoSecrets));
     REQUIRE(result.exit_code == 0);
 }

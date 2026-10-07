@@ -9,6 +9,7 @@
 #include <rp/cli.hpp>
 #include <rp/outbox_command.hpp>
 #include <rp/run_lock.hpp>
+#include <rp/timestamper.hpp>
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
@@ -358,7 +359,8 @@ TEST_CASE("rpworker outbox flush: --config and --outbox name the config and the 
 {
     Lab lab;
     const std::filesystem::path other_root = lab.box.dir.path() / "elsewhere";
-    const std::filesystem::path ca = lab.box.dir.write("cloud-ca.pem", "-----BEGIN CERTIFICATE-----\n");
+    const std::filesystem::path ca =
+        lab.box.dir.write("cloud-ca.pem", std::string{rp::default_tsa_ca_pem()});
     nlohmann::json config = rp::test::restore_command_lab::config_values();
     config["cloud_url"] = "https://cloud.example.invalid/";
     config["cloud_ca_file"] = utf8_of(ca);

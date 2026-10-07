@@ -58,9 +58,10 @@ OutboxCommandEnv default_outbox_command_env();
 // `flush [--config <path>] [--outbox <root>] [--record <dir>]`: one pass of
 // rp::Outbox::flush with rp::CloudUploader on config's cloud_url. On `out`:
 // each of the flush's lines ("pruned <run>", "sent <run>", "kept <run>:
-// <code>; attempt <n>, next at <time>", "kept <run>: folder_changed",
-// "waiting <run>: next at <time>", "moved <run>"), then "<n> queued, <m>
-// sent"; on `err` its "outbox error: ..." and "outbox warning: ..." lines.
+// <code>; attempt <n>, next at <time>", "kept <run>: folder_changed", "kept
+// <run>: not_read", "waiting <run>: next at <time>", "moved <run>"), then
+// "<n> queued, <m> sent"; on `err` its "outbox error: ..." and "outbox
+// warning: ..." lines.
 // Exit 0 when no run is left under outbox\; 3 (exit_code::transient) when one
 // is, or when another flush holds the mutex ("outbox error: another flush is
 // running; nothing was done"); 1 for "config error: <what()>" (the config, a

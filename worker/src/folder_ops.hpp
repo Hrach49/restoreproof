@@ -33,6 +33,15 @@ bool remove_folder(const std::filesystem::path& folder) noexcept;
 // folder afterwards. Never throws.
 bool make_folder(const std::filesystem::path& folder) noexcept;
 
+// Whether `a` and `b` are on one volume, so a rename between them is a rename
+// and never a copy: by the mount point each is under (GetVolumePathNameW: C:\,
+// or a folder a volume is mounted at), compared without regard to case or to
+// the extended-length prefix. Neither path need exist yet. nullopt when it
+// can't be told (a drive that isn't there); never a refusal on a guess. Never
+// throws.
+std::optional<bool> same_volume(const std::filesystem::path& a,
+                                const std::filesystem::path& b) noexcept;
+
 enum class PathKind { none, folder, file };
 
 // What is at `path`: nothing (or nothing that can be asked about), a folder,

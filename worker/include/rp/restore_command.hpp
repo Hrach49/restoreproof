@@ -172,7 +172,8 @@ struct RestoreCommandEnv {
     std::function<std::optional<std::uint64_t>()> timestamp_nonce;
     // `rpworker test --evidence <dir> --outbox <root>` only (W4.6,
     // rp/outbox.hpp): the outbox's file calls, each null = the real one (one
-    // rename of the run folder, the manifest's writer).
+    // rename of the run folder, the manifest's writer, whether the two roots
+    // are on one volume).
     OutboxFiles outbox_files;
 };
 

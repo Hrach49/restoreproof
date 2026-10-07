@@ -1,4 +1,5 @@
 #include <rp/config.hpp>
+#include <rp/timestamper.hpp>
 
 #include "test_certs.hpp"
 #include "test_support.hpp"
@@ -1385,10 +1386,37 @@ TEST_CASE("load_config rejects a cloud_ca_file that can't be opened", "[config][
           utf8(path) + ": config key \"cloud_ca_file\" names a file that can't be read");
 }
 
-TEST_CASE("load_config takes a cloud_ca_file that is there", "[config][outbox]")
+TEST_CASE("load_config rejects a cloud_ca_file that holds no certificate", "[config][outbox]")
+{
+    struct Row {
+        const char* name;
+        std::string bytes;
+    };
+    const Row row = GENERATE(
+        Row{"empty", ""}, Row{"text", "not a certificate"},
+        Row{"a cut-off block", "-----BEGIN CERTIFICATE-----\n"},
+        Row{"DER, not PEM", std::string("\x30\x82\x01\x00\x30\x82", 6)},
+        Row{"a key block alone", "-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n"});
+    CAPTURE(row.name);
+    const rp::test::TempDir dir;
+    const auto ca = dir.write("cloud-ca.pem", row.bytes);
+    json doc = valid_doc();
+    doc["cloud_ca_file"] = utf8(ca);
+    const auto path = dir.write("config.json", doc.dump());
+
+    const rp::ConfigError e = load_error(path);
+
+    CHECK(e.key() == "cloud_ca_file");
+    CHECK(std::string{e.what()} ==
+          utf8(path) +
+              ": config key \"cloud_ca_file\" names a file that holds no certificate (PEM)");
+}
+
+TEST_CASE("load_config takes a cloud_ca_file that is there and holds a certificate",
+          "[config][outbox]")
 {
     const rp::test::TempDir dir;
-    const auto ca = dir.write("cloud-ca.pem", "-----BEGIN CERTIFICATE-----\n");
+    const auto ca = dir.write("cloud-ca.pem", std::string{rp::default_tsa_ca_pem()});
     json doc = valid_doc();
     doc["cloud_ca_file"] = utf8(ca);
     const auto path = dir.write("config.json", doc.dump());

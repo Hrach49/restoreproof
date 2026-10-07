@@ -18,6 +18,8 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 using Catch::Matchers::ContainsSubstring;
@@ -382,6 +384,79 @@ TEST_CASE("outbox queue: a code that is no code is a null one", "[outbox][queue]
     CHECK_FALSE(box.manifest_of(outcome.folder).timestamped);
 }
 
+// --- prepare: before the run ----------------------------------------------------------
+
+TEST_CASE("outbox prepare: nothing in the way is an empty line, and the outbox folder is made",
+          "[outbox][queue]")
+{
+    Box box;
+    const bool with_id = GENERATE(false, true);
+    const std::optional<std::string_view> run_id =
+        with_id ? std::optional<std::string_view>{kId} : std::nullopt;
+
+    CHECK(box.outbox().prepare(box.runs, run_id).empty());
+
+    CHECK(std::filesystem::is_directory(box.root / "outbox"));
+    CHECK(std::filesystem::is_empty(box.root / "outbox"));
+    CHECK_FALSE(std::filesystem::exists(box.root / "sent"));
+    CHECK_FALSE(std::filesystem::exists(box.runs));
+}
+
+TEST_CASE("outbox prepare: with a run ID, a run already queued or already sent is refused before "
+          "anything is made",
+          "[outbox][queue]")
+{
+    Box box;
+    const bool in_sent = GENERATE(false, true);
+    const path there = in_sent ? box.sent(kId) : box.queued(kId);
+    std::filesystem::create_directories(there);
+
+    CHECK(box.outbox().prepare(box.runs, kId) ==
+          "outbox error: " + utf8_of(there) + (in_sent ? ": already sent" : ": already queued") +
+              "; nothing was done");
+    // Without the ID (the run makes its own later), nothing is known to be in
+    // the way.
+    CHECK(box.outbox().prepare(box.runs, std::nullopt).empty());
+    CHECK(std::filesystem::is_empty(there));
+}
+
+TEST_CASE("outbox prepare: an outbox folder that can't be made is refused", "[outbox][queue]")
+{
+    Box box;
+    // The root is a file: nothing can be made under it.
+    spit(box.root, "x");
+
+    CHECK(box.outbox().prepare(box.runs, kId) ==
+          "outbox error: " + utf8_of(box.root / "outbox") +
+              ": the folder couldn't be made; nothing was done");
+}
+
+TEST_CASE("outbox prepare: a runs root on another volume than the outbox is refused; one whose "
+          "volume can't be told isn't",
+          "[outbox][queue]")
+{
+    Box box;
+    std::vector<std::pair<path, path>> asked;
+    std::optional<bool> answer = false;
+    box.files.same_volume = [&](const path& a, const path& b) {
+        asked.emplace_back(a, b);
+        return answer;
+    };
+
+    CHECK(box.outbox().prepare(box.runs, kId) ==
+          "outbox error: " + utf8_of(box.runs) + ": not on the same volume as " +
+              utf8_of(box.root / "outbox") + "; nothing was done");
+
+    REQUIRE(asked.size() == 1);
+    CHECK(asked[0].first == box.runs);
+    CHECK(asked[0].second == box.root / "outbox");
+    answer = std::nullopt;
+    CHECK(box.outbox().prepare(box.runs, kId).empty());
+    answer = true;
+    CHECK(box.outbox().prepare(box.runs, kId).empty());
+    CHECK(asked.size() == 3);
+}
+
 // --- list -----------------------------------------------------------------------------
 
 TEST_CASE("outbox list: a root that isn't there is empty", "[outbox][list]")
@@ -529,6 +604,11 @@ TEST_CASE("outbox flush: a file that isn't what the run signed is never sent; th
             relist([](json& r) { r["attachments"][0]["name"] = "manifest.json"; })},
         Row{"an attachment gone", "items.csv", true,
             [](const path& f) { std::filesystem::remove(f / "items.csv"); }},
+        Row{"a folder in an attachment's place", "items.csv", true,
+            [](const path& f) {
+                std::filesystem::remove(f / "items.csv");
+                std::filesystem::create_directory(f / "items.csv");
+            }},
         Row{"an attachment longer", "veeam-session.log", true,
             [](const path& f) { spit(f / "veeam-session.log", std::string(200, 'x')); }},
         Row{"an attachment shorter", "items.csv", true,
@@ -562,6 +642,73 @@ TEST_CASE("outbox flush: a file that isn't what the run signed is never sent; th
     CHECK_FALSE(manifest.last_attempt_at);
     CHECK_FALSE(manifest.next_attempt_at);
     CHECK_FALSE(std::filesystem::exists(box.sent(kId)));
+}
+
+TEST_CASE("outbox flush: a changed run's manifest is written once; the next flush finds the "
+          "same text and rewrites nothing",
+          "[outbox][flush]")
+{
+    Box box;
+    const path folder = box.queue_run(kId);
+    spit(folder / "items.csv", "index");
+    int writes = 0;
+    box.files.write_manifest = [&](const path& file, std::string_view text) {
+        ++writes;
+        spit(file, text);
+        return true;
+    };
+    FakeUploader uploader;
+
+    const rp::FlushReport first = box.outbox().flush(uploader, at(100));
+    const rp::FlushReport second = box.outbox().flush(uploader, at(200));
+
+    CHECK(writes == 1);
+    CHECK(first.out == Lines{"kept run-0001: folder_changed"});
+    CHECK(second.out == first.out);
+    CHECK(second.err == first.err);
+    CHECK(second.errors);
+    CHECK(box.manifest_of(folder).last_error == "folder_changed");
+    CHECK(uploader.runs.empty());
+}
+
+TEST_CASE("outbox flush: a file that is there but can't be read now is said so, never called "
+          "changed; nothing is sent, nothing is written, and the next flush tries again",
+          "[outbox][flush]")
+{
+    const std::string file =
+        GENERATE("result.json", "signature.json", "timestamp.tst", "items.csv");
+    CAPTURE(file);
+    Box box;
+    const path folder = box.queue_run(kId);
+    const std::string manifest_before = *slurp(folder / "manifest.json");
+    int writes = 0;
+    box.files.write_manifest = [&](const path&, std::string_view) {
+        ++writes;
+        return true;
+    };
+    FakeUploader uploader;
+    // Another handle holds the file open and shares nothing: it is there, a
+    // file, and can't be opened to read.
+    const HANDLE holder = CreateFileW((folder / file).c_str(), GENERIC_READ, 0, nullptr,
+                                      OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    REQUIRE(holder != INVALID_HANDLE_VALUE);
+
+    const rp::FlushReport report = box.outbox().flush(uploader, at(100));
+
+    CloseHandle(holder);
+    CHECK(uploader.runs.empty());
+    CHECK(report.errors);
+    CHECK(report.err ==
+          Lines{"outbox error: " + utf8_of(folder) + ": " + file + " couldn't be read"});
+    CHECK(report.out == Lines{"kept run-0001: not_read"});
+    CHECK(report.queued == 1);
+    CHECK(writes == 0);
+    CHECK(*slurp(folder / "manifest.json") == manifest_before);
+    CHECK(box.manifest_of(folder).attempts == 0);
+    CHECK_FALSE(box.manifest_of(folder).last_error);
+    // Readable again, it is sent.
+    CHECK(box.outbox().flush(uploader, at(200)).out == Lines{"sent run-0001"});
+    CHECK(uploader.runs == std::vector<std::string>{kId});
 }
 
 TEST_CASE("outbox flush: a folder under outbox that holds no result.json is no queued run, and "

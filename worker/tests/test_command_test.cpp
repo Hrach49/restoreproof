@@ -3039,12 +3039,11 @@ TEST_CASE("test --outbox: a root that isn't a UTF-8 path is a config error befor
     CHECK(lab.make_connector_calls == 0);
 }
 
-TEST_CASE("test --outbox: a run already queued or already sent is said; its folder stays in the "
-          "runs root, complete, and the status stays",
+TEST_CASE("test --outbox: with --run-id, a run already queued or already sent is refused once the "
+          "config is read, before the secrets; nothing is done",
           "[test_command][outbox]")
 {
     TestLab lab;
-    lab.fake.pool.mail = {carol_mail(1)};
     const OutboxRun outbox(lab);
     const bool in_sent = GENERATE(false, true);
     const std::filesystem::path there = in_sent ? outbox.sent() : outbox.queued();
@@ -3053,13 +3052,77 @@ TEST_CASE("test --outbox: a run already queued or already sent is said; its fold
     const Run run = lab.run(outbox.args);
 
     CHECK(run.exit_code == rp::exit_code::config);
+    CHECK(run.out.empty());
+    CHECK(run.err == "outbox error: " + utf8(there) +
+                         (in_sent ? ": already sent" : ": already queued") +
+                         "; nothing was done\n");
+    CHECK(lab.load_secrets_calls == 0);
+    CHECK(lab.lock_calls == 0);
+    CHECK(lab.make_connector_calls == 0);
+    CHECK_FALSE(std::filesystem::exists(lab.evidence_root()));
+    CHECK(std::filesystem::is_empty(there));
+}
+
+TEST_CASE("test --outbox: an outbox folder that can't be made, or an outbox on another volume "
+          "than the runs root, is refused before the secrets; nothing is done",
+          "[test_command][outbox]")
+{
+    TestLab lab;
+    const OutboxRun outbox(lab);
+    std::string expected;
+    SECTION("the outbox root is a file")
+    {
+        lab.dir.write("rp", "a file");
+        expected = "outbox error: " + utf8(outbox.root_path / "outbox") +
+                   ": the folder couldn't be made; nothing was done\n";
+    }
+    SECTION("another volume")
+    {
+        lab.outbox_files.same_volume = [](const std::filesystem::path&,
+                                          const std::filesystem::path&) {
+            return std::optional<bool>{false};
+        };
+        expected = "outbox error: " + utf8(lab.evidence_root()) + ": not on the same volume as " +
+                   utf8(outbox.root_path / "outbox") + "; nothing was done\n";
+    }
+
+    const Run run = lab.run(outbox.args);
+
+    CHECK(run.exit_code == rp::exit_code::config);
+    CHECK(run.out.empty());
+    CHECK(run.err == expected);
+    CHECK(lab.load_secrets_calls == 0);
+    CHECK(lab.lock_calls == 0);
+    CHECK(lab.make_connector_calls == 0);
+    CHECK_FALSE(std::filesystem::exists(lab.evidence_root()));
+}
+
+TEST_CASE("test --outbox: a run already queued or already sent when the run ends (the ID the run "
+          "made itself) is said; its folder stays in the runs root, complete, and the status stays",
+          "[test_command][outbox]")
+{
+    TestLab lab;
+    lab.fake.pool.mail = {carol_mail(1)};
+    const OutboxRun outbox(lab);
+    // Without --run-id the check before the run has no ID to look for: the
+    // one at the end is what catches it.
+    const Args args{"--mail",     "2",  "--sp",     "1",           "--od",     "0",
+                    "--evidence", outbox.evidence, "--outbox", outbox.root};
+    const bool in_sent = GENERATE(false, true);
+    const std::filesystem::path there =
+        in_sent ? outbox.sent(kGeneratedRunId) : outbox.queued(kGeneratedRunId);
+    std::filesystem::create_directories(there);
+
+    const Run run = lab.run(args);
+
+    CHECK(run.exit_code == rp::exit_code::config);
     CHECK(run.err == "outbox error: " + utf8(there) +
                          (in_sent ? ": already sent\n" : ": already queued\n"));
     CHECK_THAT(run.out, ContainsSubstring("\nstatus pass: "));
-    CHECK_THAT(run.out, EndsWith(signed_lines(lab.run_folder())));
+    CHECK_THAT(run.out, EndsWith(signed_lines(lab.run_folder(kGeneratedRunId))));
     CHECK_THAT(run.out, !ContainsSubstring("queued "));
-    CHECK(names_in(lab.run_folder()) == kSignedFolder);
-    CHECK(rp::to_string(verify_folder(lab.run_folder()).word) == "verified");
+    CHECK(names_in(lab.run_folder(kGeneratedRunId)) == kSignedFolder);
+    CHECK(rp::to_string(verify_folder(lab.run_folder(kGeneratedRunId)).word) == "verified");
     CHECK(std::filesystem::is_empty(there));
 }
 
@@ -3121,7 +3184,9 @@ TEST_CASE("test --outbox: a run without a result.json is never queued", "[test_c
                          ": the result couldn't be signed; no result.json was written\n");
     CHECK_THAT(run.out, !ContainsSubstring("queued "));
     CHECK(names_in(lab.run_folder()) == kTextFiles);
-    CHECK_FALSE(std::filesystem::exists(outbox.root_path));
+    // <root>\outbox was made before the run; nothing went into it.
+    CHECK(std::filesystem::is_empty(outbox.root_path / "outbox"));
+    CHECK_FALSE(std::filesystem::exists(outbox.root_path / "sent"));
 }
 
 TEST_CASE("test --outbox: a run that got no token is queued as not timestamped, with the TSA's "

@@ -10,6 +10,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <string>
 
 namespace {
@@ -106,6 +107,30 @@ TEST_CASE("folder ops: making a folder makes the levels above it; a file in the 
     const path file = dir.write("file", "x");
     CHECK_FALSE(rp::make_folder(file));
     CHECK_FALSE(rp::make_folder(file / "under"));
+}
+
+TEST_CASE("folder ops: two paths under one folder are on one volume, whether or not they are "
+          "there yet, and however the path is written",
+          "[folder_ops][outbox]")
+{
+    const rp::test::TempDir dir;
+
+    CHECK(rp::same_volume(dir.path(), dir.path() / "not" / "yet") == std::optional<bool>{true});
+    CHECK(rp::same_volume(dir.path() / "a", dir.path() / "b") == std::optional<bool>{true});
+    // The extended-length form of one of them names the same volume.
+    CHECK(rp::same_volume(dir.path(), path{LR"(\\?\)" + dir.path().native()}) ==
+          std::optional<bool>{true});
+
+    // A drive no volume is mounted at can't be told, which is no refusal.
+    const DWORD drives = GetLogicalDrives();
+    for (wchar_t letter = L'A'; letter <= L'Z'; ++letter) {
+        if ((drives & (1u << (letter - L'A'))) == 0) {
+            const path elsewhere = std::wstring{letter} + L":\\runs\\one";
+            CHECK_FALSE(rp::same_volume(dir.path(), elsewhere).has_value());
+            CHECK_FALSE(rp::same_volume(elsewhere, dir.path()).has_value());
+            break;
+        }
+    }
 }
 
 TEST_CASE("folder ops: what is at a path is nothing, a folder, or anything else",

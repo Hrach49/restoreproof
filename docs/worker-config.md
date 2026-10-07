@@ -48,7 +48,7 @@ host name.
 | `veeam_cert_sha256` | no | (not set) | 64 hexadecimal digits in any case, no separators; needs `veeam_ca_file`: see below | The SHA-256 of Veeam's REST certificate, as Windows shows it (`GetCertHashString('SHA256')`). `veeam_ca_file` must hold that certificate. With both set, the Worker trusts exactly that certificate's key and skips only the host-name check, which Veeam's default certificate can never pass. Not a secret. |
 | `tsa_url` | no | (not set: `http://timestamp.digicert.com`) | an `http://` or `https://` URL, no user name, password, query or fragment; needs `tsa_ca_file` | The RFC 3161 timestamp authority `rpworker test --evidence` asks (W4.4). Plain HTTP is allowed for this key alone: see "The timestamp authority" below. |
 | `tsa_ca_file` | no | (not set: the embedded DigiCert root) | absolute path of a readable file | PEM file with the certificate(s) a timestamp token must chain to. Without it, the root embedded from `shared/tsa/tsa-ca.pem`. |
-| `cloud_ca_file` | no | (not set) | absolute path of a readable file | PEM file with the certificate(s) `cloud_url`'s server certificate must chain to, trusted for the Cloud instead of the Windows certificate store (W4.6): for a Cloud behind a private CA. `cloud_url` stays `https://`, the host name is still checked, and TLS verification can't be turned off. See "`rpworker outbox`". |
+| `cloud_ca_file` | no | (not set) | absolute path of a readable PEM file that holds at least one certificate | PEM file with the certificate(s) `cloud_url`'s server certificate must chain to, trusted for the Cloud instead of the Windows certificate store (W4.6): for a Cloud behind a private CA. `cloud_url` stays `https://`, the host name is still checked, and TLS verification can't be turned off. See "`rpworker outbox`". |
 | `screenshots_enabled` | no | `false` | `true` or `false`: see below | The client's screenshot setting: whether a run that writes a run folder asks for a picture of Veeam's restore session. Off by default. |
 
 At least one of `sample_mail`, `sample_sp` and `sample_od` must be above 0.
@@ -1339,15 +1339,27 @@ now.) Nothing is uploaded by `test`: `rpworker outbox flush` does that. A run of
 with a `result.json` is queued; a run without one (an `evidence error`, a `result_invalid`
 run) is not, and says nothing of the outbox.
 
-A folder that can't be queued stays in `<dir>`, complete and as it is. One line on stderr, the
-status unchanged, an exit code of 0 becoming 1:
+**Before the run.** Once the config is read and before the secrets, the mutex and any Veeam
+call, a run whose folder couldn't be queued is refused, so no restore is made for a folder
+that would then be stranded in `<dir>` (the W4.6 code review, finding 1). Exit 1, no run line,
+nothing done (`<root>\outbox` is made, and left, empty):
 
 | stderr | When |
 |---|---|
-| `config error: --outbox <root>: not a UTF-8 path` | before the secrets; nothing is done |
-| `outbox error: <root>\outbox\<run_id>: already queued` | a folder of that name is in the outbox |
-| `outbox error: <root>\sent\<run_id>: already sent` | a folder of that name is under `sent` |
-| `outbox error: <root>\outbox: the folder couldn't be made` | |
+| `config error: --outbox <root>: not a UTF-8 path` | |
+| `outbox error: <root>\outbox\<run_id>: already queued; nothing was done` | with `--run-id`: a folder of that name is in the outbox |
+| `outbox error: <root>\sent\<run_id>: already sent; nothing was done` | with `--run-id`: a folder of that name is under `sent` |
+| `outbox error: <root>\outbox: the folder couldn't be made; nothing was done` | |
+| `outbox error: <dir>: not on the same volume as <root>\outbox; nothing was done` | the rename at the end would be a copy. A volume Windows can't name (a drive that isn't there) isn't refused here; the run folder's own check is |
+
+**After the run.** A folder that still can't be queued stays in `<dir>`, complete and as it
+is. One line on stderr, the status unchanged, an exit code of 0 becoming 1:
+
+| stderr | When |
+|---|---|
+| `outbox error: <root>\outbox\<run_id>: already queued` | a run without `--run-id`, whose ID the check before the run didn't have |
+| `outbox error: <root>\sent\<run_id>: already sent` | likewise |
+| `outbox error: <root>\outbox: the folder couldn't be made` | taken away during the run |
 | `outbox error: <dir>\<run_id>: couldn't be moved to <root>\outbox\<run_id>: not on the same volume` | the rename would be a copy |
 | `outbox error: <dir>\<run_id>: couldn't be moved to <root>\outbox\<run_id> (error <n>)` | Windows refused the rename; `<n>` is its error code |
 | `outbox error: <root>\outbox\<run_id>\manifest.json: could not be written; the next flush makes it` | the folder is queued all the same (`queued ...` is printed) |
@@ -1377,6 +1389,7 @@ stdout, one line per run and then the counts:
 | `kept <run_id>: <code>; attempt <n>, next at <time>` | the upload failed; tried again at the first flush at or after `<time>` |
 | `waiting <run_id>: next at <time>` | not due yet; nothing was sent |
 | `kept <run_id>: folder_changed` | a file isn't what the run signed; never sent (below) |
+| `kept <run_id>: not_read` | a file of the folder is there but couldn't be opened just now (another process holds it); nothing is recorded, and the next flush tries again |
 | `moved <run_id>` | uploaded by an earlier flush that couldn't move it; moved now |
 | `<n> queued, <m> sent` | what is under `outbox\` and `sent\` afterwards |
 
@@ -1391,7 +1404,8 @@ stderr:
 |---|---|
 | `outbox error: another flush is running; nothing was done` | exit 3 |
 | `outbox error: <root>: the outbox can't be read` | `outbox` or `sent` under the root is no folder, or can't be listed; exit 1 |
-| `outbox error: <folder>: <file> changed since it was signed` | the file is missing, or isn't the bytes the run signed. The run is never sent and never deleted: look at the folder, and `rpworker signer verify` it |
+| `outbox error: <folder>: <file> changed since it was signed` | the file is missing, or isn't the bytes the run signed. The run is never sent and never deleted: look at the folder, and `rpworker signer verify` it. Its manifest's `last_error` becomes `folder_changed`, written once, not at every flush |
+| `outbox error: <folder>: <file> couldn't be read` | the file is there and couldn't be opened (another process holds it): not a change, nothing is written, the next flush tries again |
 | `outbox error: <folder>: no result.json; not a queued run` | a folder under `outbox\` that no run finished; left alone |
 | `outbox error: <root>\sent\<run_id>: already sent` | a folder of that name is under `sent`; not sent again |
 | `outbox error: <folder>: uploaded, but couldn't be moved to sent (error <n>)` | the next flush moves it and doesn't upload again |
@@ -1402,8 +1416,8 @@ stderr:
 | `outbox warning: <folder>: couldn't be removed` | a sent run that should have been pruned |
 | `outbox warning: the outbox holds <n> MB, over the 500 MB cap` | the queue alone is over the cap; nothing queued is ever deleted |
 
-Exit codes: 0 when no run is left under `outbox\`; 3 when one is (kept, waiting, changed, or
-another flush running); 1 for a config error (`config error: ...`: the config, a `--config`,
+Exit codes: 0 when no run is left under `outbox\`; 3 when one is (kept, waiting, changed, not
+read, or another flush running); 1 for a config error (`config error: ...`: the config, a `--config`,
 `--outbox` or `--record` path that isn't UTF-8, a `--record` folder that isn't new or empty),
 for a root that can't be read, for an incomplete recording, and, when nothing stays queued,
 for any other `outbox error` line; 64 for a command line it doesn't understand.
@@ -1415,7 +1429,11 @@ With `--record <dir>` the exchange with the Cloud is written under `cloud/`: the
 certificate store. With `cloud_ca_file` set it is verified against that PEM file instead: for
 a Cloud whose certificate chains to a private CA, and for the lab's stub Cloud
 (`docs/testing.md`, "The outbox by hand"). Nothing is relaxed: `cloud_url` must be `https://`
-and the certificate must name its host.
+and the certificate must name its host. The file must open and hold at least one PEM
+certificate: every command that reads the config refuses one that is empty, DER or cut off
+(`config error: <config>: config key "cloud_ca_file" names a file that holds no certificate
+(PEM)`, exit 1), rather than every flush ending `upload_unreachable` for good (the W4.6 code
+review, finding 2).
 
 ### `outbox list`
 

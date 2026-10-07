@@ -1,8 +1,6 @@
 #include <rp/config.hpp>
 #include <rp/secrets.hpp>
 
-#include "test_support.hpp"
-
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
 
@@ -11,158 +9,28 @@
 #include <string_view>
 #include <vector>
 
-namespace {
-
-// The field of Secrets that `name` fills.
-const std::optional<std::string>& field_for(const rp::Secrets& secrets, std::string_view name)
-{
-    if (name == rp::kEnvVeeamUsername) {
-        return secrets.veeam_username;
-    }
-    if (name == rp::kEnvVeeamPassword) {
-        return secrets.veeam_password;
-    }
-    if (name == rp::kEnvGraphCertPfxBase64) {
-        return secrets.graph_cert_pfx_base64;
-    }
-    if (name == rp::kEnvGraphCertPassword) {
-        return secrets.graph_cert_password;
-    }
-    return secrets.signing_key_base64;
-}
-
-} // namespace
-
-TEST_CASE("the secret variables are the five documented names", "[secrets]")
+TEST_CASE("the secrets are the five documented names, the vault's (W4.5)", "[secrets]")
 {
     // The Graph app signs in with a certificate, not a client secret (W2.1);
-    // the signing key is the last (W4.3).
-    REQUIRE(rp::kSecretEnvVars.size() == 5);
-    REQUIRE(rp::kSecretEnvVars[0] == "RP_VEEAM_USERNAME");
-    REQUIRE(rp::kSecretEnvVars[1] == "RP_VEEAM_PASSWORD");
-    REQUIRE(rp::kSecretEnvVars[2] == "RP_GRAPH_CERT_PFX_BASE64");
-    REQUIRE(rp::kSecretEnvVars[3] == "RP_GRAPH_CERT_PASSWORD");
-    REQUIRE(rp::kSecretEnvVars[4] == "RP_SIGNING_KEY_BASE64");
-    REQUIRE(rp::kEnvSigningKeyBase64 == "RP_SIGNING_KEY_BASE64");
-}
-
-TEST_CASE("load_secrets_from_env leaves an unset or empty variable empty", "[secrets]")
-{
-    const std::string_view name = GENERATE(rp::kEnvVeeamUsername, rp::kEnvVeeamPassword,
-                                           rp::kEnvGraphCertPfxBase64, rp::kEnvGraphCertPassword,
-                                           rp::kEnvSigningKeyBase64);
-    // On Windows, setting a variable to "" through the CRT removes it.
-    const std::optional<std::string> value = GENERATE(std::optional<std::string>{},
-                                                      std::optional<std::string>{""});
-    CAPTURE(name, value.has_value());
-    const rp::test::ScopedEnv env(name, value);
-
-    REQUIRE_FALSE(field_for(rp::load_secrets_from_env(), name).has_value());
-}
-
-TEST_CASE("load_secrets_from_env reads each variable into its own field", "[secrets]")
-{
-    const rp::test::ScopedEnv user(rp::kEnvVeeamUsername, "user-5b1a");
-    const rp::test::ScopedEnv password(rp::kEnvVeeamPassword, "password-5b1a");
-    const rp::test::ScopedEnv pfx(rp::kEnvGraphCertPfxBase64, "pfx-5b1a");
-    const rp::test::ScopedEnv pfx_password(rp::kEnvGraphCertPassword, "pfx-password-5b1a");
-    const rp::test::ScopedEnv signing_key(rp::kEnvSigningKeyBase64, "signing-key-5b1a");
-
-    const rp::Secrets secrets = rp::load_secrets_from_env();
-    REQUIRE(secrets.veeam_username == "user-5b1a");
-    REQUIRE(secrets.veeam_password == "password-5b1a");
-    REQUIRE(secrets.graph_cert_pfx_base64 == "pfx-5b1a");
-    REQUIRE(secrets.graph_cert_password == "pfx-password-5b1a");
-    REQUIRE(secrets.signing_key_base64 == "signing-key-5b1a");
-}
-
-TEST_CASE("load_secrets_from_env reads a variable when the others are unset", "[secrets]")
-{
-    const std::string_view name = GENERATE(rp::kEnvVeeamUsername, rp::kEnvVeeamPassword,
-                                           rp::kEnvGraphCertPfxBase64, rp::kEnvGraphCertPassword,
-                                           rp::kEnvSigningKeyBase64);
-    CAPTURE(name);
-    const rp::test::ScopedEnv user(rp::kEnvVeeamUsername, std::nullopt);
-    const rp::test::ScopedEnv password(rp::kEnvVeeamPassword, std::nullopt);
-    const rp::test::ScopedEnv pfx(rp::kEnvGraphCertPfxBase64, std::nullopt);
-    const rp::test::ScopedEnv pfx_password(rp::kEnvGraphCertPassword, std::nullopt);
-    const rp::test::ScopedEnv signing_key(rp::kEnvSigningKeyBase64, std::nullopt);
-    const rp::test::ScopedEnv env(name, "value with spaces & symbols = !");
-
-    const rp::Secrets secrets = rp::load_secrets_from_env();
-    for (const std::string_view other : rp::kSecretEnvVars) {
-        CAPTURE(other);
-        if (other == name) {
-            REQUIRE(field_for(secrets, other) == "value with spaces & symbols = !");
-        } else {
-            REQUIRE_FALSE(field_for(secrets, other).has_value());
-        }
+    // the signing key is the last (W4.3). No RP_* variable since W4.5.
+    REQUIRE(rp::kSecretNames.size() == 5);
+    REQUIRE(rp::kSecretNames[0] == "veeam_username");
+    REQUIRE(rp::kSecretNames[1] == "veeam_password");
+    REQUIRE(rp::kSecretNames[2] == "graph_cert_pfx_base64");
+    REQUIRE(rp::kSecretNames[3] == "graph_cert_password");
+    REQUIRE(rp::kSecretNames[4] == "signing_key_base64");
+    REQUIRE(rp::kNameSigningKeyBase64 == "signing_key_base64");
+    for (const std::string_view name : rp::kSecretNames) {
+        CAPTURE(name);
+        REQUIRE_FALSE(name.starts_with("RP_"));
     }
 }
 
-TEST_CASE("load_secrets_from_env reads a PFX of several kilobytes whole", "[secrets]")
+TEST_CASE("not_in_vault is one fixed sentence naming the secret", "[secrets]")
 {
-    // A 4096-bit key with its certificate chain is a few KB of Base64; the
-    // variable may hold up to 32767 characters.
-    std::string pfx;
-    while (pfx.size() < 12000) {
-        pfx += "MIIKXAIBAzCCChIGCSqGSIb3DQEHAaCCCgMEggn/+/==";
-    }
-    const rp::test::ScopedEnv env(rp::kEnvGraphCertPfxBase64, pfx);
-
-    REQUIRE(rp::load_secrets_from_env().graph_cert_pfx_base64 == pfx);
-}
-
-TEST_CASE("load_secrets_from_env reads a value outside the ANSI code page as UTF-8", "[secrets]")
-{
-    // Cyrillic zhe (U+0436) isn't in cp1252; the euro sign (U+20AC)
-    // is 0x80 in cp1252, so a narrow read would return it unconverted.
-    const rp::test::ScopedEnv password(rp::kEnvVeeamPassword, L"p\u0436ss\u20AC");
-
-    REQUIRE(rp::load_secrets_from_env().veeam_password == "p\xD0\xB6ss\xE2\x82\xAC");
-}
-
-TEST_CASE("load_secrets_from_env rejects a value that isn't valid Unicode, without showing it",
-          "[secrets]")
-{
-    const std::string_view name = GENERATE(rp::kEnvVeeamUsername, rp::kEnvVeeamPassword,
-                                           rp::kEnvGraphCertPfxBase64, rp::kEnvGraphCertPassword,
-                                           rp::kEnvSigningKeyBase64);
-    CAPTURE(name);
-    // An unpaired surrogate: no UTF-8 string holds it, so any conversion would
-    // change the secret.
-    const rp::test::ScopedEnv env(name, std::wstring{L"SENTINEL-c2e0"} + L'\xD800');
-
-    try {
-        rp::load_secrets_from_env();
-        FAIL("load_secrets_from_env accepted an unpaired surrogate");
-    } catch (const rp::ConfigError& e) {
-        REQUIRE(e.key() == name);
-        REQUIRE(std::string{e.what()} ==
-                "environment variable " + std::string{name} + " is not valid Unicode");
-    }
-}
-
-TEST_CASE("ScopedEnv sets and reads back a value outside the ANSI code page", "[secrets]")
-{
-    const std::string name = "RP_TEST_SCOPED_ENV_4a90";
-    const rp::test::ScopedEnv env(name, "p\xD0\xB6ss\xE2\x82\xAC");
-
-    REQUIRE(rp::test::get_env(name) == "p\xD0\xB6ss\xE2\x82\xAC");
-}
-
-TEST_CASE("ScopedEnv restores the variable it changed", "[secrets]")
-{
-    const std::string name = "RP_TEST_SCOPED_ENV_7c3d";
-    {
-        const rp::test::ScopedEnv outer(name, "outer");
-        {
-            const rp::test::ScopedEnv inner(name, "inner");
-            REQUIRE(rp::test::get_env(name) == "inner");
-        }
-        REQUIRE(rp::test::get_env(name) == "outer");
-    }
-    REQUIRE_FALSE(rp::test::get_env(name).has_value());
+    REQUIRE(rp::not_in_vault("veeam_username") == "veeam_username is not in the vault");
+    REQUIRE(rp::not_in_vault(rp::kNameSigningKeyBase64) ==
+            "signing_key_base64 is not in the vault");
 }
 
 TEST_CASE("mask_secret never reveals the value or its length", "[secrets]")
@@ -185,11 +53,11 @@ TEST_CASE("require_veeam_secrets names the first Veeam secret that is unset or e
 {
     using Secret = std::optional<std::string>;
     const auto [username, password, name] = GENERATE(table<Secret, Secret, std::string>({
-        {std::nullopt, "p", "RP_VEEAM_USERNAME"},
-        {std::string{}, "p", "RP_VEEAM_USERNAME"},
-        {std::nullopt, std::nullopt, "RP_VEEAM_USERNAME"},
-        {"u", std::nullopt, "RP_VEEAM_PASSWORD"},
-        {"u", std::string{}, "RP_VEEAM_PASSWORD"},
+        {std::nullopt, "p", "veeam_username"},
+        {std::string{}, "p", "veeam_username"},
+        {std::nullopt, std::nullopt, "veeam_username"},
+        {"u", std::nullopt, "veeam_password"},
+        {"u", std::string{}, "veeam_password"},
     }));
     const rp::Secrets secrets{username, password, std::nullopt, std::nullopt};
 
@@ -198,7 +66,7 @@ TEST_CASE("require_veeam_secrets names the first Veeam secret that is unset or e
         FAIL("require_veeam_secrets did not throw");
     } catch (const rp::ConfigError& e) {
         CHECK(e.key() == name);
-        CHECK(std::string{e.what()} == name + " is not set");
+        CHECK(std::string{e.what()} == name + " is not in the vault");
     }
 }
 

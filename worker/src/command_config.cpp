@@ -62,6 +62,19 @@ std::filesystem::path command_config_path(std::optional<std::string_view> config
     return std::move(*path);
 }
 
+std::filesystem::path command_vault_path(std::optional<std::string_view> vault_arg,
+                                         const std::function<std::filesystem::path()>& default_path)
+{
+    if (!vault_arg) {
+        return default_path();
+    }
+    std::optional<std::filesystem::path> path = path_from_utf8(*vault_arg);
+    if (!path) {
+        throw ConfigError("vault", "the --vault path is not valid UTF-8");
+    }
+    return std::move(*path);
+}
+
 std::shared_ptr<spdlog::logger> make_command_logger()
 {
     auto logger = std::make_shared<spdlog::logger>(

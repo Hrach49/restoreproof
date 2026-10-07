@@ -4,7 +4,9 @@
 #include <rp/cli.hpp>
 #include <rp/config.hpp>
 #include <rp/signer.hpp>
+#include <rp/vault.hpp>
 
+#include "command_config.hpp"
 #include "file_read.hpp"
 #include "path_utf8.hpp"
 
@@ -32,15 +34,16 @@ int answered(std::ostream& out, std::ostream& err, int code)
     return code;
 }
 
-// `rpworker signer public-key`.
-int run_public_key(std::ostream& out, std::ostream& err, const SignerCommandEnv& env)
+// `rpworker signer public-key [--vault <file>]`.
+int run_public_key(std::optional<std::string_view> vault_arg, std::ostream& out,
+                   std::ostream& err, const SignerCommandEnv& env)
 {
     // One return after the handler (see signer.cpp). Anything but a
     // ConfigError goes to run_cli, whose line never shows a message.
     Secrets secrets;
     std::optional<std::string> problem;
     try {
-        secrets = env.load_secrets();
+        secrets = env.load_secrets(command_vault_path(vault_arg, env.default_vault_path));
     } catch (const ConfigError& e) {
         problem = e.what();
     }
@@ -51,14 +54,14 @@ int run_public_key(std::ostream& out, std::ostream& err, const SignerCommandEnv&
     // The pipeline's two texts (run_pipeline.cpp), the first without its
     // "--evidence signs the result": no run is asked for here.
     if (!secrets.signing_key_base64 || secrets.signing_key_base64->empty()) {
-        err << "config error: " << kEnvSigningKeyBase64 << " is not set\n";
+        err << "config error: " << not_in_vault(kNameSigningKeyBase64) << '\n';
         return exit_code::config;
     }
     const std::optional<SigningKey> key = SigningKey::from_base64(*secrets.signing_key_base64);
     // The text isn't needed again, whatever it was.
     secure_wipe(*secrets.signing_key_base64);
     if (!key) {
-        err << "config error: " << kEnvSigningKeyBase64
+        err << "config error: " << kNameSigningKeyBase64
             << " is not an Ed25519 private key (Base64 of PKCS#8 DER)\n";
         return exit_code::config;
     }
@@ -226,14 +229,18 @@ int run_verify(const VerifyArgs& args, std::ostream& out, std::ostream& err)
 
 SignerCommandEnv default_signer_command_env()
 {
-    return {load_secrets_from_env};
+    return {default_vault_path, read_vault};
 }
 
 int run_signer_command(std::span<const std::string_view> args, std::ostream& out,
                        std::ostream& err, const SignerCommandEnv& env)
 {
-    if (args.size() == 1 && args[0] == "public-key") {
-        return run_public_key(out, err, env);
+    if (!args.empty() && args[0] == "public-key") {
+        const std::optional<CommandOptions> options = parse_options(args.subspan(1), {"--vault"});
+        const std::optional<std::string_view> vault = options ? options->value("--vault") : std::nullopt;
+        if (options && !(vault && vault->empty())) {
+            return run_public_key(vault, out, err, env);
+        }
     }
     if (!args.empty() && args[0] == "verify") {
         const std::optional<VerifyArgs> parsed = parse_verify_args(args.subspan(1));

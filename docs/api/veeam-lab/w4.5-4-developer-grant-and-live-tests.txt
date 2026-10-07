@@ -1,0 +1,40 @@
+W4.5 (#48) step 4: the developer's account (DESKTOP-P55CDUM\minas) reads the vault unelevated after one grant, 2026-10-07T01:18:31Z
+--- unelevated, before the grant (a scheduled task with /RL LIMITED: the same account, the standard token; its groups line shows Administrators as deny-only and a Medium label)
+BUILTIN\Administrators                                        Alias            S-1-5-32-544                                  Mandatory group, Enabled by default, Enabled group, Group owner
+Mandatory Label\High Mandatory Level                          Label            S-1-16-12288                                                                                                 
+vault C:\ProgramData\RestoreProof\vault.bin: ok
+veeam_username            **** (set)
+veeam_password            **** (set)
+graph_cert_pfx_base64     **** (set)
+graph_cert_password       **** (set)
+signing_key_base64        **** (set)
+exit=0
+--- rpworker vault grant <developer>   (elevated)
+granted read on C:\ProgramData\RestoreProof\vault.bin to DESKTOP-P55CDUM\minas
+vault ACL: C:\ProgramData\RestoreProof\vault.bin DESKTOP-P55CDUM\minas:(R); NT AUTHORITY\SYSTEM:(F); BUILTIN\Administrators:(F); OWNER RIGHTS:(F)
+--- unelevated, after the grant
+BUILTIN\Administrators                                        Alias            S-1-5-32-544                                  Mandatory group, Enabled by default, Enabled group, Group owner
+Mandatory Label\High Mandatory Level                          Label            S-1-16-12288                                                                                                 
+vault C:\ProgramData\RestoreProof\vault.bin: ok
+veeam_username            **** (set)
+veeam_password            **** (set)
+graph_cert_pfx_base64     **** (set)
+graph_cert_password       **** (set)
+signing_key_base64        **** (set)
+exit=0
+--- the read-only live tests, unelevated: RP_LIVE=1 and RP_LIVE_VEEAM_CA_FILE only, no secret in the environment
+BUILTIN\Administrators                                        Alias            S-1-5-32-544                                  Mandatory group, Enabled by default, Enabled group, Group owner
+Mandatory Label\High Mandatory Level                          Label            S-1-16-12288                                                                                                 
+All tests passed (392 assertions in 8 test cases)
+exit=0 
+
+--- note, after the run
+The "unelevated" task ran with a High integrity label and BUILTIN\Administrators enabled: on the lab
+machine UAC's Admin Approval Mode is off (HKLM\...\Policies\System EnableLUA=0,
+FilterAdministratorToken=0; the shell's token has TokenElevationType 1, no split), so every process
+of the developer's account is a full administrator and there is no limited token to run with
+(`runas /trustlevel:0x20000` exited 1 without starting the command, `schtasks /RL LIMITED` ran it
+elevated). So this file shows the grant applied and the read-only live tests passing from the vault
+with no secret in the environment, but not a read that the Administrators entry didn't already
+allow. The ACL's refusal of an account without an entry, and its admission after `vault grant`, are
+shown by the non-administrator probe in w4.5-5-other-account.txt, which is the same mechanism.

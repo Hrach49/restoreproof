@@ -15,6 +15,7 @@
 #include <rp/graph_command.hpp>
 #include <rp/http_client.hpp>
 #include <rp/secrets.hpp>
+#include <rp/vault.hpp>
 #include <rp/sha256.hpp>
 #include <rp/text_v1.hpp>
 
@@ -63,17 +64,8 @@ using rp::test::make_response;
 using rp::test::to_response;
 using namespace rp::test::graph_lab;
 
-const std::string kUsage = "usage: rpworker --version | rpworker config check [--config <path>] | "
-                           "rpworker veeam list [--config <path>] [--record <dir>] | "
-                           "rpworker graph list [--hash] [--config <path>] [--record <dir>] | "
-                           "rpworker restore [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] "
-                           "[--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] "
-                           "[--config <path>] [--record <dir>] | "
-                           "rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] "
-                           "[--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] "
-                           "[--config <path>] [--record <dir>] [--json <file> | --evidence <dir>] | "
-                           "rpworker signer public-key | "
-                           "rpworker signer verify <folder> --public-key <pem file> [--tsa-ca <pem file>]\n";
+// The usage line is rp::kCliUsage; cli_test.cpp holds its text.
+const std::string kUsage{rp::kCliUsage};
 
 // The download link's credential: in no output, error or log line.
 const std::string kTempauth = "v1.SENTINEL-command-tempauth";
@@ -131,8 +123,13 @@ struct Harness {
             ++default_path_calls;
             return config_path;
         };
-        env.load_secrets = [this] {
+        env.default_vault_path = [this] {
+            ++default_vault_calls;
+            return dir.path() / "default-vault.bin";
+        };
+        env.load_secrets = [this](const std::filesystem::path& vault) {
             ++load_secrets_calls;
+            vault_read = vault;
             return load_secrets();
         };
         env.make_graph_http = [this](std::shared_ptr<spdlog::logger> given)
@@ -231,6 +228,9 @@ struct Harness {
     std::function<rp::Secrets()> load_secrets = [] {
         return rp::Secrets{std::nullopt, std::nullopt, pfx_base64(), kPfxPassword};
     };
+    // W4.5: the vault the loader was given, and whether the default was asked.
+    std::filesystem::path vault_read;
+    int default_vault_calls = 0;
     std::function<std::unique_ptr<rp::IHttpClient>()> make_graph_http = [this] {
         return std::make_unique<rp::test::ForwardingHttpClient>(graph_http);
     };
@@ -410,12 +410,12 @@ TEST_CASE("rpworker graph list needs the certificate's secrets, before any reque
     };
     const Row row = GENERATE_COPY(
         Row{"no PFX", rp::Secrets{std::nullopt, std::nullopt, std::nullopt, kPfxPassword},
-            "config error: RP_GRAPH_CERT_PFX_BASE64 is not set\n"},
+            "config error: graph_cert_pfx_base64 is not in the vault\n"},
         Row{"an empty PFX", rp::Secrets{std::nullopt, std::nullopt, "", kPfxPassword},
-            "config error: RP_GRAPH_CERT_PFX_BASE64 is not set\n"},
+            "config error: graph_cert_pfx_base64 is not in the vault\n"},
         Row{"no password for a PFX that needs one",
             rp::Secrets{std::nullopt, std::nullopt, pfx_base64(), std::nullopt},
-            "config error: RP_GRAPH_CERT_PASSWORD is not set"});
+            "config error: graph_cert_password is not in the vault"});
     CAPTURE(row.name);
     Harness lab;
     lab.load_secrets = [&row] { return row.secrets; };
@@ -437,9 +437,7 @@ TEST_CASE("rpworker graph list reports a secret it can't read, and hides other f
     SECTION("a ConfigError")
     {
         Harness lab;
-        const rp::ConfigError error(std::string{rp::kEnvGraphCertPassword},
-                                    "environment variable RP_GRAPH_CERT_PASSWORD is not valid "
-                                    "Unicode");
+        const rp::VaultError error("C:\\v.bin: the vault file can't be read");
         lab.load_secrets = [error]() -> rp::Secrets { throw error; };
 
         const Run result = lab.run_list();
@@ -447,7 +445,23 @@ TEST_CASE("rpworker graph list reports a secret it can't read, and hides other f
         CHECK(result.exit_code == rp::exit_code::config);
         CHECK(result.out.empty());
         CHECK(result.err == "config error: " + std::string{error.what()} + "\n");
-        CHECK_THAT(result.err, ContainsSubstring("RP_GRAPH_CERT_PASSWORD"));
+        CHECK_THAT(result.err, ContainsSubstring("the vault file can't be read"));
+    }
+    SECTION("the vault --vault names, else the default one (W4.5)")
+    {
+        Harness lab;
+        lab.load_secrets = [] { return rp::Secrets{}; };
+        const std::string path_arg = utf8(lab.config_path);
+        Run result = lab.run(Args{"list", "--config", path_arg, "--vault", "C:\\x\\v.bin"});
+        CHECK(result.err == "config error: graph_cert_pfx_base64 is not in the vault\n");
+        CHECK(lab.vault_read == std::filesystem::path{"C:\\x\\v.bin"});
+        CHECK(lab.default_vault_calls == 0);
+        result = lab.run_list();
+        CHECK(lab.default_vault_calls == 1);
+        CHECK(lab.vault_read == lab.dir.path() / "default-vault.bin");
+        result = lab.run(Args{"list", "--config", path_arg, "--vault", "\xFF.bin"});
+        CHECK(result.exit_code == rp::exit_code::config);
+        CHECK(result.err == "config error: the --vault path is not valid UTF-8\n");
     }
     SECTION("anything else")
     {
@@ -1028,15 +1042,16 @@ TEST_CASE("rpworker graph list without a logger logs to stderr, never spdlog's d
 
 // --- The real environment ----------------------------------------------------------
 
-TEST_CASE("rpworker graph's real environment reads ProgramData and the process environment",
-          "[graph_command]")
+TEST_CASE("rpworker graph's real environment reads ProgramData and the vault", "[graph_command]")
 {
     const rp::GraphCommandEnv env = rp::default_graph_command_env();
 
     REQUIRE(env.default_config_path() == rp::default_config_path());
-    const rp::test::ScopedEnv pfx(rp::kEnvGraphCertPfxBase64, "pfx-3a7c");
-    const rp::test::ScopedEnv password(rp::kEnvGraphCertPassword, std::nullopt);
-    const rp::Secrets secrets = env.load_secrets();
+    REQUIRE(env.default_vault_path() == rp::default_vault_path());
+    const rp::test::TempDir dir;
+    const std::filesystem::path vault = dir.path() / "vault.bin";
+    rp::write_vault(vault, rp::Secrets{std::nullopt, std::nullopt, "pfx-3a7c", std::nullopt});
+    const rp::Secrets secrets = env.load_secrets(vault);
     REQUIRE(secrets.graph_cert_pfx_base64 == std::optional<std::string>{"pfx-3a7c"});
     REQUIRE_FALSE(secrets.graph_cert_password);
     // Real HttpClients; making them sends nothing.

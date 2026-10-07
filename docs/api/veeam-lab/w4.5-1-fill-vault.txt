@@ -1,0 +1,62 @@
+W4.5 (#48) step 1: the lab's vault filled from Credential Manager and the PFX file, 2026-10-07T00:58:48Z, elevated shell as DESKTOP-P55CDUM\minas
+--- vault.bin before: False
+--- .\lab\entra\fill-worker-vault.ps1
+set veeam_username in C:\ProgramData\RestoreProof\vault.bin
+set veeam_password in C:\ProgramData\RestoreProof\vault.bin
+set graph_cert_pfx_base64 in C:\ProgramData\RestoreProof\vault.bin
+set graph_cert_password in C:\ProgramData\RestoreProof\vault.bin
+set signing_key_base64 in C:\ProgramData\RestoreProof\vault.bin
+veeam_username
+veeam_password
+graph_cert_pfx_base64
+graph_cert_password
+signing_key_base64
+exit 0
+--- rpworker vault test
+vault C:\ProgramData\RestoreProof\vault.bin: ok
+veeam_username            **** (set)
+veeam_password            **** (set)
+graph_cert_pfx_base64     **** (set)
+graph_cert_password       **** (set)
+signing_key_base64        **** (set)
+exit 0
+--- icacls vault.bin
+C:\ProgramData\RestoreProof\vault.bin NT AUTHORITY\SYSTEM:(F)
+                                      BUILTIN\Administrators:(F)
+                                      OWNER RIGHTS:(F)
+
+Successfully processed 1 files; Failed processing 0 files
+--- owner
+BUILTIN\Administrators
+--- file size: 4272 bytes
+--- rpworker config check --config <lab config> (the vault read as every command reads it)
+config file: C:\Users\minas\AppData\Local\RestoreProof\lab\config.json
+cloud_url                 https://localhost
+veeam_url                 https://localhost:4443
+veeam_org_name            RestoreProofLab.onmicrosoft.com
+graph_tenant_id           bcd6bd1a-ea42-489d-aa28-2c19a44ad146
+graph_client_id           737da5ef-baf2-4198-b009-e160d8ca77c9
+test_mailbox              restoretest@RestoreProofLab.onmicrosoft.com
+test_site_id              restoreprooflab.sharepoint.com,fe08085d-eb70-42e8-95a6-470189bd98eb,4ecaf399-cc0e-4d95-b3fe-cd091a09e689
+test_library_id           b!XQgI_nDr6EKVpkcBib2Y65nzyk4OzJVNs_7NCRoJ5omdBuz_5GU6TJ2irAhs-dr6
+test_onedrive_drive_id    b!wA9gbfhlEUitGAluxbfoNBr_z5gEtDhErm5pJ6bMwyXfZJ8a_dkCQ696RX0r7_U3
+test_onedrive_folder_id   01ZK75LGDGB6QOO3MGNFGYOY6C6VBDG5OH
+poll_interval_s           300
+heartbeat_interval_s      900
+sample_mail               5
+sample_sp                 5
+sample_od                 5
+log_level                 info
+veeam_ca_file             C:\restoreproof\worker\tests\fixtures\veeam\rest-certificate.pem
+veeam_cert_sha256         9FB19E0E604C9BE49F83D8E508EFA8EA0986A952377C783E5035CEA2D772A213
+tsa_url                   (not set)
+tsa_ca_file               (not set)
+screenshots_enabled       false
+secrets (vault C:\ProgramData\RestoreProof\vault.bin; values are never shown):
+veeam_username            **** (set)
+veeam_password            **** (set)
+graph_cert_pfx_base64     **** (set)
+graph_cert_password       **** (set)
+signing_key_base64        **** (set)
+exit 0
+--- no RP_* secret variable in this shell

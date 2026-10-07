@@ -1,4 +1,6 @@
 #include <rp/cli.hpp>
+#include <rp/secrets.hpp>
+#include <rp/vault.hpp>
 #include <rp/version.hpp>
 
 #include "test_support.hpp"
@@ -16,18 +18,20 @@ using Args = std::vector<std::string_view>;
 
 namespace {
 
-const std::string kUsage = "usage: rpworker --version | rpworker config check [--config <path>] | "
-                           "rpworker veeam list [--config <path>] [--record <dir>] | "
-                           "rpworker graph list [--hash] [--config <path>] [--record <dir>] | "
-                           "rpworker restore [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] "
-                           "[--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] "
-                           "[--config <path>] [--record <dir>] | "
-                           "rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] "
-                           "[--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] "
-                           "[--config <path>] [--record <dir>] "
-                           "[--json <file> | --evidence <dir>] | "
-                           "rpworker signer public-key | "
-                           "rpworker signer verify <folder> --public-key <pem file> [--tsa-ca <pem file>]\n";
+const std::string kUsage =
+    "usage: rpworker --version | rpworker config check [--config <path>] [--vault <file>] | "
+    "rpworker vault set|remove <name> [--vault <file>] | rpworker vault list|test [--vault <file>] | "
+    "rpworker vault grant <account> [--vault <file>] | "
+    "rpworker veeam list [--config <path>] [--vault <file>] [--record <dir>] | "
+    "rpworker graph list [--hash] [--config <path>] [--vault <file>] [--record <dir>] | "
+    "rpworker restore [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] "
+    "[--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--vault <file>] "
+    "[--record <dir>] | "
+    "rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] "
+    "[--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--vault <file>] "
+    "[--record <dir>] [--json <file> | --evidence <dir>] | "
+    "rpworker signer public-key [--vault <file>] | "
+    "rpworker signer verify <folder> --public-key <pem file> [--tsa-ca <pem file>]\n";
 
 const std::string kConfigJson = R"({
     "cloud_url": "https://cloud.example.invalid",
@@ -86,7 +90,24 @@ TEST_CASE("rpworker prints usage to stderr and exits 64 for a command line it do
         Args{"signer", "public-key", "extra"},
         Args{"signer", "verify"},
         Args{"signer", "verify", "folder"},
-        Args{"signer", "new-key"});
+        Args{"signer", "new-key"},
+        // W4.5: `signer public-key` takes --vault <file> and nothing else;
+        // `vault` needs a subcommand, `set`/`remove` a name, `grant` an
+        // account; `config check` takes --vault <file>.
+        Args{"signer", "public-key", "--vault"},
+        Args{"signer", "public-key", "--vault", ""},
+        Args{"signer", "public-key", "extra"},
+        Args{"vault"},
+        Args{"Vault", "list"},
+        Args{"vault", "set"},
+        Args{"vault", "grant"},
+        Args{"vault", "list", "--vault"},
+        Args{"config", "check", "--vault"},
+        Args{"config", "check", "--vault", "a", "--vault", "b"},
+        Args{"veeam", "list", "--vault"},
+        Args{"graph", "list", "--vault"},
+        Args{"restore", "--vault"},
+        Args{"test", "--vault"});
     CAPTURE(args);
 
     std::ostringstream out;
@@ -154,13 +175,23 @@ TEST_CASE("rpworker config check --config <file> checks that file", "[cli]")
     const rp::test::TempDir dir;
     const auto path = dir.write("config.json", kConfigJson);
     const std::string path_arg = rp::test::narrow(path.wstring());
-    const Args args{"config", "check", "--config", path_arg};
+    // W4.5: a vault of its own, so the check never reads ProgramData's.
+    const std::filesystem::path vault = dir.path() / "vault.bin";
+    rp::write_vault(vault, rp::Secrets{});
+    const std::string vault_arg = rp::test::narrow(vault.wstring());
+    const Args args{"config", "check", "--config", path_arg, "--vault", vault_arg};
 
     std::ostringstream out;
     std::ostringstream err;
     REQUIRE(rp::run_cli(args, out, err) == 0);
     REQUIRE(err.str().empty());
     REQUIRE(out.str().starts_with("config file: " + path_arg + "\n"));
+    REQUIRE(out.str().ends_with("secrets (vault " + vault_arg + "; values are never shown):\n"
+                                "veeam_username            (not set)\n"
+                                "veeam_password            (not set)\n"
+                                "graph_cert_pfx_base64     (not set)\n"
+                                "graph_cert_password       (not set)\n"
+                                "signing_key_base64        (not set)\n"));
 }
 
 TEST_CASE("rpworker's main() skips the program name and runs the rest", "[cli]")
@@ -196,8 +227,11 @@ TEST_CASE("rpworker's main() passes a path outside the ANSI code page on as UTF-
     const auto path =
         dir.write(std::filesystem::path(L"\u0442\u0435\u0441\u0442.json"), kConfigJson);
     const std::wstring wide_path = path.wstring();
+    const std::filesystem::path vault = dir.path() / "vault.bin";
+    rp::write_vault(vault, rp::Secrets{});
+    const std::wstring wide_vault = vault.wstring();
     const std::vector<const wchar_t*> argv{L"rpworker.exe", L"config", L"check", L"--config",
-                                           wide_path.c_str()};
+                                           wide_path.c_str(), L"--vault", wide_vault.c_str()};
 
     std::ostringstream out;
     std::ostringstream err;

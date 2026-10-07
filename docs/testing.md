@@ -50,6 +50,27 @@ with `build\dev\rptests.exe "[live]"` (which also prints what they found). Three
 four Graph's and one the sampler's dry run, which uses both (below); once `RP_LIVE=1` is set,
 each needs its variables below and fails, rather than skips, without them.
 
+**The secrets come from the vault (W4.5).** Every `[live]` test reads the Worker's five
+secrets as the Worker does, through `worker/tests/live_secrets.hpp`: `rp::read_vault` of the
+file `RP_LIVE_VAULT` names (a path, a switch like `RP_LIVE`, not a secret) or, without it, the
+default vault `%ProgramData%\RestoreProof\vault.bin`. No test reads a secret from the
+environment. The lab's vault is filled once with `lab\entra\fill-worker-vault.ps1` from an
+elevated shell ("The vault" in `lab/README.md`); its ACL admits SYSTEM, Administrators and the
+file's owner, so a read-only live test in an unelevated shell needs one `Read` entry for the
+developer's account, granted once from an elevated shell:
+
+```powershell
+.\worker\build\dev\rpworker.exe vault grant "$env:USERDOMAIN\$env:USERNAME"
+.\worker\build\dev\rpworker.exe vault test     # as the developer, unelevated: `vault ...: ok` and the five names
+```
+
+Chosen over elevating every read-only test because the grant is the mechanism the service
+itself uses and the lab should exercise it, an elevated shell is more privilege than a
+read-only test needs, and the lab's developer already holds every one of these values (in
+Credential Manager and the PFX file). Without the grant an unelevated test fails with
+`<file>: the vault file can't be read`. The two `[live][writes]` tests still need an elevated
+shell for the certificate export, as before.
+
 The three Veeam ones
 (`worker/tests/veeam_client_live_test.cpp`) each sign in, list organisations and restore
 points, and log out: W1.5's through `VeeamClient`, W1.6's through `rpworker veeam list`
@@ -62,7 +83,7 @@ call). They read:
 
 | Variable | Value |
 |---|---|
-| `RP_VEEAM_USERNAME`, `RP_VEEAM_PASSWORD` | the Veeam account (`MACHINE\user`), as the Worker reads them |
+| `RP_LIVE_VAULT` | the vault file holding `veeam_username` and `veeam_password` (`MACHINE\user`); default: the Worker's default vault |
 | `RP_LIVE_VEEAM_CA_FILE` | PEM of Veeam's REST certificate (required) |
 | `RP_LIVE_VEEAM_CERT_SHA256` | its SHA-256; default: the lab's |
 | `RP_LIVE_VEEAM_URL` | default `https://localhost:4443` |
@@ -75,7 +96,7 @@ one naming `Sites.Selected` for a site the app has no grant on. They read:
 
 | Variable | Value |
 |---|---|
-| `RP_GRAPH_CERT_PFX_BASE64`, `RP_GRAPH_CERT_PASSWORD` | the Worker app's certificate, as the Worker reads them (`rp/secrets.hpp`); set them for one session with `. .\lab\entra\set-worker-env.ps1` (`docs/worker-config.md`, "Microsoft Graph app") (required) |
+| `RP_LIVE_VAULT` | the vault file holding the Worker app's certificate, `graph_cert_pfx_base64` and `graph_cert_password` (`rp/secrets.hpp`), filled with `lab\entra\fill-worker-vault.ps1` (`docs/worker-config.md`, "Microsoft Graph app"); default: the Worker's default vault |
 | `RP_LIVE_GRAPH_TENANT_ID` | default: the lab tenant |
 | `RP_LIVE_GRAPH_CLIENT_ID` | default: "RestoreProof Worker" |
 | `RP_LIVE_GRAPH_MAILBOX` | default: `restoretest@`, inside the Mail scope |
@@ -134,18 +155,12 @@ To run the four Graph ones on the dev laptop (the PFX and its Credential Manager
    cd C:\restoreproof
    ```
 
-3. Put the certificate into this session. Type the leading dot and space:
-
-   ```powershell
-   . .\lab\entra\set-worker-env.ps1
-   ```
-
-   It prints `set RP_GRAPH_CERT_PFX_BASE64 and RP_GRAPH_CERT_PASSWORD for this session` and,
-   while the lab has no signing key, a second line starting `skipped RP_SIGNING_KEY_BASE64:`;
-   with a key (W4.3, `lab/README.md`, "The signing key") the one line `set
-   RP_GRAPH_CERT_PFX_BASE64, RP_GRAPH_CERT_PASSWORD and RP_SIGNING_KEY_BASE64 for this session`.
-   The live tests need no signing key. A red error names what is missing (the PFX file or the
-   Credential Manager entry) and sets nothing.
+3. Make sure the vault is filled and this account can read it (once; W4.5, "Live tests"
+   above): from an elevated shell `.\lab\entra\fill-worker-vault.ps1` (it ends with `vault
+   list` naming the five secrets, or four and a `skipped signing_key_base64:` line while the lab
+   has no signing key; the live tests need none) and `.\worker\build\dev\rpworker.exe vault
+   grant "$env:USERDOMAIN\$env:USERNAME"`. Then, in this shell, `.\worker\build\dev\rpworker.exe
+   vault test` must print `vault C:\ProgramData\RestoreProof\vault.bin: ok` and the names.
 4. Turn the live tests on for this session and run the Graph ones:
 
    ```powershell
@@ -160,15 +175,14 @@ To run the four Graph ones on the dev laptop (the PFX and its Credential Manager
    with `--hash`), and `All tests passed` for 4 test cases. To run them with everything else instead, run
    `ctest --preset dev` from `C:\restoreproof\worker` (the Veeam live tests then need their
    variables too).
-5. Remove the variables again, or close the window:
+5. Remove the switch again, or close the window:
 
    ```powershell
    Remove-Item Env:RP_LIVE
-   . .\lab\entra\set-worker-env.ps1 -Clear
    ```
 
-Nothing is written to disk, and PowerShell's history holds only the commands above, never a
-value: the script reads the PFX and the password itself.
+No secret is in the session: the tests read the vault, and PowerShell's history holds only the
+commands above.
 
 ### Live sample (dry run, read-only)
 
@@ -194,8 +208,8 @@ It prints the restore point, the selection, `to_json(record)` (the result's `sam
 seed, manifest SHA-256, cursors, canary IDs, pool sizes and hashes, the containers looked
 into), the expected set (`to_json(ExpectedSet)`, the result's `expected` object; the lab has
 no real files yet, so expect a file shortfall), how many entries each OneDrive's `Documents?parentId=root` listing held, and the number
-of GETs and POSTs. It needs the Veeam and Graph variables above (`RP_VEEAM_*`,
-`RP_LIVE_VEEAM_CA_FILE`, the Worker app's certificate), no elevation, plus two optional ones:
+of GETs and POSTs. It needs the vault (the Veeam account and the Worker app's certificate in
+it) and `RP_LIVE_VEEAM_CA_FILE` above, no elevation, plus two optional ones:
 
 | Variable | Value |
 |---|---|
@@ -224,7 +238,7 @@ RestoreProof run holds it, so a test never deletes a running restore's copies.
 
 `worker/tests/veeam_m365_restore_live_test.cpp` (W2.5, tag `[live][writes]`, ctest name
 `live restore: restore_sample restores 10 canaries into the lab's restore targets`) makes the
-`veeam_m365` connector through `default_connector_registry()` with the real secrets and
+`veeam_m365` connector through `default_connector_registry()` with the vault's secrets and
 `make_local_machine_cert_exporter()`. It lists the lab organisation's restore points and takes
 the newest. It then builds one spec from `lab/seed-manifest.json`:
 
@@ -258,8 +272,7 @@ Before running it:
 3. **Make sure no restore session of the Veeam account is still running.** The connector refuses
    to start if one is (`docs/api/veeam-m365/08-sweep-sessions.ps1` stops them).
 
-Run it from `C:\restoreproof\worker`, with the certificate variables set as in the Graph steps
-above:
+Run it from `C:\restoreproof\worker`, with the vault filled as in the Graph steps above:
 
 ```powershell
 $env:RP_LIVE = '1'
@@ -314,7 +327,7 @@ The 2026-10-02 run gave `w34-file-delete-404-itemnotfound.json` and
 `w34-mail-permanentdelete-403-cannotdeleteobject-repeat.json`; its 21:05 rerun the message
 GET's 200 behind the hand-shaped `w34-mail-get-200-purged-parentfolder.json`, whose
 `parentFolderId` and `w34-mail-purges-200-id.json`'s `id` come from a read-only probe of the same
-day. It needs the Graph certificate variables,
+day. It needs the vault (the Worker app's certificate in it, readable by this account),
 `RP_LIVE=1` and `RP_LIVE_RESTORE=1`, and no elevation. It deletes everything in the three
 targets, delivered mail in `restoretest` too. From a VS 2022 Developer PowerShell:
 
@@ -335,11 +348,10 @@ web apps, then run the cleanup test again. A delete refused with 403 means a wri
 missing or not yet active (`docs/security/graph-permissions.md`; Exchange may take up to two
 hours to apply a role change). The `restoretest` mailbox's Deleted Items, which may still hold
 copies from the hand cleanups before W3.4, is emptied once by hand; the Cleaner never reads it.
-Remove the variables when done:
+Remove the switches when done:
 
 ```powershell
 Remove-Item Env:RP_LIVE, Env:RP_LIVE_RESTORE, Env:RP_LIVE_EVIDENCE_FILE, Env:RP_LIVE_RECORD_DIR -ErrorAction SilentlyContinue
-. ..\lab\entra\set-worker-env.ps1 -Clear
 ```
 
 ### The restore credential under a service account (W4.12's probe)
@@ -373,9 +385,10 @@ targets; nothing was done`, exit 4). The targets needn't be empty first.
 
 1. Open `Developer PowerShell for VS 2022` (or PowerShell) with **Run as administrator**, and
    go to `C:\restoreproof\worker`.
-2. Set `RP_VEEAM_USERNAME` and `RP_VEEAM_PASSWORD` (the Veeam account, as for the Veeam live
-   tests), and the Graph certificate variables with `. ..\lab\entra\set-worker-env.ps1`.
-   The command checks all four are set before it calls Veeam.
+2. Make sure the vault holds the Veeam account and the Graph certificate
+   (`..\lab\entra\fill-worker-vault.ps1` once, from this elevated shell; `.\build\dev\rpworker.exe
+   vault list` shows the names). The command reads the vault and checks all four are there
+   before it calls Veeam; no variable is read.
 3. Optionally, see what is in the targets now (the clean before deletes it):
 
    ```powershell
@@ -402,8 +415,7 @@ targets; nothing was done`, exit 4). The targets needn't be empty first.
    exit code. The step timings' table (W3.5, `STEP TIME NOTE`, eleven rows) ends the output.
 5. Check with `rpworker graph list` that the targets are empty again (`0 item(s)` each and no
    `(... not listed)` line: the W3.4 Done-when). If not, see "When something is left" above.
-   Remove the variables when done (`. ..\lab\entra\set-worker-env.ps1 -Clear`, and the two
-   Veeam ones).
+   Nothing to remove: the secrets stayed in the vault.
 
 ### Test by hand (`rpworker test`, writes to the lab tenant)
 
@@ -436,7 +448,7 @@ real, non-canary files in the lab, so this comes after L1.8:
    Per type, `sample.<type>.random.pool_size` must be at least 5 distinct names or subjects, and
    `containers_eligible` as expected. Note the restore point ID it printed. The pool depends on
    the run ID (the folders it draws) and the restore point, so the run below reuses both.
-4. With the variables set as in "Restore by hand" step 2, run the test with that run ID and
+4. With the vault filled as in "Restore by hand" step 2, run the test with that run ID and
    restore point, and a `--json` file in a folder that exists:
 
    ```powershell
@@ -456,7 +468,7 @@ real, non-canary files in the lab, so this comes after L1.8:
 validates against the schema" (`docs/decisions.md` 2026-10-04, W4.1). The unit tests show it
 on the recorded lab; this is the same thing once against the live lab. Check the same things
 first as above (an elevated shell, no restore session still `Working`, no other RestoreProof
-run, the variables of "Restore by hand" step 2), then, from `worker\`:
+run, the vault of "Restore by hand" step 2), then, from `worker\`:
 
 ```powershell
 .\build\dev\rpworker.exe test --mail 10 --sp 10 --od 10 --run-id w41-done-when-1 --config <your config.json> --manifest ..\lab\seed-manifest.json --json C:\restoreproof-runs\w41-done-when-1.json
@@ -528,8 +540,9 @@ lab's signing key:
    uv run python -m seeder new-signing-key --public-key-out C:\restoreproof-runs\worker-signing.pub.pem
    ```
 
-2. In the elevated shell, from the repository's root, `. .\lab\entra\set-worker-env.ps1` must
-   print the three-variable line. Then from `worker\`:
+2. In the elevated shell, from the repository's root, `.\lab\entra\fill-worker-vault.ps1` must
+   end with `vault list` naming all five secrets, `signing_key_base64` among them (W4.5). Then
+   from `worker\`:
 
    ```powershell
    .\build\dev\rpworker.exe test --mail 10 --sp 10 --od 10 --run-id w43-done-when-1 --point <restore point ID> --config <your config.json> --manifest ..\lab\seed-manifest.json --evidence $env:ProgramData\RestoreProof\runs
@@ -574,6 +587,24 @@ full path of `shared	sa	sa-ca.pem`, and run again with another run ID: the same 
 exit code, one `timestamp warning: ... tsa_unreachable after 3 attempt(s)` on stderr, a folder
 without `timestamp.tst`, about 90 s later than usual.
 
+**The W4.5 Done-when run.** W4.5's Done-when is "no secret is read from the environment or a
+config file anywhere in the code" (`docs/decisions.md` 2026-10-07, W4.5): the unit tests inject
+secrets through each command's seam and the vault's own tests use files of their own; the live
+part is one run from the vault alone. Run on 2026-10-07 (`w45-done-when-1`: `status pass`, 30
+of 30, signed and `timestamped 2026-10-07T01:01:31Z`; evidence `docs/api/veeam-lab/w4.5-*`).
+From an elevated shell with no `RP_*` secret variable set: `.\lab\entra\fill-worker-vault.ps1`
+from the repository's root (five `set <name> in C:\ProgramData\RestoreProof\vault.bin` lines
+and `vault list`), `rpworker config check --config <config>` showing the five names from the
+vault, then the same command as W4.4's run above with a new run ID: it must end `signed ...`,
+`timestamped <time>` and the `evidence` line, exit 0, stderr empty, and `graph list` 0 in all
+three targets. Then the service account reads the same vault: the W4.12 harness once more
+(`docs/api/veeam-lab/w4.5-harness/w45-service-run.ps1`, the host serving nothing over its pipe)
+with `rpworker vault grant "NT SERVICE\RpSpikeProbe"` and the key file's ACE: `rpworker restore
+--mail 1 --sp 0 --od 0` as the virtual account, 1 of 1, `status pass`, exit 0; without the grant
+`config error: C:\ProgramData\RestoreProof\vault.bin: the vault file can't be read`, exit 1,
+before any Veeam call. Everything temporary is taken away by the harness's `Remove-W45Harness`;
+`vault.bin` stays.
+
 ### Verify a run folder by hand (W4.3)
 
 Read-only, offline, no config and no secret. The two tools must agree on the stdout line
@@ -581,8 +612,8 @@ Read-only, offline, no config and no secret. The two tools must agree on the std
 own.
 
 1. **The public key.** The file the Worker's key was exported to: `new-signing-key
-   --public-key-out <file>` in the lab, or, in a shell that has `RP_SIGNING_KEY_BASE64` (from
-   `worker\`, PowerShell 7):
+   --public-key-out <file>` in the lab, or, from the vault (from `worker\`, PowerShell 7; an
+   account the vault's ACL admits):
 
    ```powershell
    .\build\dev\rpworker.exe signer public-key > C:\restoreproof-runs\worker-signing.pub.pem
@@ -678,8 +709,8 @@ canary location to record a refusal.
 1. Pick a folder that doesn't exist yet, outside the repo (for example
    `$env:TEMP\rp-rec-<what>`). The command refuses a folder with anything in it, so a
    recording never lands on committed fixtures.
-2. Set the variables as for the live tests (the two Veeam ones, and for Graph
-   `. ..\lab\entra\set-worker-env.ps1`), then run the command with `--record`:
+2. With the vault filled as for the live tests (`..\lab\entra\fill-worker-vault.ps1`), run
+   the command with `--record`:
 
    ```powershell
    .\build\dev\rpworker.exe veeam list --config <your config.json> --record $env:TEMP\rp-rec-veeam-list

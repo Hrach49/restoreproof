@@ -10,8 +10,8 @@
 //
 // Environment (docs/testing.md):
 //   RP_LIVE=1
-//   RP_GRAPH_CERT_PFX_BASE64, RP_GRAPH_CERT_PASSWORD   the Worker app's
-//       certificate (rp/secrets.hpp; lab/entra/set-worker-env.ps1 sets them)
+//   RP_LIVE_VAULT                  the vault with the Worker app's certificate; default
+//       %ProgramData%\RestoreProof\vault.bin (live_secrets.hpp)
 //   RP_LIVE_GRAPH_TENANT_ID, RP_LIVE_GRAPH_CLIENT_ID   as graph_client_live_test
 //   RP_LIVE_TARGET_MAILBOX              default: restoretest@
 //   RP_LIVE_TARGET_SITE_ID              default: the RestoreTest site
@@ -19,6 +19,7 @@
 //   RP_LIVE_TARGET_ONEDRIVE_DRIVE_ID    default: alice's OneDrive
 //   RP_LIVE_TARGET_ONEDRIVE_FOLDER_ID   default: its /RestoreTarget folder
 
+#include "live_secrets.hpp"
 #include "found_item_line.hpp"
 #include "graph_live_lab.hpp"
 
@@ -52,7 +53,7 @@ struct LiveGraph {
     std::unique_ptr<rp::IHttpClient> download = rp::graph::make_download_http_client();
     rp::graph::GraphClient client{
         *http, live_tenant_id(), live_client_id(),
-        rp::graph::certificate_from_secrets(rp::load_secrets_from_env(),
+        rp::graph::certificate_from_secrets(rp::test::live_secrets(),
                                             std::chrono::system_clock::now())};
 };
 

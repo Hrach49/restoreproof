@@ -27,6 +27,7 @@
 #include <rp/step_timer.hpp>
 #include <rp/version.hpp>
 
+#include "command_config.hpp"
 #include "duration_text.hpp"
 #include "file_read.hpp"
 #include "path_utf8.hpp"
@@ -618,8 +619,8 @@ void read_after(graph::GraphClient& client, IHttpClient& download,
     refusals("onedrive", after.onedrive);
 }
 
-// The run's signing key (W4.3 point 3): the text RP_SIGNING_KEY_BASE64
-// carried and, for a run that signs, the key parsed from it, in one holder
+// The run's signing key (W4.3 point 3): the text the vault's
+// signing_key_base64 carried and, for a run that signs, the key parsed from it, in one holder
 // that wipes both on every way out of the run, the returns before the run
 // line included. The text stays in the run's Secrets until take() moves it
 // here (wiped there), which the pipeline does before the connector is made,
@@ -638,14 +639,14 @@ public:
     }
 
     // The key the secrets carry, parsed (rp::SigningKey::from_base64). Throws
-    // ConfigError, naming the variable and never its value, when it is unset
-    // or isn't a key. Only a run that signs calls it.
+    // ConfigError, naming the secret and never its value, when it isn't in
+    // the vault or isn't a key. Only a run that signs calls it.
     void parse()
     {
-        const std::string name{kEnvSigningKeyBase64};
+        const std::string name{kNameSigningKeyBase64};
         const std::optional<std::string>& text = secrets_.signing_key_base64;
         if (!text || text->empty()) {
-            throw ConfigError(name, name + " is not set; --evidence signs the result");
+            throw ConfigError(name, not_in_vault(name) + "; --evidence signs the result");
         }
         key_ = SigningKey::from_base64(*text);
         if (!key_) {
@@ -664,7 +665,7 @@ public:
         }
     }
 
-    // Empty until take(), and when the variable wasn't set.
+    // Empty until take(), and when the vault had no key.
     const std::string& text() const noexcept { return text_; }
     // Null unless parse() made one.
     const SigningKey* key() const noexcept { return key_ ? &*key_ : nullptr; }
@@ -767,6 +768,7 @@ bool parse_pipeline_args(const CommandOptions& options, PipelineArgs& parsed)
     }
     parsed.manifest = options.value("--manifest");
     parsed.config = options.value("--config");
+    parsed.vault = options.value("--vault");
     parsed.record = options.value("--record");
     return true;
 }
@@ -817,7 +819,9 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
         if (parsed.evidence) {
             evidence_root = check_evidence_root(*parsed.evidence, parsed.run_id);
         }
-        secrets = env.load_secrets();
+        // W4.5: the vault, read once; nothing after this reads a secret from
+        // anywhere else.
+        secrets = env.load_secrets(command_vault_path(parsed.vault, env.default_vault_path));
         require_veeam_secrets(secrets);
         // restore_sample opens it only after the sample is chosen, which
         // browses Veeam. An unset password is none, as for `graph list`.

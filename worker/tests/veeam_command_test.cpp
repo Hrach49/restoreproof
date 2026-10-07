@@ -11,6 +11,7 @@
 #include <rp/config.hpp>
 #include <rp/http_client.hpp>
 #include <rp/secrets.hpp>
+#include <rp/vault.hpp>
 #include <rp/veeam_client.hpp>
 #include <rp/veeam_command.hpp>
 
@@ -55,17 +56,8 @@ using rp::test::load_fixture_json;
 using rp::test::make_response;
 using rp::test::to_response;
 
-const std::string kUsage = "usage: rpworker --version | rpworker config check [--config <path>] | "
-                           "rpworker veeam list [--config <path>] [--record <dir>] | "
-                           "rpworker graph list [--hash] [--config <path>] [--record <dir>] | "
-                           "rpworker restore [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] "
-                           "[--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] "
-                           "[--config <path>] [--record <dir>] | "
-                           "rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] "
-                           "[--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] "
-                           "[--config <path>] [--record <dir>] [--json <file> | --evidence <dir>] | "
-                           "rpworker signer public-key | "
-                           "rpworker signer verify <folder> --public-key <pem file> [--tsa-ca <pem file>]\n";
+// The usage line is rp::kCliUsage; cli_test.cpp holds its text.
+const std::string kUsage{rp::kCliUsage};
 
 const std::string kBase = "https://veeam.test:4443";
 const std::string kTokenUrl = kBase + "/v8/token";
@@ -163,8 +155,13 @@ struct Harness {
             ++default_path_calls;
             return default_path();
         };
-        env.load_secrets = [this] {
+        env.default_vault_path = [this] {
+            ++default_vault_calls;
+            return default_vault;
+        };
+        env.load_secrets = [this](const std::filesystem::path& vault) {
             ++load_secrets_calls;
+            vault_read = vault;
             return load_secrets();
         };
         env.make_http = [this](const rp::HttpClientOptions& options)
@@ -219,7 +216,11 @@ struct Harness {
     std::function<std::unique_ptr<rp::IHttpClient>()> make_http = [this] {
         return std::make_unique<rp::test::ForwardingHttpClient>(http);
     };
+    // W4.5: the vault without --vault, and the one the loader was given.
+    std::filesystem::path default_vault = dir.path() / "default-vault.bin";
+    std::filesystem::path vault_read;
     int default_path_calls = 0;
+    int default_vault_calls = 0;
     int load_secrets_calls = 0;
     int make_http_calls = 0;
     std::optional<rp::HttpClientOptions> http_options;
@@ -313,8 +314,51 @@ TEST_CASE("rpworker veeam list reads the default path without --config", "[veeam
     const Run result = lab.run(Args{"list"});
     REQUIRE(lab.default_path_calls == 1);
     // The config loaded, so the command got as far as the secrets.
-    REQUIRE(result.err == "config error: RP_VEEAM_USERNAME is not set\n");
+    REQUIRE(result.err == "config error: veeam_username is not in the vault\n");
     REQUIRE(result.exit_code == 1);
+}
+
+TEST_CASE("rpworker veeam list reads the vault --vault names, else the default one (W4.5)",
+          "[veeam_command]")
+{
+    Harness lab;
+    lab.load_secrets = [] { return rp::Secrets{}; };
+    SECTION("--vault")
+    {
+        const std::string path_arg = utf8(lab.config_path);
+        const Run result = lab.run(Args{"list", "--config", path_arg, "--vault", "C:\\x\\v.bin"});
+        REQUIRE(result.err == "config error: veeam_username is not in the vault\n");
+        REQUIRE(lab.load_secrets_calls == 1);
+        REQUIRE(lab.vault_read == std::filesystem::path{"C:\\x\\v.bin"});
+        REQUIRE(lab.default_vault_calls == 0);
+    }
+    SECTION("the default")
+    {
+        const Run result = lab.run_list();
+        REQUIRE(result.err == "config error: veeam_username is not in the vault\n");
+        REQUIRE(lab.default_vault_calls == 1);
+        REQUIRE(lab.vault_read == lab.default_vault);
+    }
+    SECTION("a --vault path that isn't UTF-8")
+    {
+        const std::string path_arg = utf8(lab.config_path);
+        const Run result = lab.run(Args{"list", "--config", path_arg, "--vault", "\xFF.bin"});
+        REQUIRE(result.exit_code == 1);
+        REQUIRE(result.out.empty());
+        REQUIRE(result.err == "config error: the --vault path is not valid UTF-8\n");
+        REQUIRE(lab.load_secrets_calls == 0);
+    }
+    SECTION("a vault that can't be used: the vault's own message")
+    {
+        lab.load_secrets = []() -> rp::Secrets {
+            throw rp::VaultError("C:\\x\\v.bin: vault file not found");
+        };
+        const Run result = lab.run_list();
+        REQUIRE(result.exit_code == 1);
+        REQUIRE(result.out.empty());
+        REQUIRE(result.err == "config error: C:\\x\\v.bin: vault file not found\n");
+        REQUIRE(lab.make_http_calls == 0);
+    }
 }
 
 TEST_CASE("rpworker veeam list reports a default path it can't find", "[veeam_command]")
@@ -351,23 +395,21 @@ TEST_CASE("rpworker veeam list reports any other config failure without its mess
     REQUIRE(lab.make_http_calls == 0);
 }
 
-TEST_CASE("rpworker veeam list reports a secret variable that can't be read", "[veeam_command]")
+TEST_CASE("rpworker veeam list reports a secret that can't be read", "[veeam_command]")
 {
     Harness lab;
     lab.load_secrets = []() -> rp::Secrets {
-        throw rp::ConfigError("RP_VEEAM_PASSWORD",
-                              "environment variable RP_VEEAM_PASSWORD is not valid Unicode");
+        throw rp::ConfigError("vault", "C:\\v.bin: not a RestoreProof vault");
     };
 
     const Run result = lab.run_list();
     REQUIRE(result.exit_code == 1);
     REQUIRE(result.out.empty());
-    REQUIRE(result.err ==
-            "config error: environment variable RP_VEEAM_PASSWORD is not valid Unicode\n");
+    REQUIRE(result.err == "config error: C:\\v.bin: not a RestoreProof vault\n");
     REQUIRE(lab.make_http_calls == 0);
 }
 
-TEST_CASE("rpworker veeam list needs RP_VEEAM_USERNAME and RP_VEEAM_PASSWORD, username first",
+TEST_CASE("rpworker veeam list needs veeam_username and veeam_password, username first",
           "[veeam_command]")
 {
     using Maybe = std::optional<std::string>;
@@ -377,11 +419,11 @@ TEST_CASE("rpworker veeam list needs RP_VEEAM_USERNAME and RP_VEEAM_PASSWORD, us
         std::string expected;
     };
     const Case c = GENERATE(
-        Case{std::nullopt, std::nullopt, "config error: RP_VEEAM_USERNAME is not set\n"},
-        Case{std::nullopt, kPassword, "config error: RP_VEEAM_USERNAME is not set\n"},
-        Case{"", kPassword, "config error: RP_VEEAM_USERNAME is not set\n"},
-        Case{kUsername, std::nullopt, "config error: RP_VEEAM_PASSWORD is not set\n"},
-        Case{kUsername, "", "config error: RP_VEEAM_PASSWORD is not set\n"});
+        Case{std::nullopt, std::nullopt, "config error: veeam_username is not in the vault\n"},
+        Case{std::nullopt, kPassword, "config error: veeam_username is not in the vault\n"},
+        Case{"", kPassword, "config error: veeam_username is not in the vault\n"},
+        Case{kUsername, std::nullopt, "config error: veeam_password is not in the vault\n"},
+        Case{kUsername, "", "config error: veeam_password is not in the vault\n"});
     CAPTURE(c.expected);
     Harness lab;
     lab.load_secrets = [c] { return rp::Secrets{c.username, c.password, std::nullopt}; };
@@ -394,15 +436,17 @@ TEST_CASE("rpworker veeam list needs RP_VEEAM_USERNAME and RP_VEEAM_PASSWORD, us
     REQUIRE(lab.http.requests().empty());
 }
 
-TEST_CASE("rpworker veeam's real environment reads ProgramData and the process environment",
-          "[veeam_command]")
+TEST_CASE("rpworker veeam's real environment reads ProgramData and the vault", "[veeam_command]")
 {
     const rp::VeeamCommandEnv env = rp::default_veeam_command_env();
 
     REQUIRE(env.default_config_path() == rp::default_config_path());
-    const rp::test::ScopedEnv user(rp::kEnvVeeamUsername, "user-5d2e");
-    const rp::test::ScopedEnv password(rp::kEnvVeeamPassword, std::nullopt);
-    const rp::Secrets secrets = env.load_secrets();
+    REQUIRE(env.default_vault_path() == rp::default_vault_path());
+    // W4.5: the loader is the vault's reader, on the file it is given.
+    const rp::test::TempDir dir;
+    const std::filesystem::path vault = dir.path() / "vault.bin";
+    rp::write_vault(vault, rp::Secrets{"user-5d2e", std::nullopt});
+    const rp::Secrets secrets = env.load_secrets(vault);
     REQUIRE(secrets.veeam_username == std::optional<std::string>{"user-5d2e"});
     REQUIRE_FALSE(secrets.veeam_password);
     // A real HttpClient; making one sends nothing.

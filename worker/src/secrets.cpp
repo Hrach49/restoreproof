@@ -2,58 +2,50 @@
 
 #include <rp/config.hpp>
 
-#include "utf16.hpp"
-
 #include <string>
 #include <utility>
-
-#define WIN32_LEAN_AND_MEAN
-#define NOMINMAX
-#include <windows.h>
 
 namespace rp {
 
 namespace {
 
-// The longest value Windows allows in an environment variable, in UTF-16 units.
-constexpr DWORD kMaxEnvValue = 32767;
-
-// The variable's value as UTF-8, or nullopt when it is unset or empty. Read
-// from the process's own UTF-16 environment: the CRT's narrow copy
-// (getenv, _dupenv_s) is in the ANSI code page, which would silently change
-// any character outside it. Throws ConfigError naming the variable, never its
-// value, when the value isn't valid UTF-16. The buffer the value is read into
-// held a secret: it is zeroed before it goes, whichever way this returns
-// (W4.3), and never changes its size, so no copy of it is left elsewhere.
-std::optional<std::string> read_env(std::string_view name)
+template <typename S, typename Field>
+Field* field_of(S& secrets, std::string_view name) noexcept
 {
-    // The names are ASCII constants, so widening byte by byte is exact.
-    const std::wstring wide_name(name.begin(), name.end());
-    std::wstring value(kMaxEnvValue + 1, L'\0');
-    const struct Zeroed {
-        std::wstring& buffer;
-        ~Zeroed() { SecureZeroMemory(buffer.data(), buffer.size() * sizeof(wchar_t)); }
-    } zeroed{value};
-    const DWORD length = GetEnvironmentVariableW(wide_name.c_str(), value.data(), kMaxEnvValue + 1);
-    // 0: unset, or set to "". Above the buffer: can't happen within the limit.
-    if (length == 0 || length > kMaxEnvValue) {
-        return std::nullopt;
+    if (name == kNameVeeamUsername) {
+        return &secrets.veeam_username;
     }
-    std::optional<std::string> utf8 = utf16_to_utf8(std::wstring_view{value.data(), length});
-    if (!utf8) {
-        throw ConfigError(std::string{name},
-                          "environment variable " + std::string{name} + " is not valid Unicode");
+    if (name == kNameVeeamPassword) {
+        return &secrets.veeam_password;
     }
-    return utf8;
+    if (name == kNameGraphCertPfxBase64) {
+        return &secrets.graph_cert_pfx_base64;
+    }
+    if (name == kNameGraphCertPassword) {
+        return &secrets.graph_cert_password;
+    }
+    if (name == kNameSigningKeyBase64) {
+        return &secrets.signing_key_base64;
+    }
+    return nullptr;
 }
 
 } // namespace
 
-Secrets load_secrets_from_env()
+std::optional<std::string>* secret_field(Secrets& secrets, std::string_view name) noexcept
 {
-    return {read_env(kEnvVeeamUsername), read_env(kEnvVeeamPassword),
-            read_env(kEnvGraphCertPfxBase64), read_env(kEnvGraphCertPassword),
-            read_env(kEnvSigningKeyBase64)};
+    return field_of<Secrets, std::optional<std::string>>(secrets, name);
+}
+
+const std::optional<std::string>* secret_field(const Secrets& secrets,
+                                               std::string_view name) noexcept
+{
+    return field_of<const Secrets, const std::optional<std::string>>(secrets, name);
+}
+
+std::string not_in_vault(std::string_view name)
+{
+    return std::string{name} + " is not in the vault";
 }
 
 std::vector<std::string> secret_values(const Secrets& secrets, std::size_t room)
@@ -74,10 +66,10 @@ std::vector<std::string> secret_values(const Secrets& secrets, std::size_t room)
 
 void require_veeam_secrets(const Secrets& secrets)
 {
-    for (const auto& [secret, name] : {std::pair{&secrets.veeam_username, kEnvVeeamUsername},
-                                       std::pair{&secrets.veeam_password, kEnvVeeamPassword}}) {
+    for (const auto& [secret, name] : {std::pair{&secrets.veeam_username, kNameVeeamUsername},
+                                       std::pair{&secrets.veeam_password, kNameVeeamPassword}}) {
         if (!secret->has_value() || (*secret)->empty()) {
-            throw ConfigError(std::string{name}, std::string{name} + " is not set");
+            throw ConfigError(std::string{name}, not_in_vault(name));
         }
     }
 }

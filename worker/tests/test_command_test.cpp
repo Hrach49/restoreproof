@@ -2247,8 +2247,8 @@ TEST_CASE("test --evidence: a signing key that is unset or isn't one stops the r
 {
     using Key = std::optional<std::string>;
     const std::string not_set =
-        "config error: RP_SIGNING_KEY_BASE64 is not set; --evidence signs the result\n";
-    const std::string not_a_key = "config error: RP_SIGNING_KEY_BASE64 is not an Ed25519 "
+        "config error: signing_key_base64 is not in the vault; --evidence signs the result\n";
+    const std::string not_a_key = "config error: signing_key_base64 is not an Ed25519 "
                                   "private key (Base64 of PKCS#8 DER)\n";
     const std::string seed{rp::test::kSigningSeed1Hex};
     const auto [name, key, line] = GENERATE_COPY(table<std::string, Key, std::string>({
@@ -2312,7 +2312,7 @@ TEST_CASE("test --evidence: the signing key is looked at only after the Graph ce
 
     CHECK(run.exit_code == rp::exit_code::config);
     CHECK(run.out.empty());
-    CHECK(run.err == "config error: RP_GRAPH_CERT_PFX_BASE64 is not set\n");
+    CHECK(run.err == "config error: graph_cert_pfx_base64 is not in the vault\n");
 }
 
 TEST_CASE("without --evidence the signing key is never parsed nor required, and nothing is "

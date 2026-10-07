@@ -159,14 +159,15 @@ bool looks_like_secret(std::string_view key)
 std::string secret_key_problem()
 {
     std::string names;
-    for (std::size_t i = 0; i < kSecretEnvVars.size(); ++i) {
+    for (std::size_t i = 0; i < kSecretNames.size(); ++i) {
         if (i > 0) {
-            names += i + 1 == kSecretEnvVars.size() ? " or " : ", ";
+            names += i + 1 == kSecretNames.size() ? " or " : ", ";
         }
-        names += kSecretEnvVars[i];
+        names += kSecretNames[i];
     }
-    return "looks like a secret; secrets don't belong in config.json. Set " + names +
-           " in the environment instead (they move to the DPAPI vault in W4.5)";
+    return "looks like a secret; secrets don't belong in config.json. Put it in the vault with "
+           "rpworker vault set <name> instead (" +
+           names + ")";
 }
 
 // `scheme` ("https://") in any case, then a host: at least one character that

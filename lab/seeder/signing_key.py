@@ -1,12 +1,12 @@
 """`python -m seeder new-signing-key` (W4.3): the lab's Ed25519 signing key pair.
 
-Until the Worker's vault lands (W4.5) and the installer makes the key (W7.1), `rpworker test
---evidence` signs with the key in RP_SIGNING_KEY_BASE64: one line of standard Base64 of the
-key's PKCS#8 DER, 64 characters, the body line of the PEM OpenSSL writes. This command makes
-the pair, keeps that line in Windows Credential Manager and prints the public key's
-SubjectPublicKeyInfo PEM and `key <key_id>` (the SHA-256 of the public key's DER, what
-`signature.json` names the key by). The private key is never printed, logged or written to a
-file; `lab/entra/set-worker-env.ps1` puts it into the variable for one PowerShell session.
+Until the installer makes the key (W7.1), `rpworker test --evidence` signs with the vault's
+`signing_key_base64` (W4.5): one line of standard Base64 of the key's PKCS#8 DER, 64 characters,
+the body line of the PEM OpenSSL writes. This command makes the pair, keeps that line in Windows
+Credential Manager and prints the public key's SubjectPublicKeyInfo PEM and `key <key_id>` (the
+SHA-256 of the public key's DER, what `signature.json` names the key by). The private key is
+never printed, logged or written to a file; `lab/entra/fill-worker-vault.ps1` feeds it to
+`rpworker vault set signing_key_base64` with the other secrets.
 
 The pure parts (the encodings, the key ID, the refusals) take the store as a parameter, so the
 tests never touch Credential Manager's lab entry.
@@ -27,8 +27,8 @@ from seeder import REPO_DIR
 
 CREDENTIAL_TARGET = "RestoreProof Lab - Worker signing key"
 CREDENTIAL_USER = "rp-worker-signing-key"
-ENV_VAR = "RP_SIGNING_KEY_BASE64"
-ENV_SCRIPT = "lab/entra/set-worker-env.ps1"
+VAULT_NAME = "signing_key_base64"  # the vault's name for it (worker/include/rp/secrets.hpp)
+FILL_SCRIPT = "lab/entra/fill-worker-vault.ps1"
 
 # PKCS#8 of an Ed25519 private key: these 16 bytes, then the 32-byte seed (RFC 8410).
 _PKCS8_PREFIX = bytes.fromhex("302e020100300506032b657004220420")
@@ -84,7 +84,7 @@ def _encode(key: ed25519.Ed25519PrivateKey) -> KeyPair:
 
 
 def is_private_key_line(text: str) -> bool:
-    """Whether text is what RP_SIGNING_KEY_BASE64 holds: strict Base64, 64 characters, of the
+    """Whether text is what the vault's signing_key_base64 holds: strict Base64, 64 characters, of the
     48 bytes of an Ed25519 key's PKCS#8 DER. No line break, no PEM armour, no other key type."""
     if len(text) != 64:
         return False
@@ -212,7 +212,7 @@ def _advapi32():
 
 class WindowsCredentialStore:
     """Generic credentials of Windows Credential Manager, the secret as UTF-16LE (as
-    lab/entra/new-worker-app.ps1 and cmdkey store one, and as set-worker-env.ps1 reads it)."""
+    lab/entra/new-worker-app.ps1 and cmdkey store one, and as fill-worker-vault.ps1 reads it)."""
 
     def read(self, target: str) -> str | None:
         ctypes, dll, credential = _advapi32()

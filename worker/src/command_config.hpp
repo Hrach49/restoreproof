@@ -49,6 +49,13 @@ std::optional<CommandOptions> parse_options(std::span<const std::string_view> ar
 std::filesystem::path command_config_path(std::optional<std::string_view> config_arg,
                                           const std::function<std::filesystem::path()>& default_path);
 
+// The vault to read (W4.5): `vault_arg` as a path, or, without one,
+// `default_path()` (rp::default_vault_path), which is called only then.
+// Throws ConfigError ("the --vault path is not valid UTF-8") for a --vault
+// path that isn't UTF-8, and whatever `default_path` throws.
+std::filesystem::path command_vault_path(std::optional<std::string_view> vault_arg,
+                                         const std::function<std::filesystem::path()>& default_path);
+
 // The logger `veeam list` and `graph list` give their clients: warnings and
 // worse, to stderr only, so no log line can land in a table on stdout. Not
 // registered with spdlog, and not the default logger, which writes to stdout.

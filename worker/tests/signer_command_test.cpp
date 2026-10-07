@@ -7,6 +7,7 @@
 #include <rp/cli.hpp>
 #include <rp/config.hpp>
 #include <rp/secrets.hpp>
+#include <rp/vault.hpp>
 #include <rp/signer.hpp>
 #include <rp/signer_command.hpp>
 
@@ -39,17 +40,8 @@ using Args = std::vector<std::string_view>;
 
 namespace {
 
-const std::string kUsage =
-    "usage: rpworker --version | rpworker config check [--config <path>] | "
-    "rpworker veeam list [--config <path>] [--record <dir>] | "
-    "rpworker graph list [--hash] [--config <path>] [--record <dir>] | "
-    "rpworker restore [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] "
-    "[--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] "
-    "[--record <dir>] | "
-    "rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] "
-    "[--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] "
-    "[--record <dir>] [--json <file> | --evidence <dir>] | "
-    "rpworker signer public-key | rpworker signer verify <folder> --public-key <pem file> [--tsa-ca <pem file>]\n";
+// The usage line is rp::kCliUsage; cli_test.cpp holds its text.
+const std::string kUsage{rp::kCliUsage};
 
 constexpr const char* kKeysFile = "testdata/signing-v1/keys.json";
 constexpr const char* kBundleFile = "testdata/signing-v1/bundle.json";
@@ -65,8 +57,8 @@ const std::string kKey2Pem = "-----BEGIN PUBLIC KEY-----\n"
                              "-----END PUBLIC KEY-----\n";
 const std::string kKey2Id = "deb2ded39dc26fce0e6085b6fc34bf6b5941913bbfe2ea614113cff9e004c170";
 
-const std::string kKeyNotSet = "config error: RP_SIGNING_KEY_BASE64 is not set\n";
-const std::string kKeyNotAKey = "config error: RP_SIGNING_KEY_BASE64 is not an Ed25519 private key "
+const std::string kKeyNotSet = "config error: signing_key_base64 is not in the vault\n";
+const std::string kKeyNotAKey = "config error: signing_key_base64 is not an Ed25519 private key "
                                 "(Base64 of PKCS#8 DER)\n";
 
 std::string utf8(const std::filesystem::path& path)
@@ -80,15 +72,22 @@ struct Ran {
     std::string out;
     std::string err;
     int secrets_asked = 0;
+    int default_vault_asked = 0;
+    std::filesystem::path vault_read;
 };
 
-// `rpworker signer <args>` with the signing key variable holding `key`.
+// `rpworker signer <args>` with the vault's signing_key_base64 holding `key`.
 Ran run(const Args& args, std::optional<std::string> key = std::nullopt)
 {
     Ran ran;
     rp::SignerCommandEnv env;
-    env.load_secrets = [&ran, key] {
+    env.default_vault_path = [&ran] {
+        ++ran.default_vault_asked;
+        return std::filesystem::path{"C:\\default\\vault.bin"};
+    };
+    env.load_secrets = [&ran, key](const std::filesystem::path& vault) {
         ++ran.secrets_asked;
+        ran.vault_read = vault;
         rp::Secrets secrets;
         // The other secrets are none of this command's business.
         secrets.veeam_password = "a Veeam password";
@@ -212,27 +211,60 @@ TEST_CASE("signer public-key: a value that isn't an Ed25519 private key is a con
     CHECK(ran.err == kKeyNotAKey);
 }
 
-TEST_CASE("signer public-key: secrets that can't be read are a config error, 1",
+TEST_CASE("signer public-key: a vault that can't be used is a config error, 1",
           "[signer_command]")
 {
     rp::SignerCommandEnv env;
-    env.load_secrets = []() -> rp::Secrets {
-        throw rp::ConfigError("RP_SIGNING_KEY_BASE64",
-                              "RP_SIGNING_KEY_BASE64 is not valid Unicode");
+    env.default_vault_path = [] { return std::filesystem::path{"C:\\default\\vault.bin"}; };
+    env.load_secrets = [](const std::filesystem::path&) -> rp::Secrets {
+        throw rp::VaultError("C:\\default\\vault.bin: vault file not found");
     };
     std::ostringstream out;
     std::ostringstream err;
     const Args args{"public-key"};
     CHECK(rp::run_signer_command(args, out, err, env) == 1);
     CHECK(out.str().empty());
-    CHECK(err.str() == "config error: RP_SIGNING_KEY_BASE64 is not valid Unicode\n");
+    CHECK(err.str() == "config error: C:\\default\\vault.bin: vault file not found\n");
+}
+
+TEST_CASE("signer public-key reads the vault --vault names, else the default one (W4.5)",
+          "[signer_command]")
+{
+    SECTION("--vault")
+    {
+        const Ran ran = run({"public-key", "--vault", "C:\\x\\v.bin"},
+                            std::string{rp::test::kSigningKey1Base64});
+        CHECK(ran.code == 0);
+        CHECK(ran.out == kKey1Pem);
+        CHECK(ran.vault_read == std::filesystem::path{"C:\\x\\v.bin"});
+        CHECK(ran.default_vault_asked == 0);
+    }
+    SECTION("the default")
+    {
+        const Ran ran = run({"public-key"}, std::string{rp::test::kSigningKey1Base64});
+        CHECK(ran.code == 0);
+        CHECK(ran.default_vault_asked == 1);
+        CHECK(ran.vault_read == std::filesystem::path{"C:\\default\\vault.bin"});
+    }
+    SECTION("a --vault path that isn't UTF-8")
+    {
+        const Ran ran = run({"public-key", "--vault", "\xFF.bin"},
+                            std::string{rp::test::kSigningKey1Base64});
+        CHECK(ran.code == 1);
+        CHECK(ran.out.empty());
+        CHECK(ran.err == "config error: the --vault path is not valid UTF-8\n");
+        CHECK(ran.secrets_asked == 0);
+    }
 }
 
 TEST_CASE("signer public-key: any other failure is let out, for run_cli to report",
           "[signer_command]")
 {
     rp::SignerCommandEnv env;
-    env.load_secrets = []() -> rp::Secrets { throw std::runtime_error("holds a secret"); };
+    env.default_vault_path = [] { return std::filesystem::path{"C:\\default\\vault.bin"}; };
+    env.load_secrets = [](const std::filesystem::path&) -> rp::Secrets {
+        throw std::runtime_error("holds a secret");
+    };
     std::ostringstream out;
     std::ostringstream err;
     const Args args{"public-key"};
@@ -300,7 +332,8 @@ TEST_CASE("signer public-key prints the public key's PEM alone on stdout and its
 TEST_CASE("signer public-key: an answer that didn't reach stdout isn't one", "[signer_command]")
 {
     rp::SignerCommandEnv env;
-    env.load_secrets = [] {
+    env.default_vault_path = [] { return std::filesystem::path{"C:\\default\\vault.bin"}; };
+    env.load_secrets = [](const std::filesystem::path&) {
         rp::Secrets secrets;
         secrets.signing_key_base64 = std::string{rp::test::kSigningKey1Base64};
         return secrets;
@@ -314,14 +347,18 @@ TEST_CASE("signer public-key: an answer that didn't reach stdout isn't one", "[s
     CHECK(err.str() == "signer error: the answer couldn't be written\n");
 }
 
-TEST_CASE("the real signer environment reads the secrets from the process environment",
-          "[signer_command]")
+TEST_CASE("the real signer environment reads the secrets from the vault", "[signer_command]")
 {
-    const rp::test::ScopedEnv scoped(rp::kEnvSigningKeyBase64,
-                                     std::string{rp::test::kSigningKey1Base64});
     const rp::SignerCommandEnv env = rp::default_signer_command_env();
     REQUIRE(env.load_secrets);
-    CHECK(env.load_secrets().signing_key_base64 == std::string{rp::test::kSigningKey1Base64});
+    REQUIRE(env.default_vault_path);
+    CHECK(env.default_vault_path() == rp::default_vault_path());
+    const TempDir dir;
+    const std::filesystem::path vault = dir.path() / "vault.bin";
+    rp::Secrets secrets;
+    secrets.signing_key_base64 = std::string{rp::test::kSigningKey1Base64};
+    rp::write_vault(vault, secrets);
+    CHECK(env.load_secrets(vault).signing_key_base64 == std::string{rp::test::kSigningKey1Base64});
 }
 
 // --- signer verify: no answer could be made, exit 1 ----------------------------------
@@ -969,19 +1006,26 @@ TEST_CASE("rpworker signer runs both commands", "[signer_command][cli]")
         CHECK(out.str() == "not verified: attachment_size\n");
         CHECK(err.str().empty());
     }
-    SECTION("signer public-key, the variable set")
+    SECTION("signer public-key, the key in a vault (W4.5)")
     {
-        const rp::test::ScopedEnv scoped(rp::kEnvSigningKeyBase64,
-                                         std::string{rp::test::kSigningKey1Base64});
-        const Args args{"signer", "public-key"};
+        const TempDir vaults;
+        const std::filesystem::path vault = vaults.path() / "vault.bin";
+        rp::Secrets secrets;
+        secrets.signing_key_base64 = std::string{rp::test::kSigningKey1Base64};
+        rp::write_vault(vault, secrets);
+        const std::string vault_arg = utf8(vault);
+        const Args args{"signer", "public-key", "--vault", vault_arg};
         CHECK(rp::run_cli(args, out, err) == 0);
         CHECK(out.str() == kKey1Pem);
         CHECK(err.str() == "key " + kKey1Id + "\n");
     }
-    SECTION("signer public-key, the variable unset")
+    SECTION("signer public-key, a vault without the key")
     {
-        const rp::test::ScopedEnv scoped(rp::kEnvSigningKeyBase64, std::optional<std::string>{});
-        const Args args{"signer", "public-key"};
+        const TempDir vaults;
+        const std::filesystem::path vault = vaults.path() / "vault.bin";
+        rp::write_vault(vault, rp::Secrets{});
+        const std::string vault_arg = utf8(vault);
+        const Args args{"signer", "public-key", "--vault", vault_arg};
         CHECK(rp::run_cli(args, out, err) == 1);
         CHECK(out.str().empty());
         CHECK(err.str() == kKeyNotSet);

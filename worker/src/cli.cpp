@@ -6,6 +6,7 @@
 #include <rp/restore_command.hpp>
 #include <rp/signer_command.hpp>
 #include <rp/test_command.hpp>
+#include <rp/vault_command.hpp>
 #include <rp/veeam_command.hpp>
 #include <rp/version.hpp>
 
@@ -46,7 +47,10 @@ int dispatch(std::span<const std::string_view> args, std::ostream& out, std::ost
         return exit_code::ok;
     }
     if (!args.empty() && args[0] == "config") {
-        return run_config_command(args.subspan(1), out, err, default_config_path);
+        return run_config_command(args.subspan(1), out, err, default_config_check_env());
+    }
+    if (!args.empty() && args[0] == "vault") {
+        return run_vault_command(args.subspan(1), out, err, default_vault_command_env());
     }
     if (!args.empty() && args[0] == "veeam") {
         return run_veeam_command(args.subspan(1), out, err, default_veeam_command_env());

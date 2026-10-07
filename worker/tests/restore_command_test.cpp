@@ -23,6 +23,7 @@
 #include <rp/restore_command.hpp>
 #include <rp/sample_rng.hpp>
 #include <rp/secrets.hpp>
+#include <rp/vault.hpp>
 #include <rp/step_timer.hpp>
 #include <rp/text_v1.hpp>
 
@@ -278,20 +279,24 @@ TEST_CASE("restore: both Veeam secrets and the Graph certificate are needed, bef
     const Secret pfx_password = std::string{rp::test::graph_lab::kPfxPassword};
     const auto [username, password, pfx_value, password_value, message] =
         GENERATE_COPY(table<Secret, Secret, Secret, Secret, std::string>({
-            {std::nullopt, "p", pfx, pfx_password, "config error: RP_VEEAM_USERNAME is not set\n"},
-            {std::string{}, "p", pfx, pfx_password, "config error: RP_VEEAM_USERNAME is not set\n"},
-            {"u", std::nullopt, pfx, pfx_password, "config error: RP_VEEAM_PASSWORD is not set\n"},
-            {"u", std::string{}, pfx, pfx_password, "config error: RP_VEEAM_PASSWORD is not set\n"},
+            {std::nullopt, "p", pfx, pfx_password,
+             "config error: veeam_username is not in the vault\n"},
+            {std::string{}, "p", pfx, pfx_password,
+             "config error: veeam_username is not in the vault\n"},
+            {"u", std::nullopt, pfx, pfx_password,
+             "config error: veeam_password is not in the vault\n"},
+            {"u", std::string{}, pfx, pfx_password,
+             "config error: veeam_password is not in the vault\n"},
             {"u", "p", std::nullopt, pfx_password,
-             "config error: RP_GRAPH_CERT_PFX_BASE64 is not set\n"},
+             "config error: graph_cert_pfx_base64 is not in the vault\n"},
             {"u", "p", std::string{}, std::nullopt,
-             "config error: RP_GRAPH_CERT_PFX_BASE64 is not set\n"},
+             "config error: graph_cert_pfx_base64 is not in the vault\n"},
             {"u", "p", pfx, std::nullopt,
-             "config error: RP_GRAPH_CERT_PASSWORD is not set, and the PFX in "
-             "RP_GRAPH_CERT_PFX_BASE64 needs a password\n"},
+             "config error: graph_cert_password is not in the vault, and the PFX in "
+             "graph_cert_pfx_base64 needs a password\n"},
             {"u", "p", pfx, std::string{},
-             "config error: RP_GRAPH_CERT_PASSWORD is not set, and the PFX in "
-             "RP_GRAPH_CERT_PFX_BASE64 needs a password\n"},
+             "config error: graph_cert_password is not in the vault, and the PFX in "
+             "graph_cert_pfx_base64 needs a password\n"},
         }));
     Harness lab;
     lab.load_secrets = [=] { return rp::Secrets{username, password, pfx_value, password_value}; };
@@ -311,8 +316,8 @@ TEST_CASE("restore: a Graph certificate that doesn't open or isn't valid is a co
     namespace gl = rp::test::graph_lab;
     const auto [what, message] = GENERATE(table<std::string, std::string>({
         {"wrong password",
-         "config error: RP_GRAPH_CERT_PASSWORD does not open the PFX in RP_GRAPH_CERT_PFX_BASE64\n"},
-        {"not Base64", "config error: RP_GRAPH_CERT_PFX_BASE64"},
+         "config error: graph_cert_password does not open the PFX in graph_cert_pfx_base64\n"},
+        {"not Base64", "config error: graph_cert_pfx_base64"},
         {"expired", "config error: "},
     }));
     CAPTURE(what);
@@ -347,7 +352,7 @@ TEST_CASE("restore: a Graph certificate that doesn't open or isn't valid is a co
     CHECK(lab.make_connector_calls == 0);
 }
 
-TEST_CASE("restore: a PFX without a password needs no RP_GRAPH_CERT_PASSWORD, as graph list",
+TEST_CASE("restore: a PFX without a password needs no graph_cert_password, as graph list",
           "[restore_command]")
 {
     namespace gl = rp::test::graph_lab;
@@ -373,14 +378,13 @@ TEST_CASE("restore: secrets that fail to load are config errors; an unexpected o
           "[restore_command]")
 {
     const auto [kind, message] = GENERATE(table<std::string, std::string>({
-        {"ConfigError", "config error: environment variable RP_VEEAM_PASSWORD is not valid Unicode\n"},
+        {"ConfigError", "config error: C:\\v.bin: not a RestoreProof vault\n"},
         {"other", "config error: unexpected failure\n"},
     }));
     Harness lab;
     lab.load_secrets = [kind = kind]() -> rp::Secrets {
         if (kind == "ConfigError") {
-            throw rp::ConfigError("RP_VEEAM_PASSWORD",
-                                  "environment variable RP_VEEAM_PASSWORD is not valid Unicode");
+            throw rp::VaultError("C:\\v.bin: not a RestoreProof vault");
         }
         throw std::runtime_error("SENTINEL-SECRET-MESSAGE");
     };
@@ -389,6 +393,45 @@ TEST_CASE("restore: secrets that fail to load are config errors; an unexpected o
 
     CHECK(run.exit_code == rp::exit_code::config);
     CHECK(run.err == message);
+}
+
+TEST_CASE("restore: the vault --vault names is read, else the default one, after the config "
+          "(W4.5)",
+          "[restore_command]")
+{
+    Harness lab;
+    SECTION("--vault reaches the loader as a path; the default isn't asked")
+    {
+        const Run run = lab.run({"--run-id", kRunId, "--mail", "1", "--sp", "0", "--od", "0",
+                                 "--vault", "C:\\x\\v.bin"});
+        CHECK(run.exit_code == rp::exit_code::ok);
+        CHECK(lab.load_secrets_calls == 1);
+        CHECK(lab.vault_read == std::filesystem::path{"C:\\x\\v.bin"});
+        CHECK(lab.default_vault_calls == 0);
+    }
+    SECTION("without it the default vault is asked for, once, after the config")
+    {
+        const Run run = lab.run({"--run-id", kRunId, "--mail", "1", "--sp", "0", "--od", "0"});
+        CHECK(run.exit_code == rp::exit_code::ok);
+        CHECK(lab.default_vault_calls == 1);
+        CHECK(lab.vault_read == lab.default_vault);
+    }
+    SECTION("a --vault path that isn't UTF-8 is a config error, before the vault is read")
+    {
+        const Run run = lab.run({"--vault", "\xFF.bin"});
+        CHECK(run.exit_code == rp::exit_code::config);
+        CHECK(run.out.empty());
+        CHECK(run.err == "config error: the --vault path is not valid UTF-8\n");
+        CHECK(lab.load_secrets_calls == 0);
+        CHECK(lab.make_connector_calls == 0);
+    }
+    SECTION("a config that doesn't load comes first: the vault isn't read")
+    {
+        const Run run = lab.run_raw({"--config", utf8(lab.dir.path() / "missing.json")});
+        CHECK(run.exit_code == rp::exit_code::config);
+        CHECK(lab.load_secrets_calls == 0);
+        CHECK(lab.default_vault_calls == 0);
+    }
 }
 
 TEST_CASE("restore: a manifest that doesn't load or isn't the tenant's is a config error, "
@@ -1689,7 +1732,9 @@ TEST_CASE("restore: the default environment reads the real config and secrets, w
 {
     const rp::RestoreCommandEnv env = rp::default_restore_command_env();
     CHECK(env.default_config_path);
+    CHECK(env.default_vault_path);
     CHECK(env.load_secrets);
+    CHECK(env.default_vault_path() == rp::default_vault_path());
     CHECK_FALSE(env.make_connector); // the default registry's veeam_m365
     CHECK_FALSE(env.make_run_id);    // rp::make_run_id
     CHECK_FALSE(env.now);            // steady_clock::now
@@ -3090,7 +3135,8 @@ struct RealRig {
     {
         rp::RestoreCommandEnv env;
         env.default_config_path = [] { return std::filesystem::path{"unused.json"}; };
-        env.load_secrets = [] {
+        env.default_vault_path = [] { return std::filesystem::path{"unused.bin"}; };
+        env.load_secrets = [](const std::filesystem::path&) {
             return rp::Secrets{vrl::kUsername, vrl::kPassword, rp::test::graph_lab::pfx_base64(),
                                std::string{rp::test::graph_lab::kPfxPassword}};
         };

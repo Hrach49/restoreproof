@@ -8,30 +8,32 @@
 
 namespace rp {
 
-// Secrets never go in config.json. Until the DPAPI vault arrives (W4.5), they
-// are read from these environment variables. This is the one place their
-// names are defined.
-inline constexpr std::string_view kEnvVeeamUsername = "RP_VEEAM_USERNAME";
-inline constexpr std::string_view kEnvVeeamPassword = "RP_VEEAM_PASSWORD";
+// Secrets never go in config.json. Since W4.5 they live in the DPAPI vault
+// (rp/vault.hpp, %ProgramData%\RestoreProof\vault.bin) under these five
+// names, which are the names `rpworker vault set <name>` takes, `vault list`
+// and `config check` print and every message uses. This is the one place
+// they are defined. No secret is read from the environment any more.
+inline constexpr std::string_view kNameVeeamUsername = "veeam_username";
+inline constexpr std::string_view kNameVeeamPassword = "veeam_password";
 // The Worker's Graph app signs in with a certificate, not a client secret
 // (W2.1): its PFX file as one line of standard Base64, and the PFX's password.
 // rp::graph::certificate_from_secrets (rp/client_assertion.hpp) opens them.
-inline constexpr std::string_view kEnvGraphCertPfxBase64 = "RP_GRAPH_CERT_PFX_BASE64";
-inline constexpr std::string_view kEnvGraphCertPassword = "RP_GRAPH_CERT_PASSWORD";
+inline constexpr std::string_view kNameGraphCertPfxBase64 = "graph_cert_pfx_base64";
+inline constexpr std::string_view kNameGraphCertPassword = "graph_cert_password";
 // The Worker's signing key (W4.3): one line of standard Base64 of an Ed25519
 // private key's PKCS#8 DER, the body line of the PEM OpenSSL writes.
 // rp::SigningKey::from_base64 (rp/signer.hpp) parses it, and only `rpworker
 // test --evidence` and `rpworker signer public-key` do: every other command
 // reads it and never looks at it.
-inline constexpr std::string_view kEnvSigningKeyBase64 = "RP_SIGNING_KEY_BASE64";
+inline constexpr std::string_view kNameSigningKeyBase64 = "signing_key_base64";
 
-inline constexpr std::array<std::string_view, 5> kSecretEnvVars{
-    kEnvVeeamUsername, kEnvVeeamPassword, kEnvGraphCertPfxBase64, kEnvGraphCertPassword,
-    kEnvSigningKeyBase64};
+inline constexpr std::array<std::string_view, 5> kSecretNames{
+    kNameVeeamUsername, kNameVeeamPassword, kNameGraphCertPfxBase64, kNameGraphCertPassword,
+    kNameSigningKeyBase64};
 
-// Each field is empty when its variable is unset or set to "". Which ones a
-// run needs depends on the Veeam auth mode (W1.0), so loading never fails on
-// an unset one.
+// Each field is empty when its name isn't in the vault. Which ones a run
+// needs depends on the command, so reading the vault never fails on an absent
+// one.
 struct Secrets {
     std::optional<std::string> veeam_username;
     std::optional<std::string> veeam_password;
@@ -40,12 +42,15 @@ struct Secrets {
     std::optional<std::string> signing_key_base64;
 };
 
-// Reads kSecretEnvVars from the process environment, as UTF-8. Throws
-// ConfigError (rp/config.hpp), whose key() is the variable's name and whose
-// message never contains the value, when a value isn't valid Unicode (an
-// unpaired surrogate): it can't be converted without changing the secret. The
-// UTF-16 buffer each variable is read into is zeroed before it goes.
-Secrets load_secrets_from_env();
+// The field `name` fills, in kSecretNames' order, or null for a name that
+// isn't one of the five.
+std::optional<std::string>* secret_field(Secrets& secrets, std::string_view name) noexcept;
+const std::optional<std::string>* secret_field(const Secrets& secrets,
+                                               std::string_view name) noexcept;
+
+// "<name> is not in the vault": what every command says for a secret it needs
+// and the vault doesn't hold. ConfigError's key() is the name.
+std::string not_in_vault(std::string_view name);
 
 // The run's secret values, each as it is: the Veeam password, the Graph PFX's
 // Base64, its password and the signing key's text, those that are set and not
@@ -61,10 +66,10 @@ Secrets load_secrets_from_env();
 // bytes behind in the block it left, never wiped).
 std::vector<std::string> secret_values(const Secrets& secrets, std::size_t room = 0);
 
-// Throws ConfigError, key() and message naming the variable ("RP_VEEAM_USERNAME
-// is not set", then RP_VEEAM_PASSWORD), unless both Veeam secrets are set and
-// not empty. The one rule every command and connector that signs in to Veeam
-// checks before any Veeam call.
+// Throws ConfigError, key() the name and the message not_in_vault(name)
+// ("veeam_username is not in the vault", then veeam_password), unless both
+// Veeam secrets are set and not empty. The one rule every command and
+// connector that signs in to Veeam checks before any Veeam call.
 void require_veeam_secrets(const Secrets& secrets);
 
 // What may be printed about a secret: "**** (set)" or "(not set)". Never any

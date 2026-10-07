@@ -223,7 +223,7 @@ ClientCertificate load_client_certificate(std::string_view pfx_base64, std::stri
     const std::string pfx_name(names.pfx_base64);
     const std::string password_name(names.password);
     if (pfx_base64.empty()) {
-        throw CertificateError(pfx_name + " is not set", pfx_name);
+        throw CertificateError(not_in_vault(pfx_name), pfx_name);
     }
     std::optional<std::vector<unsigned char>> der = base64_decode(pfx_base64);
     if (!der) {
@@ -255,7 +255,7 @@ ClientCertificate load_client_certificate(std::string_view pfx_base64, std::stri
                                                         static_cast<int>(pass.size())) == 1;
     if (!opens) {
         if (pass.empty()) {
-            throw CertificateError(password_name + " is not set, and the PFX in " + pfx_name +
+            throw CertificateError(not_in_vault(password_name) + ", and the PFX in " + pfx_name +
                                        " needs a password",
                                    password_name);
         }

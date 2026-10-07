@@ -38,6 +38,7 @@ add_library(rpcore STATIC
     src/command_config.cpp
     src/config.cpp
     src/config_check.cpp
+    src/console_input.cpp
     src/connector.cpp
     src/connector_registry.cpp
     src/ed25519.cpp
@@ -79,6 +80,8 @@ add_library(rpcore STATIC
     src/timestamper.cpp
     src/text_v1.cpp
     src/utf16.cpp
+    src/vault.cpp
+    src/vault_command.cpp
     src/veeam_browse.cpp
     src/veeam_candidates.cpp
     src/veeam_client.cpp
@@ -138,7 +141,9 @@ target_compile_options(rpcore PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/we4062>)
 # The restore credential's export (W2.5, cert_export.cpp) also reads the store
 # and exports a PFX (crypt32) and makes its password (bcrypt). The tests'
 # network guard (Q2.1, http_client.cpp) opens the sockets it allows (ws2_32).
-target_link_libraries(rpcore PRIVATE shell32 ole32 crypt32 bcrypt ws2_32)
+# The vault (W4.5, vault.cpp) encrypts with DPAPI (crypt32) and sets the
+# file's ACL (advapi32).
+target_link_libraries(rpcore PRIVATE shell32 ole32 crypt32 bcrypt ws2_32 advapi32)
 
 # rpworker: the Worker exe. main() lives in app/ and only hands argv to
 # rp::run_cli; all parsing is in rpcore, where rptests can reach it
@@ -214,6 +219,8 @@ add_executable(rptests
     tests/timestamper_test.cpp
     tests/text_util_test.cpp
     tests/text_v1_test.cpp
+    tests/vault_command_test.cpp
+    tests/vault_test.cpp
     tests/veeam_browse_test.cpp
     tests/veeam_client_live_test.cpp
     tests/veeam_client_test.cpp
@@ -232,8 +239,9 @@ target_link_libraries(rptests PRIVATE rpcore cpr::cpr OpenSSL::Crypto Catch2::Ca
 # restore_command_test.cpp's and test_command_test.cpp's Catch2 tables outgrow an object file's 65,279
 # sections.
 target_compile_options(rptests PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/bigobj>)
-# cert_export_test.cpp deletes the CNG key file it makes (ncrypt).
-target_link_libraries(rptests PRIVATE ncrypt)
+# cert_export_test.cpp deletes the CNG key file it makes (ncrypt);
+# vault_test.cpp makes DPAPI blobs of its own (crypt32) and reads ACLs (advapi32).
+target_link_libraries(rptests PRIVATE ncrypt crypt32 advapi32)
 # httplib is test-only: the HTTP client tests run a server on 127.0.0.1.
 # http_client_test.cpp also reads rpcore's internal src/http_client_detail.hpp.
 target_link_libraries(rptests PRIVATE httplib::httplib)
@@ -259,14 +267,16 @@ catch_discover_tests(rptests)
 # run_exe_test.cmake checks the exit code and both streams exactly; ctest's own
 # PASS_REGULAR_EXPRESSION and WILL_FAIL would ignore the exit code. ARGS takes
 # any number of arguments; they reach the script as one list. UNSET_ENV names
-# environment variables the script removes before running the exe. Each test
-# carries the label `exe`: the coverage run (tools/run_coverage.ps1) runs
+# environment variables the script removes before running the exe. STDIN names
+# a file whose bytes are the exe's stdin (W4.5: what `vault set` reads). Each
+# test carries the label `exe`: the coverage run (tools/run_coverage.ps1) runs
 # rptests.exe once itself and only these through ctest (`ctest -L exe`).
 set(RP_RUN_EXE_TEST ${CMAKE_CURRENT_SOURCE_DIR}/tests/run_exe_test.cmake)
 function(rp_add_exe_test name)
-    cmake_parse_arguments(PARSE_ARGV 1 T "" "EXIT_CODE;STDOUT;STDERR" "ARGS;UNSET_ENV")
+    cmake_parse_arguments(PARSE_ARGV 1 T "" "EXIT_CODE;STDOUT;STDERR;STDIN" "ARGS;UNSET_ENV")
     add_test(NAME "${name}" COMMAND ${CMAKE_COMMAND}
         "-DEXE=$<TARGET_FILE:rpworker>" "-DARGS=${T_ARGS}" "-DUNSET_ENV=${T_UNSET_ENV}"
+        "-DSTDIN=${T_STDIN}"
         "-DEXIT_CODE=${T_EXIT_CODE}" "-DSTDOUT=${T_STDOUT}" "-DSTDERR=${T_STDERR}"
         -P ${RP_RUN_EXE_TEST})
     set_tests_properties("${name}" PROPERTIES LABELS exe)
@@ -274,7 +284,7 @@ endfunction()
 
 rp_add_exe_test("rpworker --version prints the project version"
     ARGS --version EXIT_CODE 0 STDOUT ${PROJECT_VERSION} STDERR "")
-set(RP_USAGE "usage: rpworker --version | rpworker config check [--config <path>] | rpworker veeam list [--config <path>] [--record <dir>] | rpworker graph list [--hash] [--config <path>] [--record <dir>] | rpworker restore [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--record <dir>] | rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--record <dir>] [--json <file> | --evidence <dir>] | rpworker signer public-key | rpworker signer verify <folder> --public-key <pem file> [--tsa-ca <pem file>]")
+set(RP_USAGE "usage: rpworker --version | rpworker config check [--config <path>] [--vault <file>] | rpworker vault set|remove <name> [--vault <file>] | rpworker vault list|test [--vault <file>] | rpworker vault grant <account> [--vault <file>] | rpworker veeam list [--config <path>] [--vault <file>] [--record <dir>] | rpworker graph list [--hash] [--config <path>] [--vault <file>] [--record <dir>] | rpworker restore [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--vault <file>] [--record <dir>] | rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--vault <file>] [--record <dir>] [--json <file> | --evidence <dir>] | rpworker signer public-key [--vault <file>] | rpworker signer verify <folder> --public-key <pem file> [--tsa-ca <pem file>]")
 rp_add_exe_test("rpworker rejects unknown arguments"
     ARGS --no-such-option EXIT_CODE 64 STDOUT "" STDERR "${RP_USAGE}")
 rp_add_exe_test("rpworker config without a subcommand prints usage"
@@ -289,10 +299,82 @@ rp_add_exe_test("rpworker config check keeps a --config path outside the ANSI co
     ARGS config check --config "тест-no-such-config.json" EXIT_CODE 1 STDOUT ""
     STDERR "config error: тест-no-such-config.json: cannot read config file")
 
+# The vault (W4.5): the exe tests use vault files of their own under the build
+# tree, never %ProgramData%'s, each filled by `rpworker vault set` with the
+# value piped in from a file (STDIN; a CRLF line end, stripped) and listed back
+# by `vault list`. The four vaults are setup tests of the fixture `exe-vault`,
+# ordered on each file by DEPENDS, and every test that reads one requires the
+# fixture. The values are "set-by-ctest": not Base64, not a key.
+set(RP_EXE_VAULTS ${CMAKE_CURRENT_BINARY_DIR}/vault-exe-test)
+file(MAKE_DIRECTORY ${RP_EXE_VAULTS})
+file(WRITE ${RP_EXE_VAULTS}/value.txt "set-by-ctest\r\n")
+file(WRITE ${RP_EXE_VAULTS}/empty.txt "")
+set(RP_VAULT_USER ${RP_EXE_VAULTS}/user.bin)       # veeam_username
+set(RP_VAULT_TWO ${RP_EXE_VAULTS}/two.bin)         # veeam_username, veeam_password
+set(RP_VAULT_FULL ${RP_EXE_VAULTS}/full.bin)       # those, graph_cert_pfx_base64, signing_key_base64
+set(RP_VAULT_EMPTY ${RP_EXE_VAULTS}/empty.bin)     # nothing
+set(RP_VAULT_MISSING ${RP_EXE_VAULTS}/no-such-vault.bin)
+function(rp_add_vault_setup name vault secret)
+    cmake_parse_arguments(PARSE_ARGV 3 T "" "AFTER" "")
+    rp_add_exe_test("${name}"
+        ARGS vault set ${secret} --vault ${vault} STDIN ${RP_EXE_VAULTS}/value.txt
+        EXIT_CODE 0 STDOUT "set ${secret} in ${vault}" STDERR "")
+    set_tests_properties("${name}" PROPERTIES FIXTURES_SETUP exe-vault)
+    if(T_AFTER)
+        set_tests_properties("${name}" PROPERTIES DEPENDS "${T_AFTER}")
+    endif()
+endfunction()
+rp_add_vault_setup("rpworker vault set stores veeam_username from stdin" ${RP_VAULT_USER} veeam_username)
+rp_add_vault_setup("rpworker vault set stores veeam_username (two)" ${RP_VAULT_TWO} veeam_username)
+rp_add_vault_setup("rpworker vault set stores veeam_password (two)" ${RP_VAULT_TWO} veeam_password
+    AFTER "rpworker vault set stores veeam_username (two)")
+rp_add_vault_setup("rpworker vault set stores veeam_username (full)" ${RP_VAULT_FULL} veeam_username)
+rp_add_vault_setup("rpworker vault set stores veeam_password (full)" ${RP_VAULT_FULL} veeam_password
+    AFTER "rpworker vault set stores veeam_username (full)")
+rp_add_vault_setup("rpworker vault set stores graph_cert_pfx_base64 (full)" ${RP_VAULT_FULL} graph_cert_pfx_base64
+    AFTER "rpworker vault set stores veeam_password (full)")
+rp_add_vault_setup("rpworker vault set stores signing_key_base64 (full)" ${RP_VAULT_FULL} signing_key_base64
+    AFTER "rpworker vault set stores graph_cert_pfx_base64 (full)")
+rp_add_vault_setup("rpworker vault set stores veeam_username (empty)" ${RP_VAULT_EMPTY} veeam_username)
+rp_add_exe_test("rpworker vault remove takes veeam_username out (empty)"
+    ARGS vault remove veeam_username --vault ${RP_VAULT_EMPTY}
+    EXIT_CODE 0 STDOUT "removed veeam_username from ${RP_VAULT_EMPTY}" STDERR "")
+set_tests_properties("rpworker vault remove takes veeam_username out (empty)" PROPERTIES
+    FIXTURES_SETUP exe-vault DEPENDS "rpworker vault set stores veeam_username (empty)")
+# What the vault commands say.
+rp_add_exe_test("rpworker vault without a subcommand prints usage"
+    ARGS vault EXIT_CODE 64 STDOUT "" STDERR "${RP_USAGE}")
+rp_add_exe_test("rpworker vault set needs a name"
+    ARGS vault set --vault ${RP_VAULT_MISSING} EXIT_CODE 64 STDOUT "" STDERR "${RP_USAGE}")
+rp_add_exe_test("rpworker vault set takes one of the five names"
+    ARGS vault set RP_VEEAM_USERNAME --vault ${RP_VAULT_MISSING} EXIT_CODE 64 STDOUT ""
+    STDERR "usage error: the name must be one of veeam_username, veeam_password, graph_cert_pfx_base64, graph_cert_password, signing_key_base64")
+rp_add_exe_test("rpworker vault set refuses an empty value from stdin"
+    ARGS vault set veeam_password --vault ${RP_VAULT_MISSING} STDIN ${RP_EXE_VAULTS}/empty.txt
+    EXIT_CODE 1 STDOUT "" STDERR "vault error: the value is empty")
+rp_add_exe_test("rpworker vault list reports a vault that isn't there"
+    ARGS vault list --vault ${RP_VAULT_MISSING} EXIT_CODE 1 STDOUT ""
+    STDERR "vault error: ${RP_VAULT_MISSING}: vault file not found")
+rp_add_exe_test("rpworker vault list prints the names in the vault"
+    ARGS vault list --vault ${RP_VAULT_USER} EXIT_CODE 0 STDOUT "veeam_username" STDERR "")
+rp_add_exe_test("rpworker vault list prints nothing for an empty vault"
+    ARGS vault list --vault ${RP_VAULT_EMPTY} EXIT_CODE 0 STDOUT "" STDERR "")
+rp_add_exe_test("rpworker vault remove says when a name wasn't there"
+    ARGS vault remove graph_cert_password --vault ${RP_VAULT_USER} EXIT_CODE 0
+    STDOUT "graph_cert_password was not in ${RP_VAULT_USER}; nothing changed" STDERR "")
+rp_add_exe_test("rpworker vault grant refuses an account this machine doesn't know"
+    ARGS vault grant "NT SERVICE\\NoSuchService-w45" --vault ${RP_VAULT_USER} EXIT_CODE 1 STDOUT ""
+    STDERR "vault error: ${RP_VAULT_USER}: the account NT SERVICE\\NoSuchService-w45 isn't known on this machine")
+set_tests_properties(
+    "rpworker vault list prints the names in the vault"
+    "rpworker vault list prints nothing for an empty vault"
+    "rpworker vault remove says when a name wasn't there"
+    "rpworker vault grant refuses an account this machine doesn't know"
+    PROPERTIES FIXTURES_REQUIRED exe-vault)
+
 # veeam list stops before any request in each of these, so none reaches the
-# network. config.example.json is valid, so the last two get as far as the
-# secrets. ctest sets both variables and run_exe_test removes the ones named
-# in UNSET_ENV, which also shows that UNSET_ENV works.
+# network. config.example.json is valid, so the vault ones get as far as the
+# secrets.
 rp_add_exe_test("rpworker veeam without a subcommand prints usage"
     ARGS veeam EXIT_CODE 64 STDOUT "" STDERR "${RP_USAGE}")
 rp_add_exe_test("rpworker veeam rejects an unknown subcommand"
@@ -300,32 +382,32 @@ rp_add_exe_test("rpworker veeam rejects an unknown subcommand"
 rp_add_exe_test("rpworker veeam list reports a missing config file"
     ARGS veeam list --config no-such-config.json EXIT_CODE 1 STDOUT ""
     STDERR "config error: no-such-config.json: cannot read config file")
-rp_add_exe_test("rpworker veeam list needs RP_VEEAM_USERNAME"
-    ARGS veeam list --config ${CMAKE_CURRENT_SOURCE_DIR}/config.example.json
-    UNSET_ENV RP_VEEAM_USERNAME RP_VEEAM_PASSWORD
-    EXIT_CODE 1 STDOUT "" STDERR "config error: RP_VEEAM_USERNAME is not set")
-rp_add_exe_test("rpworker veeam list needs RP_VEEAM_PASSWORD"
-    ARGS veeam list --config ${CMAKE_CURRENT_SOURCE_DIR}/config.example.json
-    UNSET_ENV RP_VEEAM_PASSWORD
-    EXIT_CODE 1 STDOUT "" STDERR "config error: RP_VEEAM_PASSWORD is not set")
+rp_add_exe_test("rpworker veeam list reports a vault that isn't there"
+    ARGS veeam list --config ${CMAKE_CURRENT_SOURCE_DIR}/config.example.json --vault ${RP_VAULT_MISSING}
+    EXIT_CODE 1 STDOUT "" STDERR "config error: ${RP_VAULT_MISSING}: vault file not found")
+rp_add_exe_test("rpworker veeam list needs veeam_username"
+    ARGS veeam list --config ${CMAKE_CURRENT_SOURCE_DIR}/config.example.json --vault ${RP_VAULT_EMPTY}
+    EXIT_CODE 1 STDOUT "" STDERR "config error: veeam_username is not in the vault")
+rp_add_exe_test("rpworker veeam list needs veeam_password"
+    ARGS veeam list --config ${CMAKE_CURRENT_SOURCE_DIR}/config.example.json --vault ${RP_VAULT_USER}
+    EXIT_CODE 1 STDOUT "" STDERR "config error: veeam_password is not in the vault")
 # --record (Q2.1) refuses a folder that isn't empty (this source folder) after
 # the secrets and before any request.
 rp_add_exe_test("rpworker veeam list --record needs a folder"
     ARGS veeam list --record EXIT_CODE 64 STDOUT "" STDERR "${RP_USAGE}")
 rp_add_exe_test("rpworker veeam list --record refuses a folder that isn't empty"
-    ARGS veeam list --config ${CMAKE_CURRENT_SOURCE_DIR}/config.example.json
+    ARGS veeam list --config ${CMAKE_CURRENT_SOURCE_DIR}/config.example.json --vault ${RP_VAULT_TWO}
     --record ${CMAKE_CURRENT_SOURCE_DIR}
     EXIT_CODE 1 STDOUT ""
     STDERR "config error: ${CMAKE_CURRENT_SOURCE_DIR}: the --record folder is not empty")
 set_tests_properties(
-    "rpworker veeam list needs RP_VEEAM_USERNAME"
-    "rpworker veeam list needs RP_VEEAM_PASSWORD"
+    "rpworker veeam list needs veeam_username"
+    "rpworker veeam list needs veeam_password"
     "rpworker veeam list --record refuses a folder that isn't empty"
-    PROPERTIES ENVIRONMENT "RP_VEEAM_USERNAME=set-by-ctest;RP_VEEAM_PASSWORD=set-by-ctest")
+    PROPERTIES FIXTURES_REQUIRED exe-vault)
 
 # graph list stops before any request in each of these too: the certificate is
-# loaded before the first one. ctest sets both variables; the last test removes
-# them.
+# loaded before the first one.
 rp_add_exe_test("rpworker graph without a subcommand prints usage"
     ARGS graph EXIT_CODE 64 STDOUT "" STDERR "${RP_USAGE}")
 rp_add_exe_test("rpworker graph list rejects an unknown flag"
@@ -333,18 +415,16 @@ rp_add_exe_test("rpworker graph list rejects an unknown flag"
 rp_add_exe_test("rpworker graph list reports a missing config file"
     ARGS graph list --config no-such-config.json EXIT_CODE 1 STDOUT ""
     STDERR "config error: no-such-config.json: cannot read config file")
-rp_add_exe_test("rpworker graph list needs RP_GRAPH_CERT_PFX_BASE64"
-    ARGS graph list --hash --config ${CMAKE_CURRENT_SOURCE_DIR}/config.example.json
-    UNSET_ENV RP_GRAPH_CERT_PFX_BASE64 RP_GRAPH_CERT_PASSWORD
-    EXIT_CODE 1 STDOUT "" STDERR "config error: RP_GRAPH_CERT_PFX_BASE64 is not set")
+rp_add_exe_test("rpworker graph list needs graph_cert_pfx_base64"
+    ARGS graph list --hash --config ${CMAKE_CURRENT_SOURCE_DIR}/config.example.json --vault ${RP_VAULT_TWO}
+    EXIT_CODE 1 STDOUT "" STDERR "config error: graph_cert_pfx_base64 is not in the vault")
 set_tests_properties(
-    "rpworker graph list needs RP_GRAPH_CERT_PFX_BASE64"
-    PROPERTIES ENVIRONMENT "RP_GRAPH_CERT_PFX_BASE64=set-by-ctest;RP_GRAPH_CERT_PASSWORD=set-by-ctest")
+    "rpworker graph list needs graph_cert_pfx_base64"
+    PROPERTIES FIXTURES_REQUIRED exe-vault)
 
 # restore stops before any request in each of these too: the arguments, the
-# config, the Veeam secrets and the Graph certificate (opened and checked) come
-# first. ctest sets the variables, the first three of the last four tests
-# remove them, and the last one's PFX isn't Base64.
+# config, the vault, the Veeam secrets and the Graph certificate (opened and
+# checked) come first.
 rp_add_exe_test("rpworker restore rejects an unknown flag"
     ARGS restore --mails 1 EXIT_CODE 64 STDOUT "" STDERR "${RP_USAGE}")
 rp_add_exe_test("rpworker restore rejects a sample size above 100"
@@ -352,35 +432,31 @@ rp_add_exe_test("rpworker restore rejects a sample size above 100"
 rp_add_exe_test("rpworker restore reports a missing config file"
     ARGS restore --config no-such-config.json EXIT_CODE 1 STDOUT ""
     STDERR "config error: no-such-config.json: cannot read config file")
-rp_add_exe_test("rpworker restore needs RP_VEEAM_USERNAME"
-    ARGS restore --config ${CMAKE_CURRENT_SOURCE_DIR}/config.example.json
-    UNSET_ENV RP_VEEAM_USERNAME RP_VEEAM_PASSWORD
-    EXIT_CODE 1 STDOUT "" STDERR "config error: RP_VEEAM_USERNAME is not set")
-rp_add_exe_test("rpworker restore needs RP_VEEAM_PASSWORD"
-    ARGS restore --config ${CMAKE_CURRENT_SOURCE_DIR}/config.example.json
-    UNSET_ENV RP_VEEAM_PASSWORD
-    EXIT_CODE 1 STDOUT "" STDERR "config error: RP_VEEAM_PASSWORD is not set")
-rp_add_exe_test("rpworker restore needs RP_GRAPH_CERT_PFX_BASE64"
-    ARGS restore --config ${CMAKE_CURRENT_SOURCE_DIR}/config.example.json
-    UNSET_ENV RP_GRAPH_CERT_PFX_BASE64 RP_GRAPH_CERT_PASSWORD
-    EXIT_CODE 1 STDOUT "" STDERR "config error: RP_GRAPH_CERT_PFX_BASE64 is not set")
+rp_add_exe_test("rpworker restore needs veeam_username"
+    ARGS restore --config ${CMAKE_CURRENT_SOURCE_DIR}/config.example.json --vault ${RP_VAULT_EMPTY}
+    EXIT_CODE 1 STDOUT "" STDERR "config error: veeam_username is not in the vault")
+rp_add_exe_test("rpworker restore needs veeam_password"
+    ARGS restore --config ${CMAKE_CURRENT_SOURCE_DIR}/config.example.json --vault ${RP_VAULT_USER}
+    EXIT_CODE 1 STDOUT "" STDERR "config error: veeam_password is not in the vault")
+rp_add_exe_test("rpworker restore needs graph_cert_pfx_base64"
+    ARGS restore --config ${CMAKE_CURRENT_SOURCE_DIR}/config.example.json --vault ${RP_VAULT_TWO}
+    EXIT_CODE 1 STDOUT "" STDERR "config error: graph_cert_pfx_base64 is not in the vault")
 rp_add_exe_test("rpworker restore opens the Graph certificate before any request"
-    ARGS restore --config ${CMAKE_CURRENT_SOURCE_DIR}/config.example.json
+    ARGS restore --config ${CMAKE_CURRENT_SOURCE_DIR}/config.example.json --vault ${RP_VAULT_FULL}
     EXIT_CODE 1 STDOUT ""
-    STDERR "config error: RP_GRAPH_CERT_PFX_BASE64 is not valid Base64 (one line of A-Z, a-z, 0-9, + and /, padded with =)")
+    STDERR "config error: graph_cert_pfx_base64 is not valid Base64 (one line of A-Z, a-z, 0-9, + and /, padded with =)")
 set_tests_properties(
-    "rpworker restore needs RP_VEEAM_USERNAME"
-    "rpworker restore needs RP_VEEAM_PASSWORD"
-    "rpworker restore needs RP_GRAPH_CERT_PFX_BASE64"
+    "rpworker restore needs veeam_username"
+    "rpworker restore needs veeam_password"
+    "rpworker restore needs graph_cert_pfx_base64"
     "rpworker restore opens the Graph certificate before any request"
-    PROPERTIES ENVIRONMENT
-    "RP_VEEAM_USERNAME=set-by-ctest;RP_VEEAM_PASSWORD=set-by-ctest;RP_GRAPH_CERT_PFX_BASE64=set-by-ctest;RP_GRAPH_CERT_PASSWORD=set-by-ctest")
+    PROPERTIES FIXTURES_REQUIRED exe-vault)
 
 # test (W3.6) runs restore's pipeline, so it stops at the same places before any
 # request; its --json path is checked once the config is read and before the
-# secrets, so its refusals need no variables. A non-UTF-8 --json path can't come
-# through wmain, and an empty one can't come through a CMake list (rptests
-# covers both).
+# vault, so its refusals need no vault (a vault that isn't there shows that). A
+# non-UTF-8 --json path can't come through wmain, and an empty one can't come
+# through a CMake list (rptests covers both).
 rp_add_exe_test("rpworker test rejects an unknown flag"
     ARGS test --seed 1 EXIT_CODE 64 STDOUT "" STDERR "${RP_USAGE}")
 rp_add_exe_test("rpworker test rejects a sample size above 100"
@@ -391,64 +467,56 @@ rp_add_exe_test("rpworker test reports a missing config file"
     ARGS test --config no-such-config.json EXIT_CODE 1 STDOUT ""
     STDERR "config error: no-such-config.json: cannot read config file")
 rp_add_exe_test("rpworker test --json refuses a file that already exists"
-    ARGS test --config ${CMAKE_CURRENT_SOURCE_DIR}/config.example.json
+    ARGS test --config ${CMAKE_CURRENT_SOURCE_DIR}/config.example.json --vault ${RP_VAULT_MISSING}
     --json ${CMAKE_CURRENT_SOURCE_DIR}/config.example.json
-    UNSET_ENV RP_VEEAM_USERNAME RP_VEEAM_PASSWORD RP_GRAPH_CERT_PFX_BASE64 RP_GRAPH_CERT_PASSWORD
     EXIT_CODE 1 STDOUT ""
     STDERR "config error: --json ${CMAKE_CURRENT_SOURCE_DIR}/config.example.json: the file already exists")
 rp_add_exe_test("rpworker test --json refuses a folder that doesn't exist"
-    ARGS test --config ${CMAKE_CURRENT_SOURCE_DIR}/config.example.json
+    ARGS test --config ${CMAKE_CURRENT_SOURCE_DIR}/config.example.json --vault ${RP_VAULT_MISSING}
     --json ${CMAKE_CURRENT_SOURCE_DIR}/no-such-folder/run.json
-    UNSET_ENV RP_VEEAM_USERNAME RP_VEEAM_PASSWORD RP_GRAPH_CERT_PFX_BASE64 RP_GRAPH_CERT_PASSWORD
     EXIT_CODE 1 STDOUT ""
     STDERR "config error: --json ${CMAKE_CURRENT_SOURCE_DIR}/no-such-folder/run.json: the folder doesn't exist")
 rp_add_exe_test("rpworker test --json refuses a name that holds a colon"
-    ARGS test --config ${CMAKE_CURRENT_SOURCE_DIR}/config.example.json
+    ARGS test --config ${CMAKE_CURRENT_SOURCE_DIR}/config.example.json --vault ${RP_VAULT_MISSING}
     --json ${CMAKE_CURRENT_SOURCE_DIR}/config.example.json:x
-    UNSET_ENV RP_VEEAM_USERNAME RP_VEEAM_PASSWORD RP_GRAPH_CERT_PFX_BASE64 RP_GRAPH_CERT_PASSWORD
     EXIT_CODE 1 STDOUT ""
     STDERR "config error: --json ${CMAKE_CURRENT_SOURCE_DIR}/config.example.json:x: not a file name")
 # W4.2: --evidence takes a runs root, never with --json; a --run-id that can't
-# name the run's folder is refused once the config is read, before the secrets.
+# name the run's folder is refused once the config is read, before the vault.
 rp_add_exe_test("rpworker test --evidence needs a folder"
     ARGS test --evidence EXIT_CODE 64 STDOUT "" STDERR "${RP_USAGE}")
 rp_add_exe_test("rpworker test takes --json or --evidence, not both"
     ARGS test --json run.json --evidence runs EXIT_CODE 64 STDOUT "" STDERR "${RP_USAGE}")
 rp_add_exe_test("rpworker test --evidence refuses a run ID that can't name a folder"
-    ARGS test --config ${CMAKE_CURRENT_SOURCE_DIR}/config.example.json
+    ARGS test --config ${CMAKE_CURRENT_SOURCE_DIR}/config.example.json --vault ${RP_VAULT_MISSING}
     --evidence ${CMAKE_CURRENT_BINARY_DIR}/no-such-runs --run-id rp:1
-    UNSET_ENV RP_VEEAM_USERNAME RP_VEEAM_PASSWORD RP_GRAPH_CERT_PFX_BASE64 RP_GRAPH_CERT_PASSWORD
     EXIT_CODE 1 STDOUT ""
     STDERR "config error: --evidence: the run ID can't name a folder")
-rp_add_exe_test("rpworker test needs RP_VEEAM_USERNAME"
-    ARGS test --config ${CMAKE_CURRENT_SOURCE_DIR}/config.example.json
-    UNSET_ENV RP_VEEAM_USERNAME RP_VEEAM_PASSWORD
-    EXIT_CODE 1 STDOUT "" STDERR "config error: RP_VEEAM_USERNAME is not set")
-rp_add_exe_test("rpworker test needs RP_VEEAM_PASSWORD"
-    ARGS test --config ${CMAKE_CURRENT_SOURCE_DIR}/config.example.json
-    UNSET_ENV RP_VEEAM_PASSWORD
-    EXIT_CODE 1 STDOUT "" STDERR "config error: RP_VEEAM_PASSWORD is not set")
-rp_add_exe_test("rpworker test needs RP_GRAPH_CERT_PFX_BASE64"
-    ARGS test --config ${CMAKE_CURRENT_SOURCE_DIR}/config.example.json
-    UNSET_ENV RP_GRAPH_CERT_PFX_BASE64 RP_GRAPH_CERT_PASSWORD
-    EXIT_CODE 1 STDOUT "" STDERR "config error: RP_GRAPH_CERT_PFX_BASE64 is not set")
+rp_add_exe_test("rpworker test needs veeam_username"
+    ARGS test --config ${CMAKE_CURRENT_SOURCE_DIR}/config.example.json --vault ${RP_VAULT_EMPTY}
+    EXIT_CODE 1 STDOUT "" STDERR "config error: veeam_username is not in the vault")
+rp_add_exe_test("rpworker test needs veeam_password"
+    ARGS test --config ${CMAKE_CURRENT_SOURCE_DIR}/config.example.json --vault ${RP_VAULT_USER}
+    EXIT_CODE 1 STDOUT "" STDERR "config error: veeam_password is not in the vault")
+rp_add_exe_test("rpworker test needs graph_cert_pfx_base64"
+    ARGS test --config ${CMAKE_CURRENT_SOURCE_DIR}/config.example.json --vault ${RP_VAULT_TWO}
+    EXIT_CODE 1 STDOUT "" STDERR "config error: graph_cert_pfx_base64 is not in the vault")
 rp_add_exe_test("rpworker test opens the Graph certificate before any request"
-    ARGS test --config ${CMAKE_CURRENT_SOURCE_DIR}/config.example.json
+    ARGS test --config ${CMAKE_CURRENT_SOURCE_DIR}/config.example.json --vault ${RP_VAULT_FULL}
     EXIT_CODE 1 STDOUT ""
-    STDERR "config error: RP_GRAPH_CERT_PFX_BASE64 is not valid Base64 (one line of A-Z, a-z, 0-9, + and /, padded with =)")
+    STDERR "config error: graph_cert_pfx_base64 is not valid Base64 (one line of A-Z, a-z, 0-9, + and /, padded with =)")
 set_tests_properties(
-    "rpworker test needs RP_VEEAM_USERNAME"
-    "rpworker test needs RP_VEEAM_PASSWORD"
-    "rpworker test needs RP_GRAPH_CERT_PFX_BASE64"
+    "rpworker test needs veeam_username"
+    "rpworker test needs veeam_password"
+    "rpworker test needs graph_cert_pfx_base64"
     "rpworker test opens the Graph certificate before any request"
-    PROPERTIES ENVIRONMENT
-    "RP_VEEAM_USERNAME=set-by-ctest;RP_VEEAM_PASSWORD=set-by-ctest;RP_GRAPH_CERT_PFX_BASE64=set-by-ctest;RP_GRAPH_CERT_PASSWORD=set-by-ctest")
+    PROPERTIES FIXTURES_REQUIRED exe-vault)
 
-# signer (W4.3) reads no config. public-key stops at the signing key's variable,
-# which the first test removes and the second sets to something that is no key.
-# verify needs a key file before it looks at the folder: RFC 8032 test 1's
-# public key (shared/testdata/signing-v1/keys.json), written into the build
-# tree, beside a run folder with nothing in it.
+# signer (W4.3) reads no config. public-key stops at the vault's signing key:
+# a vault without one, then one holding something that is no key. verify needs
+# a key file before it looks at the folder: RFC 8032 test 1's public key
+# (shared/testdata/signing-v1/keys.json), written into the build tree, beside a
+# run folder with nothing in it.
 set(RP_SIGNER_TEST_KEY ${CMAKE_CURRENT_BINARY_DIR}/signer-exe-test/rfc8032-test-1.pub.pem)
 file(WRITE ${RP_SIGNER_TEST_KEY}
     "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=\n-----END PUBLIC KEY-----\n")
@@ -463,17 +531,20 @@ rp_add_exe_test("rpworker signer verify needs a folder and a key file"
 rp_add_exe_test("rpworker signer verify --public-key needs a file"
     ARGS signer verify ${CMAKE_CURRENT_BINARY_DIR}/signer-exe-test/empty-run --public-key
     EXIT_CODE 64 STDOUT "" STDERR "${RP_USAGE}")
-rp_add_exe_test("rpworker signer public-key needs RP_SIGNING_KEY_BASE64"
-    ARGS signer public-key UNSET_ENV RP_SIGNING_KEY_BASE64
-    EXIT_CODE 1 STDOUT "" STDERR "config error: RP_SIGNING_KEY_BASE64 is not set")
+rp_add_exe_test("rpworker signer public-key needs signing_key_base64"
+    ARGS signer public-key --vault ${RP_VAULT_EMPTY}
+    EXIT_CODE 1 STDOUT "" STDERR "config error: signing_key_base64 is not in the vault")
 rp_add_exe_test("rpworker signer public-key refuses a value that is no key"
-    ARGS signer public-key
+    ARGS signer public-key --vault ${RP_VAULT_FULL}
     EXIT_CODE 1 STDOUT ""
-    STDERR "config error: RP_SIGNING_KEY_BASE64 is not an Ed25519 private key (Base64 of PKCS#8 DER)")
+    STDERR "config error: signing_key_base64 is not an Ed25519 private key (Base64 of PKCS#8 DER)")
+rp_add_exe_test("rpworker signer public-key reports a vault that isn't there"
+    ARGS signer public-key --vault ${RP_VAULT_MISSING}
+    EXIT_CODE 1 STDOUT "" STDERR "config error: ${RP_VAULT_MISSING}: vault file not found")
 set_tests_properties(
-    "rpworker signer public-key needs RP_SIGNING_KEY_BASE64"
+    "rpworker signer public-key needs signing_key_base64"
     "rpworker signer public-key refuses a value that is no key"
-    PROPERTIES ENVIRONMENT "RP_SIGNING_KEY_BASE64=set-by-ctest")
+    PROPERTIES FIXTURES_REQUIRED exe-vault)
 rp_add_exe_test("rpworker signer verify reports a key file that can't be read"
     ARGS signer verify ${CMAKE_CURRENT_BINARY_DIR}/signer-exe-test/empty-run
     --public-key no-such-key.pem

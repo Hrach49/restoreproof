@@ -46,6 +46,7 @@
 // folder is opened before the first seed, so one that isn't new or empty fails
 // the test with nothing written.
 
+#include "live_secrets.hpp"
 #include "../src/command_config.hpp"
 #include "graph_live_lab.hpp"
 #include "live_seed.hpp"
@@ -316,7 +317,7 @@ TEST_CASE("live cleanup: the Cleaner empties the three restore targets with fold
     auto logger = std::make_shared<spdlog::logger>(
         "live_cleanup", std::make_shared<spdlog::sinks::ostream_sink_mt>(std::cout));
     logger->set_level(spdlog::level::info);
-    const rp::Secrets secrets = rp::load_secrets_from_env();
+    const rp::Secrets secrets = rp::test::live_secrets();
     // The recording folder is opened before any seed is sent: one that isn't
     // new or empty throws here, with nothing written to the tenant yet.
     const std::optional<std::string> record_dir = rp::test::get_env("RP_LIVE_RECORD_DIR");

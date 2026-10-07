@@ -6,11 +6,13 @@
 //
 // Environment (docs/testing.md):
 //   RP_LIVE=1
-//   RP_VEEAM_USERNAME, RP_VEEAM_PASSWORD   the Veeam account (rp/secrets.hpp)
+//   RP_LIVE_VAULT                          the vault file (live_secrets.hpp); default
+//                                          %ProgramData%\RestoreProof\vault.bin
 //   RP_LIVE_VEEAM_CA_FILE                  PEM of Veeam's REST certificate
 //   RP_LIVE_VEEAM_CERT_SHA256              its SHA-256; default: the lab's
 //   RP_LIVE_VEEAM_URL                      default: https://localhost:4443
 
+#include "live_secrets.hpp"
 #include "test_support.hpp"
 
 #include <rp/config.hpp>
@@ -59,7 +61,7 @@ TEST_CASE("live: the lab's Veeam returns the real organisation and its restore p
     if (rp::test::get_env("RP_LIVE") != std::optional<std::string>{"1"}) {
         SKIP("set RP_LIVE=1 to run against the lab's Veeam");
     }
-    const rp::Secrets secrets = rp::load_secrets_from_env();
+    const rp::Secrets secrets = rp::test::live_secrets();
     REQUIRE(secrets.veeam_username);
     REQUIRE(secrets.veeam_password);
     const std::optional<std::string> ca_file = rp::test::get_env("RP_LIVE_VEEAM_CA_FILE");
@@ -180,7 +182,7 @@ TEST_CASE("live: the veeam_m365 connector lists the lab's restore points as an I
 
     const std::unique_ptr<rp::connector::IConnector> made =
         rp::connector::default_connector_registry().create(rp::connector::kVeeamM365, config,
-                                                           rp::load_secrets_from_env());
+                                                           rp::test::live_secrets());
     rp::connector::IConnector& source = *made;
     CHECK(source.describe().name == "veeam_m365");
     const std::vector<rp::connector::RestorePoint> points =

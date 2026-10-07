@@ -7,6 +7,7 @@
 #include <rp/graph_download.hpp>
 #include <rp/graph_errors.hpp>
 #include <rp/graph_targets.hpp>
+#include <rp/vault.hpp>
 
 #include "command_config.hpp"
 #include "text_table.hpp"
@@ -36,7 +37,7 @@ std::optional<CommandOptions> parse_list_args(std::span<const std::string_view> 
     if (args.empty() || args[0] != "list") {
         return std::nullopt;
     }
-    return parse_options(args.subspan(1), {"--config", "--record"}, {"--hash"});
+    return parse_options(args.subspan(1), {"--config", "--vault", "--record"}, {"--hash"});
 }
 
 // The download client of a listing without --hash, which downloads nothing:
@@ -141,7 +142,8 @@ GraphCommandEnv default_graph_command_env()
 {
     GraphCommandEnv env;
     env.default_config_path = default_config_path;
-    env.load_secrets = load_secrets_from_env;
+    env.default_vault_path = default_vault_path;
+    env.load_secrets = read_vault;
     env.make_graph_http = [](std::shared_ptr<spdlog::logger> logger) {
         return graph::make_graph_http_client(std::move(logger));
     };
@@ -164,6 +166,7 @@ int run_list(std::span<const std::string_view> args, std::ostream& out, std::ost
     }
     const bool hash = options->has_flag("--hash");
     const std::optional<std::string_view> config_arg = options->value("--config");
+    const std::optional<std::string_view> vault_arg = options->value("--vault");
     const std::optional<std::string_view> record_arg = options->value("--record");
 
     // Never spdlog's default logger, which writes to stdout, where the tables are.
@@ -180,7 +183,8 @@ int run_list(std::span<const std::string_view> args, std::ostream& out, std::ost
                                                       : std::chrono::system_clock::now();
         // A CertificateError is a ConfigError: an unset or unusable certificate
         // is found here, before any request.
-        const Secrets secrets = env.load_secrets();
+        const Secrets secrets =
+            env.load_secrets(command_vault_path(vault_arg, env.default_vault_path));
         certificate = graph::certificate_from_secrets(secrets, wall_now, logger);
         recorder = open_recording(record_arg, hash ? "graph list --hash" : "graph list", secrets);
     } catch (const ConfigError& e) {

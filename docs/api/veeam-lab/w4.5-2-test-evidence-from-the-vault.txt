@@ -1,0 +1,98 @@
+W4.5 (#48) step 2: rpworker test --evidence as the current user (elevated), from the vault alone: no RP_* secret variable in the shell, 2026-10-07T00:59:15Z to 01:02:52Z
+command: rpworker test --mail 10 --sp 10 --od 10 --run-id w45-done-when-1 --point c2f0f2e7-177f-48ac-992b-93a50cf702e332f28a6a-67e7-46bf-844b-6b9f9ea7dc73 --config <lab config.json> --manifest C:\restoreproof\lab\seed-manifest.json --evidence C:\ProgramData\RestoreProof\runs
+RP_* variables in the shell: []
+--- stdout
+restore point 2026-10-03T16:16:54.0154727Z  c2f0f2e7-177f-48ac-992b-93a50cf702e332f28a6a-67e7-46bf-844b-6b9f9ea7dc73  (veeam_org_name RestoreProofLab.onmicrosoft.com)
+run w45-done-when-1  seed 6cbf2130
+cleanup before ok: deleted 0 mail, 0 sharepoint, 0 onedrive
+canary cursor 0,0,0 -> 5,5,5
+  KIND        REQUESTED  CANARIES  RANDOM  NOTE
+  mail        10         5 of 5    5 of 5
+  sharepoint  10         5 of 5    5 of 5
+  onedrive    10         5 of 5    5 of 5
+restoring 30 item(s) ...
+
+  SESSION                               KIND        RESULT   RESTORED  STARTED                       ENDED                         ELAPSED
+  27f4f6f6-14b5-4f49-a593-3166d9d6dd9b  mail        Success  7 of 7    2026-10-07T00:59:48.7587893Z  2026-10-07T01:00:17.8467729Z  0:00:29
+  2531ccc7-de05-499d-912a-4f67c2ac38ce  mail        Success  3 of 3    2026-10-07T01:00:19.6111475Z  2026-10-07T01:00:47.932204Z   0:00:28
+  e2286d78-9b30-42b7-8aec-e67a03194bb4  sharepoint  Success  10 of 10  2026-10-07T01:00:50.6999876Z  2026-10-07T01:01:48.4962412Z  0:00:57
+  f508280c-f361-4d81-a6b3-13059cbb11e7  onedrive    Success  10 of 10  2026-10-07T01:01:51.6161712Z  2026-10-07T01:02:34.0466639Z  0:00:42
+
+restore succeeded: 30 of 30 item(s) restored in 0:02:57
+
+  TYPE        NAME                                                    EXPECTED  FOUND  MATCH  VERDICT   REASON  MS
+  mail        RP-CANARY-0001                                          manifest  yes    match  verified  -       0
+  mail        RP-CANARY-0002                                          manifest  yes    match  verified  -       0
+  mail        RP-CANARY-0003                                          manifest  yes    match  verified  -       0
+  mail        RP-CANARY-0004                                          manifest  yes    match  verified  -       0
+  mail        RP-CANARY-0005                                          manifest  yes    match  verified  -       0
+  mail        Weekly digest: Microsoft service updates                fields    yes    match  verified  -       0
+  mail        Twoja faktura Microsoft G186548938 jest gotowa          fields    yes    match  verified  -       0
+  mail        Veeam Download Details: Veeam Backup for Microsoft 365  fields    yes    match  verified  -       0
+  mail        Client visit on Tuesday                                 fields    yes    match  verified  -       0
+  mail        Kitchen rota for next week                              fields    yes    match  verified  -       0
+  sharepoint  rp-canary-01.pdf                                        manifest  yes    match  verified  -       332
+  sharepoint  rp-canary-02.docx                                       manifest  yes    match  verified  -       322
+  sharepoint  rp-canary-03.xlsx                                       manifest  yes    match  verified  -       328
+  sharepoint  rp-canary-04.txt                                        manifest  yes    match  verified  -       379
+  sharepoint  rp-canary-05.png                                        manifest  yes    match  verified  -       377
+  sharepoint  budget-summary.pdf                                      metadata  yes    match  verified  -       366
+  sharepoint  room-bookings.xlsx                                      metadata  yes    match  verified  -       0
+  sharepoint  brand-colours-draft.png                                 metadata  yes    match  verified  -       450
+  sharepoint  supplier-contacts.txt                                   metadata  yes    match  verified  -       349
+  sharepoint  team-meeting-notes.txt                                  metadata  yes    match  verified  -       364
+  onedrive    rp-canary-11.pdf                                        manifest  yes    match  verified  -       385
+  onedrive    rp-canary-12.docx                                       manifest  yes    match  verified  -       357
+  onedrive    rp-canary-13.xlsx                                       manifest  yes    match  verified  -       403
+  onedrive    rp-canary-14.txt                                        manifest  yes    match  verified  -       388
+  onedrive    rp-canary-15.png                                        manifest  yes    match  verified  -       353
+  onedrive    whiteboard-sketch.png                                   metadata  yes    match  verified  -       399
+  onedrive    holiday-photo.png                                       metadata  yes    match  verified  -       359
+  onedrive    reading-list.txt                                        metadata  yes    match  verified  -       301
+  onedrive    expense-report-march.pdf                                metadata  yes    match  verified  -       350
+  onedrive    travel-notes.txt                                        metadata  yes    match  verified  -       381
+
+check: 30 match, 0 mismatch, 0 missing, 0 error
+
+status pass: 30 of 30 item(s) verified: manifest 15, fields 5, metadata 10
+cleanup after ok: deleted 10 mail, 10 sharepoint, 10 onedrive
+
+STEP                  TIME         NOTE
+restore_point_lookup  0:00:00.319
+cleanup_before        0:00:01.649
+sample_select         0:00:21.485
+target_snapshot       0:00:00.762
+restore               0:02:57.457
+restore_submit        0:00:01.383
+restore_wait          0:02:46.934
+verify                0:00:07.940
+recovery              0:03:05.398
+cleanup_after         0:00:05.896
+total                 0:03:35.643
+signed e1868c59fc7d1566173b87da6276b5a4da79f93590cfa5d5e0f792d584f9f323 key 9dfab6eadaa1d04a22dcc966aac7a53bcff8bbe0077232485f6143cd9c4d0ca5
+timestamped 2026-10-07T01:01:31Z
+evidence C:\ProgramData\RestoreProof\runs\w45-done-when-1: result.json, signature.json, timestamp.tst, items.csv, veeam-session.log
+--- stderr
+--- exit 0
+--- the folder
+items.csv              5807 bytes
+result.json           22239 bytes
+signature.json          322 bytes
+timestamp.tst          5999 bytes
+veeam-session.log      7510 bytes
+--- Get-FileHash result.json
+e1868c59fc7d1566173b87da6276b5a4da79f93590cfa5d5e0f792d584f9f323
+--- rpworker signer public-key (from the vault): stdout the PEM (not kept here), stderr the key line
+
+--- rpworker signer verify <folder> --public-key <that PEM> --tsa-ca shared\tsa\tsa-ca.pem
+verified e1868c59fc7d1566173b87da6276b5a4da79f93590cfa5d5e0f792d584f9f323 key 9dfab6eadaa1d04a22dcc966aac7a53bcff8bbe0077232485f6143cd9c4d0ca5 timestamp 2026-10-07T01:01:31Z
+exit 0
+--- rpworker graph list --config <lab config> after the run
+Mail (restoretest@RestoreProofLab.onmicrosoft.com, Inbox): 0 item(s)
+
+SharePoint (RestoreTarget library): 0 item(s)
+
+OneDrive (RestoreTarget folder): 0 item(s)
+
+0 item(s) in the three restore targets
+exit 0

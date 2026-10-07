@@ -2,6 +2,7 @@
 
 #include <rp/cli.hpp>
 #include <rp/config.hpp>
+#include <rp/vault.hpp>
 
 #include "command_config.hpp"
 #include "text_table.hpp"
@@ -31,7 +32,7 @@ std::optional<CommandOptions> parse_list_args(std::span<const std::string_view> 
     if (args.empty() || args[0] != "list") {
         return std::nullopt;
     }
-    return parse_options(args.subspan(1), {"--config", "--record"});
+    return parse_options(args.subspan(1), {"--config", "--vault", "--record"});
 }
 
 // what() is safe to print: VeeamError's message went through rp::redact().
@@ -110,7 +111,8 @@ VeeamCommandEnv default_veeam_command_env()
 {
     VeeamCommandEnv env;
     env.default_config_path = default_config_path;
-    env.load_secrets = load_secrets_from_env;
+    env.default_vault_path = default_vault_path;
+    env.load_secrets = read_vault;
     env.make_http = [](const HttpClientOptions& options) -> std::unique_ptr<IHttpClient> {
         return std::make_unique<HttpClient>(options);
     };
@@ -131,13 +133,14 @@ int run_list(std::span<const std::string_view> args, std::ostream& out, std::ost
         return exit_code::usage;
     }
     const std::optional<std::string_view> config_arg = options->value("--config");
+    const std::optional<std::string_view> vault_arg = options->value("--vault");
     const std::optional<std::string_view> record_arg = options->value("--record");
 
     Config config;
     Secrets secrets;
     try {
         config = load_config(command_config_path(config_arg, env.default_config_path));
-        secrets = env.load_secrets();
+        secrets = env.load_secrets(command_vault_path(vault_arg, env.default_vault_path));
     } catch (const ConfigError& e) {
         err << "config error: " << e.what() << '\n';
         return exit_code::config;

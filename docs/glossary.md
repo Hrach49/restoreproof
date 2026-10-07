@@ -239,13 +239,22 @@ on stderr.
 
 **Signing key.** The Worker's Ed25519 key pair. The private key signs each run folder's result;
 the public key, as a PEM file, is what a verifier is given and what is registered with the
-Cloud so bundles from that Worker can be verified (C5.5). Today (W4.3) the private key is the
-secret `RP_SIGNING_KEY_BASE64`, one line of Base64 in an environment variable, and in the lab
-it is made by `python -m seeder new-signing-key` and kept in Windows Credential Manager. Only
-from W4.5 does it live in the DPAPI vault and never leave it, and only from W7.1 is it
-generated on the Worker at setup. It is never logged, printed or written to a file by the
-Worker. Signing proves *which Worker* produced a bundle; the RFC 3161 timestamp will prove
-*when* it existed.
+Cloud so bundles from that Worker can be verified (C5.5). Since W4.5 the private key is the
+vault's `signing_key_base64`, one line of Base64, and in the lab it is made by `python -m
+seeder new-signing-key`, kept in Windows Credential Manager and moved into the vault by
+`fill-worker-vault.ps1`; only from W7.1 is it generated on the Worker at setup. It is never
+logged, printed or written to a file in the clear by the Worker. Signing proves *which Worker*
+produced a bundle; the RFC 3161 timestamp proves *when* it existed.
+
+**Vault.** The Worker's one store of secrets (W4.5): `%ProgramData%\RestoreProof\vault.bin`,
+a DPAPI blob under machine scope whose plaintext is a canonical JSON object of five names,
+`veeam_username`, `veeam_password`, `graph_cert_pfx_base64`, `graph_cert_password` and
+`signing_key_base64`. Machine scope means any process on the machine can decrypt it and none
+on another machine can, so the file's ACL is the access control: SYSTEM, Administrators and
+the file's owner, plus one Read entry per `rpworker vault grant <account>` (the service
+account's). `rpworker vault set <name>` fills it from the console without echo or from stdin;
+`--vault <file>` on a command names another file. No secret is read from the environment or
+`config.json`.
 
 **RFC 3161 timestamp token (`tsa_token`).** A third-party Time Stamping Authority's signature
 over the bundle hash, proving the bundle existed at that time — not merely that our server

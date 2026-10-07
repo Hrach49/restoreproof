@@ -25,8 +25,11 @@ struct VeeamCommandEnv {
     // The config file without --config (rp::default_config_path). Called only
     // then, and only after the arguments parsed.
     std::function<std::filesystem::path()> default_config_path;
-    // rp::load_secrets_from_env.
-    std::function<Secrets()> load_secrets;
+    // The vault without --vault (rp::default_vault_path, W4.5). Called only
+    // then, after the config is read.
+    std::function<std::filesystem::path()> default_vault_path;
+    // rp::read_vault, on the vault --vault names or the default one.
+    std::function<Secrets(const std::filesystem::path& vault)> load_secrets;
     // The HTTP client for Veeam. The command fills ca_file and
     // pinned_cert_sha256 from Config::veeam_ca_file and veeam_cert_sha256 (TLS
     // is never off) and logger, sleep and jitter from `client_options`.
@@ -36,14 +39,14 @@ struct VeeamCommandEnv {
     VeeamClientOptions client_options;
 };
 
-// The real environment: rp::default_config_path, rp::load_secrets_from_env,
-// an rp::HttpClient, and a logger that writes warnings and worse to stderr,
-// so no log line can land in the table on stdout.
+// The real environment: rp::default_config_path, rp::default_vault_path,
+// rp::read_vault, an rp::HttpClient, and a logger that writes warnings and
+// worse to stderr, so no log line can land in the table on stdout.
 VeeamCommandEnv default_veeam_command_env();
 
 // `rpworker veeam ...`. `args` is what follows "veeam" on the command line,
-// in UTF-8; the only subcommand is `list`, followed by `--config <path>` and
-// `--record <dir>` in any order, each at most once.
+// in UTF-8; the only subcommand is `list`, followed by `--config <path>`,
+// `--vault <file>` and `--record <dir>` in any order, each at most once.
 //
 // Prints to `out`, as UTF-8, a table of every organisation Veeam returns
 // (sorted by name, ASCII case-insensitively, then ID) with its restore points
@@ -63,8 +66,9 @@ VeeamCommandEnv default_veeam_command_env();
 // Returns an rp::exit_code, with one line on `err` for each failure:
 //  - 64: arguments it doesn't understand (rp::kCliUsage);
 //  - 1: "config error: <message>" for a ConfigError (a config that doesn't
-//    load, a --config path that isn't UTF-8, a secret that can't be read),
-//    "config error: RP_VEEAM_USERNAME is not set" (then RP_VEEAM_PASSWORD)
+//    load, a --config or --vault path that isn't UTF-8, a vault that can't be
+//    used: rp::VaultError's messages), "config error: veeam_username is not
+//    in the vault" (then veeam_password)
 //    for a missing secret, a --record folder that isn't new or empty or a
 //    --record path that isn't UTF-8, "config error: unexpected failure" for
 //    any other

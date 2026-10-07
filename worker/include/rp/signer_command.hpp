@@ -9,6 +9,7 @@
 #include <rp/secrets.hpp>
 
 #include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <iosfwd>
 #include <span>
@@ -23,29 +24,35 @@ inline constexpr std::uintmax_t kMaxPublicKeyFileBytes = 64u * 1024u;
 // What the commands reach outside themselves. run_cli passes
 // default_signer_command_env(); tests pass their own secrets.
 struct SignerCommandEnv {
-    // rp::load_secrets_from_env. Called by `public-key` only, and only after
-    // the arguments parsed: `verify` needs no secret and no config.
-    std::function<Secrets()> load_secrets;
+    // The vault without --vault (rp::default_vault_path, W4.5). Called by
+    // `public-key` only, and only after the arguments parsed.
+    std::function<std::filesystem::path()> default_vault_path;
+    // rp::read_vault, on the vault --vault names or the default one. Called by
+    // `public-key` only: `verify` needs no secret and no config.
+    std::function<Secrets(const std::filesystem::path& vault)> load_secrets;
 };
 
-// The real environment: rp::load_secrets_from_env.
+// The real environment: rp::default_vault_path, rp::read_vault.
 SignerCommandEnv default_signer_command_env();
 
 // `rpworker signer ...`. `args` is what follows "signer" on the command line,
 // in UTF-8. Returns an rp::exit_code; 64 with rp::kCliUsage on `err` for
 // arguments it doesn't understand (another subcommand, a word too many, a
-// missing or empty <folder>, --public-key or --tsa-ca value, any given twice).
+// missing or empty <folder>, --public-key, --tsa-ca or --vault value, any
+// given twice).
 //
-// `public-key` prints to `out` the SubjectPublicKeyInfo PEM of the key in
-// RP_SIGNING_KEY_BASE64 (three lines) and nothing else, so that `out` is a key
-// file as it is: what is registered with the Cloud and handed to a verifier
-// (`signer verify --public-key`, verify_bundle.py). Then, on `err`, the line
-// `key <key_id>` (the W4.3 review moved it there: a verifier refuses a key
-// file with a line after the block). Never the private key, whose text is
-// wiped before anything is printed. Exit 1 with one line on
-// `err`: "config error: <message>" for a ConfigError from `load_secrets`,
-// "config error: RP_SIGNING_KEY_BASE64 is not set" and "config error:
-// RP_SIGNING_KEY_BASE64 is not an Ed25519 private key (Base64 of PKCS#8 DER)".
+// `public-key [--vault <file>]` prints to `out` the SubjectPublicKeyInfo PEM
+// of the vault's signing_key_base64 (three lines) and nothing else, so that
+// `out` is a key file as it is: what is registered with the Cloud and handed
+// to a verifier (`signer verify --public-key`, verify_bundle.py). Then, on
+// `err`, the line `key <key_id>` (the W4.3 review moved it there: a verifier
+// refuses a key file with a line after the block). Never the private key,
+// whose text is wiped before anything is printed. Exit 1 with one line on
+// `err`: "config error: <message>" for a ConfigError from `load_secrets` (a
+// vault that can't be used: rp::VaultError's messages) or a --vault path
+// that isn't UTF-8, "config error: signing_key_base64 is not in the vault"
+// and "config error: signing_key_base64 is not an Ed25519 private key
+// (Base64 of PKCS#8 DER)".
 //
 // `verify <folder> --public-key <pem file> [--tsa-ca <pem file>]` (in any
 // order) checks the run folder with Signer::verify_folder against the key in

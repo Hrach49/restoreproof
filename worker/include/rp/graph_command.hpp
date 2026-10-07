@@ -29,8 +29,11 @@ struct GraphCommandEnv {
     // The config file without --config (rp::default_config_path). Called only
     // then, and only after the arguments parsed.
     std::function<std::filesystem::path()> default_config_path;
-    // rp::load_secrets_from_env.
-    std::function<Secrets()> load_secrets;
+    // The vault without --vault (rp::default_vault_path, W4.5). Called only
+    // then, after the config is read.
+    std::function<std::filesystem::path()> default_vault_path;
+    // rp::read_vault, on the vault --vault names or the default one.
+    std::function<Secrets(const std::filesystem::path& vault)> load_secrets;
     // The HTTP client for Graph and Entra, the token's only road:
     // rp::graph::make_graph_http_client, called with client_options.logger.
     std::function<std::unique_ptr<IHttpClient>(std::shared_ptr<spdlog::logger>)> make_graph_http;
@@ -46,17 +49,20 @@ struct GraphCommandEnv {
     graph::GraphClientOptions client_options;
 };
 
-// The real environment: rp::default_config_path, rp::load_secrets_from_env,
-// the two Graph HTTP clients, and a logger that writes warnings and worse to
-// stderr, so no log line can land in the tables on stdout.
+// The real environment: rp::default_config_path, rp::default_vault_path,
+// rp::read_vault, the two Graph HTTP clients, and a logger that writes
+// warnings and worse to stderr, so no log line can land in the tables on
+// stdout.
 GraphCommandEnv default_graph_command_env();
 
 // `rpworker graph ...`. `args` is what follows "graph" on the command line, in
 // UTF-8; the only subcommand is `list`, followed by `--hash`, `--config
-// <path>` and `--record <dir>` in any order, each at most once.
+// <path>`, `--vault <file>` and `--record <dir>` in any order, each at most
+// once.
 //
 // Signs in to Graph as the Worker app (graph_tenant_id, graph_client_id, and
-// the certificate from RP_GRAPH_CERT_PFX_BASE64 and RP_GRAPH_CERT_PASSWORD),
+// the certificate from the vault's graph_cert_pfx_base64 and
+// graph_cert_password),
 // lists the test mailbox's Inbox, the RestoreTarget library and the test
 // OneDrive's RestoreTarget folder (each file target's guard first), and prints
 // to `out`, as UTF-8, three tables in that order: each a heading line with the
@@ -86,8 +92,9 @@ GraphCommandEnv default_graph_command_env();
 // Returns an rp::exit_code, with one line on `err` for each failure:
 //  - 64: arguments it doesn't understand (rp::kCliUsage);
 //  - 1: "config error: <message>" for a ConfigError (a config that doesn't
-//    load, a --config path that isn't UTF-8, a secret that can't be read, and
-//    a graph::CertificateError: "RP_GRAPH_CERT_PFX_BASE64 is not set", a PFX
+//    load, a --config or --vault path that isn't UTF-8, a vault that can't be
+//    used (rp::VaultError's messages), and a graph::CertificateError:
+//    "graph_cert_pfx_base64 is not in the vault", a PFX
 //    that doesn't open, a certificate that isn't valid, and a --record folder
 //    that isn't new or empty), "config error:
 //    unexpected failure" for any other exception while loading the config,

@@ -438,11 +438,11 @@ TEST_CASE("veeam_m365: the factory needs both Veeam secrets", "[veeam_m365]")
 {
     const auto [username, password, message] =
         GENERATE(table<std::optional<std::string>, std::optional<std::string>, std::string>({
-            {std::nullopt, kPassword, "RP_VEEAM_USERNAME is not set"},
-            {std::string{}, kPassword, "RP_VEEAM_USERNAME is not set"},
-            {std::nullopt, std::nullopt, "RP_VEEAM_USERNAME is not set"},
-            {kUsername, std::nullopt, "RP_VEEAM_PASSWORD is not set"},
-            {kUsername, std::string{}, "RP_VEEAM_PASSWORD is not set"},
+            {std::nullopt, kPassword, "veeam_username is not in the vault"},
+            {std::string{}, kPassword, "veeam_username is not in the vault"},
+            {std::nullopt, std::nullopt, "veeam_username is not in the vault"},
+            {kUsername, std::nullopt, "veeam_password is not in the vault"},
+            {kUsername, std::string{}, "veeam_password is not in the vault"},
         }));
     Harness lab;
     lab.secrets.veeam_username = username;
@@ -484,14 +484,14 @@ TEST_CASE("veeam_m365: restore_sample needs the Worker app's certificate, before
           "[veeam_m365]")
 {
     const std::string pfx_needs_password =
-        "RP_GRAPH_CERT_PASSWORD is not set, and the PFX in RP_GRAPH_CERT_PFX_BASE64 needs a "
+        "graph_cert_password is not in the vault, and the PFX in graph_cert_pfx_base64 needs a "
         "password";
     const std::string password{rp::test::graph_lab::kPfxPassword};
     const auto [pfx, given_password, message] =
         GENERATE_COPY(table<std::optional<std::string>, std::optional<std::string>, std::string>({
-            {std::nullopt, password, "RP_GRAPH_CERT_PFX_BASE64 is not set"},
-            {std::string{}, password, "RP_GRAPH_CERT_PFX_BASE64 is not set"},
-            {std::nullopt, std::nullopt, "RP_GRAPH_CERT_PFX_BASE64 is not set"},
+            {std::nullopt, password, "graph_cert_pfx_base64 is not in the vault"},
+            {std::string{}, password, "graph_cert_pfx_base64 is not in the vault"},
+            {std::nullopt, std::nullopt, "graph_cert_pfx_base64 is not in the vault"},
             {rp::test::graph_lab::pfx_base64(), std::nullopt, pfx_needs_password},
             {rp::test::graph_lab::pfx_base64(), std::string{}, pfx_needs_password},
         }));

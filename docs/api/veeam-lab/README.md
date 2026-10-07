@@ -215,3 +215,22 @@ print no credential; the probes print lengths only.
 | [`w4.12-9-graph-list-after-rpworker.txt`](w4.12-9-graph-list-after-rpworker.txt) | `rpworker graph list --hash` after it: 0 in all three targets |
 | [`w4.12-10-teardown.txt`](w4.12-10-teardown.txt) | the service, the ACEs, the throwaway certificates and the spike folder taken away again, and what the machine holds after |
 | [`w4.12-harness/`](w4.12-harness/) | how it was run: `RpSpikeHost.cs` (the temporary service that runs one command as its account, the secrets over a named pipe), `spike-lib.ps1` (the elevated shell's side: the service, the pipe, the evidence writer), `spike-probe.ps1`, `spike-failures.ps1`. Kept as text; not run by any test |
+
+W4.5 (#48, `docs/decisions.md` 2026-10-07), 2026-10-07 00:58Z–01:05Z: the DPAPI vault. The lab's
+vault filled from Credential Manager and the PFX file, one `rpworker test --evidence` run from
+the vault alone, the W4.12 harness once more with the service account reading the vault (and
+refused without its Read entry), a temporary non-administrator reading the file, and everything
+taken away again. Text files, as the console showed them; each was checked against the four
+secret values (the Veeam password, the PFX's Base64, its password, the signing key) and for
+token, PFX, PEM and key shapes before it was written (`w4.5-harness/w45-service-run.ps1`,
+`Save-W45Evidence`): no hits. No file holds a value, a blob or a key.
+
+| File | What it is |
+|---|---|
+| [`w4.5-1-fill-vault.txt`](w4.5-1-fill-vault.txt) | `lab\entra\fill-worker-vault.ps1` from an elevated shell: five `set <name> in ...\vault.bin` lines, `vault list`, `vault test`, the file's ACL (`SYSTEM:(F)`, `Administrators:(F)`, `OWNER RIGHTS:(F)`, owner Administrators, 4272 bytes), `config check` reading the vault, and no `RP_*` variable in the shell |
+| [`w4.5-2-test-evidence-from-the-vault.txt`](w4.5-2-test-evidence-from-the-vault.txt) | the Done-when: `rpworker test --mail 10 --sp 10 --od 10 --run-id w45-done-when-1 --evidence ...` as the current user, the vault the only source of secrets: 30 of 30, `status pass`, exit 0, signed and timestamped by DigiCert, `rpworker signer verify` with `--tsa-ca` `verified`, `graph list` 0 after |
+| [`w4.5-3-service-account-reads-the-vault.txt`](w4.5-3-service-account-reads-the-vault.txt) | the W4.12 harness, the host serving 0 variables: `rpworker restore --mail 1 --sp 0 --od 0` as `NT SERVICE\RpSpikeProbe` after `rpworker vault grant` and the key file's ACE, 1 of 1, `status pass`, exit 0, cleaned after; then with the vault's entry taken away: `config error: ...\vault.bin: the vault file can't be read`, exit 1, before any Veeam call |
+| [`w4.5-4-developer-grant-and-live-tests.txt`](w4.5-4-developer-grant-and-live-tests.txt) | the developer's own account, unelevated (a restricted token): `vault test` refused before `rpworker vault grant <account>`, `ok` after, and the read-only `[live]` tests run from the vault with no secret in the environment |
+| [`w4.5-5-other-account.txt`](w4.5-5-other-account.txt) | the issue's manual test, under machine scope: a temporary local non-administrator reads the vault (`can't be read`), reads it once granted `Read` (`ok`: DPAPI decrypts for any account the ACL admits), can't write it (`couldn't be written`), and a vault it wrote in its own folder is refused to the administrator by the ownership rule; a copy on another machine not tried (one machine) |
+| [`w4.5-6-teardown.txt`](w4.5-6-teardown.txt) | the service, its ACEs on the key file and the vault, the spike folder and the probe account taken away again; the lab's `vault.bin` stays, with its five names |
+| [`w4.5-harness/`](w4.5-harness/) | `w45-service-run.ps1`: the W4.12 library reused with an empty pipe (the service gets no variable), the grant, the restore, the teardown and the evidence writer. Kept as text; not run by any test |

@@ -7,6 +7,7 @@
 #include <rp/run_lock.hpp>
 #include <rp/run_status.hpp>
 #include <rp/secrets.hpp>
+#include <rp/vault.hpp>
 
 #include "command_config.hpp"
 #include "duration_text.hpp"
@@ -99,7 +100,8 @@ RestoreCommandEnv default_restore_command_env()
 {
     RestoreCommandEnv env;
     env.default_config_path = default_config_path;
-    env.load_secrets = load_secrets_from_env;
+    env.default_vault_path = default_vault_path;
+    env.load_secrets = read_vault;
     env.connector_options.logger = make_command_logger();
     env.take_run_lock = try_take_restore_targets_lock;
     return env;
@@ -111,7 +113,7 @@ int run_restore_command(std::span<const std::string_view> args, std::ostream& ou
     PipelineArgs parsed;
     const std::optional<CommandOptions> options =
         parse_options(args, {"--mail", "--sp", "--od", "--point", "--run-id", "--canary-cursor",
-                             "--manifest", "--config", "--record"});
+                             "--manifest", "--config", "--vault", "--record"});
     if (!options || !parse_pipeline_args(*options, parsed)) {
         err << kCliUsage;
         return exit_code::usage;

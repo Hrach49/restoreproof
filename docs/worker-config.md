@@ -21,9 +21,10 @@ example, fill in your own values, and add those two keys if you need them.
 
 ## Settings
 
-Ten keys are required; the other nine are optional. Seven of those have defaults; without
-`veeam_ca_file` the Worker trusts the Windows certificate store, and without
-`veeam_cert_sha256` it checks the Veeam server's host name.
+Ten keys are required; the other ten are optional. Seven of those have defaults; without
+`veeam_ca_file` the Worker trusts the Windows certificate store for Veeam (and without
+`cloud_ca_file` for the Cloud), and without `veeam_cert_sha256` it checks the Veeam server's
+host name.
 
 | Key | Required | Default | Valid values | What it is for |
 |---|---|---|---|---|
@@ -47,6 +48,7 @@ Ten keys are required; the other nine are optional. Seven of those have defaults
 | `veeam_cert_sha256` | no | (not set) | 64 hexadecimal digits in any case, no separators; needs `veeam_ca_file`: see below | The SHA-256 of Veeam's REST certificate, as Windows shows it (`GetCertHashString('SHA256')`). `veeam_ca_file` must hold that certificate. With both set, the Worker trusts exactly that certificate's key and skips only the host-name check, which Veeam's default certificate can never pass. Not a secret. |
 | `tsa_url` | no | (not set: `http://timestamp.digicert.com`) | an `http://` or `https://` URL, no user name, password, query or fragment; needs `tsa_ca_file` | The RFC 3161 timestamp authority `rpworker test --evidence` asks (W4.4). Plain HTTP is allowed for this key alone: see "The timestamp authority" below. |
 | `tsa_ca_file` | no | (not set: the embedded DigiCert root) | absolute path of a readable file | PEM file with the certificate(s) a timestamp token must chain to. Without it, the root embedded from `shared/tsa/tsa-ca.pem`. |
+| `cloud_ca_file` | no | (not set) | absolute path of a readable PEM file that holds at least one certificate | PEM file with the certificate(s) `cloud_url`'s server certificate must chain to, trusted for the Cloud instead of the Windows certificate store (W4.6): for a Cloud behind a private CA. `cloud_url` stays `https://`, the host name is still checked, and TLS verification can't be turned off. See "`rpworker outbox`". |
 | `screenshots_enabled` | no | `false` | `true` or `false`: see below | The client's screenshot setting: whether a run that writes a run folder asks for a picture of Veeam's restore session. Off by default. |
 
 At least one of `sample_mail`, `sample_sp` and `sample_od` must be above 0.
@@ -1016,7 +1018,8 @@ lines are not shown.
 ```
 rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>]
               [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>]
-              [--vault <file>] [--record <dir>] [--json <file> | --evidence <dir>]
+              [--vault <file>] [--record <dir>]
+              [--json <file> | --evidence <dir> [--outbox <root>]]
 ```
 
 **It writes to the tenant and deletes there, as `restore` does.** It is the whole test of a
@@ -1310,6 +1313,147 @@ names (the ones the result holds), and `veeam-session.log` has Veeam's messages 
 which name the item, its source folder or path and the restore target. Keep the folder out of
 the repository.
 
+### `--outbox <root>`
+
+Only with `--evidence` (alone, with `--json`, empty or twice it is the usage line, exit 64).
+Queues the finished run folder for upload (W4.6; `docs/verification.md`, "The outbox";
+`docs/decisions.md` 2026-10-07, W4.6). `<root>` is the outbox's root: queued runs are under
+`<root>\outbox`, uploaded ones under `<root>\sent`; both are made when needed. There is no
+default: without the flag the folder stays in `<dir>` (the service will pass
+`%ProgramData%\RestoreProof`, W4.8). `<root>` and `<dir>` must be on one volume.
+
+The run is the same run: the same lines, status and exit code, and `<dir>\<run_id>` written
+as without the flag. Then, only once `result.json` is written and the `signed`, `timestamped`
+and `evidence` lines are out, the folder is renamed to `<root>\outbox\<run_id>`, its
+`manifest.json` is written there, and stdout ends with one more line:
+
+```
+signed 4a7e8cff... key 9dfab6ea...
+timestamped 2026-10-07T12:31:02Z
+evidence C:\ProgramData\RestoreProof\runs\w46-done-when-2: result.json, signature.json, timestamp.tst, items.csv, veeam-session.log
+queued C:\ProgramData\RestoreProof\outbox\w46-done-when-2
+```
+
+(The `evidence` line names the folder where the run wrote it; `queued` names where it is
+now.) Nothing is uploaded by `test`: `rpworker outbox flush` does that. A run of any status
+with a `result.json` is queued; a run without one (an `evidence error`, a `result_invalid`
+run) is not, and says nothing of the outbox.
+
+**Before the run.** Once the config is read and before the secrets, the mutex and any Veeam
+call, a run whose folder couldn't be queued is refused, so no restore is made for a folder
+that would then be stranded in `<dir>` (the W4.6 code review, finding 1). Exit 1, no run line,
+nothing done (`<root>\outbox` is made, and left, empty):
+
+| stderr | When |
+|---|---|
+| `config error: --outbox <root>: not a UTF-8 path` | |
+| `outbox error: <root>\outbox\<run_id>: already queued; nothing was done` | with `--run-id`: a folder of that name is in the outbox |
+| `outbox error: <root>\sent\<run_id>: already sent; nothing was done` | with `--run-id`: a folder of that name is under `sent` |
+| `outbox error: <root>\outbox: the folder couldn't be made; nothing was done` | |
+| `outbox error: <dir>: not on the same volume as <root>\outbox; nothing was done` | the rename at the end would be a copy. A volume Windows can't name (a drive that isn't there) isn't refused here; the run folder's own check is |
+
+**After the run.** A folder that still can't be queued stays in `<dir>`, complete and as it
+is. One line on stderr, the status unchanged, an exit code of 0 becoming 1:
+
+| stderr | When |
+|---|---|
+| `outbox error: <root>\outbox\<run_id>: already queued` | a run without `--run-id`, whose ID the check before the run didn't have |
+| `outbox error: <root>\sent\<run_id>: already sent` | likewise |
+| `outbox error: <root>\outbox: the folder couldn't be made` | taken away during the run |
+| `outbox error: <dir>\<run_id>: couldn't be moved to <root>\outbox\<run_id>: not on the same volume` | the rename would be a copy |
+| `outbox error: <dir>\<run_id>: couldn't be moved to <root>\outbox\<run_id> (error <n>)` | Windows refused the rename; `<n>` is its error code |
+| `outbox error: <root>\outbox\<run_id>\manifest.json: could not be written; the next flush makes it` | the folder is queued all the same (`queued ...` is printed) |
+
+## `rpworker outbox`
+
+```
+rpworker outbox flush [--config <path>] [--outbox <root>] [--record <dir>]
+rpworker outbox list [--outbox <root>]
+```
+
+Uploads the queued runs and shows the queue (W4.6; `docs/verification.md`, "The outbox").
+`<root>` defaults to `%ProgramData%\RestoreProof` (so `outbox\` and `sent\` under it). Neither
+command reads the vault: until W5.1 the upload carries no credential.
+
+### `outbox flush`
+
+One pass, no waiting: until the service exists (W4.8), run it by hand or from a scheduled
+task. It reads the config for `cloud_url` (and `cloud_ca_file`), deletes old sent runs, then
+tries every queued run that is due, oldest first, with one `POST <cloud_url>/v1/results` each.
+stdout, one line per run and then the counts:
+
+| Line | Meaning |
+|---|---|
+| `pruned <run_id>` | a sent run deleted: older than 30 days, or the oldest while `outbox\` and `sent\` hold over 500 MB |
+| `sent <run_id>` | the Cloud answered 202; the folder is now `sent\<run_id>` |
+| `kept <run_id>: <code>; attempt <n>, next at <time>` | the upload failed; tried again at the first flush at or after `<time>` |
+| `waiting <run_id>: next at <time>` | not due yet; nothing was sent |
+| `kept <run_id>: folder_changed` | a file isn't what the run signed; never sent (below) |
+| `kept <run_id>: not_read` | a file of the folder is there but couldn't be opened just now (another process holds it); nothing is recorded, and the next flush tries again |
+| `moved <run_id>` | uploaded by an earlier flush that couldn't move it; moved now |
+| `<n> queued, <m> sent` | what is under `outbox\` and `sent\` afterwards |
+
+`<code>` is `upload_http_<status>` (any answer but 202), `upload_unreachable` (no connection,
+a certificate the Worker doesn't trust, a connection lost mid-request), `upload_timeout` (no
+answer in 120 s) or `upload_internal`. The waits are 1, 2, 4, 8, 16 and 32 minutes, then one
+hour, for as long as it takes.
+
+stderr:
+
+| Line | Meaning |
+|---|---|
+| `outbox error: another flush is running; nothing was done` | exit 3 |
+| `outbox error: <root>: the outbox can't be read` | `outbox` or `sent` under the root is no folder, or can't be listed; exit 1 |
+| `outbox error: <folder>: <file> changed since it was signed` | the file is missing, or isn't the bytes the run signed. The run is never sent and never deleted: look at the folder, and `rpworker signer verify` it. Its manifest's `last_error` becomes `folder_changed`, written once, not at every flush |
+| `outbox error: <folder>: <file> couldn't be read` | the file is there and couldn't be opened (another process holds it): not a change, nothing is written, the next flush tries again |
+| `outbox error: <folder>: no result.json; not a queued run` | a folder under `outbox\` that no run finished; left alone |
+| `outbox error: <root>\sent\<run_id>: already sent` | a folder of that name is under `sent`; not sent again |
+| `outbox error: <folder>: uploaded, but couldn't be moved to sent (error <n>)` | the next flush moves it and doesn't upload again |
+| `outbox error: <folder>: uploaded, but manifest.json couldn't be written` | the next flush uploads it again |
+| `outbox error: <folder>\manifest.json: could not be written` | after a failed attempt: the attempt isn't recorded |
+| `outbox warning: <folder>: manifest.json was made again` | the queued run had no readable manifest; it is uploaded as usual |
+| `outbox warning: <folder>: no readable manifest.json; not pruned` | a folder under `sent\` the Worker can't date; never deleted |
+| `outbox warning: <folder>: couldn't be removed` | a sent run that should have been pruned |
+| `outbox warning: the outbox holds <n> MB, over the 500 MB cap` | the queue alone is over the cap; nothing queued is ever deleted |
+
+Exit codes: 0 when no run is left under `outbox\`; 3 when one is (kept, waiting, changed, not
+read, or another flush running); 1 for a config error (`config error: ...`: the config, a `--config`,
+`--outbox` or `--record` path that isn't UTF-8, a `--record` folder that isn't new or empty),
+for a root that can't be read, for an incomplete recording, and, when nothing stays queued,
+for any other `outbox error` line; 64 for a command line it doesn't understand.
+
+With `--record <dir>` the exchange with the Cloud is written under `cloud/`: the answer only
+(a multipart request body is never recorded).
+
+**`cloud_ca_file`.** By default the Cloud's certificate is verified against the Windows
+certificate store. With `cloud_ca_file` set it is verified against that PEM file instead: for
+a Cloud whose certificate chains to a private CA, and for the lab's stub Cloud
+(`docs/testing.md`, "The outbox by hand"). Nothing is relaxed: `cloud_url` must be `https://`
+and the certificate must name its host. The file must open and hold at least one PEM
+certificate: every command that reads the config refuses one that is empty, DER or cut off
+(`config error: <config>: config key "cloud_ca_file" names a file that holds no certificate
+(PEM)`, exit 1), rather than every flush ending `upload_unreachable` for good (the W4.6 code
+review, finding 2).
+
+### `outbox list`
+
+Reads only; no config, no vault, no network:
+
+```
+RUN              QUEUED                ATTEMPTS  NEXT                  LAST_ERROR          TIMESTAMP
+w46-done-when-1  2026-10-07T11:56:44Z  2         2026-10-07T12:40:10Z  upload_unreachable  timestamped
+w46-done-when-2  2026-10-07T12:31:05Z  0         -                     -                   not_timestamped tsa_unreachable
+2 queued, 0 sent
+```
+
+One row per queued run, by run ID: when it was queued, the uploads tried, when the next one
+is due (`-`: at the next flush), the last failure (`-`: none), and whether the run was
+timestamped (`not_timestamped` with the TSA's code when the manifest has it). A run with no
+readable manifest is a row of `-` with `no_manifest` under LAST_ERROR. A folder under
+`outbox\` without `result.json` is one `outbox error: <folder>: no result.json; not a queued
+run` on stderr and isn't counted. A root that isn't there holds nothing: `0 queued, 0 sent`.
+Exit 0; 1 for a root that can't be read or a `--outbox` path that isn't UTF-8.
+
 ## `rpworker signer`
 
 ```
@@ -1431,7 +1575,7 @@ key you already trust, and compare `key <key_id>` with what the Worker printed.
 
 ## `--record <dir>`
 
-`rpworker veeam list`, `graph list`, `restore` and `test` take `--record <dir>` (Q2.1), in any place
+`rpworker veeam list`, `graph list`, `restore`, `test` and `outbox flush` take `--record <dir>` (Q2.1), in any place
 among their other flags, once. It writes every exchange the command has with a service as a
 test fixture, scrubbed, and changes nothing else: the same requests go out and the same output
 comes back, then one more line on stdout, `recorded <n> exchange(s) in <dir>`. `restore
@@ -1444,6 +1588,8 @@ and `DELETE`s under `graph` (W3.4). How to record and replay: `docs/testing.md`,
   there, is exit 1 before any request: `config error: <dir>: the --record folder is not empty`
   (`... the --record path is not a folder`, `... the --record folder can't be made`,
   `config error: the --record path is not valid UTF-8`).
+- `rpworker outbox flush --record <dir>` writes its exchanges with the Cloud under `cloud`
+  (W4.6): each answer, never the multipart request.
 - One subfolder per service, `veeam`, `graph`, `download` and, for `test --evidence`, `tsa`
   (W4.4: the timestamp query and its answer, both binary, as Base64 in `request_body_base64`
   and `body_base64`), and one file per exchange,
@@ -1460,15 +1606,15 @@ The same for every `rpworker` command (`rp::exit_code` in `worker/include/rp/cli
 | Exit code | Meaning | stderr |
 |---|---|---|
 | 0 | Success. | (nothing) |
-| 1 | The config or a secret is missing or invalid, the vault can't be used (W4.5: not there, not readable by this account, owned by another account, not decryptable on this machine, not a vault, or a `--vault` path that isn't UTF-8), or something unexpected failed (an error no command handles ends here too, never in an `abort()`, whose exit code would be 3). For `graph list` this includes the certificate: `graph_cert_pfx_base64` not in the vault, a PFX that doesn't open with `graph_cert_password`, or a certificate that isn't valid now, all found before any request. For `restore`, also the same certificate problems as `graph list` (before any Veeam call; `graph_cert_password` absent is fine for a PFX without a password), the certificate failing as the check's reads before the restore sign in (nothing restored), a manifest that doesn't load, whose `tenant_id` isn't `graph_tenant_id` or that names a restore target (before any Veeam call), an unknown connector, a run whose status is `error config`, `error internal` (the facts not adding up, or the check failing for a reason that isn't Graph's) or `error result_invalid` (the result the Worker built isn't valid `restoreproof.result.v1`, W4.1), and stdout failing after a restore whose run passed. `test` exits as `restore` does; for `test` also a `--json` path that isn't UTF-8, isn't a plain file name, names a file already there or a folder that doesn't exist, or where a file can't be written (before the secrets), and a passing run whose `--json` file couldn't be written or whose finished result isn't valid (no file). With `--record`, a folder that isn't new or empty, and a command that succeeded but whose recording isn't complete. For `test --evidence` also (W4.3) `signing_key_base64` not in the vault or not an Ed25519 private key (before the schema check, the manifest and any Veeam call), and a passing run whose result couldn't be signed or whose `signature.json` couldn't be written (no `result.json`). For `signer public-key`, the key not in the vault or not a key; for `signer verify`, a key file that can't be read or isn't an Ed25519 public key in PEM, or a `<folder>` that can't be opened; for both, an answer that couldn't be written to stdout. For `vault` (W4.5), a vault that can't be used or a value `set` refuses. | `config error: <path>: <message>`, `config error: the --config path is not valid UTF-8`, `config error: the --vault path is not valid UTF-8`, `config error: the --manifest path is not valid UTF-8`, `config error: canary manifest: <message>`, `config error: cannot find the ProgramData folder`, `config error: <file>: vault file not found` (and the vault's other messages, "Secrets"), `config error: veeam_username is not in the vault` (then `veeam_password`), `config error: graph_cert_pfx_base64 is not in the vault` (or another message naming the certificate's names), for `restore` `config error: unknown connector "<name>" (known: <names>)`, `check error: <message>; nothing was restored`, `check error: unexpected failure` and `error: writing the output failed after the restore ran (run <run ID>, restore ...); run status ...`, with `--record` `config error: <dir>: the --record folder is not empty` and `record error: <service>/<file>: refused: ...`, for `test` `config error: --json <file>: not a UTF-8 path` (`... not a file name`, `... the file already exists`, `... the folder doesn't exist`, `... a file can't be written there`) `json error: <file>: could not be written` and `json error: <file>: the result isn't valid restoreproof.result.v1; no file was written`, for `test --evidence` `config error: signing_key_base64 is not in the vault; --evidence signs the result` (`config error: signing_key_base64 is not an Ed25519 private key (Base64 of PKCS#8 DER)`) and the `evidence error: ...` lines ("`--evidence <dir>`"), for `signer` the `signer error: ...` lines ("`rpworker signer`"), for `vault` the `vault error: ...` lines ("`rpworker vault`"), for `restore` and `test` `result error: <n> schema violation(s), first at <JSON pointer>` (`result error: the result has no canonical form`, `result error: the result couldn't be built`), `config error: unexpected failure` or `error: unexpected failure`; an unexpected failure's own message is never shown |
+| 1 | The config or a secret is missing or invalid, the vault can't be used (W4.5: not there, not readable by this account, owned by another account, not decryptable on this machine, not a vault, or a `--vault` path that isn't UTF-8), or something unexpected failed (an error no command handles ends here too, never in an `abort()`, whose exit code would be 3). For `graph list` this includes the certificate: `graph_cert_pfx_base64` not in the vault, a PFX that doesn't open with `graph_cert_password`, or a certificate that isn't valid now, all found before any request. For `restore`, also the same certificate problems as `graph list` (before any Veeam call; `graph_cert_password` absent is fine for a PFX without a password), the certificate failing as the check's reads before the restore sign in (nothing restored), a manifest that doesn't load, whose `tenant_id` isn't `graph_tenant_id` or that names a restore target (before any Veeam call), an unknown connector, a run whose status is `error config`, `error internal` (the facts not adding up, or the check failing for a reason that isn't Graph's) or `error result_invalid` (the result the Worker built isn't valid `restoreproof.result.v1`, W4.1), and stdout failing after a restore whose run passed. `test` exits as `restore` does; for `test` also a `--json` path that isn't UTF-8, isn't a plain file name, names a file already there or a folder that doesn't exist, or where a file can't be written (before the secrets), and a passing run whose `--json` file couldn't be written or whose finished result isn't valid (no file). With `--record`, a folder that isn't new or empty, and a command that succeeded but whose recording isn't complete. For `test --evidence` also (W4.3) `signing_key_base64` not in the vault or not an Ed25519 private key (before the schema check, the manifest and any Veeam call), and a passing run whose result couldn't be signed or whose `signature.json` couldn't be written (no `result.json`). For `signer public-key`, the key not in the vault or not a key; for `signer verify`, a key file that can't be read or isn't an Ed25519 public key in PEM, or a `<folder>` that can't be opened; for both, an answer that couldn't be written to stdout. For `vault` (W4.5), a vault that can't be used or a value `set` refuses. For `test --evidence --outbox` (W4.6), a `--outbox` path that isn't UTF-8 (before the secrets) and a passing run whose folder couldn't be queued (it stays in the runs root); for `outbox flush`, a config that doesn't load, a root that can't be read, and an `outbox error` when nothing stays queued; for `outbox list`, a root that can't be read. | `config error: <path>: <message>`, `config error: the --config path is not valid UTF-8`, `config error: the --vault path is not valid UTF-8`, `config error: the --manifest path is not valid UTF-8`, `config error: canary manifest: <message>`, `config error: cannot find the ProgramData folder`, `config error: <file>: vault file not found` (and the vault's other messages, "Secrets"), `config error: veeam_username is not in the vault` (then `veeam_password`), `config error: graph_cert_pfx_base64 is not in the vault` (or another message naming the certificate's names), for `restore` `config error: unknown connector "<name>" (known: <names>)`, `check error: <message>; nothing was restored`, `check error: unexpected failure` and `error: writing the output failed after the restore ran (run <run ID>, restore ...); run status ...`, with `--record` `config error: <dir>: the --record folder is not empty` and `record error: <service>/<file>: refused: ...`, for `test` `config error: --json <file>: not a UTF-8 path` (`... not a file name`, `... the file already exists`, `... the folder doesn't exist`, `... a file can't be written there`) `json error: <file>: could not be written` and `json error: <file>: the result isn't valid restoreproof.result.v1; no file was written`, for `test --evidence` `config error: signing_key_base64 is not in the vault; --evidence signs the result` (`config error: signing_key_base64 is not an Ed25519 private key (Base64 of PKCS#8 DER)`) and the `evidence error: ...` lines ("`--evidence <dir>`"), for `signer` the `signer error: ...` lines ("`rpworker signer`"), for `vault` the `vault error: ...` lines ("`rpworker vault`"), for `test --outbox` and `outbox` the `outbox error: ...` lines ("`--outbox <root>`", "`rpworker outbox`"), for `restore` and `test` `result error: <n> schema violation(s), first at <JSON pointer>` (`result error: the result has no canonical form`, `result error: the result couldn't be built`), `config error: unexpected failure` or `error: unexpected failure`; an unexpected failure's own message is never shown |
 | 2 | The service refused the sign-in, the account's role, the token or a permission: Veeam's credentials or role; Entra refusing the Worker app's sign-in; Graph refusing the token, or denying a call for want of a grant (the message names the grant, see `docs/security/graph-permissions.md`); for `restore` and `test`, a run whose status is `error backup_auth`, `graph_auth` or `graph_permission`: on the check's reads before the restore (nothing restored) or after it (the item couldn't be checked). | `veeam error: <message>`, `graph error: <message>`, `restore error: <message>` or `check error: <message>; nothing was restored` |
-| 3 | The service couldn't be reached or asked to try later: no connection, a timeout, a TLS handshake that broke off, or a 502, 503 or 504 (for Graph also a 429 or another 5xx) after the retries; for `restore` and `test`, a run whose status is `error backup_transient` or `graph_transient`, before the restore or after it. | `veeam error: <message>`, `graph error: <message>`, `restore error: <message>` or `check error: <message>; nothing was restored` |
+| 3 | The service couldn't be reached or asked to try later: no connection, a timeout, a TLS handshake that broke off, or a 502, 503 or 504 (for Graph also a 429 or another 5xx) after the retries; for `restore` and `test`, a run whose status is `error backup_transient` or `graph_transient`, before the restore or after it. For `outbox flush` (W4.6): a run is still queued afterwards (its upload failed, it isn't due yet, or its folder changed), or another flush is running. | `veeam error: <message>`, `graph error: <message>`, `restore error: <message>` or `check error: <message>; nothing was restored`; for `outbox flush` nothing (the `kept` and `waiting` lines are on stdout) or `outbox error: another flush is running; nothing was done` |
 | 4 | Any other error from the service. Veeam: an unknown organisation, a bad request, an unexpected answer, or no organisation named `veeam_org_name`; also Veeam's certificate failing verification, which a retry won't fix: `veeam_ca_file` doesn't hold Veeam's certificate or its CA, or Veeam's certificate was renewed and no longer matches `veeam_cert_sha256` (see "Veeam's default certificate"). Graph: the mailbox, drive or folder not found, a mailbox, drive or folder the guard refuses (not the RestoreTarget the config says; a 403 on the test mailbox's Inbox included), a download that failed, an unexpected answer. `restore` and `test`: another RestoreProof run holding the run mutex, no restore points or a `--point` ID that isn't one of them (before the run line), and a run whose status is `error` with any other code: `target_guard` (the restore-target guard refusing, in the clean before or later, nothing restored), `not_in_backup` (the organisation not in Veeam, or an item not in the restore point that it can't be shown to hold: a random item, or a canary in a point taken before the manifest's `seeded_at`; a canary missing from a later point is `fail`, Q3.1), `backup` (a restore session of the Veeam account still `Working`, the restore credential's export failing when not elevated, any other error of the restore), `empty_sample`, `not_run`, `restore_contradiction`, `backup_infrastructure` (an item Veeam failed for an infrastructure reason that the check didn't find), `graph` (any other Graph error, before the restore or reading an item back), `stale_target` (only an earlier run's copy of an item is there). | `veeam error: <message>` (`... TLS failure: ...` for a certificate), `veeam error: organisation <name> (veeam_org_name) not found in Veeam`, `graph error: <message>`, `restore error: <message>` (`restore error: target guard: ...` for the guard), `restore error: another RestoreProof run is using the restore targets; nothing was done`, `restore error: no restore points for veeam_org_name`, `restore error: restore point <id> not found for veeam_org_name`, `cleanup error: <target>: the restore-target guard refused the target; nothing was deleted in it (target_guard)`, `check error: <message>; nothing was restored`, or a `check error: <message>` per target that couldn't be read back; after an error of a restore that had started, also `restore error: the restore had started: items may be in the restore targets (run <run ID>)`; for a run, the status line is on stdout and its warnings follow on stderr |
 | 5 | The thing tested failed. `restore` and `test`: the run's status is `fail` (W3.3): an item is missing or doesn't match, its target read fine and Veeam didn't blame infrastructure for it, whatever Veeam's own status says (`status fail: ...` on stdout). A result about the backup, not an error: a run that couldn't run at all or couldn't tell is `error`, 1 to 4. `signer verify` (W4.3): the folder is not verified (`not verified: <word>` on stdout): anything wrong inside the folder, a missing file included. A folder or a key file that can't be read at all is 1. | (nothing but the run's warnings) |
-| 64 | The command line isn't understood (for `test` also `--seed`, which it doesn't take, and `--json` with `--evidence`; for `signer verify` a missing, empty or repeated `<folder>` or `--public-key <pem file>`; for `vault` a missing name or account, or `--vault` without a file). For `restore` and `test` also, once the config or the manifest is read: every sample size 0, or a `--canary-cursor` out of the manifest's range; for `vault set` and `remove` a name that isn't one of the five. | the usage line; for `vault`, `usage error: the name must be one of veeam_username, veeam_password, graph_cert_pfx_base64, graph_cert_password, signing_key_base64`; for `restore`, `usage error: every sample size is 0 (--mail, --sp, --od, or config's sample_mail, sample_sp, sample_od): nothing to restore` or `usage error: --canary-cursor: the <kind> cursor must be below <n>, the manifest's <kind> canaries` (`... must be 0: the manifest has no <kind> canaries`) |
+| 64 | The command line isn't understood (for `test` also `--seed`, which it doesn't take, `--json` with `--evidence`, and `--outbox` without `--evidence`; for `outbox` no subcommand, an unknown one, or an option of the other one; for `signer verify` a missing, empty or repeated `<folder>` or `--public-key <pem file>`; for `vault` a missing name or account, or `--vault` without a file). For `restore` and `test` also, once the config or the manifest is read: every sample size 0, or a `--canary-cursor` out of the manifest's range; for `vault set` and `remove` a name that isn't one of the five. | the usage line; for `vault`, `usage error: the name must be one of veeam_username, veeam_password, graph_cert_pfx_base64, graph_cert_password, signing_key_base64`; for `restore`, `usage error: every sample size is 0 (--mail, --sp, --od, or config's sample_mail, sample_sp, sample_od): nothing to restore` or `usage error: --canary-cursor: the <kind> cursor must be below <n>, the manifest's <kind> canaries` (`... must be 0: the manifest has no <kind> canaries`) |
 
 The usage line is:
 
 ```
-usage: rpworker --version | rpworker config check [--config <path>] [--vault <file>] | rpworker vault set|remove <name> [--vault <file>] | rpworker vault list|test [--vault <file>] | rpworker vault grant <account> [--vault <file>] | rpworker veeam list [--config <path>] [--vault <file>] [--record <dir>] | rpworker graph list [--hash] [--config <path>] [--vault <file>] [--record <dir>] | rpworker restore [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--vault <file>] [--record <dir>] | rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--vault <file>] [--record <dir>] [--json <file> | --evidence <dir>] | rpworker signer public-key [--vault <file>] | rpworker signer verify <folder> --public-key <pem file> [--tsa-ca <pem file>]
+usage: rpworker --version | rpworker config check [--config <path>] [--vault <file>] | rpworker vault set|remove <name> [--vault <file>] | rpworker vault list|test [--vault <file>] | rpworker vault grant <account> [--vault <file>] | rpworker veeam list [--config <path>] [--vault <file>] [--record <dir>] | rpworker graph list [--hash] [--config <path>] [--vault <file>] [--record <dir>] | rpworker restore [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--vault <file>] [--record <dir>] | rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--vault <file>] [--record <dir>] [--json <file> | --evidence <dir> [--outbox <root>]] | rpworker outbox flush [--config <path>] [--outbox <root>] [--record <dir>] | rpworker outbox list [--outbox <root>] | rpworker signer public-key [--vault <file>] | rpworker signer verify <folder> --public-key <pem file> [--tsa-ca <pem file>]
 ```

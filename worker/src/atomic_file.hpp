@@ -16,6 +16,11 @@ struct AtomicWriteOptions {
     // Called once the temp file is written, flushed and closed, just before
     // the move; null = nothing. For the tests: a file that appears there.
     std::function<void()> before_move;
+    // W4.6: the move replaces a file already at the path
+    // (MOVEFILE_REPLACE_EXISTING), whole or not at all: the outbox's
+    // manifest.json, the one file it rewrites. False, the default: never over
+    // a file that is there.
+    bool replace = false;
 };
 
 // Whether `name` is a plain Windows file name: not empty, not "." or "..",

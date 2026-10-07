@@ -45,6 +45,10 @@ struct PipelineArgs {
     // its folder <dir>\<run_id>. Not one of parse_pipeline_args' options: the
     // command that takes it sets it.
     std::optional<std::string_view> evidence;
+    // `test --evidence <dir> --outbox <root>` (W4.6): the outbox's root; the
+    // finished run folder is queued as <root>\outbox\<run_id>. Only with
+    // `evidence`; set by the command, as it is.
+    std::optional<std::string_view> outbox;
 };
 
 // Whether each of those options in `options` (--mail --sp --od --point
@@ -132,6 +136,26 @@ struct Presentation {
 //    was written", or, for a run with no valid result (after the text files
 //    are written; such a run is not signed), "evidence error: <folder>: the
 //    result isn't valid restoreproof.result.v1; no result.json was written".
+//
+// With args.outbox too (W4.6, docs/decisions.md 2026-10-07; rp::Outbox):
+//  - with the --evidence root, "config error: --outbox <root>: not a UTF-8
+//    path", exit 1, before the secrets; then, still before the secrets, the
+//    mutex and any Veeam call (the W4.6 review, finding 1), rp::Outbox::prepare:
+//    with a --run-id, "outbox error: <root>\outbox\<run_id>: already queued;
+//    nothing was done" or "outbox error: <root>\sent\<run_id>: already sent;
+//    nothing was done"; <root>\outbox made, else "outbox error: <root>\outbox:
+//    the folder couldn't be made; nothing was done"; the two roots on one
+//    volume, else "outbox error: <dir>: not on the same volume as
+//    <root>\outbox; nothing was done"; each exit 1;
+//  - last, only once result.json is written and the signed, timestamped and
+//    evidence lines are out, the run folder is renamed to
+//    <root>\outbox\<run_id> and its manifest.json written there (the W4.4
+//    code as its timestamp.code when the run got no token): "queued <outbox
+//    folder>" on `out`. A folder that can't be queued stays in <dir> as it
+//    is: one "outbox error: ..." line on `err` (rp::Outbox::queue_error), the
+//    status unchanged and an exit code of 0 becoming 1; so for a queued
+//    folder whose manifest couldn't be written, after its "queued" line. A
+//    run with no result.json queues nothing and says nothing of the outbox.
 //
 // Whatever the command, the signing key's text is taken out of the run's
 // Secrets (wiped there) before the connector is made, and wiped with the

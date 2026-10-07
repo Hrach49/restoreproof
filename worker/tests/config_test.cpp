@@ -1,4 +1,5 @@
 #include <rp/config.hpp>
+#include <rp/timestamper.hpp>
 
 #include "test_certs.hpp"
 #include "test_support.hpp"
@@ -1318,4 +1319,107 @@ TEST_CASE("load_config takes a tsa_ca_file that is there", "[config][tsa]")
 
     CHECK(config.tsa_url == "http://tsa.example/stamp");
     CHECK(config.tsa_ca_file == utf8(ca));
+}
+
+// --- W4.6: the Cloud's CA file -------------------------------------------------------
+
+TEST_CASE("without cloud_ca_file the config has none", "[config][outbox]")
+{
+    CHECK_FALSE(rp::parse_config(valid_doc().dump()).cloud_ca_file);
+}
+
+TEST_CASE("parse_config takes an absolute cloud_ca_file, and cloud_url stays https",
+          "[config][outbox]")
+{
+    json doc = valid_doc();
+    doc["cloud_ca_file"] = "C:\\ProgramData\\RestoreProof\\cloud-ca.pem";
+    CHECK(rp::parse_config(doc.dump()).cloud_ca_file ==
+          "C:\\ProgramData\\RestoreProof\\cloud-ca.pem");
+    // A CA file is what to trust, never a way to an http Cloud.
+    doc["cloud_url"] = "http://localhost:8443";
+    CHECK(parse_error(doc.dump()).key() == "cloud_url");
+}
+
+TEST_CASE("parse_config rejects a cloud_ca_file that isn't an absolute path", "[config][outbox]")
+{
+    const std::string value = GENERATE("cloud-ca.pem", ".\\cloud-ca.pem", "\\cloud-ca.pem", "C:ca.pem");
+    json doc = valid_doc();
+    doc["cloud_ca_file"] = value;
+
+    const rp::ConfigError e = parse_error(doc.dump());
+
+    CHECK(e.key() == "cloud_ca_file");
+    CHECK(std::string{e.what()} ==
+          "config key \"cloud_ca_file\" must be an absolute path, such as "
+          "C:\\ProgramData\\RestoreProof\\cloud-ca.pem");
+}
+
+TEST_CASE("cloud_ca_file is a string, empty is refused, and it is checked after the TSA's keys "
+          "and before screenshots_enabled",
+          "[config][outbox]")
+{
+    json doc = valid_doc();
+    doc["cloud_ca_file"] = 1;
+    CHECK(parse_error(doc.dump()).key() == "cloud_ca_file");
+    doc["cloud_ca_file"] = "";
+    CHECK(parse_error(doc.dump()).key() == "cloud_ca_file");
+    doc["screenshots_enabled"] = "yes";
+    CHECK(parse_error(doc.dump()).key() == "cloud_ca_file");
+    doc["tsa_url"] = "ftp://tsa.example";
+    CHECK(parse_error(doc.dump()).key() == "tsa_url");
+}
+
+TEST_CASE("load_config rejects a cloud_ca_file that can't be opened", "[config][outbox]")
+{
+    const rp::test::TempDir dir;
+    std::filesystem::create_directory(dir.path() / "ca-dir.pem");
+    const std::filesystem::path ca =
+        GENERATE_REF(dir.path() / "missing.pem", dir.path() / "ca-dir.pem");
+    json doc = valid_doc();
+    doc["cloud_ca_file"] = utf8(ca);
+    const auto path = dir.write("config.json", doc.dump());
+
+    const rp::ConfigError e = load_error(path);
+
+    CHECK(e.key() == "cloud_ca_file");
+    CHECK(std::string{e.what()} ==
+          utf8(path) + ": config key \"cloud_ca_file\" names a file that can't be read");
+}
+
+TEST_CASE("load_config rejects a cloud_ca_file that holds no certificate", "[config][outbox]")
+{
+    struct Row {
+        const char* name;
+        std::string bytes;
+    };
+    const Row row = GENERATE(
+        Row{"empty", ""}, Row{"text", "not a certificate"},
+        Row{"a cut-off block", "-----BEGIN CERTIFICATE-----\n"},
+        Row{"DER, not PEM", std::string("\x30\x82\x01\x00\x30\x82", 6)},
+        Row{"a key block alone", "-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n"});
+    CAPTURE(row.name);
+    const rp::test::TempDir dir;
+    const auto ca = dir.write("cloud-ca.pem", row.bytes);
+    json doc = valid_doc();
+    doc["cloud_ca_file"] = utf8(ca);
+    const auto path = dir.write("config.json", doc.dump());
+
+    const rp::ConfigError e = load_error(path);
+
+    CHECK(e.key() == "cloud_ca_file");
+    CHECK(std::string{e.what()} ==
+          utf8(path) +
+              ": config key \"cloud_ca_file\" names a file that holds no certificate (PEM)");
+}
+
+TEST_CASE("load_config takes a cloud_ca_file that is there and holds a certificate",
+          "[config][outbox]")
+{
+    const rp::test::TempDir dir;
+    const auto ca = dir.write("cloud-ca.pem", std::string{rp::default_tsa_ca_pem()});
+    json doc = valid_doc();
+    doc["cloud_ca_file"] = utf8(ca);
+    const auto path = dir.write("config.json", doc.dump());
+
+    CHECK(rp::load_config(path).cloud_ca_file == utf8(ca));
 }

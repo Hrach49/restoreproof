@@ -325,3 +325,44 @@ TEST_CASE("atomic file: an empty content is an empty file", "[atomic_file]")
     CHECK(rp::write_file_atomically(dir.path() / "run.json", ""));
     CHECK(read_file(dir.path() / "run.json") == "");
 }
+
+// --- W4.6: the replacing writer (the outbox's manifest.json) --------------------------
+
+TEST_CASE("atomic file: with replace the file at the target is replaced whole, and a new one is "
+          "written as without it",
+          "[atomic_file][outbox]")
+{
+    const rp::test::TempDir dir;
+    rp::AtomicWriteOptions options = fixed_suffix();
+    options.replace = true;
+    const std::filesystem::path target = dir.write("manifest.json", "the earlier, longer text");
+
+    CHECK(rp::write_file_atomically(target, "new", options));
+    CHECK(read_file(target) == "new");
+    CHECK(rp::write_file_atomically(dir.path() / "other.json", "first", options));
+    CHECK(read_file(dir.path() / "other.json") == "first");
+    CHECK(names_in(dir.path()) == std::set<std::string>{"manifest.json", "other.json"});
+}
+
+TEST_CASE("atomic file: with replace a write that fails leaves the earlier file as it was",
+          "[atomic_file][outbox]")
+{
+    const rp::test::TempDir dir;
+    rp::AtomicWriteOptions options = fixed_suffix();
+    options.replace = true;
+    const std::filesystem::path target = dir.write("manifest.json", "earlier");
+    SECTION("the step before the move fails")
+    {
+        options.before_move = [] { throw std::runtime_error("stop"); };
+        CHECK_FALSE(rp::write_file_atomically(target, "new", options));
+    }
+    SECTION("a folder is at the target")
+    {
+        const std::filesystem::path folder = dir.path() / "taken";
+        std::filesystem::create_directory(folder);
+        CHECK_FALSE(rp::write_file_atomically(folder, "new", options));
+        CHECK(std::filesystem::is_directory(folder));
+    }
+    CHECK(read_file(target) == "earlier");
+    CHECK_FALSE(std::filesystem::exists(dir.path() / (std::string{"manifest.json."} + kSuffix + ".tmp")));
+}

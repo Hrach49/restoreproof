@@ -1,0 +1,46 @@
+W4.6 (#49), the outbox's Done-when in the lab, 2026-10-07. rpworker from worker\build\dev, an elevated PowerShell 7, the vault the only source of secrets (RP_* variables in the shell: []), the config a copy of the lab's with cloud_url https://localhost:8443 and cloud_ca_file the stub Cloud's self-signed certificate (docs/api/veeam-lab/w4.6-harness/).
+Step 5 (d): a flush before the run is due sends nothing; with the stub up and the run due it is sent and moved to sent\, exit 0. The stub's lines show every part with the size and SHA-256 result.json lists for the attachments, and the folder's own for the rest.
+--- a flush before the run is due
+command: rpworker outbox flush --config <the config copy>
+2026-10-07T12:17:55Z to 2026-10-07T12:17:56Z
+exit code: 3
+--- stdout
+waiting w46-done-when-2: next at 2026-10-07T12:19:13Z
+1 queued, 1 sent
+--- stderr
+
+--- the stub started (not slow), the flush once the run is due
+command: rpworker outbox flush --config <the config copy>
+2026-10-07T12:19:14Z to 2026-10-07T12:19:15Z
+exit code: 0
+--- stdout
+sent w46-done-when-2
+0 queued, 2 sent
+--- stderr
+
+--- the stub's lines
+stub Cloud on https://localhost:8443
+POST /v1/results: 42279 bytes, Authorization absent -> 202
+  part result  file result.json  21971 bytes  sha256 3343640643f4f9d44d57cc08b69a5d7662332dec766c0047145e7c2936752a7c
+  part signature  file signature.json  322 bytes  sha256 104567c1b15340c608d0662f63d780cd7628ccd579fddb10c9b427eaa7f7b885
+  part timestamp  file timestamp.tst  5997 bytes  sha256 fbf695162a6278942b062bc81a7cad15499d2f5ee97ca6e4ca856d2ecf5d2233
+  part items.csv  file items.csv  5739 bytes  sha256 6c18372c18672e574d56145ff5e3528e21ee3513bed3e3de6bccca870cc6c381
+  part veeam-session.log  file veeam-session.log  7360 bytes  sha256 96354abcb81198ff6a253b60cc842766acb37f99280abdc9b785cd82b1991816
+--- sent\w46-done-when-2 (name, size, SHA-256)
+items.csv                5739 6c18372c18672e574d56145ff5e3528e21ee3513bed3e3de6bccca870cc6c381
+manifest.json             371 b2f2229c665424534e0bd11fac5425c74cd968a6017f108876e56604d54ebba6
+result.json             21971 3343640643f4f9d44d57cc08b69a5d7662332dec766c0047145e7c2936752a7c
+signature.json            322 104567c1b15340c608d0662f63d780cd7628ccd579fddb10c9b427eaa7f7b885
+timestamp.tst            5997 fbf695162a6278942b062bc81a7cad15499d2f5ee97ca6e4ca856d2ecf5d2233
+veeam-session.log        7360 96354abcb81198ff6a253b60cc842766acb37f99280abdc9b785cd82b1991816
+files that differ from the queued folder: manifest.json
+--- result.json's attachments (name, size_bytes, sha256)
+items.csv 5739 6c18372c18672e574d56145ff5e3528e21ee3513bed3e3de6bccca870cc6c381
+veeam-session.log 7360 96354abcb81198ff6a253b60cc842766acb37f99280abdc9b785cd82b1991816
+manifest.json: {"attempts":3,"files":["items.csv","result.json","signature.json","timestamp.tst","veeam-session.log"],"format":"restoreproof.outbox-manifest.v1","last_attempt_at":"2026-10-07T12:19:14Z","last_error":null,"next_attempt_at":null,"queued_at":"2026-10-07T12:15:59Z","run_id":"w46-done-when-2","sent_at":"2026-10-07T12:19:14Z","timestamp":{"code":null,"state":"timestamped"}}
+command: rpworker outbox list
+2026-10-07T12:19:15Z to 2026-10-07T12:19:16Z
+exit code: 0
+--- stdout
+0 queued, 2 sent
+--- stderr

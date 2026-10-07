@@ -83,15 +83,17 @@ inline constexpr std::string_view kCliUsage =
     "[--record <dir>] | "
     "rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] "
     "[--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--vault <file>] "
-    "[--record <dir>] [--json <file> | --evidence <dir>] | "
+    "[--record <dir>] [--json <file> | --evidence <dir> [--outbox <root>]] | "
+    "rpworker outbox flush [--config <path>] [--outbox <root>] [--record <dir>] | "
+    "rpworker outbox list [--outbox <root>] | "
     "rpworker signer public-key [--vault <file>] | "
     "rpworker signer verify <folder> --public-key <pem file> [--tsa-ca <pem file>]\n";
 
 // rpworker's command line: `--version`, `config ...` (rp/config_check.hpp),
 // `vault ...` (rp/vault_command.hpp, W4.5), `veeam ...`
 // (rp/veeam_command.hpp), `graph ...` (rp/graph_command.hpp), `restore ...`
-// (rp/restore_command.hpp), `test ...` (rp/test_command.hpp) or `signer ...`
-// (rp/signer_command.hpp).
+// (rp/restore_command.hpp), `test ...` (rp/test_command.hpp), `outbox ...`
+// (rp/outbox_command.hpp, W4.6) or `signer ...` (rp/signer_command.hpp).
 // `args` is argv without the program name, in UTF-8. Normal output goes to
 // `out`, usage and errors to `err`.
 // Returns the process exit code (rp::exit_code): 0 on success, 64 with

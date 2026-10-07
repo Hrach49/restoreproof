@@ -1,6 +1,7 @@
 #include <rp/config.hpp>
 #include <rp/config_check.hpp>
 #include <rp/secrets.hpp>
+#include <rp/timestamper.hpp>
 #include <rp/vault.hpp>
 
 #include "test_certs.hpp"
@@ -480,7 +481,8 @@ TEST_CASE("rpworker config check prints the Cloud's CA file when it is set",
           "[config_check][outbox]")
 {
     Lab lab;
-    const std::string ca = utf8(lab.dir.write("cloud-ca.pem", "-----BEGIN CERTIFICATE-----\n"));
+    const std::string ca =
+        utf8(lab.dir.write("cloud-ca.pem", std::string{rp::default_tsa_ca_pem()}));
     nlohmann::json doc = nlohmann::json::parse(kConfigJson);
     doc["cloud_ca_file"] = ca;
     const auto path = lab.dir.write("config.json", doc.dump());

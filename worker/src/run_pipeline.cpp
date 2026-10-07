@@ -829,6 +829,19 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
                 throw ConfigError("--outbox",
                                   "--outbox " + table_cell(*parsed.outbox) + ": not a UTF-8 path");
             }
+            // The W4.6 review, finding 1: a run whose folder couldn't be
+            // queued (its ID already queued or sent, the outbox folder not
+            // makeable, the two roots on different volumes) is refused here,
+            // before the secrets, the mutex and any Veeam call, not after
+            // the restore with a complete folder stranded in the runs root.
+            if (evidence_root) {
+                const std::string refused = Outbox({*outbox_root, env.outbox_files, nullptr})
+                                                .prepare(*evidence_root, parsed.run_id);
+                if (!refused.empty()) {
+                    err << refused << '\n';
+                    return exit_code::config;
+                }
+            }
         }
         // W4.5: the vault, read once; nothing after this reads a secret from
         // anywhere else.

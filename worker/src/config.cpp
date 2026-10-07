@@ -1,9 +1,11 @@
 #include <rp/config.hpp>
 
 #include <rp/cert_pin.hpp>
+#include <rp/rfc3161.hpp>
 #include <rp/secrets.hpp>
 
 #include "control_chars.hpp"
+#include "file_read.hpp"
 #include "path_utf8.hpp"
 #include "text_util.hpp"
 #include "uuid.hpp"
@@ -571,6 +573,35 @@ Config parse_config(std::string_view json_text)
     return config;
 }
 
+// A CA file key's file (veeam_ca_file, tsa_ca_file, cloud_ca_file) opens for
+// reading; a directory doesn't. Throws the key's ConfigError, `prefix` first.
+void require_readable(std::string_view key, const std::string& value, const std::string& prefix)
+{
+    const std::optional<std::filesystem::path> ca_path = path_from_utf8(value);
+    if (!ca_path || !std::ifstream(*ca_path, std::ios::binary)) {
+        const ConfigError e = key_error(key, "names a file that can't be read");
+        throw ConfigError(e.key(), prefix + e.what());
+    }
+}
+
+// A CA file larger than this isn't one.
+constexpr std::uintmax_t kMaxCaFileBytes = 1024u * 1024u;
+
+// The key's file holds at least one PEM certificate (the W4.6 review, finding
+// 2: a cloud_ca_file nothing could ever chain to would otherwise show only as
+// upload_unreachable at every flush, for good). The same count as the TSA's
+// CA file is held to. Throws the key's ConfigError, `prefix` first.
+void require_certificate(std::string_view key, const std::string& value,
+                         const std::string& prefix)
+{
+    const std::optional<std::filesystem::path> ca_path = path_from_utf8(value);
+    const FileRead read = ca_path ? read_whole_file(*ca_path, kMaxCaFileBytes) : FileRead{};
+    if (read.state != FileState::read || openssl_rfc3161().certificates_in(read.bytes) == 0) {
+        const ConfigError e = key_error(key, "names a file that holds no certificate (PEM)");
+        throw ConfigError(e.key(), prefix + e.what());
+    }
+}
+
 Config load_config(const std::filesystem::path& path)
 {
     const std::string prefix = path_to_utf8(path) + ": ";
@@ -586,29 +617,17 @@ Config load_config(const std::filesystem::path& path)
     } catch (const ConfigError& e) {
         throw ConfigError(e.key(), prefix + e.what());
     }
-    // Here rather than in parse_config, which stays pure over the text. Opening
-    // for reading also fails on a directory. Like every message, it names the
-    // key, not the value.
+    // Here rather than in parse_config, which stays pure over the text. Like
+    // every message, each names the key, not the value.
     if (config.veeam_ca_file) {
-        const std::optional<std::filesystem::path> ca_path = path_from_utf8(*config.veeam_ca_file);
-        if (!ca_path || !std::ifstream(*ca_path, std::ios::binary)) {
-            const ConfigError e = key_error(kCaFileKey, "names a file that can't be read");
-            throw ConfigError(e.key(), prefix + e.what());
-        }
+        require_readable(kCaFileKey, *config.veeam_ca_file, prefix);
     }
     if (config.tsa_ca_file) {
-        const std::optional<std::filesystem::path> ca_path = path_from_utf8(*config.tsa_ca_file);
-        if (!ca_path || !std::ifstream(*ca_path, std::ios::binary)) {
-            const ConfigError e = key_error(kTsaCaFileKey, "names a file that can't be read");
-            throw ConfigError(e.key(), prefix + e.what());
-        }
+        require_readable(kTsaCaFileKey, *config.tsa_ca_file, prefix);
     }
     if (config.cloud_ca_file) {
-        const std::optional<std::filesystem::path> ca_path = path_from_utf8(*config.cloud_ca_file);
-        if (!ca_path || !std::ifstream(*ca_path, std::ios::binary)) {
-            const ConfigError e = key_error(kCloudCaFileKey, "names a file that can't be read");
-            throw ConfigError(e.key(), prefix + e.what());
-        }
+        require_readable(kCloudCaFileKey, *config.cloud_ca_file, prefix);
+        require_certificate(kCloudCaFileKey, *config.cloud_ca_file, prefix);
     }
     // The pin is discarded: computing it only proves the file holds the named
     // certificate, so a wrong value is reported now rather than as a TLS

@@ -57,6 +57,12 @@ inline constexpr std::string_view kHttpPrefix = "upload_http_";
 inline constexpr std::string_view kFolderChanged = "folder_changed";
 } // namespace upload_code
 
+// Not a code and never in a manifest: a flush's stdout word, "kept <run>:
+// not_read", for a run one of whose files is there but couldn't be read at
+// that moment (held open by another process). Nothing is written; the next
+// flush tries again.
+inline constexpr std::string_view kFlushNotRead = "not_read";
+
 // Whether `code` is what an uploader may answer for a failed attempt:
 // upload_unreachable, upload_timeout, upload_internal, or upload_http_ and a
 // status of three digits.
@@ -136,6 +142,11 @@ struct OutboxFiles {
     std::function<bool(const std::filesystem::path&)> remove_folder;
     // A run folder's size in bytes; nullopt when it can't be read.
     std::function<std::optional<std::uintmax_t>(const std::filesystem::path&)> folder_bytes;
+    // Whether two paths, which needn't exist yet, are on one volume, so a
+    // rename between them is one and never a copy; nullopt when it can't be
+    // told.
+    std::function<std::optional<bool>(const std::filesystem::path&, const std::filesystem::path&)>
+        same_volume;
 };
 
 struct OutboxOptions {
@@ -214,6 +225,18 @@ public:
     // its line end; empty for `queued`.
     std::string queue_error(const QueueOutcome& outcome,
                             const std::filesystem::path& run_folder) const;
+
+    // Before a run with --outbox (the W4.6 review, finding 1): what would stop
+    // the finished folder <runs_root>\<run_id> from being queued, found before
+    // the secrets and any Veeam call rather than after the restore. With
+    // `run_id` (a --run-id; a run without one makes its ID later), first a run
+    // of that ID already queued or sent; then <root>\outbox is made when it
+    // isn't there; then the runs root and <root>\outbox are held to one volume
+    // (one that can't be told is let through: the rename says). The "outbox
+    // error: ...; nothing was done" line, without its line end, or empty when
+    // nothing stands in the way. Never throws but for no memory.
+    std::string prepare(const std::filesystem::path& runs_root,
+                        std::optional<std::string_view> run_id) const;
 
     // What is queued and how many runs are sent; reads only.
     OutboxListing list() const;

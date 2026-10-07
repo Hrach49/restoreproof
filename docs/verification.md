@@ -1334,7 +1334,12 @@ Two sibling folders under one root, by default `%ProgramData%\RestoreProof`:
 runs root or in the outbox, whole, and never half in both, so `<dir>` and `<root>` must be on
 one volume. The folder's name stays the run ID, and a flush holds `result.json`'s `run_id` to
 it. A folder that can't be queued (already queued, already sent, another volume, the rename
-refused) stays in `<dir>` as it is, with one `outbox error:` line.
+refused) stays in `<dir>` as it is, with one `outbox error:` line. What can be known before the
+run is checked before it, once the config is read and before the secrets, the mutex and any
+Veeam call (the W4.6 code review, finding 1): with a `--run-id`, that no run of that ID is
+queued or sent; that `<root>\outbox` can be made (it is made then, and left); that `<dir>` and
+`<root>\outbox` are on one volume. A run refused there does nothing: `outbox error: ...;
+nothing was done`, exit 1, no run line.
 
 A run folder without `result.json` is a run that didn't finish (`result.json` is written
 last, after the TSA was asked). The outbox never queues one and never deletes one, in the
@@ -1389,7 +1394,12 @@ below, it takes every queued run whose `next_attempt_at` is `null` or not after 
    `timestamped` and is one token over that same hash; each attachment the result lists is
    there with its size and SHA-256. A file that fails is `outbox error: <folder>: <file>
    changed since it was signed`: nothing is sent, no attempt is counted, `last_error` becomes
-   `folder_changed` and the run stays queued for the operator. This catches every change short
+   `folder_changed` (written once: a manifest that says so already isn't rewritten) and the
+   run stays queued for the operator; every file is read and checked again at every flush it
+   is due, so a folder the operator puts right is sent at the next one with no manifest edit.
+   A file that is there and couldn't be opened at that moment (another process holds it) is
+   not a change: `outbox error: <folder>: <file> couldn't be read`, `kept <run_id>: not_read`,
+   nothing written, the next flush tries again. This catches every change short
    of forging both the result and its signature; the signature itself is verified under the
    public key by the Cloud and by `rpworker signer verify`, not here (the outbox reads no key).
 2. **One request:** `POST <cloud_url>/v1/results`, multipart/form-data, the parts `result`

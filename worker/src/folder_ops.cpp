@@ -8,9 +8,45 @@
 #endif
 #include <windows.h>
 
+#include <algorithm>
+#include <cstddef>
+#include <cwchar>
+#include <string>
+#include <string_view>
 #include <system_error>
 
 namespace rp {
+
+namespace {
+
+// The mount point `p` is under, without an extended-length prefix; nullopt
+// when Windows can't say.
+std::optional<std::wstring> volume_of(const std::filesystem::path& p)
+{
+    constexpr std::wstring_view kExtended = LR"(\\?\)";
+    constexpr std::wstring_view kExtendedShare = LR"(\\?\UNC\)";
+    std::error_code ec;
+    const std::filesystem::path full = std::filesystem::absolute(p, ec);
+    if (ec) {
+        return std::nullopt;
+    }
+    // The mount point is a prefix of the path, so the path's length is room
+    // enough; MAX_PATH in case the call wants it.
+    std::wstring buffer(std::max<std::size_t>(full.native().size(), MAX_PATH) + 1, L'\0');
+    if (GetVolumePathNameW(full.c_str(), buffer.data(), static_cast<DWORD>(buffer.size())) == 0) {
+        return std::nullopt;
+    }
+    buffer.resize(std::wcslen(buffer.data()));
+    if (buffer.starts_with(kExtendedShare)) {
+        return L"\\\\" + buffer.substr(kExtendedShare.size());
+    }
+    if (buffer.starts_with(kExtended)) {
+        return buffer.substr(kExtended.size());
+    }
+    return buffer;
+}
+
+} // namespace
 
 unsigned long move_folder(const std::filesystem::path& from,
                           const std::filesystem::path& to) noexcept
@@ -67,6 +103,21 @@ bool make_folder(const std::filesystem::path& folder) noexcept
         return path_kind(folder) == PathKind::folder;
     } catch (...) {
         return false;
+    }
+}
+
+std::optional<bool> same_volume(const std::filesystem::path& a,
+                                const std::filesystem::path& b) noexcept
+{
+    try {
+        const std::optional<std::wstring> first = volume_of(a);
+        const std::optional<std::wstring> second = volume_of(b);
+        if (!first || !second) {
+            return std::nullopt;
+        }
+        return _wcsicmp(first->c_str(), second->c_str()) == 0;
+    } catch (...) {
+        return std::nullopt;
     }
 }
 

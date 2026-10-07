@@ -138,34 +138,46 @@ std::string not_a_run(const path& folder)
 
 // The run's files as the upload's parts, each read whole and checked against
 // what the run signed (point 3); or nullopt, with `changed` the file that
-// isn't as it was.
+// isn't as it was, and `not_read` when that file is there, a file, and
+// couldn't be read at this moment (held open by another process, still being
+// written): this flush's failure, never a change.
 std::optional<std::vector<UploadPart>> checked_parts(const path& folder,
                                                      const OutboxManifest& manifest,
-                                                     const Rfc3161& rfc3161, std::string& changed)
+                                                     const Rfc3161& rfc3161, std::string& changed,
+                                                     bool& not_read)
 {
     std::vector<UploadPart> parts;
-    const auto refuse = [&](std::string_view file) {
+    not_read = false;
+    const auto refuse = [&](std::string_view file, bool unread = false) {
         changed = table_cell(file);
+        not_read = unread;
         return std::nullopt;
     };
+    // Unreadable, not too large (a change) and not missing or a folder (a
+    // change too).
+    const auto unread = [](const path& file, const FileRead& read) {
+        return read.state == FileState::unreadable && path_kind(file) == PathKind::file;
+    };
 
-    FileRead result = read_whole_file(folder / kResultFileName, kMaxResultFileBytes);
+    const path result_path = folder / kResultFileName;
+    FileRead result = read_whole_file(result_path, kMaxResultFileBytes);
     const json document = result.state == FileState::read ? json::parse(result.bytes, nullptr, false)
                                                           : json(nullptr);
     const auto id = document.is_object() ? document.find("run_id") : document.end();
     if (id == document.end() || !id->is_string() || id->get<std::string>() != manifest.run_id) {
-        return refuse(kResultFileName);
+        return refuse(kResultFileName, unread(result_path, result));
     }
     const std::array<unsigned char, 32> digest = sha256_bytes(result.bytes);
     const std::string hash = sha256_hex(result.bytes);
 
-    FileRead signature = read_whole_file(folder / kSignatureFileName, kMaxSignatureFileBytes);
+    const path signature_path = folder / kSignatureFileName;
+    FileRead signature = read_whole_file(signature_path, kMaxSignatureFileBytes);
     const json signed_as = signature.state == FileState::read
                                ? json::parse(signature.bytes, nullptr, false)
                                : json(nullptr);
     const auto bundle = signed_as.is_object() ? signed_as.find("bundle_sha256") : signed_as.end();
     if (bundle == signed_as.end() || !bundle->is_string()) {
-        return refuse(kSignatureFileName);
+        return refuse(kSignatureFileName, unread(signature_path, signature));
     }
     // The signature names another hash: the result isn't the one it signed.
     if (bundle->get<std::string>() != hash) {
@@ -183,7 +195,7 @@ std::optional<std::vector<UploadPart>> checked_parts(const path& folder,
         const std::optional<TimestampTokenInfo> info =
             token.state == FileState::read ? rfc3161.parse_token(token.bytes) : std::nullopt;
         if (!info || !info->sha256 || !std::ranges::equal(info->imprint, digest)) {
-            return refuse(kTimestampFileName);
+            return refuse(kTimestampFileName, unread(token_path, token));
         }
         parts.push_back({"timestamp", std::string{kTimestampFileName}, std::string{kBytesType},
                          std::move(token.bytes)});
@@ -214,7 +226,7 @@ std::optional<std::vector<UploadPart>> checked_parts(const path& folder,
         FileRead bytes = read_whole_file(folder / *part, size->get<std::uintmax_t>());
         if (bytes.state != FileState::read || bytes.bytes.size() != size->get<std::uintmax_t>() ||
             sha256_hex(bytes.bytes) != sha256->get<std::string>()) {
-            return refuse(file);
+            return refuse(file, unread(folder / *part, bytes));
         }
         parts.push_back({file, file, std::string{kBytesType}, std::move(bytes.bytes)});
     }
@@ -348,6 +360,9 @@ Outbox::Outbox(OutboxOptions options) : options_(std::move(options))
     if (!files.folder_bytes) {
         files.folder_bytes = folder_bytes;
     }
+    if (!files.same_volume) {
+        files.same_volume = same_volume;
+    }
     if (options_.rfc3161 == nullptr) {
         options_.rfc3161 = &openssl_rfc3161();
     }
@@ -439,6 +454,34 @@ std::string Outbox::queue_error(const QueueOutcome& outcome,
         break;
     }
     return from + "no result.json; not queued";
+}
+
+std::string Outbox::prepare(const std::filesystem::path& runs_root,
+                            std::optional<std::string_view> run_id) const
+{
+    constexpr std::string_view nothing_done = "; nothing was done";
+    const std::optional<path> name = run_id ? path_from_utf8(*run_id) : std::nullopt;
+    QueueOutcome outcome;
+    outcome.folder = name ? outbox_folder() / *name : outbox_folder();
+    const path run_folder = name ? runs_root / *name : runs_root;
+    const auto refused = [&](QueueResult result) {
+        outcome.result = result;
+        return queue_error(outcome, run_folder) + std::string{nothing_done};
+    };
+    if (name && path_kind(outcome.folder) != PathKind::none) {
+        return refused(QueueResult::already_queued);
+    }
+    if (name && path_kind(sent_folder() / *name) != PathKind::none) {
+        return refused(QueueResult::already_sent);
+    }
+    if (!make_folder(outbox_folder())) {
+        return refused(QueueResult::no_outbox_folder);
+    }
+    if (options_.files.same_volume(runs_root, outbox_folder()) == std::optional<bool>{false}) {
+        return "outbox error: " + shown(runs_root) + ": not on the same volume as " +
+               shown(outbox_folder()) + std::string{nothing_done};
+    }
+    return {};
 }
 
 OutboxListing Outbox::list() const
@@ -591,12 +634,25 @@ FlushReport Outbox::flush(IUploader& uploader, std::chrono::system_clock::time_p
             continue;
         }
         std::string changed;
+        bool not_read = false;
         const std::optional<std::vector<UploadPart>> parts =
-            checked_parts(folder, manifest, *options_.rfc3161, changed);
+            checked_parts(folder, manifest, *options_.rfc3161, changed, not_read);
+        if (!parts && not_read) {
+            // The file is there and couldn't be opened now (another process
+            // holds it): nothing is recorded, and the next flush tries again.
+            error(shown(folder) + ": " + changed + " couldn't be read");
+            report.out.push_back("kept " + id + ": " + std::string{kFlushNotRead});
+            continue;
+        }
         if (!parts) {
             error(shown(folder) + ": " + changed + " changed since it was signed");
+            // Written once: a manifest that already says so is left as it is,
+            // so a run kept for the operator costs no write per flush.
+            const std::string before = manifest_text(manifest);
             manifest.last_error = std::string{upload_code::kFolderChanged};
-            static_cast<void>(files.write_manifest(manifest_file, manifest_text(manifest)));
+            if (const std::string after = manifest_text(manifest); after != before) {
+                static_cast<void>(files.write_manifest(manifest_file, after));
+            }
             report.out.push_back("kept " + id + ": " + std::string{upload_code::kFolderChanged});
             continue;
         }

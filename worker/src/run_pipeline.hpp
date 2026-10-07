@@ -139,7 +139,14 @@ struct Presentation {
 //
 // With args.outbox too (W4.6, docs/decisions.md 2026-10-07; rp::Outbox):
 //  - with the --evidence root, "config error: --outbox <root>: not a UTF-8
-//    path", exit 1, before the secrets;
+//    path", exit 1, before the secrets; then, still before the secrets, the
+//    mutex and any Veeam call (the W4.6 review, finding 1), rp::Outbox::prepare:
+//    with a --run-id, "outbox error: <root>\outbox\<run_id>: already queued;
+//    nothing was done" or "outbox error: <root>\sent\<run_id>: already sent;
+//    nothing was done"; <root>\outbox made, else "outbox error: <root>\outbox:
+//    the folder couldn't be made; nothing was done"; the two roots on one
+//    volume, else "outbox error: <dir>: not on the same volume as
+//    <root>\outbox; nothing was done"; each exit 1;
 //  - last, only once result.json is written and the signed, timestamped and
 //    evidence lines are out, the run folder is renamed to
 //    <root>\outbox\<run_id> and its manifest.json written there (the W4.4

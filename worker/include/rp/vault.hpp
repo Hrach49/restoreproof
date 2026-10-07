@@ -61,26 +61,35 @@ public:
 std::filesystem::path default_vault_path();
 
 // Reads and decrypts `file` into Secrets: a name that isn't in the vault
-// leaves its field empty. In this order: the file is there (else "not
-// found"); its owner passes the rule above; it is a file of at most
-// kMaxVaultFileBytes that reads whole; DPAPI decrypts it; the description is
+// leaves its field empty. The file is opened once, for reading, and the owner
+// rule and the read both work on that handle, so the file that passed the
+// rule is the file that is decrypted, whatever is moved onto the path
+// meanwhile. In this order: the file is there (else "not found") and opens
+// (else "can't be read", a folder and a device too); its owner passes the
+// rule above; it is at most kMaxVaultFileBytes and reads whole; DPAPI
+// decrypts it; the description is
 // kVaultDescription and the plaintext is a canonical-json-v1 object of
 // non-empty strings of at most kMaxVaultValueBytes each ("not a RestoreProof
 // vault"); every key is one of kSecretNames. The file's bytes and DPAPI's
-// plaintext buffer are wiped before they go. Throws VaultError.
+// plaintext buffer and the parsed values are wiped before they go. Throws
+// VaultError.
 Secrets read_vault(const std::filesystem::path& file);
 
 // Writes `secrets` as `file`, whole or not at all: a temp file beside it,
 // flushed, moved onto it. A field that is empty or holds "" isn't stored. A
-// file that is there must pass the owner rule and keeps its DACL; a new one
-// gets kVaultDefaultDacl, and its folder is made when it isn't there. Throws
+// file that is there must pass the owner rule and keeps its DACL (the DACL of
+// the file that passed, read through the same handle); a new one gets
+// kVaultDefaultDacl, and its folder is made when it isn't there. Throws
 // VaultError.
 void write_vault(const std::filesystem::path& file, const Secrets& secrets);
 
 // Adds a Read entry (FILE_GENERIC_READ, not inherited) for `account` (UTF-8,
-// as LookupAccountNameW takes it: "NT SERVICE\\name", "DOMAIN\\user") to
+// as LookupAccountNameW takes it: "NT SERVICE\\name", "DOMAIN\\user", or a
+// SID string, which is "S-1-..." and nothing else: SDDL's two-letter aliases
+// such as "WD" (Everyone) are names here, looked up like any other) to
 // `file`'s DACL, merged into an entry it already has, the DACL kept protected.
-// The file must be there and pass the owner rule. Throws VaultError.
+// The file must be there and pass the owner rule; the DACL is read and set
+// through one handle, on the file that passed. Throws VaultError.
 void grant_vault_read(const std::filesystem::path& file, std::string_view account);
 
 } // namespace rp

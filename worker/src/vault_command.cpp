@@ -22,6 +22,12 @@ namespace rp {
 
 namespace {
 
+// Wipes the string it holds when it goes (secure_wipe).
+struct Wiped {
+    std::string& text;
+    ~Wiped() { secure_wipe(text); }
+};
+
 // Wipes every value of the Secrets it holds when it goes.
 struct WipedSecrets {
     Secrets secrets;
@@ -87,10 +93,15 @@ std::optional<std::string> value_for(std::string_view name, std::ostream& err,
                                      const VaultCommandEnv& env)
 {
     SecretValue got = env.read_secret(name);
+    // Wiped on every way out: the value goes on as a copy, never moved out
+    // of a string that would then go unwiped.
+    const Wiped wiped{got.value};
+    std::optional<std::string> value;
     std::string problem;
     switch (got.state) {
     case SecretValue::State::ok:
-        return std::move(got.value);
+        value = got.value;
+        break;
     case SecretValue::State::empty:
         problem = "the value is empty";
         break;
@@ -107,9 +118,10 @@ std::optional<std::string> value_for(std::string_view name, std::ostream& err,
         problem = "the value couldn't be read";
         break;
     }
-    secure_wipe(got.value);
-    err << "vault error: " << problem << '\n';
-    return std::nullopt;
+    if (!value) {
+        err << "vault error: " << problem << '\n';
+    }
+    return value;
 }
 
 // The vault read, or an empty one when the file isn't there.
@@ -129,8 +141,15 @@ int run_set(std::string_view name, const std::filesystem::path& file, std::strin
     if (!value) {
         return exit_code::config;
     }
+    // Wiped when the vault can't be read or written too.
+    const Wiped wiped{*value};
     WipedSecrets held{read_or_empty(file)};
-    *secret_field(held.secrets, name) = std::move(*value);
+    std::optional<std::string>* field = secret_field(held.secrets, name);
+    if (*field) {
+        // The value replaced: assigning over it could free its buffer as it is.
+        secure_wipe(**field);
+    }
+    *field = *value;
     write_vault(file, held.secrets);
     out << "set " << name << " in " << shown << '\n';
     return exit_code::ok;
@@ -201,9 +220,9 @@ VaultCommandEnv default_vault_command_env()
     VaultCommandEnv env;
     env.default_vault_path = default_vault_path;
     env.read_secret = [](std::string_view name) {
-        const SecretLine line =
-            read_secret_line("value for " + std::string{name} + " (not shown): ",
-                             kMaxVaultValueBytes);
+        SecretLine line = read_secret_line("value for " + std::string{name} + " (not shown): ",
+                                           kMaxVaultValueBytes);
+        const Wiped wiped{line.value};
         SecretValue value;
         value.state = static_cast<SecretValue::State>(line.state);
         value.value = line.value;

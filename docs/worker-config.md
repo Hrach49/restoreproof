@@ -309,7 +309,10 @@ owner, whoever that is), and nothing for `Users`. `rpworker vault grant <account
 read and write refuses a vault file whose owner is neither `SYSTEM`, `Administrators` nor the
 calling account (`<file>: the vault file is owned by neither SYSTEM, Administrators nor this
 account`): a file another local user planted before the first `vault set` is never read and
-never written over; remove it and set the secrets again. The folder
+never written over; remove it and set the secrets again. Each of a read, a write and a `grant`
+opens the file once and applies the owner rule, the read and the ACL change through that one
+handle, so the file that passed the rule is the file that is decrypted or changed, whatever
+is moved onto its path meanwhile (PR #162 review). The folder
 `%ProgramData%\RestoreProof` is made by `vault set` when it isn't there, with the inherited
 ACL; an existing folder's ACL is left alone (W7.1 tightens it).
 
@@ -381,7 +384,10 @@ administrator has.
   account, and what `rpworker doctor` (W7.2) will run.
 - **`grant <account>`**: a `Read` entry for the account on the file's ACL, merged into one it
   already has; `granted read on <file> to <account>`. The account as `LookupAccountName` takes
-  it (`NT SERVICE\RestoreProof`, `DESKTOP\user`) or as a SID string (`S-1-5-80-...`).
+  it (`NT SERVICE\RestoreProof`, `DESKTOP\user`) or as a SID string (`S-1-5-80-...`). Only
+  `S-1-...` is read as a SID: SDDL's two-letter aliases (`WD` for Everyone, `AU` for
+  Authenticated Users) are account names here like any other, so `grant WD` grants a user
+  called `WD` or nobody.
 
 | Exit code | When |
 |---|---|

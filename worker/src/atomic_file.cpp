@@ -200,7 +200,9 @@ bool write_file_atomically(const std::filesystem::path& path, std::string_view c
             ok = false;
         }
     }
-    ok = ok && MoveFileExW(temp.c_str(), path.c_str(), MOVEFILE_WRITE_THROUGH) != 0;
+    const DWORD flags =
+        MOVEFILE_WRITE_THROUGH | (options.replace ? MOVEFILE_REPLACE_EXISTING : DWORD{0});
+    ok = ok && MoveFileExW(temp.c_str(), path.c_str(), flags) != 0;
     if (!ok) {
         DeleteFileW(temp.c_str());
     }

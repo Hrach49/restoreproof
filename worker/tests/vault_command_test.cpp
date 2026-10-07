@@ -40,7 +40,9 @@ const std::string kUsage =
     "[--record <dir>] | "
     "rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] "
     "[--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--vault <file>] "
-    "[--record <dir>] [--json <file> | --evidence <dir>] | "
+    "[--record <dir>] [--json <file> | --evidence <dir> [--outbox <root>]] | "
+    "rpworker outbox flush [--config <path>] [--outbox <root>] [--record <dir>] | "
+    "rpworker outbox list [--outbox <root>] | "
     "rpworker signer public-key [--vault <file>] | "
     "rpworker signer verify <folder> --public-key <pem file> [--tsa-ca <pem file>]\n";
 

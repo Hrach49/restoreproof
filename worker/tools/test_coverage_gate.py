@@ -232,7 +232,7 @@ class GateTest(unittest.TestCase):
     def test_absent_strict_files_are_skipped_with_a_note(self):
         code, _, summary = self.run_gate(cobertura((r"src\a.cpp", covered(10))))
         self.assertEqual(code, 0)
-        for name in ("vault", "signer", "target_guard", "run_status", "cleaner", "timestamper"):
+        for name in ("vault", "signer", "target_guard", "run_status", "cleaner", "timestamper", "outbox"):
             self.assertIn(f"`{name}`", summary)
         self.assertIn("not present yet", summary)
 

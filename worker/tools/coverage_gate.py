@@ -14,7 +14,8 @@ Rules (CLAUDE.md, "Coverage floors"):
   * vault, signer, target_guard, run_status (the status decision table,
     W3.3: the Worker's counterpart of the Cloud's app/results.py) and cleaner
     (W3.4: the only Worker code that deletes in the tenant) and timestamper
-    (W4.4: it decides which RFC 3161 token is written) need 100%
+    (W4.4: it decides which RFC 3161 token is written) and outbox (W4.6: it
+    decides what is queued, sent, kept and pruned) need 100%
     *branch* coverage. OpenCppCoverage only measures lines (its Cobertura
     branch-rate is always 0), so this gate enforces 100% *line* coverage on
     those files as the closest proxy.
@@ -36,13 +37,13 @@ import xml.etree.ElementTree as ET
 from pathlib import Path, PurePosixPath
 from typing import Iterable, TextIO
 
-STRICT_NAMES = ("vault", "signer", "target_guard", "run_status", "cleaner", "timestamper")
+STRICT_NAMES = ("vault", "signer", "target_guard", "run_status", "cleaner", "timestamper", "outbox")
 SOURCE_DIRS = ("src", "include", "app")
 SOURCE_EXTS = (".cpp", ".cc", ".cxx", ".c")
 HEADER_EXTS = (".h", ".hpp", ".hh", ".hxx", ".ipp", ".inl")
 BRANCH_NOTE = (
     "Branch coverage is not measured: OpenCppCoverage reports line coverage only. "
-    "`vault`, `signer`, `target_guard`, `run_status`, `cleaner` and `timestamper` are held to 100% **line** "
+    "`vault`, `signer`, `target_guard`, `run_status`, `cleaner`, `timestamper` and `outbox` are held to 100% **line** "
     "coverage as a proxy for the required 100% branch coverage."
 )
 

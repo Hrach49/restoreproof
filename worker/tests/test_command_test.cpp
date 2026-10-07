@@ -2937,3 +2937,326 @@ TEST_CASE("test --evidence --record: the TSA's exchange is the recording's tsa f
     CHECK(answer.ends_with(*file_bytes(lab.run_folder() / "timestamp.tst")));
     CHECK(rp::test::request_body_of(fixture) == lab.tsa_http.requests().front().body);
 }
+
+// --- W4.6: the outbox --------------------------------------------------------------
+
+#include "outbox_lab.hpp"
+
+#include <rp/outbox.hpp>
+#include <rp/outbox_command.hpp>
+
+namespace {
+
+// kThree with --evidence <the lab's runs root> --outbox <a root beside it>.
+struct OutboxRun {
+    explicit OutboxRun(const TestLab& lab)
+        : evidence(lab.evidence_arg()), root_path(lab.dir.path() / "rp"), root(utf8(root_path))
+    {
+        args.push_back("--evidence");
+        args.push_back(evidence);
+        args.push_back("--outbox");
+        args.push_back(root);
+    }
+    std::filesystem::path queued(const std::string& run_id = kRunId) const
+    {
+        return root_path / "outbox" / run_id;
+    }
+    std::filesystem::path sent(const std::string& run_id = kRunId) const
+    {
+        return root_path / "sent" / run_id;
+    }
+    rp::OutboxManifest manifest() const
+    {
+        const std::optional<std::string> text = file_bytes(queued() / "manifest.json");
+        REQUIRE(text);
+        const std::optional<rp::OutboxManifest> read = rp::parse_manifest(*text, kRunId);
+        REQUIRE(read);
+        return *read;
+    }
+    std::string evidence;
+    std::filesystem::path root_path;
+    std::string root;
+    Args args = kThree;
+};
+
+std::set<std::string> with_manifest(std::set<std::string> names)
+{
+    names.insert("manifest.json");
+    return names;
+}
+
+} // namespace
+
+// Failure paths first.
+TEST_CASE("test --outbox: only with --evidence, and never empty", "[test_command][outbox]")
+{
+    TestLab lab;
+    const std::string root = utf8(lab.dir.path() / "rp");
+    const std::string json_arg = lab.json_arg();
+    const std::string evidence_arg = lab.evidence_arg();
+    Args args = kThree;
+    SECTION("alone")
+    {
+        args.insert(args.end(), {"--outbox", root});
+    }
+    SECTION("with --json")
+    {
+        args.insert(args.end(), {"--outbox", root, "--json", json_arg});
+    }
+    SECTION("empty")
+    {
+        args.insert(args.end(), {"--evidence", evidence_arg, "--outbox", ""});
+    }
+    SECTION("twice")
+    {
+        args.insert(args.end(), {"--evidence", evidence_arg, "--outbox", root, "--outbox", root});
+    }
+
+    const Run run = lab.run(args);
+
+    CHECK(run.exit_code == rp::exit_code::usage);
+    CHECK(run.out.empty());
+    CHECK(run.err == kUsage);
+    CHECK(lab.load_secrets_calls == 0);
+    CHECK_FALSE(std::filesystem::exists(lab.dir.path() / "rp"));
+}
+
+TEST_CASE("test --outbox: a root that isn't a UTF-8 path is a config error before the secrets",
+          "[test_command][outbox]")
+{
+    TestLab lab;
+    const std::string evidence_arg = lab.evidence_arg();
+    Args args = kThree;
+    args.insert(args.end(), {"--evidence", evidence_arg, "--outbox", "bad-\xff"});
+
+    const Run run = lab.run(args);
+
+    CHECK(run.exit_code == rp::exit_code::config);
+    CHECK(run.out.empty());
+    CHECK_THAT(run.err, StartsWith("config error: --outbox "));
+    CHECK_THAT(run.err, EndsWith(": not a UTF-8 path\n"));
+    CHECK(lab.load_secrets_calls == 0);
+    CHECK(lab.make_connector_calls == 0);
+}
+
+TEST_CASE("test --outbox: a run already queued or already sent is said; its folder stays in the "
+          "runs root, complete, and the status stays",
+          "[test_command][outbox]")
+{
+    TestLab lab;
+    lab.fake.pool.mail = {carol_mail(1)};
+    const OutboxRun outbox(lab);
+    const bool in_sent = GENERATE(false, true);
+    const std::filesystem::path there = in_sent ? outbox.sent() : outbox.queued();
+    std::filesystem::create_directories(there);
+
+    const Run run = lab.run(outbox.args);
+
+    CHECK(run.exit_code == rp::exit_code::config);
+    CHECK(run.err == "outbox error: " + utf8(there) +
+                         (in_sent ? ": already sent\n" : ": already queued\n"));
+    CHECK_THAT(run.out, ContainsSubstring("\nstatus pass: "));
+    CHECK_THAT(run.out, EndsWith(signed_lines(lab.run_folder())));
+    CHECK_THAT(run.out, !ContainsSubstring("queued "));
+    CHECK(names_in(lab.run_folder()) == kSignedFolder);
+    CHECK(rp::to_string(verify_folder(lab.run_folder()).word) == "verified");
+    CHECK(std::filesystem::is_empty(there));
+}
+
+TEST_CASE("test --outbox: a folder that can't be moved stays where and as it is",
+          "[test_command][outbox]")
+{
+    TestLab lab;
+    lab.fake.pool.mail = {carol_mail(1)};
+    const OutboxRun outbox(lab);
+    const unsigned long code = GENERATE(17ul, 32ul);
+    lab.outbox_files.move_folder = [code](const std::filesystem::path&,
+                                          const std::filesystem::path&) { return code; };
+
+    const Run run = lab.run(outbox.args);
+
+    CHECK(run.exit_code == rp::exit_code::config);
+    CHECK(run.err == "outbox error: " + utf8(lab.run_folder()) + ": couldn't be moved to " +
+                         utf8(outbox.queued()) +
+                         (code == 17 ? ": not on the same volume\n" : " (error 32)\n"));
+    CHECK_THAT(run.out, EndsWith(signed_lines(lab.run_folder())));
+    CHECK(names_in(lab.run_folder()) == kSignedFolder);
+    CHECK_FALSE(std::filesystem::exists(outbox.queued()));
+}
+
+TEST_CASE("test --outbox: a manifest that can't be written leaves the run queued, and says so",
+          "[test_command][outbox]")
+{
+    TestLab lab;
+    lab.fake.pool.mail = {carol_mail(1)};
+    const OutboxRun outbox(lab);
+    lab.outbox_files.write_manifest = [](const std::filesystem::path&, std::string_view) {
+        return false;
+    };
+
+    const Run run = lab.run(outbox.args);
+
+    CHECK(run.exit_code == rp::exit_code::config);
+    CHECK(run.err == "outbox error: " + utf8(outbox.queued() / "manifest.json") +
+                         ": could not be written; the next flush makes it\n");
+    CHECK_THAT(run.out, EndsWith("queued " + utf8(outbox.queued()) + "\n"));
+    CHECK(names_in(outbox.queued()) == kSignedFolder);
+    CHECK_FALSE(std::filesystem::exists(lab.run_folder()));
+}
+
+TEST_CASE("test --outbox: a run without a result.json is never queued", "[test_command][outbox]")
+{
+    TestLab lab;
+    lab.fake.pool.mail = {carol_mail(1)};
+    const OutboxRun outbox(lab);
+    // The result can't be signed: the two text files are all the folder gets.
+    lab.sign_result = [](std::string_view, const rp::SigningKey&) {
+        return std::optional<rp::SignedResult>{};
+    };
+
+    const Run run = lab.run(outbox.args);
+
+    CHECK(run.exit_code == rp::exit_code::config);
+    CHECK(run.err == "evidence error: " + utf8(lab.run_folder()) +
+                         ": the result couldn't be signed; no result.json was written\n");
+    CHECK_THAT(run.out, !ContainsSubstring("queued "));
+    CHECK(names_in(lab.run_folder()) == kTextFiles);
+    CHECK_FALSE(std::filesystem::exists(outbox.root_path));
+}
+
+TEST_CASE("test --outbox: a run that got no token is queued as not timestamped, with the TSA's "
+          "code in its manifest",
+          "[test_command][outbox][timestamp]")
+{
+    TestLab lab;
+    lab.fake.pool.mail = {carol_mail(1)};
+    const OutboxRun outbox(lab);
+    lab.tsa_answer = [](const rp::HttpRequest&) {
+        return rp::test::make_response(503, "busy", "text/plain");
+    };
+
+    const Run run = lab.run(outbox.args);
+
+    CHECK(run.exit_code == rp::exit_code::ok);
+    CHECK(run.err == not_timestamped(lab, "tsa_http_status"));
+    CHECK_THAT(run.out, EndsWith("queued " + utf8(outbox.queued()) + "\n"));
+    CHECK(names_in(outbox.queued()) == with_manifest(kUnstampedFolder));
+    const rp::OutboxManifest manifest = outbox.manifest();
+    CHECK_FALSE(manifest.timestamped);
+    CHECK(manifest.timestamp_code == "tsa_http_status");
+    CHECK(manifest.files == std::vector<std::string>{"items.csv", "result.json", "signature.json",
+                                                     "veeam-session.log"});
+}
+
+// The happy path, end to end: queued, kept while the Cloud is down, sent.
+TEST_CASE("test --evidence --outbox: the signed run folder is queued with its manifest, a flush "
+          "with the Cloud down keeps it, the next one sends it, and it still verifies",
+          "[test_command][outbox][acceptance]")
+{
+    TestLab lab;
+    lab.fake.pool.mail = {carol_mail(1)};
+    const OutboxRun outbox(lab);
+    bool held_at_move = true;
+    lab.outbox_files.move_folder = [&](const std::filesystem::path& from,
+                                       const std::filesystem::path& to) {
+        held_at_move = lab.lock_held;
+        std::error_code ec;
+        std::filesystem::rename(from, to, ec);
+        return ec ? 5ul : 0ul;
+    };
+
+    const Run run = lab.run(outbox.args);
+
+    CHECK(run.exit_code == rp::exit_code::ok);
+    CHECK(run.err.empty());
+    // The run mutex was let go before the folder was queued.
+    CHECK_FALSE(held_at_move);
+    CHECK_FALSE(std::filesystem::exists(lab.run_folder()));
+    REQUIRE(names_in(outbox.queued()) == with_manifest(kSignedFolder));
+    const std::string result = *file_bytes(outbox.queued() / "result.json");
+    CHECK_THAT(run.out, ContainsSubstring("\nstatus pass: "));
+    CHECK_THAT(run.out,
+               EndsWith("signed " + rp::sha256_hex(result) + " key " +
+                        rp::test::signing_key().key_id() + "\ntimestamped " + kStampedAt +
+                        "\nevidence " + utf8(lab.run_folder()) +
+                        ": result.json, signature.json, timestamp.tst, items.csv, "
+                        "veeam-session.log\nqueued " +
+                        utf8(outbox.queued()) + "\n"));
+
+    const rp::OutboxManifest manifest = outbox.manifest();
+    CHECK(manifest.run_id == kRunId);
+    CHECK(manifest.queued_at == "2026-09-28T12:00:00Z");
+    CHECK(manifest.attempts == 0);
+    CHECK_FALSE(manifest.next_attempt_at);
+    CHECK_FALSE(manifest.last_attempt_at);
+    CHECK_FALSE(manifest.last_error);
+    CHECK(manifest.timestamped);
+    CHECK_FALSE(manifest.timestamp_code);
+    CHECK_FALSE(manifest.sent_at);
+    CHECK(manifest.files == std::vector<std::string>{"items.csv", "result.json", "signature.json",
+                                                     "timestamp.tst", "veeam-session.log"});
+    // The manifest is the Worker's own: the result neither lists nor names it.
+    CHECK_THAT(result, !ContainsSubstring("manifest.json"));
+    CHECK_THAT(result, !ContainsSubstring("outbox"));
+    const auto before = rp::test::outbox_lab::files_of(outbox.queued());
+    const rp::Verification queued = verify_folder(outbox.queued());
+    CHECK(rp::to_string(queued.word) == "verified");
+    CHECK(queued.notes == std::vector<std::string>{"manifest.json"});
+
+    // `rpworker outbox flush`, the Cloud down, then up.
+    rp::test::FakeHttpClient cloud;
+    int calls = 0;
+    cloud.on(rp::HttpMethod::post, "https://cloud.example.invalid/v1/results",
+             [&calls](const rp::HttpRequest&) -> rp::HttpResponse {
+                 if (++calls == 1) {
+                     throw rp::HttpError("POST: dropped", rp::TransportError::dropped, 0, 1);
+                 }
+                 return rp::test::make_response(202);
+             });
+    long long now = 0;
+    rp::OutboxCommandEnv env;
+    env.default_config_path = [&] { return lab.config_path; };
+    env.default_outbox_root = [&] { return outbox.root_path; };
+    env.make_cloud_http = [&](const rp::Config&) -> std::unique_ptr<rp::IHttpClient> {
+        return std::make_unique<rp::test::ForwardingHttpClient>(cloud);
+    };
+    env.wall_now = [&] { return rp::test::outbox_lab::at(now); };
+    env.take_flush_lock = []() -> std::unique_ptr<rp::RunLock> {
+        struct Lock final : rp::RunLock {};
+        return std::make_unique<Lock>();
+    };
+    const auto flush = [&] {
+        std::ostringstream out;
+        std::ostringstream err;
+        const Args args{"flush"};
+        const int code = rp::run_outbox_command(args, out, err, env);
+        return Run{code, out.str(), err.str()};
+    };
+
+    const Run down = flush();
+    CHECK(down.exit_code == rp::exit_code::transient);
+    CHECK(down.out == "kept run-0001: upload_unreachable; attempt 1, next at "
+                      "2026-10-07T12:01:00Z\n1 queued, 0 sent\n");
+    CHECK(rp::test::outbox_lab::files_of(outbox.queued()) == before);
+    CHECK(outbox.manifest().attempts == 1);
+
+    now = 60;
+    const Run up = flush();
+    CHECK(up.exit_code == rp::exit_code::ok);
+    CHECK(up.out == "sent run-0001\n0 queued, 1 sent\n");
+    CHECK(up.err.empty());
+    CHECK_FALSE(std::filesystem::exists(outbox.queued()));
+    CHECK(rp::test::outbox_lab::files_of(outbox.sent()) == before);
+    CHECK(rp::to_string(verify_folder(outbox.sent()).word) == "verified");
+
+    // What the Cloud was sent: the run's own files under the contract's names.
+    const std::vector<rp::HttpRequest> requests = cloud.requests();
+    REQUIRE(requests.size() == 2);
+    std::vector<std::string> names;
+    for (const rp::MultipartPart& part : requests.back().parts) {
+        names.push_back(part.name);
+        CHECK(part.content == before.at(part.filename));
+    }
+    CHECK(names == std::vector<std::string>{"result", "signature", "timestamp", "items.csv",
+                                            "veeam-session.log"});
+}

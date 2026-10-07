@@ -27,6 +27,7 @@
 #include <rp/connector_registry.hpp>
 #include <rp/evidence_builder.hpp>
 #include <rp/http_client.hpp>
+#include <rp/outbox.hpp>
 #include <rp/run_lock.hpp>
 #include <rp/secrets.hpp>
 #include <rp/step_timer.hpp>
@@ -169,6 +170,10 @@ struct RestoreCommandEnv {
     std::function<std::unique_ptr<IHttpClient>()> make_tsa_http;
     // The nonce of each timestamp request; null = a random one.
     std::function<std::optional<std::uint64_t>()> timestamp_nonce;
+    // `rpworker test --evidence <dir> --outbox <root>` only (W4.6,
+    // rp/outbox.hpp): the outbox's file calls, each null = the real one (one
+    // rename of the run folder, the manifest's writer).
+    OutboxFiles outbox_files;
 };
 
 // The real environment: rp::default_config_path, rp::default_vault_path,

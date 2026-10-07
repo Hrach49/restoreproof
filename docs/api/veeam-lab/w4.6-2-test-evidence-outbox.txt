@@ -1,0 +1,99 @@
+W4.6 (#49), the outbox's Done-when in the lab, 2026-10-07. rpworker from worker\build\dev, an elevated PowerShell 7, the vault the only source of secrets (RP_* variables in the shell: []), the config a copy of the lab's with cloud_url https://localhost:8443 and cloud_ca_file the stub Cloud's self-signed certificate (docs/api/veeam-lab/w4.6-harness/).
+Step 2 (a): rpworker test --evidence --outbox, the machine idle: status pass, 30 of 30, the run folder renamed into outbox\ with its manifest; then outbox list.
+command: rpworker test --mail 10 --sp 10 --od 10 --run-id w46-done-when-2 --point c2f0f2e7-177f-48ac-992b-93a50cf702e332f28a6a-67e7-46bf-844b-6b9f9ea7dc73 --config <the config copy> --manifest C:\restoreproof\lab\seed-manifest.json --evidence C:\ProgramData\RestoreProof\runs --outbox C:\ProgramData\RestoreProof
+2026-10-07T12:12:30Z to 2026-10-07T12:15:59Z
+exit code: 0
+--- stdout
+restore point 2026-10-03T16:16:54.0154727Z  c2f0f2e7-177f-48ac-992b-93a50cf702e332f28a6a-67e7-46bf-844b-6b9f9ea7dc73  (veeam_org_name RestoreProofLab.onmicrosoft.com)
+run w46-done-when-2  seed a2a1d6f5
+cleanup before ok: deleted 0 mail, 0 sharepoint, 0 onedrive
+canary cursor 0,0,0 -> 5,5,5
+  KIND        REQUESTED  CANARIES  RANDOM  NOTE
+  mail        10         5 of 5    5 of 5
+  sharepoint  10         5 of 5    5 of 5
+  onedrive    10         5 of 5    5 of 5
+restoring 30 item(s) ...
+
+  SESSION                               KIND        RESULT   RESTORED  STARTED                       ENDED                         ELAPSED
+  57817462-b379-4ab8-acf2-4dce34e2c70c  mail        Success  5 of 5    2026-10-07T12:12:49.6218681Z  2026-10-07T12:13:20.0025028Z  0:00:30
+  e59bc9da-f774-4a38-a0b4-4e59b4c57379  mail        Success  5 of 5    2026-10-07T12:13:20.2464492Z  2026-10-07T12:13:55.3130532Z  0:00:35
+  eea3f4e1-4498-46ec-b213-37b017b6adf7  sharepoint  Success  10 of 10  2026-10-07T12:13:55.9332174Z  2026-10-07T12:14:55.9157266Z  0:00:59
+  265eeed9-a0e7-4dfb-8066-418a792c589a  onedrive    Success  10 of 10  2026-10-07T12:14:56.8063695Z  2026-10-07T12:15:41.2821683Z  0:00:44
+
+restore succeeded: 30 of 30 item(s) restored in 0:02:59
+
+  TYPE        NAME                        EXPECTED  FOUND  MATCH  VERDICT   REASON  MS
+  mail        RP-CANARY-0001              manifest  yes    match  verified  -       0
+  mail        RP-CANARY-0002              manifest  yes    match  verified  -       0
+  mail        RP-CANARY-0003              manifest  yes    match  verified  -       0
+  mail        RP-CANARY-0004              manifest  yes    match  verified  -       0
+  mail        RP-CANARY-0005              manifest  yes    match  verified  -       0
+  mail        Quarterly numbers are in    fields    yes    match  verified  -       0
+  mail        Updated phone list          fields    yes    match  verified  -       0
+  mail        Client visit on Tuesday     fields    yes    match  verified  -       0
+  mail        Laptop replacement request  fields    yes    match  verified  -       0
+  mail        Kitchen rota for next week  fields    yes    match  verified  -       0
+  sharepoint  rp-canary-01.pdf            manifest  yes    match  verified  -       350
+  sharepoint  rp-canary-02.docx           manifest  yes    match  verified  -       362
+  sharepoint  rp-canary-03.xlsx           manifest  yes    match  verified  -       388
+  sharepoint  rp-canary-04.txt            manifest  yes    match  verified  -       318
+  sharepoint  rp-canary-05.png            manifest  yes    match  verified  -       350
+  sharepoint  project-brief.pdf           metadata  yes    match  verified  -       316
+  sharepoint  office-floor-plan.png       metadata  yes    match  verified  -       383
+  sharepoint  team-meeting-notes.txt      metadata  yes    match  verified  -       332
+  sharepoint  supplier-contacts.txt       metadata  yes    match  verified  -       303
+  sharepoint  budget-summary.pdf          metadata  yes    match  verified  -       503
+  onedrive    rp-canary-11.pdf            manifest  yes    match  verified  -       368
+  onedrive    rp-canary-12.docx           manifest  yes    match  verified  -       354
+  onedrive    rp-canary-13.xlsx           manifest  yes    match  verified  -       295
+  onedrive    rp-canary-14.txt            manifest  yes    match  verified  -       343
+  onedrive    rp-canary-15.png            manifest  yes    match  verified  -       382
+  onedrive    travel-notes.txt            metadata  yes    match  verified  -       418
+  onedrive    whiteboard-sketch.png       metadata  yes    match  verified  -       295
+  onedrive    course-certificate.pdf      metadata  yes    match  verified  -       422
+  onedrive    reading-list.txt            metadata  yes    match  verified  -       317
+  onedrive    expense-report-march.pdf    metadata  yes    match  verified  -       339
+
+check: 30 match, 0 mismatch, 0 missing, 0 error
+
+status pass: 30 of 30 item(s) verified: manifest 15, fields 5, metadata 10
+cleanup after ok: deleted 10 mail, 10 sharepoint, 10 onedrive
+
+STEP                  TIME         NOTE
+restore_point_lookup  0:00:00.117
+cleanup_before        0:00:01.528
+sample_select         0:00:09.748
+target_snapshot       0:00:01.016
+restore               0:02:59.214
+restore_submit        0:00:00.791
+restore_wait          0:02:51.826
+verify                0:00:08.328
+recovery              0:03:07.542
+cleanup_after         0:00:07.421
+total                 0:03:27.505
+signed 3343640643f4f9d44d57cc08b69a5d7662332dec766c0047145e7c2936752a7c key 9dfab6eadaa1d04a22dcc966aac7a53bcff8bbe0077232485f6143cd9c4d0ca5
+timestamped 2026-10-07T12:14:38Z
+evidence C:\ProgramData\RestoreProof\runs\w46-done-when-2: result.json, signature.json, timestamp.tst, items.csv, veeam-session.log
+queued C:\ProgramData\RestoreProof\outbox\w46-done-when-2
+--- stderr
+
+
+--- runs\w46-done-when-2 there afterwards: False
+--- outbox\w46-done-when-2 (name, size, SHA-256)
+items.csv                5739 6c18372c18672e574d56145ff5e3528e21ee3513bed3e3de6bccca870cc6c381
+manifest.json             320 c3c01e7e765e4bf8a34e7d8556842b955ad73e056b0570b322d59256185cded7
+result.json             21971 3343640643f4f9d44d57cc08b69a5d7662332dec766c0047145e7c2936752a7c
+signature.json            322 104567c1b15340c608d0662f63d780cd7628ccd579fddb10c9b427eaa7f7b885
+timestamp.tst            5997 fbf695162a6278942b062bc81a7cad15499d2f5ee97ca6e4ca856d2ecf5d2233
+veeam-session.log        7360 96354abcb81198ff6a253b60cc842766acb37f99280abdc9b785cd82b1991816
+--- its manifest.json
+{"attempts":0,"files":["items.csv","result.json","signature.json","timestamp.tst","veeam-session.log"],"format":"restoreproof.outbox-manifest.v1","last_attempt_at":null,"last_error":null,"next_attempt_at":null,"queued_at":"2026-10-07T12:15:59Z","run_id":"w46-done-when-2","timestamp":{"code":null,"state":"timestamped"}}
+command: rpworker outbox list
+2026-10-07T12:15:59Z to 2026-10-07T12:16:01Z
+exit code: 0
+--- stdout
+RUN              QUEUED                ATTEMPTS  NEXT  LAST_ERROR  TIMESTAMP
+w46-done-when-1  2026-10-07T11:56:44Z  0         -     -           timestamped
+w46-done-when-2  2026-10-07T12:15:59Z  0         -     -           timestamped
+2 queued, 0 sent
+--- stderr

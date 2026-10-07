@@ -1,0 +1,32 @@
+W4.6 (#49), the outbox's Done-when in the lab, 2026-10-07. rpworker from worker\build\dev, an elevated PowerShell 7, the vault the only source of secrets (RP_* variables in the shell: []), the config a copy of the lab's with cloud_url https://localhost:8443 and cloud_ca_file the stub Cloud's self-signed certificate (docs/api/veeam-lab/w4.6-harness/).
+Step 1, not planned: the first run, started while the coverage build was loading the machine. Veeam's explore POST timed out, the run ended `error backup_transient`, exit 3, nothing restored. It has a valid result, so it was signed, timestamped and queued like any other run; it stays in the queue and is uploaded in step 4.
+command: rpworker test --mail 10 --sp 10 --od 10 --run-id w46-done-when-1 --point c2f0f2e7-177f-48ac-992b-93a50cf702e332f28a6a-67e7-46bf-844b-6b9f9ea7dc73 --config <the config copy> --manifest C:\restoreproof\lab\seed-manifest.json --evidence C:\ProgramData\RestoreProof\runs --outbox C:\ProgramData\RestoreProof
+2026-10-07T11:55:23Z to 2026-10-07T11:56:45Z
+exit code: 3
+--- stdout
+restore point 2026-10-03T16:16:54.0154727Z  c2f0f2e7-177f-48ac-992b-93a50cf702e332f28a6a-67e7-46bf-844b-6b9f9ea7dc73  (veeam_org_name RestoreProofLab.onmicrosoft.com)
+run w46-done-when-1  seed 1adbb15a
+cleanup before ok: deleted 0 mail, 0 sharepoint, 0 onedrive
+
+status error backup_transient: the run stopped before the restore: the backup product couldn't be reached or asked to try later (backup_transient); nothing was restored
+cleanup after skipped: nothing was restored
+
+STEP                  TIME         NOTE
+restore_point_lookup  0:00:13.820
+cleanup_before        0:00:04.421
+sample_select         0:00:59.552  stopped
+target_snapshot       -            not run
+restore               -            not run
+restore_submit        -            not run
+restore_wait          -            not run
+verify                -            not run
+recovery              -            not run
+cleanup_after         -            not run
+total                 0:01:17.818
+signed 2b957c6554a247f0e6daff80a12ad7bea3056b595f36b59a2fad291c757ac584 key 9dfab6eadaa1d04a22dcc966aac7a53bcff8bbe0077232485f6143cd9c4d0ca5
+timestamped 2026-10-07T11:55:23Z
+evidence C:\ProgramData\RestoreProof\runs\w46-done-when-1: result.json, signature.json, timestamp.tst, items.csv, veeam-session.log
+queued C:\ProgramData\RestoreProof\outbox\w46-done-when-1
+--- stderr
+[2026-10-07 13:56:38.648] [rpworker] [warning] veeam_m365: the sharepoint explore POST failed, but Veeam lists explore session 2b997315-fa0b-4a2d-a7ee-55cfae47b08e made by it; it is closed with the others
+restore error: Veeam POST https://localhost:4443/v8/Organizations/ff96d072-29e2-4cb4-a155-2590f5473176/explore: timed out: Operation timed out after 30053 milliseconds with 0 bytes received

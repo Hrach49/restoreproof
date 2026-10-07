@@ -1308,3 +1308,137 @@ with the same word: the script's readers refuse a few bytes of a certificate as 
 (`timestamp_file`) that OpenSSL reads and then fails to verify (`timestamp_invalid`). No
 vector holds a signer without the timestamping key usage: OpenSSL's own responder refuses to
 make one; the script's rule for it has tests of its own.
+
+## The outbox (W4.6)
+
+A complete, signed run folder is queued in a local outbox and uploaded later, oldest first,
+with retries. Nothing signed is ever lost or changed on the way. The decisions are
+`docs/decisions.md` 2026-10-07, W4.6, and its build notes; the commands, their lines and exit
+codes are in `docs/worker-config.md` ("`--outbox <root>`", "`rpworker outbox`"). The code is
+`rp::Outbox` (`rp/outbox.hpp`, strict) and `rp::CloudUploader` (`rp/uploader.hpp`). The upload's
+endpoint is a stub until W5.1: the Worker posts to `<cloud_url>/v1/results` with no credential.
+
+### The layout
+
+Two sibling folders under one root, by default `%ProgramData%\RestoreProof`:
+
+| Folder | What is in it |
+|---|---|
+| `outbox\<run_id>\` | a queued run: the run folder as the run wrote it, plus `manifest.json` |
+| `sent\<run_id>\` | an uploaded run: the same folder, its manifest with `sent_at` |
+
+`rpworker test --evidence <dir> --outbox <root>` writes `<dir>\<run_id>` exactly as without
+`--outbox` and then, once `result.json` is written and the `signed`, `timestamped` and
+`evidence` lines are out, renames the folder to `<root>\outbox\<run_id>` with one
+`MoveFileExW` and writes `manifest.json` there. A rename, never a copy: the folder is in the
+runs root or in the outbox, whole, and never half in both, so `<dir>` and `<root>` must be on
+one volume. The folder's name stays the run ID, and a flush holds `result.json`'s `run_id` to
+it. A folder that can't be queued (already queued, already sent, another volume, the rename
+refused) stays in `<dir>` as it is, with one `outbox error:` line. What can be known before the
+run is checked before it, once the config is read and before the secrets, the mutex and any
+Veeam call (the W4.6 code review, finding 1): with a `--run-id`, that no run of that ID is
+queued or sent; that `<root>\outbox` can be made (it is made then, and left); that `<dir>` and
+`<root>\outbox` are on one volume. A run refused there does nothing: `outbox error: ...;
+nothing was done`, exit 1, no run line.
+
+A run folder without `result.json` is a run that didn't finish (`result.json` is written
+last, after the TSA was asked). The outbox never queues one and never deletes one, in the
+runs root or under `outbox\`; what the service does with it is W4.8's.
+
+### `manifest.json`
+
+The Worker's own record of a queued run: never uploaded, never in `attachments`, not covered
+by the signature, no shared schema. `canonical-json-v1`, exactly these keys:
+
+| Key | Value |
+|---|---|
+| `format` | `restoreproof.outbox-manifest.v1` |
+| `run_id` | the run ID, the folder's name |
+| `queued_at` | when it was queued |
+| `attempts` | uploads tried so far, the one that succeeded included |
+| `last_attempt_at` | when the last one was tried, or `null` |
+| `last_error` | why it failed, or `null`: `upload_http_<status>`, `upload_unreachable`, `upload_timeout`, `upload_internal`, or `folder_changed` |
+| `next_attempt_at` | when it is tried again, or `null` (at the next flush) |
+| `timestamp` | `{"state": "timestamped" \| "not_timestamped", "code": <the W4.4 code> \| null}`: whether the run got a token, and why not. This is where `tsa_error` lives |
+| `files` | the folder's names when it was queued, sorted, without `manifest.json` |
+| `sent_at` | only once the Cloud has answered 202 |
+
+Times are UTC to the second, `YYYY-MM-DDTHH:MM:SSZ`. The file is written whole (a temp file
+beside it, flushed, moved over it): it is the one file the outbox ever rewrites. A reader is
+strict: text that isn't its own canonical form with exactly these keys and kinds is no
+manifest. A queued folder without a readable manifest (a stop between the rename and the
+manifest, or a damaged file) gets a new one at the next flush, with that flush's time as
+`queued_at`, and is uploaded like any other; only the attempt count and the TSA's code are
+lost.
+
+### What is never changed
+
+- **Nothing in a queued folder but `manifest.json` is written after it is queued.**
+  `result.json`, `signature.json`, `timestamp.tst` and the attachments stay the bytes the run
+  wrote, through every failed attempt and into `sent\`.
+- **A flush never asks the TSA again.** A run that got no token is uploaded without a
+  `timestamp` part and stays "not timestamped".
+- **The queue is never pruned.** Only runs the Cloud has answered 202 for are ever deleted.
+- **A run is never re-signed or edited**, whatever its status: a `fail` or `error` run with a
+  valid result is queued and sent as a `pass` is.
+
+### A flush
+
+`rpworker outbox flush` is one pass and never waits (the loop is W4.8's). After the caps
+below, it takes every queued run whose `next_attempt_at` is `null` or not after now, oldest
+`queued_at` first. For each run, in this order:
+
+1. **Every file that would be sent is read whole and checked against what the run signed.**
+   `result.json` parses and names this run; `signature.json` names the SHA-256 of
+   `result.json`'s bytes; `timestamp.tst` is there exactly when the manifest says
+   `timestamped` and is one token over that same hash; each attachment the result lists is
+   there with its size and SHA-256. A file that fails is `outbox error: <folder>: <file>
+   changed since it was signed`: nothing is sent, no attempt is counted, `last_error` becomes
+   `folder_changed` (written once: a manifest that says so already isn't rewritten) and the
+   run stays queued for the operator; every file is read and checked again at every flush it
+   is due, so a folder the operator puts right is sent at the next one with no manifest edit.
+   A file that is there and couldn't be opened at that moment (another process holds it) is
+   not a change: `outbox error: <folder>: <file> couldn't be read`, `kept <run_id>: not_read`,
+   nothing written, the next flush tries again. This catches every change short
+   of forging both the result and its signature; the signature itself is verified under the
+   public key by the Cloud and by `rpworker signer verify`, not here (the outbox reads no key).
+2. **One request:** `POST <cloud_url>/v1/results`, multipart/form-data, the parts `result`
+   (`result.json`), `signature` (`signature.json`), `timestamp` (`timestamp.tst`, only when
+   there), then one part per listed attachment under its own name (`items.csv`,
+   `veeam-session.log`, `screenshot.png`). Sent once, 120 s at most. `manifest.json` is never a
+   part.
+3. **202:** the manifest gets `sent_at`, then the folder is renamed to `sent\<run_id>`.
+4. **Anything else** (another status, no connection, a connection lost mid-request, a
+   timeout): `attempts` + 1, `last_error`, and `next_attempt_at` by the schedule. The folder
+   is otherwise untouched.
+
+A Worker stopped in the middle of a request has written nothing; the run is tried again at
+the next flush.
+
+### The retry schedule
+
+`next_attempt_at` = the failed attempt's time + min(60 s × 2^(attempts − 1), 3600 s):
+
+| After failed attempt | 1 | 2 | 3 | 4 | 5 | 6 | 7 and later |
+|---|---|---|---|---|---|---|---|
+| Wait | 1 min | 2 min | 4 min | 8 min | 16 min | 32 min | 1 h |
+
+There is no last attempt: a queued run is tried hourly until it is sent.
+
+### The caps
+
+At every flush, before any upload:
+
+1. `sent\` runs whose `sent_at` is more than 30 days ago are deleted.
+2. While `outbox\` and `sent\` together hold more than 500 MB (500 × 1024 × 1024 bytes), the
+   oldest `sent\` run goes too.
+
+A `sent\` folder without a readable manifest has no `sent_at` and is never deleted. When the
+queue alone is over 500 MB nothing is deleted: `outbox warning: the outbox holds <n> MB, over
+the 500 MB cap` on stderr at every flush, and `rpworker outbox list` shows what is waiting.
+
+### `signer verify` on a queued or sent folder
+
+Both verifiers still say `verified` for a queued or a sent folder, with one more line on
+stderr, `note: not listed in the result: manifest.json`: the manifest is a file the result
+doesn't list, as W4.3 foresaw, and it is not evidence.

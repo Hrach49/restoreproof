@@ -1,0 +1,32 @@
+W4.6 (#49), the outbox's Done-when in the lab, 2026-10-07. rpworker from worker\build\dev, an elevated PowerShell 7, the vault the only source of secrets (RP_* variables in the shell: []), the config a copy of the lab's with cloud_url https://localhost:8443 and cloud_ca_file the stub Cloud's self-signed certificate (docs/api/veeam-lab/w4.6-harness/).
+Step 6 (e): both sent folders still verify, with both verifiers for the pass run (the one note is the outbox's manifest.json, which the result doesn't list); the restore targets are empty.
+command: rpworker signer verify C:\ProgramData\RestoreProof\sent\w46-done-when-2 --public-key <the Worker's public key, from `rpworker signer public-key`> --tsa-ca C:\restoreproof\shared\tsa\tsa-ca.pem
+2026-10-07T12:19:27Z to 2026-10-07T12:19:28Z
+exit code: 0
+--- stdout
+verified 3343640643f4f9d44d57cc08b69a5d7662332dec766c0047145e7c2936752a7c key 9dfab6eadaa1d04a22dcc966aac7a53bcff8bbe0077232485f6143cd9c4d0ca5 timestamp 2026-10-07T12:14:38Z
+--- stderr
+note: not listed in the result: manifest.json
+
+command: rpworker signer verify C:\ProgramData\RestoreProof\sent\w46-done-when-1 --public-key <the Worker's public key, from `rpworker signer public-key`> --tsa-ca C:\restoreproof\shared\tsa\tsa-ca.pem
+2026-10-07T12:19:28Z to 2026-10-07T12:19:29Z
+exit code: 0
+--- stdout
+verified 2b957c6554a247f0e6daff80a12ad7bea3056b595f36b59a2fad291c757ac584 key 9dfab6eadaa1d04a22dcc966aac7a53bcff8bbe0077232485f6143cd9c4d0ca5 timestamp 2026-10-07T11:55:23Z
+--- stderr
+note: not listed in the result: manifest.json
+
+verify_bundle.py on sent\w46-done-when-2 (stdout and stderr): note: not listed in the result: manifest.json
+verified 3343640643f4f9d44d57cc08b69a5d7662332dec766c0047145e7c2936752a7c key 9dfab6eadaa1d04a22dcc966aac7a53bcff8bbe0077232485f6143cd9c4d0ca5 timestamp 2026-10-07T12:14:38Z
+command: rpworker graph list --config <the config copy>
+2026-10-07T12:19:36Z to 2026-10-07T12:19:38Z
+exit code: 0
+--- stdout
+Mail (restoretest@RestoreProofLab.onmicrosoft.com, Inbox): 0 item(s)
+
+SharePoint (RestoreTarget library): 0 item(s)
+
+OneDrive (RestoreTarget folder): 0 item(s)
+
+0 item(s) in the three restore targets
+--- stderr

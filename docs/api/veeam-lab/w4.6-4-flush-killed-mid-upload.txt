@@ -1,0 +1,37 @@
+W4.6 (#49), the outbox's Done-when in the lab, 2026-10-07. rpworker from worker\build\dev, an elevated PowerShell 7, the vault the only source of secrets (RP_* variables in the shell: []), the config a copy of the lab's with cloud_url https://localhost:8443 and cloud_ca_file the stub Cloud's self-signed certificate (docs/api/veeam-lab/w4.6-harness/).
+Step 4 (c): the stub with --slow. The flush sent the older run first (the stub answered 202 after its 20 s: sent), then began the pass run; the stub was killed while it slept in the middle of that body. The pass run is kept, attempt 2; its folder is byte for byte as it was queued but for manifest.json.
+command: rpworker outbox flush --config <the config copy>   (started 2026-10-07T12:17:13Z against the stub with --slow; the stub answered the first run after its 20 s and was killed at 2026-10-07T12:17:35Z, 2 s after it had read the first 1024 bytes of the second run's body and begun to sleep)
+exit code: not captured (the shell that started the flush lost its handle to a mistake in the harness call; the lines below are the flush's own)
+--- stdout
+sent w46-done-when-1
+kept w46-done-when-2: upload_unreachable; attempt 2, next at 2026-10-07T12:19:13Z
+1 queued, 1 sent
+
+--- stderr
+
+--- the stub's lines
+stub Cloud on https://localhost:8443 (slow)
+POST /v1/results: read 1024 of 9646 bytes, sleeping 20 s
+POST /v1/results: 9646 bytes, Authorization absent -> 202
+  part result  file result.json  2291 bytes  sha256 2b957c6554a247f0e6daff80a12ad7bea3056b595f36b59a2fad291c757ac584
+  part signature  file signature.json  322 bytes  sha256 8ee1df065877e68e91bf74c7881627d5889a855226187b35c0e5e7c09d9b6c3d
+  part timestamp  file timestamp.tst  5998 bytes  sha256 b47e223f1af3cbb9de8641844dd572a5e5a8b8ccc7ce16b36d04200cddb44938
+  part items.csv  file items.csv  145 bytes  sha256 f6cdac16ba9a2294082ac4fe0031146c38b5623b7baca927a497be8644850b4b
+  part veeam-session.log  file veeam-session.log  0 bytes  sha256 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+POST /v1/results: read 1024 of 42279 bytes, sleeping 20 s
+--- outbox\w46-done-when-2 when it was queued (name, size, SHA-256)
+items.csv                5739 6c18372c18672e574d56145ff5e3528e21ee3513bed3e3de6bccca870cc6c381
+manifest.json             320 c3c01e7e765e4bf8a34e7d8556842b955ad73e056b0570b322d59256185cded7
+result.json             21971 3343640643f4f9d44d57cc08b69a5d7662332dec766c0047145e7c2936752a7c
+signature.json            322 104567c1b15340c608d0662f63d780cd7628ccd579fddb10c9b427eaa7f7b885
+timestamp.tst            5997 fbf695162a6278942b062bc81a7cad15499d2f5ee97ca6e4ca856d2ecf5d2233
+veeam-session.log        7360 96354abcb81198ff6a253b60cc842766acb37f99280abdc9b785cd82b1991816
+--- outbox\w46-done-when-2 after this flush
+items.csv                5739 6c18372c18672e574d56145ff5e3528e21ee3513bed3e3de6bccca870cc6c381
+manifest.json             372 107535084cb00aba9c7d54f2dab9101ba2a2d49f1566cdae7c142903a80963e4
+result.json             21971 3343640643f4f9d44d57cc08b69a5d7662332dec766c0047145e7c2936752a7c
+signature.json            322 104567c1b15340c608d0662f63d780cd7628ccd579fddb10c9b427eaa7f7b885
+timestamp.tst            5997 fbf695162a6278942b062bc81a7cad15499d2f5ee97ca6e4ca856d2ecf5d2233
+veeam-session.log        7360 96354abcb81198ff6a253b60cc842766acb37f99280abdc9b785cd82b1991816
+files that differ: manifest.json
+manifest.json: {"attempts":2,"files":["items.csv","result.json","signature.json","timestamp.tst","veeam-session.log"],"format":"restoreproof.outbox-manifest.v1","last_attempt_at":"2026-10-07T12:17:13Z","last_error":"upload_unreachable","next_attempt_at":"2026-10-07T12:19:13Z","queued_at":"2026-10-07T12:15:59Z","run_id":"w46-done-when-2","timestamp":{"code":null,"state":"timestamped"}}

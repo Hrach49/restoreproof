@@ -33,6 +33,7 @@ namespace rp {
 //   veeam_cert_sha256        no        (none)   64 hex digits; needs veeam_ca_file (4)
 //   tsa_url                  no        (none)   http:// or https:// URL (1); needs tsa_ca_file (7)
 //   tsa_ca_file              no        (none)   absolute path of a readable file (7)
+//   cloud_ca_file            no        (none)   absolute path of a readable PEM file holding a certificate (8)
 //   screenshots_enabled      no        false    true or false (6)
 //
 // (1) Printable ASCII only, with no user name, password, query or fragment:
@@ -77,6 +78,16 @@ namespace rp {
 //     checked before it is written. tsa_ca_file is a PEM file of the
 //     certificate(s) a token must chain to, an absolute path as (3); a tsa_url
 //     that is set needs it, so another TSA never borrows the default's root.
+// (8) The Cloud's CA (W4.6): a PEM file of the certificate(s) cloud_url's
+//     server certificate must chain to, trusted for cloud_url instead of the
+//     Windows certificate store; an absolute path as (3). cloud_url stays
+//     https and its host name is still checked: this chooses what to trust,
+//     and nothing turns verification off. For a Cloud behind a private CA,
+//     and the lab's stub Cloud, whose certificate is self-signed. parse_config
+//     checks the form; load_config also checks the file can be opened for
+//     reading and holds at least one PEM certificate (the W4.6 review, finding
+//     2): one nothing could chain to would otherwise show only as
+//     upload_unreachable at every flush.
 // No string value may contain a control character: ASCII (below 0x20, 0x7F),
 // C1 (U+0080-U+009F), U+2028, U+2029 or a bidi control (U+200E, U+200F,
 // U+202A-U+202E, U+2066-U+2069, U+061C).
@@ -110,6 +121,9 @@ struct Config {
     std::optional<std::string> tsa_url;
     // UTF-8; nullopt when absent.
     std::optional<std::string> tsa_ca_file;
+    // W4.6. UTF-8; nullopt when absent (the Cloud is trusted through the
+    // Windows certificate store).
+    std::optional<std::string> cloud_ca_file;
 };
 
 // A config file that can't be read, isn't valid JSON or breaks a rule above,

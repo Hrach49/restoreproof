@@ -24,7 +24,7 @@ How we test, what CI enforces, and the once-per-sprint mutation run. Set up in L
 
 | Guard | Where | Rule |
 |---|---|---|
-| Worker coverage | `.github/workflows/worker.yml`, OpenCppCoverage + `worker/tools/coverage_gate.py` | 80% line on `rpcore` (`worker/src/`, `worker/include/`) plus `rpworker`'s `main()` (`worker/app/`); 100% **line** on vault, signer, target_guard, run_status, cleaner and timestamper (the vault once it exists), meaning any file with a path part named or prefixed `vault`, `signer`, `target_guard`, `run_status`, `cleaner` or `timestamper` (W4.4's `src/timestamper.cpp`, which decides which RFC 3161 token is written, while `src/rfc3161.cpp`, the calls into OpenSSL under it, is outside like `src/ed25519.cpp`; `src/vault_dpapi.cpp`; W4.3's `src/signer.cpp`, the Signer, and `src/signer_command.cpp`, the two `rpworker signer` commands, with their headers, while `src/ed25519.cpp`, the calls into OpenSSL under the Signer, is deliberately outside: the library's failure lines for a valid key can't be reached by a test, and folding them onto their calls' own lines would hide them, `docs/decisions.md` 2026-10-05 W4.3 point 4; W2.7's `src/target_guard.cpp`, `src/target_guard_graph.cpp`, `src/target_guard_veeam.cpp` and their headers; W3.3's `src/run_status.cpp`, the status decision table; W3.4's `src/cleaner.cpp` and `include/rp/cleaner.hpp`, the only Worker code that deletes in the tenant); every `.cpp` on disk under `src/`, `include/` and `app/` must appear in the report, so a file no test links into `rptests` (or, for `app/`, that ctest's runs of `rpworker.exe` don't reach) fails (headers of declarations may be absent) |
+| Worker coverage | `.github/workflows/worker.yml`, OpenCppCoverage + `worker/tools/coverage_gate.py` | 80% line on `rpcore` (`worker/src/`, `worker/include/`) plus `rpworker`'s `main()` (`worker/app/`); 100% **line** on vault, signer, target_guard, run_status, cleaner, timestamper and outbox (the vault once it exists), meaning any file with a path part named or prefixed `vault`, `signer`, `target_guard`, `run_status`, `cleaner`, `timestamper` or `outbox` (W4.6's `src/outbox.cpp`, which decides what is queued, sent, kept and pruned, and `src/outbox_command.cpp`, while `src/uploader.cpp`, the one HTTP call, and `src/folder_ops.cpp`, the file-system calls under it, are outside; W4.4's `src/timestamper.cpp`, which decides which RFC 3161 token is written, while `src/rfc3161.cpp`, the calls into OpenSSL under it, is outside like `src/ed25519.cpp`; `src/vault_dpapi.cpp`; W4.3's `src/signer.cpp`, the Signer, and `src/signer_command.cpp`, the two `rpworker signer` commands, with their headers, while `src/ed25519.cpp`, the calls into OpenSSL under the Signer, is deliberately outside: the library's failure lines for a valid key can't be reached by a test, and folding them onto their calls' own lines would hide them, `docs/decisions.md` 2026-10-05 W4.3 point 4; W2.7's `src/target_guard.cpp`, `src/target_guard_graph.cpp`, `src/target_guard_veeam.cpp` and their headers; W3.3's `src/run_status.cpp`, the status decision table; W3.4's `src/cleaner.cpp` and `include/rp/cleaner.hpp`, the only Worker code that deletes in the tenant); every `.cpp` on disk under `src/`, `include/` and `app/` must appear in the report, so a file no test links into `rptests` (or, for `app/`, that ctest's runs of `rpworker.exe` don't reach) fails (headers of declarations may be absent) |
 | Cloud coverage | `.github/workflows/cloud.yml`, pytest-cov | 80% on `app/`, measured as coverage's combined line + branch figure; 100% line + branch on `app/auth`, `app/results.py` and `app/repo` (skipped while absent), checked by `cloud/tools/check_coverage.py` |
 | Lab tests and canary hashes | `.github/workflows/lab.yml` | `lab/`'s pytest suite passes (offline, fake Graph tenant), and `python -m seeder hash` reproduces every hash in `lab/seed-manifest.json` from the committed `lab/canary/` files and the catalog (L1.2's Done when). No coverage floor |
 | No test, no merge | `.github/workflows/pr-guards.yml`, `.github/scripts/tests_touched.py` | Each side needs its own tests: a PR that changes `worker/src/`, `worker/include/` or `worker/app/` must add or change a C++ file (`.cpp`, `.hpp`, `.h`) under `worker/tests/`, and one that changes `cloud/app/` must add or change a `.py` under `cloud/tests/`. Deleting a test, editing fixtures or editing `tests/e2e/scenarios.md` doesn't count |
@@ -687,6 +687,58 @@ tools without a live run, write the four files of `shared/testdata/signing-v1/bu
 (`files`, each string's UTF-8 with nothing added) into an empty folder and give the
 `public_key_pem` of `rfc8032-test-1` from `keys.json`: both print `verified 572bf1f9...81bf key
 06e3fd8f...2fa9 timestamp none`, and `note: not timestamped` on stderr.
+
+### The outbox by hand (W4.6)
+
+`rpworker test --evidence <dir> --outbox <root>` queues the run's folder and `rpworker outbox
+flush` uploads it (`docs/worker-config.md`, "`--outbox <root>`" and "`rpworker outbox`";
+`docs/verification.md`, "The outbox"). The unit tests cover both on temp folders with a fake
+uploader and a fake Cloud (`tests/outbox_test.cpp`, `tests/uploader_test.cpp`,
+`tests/outbox_command_test.cpp`, `tests/test_command_test.cpp` `[outbox]`); none sends
+anything. `rpworker outbox list` and `outbox flush` on an empty root are safe to run anywhere.
+
+**The Cloud is a stub until W5.1.** There is no `/v1/results` yet, so the W4.6 Done-when run
+uploads to a stub kept as text, `docs/api/veeam-lab/w4.6-harness/stub-cloud.py`: Python's
+`http.server` over TLS on `https://localhost:8443`, which answers 202 once it has read the
+whole body and prints each part's name, size and SHA-256, never a body; `--slow` makes it
+sleep 20 s after the body's first 1024 bytes, so it can be killed in the middle of an upload.
+`w46-run.ps1` beside it makes the stub's certificate (self-signed, `CN=localhost`, with Git's
+`openssl`), a copy of the lab config with `cloud_url` and `cloud_ca_file` pointing at the stub,
+starts and kills the stub, and saves evidence under the W4.5 harness's rule (refused if a
+secret, a token or a key survives). Everything it makes is under `%TEMP%\rp-w46`.
+
+The Done-when ("killing the network mid-upload leaves the run in the outbox and it uploads
+later"), from an elevated PowerShell 7, the vault the only source of secrets:
+
+```powershell
+. docs\api\veeam-lab\w4.6-harness\w46-run.ps1
+Initialize-W46Harness
+# (a) a run, queued
+worker\build\dev\rpworker.exe test --mail 10 --sp 10 --od 10 --run-id <run id> --point <restore point ID> `
+    --config $W46Config --manifest lab\seed-manifest.json `
+    --evidence $env:ProgramData\RestoreProof\runs --outbox $env:ProgramData\RestoreProof
+worker\build\dev\rpworker.exe outbox list
+# (b) the Cloud down: kept, attempt 1, exit 3
+worker\build\dev\rpworker.exe outbox flush --config $W46Config
+# (c) the Cloud lost in the middle of the upload: kept, attempt 2, the folder unchanged
+Start-W46Stub -Slow     # then, once the wait of (b) is over, the flush in a second shell,
+Stop-W46Stub            # and this while the stub sleeps
+# (d) the Cloud up: sent, exit 0
+Start-W46Stub
+worker\build\dev\rpworker.exe outbox flush --config $W46Config
+Get-W46StubLog          # every part, with the sizes result.json lists
+# (e) the sent folder still verifies
+worker\build\dev\rpworker.exe signer verify $env:ProgramData\RestoreProof\sent\<run id> `
+    --public-key <pem file> --tsa-ca shared\tsa\tsa-ca.pem
+Remove-W46Harness
+```
+
+Between (b) and (c) the run isn't due for a minute, and between (c) and (d) for two: a flush
+before then prints `waiting <run id>: next at <time>` and sends nothing. Compare the queued
+folder before and after (c) with `Get-W46Hashes <folder>`: only `manifest.json` differs.
+`rpworker graph list` must show 0 in all three targets afterwards, as after any run. The sent
+folder stays outside the repository; the 2026-10-07 run's evidence is
+`docs/api/veeam-lab/w4.6-*`.
 
 ### Recording fixtures (`--record <dir>`)
 

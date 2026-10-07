@@ -414,16 +414,15 @@ QueueOutcome Outbox::queue(const std::filesystem::path& run_folder, std::string_
 std::string Outbox::queue_error(const QueueOutcome& outcome,
                                 const std::filesystem::path& run_folder) const
 {
+    if (outcome.result == QueueResult::queued) {
+        return {};
+    }
     const std::string from = "outbox error: " + shown(run_folder) + ": ";
     const std::string moved = "couldn't be moved to " + shown(outcome.folder);
     switch (outcome.result) {
-    case QueueResult::queued:
-        break;
     case QueueResult::queued_without_manifest:
         return "outbox error: " + shown(outcome.folder / kOutboxManifestName) +
                ": could not be written; the next flush makes it";
-    case QueueResult::not_complete:
-        return from + "no result.json; not queued";
     case QueueResult::already_queued:
         return "outbox error: " + shown(outcome.folder) + ": already queued";
     case QueueResult::already_sent:
@@ -435,8 +434,11 @@ std::string Outbox::queue_error(const QueueOutcome& outcome,
         return from + moved + ": not on the same volume";
     case QueueResult::not_moved:
         return from + moved + std::format(" (error {})", outcome.error);
+    case QueueResult::queued:
+    case QueueResult::not_complete:
+        break;
     }
-    return {};
+    return from + "no result.json; not queued";
 }
 
 OutboxListing Outbox::list() const

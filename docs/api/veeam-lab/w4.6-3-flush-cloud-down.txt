@@ -1,0 +1,21 @@
+W4.6 (#49), the outbox's Done-when in the lab, 2026-10-07. rpworker from worker\build\dev, an elevated PowerShell 7, the vault the only source of secrets (RP_* variables in the shell: []), the config a copy of the lab's with cloud_url https://localhost:8443 and cloud_ca_file the stub Cloud's self-signed certificate (docs/api/veeam-lab/w4.6-harness/).
+Step 3 (b): the stub not running (nothing listening on 8443): both queued runs kept, attempt 1, exit 3.
+command: rpworker outbox flush --config <the config copy>
+2026-10-07T12:16:11Z to 2026-10-07T12:16:12Z
+exit code: 3
+--- stdout
+kept w46-done-when-1: upload_unreachable; attempt 1, next at 2026-10-07T12:17:11Z
+kept w46-done-when-2: upload_unreachable; attempt 1, next at 2026-10-07T12:17:11Z
+2 queued, 0 sent
+--- stderr
+
+manifest.json of w46-done-when-2 after: {"attempts":1,"files":["items.csv","result.json","signature.json","timestamp.tst","veeam-session.log"],"format":"restoreproof.outbox-manifest.v1","last_attempt_at":"2026-10-07T12:16:11Z","last_error":"upload_unreachable","next_attempt_at":"2026-10-07T12:17:11Z","queued_at":"2026-10-07T12:15:59Z","run_id":"w46-done-when-2","timestamp":{"code":null,"state":"timestamped"}}
+command: rpworker outbox list
+2026-10-07T12:16:12Z to 2026-10-07T12:16:13Z
+exit code: 0
+--- stdout
+RUN              QUEUED                ATTEMPTS  NEXT                  LAST_ERROR          TIMESTAMP
+w46-done-when-1  2026-10-07T11:56:44Z  1         2026-10-07T12:17:11Z  upload_unreachable  timestamped
+w46-done-when-2  2026-10-07T12:15:59Z  1         2026-10-07T12:17:11Z  upload_unreachable  timestamped
+2 queued, 0 sent
+--- stderr

@@ -80,8 +80,12 @@ struct RestoreCommandEnv {
     // The config file without --config (rp::default_config_path). Called only
     // then, and only after the arguments parsed.
     std::function<std::filesystem::path()> default_config_path;
-    // rp::load_secrets_from_env.
-    std::function<Secrets()> load_secrets;
+    // The vault without --vault (rp::default_vault_path, W4.5). Called only
+    // then, after the config is read.
+    std::function<std::filesystem::path()> default_vault_path;
+    // rp::read_vault, on the vault --vault names or the default one. Called
+    // once, after the config (and test's --json and --evidence checks).
+    std::function<Secrets(const std::filesystem::path& vault)> load_secrets;
     // Makes the connector; null = the default registry's connector::kVeeamM365
     // (connector::default_connector_registry().create). Called once, after the
     // config, the secrets and the manifest are read.
@@ -150,7 +154,7 @@ struct RestoreCommandEnv {
     ScreenshotCapturer capture_screenshot;
     // `rpworker test --evidence <dir>` only (W4.3, rp/signer.hpp): signs the
     // result's canonical text, the bytes result.json is about to be written
-    // with, with the run's key (the one RP_SIGNING_KEY_BASE64 carries, parsed
+    // with, with the run's key (the vault's signing_key_base64, parsed
     // before anything is done); null = rp::Signer::sign. nullopt, or anything
     // thrown, is a result that couldn't be signed: no result.json, the status
     // unchanged.
@@ -167,9 +171,10 @@ struct RestoreCommandEnv {
     std::function<std::optional<std::uint64_t>()> timestamp_nonce;
 };
 
-// The real environment: rp::default_config_path, rp::load_secrets_from_env, the
-// default registry's veeam_m365 connector with a logger that writes warnings
-// and worse to stderr, make_run_id, the steady clock and the real run mutex.
+// The real environment: rp::default_config_path, rp::default_vault_path,
+// rp::read_vault, the default registry's veeam_m365 connector with a logger
+// that writes warnings and worse to stderr, make_run_id, the steady clock and
+// the real run mutex.
 RestoreCommandEnv default_restore_command_env();
 
 // "rp-<YYYYMMDDTHHMMSSZ>-<8 lower-case hex digits>": the current UTC time and
@@ -184,7 +189,7 @@ std::string format_elapsed(std::chrono::nanoseconds elapsed);
 // in UTF-8:
 //   [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>]
 //   [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>]
-//   [--record <dir>]
+//   [--vault <file>] [--record <dir>]
 // in any order, each at most once, each with its value. <n> is 1 to 3 ASCII
 // digits, 0 to 100; an absent size is config's sample_mail, sample_sp or
 // sample_od. --point is `latest` in any ASCII case (the default: the newest
@@ -196,11 +201,12 @@ std::string format_elapsed(std::chrono::nanoseconds elapsed);
 // commas, nothing else (default 0,0,0). --manifest defaults to
 // seed-manifest.json in the config file's folder.
 //
-// In this order: the arguments; the config, the Veeam secrets
+// In this order: the arguments; the config, the vault (W4.5: --vault or the
+// default, read once into Secrets), the Veeam secrets
 // (rp::require_veeam_secrets) and the Graph certificate, opened and checked
 // as restore_sample will (graph::certificate_from_secrets at
-// connector_options.wall_now, or now: an unset RP_GRAPH_CERT_PASSWORD is no
-// password, as for `graph list`); the manifest, sampling::check_manifest
+// connector_options.wall_now, or now: a graph_cert_password that isn't in
+// the vault is no password, as for `graph list`); the manifest, sampling::check_manifest
 // (its tenant, no canary in a restore target) and sampling::cursor_problem;
 // the run mutex (env.take_run_lock, W3.4); the connector; its restore points
 // for veeam_org_name and the one chosen; the run ID; the first two lines,
@@ -358,8 +364,9 @@ std::string format_elapsed(std::chrono::nanoseconds elapsed);
 //    cursor must be below <n>, the manifest's <kind> canaries" (or "must be 0:
 //    the manifest has no <kind> canaries"), <kind> mail, sharepoint or onedrive;
 //  - 1: "config error: <message>" for a ConfigError (a config that doesn't
-//    load, a --config or --manifest path that isn't UTF-8, a secret that can't
-//    be read, "RP_VEEAM_USERNAME is not set", then RP_VEEAM_PASSWORD, and a
+//    load, a --config, --vault or --manifest path that isn't UTF-8, a vault
+//    that can't be used (rp::VaultError's messages), "veeam_username is not
+//    in the vault", then veeam_password, and a
 //    Graph certificate that certificate_from_secrets refuses (unset, not
 //    Base64, a password that doesn't open it, expired, ...), and a --record
 //    folder that isn't new or empty, all before any Veeam call), a

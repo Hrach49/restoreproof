@@ -20,6 +20,7 @@
 // ID, pdf and txt files before any other, never docx or xlsx (SharePoint
 // rewrites Office files, so their size differs from the manifest's).
 
+#include "live_secrets.hpp"
 #include "graph_live_lab.hpp"
 #include "test_support.hpp"
 
@@ -244,7 +245,7 @@ TEST_CASE("live restore: restore_sample restores 10 canaries into the lab's rest
     options.logger = logger;
     options.cert_exporter = rp::make_local_machine_cert_exporter();
     const std::unique_ptr<connector::IConnector> made = connector::default_connector_registry()
-        .create(connector::kVeeamM365, config, rp::load_secrets_from_env(), options);
+        .create(connector::kVeeamM365, config, rp::test::live_secrets(), options);
     connector::IConnector& source = *made;
 
     const std::vector<connector::RestorePoint> points = source.list_restore_points(kLabOrgName);
@@ -285,7 +286,7 @@ TEST_CASE("live restore: restore_sample restores 10 canaries into the lab's rest
     graph_options.logger = logger;
     rp::graph::GraphClient graph(
         *graph_http, config.graph_tenant_id, config.graph_client_id,
-        rp::graph::certificate_from_secrets(rp::load_secrets_from_env(),
+        rp::graph::certificate_from_secrets(rp::test::live_secrets(),
                                             std::chrono::system_clock::now(), logger),
         graph_options);
     rp::graph::CleanerOptions cleaner_options;

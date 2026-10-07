@@ -1,0 +1,8 @@
+W4.5 (#48) teardown, 2026-10-07T01:05:29Z
+service RpSpikeProbe deleted
+key file ACE removed: C:\ProgramData\Microsoft\Crypto\RSA\MachineKeys\76c3cba9ff326aabc15dd987a090ecaf_979c0e2f-70cd-4490-8214-782eeb81f138 NT AUTHORITY\SYSTEM:(F);                                                                                                                       BUILTIN\Administrators:(RX)
+vault ACL: C:\ProgramData\RestoreProof\vault.bin NT AUTHORITY\SYSTEM:(F);                                       BUILTIN\Administrators:(F);                                       OWNER RIGHTS:(F)
+spike folder removed: True
+service left: False
+vault.bin stays: True; names in it: veeam_username, veeam_password, graph_cert_pfx_base64, graph_cert_password, signing_key_base64
+run folder w45-done-when-1 stays outside the repository: True

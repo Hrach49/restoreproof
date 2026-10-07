@@ -440,7 +440,8 @@ def test_the_target_name_is_in_the_style_of_the_labs_other_entry():
 
     assert signing_key.CREDENTIAL_TARGET == "RestoreProof Lab - Worker signing key"
     assert signing_key.CREDENTIAL_TARGET != worker_app.CREDENTIAL_TARGET
-    assert signing_key.ENV_VAR == "RP_SIGNING_KEY_BASE64"
+    assert signing_key.VAULT_NAME == "signing_key_base64"
+    assert signing_key.FILL_SCRIPT == "lab/entra/fill-worker-vault.ps1"
 
 
 # ---- the real store, on a throwaway entry of its own (never the lab's) -----------------------

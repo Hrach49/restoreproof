@@ -70,16 +70,19 @@ using rp::test::graph_lab::kTenant;
 using rp::test::graph_lab::lab_values;
 
 inline const std::string kUsage =
-    "usage: rpworker --version | rpworker config check [--config <path>] | "
-    "rpworker veeam list [--config <path>] [--record <dir>] | "
-    "rpworker graph list [--hash] [--config <path>] [--record <dir>] | "
-    "rpworker restore [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] "
-    "[--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] "
+    "usage: rpworker --version | rpworker config check [--config <path>] [--vault <file>] | "
+    "rpworker vault set|remove <name> [--vault <file>] | rpworker vault list|test [--vault <file>] | "
+    "rpworker vault grant <account> [--vault <file>] | "
+    "rpworker veeam list [--config <path>] [--vault <file>] [--record <dir>] | "
+    "rpworker graph list [--hash] [--config <path>] [--vault <file>] [--record <dir>] | "
+    "rpworker restore [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] "
+    "[--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--vault <file>] "
     "[--record <dir>] | "
-    "rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] "
-    "[--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] "
+    "rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] "
+    "[--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--vault <file>] "
     "[--record <dir>] [--json <file> | --evidence <dir>] | "
-    "rpworker signer public-key | rpworker signer verify <folder> --public-key <pem file> [--tsa-ca <pem file>]\n";
+    "rpworker signer public-key [--vault <file>] | "
+    "rpworker signer verify <folder> --public-key <pem file> [--tsa-ca <pem file>]\n";
 
 inline const std::string kOrgName = "RestoreProofLab.onmicrosoft.com";
 // Veeam's restore point IDs are two GUIDs run together: the backup
@@ -759,8 +762,15 @@ struct Harness {
             ++default_path_calls;
             return config_path;
         };
-        env.load_secrets = [this] {
+        // W4.5: the vault's path reaches the loader; the secrets are the
+        // test's.
+        env.default_vault_path = [this] {
+            ++default_vault_calls;
+            return default_vault;
+        };
+        env.load_secrets = [this](const std::filesystem::path& vault) {
             ++load_secrets_calls;
+            vault_read = vault;
             return load_secrets();
         };
         env.make_connector = [this](const rp::Config& config, const rp::Secrets& secrets,
@@ -940,6 +950,11 @@ struct Harness {
     };
     // The secrets the connector's maker was handed.
     std::optional<rp::Secrets> connector_secrets;
+    // W4.5: the vault without --vault, the one the loader was given, and
+    // whether the default was asked.
+    std::filesystem::path default_vault = dir.path() / "default-vault.bin";
+    std::filesystem::path vault_read;
+    int default_vault_calls = 0;
     std::function<void()> connector_throw;
     bool give_connector = true;
     std::chrono::nanoseconds clock{0};

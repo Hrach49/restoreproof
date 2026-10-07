@@ -1,6 +1,7 @@
 #include <rp/config.hpp>
 #include <rp/config_check.hpp>
 #include <rp/secrets.hpp>
+#include <rp/vault.hpp>
 
 #include "test_certs.hpp"
 #include "test_support.hpp"
@@ -24,17 +25,20 @@ using Args = std::vector<std::string_view>;
 
 namespace {
 
-const std::string kUsage = "usage: rpworker --version | rpworker config check [--config <path>] | "
-                           "rpworker veeam list [--config <path>] [--record <dir>] | "
-                           "rpworker graph list [--hash] [--config <path>] [--record <dir>] | "
-                           "rpworker restore [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] "
-                           "[--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] "
-                           "[--config <path>] [--record <dir>] | "
-                           "rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] "
-                           "[--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] "
-                           "[--config <path>] [--record <dir>] [--json <file> | --evidence <dir>] | "
-                           "rpworker signer public-key | "
-                           "rpworker signer verify <folder> --public-key <pem file> [--tsa-ca <pem file>]\n";
+const std::string kUsage =
+    "usage: rpworker --version | rpworker config check [--config <path>] [--vault <file>] | "
+    "rpworker vault set|remove <name> [--vault <file>] | rpworker vault list|test [--vault <file>] | "
+    "rpworker vault grant <account> [--vault <file>] | "
+    "rpworker veeam list [--config <path>] [--vault <file>] [--record <dir>] | "
+    "rpworker graph list [--hash] [--config <path>] [--vault <file>] [--record <dir>] | "
+    "rpworker restore [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] "
+    "[--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--vault <file>] "
+    "[--record <dir>] | "
+    "rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] "
+    "[--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--vault <file>] "
+    "[--record <dir>] [--json <file> | --evidence <dir>] | "
+    "rpworker signer public-key [--vault <file>] | "
+    "rpworker signer verify <folder> --public-key <pem file> [--tsa-ca <pem file>]\n";
 
 // Every key set; sample_od left out to show its default.
 const std::string kConfigJson = R"({
@@ -61,7 +65,7 @@ std::string utf8(const std::filesystem::path& path)
     return {text.begin(), text.end()};
 }
 
-// The masks `config check` prints for each secret variable.
+// The masks `config check` prints for each of the five secrets.
 struct SecretMasks {
     std::string_view user;
     std::string_view password;
@@ -72,16 +76,15 @@ struct SecretMasks {
 
 constexpr SecretMasks kNoSecrets{"(not set)", "(not set)", "(not set)", "(not set)"};
 
-// The output of a successful check of kConfigJson at `path`, with the five
-// secret lines given and, when `ca_file` and `cert_sha256` are set,
-// veeam_ca_file and veeam_cert_sha256 added. `screenshots` is
-// screenshots_enabled's line: the default, as kConfigJson doesn't set it.
-std::string expected_output(const std::filesystem::path& path, const SecretMasks& secrets,
-                            std::string_view ca_file = "(not set)",
-                            std::string_view cert_sha256 = "(not set)",
-                            std::string_view screenshots = "false",
-                            std::string_view tsa_url = "(not set)",
-                            std::string_view tsa_ca_file = "(not set)")
+// The settings of a successful check of kConfigJson at `path`, with, when
+// `ca_file` and `cert_sha256` are set, veeam_ca_file and veeam_cert_sha256
+// added. `screenshots` is screenshots_enabled's line: the default, as
+// kConfigJson doesn't set it.
+std::string expected_settings(const std::filesystem::path& path, std::string_view ca_file = "(not set)",
+                              std::string_view cert_sha256 = "(not set)",
+                              std::string_view screenshots = "false",
+                              std::string_view tsa_url = "(not set)",
+                              std::string_view tsa_ca_file = "(not set)")
 {
     return "config file: " + utf8(path) + "\n" +
            "cloud_url                 https://cloud.example.invalid\n"
@@ -101,18 +104,21 @@ std::string expected_output(const std::filesystem::path& path, const SecretMasks
            "sample_od                 5\n"
            "log_level                 warn\n"
            "veeam_ca_file             " +
-           std::string{ca_file} + "\n" +
-           "veeam_cert_sha256         " + std::string{cert_sha256} + "\n" +
-           "tsa_url                   " + std::string{tsa_url} + "\n" +
+           std::string{ca_file} + "\n" + "veeam_cert_sha256         " + std::string{cert_sha256} +
+           "\n" + "tsa_url                   " + std::string{tsa_url} + "\n" +
            "tsa_ca_file               " + std::string{tsa_ca_file} + "\n" +
-           "screenshots_enabled       " + std::string{screenshots} + "\n" +
-           "secrets (environment variables; values are never shown):\n"
-           "RP_VEEAM_USERNAME         " +
-           std::string{secrets.user} + "\n" + "RP_VEEAM_PASSWORD         " +
-           std::string{secrets.password} + "\n" + "RP_GRAPH_CERT_PFX_BASE64  " +
-           std::string{secrets.pfx} + "\n" + "RP_GRAPH_CERT_PASSWORD    " +
-           std::string{secrets.pfx_password} + "\n" + "RP_SIGNING_KEY_BASE64     " +
-           std::string{secrets.signing_key} + "\n";
+           "screenshots_enabled       " + std::string{screenshots} + "\n";
+}
+
+// The secrets' part, for the vault at `vault` (W4.5).
+std::string expected_secrets(const std::filesystem::path& vault, const SecretMasks& secrets)
+{
+    return "secrets (vault " + utf8(vault) + "; values are never shown):\n" +
+           "veeam_username            " + std::string{secrets.user} + "\n" +
+           "veeam_password            " + std::string{secrets.password} + "\n" +
+           "graph_cert_pfx_base64     " + std::string{secrets.pfx} + "\n" +
+           "graph_cert_password       " + std::string{secrets.pfx_password} + "\n" +
+           "signing_key_base64        " + std::string{secrets.signing_key} + "\n";
 }
 
 struct Run {
@@ -123,29 +129,47 @@ struct Run {
 
 using DefaultPath = std::function<std::filesystem::path()>;
 
-Run run(const Args& args, const DefaultPath& default_path)
-{
-    std::ostringstream out;
-    std::ostringstream err;
-    const int exit_code = rp::run_config_command(args, out, err, default_path);
-    return {exit_code, out.str(), err.str()};
-}
+// A temp folder with a vault in it (the five fields given), the default
+// vault of every run, and counts of what was asked.
+struct Lab {
+    rp::test::TempDir dir;
+    std::filesystem::path vault = dir.path() / "vault.bin";
+    int default_config_calls = 0;
+    int default_vault_calls = 0;
+    int load_calls = 0;
+    DefaultPath default_config = [] { return std::filesystem::path("unused.json"); };
+    DefaultPath default_vault = [this] { return vault; };
+    std::function<rp::Secrets(const std::filesystem::path&)> load = rp::read_vault;
 
-Run run(const Args& args, const std::filesystem::path& default_path)
-{
-    return run(args, DefaultPath{[default_path] { return default_path; }});
-}
-
-// A default path that counts how often run_config_command asks for it.
-struct PathSpy {
-    int calls = 0;
-
-    DefaultPath provider()
+    Lab()
     {
-        return [this] {
-            ++calls;
-            return std::filesystem::path("unused.json");
+        rp::write_vault(vault, rp::Secrets{});
+    }
+
+    rp::ConfigCheckEnv env()
+    {
+        rp::ConfigCheckEnv env;
+        env.default_config_path = [this] {
+            ++default_config_calls;
+            return default_config();
         };
+        env.default_vault_path = [this] {
+            ++default_vault_calls;
+            return default_vault();
+        };
+        env.load_secrets = [this](const std::filesystem::path& file) {
+            ++load_calls;
+            return load(file);
+        };
+        return env;
+    }
+
+    Run run(const Args& args)
+    {
+        std::ostringstream out;
+        std::ostringstream err;
+        const int exit_code = rp::run_config_command(args, out, err, env());
+        return {exit_code, out.str(), err.str()};
     }
 };
 
@@ -165,40 +189,44 @@ TEST_CASE("rpworker config prints usage and exits 64 for arguments it doesn't un
         Args{"check", "--config", "x.json", "extra"},
         Args{"check", "--config", "x.json", "--config", "y.json"},
         Args{"check", "--CONFIG", "x.json"},
-        Args{"check", "check"});
+        Args{"check", "check"},
+        Args{"check", "--vault"},
+        Args{"check", "--vault", "v.bin", "--vault", "w.bin"});
     CAPTURE(args);
-    PathSpy spy;
+    Lab lab;
 
-    const Run result = run(args, spy.provider());
+    const Run result = lab.run(args);
     REQUIRE(result.exit_code == 64);
     REQUIRE(result.out.empty());
     REQUIRE(result.err == kUsage);
     // Usage errors never look up ProgramData.
-    REQUIRE(spy.calls == 0);
+    REQUIRE(lab.default_config_calls == 0);
+    REQUIRE(lab.default_vault_calls == 0);
 }
 
 TEST_CASE("rpworker config check exits 1 with the error when the config doesn't load",
           "[config_check]")
 {
-    const rp::test::TempDir dir;
-    const std::filesystem::path missing = dir.path() / "missing.json";
+    Lab lab;
+    const std::filesystem::path missing = lab.dir.path() / "missing.json";
     const std::string missing_arg = utf8(missing);
 
-    PathSpy spy;
-    const Run result = run(Args{"check", "--config", missing_arg}, spy.provider());
+    const Run result = lab.run(Args{"check", "--config", missing_arg});
     REQUIRE(result.exit_code == 1);
     REQUIRE(result.out.empty());
     REQUIRE(result.err == "config error: " + missing_arg + ": cannot read config file\n");
+    // The vault isn't read for a config that doesn't load.
+    REQUIRE(lab.load_calls == 0);
+    REQUIRE(lab.default_vault_calls == 0);
 }
 
 TEST_CASE("rpworker config check reports an invalid config without its values", "[config_check]")
 {
-    const rp::test::TempDir dir;
-    const auto path = dir.write("config.json", R"({"cloud_url": "http://SENTINEL-2a9f"})");
+    Lab lab;
+    const auto path = lab.dir.write("config.json", R"({"cloud_url": "http://SENTINEL-2a9f"})");
     const std::string path_arg = utf8(path);
 
-    PathSpy spy;
-    const Run result = run(Args{"check", "--config", path_arg}, spy.provider());
+    const Run result = lab.run(Args{"check", "--config", path_arg});
     REQUIRE(result.exit_code == 1);
     REQUIRE(result.out.empty());
     REQUIRE(result.err ==
@@ -207,76 +235,134 @@ TEST_CASE("rpworker config check reports an invalid config without its values", 
                 "query or fragment\n");
 }
 
-TEST_CASE("rpworker config check prints every setting and masks the secrets", "[config_check]")
+TEST_CASE("rpworker config check prints every setting and the vault's names, masked",
+          "[config_check]")
 {
-    const rp::test::TempDir dir;
-    const auto path = dir.write("config.json", kConfigJson);
+    Lab lab;
+    const auto path = lab.dir.write("config.json", kConfigJson);
     const std::string path_arg = utf8(path);
-    const rp::test::ScopedEnv user(rp::kEnvVeeamUsername, "user-0c41");
-    const rp::test::ScopedEnv password(rp::kEnvVeeamPassword, "password-0c41");
-    const rp::test::ScopedEnv pfx(rp::kEnvGraphCertPfxBase64, std::nullopt);
-    const rp::test::ScopedEnv pfx_password(rp::kEnvGraphCertPassword, std::nullopt);
-    const rp::test::ScopedEnv signing_key(rp::kEnvSigningKeyBase64, std::nullopt);
+    rp::write_vault(lab.vault, rp::Secrets{"user-0c41", "password-0c41"});
 
-    PathSpy spy;
-    const Run result = run(Args{"check", "--config", path_arg}, spy.provider());
+    const Run result = lab.run(Args{"check", "--config", path_arg});
     REQUIRE(result.err.empty());
-    REQUIRE(result.out ==
-            expected_output(path, {"**** (set)", "**** (set)", "(not set)", "(not set)"}));
+    REQUIRE(result.out == expected_settings(path) +
+                              expected_secrets(lab.vault, {"**** (set)", "**** (set)", "(not set)",
+                                                           "(not set)"}));
     REQUIRE(result.exit_code == 0);
+    REQUIRE(lab.default_config_calls == 0);
+    REQUIRE(lab.default_vault_calls == 1);
+    REQUIRE(lab.load_calls == 1);
 }
 
 TEST_CASE("rpworker config check reads the default path without --config", "[config_check]")
 {
-    const rp::test::TempDir dir;
-    const auto path = dir.write("config.json", kConfigJson);
-    const rp::test::ScopedEnv user(rp::kEnvVeeamUsername, std::nullopt);
-    const rp::test::ScopedEnv password(rp::kEnvVeeamPassword, std::nullopt);
+    Lab lab;
+    const auto path = lab.dir.write("config.json", kConfigJson);
+    lab.default_config = [path] { return path; };
     // Not a PFX, nor even Base64: config check stays offline and never opens
-    // the certificate, it only says whether the variable is set.
-    const rp::test::ScopedEnv pfx(rp::kEnvGraphCertPfxBase64, "pfx-0c41");
-    const rp::test::ScopedEnv pfx_password(rp::kEnvGraphCertPassword, "pfx-password-0c41");
-    const rp::test::ScopedEnv signing_key(rp::kEnvSigningKeyBase64, "key-0c41");
+    // the certificate, it only says whether the name is in the vault.
+    rp::write_vault(lab.vault, rp::Secrets{std::nullopt, std::nullopt, "pfx-0c41",
+                                           "pfx-password-0c41", "key-0c41"});
 
-    const Run result = run(Args{"check"}, path);
+    const Run result = lab.run(Args{"check"});
     REQUIRE(result.err.empty());
-    REQUIRE(result.out ==
-            expected_output(
-                path, {"(not set)", "(not set)", "**** (set)", "**** (set)", "**** (set)"}));
+    REQUIRE(result.out == expected_settings(path) +
+                              expected_secrets(lab.vault, {"(not set)", "(not set)", "**** (set)",
+                                                           "**** (set)", "**** (set)"}));
     REQUIRE(result.exit_code == 0);
+    REQUIRE(lab.default_config_calls == 1);
+}
+
+TEST_CASE("rpworker config check reads the vault --vault names, and reports one it can't use "
+          "after the settings (W4.5)",
+          "[config_check]")
+{
+    Lab lab;
+    const auto path = lab.dir.write("config.json", kConfigJson);
+    const std::string path_arg = utf8(path);
+    SECTION("--vault")
+    {
+        const std::filesystem::path other = lab.dir.path() / "other.bin";
+        rp::write_vault(other, rp::Secrets{std::nullopt, "p-0c41"});
+        const std::string vault_arg = utf8(other);
+        const Run result = lab.run(Args{"check", "--vault", vault_arg, "--config", path_arg});
+        REQUIRE(result.err.empty());
+        REQUIRE(result.out == expected_settings(path) +
+                                  expected_secrets(other, {"(not set)", "**** (set)", "(not set)",
+                                                           "(not set)"}));
+        REQUIRE(result.exit_code == 0);
+        REQUIRE(lab.default_vault_calls == 0);
+    }
+    SECTION("a --vault path that isn't UTF-8")
+    {
+        const Run result = lab.run(Args{"check", "--config", path_arg, "--vault", "\xFF.bin"});
+        REQUIRE(result.exit_code == 1);
+        REQUIRE(result.out == expected_settings(path));
+        REQUIRE(result.err == "config error: the --vault path is not valid UTF-8\n");
+        REQUIRE(lab.load_calls == 0);
+    }
+    SECTION("a vault that isn't there: the settings, then the vault's message")
+    {
+        const std::filesystem::path missing = lab.dir.path() / "missing.bin";
+        const std::string vault_arg = utf8(missing);
+        const Run result = lab.run(Args{"check", "--config", path_arg, "--vault", vault_arg});
+        REQUIRE(result.exit_code == 1);
+        REQUIRE(result.out == expected_settings(path));
+        REQUIRE(result.err == "config error: " + vault_arg + ": vault file not found\n");
+    }
+    SECTION("a default vault that can't be found")
+    {
+        lab.default_vault = []() -> std::filesystem::path {
+            throw rp::ConfigError("", "cannot find the ProgramData folder");
+        };
+        const Run result = lab.run(Args{"check", "--config", path_arg});
+        REQUIRE(result.exit_code == 1);
+        REQUIRE(result.out == expected_settings(path));
+        REQUIRE(result.err == "config error: cannot find the ProgramData folder\n");
+    }
+    SECTION("any other failure reading the vault, without its message")
+    {
+        lab.load = [](const std::filesystem::path&) -> rp::Secrets {
+            throw std::runtime_error("SENTINEL-d51f");
+        };
+        const Run result = lab.run(Args{"check", "--config", path_arg});
+        REQUIRE(result.exit_code == 1);
+        REQUIRE(result.out == expected_settings(path));
+        REQUIRE(result.err == "config error: unexpected failure\n");
+    }
 }
 
 TEST_CASE("rpworker config check never prints a secret's value", "[config_check]")
 {
-    const rp::test::TempDir dir;
-    const auto path = dir.write("config.json", kConfigJson);
-    const rp::test::ScopedEnv user(rp::kEnvVeeamUsername, "SENTINEL-USER-91e7");
-    const rp::test::ScopedEnv password(rp::kEnvVeeamPassword, "SENTINEL-PASSWORD-91e7");
-    const rp::test::ScopedEnv pfx(rp::kEnvGraphCertPfxBase64, "SENTINEL-PFX-91e7");
-    const rp::test::ScopedEnv pfx_password(rp::kEnvGraphCertPassword, "SENTINEL-PFX-PASSWORD-91e7");
-    const rp::test::ScopedEnv signing_key(rp::kEnvSigningKeyBase64, "SENTINEL-KEY-91e7");
+    Lab lab;
+    const auto path = lab.dir.write("config.json", kConfigJson);
+    lab.default_config = [path] { return path; };
+    rp::write_vault(lab.vault, rp::Secrets{"SENTINEL-USER-91e7", "SENTINEL-PASSWORD-91e7",
+                                           "SENTINEL-PFX-91e7", "SENTINEL-PFX-PASSWORD-91e7",
+                                           "SENTINEL-KEY-91e7"});
 
-    const Run result = run(Args{"check"}, path);
+    const Run result = lab.run(Args{"check"});
     REQUIRE(result.exit_code == 0);
     const std::string all = result.out + result.err;
     REQUIRE_THAT(all, !ContainsSubstring("SENTINEL"));
     REQUIRE_THAT(all, !ContainsSubstring("91e7"));
-    REQUIRE_THAT(all, ContainsSubstring("RP_VEEAM_USERNAME         **** (set)\n"));
-    REQUIRE_THAT(all, ContainsSubstring("RP_VEEAM_PASSWORD         **** (set)\n"));
-    REQUIRE_THAT(all, ContainsSubstring("RP_GRAPH_CERT_PFX_BASE64  **** (set)\n"));
-    REQUIRE_THAT(all, ContainsSubstring("RP_GRAPH_CERT_PASSWORD    **** (set)\n"));
-    REQUIRE_THAT(all, ContainsSubstring("RP_SIGNING_KEY_BASE64     **** (set)\n"));
+    REQUIRE_THAT(all, ContainsSubstring("veeam_username            **** (set)\n"));
+    REQUIRE_THAT(all, ContainsSubstring("veeam_password            **** (set)\n"));
+    REQUIRE_THAT(all, ContainsSubstring("graph_cert_pfx_base64     **** (set)\n"));
+    REQUIRE_THAT(all, ContainsSubstring("graph_cert_password       **** (set)\n"));
+    REQUIRE_THAT(all, ContainsSubstring("signing_key_base64        **** (set)\n"));
 }
 
 TEST_CASE("rpworker config check never prints a password in a URL", "[config_check]")
 {
-    const rp::test::TempDir dir;
+    Lab lab;
     std::string text = kConfigJson;
     const std::string url = "https://cloud.example.invalid";
     text.replace(text.find(url), url.size(), "https://user:SENTINEL-3b8d@cloud.example.invalid");
-    const auto path = dir.write("config.json", text);
+    const auto path = lab.dir.write("config.json", text);
+    lab.default_config = [path] { return path; };
 
-    const Run result = run(Args{"check"}, path);
+    const Run result = lab.run(Args{"check"});
     REQUIRE(result.exit_code == 1);
     REQUIRE_THAT(result.out + result.err, !ContainsSubstring("SENTINEL"));
     REQUIRE_THAT(result.err, ContainsSubstring("\"cloud_url\""));
@@ -285,34 +371,27 @@ TEST_CASE("rpworker config check never prints a password in a URL", "[config_che
 TEST_CASE("rpworker config check --config reads a UTF-8 path outside the ANSI code page",
           "[config_check]")
 {
-    const rp::test::TempDir dir;
+    Lab lab;
     // Cyrillic letters: not in cp1252, the ANSI code page of a Western machine.
     const auto path =
-        dir.write(std::filesystem::path(u8"\u0442\u0435\u0441\u0442.json"), kConfigJson);
+        lab.dir.write(std::filesystem::path(u8"тест.json"), kConfigJson);
     const std::string path_arg = utf8(path);
-    const rp::test::ScopedEnv user(rp::kEnvVeeamUsername, std::nullopt);
-    const rp::test::ScopedEnv password(rp::kEnvVeeamPassword, std::nullopt);
-    const rp::test::ScopedEnv pfx(rp::kEnvGraphCertPfxBase64, std::nullopt);
-    const rp::test::ScopedEnv pfx_password(rp::kEnvGraphCertPassword, std::nullopt);
-    const rp::test::ScopedEnv signing_key(rp::kEnvSigningKeyBase64, std::nullopt);
 
-    PathSpy spy;
-    const Run result = run(Args{"check", "--config", path_arg}, spy.provider());
+    const Run result = lab.run(Args{"check", "--config", path_arg});
     REQUIRE(result.err.empty());
-    REQUIRE(result.out == expected_output(path, kNoSecrets));
+    REQUIRE(result.out == expected_settings(path) + expected_secrets(lab.vault, kNoSecrets));
     REQUIRE(result.exit_code == 0);
 }
 
 TEST_CASE("rpworker config check reports a veeam_ca_file it can't read", "[config_check]")
 {
-    const rp::test::TempDir dir;
+    Lab lab;
     std::string text = kConfigJson;
-    const std::string ca_arg = utf8(dir.path() / "missing.pem");
+    const std::string ca_arg = utf8(lab.dir.path() / "missing.pem");
     text.insert(1, "\"veeam_ca_file\": " + nlohmann::json(ca_arg).dump() + ",");
-    const std::string path_arg = utf8(dir.write("config.json", text));
+    const std::string path_arg = utf8(lab.dir.write("config.json", text));
 
-    PathSpy spy;
-    const Run result = run(Args{"check", "--config", path_arg}, spy.provider());
+    const Run result = lab.run(Args{"check", "--config", path_arg});
     REQUIRE(result.exit_code == 1);
     REQUIRE(result.out.empty());
     REQUIRE(result.err == "config error: " + path_arg +
@@ -322,61 +401,52 @@ TEST_CASE("rpworker config check reports a veeam_ca_file it can't read", "[confi
 TEST_CASE("rpworker config check prints veeam_ca_file, outside the ANSI code page too",
           "[config_check]")
 {
-    const rp::test::TempDir dir;
+    Lab lab;
     const std::filesystem::path name =
         GENERATE(std::filesystem::path("veeam-ca.pem"),
                  std::filesystem::path(u8"тест-ca.pem"));
-    const std::string ca_arg = utf8(dir.write(name, "-----BEGIN CERTIFICATE-----\n"));
+    const std::string ca_arg = utf8(lab.dir.write(name, "-----BEGIN CERTIFICATE-----\n"));
     CAPTURE(ca_arg);
     std::string text = kConfigJson;
     text.insert(1, "\"veeam_ca_file\": " + nlohmann::json(ca_arg).dump() + ",");
-    const auto path = dir.write("config.json", text);
-    const rp::test::ScopedEnv user(rp::kEnvVeeamUsername, std::nullopt);
-    const rp::test::ScopedEnv password(rp::kEnvVeeamPassword, std::nullopt);
-    const rp::test::ScopedEnv pfx(rp::kEnvGraphCertPfxBase64, std::nullopt);
-    const rp::test::ScopedEnv pfx_password(rp::kEnvGraphCertPassword, std::nullopt);
-    const rp::test::ScopedEnv signing_key(rp::kEnvSigningKeyBase64, std::nullopt);
+    const auto path = lab.dir.write("config.json", text);
+    lab.default_config = [path] { return path; };
 
-    const Run result = run(Args{"check"}, path);
+    const Run result = lab.run(Args{"check"});
     REQUIRE(result.err.empty());
-    REQUIRE(result.out == expected_output(path, kNoSecrets, ca_arg));
+    REQUIRE(result.out == expected_settings(path, ca_arg) + expected_secrets(lab.vault, kNoSecrets));
     REQUIRE(result.exit_code == 0);
 }
 
 TEST_CASE("rpworker config check prints veeam_cert_sha256 after veeam_ca_file", "[config_check]")
 {
-    const rp::test::TempDir dir;
+    Lab lab;
     const rp::test::Cert cert =
         rp::test::make_cert("Veeam Software", rp::test::Role::veeam_default);
-    const std::string ca_arg = utf8(dir.write("veeam-rest.pem", cert.pem().cert));
+    const std::string ca_arg = utf8(lab.dir.write("veeam-rest.pem", cert.pem().cert));
     const std::string sha256 = rp::test::cert_sha256_hex(cert);
     std::string text = kConfigJson;
     text.insert(1, "\"veeam_ca_file\": " + nlohmann::json(ca_arg).dump() +
                        ", \"veeam_cert_sha256\": \"" + sha256 + "\",");
-    const auto path = dir.write("config.json", text);
-    const rp::test::ScopedEnv user(rp::kEnvVeeamUsername, std::nullopt);
-    const rp::test::ScopedEnv password(rp::kEnvVeeamPassword, std::nullopt);
-    const rp::test::ScopedEnv pfx(rp::kEnvGraphCertPfxBase64, std::nullopt);
-    const rp::test::ScopedEnv pfx_password(rp::kEnvGraphCertPassword, std::nullopt);
-    const rp::test::ScopedEnv signing_key(rp::kEnvSigningKeyBase64, std::nullopt);
+    const auto path = lab.dir.write("config.json", text);
+    lab.default_config = [path] { return path; };
 
-    const Run result = run(Args{"check"}, path);
+    const Run result = lab.run(Args{"check"});
     REQUIRE(result.err.empty());
     REQUIRE(result.out ==
-            expected_output(path, kNoSecrets, ca_arg, sha256));
+            expected_settings(path, ca_arg, sha256) + expected_secrets(lab.vault, kNoSecrets));
     REQUIRE(result.exit_code == 0);
 }
 
 TEST_CASE("rpworker config check reports a screenshots_enabled that isn't true or false",
           "[config_check]")
 {
-    const rp::test::TempDir dir;
+    Lab lab;
     std::string text = kConfigJson;
     text.insert(1, R"("screenshots_enabled": "true",)");
-    const std::string path_arg = utf8(dir.write("config.json", text));
+    const std::string path_arg = utf8(lab.dir.write("config.json", text));
 
-    PathSpy spy;
-    const Run result = run(Args{"check", "--config", path_arg}, spy.provider());
+    const Run result = lab.run(Args{"check", "--config", path_arg});
     REQUIRE(result.exit_code == 1);
     REQUIRE(result.out.empty());
     REQUIRE(result.err == "config error: " + path_arg +
@@ -386,42 +456,36 @@ TEST_CASE("rpworker config check reports a screenshots_enabled that isn't true o
 TEST_CASE("rpworker config check prints the TSA's URL and CA file when they are set",
           "[config_check][tsa]")
 {
-    const rp::test::TempDir dir;
-    const std::string ca = utf8(dir.write("tsa-ca.pem", "-----BEGIN CERTIFICATE-----\n"));
+    Lab lab;
+    const std::string ca = utf8(lab.dir.write("tsa-ca.pem", "-----BEGIN CERTIFICATE-----\n"));
     nlohmann::json doc = nlohmann::json::parse(kConfigJson);
     doc["tsa_url"] = "http://tsa.example.invalid/stamp";
     doc["tsa_ca_file"] = ca;
-    const auto path = dir.write("config.json", doc.dump());
-    const rp::test::ScopedEnv user(rp::kEnvVeeamUsername, std::nullopt);
-    const rp::test::ScopedEnv password(rp::kEnvVeeamPassword, std::nullopt);
-    const rp::test::ScopedEnv pfx(rp::kEnvGraphCertPfxBase64, std::nullopt);
-    const rp::test::ScopedEnv pfx_password(rp::kEnvGraphCertPassword, std::nullopt);
-    const rp::test::ScopedEnv signing_key(rp::kEnvSigningKeyBase64, std::nullopt);
+    const auto path = lab.dir.write("config.json", doc.dump());
+    lab.default_config = [path] { return path; };
 
-    const Run result = run(Args{"check"}, path);
+    const Run result = lab.run(Args{"check"});
     REQUIRE(result.err.empty());
-    REQUIRE(result.out == expected_output(path, kNoSecrets, "(not set)", "(not set)", "false",
-                                          "http://tsa.example.invalid/stamp", ca));
+    REQUIRE(result.out == expected_settings(path, "(not set)", "(not set)", "false",
+                                            "http://tsa.example.invalid/stamp", ca) +
+                              expected_secrets(lab.vault, kNoSecrets));
     REQUIRE(result.exit_code == 0);
 }
 
 TEST_CASE("rpworker config check prints screenshots_enabled as true or false", "[config_check]")
 {
-    const rp::test::TempDir dir;
+    Lab lab;
     const std::string value = GENERATE("true", "false");
     CAPTURE(value);
     std::string text = kConfigJson;
     text.insert(1, "\"screenshots_enabled\": " + value + ",");
-    const auto path = dir.write("config.json", text);
-    const rp::test::ScopedEnv user(rp::kEnvVeeamUsername, std::nullopt);
-    const rp::test::ScopedEnv password(rp::kEnvVeeamPassword, std::nullopt);
-    const rp::test::ScopedEnv pfx(rp::kEnvGraphCertPfxBase64, std::nullopt);
-    const rp::test::ScopedEnv pfx_password(rp::kEnvGraphCertPassword, std::nullopt);
-    const rp::test::ScopedEnv signing_key(rp::kEnvSigningKeyBase64, std::nullopt);
+    const auto path = lab.dir.write("config.json", text);
+    lab.default_config = [path] { return path; };
 
-    const Run result = run(Args{"check"}, path);
+    const Run result = lab.run(Args{"check"});
     REQUIRE(result.err.empty());
-    REQUIRE(result.out == expected_output(path, kNoSecrets, "(not set)", "(not set)", value));
+    REQUIRE(result.out == expected_settings(path, "(not set)", "(not set)", value) +
+                              expected_secrets(lab.vault, kNoSecrets));
     REQUIRE(result.exit_code == 0);
 }
 
@@ -429,19 +493,18 @@ TEST_CASE("rpworker config check reports a veeam_ca_file that doesn't hold the p
           "certificate",
           "[config_check]")
 {
-    const rp::test::TempDir dir;
+    Lab lab;
     const rp::test::Cert held =
         rp::test::make_cert("Veeam Software", rp::test::Role::veeam_default);
     const rp::test::Cert other =
         rp::test::make_cert("Veeam Software", rp::test::Role::veeam_default);
-    const std::string ca_arg = utf8(dir.write("veeam-rest.pem", held.pem().cert));
+    const std::string ca_arg = utf8(lab.dir.write("veeam-rest.pem", held.pem().cert));
     std::string text = kConfigJson;
     text.insert(1, "\"veeam_ca_file\": " + nlohmann::json(ca_arg).dump() +
                        ", \"veeam_cert_sha256\": \"" + rp::test::cert_sha256_hex(other) + "\",");
-    const std::string path_arg = utf8(dir.write("config.json", text));
+    const std::string path_arg = utf8(lab.dir.write("config.json", text));
 
-    PathSpy spy;
-    const Run result = run(Args{"check", "--config", path_arg}, spy.provider());
+    const Run result = lab.run(Args{"check", "--config", path_arg});
     REQUIRE(result.exit_code == 1);
     REQUIRE(result.out.empty());
     REQUIRE(result.err == "config error: " + path_arg +
@@ -451,12 +514,12 @@ TEST_CASE("rpworker config check reports a veeam_ca_file that doesn't hold the p
 
 TEST_CASE("rpworker config check reports an empty --config path as unreadable", "[config_check]")
 {
-    PathSpy spy;
-    const Run result = run(Args{"check", "--config", ""}, spy.provider());
+    Lab lab;
+    const Run result = lab.run(Args{"check", "--config", ""});
     REQUIRE(result.exit_code == 1);
     REQUIRE(result.out.empty());
     REQUIRE(result.err == "config error: : cannot read config file\n");
-    REQUIRE(spy.calls == 0);
+    REQUIRE(lab.default_config_calls == 0);
 }
 
 TEST_CASE("rpworker config check reports a --config path that isn't UTF-8", "[config_check]")
@@ -464,9 +527,9 @@ TEST_CASE("rpworker config check reports a --config path that isn't UTF-8", "[co
     const std::string path_arg = GENERATE(std::string("\xFF.json"), std::string("a\xC3.json"),
                                           std::string("\xED\xA0\x80.json"));
     CAPTURE(path_arg);
+    Lab lab;
 
-    PathSpy spy;
-    const Run result = run(Args{"check", "--config", path_arg}, spy.provider());
+    const Run result = lab.run(Args{"check", "--config", path_arg});
     REQUIRE(result.exit_code == 1);
     REQUIRE(result.out.empty());
     REQUIRE(result.err == "config error: the --config path is not valid UTF-8\n");
@@ -474,21 +537,21 @@ TEST_CASE("rpworker config check reports a --config path that isn't UTF-8", "[co
 
 TEST_CASE("rpworker config check --config never looks up the default path", "[config_check]")
 {
-    const rp::test::TempDir dir;
-    const std::string path_arg = utf8(dir.write("config.json", kConfigJson));
-    PathSpy spy;
+    Lab lab;
+    const std::string path_arg = utf8(lab.dir.write("config.json", kConfigJson));
 
-    REQUIRE(run(Args{"check", "--config", path_arg}, spy.provider()).exit_code == 0);
-    REQUIRE(spy.calls == 0);
+    REQUIRE(lab.run(Args{"check", "--config", path_arg}).exit_code == 0);
+    REQUIRE(lab.default_config_calls == 0);
 }
 
 TEST_CASE("rpworker config check reports a default path it can't find", "[config_check]")
 {
-    const DefaultPath fails = []() -> std::filesystem::path {
+    Lab lab;
+    lab.default_config = []() -> std::filesystem::path {
         throw rp::ConfigError("", "cannot find the ProgramData folder");
     };
 
-    const Run result = run(Args{"check"}, fails);
+    const Run result = lab.run(Args{"check"});
     REQUIRE(result.exit_code == 1);
     REQUIRE(result.out.empty());
     REQUIRE(result.err == "config error: cannot find the ProgramData folder\n");
@@ -497,29 +560,15 @@ TEST_CASE("rpworker config check reports a default path it can't find", "[config
 TEST_CASE("rpworker config check reports any other failure without its message",
           "[config_check]")
 {
-    const DefaultPath fails = []() -> std::filesystem::path {
+    Lab lab;
+    lab.default_config = []() -> std::filesystem::path {
         throw std::runtime_error("SENTINEL-d51f");
     };
 
-    const Run result = run(Args{"check"}, fails);
+    const Run result = lab.run(Args{"check"});
     REQUIRE(result.exit_code == 1);
     REQUIRE(result.out.empty());
     REQUIRE(result.err == "config error: unexpected failure\n");
-}
-
-TEST_CASE("rpworker config check reports a secret variable that isn't valid Unicode",
-          "[config_check]")
-{
-    const rp::test::TempDir dir;
-    const auto path = dir.write("config.json", kConfigJson);
-    const rp::test::ScopedEnv password(rp::kEnvVeeamPassword,
-                                       std::wstring{L"SENTINEL-8e15"} + L'\xDC00');
-
-    const Run result = run(Args{"check"}, path);
-    REQUIRE(result.exit_code == 1);
-    REQUIRE(result.out.empty());
-    REQUIRE(result.err ==
-            "config error: environment variable RP_VEEAM_PASSWORD is not valid Unicode\n");
 }
 
 TEST_CASE("rpworker config check prints no secret on any error path", "[config_check]")
@@ -541,18 +590,27 @@ TEST_CASE("rpworker config check prints no secret on any error path", "[config_c
         with_userinfo,
         with_key_name);
     CAPTURE(text);
-    const rp::test::TempDir dir;
-    const auto path = dir.write("config.json", text);
-    const rp::test::ScopedEnv user(rp::kEnvVeeamUsername, "SENTINEL-ENV-USER-7a64");
-    const rp::test::ScopedEnv password(rp::kEnvVeeamPassword, "SENTINEL-ENV-PASSWORD-7a64");
-    const rp::test::ScopedEnv pfx(rp::kEnvGraphCertPfxBase64, "SENTINEL-ENV-PFX-7a64");
-    const rp::test::ScopedEnv pfx_password(rp::kEnvGraphCertPassword, "SENTINEL-ENV-PFXPW-7a64");
-    const rp::test::ScopedEnv signing_key(rp::kEnvSigningKeyBase64, "SENTINEL-ENV-KEY-7a64");
+    Lab lab;
+    const auto path = lab.dir.write("config.json", text);
+    lab.default_config = [path] { return path; };
+    rp::write_vault(lab.vault, rp::Secrets{"SENTINEL-ENV-USER-7a64", "SENTINEL-ENV-PASSWORD-7a64",
+                                           "SENTINEL-ENV-PFX-7a64", "SENTINEL-ENV-PFXPW-7a64",
+                                           "SENTINEL-ENV-KEY-7a64"});
 
-    const Run result = run(Args{"check"}, path);
+    const Run result = lab.run(Args{"check"});
     REQUIRE(result.exit_code == 1);
     REQUIRE(result.out.empty());
     REQUIRE_THAT(result.err, ContainsSubstring("config error: "));
     REQUIRE_THAT(result.out + result.err, !ContainsSubstring("SENTINEL"));
     REQUIRE_THAT(result.out + result.err, !ContainsSubstring("7a64"));
+}
+
+TEST_CASE("the real config check environment reads ProgramData and the vault", "[config_check]")
+{
+    const rp::ConfigCheckEnv env = rp::default_config_check_env();
+    REQUIRE(env.default_config_path() == rp::default_config_path());
+    REQUIRE(env.default_vault_path() == rp::default_vault_path());
+    Lab lab;
+    rp::write_vault(lab.vault, rp::Secrets{"u-0c41"});
+    REQUIRE(env.load_secrets(lab.vault).veeam_username == "u-0c41");
 }

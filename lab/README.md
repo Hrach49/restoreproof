@@ -31,7 +31,7 @@ changes a mail body, the manifest records the changed bytes and also says that t
 | `tests/` | pytest, one file per module, against a fake in-memory Graph tenant. No network |
 | `entra/new-worker-app.ps1` | Creates or updates the RestoreProof Worker app registration and its grants (L1.5), below |
 | `entra/check-worker-grants.ps1` | Read-only: lists the SharePoint and OneDrive grants and checks the Worker app holds none at a canary and its write grants on the two file restore targets (W3.4), below |
-| `entra/set-worker-env.ps1` | Puts the Worker app's certificate into `RP_GRAPH_CERT_PFX_BASE64` and `RP_GRAPH_CERT_PASSWORD` and, when the lab has one, the signing key into `RP_SIGNING_KEY_BASE64` for one PowerShell session (W2.1, W4.3), below |
+| `entra/fill-worker-vault.ps1` | Fills the Worker's DPAPI vault (W4.5) from Credential Manager and the PFX file: the Veeam account, the Worker app's certificate and its password, and, when the lab has one, the signing key, each piped to `rpworker vault set <name>`; below |
 | `canary/` | The 20 generated files, committed |
 | `seed-manifest.json` | Written by a live `seed` run; committed, so CI runs the `hash` check on it, and the Worker's sampler (W2.6) reads it (`worker/include/rp/canary_manifest.hpp`) |
 | `tenant.md` | Tenant, user and restore-target IDs |
@@ -199,41 +199,48 @@ The certificate's private key exists only in `%LOCALAPPDATA%\RestoreProof\lab\wo
 `RestoreProof Lab - Worker Graph app PFX`. The script never prints either. To renew the
 certificate, delete the PFX and run the script again.
 
-### The certificate and the signing key in a Worker session (W2.1, W4.3)
+### The vault: the Worker's secrets (W4.5)
 
-Until the Worker's DPAPI vault lands (W4.5), `rpworker` reads the Worker app's certificate and
-its signing key from three environment variables: `RP_GRAPH_CERT_PFX_BASE64` (the PFX file,
-Base64), `RP_GRAPH_CERT_PASSWORD` (its password) and `RP_SIGNING_KEY_BASE64` (the Ed25519 signing
-key, below). `entra/set-worker-env.ps1` fills the first two from the PFX and the Credential
-Manager entry above, after checking the password opens the PFX, and the third from the signing
-key's own Credential Manager entry. Dot-source it (the leading `. ` matters; run any other way it
-refuses and exits 1), from the repo root:
+Since W4.5 `rpworker` reads its five secrets from the DPAPI vault
+`%ProgramData%\RestoreProof\vault.bin` and from nowhere else (`docs/worker-config.md`,
+"Secrets"): `veeam_username`, `veeam_password`, `graph_cert_pfx_base64`, `graph_cert_password`
+and `signing_key_base64`. `entra/fill-worker-vault.ps1` fills it from what the lab already
+keeps: the Veeam account `<COMPUTERNAME>\rp-veeam` and its password (the Credential Manager
+entry `RestoreProof Lab - rp-veeam (local Veeam REST)`, `docs/api/veeam-m365/README.md`), the
+PFX file and its Credential Manager entry above (after checking the password opens the PFX),
+and the signing key's own entry (below). It feeds each value to `rpworker vault set <name>` on
+stdin, one process per value, so no value is ever on a command line, in an environment variable
+or in a file, and ends with `rpworker vault list`. Run it from an elevated shell (the default
+vault's ACL is SYSTEM, Administrators and the file's owner), from the repo root, PowerShell 7:
 
 ```powershell
-. lab\entra\set-worker-env.ps1          # set them for this PowerShell session
-. lab\entra\set-worker-env.ps1 -Clear   # remove all three again
+.\lab\entra\fill-worker-vault.ps1
+.\lab\entra\fill-worker-vault.ps1 -VaultPath C:\restoreproof-runs\lab-vault.bin   # another vault file (--vault)
 ```
 
-With a signing key it prints only
-`set RP_GRAPH_CERT_PFX_BASE64, RP_GRAPH_CERT_PASSWORD and RP_SIGNING_KEY_BASE64 for this session`.
-Without one it does not fail, since only `rpworker test --evidence` signs: it sets the two
-certificate variables, removes an `RP_SIGNING_KEY_BASE64` left from an earlier call, and prints
-`set RP_GRAPH_CERT_PFX_BASE64 and RP_GRAPH_CERT_PASSWORD for this session` and a second line
-starting `skipped RP_SIGNING_KEY_BASE64:` that names the missing entry and `new-signing-key`.
-An entry that is there but isn't a signing key stops it before anything is set and
-removes an `RP_SIGNING_KEY_BASE64` left from an earlier call too; the message never shows the
-entry's value.
+It prints rpworker's own lines, `set <name> in C:\ProgramData\RestoreProof\vault.bin` five
+times and then the five names. Without a signing key it does not fail, since only `rpworker
+test --evidence` signs: it sets the other four and prints `skipped signing_key_base64:` naming
+the missing entry and `new-signing-key`. An entry that is there but isn't a signing key stops
+it before anything is set; the message never shows the entry's value. A `vault set` that fails
+stops it with that command's exit code, the values before it set.
 
-It writes nothing to disk: the variables live in that PowerShell process only (and in the
-programs it starts, such as `rpworker` and `ctest`) and are gone when the window closes.
-`-PfxPath`, `-CredentialTarget` and `-SigningKeyTarget` point it at another PFX or credential
-(the tests use them, so no test reads the lab's own key).
+The script writes nothing itself (rpworker writes the vault) and keeps no value in the session.
+`-Worker`, `-VaultPath`, `-VeeamUser`, `-VeeamCredentialTarget`, `-PfxPath`, `-CredentialTarget`
+and `-SigningKeyTarget` point it at another Worker, vault, account, PFX or credential (the tests
+use them, with a stub Worker, so no test reads the lab's own entries or writes the lab's vault).
+
+To read the vault from an unelevated shell (the read-only live tests, `rpworker vault test`),
+grant your own account once, from an elevated shell:
+`.\worker\build\dev\rpworker.exe vault grant "$env:USERDOMAIN\$env:USERNAME"`
+(`docs/testing.md`, "Live tests").
 
 ### The signing key (W4.3)
 
 `rpworker test --evidence <dir>` signs the result with an Ed25519 key (`signature.json` beside
-`result.json`; `docs/decisions.md` 2026-10-05 W4.3). The Worker's vault (W4.5) and the installer
-that makes the key (W7.1) don't exist yet, so the lab's key is made here, once, from `lab/`:
+`result.json`; `docs/decisions.md` 2026-10-05 W4.3). The installer that makes the key (W7.1)
+doesn't exist yet, so the lab's key is made here, once, from `lab/`, and `fill-worker-vault.ps1`
+puts it into the vault as `signing_key_base64` (W4.5):
 
 ```bash
 uv run python -m seeder new-signing-key
@@ -243,7 +250,7 @@ uv run python -m seeder new-signing-key --public-key-out C:\path\outside\the\rep
 It makes the key pair with `cryptography` and keeps the private key in Windows Credential
 Manager, as the generic credential `RestoreProof Lab - Worker signing key`: one line of standard
 Base64 of the key's PKCS#8 DER, 64 characters, which is the body line of the PEM OpenSSL writes
-and exactly what `RP_SIGNING_KEY_BASE64` holds. Then it prints, on stdout and nothing else there:
+and exactly what the vault's `signing_key_base64` holds. Then it prints, on stdout and nothing else there:
 
 ```
 -----BEGIN PUBLIC KEY-----
@@ -259,9 +266,9 @@ The PEM is the public key's SubjectPublicKeyInfo, what a verifier is given
 `stored the private key in Credential Manager ('RestoreProof Lab - Worker signing key')` and,
 with `--public-key-out`, `wrote <file>`.
 
-- **The private key is never printed, logged or written to a file.** It exists in Credential
-  Manager and, after `set-worker-env.ps1`, in that PowerShell session's environment. The public
-  key can be shown again at any time with `rpworker signer public-key`.
+- **The private key is never printed, logged or written to a file in the clear.** It exists in
+  Credential Manager and, after `fill-worker-vault.ps1`, in the Worker's vault. The public key
+  can be shown again at any time with `rpworker signer public-key`.
 - **An existing key is not replaced** unless `--replace` is given. A replaced key orphans every
   signature made with the old one: no run folder signed with it verifies against the new public
   key, and the old private key can't be brought back. The refusal says so and makes no key.

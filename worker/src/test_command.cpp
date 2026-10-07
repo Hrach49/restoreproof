@@ -131,7 +131,8 @@ int run_test_command(std::span<const std::string_view> args, std::ostream& out,
     PipelineArgs parsed;
     const std::optional<CommandOptions> options =
         parse_options(args, {"--mail", "--sp", "--od", "--point", "--run-id", "--canary-cursor",
-                             "--manifest", "--config", "--record", "--json", "--evidence"});
+                             "--manifest", "--config", "--vault", "--record", "--json",
+                             "--evidence"});
     // An empty --json or --evidence value is a missing one: no file or folder
     // can have that name. And one or the other (W4.2 point 7): the run
     // folder's result.json is the --json file.

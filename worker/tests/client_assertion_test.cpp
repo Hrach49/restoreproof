@@ -110,10 +110,10 @@ std::shared_ptr<spdlog::logger> string_logger(std::ostringstream& out)
 
 } // namespace
 
-TEST_CASE("An unset PFX variable is reported by name", "[graph][certificate]")
+TEST_CASE("A PFX that isn't in the vault is reported by name", "[graph][certificate]")
 {
-    CHECK(load_error("") == "RP_GRAPH_CERT_PFX_BASE64 is not set");
-    CHECK(load_error("", kPassword, {"MY_PFX", "MY_PASSWORD"}) == "MY_PFX is not set");
+    CHECK(load_error("") == "graph_cert_pfx_base64 is not in the vault");
+    CHECK(load_error("", kPassword, {"MY_PFX", "MY_PASSWORD"}) == "MY_PFX is not in the vault");
 }
 
 TEST_CASE("A PFX variable that isn't strict Base64 is refused", "[graph][certificate]")
@@ -131,7 +131,7 @@ TEST_CASE("A PFX variable that isn't strict Base64 is refused", "[graph][certifi
         pfx.substr(0, 40) + "\r\n" + pfx.substr(40, 40) + "\r\n" + pfx.substr(80),
         "  " + pfx + "  ", pfx + "\r\n\r\n");
     CHECK(load_error(bad) ==
-          "RP_GRAPH_CERT_PFX_BASE64 is not valid Base64 (one line of A-Z, a-z, 0-9, + and /, "
+          "graph_cert_pfx_base64 is not valid Base64 (one line of A-Z, a-z, 0-9, + and /, "
           "padded with =)");
     if (url_safe != pfx) {
         CHECK_THAT(load_error(url_safe), ContainsSubstring("is not valid Base64"));
@@ -155,7 +155,7 @@ TEST_CASE("Base64 that isn't a PFX is refused", "[graph][certificate]")
     const std::vector<unsigned char> bytes = GENERATE_COPY(
         std::vector<unsigned char>(text.begin(), text.end()), truncated, trailing, cert_der);
     CHECK(load_error(to_base64(bytes)) ==
-          "RP_GRAPH_CERT_PFX_BASE64 does not hold a PFX (PKCS#12) file");
+          "graph_cert_pfx_base64 does not hold a PFX (PKCS#12) file");
 }
 
 TEST_CASE("A PFX without a MAC is refused, whatever the password", "[graph][certificate]")
@@ -164,7 +164,7 @@ TEST_CASE("A PFX without a MAC is refused, whatever the password", "[graph][cert
     const std::string pfx =
         to_base64(make_pfx(good_cert(), password.c_str(), PfxOptions{.mac = false}));
     CHECK(load_error(pfx, password) ==
-          "the PFX in RP_GRAPH_CERT_PFX_BASE64 has no integrity check (MAC), so its password "
+          "the PFX in graph_cert_pfx_base64 has no integrity check (MAC), so its password "
           "can't be checked; re-export it with a password and AES256_SHA256");
 }
 
@@ -176,19 +176,19 @@ TEST_CASE("A wrong password is reported by the variable's name", "[graph][certif
     {
         const std::string pfx = to_base64(make_pfx(cert, "the right one"));
         CHECK(load_error(pfx) ==
-              "RP_GRAPH_CERT_PASSWORD does not open the PFX in RP_GRAPH_CERT_PFX_BASE64");
+              "graph_cert_password does not open the PFX in graph_cert_pfx_base64");
     }
     SECTION("a PFX with a password, and none")
     {
         const std::string pfx = to_base64(make_pfx(cert, kPassword));
-        CHECK(load_error(pfx, "") == "RP_GRAPH_CERT_PASSWORD is not set, and the PFX in "
-                                     "RP_GRAPH_CERT_PFX_BASE64 needs a password");
+        CHECK(load_error(pfx, "") == "graph_cert_password is not in the vault, and the PFX in "
+                                     "graph_cert_pfx_base64 needs a password");
     }
     SECTION("a PFX without a password, and a password")
     {
         const std::string pfx = to_base64(make_pfx(cert, ""));
         CHECK(load_error(pfx) ==
-              "RP_GRAPH_CERT_PASSWORD does not open the PFX in RP_GRAPH_CERT_PFX_BASE64");
+              "graph_cert_password does not open the PFX in graph_cert_pfx_base64");
     }
     SECTION("the names come from the caller")
     {
@@ -209,7 +209,7 @@ TEST_CASE("A PFX with a cipher OpenSSL 3 no longer reads asks for a re-export",
     CAPTURE(static_cast<int>(cipher));
     const std::string pfx = to_base64(make_pfx(good_cert(), kPassword, PfxOptions{.cipher = cipher}));
     CHECK(load_error(pfx) ==
-          "the PFX in RP_GRAPH_CERT_PFX_BASE64 uses a legacy cipher (RC2 or similar) the Worker "
+          "the PFX in graph_cert_pfx_base64 uses a legacy cipher (RC2 or similar) the Worker "
           "can't read; re-export it with AES256_SHA256");
 }
 
@@ -227,7 +227,7 @@ TEST_CASE("A PFX that fails to parse with the right password doesn't blame the p
     CAPTURE(static_cast<int>(cipher));
     const std::string pfx = to_base64(make_pfx(good_cert(), kPassword, PfxOptions{.cipher = cipher}));
     CHECK(load_error(pfx) ==
-          "the PFX in RP_GRAPH_CERT_PFX_BASE64 can't be read: it is damaged, or built in a way "
+          "the PFX in graph_cert_pfx_base64 can't be read: it is damaged, or built in a way "
           "the Worker can't read; re-export it with AES256_SHA256");
 }
 
@@ -238,19 +238,19 @@ TEST_CASE("A PFX must hold a private key and its certificate", "[graph][certific
     SECTION("no private key")
     {
         const std::string pfx = to_base64(make_pfx(nullptr, cert.cert.get(), kPassword));
-        CHECK(load_error(pfx) == "the PFX in RP_GRAPH_CERT_PFX_BASE64 holds no private key");
+        CHECK(load_error(pfx) == "the PFX in graph_cert_pfx_base64 holds no private key");
     }
     SECTION("no certificate")
     {
         const std::string pfx = to_base64(make_pfx(cert.key.get(), nullptr, kPassword));
-        CHECK(load_error(pfx) == "the PFX in RP_GRAPH_CERT_PFX_BASE64 holds no certificate");
+        CHECK(load_error(pfx) == "the PFX in graph_cert_pfx_base64 holds no certificate");
     }
     SECTION("a key that isn't the certificate's")
     {
         const Cert other = make_client_cert("Someone Else", at_now({.fresh_key = true}));
         const std::string pfx =
             to_base64(make_pfx(other.key.get(), cert.cert.get(), kPassword));
-        CHECK(load_error(pfx) == "the private key in the PFX in RP_GRAPH_CERT_PFX_BASE64 does "
+        CHECK(load_error(pfx) == "the private key in the PFX in graph_cert_pfx_base64 does "
                                  "not match its certificate");
     }
 }
@@ -261,14 +261,14 @@ TEST_CASE("The key must be RSA of at least 2048 bits", "[graph][certificate]")
     {
         const Cert cert = make_client_cert("EC", at_now({.key = KeyType::ec_p256}));
         CHECK(load_error(to_base64(make_pfx(cert, kPassword))) ==
-              "the key in the PFX in RP_GRAPH_CERT_PFX_BASE64 is not RSA; Entra's PS256 client "
+              "the key in the PFX in graph_cert_pfx_base64 is not RSA; Entra's PS256 client "
               "assertion needs an RSA key of at least 2048 bits");
     }
     SECTION("RSA 1024")
     {
         const Cert cert = make_client_cert("RSA 1024", at_now({.key = KeyType::rsa1024}));
         CHECK(load_error(to_base64(make_pfx(cert, kPassword))) ==
-              "the key in the PFX in RP_GRAPH_CERT_PFX_BASE64 is RSA 1024 bits; Entra's PS256 "
+              "the key in the PFX in graph_cert_pfx_base64 is RSA 1024 bits; Entra's PS256 "
               "client assertion needs at least 2048");
     }
     SECTION("checked before the validity")
@@ -286,7 +286,7 @@ TEST_CASE("The certificate must be valid at the wall-clock time", "[graph][certi
     {
         const Cert cert = make_client_cert("Old", at_now({.not_before = -86400, .not_after = -1}));
         CHECK(load_error(to_base64(make_pfx(cert, kPassword))) ==
-              "the certificate in RP_GRAPH_CERT_PFX_BASE64 (SHA-1 thumbprint " +
+              "the certificate in graph_cert_pfx_base64 (SHA-1 thumbprint " +
                   rp::test::cert_sha1_hex(cert) +
                   ") expired at 2026-09-28T11:59:59Z; make a new one and upload it to the app");
     }
@@ -295,7 +295,7 @@ TEST_CASE("The certificate must be valid at the wall-clock time", "[graph][certi
         const Cert cert =
             make_client_cert("Future", at_now({.not_before = 3600, .not_after = 86400}));
         CHECK(load_error(to_base64(make_pfx(cert, kPassword))) ==
-              "the certificate in RP_GRAPH_CERT_PFX_BASE64 (SHA-1 thumbprint " +
+              "the certificate in graph_cert_pfx_base64 (SHA-1 thumbprint " +
                   rp::test::cert_sha1_hex(cert) +
                   ") is not valid until 2026-09-28T13:00:00Z; check this machine's clock");
     }
@@ -324,7 +324,7 @@ TEST_CASE("Validity dates far in the future are read without wrapping", "[graph]
             "Later", at_now({.not_before_text = "60540101000000Z",
                              .not_after_text = "99991231235959Z"}));
         CHECK(load_error(to_base64(make_pfx(cert, kPassword))) ==
-              "the certificate in RP_GRAPH_CERT_PFX_BASE64 (SHA-1 thumbprint " +
+              "the certificate in graph_cert_pfx_base64 (SHA-1 thumbprint " +
                   rp::test::cert_sha1_hex(cert) +
                   ") is not valid until 6054-01-01T00:00:00Z; check this machine's clock");
     }
@@ -383,7 +383,7 @@ TEST_CASE("A certificate that expires within 30 days logs a warning", "[graph][c
         const Cert cert = make_client_cert("Soon", at_now({.not_after = 29L * 86400}));
         const std::string pfx = to_base64(make_pfx(cert, kPassword));
         load_client_certificate(pfx, kPassword, kNow, {}, logger);
-        CHECK(log.str() == "warning the certificate in RP_GRAPH_CERT_PFX_BASE64 (SHA-1 "
+        CHECK(log.str() == "warning the certificate in graph_cert_pfx_base64 (SHA-1 "
                            "thumbprint " +
                                rp::test::cert_sha1_hex(cert) +
                                ") expires at 2026-10-27T12:00:00Z, in 29 day(s); make a new one "
@@ -420,17 +420,19 @@ TEST_CASE("A ClientCertificate can be moved", "[graph][certificate]")
 
 // --- From the Worker's secrets ---
 
-TEST_CASE("The certificate's messages name the variables of rp/secrets.hpp",
+TEST_CASE("The certificate's messages name the vault's names of rp/secrets.hpp (W4.5)",
           "[graph][certificate]")
 {
     const CertificateSecretNames names;
-    CHECK(names.pfx_base64 == rp::kEnvGraphCertPfxBase64);
-    CHECK(names.password == rp::kEnvGraphCertPassword);
+    CHECK(names.pfx_base64 == rp::kNameGraphCertPfxBase64);
+    CHECK(names.password == rp::kNameGraphCertPassword);
+    CHECK(names.pfx_base64 == "graph_cert_pfx_base64");
+    CHECK(names.password == "graph_cert_password");
 }
 
 // W2.5: the connector factory's callers report a ConfigError by its key, so
-// an unset secret names its variable there too; any other reason names none.
-TEST_CASE("certificate_from_secrets keys only an unset secret by its variable",
+// a secret that isn't in the vault names it there too; any other reason names none.
+TEST_CASE("certificate_from_secrets keys only a secret that isn't in the vault by its name",
           "[graph][certificate]")
 {
     const std::string pfx = to_base64(make_pfx(good_cert(), kPassword));
@@ -445,10 +447,10 @@ TEST_CASE("certificate_from_secrets keys only an unset secret by its variable",
     const auto [pfx_value, password, key] =
         GENERATE_COPY(Catch::Generators::table<std::optional<std::string>, std::optional<std::string>,
                                                 std::string>({
-            {std::nullopt, std::string{kPassword}, "RP_GRAPH_CERT_PFX_BASE64"},
-            {std::string{}, std::string{kPassword}, "RP_GRAPH_CERT_PFX_BASE64"},
-            {pfx, std::nullopt, "RP_GRAPH_CERT_PASSWORD"},
-            {pfx, std::string{}, "RP_GRAPH_CERT_PASSWORD"},
+            {std::nullopt, std::string{kPassword}, "graph_cert_pfx_base64"},
+            {std::string{}, std::string{kPassword}, "graph_cert_pfx_base64"},
+            {pfx, std::nullopt, "graph_cert_password"},
+            {pfx, std::string{}, "graph_cert_password"},
             {pfx, std::string{"Sentinel-Wrong-3f0d"}, ""},
             {std::string{"not base64!"}, std::string{kPassword}, ""},
         }));
@@ -458,7 +460,7 @@ TEST_CASE("certificate_from_secrets keys only an unset secret by its variable",
     CHECK(key_of(secrets) == key);
 }
 
-TEST_CASE("certificate_from_secrets reports an unset or wrong secret by its variable",
+TEST_CASE("certificate_from_secrets reports a missing or wrong secret by its name",
           "[graph][certificate]")
 {
     const std::string pfx = to_base64(make_pfx(good_cert(), kPassword));
@@ -475,10 +477,10 @@ TEST_CASE("certificate_from_secrets reports an unset or wrong secret by its vari
     {
         // Whether or not the password is set: the PFX is reported first.
         rp::Secrets secrets;
-        CHECK(error_of(secrets) == "RP_GRAPH_CERT_PFX_BASE64 is not set");
+        CHECK(error_of(secrets) == "graph_cert_pfx_base64 is not in the vault");
         secrets.graph_cert_pfx_base64 = "";
         secrets.graph_cert_password = kPassword;
-        CHECK(error_of(secrets) == "RP_GRAPH_CERT_PFX_BASE64 is not set");
+        CHECK(error_of(secrets) == "graph_cert_pfx_base64 is not in the vault");
     }
     SECTION("a PFX that needs a password, and none set")
     {
@@ -487,8 +489,8 @@ TEST_CASE("certificate_from_secrets reports an unset or wrong secret by its vari
         rp::Secrets secrets;
         secrets.graph_cert_pfx_base64 = pfx;
         secrets.graph_cert_password = password;
-        CHECK(error_of(secrets) == "RP_GRAPH_CERT_PASSWORD is not set, and the PFX in "
-                                   "RP_GRAPH_CERT_PFX_BASE64 needs a password");
+        CHECK(error_of(secrets) == "graph_cert_password is not in the vault, and the PFX in "
+                                   "graph_cert_pfx_base64 needs a password");
     }
     SECTION("the wrong password")
     {
@@ -496,7 +498,7 @@ TEST_CASE("certificate_from_secrets reports an unset or wrong secret by its vari
         secrets.graph_cert_pfx_base64 = pfx;
         secrets.graph_cert_password = "Sentinel-Wrong-3f0d";
         const std::string what = error_of(secrets);
-        CHECK(what == "RP_GRAPH_CERT_PASSWORD does not open the PFX in RP_GRAPH_CERT_PFX_BASE64");
+        CHECK(what == "graph_cert_password does not open the PFX in graph_cert_pfx_base64");
         CHECK(what.find("Sentinel") == std::string::npos);
     }
     SECTION("the Veeam secrets play no part")
@@ -504,7 +506,7 @@ TEST_CASE("certificate_from_secrets reports an unset or wrong secret by its vari
         rp::Secrets secrets;
         secrets.veeam_username = pfx;
         secrets.veeam_password = kPassword;
-        CHECK(error_of(secrets) == "RP_GRAPH_CERT_PFX_BASE64 is not set");
+        CHECK(error_of(secrets) == "graph_cert_pfx_base64 is not in the vault");
     }
 }
 
@@ -535,7 +537,7 @@ TEST_CASE("certificate_from_secrets loads the PFX the secrets hold", "[graph][ce
         secrets.graph_cert_password = kPassword;
         std::ostringstream log;
         certificate_from_secrets(secrets, kNow, string_logger(log));
-        CHECK_THAT(log.str(), ContainsSubstring("the certificate in RP_GRAPH_CERT_PFX_BASE64"));
+        CHECK_THAT(log.str(), ContainsSubstring("the certificate in graph_cert_pfx_base64"));
         CHECK_THAT(log.str(), ContainsSubstring("in 10 day(s)"));
         CHECK_THROWS_AS(certificate_from_secrets(secrets, kNow + 11 * 24h), CertificateError);
     }

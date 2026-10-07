@@ -184,10 +184,10 @@ TEST_CASE("parse_config rejects secret-looking keys without echoing the value", 
     REQUIRE(e.key() == key);
     REQUIRE(std::string{e.what()} ==
             "config key \"" + key +
-                "\" looks like a secret; secrets don't belong in config.json. Set "
-                "RP_VEEAM_USERNAME, RP_VEEAM_PASSWORD, RP_GRAPH_CERT_PFX_BASE64, "
-                "RP_GRAPH_CERT_PASSWORD or RP_SIGNING_KEY_BASE64 in the environment instead "
-                "(they move to the DPAPI vault in W4.5)");
+                "\" looks like a secret; secrets don't belong in config.json. Put it in the "
+                "vault with rpworker vault set <name> instead (veeam_username, "
+                "veeam_password, graph_cert_pfx_base64, graph_cert_password or "
+                "signing_key_base64)");
     REQUIRE_THAT(e.what(), !ContainsSubstring("SENTINEL"));
 }
 
@@ -319,10 +319,10 @@ TEST_CASE("parse_config rejects a secret-looking key without printing an unsafe 
     const rp::ConfigError e = parse_error(doc.dump());
     REQUIRE(e.key().empty());
     REQUIRE(std::string{e.what()} ==
-            "config has a key that looks like a secret; secrets don't belong in config.json. Set "
-            "RP_VEEAM_USERNAME, RP_VEEAM_PASSWORD, RP_GRAPH_CERT_PFX_BASE64, "
-            "RP_GRAPH_CERT_PASSWORD or RP_SIGNING_KEY_BASE64 in the environment instead (they "
-            "move to the DPAPI vault in W4.5)");
+            "config has a key that looks like a secret; secrets don't belong in config.json. Put "
+            "it in the vault with rpworker vault set <name> instead (veeam_username, "
+            "veeam_password, graph_cert_pfx_base64, graph_cert_password or "
+            "signing_key_base64)");
 }
 
 TEST_CASE("parse_config prints a secret-looking key of 64 safe characters", "[config]")

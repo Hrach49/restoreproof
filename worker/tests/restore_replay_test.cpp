@@ -315,7 +315,8 @@ struct Replay {
     {
         rp::RestoreCommandEnv env;
         env.default_config_path = [] { return std::filesystem::path{"unused.json"}; };
-        env.load_secrets = [] {
+        env.default_vault_path = [] { return std::filesystem::path{"unused.bin"}; };
+        env.load_secrets = [](const std::filesystem::path&) {
             return rp::Secrets{vrl::kUsername, vrl::kPassword, rp::test::graph_lab::pfx_base64(),
                                std::string{rp::test::graph_lab::kPfxPassword}};
         };

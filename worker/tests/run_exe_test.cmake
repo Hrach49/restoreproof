@@ -2,14 +2,16 @@
 # ctest's PASS_REGULAR_EXPRESSION ignores the exit code and WILL_FAIL accepts
 # any non-zero one, a crash included, so tests of rpworker.exe go through here.
 #
-#   cmake -DEXE=<path> [-DARGS=<arg>] [-DUNSET_ENV=<name>] -DEXIT_CODE=<n>
-#         -DSTDOUT=<line> -DSTDERR=<line> -P run_exe_test.cmake
+#   cmake -DEXE=<path> [-DARGS=<arg>] [-DUNSET_ENV=<name>] [-DSTDIN=<file>]
+#         -DEXIT_CODE=<n> -DSTDOUT=<line> -DSTDERR=<line> -P run_exe_test.cmake
 #
 # STDOUT and STDERR each name the one line the stream must hold, newline
 # included; an empty value means the stream must be empty. CRLF counts as LF.
 # ARGS is a CMake list; pass one argument unless you escape the semicolons.
 # UNSET_ENV, also a list, names environment variables removed before the run,
 # so a test doesn't depend on what the shell that started ctest has set.
+# STDIN names a file whose bytes are the exe's stdin (W4.5: what `rpworker
+# vault set` reads when stdin isn't a console); without it stdin is empty.
 
 cmake_minimum_required(VERSION 3.25)
 
@@ -23,8 +25,14 @@ foreach(var IN LISTS UNSET_ENV)
     unset(ENV{${var}})
 endforeach()
 
+set(input_args "")
+if(DEFINED STDIN AND NOT "${STDIN}" STREQUAL "")
+    set(input_args INPUT_FILE "${STDIN}")
+endif()
+
 execute_process(
     COMMAND "${EXE}" ${ARGS}
+    ${input_args}
     RESULT_VARIABLE actual_exit
     OUTPUT_VARIABLE actual_stdout
     ERROR_VARIABLE actual_stderr

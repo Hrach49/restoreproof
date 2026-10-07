@@ -39,6 +39,7 @@ struct PipelineArgs {
     std::optional<sampling::CanaryCursor> cursor;
     std::optional<std::string_view> manifest;
     std::optional<std::string_view> config;
+    std::optional<std::string_view> vault; // W4.5: the vault file; nullopt = the default
     std::optional<std::string_view> record;
     // `test --evidence <dir>` (W4.2): the runs root, in which the run makes
     // its folder <dir>\<run_id>. Not one of parse_pipeline_args' options: the
@@ -47,7 +48,7 @@ struct PipelineArgs {
 };
 
 // Whether each of those options in `options` (--mail --sp --od --point
-// --run-id --canary-cursor --manifest --config --record, each with its
+// --run-id --canary-cursor --manifest --config --vault --record, each with its
 // value) is well-formed by the rules on run_restore_command, each copied
 // into `parsed`.
 bool parse_pipeline_args(const CommandOptions& options, PipelineArgs& parsed);
@@ -102,9 +103,9 @@ struct Presentation {
 //    exit 1;
 //  - right after the Graph certificate is checked, before the schema, the
 //    manifest, the run mutex and any Veeam call, the signing key is parsed
-//    (rp::SigningKey::from_base64): "config error: RP_SIGNING_KEY_BASE64 is
-//    not set; --evidence signs the result" or "config error:
-//    RP_SIGNING_KEY_BASE64 is not an Ed25519 private key (Base64 of PKCS#8
+//    (rp::SigningKey::from_base64): "config error: signing_key_base64 is
+//    not in the vault; --evidence signs the result" or "config error:
+//    signing_key_base64 is not an Ed25519 private key (Base64 of PKCS#8
 //    DER)", exit 1, no run line. A run without args.evidence never parses
 //    the key nor needs it;
 //  - once the run ID is known and before the run line, the run folder is

@@ -6,8 +6,8 @@
 //
 // Environment (docs/testing.md):
 //   RP_LIVE=1
-//   RP_GRAPH_CERT_PFX_BASE64, RP_GRAPH_CERT_PASSWORD   the Worker app's
-//       certificate (rp/secrets.hpp; lab/entra/set-worker-env.ps1 sets them)
+//   RP_LIVE_VAULT                  the vault with the Worker app's certificate; default
+//       %ProgramData%\RestoreProof\vault.bin (live_secrets.hpp)
 //   RP_LIVE_GRAPH_TENANT_ID        default: the lab tenant
 //   RP_LIVE_GRAPH_CLIENT_ID        default: "RestoreProof Worker"
 //   RP_LIVE_GRAPH_MAILBOX          default: restoretest@, in the Mail scope
@@ -15,6 +15,7 @@
 //   RP_LIVE_GRAPH_DENIED_SITE      default: the tenant's root site, which the
 //                                  app has no Sites.Selected grant on
 
+#include "live_secrets.hpp"
 #include "test_support.hpp"
 
 #include <rp/client_assertion.hpp>
@@ -60,7 +61,7 @@ struct LiveGraph {
     rp::graph::GraphClient client{
         *http, env_or("RP_LIVE_GRAPH_TENANT_ID", kLabTenantId),
         env_or("RP_LIVE_GRAPH_CLIENT_ID", kLabWorkerClientId),
-        rp::graph::certificate_from_secrets(rp::load_secrets_from_env(),
+        rp::graph::certificate_from_secrets(rp::test::live_secrets(),
                                             std::chrono::system_clock::now())};
 };
 

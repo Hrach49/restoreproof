@@ -1,0 +1,47 @@
+W4.5 (#48) step (d): what another account sees, 2026-10-07T01:00:14Z
+local user rp-vault-probe made (member of Users only); password random, never shown
+member of Administrators: False
+
+--- 1. the vault as made (no entry for the probe): read refused by the ACL
+vault ACL: C:\ProgramData\RestoreProof\vault.bin NT AUTHORITY\SYSTEM:(F); BUILTIN\Administrators:(F); OWNER RIGHTS:(F)
+> rpworker vault test   (as rp-vault-probe)
+vault error: C:\ProgramData\RestoreProof\vault.bin: the vault file can't be read
+exit 1
+> rpworker vault list   (as rp-vault-probe)
+vault error: C:\ProgramData\RestoreProof\vault.bin: the vault file can't be read
+exit 1
+
+--- 2. the probe granted Read (rpworker vault grant): machine-scope DPAPI decrypts for any account the ACL admits
+vault ACL: C:\ProgramData\RestoreProof\vault.bin DESKTOP-P55CDUM\rp-vault-probe:(R); NT AUTHORITY\SYSTEM:(F); BUILTIN\Administrators:(F); OWNER RIGHTS:(F)
+> rpworker vault test   (as rp-vault-probe)
+vault C:\ProgramData\RestoreProof\vault.bin: ok
+veeam_username            **** (set)
+veeam_password            **** (set)
+graph_cert_pfx_base64     **** (set)
+graph_cert_password       **** (set)
+signing_key_base64        **** (set)
+exit 0
+
+--- 3. a write by the probe (Read only): refused
+> rpworker vault set veeam_username < probe-value.txt   (as rp-vault-probe)
+vault error: C:\ProgramData\RestoreProof\vault.bin: the vault file couldn't be written
+exit 1
+the vault still reads as the administrator's: veeam_username, veeam_password, graph_cert_pfx_base64, graph_cert_password, signing_key_base64
+temp files left in the folder: 0 (the run's own count said 1: its filter `vault.bin.*` matched vault.bin itself; a listing afterwards showed only vault.bin, owner BUILTIN\Administrators, the three entries)
+
+--- 4. a vault the probe wrote in a folder of its own, read by the administrator: the ownership rule
+> rpworker vault set veeam_username --vault C:\Users\Public\rp-vault-probe\planted.bin < probe-value.txt   (as rp-vault-probe)
+set veeam_username in C:\Users\Public\rp-vault-probe\planted.bin
+exit 0; owner: DESKTOP-P55CDUM\rp-vault-probe
+> rpworker vault list --vault C:\Users\Public\rp-vault-probe\planted.bin   (as the administrator)
+vault error: C:\Users\Public\rp-vault-probe\planted.bin: the vault file is owned by neither SYSTEM, Administrators nor this account
+exit 1
+> rpworker vault set veeam_password --vault C:\Users\Public\rp-vault-probe\planted.bin   (as the administrator, a value piped)
+vault error: C:\Users\Public\rp-vault-probe\planted.bin: the vault file is owned by neither SYSTEM, Administrators nor this account
+exit 1
+
+--- 5. a copy of the blob on another machine: not tried (the lab has one machine)
+
+--- taken away again
+vault ACL: C:\ProgramData\RestoreProof\vault.bin NT AUTHORITY\SYSTEM:(F); BUILTIN\Administrators:(F); OWNER RIGHTS:(F)
+user rp-vault-probe deleted: True; profile folder left: False

@@ -18,6 +18,7 @@
 //   RP_LIVE_RUN_ID          the run ID; default "live-dry-run"
 //   RP_LIVE_SAMPLE_CURSOR   "m,s,o", the canary cursor per type; default "0,0,0"
 
+#include "live_secrets.hpp"
 #include "graph_live_lab.hpp"
 #include "test_support.hpp"
 
@@ -170,7 +171,7 @@ TEST_CASE("live sample: choose_sample picks the same sample twice, the guard acc
     config.veeam_ca_file = ca_file;
     config.veeam_cert_sha256 = env_or("RP_LIVE_VEEAM_CERT_SHA256", kLabCertSha256);
     config.veeam_org_name = kLabOrgName;
-    const rp::Secrets secrets = rp::load_secrets_from_env();
+    const rp::Secrets secrets = rp::test::live_secrets();
     REQUIRE(secrets.veeam_username);
     REQUIRE(secrets.veeam_password);
     const std::string run_id = env_or("RP_LIVE_RUN_ID", "live-dry-run");

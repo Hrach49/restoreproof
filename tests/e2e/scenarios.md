@@ -44,12 +44,11 @@ Do these once per session. They are the steps of `docs/testing.md`, "Test by han
    ```
 
 2. Build: `cmake --build --preset dev`. The build must succeed.
-3. Set the secrets for this window only:
+3. Make sure the vault holds the five secrets (W4.5; once, from this elevated shell):
 
    ```powershell
-   $env:RP_VEEAM_USERNAME = 'rp-veeam'
-   $env:RP_VEEAM_PASSWORD = '<the rp-veeam password from Credential Manager>'
-   . ..\lab\entra\set-worker-env.ps1
+   ..\lab\entra\fill-worker-vault.ps1
+   .\build\dev\rpworker.exe vault list
    ```
 
 4. Make a folder for run summaries, outside the repository (they hold tenant data):

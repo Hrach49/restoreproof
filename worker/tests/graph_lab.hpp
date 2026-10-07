@@ -45,7 +45,7 @@ inline const std::string kChildrenQuery =
     "/children?$select=id,name,size,cTag,createdDateTime,lastModifiedDateTime,file,folder&$top=200";
 inline const std::string kPrefer = std::string{rp::graph::kMailPrefer};
 
-// The Worker app's certificate as RP_GRAPH_CERT_PFX_BASE64 holds it, valid at kNow.
+// The Worker app's certificate as the vault's graph_cert_pfx_base64 holds it, valid at kNow.
 inline const std::string& pfx_base64()
 {
     static const std::string pfx = rp::test::to_base64(rp::test::make_pfx(

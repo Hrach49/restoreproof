@@ -3,8 +3,8 @@
 // The Worker's client certificate for the Graph sign-in (W2.1,
 // docs/decisions.md). The Worker signs in to Entra as its own app,
 // "RestoreProof Worker", with a certificate rather than a client secret: a
-// PFX that arrives as Base64 in RP_GRAPH_CERT_PFX_BASE64, with its password
-// in RP_GRAPH_CERT_PASSWORD, until the vault (W4.5). It is opened once,
+// PFX that the vault holds as Base64 under graph_cert_pfx_base64, with its
+// password under graph_cert_password (W4.5). It is opened once,
 // checked in full before any network call, and from then on only the key and
 // certificate objects are kept. Each token request then carries a new client
 // assertion signed with that key (make_client_assertion). No OpenSSL type
@@ -59,10 +59,10 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
-// What the messages call the two secrets: the variables they come from.
+// What the messages call the two secrets: the vault's names for them (W4.5).
 struct CertificateSecretNames {
-    std::string_view pfx_base64 = kEnvGraphCertPfxBase64;
-    std::string_view password = kEnvGraphCertPassword;
+    std::string_view pfx_base64 = kNameGraphCertPfxBase64;
+    std::string_view password = kNameGraphCertPassword;
 };
 
 // A warning is logged when the certificate expires this soon.
@@ -70,7 +70,7 @@ inline constexpr std::chrono::hours kCertificateExpiryWarning{30 * 24};
 
 // Opens the PFX that `pfx_base64` holds in standard Base64 with `password` and
 // checks it, in this order, throwing CertificateError at the first problem:
-// `pfx_base64` is empty ("<name> is not set"); it isn't strict Base64
+// `pfx_base64` is empty ("<name> is not in the vault"); it isn't strict Base64
 // (rp::base64_decode: one line, no spaces); the bytes aren't a PFX; the PFX
 // has no MAC, so the password can't be checked (refused); the password doesn't
 // open it (an empty password is tried both as "" and as no password, and is
@@ -92,12 +92,13 @@ ClientCertificate load_client_certificate(std::string_view pfx_base64, std::stri
                                           const CertificateSecretNames& names = {},
                                           std::shared_ptr<spdlog::logger> logger = nullptr);
 
-// load_client_certificate on the Worker's secrets: the PFX from
-// RP_GRAPH_CERT_PFX_BASE64 and its password from RP_GRAPH_CERT_PASSWORD, an
-// unset password standing for an empty one. The one entry point the Worker
-// uses, before any Graph call: an unset PFX is "RP_GRAPH_CERT_PFX_BASE64 is
-// not set", a PFX that needs a password when none is set is "RP_GRAPH_CERT_PASSWORD
-// is not set, and ...", and every other message names the variables too.
+// load_client_certificate on the Worker's secrets: the PFX from the vault's
+// graph_cert_pfx_base64 and its password from graph_cert_password, an absent
+// password standing for an empty one. The one entry point the Worker uses,
+// before any Graph call: an absent PFX is "graph_cert_pfx_base64 is not in
+// the vault", a PFX that needs a password when none is set is
+// "graph_cert_password is not in the vault, and ...", and every other
+// message names the two secrets too.
 ClientCertificate certificate_from_secrets(const Secrets& secrets,
                                            std::chrono::system_clock::time_point wall_now,
                                            std::shared_ptr<spdlog::logger> logger = nullptr);

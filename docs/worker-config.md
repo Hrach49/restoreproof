@@ -264,99 +264,174 @@ by default.
 `config.json` must not contain secrets. Any top-level key whose name, in any case, contains
 `password`, `passwd`, `pwd`, `secret`, `token`, `api_key`, `apikey`, `credential`,
 `private_key`, `access_key`, `signing_key`, `connection_string`, `pfx` or `passphrase` is
-rejected, and checked before anything else so that the secret is removed first. None of the
-18 settings matches. `cert` is not on the list: a certificate's hash or path is public, and
-`veeam_cert_sha256` is a setting. A key such as `graph_cert_thumbprint` is refused only as
-unknown.
+rejected, and checked before anything else so that the secret is removed first: `config key
+"<key>" looks like a secret; secrets don't belong in config.json. Put it in the vault with
+rpworker vault set <name> instead (veeam_username, ...)`. None of the 18 settings matches.
+`cert` is not on the list: a certificate's hash or path is public, and `veeam_cert_sha256` is
+a setting. A key such as `graph_cert_thumbprint` is refused only as unknown.
 
-Until the DPAPI vault (`%ProgramData%\RestoreProof\vault.bin`) arrives in W4.5 (issue #48),
-secrets are read from these environment variables, whose names are defined once in
+Since W4.5 (`docs/decisions.md` 2026-10-07, W4.5) the Worker's secrets live in the **vault**,
+`%ProgramData%\RestoreProof\vault.bin`, and nowhere else: no command, connector or client reads
+a secret from an environment variable or a file, and the `RP_*` variables of W1.2 to W4.3 are
+gone. The vault holds five named values, the names defined once in
 `worker/include/rp/secrets.hpp`:
 
-| Variable | What it is for |
+| Name | What it is for |
 |---|---|
-| `RP_VEEAM_USERNAME` | The account the Worker signs in to the Veeam REST API with. |
-| `RP_VEEAM_PASSWORD` | That account's password. |
-| `RP_GRAPH_CERT_PFX_BASE64` | The Worker app's certificate with its private key: the PFX file as one line of standard Base64. See "Microsoft Graph app" below. |
-| `RP_GRAPH_CERT_PASSWORD` | The PFX's password. Unset only if the PFX has none. |
-| `RP_SIGNING_KEY_BASE64` | The Worker's Ed25519 signing key (W4.3): one line of standard Base64 of the private key's PKCS#8 DER. See "The signing key" below. |
+| `veeam_username` | The account the Worker signs in to the Veeam REST API with (`MACHINE\user`). |
+| `veeam_password` | That account's password. |
+| `graph_cert_pfx_base64` | The Worker app's certificate with its private key: the PFX file as one line of standard Base64. See "Microsoft Graph app" below. |
+| `graph_cert_password` | The PFX's password. Absent only if the PFX has none. |
+| `signing_key_base64` | The Worker's Ed25519 signing key (W4.3): one line of standard Base64 of the private key's PKCS#8 DER. See "The signing key" below. |
 
-Any of them may be unset for now. W1.0 chose admin mode (`docs/decisions.md`, 2026-09-26):
+Which names a command needs depends on the command: `veeam list` the first two, `graph list`
+the certificate's two, `restore` and `test` the first four, `test --evidence` and `signer
+public-key` the signing key too, `config check` none (it says which are there). A name that
+isn't in the vault is `config error: <name> is not in the vault` (for the PFX's password,
+`config error: graph_cert_password is not in the vault, and the PFX in graph_cert_pfx_base64
+needs a password`; for the key, `config error: signing_key_base64 is not in the vault;
+--evidence signs the result`), exit 1, before any service is called.
 
-- `RP_VEEAM_USERNAME` and `RP_VEEAM_PASSWORD` are the local Veeam account (`rp-veeam` in the
-  lab);
-- `RP_GRAPH_CERT_PFX_BASE64` and `RP_GRAPH_CERT_PASSWORD` are the certificate of the
-  Worker's own Graph app (W2.1);
-- `RP_SIGNING_KEY_BASE64` is the key `rpworker test --evidence` signs the result with (W4.3);
-  only that command and `rpworker signer public-key` need it;
-- the Entra application certificate that restore requests must carry has no variable yet. W2.4
-  used Veeam's own organisation app in the lab, exporting its certificate per run; which
-  credential the Worker carries, and how it is stored, is open until a spike before W4.5
-  (`docs/decisions.md` 2026-09-28, W2.4). Nothing is to be stored before that spike.
+**The file.** `vault.bin` is the blob Windows' DPAPI (`CryptProtectData`) made under *machine*
+scope, with a fixed entropy and the description `restoreproof.vault.v1`; inside it is one JSON
+object of the names that are set, each a non-empty string of at most 64 KiB, in the same
+canonical form as a result (`canonical-json-v1`). Machine scope means any process on this
+machine can decrypt it and no process on another machine can; so **the file's ACL is what
+keeps other accounts out**, and the entropy is a label, not a second lock. The file is at most
+1 MiB.
 
-A variable set to an empty string counts as unset.
+**The ACL.** `rpworker vault set` makes a new vault file with a protected DACL of three
+entries, `SYSTEM: Full`, `BUILTIN\Administrators: Full` and `OWNER RIGHTS: Full` (the file's
+owner, whoever that is), and nothing for `Users`. `rpworker vault grant <account>` adds one
+`Read` entry for an account, which is how the Worker's service account (a virtual account,
+`NT SERVICE\<service name>`, W4.12) is let read it; W7.1's installer will run it. A write
+(`set`, `remove`) keeps the DACL it finds, so a grant survives a password rotation. Every
+read and write refuses a vault file whose owner is neither `SYSTEM`, `Administrators` nor the
+calling account (`<file>: the vault file is owned by neither SYSTEM, Administrators nor this
+account`): a file another local user planted before the first `vault set` is never read and
+never written over; remove it and set the secrets again. Each of a read, a write and a `grant`
+opens the file once and applies the owner rule, the read and the ACL change through that one
+handle, so the file that passed the rule is the file that is decrypted or changed, whatever
+is moved onto its path meanwhile (PR #162 review). The folder
+`%ProgramData%\RestoreProof` is made by `vault set` when it isn't there, with the inherited
+ACL; an existing folder's ACL is left alone (W7.1 tightens it).
 
-Values are read from Windows' own Unicode environment, so any character works, including
-ones outside the machine's ANSI code page (such as `€` or `Ж` on a Western-European
-machine). A value that isn't valid Unicode, which only a program can create, is rejected with
-`config error: environment variable <name> is not valid Unicode` rather than changed.
+**`--vault <file>`.** Every command that reads a secret, and every `vault` command, takes
+`--vault <file>` to use another vault file; without it the default is read. The default path is
+looked up only when `--vault` isn't given, as `--config`'s is. The exe tests and the lab's
+other vaults use it; a vault under a folder of your own needs no elevation.
 
-To set them for the current PowerShell session:
+**What a vault that can't be used says**, `vault error: ` from the `vault` commands and
+`config error: ` from the others, each naming the file as given and never a value:
 
-```powershell
-$env:RP_VEEAM_USERNAME = '...'
-$env:RP_VEEAM_PASSWORD = '...'
-$env:RP_GRAPH_CERT_PFX_BASE64 = [Convert]::ToBase64String([IO.File]::ReadAllBytes('C:\path\to\worker-graph.pfx'))
-$env:RP_GRAPH_CERT_PASSWORD = '...'
-$env:RP_SIGNING_KEY_BASE64 = '...'
+| Message | When |
+|---|---|
+| `<file>: vault file not found` | no file there: run `rpworker vault set <name>` |
+| `<file>: the vault file can't be read` | no access (the account has no entry: `vault grant` it), a folder, larger than 1 MiB, or a read that stopped short |
+| `<file>: the vault file is owned by neither SYSTEM, Administrators nor this account` | the ownership rule above |
+| `<file>: the vault can't be decrypted on this machine by this account (error 0x<8 hex>)` | DPAPI refused: a file written on another machine, or under a user's scope by another program, or damaged; DPAPI doesn't tell these apart (bytes that are no DPAPI blob at all are `0x00000057`, a blob that doesn't decrypt `0x0000000d`) |
+| `<file>: not a RestoreProof vault` | decrypts, but another description, or the plaintext isn't a canonical JSON object of non-empty strings under 64 KiB each |
+| `<file>: the vault holds a name that isn't one of the five secrets` | a sixth name, or a misspelt one (the name is never echoed) |
+| `<file>: the vault's folder couldn't be made`, `<file>: the vault file couldn't be written`, `<file>: the vault couldn't be encrypted (error 0x…)` | a write that failed |
+| `<file>: the account <account> isn't known on this machine`, `<file>: read on the vault file couldn't be granted (error <n>)` | `vault grant` |
+
+Values are stored as UTF-8, so any character works. A value that isn't valid Unicode never
+reaches the file: `vault set` refuses it.
+
+In the lab, `lab\entra\fill-worker-vault.ps1` fills the vault from Credential Manager and the
+PFX file (`lab/README.md`, "The vault"); by hand, `rpworker vault set <name>` below.
+
+### `rpworker vault`
+
+```
+rpworker vault set <name> [--vault <file>]
+rpworker vault remove <name> [--vault <file>]
+rpworker vault list [--vault <file>]
+rpworker vault test [--vault <file>]
+rpworker vault grant <account> [--vault <file>]
 ```
 
-In the lab, dot-source `lab/entra/set-worker-env.ps1` (`. .\lab\entra\set-worker-env.ps1`)
-instead: it sets the two Graph variables from the lab's PFX and Credential Manager, and the
-signing key from its own Credential Manager entry when there is one (`lab/README.md`, "The
-signing key"), without printing any of them, and `-Clear` removes all three.
+The one way the five secrets get into the vault, out of it, and the one way another account is
+let read it. The code is `rp::run_vault_command` in `worker/include/rp/vault_command.hpp`,
+over `rp::read_vault`, `write_vault` and `grant_vault_read` in `worker/include/rp/vault.hpp`.
+The default vault is under `%ProgramData%`, so `set`, `remove` and `grant` on it need an
+elevated shell (Run as administrator); `list` and `test` need read access, which an
+administrator has.
 
-A Windows service does not see a user's session variables. Until the vault lands, a Worker
-running as a service would need them set at machine level, where any local administrator can
-read them.
+- **`set <name>`** reads the value from the console **without echo** (the prompt `value for
+  <name> (not shown): ` on stderr; type or paste it, press Enter) or, when stdin isn't a console,
+  the first line of stdin as UTF-8 (a trailing line end stripped; nothing after the first line
+  is read). Never from an argument: a value on a command line is in the shell's history, the
+  process list and any transcript. Then it reads the vault (none: an empty one), puts the value
+  under the name, writes the file whole, and prints `set <name> in <file>`. A value is refused
+  before the vault is touched, exit 1: `vault error: the value is empty`, `... is longer than
+  65536 bytes`, `... isn't valid Unicode` (a console line with a lone surrogate), `... isn't
+  valid UTF-8` (a piped line), `... couldn't be read`. The PFX's Base64 is a few thousand
+  characters: pipe it rather than paste it:
+
+  ```powershell
+  [Convert]::ToBase64String([IO.File]::ReadAllBytes('C:\path\to\worker-graph.pfx')) | .\rpworker.exe vault set graph_cert_pfx_base64
+  ```
+
+  (PowerShell 7 pipes to a native program as UTF-8; Windows PowerShell 5.1 doesn't, so use
+  `pwsh` for a value with a character outside ASCII.)
+- **`remove <name>`**: `removed <name> from <file>`, or `<name> was not in <file>; nothing
+  changed`, exit 0 both.
+- **`list`**: the names in the vault, one per line, in the order of the table above; nothing
+  for an empty vault. Never a value or a length.
+- **`test`**: decrypts the vault as the calling account and prints `vault <file>: ok` and the
+  five names, each `**** (set)` or `(not set)`. It is what to run after a `grant`, as that
+  account, and what `rpworker doctor` (W7.2) will run.
+- **`grant <account>`**: a `Read` entry for the account on the file's ACL, merged into one it
+  already has; `granted read on <file> to <account>`. The account as `LookupAccountName` takes
+  it (`NT SERVICE\RestoreProof`, `DESKTOP\user`) or as a SID string (`S-1-5-80-...`). Only
+  `S-1-...` is read as a SID: SDDL's two-letter aliases (`WD` for Everyone, `AU` for
+  Authenticated Users) are account names here like any other, so `grant WD` grants a user
+  called `WD` or nobody.
+
+| Exit code | When |
+|---|---|
+| 0 | done |
+| 1 | a vault that can't be used (the table above, after `vault error: `), a `--vault` path that isn't UTF-8 (`vault error: the --vault path is not valid UTF-8`), a value `set` refuses |
+| 64 | no subcommand or an unknown one, a word too many, a missing name or account, `--vault` without a file, empty or twice (the usage line); a name that isn't one of the five: `usage error: the name must be one of veeam_username, veeam_password, graph_cert_pfx_base64, graph_cert_password, signing_key_base64` (the word given is never echoed) |
 
 ### The signing key
 
-`RP_SIGNING_KEY_BASE64` is the private half of the Ed25519 key pair that signs a run folder's
+`signing_key_base64` is the private half of the Ed25519 key pair that signs a run folder's
 result (W4.3; `docs/verification.md`, "The signature"; `docs/decisions.md` 2026-10-05, W4.3
 point 3). The value is one line of standard Base64, 64 characters, of the key's PKCS#8 DER (48
 bytes: the 16 bytes `302e020100300506032b657004220420`, then the 32-byte seed). It is the body
 line of the PEM that `openssl genpkey -algorithm ed25519` writes, without the two armour
 lines. No `rpworker` command makes or prints a private key; in the lab `python -m seeder
-new-signing-key` makes the pair and keeps the line in Credential Manager (`lab/README.md`).
-W4.5's vault will hold the same value as `signing_private_key`, and W7.1's installer will
-make it.
+new-signing-key` makes the pair and keeps the line in Credential Manager, and
+`fill-worker-vault.ps1` moves it into the vault (`lab/README.md`). W7.1's installer will make
+it.
 
 - **When it is required.** Only `rpworker test --evidence <dir>`, which always signs, and
-  `rpworker signer public-key`. Every other command reads the variable with the other secrets
-  and never parses or needs it: `restore`, `test` without `--evidence` (`--json` included),
-  `veeam list`, `graph list` and `config check` run with it unset or holding something that
-  isn't a key, and `signer verify` reads no secret at all.
+  `rpworker signer public-key`. Every other command reads the vault with it in and never parses
+  or needs it: `restore`, `test` without `--evidence` (`--json` included), `veeam list`, `graph
+  list` and `config check` run with it absent or holding something that isn't a key, and
+  `signer verify` reads no secret at all.
 - **When it is checked.** With `--evidence`, right after the Graph certificate is checked:
   before the schema check, the manifest, the run mutex and any Veeam call. Exit 1, no run
   line, nothing done:
 
   ```
-  config error: RP_SIGNING_KEY_BASE64 is not set; --evidence signs the result
-  config error: RP_SIGNING_KEY_BASE64 is not an Ed25519 private key (Base64 of PKCS#8 DER)
+  config error: signing_key_base64 is not in the vault; --evidence signs the result
+  config error: signing_key_base64 is not an Ed25519 private key (Base64 of PKCS#8 DER)
   ```
 
   The second is for anything but strict Base64 of exactly those 48 bytes: Base64 with a line
   break or without padding, 47 or 49 bytes, another algorithm's header, an RSA key, the PEM
   with its armour lines. Neither line ever shows the value.
-- **`config check`** prints `RP_SIGNING_KEY_BASE64     **** (set)` or `(not set)` and doesn't
-  look at the value.
+- **`config check`** and **`vault test`** print `signing_key_base64        **** (set)` or
+  `(not set)` and don't look at the value.
 - **Never logged.** `redact()` masks the key names `signing_key`, `signing_key_base64` and
   `signing_private_key` and any `-----BEGIN ... PRIVATE KEY-----` block. The key's text and
   the two other shapes its seed could leak in (Base64, hex) are among the run's secret values
   that the run folder's files are checked against; a `--record` recorder checks its fixtures
-  against the text. The run wipes its copies of the key when it ends; the process's own
-  environment holds the variable until the process ends, which only the vault changes.
+  against the text. The run wipes its copies of the key when it ends; the vault's reader wipes
+  the file's bytes and DPAPI's plaintext buffer.
 - **The public half** is what a verifier is given, and what is registered with the Cloud
   (C5.5): `rpworker signer public-key` prints it ("`rpworker signer`" below).
 
@@ -373,49 +448,51 @@ registration, **RestoreProof Worker** (L1.5). What it may read and why is in
   value is in `lab/tenant.md`, "RestoreProof Worker app"). It is printed at the end of
   `lab/entra/new-worker-app.ps1`. Not the seeder's app, nor Veeam's.
 - **The credential is a certificate, not a client secret** (`docs/decisions.md`,
-  2026-09-27). Until the vault arrives it comes from two variables (W2.1):
+  2026-09-27). It comes from two names of the vault (W2.1, W4.5):
 
-  | Variable | What it is for |
+  | Name | What it is for |
   |---|---|
-  | `RP_GRAPH_CERT_PFX_BASE64` | The app's certificate with its private key: the PFX file as one line of standard Base64 (`A-Z`, `a-z`, `0-9`, `+`, `/`, padded with `=`; no line breaks, no base64url). |
-  | `RP_GRAPH_CERT_PASSWORD` | The PFX's password. Leave it unset only for a PFX that has none. |
+  | `graph_cert_pfx_base64` | The app's certificate with its private key: the PFX file as one line of standard Base64 (`A-Z`, `a-z`, `0-9`, `+`, `/`, padded with `=`; no line breaks, no base64url). |
+  | `graph_cert_password` | The PFX's password. Leave it out only for a PFX that has none. |
 
   Before its first Graph call the Worker opens the PFX once and checks it, stopping with a
-  message that names the variable, never its value: the PFX variable is not set; it isn't
+  message that names the secret, never its value: the PFX isn't in the vault; it isn't
   strict Base64; it doesn't hold a PFX; the PFX has no integrity check (MAC), so its password
-  can't be checked; the password doesn't open it (`RP_GRAPH_CERT_PASSWORD is not set, and the
-  PFX in RP_GRAPH_CERT_PFX_BASE64 needs a password` when it is unset); it uses a legacy cipher
+  can't be checked; the password doesn't open it (`graph_cert_password is not in the vault,
+  and the PFX in graph_cert_pfx_base64 needs a password` when it is absent); it uses a legacy cipher
   that OpenSSL 3 no longer reads (RC2, RC4, DES), or the password is right and it still can't
   be read (a damaged file), in both cases re-export it with `AES256_SHA256`, as
   `lab/entra/new-worker-app.ps1` does; it holds no private key, no certificate, or a key
   that matches no certificate in it; the key isn't RSA of at least 2048 bits; the certificate
   has expired or isn't valid yet. A certificate that expires within 30 days still loads, with
   a warning in the log. `rpworker config check` doesn't do any of this: it stays offline and
-  only says whether each variable is set.
+  only says whether each name is in the vault.
 
   The Worker then signs every token request with a new client assertion made with the key
   (`docs/glossary.md`); the key itself is never sent. How it signs in and what a refusal says
   are in `docs/security/graph-permissions.md`, "How the Worker signs in".
 
   In the lab the PFX is `%LOCALAPPDATA%\RestoreProof\lab\worker-graph.pfx` and its password
-  is the Credential Manager generic credential `RestoreProof Lab - Worker Graph app PFX`.
-  Neither ever goes into `config.json`, which rejects key names containing `pfx`,
-  `passphrase`, `password` or `private_key`.
+  is the Credential Manager generic credential `RestoreProof Lab - Worker Graph app PFX`;
+  `lab\entra\fill-worker-vault.ps1` puts both into the vault. Neither ever goes into
+  `config.json`, which rejects key names containing `pfx`, `passphrase`, `password` or
+  `private_key`.
 
 ## `rpworker config check`
 
 ```
-rpworker config check [--config <path>]
+rpworker config check [--config <path>] [--vault <file>]
 ```
 
-Loads the config file and the secrets and prints what it found. It changes nothing. Without
-`--config` it reads the default path; with `--config`, or when the arguments are wrong, it
-doesn't look up `%ProgramData%` at all.
+Loads the config file and prints what it found, then reads the vault (W4.5) and prints which
+of the five secrets are in it. It changes nothing. Without `--config` it reads the default
+config path and without `--vault` the default vault; with both given, or when the arguments
+are wrong, it doesn't look up `%ProgramData%` at all.
 
 | Exit code | Meaning |
 |---|---|
-| 0 | The config is valid. Unset secrets are not an error. |
-| 1 | The config failed to load or validate; stderr has `config error: <path>: <message>`. If `%ProgramData%` can't be resolved, `config error: cannot find the ProgramData folder`; if a secret variable isn't valid Unicode, `config error: environment variable <name> is not valid Unicode`; any other failure prints `config error: unexpected failure`, never the underlying message. |
+| 0 | The config is valid and the vault could be read. A secret that isn't in the vault is not an error. |
+| 1 | The config failed to load or validate; stderr has `config error: <path>: <message>` and stdout is empty. Or the config is fine and the vault can't be used: the settings are printed, then stderr has `config error: <file>: vault file not found` (or another of the vault's messages, "Secrets" above). If `%ProgramData%` can't be resolved, `config error: cannot find the ProgramData folder`; any other failure prints `config error: unexpected failure`, never the underlying message. |
 | 64 | Arguments not understood; stderr has the usage line. |
 
 Sample output (placeholder values):
@@ -441,12 +518,12 @@ log_level                 info
 veeam_ca_file             C:\ProgramData\RestoreProof\veeam-rest.pem
 veeam_cert_sha256         9FB19E0E604C9BE49F83D8E508EFA8EA0986A952377C783E5035CEA2D772A213
 screenshots_enabled       false
-secrets (environment variables; values are never shown):
-RP_VEEAM_USERNAME         **** (set)
-RP_VEEAM_PASSWORD         **** (set)
-RP_GRAPH_CERT_PFX_BASE64  **** (set)
-RP_GRAPH_CERT_PASSWORD    **** (set)
-RP_SIGNING_KEY_BASE64     **** (set)
+secrets (vault C:\ProgramData\RestoreProof\vault.bin; values are never shown):
+veeam_username            **** (set)
+veeam_password            **** (set)
+graph_cert_pfx_base64     **** (set)
+graph_cert_password       **** (set)
+signing_key_base64        **** (set)
 ```
 
 Without `veeam_ca_file` its line reads `veeam_ca_file             (not set)`, and likewise
@@ -455,6 +532,8 @@ Without `veeam_ca_file` its line reads `veeam_ca_file             (not set)`, an
 
 A secret prints only as `**** (set)` or `(not set)`: never any character of its value, nor its
 length. None is opened or parsed here: a signing key that isn't a key still reads `**** (set)`.
+The vault is read after the settings are printed, so on a fresh installation the check still
+shows its config and then names what is missing.
 
 An error looks like this:
 
@@ -465,14 +544,14 @@ config error: C:\ProgramData\RestoreProof\config.json: config key "poll_interval
 ## `rpworker veeam list`
 
 ```
-rpworker veeam list [--config <path>] [--record <dir>]
+rpworker veeam list [--config <path>] [--vault <file>] [--record <dir>]
 ```
 
 Signs in to the Veeam REST API (`veeam_url`, with `veeam_ca_file` and `veeam_cert_sha256` as
 in the config), lists every Microsoft 365 organisation Veeam backs up and each one's restore
 points, logs out, and prints them as a table. It reads nothing else and changes nothing. The
-config is read as `rpworker config check` reads it; `RP_VEEAM_USERNAME` and
-`RP_VEEAM_PASSWORD` must be set (see "Secrets"). The code is `rp::run_veeam_command` in
+config is read as `rpworker config check` reads it; `veeam_username` and `veeam_password`
+must be in the vault (see "Secrets"). The code is `rp::run_veeam_command` in
 `worker/include/rp/veeam_command.hpp`.
 
 With the lab's organisation (the recorded responses in `worker/tests/fixtures/veeam/`):
@@ -521,15 +600,15 @@ shown. Debug lines are not shown.
 ## `rpworker graph list`
 
 ```
-rpworker graph list [--hash] [--config <path>] [--record <dir>]
+rpworker graph list [--hash] [--config <path>] [--vault <file>] [--record <dir>]
 ```
 
 Shows what is in the three restore targets right now: the test mailbox's Inbox
 (`test_mailbox`), the RestoreTarget library (`test_library_id`) and the test OneDrive's
 RestoreTarget folder (`test_onedrive_drive_id`, `test_onedrive_folder_id`). It is the check to
 run before and after a restore. It signs in to Graph as the Worker's app (`graph_tenant_id`,
-`graph_client_id`, and the certificate in `RP_GRAPH_CERT_PFX_BASE64` and
-`RP_GRAPH_CERT_PASSWORD`, see "Secrets"), reads, and changes nothing. Before listing each file
+`graph_client_id`, and the certificate in the vault's `graph_cert_pfx_base64` and
+`graph_cert_password`, see "Secrets"), reads, and changes nothing. Before listing each file
 target it checks that the drive or folder really is a RestoreTarget where the config says (the
 guard, `docs/decisions.md` 2026-09-28, W2.2); the canaries' RestoreTest library and folder are
 never read. Since W3.2 the mail listing runs the guard's mailbox check first too: one GET of
@@ -597,7 +676,7 @@ not shown.
 ```
 rpworker restore [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>]
                  [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>]
-                 [--record <dir>]
+                 [--vault <file>] [--record <dir>]
 ```
 
 **It writes to the tenant.** It picks a restore point of `veeam_org_name`, chooses a sample
@@ -631,11 +710,13 @@ It needs:
   passed and the explore sessions are open, before anything is sent: `restore error:
   veeam_m365: certificate <thumbprint> in LocalMachine\My: its private key can't be opened
   (error 0x80090016); ...; the restore was not sent`, exit 4;
-- `RP_VEEAM_USERNAME` and `RP_VEEAM_PASSWORD` (`config error: <name> is not set`, exit 1),
-  then the Worker app's certificate for the guard's Graph reads: `RP_GRAPH_CERT_PFX_BASE64`
-  and, unless the PFX has none, `RP_GRAPH_CERT_PASSWORD`. The certificate is opened and
-  checked before any Veeam call, as `graph list` does: unset, not Base64, a password that
-  doesn't open it, or not valid now is exit 1 with the same messages. See "Secrets";
+- the vault (W4.5; `--vault <file>` or the default; a vault that can't be used is `config
+  error: <file>: ...`, exit 1), read once after the config: `veeam_username` and
+  `veeam_password` (`config error: <name> is not in the vault`, exit 1), then the Worker app's
+  certificate for the guard's Graph reads: `graph_cert_pfx_base64` and, unless the PFX has
+  none, `graph_cert_password`. The certificate is opened and checked before any Veeam call, as
+  `graph list` does: absent, not Base64, a password that doesn't open it, or not valid now is
+  exit 1 with the same messages. See "Secrets";
 - the canary manifest (`lab/seed-manifest.json`, schema `seed-manifest.v1`), whose
   `tenant_id` must be `graph_tenant_id` and which must name no restore target (`config error:
   canary manifest: ...`, exit 1, before any Veeam call);
@@ -935,14 +1016,14 @@ lines are not shown.
 ```
 rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>]
               [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>]
-              [--record <dir>] [--json <file> | --evidence <dir>]
+              [--vault <file>] [--record <dir>] [--json <file> | --evidence <dir>]
 ```
 
 **It writes to the tenant and deletes there, as `restore` does.** It is the whole test of a
 restore point in one run (W3.6): clean before, restore point, sample, guard, restore, verify,
 status, clean after and the step timings. It runs the same pipeline as `rpworker restore`
 (`worker/src/run_pipeline.hpp`), so everything in "`rpworker restore`" holds for it: what it
-needs (an elevated shell, the secrets, the manifest, the run mutex), the order of the steps,
+needs (an elevated shell, the vault, the manifest, the run mutex), the order of the steps,
 the run line, the header, the guard, the cleanup lines, the status line and its warnings, the
 timings' table, `--record`, and the exit codes. The code is `rp::run_test_command` in
 `worker/include/rp/test_command.hpp`; the choices are `docs/decisions.md` 2026-10-03 (W3.6).
@@ -1102,7 +1183,7 @@ exit code is kept. `<file>` is the value as given, control characters shown as s
 Writes the run folder `<dir>\<run_id>\` (W4.2; `docs/verification.md`, "The run folder";
 `docs/decisions.md` 2026-10-05, W4.2) and signs its result (W4.3; `docs/verification.md`, "The
 signature"; `docs/decisions.md` 2026-10-05, W4.3). It always signs: there is no flag for an
-unsigned folder, so it needs `RP_SIGNING_KEY_BASE64` ("The signing key" above). `<dir>` is the runs root and is made if it isn't there;
+unsigned folder, so it needs the vault's `signing_key_base64` ("The signing key" above). `<dir>` is the runs root and is made if it isn't there;
 there is no default, so nothing is written without the flag (the service will pass
 `%ProgramData%\RestoreProof\runs`, W4.8). `--evidence` and `--json` can't be given together
 (exit 64): the folder's `result.json` is the `--json` file. `restore` takes neither.
@@ -1151,13 +1232,13 @@ The second is for a `--run-id` that isn't a plain file name: it holds a `:`, end
 folder's name is the run ID as it is, never an encoded form. A run ID the run makes itself
 (`rp-<time>-<8 hex>`) always can.
 
-Then the secrets are read and the Graph certificate checked, as for every run, and right after
+Then the vault is read and the Graph certificate checked, as for every run, and right after
 that the signing key is parsed, before the schema check, the manifest, the mutex and any Veeam
 call. Exit 1, no run line, no folder:
 
 ```
-config error: RP_SIGNING_KEY_BASE64 is not set; --evidence signs the result
-config error: RP_SIGNING_KEY_BASE64 is not an Ed25519 private key (Base64 of PKCS#8 DER)
+config error: signing_key_base64 is not in the vault; --evidence signs the result
+config error: signing_key_base64 is not an Ed25519 private key (Base64 of PKCS#8 DER)
 ```
 
 Then, once the run ID is known and before the run line, the folder is made. If something is
@@ -1232,19 +1313,20 @@ the repository.
 ## `rpworker signer`
 
 ```
-rpworker signer public-key
-rpworker signer verify <folder> --public-key <pem file>
+rpworker signer public-key [--vault <file>]
+rpworker signer verify <folder> --public-key <pem file> [--tsa-ca <pem file>]
 ```
 
 Two read-only commands for the signature of a run folder (W4.3; `docs/verification.md`, "The
 signature"; `docs/decisions.md` 2026-10-05, W4.3 point 4 and its build notes). Neither reads
-`config.json`, calls a service or writes a file. The code is `rp::run_signer_command` in
+`config.json`, calls a service or writes a file; `public-key` reads the vault (`--vault <file>`
+or the default), `verify` reads no secret at all. The code is `rp::run_signer_command` in
 `worker/include/rp/signer_command.hpp`. Anything else after `signer` is the usage line, exit
 64.
 
-### `signer public-key`
+### `signer public-key [--vault <file>]`
 
-Prints the public half of the key in `RP_SIGNING_KEY_BASE64`: the "public key exported as PEM
+Prints the public half of the vault's `signing_key_base64`: the "public key exported as PEM
 for registration" (C5.5), and the file a verifier is given. It never prints the private key.
 
 stdout is the key's SubjectPublicKeyInfo PEM and nothing else, three lines:
@@ -1269,11 +1351,11 @@ key file as it is:
 | Exit code | When | stderr |
 |---|---|---|
 | 0 | the PEM is on stdout | `key <key_id>` |
-| 1 | the variable is unset or empty | `config error: RP_SIGNING_KEY_BASE64 is not set` |
-| 1 | it isn't a key | `config error: RP_SIGNING_KEY_BASE64 is not an Ed25519 private key (Base64 of PKCS#8 DER)` |
-| 1 | a secret variable isn't valid Unicode | `config error: environment variable <name> is not valid Unicode` |
+| 1 | the key isn't in the vault | `config error: signing_key_base64 is not in the vault` |
+| 1 | it isn't a key | `config error: signing_key_base64 is not an Ed25519 private key (Base64 of PKCS#8 DER)` |
+| 1 | the vault can't be used | `config error: <file>: vault file not found` (or another of the vault's messages, "Secrets"); `config error: the --vault path is not valid UTF-8` |
 | 1 | stdout couldn't be written | `signer error: the answer couldn't be written`, and no `key` line |
-| 64 | any word after `public-key` | the usage line |
+| 64 | any word after `public-key` but `--vault <file>` | the usage line |
 
 ### `signer verify <folder> --public-key <pem file> [--tsa-ca <pem file>]`
 
@@ -1378,15 +1460,15 @@ The same for every `rpworker` command (`rp::exit_code` in `worker/include/rp/cli
 | Exit code | Meaning | stderr |
 |---|---|---|
 | 0 | Success. | (nothing) |
-| 1 | The config or a secret is missing or invalid, or something unexpected failed (an error no command handles ends here too, never in an `abort()`, whose exit code would be 3). For `graph list` this includes the certificate: `RP_GRAPH_CERT_PFX_BASE64` unset, a PFX that doesn't open with `RP_GRAPH_CERT_PASSWORD`, or a certificate that isn't valid now, all found before any request. For `restore`, also the same certificate problems as `graph list` (before any Veeam call; `RP_GRAPH_CERT_PASSWORD` unset is fine for a PFX without a password), the certificate failing as the check's reads before the restore sign in (nothing restored), a manifest that doesn't load, whose `tenant_id` isn't `graph_tenant_id` or that names a restore target (before any Veeam call), an unknown connector, a run whose status is `error config`, `error internal` (the facts not adding up, or the check failing for a reason that isn't Graph's) or `error result_invalid` (the result the Worker built isn't valid `restoreproof.result.v1`, W4.1), and stdout failing after a restore whose run passed. `test` exits as `restore` does; for `test` also a `--json` path that isn't UTF-8, isn't a plain file name, names a file already there or a folder that doesn't exist, or where a file can't be written (before the secrets), and a passing run whose `--json` file couldn't be written or whose finished result isn't valid (no file). With `--record`, a folder that isn't new or empty, and a command that succeeded but whose recording isn't complete. For `test --evidence` also (W4.3) `RP_SIGNING_KEY_BASE64` unset or not an Ed25519 private key (before the schema check, the manifest and any Veeam call), and a passing run whose result couldn't be signed or whose `signature.json` couldn't be written (no `result.json`). For `signer public-key`, the key unset or not a key; for `signer verify`, a key file that can't be read or isn't an Ed25519 public key in PEM, or a `<folder>` that can't be opened; for both, an answer that couldn't be written to stdout. | `config error: <path>: <message>`, `config error: the --config path is not valid UTF-8`, `config error: the --manifest path is not valid UTF-8`, `config error: canary manifest: <message>`, `config error: cannot find the ProgramData folder`, `config error: environment variable <name> is not valid Unicode`, `config error: RP_VEEAM_USERNAME is not set` (then `RP_VEEAM_PASSWORD`), `config error: RP_GRAPH_CERT_PFX_BASE64 is not set` (or another message naming the certificate's variables), for `restore` `config error: unknown connector "<name>" (known: <names>)`, `check error: <message>; nothing was restored`, `check error: unexpected failure` and `error: writing the output failed after the restore ran (run <run ID>, restore ...); run status ...`, with `--record` `config error: <dir>: the --record folder is not empty` and `record error: <service>/<file>: refused: ...`, for `test` `config error: --json <file>: not a UTF-8 path` (`... not a file name`, `... the file already exists`, `... the folder doesn't exist`, `... a file can't be written there`) `json error: <file>: could not be written` and `json error: <file>: the result isn't valid restoreproof.result.v1; no file was written`, for `test --evidence` `config error: RP_SIGNING_KEY_BASE64 is not set; --evidence signs the result` (`config error: RP_SIGNING_KEY_BASE64 is not an Ed25519 private key (Base64 of PKCS#8 DER)`) and the `evidence error: ...` lines ("`--evidence <dir>`"), for `signer` the `signer error: ...` lines ("`rpworker signer`"), for `restore` and `test` `result error: <n> schema violation(s), first at <JSON pointer>` (`result error: the result has no canonical form`, `result error: the result couldn't be built`), `config error: unexpected failure` or `error: unexpected failure`; an unexpected failure's own message is never shown |
+| 1 | The config or a secret is missing or invalid, the vault can't be used (W4.5: not there, not readable by this account, owned by another account, not decryptable on this machine, not a vault, or a `--vault` path that isn't UTF-8), or something unexpected failed (an error no command handles ends here too, never in an `abort()`, whose exit code would be 3). For `graph list` this includes the certificate: `graph_cert_pfx_base64` not in the vault, a PFX that doesn't open with `graph_cert_password`, or a certificate that isn't valid now, all found before any request. For `restore`, also the same certificate problems as `graph list` (before any Veeam call; `graph_cert_password` absent is fine for a PFX without a password), the certificate failing as the check's reads before the restore sign in (nothing restored), a manifest that doesn't load, whose `tenant_id` isn't `graph_tenant_id` or that names a restore target (before any Veeam call), an unknown connector, a run whose status is `error config`, `error internal` (the facts not adding up, or the check failing for a reason that isn't Graph's) or `error result_invalid` (the result the Worker built isn't valid `restoreproof.result.v1`, W4.1), and stdout failing after a restore whose run passed. `test` exits as `restore` does; for `test` also a `--json` path that isn't UTF-8, isn't a plain file name, names a file already there or a folder that doesn't exist, or where a file can't be written (before the secrets), and a passing run whose `--json` file couldn't be written or whose finished result isn't valid (no file). With `--record`, a folder that isn't new or empty, and a command that succeeded but whose recording isn't complete. For `test --evidence` also (W4.3) `signing_key_base64` not in the vault or not an Ed25519 private key (before the schema check, the manifest and any Veeam call), and a passing run whose result couldn't be signed or whose `signature.json` couldn't be written (no `result.json`). For `signer public-key`, the key not in the vault or not a key; for `signer verify`, a key file that can't be read or isn't an Ed25519 public key in PEM, or a `<folder>` that can't be opened; for both, an answer that couldn't be written to stdout. For `vault` (W4.5), a vault that can't be used or a value `set` refuses. | `config error: <path>: <message>`, `config error: the --config path is not valid UTF-8`, `config error: the --vault path is not valid UTF-8`, `config error: the --manifest path is not valid UTF-8`, `config error: canary manifest: <message>`, `config error: cannot find the ProgramData folder`, `config error: <file>: vault file not found` (and the vault's other messages, "Secrets"), `config error: veeam_username is not in the vault` (then `veeam_password`), `config error: graph_cert_pfx_base64 is not in the vault` (or another message naming the certificate's names), for `restore` `config error: unknown connector "<name>" (known: <names>)`, `check error: <message>; nothing was restored`, `check error: unexpected failure` and `error: writing the output failed after the restore ran (run <run ID>, restore ...); run status ...`, with `--record` `config error: <dir>: the --record folder is not empty` and `record error: <service>/<file>: refused: ...`, for `test` `config error: --json <file>: not a UTF-8 path` (`... not a file name`, `... the file already exists`, `... the folder doesn't exist`, `... a file can't be written there`) `json error: <file>: could not be written` and `json error: <file>: the result isn't valid restoreproof.result.v1; no file was written`, for `test --evidence` `config error: signing_key_base64 is not in the vault; --evidence signs the result` (`config error: signing_key_base64 is not an Ed25519 private key (Base64 of PKCS#8 DER)`) and the `evidence error: ...` lines ("`--evidence <dir>`"), for `signer` the `signer error: ...` lines ("`rpworker signer`"), for `vault` the `vault error: ...` lines ("`rpworker vault`"), for `restore` and `test` `result error: <n> schema violation(s), first at <JSON pointer>` (`result error: the result has no canonical form`, `result error: the result couldn't be built`), `config error: unexpected failure` or `error: unexpected failure`; an unexpected failure's own message is never shown |
 | 2 | The service refused the sign-in, the account's role, the token or a permission: Veeam's credentials or role; Entra refusing the Worker app's sign-in; Graph refusing the token, or denying a call for want of a grant (the message names the grant, see `docs/security/graph-permissions.md`); for `restore` and `test`, a run whose status is `error backup_auth`, `graph_auth` or `graph_permission`: on the check's reads before the restore (nothing restored) or after it (the item couldn't be checked). | `veeam error: <message>`, `graph error: <message>`, `restore error: <message>` or `check error: <message>; nothing was restored` |
 | 3 | The service couldn't be reached or asked to try later: no connection, a timeout, a TLS handshake that broke off, or a 502, 503 or 504 (for Graph also a 429 or another 5xx) after the retries; for `restore` and `test`, a run whose status is `error backup_transient` or `graph_transient`, before the restore or after it. | `veeam error: <message>`, `graph error: <message>`, `restore error: <message>` or `check error: <message>; nothing was restored` |
 | 4 | Any other error from the service. Veeam: an unknown organisation, a bad request, an unexpected answer, or no organisation named `veeam_org_name`; also Veeam's certificate failing verification, which a retry won't fix: `veeam_ca_file` doesn't hold Veeam's certificate or its CA, or Veeam's certificate was renewed and no longer matches `veeam_cert_sha256` (see "Veeam's default certificate"). Graph: the mailbox, drive or folder not found, a mailbox, drive or folder the guard refuses (not the RestoreTarget the config says; a 403 on the test mailbox's Inbox included), a download that failed, an unexpected answer. `restore` and `test`: another RestoreProof run holding the run mutex, no restore points or a `--point` ID that isn't one of them (before the run line), and a run whose status is `error` with any other code: `target_guard` (the restore-target guard refusing, in the clean before or later, nothing restored), `not_in_backup` (the organisation not in Veeam, or an item not in the restore point that it can't be shown to hold: a random item, or a canary in a point taken before the manifest's `seeded_at`; a canary missing from a later point is `fail`, Q3.1), `backup` (a restore session of the Veeam account still `Working`, the restore credential's export failing when not elevated, any other error of the restore), `empty_sample`, `not_run`, `restore_contradiction`, `backup_infrastructure` (an item Veeam failed for an infrastructure reason that the check didn't find), `graph` (any other Graph error, before the restore or reading an item back), `stale_target` (only an earlier run's copy of an item is there). | `veeam error: <message>` (`... TLS failure: ...` for a certificate), `veeam error: organisation <name> (veeam_org_name) not found in Veeam`, `graph error: <message>`, `restore error: <message>` (`restore error: target guard: ...` for the guard), `restore error: another RestoreProof run is using the restore targets; nothing was done`, `restore error: no restore points for veeam_org_name`, `restore error: restore point <id> not found for veeam_org_name`, `cleanup error: <target>: the restore-target guard refused the target; nothing was deleted in it (target_guard)`, `check error: <message>; nothing was restored`, or a `check error: <message>` per target that couldn't be read back; after an error of a restore that had started, also `restore error: the restore had started: items may be in the restore targets (run <run ID>)`; for a run, the status line is on stdout and its warnings follow on stderr |
 | 5 | The thing tested failed. `restore` and `test`: the run's status is `fail` (W3.3): an item is missing or doesn't match, its target read fine and Veeam didn't blame infrastructure for it, whatever Veeam's own status says (`status fail: ...` on stdout). A result about the backup, not an error: a run that couldn't run at all or couldn't tell is `error`, 1 to 4. `signer verify` (W4.3): the folder is not verified (`not verified: <word>` on stdout): anything wrong inside the folder, a missing file included. A folder or a key file that can't be read at all is 1. | (nothing but the run's warnings) |
-| 64 | The command line isn't understood (for `test` also `--seed`, which it doesn't take, and `--json` with `--evidence`; for `signer verify` a missing, empty or repeated `<folder>` or `--public-key <pem file>`). For `restore` and `test` also, once the config or the manifest is read: every sample size 0, or a `--canary-cursor` out of the manifest's range. | the usage line; for `restore`, `usage error: every sample size is 0 (--mail, --sp, --od, or config's sample_mail, sample_sp, sample_od): nothing to restore` or `usage error: --canary-cursor: the <kind> cursor must be below <n>, the manifest's <kind> canaries` (`... must be 0: the manifest has no <kind> canaries`) |
+| 64 | The command line isn't understood (for `test` also `--seed`, which it doesn't take, and `--json` with `--evidence`; for `signer verify` a missing, empty or repeated `<folder>` or `--public-key <pem file>`; for `vault` a missing name or account, or `--vault` without a file). For `restore` and `test` also, once the config or the manifest is read: every sample size 0, or a `--canary-cursor` out of the manifest's range; for `vault set` and `remove` a name that isn't one of the five. | the usage line; for `vault`, `usage error: the name must be one of veeam_username, veeam_password, graph_cert_pfx_base64, graph_cert_password, signing_key_base64`; for `restore`, `usage error: every sample size is 0 (--mail, --sp, --od, or config's sample_mail, sample_sp, sample_od): nothing to restore` or `usage error: --canary-cursor: the <kind> cursor must be below <n>, the manifest's <kind> canaries` (`... must be 0: the manifest has no <kind> canaries`) |
 
 The usage line is:
 
 ```
-usage: rpworker --version | rpworker config check [--config <path>] | rpworker veeam list [--config <path>] [--record <dir>] | rpworker graph list [--hash] [--config <path>] [--record <dir>] | rpworker restore [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--record <dir>] | rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--record <dir>] [--json <file> | --evidence <dir>] | rpworker signer public-key | rpworker signer verify <folder> --public-key <pem file>
+usage: rpworker --version | rpworker config check [--config <path>] [--vault <file>] | rpworker vault set|remove <name> [--vault <file>] | rpworker vault list|test [--vault <file>] | rpworker vault grant <account> [--vault <file>] | rpworker veeam list [--config <path>] [--vault <file>] [--record <dir>] | rpworker graph list [--hash] [--config <path>] [--vault <file>] [--record <dir>] | rpworker restore [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--vault <file>] [--record <dir>] | rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--vault <file>] [--record <dir>] [--json <file> | --evidence <dir>] | rpworker signer public-key [--vault <file>] | rpworker signer verify <folder> --public-key <pem file> [--tsa-ca <pem file>]
 ```

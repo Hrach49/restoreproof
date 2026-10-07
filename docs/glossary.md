@@ -194,6 +194,20 @@ neither itself nor `signature.json` nor `timestamp.tst`. A folder without `resul
 run with no result; one with it is complete: signed, and timestamped or not. See
 [verification.md](verification.md), "The run folder".
 
+**Outbox.** Where a complete, signed run folder waits to be uploaded (W4.6):
+`<root>\outbox\<run_id>\`, by default under `%ProgramData%\RestoreProof`, put there by one
+rename (`rpworker test --evidence <dir> --outbox <root>`) and moved to `<root>\sent\<run_id>\`
+once the Cloud has answered 202 (`rpworker outbox flush`). A failed upload is tried again after
+1 minute, doubled each time up to 1 hour. Nothing in a queued folder is ever changed but its
+`manifest.json`.
+
+**Outbox manifest (`manifest.json`).** The Worker's own record of a queued run
+(`restoreproof.outbox-manifest.v1`): when it was queued, the upload attempts, the last error,
+when it is tried next, and whether the run was timestamped (with the TSA's code when it
+wasn't). Never uploaded, never listed in `attachments`, not covered by the signature; a
+verifier notes it as a file the result doesn't list. See [verification.md](verification.md),
+"The outbox".
+
 **Evidence bundle.** What one run leaves behind and uploads: the run folder. The result JSON,
 `veeam-session.log` and `items.csv` (the per-item comparison, with the canaries' expected and
 found hashes), a screenshot when there is one, and `signature.json`. The result is written in

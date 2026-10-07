@@ -1,0 +1,8 @@
+W4.6 (#49), the outbox's Done-when in the lab, 2026-10-07. rpworker from worker\build\dev, an elevated PowerShell 7, the vault the only source of secrets (RP_* variables in the shell: []), the config a copy of the lab's with cloud_url https://localhost:8443 and cloud_ca_file the stub Cloud's self-signed certificate (docs/api/veeam-lab/w4.6-harness/).
+Step 7: taken away again.
+harness folder %TEMP%\rp-w46 (the stub's certificate and key, the config copy, the stub's log, the exported public key) there: False
+python stub still listening on 8443: False
+C:\ProgramData\RestoreProof\runs holds: w42-done-when-1, w43-done-when-1, w44-done-when-1, w44-tsa-down-1, w45-done-when-1
+C:\ProgramData\RestoreProof\outbox holds: []
+C:\ProgramData\RestoreProof\sent holds: w46-done-when-1, w46-done-when-2 (kept, outside the repository)
+The lab's config, vault.bin and the earlier runs' folders are as they were.

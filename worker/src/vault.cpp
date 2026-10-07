@@ -4,10 +4,10 @@
 #include <rp/cert_export.hpp>
 
 #include "atomic_file.hpp"
-#include "file_read.hpp"
 #include "path_utf8.hpp"
 #include "text_table.hpp"
 #include "utf16.hpp"
+#include "vault_detail.hpp"
 
 #include <nlohmann/json.hpp>
 
@@ -26,6 +26,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <format>
+#include <functional>
 #include <optional>
 #include <random>
 #include <string>
@@ -56,11 +57,53 @@ struct Local {
     ~Local() { LocalFree(pointer); }
 };
 
+// Closes the file handle it holds when it goes. Move-only.
+struct File {
+    HANDLE handle = INVALID_HANDLE_VALUE;
+    explicit File(HANDLE h) noexcept : handle(h) {}
+    File(File&& other) noexcept : handle(std::exchange(other.handle, INVALID_HANDLE_VALUE)) {}
+    File(const File&) = delete;
+    File& operator=(const File&) = delete;
+    File& operator=(File&&) = delete;
+    ~File()
+    {
+        if (valid()) {
+            CloseHandle(handle);
+        }
+    }
+    bool valid() const noexcept { return handle != INVALID_HANDLE_VALUE; }
+};
+
+// Nobody is kept out while the vault is open: a rotation moves a new file
+// onto the path whoever is reading the old one.
+constexpr DWORD kShareAll = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
+
 // Wipes the string it holds when it goes (secure_wipe).
 struct Wiped {
     std::string& text;
     ~Wiped() { secure_wipe(text); }
 };
+
+// Wipes the document's string values when it goes: a vault's plaintext as
+// parsed holds every secret, each in a buffer of its own. (The parser's own
+// working buffer is nlohmann's and out of reach.)
+struct WipedValues {
+    json& doc;
+    ~WipedValues()
+    {
+        for (json& value : doc) {
+            if (value.is_string()) {
+                secure_wipe(value.get_ref<std::string&>());
+            }
+        }
+    }
+};
+
+std::function<void()>& owner_checked_hook()
+{
+    static std::function<void()> hook;
+    return hook;
+}
 
 std::string hex_error(DWORD error)
 {
@@ -104,39 +147,60 @@ struct Security {
     PACL dacl = nullptr;
 };
 
-// Throws "not found" when `file` isn't there and "can't be read" when it
-// can't be asked. `name` is the path for the messages.
-void require_present(const std::filesystem::path& file, const std::string& name)
+// Opens `file` once, with the `access` its caller needs for everything it
+// will do: the owner rule, the read and a grant all work on this one handle,
+// so the file that passed the rule is the file that is read or changed,
+// whatever is moved onto the path meanwhile. nullopt when it isn't there;
+// throws "can't be read" when it can't be opened. `flags` is CreateFileW's: a
+// folder opens only with FILE_FLAG_BACKUP_SEMANTICS.
+std::optional<File> open_present(const std::filesystem::path& file, const std::string& name,
+                                 DWORD access, DWORD flags)
 {
-    std::error_code ec;
-    const std::filesystem::file_status status = std::filesystem::status(file, ec);
-    if (status.type() == std::filesystem::file_type::not_found) {
-        throw VaultError(name + ": vault file not found");
+    File opened{CreateFileW(file.c_str(), access, kShareAll, nullptr, OPEN_EXISTING, flags, nullptr)};
+    const DWORD error = GetLastError();
+    const bool absent = error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND ||
+                        error == ERROR_INVALID_NAME || error == ERROR_BAD_NETPATH ||
+                        error == ERROR_BAD_NET_NAME;
+    // No throw as the last statement: the brace after it would be a line no
+    // test runs.
+    if (!opened.valid() && !absent) {
+        throw VaultError(name + ": the vault file can't be read");
     }
-    // One line: a lookup that fails with anything but "not found" couldn't be
-    // provoked (a folder that denies everything doesn't stop a lookup by
-    // path: traverse checking is bypassed by default).
-    if (ec) { throw VaultError(name + ": the vault file can't be read"); }
+    return opened.valid() ? std::optional<File>{std::move(opened)} : std::nullopt;
 }
 
-// The file's owner and DACL, the owner rule applied. The file must be there.
-Security inspect(const std::filesystem::path& file, const std::string& name)
+// open_present for a file that must be there: throws "not found".
+File open_vault(const std::filesystem::path& file, const std::string& name, DWORD access)
+{
+    std::optional<File> opened = open_present(file, name, access, 0);
+    if (!opened) {
+        throw VaultError(name + ": vault file not found");
+    }
+    return std::move(*opened);
+}
+
+// The open file's owner and DACL, the owner rule applied. Something that is
+// no file on a disk (a device, a pipe) is never a vault.
+Security inspect(HANDLE file, const std::string& name)
 {
     Security security;
     PSID owner = nullptr;
     PSECURITY_DESCRIPTOR descriptor = nullptr;
     const DWORD result =
-        GetNamedSecurityInfoW(file.c_str(), SE_FILE_OBJECT,
-                              OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION, &owner,
-                              nullptr, &security.dacl, nullptr, &descriptor);
+        GetSecurityInfo(file, SE_FILE_OBJECT,
+                        OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION, &owner, nullptr,
+                        &security.dacl, nullptr, &descriptor);
     security.descriptor.pointer = descriptor;
-    if (result != ERROR_SUCCESS) {
+    if (result != ERROR_SUCCESS || GetFileType(file) != FILE_TYPE_DISK) {
         throw VaultError(name + ": the vault file can't be read");
     }
     if (!owner_allowed(owner)) {
         throw VaultError(name +
                          ": the vault file is owned by neither SYSTEM, Administrators nor this "
                          "account");
+    }
+    if (owner_checked_hook()) {
+        owner_checked_hook()();
     }
     return security;
 }
@@ -186,21 +250,25 @@ bool is_canonical(const json& doc, const std::string& text)
 
 Secrets parse_vault(const std::string& text, const std::string& name)
 {
-    const json doc = json::parse(text, nullptr, false, false);
+    json doc = json::parse(text, nullptr, false, false);
+    const WipedValues wiped_doc{doc};
     if (doc.is_discarded() || !doc.is_object() || !is_canonical(doc, text)) {
         throw VaultError(name + ": not a RestoreProof vault");
     }
+    // Checked whole before a value is copied, so no refusal leaves a copy
+    // behind.
     Secrets secrets;
     for (const auto& [key, value] : doc.items()) {
-        std::optional<std::string>* field = secret_field(secrets, key);
-        if (field == nullptr) {
+        if (secret_field(secrets, key) == nullptr) {
             throw VaultError(name + ": the vault holds a name that isn't one of the five secrets");
         }
         if (!value.is_string() || value.get_ref<const std::string&>().empty() ||
             value.get_ref<const std::string&>().size() > kMaxVaultValueBytes) {
             throw VaultError(name + ": not a RestoreProof vault");
         }
-        *field = value.get_ref<const std::string&>();
+    }
+    for (const auto& [key, value] : doc.items()) {
+        *secret_field(secrets, key) = value.get_ref<const std::string&>();
     }
     return secrets;
 }
@@ -226,17 +294,17 @@ struct FileSecurity {
 FileSecurity security_for(const std::filesystem::path& file, const std::string& name)
 {
     FileSecurity security;
-    std::error_code ec;
-    const std::filesystem::file_status status = std::filesystem::status(file, ec);
-    if (status.type() == std::filesystem::file_type::not_found) {
+    // A folder in the vault's place opens too, and is what the write then
+    // fails on ("couldn't be written").
+    const std::optional<File> opened = open_present(file, name, READ_CONTROL, FILE_FLAG_BACKUP_SEMANTICS);
+    if (!opened) {
         PSECURITY_DESCRIPTOR descriptor = nullptr;
         const std::wstring sddl{kVaultDefaultDacl};
         if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl.c_str(), SDDL_REVISION_1, &descriptor, nullptr)) { throw VaultError(name + ": the vault file couldn't be written"); }
         security.buffer = Local{descriptor};
         return security;
     }
-    if (ec) { throw VaultError(name + ": the vault file can't be read"); } // as require_present's
-    Security old = inspect(file, name);
+    Security old = inspect(opened->handle, name);
     // Kept protected whatever the old file's flags said, so no entry of the
     // folder's is added to the new file.
     InitializeSecurityDescriptor(&security.absolute, SECURITY_DESCRIPTOR_REVISION);
@@ -293,8 +361,11 @@ void write_atomically(const std::filesystem::path& file, std::string_view blob,
     }
 }
 
-// `account`'s SID: a SID string as it is, else the name looked up on this
-// machine. Empty when neither.
+// `account`'s SID: a SID string ("S-1-...") as it is, else the name looked up
+// on this machine. Empty when neither. Only "S-1-" is a SID string here:
+// ConvertStringSidToSidW also takes SDDL's two-letter aliases ("WD" is
+// Everyone, "AU" Authenticated Users), and an account named like one must
+// never be granted as the alias.
 std::vector<BYTE> sid_of(std::string_view account)
 {
     const std::optional<std::wstring> wide = utf8_to_utf16(account);
@@ -302,8 +373,9 @@ std::vector<BYTE> sid_of(std::string_view account)
     if (!wide || wide->empty()) {
         return {};
     }
+    const bool sid_string = wide->starts_with(L"S-1-") || wide->starts_with(L"s-1-");
     PSID parsed = nullptr;
-    if (ConvertStringSidToSidW(wide->c_str(), &parsed)) {
+    if (sid_string && ConvertStringSidToSidW(wide->c_str(), &parsed)) {
         const Local freed{parsed};
         return {static_cast<BYTE*>(parsed), static_cast<BYTE*>(parsed) + GetLengthSid(parsed)};
     }
@@ -321,6 +393,11 @@ std::vector<BYTE> sid_of(std::string_view account)
 
 VaultError::VaultError(const std::string& message) : ConfigError("vault", message) {}
 
+void detail::set_vault_owner_checked_hook(std::function<void()> hook)
+{
+    owner_checked_hook() = std::move(hook);
+}
+
 std::filesystem::path default_vault_path()
 {
     return program_data_dir() / "RestoreProof" / kVaultFileName;
@@ -329,14 +406,25 @@ std::filesystem::path default_vault_path()
 Secrets read_vault(const std::filesystem::path& file)
 {
     const std::string name = path_to_utf8(file);
-    require_present(file, name);
-    inspect(file, name);
-    FileRead read = read_whole_file(file, kMaxVaultFileBytes);
-    const Wiped wiped_bytes{read.bytes};
-    if (read.state != FileState::read) {
+    const File opened = open_vault(file, name, GENERIC_READ);
+    inspect(opened.handle, name);
+    // One byte more than the limit, which shows a file that is too large.
+    std::string bytes(static_cast<std::size_t>(kMaxVaultFileBytes) + 1, '\0');
+    const Wiped wiped_bytes{bytes};
+    std::size_t total = 0;
+    bool ok = true;
+    bool ended = false;
+    while (ok && !ended && total < bytes.size()) {
+        DWORD got = 0;
+        ok = ReadFile(opened.handle, bytes.data() + total,
+                      static_cast<DWORD>(bytes.size() - total), &got, nullptr) != FALSE;
+        total += got;
+        ended = got == 0;
+    }
+    if (!ok || total > kMaxVaultFileBytes) {
         throw VaultError(name + ": the vault file can't be read");
     }
-    std::string text = unprotect(read.bytes, name);
+    std::string text = unprotect(std::string_view{bytes.data(), total}, name);
     const Wiped wiped_text{text};
     return parse_vault(text, name);
 }
@@ -345,6 +433,7 @@ void write_vault(const std::filesystem::path& file, const Secrets& secrets)
 {
     const std::string name = path_to_utf8(file);
     json doc = json::object();
+    const WipedValues wiped_doc{doc};
     for (const std::string_view key : kSecretNames) {
         const std::optional<std::string>* field = secret_field(secrets, key);
         if (*field && !(*field)->empty()) {
@@ -371,8 +460,16 @@ void write_vault(const std::filesystem::path& file, const Secrets& secrets)
 void grant_vault_read(const std::filesystem::path& file, std::string_view account)
 {
     const std::string name = path_to_utf8(file);
-    require_present(file, name);
-    const Security security = inspect(file, name);
+    // With the right to change the DACL when the file gives it. When it
+    // doesn't, the file is opened without, so the owner rule still says what
+    // it has to before the grant is refused.
+    File changeable{CreateFileW(file.c_str(), READ_CONTROL | WRITE_DAC, kShareAll, nullptr,
+                                OPEN_EXISTING, 0, nullptr)};
+    const DWORD refused = GetLastError();
+    const bool may_change = changeable.valid();
+    const File opened =
+        may_change ? std::move(changeable) : open_vault(file, name, READ_CONTROL);
+    const Security security = inspect(opened.handle, name);
     std::vector<BYTE> sid = sid_of(account);
     if (sid.empty()) {
         throw VaultError(name + ": the account " + table_cell(account) +
@@ -385,11 +482,19 @@ void grant_vault_read(const std::filesystem::path& file, std::string_view accoun
     entry.Trustee.TrusteeForm = TRUSTEE_IS_SID;
     entry.Trustee.TrusteeType = TRUSTEE_IS_UNKNOWN;
     entry.Trustee.ptstrName = reinterpret_cast<LPWSTR>(sid.data());
+    // Set through the handle: on the file that passed the owner rule.
     PACL merged = nullptr;
-    DWORD result = SetEntriesInAclW(1, &entry, security.dacl, &merged);
+    DWORD result = may_change ? SetEntriesInAclW(1, &entry, security.dacl, &merged) : refused;
     const Local freed{merged};
-    result = result == ERROR_SUCCESS ? SetNamedSecurityInfoW(const_cast<wchar_t*>(file.c_str()), SE_FILE_OBJECT, DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION, nullptr, nullptr, merged, nullptr) : result;
-    if (result != ERROR_SUCCESS) { throw VaultError(name + ": read on the vault file couldn't be granted (error " + std::to_string(result) + ")"); }
+    if (result == ERROR_SUCCESS) {
+        result = SetSecurityInfo(opened.handle, SE_FILE_OBJECT,
+                                 DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+                                 nullptr, nullptr, merged, nullptr);
+    }
+    if (result != ERROR_SUCCESS) {
+        throw VaultError(name + ": read on the vault file couldn't be granted (error " +
+                         std::to_string(result) + ")");
+    }
 }
 
 } // namespace rp

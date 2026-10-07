@@ -8,6 +8,7 @@
 #include <rp/vault.hpp>
 
 #include "test_support.hpp"
+#include "../src/vault_detail.hpp"
 
 #include <nlohmann/json.hpp>
 
@@ -30,10 +31,12 @@
 #include <algorithm>
 #include <cstddef>
 #include <filesystem>
+#include <functional>
 #include <fstream>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 using Catch::Matchers::ContainsSubstring;
@@ -439,6 +442,154 @@ TEST_CASE("vault grant refuses an account this machine doesn't know, naming it a
                   " isn't known on this machine");
     }
     CHECK(aces_of(lab.file) == kDefaultAces);
+}
+
+TEST_CASE("vault grant never reads an account's name as one of SDDL's two-letter SID aliases",
+          "[vault]")
+{
+    // ConvertStringSidToSidW takes "WD" for Everyone, "AU" for Authenticated
+    // Users and so on: a local user called ED would be granted as Enterprise
+    // Domain Controllers, and `grant WD` would open the vault to everyone.
+    // Only "S-1-..." is a SID string; these are names, and no account here
+    // has one of them.
+    const Lab lab;
+    rp::write_vault(lab.file, five());
+    const std::string account =
+        GENERATE(std::string{"WD"}, std::string{"AU"}, std::string{"BA"}, std::string{"BU"},
+                 std::string{"AN"}, std::string{"ED"}, std::string{"SY"}, std::string{"IU"},
+                 std::string{"wd"}, std::string{"S-1"}, std::string{"S-1-"});
+    CAPTURE(account);
+
+    try {
+        rp::grant_vault_read(lab.file, account);
+        FAIL("grant_vault_read didn't throw");
+    } catch (const rp::VaultError& e) {
+        CHECK(std::string{e.what()} ==
+              lab.arg + ": the account " + account + " isn't known on this machine");
+    }
+    CHECK(aces_of(lab.file) == kDefaultAces);
+}
+
+TEST_CASE("vault grant says when the DACL can't be changed, with Windows' error", "[vault]")
+{
+    // Read alone for the owner: the owner rule passes, WRITE_DAC is refused
+    // (ERROR_ACCESS_DENIED, 5).
+    const Lab lab;
+    rp::write_vault(lab.file, five());
+    set_dacl(lab.file, L"D:P(A;;FA;;;SY)(A;;FR;;;OW)");
+
+    try {
+        rp::grant_vault_read(lab.file, "NT AUTHORITY\\LOCAL SERVICE");
+        FAIL("grant_vault_read didn't throw");
+    } catch (const rp::VaultError& e) {
+        CHECK(std::string{e.what()} ==
+              lab.arg + ": read on the vault file couldn't be granted (error 5)");
+    }
+    CHECK(aces_of(lab.file) == std::vector<std::string>{"(A;;FA;;;SY)", "(A;;FR;;;OW)"});
+}
+
+// Calls `swap` once, when a vault file's owner has passed the owner rule:
+// where another account would move a file of its own onto the path.
+struct SwapAfterOwnerCheck {
+    explicit SwapAfterOwnerCheck(std::function<void()> swap)
+    {
+        rp::detail::set_vault_owner_checked_hook([this, swap = std::move(swap)] {
+            if (!std::exchange(done, true)) {
+                swap();
+            }
+        });
+    }
+    SwapAfterOwnerCheck(const SwapAfterOwnerCheck&) = delete;
+    SwapAfterOwnerCheck& operator=(const SwapAfterOwnerCheck&) = delete;
+    ~SwapAfterOwnerCheck() { rp::detail::set_vault_owner_checked_hook({}); }
+    bool done = false;
+};
+
+TEST_CASE("the file that passed the owner rule is the file that is read, whatever is moved onto "
+          "its path meanwhile",
+          "[vault]")
+{
+    // The check and the read are one open: a vault planted between them (a
+    // valid one, which any account of this machine can make) is never read.
+    const Lab lab;
+    rp::write_vault(lab.file, five());
+    const std::filesystem::path planted = lab.dir.path() / "planted.bin";
+    rp::Secrets other = five();
+    other.veeam_password = "planted-password-3f1a";
+    rp::write_vault(planted, other);
+    const std::filesystem::path aside = lab.dir.path() / "aside.bin";
+
+    rp::Secrets read;
+    {
+        const SwapAfterOwnerCheck swapping{[&] {
+            std::filesystem::rename(lab.file, aside);
+            std::filesystem::rename(planted, lab.file);
+        }};
+        read = rp::read_vault(lab.file);
+        REQUIRE(swapping.done);
+    }
+    CHECK(read.veeam_password == "Veeam-Password-3f1a");
+    // The swap did happen: the path now holds the planted vault.
+    CHECK(rp::read_vault(lab.file).veeam_password == "planted-password-3f1a");
+}
+
+TEST_CASE("vault grant changes the DACL of the file that passed the owner rule, never of one "
+          "moved onto its path meanwhile",
+          "[vault]")
+{
+    const Lab lab;
+    rp::write_vault(lab.file, five());
+    const std::filesystem::path planted = lab.dir.path() / "planted.bin";
+    rp::write_vault(planted, five());
+    const std::filesystem::path aside = lab.dir.path() / "aside.bin";
+
+    {
+        const SwapAfterOwnerCheck swapping{[&] {
+            std::filesystem::rename(lab.file, aside);
+            std::filesystem::rename(planted, lab.file);
+        }};
+        rp::grant_vault_read(lab.file, "NT AUTHORITY\\LOCAL SERVICE");
+        REQUIRE(swapping.done);
+    }
+    CHECK(aces_of(lab.file) == kDefaultAces);
+    CHECK(aces_of(aside) == std::vector<std::string>{"(A;;FA;;;BA)", "(A;;FA;;;OW)",
+                                                     "(A;;FA;;;SY)", "(A;;FR;;;LS)"});
+}
+
+TEST_CASE("a write over a vault swapped after the owner rule keeps the checked file's DACL",
+          "[vault]")
+{
+    // The new file never takes its DACL from what was planted.
+    const Lab lab;
+    rp::write_vault(lab.file, five());
+    rp::grant_vault_read(lab.file, "NT AUTHORITY\\LOCAL SERVICE");
+    const std::filesystem::path planted = lab.dir.path() / "planted.bin";
+    rp::write_vault(planted, five());
+    rp::grant_vault_read(planted, "NT AUTHORITY\\NETWORK SERVICE");
+    const std::filesystem::path aside = lab.dir.path() / "aside.bin";
+
+    {
+        const SwapAfterOwnerCheck swapping{[&] {
+            std::filesystem::rename(lab.file, aside);
+            std::filesystem::rename(planted, lab.file);
+        }};
+        rp::write_vault(lab.file, five());
+        REQUIRE(swapping.done);
+    }
+    CHECK(aces_of(lab.file) == std::vector<std::string>{"(A;;FA;;;BA)", "(A;;FA;;;OW)",
+                                                        "(A;;FA;;;SY)", "(A;;FR;;;LS)"});
+}
+
+TEST_CASE("a device is never a vault", "[vault]")
+{
+    // NUL opens and has an owner; it is no file on a disk.
+    const std::filesystem::path device{"NUL"};
+    try {
+        rp::read_vault(device);
+        FAIL("read_vault didn't throw");
+    } catch (const rp::VaultError& e) {
+        CHECK(std::string{e.what()} == "NUL: the vault file can't be read");
+    }
 }
 
 TEST_CASE("vault grant needs the file to be there", "[vault]")

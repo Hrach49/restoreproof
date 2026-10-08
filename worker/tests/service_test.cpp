@@ -726,10 +726,15 @@ TEST_CASE("service: a body that asks for the stop itself and returns is a clean 
     lab.options.now = stepping_clock();
     lab.options.body = lab.body([](rp::ServiceContext& context) { context.stop.request(); });
 
-    const rp::ServiceRun run = lab.run();
+    lab.start();
+    REQUIRE(lab.fake.wait_for_state(rp::ServiceState::stopped));
+    // The stop is the service's own by then: a control that comes after it is
+    // answered and reports nothing behind `stopped`.
+    CHECK(lab.fake.control(rp::ServiceControl::shutdown) == rp::kControlDone);
+    const rp::ServiceRun run = lab.finish();
 
     CHECK(run.exit_code == 0);
-    // No control came, so no `stop pending` was the handler's to report.
+    // No control came in time, so no `stop pending` was the handler's to report.
     CHECK(lab.fake.report_texts() == Lines{kStartPending, kRunning, kStopped});
     CHECK(lab.fake.exits().empty());
     CHECK(lab.log_lines() == Lines{running_line(lab), "info stop requested (stop)",

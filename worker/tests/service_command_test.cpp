@@ -407,6 +407,12 @@ TEST_CASE("service start: a start that is refused", "[service_command][start]")
                 "service error: the service's executable isn't where it was installed from; "
                 "uninstall and install again",
                 1},
+        // Elevated, and still refused: the start itself was denied, which is
+        // the account's access to the executable and not the caller's rights.
+        Refusal{{5, ScmStep::call},
+                "service error: NT SERVICE\\RestoreProof was denied access when starting (error "
+                "5); it must be able to read and run the service's executable",
+                1},
         Refusal{{1053, ScmStep::call}, "service error: starting the service failed (error 1053)",
                 1},
         Refusal{{1722, ScmStep::manager},
@@ -743,6 +749,58 @@ TEST_CASE("service stop: 1052 and then a stop already under way is waited for",
     CHECK(ran.code == 0);
     CHECK(ran.out == "stopped RestoreProof in 0.2 s\n");
     CHECK(scm.calls == Calls{"stop", "sleep 250", "stop", "query"});
+}
+
+// 1061 is also what Windows may say of a service that is still starting. The
+// state tells the two apart: while it reads `start pending` after an answer
+// that wasn't "taken", the stop is sent again.
+TEST_CASE("service stop: 1061 from a service still starting is sent again",
+          "[service_command][stop]")
+{
+    FakeScm scm;
+    scm.stop = {{1061, ScmStep::call}, {1061, ScmStep::call}, {0, ScmStep::call}};
+    scm.queries = {in_state(ServiceState::start_pending), in_state(ServiceState::start_pending),
+                   in_state(ServiceState::stop_pending), in_state(ServiceState::stopped)};
+
+    const Ran ran = run(scm, {"stop"});
+
+    CHECK(ran.code == 0);
+    CHECK(ran.out == "stopped RestoreProof in 0.7 s\n");
+    CHECK(ran.err.empty());
+    CHECK(scm.calls == Calls{"stop", "query", "stop", "sleep 250", "query", "stop", "sleep 250",
+                             "query", "sleep 250", "query"});
+}
+
+TEST_CASE("service stop: 1061 from a service that starts for 35 s was never sent",
+          "[service_command][stop]")
+{
+    FakeScm scm;
+    scm.stop = {{1061, ScmStep::call}};
+    scm.queries = {in_state(ServiceState::start_pending)};
+
+    const Ran ran = run(scm, {"stop"});
+
+    CHECK(ran.code == 3);
+    CHECK(ran.out.empty());
+    CHECK(ran.err == "service error: the service RestoreProof is still starting after 35 s; the "
+                     "stop was not sent\n");
+    CHECK(scm.count("query") == 141);
+    CHECK(scm.count("stop") == 142);
+    CHECK(scm.clock == std::chrono::milliseconds{35'000});
+}
+
+TEST_CASE("service stop: a stop sent again and refused is that refusal",
+          "[service_command][stop]")
+{
+    FakeScm scm;
+    scm.stop = {{1061, ScmStep::call}, {5, ScmStep::service}};
+    scm.queries = {in_state(ServiceState::start_pending)};
+
+    const Ran ran = run(scm, {"stop"});
+
+    CHECK(ran.code == 1);
+    CHECK(ran.err == kDenied + "\n");
+    CHECK(scm.calls == Calls{"stop", "query", "stop"});
 }
 
 TEST_CASE("service stop: 1052 and then stopped by itself", "[service_command][stop]")

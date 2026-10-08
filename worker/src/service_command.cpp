@@ -332,6 +332,13 @@ Refusal start_refusal(const ScmResult& sent)
         return {"the service's executable isn't where it was installed from; uninstall and "
                 "install again"};
     }
+    if (sent.error == kAccessDenied && sent.step == ScmStep::call) {
+        // The caller opened the service, so it is elevated: the start itself
+        // was denied, which is the account's access to the executable.
+        return {std::string{kServiceAccount} +
+                " was denied access when starting (error 5); it must be able to read and run "
+                "the service's executable"};
+    }
     return refusal(sent, kStarting, true);
 }
 
@@ -420,12 +427,25 @@ int run_stop(const Context& context)
     if (sent.error != 0 && sent.error != kStopUnderWay) {
         return refuse(context, refusal(sent, kStopping, true));
     }
+    // Windows may say 1061 of a service that is still starting, too. The state
+    // tells the two apart: while it reads "start pending" and no stop was
+    // taken, the stop is sent again.
+    bool starting = false;
     const std::optional<int> done =
         poll(context, began, kServiceStopWait, [&]() -> std::optional<int> {
             ServiceStatus status;
             const ScmResult read = context.scm.query_service(kServiceName, status);
             if (read.error != 0) {
                 return refuse(context, refusal(read, kReading, true));
+            }
+            starting = sent.error != 0 && status.state == ServiceState::start_pending;
+            if (starting) {
+                sent = context.scm.stop_service(kServiceName);
+                const bool waits = sent.error == 0 || sent.error == kStopUnderWay ||
+                                   sent.error == kControlNotAccepted || sent.error == kNotActive;
+                return waits ? std::nullopt
+                             : std::optional<int>{
+                                   refuse(context, refusal(sent, kStopping, true))};
             }
             if (status.state != ServiceState::stopped) {
                 return std::nullopt;
@@ -440,7 +460,9 @@ int run_stop(const Context& context)
     if (done) {
         return *done;
     }
-    return refuse(context, {"the service " + name() + " is still stopping after 35 s",
+    return refuse(context, {"the service " + name() +
+                                (starting ? " is still starting after 35 s; the stop was not sent"
+                                          : " is still stopping after 35 s"),
                             exit_code::transient});
 }
 

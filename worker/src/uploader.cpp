@@ -9,14 +9,6 @@ namespace rp {
 
 namespace {
 
-std::string results_url(std::string cloud_url)
-{
-    while (cloud_url.ends_with('/')) {
-        cloud_url.pop_back();
-    }
-    return cloud_url + std::string{kResultsPath};
-}
-
 std::string code_of(TransportError error)
 {
     switch (error) {
@@ -34,8 +26,16 @@ std::string code_of(TransportError error)
 
 } // namespace
 
+std::string cloud_endpoint(std::string cloud_url, std::string_view path)
+{
+    while (cloud_url.ends_with('/')) {
+        cloud_url.pop_back();
+    }
+    return cloud_url.append(path);
+}
+
 CloudUploader::CloudUploader(IHttpClient& http, std::string cloud_url)
-    : http_(http), url_(results_url(std::move(cloud_url)))
+    : http_(http), url_(cloud_endpoint(std::move(cloud_url), kResultsPath))
 {
 }
 

@@ -470,17 +470,32 @@ EvidenceBuilder::Written EvidenceBuilder::adopt_attachments(bool replace) noexce
     Written out;
     try {
         std::vector<Attachment> attachments;
+        // By the folder's listing, the name byte for byte, as the verifiers
+        // read it: NTFS opens ITEMS.CSV for items.csv, and a file adopted so
+        // would be listed in the result under a name the folder doesn't have.
+        const std::vector<std::string> listed =
+            list_folder(folder_).value_or(std::vector<std::string>{});
         const auto text_file = [&](std::string_view name, std::string_view empty_form) {
             const std::filesystem::path path = folder_ / *path_from_utf8(name);
-            if (replace) {
-                std::error_code ec;
-                std::filesystem::remove(path, ec);
+            bool own = false;
+            for (const std::string& one : listed) {
+                if (!ascii_iequals(one, name)) {
+                    continue;
+                }
+                own = own || one == name;
+                // Another case of the name is not the run's file; with
+                // `replace`, neither is kept.
+                const std::optional<std::filesystem::path> file =
+                    replace || one != name ? path_from_utf8(one) : std::nullopt;
+                if (file) {
+                    std::error_code ec;
+                    std::filesystem::remove(folder_ / *file, ec);
+                }
             }
             if (is_there(path)) {
-                // The run's own, as it left it; with `replace`, one that
-                // wouldn't go.
+                // The run's own, as it left it; or one that wouldn't go.
                 const std::optional<std::string> bytes =
-                    replace ? std::nullopt : read_file(path, kMaxAdoptedFileBytes);
+                    own && !replace ? read_file(path, kMaxAdoptedFileBytes) : std::nullopt;
                 if (bytes) {
                     attachments.push_back(attachment_of(name, *bytes));
                 } else {

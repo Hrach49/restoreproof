@@ -155,10 +155,13 @@ HttpResponse fetch(IHttpClient& download, const std::string& location, std::uint
 
 } // namespace
 
-std::unique_ptr<IHttpClient> make_download_http_client()
+std::unique_ptr<IHttpClient>
+make_download_http_client(std::function<void(std::chrono::milliseconds)> sleep)
 {
-    return make_graph_http_client(std::make_shared<spdlog::logger>(
+    HttpClientOptions options = graph_http_client_options(std::make_shared<spdlog::logger>(
         "rp-download", std::make_shared<spdlog::sinks::null_sink_mt>()));
+    options.sleep = std::move(sleep);
+    return std::make_unique<HttpClient>(std::move(options));
 }
 
 std::optional<std::string> download_url_problem(std::string_view url, std::string_view tenant_host)

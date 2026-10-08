@@ -801,9 +801,13 @@ struct Harness {
             ++graph_clients;
             return std::make_unique<rp::test::ForwardingHttpClient>(targets.graph);
         };
-        env.connector_options.sleep = [](std::chrono::milliseconds) {};
+        env.connector_options.sleep = [this](std::chrono::milliseconds wait) {
+            slept.push_back(wait);
+        };
         env.connector_options.jitter = [] { return 0.0; };
-        env.make_download_http = [this]() -> std::unique_ptr<rp::IHttpClient> {
+        env.make_download_http = [this](std::function<void(std::chrono::milliseconds)> sleep)
+            -> std::unique_ptr<rp::IHttpClient> {
+            download_sleep = std::move(sleep);
             if (no_download_http) {
                 return nullptr;
             }
@@ -937,6 +941,11 @@ struct Harness {
     // The download client's maker returns null: the run stops after its run
     // line, before the clean before.
     bool no_download_http = false;
+    // Every wait asked of the pipeline's sleep (connector_options.sleep);
+    // none is real.
+    std::vector<std::chrono::milliseconds> slept;
+    // The sleep make_download_http was handed (W4.8): the pipeline's own.
+    std::function<void(std::chrono::milliseconds)> download_sleep;
     // The wall clock: the certificate check, Graph's sign-in and, for `test
     // --json`, started_at and ended_at (W3.6). Fixed at a time the lab's
     // certificate is valid.

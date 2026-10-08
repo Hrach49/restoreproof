@@ -26,6 +26,7 @@
 #include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <functional>
@@ -570,6 +571,35 @@ TEST_CASE("a size mismatch is an error, not a smaller item", "[graph][download]"
 
     CHECK(caught.kind == "GraphError");
     CHECK(caught.what == message);
+}
+
+// W4.8 (docs/decisions.md 2026-10-08 point 13): the one wait of a run that
+// didn't go through the pipeline's sleep.
+TEST_CASE("the download client waits between its attempts on the sleep it is given",
+          "[graph][download]")
+{
+    rp::test::LocalHttpServer server;
+    std::atomic<int> calls{0};
+    server.server().Get("/x", [&calls](const httplib::Request&, httplib::Response& res) {
+        if (++calls == 1) {
+            res.status = 503;
+            return;
+        }
+        res.status = 200;
+        res.set_content("ok", "application/octet-stream");
+    });
+    std::vector<std::chrono::milliseconds> waits;
+    const std::unique_ptr<rp::IHttpClient> client = rp::graph::make_download_http_client(
+        [&waits](std::chrono::milliseconds wait) { waits.push_back(wait); });
+
+    const HttpResponse response = client->get(server.url("/x"));
+
+    CHECK(response.status == 200);
+    CHECK(response.body == "ok");
+    CHECK(calls == 2);
+    // The wait after the 503, and never a real one.
+    REQUIRE(waits.size() == 1);
+    CHECK(waits[0] > std::chrono::milliseconds{0});
 }
 
 TEST_CASE("the download client logs nothing", "[graph][download]")

@@ -147,7 +147,7 @@ GraphCommandEnv default_graph_command_env()
     env.make_graph_http = [](std::shared_ptr<spdlog::logger> logger) {
         return graph::make_graph_http_client(std::move(logger));
     };
-    env.make_download_http = graph::make_download_http_client;
+    env.make_download_http = [] { return graph::make_download_http_client(); };
     env.client_options.logger = make_command_logger();
     return env;
 }

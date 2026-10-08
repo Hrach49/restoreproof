@@ -103,8 +103,11 @@ struct RestoreCommandEnv {
     // Makes the HTTP client the check downloads restored files through
     // (W3.2); null = graph::make_download_http_client. Called once, right
     // after the run line, with the Graph client the cleanup and the check
-    // share (W3.4).
-    std::function<std::unique_ptr<IHttpClient>()> make_download_http;
+    // share (W3.4). It is handed connector_options.sleep as it is (null
+    // included), the wait between that client's own attempts, so every wait of
+    // a run is the pipeline's one sleep (W4.8 point 13).
+    std::function<std::unique_ptr<IHttpClient>(std::function<void(std::chrono::milliseconds)>)>
+        make_download_http;
     // A new run ID when --run-id isn't given; null = make_run_id(). What it
     // returns must pass sampling::check_run_id, or the command fails with
     // "error: unexpected failure".

@@ -1488,9 +1488,11 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
         // and SHA-256 only.
         graph_http = options.make_graph_http ? options.make_graph_http(options.logger)
                                              : graph::make_graph_http_client(options.logger);
-        download_http = recorded(env.make_download_http ? env.make_download_http()
-                                                         : graph::make_download_http_client(),
-                                 recorder, "download", RecordedBody::digest);
+        // The download client's own retries wait on the run's sleep too.
+        download_http =
+            recorded(env.make_download_http ? env.make_download_http(options.sleep)
+                                            : graph::make_download_http_client(options.sleep),
+                     recorder, "download", RecordedBody::digest);
         if (!graph_http || !download_http) {
             throw std::logic_error("no HTTP client");
         }

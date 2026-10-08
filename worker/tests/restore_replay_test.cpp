@@ -335,7 +335,8 @@ struct Replay {
         o.wall_now = [this] { return wall_now(); };
         o.cert_exporter = exporter;
         env.now = [this] { return clock.now(); };
-        env.make_download_http = [this]() -> std::unique_ptr<rp::IHttpClient> {
+        env.make_download_http = [this](std::function<void(std::chrono::milliseconds)>)
+            -> std::unique_ptr<rp::IHttpClient> {
             return std::make_unique<rp::test::ForwardingHttpClient>(download);
         };
         // W3.4: a fake run mutex, never the machine's.

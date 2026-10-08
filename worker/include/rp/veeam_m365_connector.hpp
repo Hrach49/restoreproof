@@ -63,6 +63,13 @@ struct VeeamM365ConnectorOptions {
     // The wall clock of the duplicate check (restore-flow §8); null =
     // system_clock::now.
     std::function<std::chrono::system_clock::time_point()> wall_now;
+    // ConnectorOptions' three of the same names (W4.8): asked before every
+    // restore POST (null = always true), told every explore session opened or
+    // adopted (null = nothing), and whether the Worker was asked to stop
+    // (null = never).
+    std::function<bool()> before_restore_request;
+    std::function<void(std::string_view id)> on_session_opened;
+    std::function<bool()> stop_requested;
 };
 
 class VeeamM365Connector final : public connector::IConnector {
@@ -150,6 +157,18 @@ public:
     //     (connector::Error if unreadable), and its verdict. A session that
     //     restored nothing for an infrastructure reason, or without a word
     //     about any item, is connector::Error.
+    // W4.8 (docs/decisions.md 2026-10-08, W4.8 points 6 and 13), with the
+    // options' three set: options.on_session_opened is told each explore
+    // session of step 4 (and one adopted after a failed explore POST) once
+    // its ID is known. Before each restore call of step 5, before the
+    // certificate is exported: after options.stop_requested, or when
+    // options.before_restore_request answers false (not asked after a stop),
+    // the POST is not sent and the call ends with connector::Interrupted,
+    // its message ending with connector::kNothingRestored before the first
+    // POST of the call and not after one (the sessions made so far have
+    // stopped). In step 6, a stop seen after a poll's wait ends the call with
+    // connector::Interrupted, no verdict, the restore left running and the
+    // explore sessions left open, as at the 20 minutes.
     // Every explore session opened is stopped at the end if still Working,
     // unless a restore may still be running (no verdict on the POST, a
     // timeout, a 404, failing polls): then they are left open and named in the
@@ -198,6 +217,28 @@ public:
     // sessions' and their Stop.
     connector::CandidatePool list_candidates(const connector::CandidateQuery& query) override;
 
+    // Every session of this connector's account (initiatedBy, ASCII
+    // case-insensitive) that is Working and was created at or after `since`,
+    // newest first (W4.8 point 9): every page of GET
+    // /v8/RestoreSessions?startTimeFrom=<since, cut to the second>&orderBy=
+    // CreationTime&orderAsc=false, any organisation, any type. Explore and
+    // restore sessions alike: the list can't tell them apart. An entry
+    // without a string state or initiatedBy, and a Working one of ours whose
+    // ID isn't a UUID or whose creationTime isn't Veeam's UTC form, is
+    // connector::Error: a session is never left out on a doubt. Veeam's
+    // errors map as restore_sample maps them (a 404 is connector::Error).
+    std::vector<connector::OwnSession> own_sessions(
+        std::chrono::system_clock::time_point since) override;
+
+    // Reads session `id` and, if it is Working, stops it: the read, Stop,
+    // and after a Stop that failed with a TransientError a second read and
+    // one more Stop if it is still Working, exactly as restore_sample and
+    // list_candidates close their explore sessions (W4.8 point 9). A session
+    // that isn't Working gets no Stop. An ID that isn't a UUID is
+    // std::invalid_argument, before any request; Veeam's errors map as
+    // restore_sample maps them (a 404 is connector::Error).
+    void end_session(const std::string& id) override;
+
     // How many explore sessions list_candidates remembers (for tests).
     std::size_t candidate_sessions_remembered() const noexcept { return candidate_sessions_.size(); }
 
@@ -214,6 +255,9 @@ private:
     std::function<std::chrono::system_clock::time_point()> wall_now_;
     std::function<std::chrono::steady_clock::time_point()> now_;
     std::function<void(std::chrono::milliseconds)> sleep_;
+    std::function<bool()> before_restore_request_;
+    std::function<void(std::string_view)> on_session_opened_;
+    std::function<bool()> stop_requested_;
     std::shared_ptr<spdlog::logger> logger_;
     std::string account_; // the username as Veeam lists it in initiatedBy
     // Every explore session list_candidates opened (or adopted), stopped or

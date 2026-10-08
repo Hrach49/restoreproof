@@ -1212,6 +1212,36 @@ TEST_CASE("list_candidates: a type not asked for opens no explore session and li
     CHECK(pool.onedrive.empty());
 }
 
+TEST_CASE("list_candidates: the caller is told every explore session it opens, and one that "
+          "throws stops nothing",
+          "[veeam_m365][w2.6][w4.8]")
+{
+    CandidateRig rig;
+    fill(rig.tenant);
+    rig.serve();
+    const bool throws = GENERATE(false, true);
+    CAPTURE(throws);
+    std::vector<std::string> told;
+    rig.rig.on_session_opened = [&](std::string_view id) {
+        told.emplace_back(id);
+        if (throws) {
+            throw std::runtime_error("the record couldn't be written");
+        }
+    };
+
+    const Caught thrown = caught_by([&] { rig.list(query(true, true, true)); });
+
+    CHECK(thrown.kind == "none");
+    CHECK(told == std::vector<std::string>{mail_x5().explore(), sp_x1().explore(),
+                                           od_x1().explore()});
+    for (const Run& run : {mail_x5(), sp_x1(), od_x1()}) {
+        CHECK(rig.rig.stops(run.explore()) == 1);
+    }
+    const bool warned =
+        rig.rig.log().find("the caller couldn't be told of explore session") != std::string::npos;
+    CHECK(warned == throws);
+}
+
 TEST_CASE("list_candidates: real items outside the targets and canaries, as restore_sample will "
           "find them",
           "[veeam_m365][w2.6]")

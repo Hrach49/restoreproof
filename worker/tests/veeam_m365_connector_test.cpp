@@ -820,6 +820,69 @@ TEST_CASE("veeam_m365: a connector can be made directly on an HTTP client it own
                            std::invalid_argument, Message("veeam_m365: no HTTP client"));
 }
 
+TEST_CASE("veeam_m365: the registry's connector asks and tells its caller: the sessions opened, "
+          "the word before a restore request, the stop",
+          "[veeam_m365][w4.8]")
+{
+    namespace vrl = rp::test::veeam_restore_lab;
+    vrl::RestoreRig rig;
+    rig.serve(vrl::mail_x1());
+    rp::Config config = rp::test::graph_lab::lab_config();
+    config.veeam_url = vrl::kBase;
+    config.veeam_org_name = vrl::kOrgName;
+    config.graph_tenant_id = rp::test::graph_lab::kTenant;
+    config.graph_client_id = rp::test::graph_lab::kClient;
+    const rp::Secrets secrets{vrl::kUsername, vrl::kPassword, rp::test::graph_lab::pfx_base64(),
+                              std::string{rp::test::graph_lab::kPfxPassword}};
+    connector::ConnectorOptions options;
+    options.make_http = [&rig](const rp::HttpClientOptions&) -> std::unique_ptr<rp::IHttpClient> {
+        return std::make_unique<rp::test::ForwardingHttpClient>(rig.veeam);
+    };
+    options.make_graph_http =
+        [&rig](std::shared_ptr<spdlog::logger>) -> std::unique_ptr<rp::IHttpClient> {
+        return std::make_unique<rp::test::ForwardingHttpClient>(rig.lab.graph_http);
+    };
+    options.logger = rig.logger;
+    options.now = [&rig] { return rig.clock.now(); };
+    options.sleep = [&rig](std::chrono::milliseconds wait) { rig.clock.sleep(wait); };
+    options.jitter = [] { return 0.0; };
+    options.wall_now = [&rig] { return rig.next_post_time(); };
+    options.cert_exporter = rig.exporter;
+    std::vector<std::string> told;
+    int asked = 0;
+    options.on_session_opened = [&](std::string_view id) { told.emplace_back(id); };
+    std::string expected;
+    SECTION("the request not let go")
+    {
+        options.before_restore_request = [&] {
+            ++asked;
+            return false;
+        };
+        expected = "veeam_m365: the mail restore request was not let go; nothing was restored";
+    }
+    SECTION("a stop")
+    {
+        options.stop_requested = [] { return true; };
+        expected = "veeam_m365: the Worker was asked to stop before the mail restore request was "
+                   "sent; nothing was restored";
+    }
+
+    const std::unique_ptr<connector::IConnector> made =
+        connector::default_connector_registry().create(connector::kVeeamM365, config, secrets,
+                                                       options);
+    // Not a connector::Error: no handler for the backup product's failures takes it.
+    REQUIRE_THROWS_MATCHES(made->restore_sample(vrl::restore_spec({vrl::mail_x1_item()})),
+                           connector::Interrupted, Message(expected));
+
+    CHECK(told == std::vector<std::string>{vrl::mail_x1().explore()});
+    CHECK(asked == (expected.find("not let go") != std::string::npos ? 1 : 0));
+    CHECK(rig.restore_posts().empty());
+    CHECK(rig.exporter->calls == 0);
+    // The two new members reach Veeam through the IConnector alone.
+    made->end_session(vrl::mail_x1().explore());
+    CHECK(rig.stops(vrl::mail_x1().explore()) == 2);
+}
+
 TEST_CASE("veeam_m365: the registry's connector restores through the clients it was given",
           "[veeam_m365][w2.5]")
 {

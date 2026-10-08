@@ -341,6 +341,12 @@ struct RestoreRig {
             options.guard = lab.options();
             options.cert_exporter = exporter;
             options.wall_now = [this] { return next_post_time(); };
+            options.before_restore_request = before_restore_request;
+            options.on_session_opened = on_session_opened;
+            options.stop_requested = stop_requested;
+            if (page_size > 0) {
+                options.client.page_size = page_size;
+            }
             source = std::make_unique<rp::VeeamM365Connector>(
                 std::make_unique<ForwardingHttpClient>(veeam), kBase, kUsername, kPassword,
                 std::move(options));
@@ -518,6 +524,12 @@ struct RestoreRig {
     GuardLab lab;
     FakeClock clock;
     std::shared_ptr<FakeExporter> exporter;
+    // W4.8's three, and VeeamClient's page size (0: its own), as set before
+    // the connector's first use; each called on the test's thread.
+    std::function<bool()> before_restore_request;
+    std::function<void(std::string_view)> on_session_opened;
+    std::function<bool()> stop_requested;
+    int page_size = 0;
     std::ostringstream log_stream;
     std::shared_ptr<spdlog::logger> logger;
     std::unique_ptr<rp::VeeamM365Connector> source;
@@ -545,6 +557,8 @@ inline Caught caught_by(const std::function<void()>& call)
         return {"NotImplementedError", e.what()};
     } catch (const rp::connector::Error& e) {
         return {"Error", e.what()};
+    } catch (const rp::connector::Interrupted& e) {
+        return {"Interrupted", e.what()};
     } catch (const std::invalid_argument& e) {
         return {"invalid_argument", e.what()};
     } catch (const std::exception& e) {

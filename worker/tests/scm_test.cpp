@@ -26,7 +26,14 @@
 #endif
 #include <windows.h>
 
+#include <algorithm>
+#include <array>
 #include <atomic>
+#include <cctype>
+#include <cstddef>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -252,4 +259,261 @@ TEST_CASE("a service is created from service_setup, read back, and deleted", "[s
     const rp::ScmResult deleted = rp::scm::delete_service(kTestService);
     CHECK(deleted.error == 0);
     CHECK(gone_within_ten_seconds());
+}
+
+// ---------------------------------------------------------------------------
+// The source scan (point 8). The SCM is reached through its API in one file,
+// the process is ended in one place, and nothing ever starts another process
+// (no sc.exe, no PowerShell). The scan reads the text as it is, comments
+// included, so a comment says "the dispatcher" or "ends the process" and not
+// the call's name.
+
+namespace {
+
+// Windows' service functions and handle types, by the part every variant of a
+// name shares (the W and A forms, the Ex forms, the Ctrl dispatcher).
+constexpr std::array<std::string_view, 21> kServiceNames{
+    "OpenSCManager",
+    "CreateService",
+    "OpenService",
+    "DeleteService",
+    "StartService",
+    "ControlService",
+    "QueryServiceStatus",
+    "QueryServiceConfig",
+    "ChangeServiceConfig",
+    "SetServiceStatus",
+    "RegisterServiceCtrlHandler",
+    "CloseServiceHandle",
+    "EnumServicesStatus",
+    "EnumDependentServices",
+    "NotifyServiceStatusChange",
+    "QueryServiceObjectSecurity",
+    "SetServiceObjectSecurity",
+    "LockServiceDatabase",
+    "SC_HANDLE",
+    "SERVICE_STATUS_HANDLE",
+    "SERVICE_TABLE_ENTRY",
+};
+
+// Calls that end the process, as whole identifiers: recorded_exit_code and
+// exit_process are other words.
+constexpr std::array<std::string_view, 6> kProcessEnders{
+    "ExitProcess", "TerminateProcess", "_exit", "_Exit", "quick_exit", "abort",
+};
+// The same, for names that are also plain words: only when called.
+constexpr std::array<std::string_view, 2> kProcessEndersWhenCalled{"exit", "terminate"};
+
+// Calls that start a process: Windows' by the part every variant shares, the
+// runtime's as whole identifiers or by their family's start.
+constexpr std::array<std::string_view, 3> kProcessStarterNames{
+    "CreateProcess",
+    "ShellExecute",
+    "WinExec",
+};
+constexpr std::array<std::string_view, 4> kProcessStarters{"_popen", "_wpopen", "popen",
+                                                           "_wsystem"};
+constexpr std::array<std::string_view, 4> kProcessStarterFamilies{"_spawn", "_wspawn", "_exec",
+                                                                  "_wexec"};
+constexpr std::array<std::string_view, 1> kProcessStartersWhenCalled{"system"};
+
+bool identifier_char(char c)
+{
+    return std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '_';
+}
+
+// One identifier of `source` and whether a call's parenthesis follows it,
+// white space between them or not.
+struct Word {
+    std::string_view text;
+    bool called = false;
+};
+
+std::vector<Word> words_of(std::string_view source)
+{
+    std::vector<Word> words;
+    for (std::size_t at = 0; at < source.size();) {
+        if (!identifier_char(source[at])) {
+            ++at;
+            continue;
+        }
+        std::size_t end = at;
+        while (end < source.size() && identifier_char(source[end])) {
+            ++end;
+        }
+        std::size_t next = end;
+        while (next < source.size() && std::isspace(static_cast<unsigned char>(source[next]))) {
+            ++next;
+        }
+        words.push_back({source.substr(at, end - at), next < source.size() && source[next] == '('});
+        at = end;
+    }
+    return words;
+}
+
+template <std::size_t N>
+bool one_of(const std::array<std::string_view, N>& names, std::string_view word)
+{
+    return std::find(names.begin(), names.end(), word) != names.end();
+}
+
+// What in `source` only src/scm.cpp may hold: a service function or handle
+// type of Windows, or a call that ends the process.
+std::vector<std::string> find_scm_only(std::string_view source)
+{
+    std::vector<std::string> found;
+    for (std::string_view name : kServiceNames) {
+        if (source.find(name) != std::string_view::npos) {
+            found.emplace_back(name);
+        }
+    }
+    for (const Word& word : words_of(source)) {
+        if (one_of(kProcessEnders, word.text) ||
+            (word.called && one_of(kProcessEndersWhenCalled, word.text))) {
+            found.emplace_back(word.text);
+        }
+    }
+    return found;
+}
+
+// What no Worker source may hold: a call that starts a process.
+std::vector<std::string> find_process_starts(std::string_view source)
+{
+    std::vector<std::string> found;
+    for (std::string_view name : kProcessStarterNames) {
+        if (source.find(name) != std::string_view::npos) {
+            found.emplace_back(name);
+        }
+    }
+    for (const Word& word : words_of(source)) {
+        const bool family =
+            std::any_of(kProcessStarterFamilies.begin(), kProcessStarterFamilies.end(),
+                        [&word](std::string_view start) { return word.text.starts_with(start); });
+        if (family || one_of(kProcessStarters, word.text) ||
+            (word.called && one_of(kProcessStartersWhenCalled, word.text))) {
+            found.emplace_back(word.text);
+        }
+    }
+    return found;
+}
+
+} // namespace
+
+TEST_CASE("the scan flags Windows' service functions and calls that end the process", "[scm]")
+{
+    const std::string_view planted = GENERATE(
+        // The SCM's functions, in every form.
+        "OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT)", "OpenSCManagerA(0, 0, 1)",
+        "CreateServiceW(manager, name, display, 0, 0, 0, 0, path, 0, 0, 0, 0, 0)",
+        "::OpenServiceW(manager, L\"RestoreProof\", SERVICE_START)", "DeleteService(service);",
+        "StartServiceW(service, 0, nullptr)", "StartServiceCtrlDispatcherW(table)",
+        "ControlService(service, SERVICE_CONTROL_STOP, &status)",
+        "ControlServiceExW(service, 1, 1, &reason)", "QueryServiceStatus(service, &status)",
+        "QueryServiceStatusEx(service, SC_STATUS_PROCESS_INFO, b, n, &m)",
+        "QueryServiceConfigW(service, config, n, &m)", "QueryServiceConfig2W(service, 1, b, n, &m)",
+        "ChangeServiceConfigW(service", "ChangeServiceConfig2W(service, 2, &actions)",
+        "SetServiceStatus(handle, &status)", "RegisterServiceCtrlHandlerExW(name, handler, 0)",
+        "RegisterServiceCtrlHandlerW(name, handler)", "CloseServiceHandle(service);",
+        "EnumServicesStatusExW(", "EnumDependentServicesW(", "NotifyServiceStatusChangeW(",
+        "QueryServiceObjectSecurity(", "SetServiceObjectSecurity(", "LockServiceDatabase(",
+        "SC_HANDLE manager = nullptr;", "SERVICE_STATUS_HANDLE g_status;",
+        "const SERVICE_TABLE_ENTRYW table[2]{};",
+        // A function pointer, a comment, a macro.
+        "auto f = &StartServiceW;", "// then DeleteService marks it",
+        "#define START StartServiceW",
+        // Ending the process.
+        "ExitProcess(1);", "::ExitProcess(code)", "TerminateProcess(GetCurrentProcess(), 1);",
+        "_exit(1);", "::_exit(code)", "_Exit(1);", "std::_Exit(1)", "quick_exit(1);",
+        "std::quick_exit(0)", "abort();", "std::abort();", "std::abort ()", "auto f = &abort;",
+        "std::set_terminate(std::abort);", "// escaping wmain it would end in abort()",
+        "exit(1);", "std::exit(code)", "exit (1)", "std::exit\n(1)", "std::terminate();",
+        "terminate ()");
+    CAPTURE(planted);
+    CHECK_FALSE(find_scm_only(planted).empty());
+}
+
+TEST_CASE("the scan flags every call that starts a process", "[scm]")
+{
+    const std::string_view planted = GENERATE(
+        "CreateProcessW(nullptr, line, 0, 0, FALSE, 0, 0, 0, &si, &pi)", "CreateProcessA(",
+        "CreateProcessAsUserW(token, ", "CreateProcessWithLogonW(", "CreateProcessWithTokenW(",
+        "ShellExecuteW(nullptr, L\"open\", L\"sc.exe\", args, nullptr, 0)",
+        "ShellExecuteExW(&info)", "ShellExecuteA(", "WinExec(\"sc stop RestoreProof\", 0)",
+        "system(\"sc stop RestoreProof\");", "std::system(command.c_str())", "::system (line)",
+        "std::system\n    (line)", "_wsystem(L\"sc.exe query RestoreProof\")",
+        "_popen(\"sc query\", \"r\")", "_wpopen(L\"sc query\", L\"r\")", "popen(\"sc\", \"r\")",
+        "auto open = &_popen;", "_spawnl(_P_WAIT, \"sc.exe\", \"sc.exe\", nullptr)",
+        "_wspawnvp(_P_NOWAIT, name, args)", "_execl(\"sc.exe\", \"sc.exe\", nullptr)",
+        "_wexecvp(name, args)",
+        // A comment is read as code is: the price of a scan with no parser.
+        "// the file system (as the SCM sees it)");
+    CAPTURE(planted);
+    CHECK_FALSE(find_process_starts(planted).empty());
+}
+
+TEST_CASE("the scan passes the Worker's own names and plain words", "[scm]")
+{
+    const std::string_view legitimate = GENERATE(
+        // The seams' own names.
+        "calls.create_service(setup)", "calls.delete_service(name)", "calls.start_service(name)",
+        "calls.stop_service(name)", "calls.query_service(name, status)", "host.exit_process(1);",
+        "host.report_status(report)", "host.run_dispatcher(name, main)",
+        "std::function<void(int code)> exit_process;", "rp::ServiceStatus status;",
+        "rp::ServiceSetup setup = rp::service_setup(kServiceName, line);",
+        "ServiceControlHandler handler", "ERROR_SERVICE_SPECIFIC_ERROR", "SERVICE_RUNNING",
+        // Words that hold a banned one.
+        "int recorded_exit_code(const FixtureRecorder* recorder, int code) noexcept",
+        "exit_code::transient", "return exit_code_of(status);", "int exit = 0;",
+        "the process's exit code", "exits with (or without) a line", "rp::AbandonedRunLock",
+        "an abandoned mutex", "terminated(by)", "std::system_category()",
+        "throw std::system_error(code, std::system_category(), \"x\");",
+        "std::chrono::system_clock::now()", "std::filesystem::path file(folder);",
+        "std::filesystem::exists(path)", "// the outbox's calls into the file system, W4.6",
+        "// the operating system's own account", "execute(request)", "spawned", "popen_count",
+        "process_starts(source)");
+    CAPTURE(legitimate);
+    CHECK(find_scm_only(legitimate).empty());
+    CHECK(find_process_starts(legitimate).empty());
+}
+
+TEST_CASE("only src/scm.cpp names a service function or ends the process, and no Worker source "
+          "starts one",
+          "[scm]")
+{
+    const std::filesystem::path root{RP_SOURCE_DIR};
+    std::size_t scanned = 0;
+    bool saw_scm = false;
+    for (const char* dir : {"src", "include", "app"}) {
+        for (const auto& entry : std::filesystem::recursive_directory_iterator(root / dir)) {
+            const std::filesystem::path& path = entry.path();
+            if (!entry.is_regular_file() ||
+                (path.extension() != ".cpp" && path.extension() != ".hpp" &&
+                 path.extension() != ".h")) {
+                continue;
+            }
+            std::ifstream file(path, std::ios::binary);
+            const std::string text{std::istreambuf_iterator<char>(file), {}};
+            const std::string name = path.lexically_relative(root).generic_string();
+            CAPTURE(name);
+            CHECK(find_process_starts(text) == std::vector<std::string>{});
+            if (name == "src/scm.cpp") {
+                // The scan isn't blind: it sees what this file is there for.
+                saw_scm = true;
+                const std::vector<std::string> found = find_scm_only(text);
+                for (const char* expected :
+                     {"OpenSCManager", "CreateService", "StartService", "ControlService",
+                      "DeleteService", "QueryServiceStatus", "ChangeServiceConfig",
+                      "RegisterServiceCtrlHandler", "SetServiceStatus", "TerminateProcess"}) {
+                    CAPTURE(expected);
+                    CHECK(std::find(found.begin(), found.end(), expected) != found.end());
+                }
+            } else {
+                CHECK(find_scm_only(text) == std::vector<std::string>{});
+            }
+            ++scanned;
+        }
+    }
+    // The scan saw the Worker's sources, so it isn't looking in the wrong place.
+    CHECK(scanned >= 100);
+    CHECK(saw_scm);
 }

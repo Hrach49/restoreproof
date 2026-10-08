@@ -30,8 +30,8 @@ constexpr std::chrono::seconds kClockSkewWarning{120};
 // A CA file larger than this isn't one.
 constexpr std::uintmax_t kMaxTsaCaFileBytes = 64u * 1024u;
 
-// RunFolderOutcome::word for a folder the outbox didn't take, or took
-// without its manifest; empty for a queued one.
+} // namespace
+
 std::string_view queue_word(QueueResult result) noexcept
 {
     switch (result) {
@@ -54,8 +54,6 @@ std::string_view queue_word(QueueResult result) noexcept
     }
     return {};
 }
-
-} // namespace
 
 RunSigningKey::~RunSigningKey()
 {

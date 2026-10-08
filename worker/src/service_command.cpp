@@ -7,6 +7,7 @@
 #include "folder_ops.hpp"
 #include "path_utf8.hpp"
 #include "scm.hpp"
+#include "worker_body.hpp"
 
 #include <format>
 #include <optional>
@@ -471,6 +472,7 @@ int run_service(const Context& context, std::optional<std::string_view> config_a
 {
     ServiceOptions options;
     options.host = context.env.host;
+    options.body = context.env.body;
     options.default_config_path = context.env.default_config_path;
     options.default_log_dir = context.env.default_log_dir;
     if (config_arg) {
@@ -496,7 +498,10 @@ int run_service(const Context& context, std::optional<std::string_view> config_a
 
 ServiceCommandEnv default_service_command_env()
 {
-    return {};
+    ServiceCommandEnv env;
+    // W4.8: the scheduler loop over its real calls and paths.
+    env.body = make_worker_body();
+    return env;
 }
 
 int run_service_command(std::span<const std::string_view> args, std::ostream& out,

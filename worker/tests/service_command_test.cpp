@@ -1218,6 +1218,34 @@ TEST_CASE("service run: under the SCM it is the service, and its exit code the p
                                     ", log_level " + (with_config ? "debug" : "info");
         CHECK(log_text().find(started) != std::string::npos);
     }
+    SECTION("the env's body is the service's work, handed the service's context")
+    {
+        // W4.8: what `run` hands rp::Service; here one that only notes what
+        // it was given and waits for the stop.
+        std::atomic<int> calls{0};
+        std::atomic<bool> had_logger{false};
+        std::string log_level;
+        env.body = [&](const std::shared_ptr<rp::ServiceContext>& context) {
+            ++calls;
+            had_logger = context->logger != nullptr;
+            log_level = context->config.log_level;
+            context->stop.wait();
+        };
+        std::thread runner{[&] { code = rp::run_service_command(Args{"run"}, out, err, env); }};
+        const bool running = fake.wait_for_state(ServiceState::running);
+        if (fake.has_handler()) {
+            fake.control(rp::ServiceControl::stop);
+        }
+        runner.join();
+        fake.forget();
+
+        REQUIRE(running);
+        CHECK(code == 0);
+        CHECK(calls == 1);
+        CHECK(had_logger);
+        CHECK(log_level == "info");
+        CHECK(fake.exits().empty());
+    }
     SECTION("a config that doesn't load is exit 1, and the service's own code says why")
     {
         const std::string missing = utf8_of(tmp.path() / "missing.json");
@@ -1239,10 +1267,16 @@ TEST_CASE("service run: under the SCM it is the service, and its exit code the p
 
 // --- The real environment --------------------------------------------------------
 
-TEST_CASE("service: the real environment is every function null, and the waits are point 2's",
+TEST_CASE("service: the real environment is every function null but the body, and the waits "
+          "are point 2's",
           "[service_command]")
 {
     const rp::ServiceCommandEnv env = rp::default_service_command_env();
+
+    // W4.8: the scheduler loop; an env made by hand has none and keeps
+    // W4.7's wait.
+    CHECK(env.body);
+    CHECK_FALSE(rp::ServiceCommandEnv{}.body);
 
     CHECK_FALSE(env.scm.create_service);
     CHECK_FALSE(env.scm.set_description);

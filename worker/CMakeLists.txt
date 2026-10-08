@@ -71,10 +71,12 @@ add_library(rpcore STATIC
     src/sample_rng.cpp
     src/sample_selector.cpp
     src/secrets.cpp
+    src/service_log.cpp
     src/sha256.cpp
     src/signer.cpp
     src/signer_command.cpp
     src/step_timer.cpp
+    src/stop_signal.cpp
     src/target_guard.cpp
     src/target_guard_graph.cpp
     src/target_guard_veeam.cpp
@@ -212,11 +214,13 @@ add_executable(rptests
     tests/sample_selector_live_test.cpp
     tests/sample_selector_test.cpp
     tests/secrets_test.cpp
+    tests/service_log_test.cpp
     tests/sha256_test.cpp
     tests/signer_command_test.cpp
     tests/signer_test.cpp
     tests/smoke.cpp
     tests/step_timer_test.cpp
+    tests/stop_signal_test.cpp
     tests/target_guard_test.cpp
     tests/target_guard_veeam_test.cpp
     tests/test_command_test.cpp

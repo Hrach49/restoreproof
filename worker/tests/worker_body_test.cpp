@@ -782,6 +782,40 @@ TEST_CASE("worker body: a flush is skipped while another holds its mutex, and th
     CHECK(env.heartbeat(beat) == "http_503");
 }
 
+TEST_CASE("worker body: a stop that comes during an upload ends the flush before the next run: "
+          "one POST, and the second run still queued",
+          "[worker_body][flush]")
+{
+    BodyLab lab;
+    // Two runs in the outbox, each a folder closed and queued.
+    REQUIRE(lab.env().close_run(lab.record("killed-1")).state == rp::CloseRunState::queued);
+    // The second a second later, so that the flush's order is theirs.
+    lab.h.wall_now = [earlier = lab.h.wall_now] { return earlier() + std::chrono::seconds{1}; };
+    REQUIRE(lab.env().close_run(lab.record("killed-2")).state == rp::CloseRunState::queued);
+    lab.context->config.jobs_file.reset();
+    // The Cloud takes the first run; the stop is asked for while it answers.
+    lab.cloud.on(rp::HttpMethod::post, kResultsUrl, [&lab](const rp::HttpRequest&) {
+        lab.context->stop.request();
+        return rp::test::make_response(202);
+    });
+
+    lab.run_loop(5);
+
+    std::size_t posts = 0;
+    for (const rp::HttpRequest& request : lab.cloud.requests()) {
+        posts += request.url == kResultsUrl ? 1u : 0u;
+    }
+    CHECK(posts == 1);
+    // The older one went; the other was never started and is as it was.
+    CHECK(std::filesystem::exists(lab.sent("killed-1")));
+    CHECK_FALSE(std::filesystem::exists(lab.queued("killed-1")));
+    CHECK(names_in(lab.queued("killed-2")) == kQueuedFolder);
+    CHECK_FALSE(std::filesystem::exists(lab.sent("killed-2")));
+    const json manifest = json::parse(bytes_of(lab.queued("killed-2") / "manifest.json"));
+    CHECK(manifest.at("attempts") == 0);
+    CHECK(rp::to_string(verify(lab.queued("killed-2")).word) == "verified");
+}
+
 TEST_CASE("worker body: a Cloud client that can't be made is the step's failure",
           "[worker_body][flush]")
 {
@@ -1006,17 +1040,36 @@ TEST_CASE("worker body: one job from the stub file to the outbox and the Cloud, 
     std::optional<bool> let_go;
     std::optional<std::string> record_before_request;
     std::optional<std::string> record_at_request;
+    // What the service's wait was asked for by the pipeline's sleep and by
+    // the download client's, each called once from inside the run.
+    std::vector<milliseconds> pipeline_waits;
+    std::vector<milliseconds> download_waits;
     lab.h.fake.at_restore = [&] {
         const connector::ConnectorOptions& told = *lab.h.connector_options;
         told.on_session_opened(kSessionA);
         record_before_request = file_bytes(lab.record_file());
         let_go = told.before_restore_request();
         record_at_request = file_bytes(lab.record_file());
+        std::size_t before = lab.waits.size();
+        told.sleep(milliseconds{1234});
+        pipeline_waits.assign(lab.waits.begin() + static_cast<std::ptrdiff_t>(before),
+                              lab.waits.end());
+        before = lab.waits.size();
+        if (lab.h.download_sleep) {
+            lab.h.download_sleep(milliseconds{5678});
+        }
+        download_waits.assign(lab.waits.begin() + static_cast<std::ptrdiff_t>(before),
+                              lab.waits.end());
     };
 
     const std::optional<std::string> last_error = lab.run_loop();
 
     CHECK_FALSE(last_error);
+    // The pipeline's sleep and the download client's are the service's wait,
+    // which a stop ends: not the Harness's, and not a real sleep.
+    CHECK(pipeline_waits == std::vector<milliseconds>{milliseconds{1234}});
+    CHECK(download_waits == std::vector<milliseconds>{milliseconds{5678}});
+    CHECK(std::ranges::find(lab.h.slept, milliseconds{1234}) == lab.h.slept.end());
     // The record: on disk before the request was let go.
     REQUIRE(let_go);
     CHECK(*let_go);

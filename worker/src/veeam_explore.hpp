@@ -50,6 +50,15 @@ void check_restore_point(VeeamClient& client, const std::string& organization_id
 // "; " + `outcome`.
 void preflight(VeeamClient& client, const std::string& account, std::string_view outcome);
 
+// Reads session `id` and stops it if it is Working: the stop a call sends
+// for its own explore sessions, and VeeamM365Connector::end_session's (W4.8
+// point 9). A Stop that fails with a TransientError (a timeout, a dropped
+// connection, a 5xx Veeam calls transient) is followed by a read of the
+// session and, if it is still Working, by one more Stop: at most 2 Stops.
+// Veeam's errors pass through; the warning of the second Stop goes to `logger`.
+void stop_working_session(VeeamClient& client, const std::shared_ptr<spdlog::logger>& logger,
+                          const std::string& id);
+
 // The explore sessions one call opens, and their closing. The destructor
 // stops each one still Working (best effort, never throws) unless
 // keep_open(true) says a restore may still run under them.
@@ -61,6 +70,9 @@ public:
         const std::shared_ptr<spdlog::logger>& logger;
         const std::string& account; // as Veeam lists it in initiatedBy
         const std::string& backup_time;
+        // Told every session opened or adopted, once its ID is recorded
+        // (W4.8 point 6); null: nothing.
+        const std::function<void(std::string_view)>& on_opened;
     };
 
     explicit ExploreSessions(Context context) : c_(context) {}
@@ -74,7 +86,9 @@ public:
 
     // Opens an explore session of `kind` on the restore point and records
     // its ID at once. A failed POST (not a refused sign-in) first adopts the
-    // one session of ours it may have opened anyway, then rethrows.
+    // one session of ours it may have opened anyway, then rethrows. Each
+    // session recorded, opened or adopted, is told to the context's
+    // on_opened.
     std::string open(connector::ItemKind kind);
 
     // Records a session ID the duplicate check must not take for a new one.
@@ -108,13 +122,11 @@ public:
 
 private:
     void adopt_orphans(connector::ItemKind kind, std::chrono::system_clock::time_point sent) noexcept;
-    // Stops `id` if it is Working; an error is logged and returns false. A
-    // Stop that fails with a TransientError (a timeout, a dropped connection,
-    // a 5xx Veeam calls transient) is followed by a read of the session and,
-    // if it is still Working, by one more Stop: at most 2 Stops per session.
+    // Records a session to close and tells the context's on_opened of it; a
+    // callback that throws is a warning, and the call goes on.
+    void record(const std::string& id) noexcept;
+    // stop_working_session; an error is logged and returns false.
     bool stop_if_working(const std::string& id) noexcept;
-    // Whether GET /v8/RestoreSessions/{id} says Working.
-    bool is_working(const std::string& id);
 
     Context c_;
     std::string organization_id_;

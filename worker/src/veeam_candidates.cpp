@@ -190,11 +190,14 @@ public:
         // Where every explore session opened or adopted is remembered, with
         // when.
         std::map<std::string, std::chrono::system_clock::time_point>& opened;
+        // Told every explore session opened or adopted (W4.8); may be null.
+        const std::function<void(std::string_view)>& on_session_opened;
     };
 
     explicit CandidateLister(Context context)
         : c_(context), sessions_({context.client, context.wall_now, context.logger,
-                                  context.account, context.query.restore_point.backup_time})
+                                  context.account, context.query.restore_point.backup_time,
+                                  context.on_session_opened})
     {
     }
 
@@ -647,7 +650,8 @@ connector::CandidatePool VeeamM365Connector::list_candidates(const connector::Ca
     // counted again.
     const auto forget_before = wall_now_() - vr::kDuplicateWindow;
     std::erase_if(candidate_sessions_, [&](const auto& entry) { return entry.second < forget_before; });
-    CandidateLister lister({*client_, query, wall_now_, logger_, account_, candidate_sessions_});
+    CandidateLister lister({*client_, query, wall_now_, logger_, account_, candidate_sessions_,
+                            on_session_opened_});
     // Veeam's errors as restore_sample maps them: nothing is sampled yet, so
     // Veeam's own 404 is connector::Error, never connector::NotFoundError.
     try {

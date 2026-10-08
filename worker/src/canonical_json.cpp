@@ -69,6 +69,33 @@ std::string canonical_json(const nlohmann::json& value)
     }
 }
 
+std::size_t json_nesting_depth(std::string_view bytes) noexcept
+{
+    std::size_t depth = 0;
+    std::size_t deepest = 0;
+    bool in_string = false;
+    bool escaped = false;
+    for (const char c : bytes) {
+        if (in_string) {
+            if (escaped) {
+                escaped = false;
+            } else if (c == '\\') {
+                escaped = true;
+            } else if (c == '"') {
+                in_string = false;
+            }
+        } else if (c == '"') {
+            in_string = true;
+        } else if (c == '[' || c == '{') {
+            ++depth;
+            deepest = std::max(deepest, depth);
+        } else if ((c == ']' || c == '}') && depth > 0) {
+            --depth;
+        }
+    }
+    return deepest;
+}
+
 std::string canonical_sha256(const nlohmann::json& value)
 {
     return sha256_hex(canonical_json(value));

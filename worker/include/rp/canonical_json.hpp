@@ -7,6 +7,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <cstddef>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -36,6 +37,18 @@ public:
 //   - a binary or discarded value,
 //   - a string that isn't valid UTF-8 (strict: never replaced by U+FFFD).
 std::string canonical_json(const nlohmann::json& value);
+
+// More arrays and objects than this open at once, and a text whose word the
+// Worker would act on isn't parsed at all: a result (rp/signer.hpp), the
+// service's record and its jobs document, none of which needs a fifth of it.
+// verify_bundle.py has the same limit.
+inline constexpr std::size_t kMaxJsonNesting = 32;
+
+// The most arrays and objects open at once in `bytes`, counted on the bytes
+// and outside strings, without parsing: what keeps a file of a hundred
+// thousand '[' from the parser and from canonical_json, which calls itself
+// once per level. Counts as verify_bundle.py's nesting_depth.
+std::size_t json_nesting_depth(std::string_view bytes) noexcept;
 
 // sha256_hex(canonical_json(value)): lower-case hex, 64 characters.
 std::string canonical_sha256(const nlohmann::json& value);

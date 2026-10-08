@@ -481,6 +481,11 @@ std::string record_text(const RunningRecord& record)
 
 std::optional<RunningRecord> parse_record(std::string_view text)
 {
+    // Before the parser and the canonical form, which calls itself once per
+    // level: 64 KiB of '[' would be tens of thousands of them.
+    if (json_nesting_depth(text) > kMaxJsonNesting) {
+        return std::nullopt;
+    }
     const json document = json::parse(text, nullptr, false);
     if (!document.is_object() || document.size() != kRecordKeys || !is_canonical(document, text)) {
         return std::nullopt;

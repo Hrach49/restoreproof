@@ -12,6 +12,7 @@
 // it works over rp::Ed25519 (rp/ed25519.hpp) and reads a folder through a
 // reader handed in.
 
+#include <rp/canonical_json.hpp> // kMaxJsonNesting, the limit a result is held to
 #include <rp/ed25519.hpp>
 #include <rp/rfc3161.hpp>
 
@@ -35,10 +36,6 @@ inline constexpr std::string_view kSignatureAlgorithm = "ed25519";
 // 300 items is well under a megabyte; a signature file is 322 bytes.
 inline constexpr std::uintmax_t kMaxResultFileBytes = 16u * 1024u * 1024u;
 inline constexpr std::uintmax_t kMaxSignatureFileBytes = 4096;
-
-// More arrays and objects than this open at once, and a file isn't parsed at
-// all (a result has far fewer). verify_bundle.py has the same limit.
-inline constexpr std::size_t kMaxJsonNesting = 32;
 
 // The Worker's private signing key, parsed. Made only by from_base64. Movable,
 // not copyable; a moved-from one must not be used.

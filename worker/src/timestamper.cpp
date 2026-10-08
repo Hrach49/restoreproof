@@ -131,10 +131,17 @@ Timestamper::stamp(std::span<const unsigned char, kSha256Bytes> digest) const no
 {
     TimestampOutcome out;
     out.error = timestamp_code::kInternal;
+    const auto stopped = [this] { return options_.stop_requested && options_.stop_requested(); };
     for (int n = 1; n <= kTimestampAttempts; ++n) {
         try {
-            if (n > 1 && options_.sleep) {
+            // No wait once a stop was asked for.
+            if (n > 1 && options_.sleep && !stopped()) {
                 options_.sleep(kWaits[static_cast<std::size_t>(n - 2)]);
+            }
+            // After a stop (one that ended the wait early too) no further
+            // attempt: `out` is the last one's, or the one above, of none.
+            if (stopped()) {
+                break;
             }
             out = attempt(options_, digest);
         } catch (...) {

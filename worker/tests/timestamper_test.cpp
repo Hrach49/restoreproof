@@ -70,6 +70,8 @@ struct Lab {
     std::vector<std::chrono::milliseconds> sleeps;
     std::uint64_t next_nonce = kNonce;
     std::shared_ptr<spdlog::logger> logger;
+    // W4.8: the stop check; null = never.
+    std::function<bool()> stop_requested;
 
     rp::Timestamper timestamper()
     {
@@ -81,6 +83,7 @@ struct Lab {
         options.nonce = [this]() -> std::optional<std::uint64_t> { return next_nonce++; };
         options.sleep = [this](std::chrono::milliseconds wait) { sleeps.push_back(wait); };
         options.logger = logger;
+        options.stop_requested = stop_requested;
         return rp::Timestamper(std::move(options));
     }
 
@@ -461,6 +464,115 @@ TEST_CASE("a sleep that throws ends nothing", "[timestamper]")
     CHECK(outcome.error == rp::timestamp_code::kInternal);
     CHECK(outcome.attempts == 3);
     CHECK(calls == 1);
+}
+
+// --- A stop (W4.8, docs/decisions.md 2026-10-08 point 13) ----------------------
+
+TEST_CASE("after a stop no further attempt is made: the last attempt's code with the attempts "
+          "made, or timestamp_internal after none",
+          "[timestamper][stop]")
+{
+    // When the stop comes: before anything, while a request is out, or in the
+    // wait after it.
+    enum class At { before_first, in_request, in_wait };
+    struct StopRow {
+        const char* name;
+        At at;
+        int nth; // which request, or the wait after which
+        int attempts;
+        std::string_view code;
+        std::vector<std::chrono::milliseconds> sleeps;
+    };
+    const StopRow row = GENERATE(
+        // Never tsa_unreachable for a TSA that wasn't asked.
+        StopRow{"before the first attempt", At::before_first, 0, 0, rp::timestamp_code::kInternal, {}},
+        // Already stopped when the wait would begin: no wait either.
+        StopRow{"during the first request", At::in_request, 1, 1, rp::timestamp_code::kHttpStatus, {}},
+        StopRow{"during the first wait", At::in_wait, 1, 1, rp::timestamp_code::kHttpStatus, {30s}},
+        StopRow{"during the second request", At::in_request, 2, 2, rp::timestamp_code::kRejected, {30s}},
+        StopRow{"during the second wait", At::in_wait, 2, 2, rp::timestamp_code::kRejected, {30s, 60s}});
+    CAPTURE(row.name);
+
+    Lab lab;
+    bool stopped = row.at == At::before_first;
+    int calls = 0;
+    // The first attempt is answered 503, the second is rejected; a third
+    // would be granted, and must never be asked for.
+    lab.http.on(HttpMethod::post, kUrl, [&](const HttpRequest& request) {
+        ++calls;
+        stopped = stopped || (row.at == At::in_request && calls == row.nth);
+        if (calls == 1) {
+            return make_response(503, "busy", "text/plain");
+        }
+        if (calls == 2) {
+            return make_response(200, TestTsa::rejection(), kReplyType);
+        }
+        return make_response(200, tsa().respond(request.body), kReplyType);
+    });
+    lab.stop_requested = [&] { return stopped; };
+    rp::TimestamperOptions options;
+    options.url = kUrl;
+    options.ca_pem = tsa().root_pem();
+    options.http = &lab.http;
+    options.stop_requested = lab.stop_requested;
+    options.sleep = [&](std::chrono::milliseconds wait) {
+        lab.sleeps.push_back(wait);
+        stopped = stopped || (row.at == At::in_wait && static_cast<int>(lab.sleeps.size()) == row.nth);
+    };
+
+    const TimestampOutcome outcome = rp::Timestamper(std::move(options)).stamp(kDigestAbc);
+
+    CHECK_FALSE(outcome.stamped());
+    CHECK(outcome.token.empty());
+    CHECK(outcome.attempts == row.attempts);
+    CHECK(outcome.error == row.code);
+    CHECK(calls == row.attempts);
+    CHECK(lab.sleeps == row.sleeps);
+}
+
+TEST_CASE("a stop check that doesn't say yes is asked before every attempt and every wait, and "
+          "changes nothing",
+          "[timestamper][stop]")
+{
+    Lab lab;
+    int asked = 0;
+    int calls = 0;
+    lab.http.on(HttpMethod::post, kUrl, [&calls](const HttpRequest& request) {
+        if (++calls == 1) {
+            return make_response(503, "busy", "text/plain");
+        }
+        return make_response(200, tsa().respond(request.body), kReplyType);
+    });
+    lab.stop_requested = [&asked] { return ++asked, false; };
+
+    const TimestampOutcome outcome = lab.timestamper().stamp(kDigestAbc);
+
+    REQUIRE(outcome.stamped());
+    CHECK(outcome.attempts == 2);
+    CHECK(outcome.error.empty());
+    // Before the first attempt, and before and after the one wait.
+    CHECK(asked == 3);
+    CHECK(lab.sleeps == std::vector<std::chrono::milliseconds>{30s});
+}
+
+TEST_CASE("a stop check that throws is that attempt's failure, as a sleep that throws is",
+          "[timestamper][stop]")
+{
+    Lab lab;
+    lab.answer_well();
+    int asked = 0;
+    lab.stop_requested = [&asked]() -> bool {
+        if (++asked == 1) {
+            throw std::runtime_error("no answer");
+        }
+        return false;
+    };
+
+    const TimestampOutcome outcome = lab.timestamper().stamp(kDigestAbc);
+
+    REQUIRE(outcome.stamped());
+    CHECK(outcome.attempts == 2);
+    CHECK(lab.http.requests().size() == 1);
 }
 
 // --- The recorded fixtures (tests/fixtures/tsa/) --------------------------------

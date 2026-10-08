@@ -1690,7 +1690,10 @@ service after a minute (the recovery above).
 stderr as before.
 
 - **Rotation.** At 10 MiB `worker.log` becomes `worker.1.log`, that one `worker.2.log`, and so
-  on up to `worker.4.log`: five files, 50 MiB at most, the oldest dropped.
+  on up to `worker.4.log`: five files, 50 MiB at most, the oldest dropped. A program that holds
+  one of the files open without sharing its deletion (most tools that tail a log do) stops the
+  rotation: nothing is emptied and no line is lost, and `worker.log` grows past 10 MiB until
+  the file is let go. `Get-Content -Wait` doesn't hold it that way.
 - **A line** is `<UTC time> <level> <message>`, for example
   `2026-10-08T12:00:00.123Z info service running: rpworker 0.0.0, config C:\ProgramData\RestoreProof\config.json, log_level info`.
   One message is one line: a line break or another control character in it is written as a space.

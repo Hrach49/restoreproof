@@ -99,6 +99,75 @@ std::vector<std::string> log_lines_after_time(const std::filesystem::path& folde
     return out;
 }
 
+std::vector<std::string> lines_after_time(const std::filesystem::path& file)
+{
+    std::vector<std::string> out;
+    for (const std::string& line : lines_of(bytes_of(file))) {
+        out.push_back(after_time(line));
+    }
+    return out;
+}
+
+// Every line of the log's files in `folder`, the oldest file first.
+std::vector<std::string> all_lines_oldest_first(const std::filesystem::path& folder)
+{
+    std::vector<std::string> out;
+    for (const char* name :
+         {"worker.4.log", "worker.3.log", "worker.2.log", "worker.1.log", "worker.log"}) {
+        for (std::string& line : lines_after_time(folder / name)) {
+            out.push_back(std::move(line));
+        }
+    }
+    return out;
+}
+
+// A reader that holds a file open the way a CRT or .NET one does: others may
+// read and write it, nobody may rename it, replace it or delete it.
+class HeldOpen {
+public:
+    explicit HeldOpen(const std::filesystem::path& file)
+        : handle_(CreateFileW(file.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                              nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr))
+    {
+        REQUIRE(handle_ != INVALID_HANDLE_VALUE);
+    }
+
+    ~HeldOpen() { release(); }
+
+    HeldOpen(const HeldOpen&) = delete;
+    HeldOpen& operator=(const HeldOpen&) = delete;
+
+    void release()
+    {
+        if (handle_ != INVALID_HANDLE_VALUE) {
+            CloseHandle(handle_);
+            handle_ = INVALID_HANDLE_VALUE;
+        }
+    }
+
+private:
+    HANDLE handle_;
+};
+
+// Writes numbered info lines of about 75 bytes through a log and keeps what
+// each must read in the file, in order.
+struct LineWriter {
+    std::shared_ptr<rp::ServiceLog> log;
+    std::string what;
+    std::vector<std::string> written{};
+
+    void write(int count)
+    {
+        for (int i = 0; i < count; ++i) {
+            const std::string digits = std::to_string(written.size());
+            const std::string message =
+                "line " + std::string(3 - digits.size(), '0') + digits + " of " + what;
+            log->logger()->info(message);
+            written.push_back("info " + message);
+        }
+    }
+};
+
 // The log, opened in `folder`; the test fails when it isn't.
 std::shared_ptr<rp::ServiceLog> open_log(const std::filesystem::path& folder, Level level,
                                          rp::LogLimits limits = {})
@@ -748,6 +817,240 @@ TEST_CASE("limits of one file, or of none, keep worker.log alone", "[service_log
     CHECK(std::filesystem::file_size(folder / "worker.log") <= kKiB);
     CHECK_THAT(log_lines_after_time(folder).back(), StartsWith("info line 059"));
     CHECK(log->write_failures() == 0);
+}
+
+// --- A rotation that can't be made ------------------------------------------
+//
+// Windows refuses to rename a file somebody holds open without sharing its
+// deletion (a CRT or .NET reader tailing the log, a copy or a hash under
+// way). A rotation that meets one changes nothing it can't finish: no file is
+// emptied, the line being written is written, and worker.log grows past its
+// limit until the rotation can be made.
+
+TEST_CASE("a rotation a reader of worker.log blocks loses no line", "[service_log]")
+{
+    const TempDir tmp;
+    const std::filesystem::path folder = tmp.path() / "logs";
+    const std::shared_ptr<rp::ServiceLog> log = open_log(folder, Level::info, {kKiB, 5});
+    LineWriter lines{log, "the blocked rotation"};
+
+    rp::log_security(log->logger(), "kept through a blocked rotation");
+    lines.written.emplace_back("critical SECURITY: kept through a blocked rotation");
+    lines.write(10);
+    REQUIRE(names_in(folder) == std::set<std::string>{"worker.log"});
+    REQUIRE(std::filesystem::file_size(folder / "worker.log") < kKiB);
+
+    HeldOpen reader{folder / "worker.log"};
+    // Two files' worth, the SECURITY line and the line that crosses the
+    // limit among them.
+    lines.write(30);
+
+    CHECK(names_in(folder) == std::set<std::string>{"worker.log"});
+    CHECK(log_lines_after_time(folder) == lines.written);
+    CHECK(std::filesystem::file_size(folder / "worker.log") > 2 * kKiB);
+    // Every line was written: none failed.
+    CHECK(log->write_failures() == 0);
+
+    // The reader gone, the next line rotates what was waiting.
+    reader.release();
+    const std::vector<std::string> before = lines.written;
+    lines.write(1);
+
+    CHECK(names_in(folder) == std::set<std::string>{"worker.log", "worker.1.log"});
+    CHECK(lines_after_time(folder / "worker.1.log") == before);
+    CHECK(log_lines_after_time(folder) == std::vector<std::string>{lines.written.back()});
+    CHECK(log->write_failures() == 0);
+}
+
+TEST_CASE("a rotation a reader of an old file blocks loses no line and moves no other file",
+          "[service_log]")
+{
+    const TempDir tmp;
+    const std::filesystem::path folder = tmp.path() / "logs";
+    const std::shared_ptr<rp::ServiceLog> log = open_log(folder, Level::info, {kKiB, 5});
+    LineWriter lines{log, "the old file's reader"};
+
+    for (int i = 0; i < 100 && !std::filesystem::exists(folder / "worker.2.log"); ++i) {
+        lines.write(1);
+    }
+    const std::set<std::string> three{"worker.log", "worker.1.log", "worker.2.log"};
+    REQUIRE(names_in(folder) == three);
+    const std::string first = bytes_of(folder / "worker.1.log");
+    const std::string second = bytes_of(folder / "worker.2.log");
+
+    HeldOpen reader{folder / "worker.2.log"};
+    lines.write(40);
+
+    // worker.2.log can't become worker.3.log, so worker.1.log isn't put over
+    // it, nor worker.log over that.
+    CHECK(names_in(folder) == three);
+    CHECK(bytes_of(folder / "worker.1.log") == first);
+    CHECK(bytes_of(folder / "worker.2.log") == second);
+    CHECK(all_lines_oldest_first(folder) == lines.written);
+    CHECK(log->write_failures() == 0);
+
+    reader.release();
+    lines.write(1);
+
+    CHECK(names_in(folder) ==
+          std::set<std::string>{"worker.log", "worker.1.log", "worker.2.log", "worker.3.log"});
+    CHECK(bytes_of(folder / "worker.2.log") == first);
+    CHECK(bytes_of(folder / "worker.3.log") == second);
+    CHECK(log_lines_after_time(folder) == std::vector<std::string>{lines.written.back()});
+    CHECK(all_lines_oldest_first(folder) == lines.written);
+    CHECK(log->write_failures() == 0);
+}
+
+TEST_CASE("a blocked rotation costs the oldest file once and no file after it", "[service_log]")
+{
+    const TempDir tmp;
+    const std::filesystem::path folder = tmp.path() / "logs";
+    const std::shared_ptr<rp::ServiceLog> log = open_log(folder, Level::info, {kKiB, 5});
+    LineWriter lines{log, "the full set's reader"};
+
+    for (int i = 0; i < 200 && !std::filesystem::exists(folder / "worker.4.log"); ++i) {
+        lines.write(1);
+    }
+    const std::set<std::string> five{"worker.log", "worker.1.log", "worker.2.log", "worker.3.log",
+                                     "worker.4.log"};
+    REQUIRE(names_in(folder) == five);
+    const std::string first = bytes_of(folder / "worker.1.log");
+    const std::string second = bytes_of(folder / "worker.2.log");
+    const std::string third = bytes_of(folder / "worker.3.log");
+
+    // Every number is taken, so the first try gives up the oldest file, as a
+    // rotation does, and stops at worker.1.log. The tries after it end at the
+    // number that one left free: the old files stay where they are, however
+    // many lines follow.
+    HeldOpen reader{folder / "worker.1.log"};
+    lines.write(60);
+
+    CHECK(names_in(folder) ==
+          std::set<std::string>{"worker.log", "worker.1.log", "worker.3.log", "worker.4.log"});
+    CHECK(bytes_of(folder / "worker.1.log") == first);
+    CHECK(bytes_of(folder / "worker.3.log") == second);
+    CHECK(bytes_of(folder / "worker.4.log") == third);
+    CHECK(log->write_failures() == 0);
+    // What is left is the end of what was written, with no line missing in it.
+    const std::vector<std::string> kept = all_lines_oldest_first(folder);
+    REQUIRE(kept.size() <= lines.written.size());
+    CHECK(std::equal(kept.rbegin(), kept.rend(), lines.written.rbegin()));
+
+    reader.release();
+    lines.write(1);
+
+    CHECK(names_in(folder) == five);
+    CHECK(bytes_of(folder / "worker.2.log") == first);
+    CHECK(bytes_of(folder / "worker.3.log") == second);
+    CHECK(bytes_of(folder / "worker.4.log") == third);
+    CHECK(log_lines_after_time(folder) == std::vector<std::string>{lines.written.back()});
+}
+
+TEST_CASE("a rename refused half-way puts no file over one that stayed", "[service_log]")
+{
+    const TempDir tmp;
+    const std::filesystem::path folder = tmp.path() / "logs";
+    std::filesystem::create_directories(folder);
+    const std::filesystem::path file = folder / rp::kLogFileName;
+    // Recorded as "<from> > <to>", and refused for the file named, if any.
+    std::vector<std::string> renames;
+    std::string refused;
+    const auto rename = [&](const std::filesystem::path& from, const std::filesystem::path& to) {
+        renames.push_back(from.filename().string() + " > " + to.filename().string());
+        return from.filename().string() != refused && rp::detail::rename_log_file(from, to);
+    };
+    const auto log = std::make_shared<rp::ServiceLog>(
+        rp::detail::make_log_file_sink(file, rp::detail::ansi_path(file).value(), {kKiB, 5}, rename),
+        Level::info, file);
+    LineWriter lines{log, "the refused rename"};
+
+    for (int i = 0; i < 100 && !std::filesystem::exists(folder / "worker.2.log"); ++i) {
+        lines.write(1);
+    }
+    REQUIRE(renames == std::vector<std::string>{"worker.log > worker.1.log",
+                                                "worker.1.log > worker.2.log",
+                                                "worker.log > worker.1.log"});
+    const std::string first = bytes_of(folder / "worker.1.log");
+    const std::string second = bytes_of(folder / "worker.2.log");
+
+    renames.clear();
+    refused = "worker.1.log";
+    lines.write(40);
+
+    // worker.2.log went up; worker.1.log stayed, so worker.log was never put
+    // over it: not asked once.
+    CHECK(names_in(folder) == std::set<std::string>{"worker.log", "worker.1.log", "worker.3.log"});
+    CHECK(bytes_of(folder / "worker.1.log") == first);
+    CHECK(bytes_of(folder / "worker.3.log") == second);
+    CHECK(all_lines_oldest_first(folder) == lines.written);
+    CHECK(log->write_failures() == 0);
+    REQUIRE(renames.size() > 2);
+    CHECK(renames.front() == "worker.2.log > worker.3.log");
+    CHECK(std::all_of(renames.begin() + 1, renames.end(), [](const std::string& asked) {
+        return asked == "worker.1.log > worker.2.log";
+    }));
+
+    renames.clear();
+    refused.clear();
+    lines.write(1);
+
+    CHECK(renames == std::vector<std::string>{"worker.1.log > worker.2.log",
+                                              "worker.log > worker.1.log"});
+    CHECK(bytes_of(folder / "worker.2.log") == first);
+    CHECK(all_lines_oldest_first(folder) == lines.written);
+}
+
+TEST_CASE("a worker.log that can't be opened after a rotation fails each line until it can",
+          "[service_log]")
+{
+    const TempDir tmp;
+    const std::filesystem::path folder = tmp.path() / "logs";
+    std::filesystem::create_directories(folder);
+    const std::filesystem::path file = folder / rp::kLogFileName;
+    // The rotation is made; with `block`, a folder then stands where the new
+    // worker.log would be opened.
+    bool block = false;
+    const auto rename = [&](const std::filesystem::path& from, const std::filesystem::path& to) {
+        const bool renamed = rp::detail::rename_log_file(from, to);
+        if (block) {
+            std::filesystem::create_directory(file);
+        }
+        return renamed;
+    };
+    const auto log = std::make_shared<rp::ServiceLog>(
+        rp::detail::make_log_file_sink(file, rp::detail::ansi_path(file).value(), {kKiB, 5}, rename),
+        Level::info, file);
+    LineWriter lines{log, "the log that won't open"};
+
+    lines.write(15);
+    REQUIRE(names_in(folder) == std::set<std::string>{"worker.log"});
+    const std::vector<std::string> before = lines.written;
+
+    block = true;
+    log->logger()->info("the line that rotates, lost");
+    CHECK(log->write_failures() == 1);
+    // What was on disk is on disk: in worker.1.log, whole.
+    CHECK(std::filesystem::is_directory(file));
+    CHECK(lines_after_time(folder / "worker.1.log") == before);
+
+    // Not silently: every line that finds no file is a failure, and counted.
+    log->logger()->info("lost too");
+    rp::log_security(log->logger(), "lost as well");
+    CHECK(log->write_failures() == 3);
+    // A flush has nothing to flush and fails nothing.
+    log->flush();
+    CHECK(log->write_failures() == 3);
+
+    // The folder gone, the next line opens worker.log and is written.
+    std::filesystem::remove(file);
+    log->logger()->info("written again");
+    log->logger()->info("and again");
+
+    CHECK(log->write_failures() == 3);
+    CHECK(log_lines_after_time(folder) ==
+          std::vector<std::string>{"info written again", "info and again"});
+    CHECK(lines_after_time(folder / "worker.1.log") == before);
+    CHECK(names_in(folder) == std::set<std::string>{"worker.log", "worker.1.log"});
 }
 
 TEST_CASE("lines from several threads are whole lines", "[service_log]")

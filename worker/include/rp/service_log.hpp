@@ -16,9 +16,12 @@
 // words (trace, debug, info, warning, error, critical), ended by CR LF, and it
 // is on disk when the call that wrote it returns.
 //
-// The file rotates (spdlog's rotating sink): worker.log is the live file,
-// worker.1.log the newest old one. The logger is handed on and never global:
-// not registered with spdlog and not its default logger.
+// The file rotates: worker.log is the live file, worker.1.log the newest old
+// one. The rotation is the log's own (src/service_log_detail.hpp,
+// make_log_file_sink): a rename Windows refuses, because somebody holds one of
+// the files open, empties nothing and loses no line; worker.log then grows
+// past its limit until the rotation can be made. The logger is handed on and
+// never global: not registered with spdlog and not its default logger.
 //
 // Strict (100% line): this decides whether a SECURITY line is written and
 // whether a line is redacted.
@@ -55,7 +58,9 @@ std::filesystem::path default_log_dir();
 
 // How large the log grows: `max_bytes` a file, `files` files in all, the live
 // one included (worker.log and worker.1.log to worker.4.log: 50 MiB at most).
-// One file, or none, keeps worker.log alone, emptied when it is full.
+// One file, or none, keeps worker.log alone, emptied when it is full. The
+// limits hold while the rotation can be made; a file somebody holds open
+// stops it, and worker.log is over max_bytes for as long.
 struct LogLimits {
     std::size_t max_bytes = 10u * 1024u * 1024u;
     std::size_t files = 5;
@@ -136,10 +141,13 @@ public:
     spdlog::level::level_enum level() const noexcept;
 
     // How many lines or flushes failed since the log was opened: a write the
-    // inner sink refused (a full disk), anything thrown while a line was
-    // made (an allocation failing in redact), a message spdlog couldn't
-    // format. Such a line is not written, never written unredacted, and
-    // nothing else changes: the service doesn't stop over its log.
+    // inner sink refused (a full disk, a worker.log that can't be opened
+    // again after a rotation), anything thrown while a line was made (an
+    // allocation failing in redact), a message spdlog couldn't format. Such
+    // a line is not written, never written unredacted, and nothing else
+    // changes: no line already in the log is lost, and the service doesn't
+    // stop over its log. A rotation that can't be made is none of these: its
+    // line is written.
     std::uint64_t write_failures() const noexcept;
 
     // Flushes the inner sink. Every line is flushed when it is written, so

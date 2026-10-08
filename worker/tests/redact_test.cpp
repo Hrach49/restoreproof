@@ -5,6 +5,8 @@
 #include <catch2/generators/catch_generators_range.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <chrono>
+#include <cstddef>
 #include <string>
 #include <string_view>
 
@@ -904,6 +906,88 @@ TEST_CASE("redact masks a private key block whose label has digits or goes on af
         {"-----BEGIN PGP PUBLIC KEY BLOCK-----\nmQEN\n-----END PGP PUBLIC KEY BLOCK-----\n",
          "-----BEGIN PGP PUBLIC KEY BLOCK-----\nmQEN\n-----END PGP PUBLIC KEY BLOCK-----\n"},
     })));
+}
+
+// The rest of the block's last line goes with a value that ran to its line's
+// end, but it is read first: a secret that starts there and ends on a later
+// line is a secret still, and takes the replacement on to the end of its own
+// last line. Nothing behind it comes out because its opening was swallowed.
+TEST_CASE("redact reads what follows a private key block's END line before it goes",
+          "[redact][signing]")
+{
+    check_row(GENERATE(values<Row>({
+        // A second block on the first one's END line.
+        {"signing_key_base64: -----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY----- "
+         "-----BEGIN PRIVATE KEY-----\nBBBB\n-----END PRIVATE KEY-----\n",
+         "signing_key_base64: [REDACTED]\n"},
+        {"Authorization: Bearer -----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY----- "
+         "-----BEGIN EC PRIVATE KEY-----\nBBBB\n-----END EC PRIVATE KEY-----\r\nHost: h",
+         "Authorization: [REDACTED]\r\nHost: h"},
+        {"password: -----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY----- and "
+         "-----BEGIN PRIVATE KEY-----\nBBBB\n-----END PRIVATE KEY----- x\nnext y",
+         "password: [REDACTED]\nnext y"},
+        // A third on the second's.
+        {"password: -----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY----- "
+         "-----BEGIN PRIVATE KEY-----\nBBBB\n-----END PRIVATE KEY----- "
+         "-----BEGIN PRIVATE KEY-----\nCCCC\n-----END PRIVATE KEY-----\nnext",
+         "password: [REDACTED]\nnext"},
+        // A second block without its end: to the end of the text.
+        {"password: -----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY----- "
+         "-----BEGIN PRIVATE KEY-----\nBBBB\nmore",
+         "password: [REDACTED]"},
+        // A quoted value that goes on over a line end.
+        {"signing_key: -----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY----- "
+         "client_secret=\"line1\nline2\" tail\nnext",
+         "signing_key: [REDACTED]\nnext"},
+        {"password: -----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY----- "
+         "{\"pfx\":\"line1\nline2\"}\nnext",
+         "password: [REDACTED]\nnext"},
+        // A value there that is itself a block.
+        {"password: -----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY----- "
+         "signing_key=-----BEGIN PRIVATE KEY-----\nBBBB\n-----END PRIVATE KEY----- z\nnext",
+         "password: [REDACTED]\nnext"},
+        // A secret there that ends on the line changes nothing.
+        {"password: -----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY----- "
+         "client_secret=abc x\nnext",
+         "password: [REDACTED]\nnext"},
+    })));
+}
+
+// One END line after another, each opening the next block: no call is nested
+// per block, and no byte is read once per block before it.
+TEST_CASE("redact reads a megabyte of private key blocks chained on their END lines",
+          "[redact][signing]")
+{
+    std::string text = "password:";
+    while (text.size() < 1'000'000) {
+        text += " -----BEGIN PRIVATE KEY-----\nMC4C\n-----END PRIVATE KEY-----";
+    }
+    text += "\nnext";
+    CHECK(rp::redact(text) == "password: [REDACTED]\nnext");
+    check_twice(text);
+}
+
+// Whether a value ran to its line's end is asked of the byte behind it, not
+// by reading on to the line's end: a megabyte that is one line of secrets
+// would be read once per secret (24 s where a pass takes milliseconds).
+TEST_CASE("redact reads a megabyte that is one line of secrets in one pass", "[redact]")
+{
+    std::string input;
+    while (input.size() < 1024 * 1024) {
+        input += "password=s3cret&";
+    }
+    std::string expected;
+    for (std::size_t i = 0; i < input.size() / 16; ++i) {
+        expected += "password=[REDACTED]&";
+    }
+
+    const auto start = std::chrono::steady_clock::now();
+    const std::string output = rp::redact(input);
+    const auto took = std::chrono::steady_clock::now() - start;
+
+    CHECK(output == expected);
+    // Wide: a debug build under coverage takes well under a second.
+    CHECK(took < std::chrono::seconds{10});
 }
 
 TEST_CASE("redact reads a megabyte of PEM headers without an end in one pass", "[redact][signing]")

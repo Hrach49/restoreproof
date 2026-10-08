@@ -547,31 +547,69 @@ std::optional<Replacement> match_private_key(std::string_view text, std::size_t 
                        kRedacted};
 }
 
+// Whether a line ends at `pos`, as end_of_line reads one. Asked of the bytes
+// at `pos` alone: reading on to the line's end for every value would make a
+// long line of secrets quadratic.
+bool at_line_end(std::string_view text, std::size_t pos) noexcept
+{
+    return pos == text.size() || text[pos] == '\n' ||
+           (text[pos] == '\r' && pos + 1 < text.size() && text[pos + 1] == '\n');
+}
+
+std::optional<Replacement> match_at(std::string_view text, std::size_t pos, bool line_tails);
+
 // `r`, a bearer token's or a secret value's replacement, going on to the end
 // of a PEM private key block that starts inside it. Such a value ends at a
 // blank or at the line's end, which is inside "-----BEGIN PRIVATE KEY-----" or
 // right after it; the scan would go on behind the header, and the key's own
-// lines would stay as they are. A value that ran to its line's end (a
-// header's, a "name: value" one) runs to the end of the block's last line
-// too: what stands after "-----END ...-----" there would be the value's on a
-// second pass, and redacting twice must be redacting once (W4.7: the
-// service's log redacts every line again in its sink).
-Replacement through_private_key(std::string_view text, Replacement r)
+// lines would stay as they are.
+//
+// With `line_tail`, a value that ran to its line's end (a header's, a "name:
+// value" one) runs to the end of the block's last line too: what stands after
+// "-----END ...-----" there would be the value's on a second pass, and
+// redacting twice must be redacting once (W4.7: the service's log redacts
+// every line again in its sink). That rest of the line is read before it
+// goes, as the scan would have read it: a secret that starts in it and ends
+// behind the line's end (a second block, a quoted value over two lines) goes
+// whole, and the replacement with it to the end of that secret's last line,
+// where the same holds again. Those secrets are matched without their own
+// line tails, which this loop reads itself: one level of calls however many
+// blocks follow one another, and every byte of the tails read once.
+Replacement through_private_key(std::string_view text, Replacement r, bool line_tail)
 {
-    const bool to_line_end = end_of_line(text, r.to) == r.to;
+    const bool to_line_end = line_tail && at_line_end(text, r.to);
+    bool block_found = false;
     for (std::size_t p = r.from; p < r.to; ++p) {
         if (const auto block = match_private_key(text, p); block && block->to > r.to) {
-            r.to = to_line_end ? end_of_line(text, block->to) : block->to;
+            r.to = block->to;
+            block_found = true;
             break;
         }
     }
+    if (!block_found || !to_line_end) {
+        return r;
+    }
+    std::size_t end = end_of_line(text, r.to);
+    for (std::size_t p = r.to; p < end;) {
+        if (const auto secret = match_at(text, p, false)) {
+            p = secret->to;
+            if (p > end) {
+                end = end_of_line(text, p);
+            }
+        } else {
+            ++p;
+        }
+    }
+    r.to = end;
     return r;
 }
 
 // The secret at `pos`, if one starts there: URL userinfo after "://", a PEM
 // private key block, a raw JWT, a bearer token, or a secret header or key
-// (match_key_at), the last two with the private key block that starts in them.
-std::optional<Replacement> match_at(std::string_view text, std::size_t pos)
+// (match_key_at), the last two with the private key block that starts in them
+// and, with `line_tails`, the rest of that block's last line
+// (through_private_key).
+std::optional<Replacement> match_at(std::string_view text, std::size_t pos, bool line_tails)
 {
     if (starts_with_name(text, pos, kSchemeSeparator)) {
         return match_userinfo(text, pos);
@@ -587,11 +625,11 @@ std::optional<Replacement> match_at(std::string_view text, std::size_t pos)
     }
     if (starts_with_name(text, pos, kBearer)) {
         if (auto r = match_bearer(text, pos + kBearer.size())) {
-            return through_private_key(text, *r);
+            return through_private_key(text, *r, line_tails);
         }
     }
     if (auto r = match_key_at(text, pos)) {
-        return through_private_key(text, *r);
+        return through_private_key(text, *r, line_tails);
     }
     return std::nullopt;
 }
@@ -615,7 +653,7 @@ std::string redact(std::string_view text)
     std::size_t copied = 0; // text[0, copied) is in `out`
     std::size_t pos = 0;
     while (pos < text.size()) {
-        if (auto r = match_at(text, pos)) {
+        if (auto r = match_at(text, pos, true)) {
             out.append(text.substr(copied, r->from - copied));
             out.append(r->with);
             copied = r->to;

@@ -70,6 +70,7 @@ add_library(rpcore STATIC
     src/run_status.cpp
     src/sample_rng.cpp
     src/sample_selector.cpp
+    src/scm.cpp
     src/secrets.cpp
     src/service.cpp
     src/service_log.cpp
@@ -214,6 +215,7 @@ add_executable(rptests
     tests/sample_rng_test.cpp
     tests/sample_selector_live_test.cpp
     tests/sample_selector_test.cpp
+    tests/scm_test.cpp
     tests/secrets_test.cpp
     tests/service_log_test.cpp
     tests/service_test.cpp

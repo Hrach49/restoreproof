@@ -1692,6 +1692,72 @@ TEST_CASE("an adopted folder is signed and written as a run's own is", "[evidenc
     CHECK(bytes_of(lab.folder / "signature.json") == signature.signature_file);
 }
 
+TEST_CASE("adopting: a text file that is there only under another case of its name is no "
+          "attachment: it is taken away and the empty form written under the exact name",
+          "[evidence][adopt]")
+{
+    // NTFS opens ITEMS.CSV for items.csv, but the verifiers read a file only
+    // when the folder's listing has its name byte for byte.
+    const bool replace = GENERATE(false, true);
+    CAPTURE(replace);
+    Lab lab;
+    put(lab.folder / "ITEMS.CSV", kCsvHeaderRow + "0,\"not the run's\"\n");
+    const std::string log = "a line\n";
+    put(lab.folder / "veeam-session.log", log);
+    EvidenceBuilder builder = lab.builder();
+
+    const EvidenceBuilder::Written written = builder.adopt_attachments(replace);
+
+    CHECK(written.errors.empty());
+    REQUIRE(written.evidence);
+    CHECK(names_in(lab.folder) == std::set<std::string>{"items.csv", "veeam-session.log"});
+    CHECK(bytes_of(lab.folder / "items.csv") == kCsvHeaderRow);
+    CHECK(named(*written.evidence, "items.csv").sha256 == rp::sha256_hex(kCsvHeaderRow));
+    CHECK(named(*written.evidence, "items.csv").size_bytes == kCsvHeaderRow.size());
+    // The file under its exact name is the run's own, kept unless replaced.
+    CHECK(bytes_of(lab.folder / "veeam-session.log") == (replace ? std::string{} : log));
+
+    // And the folder closed over it verifies.
+    nlohmann::json document = nlohmann::json::parse(
+        rp::test::read_shared("testdata/result-v1/valid.json"));
+    document["attachments"] = rp::to_json(written.evidence->attachments);
+    SignedResult signature;
+    REQUIRE_FALSE(
+        builder.write_result(*written.evidence, rp::canonical_json(document), &signature));
+    const rp::Verification verified = rp::Signer::verify_folder(
+        rp::folder_reader(lab.folder), *rp::list_folder(lab.folder),
+        rp::test::public_key_of(*lab.key));
+    CHECK(rp::to_string(verified.word) == "verified");
+}
+
+TEST_CASE("adopting: a file under another case of a text file's name that can't be taken away "
+          "is an error",
+          "[evidence][adopt]")
+{
+    Lab lab;
+    std::filesystem::create_directory(lab.folder / "Items.csv");
+    put(lab.folder / "Items.csv" / "inside", "x");
+
+    const EvidenceBuilder::Written written = lab.builder().adopt_attachments();
+
+    CHECK_FALSE(written.evidence);
+    REQUIRE(written.errors.size() == 1);
+    CHECK(written.errors[0].file == "items.csv");
+    CHECK(written.errors[0].cause == EvidenceFailure::not_written);
+    CHECK(names_in(lab.folder) == std::set<std::string>{"Items.csv", "veeam-session.log"});
+}
+
+TEST_CASE("adopting: a folder that can't be listed gives no evidence", "[evidence][adopt]")
+{
+    Lab lab;
+    EvidenceBuilder builder(lab.dir.path() / "no such folder", lab.options);
+
+    const EvidenceBuilder::Written written = builder.adopt_attachments();
+
+    CHECK_FALSE(written.evidence);
+    CHECK_FALSE(written.errors.empty());
+}
+
 TEST_CASE("the leftovers of a signing that didn't finish are taken away: signature.json, "
           "timestamp.tst, screenshot.png and the atomic writer's temp files, nothing else",
           "[evidence][adopt]")

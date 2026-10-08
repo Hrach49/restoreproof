@@ -317,6 +317,19 @@ rp_add_exe_test("rpworker config check keeps a --config path outside the ANSI co
     ARGS config check --config "тест-no-such-config.json" EXIT_CODE 1 STDOUT ""
     STDERR "config error: тест-no-such-config.json: cannot read config file")
 
+# W4.8: a config whose jobs_file isn't an absolute path, made under the build
+# tree from the example config. The service's working directory is System32,
+# so a relative path would name a file that depends on where the process is.
+set(RP_EXE_CONFIGS ${CMAKE_CURRENT_BINARY_DIR}/config-exe-test)
+file(MAKE_DIRECTORY ${RP_EXE_CONFIGS})
+file(READ ${CMAKE_CURRENT_SOURCE_DIR}/config.example.json RP_EXAMPLE_CONFIG)
+string(REPLACE "\"screenshots_enabled\": false" "\"screenshots_enabled\": false,\n    \"jobs_file\": \"jobs.json\""
+    RP_RELATIVE_JOBS_CONFIG "${RP_EXAMPLE_CONFIG}")
+file(WRITE ${RP_EXE_CONFIGS}/relative-jobs.json "${RP_RELATIVE_JOBS_CONFIG}")
+rp_add_exe_test("rpworker config check refuses a jobs_file that isn't an absolute path"
+    ARGS config check --config ${RP_EXE_CONFIGS}/relative-jobs.json EXIT_CODE 1 STDOUT ""
+    STDERR "config error: ${RP_EXE_CONFIGS}/relative-jobs.json: config key \"jobs_file\" must be an absolute path, such as C:\\ProgramData\\RestoreProof\\jobs.json")
+
 # The vault (W4.5): the exe tests use vault files of their own under the build
 # tree, never %ProgramData%'s, each filled by `rpworker vault set` with the
 # value piped in from a file (STDIN; a CRLF line end, stripped) and listed back

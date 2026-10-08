@@ -123,6 +123,38 @@ Attachment attachment_of(std::string_view name, std::string_view bytes)
     return {std::string{name}, sha256_hex(bytes), bytes.size()};
 }
 
+// Whether anything is at `path`, a folder or a link that leads nowhere
+// included.
+bool is_there(const std::filesystem::path& path) noexcept
+{
+    std::error_code ec;
+    return std::filesystem::exists(std::filesystem::symlink_status(path, ec));
+}
+
+// "<name>.<16 lower-case hex digits>.tmp": the atomic writer's temp file
+// (src/atomic_file.cpp).
+bool is_temp_name(std::string_view name) noexcept
+{
+    constexpr std::string_view suffix = ".tmp";
+    constexpr std::size_t digits = 16;
+    if (name.size() < 1 + 1 + digits + suffix.size() || !name.ends_with(suffix)) {
+        return false;
+    }
+    name.remove_suffix(suffix.size());
+    const std::string_view hex = name.substr(name.size() - digits);
+    name.remove_suffix(digits);
+    return name.size() > 1 && name.back() == '.' && std::ranges::all_of(hex, [](char c) {
+        return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
+    });
+}
+
+// Whether `name` is one remove_unfinished takes away.
+bool is_unfinished_name(std::string_view name) noexcept
+{
+    return ascii_iequals(name, kSignatureFileName) || ascii_iequals(name, kTimestampFileName) ||
+           ascii_iequals(name, kScreenshotName) || is_temp_name(name);
+}
+
 } // namespace
 
 std::string_view to_string(ScreenshotReason reason) noexcept
@@ -431,6 +463,75 @@ EvidenceBuilder::Written EvidenceBuilder::write_attachments(const EvidenceFacts&
         out.errors.push_back({std::string{kItemsCsvName}, EvidenceFailure::not_written});
     }
     return out;
+}
+
+EvidenceBuilder::Written EvidenceBuilder::adopt_attachments(bool replace) noexcept
+{
+    Written out;
+    try {
+        std::vector<Attachment> attachments;
+        const auto text_file = [&](std::string_view name, std::string_view empty_form) {
+            const std::filesystem::path path = folder_ / *path_from_utf8(name);
+            if (replace) {
+                std::error_code ec;
+                std::filesystem::remove(path, ec);
+            }
+            if (is_there(path)) {
+                // The run's own, as it left it; with `replace`, one that
+                // wouldn't go.
+                const std::optional<std::string> bytes =
+                    replace ? std::nullopt : read_file(path, kMaxAdoptedFileBytes);
+                if (bytes) {
+                    attachments.push_back(attachment_of(name, *bytes));
+                } else {
+                    out.errors.push_back({std::string{name}, EvidenceFailure::not_written});
+                }
+            } else if (write(name, empty_form)) {
+                attachments.push_back(attachment_of(name, empty_form));
+            } else {
+                out.errors.push_back({std::string{name}, EvidenceFailure::not_written});
+            }
+        };
+        text_file(kItemsCsvName, kCsvHeader);
+        text_file(kSessionLogName, {});
+        if (out.errors.empty()) {
+            std::ranges::sort(attachments, {}, &Attachment::name);
+            // W4.2's rule for a run without a restore session to show.
+            out.evidence = Evidence{std::move(attachments),
+                                    {false, options_.screenshots_enabled
+                                                ? ScreenshotReason::no_page
+                                                : ScreenshotReason::disabled}};
+        }
+    } catch (...) {
+        out.evidence.reset();
+        out.errors.push_back({std::string{kItemsCsvName}, EvidenceFailure::not_written});
+    }
+    return out;
+}
+
+bool EvidenceBuilder::remove_unfinished(const std::filesystem::path& folder) noexcept
+{
+    try {
+        const std::optional<std::vector<std::string>> names = list_folder(folder);
+        if (!names) {
+            return false;
+        }
+        bool gone = true;
+        for (const std::string& name : *names) {
+            // A name that isn't UTF-8 is none of them.
+            const std::optional<std::filesystem::path> file =
+                is_unfinished_name(name) ? path_from_utf8(name) : std::nullopt;
+            if (!file) {
+                continue;
+            }
+            std::error_code ec;
+            std::filesystem::remove(folder / *file, ec);
+            gone = gone && !is_there(folder / *file);
+        }
+        return gone;
+    } catch (...) {
+        return false;
+    }
 }
 
 EvidenceBuilder::~EvidenceBuilder()

@@ -1471,3 +1471,295 @@ TEST_CASE("without a timestamper none is asked and no token is written", "[evide
     CHECK(timestamp.error.empty());
     CHECK(timestamp.attempts == 0);
 }
+
+// --- W4.8 point 7: a run folder that was left without a result -------------------------
+// What the service's close of such a folder needs of the builder: the text
+// files that are there adopted as they are, the empty form of one that isn't,
+// and the leftovers of a signing that didn't finish taken away.
+
+namespace {
+
+const std::string kCsvHeaderRow =
+    "index,type,source,canary_id,name,expected_kind,sha256_rule,expected_sha256,found_sha256,"
+    "restore_outcome,found,outcome,mismatches,verdict,code,ms\n";
+
+void put(const std::filesystem::path& path, const std::string& content)
+{
+    std::ofstream file(path, std::ios::binary);
+    file << content;
+    REQUIRE(file.good());
+}
+
+const Attachment& named(const Evidence& evidence, const std::string& name)
+{
+    const auto it = std::ranges::find(evidence.attachments, name, &Attachment::name);
+    REQUIRE(it != evidence.attachments.end());
+    return *it;
+}
+
+} // namespace
+
+TEST_CASE("adopting: a text file that is there but can't be read is an error, never replaced",
+          "[evidence][adopt]")
+{
+    Lab lab;
+    // A folder where the file should be: nothing the builder wrote.
+    std::filesystem::create_directory(lab.folder / "items.csv");
+    put(lab.folder / "veeam-session.log", "a line\n");
+
+    const EvidenceBuilder::Written written = lab.builder().adopt_attachments();
+
+    CHECK_FALSE(written.evidence);
+    REQUIRE(written.errors.size() == 1);
+    CHECK(written.errors[0].file == "items.csv");
+    CHECK(written.errors[0].cause == EvidenceFailure::not_written);
+    CHECK(std::filesystem::is_directory(lab.folder / "items.csv"));
+    CHECK(bytes_of(lab.folder / "veeam-session.log") == "a line\n");
+}
+
+TEST_CASE("adopting: an empty form that can't be written is an error, and the other file is "
+          "still tried",
+          "[evidence][adopt]")
+{
+    const std::string refused = GENERATE("items.csv", "veeam-session.log");
+    CAPTURE(refused);
+    Lab lab;
+    std::vector<std::string> tried;
+    lab.options.write_file = [&](const std::filesystem::path& path, std::string_view) {
+        tried.push_back(path.filename().string());
+        return path.filename().string() != refused;
+    };
+
+    const EvidenceBuilder::Written written = lab.builder().adopt_attachments();
+
+    CHECK_FALSE(written.evidence);
+    REQUIRE(written.errors.size() == 1);
+    CHECK(written.errors[0].file == refused);
+    CHECK(written.errors[0].cause == EvidenceFailure::not_written);
+    CHECK(tried == std::vector<std::string>{"items.csv", "veeam-session.log"});
+}
+
+TEST_CASE("adopting: a writer that throws is an error, never an exception", "[evidence][adopt]")
+{
+    Lab lab;
+    lab.options.write_file = [](const std::filesystem::path&, std::string_view) -> bool {
+        throw std::runtime_error("disk full");
+    };
+
+    const EvidenceBuilder::Written written = lab.builder().adopt_attachments();
+
+    CHECK_FALSE(written.evidence);
+    CHECK(written.errors.size() == 2);
+}
+
+TEST_CASE("adopting: the text files that are there are listed as they are, never rewritten",
+          "[evidence][adopt]")
+{
+    Lab lab;
+    const std::string csv = kCsvHeaderRow + "0,\"mail\",\"canary\"\n";
+    const std::string log = "session s1 (mail): Success\n";
+    put(lab.folder / "items.csv", csv);
+    put(lab.folder / "veeam-session.log", log);
+    int writes = 0;
+    lab.options.write_file = [&](const std::filesystem::path&, std::string_view) {
+        ++writes;
+        return true;
+    };
+
+    const EvidenceBuilder::Written written = lab.builder().adopt_attachments();
+
+    CHECK(written.errors.empty());
+    REQUIRE(written.evidence);
+    CHECK(writes == 0);
+    REQUIRE(written.evidence->attachments.size() == 2);
+    // Sorted by name, each with the hash and size of the bytes on disk.
+    CHECK(written.evidence->attachments[0].name == "items.csv");
+    CHECK(written.evidence->attachments[0].sha256 == rp::sha256_hex(csv));
+    CHECK(written.evidence->attachments[0].size_bytes == csv.size());
+    CHECK(written.evidence->attachments[1].name == "veeam-session.log");
+    CHECK(written.evidence->attachments[1].sha256 == rp::sha256_hex(log));
+    CHECK(written.evidence->attachments[1].size_bytes == log.size());
+    CHECK(bytes_of(lab.folder / "items.csv") == csv);
+    CHECK(bytes_of(lab.folder / "veeam-session.log") == log);
+}
+
+TEST_CASE("adopting: a text file that isn't there is written in its empty form: the CSV's "
+          "header alone, an empty log",
+          "[evidence][adopt]")
+{
+    const auto [has_csv, has_log] = GENERATE(table<bool, bool>({
+        {false, false},
+        {true, false},
+        {false, true},
+    }));
+    CAPTURE(has_csv, has_log);
+    Lab lab;
+    const std::string csv = kCsvHeaderRow + "0,\"mail\"\n";
+    const std::string log = "a line\n";
+    if (has_csv) {
+        put(lab.folder / "items.csv", csv);
+    }
+    if (has_log) {
+        put(lab.folder / "veeam-session.log", log);
+    }
+
+    const EvidenceBuilder::Written written = lab.builder().adopt_attachments();
+
+    CHECK(written.errors.empty());
+    REQUIRE(written.evidence);
+    CHECK(names_in(lab.folder) == std::set<std::string>{"items.csv", "veeam-session.log"});
+    const std::string csv_now = has_csv ? csv : kCsvHeaderRow;
+    const std::string log_now = has_log ? log : std::string{};
+    CHECK(bytes_of(lab.folder / "items.csv") == csv_now);
+    CHECK(bytes_of(lab.folder / "veeam-session.log") == log_now);
+    CHECK(named(*written.evidence, "items.csv").sha256 == rp::sha256_hex(csv_now));
+    CHECK(named(*written.evidence, "veeam-session.log").sha256 == rp::sha256_hex(log_now));
+    CHECK(named(*written.evidence, "veeam-session.log").size_bytes == log_now.size());
+    // The empty CSV is the one a run with no expected set writes.
+    CHECK(kCsvHeaderRow == EvidenceBuilder::items_csv({}).text);
+    CHECK(EvidenceBuilder::session_log(nullptr).text.empty());
+}
+
+TEST_CASE("adopting with `replace`: both text files are replaced by their empty forms, whatever "
+          "they held",
+          "[evidence][adopt]")
+{
+    Lab lab;
+    put(lab.folder / "items.csv", kCsvHeaderRow + "0,\"changed after it was hashed\"\n");
+    put(lab.folder / "veeam-session.log", "a line\n");
+
+    const EvidenceBuilder::Written written = lab.builder().adopt_attachments(true);
+
+    CHECK(written.errors.empty());
+    REQUIRE(written.evidence);
+    CHECK(bytes_of(lab.folder / "items.csv") == kCsvHeaderRow);
+    CHECK(bytes_of(lab.folder / "veeam-session.log") == std::string{});
+    CHECK(named(*written.evidence, "items.csv").sha256 == rp::sha256_hex(kCsvHeaderRow));
+    CHECK(named(*written.evidence, "veeam-session.log").size_bytes == 0);
+}
+
+TEST_CASE("adopting with `replace`: a file that can't be taken away is an error",
+          "[evidence][adopt]")
+{
+    Lab lab;
+    // Not a file, and not empty: remove() leaves it.
+    std::filesystem::create_directory(lab.folder / "veeam-session.log");
+    put(lab.folder / "veeam-session.log" / "inside", "x");
+
+    const EvidenceBuilder::Written written = lab.builder().adopt_attachments(true);
+
+    CHECK_FALSE(written.evidence);
+    REQUIRE(written.errors.size() == 1);
+    CHECK(written.errors[0].file == "veeam-session.log");
+    CHECK(bytes_of(lab.folder / "items.csv") == kCsvHeaderRow);
+}
+
+TEST_CASE("adopting: the screenshot is unavailable, `disabled` or `no_page` by the client's "
+          "setting, and the capturer is never asked",
+          "[evidence][adopt][screenshot]")
+{
+    const bool enabled = GENERATE(false, true);
+    Lab lab;
+    lab.options.screenshots_enabled = enabled;
+    int captures = 0;
+    lab.options.capture = [&](const ScreenshotRequest&) -> std::optional<ScreenshotReason> {
+        ++captures;
+        return std::nullopt;
+    };
+
+    const EvidenceBuilder::Written written = lab.builder().adopt_attachments();
+
+    REQUIRE(written.evidence);
+    CHECK_FALSE(written.evidence->screenshot.captured);
+    CHECK(written.evidence->screenshot.reason ==
+          (enabled ? ScreenshotReason::no_page : ScreenshotReason::disabled));
+    CHECK(captures == 0);
+}
+
+TEST_CASE("an adopted folder is signed and written as a run's own is", "[evidence][adopt]")
+{
+    Lab lab;
+    put(lab.folder / "items.csv", kCsvHeaderRow + "0,\"mail\"\n");
+    EvidenceBuilder builder = lab.builder();
+    const EvidenceBuilder::Written written = builder.adopt_attachments();
+    REQUIRE(written.evidence);
+    SignedResult signature;
+
+    REQUIRE_FALSE(builder.write_result(*written.evidence, R"({"a":1})", &signature));
+
+    CHECK(names_in(lab.folder) == std::set<std::string>{"items.csv", "result.json",
+                                                        "signature.json", "veeam-session.log"});
+    CHECK(bytes_of(lab.folder / "signature.json") == signature.signature_file);
+}
+
+TEST_CASE("the leftovers of a signing that didn't finish are taken away: signature.json, "
+          "timestamp.tst, screenshot.png and the atomic writer's temp files, nothing else",
+          "[evidence][adopt]")
+{
+    Lab lab;
+    const std::vector<std::string> leftovers{
+        "signature.json",
+        "timestamp.tst",
+        "screenshot.png",
+        "result.json.0123456789abcdef.tmp",
+        "items.csv.fedcba9876543210.tmp",
+        "anything.0000000000000000.tmp",
+        // Windows names a file whatever its letters' case.
+        "SIGNATURE.JSON.0123456789abcdef.tmp",
+    };
+    const std::vector<std::string> kept{
+        "items.csv",
+        "veeam-session.log",
+        "notes.txt",
+        // Not the writer's temp name: 15 digits, 17, upper case, no name before it.
+        "result.json.0123456789abcde.tmp",
+        "result.json.0123456789abcdef0.tmp",
+        "other.0123456789ABCDEF.tmp",
+        ".0123456789abcdef.tmp",
+        "result.json.0123456789abcdef.tmp.bak",
+        "signature.json.bak",
+    };
+    for (const std::string& name : leftovers) {
+        put(lab.folder / name, "left");
+    }
+    for (const std::string& name : kept) {
+        put(lab.folder / name, "kept");
+    }
+
+    CHECK(EvidenceBuilder::remove_unfinished(lab.folder));
+
+    CHECK(names_in(lab.folder) == std::set<std::string>(kept.begin(), kept.end()));
+    for (const std::string& name : kept) {
+        CHECK(bytes_of(lab.folder / name) == "kept");
+    }
+    // Done twice, it does nothing more.
+    CHECK(EvidenceBuilder::remove_unfinished(lab.folder));
+    CHECK(names_in(lab.folder) == std::set<std::string>(kept.begin(), kept.end()));
+}
+
+TEST_CASE("leftovers under another case of their names are taken away too", "[evidence][adopt]")
+{
+    Lab lab;
+    put(lab.folder / "Signature.JSON", "left");
+    put(lab.folder / "TIMESTAMP.tst", "left");
+
+    CHECK(EvidenceBuilder::remove_unfinished(lab.folder));
+
+    CHECK(names_in(lab.folder).empty());
+}
+
+TEST_CASE("a leftover that can't be taken away, and a folder that isn't there, are said",
+          "[evidence][adopt]")
+{
+    Lab lab;
+    // A folder with something in it under the signature's name.
+    std::filesystem::create_directory(lab.folder / "signature.json");
+    put(lab.folder / "signature.json" / "inside", "x");
+    put(lab.folder / "timestamp.tst", "left");
+
+    CHECK_FALSE(EvidenceBuilder::remove_unfinished(lab.folder));
+    // What could go went.
+    CHECK(names_in(lab.folder) == std::set<std::string>{"signature.json"});
+
+    CHECK_FALSE(EvidenceBuilder::remove_unfinished(lab.dir.path() / "no such folder"));
+}

@@ -131,7 +131,7 @@ struct FakeFiles {
             written = std::string{text};
             return write_ok;
         };
-        out.remove = [this](const std::filesystem::path& path) {
+        out.erase = [this](const std::filesystem::path& path) {
             calls.push_back("remove " + path.generic_string());
             return remove_ok;
         };
@@ -646,7 +646,7 @@ TEST_CASE("the store removes the record and moves it aside beside itself", "[ser
 
     CHECK(store.file() == std::filesystem::path{"state/running.json"});
     CHECK(store.unread_file() == std::filesystem::path{"state"} / "running.json.unread");
-    CHECK(store.remove() == ok);
+    CHECK(store.erase() == ok);
     CHECK(store.move_aside() == ok);
     CHECK(fake.calls ==
           std::vector<std::string>{"remove state/running.json",

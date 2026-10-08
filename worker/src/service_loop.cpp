@@ -437,7 +437,7 @@ void ServiceLoop::drop_record()
                        report ? &*report : nullptr, hold_done_)) {
         return;
     }
-    if (!store_.remove()) {
+    if (!store_.erase()) {
         trouble(service_error::kRecordNotRemoved);
         if (again("record:not_removed")) {
             env_.logger->error("running.json couldn't be removed");

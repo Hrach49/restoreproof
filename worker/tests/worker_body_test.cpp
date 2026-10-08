@@ -601,10 +601,10 @@ TEST_CASE("worker body: the record's file calls make the state folder, replace, 
     CHECK(store.read().state == rp::RecordState::none);
     // With nothing there, nothing is moved; a remove of nothing is done.
     CHECK_FALSE(store.move_aside());
-    CHECK(store.remove());
+    CHECK(store.erase());
 
     REQUIRE(store.write(lab.record("run-b")));
-    CHECK(store.remove());
+    CHECK(store.erase());
     CHECK_FALSE(std::filesystem::exists(lab.record_file()));
 }
 

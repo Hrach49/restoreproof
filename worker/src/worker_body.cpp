@@ -118,7 +118,7 @@ RecordFiles record_files()
         options.replace = true;
         return write_file_atomically(file, text, options);
     };
-    files.remove = [](const std::filesystem::path& file) {
+    files.erase = [](const std::filesystem::path& file) {
         std::error_code ec;
         std::filesystem::remove(file, ec);
         return path_kind(file) == PathKind::none;

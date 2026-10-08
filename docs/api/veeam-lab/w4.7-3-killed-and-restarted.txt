@@ -1,0 +1,21 @@
+W4.7 (#50) live Done-when, step (c): the service's process killed; the Service Control Manager starts it again 60 s later (event 7031).
+
+killed pid 16928 at 2026-10-08T15:12:50Z
+
+-- 5 s later
+service RestoreProof: state Stopped, start mode Auto, account NT SERVICE\RestoreProof, pid 0
+machine booted 2026-10-05T22:45:07Z, now 2026-10-08T15:12:55Z
+
+-- 75 s later
+service RestoreProof: state Running, start mode Auto, account NT SERVICE\RestoreProof, pid 5176
+process 5176: owner NT SERVICE\RestoreProof, started 2026-10-08T15:13:50Z
+command line: "C:\restoreproof\worker\build\dev\rpworker.exe" service run --config "C:\ProgramData\RestoreProof\w47\config.json"
+machine booted 2026-10-05T22:45:07Z, now 2026-10-08T15:14:06Z
+
+-- events
+2026-10-08T15:12:50Z 7031 Error: The RestoreProof Worker service terminated unexpectedly. It has done this 1 time(s). The following corrective action will be taken in 60000 milliseconds: Restart the service.
+
+worker.log            131 bytes  owner NT SERVICE\RestoreProof
+--- worker.log, last 20 line(s)
+2026-10-08T15:12:32.806Z info service running: rpworker 0.0.0, config C:\ProgramData\RestoreProof\w47\config.json, log_level info
+2026-10-08T15:13:50.105Z info service running: rpworker 0.0.0, config C:\ProgramData\RestoreProof\w47\config.json, log_level info

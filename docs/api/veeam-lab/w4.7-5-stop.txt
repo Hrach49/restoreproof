@@ -1,0 +1,28 @@
+W4.7 (#50) live Done-when, step (e): rpworker service stop; stopped in 0.2 s, the stop lines in the log, no event; a second stop.
+
+command: rpworker service stop
+2026-10-08T16:01:23Z to 2026-10-08T16:01:24Z
+exit code: 0
+--- stdout
+stopped RestoreProof in 0.2 s
+--- stderr
+
+
+service RestoreProof: state Stopped, start mode Auto, account NT SERVICE\RestoreProof, pid 0
+machine booted 2026-10-08T15:56:51Z, now 2026-10-08T16:01:25Z
+
+worker.log            619 bytes  owner NT SERVICE\RestoreProof
+--- worker.log, last 3 line(s)
+2026-10-08T15:57:02.367Z info service running: rpworker 0.0.0, config C:\ProgramData\RestoreProof\w47\config.json, log_level info
+2026-10-08T16:01:23.444Z info stop requested (stop)
+2026-10-08T16:01:23.444Z info service stopped after 0 ms
+
+-- events since the stop
+(no events)
+
+command: rpworker service stop
+2026-10-08T16:01:26Z to 2026-10-08T16:01:27Z
+exit code: 0
+--- stdout
+RestoreProof is already stopped
+--- stderr

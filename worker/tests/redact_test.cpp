@@ -5,6 +5,8 @@
 #include <catch2/generators/catch_generators_range.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 
+#include <chrono>
+#include <cstddef>
 #include <string>
 #include <string_view>
 
@@ -18,11 +20,24 @@ struct Row {
     std::string_view expected;
 };
 
-// Checks one row of a table through rp::redact.
+// W4.7 (docs/decisions.md 2026-10-08 point 7): the service's log redacts every
+// line in its sink, so a line whose call site redacted it already is redacted
+// twice. That must change nothing: what redact() wrote is never itself read as
+// a secret, and nothing it left is one the second time round.
+void check_twice(std::string_view input)
+{
+    const std::string once = rp::redact(input);
+    CAPTURE(once);
+    CHECK(rp::redact(once) == once);
+}
+
+// Checks one row of a table through rp::redact, and that redacting its
+// output again leaves it as it is.
 void check_row(const Row& row)
 {
     CAPTURE(row.input);
     CHECK(rp::redact(row.input) == row.expected);
+    check_twice(row.input);
 }
 
 } // namespace
@@ -362,6 +377,7 @@ TEST_CASE("redact hides a quoted secret behind any number of backslashes", "[red
     const std::string out = rp::redact(input);
     CAPTURE(out);
     CHECK_THAT(out, ContainsSubstring("[REDACTED]"));
+    check_twice(input);
     for (const std::string_view part : {"SE", "RET"}) {
         CHECK(out.find(part) == std::string::npos);
     }
@@ -499,6 +515,7 @@ TEST_CASE("redact finds a secret in deeply nested JSON", "[redact]")
         expected += "]}";
     }
     CHECK(rp::redact(input) == expected);
+    check_twice(input);
 }
 
 TEST_CASE("redact handles a megabyte of input in one pass", "[redact]")
@@ -523,6 +540,7 @@ TEST_CASE("redact handles a megabyte of input in one pass", "[redact]")
         const std::string output = rp::redact(input);
         CHECK_THAT(output, !ContainsSubstring("s3cret"));
         CHECK_THAT(output, ContainsSubstring(R"({"password":"[REDACTED]"},password=[REDACTED]&)"));
+        check_twice(input);
     }
     SECTION("with names that almost match")
     {
@@ -537,6 +555,7 @@ TEST_CASE("redact handles a megabyte of input in one pass", "[redact]")
     {
         std::string input = R"({"password":)" + std::string(kSize, '[');
         CHECK(rp::redact(input) == R"({"password":"[REDACTED]")");
+        check_twice(input);
     }
 }
 
@@ -840,7 +859,18 @@ TEST_CASE("redact masks a PEM private key block that is the value of a secret na
         {"signing_key_base64 = -----BEGIN PRIVATE KEY-----\nMC4C\n-----END PRIVATE KEY-----",
          "signing_key_base64 = [REDACTED]"},
         {"password: -----BEGIN RSA PRIVATE KEY-----\nMIIE\nAAAA\n-----END RSA PRIVATE KEY----- x",
-         "password: [REDACTED] x"},
+         "password: [REDACTED]"},
+        // A value that runs to its line's end takes the rest of the block's
+        // last line with it (W4.7: a second redaction would, and redacting
+        // twice is redacting once); the next line stays.
+        {"Authorization: Bearer -----BEGIN PRIVATE KEY-----\nMC4C\n"
+         "-----END PRIVATE KEY----- trailer\r\nHost: h",
+         "Authorization: [REDACTED]\r\nHost: h"},
+        {"password: -----BEGIN PRIVATE KEY-----\nMC4C\n-----END PRIVATE KEY----- x\nnext y",
+         "password: [REDACTED]\nnext y"},
+        // A form value ends where it ends: what follows its block stays.
+        {"password=-----BEGIN PRIVATE KEY-----\nMC4C\n-----END PRIVATE KEY----- x",
+         "password=[REDACTED] x"},
         {"client_secret=-----BEGIN EC PRIVATE KEY-----\nCCCC\n-----END EC PRIVATE KEY-----&a=1",
          "client_secret=[REDACTED]&a=1"},
         // Further along the value's line, and behind a header's scheme.
@@ -878,6 +908,88 @@ TEST_CASE("redact masks a private key block whose label has digits or goes on af
     })));
 }
 
+// The rest of the block's last line goes with a value that ran to its line's
+// end, but it is read first: a secret that starts there and ends on a later
+// line is a secret still, and takes the replacement on to the end of its own
+// last line. Nothing behind it comes out because its opening was swallowed.
+TEST_CASE("redact reads what follows a private key block's END line before it goes",
+          "[redact][signing]")
+{
+    check_row(GENERATE(values<Row>({
+        // A second block on the first one's END line.
+        {"signing_key_base64: -----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY----- "
+         "-----BEGIN PRIVATE KEY-----\nBBBB\n-----END PRIVATE KEY-----\n",
+         "signing_key_base64: [REDACTED]\n"},
+        {"Authorization: Bearer -----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY----- "
+         "-----BEGIN EC PRIVATE KEY-----\nBBBB\n-----END EC PRIVATE KEY-----\r\nHost: h",
+         "Authorization: [REDACTED]\r\nHost: h"},
+        {"password: -----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY----- and "
+         "-----BEGIN PRIVATE KEY-----\nBBBB\n-----END PRIVATE KEY----- x\nnext y",
+         "password: [REDACTED]\nnext y"},
+        // A third on the second's.
+        {"password: -----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY----- "
+         "-----BEGIN PRIVATE KEY-----\nBBBB\n-----END PRIVATE KEY----- "
+         "-----BEGIN PRIVATE KEY-----\nCCCC\n-----END PRIVATE KEY-----\nnext",
+         "password: [REDACTED]\nnext"},
+        // A second block without its end: to the end of the text.
+        {"password: -----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY----- "
+         "-----BEGIN PRIVATE KEY-----\nBBBB\nmore",
+         "password: [REDACTED]"},
+        // A quoted value that goes on over a line end.
+        {"signing_key: -----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY----- "
+         "client_secret=\"line1\nline2\" tail\nnext",
+         "signing_key: [REDACTED]\nnext"},
+        {"password: -----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY----- "
+         "{\"pfx\":\"line1\nline2\"}\nnext",
+         "password: [REDACTED]\nnext"},
+        // A value there that is itself a block.
+        {"password: -----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY----- "
+         "signing_key=-----BEGIN PRIVATE KEY-----\nBBBB\n-----END PRIVATE KEY----- z\nnext",
+         "password: [REDACTED]\nnext"},
+        // A secret there that ends on the line changes nothing.
+        {"password: -----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY----- "
+         "client_secret=abc x\nnext",
+         "password: [REDACTED]\nnext"},
+    })));
+}
+
+// One END line after another, each opening the next block: no call is nested
+// per block, and no byte is read once per block before it.
+TEST_CASE("redact reads a megabyte of private key blocks chained on their END lines",
+          "[redact][signing]")
+{
+    std::string text = "password:";
+    while (text.size() < 1'000'000) {
+        text += " -----BEGIN PRIVATE KEY-----\nMC4C\n-----END PRIVATE KEY-----";
+    }
+    text += "\nnext";
+    CHECK(rp::redact(text) == "password: [REDACTED]\nnext");
+    check_twice(text);
+}
+
+// Whether a value ran to its line's end is asked of the byte behind it, not
+// by reading on to the line's end: a megabyte that is one line of secrets
+// would be read once per secret (24 s where a pass takes milliseconds).
+TEST_CASE("redact reads a megabyte that is one line of secrets in one pass", "[redact]")
+{
+    std::string input;
+    while (input.size() < 1024 * 1024) {
+        input += "password=s3cret&";
+    }
+    std::string expected;
+    for (std::size_t i = 0; i < input.size() / 16; ++i) {
+        expected += "password=[REDACTED]&";
+    }
+
+    const auto start = std::chrono::steady_clock::now();
+    const std::string output = rp::redact(input);
+    const auto took = std::chrono::steady_clock::now() - start;
+
+    CHECK(output == expected);
+    // Wide: a debug build under coverage takes well under a second.
+    CHECK(took < std::chrono::seconds{10});
+}
+
 TEST_CASE("redact reads a megabyte of PEM headers without an end in one pass", "[redact][signing]")
 {
     std::string text;
@@ -885,4 +997,47 @@ TEST_CASE("redact reads a megabyte of PEM headers without an end in one pass", "
         text += "-----BEGIN PRIVATE KEY-----\nMC4C\n";
     }
     CHECK(rp::redact(text) == "[REDACTED]");
+    check_twice(text);
+}
+
+// The inputs above reach check_twice through their tables. These are the
+// outputs' own shapes side by side, and the texts whose first redaction ends
+// in the middle of something a rule reads: a value cut at a separator, a
+// token before a key, a block without its end.
+TEST_CASE("redacting twice is redacting once", "[redact]")
+{
+    const std::string_view text = GENERATE(values<std::string_view>({
+        "",
+        "nothing secret here",
+        "[REDACTED]",
+        "[REDACTED] [REDACTED]",
+        "password=[REDACTED]",
+        "password=[REDACTED]&client_secret=[REDACTED]#access_token=[REDACTED]",
+        "password: [REDACTED]",
+        R"({"password":"[REDACTED]","x":{"refresh_token":"[REDACTED]"}})",
+        "Authorization: [REDACTED]",
+        "Authorization: [REDACTED]\r\nProxy-Authorization: [REDACTED]\r\nHost: h",
+        "authorization=[REDACTED]",
+        "Bearer [REDACTED]",
+        "token [REDACTED].",
+        "https://[REDACTED]@veeam.example.invalid:4443/v8/x?sig=[REDACTED]",
+        // Inputs the first pass changes.
+        "password=hunter2, password=again",
+        "password = \"a b\" password='c d' user=bob",
+        "Authorization: Bearer abc.def\r\npassword=x",
+        "Bearer password = x",
+        "Bearer eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ4In0.c2ln",
+        "eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ4In0.password=x",
+        "https://user:pa@ss@host/path?tempauth=abc&x=1#id_token=def",
+        R"({"password":{"nested":["a","b"]},"pfx":123,"signing_key":null})",
+        R"("{\"password\":\"x\",\"user\":\"bob\"}")",
+        R"({"password":"unterminated)",
+        "signing_key_base64: MC4CAQAwBQYDK2VwBCIEIA==",
+        "-----BEGIN PRIVATE KEY-----\nMC4C\n-----END PRIVATE KEY-----\nafter",
+        "-----BEGIN ENCRYPTED PRIVATE KEY-----\nMC4C",
+        "pfx=-----BEGIN PRIVATE KEY-----\nMC4C\n-----END PRIVATE KEY-----",
+        "SECURITY: evidence: 2 line(s) withheld client_secret=abc",
+    }));
+    CAPTURE(text);
+    check_twice(text);
 }

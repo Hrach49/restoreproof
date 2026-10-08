@@ -41,7 +41,9 @@ const std::string kUsage =
     "rpworker outbox flush [--config <path>] [--outbox <root>] [--record <dir>] | "
     "rpworker outbox list [--outbox <root>] | "
     "rpworker signer public-key [--vault <file>] | "
-    "rpworker signer verify <folder> --public-key <pem file> [--tsa-ca <pem file>]\n";
+    "rpworker signer verify <folder> --public-key <pem file> [--tsa-ca <pem file>] | "
+    "rpworker service install [--config <path>] | rpworker service uninstall|start|stop | "
+    "rpworker service run [--config <path>]\n";
 
 // Every key set; sample_od left out to show its default.
 const std::string kConfigJson = R"({

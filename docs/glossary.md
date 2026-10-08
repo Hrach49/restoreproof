@@ -270,6 +270,17 @@ account's). `rpworker vault set <name>` fills it from the console without echo o
 `--vault <file>` on a command names another file. No secret is read from the environment or
 `config.json`.
 
+**Service (the Worker's).** The Windows service `RestoreProof` (display name `RestoreProof
+Worker`, W4.7): `rpworker service run`, started by Windows at boot under the virtual account
+`NT SERVICE\RestoreProof`, restarted a minute after a failure up to three times, and stopped
+within 30 s of being asked. Installed and removed by `rpworker service install` and
+`uninstall`. In W4.7 it only waits for its stop; its work is W4.8's.
+
+**Service log (`worker.log`).** The running service's log,
+`%ProgramData%\RestoreProof\logs\worker.log`: five files of 10 MiB at most, every line
+through `redact()`, `SECURITY: ` lines written at every `log_level`. The commands log to
+stderr, not to it.
+
 **RFC 3161 timestamp token (`tsa_token`).** A third-party Time Stamping Authority's signature
 over the bundle hash, proving the bundle existed at that time — not merely that our server
 says so. Not built yet (W4.4). It will be a file of its own in the run folder, not a field of

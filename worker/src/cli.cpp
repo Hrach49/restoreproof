@@ -5,6 +5,7 @@
 #include <rp/graph_command.hpp>
 #include <rp/outbox_command.hpp>
 #include <rp/restore_command.hpp>
+#include <rp/service_command.hpp>
 #include <rp/signer_command.hpp>
 #include <rp/test_command.hpp>
 #include <rp/vault_command.hpp>
@@ -24,8 +25,8 @@ namespace {
 
 // Runs `command` and returns its exit code. An exception it lets out is
 // reported without its message, which may not be safe to show, as exit code 1:
-// escaping wmain it would end in abort(), whose exit code on Windows, 3, is
-// exit_code::transient.
+// escaping wmain it would end the process through the runtime's terminate
+// handler, whose exit code on Windows, 3, is exit_code::transient.
 template <typename Command>
 int guarded(std::ostream& err, Command&& command) noexcept
 {
@@ -70,6 +71,9 @@ int dispatch(std::span<const std::string_view> args, std::ostream& out, std::ost
     }
     if (!args.empty() && args[0] == "signer") {
         return run_signer_command(args.subspan(1), out, err, default_signer_command_env());
+    }
+    if (!args.empty() && args[0] == "service") {
+        return run_service_command(args.subspan(1), out, err, default_service_command_env());
     }
     err << kCliUsage;
     return exit_code::usage;

@@ -1,0 +1,48 @@
+W4.7 (#50) live Done-when, step (a): install, and what Windows holds for the service. 2026-10-08, elevated, the lab machine.
+
+command: rpworker service install --config C:\ProgramData\RestoreProof\w47\config.json
+2026-10-08T15:12:18Z to 2026-10-08T15:12:20Z
+exit code: 0
+--- stdout
+installed RestoreProof: "C:\restoreproof\worker\build\dev\rpworker.exe" service run --config "C:\ProgramData\RestoreProof\w47\config.json"
+account NT SERVICE\RestoreProof, automatic start, restart after 60 s up to 3 times; not started: run rpworker service start
+--- stderr
+
+
+> sc qc RestoreProof
+[SC] QueryServiceConfig SUCCESS
+SERVICE_NAME: RestoreProof
+        TYPE               : 10  WIN32_OWN_PROCESS 
+        START_TYPE         : 2   AUTO_START
+        ERROR_CONTROL      : 1   NORMAL
+        BINARY_PATH_NAME   : "C:\restoreproof\worker\build\dev\rpworker.exe" service run --config "C:\ProgramData\RestoreProof\w47\config.json"
+        LOAD_ORDER_GROUP   : 
+        TAG                : 0
+        DISPLAY_NAME       : RestoreProof Worker
+        DEPENDENCIES       : 
+        SERVICE_START_NAME : NT SERVICE\RestoreProof
+
+> sc qfailure RestoreProof
+[SC] QueryServiceConfig2 SUCCESS
+SERVICE_NAME: RestoreProof
+        RESET_PERIOD (in seconds)    : 86400
+        REBOOT_MESSAGE               : 
+        COMMAND_LINE                 : 
+        FAILURE_ACTIONS              : RESTART -- Delay = 60000 milliseconds.
+                                       RESTART -- Delay = 60000 milliseconds.
+                                       RESTART -- Delay = 60000 milliseconds.
+
+> sc qdescription RestoreProof
+[SC] QueryServiceConfig2 SUCCESS
+SERVICE_NAME: RestoreProof
+DESCRIPTION:  Tests that Microsoft 365 backups in Veeam Backup for Microsoft 365 restore: restores a sample into test locations and checks it.
+
+> registry FailureActions
+reset period 86400 s, actions 4
+  restart after 60000 ms
+  restart after 60000 ms
+  restart after 60000 ms
+  none after 0 ms
+
+service RestoreProof: state Stopped, start mode Auto, account NT SERVICE\RestoreProof, pid 0
+machine booted 2026-10-05T22:45:07Z, now 2026-10-08T15:12:21Z

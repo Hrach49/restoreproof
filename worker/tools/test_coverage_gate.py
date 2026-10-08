@@ -136,7 +136,11 @@ class GateTest(unittest.TestCase):
         self.assertIn("80.0% lines, needs 90%", out)
 
     def test_strict_file_missing_from_report_fails(self):
-        for rel, name in (("src/vault.cpp", "vault"), ("src/signer/ed25519.cpp", "signer")):
+        for rel, name in (
+            ("src/vault.cpp", "vault"),
+            ("src/signer/ed25519.cpp", "signer"),
+            ("src/service_log.cpp", "service"),
+        ):
             with self.subTest(rel=rel):
                 code, out, summary = self.run_gate(
                     cobertura((r"src\a.cpp", covered(10))),
@@ -166,6 +170,9 @@ class GateTest(unittest.TestCase):
             r"include\rp\cleaner.hpp",
             r"src\timestamper.cpp",
             r"include\rp\timestamper.hpp",
+            r"src\outbox.cpp",
+            r"src\service.cpp",
+            r"include\rp\service.hpp",
         ):
             with self.subTest(name=name):
                 xml = cobertura((r"src\big.cpp", covered(1000)), (name, mixed(1, 1)))
@@ -179,6 +186,12 @@ class GateTest(unittest.TestCase):
             r"src\vault_dpapi.cpp",
             r"src\target_guard_rules.cpp",
             r"src\vault\detail\blob.cpp",
+            # W4.7: the service's subcommands and its log.
+            r"src\service_command.cpp",
+            r"include\rp\service_command.hpp",
+            r"src\service_log.cpp",
+            r"include\rp\service_log.hpp",
+            r"src\service_log_detail.hpp",
         ):
             with self.subTest(name=name):
                 xml = cobertura((r"src\big.cpp", covered(1000)), (name, mixed(1, 1)))
@@ -189,7 +202,18 @@ class GateTest(unittest.TestCase):
     def test_strict_name_does_not_match_unrelated_file(self):
         # "vaulted.cpp" is not the vault: a strict name must be a whole path
         # part, or a prefix followed by "_".
-        for name in (r"src\vaulted.cpp", r"src\signers.cpp", r"src\my_vault.cpp", r"src\cleaners.cpp"):
+        # Nor are the calls into Windows under the service (W4.7): src/scm.cpp
+        # and src/stop_signal.cpp count toward the total only.
+        for name in (
+            r"src\vaulted.cpp",
+            r"src\signers.cpp",
+            r"src\my_vault.cpp",
+            r"src\cleaners.cpp",
+            r"src\services.cpp",
+            r"src\run_service.cpp",
+            r"src\scm.cpp",
+            r"src\stop_signal.cpp",
+        ):
             with self.subTest(name=name):
                 xml = cobertura((r"src\big.cpp", covered(1000)), (name, mixed(1, 1)))
                 code, _, _ = self.run_gate(xml)
@@ -232,9 +256,17 @@ class GateTest(unittest.TestCase):
     def test_absent_strict_files_are_skipped_with_a_note(self):
         code, _, summary = self.run_gate(cobertura((r"src\a.cpp", covered(10))))
         self.assertEqual(code, 0)
-        for name in ("vault", "signer", "target_guard", "run_status", "cleaner", "timestamper", "outbox"):
-            self.assertIn(f"`{name}`", summary)
-        self.assertIn("not present yet", summary)
+        for name in (
+            "vault",
+            "signer",
+            "target_guard",
+            "run_status",
+            "cleaner",
+            "timestamper",
+            "outbox",
+            "service",
+        ):
+            self.assertIn(f"`{name}`: not present yet", summary)
 
     def test_strict_file_on_disk_is_not_reported_as_absent(self):
         code, _, summary = self.run_gate(
@@ -252,6 +284,9 @@ class GateTest(unittest.TestCase):
         self.assertIn("| File | Lines covered | Line % |", summary)
         self.assertIn("| `src/a.cpp` | 3/3 | 100.0% |", summary)
         self.assertIn("branch coverage is not measured", summary.lower())
+        # The note names every strict name, so the summary says what is held.
+        for name in coverage_gate.STRICT_NAMES:
+            self.assertIn(f"`{name}`", coverage_gate.BRANCH_NOTE)
 
     def test_threshold_is_configurable(self):
         code, _, _ = self.run_gate(cobertura((r"src\a.cpp", mixed(50, 50))), "--min-line", "50")

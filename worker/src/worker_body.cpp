@@ -52,7 +52,9 @@ bool is_temp_name(std::string_view name) noexcept
            });
 }
 
-// What the run's folder holds, by the names of what is in it.
+// What the run's folder holds, by the names of what is in it; and, of the
+// four files whose word the close would act on, whether the owner passes the
+// vault's rule (the runs root has the inherited ACL until W7.1).
 FolderContents look_at(const std::filesystem::path& folder)
 {
     FolderContents contents;
@@ -64,10 +66,19 @@ FolderContents look_at(const std::filesystem::path& folder)
     for (std::filesystem::directory_iterator entry(folder, ec), end; !ec && entry != end;
          entry.increment(ec)) {
         const std::string name = path_to_utf8(entry->path().filename());
-        contents.result = contents.result || ascii_iequals(name, kResultFileName);
-        contents.items_csv = contents.items_csv || ascii_iequals(name, kItemsCsvName);
-        contents.session_log = contents.session_log || ascii_iequals(name, kSessionLogName);
-        contents.signature = contents.signature || ascii_iequals(name, kSignatureFileName);
+        // Only "owned by somebody else" counts: a file whose owner can't be
+        // asked fails at its read.
+        const auto seen = [&](std::string_view file, bool& there, bool& untrusted) {
+            if (ascii_iequals(name, file)) {
+                there = true;
+                untrusted = untrusted ||
+                            check_trusted_owner(entry->path()) == OwnerTrust::not_trusted;
+            }
+        };
+        seen(kResultFileName, contents.result, contents.result_untrusted);
+        seen(kItemsCsvName, contents.items_csv, contents.items_csv_untrusted);
+        seen(kSessionLogName, contents.session_log, contents.session_log_untrusted);
+        seen(kSignatureFileName, contents.signature, contents.signature_untrusted);
         contents.timestamp = contents.timestamp || ascii_iequals(name, kTimestampFileName);
         contents.screenshot = contents.screenshot || ascii_iequals(name, kScreenshotName);
         contents.temp_files = contents.temp_files || is_temp_name(name);

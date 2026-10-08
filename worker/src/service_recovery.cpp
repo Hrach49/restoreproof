@@ -42,6 +42,7 @@ constexpr std::string_view kChanged = "changed";
 // What with_changed_text_files puts after a result_invalid record's ending.
 constexpr std::string_view kAndChanged = "; changed";
 constexpr std::string_view kNotWritten = "not_written";
+constexpr std::string_view kUntrusted = "untrusted";
 constexpr std::string_view kPass = "pass";
 constexpr std::string_view kFail = "fail";
 constexpr std::string_view kError = "error";
@@ -564,7 +565,11 @@ ClosePlan plan_close(const RunningRecord& record, const FolderContents& folder)
     ClosePlan plan;
     plan.run_id = record.run_id;
     if (folder.exists && folder.result) {
-        plan.action = CloseAction::queue_only;
+        // What is queued is uploaded as the Worker's own word: never a
+        // result, or a signature beside it, that somebody else put there.
+        const bool untrusted =
+            folder.result_untrusted || (folder.signature && folder.signature_untrusted);
+        plan.action = untrusted ? CloseAction::refuse : CloseAction::queue_only;
         return plan;
     }
     plan.make_folder = !folder.exists;
@@ -583,7 +588,12 @@ ClosePlan plan_close(const RunningRecord& record, const FolderContents& folder)
     // One of them was found altered after it was hashed, by the run or by an
     // earlier close: the Worker lists no file it knows was changed. And
     // nothing in the folder of a job that is no job is a run's evidence.
-    plan.replace_text_files = says_changed(record) || record.close_as == CloseAs::job_invalid;
+    // Nor one that somebody else put there: the owner rule, as for the jobs
+    // file and the record.
+    plan.untrusted_text_files = (folder.items_csv && folder.items_csv_untrusted) ||
+                                (folder.session_log && folder.session_log_untrusted);
+    plan.replace_text_files = says_changed(record) ||
+                              record.close_as == CloseAs::job_invalid || plan.untrusted_text_files;
     if (!record.close_as) {
         plan.code = std::string{kInterrupted};
         plan.verdict = verification::interrupted_before_result(requested);
@@ -636,6 +646,9 @@ std::variant<BuiltResult, ResultError> build_close_result(const ClosePlan& plan,
 CloseRunOutcome close_run(const RunningRecord& record, const CloseRunCalls& calls)
 {
     const ClosePlan plan = plan_close(record, calls.look());
+    if (plan.action == CloseAction::refuse) {
+        return {CloseRunState::not_closed, std::string{kUntrusted}};
+    }
     if (plan.action == CloseAction::queue_only) {
         return outcome_of(calls.queue());
     }
@@ -650,7 +663,9 @@ CloseRunOutcome close_run(const RunningRecord& record, const CloseRunCalls& call
         BuiltResult* valid = std::get_if<BuiltResult>(&built);
         return valid != nullptr ? std::optional{std::move(valid->canonical)} : std::nullopt;
     };
-    return outcome_of(calls.finish(plan.replace_text_files, result));
+    CloseRunOutcome outcome = outcome_of(calls.finish(plan.replace_text_files, result));
+    outcome.untrusted_text_files = plan.untrusted_text_files;
+    return outcome;
 }
 
 bool needs_hold(const RunningRecord& record) noexcept

@@ -12,6 +12,7 @@
 #include "../src/file_read.hpp"
 #include "../src/folder_ops.hpp"
 
+#include "owner_lab.hpp"
 #include "restore_command_lab.hpp"
 #include "service_lab.hpp"
 
@@ -451,6 +452,94 @@ TEST_CASE("worker body: a folder that can't be queued stays complete, and the ne
     const json manifest = json::parse(bytes_of(lab.queued("killed-1") / "manifest.json"));
     CHECK(manifest.at("timestamp") == json{{"code", nullptr}, {"state", "timestamped"}});
     CHECK(has(lab.h.log(), "[killed-1] queued " + utf8(lab.queued("killed-1"))));
+}
+
+TEST_CASE("worker body: a text file of another account's is replaced with the other, and the "
+          "folder closed over their empty forms verifies",
+          "[worker_body][close][owner]")
+{
+    if (!rp::test::elevated()) {
+        SKIP("changing a file's owner needs SeRestorePrivilege: run elevated");
+    }
+    const std::string name = GENERATE("items.csv", "veeam-session.log");
+    CAPTURE(name);
+    BodyLab lab;
+    const std::filesystem::path folder = lab.runs() / "killed-1";
+    std::filesystem::create_directories(folder);
+    std::ofstream(folder / "items.csv", std::ios::binary) << "index,type\n0,mail\n";
+    std::ofstream(folder / "veeam-session.log", std::ios::binary) << "a session's line\n";
+    rp::test::give_to(folder / name, L"S-1-5-19");
+
+    const rp::CloseRunOutcome outcome = lab.env().close_run(lab.started_record("killed-1"));
+
+    REQUIRE(outcome.state == rp::CloseRunState::queued);
+    CHECK(outcome.untrusted_text_files);
+    const std::filesystem::path queued = lab.queued("killed-1");
+    CHECK(names_in(queued) == kQueuedFolder);
+    CHECK(bytes_of(queued / "items.csv") == empty_items_csv());
+    CHECK(bytes_of(queued / "veeam-session.log").empty());
+    CHECK(rp::check_trusted_owner(queued / name) == rp::OwnerTrust::trusted);
+    CHECK(rp::to_string(verify(queued).word) == "verified");
+    CHECK(result_in(queued).at("status").at("error_code") == "interrupted");
+}
+
+TEST_CASE("worker body: text files of this account's are kept as they are, and say nothing of "
+          "their owner",
+          "[worker_body][close][owner]")
+{
+    BodyLab lab;
+    const std::filesystem::path folder = lab.runs() / "killed-1";
+    std::filesystem::create_directories(folder);
+    std::ofstream(folder / "items.csv", std::ios::binary) << "index,type\n0,mail\n";
+
+    const rp::CloseRunOutcome outcome = lab.env().close_run(lab.started_record("killed-1"));
+
+    REQUIRE(outcome.state == rp::CloseRunState::queued);
+    CHECK_FALSE(outcome.untrusted_text_files);
+    CHECK(bytes_of(lab.queued("killed-1") / "items.csv") == "index,type\n0,mail\n");
+}
+
+TEST_CASE("worker body: a complete folder whose result.json or signature.json is another "
+          "account's is not queued, and the loop says so in a SECURITY line",
+          "[worker_body][close][owner]")
+{
+    if (!rp::test::elevated()) {
+        SKIP("changing a file's owner needs SeRestorePrivilege: run elevated");
+    }
+    const std::string name = GENERATE("result.json", "signature.json");
+    CAPTURE(name);
+    BodyLab lab;
+    bool refuse = true;
+    lab.options.outbox_files.move_folder = [&refuse](const std::filesystem::path& from,
+                                                     const std::filesystem::path& to) {
+        return refuse ? 5ul : rp::move_folder(from, to);
+    };
+    const rp::RunningRecord record = lab.record("killed-1");
+    const std::filesystem::path folder = lab.runs() / "killed-1";
+    // A folder with its result.json, left under the runs root.
+    REQUIRE(lab.env().close_run(record).state == rp::CloseRunState::not_queued);
+    refuse = false;
+    const std::set<std::string> complete = names_in(folder);
+    rp::test::give_to(folder / name, L"S-1-5-19");
+
+    const rp::CloseRunOutcome outcome = lab.env().close_run(record);
+
+    CHECK(outcome.state == rp::CloseRunState::not_closed);
+    CHECK(outcome.word == "untrusted");
+    CHECK(names_in(folder) == complete);
+    CHECK_FALSE(std::filesystem::exists(lab.queued("killed-1")));
+
+    // And through the loop: the line, the record kept, nothing sent.
+    REQUIRE(lab.write_record(record));
+    const std::optional<std::string> last_error = lab.run_loop();
+    CHECK(last_error == rp::service_error::kRunNotClosed);
+    CHECK(has(lab.h.log(), "SECURITY: service: run killed-1: result.json or signature.json is "
+                           "owned by neither SYSTEM, Administrators nor this account; the folder "
+                           "is not queued"));
+    CHECK(has(lab.h.log(), "run killed-1: couldn't be closed (untrusted)"));
+    CHECK(std::filesystem::exists(lab.record_file()));
+    CHECK_FALSE(std::filesystem::exists(lab.queued("killed-1")));
+    CHECK_FALSE(std::filesystem::exists(lab.sent("killed-1")));
 }
 
 namespace {

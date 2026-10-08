@@ -48,7 +48,10 @@ bool is_secret_header(std::string_view name) noexcept;
 //    ends in "PRIVATE KEY" (PRIVATE KEY, ENCRYPTED PRIVATE KEY, RSA PRIVATE
 //    KEY, ...): the whole block up to and with its "-----END <label>-----",
 //    or to the end of the text without one. A PUBLIC KEY or CERTIFICATE
-//    block stays;
+//    block stays. A block that starts in a secret value or a bearer token
+//    goes with it; when that value ran to its line's end, so does the
+//    replacement at the block's last line (W4.7), which keeps redact(redact(x))
+//    equal to redact(x);
 //  - URL userinfo, "scheme://user:password@host": everything between "://"
 //    and the last '@' before the first '/', '?' or '#';
 //  - a raw JWT anywhere: "eyJ" (case matters) not run into a preceding

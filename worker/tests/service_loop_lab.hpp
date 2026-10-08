@@ -112,12 +112,18 @@ struct LoopLab {
     std::vector<Wall> looked_since;
     std::vector<std::string> ended;
     std::set<std::string> end_fails;
+    // Called after each end that didn't fail, with the session's ID.
+    std::function<void(const std::string&)> on_end;
     int released = 0;
     std::string clean_word = "ok";
     int cleans = 0;
 
     std::function<std::optional<FlushReport>()> on_flush;
     int flushes = 0;
+    // What the stop function a flush is handed answered: once before
+    // `flush_sets_stop` was applied and once after it.
+    bool flush_sets_stop = false;
+    std::vector<bool> flush_stop_answers;
     std::string heartbeat_word;
     std::vector<LoopHeartbeat> heartbeats;
     std::vector<std::chrono::seconds> heartbeat_at;
@@ -334,6 +340,9 @@ struct LoopLab {
                 throw connector::Error("veeam_m365: Stop refused for " + id);
             }
             ended.push_back(id);
+            if (on_end) {
+                on_end(id);
+            }
         };
         env.release_hold = [this] {
             calls.push_back("release");
@@ -345,9 +354,12 @@ struct LoopLab {
             return clean_word;
         };
 
-        env.flush = [this](const std::function<bool()>&) -> std::optional<FlushReport> {
+        env.flush = [this](const std::function<bool()>& asked) -> std::optional<FlushReport> {
             calls.push_back("flush");
             ++flushes;
+            flush_stop_answers.push_back(asked());
+            stop = stop || flush_sets_stop;
+            flush_stop_answers.push_back(asked());
             if (on_flush) {
                 return on_flush();
             }

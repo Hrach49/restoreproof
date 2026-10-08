@@ -32,23 +32,6 @@ std::filesystem::path root_of(std::optional<std::string_view> arg, const OutboxC
     return std::move(*root);
 }
 
-// The flush mutex, or null when another flush holds it. One a dead flush left
-// is taken at the second try: try_take_named_lock has released it by then.
-std::unique_ptr<RunLock> take_flush_lock(const OutboxCommandEnv& env)
-{
-    const auto take = [&env] {
-        return env.take_flush_lock ? env.take_flush_lock() : try_take_named_lock(kOutboxMutex);
-    };
-    std::unique_ptr<RunLock> lock;
-    bool abandoned = false;
-    try {
-        lock = take();
-    } catch (const AbandonedRunLock&) {
-        abandoned = true;
-    }
-    return abandoned ? take() : std::move(lock);
-}
-
 std::string or_dash(const std::optional<std::string>& text)
 {
     return text ? table_cell(*text) : std::string{"-"};
@@ -66,7 +49,7 @@ int run_flush(const CommandOptions& options, std::ostream& out, std::ostream& er
     try {
         config = load_config(command_config_path(options.value("--config"), env.default_config_path));
         root = root_of(options.value("--outbox"), env);
-        lock = take_flush_lock(env);
+        lock = take_outbox_flush_lock(env.take_flush_lock);
         // A flush that is refused makes no recording folder.
         if (lock) {
             recorder = open_recording(options.value("--record"), "outbox flush", Secrets{});

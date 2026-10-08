@@ -76,6 +76,7 @@ add_library(rpcore STATIC
     src/secrets.cpp
     src/service.cpp
     src/service_command.cpp
+    src/service_jobs.cpp
     src/service_log.cpp
     src/sha256.cpp
     src/signer.cpp
@@ -221,6 +222,7 @@ add_executable(rptests
     tests/scm_test.cpp
     tests/secrets_test.cpp
     tests/service_command_test.cpp
+    tests/service_jobs_test.cpp
     tests/service_log_test.cpp
     tests/service_test.cpp
     tests/sha256_test.cpp

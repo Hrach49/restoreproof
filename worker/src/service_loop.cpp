@@ -427,14 +427,19 @@ bool ServiceLoop::look_and_end(bool& clean)
             return false;
         }
         SessionsLook sessions;
+        // One return after the handlers, so each of their lines is reached.
+        std::string_view failed;
         try {
             sessions = env_.own_sessions(since);
         } catch (const connector::AuthError&) {
-            return look_failed("auth");
+            failed = "auth";
         } catch (const connector::TransientError&) {
-            return look_failed("transient");
+            failed = "transient";
         } catch (const std::exception&) {
-            return look_failed("other");
+            failed = "other";
+        }
+        if (!failed.empty()) {
+            return look_failed(failed);
         }
         const HoldDecision decision =
             decide_hold(*record_, sessions.running, env_.wall_now(), *hold_began_);
@@ -457,21 +462,30 @@ bool ServiceLoop::look_and_end(bool& clean)
             return false;
         }
         for (const std::string& id : decision.end) {
-            if (stopped()) {
-                return false;
-            }
-            try {
-                env_.end_session(id);
-            } catch (const std::exception&) {
-                trouble(service_error::kVeeamLookFailed);
-                if (again("hold:end:" + id)) {
-                    env_.logger->warn("ending session {} failed", id);
-                }
+            if (stopped() || !end_session(id)) {
                 return false;
             }
         }
     }
     return false;
+}
+
+// Whether the session was ended; an end that fails is "not yet".
+bool ServiceLoop::end_session(const std::string& id)
+{
+    bool ended = true;
+    try {
+        env_.end_session(id);
+    } catch (const std::exception&) {
+        ended = false;
+    }
+    if (!ended) {
+        trouble(service_error::kVeeamLookFailed);
+        if (again("hold:end:" + id)) {
+            env_.logger->warn("ending session {} failed", id);
+        }
+    }
+    return ended;
 }
 
 void ServiceLoop::clean_after_hold()

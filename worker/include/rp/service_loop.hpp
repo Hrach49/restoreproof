@@ -207,6 +207,7 @@ private:
     void hold();
     bool look_failed(std::string_view reason);
     bool look_and_end(bool& clean);
+    bool end_session(const std::string& id);
     void clean_after_hold();
     void drop_record();
     bool write_record(RunningRecord next);

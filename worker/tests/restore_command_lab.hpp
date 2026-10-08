@@ -16,6 +16,9 @@
 #include "test_support.hpp"
 #include "veeam_restore_lab.hpp"
 
+#include "../src/command_config.hpp"
+#include "../src/run_pipeline.hpp"
+
 #include <rp/canary_manifest.hpp>
 #include <rp/cli.hpp>
 #include <rp/config.hpp>
@@ -782,6 +785,7 @@ struct Harness {
             -> std::unique_ptr<connector::IConnector> {
             ++make_connector_calls;
             connector_secrets = secrets;
+            connector_options = options;
             made_for_org = config.veeam_org_name;
             fake.logger = options.logger;
             if (connector_throw) {
@@ -862,7 +866,47 @@ struct Harness {
         env.timestamp_nonce = timestamp_nonce;
         // W4.6: the outbox's file calls; null, the real ones, in the temp folder.
         env.outbox_files = outbox_files;
+        // W4.8: the stop check (null: never) and the run's record, each call
+        // kept with stdout and the Graph requests as they stood then.
+        env.stop_requested = stop_requested;
+        env.connector_options.stop_requested = connector_stop;
+        env.on_run_started = [this](const rp::RunStarted& started) {
+            run_started.push_back(started);
+            out_at_run_started.push_back(fake.out ? fake.out->str() : "");
+            graph_requests_at_run_started = targets.graph.requests().size();
+            return on_run_started ? on_run_started(started) : true;
+        };
         return env;
+    }
+
+    // W4.8: from here on the Harness runs the pipeline itself, as the
+    // service's loop calls it: the command line parsed as `rpworker test`
+    // parses it (no --json), test's presentation, `loaded` and `screenshots`
+    // handed on, and what became of the run in `report`.
+    void use_pipeline()
+    {
+        command = [this](std::span<const std::string_view> args, std::ostream& out,
+                         std::ostream& err, const rp::RestoreCommandEnv& env) {
+            rp::PipelineArgs parsed;
+            const std::optional<rp::CommandOptions> options = rp::parse_options(
+                args, {"--mail", "--sp", "--od", "--point", "--run-id", "--canary-cursor",
+                       "--manifest", "--config", "--vault", "--record", "--evidence", "--outbox"});
+            if (!options || !rp::parse_pipeline_args(*options, parsed)) {
+                return rp::exit_code::usage;
+            }
+            parsed.evidence = options->value("--evidence");
+            parsed.outbox = options->value("--outbox");
+            parsed.loaded = loaded;
+            parsed.screenshots = screenshots;
+            std::shared_ptr<rp::FixtureRecorder> recorder;
+            // What an earlier run left in the report must not survive.
+            report.run_id = "an earlier run's";
+            report.run_line = true;
+            report.restore_may_still_run = true;
+            report.folder = rp::RunFolderState::queued;
+            return rp::run_pipeline(parsed, out, err, env, recorder, rp::test_presentation(),
+                                    &report);
+        };
     }
 
     // Held while it lives; `held` says so.
@@ -936,6 +980,22 @@ struct Harness {
     std::function<std::optional<std::uint64_t>()> timestamp_nonce;
     int tsa_clients = 0;
     rp::OutboxFiles outbox_files;
+    // W4.8: the stop check (null: never), on_run_started's answer (null:
+    // true), every RunStarted it was given, with stdout and the count of
+    // Graph requests as they stood at the last one, the options the
+    // connector's maker was handed, and, after use_pipeline(), the config
+    // and the screenshots flag the pipeline is handed and its report.
+    std::function<bool()> stop_requested;
+    // A stop check the connector's options carry already (null: none).
+    std::function<bool()> connector_stop;
+    std::function<bool(const rp::RunStarted&)> on_run_started;
+    std::vector<rp::RunStarted> run_started;
+    std::vector<std::string> out_at_run_started;
+    std::size_t graph_requests_at_run_started = 0;
+    std::optional<connector::ConnectorOptions> connector_options;
+    const rp::Config* loaded = nullptr;
+    std::optional<bool> screenshots;
+    rp::PipelineReport report;
     // The run ID a run without --run-id makes.
     std::string generated_run_id{kGeneratedRunId};
     // The download client's maker returns null: the run stops after its run
@@ -1022,10 +1082,9 @@ inline std::string clean_after_line(int mail, int sharepoint, int onedrive)
     return "cleanup after ok: deleted " + std::to_string(mail) + " mail, " +
            std::to_string(sharepoint) + " sharepoint, " + std::to_string(onedrive) + " onedrive\n";
 }
-// The same when Veeam may still be writing.
+// When Veeam may still be writing: no clean under a restore (W4.8 point 9).
 inline const std::string kCleanAfterStillRunning =
-    "cleanup after incomplete: deleted 2 mail, 1 sharepoint, 0 onedrive; the restore may "
-    "still be running; the next run cleans before\n";
+    "cleanup after skipped: the restore may still be running; the next run cleans before\n";
 
 // The first two lines of `--run-id run-0001` on the newest point.
 inline std::string expected_run_lines()

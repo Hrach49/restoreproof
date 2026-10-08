@@ -962,7 +962,9 @@ TEST_CASE("test: a result that isn't valid when the status is decided is error r
     CHECK(count_of(run.out, "\nstatus ") == 1);
     REQUIRE(lab.cleanups.size() == 1);
     CHECK(lab.cleanups[0].restore_sent == c.restore_sent);
-    CHECK(lab.cleanups[0].after.has_value() == c.restore_sent);
+    // No clean under a restore that may still run (W4.8 point 9).
+    CHECK(lab.cleanups[0].after.has_value() ==
+          (c.restore_sent && c.cleanup != kCleanAfterStillRunning));
     // No item verdict: VERDICT reads "-", as when rows 1 to 4 decide.
     CHECK_THAT(run.out, !ContainsSubstring("verified"));
     CHECK_THAT(run.out, !ContainsSubstring("  failed  "));
@@ -3324,4 +3326,440 @@ TEST_CASE("test --evidence --outbox: the signed run folder is queued with its ma
     }
     CHECK(names == std::vector<std::string>{"result", "signature", "timestamp", "items.csv",
                                             "veeam-session.log"});
+}
+
+// --- W4.8: the pipeline as the service's loop calls it --------------------------------
+// (docs/decisions.md 2026-10-08, W4.8 points 2, 5 and 13): the report of every way
+// out, the loaded config, a job's screenshots flag and the Timestamper's stop.
+
+namespace {
+
+// A TestLab that runs the pipeline itself (Harness::use_pipeline) and keeps
+// its report. kThree's second mail is a random one.
+struct PipelineLab : TestLab {
+    explicit PipelineLab(const json& config_edit = json::object()) : TestLab(config_edit)
+    {
+        use_pipeline();
+        fake.pool.mail = {carol_mail(1)};
+    }
+};
+
+// "<pass|fail|error>[ <code>]", or "-" for none.
+std::string status_text(const std::optional<rp::verification::RunStatus>& status,
+                        const std::string& code)
+{
+    if (!status) {
+        return "-";
+    }
+    return std::string{rp::verification::to_string(*status)} + (code.empty() ? "" : " " + code);
+}
+
+using rp::RunFolderState;
+
+struct ReportCase {
+    std::string name;
+    // What the case changes: the lab, and the command line (kThree, then
+    // --evidence <runs root> --outbox <outbox root>).
+    std::function<void(PipelineLab&, const OutboxRun&, Args&)> setup;
+    int exit_code;
+    std::string run_id;
+    bool run_line;
+    std::string status;   // the run's, "-" when none was decided
+    std::string replaced; // what result_invalid replaced, "-" when it didn't
+    RunFolderState folder;
+    std::string word;
+    bool may_still_run;
+};
+
+const std::vector<ReportCase>& report_cases()
+{
+    using Lab = PipelineLab;
+    const auto nothing = [](Lab&, const OutboxRun&, Args&) {};
+    static const std::vector<ReportCase> cases{
+        // Before the run line: no status, no folder.
+        {"a vault that can't be read",
+         [](Lab& lab, const OutboxRun&, Args&) {
+             lab.load_secrets = []() -> rp::Secrets {
+                 throw rp::ConfigError("vault", "vault file not found");
+             };
+         },
+         rp::exit_code::config, kRunId, false, "-", "-", RunFolderState::none, "", false},
+        {"a run ID already queued",
+         [](Lab&, const OutboxRun& outbox, Args&) {
+             std::filesystem::create_directories(outbox.queued());
+         },
+         rp::exit_code::config, kRunId, false, "-", "-", RunFolderState::none, "", false},
+        {"every sample size 0",
+         [](Lab&, const OutboxRun&, Args& args) {
+             args[3] = "0";
+             args[5] = "0";
+         },
+         rp::exit_code::usage, kRunId, false, "-", "-", RunFolderState::none, "", false},
+        {"no result schema",
+         [](Lab& lab, const OutboxRun&, Args&) { lab.schema_ready = [] { return false; }; },
+         rp::exit_code::config, kRunId, false, "-", "-", RunFolderState::none, "", false},
+        {"a cursor past the manifest's canaries",
+         [](Lab&, const OutboxRun&, Args& args) {
+             args.push_back("--canary-cursor");
+             args.push_back("999999,0,0");
+         },
+         rp::exit_code::usage, kRunId, false, "-", "-", RunFolderState::none, "", false},
+        {"a stop before the mutex",
+         [](Lab& lab, const OutboxRun&, Args&) { lab.stop_requested = [] { return true; }; },
+         rp::exit_code::service, kRunId, false, "-", "-", RunFolderState::none, "", false},
+        {"the mutex held",
+         [](Lab& lab, const OutboxRun&, Args&) { lab.lock_taken = true; },
+         rp::exit_code::service, kRunId, false, "-", "-", RunFolderState::none, "", false},
+        {"the mutex held, no --run-id",
+         [](Lab& lab, const OutboxRun&, Args& args) {
+             args.erase(args.begin(), args.begin() + 2);
+             lab.lock_taken = true;
+         },
+         rp::exit_code::service, "", false, "-", "-", RunFolderState::none, "", false},
+        {"no restore point",
+         [](Lab& lab, const OutboxRun&, Args&) { lab.fake.points.clear(); },
+         rp::exit_code::service, kRunId, false, "-", "-", RunFolderState::none, "", false},
+        {"the backup unreachable when the restore points are listed",
+         [](Lab& lab, const OutboxRun&, Args&) {
+             lab.fake.points_throw = [] {
+                 throw rp::connector::TransientError("Veeam unreachable");
+             };
+         },
+         rp::exit_code::transient, kRunId, false, "-", "-", RunFolderState::none, "", false},
+        {"a run folder already there",
+         [](Lab& lab, const OutboxRun&, Args&) {
+             std::filesystem::create_directories(lab.run_folder());
+         },
+         rp::exit_code::config, kRunId, false, "-", "-", RunFolderState::none, "", false},
+        // A stop in each phase, the folder signed and queued all the same.
+        {"the run not put on record",
+         [](Lab& lab, const OutboxRun&, Args&) {
+             lab.on_run_started = [](const rp::RunStarted&) { return false; };
+         },
+         rp::exit_code::service, kRunId, true, "error interrupted", "-", RunFolderState::queued,
+         "", false},
+        {"a stop after the run line",
+         [](Lab& lab, const OutboxRun&, Args&) {
+             lab.stop_requested = [&lab] { return !lab.run_started.empty(); };
+         },
+         rp::exit_code::service, kRunId, true, "error interrupted", "-", RunFolderState::queued,
+         "", false},
+        {"the backup unreachable when the sample is chosen",
+         [](Lab& lab, const OutboxRun&, Args&) {
+             lab.fake.candidates_throw = [] {
+                 throw rp::connector::TransientError("Veeam unreachable");
+             };
+         },
+         rp::exit_code::transient, kRunId, true, "error backup_transient", "-",
+         RunFolderState::queued, "", false},
+        {"a restore that may still run",
+         [](Lab& lab, const OutboxRun&, Args&) {
+             lab.fake.restore_throw = [] { throw rp::connector::Error("Veeam said no"); };
+         },
+         rp::exit_code::service, kRunId, true, "error backup", "-", RunFolderState::queued, "",
+         true},
+        {"a restore request withdrawn before the first",
+         [](Lab& lab, const OutboxRun&, Args&) {
+             lab.fake.restore_throw = [] {
+                 throw rp::connector::Interrupted("asked to stop; nothing was restored");
+             };
+         },
+         rp::exit_code::service, kRunId, true, "error interrupted", "-", RunFolderState::queued,
+         "", false},
+        {"a restore's poll left on a stop",
+         [](Lab& lab, const OutboxRun&, Args&) {
+             lab.fake.restore_throw = [] {
+                 throw rp::connector::Interrupted("still Working when asked to stop");
+             };
+         },
+         rp::exit_code::service, kRunId, true, "error interrupted", "-", RunFolderState::queued,
+         "", true},
+        {"a check that fails unexpectedly",
+         [](Lab& lab, const OutboxRun&, Args&) {
+             lab.targets.download_throw = [] { throw std::logic_error("a bug"); };
+         },
+         rp::exit_code::config, kRunId, true, "error internal", "-", RunFolderState::queued, "",
+         false},
+        // The normal ends.
+        {"a pass", nothing, rp::exit_code::ok, kRunId, true, "pass", "-", RunFolderState::queued,
+         "", false},
+        {"a pass under a run ID the run made",
+         [](Lab&, const OutboxRun&, Args& args) { args.erase(args.begin(), args.begin() + 2); },
+         rp::exit_code::ok, kGeneratedRunId, true, "pass", "-", RunFolderState::queued, "",
+         false},
+        {"a fail",
+         [](Lab& lab, const OutboxRun&, Args&) {
+             lab.targets.after[kind_slot(rp::connector::ItemKind::sharepoint)] = json::array();
+         },
+         rp::exit_code::restore, kRunId, true, "fail", "-", RunFolderState::queued, "", false},
+        {"a pass without --evidence",
+         [](Lab&, const OutboxRun&, Args& args) { args.resize(kThree.size()); },
+         rp::exit_code::ok, kRunId, true, "pass", "-", RunFolderState::none, "", false},
+        {"a pass without --outbox",
+         [](Lab&, const OutboxRun&, Args& args) { args.resize(kThree.size() + 2); },
+         rp::exit_code::ok, kRunId, true, "pass", "-", RunFolderState::complete, "", false},
+        // result_invalid, and what it replaced.
+        {"a result that isn't valid, the run a pass",
+         [](Lab& lab, const OutboxRun&, Args&) { lab.fake.info.name = "fake"; },
+         rp::exit_code::config, kRunId, true, "error result_invalid", "pass",
+         RunFolderState::incomplete, "invalid", false},
+        {"a result that isn't valid, the run an error",
+         [](Lab& lab, const OutboxRun&, Args&) {
+             lab.fake.info.name = "fake";
+             lab.fake.candidates_throw = [] {
+                 throw rp::connector::TransientError("Veeam unreachable");
+             };
+         },
+         rp::exit_code::config, kRunId, true, "error result_invalid", "error backup_transient",
+         RunFolderState::incomplete, "invalid", false},
+        {"a result that is valid when the status is decided and isn't at the end",
+         [](Lab& lab, const OutboxRun&, Args&) {
+             lab.wall_now = [&lab] {
+                 return lab.cleanups.empty() ? rp::test::graph_lab::kNow : year_10000();
+             };
+         },
+         rp::exit_code::config, kRunId, true, "pass", "-", RunFolderState::incomplete, "invalid",
+         false},
+        // Each evidence failure: the folder without a result.json.
+        {"a text file that can't be written",
+         [](Lab& lab, const OutboxRun&, Args&) {
+             lab.write_evidence_file = [&lab](const std::filesystem::path& path,
+                                              std::string_view content) {
+                 if (utf8(path.filename()) == "items.csv") {
+                     return false;
+                 }
+                 lab.dir.write(std::filesystem::relative(path, lab.dir.path()), content);
+                 return true;
+             };
+         },
+         rp::exit_code::config, kRunId, true, "pass", "-", RunFolderState::incomplete,
+         "not_written", false},
+        {"a result.json that can't be written",
+         [](Lab& lab, const OutboxRun&, Args&) {
+             lab.write_evidence_file = [&lab](const std::filesystem::path& path,
+                                              std::string_view content) {
+                 if (utf8(path.filename()) == "result.json") {
+                     return false;
+                 }
+                 lab.dir.write(std::filesystem::relative(path, lab.dir.path()), content);
+                 return true;
+             };
+         },
+         rp::exit_code::config, kRunId, true, "pass", "-", RunFolderState::incomplete,
+         "not_written", false},
+        {"an attachment changed after it was hashed",
+         [](Lab& lab, const OutboxRun&, Args&) {
+             // The job's flag: the capturer runs once the text files are hashed.
+             lab.screenshots = true;
+             lab.capture_screenshot = [](const rp::ScreenshotRequest& request)
+                 -> std::optional<rp::ScreenshotReason> {
+                 std::ofstream(request.png.parent_path() / "items.csv",
+                               std::ios::binary | std::ios::app)
+                     << "9,\"added later\"\n";
+                 return rp::ScreenshotReason::no_browser;
+             };
+         },
+         rp::exit_code::config, kRunId, true, "pass", "-", RunFolderState::incomplete, "changed",
+         false},
+        {"a result that holds a secret value",
+         [](Lab& lab, const OutboxRun&, Args&) {
+             rp::connector::MailCandidate mail = carol_mail(1);
+             mail.selector.subject = "fwd: Sentinel-Veeam-Password-9c2e";
+             lab.fake.pool.mail = {mail};
+         },
+         rp::exit_code::config, kRunId, true, "pass", "-", RunFolderState::incomplete,
+         "holds_secret", false},
+        {"a result that can't be signed",
+         [](Lab& lab, const OutboxRun&, Args&) {
+             lab.sign_result = [](std::string_view, const rp::SigningKey&) {
+                 return std::optional<rp::SignedResult>{};
+             };
+         },
+         rp::exit_code::config, kRunId, true, "pass", "-", RunFolderState::incomplete,
+         "not_signed", false},
+        // The outbox.
+        {"a folder the outbox can't take",
+         [](Lab& lab, const OutboxRun&, Args&) {
+             lab.outbox_files.move_folder = [](const std::filesystem::path&,
+                                               const std::filesystem::path&) { return 32ul; };
+         },
+         rp::exit_code::config, kRunId, true, "pass", "-", RunFolderState::complete, "not_moved",
+         false},
+        {"a queued folder whose manifest can't be written",
+         [](Lab& lab, const OutboxRun&, Args&) {
+             lab.outbox_files.write_manifest = [](const std::filesystem::path&,
+                                                  std::string_view) { return false; };
+         },
+         rp::exit_code::config, kRunId, true, "pass", "-", RunFolderState::queued,
+         "manifest_not_written", false},
+    };
+    return cases;
+}
+
+} // namespace
+
+TEST_CASE("the pipeline's report says what became of the run on every way out: its ID, whether "
+          "the run line was written, the status and what result_invalid replaced, the run "
+          "folder with its word, and whether a restore may still run",
+          "[test_command][report]")
+{
+    const std::vector<ReportCase>& cases = report_cases();
+    const std::size_t count = cases.size();
+    const ReportCase& c = cases[GENERATE_COPY(range(std::size_t{0}, count))];
+    CAPTURE(c.name);
+    PipelineLab lab;
+    const OutboxRun outbox(lab);
+    Args args = outbox.args;
+    c.setup(lab, outbox, args);
+
+    const Run run = lab.run(args);
+
+    INFO(run.out);
+    INFO(run.err);
+    const rp::PipelineReport& report = lab.report;
+    CHECK(run.exit_code == c.exit_code);
+    CHECK(report.run_id == c.run_id);
+    CHECK(report.run_line == c.run_line);
+    CHECK(status_text(report.status, report.error_code) == c.status);
+    CHECK(status_text(report.replaced_status, report.replaced_code) == c.replaced);
+    CHECK(report.folder == c.folder);
+    CHECK(report.folder_word == c.word);
+    CHECK(report.restore_may_still_run == c.may_still_run);
+
+    // The report against what the run printed and left.
+    CHECK((run.out.find("run " + c.run_id + "  seed ") != std::string::npos) == c.run_line);
+    if (c.status != "-") {
+        CHECK_THAT(run.out, ContainsSubstring("\nstatus " + c.status + ": "));
+    } else {
+        CHECK_THAT(run.out, !ContainsSubstring("\nstatus "));
+    }
+    const std::filesystem::path in_runs = lab.run_folder(c.run_id.empty() ? kRunId : c.run_id);
+    const std::filesystem::path in_outbox = outbox.queued(c.run_id.empty() ? kRunId : c.run_id);
+    switch (c.folder) {
+    case RunFolderState::none:
+        CHECK_FALSE(std::filesystem::exists(in_runs / "items.csv"));
+        CHECK_FALSE(std::filesystem::exists(in_outbox / "result.json"));
+        break;
+    case RunFolderState::incomplete:
+        CHECK(std::filesystem::is_directory(in_runs));
+        CHECK_FALSE(std::filesystem::exists(in_runs / "result.json"));
+        CHECK_FALSE(std::filesystem::exists(in_outbox));
+        break;
+    case RunFolderState::complete:
+        CHECK(std::filesystem::exists(in_runs / "result.json"));
+        CHECK_FALSE(std::filesystem::exists(in_outbox));
+        break;
+    case RunFolderState::queued:
+        CHECK(std::filesystem::exists(in_outbox / "result.json"));
+        CHECK_FALSE(std::filesystem::exists(in_runs));
+        break;
+    }
+    // A restore that may still run skipped its clean after.
+    if (c.may_still_run) {
+        CHECK_THAT(run.out, ContainsSubstring(kCleanAfterStillRunning));
+        CHECK(lab.targets.deleted.empty());
+    }
+}
+
+TEST_CASE("the pipeline run without a report runs as with one", "[test_command][report]")
+{
+    PipelineLab lab;
+    lab.command = [&lab](std::span<const std::string_view>, std::ostream& out, std::ostream& err,
+                         const rp::RestoreCommandEnv& env) {
+        rp::PipelineArgs args;
+        args.run_id = kRunId;
+        args.mail = 2;
+        args.sharepoint = 1;
+        args.onedrive = 0;
+        std::shared_ptr<rp::FixtureRecorder> recorder;
+        const std::string config = utf8(lab.config_path);
+        args.config = config;
+        return rp::run_pipeline(args, out, err, env, recorder, rp::test_presentation());
+    };
+
+    const Run run = lab.run_raw({});
+
+    CHECK(run.exit_code == rp::exit_code::ok);
+    CHECK_THAT(run.out, ContainsSubstring("\nstatus pass: "));
+}
+
+TEST_CASE("the pipeline handed a loaded config doesn't read the file again; the manifest is "
+          "still the one beside it",
+          "[test_command][report]")
+{
+    PipelineLab lab;
+    const rp::Config loaded = rp::load_config(lab.config_path);
+    lab.loaded = &loaded;
+    // What the file holds now is nobody's business until the next start.
+    lab.dir.write("config.json", "not a config");
+
+    const Run run = lab.run(kThree);
+
+    INFO(run.err);
+    CHECK(run.exit_code == rp::exit_code::ok);
+    CHECK(run.err.empty());
+    CHECK(lab.made_for_org == kOrgName);
+    CHECK(lab.report.status == std::optional{rp::verification::RunStatus::pass});
+}
+
+TEST_CASE("without a loaded config the pipeline reads the file, and says when it can't",
+          "[test_command][report]")
+{
+    PipelineLab lab;
+    lab.dir.write("config.json", "not a config");
+
+    const Run run = lab.run(kThree);
+
+    CHECK(run.exit_code == rp::exit_code::config);
+    CHECK_THAT(run.err, StartsWith("config error: "));
+    CHECK_FALSE(lab.report.run_line);
+    CHECK(lab.report.run_id == kRunId);
+}
+
+TEST_CASE("a job's screenshots flag replaces the config's for its run",
+          "[test_command][report][evidence]")
+{
+    const auto [config_says, job_says, asked, reason] =
+        GENERATE(table<bool, std::optional<bool>, int, std::string>({
+            {true, std::optional<bool>{false}, 0, "disabled"},
+            {false, std::optional<bool>{true}, 1, "no_browser"},
+            {true, std::optional<bool>{}, 1, "no_browser"},
+            {false, std::optional<bool>{}, 0, "disabled"},
+        }));
+    CAPTURE(config_says, job_says);
+    PipelineLab lab({{"screenshots_enabled", config_says}});
+    lab.screenshots = job_says;
+    int captures = 0;
+    lab.capture_screenshot =
+        [&](const rp::ScreenshotRequest&) -> std::optional<rp::ScreenshotReason> {
+        ++captures;
+        return rp::ScreenshotReason::no_browser;
+    };
+
+    const Run run = evidence_run(lab);
+
+    CHECK(run.exit_code == rp::exit_code::ok);
+    CHECK(captures == asked);
+    CHECK(lab.evidence_result().at("screenshot") ==
+          json{{"state", "unavailable"}, {"reason", reason}});
+}
+
+TEST_CASE("test --evidence: after a stop the TSA isn't asked: not timestamped after 0 "
+          "attempt(s), the folder complete without a token, the status and the exit code the "
+          "run's",
+          "[test_command][evidence][timestamp][stop]")
+{
+    TestLab lab;
+    // The stop comes once the status is out: the run is over but for its folder.
+    lab.stop_requested = [&lab] { return !lab.cleanups.empty(); };
+
+    const Run run = evidence_run(lab);
+
+    CHECK(run.exit_code == rp::exit_code::ok);
+    CHECK(run.err == not_timestamped(lab, "timestamp_internal", 0));
+    CHECK_THAT(run.out, ContainsSubstring("\nstatus pass: "));
+    CHECK_THAT(run.out, EndsWith(signed_lines(lab.run_folder(), false, "")));
+    CHECK(names_in(lab.run_folder()) == kUnstampedFolder);
+    CHECK(lab.tsa_http.requests().empty());
+    CHECK(lab.slept.empty());
 }

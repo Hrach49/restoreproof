@@ -54,13 +54,14 @@ struct RunCleanup {
     // stopped before its Graph client was made).
     std::optional<graph::CleanupResult> before;
     // The clean after the status line; nullopt when none ran: nothing was
-    // restored, or there was no Graph client.
+    // restored, the restore may still run, or there was no Graph client.
     std::optional<graph::CleanupResult> after;
     // The status's restore_sent: items may be in the targets.
     bool restore_sent = false;
     // The run stopped in its restore phase without the connector's promise
-    // that nothing was sent (a POST with no answer, a poll that gave up):
-    // Veeam may still be writing into the targets after the clean-after.
+    // that nothing was sent (a POST with no answer, a poll that gave up or
+    // was left on a stop): Veeam may still be writing into the targets, so
+    // the clean after is skipped (W4.8 point 9).
     bool restore_may_still_run = false;
 
     // The state the run leaves behind: false when the restore may still run,
@@ -72,6 +73,25 @@ struct RunCleanup {
 // {"cleanup_ok", "restore_may_still_run", "before": {...} | null, "after":
 // {...} | null}, each clean as graph::to_json(CleanupResult).
 nlohmann::json to_json(const RunCleanup& cleanup);
+
+// What a run is once its run line is out (docs/decisions.md 2026-10-08, W4.8
+// point 6): what the service writes into its record of the run before the
+// run does anything in the tenant or opens a session in the backup product.
+// IDs, times and the connector's own words, never a secret.
+struct RunStarted {
+    std::string run_id;
+    // The wall clock where the run's `total` starts, the result's started_at
+    // ("YYYY-MM-DDTHH:MM:SS.mmmZ"); nullopt when the clock failed.
+    std::optional<std::string> started_at;
+    // The restore point chosen: its ID and its time as the backup product
+    // gives it (the result's restore_point.id and backup_time_raw).
+    std::string restore_point_id;
+    std::string restore_point_time;
+    // The connector, as it describes itself (the result's connector.type and
+    // connector.api).
+    std::string connector_type;
+    std::string connector_api;
+};
 
 // What the command reaches outside itself. run_cli passes
 // default_restore_command_env(); tests pass a temp config, their own secrets, a
@@ -178,6 +198,29 @@ struct RestoreCommandEnv {
     // rename of the run folder, the manifest's writer, whether the two roots
     // are on one volume).
     OutboxFiles outbox_files;
+    // W4.8 point 13: whether the Worker was asked to stop; null = never (the
+    // commands at a prompt). One that throws answered yes. Asked at the
+    // run's step boundaries: right before the run mutex is taken ("restore
+    // error: the Worker was asked to stop; nothing was done", exit 4, no run
+    // line), and, once the run line is out, before each of the clean before,
+    // choose_sample, the before snapshot and restore_sample ("restore error:
+    // the Worker was asked to stop; nothing was restored" on `err`, then the
+    // run ends as every stopped run does: status error interrupted, the
+    // clean after skipped). Asked once more before the status is decided: a
+    // verdict that is an error then, with a code other than interrupted,
+    // target_guard or result_invalid, becomes error interrupted
+    // (verification::interrupted), since a wait the stop cut short reads as
+    // the failure of whatever was waited for; a pass or a fail stays. Handed
+    // on to the connector as connector_options.stop_requested, unless that is
+    // set already, and to the Timestamper, which makes no further attempt.
+    std::function<bool()> stop_requested;
+    // W4.8 point 6: called once, right after the run line is flushed and the
+    // run folder kept, before the Graph client is made, any clean and any
+    // session in the backup product; null = nothing. False, or anything
+    // thrown, is a run that couldn't be put on record: "restore error: the
+    // run couldn't be recorded as started; nothing was restored" on `err`,
+    // and the run ends there as a stop does (status error interrupted).
+    std::function<bool(const RunStarted&)> on_run_started;
 };
 
 // The real environment: rp::default_config_path, rp::default_vault_path,
@@ -286,9 +329,10 @@ std::string format_elapsed(std::chrono::nanoseconds elapsed);
 // The cleanup lines (W3.4) hold counts and codes, never a name or an ID:
 //   cleanup <before|after> ok: deleted <a> mail, <b> sharepoint, <c> onedrive
 //   cleanup <before|after> incomplete: deleted ...[; left <x> mail, <y>
-//     sharepoint, <z> onedrive][; skipped <n>][; <target> <error_code>]...[;
-//     the restore may still be running; the next run cleans before]
+//     sharepoint, <z> onedrive][; skipped <n>][; <target> <error_code>]...
 //   cleanup after skipped: nothing was restored
+//   cleanup after skipped: the restore may still be running; the next run
+//     cleans before
 //   cleanup after skipped: no Graph client
 // "deleted" counts Graph's 204s; "left" the items the last listing still
 // showed; "skipped" the entries never deleted (folders, packages, ...). Each
@@ -303,9 +347,12 @@ std::string format_elapsed(std::chrono::nanoseconds elapsed);
 // the status or the exit code; a pass with leftovers still exits 0. The
 // clean after runs after the status line and its warnings, so the decided
 // verdict never waits on it, and after the check, so no evidence is deleted
-// before it is read; after a check that threw, and after a restore_sample
-// that threw having sent a restore (the cleanup line then says the restore
-// may still be running), it runs too.
+// before it is read; after a check that threw it runs too. After a
+// restore_sample that threw having sent a restore, Veeam may still be
+// writing: nothing is deleted under a restore, the clean after is skipped
+// with its own line and RunCleanup::restore_may_still_run is true (W4.8
+// point 9, which amends W3.4: the next run cleans before, and the service
+// waits for Veeam's sessions first).
 //
 // The status line (W3.3) ends every run once its first two lines are out,
 // whatever stopped it: a failure choosing the sample, an empty sample (status
@@ -402,6 +449,16 @@ std::string format_elapsed(std::chrono::nanoseconds elapsed);
 //    error: the last RestoreProof run ended without releasing the restore
 //    targets; nothing was done; the next run cleans them before it restores"
 //    when its last holder ended without releasing it (rp::AbandonedRunLock);
+//    and, right before the mutex is asked for, "restore error: the Worker
+//    was asked to stop; nothing was done" when env.stop_requested says so
+//    (W4.8 point 13; never at a prompt, where there is no stop check);
+//  - 4, once the run line is out: "restore error: the Worker was asked to
+//    stop; nothing was restored" for a stop found before the clean before,
+//    choose_sample, the before snapshot or restore_sample, and "restore
+//    error: the run couldn't be recorded as started; nothing was restored"
+//    when env.on_run_started fails; status error interrupted, "the run
+//    stopped before the restore: the run was interrupted (interrupted);
+//    nothing was restored", the clean after skipped;
 //  - before the run line, with no status line: "restore error: <what()>" for
 //    a connector::Error listing the restore points (2 for an AuthError, 3 for
 //    a TransientError, 4 for any other), and 4 with "restore error: no
@@ -416,7 +473,9 @@ std::string format_elapsed(std::chrono::nanoseconds elapsed);
 //    sample or restoring (backup_auth for an AuthError, backup_transient for
 //    a TransientError, target_guard for a SafetyViolation ("restore error:
 //    target guard: ..."), not_in_backup for a NotFoundError, backup for any
-//    other, a NotImplementedError included), or a graph::GraphError
+//    other, a NotImplementedError included), a connector::Interrupted
+//    (interrupted: the connector withdrew a restore request or left its
+//    poll on a stop, W4.8 point 13), or a graph::GraphError
 //    restore_sample's guard let out (graph_auth, graph_permission,
 //    graph_transient or graph, never a backup code); every exception's exit
 //    code, before the run line too, is its stop's (verification::stop_reason

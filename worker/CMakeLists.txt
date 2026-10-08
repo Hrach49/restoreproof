@@ -54,6 +54,7 @@ add_library(rpcore STATIC
     src/graph_paging.cpp
     src/graph_targets.cpp
     src/http_client.cpp
+    src/job_rules.cpp
     src/name_key.cpp
     src/office_v1.cpp
     src/outbox.cpp
@@ -65,6 +66,7 @@ add_library(rpcore STATIC
     src/result_schema.cpp
     src/retry_policy.cpp
     src/rfc3161.cpp
+    src/run_folder_tail.cpp
     src/run_lock.cpp
     src/run_pipeline.cpp
     src/run_status.cpp

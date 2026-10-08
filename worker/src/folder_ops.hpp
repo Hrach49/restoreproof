@@ -33,6 +33,18 @@ bool remove_folder(const std::filesystem::path& folder) noexcept;
 // folder afterwards. Never throws.
 bool make_folder(const std::filesystem::path& folder) noexcept;
 
+// make_folder with Windows' reason (W4.7, `rpworker service install`'s log
+// folder): 0 when `folder` is a folder afterwards, else the error code of the
+// level that couldn't be made, or 267 (the directory name is invalid) when
+// something that is no folder is there and nothing else was said. Never
+// throws.
+unsigned long make_folder_error(const std::filesystem::path& folder) noexcept;
+
+// The full path of the executable this process runs (W4.7: what the
+// service's command line names). Throws std::system_error when Windows can't
+// say.
+std::filesystem::path own_executable_path();
+
 // Whether `a` and `b` are on one volume, so a rename between them is a rename
 // and never a copy: by the mount point each is under (GetVolumePathNameW: C:\,
 // or a folder a volume is mounted at), compared without regard to case or to

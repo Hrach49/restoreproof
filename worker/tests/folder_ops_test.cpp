@@ -109,6 +109,35 @@ TEST_CASE("folder ops: making a folder makes the levels above it; a file in the 
     CHECK_FALSE(rp::make_folder(file / "under"));
 }
 
+TEST_CASE("folder ops: making a folder says why it couldn't", "[folder_ops][service_command]")
+{
+    const rp::test::TempDir dir;
+
+    // Made with the levels above it, and no error when it is there already.
+    CHECK(rp::make_folder_error(dir.path() / "a" / "b" / "c") == 0ul);
+    CHECK(rp::make_folder_error(dir.path() / "a" / "b" / "c") == 0ul);
+    CHECK(std::filesystem::is_directory(dir.path() / "a" / "b" / "c"));
+
+    // A file in the folder's place, or in the place of a level above it: not
+    // a folder afterwards, and never "it worked".
+    const path file = dir.write("file", "x");
+    CHECK(rp::make_folder_error(file) != 0ul);
+    CHECK(rp::make_folder_error(file / "under") != 0ul);
+    CHECK(text_of(file) == "x");
+    // A name Windows doesn't take.
+    CHECK(rp::make_folder_error(dir.path() / "a<b") != 0ul);
+}
+
+TEST_CASE("folder ops: the process's own executable is a file with an absolute path",
+          "[folder_ops][service_command]")
+{
+    const path own = rp::own_executable_path();
+
+    CHECK(own.is_absolute());
+    CHECK(std::filesystem::is_regular_file(own));
+    CHECK(own.filename() == path{"rptests.exe"});
+}
+
 TEST_CASE("folder ops: two paths under one folder are on one volume, whether or not they are "
           "there yet, and however the path is written",
           "[folder_ops][outbox]")

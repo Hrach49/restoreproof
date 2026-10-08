@@ -5,6 +5,7 @@
 #include <rp/graph_command.hpp>
 #include <rp/outbox_command.hpp>
 #include <rp/restore_command.hpp>
+#include <rp/service_command.hpp>
 #include <rp/signer_command.hpp>
 #include <rp/test_command.hpp>
 #include <rp/vault_command.hpp>
@@ -70,6 +71,9 @@ int dispatch(std::span<const std::string_view> args, std::ostream& out, std::ost
     }
     if (!args.empty() && args[0] == "signer") {
         return run_signer_command(args.subspan(1), out, err, default_signer_command_env());
+    }
+    if (!args.empty() && args[0] == "service") {
+        return run_service_command(args.subspan(1), out, err, default_service_command_env());
     }
     err << kCliUsage;
     return exit_code::usage;

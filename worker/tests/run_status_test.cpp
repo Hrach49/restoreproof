@@ -4,7 +4,9 @@
 // row for row: R<n><x> is row n of the run table in docs/verification.md
 // ("The status decision table"), I<n><x> rule n of the item verdicts, S<n> a
 // step of the severity order, E<n> an exception type of the error-code table,
-// X<n> an exit code, V<n> a verdict result_invalid() replaces (W4.1 point 5).
+// X<n> an exit code, V<n> a verdict result_invalid() replaces (W4.1 point 5),
+// N<n> one interrupted() replaces or leaves (W4.8 point 13), A<n> a verdict
+// made for a result written afterwards (W4.8 point 7).
 // Failure paths first: facts that don't add up, stops, then
 // fail before error before pass. The choices are the 2026-10-01 W3.3 entry in
 // docs/decisions.md.
@@ -841,6 +843,9 @@ TEST_CASE("run status, error codes: each exception type is its code, in every ph
         {"E16", [] { throw connector::Error("Veeam said no"); }, "backup", true},
         {"E17", [] { throw std::logic_error("secret=hunter2"); }, "internal", false},
         {"E18", [] { throw 42; }, "internal", false},
+        // A stop asked of the Worker (W4.8 point 13): not a connector::Error.
+        {"E19", [] { throw connector::Interrupted("the restore was interrupted"); },
+         "interrupted", true},
     }));
     const RunPhase phase =
         GENERATE(RunPhase::before_restore, RunPhase::restore, RunPhase::check);
@@ -908,6 +913,15 @@ TEST_CASE("run status: a restore error that promises nothing was restored is a s
     CHECK(stop_of(graph, RunPhase::restore).nothing_restored);
     CHECK(stop_of(graph, RunPhase::restore).error_code == "graph_permission");
     CHECK_FALSE(stop_of(later, RunPhase::restore).nothing_restored);
+    // A stop before the first restore request promises it too; after one, not.
+    const auto stopped_first = std::make_exception_ptr(
+        connector::Interrupted("the restore was interrupted" + promise));
+    const auto stopped_later =
+        std::make_exception_ptr(connector::Interrupted("the restore was interrupted"));
+    CHECK(stop_of(stopped_first, RunPhase::restore).nothing_restored);
+    CHECK(stop_of(stopped_first, RunPhase::restore).error_code == "interrupted");
+    CHECK_FALSE(stop_of(stopped_later, RunPhase::restore).nothing_restored);
+    CHECK_FALSE(stop_of(stopped_first, RunPhase::before_restore).nothing_restored);
     // Elsewhere it means nothing.
     CHECK_FALSE(stop_of(guard, RunPhase::before_restore).nothing_restored);
     CHECK_FALSE(stop_of(guard, RunPhase::check).nothing_restored);
@@ -971,6 +985,7 @@ TEST_CASE("run status: a stop's message says where the run stopped, never what()
         {"graph_permission", "Microsoft Graph refused a permission the Worker relies on"},
         {"graph_transient", "Microsoft Graph couldn't be reached or asked to try later"},
         {"graph", "Microsoft Graph reported an error"},
+        {"interrupted", "the run was interrupted"},
     };
     for (const auto& [code, text] : texts) {
         const Run run = stop_only(RunPhase::before_restore, code);
@@ -1240,6 +1255,10 @@ TEST_CASE("run status: the exit code of each status and error code", "[run_statu
         {"X19", RunStatus::error, "stale_target", rp::exit_code::service},
         // The Worker's own fault, as internal (W4.1 point 5).
         {"X20", RunStatus::error, "result_invalid", rp::exit_code::config},
+        // A stop asked of the Worker: no service's fault, and not the Worker's (W4.8 point 14).
+        {"X21", RunStatus::error, "interrupted", rp::exit_code::service},
+        // The job is the Worker's own input, as the configuration is.
+        {"X22", RunStatus::error, "job_invalid", rp::exit_code::config},
     }));
     INFO(row.id << ": " << row.code);
     verification::RunVerdict verdict;
@@ -1255,13 +1274,13 @@ TEST_CASE("run status: the exit code of each status and error code", "[run_statu
 
 TEST_CASE("run status: the exit-code rows name every error code", "[run_status]")
 {
-    // X3 to X20 above, by hand: a code added to the table needs its X row.
+    // X3 to X22 above, by hand: a code added to the table needs its X row.
     const std::set<std::string_view> rows{
         "config",           "internal",         "backup_auth",           "graph_auth",
         "graph_permission", "backup_transient", "graph_transient",       "not_in_backup",
         "no_restore_point", "target_guard",     "backup",                "backup_infrastructure",
         "empty_sample",     "not_run",          "restore_contradiction", "graph",
-        "stale_target",     "result_invalid"};
+        "stale_target",     "result_invalid",   "interrupted",           "job_invalid"};
     const std::vector<std::string_view> codes = verification::error_codes();
     CHECK(std::set<std::string_view>(codes.begin(), codes.end()) == rows);
 }
@@ -1276,9 +1295,10 @@ TEST_CASE("run status: a code outside the vocabulary exits 4", "[run_status]")
 TEST_CASE("run status: a code that is never a stop's is error internal as a stop's or an item's",
           "[run_status]")
 {
-    // result_invalid and restore_contradiction are in the table for their
-    // exit codes and the schema's enum, never for a stop or a check item.
-    const std::string code = GENERATE("result_invalid", "restore_contradiction");
+    // result_invalid, restore_contradiction and job_invalid are in the table
+    // for their exit codes and the schema's enum, never for a stop or a check
+    // item.
+    const std::string code = GENERATE("result_invalid", "restore_contradiction", "job_invalid");
     CAPTURE(code);
     const RunPhase phase =
         GENERATE(RunPhase::before_restore, RunPhase::restore, RunPhase::check);
@@ -1299,6 +1319,50 @@ TEST_CASE("run status: a code that is never a stop's is error internal as a stop
     CHECK(verdict.unchecked.empty());
 }
 
+TEST_CASE("run status: interrupted is a stop's code in every phase, never a check item's",
+          "[run_status]")
+{
+    const Run before = stop_only(RunPhase::before_restore, "interrupted");
+    verification::RunVerdict verdict = verification::decide_status(before.facts());
+    CHECK(verdict.status == kError);
+    CHECK(verdict.error_code == "interrupted");
+    CHECK(verdict.message == "the run stopped before the restore: the run was interrupted "
+                             "(interrupted); nothing was restored");
+    CHECK_FALSE(verdict.restore_sent);
+    CHECK(verification::exit_code_of(verdict) == rp::exit_code::service);
+
+    Run unsent = with_stop(sample_only({match()}), RunPhase::restore, "interrupted");
+    unsent.stop->nothing_restored = true;
+    verdict = verification::decide_status(unsent.facts());
+    CHECK(verdict.error_code == "interrupted");
+    CHECK(verdict.message == "the restore didn't start: the run was interrupted (interrupted); "
+                             "nothing was restored");
+    CHECK_FALSE(verdict.restore_sent);
+
+    const Run sent = with_stop(sample_only({match()}), RunPhase::restore, "interrupted");
+    verdict = verification::decide_status(sent.facts());
+    CHECK(verdict.error_code == "interrupted");
+    CHECK(verdict.message == "the restore didn't complete: the run was interrupted "
+                             "(interrupted); items may be in the restore targets");
+    CHECK(verdict.restore_sent);
+
+    Run check = with_stop(run_of({match()}), RunPhase::check, "interrupted");
+    check.with_check = false;
+    verdict = verification::decide_status(check.facts());
+    CHECK(verdict.error_code == "interrupted");
+    CHECK(verdict.message ==
+          "the restored items couldn't be checked: the run was interrupted (interrupted)");
+    CHECK(verdict.restore_sent);
+
+    // The checker never gives it, and no unchecked item carries it.
+    verdict = verification::decide_status(run_of({match(), error("interrupted")}).facts());
+    CHECK(verdict.status == kError);
+    CHECK(verdict.error_code == "internal");
+    CHECK(verdict.unchecked.empty());
+    CHECK_FALSE(listed(verification::unchecked_item_codes(), "interrupted"));
+    CHECK_FALSE(listed(verification::unchecked_item_codes(), "job_invalid"));
+}
+
 TEST_CASE("run status: the public lists of error, unchecked-item and warning codes",
           "[run_status]")
 {
@@ -1310,9 +1374,11 @@ TEST_CASE("run status: the public lists of error, unchecked-item and warning cod
             "target_guard",     "backup",                "graph_auth",
             "graph_permission", "backup_infrastructure", "graph",
             "graph_transient",  "stale_target",          "empty_sample",
-            "not_run",          "restore_contradiction", "result_invalid"};
+            "not_run",          "restore_contradiction", "result_invalid",
+            "interrupted",      "job_invalid"};
         const std::vector<std::string_view> codes = verification::error_codes();
         CHECK(codes == want);
+        CHECK(codes.size() == 20);
         CHECK(std::set<std::string_view>(codes.begin(), codes.end()).size() == codes.size());
     }
     SECTION("unchecked_item_codes: the codes an unchecked item carries, most severe first")
@@ -1487,6 +1553,205 @@ TEST_CASE("run status: result_invalid's message holds only the status's own word
         verdict.status = static_cast<RunStatus>(9);
         CHECK(verification::result_invalid(verdict).message == prefix + "unknown");
     }
+}
+
+// --- A stop of the Worker and the results written afterwards (W4.8 points 7 and 13) ---
+
+namespace {
+
+// The status object of a verdict that says nothing of items: every count 0,
+// every list empty.
+json bare_status(const std::string& code, const std::string& message, bool restore_sent)
+{
+    return {{"status", "error"},
+            {"error_code", code},
+            {"message", message},
+            {"restore_sent", restore_sent},
+            {"counts", {{"items", 0}, {"verified", 0}, {"failed", 0}, {"unchecked", 0}}},
+            {"verified", {{"manifest", 0}, {"fields", 0}, {"metadata", 0}}},
+            {"failed_items", json::array()},
+            {"unchecked_items", json::array()},
+            {"warnings", json::array()}};
+}
+
+} // namespace
+
+TEST_CASE("run status: interrupted replaces an error a stop of the Worker came before, and "
+          "nothing else",
+          "[run_status]")
+{
+    struct StopRow {
+        std::string id;
+        std::function<Run()> make;
+        std::string ended; // the run's own end
+        bool replaced;
+        bool restore_sent;
+        std::size_t items;
+        std::vector<std::string> warnings;
+    };
+    const StopRow row = GENERATE(values<StopRow>({
+        {"N1 a pass reached in spite of the stop", [] { return run_of({match()}); }, "pass",
+         false, true, 1, {}},
+        {"N2 a fail", [] { return run_of({missing(), match()}); }, "fail", false, true, 2, {}},
+        {"N3 the guard's refusal stays the guard's",
+         [] {
+             Run r = with_stop(sample_only({match()}), RunPhase::restore, "target_guard");
+             r.stop->nothing_restored = true;
+             return r;
+         },
+         "error target_guard", false, false, 1, {}},
+        {"N4 a stop the run made of it itself",
+         [] { return stop_only(RunPhase::before_restore, "interrupted"); }, "error interrupted",
+         false, false, 0, {}},
+        {"N5 a wait cut short, read as Graph's",
+         [] {
+             Run r = run_of({error("graph_transient"), match(), It{.duplicate = true}});
+             r.check.stale_mail = 2;
+             return r;
+         },
+         "error graph_transient", true, true, 3, {"duplicate", "stale_copies"}},
+        {"N6 a wait cut short, read as the backup's, before any restore",
+         [] {
+             Run r = with_stop(sample_only({match(), match()}), RunPhase::restore,
+                               "backup_transient");
+             r.stop->nothing_restored = true;
+             r.shortfalls = {{ItemKind::onedrive, ItemSource::random, 1, 0}};
+             return r;
+         },
+         "error backup_transient", true, false, 2, {"shortfall"}},
+        {"N7 facts that don't add up",
+         [] {
+             Run r = run_of({match()});
+             r.with_check = false;
+             return r;
+         },
+         "error internal", true, true, 1, {}},
+        {"N8 an empty sample", [] { return sample_only({}); }, "error empty_sample", true, false,
+         0, {}},
+    }));
+    INFO(row.id);
+    const Run run = row.make();
+    const verification::RunVerdict before = verification::decide_status(run.facts());
+    REQUIRE(before.restore_sent == row.restore_sent);
+    REQUIRE(before.items == row.items);
+    REQUIRE(warning_codes(before) == row.warnings);
+
+    CHECK(verification::interrupt_replaces(before) == row.replaced);
+
+    // What the replacement would be, asked for or not.
+    const verification::RunVerdict verdict = verification::interrupted(before);
+    CHECK(verdict.status == kError);
+    CHECK(verdict.error_code == "interrupted");
+    CHECK(verdict.message ==
+          "the Worker was stopped during the run; the run itself ended " + row.ended);
+    CHECK(verification::exit_code_of(verdict) == rp::exit_code::service);
+    check_vocabulary(verdict);
+    // Kept, as result_invalid() keeps them.
+    CHECK(verdict.restore_sent == row.restore_sent);
+    CHECK(verdict.items == row.items);
+    REQUIRE(verdict.warnings.size() == before.warnings.size());
+    for (std::size_t i = 0; i < before.warnings.size(); ++i) {
+        CHECK(verdict.warnings[i].code == before.warnings[i].code);
+        CHECK(verdict.warnings[i].message == before.warnings[i].message);
+        CHECK(verdict.warnings[i].indexes == before.warnings[i].indexes);
+    }
+    // Cleared: the item verdicts.
+    CHECK(verdict.failed.empty());
+    CHECK(verdict.unchecked.empty());
+    CHECK(verdict.verified() == 0);
+    // Once replaced, never again.
+    CHECK_FALSE(verification::interrupt_replaces(verdict));
+}
+
+TEST_CASE("run status: result_invalid is never replaced by interrupted", "[run_status]")
+{
+    const verification::RunVerdict invalid = verification::result_invalid(
+        verification::decide_status(run_of({error("graph_transient")}).facts()));
+    CHECK_FALSE(verification::interrupt_replaces(invalid));
+}
+
+TEST_CASE("run status: interrupted's message holds only the status's own words", "[run_status]")
+{
+    verification::RunVerdict verdict;
+    verdict.message = "Alice's plan.docx";
+    verdict.error_code = "Budget Q3.xlsx";
+    // An error it would replace, but its code is no word of the table's.
+    CHECK(verification::interrupt_replaces(verdict));
+    CHECK(verification::interrupted(verdict).message ==
+          "the Worker was stopped during the run; the run itself ended error");
+}
+
+TEST_CASE("run status: the verdicts of a result written afterwards", "[run_status]")
+{
+    struct AfterRow {
+        std::string id;
+        std::function<verification::RunVerdict()> make;
+        std::string code;
+        std::string message;
+        bool restore_sent;
+        int exit;
+    };
+    const AfterRow row = GENERATE(values<AfterRow>({
+        {"A1 interrupted, no restore request on record",
+         [] { return verification::interrupted_before_result(false); }, "interrupted",
+         "the run was interrupted before its result was written; no restore request had been "
+         "sent",
+         false, rp::exit_code::service},
+        {"A2 interrupted, a restore request on record",
+         [] { return verification::interrupted_before_result(true); }, "interrupted",
+         "the run was interrupted before its result was written; a restore request may have "
+         "been sent, so items may be in the restore targets",
+         true, rp::exit_code::service},
+        {"A3 the run folder couldn't be completed",
+         [] { return verification::ended_without_result(false); }, "internal",
+         "the run ended without a result the Worker could write; this result was written "
+         "afterwards",
+         false, rp::exit_code::config},
+        {"A4 the same after a restore request",
+         [] { return verification::ended_without_result(true); }, "internal",
+         "the run ended without a result the Worker could write; this result was written "
+         "afterwards",
+         true, rp::exit_code::config},
+        {"A5 an invalid result of a run that passed",
+         [] { return verification::result_invalid_afterwards(RunStatus::pass, "", true); },
+         "result_invalid",
+         "the result isn't valid restoreproof.result.v1; the run itself ended pass", true,
+         rp::exit_code::config},
+        {"A6 of a run that failed",
+         [] { return verification::result_invalid_afterwards(RunStatus::fail, "graph", true); },
+         "result_invalid",
+         "the result isn't valid restoreproof.result.v1; the run itself ended fail", true,
+         rp::exit_code::config},
+        {"A7 of a run that ended in an error",
+         [] {
+             return verification::result_invalid_afterwards(RunStatus::error, "backup_transient",
+                                                            false);
+         },
+         "result_invalid",
+         "the result isn't valid restoreproof.result.v1; the run itself ended error "
+         "backup_transient",
+         false, rp::exit_code::config},
+        {"A8 of a run whose code isn't the table's",
+         [] {
+             return verification::result_invalid_afterwards(RunStatus::error, "Budget Q3.xlsx",
+                                                            false);
+         },
+         "result_invalid",
+         "the result isn't valid restoreproof.result.v1; the run itself ended error", false,
+         rp::exit_code::config},
+        {"A9 a job that isn't one", [] { return verification::job_invalid("sample_mail"); },
+         "job_invalid", "the job isn't a valid job (sample_mail); nothing was done", false,
+         rp::exit_code::config},
+        {"A10 a job with a key the Worker doesn't know",
+         [] { return verification::job_invalid("unknown key"); }, "job_invalid",
+         "the job isn't a valid job (unknown key); nothing was done", false,
+         rp::exit_code::config},
+    }));
+    INFO(row.id);
+    const verification::RunVerdict verdict = row.make();
+    check_vocabulary(verdict);
+    CHECK(verification::exit_code_of(verdict) == row.exit);
+    CHECK(verification::to_json(verdict) == bare_status(row.code, row.message, row.restore_sent));
 }
 
 TEST_CASE("run status: the names of statuses and phases", "[run_status]")

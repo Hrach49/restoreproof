@@ -72,11 +72,12 @@ UploadAnswer CloudUploader::upload(const std::string&, const std::vector<UploadP
     }
 }
 
-std::unique_ptr<IHttpClient> make_cloud_http_client(const Config& config)
+std::unique_ptr<IHttpClient> make_cloud_http_client(const Config& config,
+                                                    std::shared_ptr<spdlog::logger> logger)
 {
     HttpClientOptions options;
     options.ca_file = config.cloud_ca_file;
-    options.logger = make_command_logger();
+    options.logger = logger ? std::move(logger) : make_command_logger();
     return std::make_unique<HttpClient>(std::move(options));
 }
 

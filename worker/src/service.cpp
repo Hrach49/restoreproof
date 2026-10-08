@@ -298,6 +298,11 @@ void run_service(const std::shared_ptr<State>& shared)
         return;
     }
 
+    // The stop is the main function's from here on. When no control brought
+    // it (the work asked for it itself), the handler's state is taken now, so
+    // a control that comes later reports nothing behind these reports.
+    int taken = kNoControl;
+    state.control.compare_exchange_strong(taken, kStopControl);
     const std::chrono::steady_clock::time_point asked = options.now();
     logger.info("stop requested ({})",
                 state.control == kShutdownControl ? "shutdown" : "stop");

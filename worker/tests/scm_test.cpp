@@ -198,7 +198,9 @@ TEST_CASE("a service is created from service_setup, read back, and deleted", "[s
     // The product's setup under the test's name, with two fields changed so
     // that a leftover can never run: disabled, and a file that doesn't exist.
     const rp::test::TempDir dir;
-    const std::string executable = (dir.path() / "no-such-rpworker.exe").string();
+    // UTF-8, as the calls take it: a temp folder's name needn't be ASCII.
+    const std::u8string executable_u8 = (dir.path() / "no-such-rpworker.exe").u8string();
+    const std::string executable{executable_u8.begin(), executable_u8.end()};
     rp::ServiceSetup setup =
         rp::service_setup(kTestService, "\"" + executable + "\" service run");
     setup.start_type = rp::ServiceStartType::disabled;

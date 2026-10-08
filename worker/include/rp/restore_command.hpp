@@ -361,7 +361,8 @@ std::string format_elapsed(std::chrono::nanoseconds elapsed);
 // for config, internal and result_invalid, 2 for backup_auth, graph_auth and
 // graph_permission, 3 for backup_transient and graph_transient, 4 for any
 // other code (target_guard, not_in_backup, backup, backup_infrastructure,
-// graph, stale_target, empty_sample, not_run, restore_contradiction). Each
+// graph, stale_target, empty_sample, not_run, restore_contradiction,
+// interrupted; job_invalid, 1, is never a run's own). Each
 // failure has one line on `err` too:
 //  - 64: a command line it doesn't understand (rp::kCliUsage), before the
 //    config is read; after it, "usage error: every sample size is 0 (--mail,

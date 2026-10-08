@@ -275,6 +275,18 @@ public:
     using Error::Error;
 };
 
+// The Worker was asked to stop while the connector worked (W4.8;
+// docs/decisions.md 2026-10-08, W4.8 point 13): a restore request the caller
+// didn't let go, or a wait for a restore that a stop ended. Not an Error: no
+// handler written for the backup product's failures takes it, and the run's
+// status reads it as `error interrupted`, never as the product's fault.
+// what() is safe to print and log, and ends with kNothingRestored (below)
+// when no restore request of the call had gone out.
+class Interrupted : public std::runtime_error {
+public:
+    using std::runtime_error::runtime_error;
+};
+
 // W2.6: what the random half of a sample may be drawn from (docs/decisions.md
 // 2026-09-30, W2.6). The connector lists a few containers' items, drawn with
 // the query's seed, and keeps only those restore_sample will later find exactly

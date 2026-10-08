@@ -60,6 +60,41 @@ public:
 // program_data_dir throws.
 std::filesystem::path default_vault_path();
 
+// The owner rule by itself (W4.8, docs/decisions.md 2026-10-08 points 3 and
+// 6): what read_vault, write_vault and grant_vault_read hold the vault to, for
+// the other files whose word the service acts on (its jobs file, its record).
+enum class OwnerTrust {
+    trusted,     // owned by SYSTEM, Administrators or the calling account
+    not_trusted, // owned by anybody else
+    unreadable,  // there, but it can't be opened or its owner can't be asked;
+                 // a folder and a device too
+    absent       // nothing is at the path
+};
+
+// Whether `file`'s owner passes the rule. The file is opened once, without
+// the right to read its bytes, and never changed. Never throws but for no
+// memory.
+OwnerTrust check_trusted_owner(const std::filesystem::path& file);
+
+enum class TrustedRead {
+    read,        // the owner passed and `bytes` is the file, whole
+    absent,      // as OwnerTrust's
+    unreadable,  // as OwnerTrust's, or the read failed
+    not_trusted, // as OwnerTrust's: nothing was read
+    too_large    // the owner passed; the file is over the limit
+};
+
+struct TrustedFile {
+    TrustedRead state = TrustedRead::unreadable;
+    std::string bytes; // empty unless `read`
+};
+
+// Reads `file` whole, at most `max_bytes`, only when its owner passes the
+// rule: one open, the rule and the read on that handle, as read_vault does,
+// so the file that passed is the file that is read, whatever is moved onto
+// the path meanwhile. Never throws but for no memory.
+TrustedFile read_trusted_file(const std::filesystem::path& file, std::uintmax_t max_bytes);
+
 // Reads and decrypts `file` into Secrets: a name that isn't in the vault
 // leaves its field empty. The file is opened once, for reading, and the owner
 // rule and the read both work on that handle, so the file that passed the

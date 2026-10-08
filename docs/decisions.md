@@ -7,6 +7,43 @@ Format: date, decision, reason, alternatives rejected.
 
 ---
 
+## 2026-10-08 — W4.7 build notes and the live Done-when: installed, started by Windows after a crash and after a reboot, stopped in 0.2 s, the log rotated with a reader holding it, nothing left installed
+
+Amends the W4.7 entry below where it says so. The build was made test-first in four steps (the stop signal and the log; the SCM seam; `rp::Service`; the commands), then reviewed twice: findings A to D below from the first review, and the second's own entry above ("W4.7 code review, findings 1 to 3").
+
+1. **What the entry didn't say, now decided.**
+   - `make_service_logger` answers `std::variant<std::shared_ptr<rp::ServiceLog>, rp::ServiceLogFailure>` (`code_page`, `folder`, `file`); `rp::ServiceLog` holds the logger beside `set_level`, `write_failures`, `flush`, `close` and `file`, and takes any inner sink, so the service's tests need no file. The code page is checked before the folder is made. A line ends in CR LF.
+   - The sink's level is its own (`ServiceLogSink::set_threshold`), not spdlog's `sink::set_level`, which the logger would ask before the sink's SECURITY rule ever saw the line.
+   - `rp::ScmCalls`' members answer `rp::ScmResult{error, step}`, the step (`manager`, `service`, `call`) naming which call of the sequence Windows refused, so a line can say what was tried. `create_service` creates only; the description and the failure actions are `set_description` and `set_recovery`, install's steps (d) and (e). `rp::scm::read_setup` reads a service back into a `ServiceSetup`. A start type or action `service.hpp` has no word for is error 13.
+   - `rp::ServiceReport` has no Windows code: `scm.cpp` reports 1066 with the service's own code when it isn't 0.
+   - `rp::Service::run` answers `ServiceRun{exit_code, dispatcher_error}`; the command prints the 1063 line, and any other dispatcher error as `opening the service control manager failed (error <n>)`. Three events: the stop (the context's), the work's end, and the wake the main function waits on.
+   - A handler that can't be registered ends the process with 1 (nothing can be reported without its handle). An exception from the service's own steps that the entry gives no code for is `the service ended on an unexpected failure` in the log, `stopped` with code 3 only when a stop was asked for, and `exit_process(1)` always. A second stop or shutdown control is answered and does nothing.
+   - `ServiceCommandEnv`: every member null means the real one. A failed log folder is always `making the log folder failed (error <n>)`, 5 included. A roll-back whose delete answers 1060 ends `; the service was not installed`. A `--config` that isn't UTF-8 is `service error: the --config path is not valid UTF-8`, exit 1; one holding a quote is refused as not absolute. In the command line, backslashes before the closing quote of `--config` are doubled. A lost stdout is `service error: the answer couldn't be written`, exit 1.
+   - The real dispatcher answers 1063 to the first call of a process and 1056 to every later one; the three tests that call it ask `rp::test::next_real_dispatcher_answer()` which to expect, so `rptests` passes in one process (the coverage run) as in many (ctest).
+   - The source scan of point 8 bans more than the entry lists (`_Exit`, `exit` and `terminate` when called, `WinExec`, `popen`, `_wpopen`, the `_spawn` and `_exec` families) and reads comments: three comments of `main` were reworded rather than exempted.
+   - `redact(redact(x)) == redact(x)`, which the entry's sink test needs, failed for a `name: value` whose PEM block ended with text on its END line; `through_private_key` takes such a value to the end of that line (one row's expectation changed; only ever more is redacted). The second review then made that rest of the line read before it goes (its point 2).
+2. **The first code review (five reviewers, each finding checked by a second): three confirmed, all low, fixed test-first in commit ad2d4d4, plus one answer of Windows made safe.**
+   - A. A stop the work asked for itself left the handler's state free, so a control a few milliseconds later could report `stop pending` after `stopped`. The main function now takes the handler's state when it takes the stop path.
+   - B. `service start` refused with 5 by the start call itself (the caller already opened the service, so it is elevated) told an administrator to elevate. It is now `NT SERVICE\RestoreProof was denied access when starting (error 5); it must be able to read and run the service's executable`. This amends point 2's "access denied from any call".
+   - C. The elevated `scm_test` built its command line in the ANSI code page; it is UTF-8 now.
+   - D. Microsoft's documentation gives 1061 for a service that is still starting as well as for one that is stopping; the entry read 1061 as "a stop under way". `service stop` now reads the state while it waits and sends the stop again while the service reads `start pending` and no stop was taken; at the deadline that is `still starting after 35 s; the stop was not sent`. Not seen live: the service starts in under a second.
+3. **The gate's one failure was from `main`.** `src/outbox.cpp` was 427 of 428 since the W4.6 review: the closing line of the `folder_changed` branch carried only its local's clean-up. The local has its own scope now (commit 9e9816f); behaviour unchanged.
+4. **The live Done-when, 2026-10-08, elevated, on this machine; evidence `docs/api/veeam-lab/w4.7-*`, harness `w4.7-harness/w47-run.ps1`.** Steps (a) to (e) and (g) ran on commit 9e9816f; step (f) ran again on ccd8def, the second review's rotation, which changed nothing else the run touched.
+   - (a) `install --config <a copy of the lab config under %ProgramData%\RestoreProof\w47>`: exit 0. `sc qc` `AUTO_START`, `NT SERVICE\RestoreProof`, the display name, the quoted command line; `sc qfailure` three restarts after 60,000 ms and 86,400 s. The registry's `FailureActions` holds four actions, the fourth `none`, as written: **Windows takes the list.** The owner saw it in services.msc.
+   - (b) `start`: `started RestoreProof`; the process's owner `NT SERVICE\RestoreProof`; the start line in `worker.log`, the file owned by the account: **the account creates and writes its log under the inherited ACL.** A second start: `RestoreProof is already running`.
+   - (c) The process killed at 15:12:50Z: event 7031, started again at 15:13:50Z.
+   - (d) The owner restarted the machine. The log shows `stop requested (shutdown)` and `service stopped after 0 ms` at 15:56:30Z; after the boot at 15:56:51Z the service was running from 15:57:01Z with nobody starting it.
+   - (e) `stop`: `stopped RestoreProof in 0.2 s`, the two stop lines, no event; a second stop `RestoreProof is already stopped`.
+   - (f) The service's own `worker.log` filled to 60 bytes under 10 MiB, then the service started while a reader held `worker.log` open without delete sharing: no rotation, the start line appended, nothing emptied. The reader let go; the stop's line rotated it, `worker.1.log` keeping all 52,428 filler lines and the start line: **the account renames its own files.** The five values the lab's vault was filled from, a JWT shape, a PEM header and an `MII` run: 0 in every file. (The idle service writes three kinds of line, so the search says little beyond them; the redaction itself is the unit tests'.)
+   - (g) The process killed (a restart queued for 60 s later) and `uninstall` run 4 s after: `uninstalled RestoreProof` at once, and nothing came back after the minute. **A queued restart doesn't hold an uninstall.**
+   - The teardown: `sc query` 1060 for `RestoreProof` and `RestoreProofScmTest`, the config copy and `logs\` taken away. **Nothing is installed.**
+   - Not shown live: the refusal without elevation (UAC's Admin Approval Mode is off here); the fake SCM's table holds it.
+5. **The runs.** `ctest --preset dev` 1,842 of 1,842 before the second review's commit; the coverage gate's results are in the PR. Two background runs of the full suite and of the coverage script were stopped by Claude Code for low memory on this 16 GB machine while other work ran; run one at a time they finish.
+
+**Open**, beside the entry's own: the second review's listed findings it didn't fix (its entry's Open); `service stop`'s 1061 rule (point 2 D) seen only on the fake SCM.
+
+---
+
 ## 2026-10-08 — W4.7 code review, findings 1 to 3: the log's rotation is our own and loses no line to a rename that fails; `redact()` reads the rest of a private key block's last line before it takes it
 
 Amends point 7 of the W4.7 entry below ("Rotation" and "The path"). Each was seen failing first.

@@ -1,0 +1,21 @@
+W4.7 (#50) live Done-when, the teardown after the last step: nothing installed, the config copy and the logs taken away. The vault and the outbox and runs folders are the lab's from W4.5 and W4.6 and stay.
+
+> sc query RestoreProof
+[SC] EnumQueryServicesStatus:OpenService FAILED 1060:
+
+The specified service does not exist as an installed service.
+
+
+> sc query RestoreProofScmTest
+[SC] EnumQueryServicesStatus:OpenService FAILED 1060:
+
+The specified service does not exist as an installed service.
+
+
+config copy removed: True; logs removed: True
+
+> the RestoreProof folder now
+outbox
+runs
+sent
+vault.bin

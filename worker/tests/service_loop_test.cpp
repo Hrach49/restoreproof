@@ -115,9 +115,192 @@ TEST_CASE("a stop between two jobs ends the poll: no second job and no flush", "
     CHECK(lab.runs == Lines{"job-1"});
     CHECK(lab.flushes == 0);
     CHECK(lab.heartbeats.size() == 1);
-    // The run that ended is still the run's own business: its record goes.
-    CHECK_FALSE(lab.has_record());
+    // After a stop no step is started for a record, its erase included: the
+    // next start finds it and the run in the outbox.
+    CHECK(lab.has_record());
+    CHECK(lab.count_call("remove record") == 0);
     CHECK(lab.count("info run job-1: ended pass; queued") == 1);
+}
+
+TEST_CASE("a stop during a run that ends before its run line: nothing was done, and the record "
+          "is deleted",
+          "[service_loop]")
+{
+    LoopLab lab;
+    lab.jobs = jobs_text({job_text("job-1")});
+    lab.on_run = [&lab](const rp::Job&, const rp::JobCallbacks&) {
+        lab.stop = true;
+        JobRun run;
+        run.exit_code = 4;
+        return run;
+    };
+
+    lab.run();
+
+    // Point 13: the stub offers the job again; a record left here would be
+    // closed as an interrupted run at the next start.
+    CHECK_FALSE(lab.has_record());
+    CHECK(lab.closed.empty());
+}
+
+TEST_CASE("a stop during a run that left its folder without a result: no close_as is written, "
+          "nothing is closed and the record stays",
+          "[service_loop]")
+{
+    LoopLab lab;
+    lab.jobs = jobs_text({job_text("job-1")});
+    lab.on_run = [&lab](const rp::Job& job, const rp::JobCallbacks& callbacks) {
+        callbacks.on_run_started(LoopLab::run_started(job.run_id));
+        lab.stop = true;
+        return LoopLab::ended_run(JobFolder::incomplete, "not_signed");
+    };
+
+    lab.run();
+
+    CHECK(lab.writes.size() == 2); // taken, started
+    CHECK_FALSE(lab.on_disk().close_as);
+    CHECK(lab.closed.empty());
+    CHECK(lab.has_record());
+    CHECK(lab.count_call("remove record") == 0);
+    CHECK(lab.flushes == 0);
+}
+
+TEST_CASE("a stop during the close of a record found: no lock, no look, and the record stays",
+          "[service_loop]")
+{
+    LoopLab lab;
+    lab.put_record(lab.found({"a"}, true));
+    lab.on_close = [&lab](const rp::RunningRecord& record) {
+        lab.stop = true;
+        lab.queued.insert(record.run_id);
+        return CloseRunOutcome{CloseRunState::queued, {}};
+    };
+
+    lab.run();
+
+    CHECK(lab.calls == Lines{"read record", "close job-1"});
+    CHECK(lab.has_record());
+    CHECK(lab.cleans == 0);
+}
+
+TEST_CASE("a stop during a run that was queued while its restore may still run: no look",
+          "[service_loop]")
+{
+    LoopLab lab;
+    lab.jobs = jobs_text({job_text("job-1")});
+    lab.on_run = [&lab](const rp::Job& job, const rp::JobCallbacks& callbacks) {
+        callbacks.on_run_started(LoopLab::run_started(job.run_id));
+        callbacks.on_session_opened("s1");
+        callbacks.before_restore_request();
+        lab.queued.insert(job.run_id);
+        lab.stop = true;
+        JobRun run = LoopLab::ended_run(JobFolder::queued, {}, RunStatus::error, "interrupted");
+        run.restore_may_still_run = true;
+        return run;
+    };
+
+    lab.run();
+
+    CHECK(lab.count_call("lock") == 0);
+    CHECK(lab.count_call("look") == 0);
+    CHECK(lab.flushes == 0);
+    CHECK(lab.has_record());
+}
+
+TEST_CASE("a stop that comes during a look ends no session, cleans nothing and keeps the record",
+          "[service_loop]")
+{
+    const bool requested = GENERATE(false, true);
+    CAPTURE(requested);
+    LoopLab lab;
+    lab.put_record(lab.found({"a", "b"}, requested));
+    lab.queued.insert("job-1");
+    lab.every_look = [&lab, requested] {
+        lab.stop = true;
+        // Without a request: two recorded sessions to end. After one: nothing
+        // is running any more, so the hold would be over and the clean due.
+        return requested ? SessionsLook{"rp-veeam", {}}
+                         : SessionsLook{"rp-veeam",
+                                        {session("a", lab.wall0), session("b", lab.wall0)}};
+    };
+
+    lab.run();
+
+    CHECK(lab.calls == Lines{"read record", "lock", "look"});
+    CHECK(lab.ended.empty());
+    CHECK(lab.cleans == 0);
+    CHECK(lab.released == 0);
+    CHECK(lab.has_record());
+}
+
+TEST_CASE("a stop that comes while a session is ended ends no further session and makes no "
+          "second look",
+          "[service_loop]")
+{
+    const char* const at = GENERATE("a", "b");
+    CAPTURE(at);
+    LoopLab lab;
+    lab.put_record(lab.found({"a", "b"}));
+    lab.queued.insert("job-1");
+    lab.every_look = [&lab] {
+        return SessionsLook{"rp-veeam", {session("a", lab.wall0), session("b", lab.wall0)}};
+    };
+    lab.on_end = [&lab, at](const std::string& id) { lab.stop = lab.stop || id == at; };
+
+    lab.run();
+
+    CHECK(lab.ended == (std::string{at} == "a" ? Lines{"a"} : Lines{"a", "b"}));
+    CHECK(lab.count_call("look") == 1);
+    CHECK(lab.has_record());
+    CHECK(lab.count_call("remove record") == 0);
+}
+
+TEST_CASE("a run that ended before its run line and whose record couldn't be deleted is not "
+          "closed: the erase is tried again at the next poll, and the job runs again",
+          "[service_loop]")
+{
+    LoopLab lab;
+    lab.jobs = jobs_text({job_text("job-1")});
+    lab.on_run = [&lab](const rp::Job& job, const rp::JobCallbacks& callbacks) {
+        if (lab.runs.size() > 1) {
+            return queued_run(lab, job, callbacks);
+        }
+        JobRun run;
+        run.exit_code = 3;
+        return run;
+    };
+    lab.remove_ok = false;
+    std::size_t runs_in_first_poll = 0;
+    lab.on_wait = [&](int) {
+        runs_in_first_poll = runs_in_first_poll == 0 ? lab.runs.size() : runs_in_first_poll;
+        lab.remove_ok = true;
+    };
+
+    lab.run(2);
+
+    CHECK(runs_in_first_poll == 1);
+    CHECK(lab.closed.empty());
+    CHECK(lab.runs == Lines{"job-1", "job-1"});
+    // Refused at 0 s; at 60 s the record goes, and then the second run's.
+    CHECK(lab.count_call("remove record") == 3);
+    CHECK(lab.count("error running.json couldn't be removed") == 1);
+    // No close_as was ever written for a run that has no folder.
+    for (const std::string& text : lab.writes) {
+        CHECK_FALSE(rp::parse_record(text).value().close_as);
+    }
+    CHECK_FALSE(lab.has_record());
+}
+
+TEST_CASE("the flush is handed a stop function that answers the loop's own stop",
+          "[service_loop]")
+{
+    LoopLab lab;
+    lab.flush_sets_stop = true;
+
+    lab.run();
+
+    CHECK(lab.flush_stop_answers == std::vector<bool>{false, true});
+    CHECK(lab.flushes == 1);
 }
 
 TEST_CASE("a job whose run is already queued, sent or has a run folder is skipped, said once",

@@ -268,6 +268,12 @@ void ServiceLoop::settle_record(bool close)
     if (hold_needed() && !stopped()) {
         hold();
     }
+    // After a stop no step is started for a record, its erase included; but
+    // a run that ended before its run line did nothing, and its record goes
+    // (point 13), or the next start would close it as an interrupted run.
+    if (stopped() && !never_started()) {
+        return;
+    }
     drop_record();
 }
 
@@ -342,6 +348,11 @@ void ServiceLoop::hold()
             return;
         }
     }
+    if (stopped()) {
+        // The look ended in a stop: the clean isn't started, and the next
+        // start looks again.
+        return;
+    }
     next_look_.reset();
     if (clean) {
         clean_after_hold();
@@ -360,12 +371,16 @@ bool ServiceLoop::look_failed(std::string_view reason)
 
 // True when the hold is over, with `clean` whether the restore targets are
 // to be cleaned. Ends only sessions the record lists, and after ending them
-// looks once more.
+// looks once more. A stop is asked for before each end and before the second
+// look: after one nothing more is asked of the backup product.
 bool ServiceLoop::look_and_end(bool& clean)
 {
     const std::chrono::system_clock::time_point since =
         record_time(record_->taken_at).value_or(std::chrono::system_clock::time_point{});
     for (int look = 0; look < 2; ++look) {
+        if (stopped()) {
+            return false;
+        }
         SessionsLook sessions;
         try {
             sessions = env_.own_sessions(since);
@@ -397,6 +412,9 @@ bool ServiceLoop::look_and_end(bool& clean)
             return false;
         }
         for (const std::string& id : decision.end) {
+            if (stopped()) {
+                return false;
+            }
             try {
                 env_.end_session(id);
             } catch (const std::exception&) {

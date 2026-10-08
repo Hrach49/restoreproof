@@ -1129,6 +1129,120 @@ TEST_CASE("a flush that throws after a run or a close doesn't keep the record's 
     CHECK(lab.has_record());
 }
 
+TEST_CASE("what is said once and hourly of a record is said anew for the next record: two holds "
+          "ten minutes apart, the waiting line twice",
+          "[service_loop]")
+{
+    LoopLab lab;
+    lab.jobs = jobs_text({job_text("job-1")});
+    lab.on_run = [&](const rp::Job& job, const rp::JobCallbacks& callbacks) {
+        callbacks.on_run_started(LoopLab::run_started(job.run_id));
+        callbacks.before_restore_request();
+        lab.queued.insert(job.run_id);
+        JobRun run = LoopLab::ended_run(JobFolder::queued, {}, RunStatus::error, "backup");
+        run.restore_may_still_run = true;
+        return run;
+    };
+    bool restoring = true;
+    lab.every_look = [&] {
+        return restoring ? SessionsLook{"rp-veeam", {session("r", lab.wall0)}}
+                         : SessionsLook{"rp-veeam", {}};
+    };
+    // The first record's erase is refused once, and so is the second's.
+    lab.remove_ok = false;
+    lab.on_wait = [&](int wait) {
+        // 30 s: the first restore is over. 600 s: the second job is offered.
+        // 630 s: its restore is over.
+        restoring = wait == 11;
+        lab.remove_ok = wait != 1 && wait != 12;
+        if (wait == 11) {
+            lab.jobs = jobs_text({job_text("job-2")});
+        }
+    };
+
+    lab.run(14);
+
+    CHECK(lab.runs == Lines{"job-1", "job-2"});
+    CHECK(lab.count("warning waiting for Veeam: 1 session(s) of rp-veeam still Working since "
+                    "2026-10-08T10:00:00.000Z") == 2);
+    CHECK(lab.count("error running.json couldn't be removed") == 2);
+    CHECK(lab.cleans == 2);
+    CHECK_FALSE(lab.has_record());
+}
+
+TEST_CASE("what is said once of a job is forgotten when the document no longer names it",
+          "[service_loop]")
+{
+    LoopLab lab;
+    const std::string with = jobs_text({job_text("job-q"), job_text("job-n")});
+    lab.jobs = with;
+    lab.queued.insert("job-q");
+    lab.on_run = [](const rp::Job&, const rp::JobCallbacks&) {
+        JobRun run;
+        run.exit_code = 1;
+        return run;
+    };
+    lab.on_flush = [] { return rp::FlushReport{}; };
+    lab.on_wait = [&](int wait) {
+        // Polls at 0 and 60 s with both jobs, at 120 s with neither, at 180 s
+        // a file that can't be read, then both again.
+        lab.jobs_fault.reset();
+        lab.jobs = with;
+        if (wait == 2) {
+            lab.jobs = jobs_text({});
+        } else if (wait == 3) {
+            lab.jobs_fault = rp::JobsFault::unreadable;
+        }
+    };
+
+    lab.run(6);
+
+    // 0 s, and again at 240 s; not at 60 s, and not at 300 s.
+    CHECK(lab.count("info skipped job-q: already queued") == 2);
+    CHECK(lab.count("warning run job-n: ended before its run line; nothing was done") == 2);
+    CHECK(lab.runs.size() == 4);
+}
+
+TEST_CASE("a job without a usable run_id is said again when the document's content came back "
+          "after another",
+          "[service_loop]")
+{
+    LoopLab lab;
+    const std::string first = jobs_text({R"({"run_id":7})"});
+    lab.jobs = first;
+    lab.on_wait = [&](int wait) {
+        lab.jobs = wait == 2 ? jobs_text({R"({"run_id":8})"}) : first;
+    };
+
+    lab.run(4); // first, first, the other, first
+
+    CHECK(lab.count("warning job 1 of C:\\rp\\jobs.json: no usable run_id; not run") == 3);
+}
+
+TEST_CASE("a run the flush couldn't read is said again when a pass in between didn't name it",
+          "[service_loop]")
+{
+    LoopLab lab;
+    lab.on_flush = [&lab] {
+        rp::FlushReport report;
+        if (lab.flushes != 3) {
+            report.out = {"kept run-y: not_read", "kept run-x: folder_changed"};
+            report.err = {"outbox error: C:\\rp\\outbox\\run-y: result.json couldn't be read"};
+        } else {
+            report.out = {"kept run-x: folder_changed"};
+        }
+        return report;
+    };
+
+    lab.run(5); // five passes; the third doesn't name run-y
+
+    CHECK(lab.count("info kept run-y: not_read") == 2);
+    CHECK(lab.count("warning outbox error: C:\\rp\\outbox\\run-y: result.json couldn't be read") ==
+          2);
+    // Named at every pass: once.
+    CHECK(lab.count("info kept run-x: folder_changed") == 1);
+}
+
 TEST_CASE("a write of the record that fails during the run ends the run, withholds the restore "
           "request, or costs one session its place",
           "[service_loop]")

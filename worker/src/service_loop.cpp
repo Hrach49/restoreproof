@@ -100,13 +100,8 @@ void ServiceLoop::trouble(std::string_view word)
     last_error_at_ = env_.wall_now();
 }
 
-// Whether this is said for the first time in the service's life.
-bool ServiceLoop::once(const std::string& key)
-{
-    return said_.insert(key).second;
-}
-
-// Whether this is said for the first time, or was last said an hour ago.
+// Whether this is said of the record for the first time, or was last said
+// an hour ago. Every key is the record's: they go when it does.
 bool ServiceLoop::again(const std::string& key)
 {
     const Steady now = env_.now();
@@ -204,6 +199,8 @@ bool ServiceLoop::find_record()
 {
     RecordRead read = store_.read();
     if (read.state == RecordState::none) {
+        // No record: what was said of one is said anew of the next.
+        said_at_.clear();
         return true;
     }
     if (read.state == RecordState::record) {
@@ -483,6 +480,8 @@ void ServiceLoop::drop_record()
     }
     record_.reset();
     run_.reset();
+    // What was said "once and again every hour" was said of this record.
+    said_at_.clear();
     close_not_before_.reset();
     reached_outbox_ = false;
     hold_done_ = false;
@@ -531,12 +530,36 @@ JobsDocument ServiceLoop::read_jobs()
     return document;
 }
 
+// What was said once of a job is kept only while the document names it, so
+// nothing grows with the service's life: a job without a run_id by the
+// document's content, the others by their run IDs. A document that couldn't
+// be read names nothing and forgets nothing.
+void ServiceLoop::forget_jobs(const JobsDocument& document)
+{
+    if (document.state == JobsState::error) {
+        return;
+    }
+    if (document.sha256 != jobs_sha_) {
+        jobs_sha_ = document.sha256;
+        no_run_id_said_.clear();
+    }
+    const auto named = [&document](const std::string& run_id) {
+        return std::ranges::any_of(document.jobs, [&run_id](const JobEntry& entry) {
+            return entry.state != JobState::no_run_id && entry.job.run_id == run_id;
+        });
+    };
+    std::erase_if(skipped_said_, [&named](const std::string& run_id) { return !named(run_id); });
+    std::erase_if(not_started_said_,
+                  [&named](const std::pair<std::string, int>& said) { return !named(said.first); });
+}
+
 // The jobs of this poll, in the document's order, one at a time, and only
 // while no run is taken.
 void ServiceLoop::run_jobs()
 {
     JobsDocument document;
     step([this, &document] { document = read_jobs(); });
+    forget_jobs(document);
     for (const JobEntry& entry : document.jobs) {
         if (stopped() || record_) {
             return;
@@ -552,7 +575,7 @@ void ServiceLoop::take_job(const JobEntry& entry, const JobsDocument& document)
     if (entry.state == JobState::no_run_id) {
         // J1: nothing can be signed under a name the Cloud knows.
         trouble(service_error::kJobInvalid);
-        if (once(std::format("job:{}:{}", document.sha256, entry.position))) {
+        if (no_run_id_said_.insert(entry.position).second) {
             env_.logger->warn("job {} of {}: no usable run_id; not run", entry.position,
                               path_to_utf8(*env_.jobs_file));
         }
@@ -588,7 +611,7 @@ bool ServiceLoop::skip_job(const std::string& run_id)
     } else if (!env_.run_folder_exists(run_id)) {
         return false;
     }
-    if (once("skipped:" + run_id)) {
+    if (skipped_said_.insert(run_id).second) {
         env_.logger->info("skipped {}: {}", run_id, why);
     }
     return true;
@@ -609,7 +632,7 @@ void ServiceLoop::run_job(const Job& job)
         // No folder and no result, as for the command; the stub offers the
         // job again at the next poll.
         trouble(service_error::kJobNotStarted);
-        if (once(std::format("not_started:{}:{}", id, run.exit_code))) {
+        if (not_started_said_.emplace(id, run.exit_code).second) {
             env_.logger->warn("run {}: ended before its run line; nothing was done", id);
         }
         settle_record(false);
@@ -678,13 +701,18 @@ void ServiceLoop::flush()
         env_.logger->debug("flush skipped: another flush is running");
         return;
     }
+    // A run that is never sent, and one that couldn't be read: once per run
+    // and reason for as long as every pass names it, not at every pass.
+    std::set<std::string> lasting_now;
+    const auto said_before = [this, &lasting_now](const std::string& line) {
+        lasting_now.insert(line);
+        return flush_said_.contains(line);
+    };
     for (const std::string& line : report->out) {
         const std::string word = kept_word(line);
-        // A run that is never sent, and one that couldn't be read: once per
-        // run and reason, not at every pass.
         const bool lasting =
             word == service_error::kFolderChanged || word == service_error::kNotRead;
-        if (lasting && !once("flush:" + line)) {
+        if (lasting && said_before(line)) {
             continue;
         }
         if (is_service_error(word)) {
@@ -695,10 +723,11 @@ void ServiceLoop::flush()
     }
     for (const std::string& line : report->err) {
         const bool lasting = line.ends_with(kChangedLine) || line.ends_with(kNotReadLine);
-        if (!lasting || once("flush:" + line)) {
+        if (!lasting || !said_before(line)) {
             env_.logger->warn("{}", line);
         }
     }
+    flush_said_ = std::move(lasting_now);
 }
 
 } // namespace rp

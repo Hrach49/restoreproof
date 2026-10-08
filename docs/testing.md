@@ -779,10 +779,10 @@ $since = Get-Date; Stop-W47Process; Start-Sleep 75; Get-W47Process; Get-W47Event
 Get-W47Process                        # running, its start right after the boot
 # (e) stop
 Invoke-W47 @('service','stop'); Get-W47Log
-# (f) rotation with the real limit, and the search for secrets
-Add-W47Filler; Invoke-W47 @('service','start'); Get-W47Log; Test-W47LogSecrets
-# (g) leave nothing installed
-Invoke-W47 @('service','stop'); Invoke-W47 @('service','uninstall'); Get-W47Process
+# (f) rotation with the real limit, blocked by a reader and then made, and the search for secrets
+Add-W47Filler; Invoke-W47StartWhileHeld; Invoke-W47 @('service','stop'); Get-W47Log; Test-W47LogSecrets
+# (g) a restart queued, and the uninstall inside its minute; nothing installed
+Invoke-W47 @('service','start'); Stop-W47Process; Invoke-W47 @('service','uninstall'); Start-Sleep 70; Get-W47Process
 Remove-W47Harness
 ```
 

@@ -84,7 +84,7 @@ function Get-W47Setup {
 # The service's state, its process and whose it is, beside the machine's boot time.
 function Get-W47Process {
     $service = Get-CimInstance Win32_Service -Filter "Name='$script:W47Service'"
-    if (-not $service) { return "service $script:W47Service: not installed" }
+    if (-not $service) { return "service ${script:W47Service}: not installed" }
     $lines = @("service $($service.Name): state $($service.State), start mode $($service.StartMode), account $($service.StartName), pid $($service.ProcessId)")
     if ($service.ProcessId) {
         $process = Get-CimInstance Win32_Process -Filter "ProcessId=$($service.ProcessId)"
@@ -125,19 +125,39 @@ function Get-W47Log([int]$Tail = 20) {
 }
 
 # Appends filler lines to the service's own worker.log (so its owner and ACL stay) until it is
-# 100 bytes under spdlog's 10 MiB limit: the next line the service writes rotates it.
+# 60 bytes under the 10 MiB limit: the next line the service writes (its start line is 131) rotates it.
 function Add-W47Filler {
     $live = Join-Path $script:W47Logs 'worker.log'
     if (-not (Test-Path $live)) { throw 'no worker.log yet: start and stop the service once' }
-    $limit = 10 * 1024 * 1024 - 100
+    $limit = 10 * 1024 * 1024 - 60
     $line = [Text.Encoding]::ASCII.GetBytes("2026-10-08T00:00:00.000Z info w47 filler " + ('x' * 157) + "`r`n")   # 200 bytes
     $stream = [IO.File]::Open($live, 'Append', 'Write', 'Read')
     try {
         $count = 0
         while ($stream.Length + $line.Length -le $limit) { $stream.Write($line, 0, $line.Length); $count++ }
+        # One shorter filler line ends it at the limit exactly.
+        $rest = $limit - $stream.Length
+        if ($rest -ge 50) {
+            $last = [Text.Encoding]::ASCII.GetBytes("2026-10-08T00:00:00.000Z info w47 filler " + ('x' * ($rest - 43)) + "`r`n")
+            $stream.Write($last, 0, $last.Length); $count++
+        }
         $size = $stream.Length
     } finally { $stream.Dispose() }
-    "appended $count filler line(s) of $($line.Length) bytes; worker.log is $size bytes, $(10 * 1024 * 1024 - $size) under the limit"
+    "appended $count filler line(s); worker.log is $size bytes, $(10 * 1024 * 1024 - $size) under the limit"
+}
+
+# Starts the service while this process holds worker.log open without sharing its deletion, as
+# a tool tailing the log does: the rotation the start line asks for can't be made. Then lets it
+# go. What the files were while it was held.
+function Invoke-W47StartWhileHeld {
+    $live = Join-Path $script:W47Logs 'worker.log'
+    $reader = [IO.File]::Open($live, 'Open', 'Read', 'ReadWrite')   # no FileShare.Delete
+    try {
+        $started = Invoke-W47 @('service', 'start')
+        Start-Sleep 2
+        $held = Get-W47Log -Tail 2
+    } finally { $reader.Dispose() }
+    "-- worker.log held open by a reader (no delete sharing) during the start`n$started`n`n-- while it was held`n$held`n`n-- the reader let go at $([DateTime]::UtcNow.ToString('s'))Z"
 }
 
 # Every worker*.log searched for the five values, a JWT shape, a PEM block and an MII run.

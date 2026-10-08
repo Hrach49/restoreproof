@@ -1013,6 +1013,122 @@ TEST_CASE("a run of this process that closed its own sessions is not held for", 
     CHECK_FALSE(lab.has_record());
 }
 
+TEST_CASE("a run that reached the outbox is never closed again, even when the outbox no longer "
+          "holds it while the hold lasts",
+          "[service_loop]")
+{
+    // How the loop learns that the run reached the outbox: the pipeline
+    // queued it, or a close did.
+    const bool by_close = GENERATE(false, true);
+    CAPTURE(by_close);
+    LoopLab lab;
+    lab.jobs = jobs_text({job_text("job-1")});
+    lab.on_run = [&](const rp::Job& job, const rp::JobCallbacks& callbacks) {
+        callbacks.on_run_started(LoopLab::run_started(job.run_id));
+        callbacks.before_restore_request();
+        JobRun run = LoopLab::ended_run(by_close ? JobFolder::complete : JobFolder::queued, {},
+                                        RunStatus::error, "backup");
+        run.restore_may_still_run = true;
+        return run;
+    };
+    // Neither fake puts the run into the lab's outbox: it was sent and then
+    // pruned from sent\ (over the cap) before the loop asked.
+    lab.on_close = [](const rp::RunningRecord&) { return CloseRunOutcome{CloseRunState::queued, {}}; };
+    bool restoring = true;
+    lab.every_look = [&] {
+        return restoring ? SessionsLook{"rp-veeam", {session("r", lab.wall0)}}
+                         : SessionsLook{"rp-veeam", {}};
+    };
+    lab.on_flush = [] { return rp::FlushReport{}; };
+    std::size_t closes_while_held = 0;
+    std::size_t writes_while_held = 0;
+    lab.on_wait = [&](int wait) {
+        if (wait == 7) { // 210 s: the polls at 60, 120 and 180 s are done
+            closes_while_held = lab.closed.size();
+            writes_while_held = lab.writes.size();
+            restoring = false;
+            lab.jobs.reset();
+        }
+    };
+
+    lab.run(9);
+
+    // The pipeline's own queue needs no close; a close is made once (at the
+    // poll after the run the pipeline couldn't queue) and never again.
+    CHECK(closes_while_held == (by_close ? 1u : 0u));
+    CHECK(lab.closed.size() == closes_while_held);
+    // Taken, started, the restore request: no close_as was ever written.
+    CHECK(writes_while_held == 3);
+    CHECK(lab.writes.size() == 3);
+    CHECK(lab.count("error run job-1: couldn't be closed (vault)") == 0);
+    // And the record still goes when the hold is over.
+    CHECK(lab.cleans == 1);
+    CHECK_FALSE(lab.has_record());
+    CHECK(lab.runs == Lines{"job-1"});
+}
+
+TEST_CASE("a run the outbox was seen to hold at a poll is not closed when it is gone from there "
+          "at a later one",
+          "[service_loop]")
+{
+    LoopLab lab;
+    lab.put_record(lab.found({}, true));
+    lab.queued.insert("job-1");
+    lab.every_look = [&] { return SessionsLook{"rp-veeam", {session("r", lab.wall0)}}; };
+    lab.on_flush = [] { return rp::FlushReport{}; };
+    lab.on_wait = [&](int) { lab.queued.clear(); };
+
+    lab.run(5);
+
+    CHECK(lab.closed.empty());
+    CHECK(lab.writes.empty());
+    CHECK(lab.has_record());
+}
+
+TEST_CASE("a flush that throws after a run or a close doesn't keep the record's business from "
+          "going on: the hold begins in the same poll",
+          "[service_loop]")
+{
+    const bool found = GENERATE(false, true);
+    CAPTURE(found);
+    LoopLab lab;
+    if (found) {
+        lab.put_record(lab.found({}, true));
+    } else {
+        lab.jobs = jobs_text({job_text("job-1")});
+    }
+    lab.on_run = [&](const rp::Job& job, const rp::JobCallbacks& callbacks) {
+        callbacks.on_run_started(LoopLab::run_started(job.run_id));
+        callbacks.before_restore_request();
+        lab.queued.insert(job.run_id);
+        JobRun run = LoopLab::ended_run(JobFolder::queued, {}, RunStatus::error, "backup");
+        run.restore_may_still_run = true;
+        return run;
+    };
+    lab.every_look = [&] { return SessionsLook{"rp-veeam", {session("r", lab.wall0)}}; };
+    lab.on_flush = []() -> std::optional<rp::FlushReport> {
+        throw std::runtime_error("C:\\secret-path\\outbox");
+    };
+    std::size_t looks_before_first_wait = 99;
+    lab.on_wait = [&](int wait) {
+        if (wait == 1) {
+            looks_before_first_wait = lab.count_call("look");
+        }
+    };
+
+    lab.run(3);
+
+    // The look right after the flush that threw (for a record found: at
+    // start, and again at the first poll), then every 30 s.
+    CHECK(looks_before_first_wait == (found ? 2u : 1u));
+    CHECK(lab.waited == std::vector<std::chrono::milliseconds>{30s, 30s, 30s});
+    CHECK(lab.count_call("look") == looks_before_first_wait + 2);
+    // One fixed line per flush, never its text.
+    CHECK(lab.flushes == 3);
+    CHECK(lab.count(kStepFailed) == 3);
+    CHECK(lab.has_record());
+}
+
 TEST_CASE("a write of the record that fails during the run ends the run, withholds the restore "
           "request, or costs one session its place",
           "[service_loop]")

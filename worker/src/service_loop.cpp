@@ -261,8 +261,7 @@ bool ServiceLoop::never_started() const
 void ServiceLoop::settle_record(bool close)
 {
     next_look_.reset();
-    if (close && !never_started() && !stopped() &&
-        env_.outbox_holds(record_->run_id) == OutboxHolds::none) {
+    if (close && !never_started() && !stopped() && record_holds() == OutboxHolds::none) {
         close_record_run();
     }
     if (hold_needed() && !stopped()) {
@@ -275,6 +274,21 @@ void ServiceLoop::settle_record(bool close)
         return;
     }
     drop_record();
+}
+
+// Where the outbox has the record's run. A run that reached the outbox in
+// this process is never "none" again: sent\ is pruned (30 days, 500 MB), and
+// a run that is gone from there was sent, not lost. Without this the loop
+// would close and sign a second result under the same run ID while the hold
+// lasts.
+OutboxHolds ServiceLoop::record_holds()
+{
+    const OutboxHolds holds = env_.outbox_holds(record_->run_id);
+    if (holds != OutboxHolds::none) {
+        reached_outbox_ = true;
+        return holds;
+    }
+    return reached_outbox_ ? OutboxHolds::sent : OutboxHolds::none;
 }
 
 void ServiceLoop::close_record_run()
@@ -302,8 +316,11 @@ void ServiceLoop::close_record_run()
     close_not_before_.reset();
     const CloseRunOutcome outcome = env_.close_run(*record_);
     if (outcome.state == CloseRunState::queued) {
+        reached_outbox_ = true;
         env_.logger->info("run {}: queued", id);
-        flush();
+        // Through the step: a flush that throws doesn't end the record's
+        // business.
+        step([this] { flush(); });
         return;
     }
     const bool closed = outcome.state == CloseRunState::not_queued;
@@ -451,8 +468,7 @@ void ServiceLoop::drop_record()
 {
     const std::optional<PipelineReport> report =
         run_ ? std::optional{report_of(*run_)} : std::nullopt;
-    if (!record_may_go(*record_, env_.outbox_holds(record_->run_id),
-                       report ? &*report : nullptr, hold_done_)) {
+    if (!record_may_go(*record_, record_holds(), report ? &*report : nullptr, hold_done_)) {
         return;
     }
     if (!store_.erase()) {
@@ -468,6 +484,7 @@ void ServiceLoop::drop_record()
     record_.reset();
     run_.reset();
     close_not_before_.reset();
+    reached_outbox_ = false;
     hold_done_ = false;
     hold_began_.reset();
 }
@@ -599,8 +616,9 @@ void ServiceLoop::run_job(const Job& job)
         return;
     }
     if (run.folder == JobFolder::queued) {
+        reached_outbox_ = true;
         env_.logger->info("run {}: ended {}; queued", id, ended(run));
-        flush();
+        step([this] { flush(); });
         settle_record(false);
         return;
     }

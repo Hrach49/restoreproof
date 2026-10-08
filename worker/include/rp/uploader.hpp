@@ -32,6 +32,10 @@ inline constexpr std::uint64_t kMaxUploadAnswerBytes = 64u * 1024u;
 // The one status that means the Cloud has the run.
 inline constexpr int kUploadAccepted = 202;
 
+// A Cloud route's URL: `cloud_url` (Config::cloud_url) with every '/' at its
+// end dropped, then `path`, which starts with one ("/v1/results").
+std::string cloud_endpoint(std::string cloud_url, std::string_view path);
+
 class CloudUploader final : public IUploader {
 public:
     // `http` must outlive the uploader. `cloud_url` is Config::cloud_url; a

@@ -53,6 +53,7 @@ add_library(rpcore STATIC
     src/graph_ids.cpp
     src/graph_paging.cpp
     src/graph_targets.cpp
+    src/heartbeat.cpp
     src/http_client.cpp
     src/job_rules.cpp
     src/name_key.cpp
@@ -76,6 +77,7 @@ add_library(rpcore STATIC
     src/secrets.cpp
     src/service.cpp
     src/service_command.cpp
+    src/service_errors.cpp
     src/service_jobs.cpp
     src/service_log.cpp
     src/service_log_stream.cpp
@@ -198,6 +200,7 @@ add_executable(rptests
     tests/graph_ids_test.cpp
     tests/graph_paging_test.cpp
     tests/graph_write_rule_test.cpp
+    tests/heartbeat_test.cpp
     tests/graph_targets_live_test.cpp
     tests/graph_targets_test.cpp
     tests/http_client_test.cpp
@@ -223,6 +226,7 @@ add_executable(rptests
     tests/scm_test.cpp
     tests/secrets_test.cpp
     tests/service_command_test.cpp
+    tests/service_errors_test.cpp
     tests/service_jobs_test.cpp
     tests/service_log_test.cpp
     tests/service_log_stream_test.cpp

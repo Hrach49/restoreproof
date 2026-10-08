@@ -15,7 +15,10 @@ Rules (CLAUDE.md, "Coverage floors"):
     W3.3: the Worker's counterpart of the Cloud's app/results.py) and cleaner
     (W3.4: the only Worker code that deletes in the tenant) and timestamper
     (W4.4: it decides which RFC 3161 token is written) and outbox (W4.6: it
-    decides what is queued, sent, kept and pruned) need 100%
+    decides what is queued, sent, kept and pruned) and service (W4.7: the
+    service's state machine, its subcommands and its log, which decide when a
+    process holding a run is ended, whether a SECURITY line is written and
+    whether a line is redacted) need 100%
     *branch* coverage. OpenCppCoverage only measures lines (its Cobertura
     branch-rate is always 0), so this gate enforces 100% *line* coverage on
     those files as the closest proxy.
@@ -23,7 +26,10 @@ Rules (CLAUDE.md, "Coverage floors"):
     -fprofile-instr-generate -fcoverage-mapping + llvm-cov, or MSVC
     Microsoft.CodeCoverage (Enterprise). A file is strict when any part of its
     path is a strict name or starts with one plus "_" (src/signer/ed25519.cpp,
-    src/vault_dpapi.cpp). Names with no file yet are skipped with a note.
+    src/vault_dpapi.cpp, src/service_log.cpp). The calls into Windows under a
+    strict file live in files of other names (src/scm.cpp and
+    src/stop_signal.cpp under the service) and count toward the total only.
+    Names with no file yet are skipped with a note.
 
 Exit codes: 0 pass, 1 below a threshold, 2 unusable report.
 Stdlib only, so CI needs nothing beyond Python.
@@ -37,13 +43,23 @@ import xml.etree.ElementTree as ET
 from pathlib import Path, PurePosixPath
 from typing import Iterable, TextIO
 
-STRICT_NAMES = ("vault", "signer", "target_guard", "run_status", "cleaner", "timestamper", "outbox")
+STRICT_NAMES = (
+    "vault",
+    "signer",
+    "target_guard",
+    "run_status",
+    "cleaner",
+    "timestamper",
+    "outbox",
+    "service",
+)
 SOURCE_DIRS = ("src", "include", "app")
 SOURCE_EXTS = (".cpp", ".cc", ".cxx", ".c")
 HEADER_EXTS = (".h", ".hpp", ".hh", ".hxx", ".ipp", ".inl")
 BRANCH_NOTE = (
     "Branch coverage is not measured: OpenCppCoverage reports line coverage only. "
-    "`vault`, `signer`, `target_guard`, `run_status`, `cleaner`, `timestamper` and `outbox` are held to 100% **line** "
+    "`vault`, `signer`, `target_guard`, `run_status`, `cleaner`, `timestamper`, `outbox` and `service` are held "
+    "to 100% **line** "
     "coverage as a proxy for the required 100% branch coverage."
 )
 

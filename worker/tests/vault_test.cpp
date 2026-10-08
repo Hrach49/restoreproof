@@ -580,6 +580,161 @@ TEST_CASE("a write over a vault swapped after the owner rule keeps the checked f
                                                         "(A;;FA;;;SY)", "(A;;FR;;;LS)"});
 }
 
+// --- The owner rule by itself (W4.8, docs/decisions.md 2026-10-08 points 3 and 6) ---
+
+TEST_CASE("the owner rule by itself: a file of this account is trusted; one that isn't there, "
+          "or whose owner can't be asked, says which",
+          "[vault][owner]")
+{
+    const Lab lab;
+    SECTION("not there")
+    {
+        CHECK(rp::check_trusted_owner(lab.file) == rp::OwnerTrust::absent);
+        CHECK(rp::check_trusted_owner(lab.dir.path() / "no-folder" / "x.json") ==
+              rp::OwnerTrust::absent);
+    }
+    SECTION("this account's file, whatever it holds")
+    {
+        lab.put("not a vault");
+        CHECK(rp::check_trusted_owner(lab.file) == rp::OwnerTrust::trusted);
+        // Nothing was changed by asking.
+        CHECK(read_bytes(lab.file) == "not a vault");
+    }
+    SECTION("an empty file")
+    {
+        lab.put("");
+        CHECK(rp::check_trusted_owner(lab.file) == rp::OwnerTrust::trusted);
+    }
+    SECTION("a folder is no file")
+    {
+        std::filesystem::create_directory(lab.file);
+        CHECK(rp::check_trusted_owner(lab.file) == rp::OwnerTrust::unreadable);
+    }
+    SECTION("a device is no file on a disk")
+    {
+        CHECK(rp::check_trusted_owner("NUL") == rp::OwnerTrust::unreadable);
+    }
+    SECTION("security this account can't ask for")
+    {
+        set_privilege(L"SeRestorePrivilege", false);
+        set_privilege(L"SeBackupPrivilege", false);
+        lab.put("x");
+        set_dacl(lab.file, L"D:P(D;;RC;;;WD)(A;;0x1;;;OW)(A;;FA;;;SY)");
+        CHECK(rp::check_trusted_owner(lab.file) == rp::OwnerTrust::unreadable);
+    }
+    SECTION("bytes this account can't read: the owner is still asked")
+    {
+        // READ_CONTROL and SYNCHRONIZE, which every open needs, and no right
+        // to the data: enough for the rule, which never reads the file.
+        lab.put("x");
+        set_dacl(lab.file, L"D:P(A;;FA;;;SY)(A;;0x120000;;;OW)");
+        CHECK(rp::check_trusted_owner(lab.file) == rp::OwnerTrust::trusted);
+        CHECK(rp::read_trusted_file(lab.file, 100).state == rp::TrustedRead::unreadable);
+    }
+}
+
+TEST_CASE("a trusted file is read whole through the handle its owner was asked on",
+          "[vault][owner]")
+{
+    const Lab lab;
+    SECTION("not there")
+    {
+        const rp::TrustedFile read = rp::read_trusted_file(lab.file, 100);
+        CHECK(read.state == rp::TrustedRead::absent);
+        CHECK(read.bytes.empty());
+    }
+    SECTION("a folder, a device")
+    {
+        std::filesystem::create_directory(lab.file);
+        CHECK(rp::read_trusted_file(lab.file, 100).state == rp::TrustedRead::unreadable);
+        CHECK(rp::read_trusted_file("NUL", 100).state == rp::TrustedRead::unreadable);
+    }
+    SECTION("bytes this account can't read")
+    {
+        lab.put("x");
+        set_dacl(lab.file, L"D:P(A;;FA;;;SY)(A;;RC;;;OW)");
+        const rp::TrustedFile read = rp::read_trusted_file(lab.file, 100);
+        CHECK(read.state == rp::TrustedRead::unreadable);
+        CHECK(read.bytes.empty());
+    }
+    SECTION("one byte over the limit: nothing of it is handed on")
+    {
+        lab.put(std::string(101, 'x'));
+        const rp::TrustedFile read = rp::read_trusted_file(lab.file, 100);
+        CHECK(read.state == rp::TrustedRead::too_large);
+        CHECK(read.bytes.empty());
+    }
+    SECTION("exactly the limit, every byte as it is")
+    {
+        const std::string bytes = std::string("a\0b\r\n\xff", 6) + std::string(94, 'x');
+        lab.put(bytes);
+        const rp::TrustedFile read = rp::read_trusted_file(lab.file, 100);
+        CHECK(read.state == rp::TrustedRead::read);
+        CHECK(read.bytes == bytes);
+    }
+    SECTION("an empty file, and a limit of nothing")
+    {
+        lab.put("");
+        const rp::TrustedFile read = rp::read_trusted_file(lab.file, 0);
+        CHECK(read.state == rp::TrustedRead::read);
+        CHECK(read.bytes.empty());
+        lab.put("x");
+        CHECK(rp::read_trusted_file(lab.file, 0).state == rp::TrustedRead::too_large);
+    }
+}
+
+TEST_CASE("the file whose owner passed is the file that is read, whatever is moved onto its "
+          "path meanwhile",
+          "[vault][owner]")
+{
+    const Lab lab;
+    lab.put("the checked file");
+    const std::filesystem::path planted = lab.dir.path() / "planted.json";
+    {
+        std::ofstream out(planted, std::ios::binary);
+        out << "a planted file";
+    }
+    const std::filesystem::path aside = lab.dir.path() / "aside.json";
+
+    rp::TrustedFile read;
+    {
+        const SwapAfterOwnerCheck swapping{[&] {
+            std::filesystem::rename(lab.file, aside);
+            std::filesystem::rename(planted, lab.file);
+        }};
+        read = rp::read_trusted_file(lab.file, 100);
+        REQUIRE(swapping.done);
+    }
+    CHECK(read.state == rp::TrustedRead::read);
+    CHECK(read.bytes == "the checked file");
+    CHECK(read_bytes(lab.file) == "a planted file");
+}
+
+TEST_CASE("the owner rule by itself: a file of another account is not trusted, one of SYSTEM or "
+          "Administrators is",
+          "[vault][owner]")
+{
+    if (!elevated()) {
+        SKIP("changing a file's owner needs SeRestorePrivilege: run elevated");
+    }
+    const Lab lab;
+    lab.put("x");
+    // Readable by everyone, so only the owner decides.
+    set_dacl(lab.file, L"D:P(A;;FA;;;WD)");
+
+    give_to(lab.file, L"S-1-5-19");
+    CHECK(rp::check_trusted_owner(lab.file) == rp::OwnerTrust::not_trusted);
+    const rp::TrustedFile read = rp::read_trusted_file(lab.file, 100);
+    CHECK(read.state == rp::TrustedRead::not_trusted);
+    CHECK(read.bytes.empty());
+
+    for (const wchar_t* sid : {L"S-1-5-18", L"S-1-5-32-544"}) {
+        give_to(lab.file, sid);
+        CHECK(rp::check_trusted_owner(lab.file) == rp::OwnerTrust::trusted);
+        CHECK(rp::read_trusted_file(lab.file, 100).bytes == "x");
+    }
+}
+
 TEST_CASE("a device is never a vault", "[vault]")
 {
     // NUL opens and has an owner; it is no file on a disk.

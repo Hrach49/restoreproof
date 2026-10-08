@@ -1975,6 +1975,23 @@ TEST_CASE("restore: copies earlier runs left are ignored and counted; a file onl
     CHECK(lab.targets.download.requests().empty());
 }
 
+// W4.8 (docs/decisions.md 2026-10-08 point 13): the download client's own
+// retries were the one wait of a run outside the pipeline's sleep.
+TEST_CASE("restore: the download client is made with the pipeline's own sleep",
+          "[restore_command][checker]")
+{
+    Harness lab;
+
+    const Run run = lab.run({});
+
+    REQUIRE(run.exit_code == rp::exit_code::ok);
+    REQUIRE(lab.download_sleep);
+    const std::size_t before = lab.slept.size();
+    lab.download_sleep(std::chrono::milliseconds{7});
+    REQUIRE(lab.slept.size() == before + 1);
+    CHECK(lab.slept.back() == std::chrono::milliseconds{7});
+}
+
 TEST_CASE("restore: an earlier run's file that couldn't be downloaded doesn't touch the check; "
           "only this run's expected files are read",
           "[restore_command][checker]")
@@ -3161,7 +3178,8 @@ struct RealRig {
         };
         o.cert_exporter = rig.exporter;
         env.now = [this] { return rig.clock.now(); };
-        env.make_download_http = [this]() -> std::unique_ptr<rp::IHttpClient> {
+        env.make_download_http = [this](std::function<void(std::chrono::milliseconds)>)
+            -> std::unique_ptr<rp::IHttpClient> {
             return std::make_unique<rp::test::ForwardingHttpClient>(download);
         };
         // W3.4: a fake run mutex, never the machine's.

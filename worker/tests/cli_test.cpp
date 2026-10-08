@@ -33,7 +33,9 @@ const std::string kUsage =
     "rpworker outbox flush [--config <path>] [--outbox <root>] [--record <dir>] | "
     "rpworker outbox list [--outbox <root>] | "
     "rpworker signer public-key [--vault <file>] | "
-    "rpworker signer verify <folder> --public-key <pem file> [--tsa-ca <pem file>]\n";
+    "rpworker signer verify <folder> --public-key <pem file> [--tsa-ca <pem file>] | "
+    "rpworker service install [--config <path>] | rpworker service uninstall|start|stop | "
+    "rpworker service run [--config <path>]\n";
 
 const std::string kConfigJson = R"({
     "cloud_url": "https://cloud.example.invalid",
@@ -109,7 +111,24 @@ TEST_CASE("rpworker prints usage to stderr and exits 64 for a command line it do
         Args{"veeam", "list", "--vault"},
         Args{"graph", "list", "--vault"},
         Args{"restore", "--vault"},
-        Args{"test", "--vault"});
+        Args{"test", "--vault"},
+        // W4.7: `service` takes one of five subcommands, --config (a path,
+        // never empty, once) for `install` and `run` alone, and no other word.
+        // Only command lines the command refuses before any call are here:
+        // run_cli asks the machine's real Service Control Manager.
+        Args{"service"},
+        Args{"Service", "start"},
+        Args{"service", "restart"},
+        Args{"service", "status"},
+        Args{"service", "start", "extra"},
+        Args{"service", "stop", "--force"},
+        Args{"service", "uninstall", "--config", "C:\\config.json"},
+        Args{"service", "install", "--config"},
+        Args{"service", "install", "--config", ""},
+        Args{"service", "install", "--config", "C:\\a.json", "--config", "C:\\b.json"},
+        Args{"service", "install", "--vault", "C:\\vault.bin"},
+        Args{"service", "run", "extra"},
+        Args{"service", "run", "--config"});
     CAPTURE(args);
 
     std::ostringstream out;
@@ -140,6 +159,22 @@ TEST_CASE("rpworker --version prints the project version to stdout and exits 0",
     REQUIRE(rp::run_cli(args, out, err) == 0);
     REQUIRE(out.str() == std::string{rp::version()} + "\n");
     REQUIRE(err.str().empty());
+}
+
+TEST_CASE("rpworker service reaches the service's commands", "[cli][service_command]")
+{
+    // The one `service` command line run_cli is given here that the command
+    // takes: `run` with a --config path that isn't UTF-8, refused before the
+    // dispatcher is called. run_cli's environment is the real one, so nothing
+    // that asks the machine's Service Control Manager for anything is run
+    // through it; `rpworker.exe service run` itself is an exe test.
+    const Args args{"service", "run", "--config", "C:\\\xff\\config.json"};
+
+    std::ostringstream out;
+    std::ostringstream err;
+    REQUIRE(rp::run_cli(args, out, err) == 1);
+    REQUIRE(out.str().empty());
+    REQUIRE(err.str() == "service error: the --config path is not valid UTF-8\n");
 }
 
 TEST_CASE("rpworker reports an exception a command doesn't handle as exit 1, never a crash",

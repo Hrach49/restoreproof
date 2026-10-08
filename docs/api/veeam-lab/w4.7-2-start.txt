@@ -1,0 +1,26 @@
+W4.7 (#50) live Done-when, step (b): start; the process's account; the log's start line; a second start.
+(The listing's 0 bytes is the folder's entry, not yet updated while the file is open; the line is in the file.)
+
+command: rpworker service start
+2026-10-08T15:12:30Z to 2026-10-08T15:12:33Z
+exit code: 0
+--- stdout
+started RestoreProof
+--- stderr
+
+
+service RestoreProof: state Running, start mode Auto, account NT SERVICE\RestoreProof, pid 16928
+process 16928: owner NT SERVICE\RestoreProof, started 2026-10-08T15:12:32Z
+command line: "C:\restoreproof\worker\build\dev\rpworker.exe" service run --config "C:\ProgramData\RestoreProof\w47\config.json"
+machine booted 2026-10-05T22:45:07Z, now 2026-10-08T15:12:35Z
+
+worker.log              0 bytes  owner NT SERVICE\RestoreProof
+--- worker.log, last 20 line(s)
+2026-10-08T15:12:32.806Z info service running: rpworker 0.0.0, config C:\ProgramData\RestoreProof\w47\config.json, log_level info
+
+command: rpworker service start
+2026-10-08T15:12:36Z to 2026-10-08T15:12:37Z
+exit code: 0
+--- stdout
+RestoreProof is already running
+--- stderr

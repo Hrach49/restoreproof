@@ -1,0 +1,19 @@
+W4.7 (#50) live Done-when, step (d): the owner restarted the machine at about 15:56Z. The service's log shows the shutdown taken as a stop (15:56:30Z); after the boot (15:56:51Z) the Service Control Manager started the service at 15:57:01Z with nobody starting it. The event 7045 is the unit tests' disabled RestoreProofScmTest, made and deleted by the coverage run before the reboot (it answers 1060).
+
+service RestoreProof: state Running, start mode Auto, account NT SERVICE\RestoreProof, pid 5624
+process 5624: owner NT SERVICE\RestoreProof, started 2026-10-08T15:57:01Z
+command line: "C:\restoreproof\worker\build\dev\rpworker.exe" service run --config "C:\ProgramData\RestoreProof\w47\config.json"
+machine booted 2026-10-08T15:56:51Z, now 2026-10-08T16:01:06Z
+
+-- events since the boot
+2026-10-08T15:50:18Z 7045 Information: A service was installed in the system. Service Name: RestoreProofScmTest Worker Service File Name: "C:\Users\minas\AppData\Local\Temp\rp-test-7277808709639751460\no-such-rpworker.exe" service run Service Type: user mode service Service Start Type: disabled Service Account: NT SERVICE\RestoreProofScmTest
+
+latest interactive sign-in: 2026-10-08T15:57:00Z
+
+worker.log            377 bytes  owner NT SERVICE\RestoreProof
+--- worker.log, last 20 line(s)
+2026-10-08T15:12:32.806Z info service running: rpworker 0.0.0, config C:\ProgramData\RestoreProof\w47\config.json, log_level info
+2026-10-08T15:13:50.105Z info service running: rpworker 0.0.0, config C:\ProgramData\RestoreProof\w47\config.json, log_level info
+2026-10-08T15:56:30.718Z info stop requested (shutdown)
+2026-10-08T15:56:30.719Z info service stopped after 0 ms
+2026-10-08T15:57:02.367Z info service running: rpworker 0.0.0, config C:\ProgramData\RestoreProof\w47\config.json, log_level info

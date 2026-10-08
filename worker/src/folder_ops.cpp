@@ -14,6 +14,7 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <utility>
 
 namespace rp {
 
@@ -104,6 +105,34 @@ bool make_folder(const std::filesystem::path& folder) noexcept
     } catch (...) {
         return false;
     }
+}
+
+unsigned long make_folder_error(const std::filesystem::path& folder) noexcept
+{
+    try {
+        std::error_code ec;
+        std::filesystem::create_directories(folder, ec);
+        if (path_kind(folder) == PathKind::folder) {
+            return 0;
+        }
+        return ec ? static_cast<unsigned long>(ec.value()) : ERROR_DIRECTORY;
+    } catch (...) {
+        return ERROR_NOT_ENOUGH_MEMORY;
+    }
+}
+
+std::filesystem::path own_executable_path()
+{
+    // Long enough for any path Windows hands out (32,767 characters).
+    std::wstring buffer(32'768, L' ');
+    const DWORD length =
+        GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
+    if (length == 0 || length >= buffer.size()) {
+        throw std::system_error(static_cast<int>(GetLastError()), std::system_category(),
+                                "GetModuleFileNameW");
+    }
+    buffer.resize(length);
+    return std::filesystem::path{std::move(buffer)};
 }
 
 std::optional<bool> same_volume(const std::filesystem::path& a,

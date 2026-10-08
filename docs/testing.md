@@ -24,7 +24,7 @@ How we test, what CI enforces, and the once-per-sprint mutation run. Set up in L
 
 | Guard | Where | Rule |
 |---|---|---|
-| Worker coverage | `.github/workflows/worker.yml`, OpenCppCoverage + `worker/tools/coverage_gate.py` | 80% line on `rpcore` (`worker/src/`, `worker/include/`) plus `rpworker`'s `main()` (`worker/app/`); 100% **line** on vault, signer, target_guard, run_status, cleaner, timestamper and outbox (the vault once it exists), meaning any file with a path part named or prefixed `vault`, `signer`, `target_guard`, `run_status`, `cleaner`, `timestamper` or `outbox` (W4.6's `src/outbox.cpp`, which decides what is queued, sent, kept and pruned, and `src/outbox_command.cpp`, while `src/uploader.cpp`, the one HTTP call, and `src/folder_ops.cpp`, the file-system calls under it, are outside; W4.4's `src/timestamper.cpp`, which decides which RFC 3161 token is written, while `src/rfc3161.cpp`, the calls into OpenSSL under it, is outside like `src/ed25519.cpp`; `src/vault_dpapi.cpp`; W4.3's `src/signer.cpp`, the Signer, and `src/signer_command.cpp`, the two `rpworker signer` commands, with their headers, while `src/ed25519.cpp`, the calls into OpenSSL under the Signer, is deliberately outside: the library's failure lines for a valid key can't be reached by a test, and folding them onto their calls' own lines would hide them, `docs/decisions.md` 2026-10-05 W4.3 point 4; W2.7's `src/target_guard.cpp`, `src/target_guard_graph.cpp`, `src/target_guard_veeam.cpp` and their headers; W3.3's `src/run_status.cpp`, the status decision table; W3.4's `src/cleaner.cpp` and `include/rp/cleaner.hpp`, the only Worker code that deletes in the tenant); every `.cpp` on disk under `src/`, `include/` and `app/` must appear in the report, so a file no test links into `rptests` (or, for `app/`, that ctest's runs of `rpworker.exe` don't reach) fails (headers of declarations may be absent) |
+| Worker coverage | `.github/workflows/worker.yml`, OpenCppCoverage + `worker/tools/coverage_gate.py` | 80% line on `rpcore` (`worker/src/`, `worker/include/`) plus `rpworker`'s `main()` (`worker/app/`); 100% **line** on vault, signer, target_guard, run_status, cleaner, timestamper, outbox and service (the vault once it exists), meaning any file with a path part named or prefixed `vault`, `signer`, `target_guard`, `run_status`, `cleaner`, `timestamper`, `outbox` or `service` (W4.7's `src/service.cpp`, the running service's state machine, `src/service_command.cpp`, the `rpworker service` commands, and `src/service_log.cpp`, which decides what reaches the log file, while `src/scm.cpp`, the calls into the Service Control Manager, and `src/stop_signal.cpp` are outside; W4.6's `src/outbox.cpp`, which decides what is queued, sent, kept and pruned, and `src/outbox_command.cpp`, while `src/uploader.cpp`, the one HTTP call, and `src/folder_ops.cpp`, the file-system calls under it, are outside; W4.4's `src/timestamper.cpp`, which decides which RFC 3161 token is written, while `src/rfc3161.cpp`, the calls into OpenSSL under it, is outside like `src/ed25519.cpp`; `src/vault_dpapi.cpp`; W4.3's `src/signer.cpp`, the Signer, and `src/signer_command.cpp`, the two `rpworker signer` commands, with their headers, while `src/ed25519.cpp`, the calls into OpenSSL under the Signer, is deliberately outside: the library's failure lines for a valid key can't be reached by a test, and folding them onto their calls' own lines would hide them, `docs/decisions.md` 2026-10-05 W4.3 point 4; W2.7's `src/target_guard.cpp`, `src/target_guard_graph.cpp`, `src/target_guard_veeam.cpp` and their headers; W3.3's `src/run_status.cpp`, the status decision table; W3.4's `src/cleaner.cpp` and `include/rp/cleaner.hpp`, the only Worker code that deletes in the tenant); every `.cpp` on disk under `src/`, `include/` and `app/` must appear in the report, so a file no test links into `rptests` (or, for `app/`, that ctest's runs of `rpworker.exe` don't reach) fails (headers of declarations may be absent) |
 | Cloud coverage | `.github/workflows/cloud.yml`, pytest-cov | 80% on `app/`, measured as coverage's combined line + branch figure; 100% line + branch on `app/auth`, `app/results.py` and `app/repo` (skipped while absent), checked by `cloud/tools/check_coverage.py` |
 | Lab tests and canary hashes | `.github/workflows/lab.yml` | `lab/`'s pytest suite passes (offline, fake Graph tenant), and `python -m seeder hash` reproduces every hash in `lab/seed-manifest.json` from the committed `lab/canary/` files and the catalog (L1.2's Done when). No coverage floor |
 | No test, no merge | `.github/workflows/pr-guards.yml`, `.github/scripts/tests_touched.py` | Each side needs its own tests: a PR that changes `worker/src/`, `worker/include/` or `worker/app/` must add or change a C++ file (`.cpp`, `.hpp`, `.h`) under `worker/tests/`, and one that changes `cloud/app/` must add or change a `.py` under `cloud/tests/`. Deleting a test, editing fixtures or editing `tests/e2e/scenarios.md` doesn't count |
@@ -739,6 +739,56 @@ folder before and after (c) with `Get-W46Hashes <folder>`: only `manifest.json` 
 `rpworker graph list` must show 0 in all three targets afterwards, as after any run. The sent
 folder stays outside the repository; the 2026-10-07 run's evidence is
 `docs/api/veeam-lab/w4.6-*`.
+
+### The service by hand (W4.7)
+
+`rpworker service install|uninstall|start|stop` act on the machine's real service, so no
+automated test runs them (`docs/worker-config.md`, "`rpworker service`"). What the tests cover:
+
+- `tests/service_command_test.cpp`: the five commands on a fake Service Control Manager
+  (`tests/service_lab.hpp`), every refusal with its exact line and exit code, the waits on a
+  fake clock.
+- `tests/service_test.cpp`: the running service on a fake host: every status it reports, in
+  order, for each way it can start, stop and fail.
+- `tests/service_log_test.cpp`: the log file: redaction, the `SECURITY: ` rule at every
+  level, one message one line, rotation at a small limit.
+- `tests/scm_test.cpp`: the real calls. Unelevated they only ask about a name that isn't
+  installed. Elevated, one test creates a service named `RestoreProofScmTest` (disabled, its
+  executable a file that doesn't exist, so it can never run), reads it back and deletes it; it
+  first deletes one a cut-off run left. The same file holds the source scan: only
+  `src/scm.cpp` may name a Windows service function or a call that ends the process, and no
+  Worker source may name a call that starts one. The scan reads comments too.
+- The exe tests: `service` alone, an unknown subcommand, a word too many, `--config` without
+  a value, and `service run` from a console. **None names `install`, `uninstall`, `start` or
+  `stop`**, and none may.
+
+The Done-when ("installs, starts on boot, stops cleanly within 30 s, logs rotate") is run by
+hand from an elevated PowerShell 7 with `docs/api/veeam-lab/w4.7-harness/w47-run.ps1`:
+
+```powershell
+. docs\api\veeam-lab\w4.7-harness\w47-run.ps1
+Initialize-W47Harness                 # a copy of the lab config the service's account can read
+# (a) install; what Windows holds
+Invoke-W47 @('service','install','--config',$W47Config)
+Get-W47Setup                          # sc qc, sc qfailure, sc qdescription, FailureActions
+# (b) start; whose process it is
+Invoke-W47 @('service','start'); Get-W47Process; Get-W47Log
+# (c) a crash: Windows starts it again after a minute
+$since = Get-Date; Stop-W47Process; Start-Sleep 75; Get-W47Process; Get-W47Events $since
+# (d) restart the machine, sign in, open an elevated PowerShell 7 again
+Get-W47Process                        # running, its start right after the boot
+# (e) stop
+Invoke-W47 @('service','stop'); Get-W47Log
+# (f) rotation with the real limit, blocked by a reader and then made, and the search for secrets
+Add-W47Filler; Invoke-W47StartWhileHeld; Invoke-W47 @('service','stop'); Get-W47Log; Test-W47LogSecrets
+# (g) a restart queued, and the uninstall inside its minute; nothing installed
+Invoke-W47 @('service','start'); Stop-W47Process; Invoke-W47 @('service','uninstall'); Start-Sleep 70; Get-W47Process
+Remove-W47Harness
+```
+
+`sc qc RestoreProof` answers 1060 afterwards. The 2026-10-08 run's evidence is
+`docs/api/veeam-lab/w4.7-*`. `services.msc` held open on the service keeps it "marked for
+deletion" after an uninstall until it is closed.
 
 ### Recording fixtures (`--record <dir>`)
 

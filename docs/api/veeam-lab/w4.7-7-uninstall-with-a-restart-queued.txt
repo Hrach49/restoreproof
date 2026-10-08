@@ -1,0 +1,32 @@
+W4.7 (#50) live Done-when, step (g): the process killed, so a restart is queued for 60 s later, and rpworker service uninstall run inside that minute: uninstalled at once, and nothing comes back when the minute is over.
+
+command: rpworker service start
+2026-10-08T16:02:11Z to 2026-10-08T16:02:12Z
+exit code: 0
+--- stdout
+started RestoreProof
+--- stderr
+
+killed pid 17276 at 2026-10-08T16:02:14Z
+
+-- 3 s after the kill, before the uninstall
+service RestoreProof: state Stopped, start mode Auto, account NT SERVICE\RestoreProof, pid 0
+
+-- uninstall inside the minute
+command: rpworker service uninstall
+2026-10-08T16:02:18Z to 2026-10-08T16:02:19Z
+exit code: 0
+--- stdout
+uninstalled RestoreProof
+--- stderr
+
+-- at 2026-10-08T16:03:30Z, past the restart that was queued for 16:03:14Z
+service RestoreProof: not installed
+
+-- events
+2026-10-08T16:02:14Z 7031 Error: The RestoreProof Worker service terminated unexpectedly. It has done this 1 time(s). The following corrective action will be taken in 60000 milliseconds: Restart the service.
+
+> sc qc RestoreProof
+[SC] OpenService FAILED 1060:
+
+The specified service does not exist as an installed service.

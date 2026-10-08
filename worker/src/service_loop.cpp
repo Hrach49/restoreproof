@@ -30,6 +30,9 @@ constexpr std::string_view kResultInvalid = "result_invalid";
 // The close's own word for a text file altered between its hash and the read
 // back.
 constexpr std::string_view kChanged = "changed";
+// And for a result.json, or its signature.json, of an owner the service
+// doesn't trust.
+constexpr std::string_view kUntrusted = "untrusted";
 constexpr std::string_view kCleanOk = "ok";
 constexpr std::string_view kKept = "kept ";
 constexpr std::string_view kWaiting = "waiting ";
@@ -315,6 +318,14 @@ void ServiceLoop::close_record_run()
     }
     close_not_before_.reset();
     const CloseRunOutcome outcome = env_.close_run(*record_);
+    if (outcome.untrusted_text_files && again(std::format("close:{}:untrusted_text", id))) {
+        // Fixed words and the run's ID, never a file's content.
+        log_security(env_.logger,
+                     std::format("service: run {}: items.csv or veeam-session.log is owned by "
+                                 "neither SYSTEM, Administrators nor this account; both text "
+                                 "files are replaced by their empty forms",
+                                 id));
+    }
     if (outcome.state == CloseRunState::queued) {
         reached_outbox_ = true;
         env_.logger->info("run {}: queued", id);
@@ -340,6 +351,13 @@ void ServiceLoop::close_record_run()
     trouble(closed ? service_error::kRunNotQueued : service_error::kRunNotClosed);
     const std::string_view what = closed ? "queued" : "closed";
     if (again(std::format("close:{}:{}:{}", id, what, outcome.word))) {
+        if (!closed && outcome.word == kUntrusted) {
+            log_security(env_.logger,
+                         std::format("service: run {}: result.json or signature.json is owned "
+                                     "by neither SYSTEM, Administrators nor this account; the "
+                                     "folder is not queued",
+                                     id));
+        }
         env_.logger->error("run {}: couldn't be {} ({})", id, what, outcome.word);
     }
 }

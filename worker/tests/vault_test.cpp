@@ -7,6 +7,7 @@
 #include <rp/secrets.hpp>
 #include <rp/vault.hpp>
 
+#include "owner_lab.hpp"
 #include "test_support.hpp"
 #include "../src/vault_detail.hpp"
 
@@ -136,47 +137,10 @@ std::vector<std::string> aces_of(const std::filesystem::path& path)
 
 const std::vector<std::string> kDefaultAces{"(A;;FA;;;BA)", "(A;;FA;;;OW)", "(A;;FA;;;SY)"};
 
-bool elevated()
-{
-    HANDLE token = nullptr;
-    REQUIRE(OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token));
-    TOKEN_ELEVATION elevation{};
-    DWORD size = 0;
-    const bool ok = GetTokenInformation(token, TokenElevation, &elevation, sizeof elevation, &size);
-    CloseHandle(token);
-    return ok && elevation.TokenIsElevated != 0;
-}
-
-// Turns a privilege of the process token on or off. With SeRestorePrivilege
-// (or SeBackupPrivilege) enabled, Windows reads any file's security for the
-// process whatever its DACL says, so a test that enables one puts it back:
-// every test case runs in one process under the coverage run.
-void set_privilege(const wchar_t* name, bool enabled)
-{
-    HANDLE token = nullptr;
-    REQUIRE(OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &token));
-    TOKEN_PRIVILEGES privileges{};
-    privileges.PrivilegeCount = 1;
-    REQUIRE(LookupPrivilegeValueW(nullptr, name, &privileges.Privileges[0].Luid));
-    privileges.Privileges[0].Attributes = enabled ? SE_PRIVILEGE_ENABLED : 0;
-    REQUIRE(AdjustTokenPrivileges(token, FALSE, &privileges, 0, nullptr, nullptr));
-    CloseHandle(token);
-}
-
-// Makes `path` owned by `sid`: needs SeRestorePrivilege (elevation), enabled
-// for this call alone.
-void give_to(const std::filesystem::path& path, const wchar_t* sid_text)
-{
-    set_privilege(L"SeRestorePrivilege", true);
-    PSID sid = nullptr;
-    REQUIRE(ConvertStringSidToSidW(sid_text, &sid));
-    const DWORD result = SetNamedSecurityInfoW(const_cast<wchar_t*>(path.c_str()), SE_FILE_OBJECT,
-                                               OWNER_SECURITY_INFORMATION, sid, nullptr, nullptr,
-                                               nullptr);
-    LocalFree(sid);
-    set_privilege(L"SeRestorePrivilege", false);
-    REQUIRE(result == ERROR_SUCCESS);
-}
+// elevated(), set_privilege() and give_to(): tests/owner_lab.hpp.
+using rp::test::elevated;
+using rp::test::give_to;
+using rp::test::set_privilege;
 
 struct Lab {
     rp::test::TempDir dir;

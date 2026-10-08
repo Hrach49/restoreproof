@@ -622,6 +622,67 @@ TEST_CASE("changed text files that can't be put on record are said, and nothing 
     }
 }
 
+TEST_CASE("a folder whose result the service doesn't trust is a SECURITY line, said with the "
+          "close's own line once and hourly, and the record stays",
+          "[service_loop]")
+{
+    LoopLab lab;
+    lab.put_record(lab.found());
+    lab.jobs = jobs_text({job_text("job-2")});
+    lab.on_close = [](const rp::RunningRecord&) {
+        return CloseRunOutcome{CloseRunState::not_closed, "untrusted"};
+    };
+    lab.on_flush = [] { return rp::FlushReport{}; };
+
+    lab.run(61); // to 3600 s: closes at 0, 900, 1800, 2700 and 3600 s
+
+    const std::string security =
+        "critical SECURITY: service: run job-1: result.json or signature.json is owned by "
+        "neither SYSTEM, Administrators nor this account; the folder is not queued";
+    const std::string error = "error run job-1: couldn't be closed (untrusted)";
+    CHECK(lab.lines == Lines{kStarted, kFound + "no", security, error, security, error});
+    CHECK(lab.closed.size() == 5);
+    CHECK(lab.has_record());
+    CHECK(lab.runs.empty());
+    CHECK(lab.writes.empty());
+    CHECK(lab.last_error == rp::service_error::kRunNotClosed);
+}
+
+TEST_CASE("text files the close replaced because the service doesn't trust their owner are a "
+          "SECURITY line, whatever became of the close",
+          "[service_loop]")
+{
+    const bool queued = GENERATE(true, false);
+    CAPTURE(queued);
+    LoopLab lab;
+    lab.put_record(lab.found());
+    lab.on_close = [&lab, queued](const rp::RunningRecord& record) {
+        CloseRunOutcome outcome{queued ? CloseRunState::queued : CloseRunState::not_closed,
+                                queued ? "" : "vault"};
+        outcome.untrusted_text_files = true;
+        if (queued) {
+            lab.queued.insert(record.run_id);
+        }
+        return outcome;
+    };
+    lab.on_flush = [] { return rp::FlushReport{}; };
+
+    lab.run(16); // the close at start, and when it failed again at 900 s
+
+    const std::string security =
+        "critical SECURITY: service: run job-1: items.csv or veeam-session.log is owned by "
+        "neither SYSTEM, Administrators nor this account; both text files are replaced by their "
+        "empty forms";
+    if (queued) {
+        CHECK(lab.lines == Lines{kStarted, kFound + "no", security, "info run job-1: queued"});
+    } else {
+        // Said once for the record, not at every try.
+        CHECK(lab.lines == Lines{kStarted, kFound + "no", security,
+                                 "error run job-1: couldn't be closed (vault)"});
+        CHECK(lab.closed.size() == 2);
+    }
+}
+
 TEST_CASE("a folder the pipeline couldn't queue is queued at the next poll, and at every poll "
           "until it is",
           "[service_loop]")

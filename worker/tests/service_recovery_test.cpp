@@ -1073,6 +1073,102 @@ TEST_CASE("a record whose result the schema doesn't take is closed as nothing",
     CHECK_FALSE(fake.result);
 }
 
+TEST_CASE("a folder whose result.json or signature.json is of an owner the service doesn't "
+          "trust is not queued",
+          "[service_recovery]")
+{
+    const bool by_signature = GENERATE(false, true);
+    CAPTURE(by_signature);
+    FakeClose fake;
+    fake.folder = there();
+    fake.folder.result = true;
+    fake.folder.signature = true;
+    fake.folder.result_untrusted = !by_signature;
+    fake.folder.signature_untrusted = by_signature;
+    // The text files' owners don't matter here: the flush holds them to the
+    // hashes the result lists.
+    fake.folder.items_csv = true;
+    fake.folder.items_csv_untrusted = true;
+
+    CHECK(rp::plan_close(requested(), fake.folder).action == rp::CloseAction::refuse);
+    const rp::CloseRunOutcome outcome = rp::close_run(requested(), fake.make());
+
+    CHECK(outcome.state == rp::CloseRunState::not_closed);
+    CHECK(outcome.word == "untrusted");
+    CHECK_FALSE(outcome.untrusted_text_files);
+    // Nothing is queued, signed, taken away or written.
+    CHECK(fake.calls == std::vector<std::string>{"look"});
+}
+
+TEST_CASE("a text file of an owner the service doesn't trust is replaced, both are, and the "
+          "outcome says so",
+          "[service_recovery]")
+{
+    struct Row {
+        bool csv;
+        bool csv_untrusted;
+        bool log;
+        bool log_untrusted;
+        bool replaced;
+    };
+    const Row row = GENERATE(Row{true, true, true, false, true},
+                             Row{true, false, true, true, true},
+                             Row{true, true, false, false, true},
+                             Row{true, false, true, false, false},
+                             // A flag of a file that isn't there says nothing.
+                             Row{false, true, false, true, false});
+    CAPTURE(row.csv, row.csv_untrusted, row.log, row.log_untrusted);
+    FakeClose fake;
+    fake.folder = there();
+    fake.folder.items_csv = row.csv;
+    fake.folder.items_csv_untrusted = row.csv_untrusted;
+    fake.folder.session_log = row.log;
+    fake.folder.session_log_untrusted = row.log_untrusted;
+    // A signature that didn't get its result is taken away whoever owns it.
+    fake.folder.signature_untrusted = true;
+
+    const rp::ClosePlan plan = rp::plan_close(requested(), fake.folder);
+    CHECK(plan.action == rp::CloseAction::close);
+    CHECK(plan.untrusted_text_files == row.replaced);
+    CHECK(plan.replace_text_files == row.replaced);
+    CHECK(plan.code == "interrupted");
+
+    const rp::CloseRunOutcome outcome = rp::close_run(requested(), fake.make());
+
+    CHECK(outcome.state == rp::CloseRunState::queued);
+    CHECK(outcome.untrusted_text_files == row.replaced);
+    CHECK(fake.replaced == row.replaced);
+}
+
+TEST_CASE("a close that ends short after replacing untrusted text files still says it did",
+          "[service_recovery]")
+{
+    FakeClose fake;
+    fake.folder = there();
+    fake.folder.session_log = true;
+    fake.folder.session_log_untrusted = true;
+    fake.finished = {rp::FolderEnd::incomplete, "vault"};
+
+    const rp::CloseRunOutcome outcome = rp::close_run(requested(), fake.make());
+
+    CHECK(outcome.state == rp::CloseRunState::not_closed);
+    CHECK(outcome.word == "vault");
+    CHECK(outcome.untrusted_text_files);
+}
+
+TEST_CASE("a signature.json flag without a signature.json doesn't keep a complete folder from "
+          "the outbox",
+          "[service_recovery]")
+{
+    FakeClose fake;
+    fake.folder = there();
+    fake.folder.result = true;
+    fake.folder.signature_untrusted = true;
+
+    CHECK(rp::plan_close(requested(), fake.folder).action == rp::CloseAction::queue_only);
+    CHECK(rp::close_run(requested(), fake.make()).state == rp::CloseRunState::queued);
+}
+
 TEST_CASE("a folder with its result.json is only queued: nothing is signed twice",
           "[service_recovery]")
 {

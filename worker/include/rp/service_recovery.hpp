@@ -240,11 +240,21 @@ struct FolderContents {
     bool timestamp = false;   // timestamp.tst
     bool screenshot = false;  // screenshot.png
     bool temp_files = false;  // any "<name>.<16 hex>.tmp"
+    // Of a file that is there: its owner is neither SYSTEM, Administrators
+    // nor this account (rp::check_trusted_owner answering not_trusted). The
+    // runs root has the inherited ACL until W7.1, so a local user can put a
+    // file there; the service acts on no such file's word.
+    bool result_untrusted = false;
+    bool signature_untrusted = false;
+    bool items_csv_untrusted = false;
+    bool session_log_untrusted = false;
 };
 
 enum class CloseAction {
     queue_only, // the folder has its result.json: nothing is signed twice
-    close       // the result is written afterwards
+    close,      // the result is written afterwards
+    refuse      // the folder has a result.json, and that or its signature.json
+                // is of an owner the service doesn't trust: not queued
 };
 
 // What closing the record's run means (point 7). Everything after `action`
@@ -265,6 +275,9 @@ struct ClosePlan {
     // forms: when the run, or an earlier close, had found one changed after
     // it hashed it, and always for a job that is no job.
     bool replace_text_files = false;
+    // One of the two text files is there and of an owner the service doesn't
+    // trust: both are replaced, and the log says so.
+    bool untrusted_text_files = false;
     // interrupted without close_as, else close_as.
     std::string code;
     // Status error with `code`, restore_sent the record's restore_requested
@@ -331,16 +344,23 @@ struct CloseRunCalls {
 enum class CloseRunState {
     queued,     // in the outbox
     not_closed, // no result.json: `word` is vault, not_signed, not_written,
-                // holds_secret, changed or invalid
+                // holds_secret, changed or invalid; or one the service
+                // doesn't trust: `untrusted`
     not_queued  // complete and not in the outbox: `word` is the outbox's
 };
 
 struct CloseRunOutcome {
     CloseRunState state = CloseRunState::not_closed;
     std::string word;
+    // The close met a text file of an owner the service doesn't trust and
+    // replaced both by their empty forms (the plan's untrusted_text_files),
+    // whatever became of the folder afterwards.
+    bool untrusted_text_files = false;
 };
 
-// Point 7's order: a folder with a result.json is only queued; one that
+// Point 7's order: a folder with a result.json is only queued, or, when the
+// result.json or its signature.json is of an owner the service doesn't
+// trust, left as it is (not_closed, "untrusted"); one that
 // isn't there is made; what a signing that didn't finish left is taken
 // away; then the tail. A folder that can't be made, and one whose leftovers
 // can't be taken away, is not_closed "not_written".

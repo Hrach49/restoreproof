@@ -79,6 +79,7 @@ add_library(rpcore STATIC
     src/service_command.cpp
     src/service_errors.cpp
     src/service_jobs.cpp
+    src/service_recovery.cpp
     src/service_log.cpp
     src/service_log_stream.cpp
     src/sha256.cpp
@@ -228,6 +229,7 @@ add_executable(rptests
     tests/service_command_test.cpp
     tests/service_errors_test.cpp
     tests/service_jobs_test.cpp
+    tests/service_recovery_test.cpp
     tests/service_log_test.cpp
     tests/service_log_stream_test.cpp
     tests/service_test.cpp

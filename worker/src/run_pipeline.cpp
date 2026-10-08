@@ -1018,13 +1018,7 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
             if (connector_info) {
                 parts.connector = *connector_info;
             }
-            parts.client = {.tenant_id = config.graph_tenant_id,
-                            .veeam_org_name = config.veeam_org_name,
-                            .mailbox = config.test_mailbox,
-                            .site_id = config.test_site_id,
-                            .library_id = config.test_library_id,
-                            .onedrive_drive_id = config.test_onedrive_drive_id,
-                            .onedrive_folder_id = config.test_onedrive_folder_id};
+            parts.client = result_client(config);
             if (chosen) {
                 parts.restore_point_id = chosen->id;
                 parts.restore_point_time = chosen->backup_time;

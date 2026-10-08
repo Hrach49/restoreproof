@@ -34,6 +34,17 @@ std::string_view to_string(ResultFailure failure) noexcept
     return "unknown";
 }
 
+ResultClient result_client(const Config& config)
+{
+    return {.tenant_id = config.graph_tenant_id,
+            .veeam_org_name = config.veeam_org_name,
+            .mailbox = config.test_mailbox,
+            .site_id = config.test_site_id,
+            .library_id = config.test_library_id,
+            .onedrive_drive_id = config.test_onedrive_drive_id,
+            .onedrive_folder_id = config.test_onedrive_folder_id};
+}
+
 json ResultBuilder::document(const ResultParts& parts)
 {
     if (parts.verdict == nullptr) {

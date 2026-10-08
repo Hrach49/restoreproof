@@ -202,6 +202,7 @@ private:
     bool find_record();
     bool never_started() const;
     void settle_record(bool close);
+    OutboxHolds record_holds();
     void close_record_run();
     bool hold_needed() const;
     void hold();
@@ -235,6 +236,9 @@ private:
     std::optional<RunningRecord> record_;
     std::optional<JobRun> run_;
     std::optional<Steady> close_not_before_;
+    // The record's run reached the outbox while this process ran: it is
+    // never closed again, whatever the outbox answers later.
+    bool reached_outbox_ = false;
     bool hold_done_ = false;
     std::optional<std::chrono::system_clock::time_point> hold_began_;
     std::optional<Steady> next_look_;

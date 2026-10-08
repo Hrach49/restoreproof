@@ -329,12 +329,36 @@ RunningRecord new_record(std::string_view run_id, std::optional<std::string> cli
     return record;
 }
 
-CloseRunOutcome outcome_of(FolderOutcome folder)
+// By reference, and the two readers below by reference too: a function that
+// ends in a braced return while a local of its own is alive has a closing
+// line no run reaches.
+CloseRunOutcome outcome_of(const FolderOutcome& folder)
 {
     const CloseRunState state = folder.state == FolderEnd::queued     ? CloseRunState::queued
                                 : folder.state == FolderEnd::complete ? CloseRunState::not_queued
                                                                       : CloseRunState::not_closed;
-    return {state, std::move(folder.word)};
+    return {state, folder.word};
+}
+
+RecordRead read_of(std::optional<RunningRecord>&& record)
+{
+    const RecordState state = record ? RecordState::record : RecordState::not_record;
+    return {state, std::move(record)};
+}
+
+RecordRead record_of(const TrustedFile& file)
+{
+    if (file.state == TrustedRead::absent) {
+        return {RecordState::none, std::nullopt};
+    }
+    if (file.state == TrustedRead::not_trusted) {
+        return {RecordState::not_trusted, std::nullopt};
+    }
+    if (file.state == TrustedRead::unreadable) {
+        return {RecordState::unreadable, std::nullopt};
+    }
+    // A file over the limit is no record: no record is that large.
+    return read_of(file.state == TrustedRead::read ? parse_record(file.bytes) : std::nullopt);
 }
 
 } // namespace
@@ -521,32 +545,20 @@ RecordStore::RecordStore(std::filesystem::path file, RecordFiles files)
 
 RecordRead RecordStore::read() const
 {
-    TrustedFile file = files_.read(file_, kMaxRecordBytes);
-    if (file.state == TrustedRead::absent) {
-        return {RecordState::none, std::nullopt};
-    }
-    if (file.state == TrustedRead::not_trusted) {
-        return {RecordState::not_trusted, std::nullopt};
-    }
-    if (file.state == TrustedRead::unreadable) {
-        return {RecordState::unreadable, std::nullopt};
-    }
-    // A file over the limit is no record: no record is that large.
-    std::optional<RunningRecord> record =
-        file.state == TrustedRead::read ? parse_record(file.bytes) : std::nullopt;
-    const RecordState state = record ? RecordState::record : RecordState::not_record;
-    return {state, std::move(record)};
+    return record_of(files_.read(file_, kMaxRecordBytes));
 }
 
 bool RecordStore::write(const RunningRecord& record) const
 {
+    // Empty for a record that has no canonical form. One return after the
+    // handler.
     std::string text;
     try {
         text = record_text(record);
     } catch (const CanonicalJsonError&) {
-        return false;
+        text.clear();
     }
-    return text.size() <= kMaxRecordBytes && parse_record(text).has_value() &&
+    return !text.empty() && text.size() <= kMaxRecordBytes && parse_record(text).has_value() &&
            files_.write(file_, text);
 }
 

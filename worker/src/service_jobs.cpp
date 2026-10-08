@@ -303,22 +303,31 @@ JobsDocument parse_jobs(std::string_view text)
     return out;
 }
 
+namespace {
+
+// What was read as a document. The file is the caller's temporary and this
+// function holds no local, so that its last line is reached: after a switch
+// whose every case returns, the closing line of a function with a local to
+// destroy is one no run reaches.
+JobsDocument document_of(const TrustedFile& bytes)
+{
+    if (bytes.state == TrustedRead::read) {
+        return parse_jobs(bytes.bytes);
+    }
+    if (bytes.state == TrustedRead::absent) {
+        return {};
+    }
+    return failed({}, bytes.state == TrustedRead::not_trusted ? JobsFault::not_trusted
+                      : bytes.state == TrustedRead::too_large ? JobsFault::too_large
+                                                              : JobsFault::unreadable);
+}
+
+} // namespace
+
 JobsDocument read_jobs(const std::filesystem::path& file, const JobsFileReader& read)
 {
-    const TrustedFile bytes =
-        read ? read(file, kMaxJobsFileBytes) : read_trusted_file(file, kMaxJobsFileBytes);
-    switch (bytes.state) {
-    case TrustedRead::read:
-        return parse_jobs(bytes.bytes);
-    case TrustedRead::absent:
-        return {};
-    case TrustedRead::not_trusted:
-        return failed({}, JobsFault::not_trusted);
-    case TrustedRead::too_large:
-        return failed({}, JobsFault::too_large);
-    default:
-        return failed({}, JobsFault::unreadable);
-    }
+    return document_of(read ? read(file, kMaxJobsFileBytes)
+                            : read_trusted_file(file, kMaxJobsFileBytes));
 }
 
 } // namespace rp

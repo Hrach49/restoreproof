@@ -43,7 +43,7 @@ host name.
 | `sample_mail` | no | `5` | integer, 0 to 100 | Mail items restored per test run. |
 | `sample_sp` | no | `5` | integer, 0 to 100 | SharePoint items restored per test run. |
 | `sample_od` | no | `5` | integer, 0 to 100 | OneDrive items restored per test run. |
-| `log_level` | no | `"info"` | `trace`, `debug`, `info`, `warn`, `error`, `critical`, `off` | How much the Worker logs. Lowercase only. |
+| `log_level` | no | `"info"` | `trace`, `debug`, `info`, `warn`, `error`, `critical`, `off` | How much the Worker logs. Lowercase only. For the service's log file ("The service's log"): `off` still writes `SECURITY: ` lines. |
 | `veeam_ca_file` | no | (not set) | absolute path of a readable file: see below | PEM file with the CA certificate(s), or Veeam's self-signed certificate itself, that the Worker trusts for `veeam_url` instead of the Windows certificate store. TLS verification can't be turned off. |
 | `veeam_cert_sha256` | no | (not set) | 64 hexadecimal digits in any case, no separators; needs `veeam_ca_file`: see below | The SHA-256 of Veeam's REST certificate, as Windows shows it (`GetCertHashString('SHA256')`). `veeam_ca_file` must hold that certificate. With both set, the Worker trusts exactly that certificate's key and skips only the host-name check, which Veeam's default certificate can never pass. Not a secret. |
 | `tsa_url` | no | (not set: `http://timestamp.digicert.com`) | an `http://` or `https://` URL, no user name, password, query or fragment; needs `tsa_ca_file` | The RFC 3161 timestamp authority `rpworker test --evidence` asks (W4.4). Plain HTTP is allowed for this key alone: see "The timestamp authority" below. |
@@ -1573,6 +1573,137 @@ inside it, LF or CRLF line ends, no BOM, not UTF-16). The whole rule is in
 folder signed with another key verifies against that other key's file. Give the verifier the
 key you already trust, and compare `key <key_id>` with what the Worker printed.
 
+## `rpworker service`
+
+```
+rpworker service install [--config <path>]
+rpworker service uninstall
+rpworker service start
+rpworker service stop
+rpworker service run [--config <path>]
+```
+
+The Worker as a Windows service (W4.7; `docs/decisions.md` 2026-10-08, W4.7 and its build
+notes). `install`, `uninstall`, `start` and `stop` talk to Windows' Service Control Manager
+through its API and need an elevated prompt (Administrators); `run` is what the Service Control
+Manager itself starts. None of them reads the vault, and only `run` reads `config.json`.
+
+The service is always the same one; nothing about it is an option:
+
+| | |
+|---|---|
+| Name | `RestoreProof` (what `sc`, `net start` and the commands here use) |
+| Display name | `RestoreProof Worker` (what `services.msc` lists) |
+| Account | the virtual account `NT SERVICE\RestoreProof`, no password (W4.12; never LocalSystem) |
+| Start type | automatic: Windows starts it at boot, with nobody signed in |
+| Recovery | restarted 60 s after a failure, three times; after the third nothing more; the count starts again after a day without a failure |
+| Command line | `"<rpworker.exe's full path>" service run [--config "<path>"]` |
+
+**In W4.7 the service does no work.** It starts, loads the config, writes its log and waits
+for a stop. The poll loop, the runs and the outbox flush are W4.8's. The account is given
+nothing here either: read access to the vault, the folders' ACLs and Veeam's certificate key
+are the installer's (W7.1).
+
+### `service install [--config <path>]`
+
+Creates the service from the `rpworker.exe` the command is run from, so install from where
+the Worker is to stay. `--config` must be an absolute path (a service's working directory is
+`System32`); without it the service reads the default config (`%ProgramData%\RestoreProof\config.json`).
+The file isn't read by `install`. It also makes `%ProgramData%\RestoreProof\logs`. The service
+is not started. stdout:
+
+```
+installed RestoreProof: "C:\Program Files\RestoreProof\rpworker.exe" service run
+account NT SERVICE\RestoreProof, automatic start, restart after 60 s up to 3 times; not started: run rpworker service start
+```
+
+A step that fails after the service was created takes the service away again, and the line
+ends `; the service was not installed` (or `; the service was left installed: run rpworker
+service uninstall` when even that failed).
+
+### `service start`, `service stop`, `service uninstall`
+
+| stdout | Meaning | Exit |
+|---|---|---|
+| `started RestoreProof` | running, within 30 s | 0 |
+| `RestoreProof is already running` | nothing was done | 0 |
+| `stopped RestoreProof in <s.s> s` | stopped, within 35 s of the command's start | 0 |
+| `RestoreProof is already stopped` | nothing was done | 0 |
+| `uninstalled RestoreProof` | the Service Control Manager no longer knows the name | 0 |
+
+`stop` waits for the service: it finishes its current step, closes its log and reports
+stopped within 30 s (below). `uninstall` refuses a service that isn't stopped; it deletes
+nothing but the service (the log, the config, the vault and the run folders stay).
+
+### The lines on stderr
+
+Every refusal is one `service error: ...` line:
+
+| Line | Exit |
+|---|---|
+| `access denied; run this from an elevated prompt (Administrators)` | 1 |
+| `the service RestoreProof is not installed` (`start`, `stop`, `uninstall`) | 1 |
+| `the service RestoreProof is already installed; uninstall it first` | 1 |
+| `the display name RestoreProof Worker is in use by another service` | 1 |
+| `--config must be an absolute path; a service's working directory is System32` | 1 |
+| `the --config path is not valid UTF-8` | 1 |
+| `the service RestoreProof is running; stop it first (rpworker service stop)` (`uninstall`) | 1 |
+| `the service RestoreProof is disabled` (`start`) | 1 |
+| `NT SERVICE\RestoreProof couldn't log on (error 1069); it needs the "Log on as a service" right` | 1 |
+| `NT SERVICE\RestoreProof was denied access when starting (error 5); it must be able to read and run the service's executable` (`start` from an elevated prompt: the executable is somewhere the account can't read, a user's profile for one) | 1 |
+| `the service's executable isn't where it was installed from; uninstall and install again` | 1 |
+| `the service RestoreProof stopped while starting (<reason>); see <log file>` | 1 |
+| `service run is what the Service Control Manager starts; use rpworker service start` (`run` from a prompt) | 1 |
+| `<what was tried> failed (error <n>)`: any other answer of Windows, with its error number | 1 |
+| `the answer couldn't be written` (stdout lost) | 1 |
+| `the service RestoreProof is still starting after 30 s` (`start`) | 3 |
+| `the service RestoreProof is still starting after 35 s; the stop was not sent` (`stop`) | 3 |
+| `the service RestoreProof is still stopping after 35 s` (`stop`) | 3 |
+| `the service RestoreProof is stopping; start it again when it has stopped` (`start`) | 3 |
+| `the service RestoreProof is marked for deletion; close services.msc and any other tool that has it open, then try again` | 3 |
+| `the service RestoreProof is marked for deletion; it goes when services.msc and any other tool that has it open are closed` (`uninstall`, after 10 s) | 3 |
+
+`<reason>` is `the config couldn't be loaded`, `the log couldn't be opened`, `service error
+<n>` or `Windows error <n>`. Exit 3 means "not yet": try the command again. Exit 64 with the
+usage line for anything else on the command line.
+
+### What the running service does
+
+1. Tells Windows it is starting (no control is taken yet).
+2. Opens the log (below). If it can't, it stops with its own exit code 2.
+3. Loads the config. If that fails it writes `config error: <what config check prints>` to
+   the log and stops with its own exit code 1. Both are a stop, not a failure, so Windows
+   doesn't restart it: fix the config and `rpworker service start`.
+4. Reports running and writes `service running: rpworker <version>, config <path>, log_level <level>`.
+5. On a stop (`rpworker service stop`, `services.msc`, `net stop`) or a shutdown of Windows:
+   writes `stop requested (stop|shutdown)`, lets its work finish its current step, writes
+   `service stopped after <n> ms`, closes the log and reports stopped.
+
+A stop is given 25 s. Work that hasn't ended by then is cut off: one error line in the log,
+stopped is reported, and the process is ended, so the service is gone within 30 s either way.
+Work that ends by itself, with no stop asked for, is a failure to Windows, which restarts the
+service after a minute (the recovery above).
+
+### The service's log
+
+`%ProgramData%\RestoreProof\logs\worker.log`. Only the service writes it; the commands log to
+stderr as before.
+
+- **Rotation.** At 10 MiB `worker.log` becomes `worker.1.log`, that one `worker.2.log`, and so
+  on up to `worker.4.log`: five files, 50 MiB at most, the oldest dropped.
+- **A line** is `<UTC time> <level> <message>`, for example
+  `2026-10-08T12:00:00.123Z info service running: rpworker 0.0.0, config C:\ProgramData\RestoreProof\config.json, log_level info`.
+  One message is one line: a line break or another control character in it is written as a space.
+- **Level.** The config's `log_level`. Until the config is loaded the level is `info`. `off`
+  writes nothing but the lines below.
+- **`SECURITY: ` lines are always written**, whatever the level, `off` included (a guard
+  refusal, a secret found where none belongs).
+- **No secret.** Every line goes through `rp::redact()` before it is written, the same rule as
+  everywhere else ("Secrets"). The config's values in the log are its path and its level only.
+- Every line is flushed as it is written, so the file is complete after a crash.
+
+A log that can't be written while the service runs never stops the service.
+
 ## `--record <dir>`
 
 `rpworker veeam list`, `graph list`, `restore`, `test` and `outbox flush` take `--record <dir>` (Q2.1), in any place
@@ -1606,15 +1737,15 @@ The same for every `rpworker` command (`rp::exit_code` in `worker/include/rp/cli
 | Exit code | Meaning | stderr |
 |---|---|---|
 | 0 | Success. | (nothing) |
-| 1 | The config or a secret is missing or invalid, the vault can't be used (W4.5: not there, not readable by this account, owned by another account, not decryptable on this machine, not a vault, or a `--vault` path that isn't UTF-8), or something unexpected failed (an error no command handles ends here too, never in an `abort()`, whose exit code would be 3). For `graph list` this includes the certificate: `graph_cert_pfx_base64` not in the vault, a PFX that doesn't open with `graph_cert_password`, or a certificate that isn't valid now, all found before any request. For `restore`, also the same certificate problems as `graph list` (before any Veeam call; `graph_cert_password` absent is fine for a PFX without a password), the certificate failing as the check's reads before the restore sign in (nothing restored), a manifest that doesn't load, whose `tenant_id` isn't `graph_tenant_id` or that names a restore target (before any Veeam call), an unknown connector, a run whose status is `error config`, `error internal` (the facts not adding up, or the check failing for a reason that isn't Graph's) or `error result_invalid` (the result the Worker built isn't valid `restoreproof.result.v1`, W4.1), and stdout failing after a restore whose run passed. `test` exits as `restore` does; for `test` also a `--json` path that isn't UTF-8, isn't a plain file name, names a file already there or a folder that doesn't exist, or where a file can't be written (before the secrets), and a passing run whose `--json` file couldn't be written or whose finished result isn't valid (no file). With `--record`, a folder that isn't new or empty, and a command that succeeded but whose recording isn't complete. For `test --evidence` also (W4.3) `signing_key_base64` not in the vault or not an Ed25519 private key (before the schema check, the manifest and any Veeam call), and a passing run whose result couldn't be signed or whose `signature.json` couldn't be written (no `result.json`). For `signer public-key`, the key not in the vault or not a key; for `signer verify`, a key file that can't be read or isn't an Ed25519 public key in PEM, or a `<folder>` that can't be opened; for both, an answer that couldn't be written to stdout. For `vault` (W4.5), a vault that can't be used or a value `set` refuses. For `test --evidence --outbox` (W4.6), a `--outbox` path that isn't UTF-8 (before the secrets) and a passing run whose folder couldn't be queued (it stays in the runs root); for `outbox flush`, a config that doesn't load, a root that can't be read, and an `outbox error` when nothing stays queued; for `outbox list`, a root that can't be read. | `config error: <path>: <message>`, `config error: the --config path is not valid UTF-8`, `config error: the --vault path is not valid UTF-8`, `config error: the --manifest path is not valid UTF-8`, `config error: canary manifest: <message>`, `config error: cannot find the ProgramData folder`, `config error: <file>: vault file not found` (and the vault's other messages, "Secrets"), `config error: veeam_username is not in the vault` (then `veeam_password`), `config error: graph_cert_pfx_base64 is not in the vault` (or another message naming the certificate's names), for `restore` `config error: unknown connector "<name>" (known: <names>)`, `check error: <message>; nothing was restored`, `check error: unexpected failure` and `error: writing the output failed after the restore ran (run <run ID>, restore ...); run status ...`, with `--record` `config error: <dir>: the --record folder is not empty` and `record error: <service>/<file>: refused: ...`, for `test` `config error: --json <file>: not a UTF-8 path` (`... not a file name`, `... the file already exists`, `... the folder doesn't exist`, `... a file can't be written there`) `json error: <file>: could not be written` and `json error: <file>: the result isn't valid restoreproof.result.v1; no file was written`, for `test --evidence` `config error: signing_key_base64 is not in the vault; --evidence signs the result` (`config error: signing_key_base64 is not an Ed25519 private key (Base64 of PKCS#8 DER)`) and the `evidence error: ...` lines ("`--evidence <dir>`"), for `signer` the `signer error: ...` lines ("`rpworker signer`"), for `vault` the `vault error: ...` lines ("`rpworker vault`"), for `test --outbox` and `outbox` the `outbox error: ...` lines ("`--outbox <root>`", "`rpworker outbox`"), for `restore` and `test` `result error: <n> schema violation(s), first at <JSON pointer>` (`result error: the result has no canonical form`, `result error: the result couldn't be built`), `config error: unexpected failure` or `error: unexpected failure`; an unexpected failure's own message is never shown |
+| 1 | The config or a secret is missing or invalid, the vault can't be used (W4.5: not there, not readable by this account, owned by another account, not decryptable on this machine, not a vault, or a `--vault` path that isn't UTF-8), or something unexpected failed (an error no command handles ends here too, never in an `abort()`, whose exit code would be 3). For `graph list` this includes the certificate: `graph_cert_pfx_base64` not in the vault, a PFX that doesn't open with `graph_cert_password`, or a certificate that isn't valid now, all found before any request. For `restore`, also the same certificate problems as `graph list` (before any Veeam call; `graph_cert_password` absent is fine for a PFX without a password), the certificate failing as the check's reads before the restore sign in (nothing restored), a manifest that doesn't load, whose `tenant_id` isn't `graph_tenant_id` or that names a restore target (before any Veeam call), an unknown connector, a run whose status is `error config`, `error internal` (the facts not adding up, or the check failing for a reason that isn't Graph's) or `error result_invalid` (the result the Worker built isn't valid `restoreproof.result.v1`, W4.1), and stdout failing after a restore whose run passed. `test` exits as `restore` does; for `test` also a `--json` path that isn't UTF-8, isn't a plain file name, names a file already there or a folder that doesn't exist, or where a file can't be written (before the secrets), and a passing run whose `--json` file couldn't be written or whose finished result isn't valid (no file). With `--record`, a folder that isn't new or empty, and a command that succeeded but whose recording isn't complete. For `test --evidence` also (W4.3) `signing_key_base64` not in the vault or not an Ed25519 private key (before the schema check, the manifest and any Veeam call), and a passing run whose result couldn't be signed or whose `signature.json` couldn't be written (no `result.json`). For `signer public-key`, the key not in the vault or not a key; for `signer verify`, a key file that can't be read or isn't an Ed25519 public key in PEM, or a `<folder>` that can't be opened; for both, an answer that couldn't be written to stdout. For `vault` (W4.5), a vault that can't be used or a value `set` refuses. For `test --evidence --outbox` (W4.6), a `--outbox` path that isn't UTF-8 (before the secrets) and a passing run whose folder couldn't be queued (it stays in the runs root); for `outbox flush`, a config that doesn't load, a root that can't be read, and an `outbox error` when nothing stays queued; for `outbox list`, a root that can't be read. For `service` (W4.7): not elevated, a service that isn't installed or is already installed, one that is running at `uninstall`, one that stopped while starting, `run` from a prompt, and any other answer of the Service Control Manager. | `config error: <path>: <message>`, `config error: the --config path is not valid UTF-8`, `config error: the --vault path is not valid UTF-8`, `config error: the --manifest path is not valid UTF-8`, `config error: canary manifest: <message>`, `config error: cannot find the ProgramData folder`, `config error: <file>: vault file not found` (and the vault's other messages, "Secrets"), `config error: veeam_username is not in the vault` (then `veeam_password`), `config error: graph_cert_pfx_base64 is not in the vault` (or another message naming the certificate's names), for `restore` `config error: unknown connector "<name>" (known: <names>)`, `check error: <message>; nothing was restored`, `check error: unexpected failure` and `error: writing the output failed after the restore ran (run <run ID>, restore ...); run status ...`, with `--record` `config error: <dir>: the --record folder is not empty` and `record error: <service>/<file>: refused: ...`, for `test` `config error: --json <file>: not a UTF-8 path` (`... not a file name`, `... the file already exists`, `... the folder doesn't exist`, `... a file can't be written there`) `json error: <file>: could not be written` and `json error: <file>: the result isn't valid restoreproof.result.v1; no file was written`, for `test --evidence` `config error: signing_key_base64 is not in the vault; --evidence signs the result` (`config error: signing_key_base64 is not an Ed25519 private key (Base64 of PKCS#8 DER)`) and the `evidence error: ...` lines ("`--evidence <dir>`"), for `signer` the `signer error: ...` lines ("`rpworker signer`"), for `vault` the `vault error: ...` lines ("`rpworker vault`"), for `test --outbox` and `outbox` the `outbox error: ...` lines ("`--outbox <root>`", "`rpworker outbox`"), for `service` the `service error: ...` lines ("`rpworker service`"), for `restore` and `test` `result error: <n> schema violation(s), first at <JSON pointer>` (`result error: the result has no canonical form`, `result error: the result couldn't be built`), `config error: unexpected failure` or `error: unexpected failure`; an unexpected failure's own message is never shown |
 | 2 | The service refused the sign-in, the account's role, the token or a permission: Veeam's credentials or role; Entra refusing the Worker app's sign-in; Graph refusing the token, or denying a call for want of a grant (the message names the grant, see `docs/security/graph-permissions.md`); for `restore` and `test`, a run whose status is `error backup_auth`, `graph_auth` or `graph_permission`: on the check's reads before the restore (nothing restored) or after it (the item couldn't be checked). | `veeam error: <message>`, `graph error: <message>`, `restore error: <message>` or `check error: <message>; nothing was restored` |
-| 3 | The service couldn't be reached or asked to try later: no connection, a timeout, a TLS handshake that broke off, or a 502, 503 or 504 (for Graph also a 429 or another 5xx) after the retries; for `restore` and `test`, a run whose status is `error backup_transient` or `graph_transient`, before the restore or after it. For `outbox flush` (W4.6): a run is still queued afterwards (its upload failed, it isn't due yet, or its folder changed), or another flush is running. | `veeam error: <message>`, `graph error: <message>`, `restore error: <message>` or `check error: <message>; nothing was restored`; for `outbox flush` nothing (the `kept` and `waiting` lines are on stdout) or `outbox error: another flush is running; nothing was done` |
+| 3 | The service couldn't be reached or asked to try later: no connection, a timeout, a TLS handshake that broke off, or a 502, 503 or 504 (for Graph also a 429 or another 5xx) after the retries; for `restore` and `test`, a run whose status is `error backup_transient` or `graph_transient`, before the restore or after it. For `outbox flush` (W4.6): a run is still queued afterwards (its upload failed, it isn't due yet, or its folder changed), or another flush is running. For `service` (W4.7): not yet, try again: the service is still starting or still stopping after the wait, is stopping when asked to start, or is marked for deletion. | `veeam error: <message>`, `graph error: <message>`, `restore error: <message>` or `check error: <message>; nothing was restored`; for `outbox flush` nothing (the `kept` and `waiting` lines are on stdout) or `outbox error: another flush is running; nothing was done`; for `service` a `service error: ...` line |
 | 4 | Any other error from the service. Veeam: an unknown organisation, a bad request, an unexpected answer, or no organisation named `veeam_org_name`; also Veeam's certificate failing verification, which a retry won't fix: `veeam_ca_file` doesn't hold Veeam's certificate or its CA, or Veeam's certificate was renewed and no longer matches `veeam_cert_sha256` (see "Veeam's default certificate"). Graph: the mailbox, drive or folder not found, a mailbox, drive or folder the guard refuses (not the RestoreTarget the config says; a 403 on the test mailbox's Inbox included), a download that failed, an unexpected answer. `restore` and `test`: another RestoreProof run holding the run mutex, no restore points or a `--point` ID that isn't one of them (before the run line), and a run whose status is `error` with any other code: `target_guard` (the restore-target guard refusing, in the clean before or later, nothing restored), `not_in_backup` (the organisation not in Veeam, or an item not in the restore point that it can't be shown to hold: a random item, or a canary in a point taken before the manifest's `seeded_at`; a canary missing from a later point is `fail`, Q3.1), `backup` (a restore session of the Veeam account still `Working`, the restore credential's export failing when not elevated, any other error of the restore), `empty_sample`, `not_run`, `restore_contradiction`, `backup_infrastructure` (an item Veeam failed for an infrastructure reason that the check didn't find), `graph` (any other Graph error, before the restore or reading an item back), `stale_target` (only an earlier run's copy of an item is there). | `veeam error: <message>` (`... TLS failure: ...` for a certificate), `veeam error: organisation <name> (veeam_org_name) not found in Veeam`, `graph error: <message>`, `restore error: <message>` (`restore error: target guard: ...` for the guard), `restore error: another RestoreProof run is using the restore targets; nothing was done`, `restore error: no restore points for veeam_org_name`, `restore error: restore point <id> not found for veeam_org_name`, `cleanup error: <target>: the restore-target guard refused the target; nothing was deleted in it (target_guard)`, `check error: <message>; nothing was restored`, or a `check error: <message>` per target that couldn't be read back; after an error of a restore that had started, also `restore error: the restore had started: items may be in the restore targets (run <run ID>)`; for a run, the status line is on stdout and its warnings follow on stderr |
 | 5 | The thing tested failed. `restore` and `test`: the run's status is `fail` (W3.3): an item is missing or doesn't match, its target read fine and Veeam didn't blame infrastructure for it, whatever Veeam's own status says (`status fail: ...` on stdout). A result about the backup, not an error: a run that couldn't run at all or couldn't tell is `error`, 1 to 4. `signer verify` (W4.3): the folder is not verified (`not verified: <word>` on stdout): anything wrong inside the folder, a missing file included. A folder or a key file that can't be read at all is 1. | (nothing but the run's warnings) |
-| 64 | The command line isn't understood (for `test` also `--seed`, which it doesn't take, `--json` with `--evidence`, and `--outbox` without `--evidence`; for `outbox` no subcommand, an unknown one, or an option of the other one; for `signer verify` a missing, empty or repeated `<folder>` or `--public-key <pem file>`; for `vault` a missing name or account, or `--vault` without a file). For `restore` and `test` also, once the config or the manifest is read: every sample size 0, or a `--canary-cursor` out of the manifest's range; for `vault set` and `remove` a name that isn't one of the five. | the usage line; for `vault`, `usage error: the name must be one of veeam_username, veeam_password, graph_cert_pfx_base64, graph_cert_password, signing_key_base64`; for `restore`, `usage error: every sample size is 0 (--mail, --sp, --od, or config's sample_mail, sample_sp, sample_od): nothing to restore` or `usage error: --canary-cursor: the <kind> cursor must be below <n>, the manifest's <kind> canaries` (`... must be 0: the manifest has no <kind> canaries`) |
+| 64 | The command line isn't understood (for `test` also `--seed`, which it doesn't take, `--json` with `--evidence`, and `--outbox` without `--evidence`; for `outbox` no subcommand, an unknown one, or an option of the other one; for `signer verify` a missing, empty or repeated `<folder>` or `--public-key <pem file>`; for `vault` a missing name or account, or `--vault` without a file; for `service` no subcommand, an unknown one, a word too many, or `--config` without a path). For `restore` and `test` also, once the config or the manifest is read: every sample size 0, or a `--canary-cursor` out of the manifest's range; for `vault set` and `remove` a name that isn't one of the five. | the usage line; for `vault`, `usage error: the name must be one of veeam_username, veeam_password, graph_cert_pfx_base64, graph_cert_password, signing_key_base64`; for `restore`, `usage error: every sample size is 0 (--mail, --sp, --od, or config's sample_mail, sample_sp, sample_od): nothing to restore` or `usage error: --canary-cursor: the <kind> cursor must be below <n>, the manifest's <kind> canaries` (`... must be 0: the manifest has no <kind> canaries`) |
 
 The usage line is:
 
 ```
-usage: rpworker --version | rpworker config check [--config <path>] [--vault <file>] | rpworker vault set|remove <name> [--vault <file>] | rpworker vault list|test [--vault <file>] | rpworker vault grant <account> [--vault <file>] | rpworker veeam list [--config <path>] [--vault <file>] [--record <dir>] | rpworker graph list [--hash] [--config <path>] [--vault <file>] [--record <dir>] | rpworker restore [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--vault <file>] [--record <dir>] | rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--vault <file>] [--record <dir>] [--json <file> | --evidence <dir> [--outbox <root>]] | rpworker outbox flush [--config <path>] [--outbox <root>] [--record <dir>] | rpworker outbox list [--outbox <root>] | rpworker signer public-key [--vault <file>] | rpworker signer verify <folder> --public-key <pem file> [--tsa-ca <pem file>]
+usage: rpworker --version | rpworker config check [--config <path>] [--vault <file>] | rpworker vault set|remove <name> [--vault <file>] | rpworker vault list|test [--vault <file>] | rpworker vault grant <account> [--vault <file>] | rpworker veeam list [--config <path>] [--vault <file>] [--record <dir>] | rpworker graph list [--hash] [--config <path>] [--vault <file>] [--record <dir>] | rpworker restore [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--vault <file>] [--record <dir>] | rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--vault <file>] [--record <dir>] [--json <file> | --evidence <dir> [--outbox <root>]] | rpworker outbox flush [--config <path>] [--outbox <root>] [--record <dir>] | rpworker outbox list [--outbox <root>] | rpworker signer public-key [--vault <file>] | rpworker signer verify <folder> --public-key <pem file> [--tsa-ca <pem file>] | rpworker service install [--config <path>] | rpworker service uninstall|start|stop | rpworker service run [--config <path>]
 ```

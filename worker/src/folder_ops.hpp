@@ -1,7 +1,7 @@
 #pragma once
 
-// The outbox's calls into the file system (W4.6, docs/decisions.md 2026-10-07
-// point 8): one Win32 or std::filesystem call each, with nothing decided
+// The outbox's calls into the file system: W4.6, docs/decisions.md 2026-10-07
+// point 8; one Win32 or std::filesystem call each, with nothing decided
 // here. rp::Outbox (strict) takes them as rp::OutboxFiles, so its own branches
 // are tested with a fake in their place.
 

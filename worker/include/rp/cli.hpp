@@ -101,7 +101,7 @@ inline constexpr std::string_view kCliUsage =
 // `restore` and `test`, 64 with a "usage error: ..." line for all-zero sample sizes or a
 // canary cursor out of range), and the command's own code when it fails. No exception escapes: one a command lets
 // out is "error: unexpected failure" on `err` and exit code 1, never a crash,
-// whose abort() would exit with 3 (exit_code::transient).
+// which the runtime would end with exit code 3 (exit_code::transient).
 int run_cli(std::span<const std::string_view> args, std::ostream& out,
             std::ostream& err) noexcept;
 

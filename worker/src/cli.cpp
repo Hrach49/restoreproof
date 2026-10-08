@@ -24,8 +24,8 @@ namespace {
 
 // Runs `command` and returns its exit code. An exception it lets out is
 // reported without its message, which may not be safe to show, as exit code 1:
-// escaping wmain it would end in abort(), whose exit code on Windows, 3, is
-// exit_code::transient.
+// escaping wmain it would end the process through the runtime's terminate
+// handler, whose exit code on Windows, 3, is exit_code::transient.
 template <typename Command>
 int guarded(std::ostream& err, Command&& command) noexcept
 {

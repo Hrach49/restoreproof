@@ -85,8 +85,11 @@ struct RunningRecord {
     // With close_as: `internal`, the run folder's word (not_written, changed,
     // holds_secret, not_signed, invalid); `job_invalid`, the jobs reader's
     // word for the key at fault; `result_invalid`, how the run itself had
-    // ended (ended_detail), or nothing when that isn't known. Nothing
-    // without close_as.
+    // ended (ended_detail), or nothing when that isn't known. Without
+    // close_as: nothing. And one more word, written by
+    // with_changed_text_files after a close that itself found a text file
+    // changed: `changed` without close_as and for `internal`, and
+    // "<ending>; changed" for `result_invalid`.
     std::optional<std::string> close_detail;
     // {type, api}, once the run line is out.
     std::optional<connector::ConnectorInfo> connector;
@@ -139,6 +142,16 @@ RunningRecord with_restore_request(RunningRecord record,
 RunningRecord with_close(RunningRecord record, CloseAs close_as,
                          std::optional<std::string> detail);
 
+// After a close that itself answered `changed` (a text file altered between
+// its hash and the read back): the record says so, so that the next try
+// replaces both text files by their empty forms, and the code the run is
+// closed with stays what it was. Without close_as, and for `internal`,
+// close_detail becomes `changed`; for `result_invalid` the ending gets
+// "; changed" after it ("error" standing for an ending that isn't known);
+// a job_invalid record is unchanged (its text files are always replaced).
+// Applied twice it gives the same record.
+RunningRecord with_changed_text_files(RunningRecord record);
+
 // close_detail for close_as result_invalid: how the run itself had ended,
 // "pass", "fail", "error <code>" for a code of verification::error_codes(),
 // else "error" (PipelineReport's replaced_status and replaced_code).
@@ -155,7 +168,7 @@ std::string record_text(const RunningRecord& record);
 // object within the schema's lengths, its client_id null; `client_id` null
 // or 1 to 128 printable ASCII characters; `close_as` null or its three
 // words, job_invalid exactly when `kind` is; `close_detail` as RunningRecord
-// says; `connector` null or {type "veeam_m365", api at most 64 bytes};
+// says (so null or `changed` without close_as); `connector` null or {type "veeam_m365", api at most 64 bytes};
 // `restore_point` null or two strings of at most 1024 bytes;
 // `restore_requested_at` a time exactly when restore_requested is true;
 // `sessions` strings of 1 to 128 printable ASCII characters; `started_at`
@@ -248,8 +261,9 @@ struct ClosePlan {
     std::vector<std::string> remove;
     bool remove_temp_files = false;
     // items.csv and veeam-session.log: kept as they are (one that isn't
-    // there written in its empty form), or, when the run had found one
-    // changed after it hashed it, both replaced by their empty forms.
+    // there written in its empty form), or both replaced by their empty
+    // forms: when the run, or an earlier close, had found one changed after
+    // it hashed it, and always for a job that is no job.
     bool replace_text_files = false;
     // interrupted without close_as, else close_as.
     std::string code;

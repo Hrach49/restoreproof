@@ -277,7 +277,9 @@ TEST_CASE("a record with a key missing, one too many or a wrong kind or word is 
         {"client_id a number", set("/client_id", 5)},
         {"an unknown close_as", set("/close_as", "interrupted")},
         {"close_as a number", set("/close_as", 1)},
-        {"close_detail without close_as", set("/close_detail", "changed")},
+        {"a folder's word without close_as that isn't changed",
+         set("/close_detail", "not_signed")},
+        {"an ending without close_as", set("/close_detail", "pass")},
         {"close_detail a number", set("/close_detail", 1)},
         {"internal without its word", set("/close_as", "internal")},
         {"internal with another word",
@@ -290,6 +292,14 @@ TEST_CASE("a record with a key missing, one too many or a wrong kind or word is 
          both(set("/close_as", "result_invalid"), set("/close_detail", "pass config"))},
         {"result_invalid with error and a blank",
          both(set("/close_as", "result_invalid"), set("/close_detail", "error "))},
+        {"result_invalid with changed and no ending",
+         both(set("/close_as", "result_invalid"), set("/close_detail", "; changed"))},
+        {"result_invalid with changed alone",
+         both(set("/close_as", "result_invalid"), set("/close_detail", "changed"))},
+        {"result_invalid with changed twice",
+         both(set("/close_as", "result_invalid"), set("/close_detail", "pass; changed; changed"))},
+        {"result_invalid with changed after no ending",
+         both(set("/close_as", "result_invalid"), set("/close_detail", "errors; changed"))},
         {"job_invalid for a run",
          both(set("/close_as", "job_invalid"), set("/close_detail", "sample_mail"))},
         {"kind job_invalid without close_as", set("/kind", "job_invalid")},
@@ -370,6 +380,12 @@ TEST_CASE("a record reads with each word and each null it may hold", "[service_r
         {"an empty client", [](RunningRecord& record) { record.client = {}; }},
         {"a tenant's name that isn't ASCII",
          [](RunningRecord& record) { record.client.veeam_org_name = "caf\xC3\xA9"; }},
+        {"interrupted, a text file changed at the close",
+         [](RunningRecord& record) { record.close_detail = "changed"; }},
+        {"result_invalid after pass, a text file changed at the close",
+         closed(CloseAs::result_invalid, "pass; changed")},
+        {"result_invalid after error graph_transient, a text file changed at the close",
+         closed(CloseAs::result_invalid, "error graph_transient; changed")},
         {"internal not_written", closed(CloseAs::internal, "not_written")},
         {"internal changed", closed(CloseAs::internal, "changed")},
         {"internal holds_secret", closed(CloseAs::internal, "holds_secret")},
@@ -780,7 +796,26 @@ std::vector<CodeRow> code_rows()
          rp::new_job_invalid_record("job-0001", std::string{"client-7"}, short_config(),
                                     at(kTaken), "sample_mail"),
          "job_invalid", "the job isn't a valid job (sample_mail); nothing was done", false,
-         false},
+         // Nothing in the folder of a job that is no job is a run's evidence.
+         true},
+        {"interrupted, a text file changed at an earlier close",
+         rp::with_changed_text_files(requested()), "interrupted",
+         "the run was interrupted before its result was written; a restore request may have "
+         "been sent, so items may be in the restore targets",
+         true, true},
+        {"result_invalid after fail, a text file changed at an earlier close",
+         rp::with_changed_text_files(closed(requested(), CloseAs::result_invalid, "fail")),
+         "result_invalid", invalid + "fail", true, true},
+        {"result_invalid after error graph_auth, a text file changed at an earlier close",
+         rp::with_changed_text_files(
+             closed(not_requested, CloseAs::result_invalid, "error graph_auth")),
+         "result_invalid", invalid + "error graph_auth", false, true},
+        {"result_invalid, the ending not known, a text file changed at an earlier close",
+         rp::with_changed_text_files(closed(requested(), CloseAs::result_invalid, std::nullopt)),
+         "result_invalid", invalid + "error", true, true},
+        {"internal not_signed, a text file changed at an earlier close",
+         rp::with_changed_text_files(closed(requested(), CloseAs::internal, "not_signed")),
+         "internal", internal, true, true},
     };
     for (const char* word : {"not_written", "changed", "holds_secret", "not_signed", "invalid"}) {
         const bool changed = std::string_view{word} == "changed";
@@ -857,6 +892,49 @@ TEST_CASE("the result written afterwards, for each code, is valid restoreproof.r
         CHECK(document["restore_point"] ==
               json{{"id", ""}, {"backup_time_raw", ""}, {"backup_time", nullptr}});
     }
+}
+
+TEST_CASE("a close that found a text file changed is on record without changing what the run "
+          "is closed as",
+          "[service_recovery]")
+{
+    struct Row {
+        std::optional<CloseAs> close_as;
+        std::optional<std::string> detail;
+        std::optional<std::string> afterwards;
+    };
+    const Row row = GENERATE(
+        Row{std::nullopt, std::nullopt, "changed"},
+        Row{CloseAs::internal, "not_signed", "changed"},
+        Row{CloseAs::internal, "changed", "changed"},
+        Row{CloseAs::result_invalid, "pass", "pass; changed"},
+        Row{CloseAs::result_invalid, "error graph", "error graph; changed"},
+        Row{CloseAs::result_invalid, std::nullopt, "error; changed"});
+    CAPTURE(row.detail, row.afterwards);
+    RunningRecord record = requested();
+    record.close_as = row.close_as;
+    record.close_detail = row.detail;
+
+    const RunningRecord next = rp::with_changed_text_files(record);
+
+    CHECK(next.close_as == row.close_as);
+    CHECK(next.close_detail == row.afterwards);
+    // Nothing else, a record that reads, and the same when written twice.
+    RunningRecord same = next;
+    same.close_detail = record.close_detail;
+    CHECK(same == record);
+    CHECK(rp::parse_record(rp::record_text(next)) == next);
+    CHECK(rp::with_changed_text_files(next) == next);
+    CHECK(rp::plan_close(next, {}).replace_text_files);
+    CHECK(rp::plan_close(next, {}).code == rp::plan_close(record, {}).code);
+}
+
+TEST_CASE("a job that is no job has nothing to put on record for changed text files",
+          "[service_recovery]")
+{
+    const RunningRecord record = rp::new_job_invalid_record(
+        "job-0001", std::string{"client-7"}, short_config(), at(kTaken), "sample_mail");
+    CHECK(rp::with_changed_text_files(record) == record);
 }
 
 TEST_CASE("a plan the schema doesn't take gives no result", "[service_recovery]")
@@ -1036,6 +1114,7 @@ TEST_CASE("a close in point 7's order, the tail handed the result written afterw
                                             "unknown key");
         calls = {"look", "make_folder", "finish"};
         code = "job_invalid";
+        replace = true;
     }
     SECTION("an empty folder is closed as it is")
     {

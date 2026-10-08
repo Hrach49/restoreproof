@@ -648,10 +648,12 @@ FlushReport Outbox::flush(IUploader& uploader, std::chrono::system_clock::time_p
             error(shown(folder) + ": " + changed + " changed since it was signed");
             // Written once: a manifest that already says so is left as it is,
             // so a run kept for the operator costs no write per flush.
-            const std::string before = manifest_text(manifest);
-            manifest.last_error = std::string{upload_code::kFolderChanged};
-            if (const std::string after = manifest_text(manifest); after != before) {
-                static_cast<void>(files.write_manifest(manifest_file, after));
+            {
+                const std::string before = manifest_text(manifest);
+                manifest.last_error = std::string{upload_code::kFolderChanged};
+                if (const std::string after = manifest_text(manifest); after != before) {
+                    static_cast<void>(files.write_manifest(manifest_file, after));
+                }
             }
             report.out.push_back("kept " + id + ": " + std::string{upload_code::kFolderChanged});
             continue;

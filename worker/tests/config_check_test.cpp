@@ -90,7 +90,8 @@ std::string expected_settings(const std::filesystem::path& path, std::string_vie
                               std::string_view screenshots = "false",
                               std::string_view tsa_url = "(not set)",
                               std::string_view tsa_ca_file = "(not set)",
-                              std::string_view cloud_ca_file = "(not set)")
+                              std::string_view cloud_ca_file = "(not set)",
+                              std::string_view jobs_file = "(not set)")
 {
     return "config file: " + utf8(path) + "\n" +
            "cloud_url                 https://cloud.example.invalid\n"
@@ -114,6 +115,7 @@ std::string expected_settings(const std::filesystem::path& path, std::string_vie
            "\n" + "tsa_url                   " + std::string{tsa_url} + "\n" +
            "tsa_ca_file               " + std::string{tsa_ca_file} + "\n" +
            "cloud_ca_file             " + std::string{cloud_ca_file} + "\n" +
+           "jobs_file                 " + std::string{jobs_file} + "\n" +
            "screenshots_enabled       " + std::string{screenshots} + "\n";
 }
 
@@ -496,6 +498,42 @@ TEST_CASE("rpworker config check prints the Cloud's CA file when it is set",
                                             "(not set)", ca) +
                               expected_secrets(lab.vault, kNoSecrets));
     REQUIRE(result.exit_code == 0);
+}
+
+// W4.8: the stub job source. Its file needn't be there for the check.
+TEST_CASE("rpworker config check prints the jobs file when it is set, there or not",
+          "[config_check][jobs]")
+{
+    Lab lab;
+    const std::string jobs = utf8(lab.dir.path() / "no-such-jobs.json");
+    nlohmann::json doc = nlohmann::json::parse(kConfigJson);
+    doc["jobs_file"] = jobs;
+    const auto path = lab.dir.write("config.json", doc.dump());
+    lab.default_config = [path] { return path; };
+
+    const Run result = lab.run(Args{"check"});
+    REQUIRE(result.err.empty());
+    REQUIRE(result.out == expected_settings(path, "(not set)", "(not set)", "false", "(not set)",
+                                            "(not set)", "(not set)", jobs) +
+                              expected_secrets(lab.vault, kNoSecrets));
+    REQUIRE(result.exit_code == 0);
+}
+
+TEST_CASE("rpworker config check refuses a jobs_file that isn't an absolute path",
+          "[config_check][jobs]")
+{
+    Lab lab;
+    nlohmann::json doc = nlohmann::json::parse(kConfigJson);
+    doc["jobs_file"] = "jobs.json";
+    const auto path = lab.dir.write("config.json", doc.dump());
+    lab.default_config = [path] { return path; };
+
+    const Run result = lab.run(Args{"check"});
+    CHECK(result.out.empty());
+    CHECK(result.err == "config error: " + utf8(path) +
+                            ": config key \"jobs_file\" must be an absolute path, such as "
+                            "C:\\ProgramData\\RestoreProof\\jobs.json\n");
+    CHECK(result.exit_code == 1);
 }
 
 TEST_CASE("rpworker config check prints screenshots_enabled as true or false", "[config_check]")

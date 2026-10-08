@@ -1423,3 +1423,81 @@ TEST_CASE("load_config takes a cloud_ca_file that is there and holds a certifica
 
     CHECK(rp::load_config(path).cloud_ca_file == utf8(ca));
 }
+
+// --- W4.8: the jobs file and the service's folders ------------------------------------
+
+TEST_CASE("without jobs_file the config has none", "[config][jobs]")
+{
+    CHECK_FALSE(rp::parse_config(valid_doc().dump()).jobs_file);
+}
+
+TEST_CASE("parse_config rejects a jobs_file that isn't an absolute path", "[config][jobs]")
+{
+    const std::string value =
+        GENERATE("jobs.json", ".\\jobs.json", "..\\jobs.json", "\\jobs.json", "C:jobs.json",
+                 "state/jobs.json");
+    CAPTURE(value);
+    json doc = valid_doc();
+    doc["jobs_file"] = value;
+
+    const rp::ConfigError e = parse_error(doc.dump());
+
+    CHECK(e.key() == "jobs_file");
+    CHECK(std::string{e.what()} == "config key \"jobs_file\" must be an absolute path, such as "
+                                   "C:\\ProgramData\\RestoreProof\\jobs.json");
+}
+
+TEST_CASE("jobs_file is a string, empty is refused, and it is checked after cloud_ca_file and "
+          "before screenshots_enabled",
+          "[config][jobs]")
+{
+    json doc = valid_doc();
+    doc["jobs_file"] = 1;
+    CHECK(parse_error(doc.dump()).key() == "jobs_file");
+    doc["jobs_file"] = nullptr;
+    CHECK(parse_error(doc.dump()).key() == "jobs_file");
+    doc["jobs_file"] = "";
+    CHECK(parse_error(doc.dump()).key() == "jobs_file");
+    doc["screenshots_enabled"] = "yes";
+    CHECK(parse_error(doc.dump()).key() == "jobs_file");
+    doc["cloud_ca_file"] = "cloud-ca.pem";
+    CHECK(parse_error(doc.dump()).key() == "cloud_ca_file");
+}
+
+TEST_CASE("parse_config takes an absolute jobs_file, on a drive or a share", "[config][jobs]")
+{
+    const std::string value = GENERATE("C:\\ProgramData\\RestoreProof\\jobs.json",
+                                       "\\\\server\\share\\jobs.json", "D:/lab/jobs.json");
+    json doc = valid_doc();
+    doc["jobs_file"] = value;
+
+    CHECK(rp::parse_config(doc.dump()).jobs_file == value);
+}
+
+TEST_CASE("load_config never opens the jobs file: one that isn't there, a folder and text that "
+          "is no jobs document all load",
+          "[config][jobs]")
+{
+    const rp::test::TempDir dir;
+    const std::filesystem::path jobs = dir.path() / "jobs.json";
+    json doc = valid_doc();
+    doc["jobs_file"] = utf8(jobs);
+    const std::filesystem::path path = dir.write("config.json", doc.dump());
+
+    SECTION("not there") {}
+    SECTION("a folder") { std::filesystem::create_directory(jobs); }
+    SECTION("not a jobs document") { dir.write("jobs.json", "SENTINEL-jobs"); }
+
+    CHECK(rp::load_config(path).jobs_file == utf8(jobs));
+}
+
+TEST_CASE("the service's runs root and state folder are in RestoreProof under ProgramData",
+          "[config][jobs]")
+{
+    const std::filesystem::path home = rp::default_config_path().parent_path();
+
+    CHECK(rp::default_runs_root() == rp::program_data_dir() / "RestoreProof" / "runs");
+    CHECK(rp::default_state_dir() == rp::program_data_dir() / "RestoreProof" / "state");
+    CHECK(rp::default_runs_root().parent_path() == home);
+    CHECK(rp::default_state_dir().parent_path() == home);
+}

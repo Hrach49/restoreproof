@@ -95,6 +95,8 @@ constexpr std::string_view kTsaUrlKey = "tsa_url";
 constexpr std::string_view kTsaCaFileKey = "tsa_ca_file";
 // The Cloud's CA file (W4.6), checked after them.
 constexpr std::string_view kCloudCaFileKey = "cloud_ca_file";
+// The service's stub job source (W4.8), checked after them.
+constexpr std::string_view kJobsFileKey = "jobs_file";
 // The one boolean (W4.2), checked last.
 constexpr std::string_view kScreenshotsKey = "screenshots_enabled";
 
@@ -146,7 +148,8 @@ bool is_known_key(std::string_view key)
     return std::any_of(kRequiredStrings.begin(), kRequiredStrings.end(), named) ||
            std::any_of(kIntFields.begin(), kIntFields.end(), named) || key == kLogLevel.key ||
            key == kCaFileKey || key == kCertSha256Key || key == kTsaUrlKey ||
-           key == kTsaCaFileKey || key == kCloudCaFileKey || key == kScreenshotsKey;
+           key == kTsaCaFileKey || key == kCloudCaFileKey || key == kJobsFileKey ||
+           key == kScreenshotsKey;
 }
 
 bool looks_like_secret(std::string_view key)
@@ -370,6 +373,21 @@ void read_cloud_ca_file(const json& doc, Config& config)
     config.cloud_ca_file = *value;
 }
 
+// The stub job source's file (W4.8): where it is, never what it holds. The
+// file needn't exist, so nothing here or in load_config opens it.
+void read_jobs_file(const json& doc, Config& config)
+{
+    const std::string* value = find_string(doc, kJobsFileKey, false);
+    if (value == nullptr) {
+        return;
+    }
+    if (!is_absolute_path(*value)) {
+        throw key_error(kJobsFileKey, "must be an absolute path, such as "
+                                      "C:\\ProgramData\\RestoreProof\\jobs.json");
+    }
+    config.jobs_file = *value;
+}
+
 // After read_ca_file: the pin names a certificate that veeam_ca_file holds,
 // so it means nothing without it. Whether the file really holds it is
 // load_config's check, since parse_config never opens files.
@@ -564,6 +582,7 @@ Config parse_config(std::string_view json_text)
     read_cert_sha256(doc, config);
     read_tsa(doc, config);
     read_cloud_ca_file(doc, config);
+    read_jobs_file(doc, config);
     read_screenshots_enabled(doc, config);
 
     if (config.sample_mail == 0 && config.sample_sp == 0 && config.sample_od == 0) {
@@ -659,6 +678,16 @@ std::filesystem::path program_data_dir()
 std::filesystem::path default_config_path()
 {
     return program_data_dir() / "RestoreProof" / "config.json";
+}
+
+std::filesystem::path default_runs_root()
+{
+    return program_data_dir() / "RestoreProof" / "runs";
+}
+
+std::filesystem::path default_state_dir()
+{
+    return program_data_dir() / "RestoreProof" / "state";
 }
 
 } // namespace rp

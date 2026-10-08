@@ -18,6 +18,10 @@
 #include <string_view>
 #include <vector>
 
+namespace spdlog {
+class logger;
+}
+
 namespace rp {
 
 inline constexpr std::string_view kResultsPath = "/v1/results";
@@ -56,7 +60,10 @@ private:
 // The HTTP client the Cloud is reached through: TLS verified against the
 // Windows certificate store, or, with config's cloud_ca_file, against that
 // PEM file in its place (the host name checked either way; nothing turns
-// verification off), logging warnings and worse to stderr.
-std::unique_ptr<IHttpClient> make_cloud_http_client(const Config& config);
+// verification off). It logs to `logger`; null is the commands' logger,
+// warnings and worse to stderr, which the service, having no stderr, replaces
+// with its own (W4.8 point 12).
+std::unique_ptr<IHttpClient>
+make_cloud_http_client(const Config& config, std::shared_ptr<spdlog::logger> logger = nullptr);
 
 } // namespace rp

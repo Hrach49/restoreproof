@@ -551,12 +551,17 @@ std::optional<Replacement> match_private_key(std::string_view text, std::size_t 
 // of a PEM private key block that starts inside it. Such a value ends at a
 // blank or at the line's end, which is inside "-----BEGIN PRIVATE KEY-----" or
 // right after it; the scan would go on behind the header, and the key's own
-// lines would stay as they are.
+// lines would stay as they are. A value that ran to its line's end (a
+// header's, a "name: value" one) runs to the end of the block's last line
+// too: what stands after "-----END ...-----" there would be the value's on a
+// second pass, and redacting twice must be redacting once (W4.7: the
+// service's log redacts every line again in its sink).
 Replacement through_private_key(std::string_view text, Replacement r)
 {
+    const bool to_line_end = end_of_line(text, r.to) == r.to;
     for (std::size_t p = r.from; p < r.to; ++p) {
         if (const auto block = match_private_key(text, p); block && block->to > r.to) {
-            r.to = block->to;
+            r.to = to_line_end ? end_of_line(text, block->to) : block->to;
             break;
         }
     }

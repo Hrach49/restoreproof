@@ -44,7 +44,9 @@ const std::string kUsage =
     "rpworker outbox flush [--config <path>] [--outbox <root>] [--record <dir>] | "
     "rpworker outbox list [--outbox <root>] | "
     "rpworker signer public-key [--vault <file>] | "
-    "rpworker signer verify <folder> --public-key <pem file> [--tsa-ca <pem file>]\n";
+    "rpworker signer verify <folder> --public-key <pem file> [--tsa-ca <pem file>] | "
+    "rpworker service install [--config <path>] | rpworker service uninstall|start|stop | "
+    "rpworker service run [--config <path>]\n";
 
 const std::string kNames = "veeam_username, veeam_password, graph_cert_pfx_base64, "
                            "graph_cert_password, signing_key_base64";

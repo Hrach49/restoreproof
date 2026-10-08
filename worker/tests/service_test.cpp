@@ -239,13 +239,15 @@ TEST_CASE("service run: with no host handed in, the real dispatcher refuses a pr
 {
     // Every host function null = the real one. rptests wasn't started by the
     // SCM, so the real dispatcher answers 1063 at once and runs nothing: no
-    // handler, no report, no exit.
+    // handler, no report, no exit. (1056 when another test of this process
+    // has called it before: rp::test::next_real_dispatcher_answer.)
+    const unsigned long expected = rp::test::next_real_dispatcher_answer();
     rp::Service service;
 
     const rp::ServiceRun run = service.run();
 
     CHECK(run.exit_code == 1);
-    CHECK(run.dispatcher_error == rp::kNotStartedByScm);
+    CHECK(run.dispatcher_error == expected);
 }
 
 TEST_CASE("service: a handler that can't be registered ends the process, nothing reported",

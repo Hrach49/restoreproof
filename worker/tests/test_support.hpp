@@ -177,4 +177,20 @@ protected:
     std::streamsize xsputn(const char*, std::streamsize) override { return 0; }
 };
 
+// What Windows' real service dispatcher answers the call a test is about to
+// make (W4.7): 1063 to the first one of a process the Service Control Manager
+// didn't start, and 1056 ("an instance of the service is already running") to
+// every later one in that process, the main function run by neither. ctest
+// runs each test case in a process of its own, the coverage run all of them
+// in one, so every test that calls the real dispatcher asks here, right
+// before it does, and holds the answer to exactly this. Only the test's own
+// thread calls it.
+inline unsigned long next_real_dispatcher_answer()
+{
+    static bool called = false;
+    const unsigned long answer = called ? 1056ul : 1063ul;
+    called = true;
+    return answer;
+}
+
 } // namespace rp::test

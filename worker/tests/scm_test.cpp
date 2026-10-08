@@ -151,10 +151,14 @@ TEST_CASE("a name that isn't UTF-8 is refused before the SCM is asked", "[scm]")
 TEST_CASE("the dispatcher refuses a process the SCM didn't start with error 1063", "[scm]")
 {
     std::atomic<int> runs{0};
+    // 1063 for the process's first call; Windows answers a later one 1056
+    // (seen when every test case runs in one process, as the coverage run's).
+    const unsigned long expected = rp::test::next_real_dispatcher_answer();
 
     const unsigned long error = rp::scm::run_dispatcher(kTestService, [&runs] { ++runs; });
 
-    CHECK(error == kNotStartedByTheScm);
+    CHECK(error == expected);
+    CHECK((expected == kNotStartedByTheScm || expected == 1056ul));
     CHECK(runs == 0);
 }
 

@@ -1,9 +1,11 @@
 #pragma once
 
-// The running service's tests (rp::Service, W4.7 points 5 and 6): a fake
-// rp::ServiceHost in place of the Service Control Manager, and a Lab with a
-// temp folder for the log and the config. No test touches the machine's real
-// service or %ProgramData%, and none really waits out the stop's budget.
+// The service's tests (W4.7). For the running service (rp::Service, points 5
+// and 6): a fake rp::ServiceHost in place of the Service Control Manager, and
+// a Lab with a temp folder for the log and the config. For the commands
+// (rp::run_service_command, point 2), at the end: FakeScm, a fake SCM with a
+// clock and a sleep. No test touches the machine's real service or
+// %ProgramData%, and none really waits out the stop's budget.
 //
 // The fake host records every call in order, under a lock. Its dispatcher runs
 // the service's main function on a thread of its own and returns when that
@@ -16,11 +18,13 @@
 #include "test_support.hpp"
 
 #include <rp/service.hpp>
+#include <rp/service_command.hpp>
 #include <rp/service_log.hpp>
 #include <rp/stop_signal.hpp>
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -28,6 +32,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -451,6 +456,167 @@ struct Lab {
 private:
     std::thread runner_;
     rp::ServiceRun result_;
+};
+
+// --- The commands' fake SCM (rp::run_service_command, W4.7 point 2) ----------
+
+// One answer to "what is the service's state".
+struct QueryAnswer {
+    rp::ScmResult result;
+    rp::ServiceStatus status;
+};
+
+inline QueryAnswer in_state(rp::ServiceState state, unsigned long win32_exit_code = 0,
+                            unsigned long service_exit_code = 0)
+{
+    QueryAnswer answer;
+    answer.status.state = state;
+    answer.status.win32_exit_code = win32_exit_code;
+    answer.status.service_exit_code = service_exit_code;
+    return answer;
+}
+
+inline QueryAnswer query_error(unsigned long error, rp::ScmStep step = rp::ScmStep::call)
+{
+    QueryAnswer answer;
+    answer.result = {error, step};
+    return answer;
+}
+
+// A Service Control Manager, a clock and a sleep for the commands: each call
+// answers what the test scripted for it and is recorded, in order, as one
+// word. Nothing of Windows is touched, and no time really passes: the clock
+// moves only by what `sleep` is asked for and by `call_cost` per SCM call.
+// The commands run on the test's thread, so nothing here is locked.
+class FakeScm {
+public:
+    // What each call answers, in the order it is made; the last answer
+    // repeats, and none means "it worked".
+    std::vector<rp::ScmResult> create;
+    std::vector<rp::ScmResult> description;
+    std::vector<rp::ScmResult> recovery;
+    std::vector<rp::ScmResult> remove;
+    std::vector<rp::ScmResult> start;
+    std::vector<rp::ScmResult> stop;
+    // None: stopped, with no error.
+    std::vector<QueryAnswer> queries;
+    // Windows' code for making the log folder; 0: made.
+    unsigned long make_folder_error = 0;
+    // What the dispatcher answers; the main function is never run.
+    unsigned long dispatcher_error = rp::kNotStartedByScm;
+    // What every SCM call takes on the fake clock.
+    std::chrono::milliseconds call_cost{0};
+
+    std::filesystem::path own_path{R"(C:\Program Files\RestoreProof\rpworker.exe)"};
+    std::filesystem::path log_dir{R"(C:\ProgramData\RestoreProof\logs)"};
+
+    // Every call in order: "create", "make_folder <path>", "set_description",
+    // "set_recovery", "delete", "start", "stop", "query", "sleep <ms>",
+    // "dispatcher". A call for a service of another name carries that name.
+    std::vector<std::string> calls;
+    std::vector<rp::ServiceSetup> created;
+    std::vector<std::string> descriptions;
+    std::vector<std::vector<rp::ServiceAction>> actions;
+    std::vector<unsigned long> reset_periods;
+    std::chrono::milliseconds clock{0};
+
+    FakeScm() = default;
+    FakeScm(const FakeScm&) = delete;
+    FakeScm& operator=(const FakeScm&) = delete;
+
+    rp::ServiceCommandEnv env()
+    {
+        rp::ServiceCommandEnv out;
+        out.scm.create_service = [this](const rp::ServiceSetup& setup) {
+            created.push_back(setup);
+            return scm_call("create", setup.name, create);
+        };
+        out.scm.set_description = [this](std::string_view name, std::string_view text) {
+            descriptions.emplace_back(text);
+            return scm_call("set_description", name, description);
+        };
+        out.scm.set_recovery = [this](std::string_view name,
+                                      const std::vector<rp::ServiceAction>& list,
+                                      unsigned long reset_period_s) {
+            actions.push_back(list);
+            reset_periods.push_back(reset_period_s);
+            return scm_call("set_recovery", name, recovery);
+        };
+        out.scm.delete_service = [this](std::string_view name) {
+            return scm_call("delete", name, remove);
+        };
+        out.scm.start_service = [this](std::string_view name) {
+            return scm_call("start", name, start);
+        };
+        out.scm.stop_service = [this](std::string_view name) {
+            return scm_call("stop", name, stop);
+        };
+        out.scm.query_service = [this](std::string_view name, rp::ServiceStatus& status) {
+            record("query", name);
+            clock += call_cost;
+            const QueryAnswer answer = queries.empty()
+                                           ? QueryAnswer{}
+                                           : queries[std::min(asked_, queries.size() - 1)];
+            ++asked_;
+            if (answer.result.error == 0) {
+                status = answer.status;
+            }
+            return answer.result;
+        };
+        out.host.run_dispatcher = [this](std::string_view name, rp::ServiceMainFunction) {
+            record("dispatcher", name);
+            return dispatcher_error;
+        };
+        out.own_path = [this] { return own_path; };
+        out.default_log_dir = [this] { return log_dir; };
+        // Never the machine's own.
+        out.default_config_path = [] { return std::filesystem::path{R"(C:\no\such\config.json)"}; };
+        out.make_folder = [this](const std::filesystem::path& folder) {
+            calls.push_back("make_folder " + utf8_of(folder));
+            return make_folder_error;
+        };
+        out.sleep = [this](std::chrono::milliseconds time) {
+            calls.push_back("sleep " + std::to_string(time.count()));
+            clock += time;
+        };
+        out.now = [this] { return std::chrono::steady_clock::time_point{} + clock; };
+        return out;
+    }
+
+    // How many calls of that word were made.
+    std::size_t count(std::string_view call) const
+    {
+        std::size_t n = 0;
+        for (const std::string& made : calls) {
+            n += made == call ? 1 : 0;
+        }
+        return n;
+    }
+
+private:
+    void record(std::string_view call, std::string_view name)
+    {
+        std::string text{call};
+        if (name != rp::kServiceName) {
+            text += " " + std::string{name};
+        }
+        calls.push_back(std::move(text));
+    }
+
+    rp::ScmResult scm_call(std::string_view call, std::string_view name,
+                           const std::vector<rp::ScmResult>& answers)
+    {
+        record(call, name);
+        clock += call_cost;
+        std::size_t& made = made_[std::string{call}];
+        const rp::ScmResult answer =
+            answers.empty() ? rp::ScmResult{} : answers[std::min(made, answers.size() - 1)];
+        ++made;
+        return answer;
+    }
+
+    std::map<std::string, std::size_t> made_;
+    std::size_t asked_ = 0;
 };
 
 } // namespace rp::test::service_lab

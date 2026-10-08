@@ -30,7 +30,13 @@ inline constexpr int ok = 0;
 // that can't be opened or a --public-key file that can't be read or isn't an
 // Ed25519 public key in PEM (`verify`), and an answer that didn't reach
 // stdout. For `rpworker vault` (W4.5): a vault that can't be used, and a
-// value `set` refuses.
+// value `set` refuses. For `rpworker service` (W4.7): every "service error"
+// not named under 3 (access denied, a service that isn't installed or is
+// already, a step of `install` that failed, a service that stopped while
+// starting, `run` in a process the Service Control Manager didn't start), an
+// answer that didn't reach stdout, and, under the Service Control Manager, a
+// `run` that didn't end in a clean stop (nobody reads that one: the SCM reads
+// the status the service reported).
 inline constexpr int config = 1;
 // The service refused the credentials, the account's role, the token or a
 // permission: Veeam's AuthError, Graph's AuthError and PermissionError (whose
@@ -40,7 +46,11 @@ inline constexpr int auth = 2;
 // The service couldn't be reached or asked to try later: no connection, a
 // timeout, a TLS handshake failure, 502/503/504 (and Graph's 429 and other
 // 5xx) after the retries (Veeam's and Graph's TransientError). For `restore`
-// and `test`: status error backup_transient or graph_transient.
+// and `test`: status error backup_transient or graph_transient. For `rpworker
+// outbox flush` (W4.6): a run is left queued, or another flush is running.
+// For `rpworker service` (W4.7): not yet, and trying again may do it: the
+// service still starting or still stopping when the wait is up, stopping
+// when asked to start, or marked for deletion.
 inline constexpr int transient = 3;
 // Any other error from the service (Veeam's or Graph's NotFoundError
 // included, a certificate that fails verification: TLS failures that aren't a
@@ -52,7 +62,8 @@ inline constexpr int transient = 3;
 // code not named under 1, 2 or 3 (rp/run_status.hpp's error_codes():
 // not_in_backup, no_restore_point, target_guard, backup,
 // backup_infrastructure, graph, stale_target, empty_sample, not_run,
-// restore_contradiction).
+// restore_contradiction). The service here is Veeam or Graph, never the
+// Windows service: `rpworker service` doesn't use this code.
 inline constexpr int service = 4;
 // The thing tested failed. For `rpworker restore` and `rpworker test`: the
 // run's status is `fail` (W3.3, rp/run_status.hpp): an item is missing or a
@@ -87,13 +98,16 @@ inline constexpr std::string_view kCliUsage =
     "rpworker outbox flush [--config <path>] [--outbox <root>] [--record <dir>] | "
     "rpworker outbox list [--outbox <root>] | "
     "rpworker signer public-key [--vault <file>] | "
-    "rpworker signer verify <folder> --public-key <pem file> [--tsa-ca <pem file>]\n";
+    "rpworker signer verify <folder> --public-key <pem file> [--tsa-ca <pem file>] | "
+    "rpworker service install [--config <path>] | rpworker service uninstall|start|stop | "
+    "rpworker service run [--config <path>]\n";
 
 // rpworker's command line: `--version`, `config ...` (rp/config_check.hpp),
 // `vault ...` (rp/vault_command.hpp, W4.5), `veeam ...`
 // (rp/veeam_command.hpp), `graph ...` (rp/graph_command.hpp), `restore ...`
 // (rp/restore_command.hpp), `test ...` (rp/test_command.hpp), `outbox ...`
-// (rp/outbox_command.hpp, W4.6) or `signer ...` (rp/signer_command.hpp).
+// (rp/outbox_command.hpp, W4.6), `signer ...` (rp/signer_command.hpp) or
+// `service ...` (rp/service_command.hpp, W4.7).
 // `args` is argv without the program name, in UTF-8. Normal output goes to
 // `out`, usage and errors to `err`.
 // Returns the process exit code (rp::exit_code): 0 on success, 64 with

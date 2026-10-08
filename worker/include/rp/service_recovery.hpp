@@ -161,9 +161,10 @@ std::string ended_detail(verification::RunStatus status, std::string_view code);
 // that isn't UTF-8.
 std::string record_text(const RunningRecord& record);
 
-// Strict: `text` must be its own canonical form and hold exactly the
-// fourteen keys with their kinds and words, or it is not a
-// restoreproof.running.v1 record (nullopt). The words: `format`; `kind`;
+// Strict: `text` must be its own canonical form, nested no deeper than
+// kMaxJsonNesting (a record has three levels; a deeper text is never parsed),
+// and hold exactly the fourteen keys with their kinds and words, or it is not
+// a restoreproof.running.v1 record (nullopt). The words: `format`; `kind`;
 // `run_id` a run ID that can name a folder; `client` the result's client
 // object within the schema's lengths, its client_id null; `client_id` null
 // or 1 to 128 printable ASCII characters; `close_as` null or its three

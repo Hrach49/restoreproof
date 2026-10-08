@@ -212,6 +212,31 @@ TEST_CASE("a text that isn't its own canonical form is no record", "[service_rec
     }
 }
 
+TEST_CASE("a record nested past the limit is no record, and is never handed to the parser: "
+          "50,000 levels in a file under 64 KiB",
+          "[service_recovery]")
+{
+    const std::string good = rp::record_text(requested());
+    const std::string key = "\"sessions\":";
+    const std::size_t from = good.find(key + "[");
+    REQUIRE(from != std::string::npos);
+    const std::size_t end = good.find(']', from) + 1;
+    const auto nested = [&](std::size_t levels) {
+        return std::string{good}.replace(from, end - from,
+                                         key + std::string(levels, '[') +
+                                             std::string(levels, ']'));
+    };
+    // Canonicalising it would be a call per level.
+    const std::string deep = nested(50'000);
+    REQUIRE(deep.size() <= rp::kMaxRecordBytes + 40'000);
+
+    CHECK_FALSE(rp::parse_record(deep));
+    CHECK_FALSE(rp::parse_record(nested(rp::kMaxJsonNesting)));
+    // What a record itself needs is far below the limit.
+    CHECK(rp::json_nesting_depth(good) == 3);
+    CHECK(rp::parse_record(good));
+}
+
 TEST_CASE("a record with a key missing, one too many or a wrong kind or word is no record",
           "[service_recovery]")
 {

@@ -3,6 +3,7 @@
 #include "job_rules.hpp"
 #include "path_utf8.hpp"
 
+#include <rp/canonical_json.hpp>
 #include <rp/sha256.hpp>
 
 #include <nlohmann/json.hpp>
@@ -36,11 +37,15 @@ constexpr std::string_view kCanaryCursor = "canary_cursor";
 constexpr std::array kJobKeys{kRunId,        kClientId,    kSampleMail, kSampleSp,
                               kSampleOd,     kRestorePoint, kScreenshots, kCanaryCursor};
 
-// `text` as JSON, or nothing: not JSON (whatever the parser calls it), or an
-// object at any depth with a key twice, of which nlohmann would silently
-// keep the last.
+// `text` as JSON, or nothing: nested past kMaxJsonNesting, not JSON (whatever
+// the parser calls it), or an object at any depth with a key twice, of which
+// nlohmann would silently keep the last.
 std::optional<json> parse_strict(std::string_view text)
 {
+    // Nested deeper than any jobs document: not handed to the parser at all.
+    if (json_nesting_depth(text) > kMaxJsonNesting) {
+        return std::nullopt;
+    }
     // The keys of each object being read, innermost last.
     std::vector<std::set<std::string>> open;
     bool twice = false;

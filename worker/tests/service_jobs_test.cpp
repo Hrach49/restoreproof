@@ -5,6 +5,7 @@
 
 #include "test_support.hpp"
 
+#include <rp/canonical_json.hpp>
 #include <rp/service_jobs.hpp>
 #include <rp/sha256.hpp>
 #include <rp/vault.hpp>
@@ -189,6 +190,31 @@ TEST_CASE("jobs: a document that isn't one runs nothing", "[service_jobs]")
     CHECK(document.jobs.empty());
     // What was read is named, so the loop can tell when it changed.
     CHECK(document.sha256 == rp::sha256_hex(row.text));
+}
+
+TEST_CASE("jobs: a document nested past the limit is not JSON to the reader: 50,000 levels in "
+          "a file under 1 MiB",
+          "[service_jobs]")
+{
+    const auto nested = [](std::size_t levels) {
+        return R"({"format":"restoreproof.jobs.v1","jobs":[)" + std::string(levels, '[') +
+               std::string(levels, ']') + "]}";
+    };
+    const std::string deep = nested(50'000);
+    REQUIRE(deep.size() < rp::kMaxJobsFileBytes);
+
+    const rp::JobsDocument refused = rp::parse_jobs(deep);
+    CHECK(refused.state == rp::JobsState::error);
+    CHECK(refused.fault == rp::JobsFault::not_json);
+    CHECK(refused.jobs.empty());
+    CHECK(refused.sha256 == rp::sha256_hex(deep));
+
+    // The document's two levels and thirty more are the most that is read.
+    CHECK(rp::parse_jobs(nested(rp::kMaxJsonNesting - 1)).fault == rp::JobsFault::not_json);
+    const rp::JobsDocument read = rp::parse_jobs(nested(rp::kMaxJsonNesting - 2));
+    CHECK(read.state == rp::JobsState::read);
+    REQUIRE(read.jobs.size() == 1);
+    CHECK(read.jobs[0].state == rp::JobState::no_run_id);
 }
 
 // --- A job ------------------------------------------------------------------

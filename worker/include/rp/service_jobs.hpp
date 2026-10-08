@@ -131,7 +131,9 @@ struct JobsDocument {
 };
 
 // `text` as a jobs document: `state` is read or error (not_json,
-// not_document, too_many, in that order), `sha256` always set. A UTF-8 byte
+// not_document, too_many, in that order), `sha256` always set. A text nested
+// deeper than rp::kMaxJsonNesting (rp/canonical_json.hpp) is not_json and is
+// never parsed. A UTF-8 byte
 // order mark before the document is taken. Pure; never throws but for no
 // memory.
 JobsDocument parse_jobs(std::string_view text);

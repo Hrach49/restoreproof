@@ -191,7 +191,6 @@ private:
     template <typename Step> void step(Step&& body);
     bool stopped() const;
     void trouble(std::string_view word);
-    bool once(const std::string& key);
     bool again(const std::string& key);
 
     void send_heartbeat();
@@ -214,6 +213,7 @@ private:
     bool take_record(RunningRecord record);
 
     JobsDocument read_jobs();
+    void forget_jobs(const JobsDocument& document);
     void run_jobs();
     void take_job(const JobEntry& entry, const JobsDocument& document);
     bool skip_job(const std::string& run_id);
@@ -244,8 +244,20 @@ private:
     std::optional<Steady> next_look_;
 
     std::optional<JobsFault> jobs_fault_;
-    std::set<std::string> said_;
+    // What was said "once and again every hour", and when: of the record
+    // alone, and gone with it.
     std::map<std::string, Steady> said_at_;
+    // What was said once of a job, for as long as the document names it: the
+    // positions without a run_id of the document with this content, the run
+    // IDs skipped, and the runs that ended before their run line with their
+    // exit codes.
+    std::string jobs_sha_;
+    std::set<std::size_t> no_run_id_said_;
+    std::set<std::string> skipped_said_;
+    std::set<std::pair<std::string, int>> not_started_said_;
+    // The flush's lines of runs that are never sent or couldn't be read, as
+    // the last pass named them.
+    std::set<std::string> flush_said_;
 };
 
 } // namespace rp

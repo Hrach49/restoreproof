@@ -15,9 +15,23 @@
 // No Windows type is named here. Windows' error codes travel as plain
 // numbers, in decimal as `sc` and `net helpmsg` take them; 0 is "no error".
 //
-// Strict (100% line): what is asked of the SCM is decided here.
+// rp::Service, at the end, is the running service's state machine (points 5
+// and 6) over a ServiceHost.
+//
+// Strict (100% line): what is asked of the SCM is decided here, and when a
+// process holding a run is ended.
 
+#include <rp/config.hpp>
+#include <rp/service_log.hpp>
+#include <rp/stop_signal.hpp>
+
+#include <spdlog/logger.h>
+
+#include <chrono>
+#include <filesystem>
 #include <functional>
+#include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -187,6 +201,131 @@ struct ServiceHost {
     // shutdown: no static destructor runs under a thread that is still
     // working. The real one doesn't return.
     std::function<void(int code)> exit_process;
+};
+
+// --- The running service (points 5 and 6) ------------------------------------
+
+// What the service's work is handed, shared between the service's main
+// function and the thread the work runs on. Everything but `stop` is set
+// before that thread starts and not changed afterwards.
+struct ServiceContext {
+    // Asked for by the control handler at a stop or a shutdown. The work
+    // starts nothing it couldn't leave once it is: no new job, no wait
+    // (wait_for returns at once).
+    StopSignal stop;
+    // The service's log (rp/service_log.hpp); never null.
+    std::shared_ptr<spdlog::logger> logger;
+    // The config as loaded at the start, and the file it came from.
+    Config config;
+    std::filesystem::path config_path;
+};
+
+// The service's work: runs on a thread of its own from start to end, and
+// returns when it is done, which is when a stop was asked for. W4.7's is
+// `context->stop.wait()`; W4.8 fills it. An exception it lets out, and a
+// return while no stop was asked for, are the service's unexpected failure.
+using ServiceBody = std::function<void(const std::shared_ptr<ServiceContext>& context)>;
+
+// The service's own exit codes, reported with "stopped" as Windows'
+// service-specific error (ServiceStatus::service_exit_code): the config
+// didn't load; the log couldn't be opened; the work let an exception out
+// after a stop was asked for.
+inline constexpr unsigned long kServiceCodeConfig = 1;
+inline constexpr unsigned long kServiceCodeLog = 2;
+inline constexpr unsigned long kServiceCodeFailure = 3;
+
+// The wait hints reported while starting and while stopping, and the stop's
+// budget: the work is waited for in ten slices of 2.5 s, 25 s in all, with a
+// "stop pending" report after each slice it hasn't ended in.
+inline constexpr unsigned long kStartWaitHintMs = 10'000;
+inline constexpr unsigned long kStopWaitHintMs = 5'000;
+inline constexpr std::chrono::milliseconds kStopSlice{2'500};
+inline constexpr int kStopSlices = 10;
+
+// Windows' answer to the dispatcher in a process the SCM didn't start.
+inline constexpr unsigned long kNotStartedByScm = 1063;
+
+// What rp::Service is made of; every function null = the real one.
+struct ServiceOptions {
+    ServiceHost host;
+    // Null: `context->stop.wait()`.
+    ServiceBody body;
+    // --config; nullopt: what `default_config_path` answers.
+    std::optional<std::filesystem::path> config_path;
+    // Null: rp::default_config_path. May throw ConfigError, which is "the
+    // config didn't load".
+    std::function<std::filesystem::path()> default_config_path;
+    // The log's folder. Null: rp::default_log_dir. May throw ConfigError,
+    // which is "the log couldn't be opened".
+    std::function<std::filesystem::path()> default_log_dir;
+    LogLimits log_limits;
+    // Waits up to `time` for `done`, the signal the work's thread sets as its
+    // last act; true when it is set. Null: `done.wait_for(time)`.
+    std::function<bool(const StopSignal& done, std::chrono::milliseconds time)> wait_done;
+    // Null: std::chrono::steady_clock::now.
+    std::function<std::chrono::steady_clock::time_point()> now;
+};
+
+// How Service::run ended. `dispatcher_error` is Windows' code for a dispatcher
+// that didn't run the service (kNotStartedByScm from a prompt), else 0;
+// `exit_code` is the process's: 0 after a clean stop, 1 otherwise.
+struct ServiceRun {
+    int exit_code = 1;
+    unsigned long dispatcher_error = 0;
+};
+
+// The service's state machine: what is reported when, what a control does,
+// the stop's budget, the exit codes and every log line. It reaches Windows
+// only through `options.host`.
+//
+// The main function, in order: registers the handler; reports "start pending"
+// (checkpoint 1, kStartWaitHintMs, no control accepted); opens the log at
+// info (else: "stopped" with kServiceCodeLog); loads the config (else: one
+// error line `config error: <text>`, "stopped" with kServiceCodeConfig); sets
+// the log's level; starts the work on its thread; reports "running",
+// accepting stop and shutdown; logs `service running: rpworker <version>,
+// config <path>, log_level <level>`; then waits for the stop or the work's
+// end, whichever is first.
+//
+// The handler: the first stop or shutdown reports "stop pending" (checkpoint
+// 1, kStopWaitHintMs, no control accepted), then asks for the stop;
+// kControlDone. A later one, and interrogate: kControlDone, nothing done.
+// Anything else: kControlNotImplemented. It logs nothing, takes no lock and
+// never blocks.
+//
+// The endings:
+//  - a stop, and the work back within the budget: `stop requested
+//    (stop|shutdown)`, `service stopped after <n> ms`, the log closed,
+//    "stopped" with no error as the last thing done; exit code 0.
+//  - a stop, and the work not back after 25 s: its thread is detached, the
+//    error line `the service's work didn't end within 25 s of the stop;
+//    ending the process`, "stopped" with no error, then exit_process(0).
+//  - a stop, and the work let an exception out: the error line `the service's
+//    work ended on an unexpected failure` (never the exception's text),
+//    "stopped" with kServiceCodeFailure; exit code 1.
+//  - the work ended and no stop was asked for: that error line, or `the
+//    service's work ended without a stop` for a return, then exit_process(1)
+//    and no "stopped": to the SCM a failure, which the recovery actions
+//    restart.
+//  - the service's own steps failed where none of the above says what
+//    happens (the handler couldn't be registered, a seam threw): the error
+//    line `the service ended on an unexpected failure` when the log is open,
+//    "stopped" with kServiceCodeFailure only when a stop was asked for, then
+//    exit_process(1).
+class Service {
+public:
+    explicit Service(ServiceOptions options = {});
+
+    // Calls the dispatcher and nothing of the above before it; all of it
+    // happens in the main function the dispatcher runs. Returns when the
+    // dispatcher does. After an ending that called exit_process, it calls
+    // exit_process again with the same code before it returns (the real one
+    // doesn't return): no thread goes back into the runtime while the work's
+    // thread may live.
+    ServiceRun run();
+
+private:
+    ServiceOptions options_;
 };
 
 } // namespace rp

@@ -83,6 +83,7 @@ add_library(rpcore STATIC
     src/service_log.cpp
     src/service_log_stream.cpp
     src/service_loop.cpp
+    src/worker_body.cpp
     src/sha256.cpp
     src/signer.cpp
     src/signer_command.cpp
@@ -234,6 +235,7 @@ add_executable(rptests
     tests/service_log_test.cpp
     tests/service_log_stream_test.cpp
     tests/service_loop_test.cpp
+    tests/worker_body_test.cpp
     tests/service_test.cpp
     tests/sha256_test.cpp
     tests/signer_command_test.cpp

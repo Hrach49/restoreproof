@@ -93,6 +93,11 @@ struct RunFolderOutcome {
     std::string word;
 };
 
+// RunFolderOutcome::word for what rp::Outbox::queue answered: empty for a
+// queued folder, "manifest_not_written" for one queued without its manifest,
+// else why the outbox didn't take it.
+std::string_view queue_word(QueueResult result) noexcept;
+
 // What the tail is given. The pointers are borrowed for the call.
 struct RunFolderTail {
     // The run's folder, there and the caller's own.

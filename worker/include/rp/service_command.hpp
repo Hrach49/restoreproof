@@ -40,6 +40,12 @@ struct ServiceCommandEnv {
     ScmCalls scm;
     // What `run` hands rp::Service; each null = the real one.
     ServiceHost host;
+    // The service's work (W4.8): what `run` hands rp::Service as its body.
+    // Null: W4.7's, which only waits for the stop, so an env that leaves it
+    // out never meets the real paths. default_service_command_env() sets the
+    // scheduler loop over its real calls (rp::make_worker_body,
+    // src/worker_body.hpp).
+    ServiceBody body;
     // This executable's full path, which the service's command line names.
     // Null: rp::own_executable_path (src/folder_ops.hpp).
     std::function<std::filesystem::path()> own_path;
@@ -58,7 +64,7 @@ struct ServiceCommandEnv {
     std::function<std::chrono::steady_clock::time_point()> now;
 };
 
-// The real environment: every member null.
+// The real environment: every member null but `body`, the scheduler loop.
 ServiceCommandEnv default_service_command_env();
 
 // `rpworker service ...`. `args` is what follows "service", in UTF-8. Each
@@ -132,8 +138,8 @@ ServiceCommandEnv default_service_command_env();
 // stop was not sent" (3). Still not stopped: "the service RestoreProof is
 // still stopping after 35 s" (3).
 //
-// `run [--config <path>]`: rp::Service::run over `env.host`, and nothing of
-// the service before the dispatcher. In a process the SCM didn't start
+// `run [--config <path>]`: rp::Service::run over `env.host` with `env.body`
+// as the service's work, and nothing of the service before the dispatcher. In a process the SCM didn't start
 // (1063): "service run is what the Service Control Manager starts; use
 // rpworker service start", exit 1, nothing logged and no log file touched;
 // any other answer of the dispatcher: "opening the service control manager

@@ -539,6 +539,89 @@ TEST_CASE("a close that fails is tried again no sooner than every 15 min, said o
     CHECK(lab.last_error_at == lab.wall0 + 3600s);
 }
 
+TEST_CASE("a close that itself finds a text file changed puts that on record before it is tried "
+          "again, and the run is closed as it would have been",
+          "[service_loop]")
+{
+    struct Row {
+        std::optional<CloseAs> close_as;
+        std::optional<std::string> detail;
+        std::optional<std::string> afterwards;
+    };
+    const Row row = GENERATE(Row{std::nullopt, std::nullopt, "changed"},
+                             Row{CloseAs::internal, "not_signed", "changed"},
+                             Row{CloseAs::result_invalid, "fail", "fail; changed"});
+    CAPTURE(row.afterwards);
+    LoopLab lab;
+    rp::RunningRecord found = lab.found();
+    found.close_as = row.close_as;
+    found.close_detail = row.detail;
+    lab.put_record(found);
+    int closes = 0;
+    lab.on_close = [&](const rp::RunningRecord& record) {
+        if (++closes == 1) {
+            return CloseRunOutcome{CloseRunState::not_closed, "changed"};
+        }
+        lab.queued.insert(record.run_id);
+        return CloseRunOutcome{CloseRunState::queued, {}};
+    };
+
+    lab.run(16); // the close at start, and again at 900 s
+
+    REQUIRE(lab.closed.size() == 2);
+    CHECK(lab.closed[0].close_detail == row.detail);
+    CHECK(lab.closed[1].close_as == row.close_as);
+    CHECK(lab.closed[1].close_detail == row.afterwards);
+    // Written to the file right after the close that answered so.
+    REQUIRE(lab.writes.size() == 1);
+    CHECK(lab.writes[0] == rp::record_text(lab.closed[1]));
+    CHECK(lab.calls[static_cast<std::size_t>(index_of(lab.calls, "close job-1")) + 1] ==
+          "write record");
+    CHECK(lab.count("error run job-1: couldn't be closed (changed)") == 1);
+    CHECK_FALSE(lab.has_record());
+}
+
+TEST_CASE("changed text files that can't be put on record are said, and nothing is written for "
+          "a record that already says so or has no place for it",
+          "[service_loop]")
+{
+    LoopLab lab;
+    lab.on_close = [](const rp::RunningRecord&) {
+        return CloseRunOutcome{CloseRunState::not_closed, "changed"};
+    };
+    SECTION("the write fails")
+    {
+        lab.put_record(lab.found());
+        lab.write_ok = false;
+
+        lab.run();
+
+        CHECK(lab.count("error run job-1: running.json couldn't be written; the changed text "
+                        "files are not on record") == 1);
+        CHECK(lab.count_call("write record") == 1);
+        CHECK_FALSE(lab.on_disk().close_detail);
+        CHECK(lab.last_error == rp::service_error::kRunNotClosed);
+    }
+    SECTION("the record says so already")
+    {
+        lab.put_record(rp::with_changed_text_files(lab.found()));
+
+        lab.run();
+
+        CHECK(lab.count_call("write record") == 0);
+        CHECK(lab.count("error run job-1: couldn't be closed (changed)") == 1);
+    }
+    SECTION("a job that is no job")
+    {
+        lab.put_record(rp::new_job_invalid_record("job-1", std::nullopt, lab.config,
+                                                  lab.wall0 - 10min, "sample_mail"));
+
+        lab.run();
+
+        CHECK(lab.count_call("write record") == 0);
+    }
+}
+
 TEST_CASE("a folder the pipeline couldn't queue is queued at the next poll, and at every poll "
           "until it is",
           "[service_loop]")

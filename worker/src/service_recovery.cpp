@@ -39,6 +39,8 @@ constexpr std::string_view kResultInvalid = "result_invalid";
 constexpr std::string_view kInternal = "internal";
 constexpr std::string_view kInterrupted = "interrupted";
 constexpr std::string_view kChanged = "changed";
+// What with_changed_text_files puts after a result_invalid record's ending.
+constexpr std::string_view kAndChanged = "; changed";
 constexpr std::string_view kNotWritten = "not_written";
 constexpr std::string_view kPass = "pass";
 constexpr std::string_view kFail = "fail";
@@ -88,15 +90,33 @@ std::optional<std::pair<verification::RunStatus, std::string>> ended_of(std::str
     return std::nullopt;
 }
 
+// A result_invalid record's close_detail without the "; changed" a close may
+// have put after it.
+std::string_view ending_of(std::string_view detail) noexcept
+{
+    return detail.ends_with(kAndChanged) ? detail.substr(0, detail.size() - kAndChanged.size())
+                                         : detail;
+}
+
+// Whether the record says a text file was found changed after it was hashed:
+// by the run (`internal` with `changed`) or by a close.
+bool says_changed(const RunningRecord& record) noexcept
+{
+    const std::string_view detail = record.close_detail ? std::string_view{*record.close_detail}
+                                                        : std::string_view{};
+    return record.close_as == CloseAs::result_invalid ? detail.ends_with(kAndChanged)
+                                                      : detail == kChanged;
+}
+
 // Whether `detail` is a word `close_as` may carry.
 bool is_close_detail(const std::optional<CloseAs>& close_as,
                      const std::optional<std::string>& detail)
 {
     if (!close_as) {
-        return !detail;
+        return !detail || *detail == kChanged;
     }
     if (*close_as == CloseAs::result_invalid) {
-        return !detail || ended_of(*detail).has_value();
+        return !detail || ended_of(ending_of(*detail)).has_value();
     }
     if (*close_as == CloseAs::internal) {
         return detail && std::ranges::find(kFolderWords, std::string_view{*detail}) !=
@@ -430,6 +450,18 @@ RunningRecord with_close(RunningRecord record, CloseAs close_as, std::optional<s
     return record;
 }
 
+RunningRecord with_changed_text_files(RunningRecord record)
+{
+    if (record.close_as == CloseAs::job_invalid || says_changed(record)) {
+        return record;
+    }
+    record.close_detail = record.close_as == CloseAs::result_invalid
+                              ? record.close_detail.value_or(std::string{kError}) +
+                                    std::string{kAndChanged}
+                              : std::string{kChanged};
+    return record;
+}
+
 std::string ended_detail(verification::RunStatus status, std::string_view code)
 {
     if (status == verification::RunStatus::pass) {
@@ -548,19 +580,20 @@ ClosePlan plan_close(const RunningRecord& record, const FolderContents& folder)
     plan.remove_temp_files = folder.temp_files;
 
     const bool requested = record.restore_requested;
+    // One of them was found altered after it was hashed, by the run or by an
+    // earlier close: the Worker lists no file it knows was changed. And
+    // nothing in the folder of a job that is no job is a run's evidence.
+    plan.replace_text_files = says_changed(record) || record.close_as == CloseAs::job_invalid;
     if (!record.close_as) {
         plan.code = std::string{kInterrupted};
         plan.verdict = verification::interrupted_before_result(requested);
     } else if (*record.close_as == CloseAs::internal) {
         plan.code = std::string{kInternal};
         plan.verdict = verification::ended_without_result(requested);
-        // The run found one of them altered after it hashed it: the Worker
-        // lists no file it knows was changed.
-        plan.replace_text_files = record.close_detail == kChanged;
     } else if (*record.close_as == CloseAs::result_invalid) {
         plan.code = std::string{kResultInvalid};
         // An ending that isn't known, or doesn't read, is "error" alone.
-        const auto ended = ended_of(record.close_detail.value_or(std::string{kError}))
+        const auto ended = ended_of(ending_of(record.close_detail.value_or(std::string{kError})))
                                .value_or(std::pair{verification::RunStatus::error, std::string{}});
         plan.verdict = verification::result_invalid_afterwards(ended.first, ended.second, requested);
     } else {

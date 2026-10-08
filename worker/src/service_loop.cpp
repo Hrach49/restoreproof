@@ -27,6 +27,9 @@ constexpr std::array<std::string_view, 5> kFolderWords{"not_written", "changed",
                                                        "not_signed", "invalid"};
 
 constexpr std::string_view kResultInvalid = "result_invalid";
+// The close's own word for a text file altered between its hash and the read
+// back.
+constexpr std::string_view kChanged = "changed";
 constexpr std::string_view kCleanOk = "ok";
 constexpr std::string_view kKept = "kept ";
 constexpr std::string_view kWaiting = "waiting ";
@@ -323,6 +326,16 @@ void ServiceLoop::close_record_run()
     const bool closed = outcome.state == CloseRunState::not_queued;
     if (!closed) {
         close_not_before_ = now + kCloseAgain;
+    }
+    if (!closed && outcome.word == kChanged) {
+        // On record before the next try, which then replaces both text
+        // files; what the run is closed as stays.
+        RunningRecord next = with_changed_text_files(*record_);
+        if (!(next == *record_) && !write_record(std::move(next))) {
+            env_.logger->error("run {}: running.json couldn't be written; the changed text "
+                               "files are not on record",
+                               id);
+        }
     }
     trouble(closed ? service_error::kRunNotQueued : service_error::kRunNotClosed);
     const std::string_view what = closed ? "queued" : "closed";

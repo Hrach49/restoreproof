@@ -236,7 +236,7 @@ struct LoopLab {
             }
             return write_ok;
         };
-        env.record_files.remove = [this](const std::filesystem::path&) {
+        env.record_files.erase = [this](const std::filesystem::path&) {
             calls.push_back("remove record");
             if (remove_ok) {
                 record = {TrustedRead::absent, {}};

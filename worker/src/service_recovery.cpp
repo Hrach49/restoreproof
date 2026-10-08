@@ -512,9 +512,9 @@ bool RecordStore::write(const RunningRecord& record) const
            files_.write(file_, text);
 }
 
-bool RecordStore::remove() const
+bool RecordStore::erase() const
 {
-    return files_.remove(file_);
+    return files_.erase(file_);
 }
 
 bool RecordStore::move_aside() const

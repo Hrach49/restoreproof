@@ -172,7 +172,7 @@ struct RecordFiles {
     // there. Whether the file now holds the text.
     std::function<bool(const std::filesystem::path&, std::string_view text)> write;
     // Whether nothing is at the path afterwards.
-    std::function<bool(const std::filesystem::path&)> remove;
+    std::function<bool(const std::filesystem::path&)> erase;
     // Moves `from` to `to`, replacing what is there; whether it did.
     std::function<bool(const std::filesystem::path& from, const std::filesystem::path& to)>
         move_aside;
@@ -203,7 +203,7 @@ public:
     // writer's answer.
     bool write(const RunningRecord& record) const;
 
-    bool remove() const;
+    bool erase() const;
 
     // The file moved to running.json.unread beside it, replacing an older
     // one.

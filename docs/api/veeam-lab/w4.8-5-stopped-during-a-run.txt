@@ -1,0 +1,168 @@
+W4.8 (#51) live Done-when, step (e): a third job, service stop during its restore. 2026-10-09T01:03:29Z, commit 995c4ba
+
+jobs file written at 2026-10-09T01:03:29Z:
+{
+  "format": "restoreproof.jobs.v1",
+  "jobs": [
+    {
+      "run_id": "w48-live-1",
+      "client_id": "lab-client",
+      "sample_mail": 5,
+      "sample_sp": 5,
+      "sample_od": 5,
+      "restore_point": "latest",
+      "screenshots_enabled": false
+    },
+    {
+      "run_id": "w48-live-2",
+      "client_id": "lab-client",
+      "sample_mail": 5,
+      "sample_sp": 5,
+      "sample_od": 5,
+      "restore_point": "latest",
+      "screenshots_enabled": false
+    },
+    {
+      "run_id": "w48-live-3",
+      "client_id": "lab-client",
+      "sample_mail": 5,
+      "sample_sp": 5,
+      "sample_od": 5,
+      "restore_point": "latest",
+      "screenshots_enabled": false
+    }
+  ]
+}
+
+-- taken: 2026-10-09T01:03:44.056Z info run w48-live-3: starting (mail 5, sharepoint 5, onedrive 5, point latest)
+
+-- the record, 12 s into the restore
+running.json at 2026-10-09T01:04:08Z:
+{"client":{"client_id":null,"targets":{"library_id":"b!XQgI_nDr6EKVpkcBib2Y65nzyk4OzJVNs_7NCRoJ5omdBuz_5GU6TJ2irAhs-dr6","mailbox":"restoretest@RestoreProofLab.onmicrosoft.com","onedrive_drive_id":"b!wA9gbfhlEUitGAluxbfoNBr_z5gEtDhErm5pJ6bMwyXfZJ8a_dkCQ696RX0r7_U3","onedrive_folder_id":"01ZK75LGDGB6QOO3MGNFGYOY6C6VBDG5OH","site_id":"restoreprooflab.sharepoint.com,fe08085d-eb70-42e8-95a6-470189bd98eb,4ecaf399-cc0e-4d95-b3fe-cd091a09e689"},"tenant_id":"bcd6bd1a-ea42-489d-aa28-2c19a44ad146","veeam_org_name":"RestoreProofLab.onmicrosoft.com"},"client_id":"lab-client","close_as":null,"close_detail":null,"connector":{"api":"v8","type":"veeam_m365"},"format":"restoreproof.running.v1","kind":"run","restore_point":{"backup_time_raw":"2026-10-08T23:43:58.1565721Z","id":"c2f0f2e7-177f-48ac-992b-93a50cf702e33f589dc6-03b8-44c1-8bfe-1c32d63d5849"},"restore_requested":true,"restore_requested_at":"2026-10-09T01:03:56.603Z","run_id":"w48-live-3","sessions":["9b2d3189-058c-463c-977b-17ab665ee7c6","f7cb03a2-28c6-4e0c-81b3-080c481dc889","8f5d6fb0-fd2f-4bb6-af7d-2ad59f6a9b78","9c03aaf1-6b00-473a-8bdd-f3e732da2a10","0af8f24f-a4b0-429c-9692-ec4c6430b12b","70fc4dae-fb6c-4980-bb07-300e9513160f"],"started_at":"2026-10-09T01:03:44.079Z","taken_at":"2026-10-09T01:03:44.020Z"}
+
+command: rpworker service stop
+2026-10-09T01:04:08Z to 2026-10-09T01:04:09Z
+exit code: 0
+--- stdout
+stopped RestoreProof in 0.2 s
+--- stderr
+
+
+-- right after the stop: what was in flight
+service RestoreProof: state Stopped, account NT SERVICE\RestoreProof, pid 0, now 2026-10-09T01:04:10Z
+running.json at 2026-10-09T01:04:10Z:
+{"client":{"client_id":null,"targets":{"library_id":"b!XQgI_nDr6EKVpkcBib2Y65nzyk4OzJVNs_7NCRoJ5omdBuz_5GU6TJ2irAhs-dr6","mailbox":"restoretest@RestoreProofLab.onmicrosoft.com","onedrive_drive_id":"b!wA9gbfhlEUitGAluxbfoNBr_z5gEtDhErm5pJ6bMwyXfZJ8a_dkCQ696RX0r7_U3","onedrive_folder_id":"01ZK75LGDGB6QOO3MGNFGYOY6C6VBDG5OH","site_id":"restoreprooflab.sharepoint.com,fe08085d-eb70-42e8-95a6-470189bd98eb,4ecaf399-cc0e-4d95-b3fe-cd091a09e689"},"tenant_id":"bcd6bd1a-ea42-489d-aa28-2c19a44ad146","veeam_org_name":"RestoreProofLab.onmicrosoft.com"},"client_id":"lab-client","close_as":null,"close_detail":null,"connector":{"api":"v8","type":"veeam_m365"},"format":"restoreproof.running.v1","kind":"run","restore_point":{"backup_time_raw":"2026-10-08T23:43:58.1565721Z","id":"c2f0f2e7-177f-48ac-992b-93a50cf702e33f589dc6-03b8-44c1-8bfe-1c32d63d5849"},"restore_requested":true,"restore_requested_at":"2026-10-09T01:03:56.603Z","run_id":"w48-live-3","sessions":["9b2d3189-058c-463c-977b-17ab665ee7c6","f7cb03a2-28c6-4e0c-81b3-080c481dc889","8f5d6fb0-fd2f-4bb6-af7d-2ad59f6a9b78","9c03aaf1-6b00-473a-8bdd-f3e732da2a10","0af8f24f-a4b0-429c-9692-ec4c6430b12b","70fc4dae-fb6c-4980-bb07-300e9513160f"],"started_at":"2026-10-09T01:03:44.079Z","taken_at":"2026-10-09T01:03:44.020Z"}
+Working at 2026-10-09T01:04:10Z:
+  5b9b264a-f1fe-45c0-96f6-94646cc80e74 type Vex created 10/09/2026 01:03:56 by rp-veeam
+  70fc4dae-fb6c-4980-bb07-300e9513160f type Veod created 10/09/2026 01:03:55 by rp-veeam
+  0af8f24f-a4b0-429c-9692-ec4c6430b12b type Vesp created 10/09/2026 01:03:54 by rp-veeam
+  9c03aaf1-6b00-473a-8bdd-f3e732da2a10 type Vex created 10/09/2026 01:03:53 by rp-veeam
+runs\:
+  w42-done-when-1: items.csv 5746, result.json 22606, veeam-session.log 7371
+  w43-done-when-1: items.csv 5749, result.json 22347, signature.json 322, veeam-session.log 7490
+  w44-done-when-1: items.csv 5753, result.json 21997, signature.json 322, timestamp.tst 5998, veeam-session.log 7370
+  w44-tsa-down-1: items.csv 5741, result.json 21954, signature.json 322, veeam-session.log 7363
+  w45-done-when-1: items.csv 5807, result.json 22239, signature.json 322, timestamp.tst 5999, veeam-session.log 7510
+outbox\:
+  w48-live-3: items.csv 2227, manifest.json 319, result.json 8969, signature.json 322, veeam-session.log 0
+sent\:
+  w46-done-when-1: items.csv 145, manifest.json 371, result.json 2291, signature.json 322, timestamp.tst 5998, veeam-session.log 0
+  w46-done-when-2: items.csv 5739, manifest.json 371, result.json 21971, signature.json 322, timestamp.tst 5997, veeam-session.log 7360
+  w48-live-1: items.csv 3173, manifest.json 366, result.json 13636, signature.json 322, timestamp.tst 5999, veeam-session.log 3968
+  w48-live-2: items.csv 145, manifest.json 366, result.json 1909, signature.json 322, timestamp.tst 5998, veeam-session.log 0
+
+-- worker.log from the stop on
+2026-10-09T01:04:08.786Z info stop requested (stop)
+2026-10-09T01:04:08.787Z warning veeam_m365: explore session(s) left open; left open, as a restore may still be running: restore session 5b9b264a-f1fe-45c0-96f6-94646cc80e74, explore session(s) 9c03aaf1-6b00-473a-8bdd-f3e732da2a10 0af8f24f-a4b0-429c-9692-ec4c6430b12b 70fc4dae-fb6c-4980-bb07-300e9513160f
+2026-10-09T01:04:08.802Z warning [w48-live-3] restore error: veeam_m365: restore session 5b9b264a-f1fe-45c0-96f6-94646cc80e74 (mail) was still Working when the Worker was asked to stop; no verdict; left open, as a restore may still be running: restore session 5b9b264a-f1fe-45c0-96f6-94646cc80e74, explore session(s) 9c03aaf1-6b00-473a-8bdd-f3e732da2a10 0af8f24f-a4b0-429c-9692-ec4c6430b12b 70fc4dae-fb6c-4980-bb07-300e9513160f
+2026-10-09T01:04:08.802Z warning [w48-live-3] restore error: the restore had started: items may be in the restore targets (run w48-live-3)
+2026-10-09T01:04:08.831Z info [w48-live-3] status error interrupted: the restore didn't complete: the run was interrupted (interrupted); items may be in the restore targets
+2026-10-09T01:04:08.831Z info [w48-live-3] cleanup after skipped: the restore may still be running; the next run cleans before
+2026-10-09T01:04:08.832Z info [w48-live-3] STEP                  TIME         NOTE
+2026-10-09T01:04:08.832Z info [w48-live-3] restore_point_lookup  0:00:00.071
+2026-10-09T01:04:08.832Z info [w48-live-3] cleanup_before        0:00:01.381
+2026-10-09T01:04:08.832Z info [w48-live-3] sample_select         0:00:06.451
+2026-10-09T01:04:08.832Z info [w48-live-3] target_snapshot       0:00:00.713
+2026-10-09T01:04:08.832Z info [w48-live-3] restore               0:00:16.095  stopped
+2026-10-09T01:04:08.832Z info [w48-live-3] restore_submit        -            not reported
+2026-10-09T01:04:08.833Z info [w48-live-3] restore_wait          -            not reported
+2026-10-09T01:04:08.833Z info [w48-live-3] verify                -            not run
+2026-10-09T01:04:08.833Z info [w48-live-3] recovery              0:00:16.095  stopped
+2026-10-09T01:04:08.833Z info [w48-live-3] cleanup_after         -            not run
+2026-10-09T01:04:08.833Z info [w48-live-3] total                 0:00:24.752
+2026-10-09T01:04:08.893Z warning [w48-live-3] timestamp warning: C:\ProgramData\RestoreProof\runs\w48-live-3: not timestamped: timestamp_internal after 0 attempt(s)
+2026-10-09T01:04:08.894Z info [w48-live-3] signed 800a721223091d992ce4bd7b0626559b64bb471cffa15aee4b575cf52f4bf43d key 9dfab6eadaa1d04a22dcc966aac7a53bcff8bbe0077232485f6143cd9c4d0ca5
+2026-10-09T01:04:08.894Z info [w48-live-3] evidence C:\ProgramData\RestoreProof\runs\w48-live-3: result.json, signature.json, items.csv, veeam-session.log
+2026-10-09T01:04:08.902Z info [w48-live-3] queued C:\ProgramData\RestoreProof\outbox\w48-live-3
+2026-10-09T01:04:08.902Z info run w48-live-3: ended error interrupted; queued
+2026-10-09T01:04:08.903Z info service stopped after 117 ms
+
+
+-- the Service Control Manager's events since the stop: (no events)
+
+command: rpworker service start
+2026-10-09T01:04:10Z to 2026-10-09T01:04:11Z
+exit code: 0
+--- stdout
+started RestoreProof
+--- stderr
+
+
+-- worker.log from the start on (the record found, the queued run sent, the hold, the clean, the record gone)
+2026-10-09T01:04:10.345Z info service running: rpworker 0.0.0, config C:\ProgramData\RestoreProof\w48\config.json, log_level info
+2026-10-09T01:04:10.345Z info scheduler started: poll 30 s, heartbeat 60 s, jobs C:\ProgramData\RestoreProof\w48\jobs.json, runs C:\ProgramData\RestoreProof\runs, outbox C:\ProgramData\RestoreProof
+2026-10-09T01:04:10.347Z warning interrupted run w48-live-3 found: taken 2026-10-09T01:03:44.020Z, restore requested yes
+2026-10-09T01:04:10.398Z warning waiting for Veeam: 1 session(s) of DESKTOP-P55CDUM\rp-veeam still Working since 2026-10-09T01:03:56.713Z
+2026-10-09T01:04:10.453Z info sent w48-live-3
+2026-10-09T01:06:10.876Z info recovery clean for w48-live-3:
+2026-10-09T01:06:11.967Z info cleanup before: the test mailbox's Inbox: deleted 4, gone 0, left 0, skipped 0 in 1 round(s)
+2026-10-09T01:06:12.482Z info cleanup before: the RestoreTarget library: deleted 0, gone 0, left 0, skipped 0 in 1 round(s)
+2026-10-09T01:06:12.866Z info cleanup before: the test OneDrive folder: deleted 0, gone 0, left 0, skipped 0 in 1 round(s)
+2026-10-09T01:06:12.867Z info [w48-live-3] cleanup before ok: deleted 4 mail, 0 sharepoint, 0 onedrive
+2026-10-09T01:06:12.886Z info skipped w48-live-1: already sent
+2026-10-09T01:06:12.886Z info skipped w48-live-2: already sent
+2026-10-09T01:06:12.887Z info skipped w48-live-3: already sent
+
+
+-- afterwards
+(no running.json) at 2026-10-09T01:06:21Z
+no session Working at 2026-10-09T01:06:21Z
+
+-- the stub's lines since the stop
+2026-10-09T01:04:10Z POST /v1/heartbeat: 130 bytes, Content-Type application/json, Authorization absent -> 204  {"last_error":"veeam_sessions_working","last_error_at":"2026-10-09T01:04:10.398Z","outbox_depth":1,"uptime_s":0,"version":"0.0.0"}
+2026-10-09T01:04:10Z POST /v1/results: 12238 bytes, Authorization absent -> 202
+  part result  file result.json  8969 bytes  sha256 800a721223091d992ce4bd7b0626559b64bb471cffa15aee4b575cf52f4bf43d
+  part signature  file signature.json  322 bytes  sha256 3d6d797ec75a9e22f08f7b8d8410dc304bc9ade7a7e00c33cb5f96c9092e4040
+  part items.csv  file items.csv  2227 bytes  sha256 ce93b0091c8b2c00ea6f83ef5c8aa766bc95646aa34e18a0d8949c7d10d792b1
+  part veeam-session.log  file veeam-session.log  0 bytes  sha256 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+2026-10-09T01:05:10Z POST /v1/heartbeat: 131 bytes, Content-Type application/json, Authorization absent -> 204  {"last_error":"veeam_sessions_working","last_error_at":"2026-10-09T01:04:10.425Z","outbox_depth":0,"uptime_s":60,"version":"0.0.0"}
+2026-10-09T01:06:10Z POST /v1/heartbeat: 132 bytes, Content-Type application/json, Authorization absent -> 204  {"last_error":"veeam_sessions_working","last_error_at":"2026-10-09T01:04:10.425Z","outbox_depth":0,"uptime_s":120,"version":"0.0.0"}
+
+-- both verifiers over the sent folder
+folder: C:\ProgramData\RestoreProof\sent\w48-live-3
+command: rpworker signer verify C:\ProgramData\RestoreProof\sent\w48-live-3 --public-key C:\ProgramData\RestoreProof\w48\worker-signing.pub.pem --tsa-ca C:\restoreproof\shared\tsa\tsa-ca.pem
+2026-10-09T01:06:21Z to 2026-10-09T01:06:22Z
+exit code: 0
+--- stdout
+verified 800a721223091d992ce4bd7b0626559b64bb471cffa15aee4b575cf52f4bf43d key 9dfab6eadaa1d04a22dcc966aac7a53bcff8bbe0077232485f6143cd9c4d0ca5 timestamp none
+--- stderr
+note: not listed in the result: manifest.json
+note: not timestamped
+
+verify_bundle.py (exit code 0): note: not listed in the result: manifest.json | verified 800a721223091d992ce4bd7b0626559b64bb471cffa15aee4b575cf52f4bf43d key 9dfab6eadaa1d04a22dcc966aac7a53bcff8bbe0077232485f6143cd9c4d0ca5 timestamp none | note: not timestamped
+result.json: run_id w48-live-3, status error interrupted, restore_sent True, message: the restore didn't complete: the run was interrupted (interrupted); items may be in the restore targets
+result.json sha256 800a721223091d992ce4bd7b0626559b64bb471cffa15aee4b575cf52f4bf43d
+
+-- the three restore targets
+command: rpworker graph list --config C:\Users\minas\AppData\Local\RestoreProof\lab\config.json
+2026-10-09T01:06:23Z to 2026-10-09T01:06:25Z
+exit code: 0
+--- stdout
+Mail (restoretest@RestoreProofLab.onmicrosoft.com, Inbox): 0 item(s)
+
+SharePoint (RestoreTarget library): 0 item(s)
+
+OneDrive (RestoreTarget folder): 0 item(s)
+
+0 item(s) in the three restore targets
+--- stderr

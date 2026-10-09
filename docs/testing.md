@@ -874,8 +874,10 @@ outbox within one poll interval") is run on the lab machine with the harness
 `docs/api/veeam-lab/w4.8-harness/`: `w48-run.ps1`, which is W4.7's `w47-run.ps1` grown by the
 grants, the config copy, the jobs file and the reads of `running.json` and the folders, and
 `stub-cloud.py`, W4.6's stub Cloud with `POST /v1/heartbeat` answering 204 and printing the
-body. Both are committed with the live run, and so are the names of the harness's functions;
-the steps below are the commands they wrap. The live run: see the build notes.
+body. `w48-done-when.ps1` beside them runs steps (a) to (g) in one go and saves each step's
+text as evidence when the step has ended (`docs/api/veeam-lab/w4.8-1` to `w4.8-7`). The steps
+below are the commands they wrap. The live run of 2026-10-09: `docs/decisions.md`, "W4.8 build
+notes", point 5.
 
 This writes into the lab tenant and deletes there, as every run does. Before the first step:
 

@@ -79,7 +79,7 @@ FolderContents look_at(const std::filesystem::path& folder)
         seen(kItemsCsvName, contents.items_csv, contents.items_csv_untrusted);
         seen(kSessionLogName, contents.session_log, contents.session_log_untrusted);
         seen(kSignatureFileName, contents.signature, contents.signature_untrusted);
-        contents.timestamp = contents.timestamp || ascii_iequals(name, kTimestampFileName);
+        seen(kTimestampFileName, contents.timestamp, contents.timestamp_untrusted);
         contents.screenshot = contents.screenshot || ascii_iequals(name, kScreenshotName);
         contents.temp_files = contents.temp_files || is_temp_name(name);
     }

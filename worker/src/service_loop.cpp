@@ -322,8 +322,8 @@ void ServiceLoop::close_record_run()
         // Fixed words and the run's ID, never a file's content.
         log_security(env_.logger,
                      std::format("service: run {}: items.csv or veeam-session.log is owned by "
-                                 "neither SYSTEM, Administrators nor this account; both text "
-                                 "files are replaced by their empty forms",
+                                 "neither SYSTEM, Administrators nor this account; neither is "
+                                 "kept: the close replaces both by their empty forms",
                                  id));
     }
     if (outcome.state == CloseRunState::queued) {
@@ -353,7 +353,7 @@ void ServiceLoop::close_record_run()
     if (again(std::format("close:{}:{}:{}", id, what, outcome.word))) {
         if (!closed && outcome.word == kUntrusted) {
             log_security(env_.logger,
-                         std::format("service: run {}: result.json or signature.json is owned "
+                         std::format("service: run {}: result.json, signature.json or timestamp.tst is owned "
                                      "by neither SYSTEM, Administrators nor this account; the "
                                      "folder is not queued",
                                      id));

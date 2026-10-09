@@ -583,9 +583,11 @@ ClosePlan plan_close(const RunningRecord& record, const FolderContents& folder)
     plan.run_id = record.run_id;
     if (folder.exists && folder.result) {
         // What is queued is uploaded as the Worker's own word: never a
-        // result, or a signature beside it, that somebody else put there.
-        const bool untrusted =
-            folder.result_untrusted || (folder.signature && folder.signature_untrusted);
+        // result, or a signature or a token beside it, that somebody else
+        // put there.
+        const bool untrusted = folder.result_untrusted ||
+                               (folder.signature && folder.signature_untrusted) ||
+                               (folder.timestamp && folder.timestamp_untrusted);
         plan.action = untrusted ? CloseAction::refuse : CloseAction::queue_only;
         return plan;
     }

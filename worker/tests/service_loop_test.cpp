@@ -637,7 +637,7 @@ TEST_CASE("a folder whose result the service doesn't trust is a SECURITY line, s
     lab.run(61); // to 3600 s: closes at 0, 900, 1800, 2700 and 3600 s
 
     const std::string security =
-        "critical SECURITY: service: run job-1: result.json or signature.json is owned by "
+        "critical SECURITY: service: run job-1: result.json, signature.json or timestamp.tst is owned by "
         "neither SYSTEM, Administrators nor this account; the folder is not queued";
     const std::string error = "error run job-1: couldn't be closed (untrusted)";
     CHECK(lab.lines == Lines{kStarted, kFound + "no", security, error, security, error});
@@ -671,8 +671,8 @@ TEST_CASE("text files the close replaced because the service doesn't trust their
 
     const std::string security =
         "critical SECURITY: service: run job-1: items.csv or veeam-session.log is owned by "
-        "neither SYSTEM, Administrators nor this account; both text files are replaced by their "
-        "empty forms";
+        "neither SYSTEM, Administrators nor this account; neither is kept: the close replaces both "
+        "by their empty forms";
     if (queued) {
         CHECK(lab.lines == Lines{kStarted, kFound + "no", security, "info run job-1: queued"});
     } else {

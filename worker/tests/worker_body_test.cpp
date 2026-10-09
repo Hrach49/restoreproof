@@ -506,7 +506,7 @@ TEST_CASE("worker body: a complete folder whose result.json or signature.json is
     if (!rp::test::elevated()) {
         SKIP("changing a file's owner needs SeRestorePrivilege: run elevated");
     }
-    const std::string name = GENERATE("result.json", "signature.json");
+    const std::string name = GENERATE("result.json", "signature.json", "timestamp.tst");
     CAPTURE(name);
     BodyLab lab;
     bool refuse = true;
@@ -533,9 +533,9 @@ TEST_CASE("worker body: a complete folder whose result.json or signature.json is
     REQUIRE(lab.write_record(record));
     const std::optional<std::string> last_error = lab.run_loop();
     CHECK(last_error == rp::service_error::kRunNotClosed);
-    CHECK(has(lab.h.log(), "SECURITY: service: run killed-1: result.json or signature.json is "
-                           "owned by neither SYSTEM, Administrators nor this account; the folder "
-                           "is not queued"));
+    CHECK(has(lab.h.log(), "SECURITY: service: run killed-1: result.json, signature.json or "
+                           "timestamp.tst is owned by neither SYSTEM, Administrators nor this "
+                           "account; the folder is not queued"));
     CHECK(has(lab.h.log(), "run killed-1: couldn't be closed (untrusted)"));
     CHECK(std::filesystem::exists(lab.record_file()));
     CHECK_FALSE(std::filesystem::exists(lab.queued("killed-1")));

@@ -43,6 +43,7 @@ constexpr std::string_view kChanged = "changed";
 constexpr std::string_view kAndChanged = "; changed";
 constexpr std::string_view kNotWritten = "not_written";
 constexpr std::string_view kUntrusted = "untrusted";
+constexpr std::string_view kNotRead = "not_read";
 constexpr std::string_view kPass = "pass";
 constexpr std::string_view kFail = "fail";
 constexpr std::string_view kError = "error";
@@ -664,7 +665,12 @@ std::variant<BuiltResult, ResultError> build_close_result(const ClosePlan& plan,
 
 CloseRunOutcome close_run(const RunningRecord& record, const CloseRunCalls& calls)
 {
-    const ClosePlan plan = plan_close(record, calls.look());
+    const FolderContents contents = calls.look();
+    if (contents.list_failed) {
+        // A result.json left out of the listing would lose its signature.
+        return {CloseRunState::not_closed, std::string{kNotRead}};
+    }
+    const ClosePlan plan = plan_close(record, contents);
     if (plan.action == CloseAction::refuse) {
         return {CloseRunState::not_closed, std::string{kUntrusted}};
     }

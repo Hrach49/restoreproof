@@ -234,6 +234,9 @@ private:
 // What the run's folder under the runs root holds.
 struct FolderContents {
     bool exists = false;
+    // The folder is there, but its listing failed or stopped short: what it
+    // holds isn't known, and nothing is done on a part of it.
+    bool list_failed = false;
     bool result = false;      // result.json: the folder is complete
     bool items_csv = false;
     bool session_log = false;
@@ -346,7 +349,8 @@ struct CloseRunCalls {
 enum class CloseRunState {
     queued,     // in the outbox
     not_closed, // no result.json: `word` is vault, not_signed, not_written,
-                // holds_secret, changed or invalid; or one the service
+                // holds_secret, changed or invalid; not_read for a folder
+                // that couldn't be listed whole; or one the service
                 // doesn't trust: `untrusted`
     not_queued  // complete and not in the outbox: `word` is the outbox's
 };
@@ -360,7 +364,8 @@ struct CloseRunOutcome {
     bool untrusted_text_files = false;
 };
 
-// Point 7's order: a folder with a result.json is only queued, or, when the
+// Point 7's order: a folder that couldn't be listed whole is left as it is
+// (not_closed, "not_read"); a folder with a result.json is only queued, or, when the
 // result.json or its signature.json is of an owner the service doesn't
 // trust, left as it is (not_closed, "untrusted"); one that
 // isn't there is made; what a signing that didn't finish left is taken

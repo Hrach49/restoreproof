@@ -135,6 +135,11 @@ struct ServiceLoopEnv {
     std::function<OutboxHolds(std::string_view run_id)> outbox_holds;
     // Whether anything is at <runs root>\<run_id>.
     std::function<bool(std::string_view run_id)> run_folder_exists;
+    // Whether the run is marked as run (a mark under the state folder), and
+    // the mark, made when a run's record goes after it had its run line:
+    // sent\ is pruned, so the outbox alone can't say a run was made.
+    std::function<bool(std::string_view run_id)> run_done;
+    std::function<bool(std::string_view run_id)> mark_run_done;
     // The runs under outbox\, the ones that can't be sent included.
     std::function<std::uint64_t()> outbox_depth;
 
@@ -243,6 +248,9 @@ private:
     bool hold_done_ = false;
     std::optional<std::chrono::system_clock::time_point> hold_began_;
     std::optional<Steady> next_look_;
+    // A session the run of this process opened couldn't be put on record:
+    // no restore request of that run is let go.
+    bool session_unrecorded_ = false;
 
     std::optional<JobsFault> jobs_fault_;
     // What was said "once and again every hour", and when: of the record

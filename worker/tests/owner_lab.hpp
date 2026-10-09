@@ -64,4 +64,24 @@ inline void give_to(const std::filesystem::path& path, const wchar_t* sid_text)
     REQUIRE(result == ERROR_SUCCESS);
 }
 
+// Gives `path` the DACL `sddl` (for instance "D:P(D;;0x1;;;WD)(A;;FA;;;WD)":
+// nobody may list the folder). The owner can always set it back: owning an
+// object grants changing its DACL. Needs no privilege.
+inline void set_dacl(const std::filesystem::path& path, const wchar_t* sddl)
+{
+    PSECURITY_DESCRIPTOR descriptor = nullptr;
+    REQUIRE(ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl, SDDL_REVISION_1,
+                                                                 &descriptor, nullptr));
+    BOOL present = FALSE;
+    BOOL defaulted = FALSE;
+    PACL dacl = nullptr;
+    REQUIRE(GetSecurityDescriptorDacl(descriptor, &present, &dacl, &defaulted));
+    const DWORD result = SetNamedSecurityInfoW(
+        const_cast<wchar_t*>(path.c_str()), SE_FILE_OBJECT,
+        DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION, nullptr, nullptr, dacl,
+        nullptr);
+    LocalFree(descriptor);
+    REQUIRE(result == ERROR_SUCCESS);
+}
+
 } // namespace rp::test

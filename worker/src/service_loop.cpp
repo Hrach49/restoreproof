@@ -513,6 +513,17 @@ void ServiceLoop::drop_record()
     if (!record_may_go(*record_, record_holds(), report ? &*report : nullptr, hold_done_)) {
         return;
     }
+    // The run is marked before its record goes, so a job that names it is
+    // never run again, even once sent\ has been pruned; a run that ended
+    // before its run line made nothing and is offered again.
+    if (!never_started() && !env_.mark_run_done(record_->run_id)) {
+        trouble(service_error::kRecordNotRemoved);
+        if (again("record:not_marked")) {
+            env_.logger->error("run {}: couldn't be marked as run; running.json is kept",
+                               record_->run_id);
+        }
+        return;
+    }
     if (!store_.erase()) {
         trouble(service_error::kRecordNotRemoved);
         if (again("record:not_removed")) {
@@ -648,12 +659,17 @@ void ServiceLoop::take_job(const JobEntry& entry, const JobsDocument& document)
 bool ServiceLoop::skip_job(const std::string& run_id)
 {
     const OutboxHolds holds = env_.outbox_holds(run_id);
-    std::string_view why = "a run folder is already there";
+    std::string_view why;
     if (holds == OutboxHolds::queued) {
         why = "already queued";
     } else if (holds == OutboxHolds::sent) {
         why = "already sent";
-    } else if (!env_.run_folder_exists(run_id)) {
+    } else if (env_.run_folder_exists(run_id)) {
+        why = "a run folder is already there";
+    } else if (env_.run_done(run_id)) {
+        // Sent and since pruned from sent\.
+        why = "already run";
+    } else {
         return false;
     }
     if (skipped_said_.insert(run_id).second) {
@@ -669,6 +685,7 @@ void ServiceLoop::run_job(const Job& job)
     if (!take_record(new_run_record(id, job.client_id, env_.config, env_.wall_now()))) {
         return;
     }
+    session_unrecorded_ = false;
     env_.logger->info("run {}: starting (mail {}, sharepoint {}, onedrive {}, point {})", id,
                       job.sample_mail, job.sample_sp, job.sample_od, job.restore_point);
     run_ = env_.run_job(job, callbacks());
@@ -715,8 +732,11 @@ JobCallbacks ServiceLoop::callbacks()
         return false;
     };
     calls.on_session_opened = [this](std::string_view session) {
-        // The price is one session nobody ends, never a safety rule.
+        // The price is one session nobody ends, and no restore request of
+        // this run: a hold after one would wait on that session for ever,
+        // since Veeam lists an explore session and a restore session alike.
         if (!write_record(with_session(*record_, session))) {
+            session_unrecorded_ = true;
             env_.logger->warn(
                 "run {}: running.json couldn't be written; a session the run opened is not on "
                 "record",
@@ -724,6 +744,12 @@ JobCallbacks ServiceLoop::callbacks()
         }
     };
     calls.before_restore_request = [this] {
+        if (session_unrecorded_) {
+            env_.logger->error("run {}: a session the run opened is not on record; the restore "
+                               "request is not sent",
+                               record_->run_id);
+            return false;
+        }
         if (write_record(with_restore_request(*record_, env_.wall_now()))) {
             return true;
         }

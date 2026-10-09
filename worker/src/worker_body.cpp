@@ -58,11 +58,19 @@ bool is_temp_name(std::string_view name) noexcept
 FolderContents look_at(const std::filesystem::path& folder)
 {
     FolderContents contents;
-    if (path_kind(folder) != PathKind::folder) {
+    std::error_code ec;
+    const std::filesystem::file_status status = std::filesystem::symlink_status(folder, ec);
+    if (ec == std::errc::no_such_file_or_directory ||
+        (!ec && status.type() == std::filesystem::file_type::not_found)) {
         return contents;
     }
     contents.exists = true;
-    std::error_code ec;
+    if (ec || status.type() != std::filesystem::file_type::directory) {
+        // Something is there that can't be asked, or isn't a folder: not
+        // made, not written into (finding 4 of the W4.8 review).
+        contents.list_failed = true;
+        return contents;
+    }
     for (std::filesystem::directory_iterator entry(folder, ec), end; !ec && entry != end;
          entry.increment(ec)) {
         const std::string name = path_to_utf8(entry->path().filename());
@@ -83,6 +91,9 @@ FolderContents look_at(const std::filesystem::path& folder)
         contents.screenshot = contents.screenshot || ascii_iequals(name, kScreenshotName);
         contents.temp_files = contents.temp_files || is_temp_name(name);
     }
+    // Not listed whole: nothing is known of the rest (finding 4 of the
+    // W4.8 review).
+    contents.list_failed = static_cast<bool>(ec);
     return contents;
 }
 
@@ -180,6 +191,34 @@ struct Body {
 
     Outbox outbox() const { return Outbox({outbox_root, options.outbox_files, nullptr}); }
 
+    // <state folder>\done\<run_id>: the mark of a run that was made. An
+    // empty file; its being there is all it says.
+    std::optional<std::filesystem::path> done_mark(std::string_view run_id) const
+    {
+        const std::optional<std::filesystem::path> name = path_from_utf8(run_id);
+        if (!name) {
+            return std::nullopt;
+        }
+        return state_dir / std::filesystem::path{L"done"} / *name;
+    }
+
+    bool run_done(std::string_view run_id) const
+    {
+        const std::optional<std::filesystem::path> mark = done_mark(run_id);
+        return mark && path_kind(*mark) == PathKind::file;
+    }
+
+    bool mark_run_done(std::string_view run_id) const
+    {
+        const std::optional<std::filesystem::path> mark = done_mark(run_id);
+        if (!mark || !make_folder(mark->parent_path())) {
+            return false;
+        }
+        AtomicWriteOptions replace;
+        replace.replace = true;
+        return write_file_atomically(*mark, {}, replace);
+    }
+
     // The pipeline's env with what is the service's (point 5): its logger,
     // its stop as the sleep and the stop check, its run mutex, its vault.
     RestoreCommandEnv pipeline_env() const
@@ -199,7 +238,9 @@ struct Body {
     // Point 5: rpworker test's pipeline, in process.
     JobRun run_job(const Job& job, const JobCallbacks& calls) const
     {
-        JobRun run;
+        // Outside the try: run_pipeline fills it as the run goes, so what
+        // escapes keeps what was known (finding 3 of the W4.8 review).
+        PipelineReport report;
         try {
             RestoreCommandEnv env = pipeline_env();
             env.on_run_started = calls.on_run_started;
@@ -227,24 +268,12 @@ struct Body {
             LogLineStream out(logger(), spdlog::level::info, job.run_id);
             LogLineStream err(logger(), spdlog::level::warn, job.run_id);
             std::shared_ptr<FixtureRecorder> recorder;
-            PipelineReport report;
-            run.exit_code =
+            const int exit =
                 run_pipeline(args, out, err, env, recorder, test_presentation(), &report);
-            run.run_line = report.run_line;
-            run.status = report.status;
-            run.error_code = report.error_code;
-            run.replaced_status = report.replaced_status;
-            run.replaced_code = report.replaced_code;
-            run.folder = job_folder(report.folder);
-            run.folder_word = report.folder_word;
-            run.restore_may_still_run = report.restore_may_still_run;
+            return job_run_of(report, exit);
         } catch (...) {
-            // Only what came before the pipeline can throw (its env, a
-            // stream): nothing was done.
-            run = {};
-            run.exit_code = exit_code::config;
+            return job_run_after_throw(report);
         }
-        return run;
     }
 
     // The tail of a close (point 7): the key from the vault, held as the
@@ -430,6 +459,34 @@ struct Body {
 
 } // namespace
 
+JobRun job_run_of(const PipelineReport& report, int exit_code)
+{
+    JobRun run;
+    run.exit_code = exit_code;
+    run.run_line = report.run_line;
+    run.status = report.status;
+    run.error_code = report.error_code;
+    run.replaced_status = report.replaced_status;
+    run.replaced_code = report.replaced_code;
+    run.folder = job_folder(report.folder);
+    run.folder_word = report.folder_word;
+    run.restore_may_still_run = report.restore_may_still_run;
+    return run;
+}
+
+JobRun job_run_after_throw(const PipelineReport& report)
+{
+    if (!report.run_line) {
+        // Nothing was done: no folder, and the record goes.
+        JobRun run;
+        run.exit_code = exit_code::config;
+        return run;
+    }
+    JobRun run = job_run_of(report, exit_code::config);
+    run.restore_may_still_run = true;
+    return run;
+}
+
 std::unique_ptr<RunLock> retaking_abandoned(const std::function<std::unique_ptr<RunLock>()>& take)
 {
     const auto once = [&take] { return take ? take() : try_take_restore_targets_lock(); };
@@ -476,6 +533,8 @@ ServiceLoopEnv make_worker_loop_env(const std::shared_ptr<ServiceContext>& conte
         const std::optional<std::filesystem::path> name = path_from_utf8(run_id);
         return name && path_kind(body->runs_root / *name) != PathKind::none;
     };
+    env.run_done = [body](std::string_view run_id) { return body->run_done(run_id); };
+    env.mark_run_done = [body](std::string_view run_id) { return body->mark_run_done(run_id); };
     env.outbox_depth = [body] { return body->outbox_depth(); };
 
     env.run_job = [body](const Job& job, const JobCallbacks& calls) {

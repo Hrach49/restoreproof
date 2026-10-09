@@ -882,7 +882,7 @@ TEST_CASE("the hold without a restore request ends the recorded sessions at once
 
     CHECK(lab.lines == Lines{kStarted, kFound + "no"});
     CHECK(lab.calls == Lines{"read record", "lock", "look", "end a", "end b", "end c", "look",
-                             "remove record", "release", "heartbeat", "read record", "read jobs",
+                             "mark job-1", "remove record", "release", "heartbeat", "read record", "read jobs",
                              "flush"});
     REQUIRE(lab.looked_since.size() == 2);
     CHECK(lab.looked_since[0] == lab.wall0 - 10min);
@@ -967,9 +967,9 @@ TEST_CASE("the hold after a restore request ends the recorded sessions 120 s aft
     CHECK(lab.cleans == 1);
     CHECK(lab.released == 1);
     CHECK_FALSE(lab.has_record());
-    const Lines tail(lab.calls.end() - 9, lab.calls.end());
-    CHECK(tail == Lines{"lock", "look", "end a", "look", "clean job-1", "remove record",
-                        "release", "read jobs", "flush"});
+    const Lines tail(lab.calls.end() - 10, lab.calls.end());
+    CHECK(tail == Lines{"lock", "look", "end a", "look", "clean job-1", "mark job-1",
+                        "remove record", "release", "read jobs", "flush"});
 }
 
 TEST_CASE("a recorded session that is no longer listed ends the hold at once; the clean is made "
@@ -1396,10 +1396,11 @@ TEST_CASE("a write of the record that fails during the run ends the run, withhol
     lab.on_run = [&](const rp::Job& job, const rp::JobCallbacks& callbacks) {
         lab.write_ok = false;
         CHECK_FALSE(callbacks.on_run_started(LoopLab::run_started(job.run_id)));
-        callbacks.on_session_opened("s1");
         CHECK_FALSE(callbacks.before_restore_request());
+        callbacks.on_session_opened("s1");
         lab.write_ok = true;
         callbacks.on_session_opened("s2");
+        CHECK_FALSE(callbacks.before_restore_request());
         lab.queued.insert(job.run_id);
         return LoopLab::ended_run(JobFolder::queued, {}, RunStatus::error, "interrupted");
     };
@@ -1411,16 +1412,113 @@ TEST_CASE("a write of the record that fails during the run ends the run, withhol
           Lines{kStarted,
                 "info run job-1: starting (mail 5, sharepoint 5, onedrive 5, point latest)",
                 "error run job-1: running.json couldn't be written; the run ends",
-                "warning run job-1: running.json couldn't be written; a session the run opened "
-                "is not on record",
                 "error run job-1: running.json couldn't be written; the restore request is not "
                 "sent",
+                "warning run job-1: running.json couldn't be written; a session the run opened "
+                "is not on record",
+                "error run job-1: a session the run opened is not on record; the restore request "
+                "is not sent",
                 "info run job-1: ended error interrupted; queued", "info sent job-1",
                 "error running.json couldn't be removed"});
     // What couldn't be written isn't in the record.
     CHECK(lab.on_disk().sessions == Lines{"s2"});
     CHECK_FALSE(lab.on_disk().restore_requested);
     CHECK_FALSE(lab.on_disk().started_at);
+}
+
+TEST_CASE("a session the run opened that couldn't be put on record withholds every later restore "
+          "request of that run, and of that run only",
+          "[service_loop]")
+{
+    // Veeam lists a restore session and an explore session alike: a session
+    // of the run that the record doesn't hold would keep a hold after a
+    // restore request waiting forever. Every session opens before the first
+    // request, so none is sent once one is missing from the record.
+    LoopLab lab;
+    lab.jobs = jobs_text({job_text("job-1"), job_text("job-2")});
+    lab.on_run = [&](const rp::Job& job, const rp::JobCallbacks& callbacks) {
+        CHECK(callbacks.on_run_started(LoopLab::run_started(job.run_id)));
+        if (job.run_id == "job-1") {
+            lab.write_ok = false;
+            callbacks.on_session_opened("s1");
+            lab.write_ok = true;
+        }
+        callbacks.on_session_opened("s2");
+        const bool sent = callbacks.before_restore_request();
+        CHECK(sent == (job.run_id == "job-2"));
+        lab.queued.insert(job.run_id);
+        return LoopLab::ended_run(JobFolder::queued, {}, sent ? RunStatus::pass : RunStatus::error,
+                                  sent ? "" : "interrupted");
+    };
+
+    lab.run();
+
+    CHECK(lab.runs == Lines{"job-1", "job-2"});
+    CHECK(lab.count("warning run job-1: running.json couldn't be written; a session the run "
+                    "opened is not on record") == 1);
+    CHECK(lab.count("error run job-1: a session the run opened is not on record; the restore "
+                    "request is not sent") == 1);
+    CHECK(lab.count_call("look") == 0);
+    // job-1's record never said a request was sent.
+    const auto requested = std::ranges::count_if(lab.writes, [](const std::string& text) {
+        return rp::parse_record(text).value().restore_requested;
+    });
+    CHECK(requested == 1);
+}
+
+TEST_CASE("a run that went to the outbox is never run again once sent\\ was pruned: the run is "
+          "marked as run when its record goes",
+          "[service_loop]")
+{
+    LoopLab lab;
+    lab.jobs = jobs_text({job_text("job-1")});
+    // Sent at the first poll, then pruned (30 days, or the 500 MB cap).
+    lab.on_wait = [&](int) { lab.sent.clear(); };
+
+    lab.run(3);
+    // And in the next life of the service.
+    lab.run(2);
+
+    CHECK(lab.runs == Lines{"job-1"});
+    CHECK(lab.done == std::set<std::string, std::less<>>{"job-1"});
+    CHECK(lab.count("info skipped job-1: already run") == 2);
+    CHECK_FALSE(lab.has_record());
+}
+
+TEST_CASE("a run that ended before its run line is not marked as run: the job is offered again",
+          "[service_loop]")
+{
+    LoopLab lab;
+    lab.jobs = jobs_text({job_text("job-1")});
+    lab.on_run = [](const rp::Job&, const rp::JobCallbacks&) {
+        JobRun run;
+        run.exit_code = 1;
+        return run;
+    };
+
+    lab.run(2);
+
+    CHECK(lab.runs == Lines{"job-1", "job-1"});
+    CHECK(lab.done.empty());
+}
+
+TEST_CASE("a run that can't be marked as run keeps its record, so no job runs, said once, and "
+          "the record goes at the poll that marks it",
+          "[service_loop]")
+{
+    LoopLab lab;
+    lab.jobs = jobs_text({job_text("job-1"), job_text("job-2")});
+    lab.done_ok = false;
+    lab.on_wait = [&](int wait) { lab.done_ok = wait >= 2; };
+
+    lab.run(3);
+
+    // job-1 at the first poll; its record kept at the second; gone at the
+    // third, where job-2 runs.
+    CHECK(lab.runs == Lines{"job-1", "job-2"});
+    CHECK(lab.count("error run job-1: couldn't be marked as run; running.json is kept") == 1);
+    CHECK(lab.done == std::set<std::string, std::less<>>{"job-1", "job-2"});
+    CHECK(lab.last_error == rp::service_error::kRecordNotRemoved);
 }
 
 TEST_CASE("a heartbeat that falls due during a run is sent once after it, and the next poll is "
@@ -1646,7 +1744,8 @@ TEST_CASE("one job from poll to queued and sent: every line in order, the record
                 "info skipped job-1: already sent"});
     CHECK(lab.calls == Lines{"read record", "heartbeat", "read record", "read jobs",
                              "write record", "run job-1", "write record", "write record",
-                             "write record", "write record", "flush", "remove record", "flush",
+                             "write record", "write record", "flush", "mark job-1", "remove record",
+                             "flush",
                              "read record", "read jobs", "flush"});
     REQUIRE(lab.writes.size() == 5);
     const rp::RunningRecord last = rp::parse_record(lab.writes[4]).value();

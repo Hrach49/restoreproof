@@ -1049,6 +1049,21 @@ TEST_CASE("a folder that can't be made, or cleared of what a signing left, isn't
     }
 }
 
+TEST_CASE("a folder that couldn't be listed whole isn't closed, made, cleared or queued",
+          "[service_recovery]")
+{
+    // A listing that stopped short could leave out a result.json that is
+    // there: the close would take its signature.json away.
+    FakeClose fake;
+    fake.folder = there();
+    fake.folder.list_failed = true;
+    fake.folder.signature = true;
+    const rp::CloseRunOutcome outcome = rp::close_run(requested(), fake.make());
+    CHECK(outcome.state == rp::CloseRunState::not_closed);
+    CHECK(outcome.word == "not_read");
+    CHECK(fake.calls == std::vector<std::string>{"look"});
+}
+
 TEST_CASE("a close that the tail ends short keeps the tail's word", "[service_recovery]")
 {
     struct Row {

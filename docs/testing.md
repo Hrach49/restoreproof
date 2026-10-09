@@ -64,7 +64,7 @@ Tests tagged `[live]` call the lab's real services and are skipped unless `RP_LI
 they are read-only, except the two tagged `[live][writes]`, which also need `RP_LIVE_RESTORE=1`
 ("Live restore" below). `RP_LIVE=1 ctest --preset dev` runs them with the rest, or run them alone
 with `build\dev\rptests.exe "[live]"` (which also prints what they found). Three are Veeam's,
-four Graph's and one the sampler's dry run, which uses both (below); once `RP_LIVE=1` is set,
+five Graph's (W4.10's `client check` among them) and one the sampler's dry run, which uses both (below); once `RP_LIVE=1` is set,
 each needs its variables below and fails, rather than skips, without them.
 
 **The secrets come from the vault (W4.5).** Every `[live]` test reads the Worker's five
@@ -433,6 +433,28 @@ targets; nothing was done`, exit 4). The targets needn't be empty first.
 5. Check with `rpworker graph list` that the targets are empty again (`0 item(s)` each and no
    `(... not listed)` line: the W3.4 Done-when). If not, see "When something is left" above.
    Nothing to remove: the secrets stayed in the vault.
+
+### Client check by hand (`rpworker client check`, read-only; W4.10)
+
+`rpworker client check --profile-file <file>` lists a profile's three restore targets as `graph
+list` does, reading no config (`docs/worker-config.md`, "`rpworker client check`"). The lab's
+profile is the eight client keys of the lab config as a `restoreproof.client-profile.v1` object
+(`lab/tenant.md`, "Restore targets"; the app's ID is the Worker app's, `lab/tenant.md`); keep
+it outside the repository, with the config, under `%LOCALAPPDATA%\RestoreProof\lab\`:
+
+```powershell
+$config = Get-Content $env:LOCALAPPDATA\RestoreProof\lab\config.json -Raw | ConvertFrom-Json -AsHashtable
+$profile = [ordered]@{ format = 'restoreproof.client-profile.v1' }
+foreach ($key in 'veeam_org_name','graph_tenant_id','graph_client_id','test_mailbox','test_site_id','test_library_id','test_onedrive_drive_id','test_onedrive_folder_id') { $profile[$key] = $config[$key] }
+[IO.File]::WriteAllText("$env:LOCALAPPDATA\RestoreProof\lab\lab-profile.json", ($profile | ConvertTo-Json), [Text.UTF8Encoding]::new($false))
+.\worker\build\dev\rpworker.exe client check --profile-file $env:LOCALAPPDATA\RestoreProof\lab\lab-profile.json
+```
+
+The live test `worker/tests/client_command_live_test.cpp` (`[client_command][live]`,
+`RP_LIVE=1`) does the same from a temp file and then shows that a copy with `test_mailbox`
+set to another user is refused with exit 1 naming the key. `rpworker restore --profile-file`
+and `test --profile-file` run on such a file at a prompt, as the service runs on a job's
+`client`; a config copy without its eight client keys shows that nothing of them is used.
 
 ### Test by hand (`rpworker test`, writes to the lab tenant)
 
@@ -1112,6 +1134,10 @@ embeds.
 | `shared/schemas/result.v1.json` | the result's schema, the only copy | `worker/tests/result_schema_test.cpp` (`[result_schema]`): the embedded bytes are the file's, only the allowed keywords, the seventeen keys, the enums against the code | `cloud/tests/test_result_schema.py`: `check_schema`, `$schema` is draft 2020-12 |
 | `shared/testdata/canonical-json-v1.json` | `canonical-json-v1`: 33 `cases` (`input`, `canonical`, `sha256`) and 9 `rejects` (`input_text`, `reason`: `float`, `integer_out_of_range` or `non_ascii_key`) | `worker/tests/canonical_json_test.cpp` (`[canonical_json]`): every case and every reject; invalid UTF-8, which a JSON file can't hold, on bytes | `cloud/tests/test_canonical_json.py`, since W4.3 on the Python canonicaliser in `shared/tools/verify_bundle.py` (`parse_strict`, `canonical_json`), loaded by path: the 33 cases byte for byte, the 9 rejects by their reason, and what a vector's JSON text can't hold built in the test (a duplicate key, a BOM, `NaN`, invalid UTF-8, a lone surrogate, 33 levels of nesting) |
 | `shared/testdata/result-v1/valid.json` | a valid result, as canonical bytes | `worker/tests/test_command_test.cpp`: the pipeline's run reproduces it byte for byte | `test_result_schema.py`: valid, and equal to its own canonical dump |
+| `shared/schemas/client-profile.v1.json` | the client profile's schema (W4.10): nine required keys, closed, the config's shape rules as patterns | `worker/tests/client_profile_test.cpp` (`[client_profile]`): the keyword walk, and every shared case through the validator library and through `rp::parse_client_profile` alike | `cloud/tests/test_client_profile_schema.py`: `check_schema`, the keys, every case |
+| `shared/testdata/client-profile-v1/valid.json`, `cases.json` | a valid profile (the result vectors' made-up names), and 97 patches of it: 17 valid, 80 invalid, 2 of the valid ones `code_refuses` (a control character in `veeam_org_name`, tenant text the schema holds to a length alone) | `client_profile_test.cpp`, one `GENERATE` row per case: the reader accepts exactly the valid ones the code doesn't refuse, the validator exactly the valid ones | `test_client_profile_schema.py`, one parametrised test per case; both pin the counts |
+| `shared/schemas/jobs.v1.json` | the jobs document's schema (W4.10): the Worker's proposal for C5.6, its job's `client` a `$ref` to `client-profile.v1.json` | `worker/tests/service_jobs_test.cpp` (`[service_jobs][schema]`) runs the vectors through `rp::parse_jobs`; the Worker never validates a job with the schema | `cloud/tests/test_jobs_schema.py`: `check_schema`, the `$ref`, every case with the profile schema registered |
+| `shared/testdata/jobs-v1/valid.json`, `cases.json` | a valid jobs document and 69 patches: 17 valid, 52 invalid, 3 `code_refuses` (a `run_id` the pattern allows and no folder can carry: `PRN`, `job.`, `..`) | `service_jobs_test.cpp`: a document is valid when it reads and every job of it passes | `test_jobs_schema.py`; both pin the counts |
 | `shared/testdata/result-v1/cases.json` | 185 documents, each `valid.json` with an RFC 6902 `patch` (add, remove, replace) and whether the schema accepts it (`valid`): 47 valid, 138 invalid (three hold W4.3's cut of `containers_listed` to the count `containers_drawn`; the two newest, both valid, are W4.8's results written afterwards, `written-afterwards-error-interrupted-every-step-null` and `written-afterwards-error-job-invalid-nothing-known`, and the made-up code of `status-unknown-error-code` is now `teapot`, since `job_invalid` is a real one). Both sides pin the counts | `result_schema_test.cpp`, one `GENERATE` row per case | `test_result_schema.py`, one parametrised test per case |
 
 The Python tests find `shared/` by walking up from their own file, so they also run from
@@ -1301,7 +1327,7 @@ never the bytes.
 |---|---|---|
 | A | `rpworker restore`, a pass | stdout, stderr, the command logger, every file under the temp folder, the TSA's requests |
 | B | `rpworker test --json` | the same, the `--json` file among the files |
-| C | `test --evidence --outbox --record`, a pass; `outbox flush --record` with the Cloud answering 500 and then 202; `outbox list`; `graph list --hash --record` | the same, the run folder, the queued and sent folder with its `manifest.json`, the four recordings (the run's, each flush's `cloud/`, `graph list`'s), every request the fake Cloud received (URL, headers, body, every multipart part's name, file name, content type and bytes) |
+| C | `test --evidence --outbox --record`, a pass; `outbox flush --record` with the Cloud answering 500 and then 202; `outbox list`; `graph list --hash --record`; `client check --profile-file --record` (W4.10) on a profile file written from the config's keys | the same, the run folder, the queued and sent folder with its `manifest.json`, the five recordings (the run's, each flush's `cloud/`, `graph list`'s, `client check`'s), the profile file, every request the fake Cloud received (URL, headers, body, every multipart part's name, file name, content type and bytes) |
 | D | a `fail` (an item missing from its target) | the same, `items.csv`'s failed rows |
 | E | an `error` before the restore (Graph refusing the token: `check error`, `graph_auth`) | the same, a signed result with `null` steps |
 | F | an `error` in the restore phase (the connector throwing `AuthError`) | the same |

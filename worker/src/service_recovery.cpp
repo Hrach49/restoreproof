@@ -268,6 +268,16 @@ bool read_connector(const json& document, std::optional<connector::ConnectorInfo
     return true;
 }
 
+// A job reported as connector_unknown names, as its connector, the type the
+// job asked for (close_detail): the result written for it says that type, so
+// a record that names another, or none, would sign a result that contradicts
+// itself.
+bool is_closes_connector(const RunningRecord& record)
+{
+    return record.close_as != CloseAs::connector_unknown ||
+           (record.connector && record.connector->name == record.close_detail);
+}
+
 bool read_restore_point(const json& document, std::optional<RecordRestorePoint>& into)
 {
     const json* value = value_at(document, "restore_point");
@@ -552,6 +562,7 @@ std::optional<RunningRecord> parse_record(std::string_view text)
         !job_rules::is_folder_run_id(record.run_id) || !read_client(document, record.client) ||
         !read_nullable(document, "client_id", client_id, record.client_id) ||
         !read_close(document, record) || !read_connector(document, record.connector) ||
+        !is_closes_connector(record) ||
         !read_restore_point(document, record.restore_point) || requested == nullptr ||
         !requested->is_boolean() ||
         !read_nullable(document, "restore_requested_at", is_time, record.restore_requested_at) ||
@@ -657,7 +668,8 @@ ClosePlan plan_close(const RunningRecord& record, const FolderContents& folder)
         plan.verdict = verification::result_invalid_afterwards(ended.first, ended.second, requested);
     } else if (*record.close_as == CloseAs::connector_unknown) {
         // W4.11 point 6: the job's connector type, from the record's own
-        // connector, is what the result names.
+        // connector, is what the result names (the reader holds the two to
+        // each other).
         plan.code = std::string{kConnectorUnknown};
         plan.verdict = verification::connector_unknown();
     } else {

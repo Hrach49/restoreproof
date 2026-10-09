@@ -13,6 +13,7 @@
 #include <rp/connector_registry.hpp>
 #include <rp/graph_errors.hpp>
 #include <rp/http_client.hpp>
+#include <rp/run_status.hpp>
 #include <rp/secrets.hpp>
 #include <rp/veeam_m365_connector.hpp>
 
@@ -420,9 +421,19 @@ TEST_CASE("veeam_m365: the registry's connector refuses a restore spec that isn'
         spec.targets = connector::RestoreTargets::from_config(other);
     }
     REQUIRE_THROWS_MATCHES(
-        made->restore_sample(spec), std::invalid_argument,
+        made->restore_sample(spec), connector::SafetyViolation,
         Catch::Matchers::Message(
-            "veeam_m365: the restore spec isn't the connector's client's; nothing was restored"));
+            "target guard: the restore spec isn't the connector's client's; nothing was restored"));
+    // A refusal of the guard's kind: target_guard with nothing restored,
+    // never `internal`, which would count as a restore that may still run.
+    try {
+        made->restore_sample(spec);
+    } catch (...) {
+        const rp::verification::RunStop stop = rp::verification::stop_reason(
+            std::current_exception(), rp::verification::RunPhase::restore);
+        CHECK(stop.error_code == "target_guard");
+        CHECK(stop.nothing_restored);
+    }
     CHECK(lab.http.requests().empty());
     CHECK(lab.guard_lab.graph_gets() == 0);
     // The organisation's name in another ASCII case is the same client.

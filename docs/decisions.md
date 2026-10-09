@@ -7,6 +7,22 @@ Format: date, decision, reason, alternatives rejected.
 
 ---
 
+## 2026-10-10 — W4.11 code review: findings 1 to 7 of nine fixed, 8 and 9 open
+
+The review of the branch `w4.11-client-check` gave nine findings. 1 to 7 are fixed, each with its test; 8 and 9 stay open.
+
+1. **A stop is asked for again right before the clean before.** The client check stands between W4.8's stop check and the Cleaner, and its Graph reads can wait minutes. `run_pipeline` now asks once more after the `client ok` line: `error interrupted`, nothing cleaned. Test: the stop table of `tests/restore_command_test.cpp` has the row "the clean before" (a stop that came during the check).
+2. **A run's record naming a connector this Worker lacks is no record.** `ServiceLoop::find_record` treats it as one that doesn't parse: moved aside as `running.json.unread` with that line, nothing ended, closed or cleaned on its word, as before W4.11, when the reader refused such a name. A `connector_unknown` record names such a type on purpose and is unchanged. Rejected: holding with one log line, since nothing would ever end the hold.
+3. **The connector's refusal of a spec that isn't its profile's is a `SafetyViolation`.** It was `std::invalid_argument`, which `stop_reason` reads as `internal` with a restore that may have started. Now `target guard: the restore spec isn't the connector's client's; nothing was restored` through `rp::refusal` (one `SECURITY:` line): `error target_guard`, exit 4, nothing restored, no hold.
+4. **`parse_record` holds a `connector_unknown` record's `connector.type` to its `close_detail`.** A record with another type, or no connector, is no record, so `close_run` can't sign `connector.type: veeam_m365` beside `error connector_unknown`.
+5. **`ServiceLoopEnv::connector_names` became the required function `has_connector`.** An empty list read as "no connectors" and turned every job into a signed `connector_unknown` with its `done` mark. An env without the function now fails the step (`scheduler: a step failed unexpectedly; the loop goes on`): no record, no mark, no result.
+6. **The schema holds `client.scope` and `client.resolved` to each other.** `result.v1.json`'s `client` has a `oneOf`: both null, or `scope` `same_tenant` beside a `resolved` that isn't null. `result-v1/cases.json` has 201 patches, 52 valid (the two one-sided cases now invalid, both null a new valid one). No verifier word was added; both verifiers refuse such a result as `result_schema`. Open: nothing holds `resolved.organization.tenant_id` to `client.tenant_id`, which a schema can't say; C5.7 should compare them.
+7. **The live harnesses' `finally`.** In `w410-live.ps1` and `w411-live.ps1` step (c), the uninstall runs whatever the revoke does, and a run that failed writes `...-service-run.failed.txt` and never replaces the committed evidence. Parsed, not run live.
+
+Open: 8 (the three targets are resolved by the client check and again by the Cleaner, the before snapshot and layer 1; handing them on changes the Cleaner's interface) and 9 (`shown_word` in `client_check.cpp` beside `one_line` in `src/text_util.hpp`).
+
+---
+
 ## 2026-10-09 — W4.11 build notes: the client check built as the entry says, the organisation kept by the connector, the vectors rewritten, two tests moved by the step; the runs; the live Done-when waiting for the owner's go-ahead (proposed)
 
 W4.11 (#134) was built as the entry below says, test-first, on the branch `w4.11-client-check` (nothing committed until the owner asks). This records where the build left the entry, what it settled beyond it, the runs, and what is open. `docs/verification.md` ("The client check (W4.11)", the two codes' rows), `docs/worker-config.md` ("`rpworker restore`" the client check, "The jobs file" `connector` and J3b, "`running.json`"), `docs/testing.md`, `docs/glossary.md` and `tests/e2e/scenarios.md` (scenario 8) say the rest.

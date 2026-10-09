@@ -94,6 +94,7 @@ if ($Steps -contains 'c') {
         $t += "`n$(Invoke-W48 @('service', 'start'))"
         $labJson = Get-Content $LabProfile -Raw | ConvertFrom-Json -AsHashtable
         $other = Get-Content $OtherTenant -Raw | ConvertFrom-Json -AsHashtable
+        $done = $false
         $unknown = New-W48Job "$Prefix-3" 1 1 1
         $unknown['client'] = $labJson
         $unknown['connector'] = @{ type = 'other_backup' }
@@ -119,9 +120,18 @@ if ($Steps -contains 'c') {
             $t += "`n-- $(Get-W411Client $sent)"
         }
         $t += "`n-- Veeam after: $(Get-W48Sessions)"
+        $done = $true
     } finally {
-        $t += "`n-- the grants taken away, the service uninstalled`n$(Revoke-W48Account)`n$(Invoke-W48 @('service', 'uninstall'))"
-        Save-W48Evidence 'w4.11-3-service-run.txt' ($t -join "`n")
+        # The service goes also when the grants can't be taken away (the W4.11 review's finding 7).
+        try {
+            $t += "`n-- the grants taken away`n$(Revoke-W48Account)"
+        } catch {
+            $t += "`n-- the grants couldn't be taken away: $($_.Exception.Message)"
+        } finally {
+            $t += "`n-- the service uninstalled`n$(Invoke-W48 @('service', 'uninstall'))"
+            # A run that failed never replaces the committed evidence.
+            Save-W48Evidence ($done ? 'w4.11-3-service-run.txt' : 'w4.11-3-service-run.failed.txt') ($t -join "`n")
+        }
     }
 }
 

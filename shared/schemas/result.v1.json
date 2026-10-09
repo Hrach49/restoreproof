@@ -95,6 +95,32 @@
         "scope",
         "resolved"
       ],
+      "oneOf": [
+        {
+          "properties": {
+            "scope": {
+              "type": "null"
+            },
+            "resolved": {
+              "type": "null"
+            }
+          }
+        },
+        {
+          "properties": {
+            "scope": {
+              "enum": [
+                "same_tenant"
+              ]
+            },
+            "resolved": {
+              "not": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ],
       "properties": {
         "scope": {
           "oneOf": [

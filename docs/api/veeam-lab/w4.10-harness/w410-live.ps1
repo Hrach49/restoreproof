@@ -92,6 +92,7 @@ if ($Steps -contains 'c') {
     $t += "`n-- the grants`n$(Grant-W48Account)"
     $since = [DateTime]::UtcNow
     $t += "`n$(Invoke-W48 @('service', 'start'))"
+    $done = $false
     $job = New-W48Job "$Prefix-2" 1 1 1
     $job['client'] = Get-Content $LabProfile -Raw | ConvertFrom-Json -AsHashtable
     $t += "`n$(Set-W48Jobs @($job))"
@@ -108,10 +109,19 @@ if ($Steps -contains 'c') {
     $t += "`n-- the sent folder`n$(Test-W48Folder $sent)"
     $t += "`n-- $(Get-W410Client $sent)"
     $t += "`n-- Veeam after: $(Get-W48Sessions)"
+    $done = $true
     } finally {
-        # The W4.10 review's finding 15: the grants and the service go whatever happened above.
-        $t += "`n-- the grants taken away, the service uninstalled`n$(Revoke-W48Account)`n$(Invoke-W48 @('service', 'uninstall'))"
-        Save-W48Evidence 'w4.10-3-service-run.txt' ($t -join "`n")
+        # The W4.10 review's finding 15: the grants and the service go whatever happened above,
+        # the service also when the grants can't be taken away (the W4.11 review's finding 7).
+        try {
+            $t += "`n-- the grants taken away`n$(Revoke-W48Account)"
+        } catch {
+            $t += "`n-- the grants couldn't be taken away: $($_.Exception.Message)"
+        } finally {
+            $t += "`n-- the service uninstalled`n$(Invoke-W48 @('service', 'uninstall'))"
+            # A run that failed never replaces the committed evidence.
+            Save-W48Evidence ($done ? 'w4.10-3-service-run.txt' : 'w4.10-3-service-run.failed.txt') ($t -join "`n")
+        }
     }
 }
 

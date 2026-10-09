@@ -1517,7 +1517,7 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
                 return interrupted_before("the run couldn't be recorded as started");
             }
         }
-        // W4.8 point 13: a stop before the client check and the clean before.
+        // W4.8 point 13: a stop before the client check.
         if (stop_asked()) {
             return interrupted_before(kAskedToStop);
         }
@@ -1548,6 +1548,11 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
         }
         out << format_client_ok(*resolved);
         flush_or_throw(out);
+        // W4.8 point 13: a stop before the clean before, which deletes. The
+        // check's Graph reads may have waited long enough for one to come.
+        if (stop_asked()) {
+            return interrupted_before(kAskedToStop);
+        }
 
         // W3.4: every run with a run line empties all three targets first,
         // whatever it samples, so an earlier run's copies can't pass for this

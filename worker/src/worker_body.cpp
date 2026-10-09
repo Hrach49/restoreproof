@@ -540,7 +540,10 @@ ServiceLoopEnv make_worker_loop_env(const std::shared_ptr<ServiceContext>& conte
 
     env.read_jobs = [](const std::filesystem::path& file) { return read_jobs(file); };
     // W4.11: the connectors this Worker has, and the hold's by the record.
-    env.connector_names = connector::default_connector_registry().names();
+    env.has_connector = [names = connector::default_connector_registry().names()](
+                            std::string_view type) {
+        return std::ranges::find(names, type) != names.end();
+    };
     env.hold_connector_type = [body](std::string_view type) {
         if (body->hold_connector && body->hold_type != type) {
             body->hold_connector.reset();

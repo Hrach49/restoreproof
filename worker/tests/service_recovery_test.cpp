@@ -370,6 +370,16 @@ TEST_CASE("a record with a key missing, one too many or a wrong kind or word is 
         {"connector_unknown with a type that isn't a name",
          both(set("/kind", "job_invalid"),
               both(set("/close_as", "connector_unknown"), set("/close_detail", "Other Backup")))},
+        // The result written for it names the record's connector: it is the
+        // type the job asked for, or the record is none.
+        {"connector_unknown whose connector is another type",
+         both(set("/kind", "job_invalid"),
+              both(set("/close_as", "connector_unknown"), set("/close_detail", "other_backup")))},
+        {"connector_unknown without a connector",
+         both(set("/connector", nullptr),
+              both(set("/kind", "job_invalid"),
+                   both(set("/close_as", "connector_unknown"),
+                        set("/close_detail", "other_backup"))))},
         {"connector type a number", set("/connector/type", 5)},
         {"connector without api", drop("/connector", "api")},
         {"connector with a third key", set("/connector/zz", 1)},

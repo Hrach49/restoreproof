@@ -9,14 +9,15 @@ a secret takes, never a value: a JWT, a `Bearer` token, a PEM private key
 block, the Base64 opening of a private key's DER (Ed25519, RSA and EC in
 PKCS#8, RSA PKCS#1, EC SEC1) and of a PKCS#12 file, and a keyed secret
 (`"password": "..."`, `access_token=...`) whose value isn't a placeholder
-(`[REDACTED]`, `SCRUBBED`, `null`, empty, `[...]`, `<...>`, an ellipsis, a
-script's `$variable` or `(call)`). A
+(`[REDACTED]`, `SCRUBBED`, `null`, empty, an ellipsis, or starting with `[`,
+`<`, `$`, `(` or a backtick: a bracketed placeholder, a script's variable, call
+or expression, Markdown's code). A
 certificate or a signed token is public and no shape: `MII...` alone is
 nothing, only the openings a private key or a PFX has.
 
 Every file under each tree is read, whatever its name; UTF-8 where it is,
 Latin-1 otherwise, so no byte is skipped. `.venv`, `__pycache__`, `build` and
-`.git` folders are not entered.
+`.git` folders are not entered, nor any symbolic link or junction.
 
 The allowlist (fixture_secret_scan_allowlist.json beside this file) names, per
 file, the shape it may hold, why, and either the exact `values` or the
@@ -26,8 +27,8 @@ allowance is a hole.
 
 A finding names the file, the line and the shape, never the text.
 
-Exit codes: 0 clean, 1 a finding or a stale entry, 2 the allowlist or a tree
-can't be read. Stdlib only, as the coverage gate is.
+Exit codes: 0 clean, 1 a finding or a stale entry, 2 the allowlist, a tree or
+a file can't be read (never a pass over what wasn't read). Stdlib only, as the coverage gate is.
 """
 
 from __future__ import annotations
@@ -37,7 +38,7 @@ import json
 import re
 import sys
 from dataclasses import dataclass, field
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Iterable, TextIO
 
 HERE = Path(__file__).resolve().parent
@@ -47,8 +48,10 @@ DEFAULT_TREES = [
     "worker/tests/fixtures",
     "shared/testdata",
     "docs/api",
+    "tests/e2e",
     "lab/canary",
     "lab/seed-manifest.json",
+    "lab/tenant.md",
 ]
 SKIPPED_FOLDERS = frozenset({".venv", "__pycache__", "build", ".git"})
 
@@ -68,6 +71,9 @@ SECRET_KEYS = (
     "signing_key_base64",
     "signing_private_key",
     "pfx_base64",
+    "pfx",
+    "sig",
+    "authorization",
 )
 _KEYS = "|".join(re.escape(k) for k in SECRET_KEYS)
 
@@ -97,11 +103,17 @@ SHAPES: dict[str, re.Pattern[str]] = {
         r"(?P<value>(?:MII" + BASE64 + r"{2}[AQgw]IBAzCC|MIM" + BASE64 + r"{4}CAQMwgg)"
         + BASE64 + r"*)"
     ),
-    # "<key>": "<value>" or <key>=<value>, the key in any case and not part of
-    # a longer name; a placeholder value is no secret (is_placeholder).
+    # "<key>": "<value>", its JSON-escaped form inside a string
+    # (\"<key>\":\"<value>\") or <key>=<value> with a bare, "quoted" or
+    # 'quoted' value; the key in any case, ending a longer name after a
+    # separator as redact() takes it (veeam_password, db.password) but never
+    # run into a letter or digit (xpassword) nor followed by one or '_'
+    # (password_hash). A placeholder value is no secret (is_placeholder).
     "keyed_secret": re.compile(
-        r"(?<![A-Za-z0-9_])(?:" + _KEYS + r")(?![A-Za-z0-9_])"
-        r"(?:\"\s*:\s*\"(?P<json>(?:[^\"\\]|\\.)*)\"|\s*=\s*(?P<form>[^&\s\"',]*))",
+        r"(?<![A-Za-z0-9])(?:" + _KEYS + r")(?![A-Za-z0-9_])"
+        r"(?:\"\s*:\s*\"(?P<json>(?:[^\"\\]|\\.)*)\""
+        r'|\\"\s*:\s*\\"(?P<esc>(?:[^\\"]|\\[^"])*?)\\"'
+        r"|\s*=\s*(?:\"(?P<dq>[^\"]*)\"|'(?P<sq>[^']*)'|(?P<form>[^&\s\"',]*)))",
         re.IGNORECASE,
     ),
 }
@@ -112,13 +124,11 @@ PLACEHOLDERS = frozenset({"", "[REDACTED]", "SCRUBBED", "null"})
 def is_placeholder(value: str) -> bool:
     if value in PLACEHOLDERS:
         return True
-    if value.startswith("[") and value.endswith("]"):
-        return True
-    if value.startswith("<") and value.endswith(">"):
-        return True
-    # A script's variable or call (`password = $pw`, `refresh_token = (Get-...)`)
-    # names where a value comes from, not a value.
-    if value.startswith("$") or value.startswith("("):
+    # A bracketed placeholder ([REDACTED], <Base64 PFX>), a script's variable,
+    # call or expression (`password = $pw`, `refresh_token = (Get-...)`,
+    # `pfx = [Convert]::...`) or Markdown's backtick name where a value comes
+    # from, not a value.
+    if value[:1] in ("[", "<", "$", "(", "`"):
         return True
     return value.startswith("…") or value.startswith("...")
 
@@ -149,9 +159,8 @@ def find_shapes(text: str) -> list[Shape]:
             if name == "pem_private_key":
                 value = pem_body(text, match.start())
             elif name == "keyed_secret":
-                value = match.group("json")
-                if value is None:
-                    value = match.group("form")
+                value = next(v for v in (match.group("json"), match.group("esc"), match.group("dq"),
+                                         match.group("sq"), match.group("form")) if v is not None)
                 if is_placeholder(value):
                     continue
             else:
@@ -269,11 +278,13 @@ class Result:
     findings: list[Finding] = field(default_factory=list)
     stale: list[Stale] = field(default_factory=list)
     missing_trees: list[str] = field(default_factory=list)
+    unreadable: list[str] = field(default_factory=list)  # "<path>: <why>"
     files: int = 0
     allowed: int = 0
 
     def ok(self) -> bool:
-        return not self.findings and not self.stale and not self.missing_trees
+        return (not self.findings and not self.stale and not self.missing_trees
+                and not self.unreadable)
 
 
 def decode(data: bytes) -> str:
@@ -294,6 +305,10 @@ def files_under(root: Path, tree: str) -> Iterable[Path] | None:
 
     def walk(folder: Path) -> Iterable[Path]:
         for entry in sorted(folder.iterdir(), key=lambda p: p.name):
+            # A link or a junction is never entered: it could point up the
+            # tree, and what it points at is scanned where it is.
+            if entry.is_symlink() or entry.is_junction():
+                continue
             if entry.is_dir():
                 if entry.name not in SKIPPED_FOLDERS:
                     yield from walk(entry)
@@ -303,9 +318,20 @@ def files_under(root: Path, tree: str) -> Iterable[Path] | None:
     return walk(top)
 
 
+def relative_name(file: Path, root: Path) -> str:
+    try:
+        return file.relative_to(root).as_posix()
+    except ValueError:
+        return file.as_posix()
+
+
 def scan_file(file: Path, root: Path, allowlist: Allowlist, result: Result) -> None:
-    rel = PurePosixPath(file.relative_to(root).as_posix()).as_posix()
-    text = decode(file.read_bytes())
+    rel = relative_name(file, root)
+    try:
+        text = decode(file.read_bytes())
+    except OSError as exc:
+        result.unreadable.append(f"{rel}: {exc.strerror or exc}")
+        return
     result.files += 1
     for shape in find_shapes(text):
         if allowlist.allow(rel, shape.shape, shape.value):
@@ -345,10 +371,16 @@ def main(argv: list[str] | None = None, out: TextIO = sys.stdout) -> int:
     except AllowlistError as exc:
         print(f"fixture secret scan: allowlist error: {exc}", file=out)
         return 2
-    result = scan_trees(root, trees, allowlist)
-    if result.missing_trees:
+    try:
+        result = scan_trees(root, trees, allowlist)
+    except OSError as exc:
+        print(f"fixture secret scan: a tree can't be read: {exc}", file=out)
+        return 2
+    if result.missing_trees or result.unreadable:
         for tree in result.missing_trees:
             print(f"fixture secret scan: no such tree under {root}: {tree}", file=out)
+        for file in result.unreadable:
+            print(f"fixture secret scan: a file can't be read: {file}", file=out)
         return 2
     for finding in result.findings:
         print(finding.text(), file=out)

@@ -1326,16 +1326,20 @@ and `searched()`, long values through `add_base64` or `add_with_pieces`.
 
 **The fixture scan**, `worker/tools/fixture_secret_scan.py` (stdlib only), searches the
 committed data trees for the shapes alone, since CI has no lab secret and must never be given
-one: `worker/tests/fixtures/`, `shared/testdata/`, `docs/api/`, `lab/canary/` and
-`lab/seed-manifest.json`, every file whatever its name (UTF-8 where it is, Latin-1 otherwise,
-so no byte is skipped), never a `.venv`, `__pycache__`, `build` or `.git` folder. Source trees
-are not scanned: a secret in code is caught by review and by the vault rule. It runs as the
+one: `worker/tests/fixtures/`, `shared/testdata/`, `docs/api/`, `tests/e2e/`, `lab/canary/`,
+`lab/seed-manifest.json` and `lab/tenant.md`, every file whatever its name (UTF-8 where it is,
+Latin-1 otherwise, so no byte is skipped), never a `.venv`, `__pycache__`, `build` or `.git`
+folder, nor a symbolic link or junction. Not the rest of `docs/`: `decisions.md` and this file
+describe the shapes themselves and quote a PEM header in prose with no body to pin, so a value
+allowlist can't hold them (W4.9 build notes). Source trees are not scanned: a secret in code is
+caught by review and by the vault rule. A file that can't be read is never a pass: exit 2, as a
+tree that isn't there. It runs as the
 ctest test `fixture secret scan` (label `scan`, registered when CMake finds a Python 3) and in
 CI as the `fixture-scan` job of `.github/workflows/worker.yml`, on Ubuntu, without a compiler,
 beside the Windows build job. Its self-tests run with the gate's:
 
 ```powershell
-python tools/fixture_secret_scan.py --root ..          # from worker/: exit 0 clean, 1 a finding, 2 unusable
+python tools/fixture_secret_scan.py --root ..          # from worker/: exit 0 clean, 1 a finding or a stale entry, 2 unusable (the allowlist, a tree or a file can't be read)
 python -m unittest discover -s tools -p "test_*.py"
 ```
 
@@ -1347,26 +1351,30 @@ whose values match nothing is stale and fails the scan. Today it holds: the scru
 JWT (`alg` `none`, the claim `{"scrubbed":true}`) in `graph/token-200.json` and the Graph
 fixtures' README; Base64 of a result document in `signing-v1/cases.json` (Base64 of `{"` is
 `eyJ`, whatever follows); RFC 8032's test keys 1 and 2 in `signing-v1/keys.json` and
-`key-files.json`; the test TSA's EC key in `timestamp-v1/keys.json`. To allow a new file, add an
+`key-files.json`; the test TSA's EC key in `timestamp-v1/keys.json`; the stub Cloud's own word
+`present` under `authorization` in `w4.8-harness/stub-cloud.py`. To allow a new file, add an
 entry with its path, the shape, a reason sentence and the value (for a PEM block, its Base64
 body without line breaks; for a Base64 opening, the Base64 run from the opening on; for a JWT,
 the token) or a prefix.
 
 **The shapes**, one table for both halves (the sentinel audit searches for them in every output
-beside the values; the fixture scan in every data file):
+beside the values; the fixture scan in every data file), and one list of examples both are held
+to: `worker/tools/secret_shapes_cases.json` (`shaped`, each with its shape; `clean`), read by
+`test_fixture_secret_scan.py` and by the audit's case "the shapes are the fixture scan's". A new
+rule, or a text one half gets wrong, goes there first:
 
 | Shape | Rule | Allowed to be |
 |---|---|---|
 | `jwt` | `eyJ` not run into a preceding base64url character, then 37 or more base64url characters and dots (the recorder's `kMinJwtTail`) | the scrub placeholder; Base64 of a JSON document |
-| `bearer` | `Bearer`, blanks, 20 or more of `A-Z a-z 0-9 . _ ~ + / -` and up to two `=`, not followed by a letter, a digit or `=` (`Bearer realm=` is an auth-param; `Bearer [REDACTED]` doesn't match) | nothing |
-| `pem_private_key` | `-----BEGIN <label>-----` whose label ends in `PRIVATE KEY` (`redact()`'s rule); a `PUBLIC KEY` or `CERTIFICATE` block is no shape | the published test keys |
+| `bearer` | `Bearer` not run into a word character, blanks, 20 or more of `A-Z a-z 0-9 . _ ~ + / -` and up to two `=`, not followed by a letter, a digit or `=` (`Bearer realm=` is an auth-param; `Bearer [REDACTED]` doesn't match) | nothing |
+| `pem_private_key` | `-----BEGIN <label>-----` whose label is upper-case words ending in `PRIVATE KEY` (`redact()`'s rule: `PRIVATE KEY`, `RSA PRIVATE KEY`, `ENCRYPTED PRIVATE KEY`; not `XPRIVATE KEY`); a `PUBLIC KEY` or `CERTIFICATE` block is no shape; the value compared is the block's Base64 body | the published test keys |
 | `ed25519_pkcs8` | `MC4CAQAwBQYDK2VwBCIEI` and 43 Base64 characters: an Ed25519 PKCS#8 key whole | RFC 8032's test keys |
 | `rsa_pkcs8` | `MII..[AQgw]IBADANBgkqhkiG9w0BAQEFAASC` | nothing |
 | `rsa_pkcs1` | `MII..[AQgw]IBAAKCA` | nothing |
 | `ec_pkcs8` | `MIG.AgEAMBMGByqGSM49` | the test TSA's key |
 | `ec_sec1` | `MHcCAQEEI`, `MIGkAgEBBDA` or `MIHcAgEBBEIB` (P-256, P-384, P-521) | nothing |
 | `pkcs12` | `MII..[AQgw]IBAzCC`, or `MIM....CAQMwgg` over 64 KiB: a PFX | nothing |
-| `keyed_secret` (the fixture scan only; in the audit the values are searched as bytes) | `"<key>": "<value>"` or `<key>=<value>` for `password`, `client_secret`, `client_assertion`, `refresh_token`, `access_token`, `id_token`, `tempauth`, `applicationCertificate`, `applicationCertificatePassword`, `signing_key`, `signing_key_base64`, `signing_private_key`, `pfx_base64`, the key in any case and not part of a longer name, the value not `[REDACTED]`, `SCRUBBED`, `null`, empty, `[...]`, `<...>`, an ellipsis, a script's `$variable` or `(call)` | the placeholder JWT under `access_token` |
+| `keyed_secret` (the fixture scan only; in the audit the values are searched as bytes) | `"<key>": "<value>"`, its JSON-escaped form inside a string (`\"<key>\":\"<value>\"`) or `<key>=<value>` with a bare, `"quoted"` or `'quoted'` value, for the keys `redact()` masks: `password`, `client_secret`, `client_assertion`, `refresh_token`, `access_token`, `id_token`, `tempauth`, `applicationCertificate`, `applicationCertificatePassword`, `signing_key`, `signing_key_base64`, `signing_private_key`, `pfx_base64`, `pfx`, `sig`, `authorization`; the key in any case, ending a longer name after a separator as `redact()` takes it (`veeam_password`, `db.password`) but never run into a letter or digit (`xpassword`) nor followed by one or `_` (`password_hash`); the value not `[REDACTED]`, `SCRUBBED`, `null`, empty, an ellipsis, or starting with `[`, `<`, `$`, `(` or a backtick (a bracketed placeholder, a script's variable, call or expression, Markdown's code) | the placeholder JWT under `access_token`; the stub's `present` |
 
 A bare `MII...` run is a certificate or a CMS token, public, and no shape: the fixture trees hold
 hundreds (`rest-certificate.pem`, the TSA fixtures, the timestamp vectors). A TimeStampResp

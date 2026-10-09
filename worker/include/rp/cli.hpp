@@ -91,12 +91,13 @@ inline constexpr std::string_view kCliUsage =
     "rpworker vault grant <account> [--vault <file>] | "
     "rpworker veeam list [--config <path>] [--vault <file>] [--record <dir>] | "
     "rpworker graph list [--hash] [--config <path>] [--vault <file>] [--record <dir>] | "
+    "rpworker client check --profile-file <file> [--vault <file>] [--record <dir>] | "
     "rpworker restore [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] "
     "[--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--vault <file>] "
-    "[--record <dir>] | "
+    "[--record <dir>] [--profile-file <file>] | "
     "rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] "
     "[--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--vault <file>] "
-    "[--record <dir>] [--json <file> | --evidence <dir> [--outbox <root>]] | "
+    "[--record <dir>] [--profile-file <file>] [--json <file> | --evidence <dir> [--outbox <root>]] | "
     "rpworker outbox flush [--config <path>] [--outbox <root>] [--record <dir>] | "
     "rpworker outbox list [--outbox <root>] | "
     "rpworker signer public-key [--vault <file>] | "
@@ -106,7 +107,8 @@ inline constexpr std::string_view kCliUsage =
 
 // rpworker's command line: `--version`, `config ...` (rp/config_check.hpp),
 // `vault ...` (rp/vault_command.hpp, W4.5), `veeam ...`
-// (rp/veeam_command.hpp), `graph ...` (rp/graph_command.hpp), `restore ...`
+// (rp/veeam_command.hpp), `graph ...` (rp/graph_command.hpp), `client ...`
+// (rp/client_command.hpp, W4.10), `restore ...`
 // (rp/restore_command.hpp), `test ...` (rp/test_command.hpp), `outbox ...`
 // (rp/outbox_command.hpp, W4.6), `signer ...` (rp/signer_command.hpp) or
 // `service ...` (rp/service_command.hpp, W4.7).

@@ -606,11 +606,13 @@ W3.5 times the two cleans as the spans `cleanup_before` and `cleanup_after` (`do
 running keeps its record (`running.json`), and no job starts while it does. The loop looks at
 Veeam's sessions until nothing of that run is running any more (the hold) and then cleans the
 restore targets once: `rp::clean_restore_targets` beside `run_pipeline`, under the run mutex,
-with the vault's Graph certificate, the same Cleaner over the config's targets. It is the
+with the vault's Graph certificate, the same Cleaner over the targets of the record's own
+profile (W4.10; never the config's client keys). It is the
 Cleaner's `before_run` clean, unchanged, and its line is the clean before's (`cleanup before
 ok|incomplete: ...`), logged after `recovery clean for <run_id>:`. It is made only when a
-restore request is on record and the config's client is the record's (`the config's client is
-not the run's; the restore targets were not cleaned` otherwise). Whatever it answers, the
+restore request is on record (W4.8 also compared the config's client with the record's and
+wrote `the config's client is not the run's; the restore targets were not cleaned`; since
+W4.10 the record's profile names the targets and that line is gone). Whatever it answers, the
 record goes and jobs run again: every run cleans before anyway. This clean is in no result:
 the run's own result was written before it, with `cleanup.after` `null`. The hold, its lines
 and the operator's way out are in `docs/worker-config.md`.

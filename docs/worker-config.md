@@ -298,6 +298,11 @@ gone. The vault holds five named values, the names defined once in
 | `graph_cert_password` | The PFX's password. Absent only if the PFX has none. |
 | `signing_key_base64` | The Worker's Ed25519 signing key (W4.3): one line of standard Base64 of the private key's PKCS#8 DER. See "The signing key" below. |
 
+The user name, `veeam_username`, is a name and no secret value: it is in Veeam's own session
+list and in the service's `waiting for Veeam` line, and `rp::secret_values` leaves it out.
+The other four never reach anything the Worker writes, which W4.9's secret audit holds every
+path to (`docs/testing.md`, "The secret audit (W4.9)").
+
 Which names a command needs depends on the command: `veeam list` the first two, `graph list`
 the certificate's two, `restore` and `test` the first four, `test --evidence` and `signer
 public-key` the signing key too, `config check` none (it says which are there). A name that

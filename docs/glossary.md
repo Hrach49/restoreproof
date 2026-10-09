@@ -407,6 +407,29 @@ the base64url SHA-256 of the certificate's DER encoding. Entra finds the app's k
 Not the thumbprint Windows and the Entra portal show, which is the SHA-1 in hex (`x5t` is its
 base64url form); the Worker's error messages name the certificate by that SHA-1.
 
+**Sentinel audit.** W4.9's test (`worker/tests/secret_audit_test.cpp`, `[secret_audit]`): every
+path of the pipeline, the commands that read the vault and the service's loop run on fixtures
+with five known values in place of the vault's secrets (`Sentinel-Audit-...`, a PFX made for
+the audit, RFC 8032's test key 2), and everything each path wrote (both streams, the log, every
+file, every request to the fake Cloud and the fake TSA) is searched for every value, every value
+derived from one (the PFX's bytes and hex, the signing seed, the tokens the fakes hand out, the
+exported credential, the client assertion) and every secret shape. A hit names the output and
+the value's label, never the bytes. `veeam_username` is no secret value and is only counted. See
+`docs/testing.md`, "The secret audit (W4.9)".
+
+**Fixture scan.** W4.9's other half (`worker/tools/fixture_secret_scan.py`, a ctest test and the
+`fixture-scan` CI job): the committed fixture, vector and evidence trees searched for secret
+shapes, never values (CI has no lab secret), against an allowlist that names, per file, the shape,
+the reason and the exact values or prefixes allowed (the published RFC 8032 and test-TSA keys, the
+scrub placeholder JWT). A stale allowance fails the scan.
+
+**Secret shape.** What a secret looks like without knowing its value: a JWT (`eyJ` and 37 or more
+base64url characters), a `Bearer` token, a PEM private key block, the Base64 opening of a private
+key's DER (Ed25519 `MC4CAQAwBQYDK2VwBCIEI`, RSA and EC in PKCS#8, RSA PKCS#1, EC SEC1) or of a PFX
+(`MII..[AQgw]IBAzCC`), or a keyed secret (`"password": "..."`) with a value that isn't a
+placeholder. A bare `MII...` run is a certificate or a signed token, public, and no shape. One
+table for both halves of the audit in `docs/testing.md`.
+
 **Grant (in Worker messages).** A permission a Graph call relies on, in words a customer can
 act on, such as `Sites.Selected read on the test site`. Graph's 403 doesn't say what is
 missing, so every call the Worker makes names its grant, and a refusal's message quotes it

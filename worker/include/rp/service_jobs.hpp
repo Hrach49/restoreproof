@@ -11,13 +11,19 @@
 //   run_id               required; a run ID that names a folder
 //                        (job_rules::is_folder_run_id)
 //   client_id            required; 1 to 128 printable ASCII characters, or null
+//   client               required; the client's profile, a
+//                        restoreproof.client-profile.v1 object (W4.10,
+//                        rp/client_profile.hpp): the tenant, the organisation
+//                        and the restore targets the run uses
 //   sample_mail, sample_sp, sample_od
 //                        required integers 0 to 100, not all 0
 //   restore_point        required; `latest` or a restore point ID (--point's rule)
 //   screenshots_enabled  required boolean
 //   canary_cursor        optional; three integers 0 to 999999, default 0,0,0
 // The rules are the ones a command line is held to (src/job_rules.hpp), not a
-// copy.
+// copy. The schema shared/schemas/jobs.v1.json is the Cloud's copy of the
+// shape, and the shared vectors shared/testdata/jobs-v1/ hold the two
+// together.
 //
 // Whoever can write the file commands the Worker, so read_jobs reads it only
 // when its owner passes the vault's rule (rp::read_trusted_file).
@@ -29,6 +35,7 @@
 //
 // Strict (100% line): this decides which jobs run.
 
+#include <rp/client_profile.hpp>
 #include <rp/sample_selector.hpp>
 #include <rp/vault.hpp>
 
@@ -51,13 +58,22 @@ inline constexpr std::size_t kMaxJobs = 5;
 inline constexpr std::size_t kMaxClientIdLength = 128;
 // A JobEntry's `fault` for a key the job format doesn't have.
 inline constexpr std::string_view kJobUnknownKey = "unknown key";
+// A JobEntry's `fault` for a `client` that is missing, not an object, not the
+// profile's format or has a key that isn't the profile's; one of the profile's
+// eight keys at fault is "client.<key>".
+inline constexpr std::string_view kJobClientKey = "client";
 
 // A job that passed every rule.
 struct Job {
     std::string run_id;
-    // nullopt for the document's null. Not checked against the config's
-    // tenant and not written into the result until W4.11.
+    // nullopt for the document's null. The Cloud's label for the client,
+    // written into the result's client.client_id (W4.10); checked against
+    // nothing until W4.11.
     std::optional<std::string> client_id;
+    // The client's profile (W4.10): what the run uses for its tenant,
+    // organisation and targets. Set for a valid job; for an invalid one, set
+    // when it could be read.
+    std::optional<ClientProfile> client;
     int sample_mail = 0;
     int sample_sp = 0;
     int sample_od = 0;
@@ -82,15 +98,17 @@ struct JobEntry {
     JobState state = JobState::no_run_id;
     // Its place in the document, from 1.
     std::size_t position = 0;
-    // invalid: the first key at fault, in the order client_id, sample_mail,
-    // sample_sp, sample_od, restore_point, screenshots_enabled, canary_cursor
-    // (three sizes that are each valid and all 0 are sample_mail's fault),
-    // or kJobUnknownKey when those all pass and the job has another key.
-    // Empty otherwise.
+    // invalid: the first key at fault, in the order client_id, client
+    // (kJobClientKey, or "client.<key>" for one of the profile's keys),
+    // sample_mail, sample_sp, sample_od, restore_point, screenshots_enabled,
+    // canary_cursor (three sizes that are each valid and all 0 are
+    // sample_mail's fault), or kJobUnknownKey when those all pass and the job
+    // has another key. Empty otherwise.
     std::string fault;
-    // valid: the job. invalid: its run_id, and its client_id when that
-    // passed its rule (nullopt when client_id is the key at fault); the rest
-    // as a new Job has it. no_run_id: a new Job.
+    // valid: the job. invalid: its run_id, its client_id when that passed
+    // its rule (nullopt when client_id is the key at fault) and its client
+    // when that could be read (nullopt when client_id or client is the key
+    // at fault); the rest as a new Job has it. no_run_id: a new Job.
     Job job;
 };
 

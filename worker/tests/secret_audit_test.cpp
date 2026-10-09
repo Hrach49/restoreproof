@@ -23,6 +23,8 @@
 #include "worker_body_lab.hpp"
 
 #include <rp/cli.hpp>
+#include <rp/client_command.hpp>
+#include <rp/client_profile.hpp>
 #include <rp/connector.hpp>
 #include <rp/graph_command.hpp>
 #include <rp/outbox_command.hpp>
@@ -167,7 +169,8 @@ TEST_CASE("secret audit B: rpworker test --json", "[secret_audit]")
 }
 
 TEST_CASE("secret audit C: test --evidence --outbox --record, a pass; outbox flush with the Cloud "
-          "refusing and then taking it; outbox list; graph list --hash --record",
+          "refusing and then taking it; outbox list; graph list --hash --record; client check "
+          "--profile-file --record",
           "[secret_audit]")
 {
     AuditLab lab;
@@ -258,11 +261,33 @@ TEST_CASE("secret audit C: test --evidence --outbox --record, a pass; outbox flu
     REQUIRE_THAT(graph_list.out, ContainsSubstring("recorded "));
     lab.collect("graph list --hash --record", graph_list);
 
+    // W4.10: client check --profile-file --record on the same targets, the
+    // profile a job would carry written as a file from the config's keys
+    // (IDs, a name and an address: nothing in it is a secret value).
+    json profile = {{"format", std::string{rp::kClientProfileFormat}}};
+    const json config_doc = json::parse(file_bytes(lab.config_path).value());
+    for (const std::string_view key : rp::kClientProfileKeys) {
+        profile[std::string{key}] = config_doc.at(key);
+    }
+    const std::string profile_file = utf8(lab.dir.write("profile.json", profile.dump(2)));
+    const std::string client_record = utf8(lab.dir.path() / "rec-client");
+    std::ostringstream client_out;
+    std::ostringstream client_err;
+    const Args client_args{"check", "--profile-file", profile_file, "--record", client_record};
+    const int client_code = rp::run_client_command(client_args, client_out, client_err, graph_env);
+    const Run client_check{client_code, client_out.str(), client_err.str()};
+    REQUIRE(client_check.exit_code == rp::exit_code::ok);
+    REQUIRE_THAT(client_check.out, ContainsSubstring("client profile: veeam_org_name "));
+    REQUIRE_THAT(client_check.out, ContainsSubstring("recorded "));
+    lab.collect("client check --profile-file --record", client_check);
+
     lab.finish();
     // The whole folder went through the outbox and was uploaded, part by part.
     CHECK(lab.outputs.has_output("temp/box/sent/audit-c/result.json"));
     CHECK(lab.outputs.has_output("temp/box/sent/audit-c/manifest.json"));
     CHECK(lab.outputs.has_output("temp/rec/graph/"));
+    CHECK(lab.outputs.has_output("temp/rec-client/graph/"));
+    CHECK(lab.outputs.has_output("temp/profile.json"));
     CHECK(lab.outputs.has_output("temp/rec/tsa/"));
     CHECK(lab.outputs.has_output("temp/rec-flush-refused/cloud/"));
     CHECK(lab.outputs.has_output("temp/rec-flush-sent/cloud/"));

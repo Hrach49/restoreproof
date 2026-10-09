@@ -1,0 +1,10 @@
+{
+  "format": "restoreproof.client-profile.v1",
+  "graph_client_id": "22222222-3333-4444-5555-666666666666",
+  "graph_tenant_id": "11111111-2222-3333-4444-555555555555",
+  "test_library_id": "b!library",
+  "test_mailbox": "restoretest@contoso.onmicrosoft.com",
+  "test_onedrive_drive_id": "b!onedrive",
+  "test_onedrive_folder_id": "01FOLDER",
+  "veeam_org_name": "contoso.onmicrosoft.com"
+}

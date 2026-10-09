@@ -1,0 +1,46 @@
+W4.9 (#52) live check, step (c): every file the two steps wrote, searched for the vault's values, their derived shapes and the secret shapes; counts only. 2026-10-09T10:24:58Z, commit cb471f6
+
+-- roots
+  C:\ProgramData\RestoreProof\w49
+  C:\ProgramData\RestoreProof\sent\w49-2
+  C:\ProgramData\RestoreProof\logs
+  C:\ProgramData\RestoreProof\state
+  C:\ProgramData\RestoreProof\w48
+  C:\Users\minas\AppData\Local\Temp\rp-w48
+
+-- the search
+values searched for: 123 (veeam_password, graph_cert_pfx_base64, graph_cert_pfx (hex), graph_cert_password, signing_key_base64, signing seed (base64), signing seed (hex), and the PFX's Base64 in 32-character pieces)
+
+C:\ProgramData\RestoreProof\w49 : 150 file(s), 1140251 byte(s) read
+  value hits: 0
+  the account name (DESKTOP-P55CDUM\rp-veeam, no secret value): 0 time(s)
+  shape scan (exit 0): fixture secret scan: 150 file(s) in 1 tree(s), 0 allowed match(es), 0 finding(s), 0 stale allowlist entries; no secret shape found
+
+C:\ProgramData\RestoreProof\sent\w49-2 : 6 file(s), 14843 byte(s) read
+  value hits: 0
+  the account name (DESKTOP-P55CDUM\rp-veeam, no secret value): 0 time(s)
+  shape scan (exit 0): fixture secret scan: 6 file(s) in 1 tree(s), 0 allowed match(es), 0 finding(s), 0 stale allowlist entries; no secret shape found
+
+C:\ProgramData\RestoreProof\logs : 1 file(s), 5680 byte(s) read
+  value hits: 0
+  the account name (DESKTOP-P55CDUM\rp-veeam, no secret value): 0 time(s)
+  shape scan (exit 0): fixture secret scan: 1 file(s) in 1 tree(s), 0 allowed match(es), 0 finding(s), 0 stale allowlist entries; no secret shape found
+
+C:\ProgramData\RestoreProof\state : 1 file(s), 0 byte(s) read
+  value hits: 0
+  the account name (DESKTOP-P55CDUM\rp-veeam, no secret value): 0 time(s)
+  shape scan (exit 0): fixture secret scan: 1 file(s) in 1 tree(s), 0 allowed match(es), 0 finding(s), 0 stale allowlist entries; no secret shape found
+
+C:\ProgramData\RestoreProof\w48 : 6 file(s), 44266 byte(s) read
+  value hits: 0
+  the account name (DESKTOP-P55CDUM\rp-veeam, no secret value): 0 time(s)
+  shape scan (exit 0): fixture secret scan: 6 file(s) in 1 tree(s), 0 allowed match(es), 0 finding(s), 0 stale allowlist entries; no secret shape found
+
+C:\Users\minas\AppData\Local\Temp\rp-w48 : 7 file(s), 2912 byte(s) read
+  value hits: 0
+  the account name (DESKTOP-P55CDUM\rp-veeam, no secret value): 0 time(s)
+  shape scan (exit 1): stub-key.pem:1: pem_private_key (1624 characters)
+    stub-key.pem:2: rsa_pkcs8 (64 characters)
+    fixture secret scan: 7 file(s) in 1 tree(s), 0 allowed match(es), 2 finding(s), 0 stale allowlist entries
+
+in all: 171 file(s), 1207952 byte(s), 0 value hit(s)

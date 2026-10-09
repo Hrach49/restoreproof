@@ -205,6 +205,15 @@ bool ServiceLoop::record_business()
 bool ServiceLoop::find_record()
 {
     RecordRead read = store_.read();
+    // A run made with a connector this Worker lacks wasn't this Worker's: the
+    // hold couldn't look at its sessions, so it would never end. Not a record
+    // to act on, like one that doesn't parse. (A job reported as
+    // connector_unknown names such a type on purpose and is never held.)
+    if (read.state == RecordState::record && read.record->connector &&
+        read.record->close_as != CloseAs::connector_unknown &&
+        !env_.has_connector(read.record->connector->name)) {
+        read.state = RecordState::not_record;
+    }
     if (read.state == RecordState::none) {
         // No record: what was said of one is said anew of the next.
         said_at_.clear();
@@ -655,8 +664,7 @@ void ServiceLoop::take_job(const JobEntry& entry, const JobsDocument& document)
         }
         return;
     }
-    if (std::ranges::find(env_.connector_names, job.connector_type) ==
-        env_.connector_names.end()) {
+    if (!env_.has_connector(job.connector_type)) {
         // J3b (W4.11 point 6): a job asking for a connector this Worker
         // lacks, reported as J3 is; nothing is asked of Veeam or Graph. The
         // type passed the reader's name rule, so it may be said.

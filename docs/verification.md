@@ -494,7 +494,8 @@ list (the one `list_restore_points` already made, kept by the connector) and thr
 makes every failure of a target to resolve a stop before any delete. The Graph token has been
 the profile's tenant's since W4.10, for the guard's client and the run's own alike. The result
 of a run that got past the step says `client.scope` `same_tenant` and `client.resolved`
-(below); a run that stopped in or before it says `null` for both, and so does every result
+(below); a run that stopped in or before it says `null` for both (the schema refuses one
+without the other), and so does every result
 written afterwards. A job whose connector type this Worker lacks never reaches the step: the
 service reports it as `error connector_unknown` (`docs/worker-config.md`, "The jobs file",
 J3b).

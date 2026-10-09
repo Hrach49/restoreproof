@@ -2182,7 +2182,7 @@ known: nothing is closed, signed, ended or cleaned on its word, and `last_error`
 | Line | Level | What was done |
 |---|---|---|
 | `SECURITY: service: running.json is owned by neither SYSTEM, Administrators nor this account; moved aside` | `critical` | moved to `state\running.json.unread`, over an older one; the loop goes on without a record |
-| `running.json isn't a restoreproof.running.v1 record; moved aside as running.json.unread` | `error` | the same |
+| `running.json isn't a restoreproof.running.v1 record; moved aside as running.json.unread` | `error` | the same; also said of a run's record whose `connector.type` this Worker's registry doesn't have (W4.11 review: the hold couldn't look at that run's sessions and would never end) |
 | `SECURITY: service: running.json is owned by neither SYSTEM, Administrators nor this account; it couldn't be moved aside; no job runs` | `critical` | nothing; said again every hour, tried again at every poll |
 | `running.json isn't a restoreproof.running.v1 record and couldn't be moved aside; no job runs` | `error` | the same |
 | `running.json can't be read; no job runs` | `error` | there, and it can't be opened; no move is tried; said again every hour |

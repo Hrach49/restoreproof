@@ -890,8 +890,8 @@
       ]
     },
     {
-      "name": "client-scope-null",
-      "valid": true,
+      "name": "client-scope-null-beside-resolved",
+      "valid": false,
       "patch": [
         {
           "op": "replace",
@@ -901,9 +901,25 @@
       ]
     },
     {
-      "name": "client-resolved-null",
+      "name": "client-resolved-null-beside-scope",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/client/resolved",
+          "value": null
+        }
+      ]
+    },
+    {
+      "name": "client-scope-and-resolved-null",
       "valid": true,
       "patch": [
+        {
+          "op": "replace",
+          "path": "/client/scope",
+          "value": null
+        },
         {
           "op": "replace",
           "path": "/client/resolved",

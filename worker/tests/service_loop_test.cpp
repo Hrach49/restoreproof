@@ -426,6 +426,48 @@ TEST_CASE("the registered connector's job runs, and the hold's connector is the 
     CHECK(lab.hold_types[1] == "other_backup");
 }
 
+TEST_CASE("a run's record naming a connector this Worker lacks is moved aside: no hold that "
+          "could never end, nothing done on its word",
+          "[service_loop][client_check][w4.11]")
+{
+    LoopLab lab;
+    rp::RunningRecord made = lab.found({"a"});
+    made.connector->name = "other_backup";
+    lab.put_record(made);
+    lab.jobs = jobs_text({job_text("job-1")});
+
+    lab.run();
+
+    REQUIRE(lab.lines.size() > 1);
+    CHECK(lab.lines[1] == "error running.json isn't a restoreproof.running.v1 record; moved "
+                          "aside as running.json.unread");
+    CHECK(lab.count_call("move record to running.json.unread") == 1);
+    CHECK(lab.hold_types.empty());
+    CHECK(lab.count_call("look") == 0);
+    CHECK(lab.ended.empty());
+    CHECK(lab.closed.empty());
+    CHECK(lab.cleans == 0);
+    CHECK(lab.runs == Lines{"job-1"});
+    CHECK(lab.last_error == rp::service_error::kRecordUnreadable);
+}
+
+TEST_CASE("an env that doesn't say which connectors the Worker has runs no job and reports "
+          "none",
+          "[service_loop][client_check][w4.11]")
+{
+    LoopLab lab;
+    lab.jobs = jobs_text({job_text("job-1")});
+    lab.no_has_connector = true;
+
+    lab.run();
+
+    CHECK(lab.count("error scheduler: a step failed unexpectedly; the loop goes on") >= 1);
+    CHECK(lab.runs.empty());
+    CHECK(lab.closed.empty());
+    CHECK(lab.done.empty());
+    CHECK_FALSE(lab.has_record());
+}
+
 TEST_CASE("a job whose record can't be written is not run", "[service_loop]")
 {
     LoopLab lab;

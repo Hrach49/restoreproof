@@ -3579,8 +3579,12 @@ TEST_CASE("restore: a stop asked for after the run line ends the run at the next
     };
     const std::string before_read = rp::test::graph_lab::mail_list_url(false);
     const Row row = GENERATE_COPY(
-        Row{"the clean before", [](Harness& lab) { return !lab.run_started.empty(); },
+        Row{"the client check", [](Harness& lab) { return !lab.run_started.empty(); },
             expected_run_lines, 0, 0, 0, 0},
+        // A stop that came during the client check: the check's line is out,
+        // and the Cleaner lists and deletes nothing.
+        Row{"the clean before", [](Harness& lab) { return lab.fake.facts_calls > 0; },
+            [] { return expected_run_lines() + client_ok_line(); }, 1, 0, 0, 0},
         Row{"choose_sample", [](Harness& lab) { return lab.targets.clean_listings[0] > 0; },
             expected_intro, 1, 2, 0, 0},
         Row{"the read before", [](Harness& lab) { return lab.fake.candidate_calls > 0; },

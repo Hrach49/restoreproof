@@ -8,6 +8,7 @@
 #include "command_config.hpp"
 #include "json_fields.hpp"
 #include "name_key.hpp"
+#include "target_guard_refuse.hpp"
 #include "text_util.hpp"
 #include "uuid.hpp"
 #include "veeam_browse.hpp"
@@ -1168,9 +1169,11 @@ connector::RestoreResult VeeamM365Connector::restore_sample(const connector::Res
     // W4.11 point 8: the spec is the profile's the connector was made for.
     if (profile_ && (!ascii_iequals(spec.client_ref, profile_->veeam_org_name) ||
                      spec.targets != connector::RestoreTargets::from_profile(*profile_))) {
-        throw std::invalid_argument(
-            "veeam_m365: the restore spec isn't the connector's client's" +
-            std::string{connector::kNothingRestored});
+        // A refusal of the guard's kind: the run ends `error target_guard`
+        // with nothing restored, never as a restore that may have started.
+        throw refusal(guard_options_,
+                      "target guard: the restore spec isn't the connector's client's" +
+                          std::string{connector::kNothingRestored});
     }
     // The guard is the first line (W2.7, #32): nothing reaches Veeam before
     // layer 1 passed. Its SafetyViolation passes out as it is: status `error`,

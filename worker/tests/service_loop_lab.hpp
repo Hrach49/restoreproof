@@ -11,6 +11,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
+
 #include <spdlog/details/null_mutex.h>
 #include <spdlog/logger.h>
 #include <spdlog/sinks/base_sink.h>
@@ -116,6 +118,8 @@ struct LoopLab {
     // hold was told.
     std::vector<std::string> connector_names{"veeam_m365"};
     std::vector<std::string> hold_types;
+    // An env built without has_connector.
+    bool no_has_connector = false;
 
     // The jobs file: its text, or why it runs nothing; neither: no file.
     std::optional<std::string> jobs;
@@ -308,7 +312,12 @@ struct LoopLab {
         env.now = [this] { return t; };
         env.wall_now = [this] { return wall(); };
 
-        env.connector_names = connector_names;
+        env.has_connector = [this](std::string_view type) {
+            return std::ranges::find(connector_names, type) != connector_names.end();
+        };
+        if (no_has_connector) {
+            env.has_connector = nullptr;
+        }
         env.hold_connector_type = [this](std::string_view type) {
             hold_types.emplace_back(type);
         };

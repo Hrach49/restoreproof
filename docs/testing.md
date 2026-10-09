@@ -27,6 +27,7 @@ How we test, what CI enforces, and the once-per-sprint mutation run. Set up in L
 | Worker coverage | `.github/workflows/worker.yml`, OpenCppCoverage + `worker/tools/coverage_gate.py` | 80% line on `rpcore` (`worker/src/`, `worker/include/`) plus `rpworker`'s `main()` (`worker/app/`); 100% **line** on vault, signer, target_guard, run_status, cleaner, timestamper, outbox and service (the vault once it exists), meaning any file with a path part named or prefixed `vault`, `signer`, `target_guard`, `run_status`, `cleaner`, `timestamper`, `outbox` or `service` (W4.8's five by the `service` prefix: `src/service_loop.cpp`, the scheduler loop, which decides what is due, which job runs, what is skipped and what becomes of a run's record, `src/service_jobs.cpp`, the jobs document's reader, `src/service_recovery.cpp`, `running.json`, the plan for a run folder without a result and the rule for Veeam's sessions after one, `src/service_log_stream.cpp`, the streams that turn a run's lines into log lines, and `src/service_errors.cpp`, the words a heartbeat's `last_error` may be, with their headers, while `src/worker_body.cpp`, the real calls the loop is handed, `src/heartbeat.cpp`, the one POST, `src/run_folder_tail.cpp`, the end of a run folder that the pipeline and the close share, and `src/job_rules.cpp`, the rules a command line and a job are both held to, are outside; W4.7's `src/service.cpp`, the running service's state machine, `src/service_command.cpp`, the `rpworker service` commands, and `src/service_log.cpp`, which decides what reaches the log file, while `src/scm.cpp`, the calls into the Service Control Manager, and `src/stop_signal.cpp` are outside; W4.6's `src/outbox.cpp`, which decides what is queued, sent, kept and pruned, and `src/outbox_command.cpp`, while `src/uploader.cpp`, the one HTTP call, and `src/folder_ops.cpp`, the file-system calls under it, are outside; W4.4's `src/timestamper.cpp`, which decides which RFC 3161 token is written, while `src/rfc3161.cpp`, the calls into OpenSSL under it, is outside like `src/ed25519.cpp`; `src/vault_dpapi.cpp`; W4.3's `src/signer.cpp`, the Signer, and `src/signer_command.cpp`, the two `rpworker signer` commands, with their headers, while `src/ed25519.cpp`, the calls into OpenSSL under the Signer, is deliberately outside: the library's failure lines for a valid key can't be reached by a test, and folding them onto their calls' own lines would hide them, `docs/decisions.md` 2026-10-05 W4.3 point 4; W2.7's `src/target_guard.cpp`, `src/target_guard_graph.cpp`, `src/target_guard_veeam.cpp` and their headers; W3.3's `src/run_status.cpp`, the status decision table; W3.4's `src/cleaner.cpp` and `include/rp/cleaner.hpp`, the only Worker code that deletes in the tenant); every `.cpp` on disk under `src/`, `include/` and `app/` must appear in the report, so a file no test links into `rptests` (or, for `app/`, that ctest's runs of `rpworker.exe` don't reach) fails (headers of declarations may be absent) |
 | Cloud coverage | `.github/workflows/cloud.yml`, pytest-cov | 80% on `app/`, measured as coverage's combined line + branch figure; 100% line + branch on `app/auth`, `app/results.py` and `app/repo` (skipped while absent), checked by `cloud/tools/check_coverage.py` |
 | Lab tests and canary hashes | `.github/workflows/lab.yml` | `lab/`'s pytest suite passes (offline, fake Graph tenant), and `python -m seeder hash` reproduces every hash in `lab/seed-manifest.json` from the committed `lab/canary/` files and the catalog (L1.2's Done when). No coverage floor |
+| Secret audit | `worker/tests/secret_audit_test.cpp` (ctest, `[secret_audit]`); `worker/tools/fixture_secret_scan.py` (ctest `fixture secret scan` and the `fixture-scan` job of `.github/workflows/worker.yml`) | W4.9: every path of the pipeline, the commands and the service's loop run on fixtures with five sentinel secrets, and every output (both streams, the log, every file, every request to the fake Cloud and TSA) holds no sentinel, no value derived from one and no secret shape; the committed fixture, vector and evidence trees hold no secret shape but what `worker/tools/fixture_secret_scan_allowlist.json` allows by file, shape and value. See "The secret audit (W4.9)" |
 | No test, no merge | `.github/workflows/pr-guards.yml`, `.github/scripts/tests_touched.py` | Each side needs its own tests: a PR that changes `worker/src/`, `worker/include/` or `worker/app/` must add or change a C++ file (`.cpp`, `.hpp`, `.h`) under `worker/tests/`, and one that changes `cloud/app/` must add or change a `.py` under `cloud/tests/`. Deleting a test, editing fixtures or editing `tests/e2e/scenarios.md` doesn't count |
 | PR checklist | `.github/PULL_REQUEST_TEMPLATE.md` | Failing test written first, suite green locally, "Done when" observed |
 
@@ -1267,6 +1268,109 @@ them to change). Then read the diff and run both sides: `.\build\dev\rptests.exe
 "[signer],[signer_command],[ed25519]"` and, from `cloud\`, `uv run pytest tests/test_verify_bundle.py tests/test_canonical_json.py`. A new case
 moves the pinned counts in `signer_test.cpp`, `signer_command_test.cpp` and
 `test_verify_bundle.py`; a new key file moves the 46 and its two parts there too.
+
+### The secret audit (W4.9)
+
+Two tests make CLAUDE.md's "Secrets" rule true (`docs/decisions.md` 2026-10-09, W4.9). Neither
+needs a lab secret, the network, the real vault, the service or `%ProgramData%`.
+
+**The sentinel audit**, `worker/tests/secret_audit_test.cpp` on `tests/secret_audit_lab.hpp`,
+tag `[secret_audit]`, part of `rptests` and so of `ctest --preset dev`:
+
+```powershell
+.\build\dev\rptests.exe "[secret_audit]"
+ctest --preset dev -R "secret audit"
+```
+
+Every case runs one path of the Worker with five sentinel secrets in place of the vault's
+values (`rp::test::secret_audit::secrets()`: `veeam_password`
+`Sentinel-Audit-Veeam-Password-2d7f`, a PFX made for the audit under
+`Sentinel-Audit-PFX-Password-2d7f`, RFC 8032's test key 2 as the signing key, and the user
+name `AUDIT-HOST\rp-veeam-audit-2d7f`, which is no secret value), the fakes handing out
+sentinel tokens (`Sentinel-Audit-Veeam-Access-Token-...`, `...-Graph-Access-Token-...`) and a
+sentinel exported credential, then collects everything the path wrote and searches it. The
+search set (`searched()`) is every secret value as it is, the Base64 ones also as their bytes
+and their hex and in 32-character pieces (a leak of 63 or more consecutive characters is
+found), the signing seed in the two shapes `SigningKey::secret_shapes()` gives, the tokens, the
+exported PFX and its password, and the client assertion the run signed, read from the fake
+token endpoint's requests after the run; and beside the values, every secret shape of the table
+below. A hit fails the case with the output's name, the secret's label and the byte offset,
+never the bytes.
+
+| Case | Path | Outputs searched |
+|---|---|---|
+| A | `rpworker restore`, a pass | stdout, stderr, the command logger, every file under the temp folder, the TSA's requests |
+| B | `rpworker test --json` | the same, the `--json` file among the files |
+| C | `test --evidence --outbox --record`, a pass; `outbox flush` with the Cloud answering 500 and then 202; `outbox list`; `graph list --hash --record` | the same, the run folder, the queued and sent folder with its `manifest.json`, both recordings, every request the fake Cloud received (URL, headers, body, every multipart part's name, file name, content type and bytes) |
+| D | a `fail` (an item missing from its target) | the same, `items.csv`'s failed rows |
+| E | an `error` before the restore (Graph refusing the token: `check error`, `graph_auth`) | the same, a signed result with `null` steps |
+| F | an `error` in the restore phase (the connector throwing `AuthError`) | the same |
+| G | a run that ends `result_invalid`, closed afterwards by the service as `error result_invalid` | the service's log (below) and the folders |
+| H | the TSA failing (503): `timestamp warning`, a folder without a token | the same as A |
+| I | the real `veeam_m365` connector over `recordings/w34-live-run1/` (`tests/replay_lab.hpp`), the fake Veeam's token answer and the exporter's credential replaced by the audit's: the sign-in, the Bearer header, four restore POSTs carrying the exported PFX and its password, Veeam's own words | stdout, stderr, the logger, the temp folder; the test also counts the four POSTs that carried the credential to Veeam, where it belongs |
+| J1 to J7 | the service's loop on `tests/worker_body_lab.hpp`'s `BodyLab` with a real `worker.log` (`rp::make_service_logger` into the temp folder, level `trace`): one job to `sent\` and the same job skipped (J1, with `running.json` as it stood before and at the restore request), a jobs file that isn't JSON (J3), an invalid job (J4), a killed run's record held for while another session of the account is `Working` (J5: the `waiting for Veeam` line names the account, which the test counts and allows), the hold over and the recovery clean (J6), a close that fails for a vault that can't be read (J7) | the log files, every file under the temp folder (`runs\`, `box\`, `state\`, the jobs file, the config), the fake Cloud's requests (the heartbeat's body, the uploaded parts), the TSA's |
+| K | `config check`, `vault list`, `vault test`, `signer public-key` through `rp::run_cli` on a DPAPI vault of the sentinels in the temp folder; `vault set` and `vault remove` through their Env; `veeam list --record` on the recorded organisations | the same as A, the vault file (DPAPI's blob holds no plaintext) and the recording |
+
+Not a path: `vault grant` (an ACL, no value), `service install|uninstall|start|stop` (the SCM),
+`signer verify` (reads a folder and a public key). Requests to the fake Veeam and Graph are not
+outputs: the token request to Veeam carries the password by design, the restore POST the
+exported PFX, Graph's token request the client assertion; what comes back and is written is.
+
+**To add a writer or a path.** A new kind of output (a new file a run writes, a new third party
+it posts to) goes into the collector: `Outputs::add`, `add_folder` (every regular file under a
+root) or `add_requests` (every request a `FakeHttpClient` received). A new path is a new
+`TEST_CASE` that REQUIREs its own expected line or file first (`status pass`, `result.json`
+there, `sent <run>`), then `collect`s its streams and `finish`es; an audit that searches
+nothing fails on `REQUIRE_FALSE(outputs.items.empty())`. A new secret goes into `secrets()`
+and `searched()`, long values through `add_base64` or `add_with_pieces`.
+
+**The fixture scan**, `worker/tools/fixture_secret_scan.py` (stdlib only), searches the
+committed data trees for the shapes alone, since CI has no lab secret and must never be given
+one: `worker/tests/fixtures/`, `shared/testdata/`, `docs/api/`, `lab/canary/` and
+`lab/seed-manifest.json`, every file whatever its name (UTF-8 where it is, Latin-1 otherwise,
+so no byte is skipped), never a `.venv`, `__pycache__`, `build` or `.git` folder. Source trees
+are not scanned: a secret in code is caught by review and by the vault rule. It runs as the
+ctest test `fixture secret scan` (label `scan`, registered when CMake finds a Python 3) and in
+CI as the `fixture-scan` job of `.github/workflows/worker.yml`, on Ubuntu, without a compiler,
+beside the Windows build job. Its self-tests run with the gate's:
+
+```powershell
+python tools/fixture_secret_scan.py --root ..          # from worker/: exit 0 clean, 1 a finding, 2 unusable
+python -m unittest discover -s tools -p "test_*.py"
+```
+
+A finding is `<path>:<line>: <shape> (<n> characters)`, never the text. **The allowlist**,
+`worker/tools/fixture_secret_scan_allowlist.json`, names per file the shape it may hold, why,
+and either the exact `values` or the `prefixes` of what is allowed; never a file-wide pass, so
+a new secret-shaped text in an allowed file still fails, and an entry whose file is gone or
+whose values match nothing is stale and fails the scan. Today it holds: the scrub placeholder
+JWT (`alg` `none`, the claim `{"scrubbed":true}`) in `graph/token-200.json` and the Graph
+fixtures' README; Base64 of a result document in `signing-v1/cases.json` (Base64 of `{"` is
+`eyJ`, whatever follows); RFC 8032's test keys 1 and 2 in `signing-v1/keys.json` and
+`key-files.json`; the test TSA's EC key in `timestamp-v1/keys.json`. To allow a new file, add an
+entry with its path, the shape, a reason sentence and the value (for a PEM block, its Base64
+body without line breaks; for a Base64 opening, the Base64 run from the opening on; for a JWT,
+the token) or a prefix.
+
+**The shapes**, one table for both halves (the sentinel audit searches for them in every output
+beside the values; the fixture scan in every data file):
+
+| Shape | Rule | Allowed to be |
+|---|---|---|
+| `jwt` | `eyJ` not run into a preceding base64url character, then 37 or more base64url characters and dots (the recorder's `kMinJwtTail`) | the scrub placeholder; Base64 of a JSON document |
+| `bearer` | `Bearer`, blanks, 20 or more of `A-Z a-z 0-9 . _ ~ + / -` and up to two `=`, not followed by a letter, a digit or `=` (`Bearer realm=` is an auth-param; `Bearer [REDACTED]` doesn't match) | nothing |
+| `pem_private_key` | `-----BEGIN <label>-----` whose label ends in `PRIVATE KEY` (`redact()`'s rule); a `PUBLIC KEY` or `CERTIFICATE` block is no shape | the published test keys |
+| `ed25519_pkcs8` | `MC4CAQAwBQYDK2VwBCIEI` and 43 Base64 characters: an Ed25519 PKCS#8 key whole | RFC 8032's test keys |
+| `rsa_pkcs8` | `MII..[AQgw]IBADANBgkqhkiG9w0BAQEFAASC` | nothing |
+| `rsa_pkcs1` | `MII..[AQgw]IBAAKCA` | nothing |
+| `ec_pkcs8` | `MIG.AgEAMBMGByqGSM49` | the test TSA's key |
+| `ec_sec1` | `MHcCAQEEI`, `MIGkAgEBBDA` or `MIHcAgEBBEIB` (P-256, P-384, P-521) | nothing |
+| `pkcs12` | `MII..[AQgw]IBAzCC`, or `MIM....CAQMwgg` over 64 KiB: a PFX | nothing |
+| `keyed_secret` (the fixture scan only; in the audit the values are searched as bytes) | `"<key>": "<value>"` or `<key>=<value>` for `password`, `client_secret`, `client_assertion`, `refresh_token`, `access_token`, `id_token`, `tempauth`, `applicationCertificate`, `applicationCertificatePassword`, `signing_key`, `signing_key_base64`, `signing_private_key`, `pfx_base64`, the key in any case and not part of a longer name, the value not `[REDACTED]`, `SCRUBBED`, `null`, empty, `[...]`, `<...>`, an ellipsis, a script's `$variable` or `(call)` | the placeholder JWT under `access_token` |
+
+A bare `MII...` run is a certificate or a CMS token, public, and no shape: the fixture trees hold
+hundreds (`rest-certificate.pem`, the TSA fixtures, the timestamp vectors). A TimeStampResp
+reads `MII..` then `ADAgEAMII`, whose sixth character isn't `IB`.
 
 ### Running the gates locally
 

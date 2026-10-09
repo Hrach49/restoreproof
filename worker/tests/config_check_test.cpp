@@ -263,6 +263,51 @@ TEST_CASE("rpworker config check prints every setting and the vault's names, mas
     REQUIRE(lab.load_calls == 1);
 }
 
+// W4.10 point 5: a config without the eight client keys (the service's, which
+// takes the client from each job) prints (not set) for each.
+TEST_CASE("rpworker config check prints (not set) for each of the eight client keys a config "
+          "doesn't have",
+          "[config_check][client_profile]")
+{
+    Lab lab;
+    nlohmann::json doc = nlohmann::json::parse(kConfigJson);
+    for (const char* key : {"veeam_org_name", "graph_tenant_id", "graph_client_id", "test_mailbox",
+                            "test_site_id", "test_library_id", "test_onedrive_drive_id",
+                            "test_onedrive_folder_id"}) {
+        doc.erase(key);
+    }
+    const auto path = lab.dir.write("config.json", doc.dump(2));
+
+    const Run result = lab.run(Args{"check", "--config", utf8(path)});
+    REQUIRE(result.err.empty());
+    REQUIRE(result.exit_code == 0);
+    const std::string expected = "config file: " + utf8(path) + "\n" +
+                                 "cloud_url                 https://cloud.example.invalid\n"
+                                 "veeam_url                 https://veeam.example.invalid:4443\n"
+                                 "veeam_org_name            (not set)\n"
+                                 "graph_tenant_id           (not set)\n"
+                                 "graph_client_id           (not set)\n"
+                                 "test_mailbox              (not set)\n"
+                                 "test_site_id              (not set)\n"
+                                 "test_library_id           (not set)\n"
+                                 "test_onedrive_drive_id    (not set)\n"
+                                 "test_onedrive_folder_id   (not set)\n"
+                                 "poll_interval_s           60\n";
+    REQUIRE_THAT(result.out, Catch::Matchers::StartsWith(expected));
+    REQUIRE_THAT(result.out, ContainsSubstring(expected_secrets(lab.vault, kNoSecrets)));
+    // A config with some of them is refused as any invalid config is.
+    doc["test_mailbox"] = "restoretest@example.onmicrosoft.com";
+    const auto partial = lab.dir.write("partial.json", doc.dump(2));
+    const Run refused = lab.run(Args{"check", "--config", utf8(partial)});
+    REQUIRE(refused.exit_code == 1);
+    REQUIRE(refused.out.empty());
+    REQUIRE(refused.err ==
+            "config error: " + utf8(partial) +
+                ": config key \"veeam_org_name\" is missing: the eight client keys (veeam_org_name, "
+                "graph_tenant_id, graph_client_id, test_mailbox, test_site_id, test_library_id, "
+                "test_onedrive_drive_id, test_onedrive_folder_id) are set together or not at all\n");
+}
+
 TEST_CASE("rpworker config check reads the default path without --config", "[config_check]")
 {
     Lab lab;

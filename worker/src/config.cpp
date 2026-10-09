@@ -61,9 +61,16 @@ struct IntField {
 
 // Declaration order of Config: fields are checked, and errors reported, in
 // this order.
-constexpr std::array<StringField, 10> kRequiredStrings{{
+constexpr std::array<StringField, 2> kRequiredStrings{{
     {"cloud_url", &Config::cloud_url, true, StringRule::https_url},
     {"veeam_url", &Config::veeam_url, true, StringRule::https_url},
+}};
+
+// The eight client keys (W4.10 point 5): the config's local profile, read
+// after the required strings, all of them or none. Each is a required string
+// once any is set; with none set each stays empty and the service takes the
+// client from its jobs.
+constexpr std::array<StringField, 8> kClientStrings{{
     {"veeam_org_name", &Config::veeam_org_name, true, StringRule::non_empty},
     {"graph_tenant_id", &Config::graph_tenant_id, true, StringRule::guid},
     {"graph_client_id", &Config::graph_client_id, true, StringRule::guid},
@@ -136,6 +143,7 @@ bool is_known_key(std::string_view key)
 {
     const auto named = [key](const auto& field) { return field.key == key; };
     return std::any_of(kRequiredStrings.begin(), kRequiredStrings.end(), named) ||
+           std::any_of(kClientStrings.begin(), kClientStrings.end(), named) ||
            std::any_of(kIntFields.begin(), kIntFields.end(), named) || key == kLogLevel.key ||
            key == kCaFileKey || key == kCertSha256Key || key == kTsaUrlKey ||
            key == kTsaCaFileKey || key == kCloudCaFileKey || key == kJobsFileKey ||
@@ -278,6 +286,31 @@ void read_string(const json& doc, const StringField& field, Config& config)
         throw key_error(field.key, *problem);
     }
     config.*field.member = *value;
+}
+
+// The eight client keys together or not at all: a key missing while another
+// is set is reported, the first in the table's order, before any rule of the
+// others, so a half-written local profile can't pass as none. With none set
+// nothing is read.
+void read_client_keys(const json& doc, Config& config)
+{
+    const auto present = [&doc](const StringField& field) { return doc.contains(field.key); };
+    if (std::none_of(kClientStrings.begin(), kClientStrings.end(), present)) {
+        return;
+    }
+    for (const StringField& field : kClientStrings) {
+        if (!present(field)) {
+            std::string names;
+            for (const StringField& each : kClientStrings) {
+                names += (names.empty() ? "" : ", ") + std::string{each.key};
+            }
+            throw key_error(field.key, "is missing: the eight client keys (" + names +
+                                           ") are set together or not at all");
+        }
+    }
+    for (const StringField& field : kClientStrings) {
+        read_string(doc, field, config);
+    }
 }
 
 // A path with a drive and a root (C:\...) or a UNC share (\\server\share\...).
@@ -568,6 +601,7 @@ Config parse_config(std::string_view json_text)
     for (const StringField& field : kRequiredStrings) {
         read_string(doc, field, config);
     }
+    read_client_keys(doc, config);
     for (const IntField& field : kIntFields) {
         read_int(doc, field, config);
     }

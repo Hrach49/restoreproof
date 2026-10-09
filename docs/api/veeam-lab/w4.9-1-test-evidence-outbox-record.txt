@@ -1,0 +1,240 @@
+W4.9 (#52) live check, step (a): rpworker test --evidence --outbox --record with the lab config and the real vault. 2026-10-09T10:18:20Z, commit cb471f6
+
+-- Veeam before: no session Working at 2026-10-09T10:18:20Z
+
+-- the three restore targets before
+command: rpworker graph list --config C:\Users\minas\AppData\Local\RestoreProof\lab\config.json
+2026-10-09T10:18:20Z to 2026-10-09T10:18:22Z
+exit code: 0
+--- stdout
+Mail (restoretest@RestoreProofLab.onmicrosoft.com, Inbox): 0 item(s)
+
+SharePoint (RestoreTarget library): 0 item(s)
+
+OneDrive (RestoreTarget folder): 0 item(s)
+
+0 item(s) in the three restore targets
+--- stderr
+
+
+command: rpworker test --mail 2 --sp 1 --od 1 --run-id w49-1 --config C:\Users\minas\AppData\Local\RestoreProof\lab\config.json --manifest C:\restoreproof\lab\seed-manifest.json --evidence C:\ProgramData\RestoreProof\w49\runs --outbox C:\ProgramData\RestoreProof\w49\box --record C:\ProgramData\RestoreProof\w49\rec-w49-1
+2026-10-09T10:18:22Z to 2026-10-09T10:21:00Z
+exit code: 0
+--- stdout
+restore point 2026-10-08T23:43:58.1565721Z  c2f0f2e7-177f-48ac-992b-93a50cf702e33f589dc6-03b8-44c1-8bfe-1c32d63d5849  (veeam_org_name RestoreProofLab.onmicrosoft.com)
+run w49-1  seed 165915b7
+cleanup before ok: deleted 0 mail, 0 sharepoint, 0 onedrive
+canary cursor 0,0,0 -> 1,1,1
+  KIND        REQUESTED  CANARIES  RANDOM  NOTE
+  mail        2          1 of 1    1 of 1
+  sharepoint  1          1 of 1    0 of 0
+  onedrive    1          1 of 1    0 of 0
+restoring 4 item(s) ...
+
+  SESSION                               KIND        RESULT   RESTORED  STARTED                       ENDED                         ELAPSED
+  8ad415e4-9580-4ddd-bc00-33ad8617aaa4  mail        Success  1 of 1    2026-10-09T10:18:32.80544Z    2026-10-09T10:18:59.5196907Z  0:00:26
+  342dfd62-3053-44ba-9f1c-204f0a9d0181  mail        Success  1 of 1    2026-10-09T10:19:03.5778833Z  2026-10-09T10:19:34.6315032Z  0:00:31
+  8e98e6e8-c035-47f5-996c-828d879f8a89  sharepoint  Success  1 of 1    2026-10-09T10:19:39.3762296Z  2026-10-09T10:20:19.7807118Z  0:00:40
+  39f4e794-4bad-4487-9ce6-b7666b0f7a37  onedrive    Success  1 of 1    2026-10-09T10:20:20.2558125Z  2026-10-09T10:20:54.9687889Z  0:00:34
+
+restore succeeded: 4 of 4 item(s) restored in 0:02:28
+
+  TYPE        NAME                                EXPECTED  FOUND  MATCH  VERDICT   REASON  MS
+  mail        RP-CANARY-0001                      manifest  yes    match  verified  -       0
+  mail        RestoreProof W2.2 second mail 3n5w  fields    yes    match  verified  -       0
+  sharepoint  rp-canary-01.pdf                    manifest  yes    match  verified  -       331
+  onedrive    rp-canary-11.pdf                    manifest  yes    match  verified  -       358
+
+check: 4 match, 0 mismatch, 0 missing, 0 error
+
+status pass: 4 of 4 item(s) verified: manifest 3, fields 1, metadata 0
+cleanup after ok: deleted 2 mail, 1 sharepoint, 1 onedrive
+
+STEP                  TIME         NOTE
+restore_point_lookup  0:00:00.176
+cleanup_before        0:00:01.708
+sample_select         0:00:02.022
+target_snapshot       0:00:01.029
+restore               0:02:28.124
+restore_submit        0:00:00.927
+restore_wait          0:02:21.911
+verify                0:00:01.963
+recovery              0:02:30.088
+cleanup_after         0:00:02.207
+total                 0:02:37.258
+signed d369722f62263a153821b3bca647374c916752e6b5df78c3978363a24e3c4e18 key 9dfab6eadaa1d04a22dcc966aac7a53bcff8bbe0077232485f6143cd9c4d0ca5
+timestamped 2026-10-09T10:19:39Z
+evidence C:\ProgramData\RestoreProof\w49\runs\w49-1: result.json, signature.json, timestamp.tst, items.csv, veeam-session.log
+queued C:\ProgramData\RestoreProof\w49\box\outbox\w49-1
+recorded 144 exchange(s) in C:\ProgramData\RestoreProof\w49\rec-w49-1
+--- stderr
+
+
+-- what was written
+C:\ProgramData\RestoreProof\w49 (150 file(s)):
+  box\outbox\w49-1\items.csv 1036
+  box\outbox\w49-1\manifest.json 310
+  box\outbox\w49-1\result.json 7228
+  box\outbox\w49-1\signature.json 322
+  box\outbox\w49-1\timestamp.tst 5999
+  box\outbox\w49-1\veeam-session.log 1278
+  rec-w49-1\download\001-get-sites-restoretest-layouts-15-download-aspx.json 383
+  rec-w49-1\download\002-get-personal-alice-restoreprooflab-onmicrosoft-com-layouts-15-do.json 412
+  rec-w49-1\graph\001-post-bcd6bd1a-ea42-489d-aa28-2c19a44ad146-oauth2-v2-0-token.json 345
+  rec-w49-1\graph\002-get-v1-0-users-restoretest-restoreprooflab-onmicrosoft-com-mailf.json 611
+  rec-w49-1\graph\003-get-v1-0-users-restoretest-restoreprooflab-onmicrosoft-com-mailf.json 522
+  rec-w49-1\graph\004-get-v1-0-users-restoretest-restoreprooflab-onmicrosoft-com-mailf.json 522
+  rec-w49-1\graph\005-get-v1-0-drives-b-xqgi-ndr6ekvpkcbib2y65nzyk4ozjvns-7ncroj5omdbu.json 1055
+  rec-w49-1\graph\006-get-v1-0-drives-b-xqgi-ndr6ekvpkcbib2y65nzyk4ozjvns-7ncroj5omdbu.json 539
+  rec-w49-1\graph\007-get-v1-0-drives-b-xqgi-ndr6ekvpkcbib2y65nzyk4ozjvns-7ncroj5omdbu.json 528
+  rec-w49-1\graph\008-get-v1-0-drives-b-xqgi-ndr6ekvpkcbib2y65nzyk4ozjvns-7ncroj5omdbu.json 528
+  rec-w49-1\graph\009-get-v1-0-drives-b-wa9gbfhleuitgaluxbfonbr-z5getdherm5pj6bmwyxfzj.json 1926
+  rec-w49-1\graph\010-get-v1-0-drives-b-wa9gbfhleuitgaluxbfonbr-z5getdherm5pj6bmwyxfzj.json 564
+  rec-w49-1\graph\011-get-v1-0-drives-b-wa9gbfhleuitgaluxbfonbr-z5getdherm5pj6bmwyxfzj.json 564
+  rec-w49-1\graph\012-get-v1-0-users-restoretest-restoreprooflab-onmicrosoft-com-mailf.json 611
+  rec-w49-1\graph\013-get-v1-0-users-restoretest-restoreprooflab-onmicrosoft-com-mailf.json 676
+  rec-w49-1\graph\014-get-v1-0-drives-b-xqgi-ndr6ekvpkcbib2y65nzyk4ozjvns-7ncroj5omdbu.json 1055
+  rec-w49-1\graph\015-get-v1-0-drives-b-xqgi-ndr6ekvpkcbib2y65nzyk4ozjvns-7ncroj5omdbu.json 539
+  rec-w49-1\graph\016-get-v1-0-drives-b-xqgi-ndr6ekvpkcbib2y65nzyk4ozjvns-7ncroj5omdbu.json 530
+  rec-w49-1\graph\017-get-v1-0-drives-b-wa9gbfhleuitgaluxbfonbr-z5getdherm5pj6bmwyxfzj.json 1926
+  rec-w49-1\graph\018-get-v1-0-drives-b-wa9gbfhleuitgaluxbfonbr-z5getdherm5pj6bmwyxfzj.json 566
+  rec-w49-1\graph\019-post-bcd6bd1a-ea42-489d-aa28-2c19a44ad146-oauth2-v2-0-token.json 345
+  rec-w49-1\graph\020-get-v1-0-users-restoretest-restoreprooflab-onmicrosoft-com-mailf.json 611
+  rec-w49-1\graph\021-get-v1-0-drives-b-xqgi-ndr6ekvpkcbib2y65nzyk4ozjvns-7ncroj5omdbu.json 1055
+  rec-w49-1\graph\022-get-v1-0-drives-b-wa9gbfhleuitgaluxbfonbr-z5getdherm5pj6bmwyxfzj.json 1926
+  rec-w49-1\graph\023-get-v1-0-users-restoretest-restoreprooflab-onmicrosoft-com-mailf.json 611
+  rec-w49-1\graph\024-get-v1-0-users-restoretest-restoreprooflab-onmicrosoft-com-mailf.json 2444
+  rec-w49-1\graph\025-get-v1-0-drives-b-xqgi-ndr6ekvpkcbib2y65nzyk4ozjvns-7ncroj5omdbu.json 1055
+  rec-w49-1\graph\026-get-v1-0-drives-b-xqgi-ndr6ekvpkcbib2y65nzyk4ozjvns-7ncroj5omdbu.json 539
+  rec-w49-1\graph\027-get-v1-0-drives-b-xqgi-ndr6ekvpkcbib2y65nzyk4ozjvns-7ncroj5omdbu.json 1101
+  rec-w49-1\graph\028-get-v1-0-drives-b-xqgi-ndr6ekvpkcbib2y65nzyk4ozjvns-7ncroj5omdbu.json 473
+  rec-w49-1\graph\029-get-v1-0-drives-b-wa9gbfhleuitgaluxbfonbr-z5getdherm5pj6bmwyxfzj.json 1926
+  rec-w49-1\graph\030-get-v1-0-drives-b-wa9gbfhleuitgaluxbfonbr-z5getdherm5pj6bmwyxfzj.json 1137
+  rec-w49-1\graph\031-get-v1-0-drives-b-wa9gbfhleuitgaluxbfonbr-z5getdherm5pj6bmwyxfzj.json 505
+  rec-w49-1\graph\032-get-v1-0-users-restoretest-restoreprooflab-onmicrosoft-com-mailf.json 611
+  rec-w49-1\graph\033-get-v1-0-users-restoretest-restoreprooflab-onmicrosoft-com-mailf.json 876
+  rec-w49-1\graph\034-post-v1-0-users-restoretest-restoreprooflab-onmicrosoft-com-messa.json 268
+  rec-w49-1\graph\035-post-v1-0-users-restoretest-restoreprooflab-onmicrosoft-com-messa.json 268
+  rec-w49-1\graph\036-get-v1-0-users-restoretest-restoreprooflab-onmicrosoft-com-mailf.json 522
+  rec-w49-1\graph\037-get-v1-0-drives-b-xqgi-ndr6ekvpkcbib2y65nzyk4ozjvns-7ncroj5omdbu.json 1055
+  rec-w49-1\graph\038-get-v1-0-drives-b-xqgi-ndr6ekvpkcbib2y65nzyk4ozjvns-7ncroj5omdbu.json 539
+  rec-w49-1\graph\039-get-v1-0-drives-b-xqgi-ndr6ekvpkcbib2y65nzyk4ozjvns-7ncroj5omdbu.json 1392
+  rec-w49-1\graph\040-delete-v1-0-drives-b-xqgi-ndr6ekvpkcbib2y65nzyk4ozjvns-7ncroj5omdbu.json 241
+  rec-w49-1\graph\041-get-v1-0-drives-b-xqgi-ndr6ekvpkcbib2y65nzyk4ozjvns-7ncroj5omdbu.json 528
+  rec-w49-1\graph\042-get-v1-0-drives-b-wa9gbfhleuitgaluxbfonbr-z5getdherm5pj6bmwyxfzj.json 1926
+  rec-w49-1\graph\043-get-v1-0-drives-b-wa9gbfhleuitgaluxbfonbr-z5getdherm5pj6bmwyxfzj.json 1435
+  rec-w49-1\graph\044-delete-v1-0-drives-b-wa9gbfhleuitgaluxbfonbr-z5getdherm5pj6bmwyxfzj.json 241
+  rec-w49-1\graph\045-get-v1-0-drives-b-wa9gbfhleuitgaluxbfonbr-z5getdherm5pj6bmwyxfzj.json 564
+  rec-w49-1\tsa\001-post-root.json 8331
+  rec-w49-1\veeam\001-post-v8-token.json 446
+  rec-w49-1\veeam\002-get-v8-organizations.json 2923
+  rec-w49-1\veeam\003-get-v8-restorepoints.json 19244
+  rec-w49-1\veeam\004-get-v8-organizations.json 2923
+  rec-w49-1\veeam\005-get-v8-restorepoints.json 19244
+  rec-w49-1\veeam\006-get-v8-restoresessions.json 199271
+  rec-w49-1\veeam\007-post-v8-organizations-ff96d072-29e2-4cb4-a155-2590f5473176-explor.json 1305
+  rec-w49-1\veeam\008-get-v8-restoresessions-d2762754-5564-4fbf-8cad-9fc5f54d34f7-orga.json 11912
+  rec-w49-1\veeam\009-get-v8-restoresessions-d2762754-5564-4fbf-8cad-9fc5f54d34f7-orga.json 32026
+  rec-w49-1\veeam\010-get-v8-restoresessions-d2762754-5564-4fbf-8cad-9fc5f54d34f7-orga.json 39989
+  rec-w49-1\veeam\011-get-v8-restoresessions-d2762754-5564-4fbf-8cad-9fc5f54d34f7-orga.json 724
+  rec-w49-1\veeam\012-get-v8-restoresessions-d2762754-5564-4fbf-8cad-9fc5f54d34f7-orga.json 724
+  rec-w49-1\veeam\013-get-v8-restoresessions-d2762754-5564-4fbf-8cad-9fc5f54d34f7-orga.json 95392
+  rec-w49-1\veeam\014-get-v8-restoresessions-d2762754-5564-4fbf-8cad-9fc5f54d34f7-orga.json 32026
+  rec-w49-1\veeam\015-get-v8-restoresessions-d2762754-5564-4fbf-8cad-9fc5f54d34f7-orga.json 39990
+  rec-w49-1\veeam\016-get-v8-restoresessions-d2762754-5564-4fbf-8cad-9fc5f54d34f7-orga.json 724
+  rec-w49-1\veeam\017-get-v8-restoresessions-d2762754-5564-4fbf-8cad-9fc5f54d34f7-orga.json 25415
+  rec-w49-1\veeam\018-get-v8-restoresessions-d2762754-5564-4fbf-8cad-9fc5f54d34f7-orga.json 724
+  rec-w49-1\veeam\019-get-v8-restoresessions-d2762754-5564-4fbf-8cad-9fc5f54d34f7.json 1075
+  rec-w49-1\veeam\020-post-v8-restoresessions-d2762754-5564-4fbf-8cad-9fc5f54d34f7-stop.json 180
+  rec-w49-1\veeam\021-get-v8-organizations.json 2923
+  rec-w49-1\veeam\022-get-v8-restorepoints.json 19244
+  rec-w49-1\veeam\023-get-v8-restoresessions.json 199276
+  rec-w49-1\veeam\024-post-v8-organizations-ff96d072-29e2-4cb4-a155-2590f5473176-explor.json 1304
+  rec-w49-1\veeam\025-get-v8-restoresessions-eca07f15-277f-40a3-843a-7ce194f0111c-orga.json 11912
+  rec-w49-1\veeam\026-get-v8-restoresessions-eca07f15-277f-40a3-843a-7ce194f0111c-orga.json 3019
+  rec-w49-1\veeam\027-get-v8-restoresessions-eca07f15-277f-40a3-843a-7ce194f0111c-orga.json 66438
+  rec-w49-1\veeam\028-get-v8-restoresessions-eca07f15-277f-40a3-843a-7ce194f0111c-orga.json 4389
+  rec-w49-1\veeam\029-get-v8-restoresessions-eca07f15-277f-40a3-843a-7ce194f0111c-orga.json 3037
+  rec-w49-1\veeam\030-get-v8-restoresessions-eca07f15-277f-40a3-843a-7ce194f0111c-orga.json 95392
+  rec-w49-1\veeam\031-get-v8-restoresessions-eca07f15-277f-40a3-843a-7ce194f0111c-orga.json 4422
+  rec-w49-1\veeam\032-post-v8-organizations-ff96d072-29e2-4cb4-a155-2590f5473176-explor.json 1309
+  rec-w49-1\veeam\033-get-v8-restoresessions-95b1bc26-452e-4121-9a4c-c62911044fa3-orga.json 1938
+  rec-w49-1\veeam\034-get-v8-restoresessions-95b1bc26-452e-4121-9a4c-c62911044fa3-orga.json 12480
+  rec-w49-1\veeam\035-get-v8-restoresessions-95b1bc26-452e-4121-9a4c-c62911044fa3-orga.json 17778
+  rec-w49-1\veeam\036-get-v8-restoresessions-95b1bc26-452e-4121-9a4c-c62911044fa3-orga.json 2061
+  rec-w49-1\veeam\037-post-v8-organizations-ff96d072-29e2-4cb4-a155-2590f5473176-explor.json 1307
+  rec-w49-1\veeam\038-get-v8-restoresessions-67148f7a-6590-40a7-9c88-6eb7b689f600-orga.json 3318
+  rec-w49-1\veeam\039-get-v8-restoresessions-67148f7a-6590-40a7-9c88-6eb7b689f600-orga.json 5930
+  rec-w49-1\veeam\040-get-v8-restoresessions-67148f7a-6590-40a7-9c88-6eb7b689f600-orga.json 16128
+  rec-w49-1\veeam\041-get-v8-restoresessions-67148f7a-6590-40a7-9c88-6eb7b689f600-orga.json 1790
+  rec-w49-1\veeam\042-post-v8-restoresessions-eca07f15-277f-40a3-843a-7ce194f0111c-orga.json 1289
+  rec-w49-1\veeam\043-get-v8-restoresessions.json 5289
+  rec-w49-1\veeam\044-get-v8-restoresessions-8ad415e4-9580-4ddd-bc00-33ad8617aaa4.json 1051
+  rec-w49-1\veeam\045-get-v8-restoresessions-8ad415e4-9580-4ddd-bc00-33ad8617aaa4.json 1051
+  rec-w49-1\veeam\046-get-v8-restoresessions-8ad415e4-9580-4ddd-bc00-33ad8617aaa4.json 1051
+  rec-w49-1\veeam\047-get-v8-restoresessions-8ad415e4-9580-4ddd-bc00-33ad8617aaa4.json 1051
+  rec-w49-1\veeam\048-get-v8-restoresessions-8ad415e4-9580-4ddd-bc00-33ad8617aaa4.json 1051
+  rec-w49-1\veeam\049-get-v8-restoresessions-8ad415e4-9580-4ddd-bc00-33ad8617aaa4.json 1051
+  rec-w49-1\veeam\050-get-v8-restoresessions-8ad415e4-9580-4ddd-bc00-33ad8617aaa4.json 1099
+  rec-w49-1\veeam\051-get-v8-restoresessions-8ad415e4-9580-4ddd-bc00-33ad8617aaa4-stat.json 369
+  rec-w49-1\veeam\052-get-v8-restoresessions-8ad415e4-9580-4ddd-bc00-33ad8617aaa4-even.json 3334
+  rec-w49-1\veeam\053-post-v8-restoresessions-eca07f15-277f-40a3-843a-7ce194f0111c-orga.json 1289
+  rec-w49-1\veeam\054-get-v8-restoresessions.json 6271
+  rec-w49-1\veeam\055-get-v8-restoresessions-342dfd62-3053-44ba-9f1c-204f0a9d0181.json 1053
+  rec-w49-1\veeam\056-get-v8-restoresessions-342dfd62-3053-44ba-9f1c-204f0a9d0181.json 1053
+  rec-w49-1\veeam\057-get-v8-restoresessions-342dfd62-3053-44ba-9f1c-204f0a9d0181.json 1053
+  rec-w49-1\veeam\058-get-v8-restoresessions-342dfd62-3053-44ba-9f1c-204f0a9d0181.json 1053
+  rec-w49-1\veeam\059-get-v8-restoresessions-342dfd62-3053-44ba-9f1c-204f0a9d0181.json 1053
+  rec-w49-1\veeam\060-get-v8-restoresessions-342dfd62-3053-44ba-9f1c-204f0a9d0181.json 1053
+  rec-w49-1\veeam\061-get-v8-restoresessions-342dfd62-3053-44ba-9f1c-204f0a9d0181.json 1053
+  rec-w49-1\veeam\062-get-v8-restoresessions-342dfd62-3053-44ba-9f1c-204f0a9d0181.json 1101
+  rec-w49-1\veeam\063-get-v8-restoresessions-342dfd62-3053-44ba-9f1c-204f0a9d0181-stat.json 369
+  rec-w49-1\veeam\064-get-v8-restoresessions-342dfd62-3053-44ba-9f1c-204f0a9d0181-even.json 3406
+  rec-w49-1\veeam\065-post-v8-restoresessions-95b1bc26-452e-4121-9a4c-c62911044fa3-orga.json 1518
+  rec-w49-1\veeam\066-get-v8-restoresessions.json 2424
+  rec-w49-1\veeam\067-get-v8-restoresessions-8e98e6e8-c035-47f5-996c-828d879f8a89.json 1056
+  rec-w49-1\veeam\068-get-v8-restoresessions-8e98e6e8-c035-47f5-996c-828d879f8a89.json 1056
+  rec-w49-1\veeam\069-get-v8-restoresessions-8e98e6e8-c035-47f5-996c-828d879f8a89.json 1056
+  rec-w49-1\veeam\070-get-v8-restoresessions-8e98e6e8-c035-47f5-996c-828d879f8a89.json 1056
+  rec-w49-1\veeam\071-get-v8-restoresessions-8e98e6e8-c035-47f5-996c-828d879f8a89.json 1056
+  rec-w49-1\veeam\072-get-v8-restoresessions-8e98e6e8-c035-47f5-996c-828d879f8a89.json 1056
+  rec-w49-1\veeam\073-get-v8-restoresessions-8e98e6e8-c035-47f5-996c-828d879f8a89.json 1056
+  rec-w49-1\veeam\074-get-v8-restoresessions-8e98e6e8-c035-47f5-996c-828d879f8a89.json 1056
+  rec-w49-1\veeam\075-get-v8-restoresessions-8e98e6e8-c035-47f5-996c-828d879f8a89.json 1104
+  rec-w49-1\veeam\076-get-v8-restoresessions-8e98e6e8-c035-47f5-996c-828d879f8a89-stat.json 588
+  rec-w49-1\veeam\077-get-v8-restoresessions-8e98e6e8-c035-47f5-996c-828d879f8a89-even.json 3283
+  rec-w49-1\veeam\078-post-v8-restoresessions-67148f7a-6590-40a7-9c88-6eb7b689f600-orga.json 1617
+  rec-w49-1\veeam\079-get-v8-restoresessions.json 2425
+  rec-w49-1\veeam\080-get-v8-restoresessions-39f4e794-4bad-4487-9ce6-b7666b0f7a37.json 1054
+  rec-w49-1\veeam\081-get-v8-restoresessions-39f4e794-4bad-4487-9ce6-b7666b0f7a37.json 1054
+  rec-w49-1\veeam\082-get-v8-restoresessions-39f4e794-4bad-4487-9ce6-b7666b0f7a37.json 1054
+  rec-w49-1\veeam\083-get-v8-restoresessions-39f4e794-4bad-4487-9ce6-b7666b0f7a37.json 1054
+  rec-w49-1\veeam\084-get-v8-restoresessions-39f4e794-4bad-4487-9ce6-b7666b0f7a37.json 1054
+  rec-w49-1\veeam\085-get-v8-restoresessions-39f4e794-4bad-4487-9ce6-b7666b0f7a37.json 1054
+  rec-w49-1\veeam\086-get-v8-restoresessions-39f4e794-4bad-4487-9ce6-b7666b0f7a37.json 1054
+  rec-w49-1\veeam\087-get-v8-restoresessions-39f4e794-4bad-4487-9ce6-b7666b0f7a37.json 1102
+  rec-w49-1\veeam\088-get-v8-restoresessions-39f4e794-4bad-4487-9ce6-b7666b0f7a37-stat.json 588
+  rec-w49-1\veeam\089-get-v8-restoresessions-39f4e794-4bad-4487-9ce6-b7666b0f7a37-even.json 3628
+  rec-w49-1\veeam\090-get-v8-restoresessions-eca07f15-277f-40a3-843a-7ce194f0111c.json 1074
+  rec-w49-1\veeam\091-post-v8-restoresessions-eca07f15-277f-40a3-843a-7ce194f0111c-stop.json 180
+  rec-w49-1\veeam\092-get-v8-restoresessions-95b1bc26-452e-4121-9a4c-c62911044fa3.json 1078
+  rec-w49-1\veeam\093-post-v8-restoresessions-95b1bc26-452e-4121-9a4c-c62911044fa3-stop.json 180
+  rec-w49-1\veeam\094-get-v8-restoresessions-67148f7a-6590-40a7-9c88-6eb7b689f600.json 1076
+  rec-w49-1\veeam\095-post-v8-restoresessions-67148f7a-6590-40a7-9c88-6eb7b689f600-stop.json 180
+  rec-w49-1\veeam\096-post-v8-token-logout.json 135
+
+-- the queued folder
+folder: C:\ProgramData\RestoreProof\w49\box\outbox\w49-1
+command: rpworker signer verify C:\ProgramData\RestoreProof\w49\box\outbox\w49-1 --public-key C:\ProgramData\RestoreProof\w48\worker-signing.pub.pem --tsa-ca C:\restoreproof\shared\tsa\tsa-ca.pem
+2026-10-09T10:21:01Z to 2026-10-09T10:21:02Z
+exit code: 0
+--- stdout
+verified d369722f62263a153821b3bca647374c916752e6b5df78c3978363a24e3c4e18 key 9dfab6eadaa1d04a22dcc966aac7a53bcff8bbe0077232485f6143cd9c4d0ca5 timestamp 2026-10-09T10:19:39Z
+--- stderr
+note: not listed in the result: manifest.json
+
+verify_bundle.py (exit code 0): note: not listed in the result: manifest.json | verified d369722f62263a153821b3bca647374c916752e6b5df78c3978363a24e3c4e18 key 9dfab6eadaa1d04a22dcc966aac7a53bcff8bbe0077232485f6143cd9c4d0ca5 timestamp 2026-10-09T10:19:39Z
+result.json: run_id w49-1, status pass, restore_sent True, message: 4 of 4 item(s) verified: manifest 3, fields 1, metadata 0
+result.json sha256 d369722f62263a153821b3bca647374c916752e6b5df78c3978363a24e3c4e18
+
+-- Veeam after: no session Working at 2026-10-09T10:21:10Z

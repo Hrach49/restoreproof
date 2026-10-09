@@ -72,8 +72,24 @@ service's runs, its record and its recovery clean take the client from the job's
 never from the config; `rpworker client check --profile-file` lists a profile's three restore
 targets; `restore` and `test` take `--profile-file` too. The config's eight keys, set
 together or not at all, are its **local client profile**, what the commands at a prompt run
-on without a file. What the profile claims about the tenant is checked against Veeam in
-W4.11.
+on without a file. What the profile claims about the tenant is checked by the client check
+(W4.11).
+
+**Client check (W4.11).** The step of every run, right after the run line and before the
+clean before, that holds the run's client profile to facts Veeam and Graph report: the
+organisation named by `veeam_org_name` is of type `Office365`, its `msid` is the profile's
+`graph_tenant_id` and its region is `Worldwide` (`rp::check_client`, else
+`error client_mismatch`); the canary manifest is that tenant's (`error config`); and the
+three restore targets resolve in that tenant through the guard's own checks (Graph's codes).
+Nothing is cleaned, sampled or restored before it passes, and a run that stops in it is
+reported under its run ID. `docs/verification.md`, "The client check".
+
+**Scope (`client.scope`).** The one claim a signed result makes about where the restore went:
+`same_tenant` when the client check passed, so the Veeam organisation's tenant is the
+profile's and the targets resolved in it; `null` when the run stopped in or before the check,
+and in every result written afterwards. `client.resolved` beside it holds what the check
+resolved (the organisation's facts, the Inbox's ID, the library's list ID and site URL, the
+OneDrive's site URL).
 
 **Connector.** The Worker's adapter to one backup product (`rp::connector::IConnector`,
 W1.7): it lists a client's restore points and restores a sample into the restore targets.
@@ -327,8 +343,10 @@ longer than the interval makes the next poll late, never a second run. After a s
 new is started.
 
 **Job.** One test the service is to run: a closed object with `run_id`, `client_id`, `client`
-(the client's profile, W4.10), `sample_mail`, `sample_sp`, `sample_od`, `restore_point`
-(`latest` or a restore point ID), `screenshots_enabled` and, optionally, `canary_cursor`. It is run through `rpworker test`'s
+(the client's profile, W4.10), `connector` (`{type}`, the connector's registry name, W4.11; a
+name this Worker's registry lacks is reported as `error connector_unknown`), `sample_mail`,
+`sample_sp`, `sample_od`, `restore_point` (`latest` or a restore point ID),
+`screenshots_enabled` and, optionally, `canary_cursor`. It is run through `rpworker test`'s
 pipeline, in process, into a run folder and the outbox. A job whose run is already queued or
 sent, or whose run folder is already there, is skipped; the run ID is what makes a job run
 once.

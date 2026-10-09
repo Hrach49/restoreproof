@@ -7,6 +7,24 @@ Format: date, decision, reason, alternatives rejected.
 
 ---
 
+## 2026-10-10 — Q4.1 (#53) closed: the four signing and schema steps are covered by tests that exist; a re-ordered `result.json` is refused, not verified (W4.3); green locally, not in CI
+
+Q4.1 asks for four unit tests. Each was written with the task that built the thing (W4.1, W4.3, W4.5), so nothing was built here: the tests were found, run and listed. Worker paths are under `worker/`.
+
+1. **A tampered bundle (a changed item hash) fails verify.** The shared vectors `shared/testdata/signing-v1/cases.json`: `result-expected-item-hash-one-digit` (one digit of `expected.items[0].sha256` changed, the file still canonical and valid: `hash_mismatch`), `result-check-item-one-digit` (`hash_mismatch`), `forgery-result-changed-hash-computed-again` (the result changed and `bundle_sha256` computed again under the old signature: `signature_invalid`), `signature-one-bit-changed` (`signature_invalid`) and `attachment-one-byte-changed` (`attachment_hash`). Run by `tests/signer_test.cpp` "the folder verifier answers every shared case with its word", by `tests/signer_command_test.cpp` "signer verify answers every shared case with its line and exit code" (`not verified: <word>`, exit 5) and by `cloud/tests/test_verify_bundle.py` `test_each_failing_case_gets_its_word`. Beside the vectors: `tests/signer_test.cpp` "after the signature file: the hash, then the key, then the signature" and "each listed attachment: there, its size, its hash, in the result's order".
+2. **Re-ordered keys in `result.json`: superseded by W4.3.** The guide says a re-ordered file still verifies. W4.3 (2026-10-05, point 2) decided the opposite: `bundle_sha256` is the SHA-256 of the file's own bytes, and a `result.json` that isn't its own `canonical-json-v1` form is refused as `result_not_canonical`, so the two JSON parsers can never differ on what was signed. The tests hold that: the vector `result-keys-reordered` expects `result_not_canonical`, in the three tests of step 1; `tests/signer_test.cpp` "the result's own checks come before the signature's, whatever the signature says" holds the same word for a file with a trailing newline, the signature not even asked. What is left of the guide's intent is tested too: the order in which a document is built doesn't change what is signed (`tests/signer_test.cpp` "a document built in two key orders has one canonical text and one hash", `cloud/tests/test_canonical_json.py` `test_two_key_orders_one_canonical_text`, and the `key-order` cases of `shared/testdata/canonical-json-v1.json`). Q4.1's second step is read as "a re-ordered file is refused"; the issue's wording is not met and is not meant to be.
+3. **The schema rejects an unknown status.** `shared/testdata/result-v1/cases.json`: `status-passed` (`status.status` `passed`), `status-unknown-error-code` (`error_code` `teapot`) and `restore-unknown-status` (`restore.status` `Success`), all `valid: false`, run by `tests/result_schema_test.cpp` "the shared result documents validate as they say" and by `cloud/tests/test_result_schema.py` `test_each_case_validates_as_it_says`. Also `tests/result_schema_test.cpp` "a validator that can't be loaded checks nothing, and says so" (`status.status` `maybe` is invalid) and "the result schema's enums are the code's words", and through the verifiers the signing vector `result-unknown-status` (`result_schema`).
+4. **DPAPI round trip.** `tests/vault_test.cpp` "a vault round-trips the five secrets through DPAPI" (written by `write_vault`, read back by `read_vault`, nothing of a value in the file's bytes), with "a value outside the ANSI code page round-trips as UTF-8". The Worker builds on Windows only, so there is no non-Windows runner to skip it on.
+
+The runs, on `main` at 5794beb, 2026-10-10, on the dev laptop:
+
+- `ctest --preset dev -R "signer|result_schema|vault|canonical"`: 139 of 139 passed, none skipped. The regex matches test names, and several of the tests above have none of its words in their names, so the same build was also run by tag: `rptests "[signer],[signer_command],[result_schema],[vault],[canonical_json]"`, 146 test cases, 7817 assertions, all passed.
+- `uv run pytest tests/test_verify_bundle.py tests/test_result_schema.py tests/test_canonical_json.py` in `cloud/`: 639 passed.
+
+**"Green in CI" is not shown.** The Done-when says all four are green in CI. No Worker CI run has started since 2026-10-03 (GitHub billing, W4.1 build notes point 16), so the Worker's half is shown by the local runs above alone. When the workflows run again, the first green `worker` run is the Done-when's own evidence; nothing in this entry stands in for it.
+
+---
+
 ## 2026-10-10 — W4.11 code review: findings 1 to 7 of nine fixed, 8 and 9 open
 
 The review of the branch `w4.11-client-check` gave nine findings. 1 to 7 are fixed, each with its test; 8 and 9 stay open.

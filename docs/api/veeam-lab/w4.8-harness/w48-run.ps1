@@ -176,6 +176,7 @@ function Revoke-W48Account {
 
 function New-W48Job([string]$RunId, [int]$Mail, [int]$Sp, [int]$Od) {
     [ordered]@{ run_id = $RunId; client_id = 'lab-client'; sample_mail = $Mail; sample_sp = $Sp; sample_od = $Od
+        connector = @{ type = 'veeam_m365' }  # W4.11: the job names its connector
         restore_point = 'latest'; screenshots_enabled = $false }
 }
 

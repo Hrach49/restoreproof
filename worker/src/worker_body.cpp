@@ -175,6 +175,9 @@ struct Body {
     // The hold's one connector and the account it signs in with (point 9).
     std::unique_ptr<connector::IConnector> hold_connector;
     std::string hold_account;
+    // W4.11: the connector type the hold's connector is to be made with (the
+    // record's); empty = connector::kVeeamM365.
+    std::string hold_type;
 
     const Config& config() const noexcept { return context->config; }
     const std::shared_ptr<spdlog::logger>& logger() const noexcept { return context->logger; }
@@ -264,9 +267,13 @@ struct Body {
             args.outbox = outbox_arg;
             args.loaded = &config();
             args.screenshots = job.screenshots_enabled;
-            // W4.10: the job's client, never the config's keys.
-            args.client = job.client ? &*job.client : nullptr;
+            // W4.10: the job's client, never the config's keys. W4.11 (the
+            // W4.10 review's finding 7): a job without one is never run on
+            // the config's local profile: value() throws, and the job ends
+            // before its run line.
+            args.client = &job.client.value();
             args.client_id = job.client_id;
+            args.connector_type = job.connector_type;
             // Point 12: the run's two streams are the log's.
             LogLineStream out(logger(), spdlog::level::info, job.run_id);
             LogLineStream err(logger(), spdlog::level::warn, job.run_id);
@@ -385,7 +392,8 @@ struct Body {
                 env.make_connector
                     ? env.make_connector(config(), secrets, env.connector_options)
                     : connector::default_connector_registry().create(
-                          connector::kVeeamM365, config(), secrets, env.connector_options);
+                          hold_type.empty() ? std::string{connector::kVeeamM365} : hold_type,
+                          config(), secrets, env.connector_options);
             if (!hold_connector) {
                 throw std::logic_error("no connector");
             }
@@ -531,6 +539,14 @@ ServiceLoopEnv make_worker_loop_env(const std::shared_ptr<ServiceContext>& conte
     env.wall_now = [body] { return body->wall_now(); };
 
     env.read_jobs = [](const std::filesystem::path& file) { return read_jobs(file); };
+    // W4.11: the connectors this Worker has, and the hold's by the record.
+    env.connector_names = connector::default_connector_registry().names();
+    env.hold_connector_type = [body](std::string_view type) {
+        if (body->hold_connector && body->hold_type != type) {
+            body->hold_connector.reset();
+        }
+        body->hold_type = std::string{type};
+    };
     env.outbox_holds = [body](std::string_view run_id) { return body->outbox().holds(run_id); };
     env.run_folder_exists = [body](std::string_view run_id) {
         const std::optional<std::filesystem::path> name = path_from_utf8(run_id);

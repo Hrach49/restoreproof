@@ -129,6 +129,16 @@ struct ServiceLoopEnv {
     std::function<std::chrono::steady_clock::time_point()> now;
     std::function<std::chrono::system_clock::time_point()> wall_now;
 
+    // W4.11 point 6: the connectors this Worker has, the registry's names.
+    // A valid job naming another is J3b: reported as error connector_unknown,
+    // nothing asked of Veeam or Graph.
+    std::vector<std::string> connector_names;
+    // W4.11: told, before each look of the hold, the connector type the
+    // record's run was made with (its `connector.type`, else
+    // connector::kVeeamM365), so the hold's connector is that one. Null:
+    // nothing.
+    std::function<void(std::string_view connector_type)> hold_connector_type;
+
     // rp::read_jobs.
     std::function<JobsDocument(const std::filesystem::path&)> read_jobs;
     // rp::Outbox::holds.

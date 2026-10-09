@@ -319,6 +319,119 @@ TEST_CASE("veeam_m365: each Veeam failure is the matching connector error", "[ve
     require_no_secret(lab.log());
 }
 
+// --- The client's facts (W4.11 point 2) ----------------------------------------------
+
+TEST_CASE("veeam_m365: the client's facts are the organisation's name, msid, type and region as "
+          "sent, each empty when Veeam sent none",
+          "[veeam_m365][client_check][w4.11]")
+{
+    struct Row {
+        const char* name;
+        std::function<void(json&)> edit;
+        connector::ClientFacts facts;
+    };
+    const Row row = GENERATE(
+        Row{"as recorded", {},
+            {"RestoreProofLab.onmicrosoft.com", "bcd6bd1a-ea42-489d-aa28-2c19a44ad146",
+             "Office365", "Worldwide"}},
+        Row{"no msid", [](json& org) { org.erase("msid"); },
+            {"RestoreProofLab.onmicrosoft.com", "", "Office365", "Worldwide"}},
+        Row{"msid null", [](json& org) { org["msid"] = nullptr; },
+            {"RestoreProofLab.onmicrosoft.com", "", "Office365", "Worldwide"}},
+        Row{"no type", [](json& org) { org.erase("type"); },
+            {"RestoreProofLab.onmicrosoft.com", "bcd6bd1a-ea42-489d-aa28-2c19a44ad146", "",
+             "Worldwide"}},
+        Row{"another type and region, as sent",
+            [](json& org) {
+                org["type"] = "Office365Germany";
+                org["region"] = "Germany";
+            },
+            {"RestoreProofLab.onmicrosoft.com", "bcd6bd1a-ea42-489d-aa28-2c19a44ad146",
+             "Office365Germany", "Germany"}},
+        Row{"the name as Veeam has it, whatever case was asked",
+            [](json& org) { org["name"] = "restoreprooflab.onmicrosoft.com"; },
+            {"restoreprooflab.onmicrosoft.com", "bcd6bd1a-ea42-489d-aa28-2c19a44ad146",
+             "Office365", "Worldwide"}});
+    CAPTURE(row.name);
+    Harness lab;
+    lab.http.on(HttpMethod::get, orgs_url(), {orgs_response(row.edit)});
+    lab.secrets.graph_cert_pfx_base64.reset();
+    const std::unique_ptr<connector::IConnector> made = lab.make();
+
+    const connector::ClientFacts facts = made->client_facts(kOrgName);
+
+    CHECK(facts == row.facts);
+    // Nothing of Graph, and no session.
+    CHECK(lab.make_graph_http_calls == 0);
+    CHECK(lab.guard_lab.graph_gets() == 0);
+}
+
+TEST_CASE("veeam_m365: the client's facts fail as listing restore points fails: an unknown "
+          "client, two matches, Veeam's own errors, an empty reference",
+          "[veeam_m365][client_check][w4.11]")
+{
+    Harness lab;
+    SECTION("a client Veeam doesn't know is NotFoundError")
+    {
+        const std::unique_ptr<connector::IConnector> made = lab.make();
+        REQUIRE_THROWS_AS(made->client_facts("other.onmicrosoft.com"), connector::NotFoundError);
+    }
+    SECTION("two organisations of the name are an Error")
+    {
+        lab.http.on(HttpMethod::get, orgs_url(),
+                    {orgs_response({}, {{"22222222-2222-4222-8222-222222222222", kOrgName}})});
+        const std::unique_ptr<connector::IConnector> made = lab.make();
+        std::string message;
+        CHECK(kind_of([&] { (void)made->client_facts(kOrgName); }, message) == "Error");
+        CHECK_THAT(message, ContainsSubstring("matches 2 organisations"));
+    }
+    SECTION("Veeam unavailable is a TransientError, a refused token an AuthError")
+    {
+        lab.http.on(HttpMethod::get, orgs_url(), {make_response(503)});
+        const std::unique_ptr<connector::IConnector> made = lab.make();
+        REQUIRE_THROWS_AS(made->client_facts(kOrgName), connector::TransientError);
+        lab.http.on(HttpMethod::post, kTokenUrl, {load_fixture("veeam", "token-rejected-401")});
+        const std::unique_ptr<connector::IConnector> again = lab.make();
+        REQUIRE_THROWS_AS(again->client_facts(kOrgName), connector::AuthError);
+    }
+    SECTION("an empty reference is refused before any request")
+    {
+        const std::unique_ptr<connector::IConnector> made = lab.make();
+        REQUIRE_THROWS_AS(made->client_facts(""), std::invalid_argument);
+        CHECK(lab.http.requests().empty());
+    }
+}
+
+TEST_CASE("veeam_m365: the registry's connector refuses a restore spec that isn't its client's, "
+          "before the guard and before any request (finding 8)",
+          "[veeam_m365][client_check][w4.11]")
+{
+    Harness lab;
+    const std::unique_ptr<connector::IConnector> made = lab.make();
+    connector::RestoreSpec spec = one_mail_spec(lab.config);
+    SECTION("another organisation")
+    {
+        spec.client_ref = "other.onmicrosoft.com";
+    }
+    SECTION("another client's targets")
+    {
+        rp::Config other = lab.config;
+        other.test_mailbox = "restoretest@other.onmicrosoft.com";
+        spec.targets = connector::RestoreTargets::from_config(other);
+    }
+    REQUIRE_THROWS_MATCHES(
+        made->restore_sample(spec), std::invalid_argument,
+        Catch::Matchers::Message(
+            "veeam_m365: the restore spec isn't the connector's client's; nothing was restored"));
+    CHECK(lab.http.requests().empty());
+    CHECK(lab.guard_lab.graph_gets() == 0);
+    // The organisation's name in another ASCII case is the same client.
+    connector::RestoreSpec same = one_mail_spec(lab.config);
+    same.client_ref = "RESTOREPROOFLAB.ONMICROSOFT.COM";
+    same.mail.front().mailbox = lab.config.test_mailbox; // refused by the guard, not here
+    REQUIRE_THROWS_AS(made->restore_sample(same), connector::SafetyViolation);
+}
+
 TEST_CASE("veeam_m365: a transport failure is a TransientError, a TLS failure a plain Error",
           "[veeam_m365]")
 {

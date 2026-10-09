@@ -806,6 +806,7 @@ std::vector<Organization> VeeamClient::list_organizations()
             org.id = required_string(item, "id");
             org.name = required_string(item, "name");
             org.msid = optional_string(item, "msid");
+            org.type = optional_string(item, "type");
             org.region = optional_string(item, "region");
             org.office_name = optional_string(item, "officeName");
             org.exchange_app = optional_app(item, "exchangeOnlineSettings", org.settings_problem);

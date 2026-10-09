@@ -69,9 +69,14 @@
       ],
       "properties": {
         "type": {
-          "enum": [
-            "veeam_m365"
-          ]
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-z0-9_]{1,64}$",
+          "not": {
+            "pattern": "\n"
+          },
+          "description": "The connector's registry name (W4.11: a name, not the one word veeam_m365, since a result written afterwards for a job whose connector this Worker lacks names the type the job asked for)."
         },
         "api": {
           "type": "string",
@@ -86,9 +91,124 @@
         "client_id",
         "tenant_id",
         "veeam_org_name",
-        "targets"
+        "targets",
+        "scope",
+        "resolved"
       ],
       "properties": {
+        "scope": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "enum": [
+                "same_tenant"
+              ]
+            }
+          ],
+          "description": "same_tenant exactly when the client check passed (W4.11): the backup product's organisation named by veeam_org_name is an Office365 organisation of the Worldwide region whose tenant ID is tenant_id, and the three restore targets resolved in that tenant; null when the run stopped in or before the check, and in every result written afterwards."
+        },
+        "resolved": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "organization",
+                "mailbox",
+                "library",
+                "onedrive_folder"
+              ],
+              "properties": {
+                "organization": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "name",
+                    "tenant_id",
+                    "type",
+                    "region"
+                  ],
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "maxLength": 1024
+                    },
+                    "tenant_id": {
+                      "type": "string",
+                      "maxLength": 128
+                    },
+                    "type": {
+                      "type": "string",
+                      "maxLength": 64
+                    },
+                    "region": {
+                      "type": "string",
+                      "maxLength": 64
+                    }
+                  }
+                },
+                "mailbox": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "inbox_id"
+                  ],
+                  "properties": {
+                    "inbox_id": {
+                      "type": "string",
+                      "maxLength": 1024
+                    }
+                  }
+                },
+                "library": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "name",
+                    "list_id",
+                    "site_url"
+                  ],
+                  "properties": {
+                    "name": {
+                      "const": "RestoreTarget"
+                    },
+                    "list_id": {
+                      "type": "string",
+                      "maxLength": 128
+                    },
+                    "site_url": {
+                      "type": "string",
+                      "maxLength": 2048
+                    }
+                  }
+                },
+                "onedrive_folder": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "name",
+                    "site_url"
+                  ],
+                  "properties": {
+                    "name": {
+                      "const": "RestoreTarget"
+                    },
+                    "site_url": {
+                      "type": "string",
+                      "maxLength": 2048
+                    }
+                  }
+                }
+              }
+            }
+          ],
+          "description": "What the client check resolved (W4.11), set with scope: the organisation as the backup product reported it (its name, tenant ID, type and region, as sent), the mailbox's Inbox ID, the library's name, list ID and site URL, and the OneDrive folder's name and the OneDrive's site URL, as Graph wrote them. Null when scope is."
+        },
         "client_id": {
           "type": [
             "string",
@@ -1484,7 +1604,9 @@
             "restore_contradiction",
             "result_invalid",
             "interrupted",
-            "job_invalid"
+            "job_invalid",
+            "client_mismatch",
+            "connector_unknown"
           ]
         },
         "message": {

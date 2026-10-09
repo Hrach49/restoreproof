@@ -44,7 +44,10 @@
             "sample_sp": 3,
             "sample_od": 2,
             "restore_point": "latest",
-            "screenshots_enabled": false
+            "screenshots_enabled": false,
+            "connector": {
+              "type": "veeam_m365"
+            }
           }
         }
       ]
@@ -75,7 +78,10 @@
               "sample_sp": 3,
               "sample_od": 2,
               "restore_point": "latest",
-              "screenshots_enabled": false
+              "screenshots_enabled": false,
+              "connector": {
+                "type": "veeam_m365"
+              }
             },
             {
               "run_id": "job-0002",
@@ -95,7 +101,10 @@
               "sample_sp": 3,
               "sample_od": 2,
               "restore_point": "latest",
-              "screenshots_enabled": false
+              "screenshots_enabled": false,
+              "connector": {
+                "type": "veeam_m365"
+              }
             },
             {
               "run_id": "job-0003",
@@ -115,7 +124,10 @@
               "sample_sp": 3,
               "sample_od": 2,
               "restore_point": "latest",
-              "screenshots_enabled": false
+              "screenshots_enabled": false,
+              "connector": {
+                "type": "veeam_m365"
+              }
             },
             {
               "run_id": "job-0004",
@@ -135,7 +147,10 @@
               "sample_sp": 3,
               "sample_od": 2,
               "restore_point": "latest",
-              "screenshots_enabled": false
+              "screenshots_enabled": false,
+              "connector": {
+                "type": "veeam_m365"
+              }
             },
             {
               "run_id": "job-0005",
@@ -155,7 +170,10 @@
               "sample_sp": 3,
               "sample_od": 2,
               "restore_point": "latest",
-              "screenshots_enabled": false
+              "screenshots_enabled": false,
+              "connector": {
+                "type": "veeam_m365"
+              }
             }
           ]
         }
@@ -347,7 +365,10 @@
               "sample_sp": 3,
               "sample_od": 2,
               "restore_point": "latest",
-              "screenshots_enabled": false
+              "screenshots_enabled": false,
+              "connector": {
+                "type": "veeam_m365"
+              }
             },
             {
               "run_id": "job-0002",
@@ -367,7 +388,10 @@
               "sample_sp": 3,
               "sample_od": 2,
               "restore_point": "latest",
-              "screenshots_enabled": false
+              "screenshots_enabled": false,
+              "connector": {
+                "type": "veeam_m365"
+              }
             },
             {
               "run_id": "job-0003",
@@ -387,7 +411,10 @@
               "sample_sp": 3,
               "sample_od": 2,
               "restore_point": "latest",
-              "screenshots_enabled": false
+              "screenshots_enabled": false,
+              "connector": {
+                "type": "veeam_m365"
+              }
             },
             {
               "run_id": "job-0004",
@@ -407,7 +434,10 @@
               "sample_sp": 3,
               "sample_od": 2,
               "restore_point": "latest",
-              "screenshots_enabled": false
+              "screenshots_enabled": false,
+              "connector": {
+                "type": "veeam_m365"
+              }
             },
             {
               "run_id": "job-0005",
@@ -427,7 +457,10 @@
               "sample_sp": 3,
               "sample_od": 2,
               "restore_point": "latest",
-              "screenshots_enabled": false
+              "screenshots_enabled": false,
+              "connector": {
+                "type": "veeam_m365"
+              }
             },
             {
               "run_id": "job-0006",
@@ -447,7 +480,10 @@
               "sample_sp": 3,
               "sample_od": 2,
               "restore_point": "latest",
-              "screenshots_enabled": false
+              "screenshots_enabled": false,
+              "connector": {
+                "type": "veeam_m365"
+              }
             }
           ]
         }
@@ -544,6 +580,137 @@
         {
           "op": "remove",
           "path": "/jobs/0/client"
+        }
+      ]
+    },
+    {
+      "name": "connector-type-other-backup",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/jobs/0/connector/type",
+          "value": "other_backup"
+        }
+      ]
+    },
+    {
+      "name": "job-without-connector",
+      "valid": false,
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/jobs/0/connector"
+        }
+      ]
+    },
+    {
+      "name": "connector-a-string",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/jobs/0/connector",
+          "value": "veeam_m365"
+        }
+      ]
+    },
+    {
+      "name": "connector-null",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/jobs/0/connector",
+          "value": null
+        }
+      ]
+    },
+    {
+      "name": "connector-empty-object",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/jobs/0/connector",
+          "value": {}
+        }
+      ]
+    },
+    {
+      "name": "connector-type-a-number",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/jobs/0/connector/type",
+          "value": 1
+        }
+      ]
+    },
+    {
+      "name": "connector-type-empty",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/jobs/0/connector/type",
+          "value": ""
+        }
+      ]
+    },
+    {
+      "name": "connector-type-with-a-space",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/jobs/0/connector/type",
+          "value": "veeam m365"
+        }
+      ]
+    },
+    {
+      "name": "connector-type-upper-case",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/jobs/0/connector/type",
+          "value": "Veeam_M365"
+        }
+      ]
+    },
+    {
+      "name": "connector-type-65-chars",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/jobs/0/connector/type",
+          "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ]
+    },
+    {
+      "name": "connector-extra-key",
+      "valid": false,
+      "patch": [
+        {
+          "op": "add",
+          "path": "/jobs/0/connector/api",
+          "value": "v8"
+        }
+      ]
+    },
+    {
+      "name": "connector-type-trailing-newline",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/jobs/0/connector/type",
+          "value": "veeam_m365\n"
         }
       ]
     },
@@ -725,7 +892,7 @@
         {
           "op": "replace",
           "path": "/jobs/0/client_id",
-          "value": "kundé"
+          "value": "kund\u00e9"
         }
       ]
     },

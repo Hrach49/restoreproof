@@ -6,6 +6,7 @@
 #include <rp/cleaner.hpp>
 #include <rp/cli.hpp>
 #include <rp/client_assertion.hpp>
+#include <rp/client_check.hpp>
 #include <rp/evidence_builder.hpp>
 #include <rp/expected_set.hpp>
 #include <rp/graph_client.hpp>
@@ -31,6 +32,7 @@
 #include "job_rules.hpp"
 #include "path_utf8.hpp"
 #include "run_folder_tail.hpp"
+#include "target_guard_refuse.hpp"
 #include "text_table.hpp"
 #include "text_util.hpp"
 #include "veeam_time.hpp"
@@ -562,6 +564,83 @@ std::exception_ptr read_before(graph::GraphClient& client, IHttpClient& download
     }
 }
 
+// W4.11 point 1: the client check, between the run line and the clean
+// before. In order: (a) the organisation the connector reports for
+// veeam_org_name against the profile (rp::check_client: type, tenant,
+// region), (b) the manifest's tenant against the profile's, (c) the three
+// restore targets resolved in the tenant through the run's own Graph client,
+// with the guard's wording. Null when all passed, `resolved` filled; else
+// the failure, its line `client error: <what()>; nothing was restored` on
+// `err`: a ClientMismatchError (client_mismatch), a ManifestError (config),
+// a Graph error (the check's code for it) or the connector's (the backup's
+// codes). Nothing has been cleaned, sampled or restored, and no session is
+// open. Anything else is thrown.
+constexpr graph::TargetCheckWording kClientWording{"restores only into", "nothing was restored"};
+
+std::exception_ptr check_client_step(connector::IConnector& source, const ClientProfile& profile,
+                                     const sampling::CanaryManifest& manifest,
+                                     graph::GraphClient& graph,
+                                     const connector::RestoreTargets& targets,
+                                     const std::shared_ptr<spdlog::logger>& logger,
+                                     std::ostream& err, std::optional<ResolvedClient>& resolved)
+{
+    const auto failed = [&](const std::exception& e) {
+        const std::string_view what{e.what()};
+        err << "client error: " << what
+            << (what.ends_with(connector::kNothingRestored) ? "" : connector::kNothingRestored)
+            << '\n';
+        return std::current_exception();
+    };
+    try {
+        const connector::ClientFacts facts = source.client_facts(profile.veeam_org_name);
+        if (const std::optional<ClientMismatch> mismatch = check_client(profile, facts)) {
+            throw ClientMismatchError(*mismatch);
+        }
+        sampling::check_manifest_tenant(manifest, profile.graph_tenant_id);
+        const graph::ResolvedMailbox mailbox =
+            graph::check_restore_mailbox(graph, targets, kClientWording);
+        const graph::ResolvedLibrary library =
+            graph::check_restore_library(graph, targets, kClientWording);
+        const graph::ResolvedOneDriveFolder folder =
+            graph::check_restore_onedrive_folder(graph, targets, kClientWording);
+        resolved = ResolvedClient{.organization_name = facts.name,
+                                  .organization_tenant = facts.tenant_id,
+                                  .organization_type = facts.organization_type,
+                                  .organization_region = facts.region,
+                                  .inbox_id = mailbox.inbox_id,
+                                  .library_name = library.name,
+                                  .library_list_id = library.list_id,
+                                  .library_site_url = library.site_url,
+                                  .folder_name = folder.name,
+                                  .folder_site_url = folder.site_url};
+        return nullptr;
+    } catch (const ClientMismatchError& e) {
+        return failed(e);
+    } catch (const sampling::ManifestError& e) {
+        return failed(e);
+    } catch (const graph::WrongTargetError& e) {
+        // The guard's refusal: one critical SECURITY line, as the Cleaner's
+        // and layer 1's.
+        log_security(logger, "client check: " + std::string{e.what()});
+        return failed(e);
+    } catch (const graph::GraphError& e) {
+        return failed(e);
+    } catch (const connector::Error& e) {
+        return failed(e);
+    } catch (const ConfigError& e) {
+        return failed(e);
+    }
+}
+
+// The line after a client check that passed.
+std::string format_client_ok(const ResolvedClient& resolved)
+{
+    return "client ok: tenant " + table_cell(resolved.organization_tenant) + ", " +
+           table_cell(resolved.organization_type) + ", " +
+           table_cell(resolved.organization_region) +
+           "; mailbox, library and folder resolved\n";
+}
+
 // The after read (W3.2): the targets the spec has items for, each mail body
 // hashed, and each file `hash_file` takes (this run's copies of expected
 // files, verification::hash_filter) downloaded and hashed, a docx or xlsx by
@@ -938,6 +1017,8 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
     std::optional<graph::GraphClient> graph_client;
     std::optional<graph::Cleaner> cleaner;
     RunCleanup cleanup;
+    // W4.11: what the client check resolved; set when it passed.
+    std::optional<ResolvedClient> resolved;
     // The steady clock everything here is timed by: the restore's line, each
     // checked item's ms, and the step timings (W3.5), read at the boundaries
     // of docs/decisions.md 2026-10-03 point 2. Spans that share a boundary
@@ -1045,6 +1126,7 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
                 parts.connector = *connector_info;
             }
             parts.client = result_client(profile, parsed.client_id);
+            parts.client.resolved = resolved;
             if (chosen) {
                 parts.restore_point_id = chosen->id;
                 parts.restore_point_time = chosen->backup_time;
@@ -1293,7 +1375,9 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
         const connector::RestoreTargets targets = connector::RestoreTargets::from_profile(profile);
         // choose_sample's own checks, said before the connector is made: an
         // unreachable Veeam can't hide a manifest that names a restore target.
-        sampling::check_manifest(manifest, targets, profile.graph_tenant_id);
+        // The manifest's tenant is the client check's (W4.11), after the run
+        // line, so that a job of another tenant is reported.
+        sampling::check_manifest_targets(manifest, targets);
         if (const std::optional<std::string> problem = sampling::cursor_problem(manifest, cursor)) {
             err << "usage error: --canary-cursor: " << *problem << '\n';
             return exit_code::usage;
@@ -1348,7 +1432,9 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
         const std::unique_ptr<connector::IConnector> source =
             env.make_connector ? env.make_connector(config, secrets, options)
                                : connector::default_connector_registry().create(
-                                     connector::kVeeamM365, config, secrets, options);
+                                     parsed.connector_type.value_or(
+                                         std::string{connector::kVeeamM365}),
+                                     config, secrets, options);
         if (!source) {
             throw std::logic_error("no connector");
         }
@@ -1431,15 +1517,15 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
                 return interrupted_before("the run couldn't be recorded as started");
             }
         }
-        // W4.8 point 13: a stop before the clean before.
+        // W4.8 point 13: a stop before the client check and the clean before.
         if (stop_asked()) {
             return interrupted_before(kAskedToStop);
         }
 
-        // Graph for the cleanup and the check (W3.2, W3.4), one client for
-        // both. `options` records Graph under "graph" with --record, the
-        // cleanup's deletes included; downloads are recorded as their size
-        // and SHA-256 only.
+        // Graph for the client check, the cleanup and the check (W3.2, W3.4,
+        // W4.11), one client for all. `options` records Graph under "graph"
+        // with --record, the cleanup's deletes included; downloads are
+        // recorded as their size and SHA-256 only.
         graph_http = options.make_graph_http ? options.make_graph_http(options.logger)
                                              : graph::make_graph_http_client(options.logger);
         // The download client's own retries wait on the run's sleep too.
@@ -1452,6 +1538,16 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
         }
         make_graph_and_cleaner(graph_client, cleaner, *graph_http, profile,
                                std::move(*certificate), targets, options);
+
+        // W4.11 point 1: the client check, before anything is cleaned,
+        // sampled or restored. A failure is a before_restore stop.
+        if (const std::exception_ptr failed =
+                check_client_step(*source, profile, manifest, *graph_client, targets,
+                                  options.logger, err, resolved)) {
+            return finish(verification::stop_reason(failed, *phase), nullptr, false);
+        }
+        out << format_client_ok(*resolved);
+        flush_or_throw(out);
 
         // W3.4: every run with a run line empties all three targets first,
         // whatever it samples, so an earlier run's copies can't pass for this

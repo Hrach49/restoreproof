@@ -42,6 +42,7 @@ add_library(rpcore STATIC
     src/cleaner.cpp
     src/cli.cpp
     src/client_assertion.cpp
+    src/client_check.cpp
     src/client_command.cpp
     src/client_profile.cpp
     src/command_config.cpp
@@ -192,6 +193,7 @@ add_executable(rptests
     tests/cleaner_test.cpp
     tests/client_assertion_test.cpp
     tests/cli_test.cpp
+    tests/client_check_test.cpp
     tests/client_command_live_test.cpp
     tests/client_command_test.cpp
     tests/client_profile_test.cpp

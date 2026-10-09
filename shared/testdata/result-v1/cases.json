@@ -815,13 +815,153 @@
       ]
     },
     {
-      "name": "connector-type-fake",
+      "name": "connector-type-other",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/connector/type",
+          "value": "other_backup"
+        }
+      ]
+    },
+    {
+      "name": "connector-type-empty",
       "valid": false,
       "patch": [
         {
           "op": "replace",
           "path": "/connector/type",
-          "value": "fake"
+          "value": ""
+        }
+      ]
+    },
+    {
+      "name": "connector-type-bad-characters",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/connector/type",
+          "value": "Veeam M365"
+        }
+      ]
+    },
+    {
+      "name": "connector-type-65-chars",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/connector/type",
+          "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ]
+    },
+    {
+      "name": "client-no-scope",
+      "valid": false,
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/client/scope"
+        }
+      ]
+    },
+    {
+      "name": "client-no-resolved",
+      "valid": false,
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/client/resolved"
+        }
+      ]
+    },
+    {
+      "name": "client-scope-other",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/client/scope",
+          "value": "other_tenant"
+        }
+      ]
+    },
+    {
+      "name": "client-scope-null",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/client/scope",
+          "value": null
+        }
+      ]
+    },
+    {
+      "name": "client-resolved-null",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/client/resolved",
+          "value": null
+        }
+      ]
+    },
+    {
+      "name": "client-resolved-unknown-key",
+      "valid": false,
+      "patch": [
+        {
+          "op": "add",
+          "path": "/client/resolved/app_id",
+          "value": "x"
+        }
+      ]
+    },
+    {
+      "name": "client-resolved-library-name-other",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/client/resolved/library/name",
+          "value": "Dokumenty"
+        }
+      ]
+    },
+    {
+      "name": "client-resolved-folder-name-other",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/client/resolved/onedrive_folder/name",
+          "value": "RestoreTest"
+        }
+      ]
+    },
+    {
+      "name": "client-resolved-organization-without-region",
+      "valid": false,
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/client/resolved/organization/region"
+        }
+      ]
+    },
+    {
+      "name": "client-resolved-mailbox-extra-key",
+      "valid": false,
+      "patch": [
+        {
+          "op": "add",
+          "path": "/client/resolved/mailbox/address",
+          "value": "x"
         }
       ]
     },
@@ -1953,17 +2093,6 @@
       ]
     },
     {
-      "name": "client-scope",
-      "valid": false,
-      "patch": [
-        {
-          "op": "add",
-          "path": "/client/scope",
-          "value": "same_tenant"
-        }
-      ]
-    },
-    {
       "name": "client-id-number",
       "valid": false,
       "patch": [
@@ -2576,6 +2705,350 @@
             "status": "error",
             "error_code": "job_invalid",
             "message": "the job isn't a valid job (sample_mail); nothing was done",
+            "restore_sent": false,
+            "counts": {
+              "items": 0,
+              "verified": 0,
+              "failed": 0,
+              "unchecked": 0
+            },
+            "verified": {
+              "manifest": 0,
+              "fields": 0,
+              "metadata": 0
+            },
+            "failed_items": [],
+            "unchecked_items": [],
+            "warnings": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "status-error-client-mismatch",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/ended_at",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/sample",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/expected",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/restore",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/check",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/cleanup",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/timings/spans/cleanup_before",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/timings/spans/sample_select",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/timings/spans/target_snapshot",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/timings/spans/restore",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/timings/spans/restore_submit",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/timings/spans/restore_wait",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/timings/spans/verify",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/timings/spans/recovery",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/timings/spans/cleanup_after",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/status",
+          "value": {
+            "status": "error",
+            "error_code": "client_mismatch",
+            "message": "the run stopped before the restore: the backup's organisation doesn't match the client's profile (client_mismatch); nothing was restored",
+            "restore_sent": false,
+            "counts": {
+              "items": 0,
+              "verified": 0,
+              "failed": 0,
+              "unchecked": 0
+            },
+            "verified": {
+              "manifest": 0,
+              "fields": 0,
+              "metadata": 0
+            },
+            "failed_items": [],
+            "unchecked_items": [],
+            "warnings": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "status-error-connector-unknown-as-a-stop",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/ended_at",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/sample",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/expected",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/restore",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/check",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/cleanup",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/timings/spans/cleanup_before",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/timings/spans/sample_select",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/timings/spans/target_snapshot",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/timings/spans/restore",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/timings/spans/restore_submit",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/timings/spans/restore_wait",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/timings/spans/verify",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/timings/spans/recovery",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/timings/spans/cleanup_after",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/status",
+          "value": {
+            "status": "error",
+            "error_code": "connector_unknown",
+            "message": "the run stopped before the restore: the connector type isn't one this Worker has (connector_unknown); nothing was restored",
+            "restore_sent": false,
+            "counts": {
+              "items": 0,
+              "verified": 0,
+              "failed": 0,
+              "unchecked": 0
+            },
+            "verified": {
+              "manifest": 0,
+              "fields": 0,
+              "metadata": 0
+            },
+            "failed_items": [],
+            "unchecked_items": [],
+            "warnings": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "written-afterwards-error-connector-unknown",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/started_at",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/ended_at",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/sample",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/expected",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/restore",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/check",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/cleanup",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/timings/spans/restore_point_lookup",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/timings/spans/cleanup_before",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/timings/spans/sample_select",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/timings/spans/target_snapshot",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/timings/spans/restore",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/timings/spans/restore_submit",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/timings/spans/restore_wait",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/timings/spans/verify",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/timings/spans/recovery",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/timings/spans/cleanup_after",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/timings/spans/total",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/connector/api",
+          "value": ""
+        },
+        {
+          "op": "replace",
+          "path": "/restore_point",
+          "value": {
+            "id": "",
+            "backup_time_raw": "",
+            "backup_time": null
+          }
+        },
+        {
+          "op": "replace",
+          "path": "/status",
+          "value": {
+            "status": "error",
+            "error_code": "connector_unknown",
+            "message": "the job's connector type isn't one this Worker has; nothing was done",
             "restore_sent": false,
             "counts": {
               "items": 0,

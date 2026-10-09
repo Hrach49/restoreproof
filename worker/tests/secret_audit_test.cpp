@@ -354,7 +354,9 @@ TEST_CASE("secret audit E: an error before the restore, Graph refusing the token
     INFO(run.out);
     INFO(run.err);
     REQUIRE(run.exit_code == rp::exit_code::auth);
-    REQUIRE_THAT(run.err, ContainsSubstring("check error: "));
+    // W4.11: the client check signs in to Graph first, so it is where the
+    // token is refused.
+    REQUIRE_THAT(run.err, ContainsSubstring("client error: "));
     REQUIRE_THAT(run.out, ContainsSubstring("\nstatus error graph_auth: "));
     lab.collect("test, Graph refusing", run);
     lab.finish();
@@ -522,7 +524,9 @@ TEST_CASE("secret audit G: a run that ends result_invalid, closed afterwards by 
           "[secret_audit]")
 {
     ServiceAudit audit;
-    audit.lab.h.fake.info = {"not_a_connector_the_schema_knows", "1"};
+    // W4.11: the schema holds the type to the registry's name rule; a name
+    // with spaces and capitals is what it refuses.
+    audit.lab.h.fake.info = {"Not A Connector The Schema Takes", "1"};
     audit.lab.write_jobs(json::array({job("audit-g")}));
 
     audit.lab.run_loop(2);
@@ -743,4 +747,47 @@ TEST_CASE("secret audit K: config check, vault list|test|set|remove, signer publ
     // The vault file was searched too: DPAPI's blob holds no plaintext.
     CHECK(lab.outputs.has_output("temp/vault.bin"));
     CHECK(lab.outputs.has_output("temp/rec-veeam/veeam/"));
+}
+
+// --- W4.11: the client check's refusal, and a job of a connector this Worker lacks ------------
+
+TEST_CASE("secret audit L: test --evidence --outbox on a profile whose tenant isn't the "
+          "organisation's: error client_mismatch, signed and queued",
+          "[secret_audit]")
+{
+    AuditLab lab;
+    lab.command = rp::run_test_command;
+    lab.fake.facts = connector::ClientFacts{kOrgName, "11111111-2222-3333-4444-555555555555",
+                                            "Office365", "Worldwide"};
+    Args args = with_run_id("audit-l");
+    args.insert(args.end(), {"--evidence", lab.evidence_arg, "--outbox", lab.outbox_arg});
+
+    const Run run = lab.run(args);
+
+    INFO(run.out);
+    INFO(run.err);
+    REQUIRE(run.exit_code == rp::exit_code::service);
+    REQUIRE_THAT(run.out, ContainsSubstring("\nstatus error client_mismatch: "));
+    REQUIRE_THAT(run.err, ContainsSubstring("client error: client mismatch: "));
+    REQUIRE_THAT(run.out, ContainsSubstring("\nsigned "));
+    REQUIRE_THAT(run.out, ContainsSubstring("\nqueued "));
+    lab.collect("test --evidence --outbox, client_mismatch", run);
+    lab.finish();
+    CHECK(lab.outputs.has_output("temp/box/outbox/audit-l/result.json"));
+}
+
+TEST_CASE("secret audit J8: a job asking for a connector this Worker lacks, reported as error "
+          "connector_unknown and sent",
+          "[secret_audit]")
+{
+    ServiceAudit audit;
+    audit.lab.write_jobs(json::array({job("audit-j8", 2, 1, 0, "other_backup")}));
+
+    audit.lab.run_loop(1);
+
+    REQUIRE(has(audit.log_text(),
+                "job audit-j8: connector type other_backup isn't one this Worker has"));
+    REQUIRE(has(audit.log_text(), "sent audit-j8"));
+    audit.finish();
+    CHECK(audit.outputs.has_output("temp/box/sent/audit-j8/result.json"));
 }

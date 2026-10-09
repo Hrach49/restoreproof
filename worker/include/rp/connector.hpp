@@ -70,6 +70,8 @@ public:
     const std::string& onedrive_drive_id() const noexcept { return onedrive_drive_id_; }
     const std::string& onedrive_folder_id() const noexcept { return onedrive_folder_id_; }
 
+    bool operator==(const RestoreTargets&) const = default;
+
 private:
     RestoreTargets() = default;
 
@@ -400,6 +402,26 @@ struct OwnSession {
     std::chrono::system_clock::time_point created_at; // as the product says
 };
 
+// What the backup product says about the client `client_ref` names
+// (client_facts, W4.11): the facts the client check (rp/client_check.hpp)
+// holds a job's profile to. Each is the product's own text, as sent, or
+// empty when it sent none. Veeam: the organisation's `name`, `msid`, `type`
+// and `region`.
+struct ClientFacts {
+    std::string name;              // the client as the product names it
+    std::string tenant_id;         // the tenant it backs up as this client
+    std::string organization_type; // e.g. "Office365"
+    std::string region;            // e.g. "Worldwide"
+
+    bool operator==(const ClientFacts&) const = default;
+};
+
+// A connector's registry name (W4.11): 1 to 64 of a-z, 0-9 and _. What a
+// job's `connector.type`, the record's and the result's `connector.type` and
+// ConnectorRegistry::add hold a name to.
+inline constexpr std::size_t kMaxConnectorNameLength = 64;
+bool is_connector_name(std::string_view name) noexcept;
+
 // A backup product as the pipeline sees it. One instance talks to one backup
 // server with one set of credentials; each call names the client (an MSP's
 // customer: one Microsoft 365 tenant) it is about.
@@ -448,6 +470,14 @@ public:
     // NotFoundError. The default throws NotImplementedError("<describe().name>:
     // listing the account's sessions isn't implemented").
     virtual std::vector<OwnSession> own_sessions(std::chrono::system_clock::time_point since);
+
+    // W4.11 (docs/decisions.md 2026-10-09 point 2): what the product says
+    // about the client `client_ref` names, for the client check. Read-only.
+    // The errors of list_restore_points: NotFoundError for a client the
+    // product doesn't know. The default throws
+    // NotImplementedError("<describe().name>: the client's facts aren't
+    // implemented").
+    virtual ClientFacts client_facts(const std::string& client_ref);
 
     // Ends the session `id` if it is still running: the stop a run sends for
     // its own browsing sessions when it ends, nothing more. A session that

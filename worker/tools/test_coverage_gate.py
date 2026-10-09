@@ -141,6 +141,7 @@ class GateTest(unittest.TestCase):
             ("src/signer/ed25519.cpp", "signer"),
             ("src/service_log.cpp", "service"),
             ("src/client_profile.cpp", "client_profile"),
+            ("src/client_check.cpp", "client_check"),
         ):
             with self.subTest(rel=rel):
                 code, out, summary = self.run_gate(
@@ -178,6 +179,9 @@ class GateTest(unittest.TestCase):
             r"src\client_profile.cpp",
             r"include\rp\client_profile.hpp",
             r"src\strict_json.hpp",
+            # W4.11: the client check's rule.
+            r"src\client_check.cpp",
+            r"include\rp\client_check.hpp",
         ):
             with self.subTest(name=name):
                 xml = cobertura((r"src\big.cpp", covered(1000)), (name, mixed(1, 1)))
@@ -274,6 +278,7 @@ class GateTest(unittest.TestCase):
             "service",
             "client_profile",
             "strict_json",
+            "client_check",
         ):
             self.assertIn(f"`{name}`: not present yet", summary)
 

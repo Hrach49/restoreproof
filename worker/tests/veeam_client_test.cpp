@@ -1227,6 +1227,7 @@ TEST_CASE("list_organizations reads every organisation with the bearer token", "
     CHECK(orgs[0].id == kOrgId);
     CHECK(orgs[0].name == "RestoreProofLab.onmicrosoft.com");
     CHECK(orgs[0].msid == "bcd6bd1a-ea42-489d-aa28-2c19a44ad146");
+    CHECK(orgs[0].type == "Office365");
     CHECK(orgs[0].region == "Worldwide");
     CHECK(orgs[0].office_name == "RestoreProofLab.onmicrosoft.com");
     const std::vector<HttpRequest> sent = lab.http.requests();

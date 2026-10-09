@@ -10,6 +10,8 @@ committed allowlist, which is what ctest and CI run.
 
 import io
 import json
+import subprocess
+import sys
 import tempfile
 import unittest
 import unittest.mock
@@ -47,7 +49,7 @@ class Tree:
         if isinstance(text, bytes):
             file.write_bytes(text)
         else:
-            file.write_text(text, encoding=encoding, newline="\n")
+            file.write_bytes(text.encode(encoding))
         return file
 
     def allowlist(self, entries):
@@ -80,6 +82,9 @@ class ShapeTests(unittest.TestCase):
             ('password="Hunter2!"', "Hunter2!"),
             ("password='Hunter2!'", "Hunter2!"),
             ("db.password=hunter2", "hunter2"),
+            ("Password : Hunter2! \r\nnext", "Hunter2!"),
+            ("password: 'two words'", "two words"),
+            ("Authorization: Basic dXNlcjpwYXNz", "Basic dXNlcjpwYXNz"),
         ]:
             with self.subTest(text=text):
                 found = scan.find_shapes(text)
@@ -177,16 +182,48 @@ class TreeTests(unittest.TestCase):
         self.assertEqual(["fixtures/b.json: Permission denied"], result.unreadable)
         self.assertFalse(result.ok())
 
-    @unittest.skipUnless(hasattr(__import__("_winapi"), "CreateJunction"), "a junction needs Windows")
-    def test_a_junction_or_link_is_not_entered(self):
+    def junction_loop(self):
         import _winapi
 
         self.tree.write("fixtures/kept/x.txt", RFC_KEY_1)
         # A junction inside the tree pointing at the tree's parent: a loop.
         _winapi.CreateJunction(str(self.tree.root), str(self.tree.root / "fixtures" / "loop"))
+
+    @unittest.skipUnless(sys.platform == "win32", "a junction needs Windows")
+    def test_a_junction_or_link_is_not_entered(self):
+        self.junction_loop()
         result = self.tree.run()
         self.assertEqual(["fixtures/kept/x.txt"], [f.path for f in result.findings])
         self.assertEqual(1, result.files)
+
+    @unittest.skipUnless(sys.platform == "win32", "a junction needs Windows")
+    def test_a_junction_is_not_entered_by_a_python_without_is_junction(self):
+        # Path.is_junction() came with Python 3.12; CMake takes any Python 3.
+        self.junction_loop()
+        with unittest.mock.patch.object(Path, "is_junction", None, create=True):
+            result = self.tree.run()
+        self.assertEqual(["fixtures/kept/x.txt"], [f.path for f in result.findings])
+        self.assertEqual(1, result.files)
+
+    def test_a_plain_folder_is_entered_by_a_python_without_is_junction(self):
+        self.tree.write("fixtures/kept/x.txt", RFC_KEY_1)
+        with unittest.mock.patch.object(Path, "is_junction", None, create=True):
+            result = self.tree.run()
+        self.assertEqual(["fixtures/kept/x.txt"], [f.path for f in result.findings])
+
+
+class ImportTests(unittest.TestCase):
+    def test_this_module_imports_where_there_is_no_winapi(self):
+        # CI's fixture-scan job runs on Ubuntu, which has no _winapi: the
+        # standard library is loaded first, then _winapi is taken away.
+        code = ("import io, json, subprocess, sys, tempfile, unittest, unittest.mock, pathlib\n"
+                "import argparse, dataclasses, re, stat, typing\n"
+                "sys.modules['_winapi'] = None\n"
+                "import test_fixture_secret_scan\n")
+        done = subprocess.run([sys.executable, "-c", code], cwd=Path(__file__).parent,
+                              capture_output=True, text=True)
+        self.assertEqual("", done.stderr)
+        self.assertEqual(0, done.returncode)
 
 
 class AllowlistTests(unittest.TestCase):

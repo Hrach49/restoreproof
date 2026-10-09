@@ -45,11 +45,21 @@ private:
     std::vector<std::string>& lines_;
 };
 
+// The client a job carries (W4.10): the shared vectors' profile, as text.
+inline constexpr std::string_view kProfileText =
+    R"({"format":"restoreproof.client-profile.v1","graph_client_id":"22222222-3333-4444-5555-666666666666",)"
+    R"("graph_tenant_id":"11111111-2222-3333-4444-555555555555","test_library_id":"b!library",)"
+    R"("test_mailbox":"restoretest@contoso.onmicrosoft.com","test_onedrive_drive_id":"b!onedrive",)"
+    R"("test_onedrive_folder_id":"01FOLDER","test_site_id":"contoso.sharepoint.com,)"
+    R"(aaaaaaaa-0000-0000-0000-000000000001,aaaaaaaa-0000-0000-0000-000000000002",)"
+    R"("veeam_org_name":"contoso.onmicrosoft.com"})";
+
 inline std::string job_text(std::string_view run_id, int mail = 5, int sp = 5, int od = 5)
 {
-    return R"({"run_id":")" + std::string{run_id} + R"(","client_id":"client-7","sample_mail":)" +
-           std::to_string(mail) + R"(,"sample_sp":)" + std::to_string(sp) + R"(,"sample_od":)" +
-           std::to_string(od) + R"(,"restore_point":"latest","screenshots_enabled":false})";
+    return R"({"run_id":")" + std::string{run_id} + R"(","client_id":"client-7","client":)" +
+           std::string{kProfileText} + R"(,"sample_mail":)" + std::to_string(mail) +
+           R"(,"sample_sp":)" + std::to_string(sp) + R"(,"sample_od":)" + std::to_string(od) +
+           R"(,"restore_point":"latest","screenshots_enabled":false})";
 }
 
 inline std::string jobs_text(const std::vector<std::string>& jobs)

@@ -3,6 +3,7 @@
 // and for each job whether it has no usable run_id (J1), is invalid with its
 // first key at fault (J3), or is a job. Failure paths first.
 
+#include "result_lab.hpp"
 #include "test_support.hpp"
 
 #include <rp/canonical_json.hpp>
@@ -14,7 +15,9 @@
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
+#include <catch2/generators/catch_generators_range.hpp>
 
+#include <algorithm>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -27,13 +30,28 @@ using rp::test::TempDir;
 
 namespace {
 
+// The client's profile a job carries (W4.10): the shared vectors' valid one.
+const json& profile()
+{
+    static const json value =
+        json::parse(rp::test::read_shared("testdata/client-profile-v1/valid.json"));
+    return value;
+}
+
 // A job that passes every rule.
 json valid_job()
 {
     return json{{"run_id", "job-0001"},      {"client_id", "client-7"},
-                {"sample_mail", 5},          {"sample_sp", 3},
-                {"sample_od", 2},            {"restore_point", "latest"},
-                {"screenshots_enabled", false}};
+                {"client", profile()},       {"sample_mail", 5},
+                {"sample_sp", 3},            {"sample_od", 2},
+                {"restore_point", "latest"}, {"screenshots_enabled", false}};
+}
+
+// `job` with its client's `key` set to `value`.
+json with_client(json job, const char* key, json value)
+{
+    job["client"][key] = std::move(value);
+    return job;
 }
 
 std::string document_of(const json& jobs)
@@ -281,6 +299,31 @@ TEST_CASE("jobs: a job with a usable run_id and a broken rule is J3, with the fi
         Row{"client_id with DEL", with(valid_job(), "client_id", "a\x7f"), "client_id"},
         Row{"client_id outside ASCII", with(valid_job(), "client_id", "kund\xc3\xa9"),
             "client_id"},
+        // the client (W4.10 point 2)
+        Row{"no client", without(valid_job(), "client"), "client"},
+        Row{"client a string", with(valid_job(), "client", "contoso"), "client"},
+        Row{"client null", with(valid_job(), "client", nullptr), "client"},
+        Row{"client an empty object", with(valid_job(), "client", json::object()), "client"},
+        Row{"client of another format", with_client(valid_job(), "format", "restoreproof.jobs.v1"),
+            "client"},
+        Row{"client with a key that isn't the profile's",
+            with_client(valid_job(), "client_id", "client-7"), "client"},
+        Row{"client without its mailbox",
+            with(valid_job(), "client", without(profile(), "test_mailbox")), "client.test_mailbox"},
+        Row{"client with a tenant that isn't a GUID",
+            with_client(valid_job(), "graph_tenant_id", "contoso.onmicrosoft.com"),
+            "client.graph_tenant_id"},
+        Row{"client with another mailbox",
+            with_client(valid_job(), "test_mailbox", "alice@contoso.onmicrosoft.com"),
+            "client.test_mailbox"},
+        Row{"client with a list GUID for the library",
+            with_client(valid_job(), "test_library_id", "ffec069d-65e4-4c3a-9da2-ac086cf9dafa"),
+            "client.test_library_id"},
+        Row{"client with a folder ID that can't be one",
+            with_client(valid_job(), "test_onedrive_folder_id", "01/ABC"),
+            "client.test_onedrive_folder_id"},
+        Row{"client with a control character in the organisation's name",
+            with_client(valid_job(), "veeam_org_name", "a\nb"), "client.veeam_org_name"},
         // the sizes
         Row{"no sample_mail", without(valid_job(), "sample_mail"), "sample_mail"},
         Row{"sample_mail a string", with(valid_job(), "sample_mail", "5"), "sample_mail"},
@@ -339,7 +382,11 @@ TEST_CASE("jobs: a job with a usable run_id and a broken rule is J3, with the fi
             "sample_sp"},
         Row{"a known key at fault and an unknown one",
             with(with(valid_job(), "profile", 1), "screenshots_enabled", 1),
-            "screenshots_enabled"});
+            "screenshots_enabled"},
+        Row{"a bad client and a bad size", with(without(valid_job(), "client"), "sample_od", -1),
+            "client"},
+        Row{"a bad client_id and a bad client",
+            with(without(valid_job(), "client"), "client_id", 7), "client_id"});
     CAPTURE(row.name);
 
     const rp::JobEntry entry = entry_of(row.job);
@@ -353,6 +400,14 @@ TEST_CASE("jobs: a job with a usable run_id and a broken rule is J3, with the fi
         CHECK_FALSE(entry.job.client_id.has_value());
     } else {
         CHECK(entry.job.client_id == std::optional<std::string>{"client-7"});
+    }
+    // And its profile, when that could be read (W4.10): a J3 record carries
+    // it, so the job's result names the client.
+    if (std::string{row.fault} == "client_id" || std::string_view{row.fault}.starts_with("client")) {
+        CHECK_FALSE(entry.job.client.has_value());
+    } else {
+        REQUIRE(entry.job.client.has_value());
+        CHECK(rp::to_json(*entry.job.client) == profile());
     }
     CHECK(entry.job.sample_mail == 0);
     CHECK(entry.job.sample_sp == 0);
@@ -482,4 +537,52 @@ TEST_CASE("jobs: a file of this account's is read from disk whole", "[service_jo
     const rp::JobsDocument folder = rp::read_jobs(tmp.path());
     CHECK(folder.state == rp::JobsState::error);
     CHECK(folder.fault == std::optional<rp::JobsFault>{rp::JobsFault::unreadable});
+}
+
+// --- the shared jobs vectors (W4.10 point 8) ---------------------------------
+
+TEST_CASE("jobs: every shared jobs case is judged by the reader as the file says",
+          "[service_jobs][schema]")
+{
+    static const json cases_file =
+        json::parse(rp::test::read_shared("testdata/jobs-v1/cases.json"));
+    static const json base = json::parse(rp::test::read_shared(
+        "testdata/jobs-v1/" + cases_file.at("base").get<std::string>()));
+    const json& cases = cases_file.at("cases");
+    REQUIRE(cases_file.at("format") == std::string{rp::kJobsFormat});
+    // The file can't shrink unnoticed: the Cloud pins the same counts.
+    REQUIRE(cases.size() == 69);
+    std::size_t valid = 0;
+    std::size_t code_refuses = 0;
+    for (const json& entry : cases) {
+        valid += entry.at("valid").get<bool>() ? 1 : 0;
+        code_refuses += entry.value("code_refuses", false) ? 1 : 0;
+    }
+    REQUIRE(valid == 17);
+    REQUIRE(code_refuses == 3);
+    // The base is its own canonical form: what the Worker would write.
+    REQUIRE(rp::test::read_shared("testdata/jobs-v1/valid.json") == rp::canonical_json(base));
+
+    const std::size_t i = GENERATE(range(std::size_t{0}, std::size_t{69}));
+    const json& entry = cases.at(i);
+    const std::string name = entry.at("name");
+    INFO(name);
+    const json document = base.patch(entry.at("patch"));
+    const bool schema_valid = entry.at("valid").get<bool>();
+    const bool code_refuses_this = entry.value("code_refuses", false);
+    REQUIRE((!code_refuses_this || schema_valid));
+
+    const rp::JobsDocument read = rp::parse_jobs(document.dump());
+    const bool accepted =
+        read.state == rp::JobsState::read &&
+        std::ranges::all_of(read.jobs, [](const rp::JobEntry& job) {
+            return job.state == rp::JobState::valid;
+        });
+    CHECK(accepted == (schema_valid && !code_refuses_this));
+    if (accepted) {
+        for (const rp::JobEntry& job : read.jobs) {
+            REQUIRE(job.job.client.has_value());
+            CHECK(rp::to_json(*job.job.client) == document.at("jobs").at(job.position - 1).at("client"));
+        }
+    }
 }

@@ -278,6 +278,15 @@ said. It keeps `restore_sent` (the clean after still runs), the item count and t
 clears the verified, failed and unchecked items, as R1 to R4 leave them. See "The result"
 below. The test rows are V1 to V7.
 
+Since W4.8 a verdict can be replaced once more, before the result is built: by `interrupted`.
+When the Worker was asked to stop before the table decided, and the row gave an `error` whose
+code is none of `interrupted`, `target_guard` and `result_invalid`
+(`verification::interrupt_replaces`), the verdict becomes `verification::interrupted(verdict)`:
+status `error`, code `interrupted`, keeping and clearing what `result_invalid()` keeps and
+clears. A `pass` or a `fail` reached in spite of the stop stays what it is, and so does every
+verdict decided before the stop came. See "A stop during a run" under "A result written
+afterwards" below. The test rows are N1 to N8.
+
 R1, the facts that don't add up: no expected set and no stop; a restore result without an
 expected set, or a check without a restore result; an expected item not at its index; a
 restore of an empty sample, or a sample of items with neither a restore result nor a stop; a
@@ -315,9 +324,15 @@ How the backup's own status reads (decision point 4):
 One flat vocabulary, the same in every phase, with `rpworker`'s exit code. In the code it is
 one table (`kCodes` in `src/run_status.cpp`: each code's stop text, whether the checker gives
 it, its severity rank and its exit code). Every code a status can carry has a row there,
-eighteen since W4.1: `restore_contradiction`, R6's own code, was outside the table before (exit
-4 then as now), and `result_invalid` is new. Neither can be a stop's code or a check item's:
-given as one, it is R1's `internal`. Three public lists give the vocabulary to the result's
+twenty since W4.8. W4.1 made it eighteen: `restore_contradiction`, R6's own code, was outside
+the table before (exit 4 then as now), and `result_invalid` was new. Neither can be a stop's
+code or a check item's: given as one, it is R1's `internal`. W4.8 added two at the table's
+end, in this order (`docs/decisions.md` 2026-10-08, W4.8 point 14): `interrupted`, a stop's
+code (stop text `the run was interrupted`) and never a check item's, and `job_invalid`, which
+is neither a stop's code nor an item's and, given as a stop's, is R1's `internal` too. The
+schema's enum only grew at its end, so every result signed before stays valid; a verifier
+that holds the older schema answers `result_schema` for a result with a new code, which is why
+the schema travels with the verifier (`--schemas`). Three public lists give the vocabulary to the result's
 schema, and a test holds the schema's enums to them: `error_codes()` (the table's order),
 `unchecked_item_codes()` (most severe first) and `warning_codes()`. A Graph exception's code is the checker's
 `read_error_code` wherever it is thrown, the restore-target guard's layer 1 inside
@@ -326,7 +341,7 @@ schema, and a test holds the schema's enums to them: `error_codes()` (the table'
 | Code | From | Exit |
 |---|---|---|
 | `config` | `rp::ConfigError` (`graph::CertificateError` too), `sampling::ManifestError`, `connector::UnknownConnectorError`, in any phase (in the read-back too: a stop, never an item error) | 1 |
-| `internal` | any other exception (its `what()` is never shown); facts that don't add up (R1) | 1 |
+| `internal` | any other exception (its `what()` is never shown); facts that don't add up (R1); a result written afterwards for a run that returned and left its folder without one (`ended_without_result()`, W4.8) | 1 |
 | `backup_auth` | `connector::AuthError` | 2 |
 | `backup_transient` | `connector::TransientError` (unreachable, a timeout, a gateway error) | 3 |
 | `not_in_backup` | `connector::NotFoundError`: the organisation; an item the restore point doesn't hold that it isn't shown to hold (I4) | 4 |
@@ -338,6 +353,8 @@ schema, and a test holds the schema's enums to them: `error_codes()` (the table'
 | `not_run` | R4 | 4 |
 | `restore_contradiction` | R6 | 4 |
 | `result_invalid` | the result built from the run isn't valid `restoreproof.result.v1`, or couldn't be built (`result_invalid()`, after the table); the Worker's own fault, as `internal` | 1 |
+| `interrupted` | `connector::Interrupted`, in any phase: a stop asked of the Worker during the run (a stop found at a step's boundary, a restore request withdrawn, the restore's poll left), or a run that couldn't be put on record as started; an `error` decided after a stop (`interrupted()`, after the table); a result written afterwards for a run the process ended during (`interrupted_before_result()`). No service's fault (W4.8) | 4 |
+| `job_invalid` | a job the service was handed that is no valid job (`job_invalid()`, W4.8): never decided by the table, only ever in a result written afterwards | 1 |
 | `graph_auth` / `graph_permission` | `graph::AuthError` / `graph::PermissionError` | 2 |
 | `graph_transient` | `graph::TransientError` | 3 |
 | `graph` | any other `graph::GraphError` | 4 |
@@ -363,6 +380,20 @@ address or Graph ID) and never an exception's `what()`, which goes to stderr onl
 | R7 | `<u> of <n> item(s) couldn't be checked (<code> <k>, ...)[; <v> verified]` |
 | R8 | `<n> of <n> item(s) verified: manifest <a>, fields <b>, metadata <c>` |
 | `result_invalid` | `the result isn't valid restoreproof.result.v1; the run itself ended <pass\|fail\|error <code>>`: the replaced verdict's status and code, never its message (a code outside the table isn't repeated: `... ended error`) |
+| `interrupted`, a stop (R2) | R2's messages with the reason `the run was interrupted`: `the run stopped before the restore: the run was interrupted (interrupted); nothing was restored`, and so on by phase |
+| `interrupted`, replacing an `error` | `the Worker was stopped during the run; the run itself ended error <code>` (`interrupted(verdict)`: the words as `result_invalid` writes them, so `pass`, `fail` or `error <code>` of whatever verdict it is handed, a code outside the table not repeated; the pipeline hands it an `error` only) |
+| `interrupted`, written afterwards | `the run was interrupted before its result was written; no restore request had been sent`, or `the run was interrupted before its result was written; a restore request may have been sent, so items may be in the restore targets` (`interrupted_before_result(restore_requested)`) |
+| `internal`, written afterwards | `the run ended without a result the Worker could write; this result was written afterwards` (`ended_without_result(restore_requested)`) |
+| `result_invalid`, written afterwards | `result_invalid`'s own message, naming how the run had ended (`result_invalid_afterwards(status, code, restore_requested)`; an ending that isn't known is `... ended error`) |
+| `job_invalid` | `the job isn't a valid job (<key>); nothing was done` (`job_invalid(key)`): `<key>` is the jobs reader's word for the first key at fault, a key of the job's format or `unknown key`, never text taken from the job |
+
+The five makers of the last five rows are in `rp/run_status.hpp` beside `result_invalid()`, so
+the words live with the codes. The four that make a result written afterwards
+(`interrupted_before_result`, `ended_without_result`, `result_invalid_afterwards`,
+`job_invalid`) give a verdict that says nothing of items: every count 0, no failed or
+unchecked item, no warning; `restore_sent` is the run record's `restore_requested`, and always
+false for `job_invalid`. The test rows are E19 (`Interrupted` in each phase), X21 and X22 (the
+exit codes) and A1 to A10 (the makers).
 
 ### Warnings
 
@@ -526,8 +557,13 @@ whose text is never copied. A 403 on a delete names the write grant it relies on
   first, then, only when `restore_sent`, the clean after, then its line. On the normal path it
   runs after the check, so nothing is deleted before it is read; after a check that threw it
   runs too (the restore's own rows are the evidence). When the run stopped in the restore
-  without `nothing_restored`, Veeam may still be writing: it runs anyway and the run's
-  `restore_may_still_run` is true.
+  without `nothing_restored`, Veeam may still be writing: the clean after is skipped, the
+  line is `cleanup after skipped: the restore may still be running; the next run cleans
+  before`, and the run's `restore_may_still_run` is true. Nothing is cleaned under a restore
+  that may still be writing. This amends W3.4, under which the clean after ran anyway
+  (`docs/decisions.md` 2026-10-08, W4.8 point 9), for `rpworker restore` and `test` at a
+  prompt too. The next run's clean before takes up what is left; in the service the hold
+  waits for Veeam first and then makes the clean the run never made (below).
 - **The cleanup never changes the status**, but through the guard refusal above: `RunFacts`,
   `decide_status`, the codes, the warnings and the exit codes are W3.3's, and
   `rp/run_status.hpp` doesn't include `rp/cleaner.hpp`. A cleanup failure is housekeeping,
@@ -537,8 +573,9 @@ whose text is never copied. A 403 on a delete names the write grant it relies on
 **The result's `cleanup` object.** `to_json(RunCleanup)` in `rp/restore_command.hpp`, handed
 to `RestoreCommandEnv::on_cleanup` once the run's last line is out (no result file exists yet;
 W4.1 adopts it into `result.v1.json` beside `status`). Counts and codes only, never a name or
-an ID; `error_code` only when set; `after` is `null` when the clean after didn't run (and
-`before` when the run stopped before it):
+an ID; `error_code` only when set; `after` is `null` when the clean after didn't run: nothing
+was restored, or, since W4.8, the restore may still be running (`restore_may_still_run` true,
+`cleanup_ok` false); `before` is `null` when the run stopped before it:
 
 ```json
 {
@@ -564,6 +601,19 @@ before W3.4) is emptied once by hand; the Cleaner never reads it. Stopping our o
 sessions still `Working` is W3.6's, with the same Cleaner and placements in `rpworker test`;
 W3.5 times the two cleans as the spans `cleanup_before` and `cleanup_after` (`docs/decisions.md`
 2026-10-03, W3.5; `cleanup_after` stays `not run` when the clean after is skipped).
+
+**The clean a run never made (W4.8).** In the service, a run whose restore may still be
+running keeps its record (`running.json`), and no job starts while it does. The loop looks at
+Veeam's sessions until nothing of that run is running any more (the hold) and then cleans the
+restore targets once: `rp::clean_restore_targets` beside `run_pipeline`, under the run mutex,
+with the vault's Graph certificate, the same Cleaner over the config's targets. It is the
+Cleaner's `before_run` clean, unchanged, and its line is the clean before's (`cleanup before
+ok|incomplete: ...`), logged after `recovery clean for <run_id>:`. It is made only when a
+restore request is on record and the config's client is the record's (`the config's client is
+not the run's; the restore targets were not cleaned` otherwise). Whatever it answers, the
+record goes and jobs run again: every run cleans before anyway. This clean is in no result:
+the run's own result was written before it, with `cleanup.after` `null`. The hold, its lines
+and the operator's way out are in `docs/worker-config.md`.
 
 ## The result (`restoreproof.result.v1`, W4.1)
 
@@ -654,8 +704,9 @@ mismatch `reason`.
 
 `shared/testdata/result-v1/` holds the documents both validators must judge alike: `valid.json`
 (a whole pipeline run of the Worker's tests, the lab's names replaced; since W4.2 the
-`result.json` of an `--evidence` run, so it lists two attachments) and `cases.json` (183
-small changes to it, 45 valid and 138 invalid). `worker/tests/result_schema_test.cpp` and
+`result.json` of an `--evidence` run, so it lists two attachments) and `cases.json` (185
+small changes to it, 47 valid and 138 invalid; the last two, valid, are results written
+afterwards, W4.8). `worker/tests/result_schema_test.cpp` and
 `cloud/tests/test_result_schema.py` run the same file (`docs/testing.md`, "The shared vectors
 and result documents").
 
@@ -820,8 +871,9 @@ is a run with no result: `error result_invalid`, a finished result that isn't va
 secret value, no verdict, a result that couldn't be signed, a file that couldn't be written, or
 a process that ended in between (between steps 9 and 11 that leaves a `signature.json`, and
 perhaps a `timestamp.tst`, beside no result). No cut-down result is written
-for any of these (W4.1 point 5 stands). What the service reports to the Cloud for such a run
-is W4.8's question.
+for any of these (W4.1 point 5 stands). A command leaves such a folder as it is. The service
+closes the one its record names with a result written afterwards, a valid one that says
+`error` and why ("A result written afterwards" below).
 
 Through `attachments` the signature covers the other files: their names, hashes and sizes are
 inside the signed bytes. That `result.json` means complete is a statement about the Worker's
@@ -1036,9 +1088,12 @@ can't be, the Worker removes `signature.json` again; a crash between the two wri
 leave it.
 
 **What is signed, and what never is.** A run that ended `fail` or `error` with a valid result
-is signed exactly as a `pass` is. A run that ended `result_invalid` is not signed: it has no
-`result.json`. Nothing is ever re-signed: the folder of a run ID can't be made twice and the
-writer replaces nothing.
+is signed exactly as a `pass` is. The invalid result is never signed: a run that ended
+`result_invalid` has no `result.json` when it ends. In the service the result written
+afterwards for such a run is signed, and it is a valid one that says `result_invalid` (W4.8
+point 7, which amends W4.3's "a `result_invalid` run is never signed"). Nothing is ever
+re-signed: the folder of a run ID can't be made twice, the writer replaces nothing, and a
+folder that has its `result.json` is only ever queued.
 
 ### The key
 
@@ -1252,7 +1307,7 @@ timestamp warning: <folder>: not timestamped: <code> after <n> attempt(s)
 | `tsa_nonce_mismatch` | not the nonce that was sent |
 | `tsa_imprint_mismatch` | not a SHA-256 imprint of the result's hash |
 | `tsa_untrusted` | the token doesn't verify under the CA |
-| `timestamp_internal` | the request couldn't be made, or the primitive or the HTTP client failed in a way that is neither's answer |
+| `timestamp_internal` | the request couldn't be made, or the primitive or the HTTP client failed in a way that is neither's answer; or, since W4.8, the Worker was asked to stop before the first attempt (`after 0 attempt(s)`) |
 | `timestamp_not_written` | there was a token and the file couldn't be written |
 
 (`rp::timestamp_codes()`.) The status line, the exit code, the result and the signature are
@@ -1261,6 +1316,22 @@ verifiers call it `verified ... timestamp none`. There is no error file in the f
 there but `result.json` is signed, so a file saying "the TSA failed" could be added or removed
 by whoever removes a token. `EvidenceBuilder::write_result` hands the outcome on to its caller
 (W4.6 puts it into the outbox manifest as `tsa_error`).
+
+**After a stop (W4.8).** The Timestamper is handed the service's stop check
+(`TimestamperOptions::stop_requested`; null, as for a command, means never). It is asked
+before each attempt and before the wait that precedes it: after a yes no wait is begun and no
+further attempt is made. The outcome is then the last attempt's code with the attempts made,
+or `timestamp_internal` with no attempt at all when the stop came before the first, never
+`tsa_unreachable` for a TSA that wasn't asked. So `<n>` in the warning may be 0:
+
+```
+timestamp warning: <folder>: not timestamped: timestamp_internal after 0 attempt(s)
+```
+
+An answer already taken stays taken. This amends W4.4's build note 3 ("the next attempt is
+still made") for a stop. A run the stop itself ended is therefore not timestamped as a rule:
+the stop check still says yes when its folder is written, so it is signed, complete and
+without a token ("A stop during a run" below).
 
 A clock that disagrees with the TSA's is said and changes nothing either: `timestamp warning:
 the TSA's time and this machine's clock differ by <n> s` when they are more than 120 s apart.
@@ -1343,7 +1414,8 @@ nothing was done`, exit 1, no run line.
 
 A run folder without `result.json` is a run that didn't finish (`result.json` is written
 last, after the TSA was asked). The outbox never queues one and never deletes one, in the
-runs root or under `outbox\`; what the service does with it is W4.8's.
+runs root or under `outbox\`. The service gives the one its record names a result written
+afterwards and queues it then ("A result written afterwards" below); any other is left.
 
 ### `manifest.json`
 
@@ -1384,7 +1456,10 @@ lost.
 
 ### A flush
 
-`rpworker outbox flush` is one pass and never waits (the loop is W4.8's). After the caps
+`rpworker outbox flush` is one pass and never waits. The service's loop (W4.8) makes the same
+pass itself, `Outbox::flush` under the flush mutex, after each run that queued something and
+at the end of every poll, and hands it a stop check that is asked before each queued run:
+after a stop no further upload is started. After the caps
 below, it takes every queued run whose `next_attempt_at` is `null` or not after now, oldest
 `queued_at` first. For each run, in this order:
 
@@ -1442,3 +1517,250 @@ the 500 MB cap` on stderr at every flush, and `rpworker outbox list` shows what 
 Both verifiers still say `verified` for a queued or a sent folder, with one more line on
 stderr, `note: not listed in the result: manifest.json`: the manifest is a file the result
 doesn't list, as W4.3 foresaw, and it is not evidence.
+
+## A result written afterwards (W4.8)
+
+The service runs one job at a time through `rpworker test`'s pipeline, in process, and writes
+a record of the run it has taken, `%ProgramData%\RestoreProof\state\running.json`, before the
+run does anything. A run whose folder was left without a `result.json` is closed by the
+service: it writes a result for it afterwards, signs it and queues the folder, so the Cloud
+gets a signed answer under the job's own run ID. The decisions are `docs/decisions.md`
+2026-10-08, W4.8 (points 6, 7, 13 and 14), and its build notes; the loop, the jobs file, the
+record's keys, the log lines and the operator's ways out are in `docs/worker-config.md`. The
+code is `plan_close`, `build_close_result` and `close_run` in `rp/service_recovery.hpp`
+(strict), `EvidenceBuilder::adopt_attachments` and `remove_unfinished`, and the run folder's
+shared tail `rp::finish_run_folder` in `src/run_folder_tail.hpp`, which the pipeline and the
+close both end in.
+
+Only the service does this, and only for the one folder its record names,
+`<runs root>\<run_id>`. It lists nothing under the runs root and adopts nothing it finds
+there: a folder a command left (`rpworker test --evidence`) stays as it is.
+
+### When one is written
+
+| The record | The run | Code |
+|---|---|---|
+| found at start, `close_as` `null` | the process ended during the run (a kill, a crash, the 25 s after a stop) | `interrupted` |
+| `close_as` `result_invalid` | the pipeline returned and its own result wasn't valid | `result_invalid` |
+| `close_as` `internal` | the pipeline returned and the folder couldn't be completed; `close_detail` is the run folder's word: `not_written`, `changed`, `holds_secret`, `not_signed` or `invalid` | `internal` |
+| `kind` `job_invalid` | a job that has a usable `run_id` and breaks another rule of the jobs document; no pipeline run, nothing asked of Veeam or Graph | `job_invalid` |
+
+When the pipeline returns and leaves the folder incomplete, the loop first writes `close_as`
+and `close_detail` into the record and then closes, so a close that is itself cut short keeps
+its word: a record found at start with `close_as` set is closed with that code (`unfinished
+run <run_id> found: to be closed as <code>` in the log; a record without one is `interrupted
+run <run_id> found: taken <time>, restore requested <yes|no>`). A job that is no job has
+`close_as` `job_invalid` and the key at fault from the record's first write. After a stop no
+step is started for a record: a run that returned with an incomplete folder just as the
+service was asked to stop has no `close_as` on record, and the next start closes it as
+`interrupted`.
+
+A run that ended before its run line has no folder and gets no result, in the service as for
+the command; its record is deleted. A job without a usable `run_id` gets none either: nothing
+can be signed under a name the Cloud knows.
+
+### What the result holds
+
+A valid `restoreproof.result.v1` with what the record knows and `null` for the rest, built by
+`rp::ResultBuilder` like any other and validated before it is signed:
+
+| Key | Value |
+|---|---|
+| `run_id` | the record's |
+| `worker_version` | the Worker's that writes the result |
+| `started_at` | the record's, written right after the run line; `null` when the run line was never reached |
+| `ended_at` | `null` |
+| `connector`, `restore_point` | the record's, written right after the run line; else `{"api": "", "type": "veeam_m365"}` and the empty restore point the pipeline writes when none was chosen (`id` and `backup_time_raw` empty, `backup_time` `null`) |
+| `client` | the record's: the result's client object as the config gave it when the job was taken; `client_id` `null` (the job's `client_id` is in the record and the log only, until W4.11) |
+| `sample`, `expected`, `restore`, `check`, `cleanup` | `null` |
+| `timings` | every one of the eleven spans `null` |
+| `attachments` | `items.csv` and `veeam-session.log`, with their hashes and sizes (below) |
+| `screenshot` | `{"state": "unavailable", "reason": "disabled"}`, or `no_page` when the config's `screenshots_enabled` is true: W4.2's rule for a run without a restore session to show. The capturer isn't asked, and it is the config's setting, not the job's: the record doesn't keep the job's flag |
+| `status` | `error` with the code; `restore_sent` the record's `restore_requested` (false for `job_invalid`); every count 0; `failed_items`, `unchecked_items` and `warnings` empty; the fixed message of the status table's "Messages" above |
+
+`restore_sent` false is the record's promise that no restore request went out. True means one
+may have, whether or not Veeam took it: the record is written before every restore request,
+and a kill between that write and the request looks the same as one after it. For
+`result_invalid` the message names how the run itself had ended, which the record keeps in
+`close_detail` (`pass`, `fail`, `error <code>`, or `error` alone when it isn't known).
+
+### The attachments
+
+In this order:
+
+1. **A folder that isn't there is made** (a kill before the pipeline made it, or a job that is
+   no job).
+2. **What a signing that didn't finish can leave is taken away**
+   (`EvidenceBuilder::remove_unfinished`): `signature.json` and `timestamp.tst` (a signature
+   without its result signs bytes that exist nowhere any more), `screenshot.png` (its writer
+   is the one that isn't atomic), each under any ASCII case of its name, and every `<name>.<16
+   lower-case hex>.tmp`, the atomic writer's temp file. Nothing else in the folder is touched,
+   and nothing below it.
+3. **`items.csv` and `veeam-session.log`** (`EvidenceBuilder::adopt_attachments`). One that is
+   there is kept and listed as it is, its bytes hashed and never rewritten: the run only ever
+   wrote each whole. One that isn't there is written in its empty form: the CSV's header row
+   alone, an empty log. Both are replaced by their empty forms, whatever they hold, in three
+   cases:
+   - **changed.** The run found one of them altered after it hashed it (`close_as` `internal`
+     with `changed`), or an earlier try of this close did (the loop then writes `changed` into
+     the record's `close_detail`, `<ending>; changed` for `result_invalid`, before the next
+     try). The Worker doesn't list as its evidence a file it knows was changed.
+   - **another owner.** One of them is owned by neither SYSTEM, Administrators nor the
+     service's account (the vault's owner rule, `rp::check_trusted_owner`): the runs root has
+     the inherited ACL until W7.1, so a local user can put a file there. One `SECURITY:
+     service: run <run_id>: items.csv or veeam-session.log is owned by neither SYSTEM,
+     Administrators nor this account; neither is kept: the close replaces both by their empty
+     forms` line.
+   - **a job that is no job.** Nothing in its folder is a run's evidence.
+
+   The files are decided by the folder's listing, the name byte for byte, as the verifiers
+   read it. A file under another case of the name (`ITEMS.CSV`) is not the run's file under
+   the name the result lists: it is deleted, never adopted or renamed, and the empty form is
+   written under the right name. A text file that is there and can't be read whole (a folder
+   of that name, a file over 64 MiB) or can't be taken away fails the close (`not_written`).
+4. **Anything else found in the folder is left**, and is the verifiers' `note: not listed in
+   the result: <name>`.
+
+### Signed and timestamped by the same path
+
+From there the close ends in the same tail as every run, `rp::finish_run_folder`, so there is
+one signing path: the result built and validated, its strings looked through for the secret
+values (the vault's, the signing key's text and its other shapes), each attachment read back
+against its hash and size, the signature under the vault's key, the TSA asked, then
+`signature.json`, `timestamp.tst` when there is a token and `result.json` last, then the
+folder queued by one rename with its `manifest.json` ("The run folder" steps 4 to 11, "The
+outbox"). The log has the tail's own lines under the run's ID: `signed <bundle_sha256> key
+<key_id>`, `timestamped <time>`, `evidence <folder>: ...`, `queued <outbox folder>`. The
+signing key is read from the vault for this and held as the pipeline holds it (wiped on every
+way out), which makes the close the key's third reader beside `rpworker test --evidence` and
+`signer public-key`.
+
+A closed folder is a signed folder like any other: `rpworker signer verify` and
+`verify_bundle.py` say `verified` for it, and a flush checks and uploads it as it does any
+run's. No token is never a failure here either: the folder is complete and queued without
+`timestamp.tst`. A `tsa_ca_file` that can't be used doesn't fail a close: `timestamp warning:
+the TSA's CA file can't be used; not timestamped`, and no TSA is asked.
+
+This amends two sentences (W4.8 point 7). W4.3's "a `result_invalid` run is never signed" is
+now "the invalid result is never signed": what the close signs for such a run is a valid
+result that says `result_invalid`. And "nothing in a run folder is written after the run"
+holds for a folder that has its `result.json`; one without was never signed, and the close is
+its one writer.
+
+**When it fails.** The record stays, so no other job runs, and the close is tried again at a
+poll, not sooner than 15 minutes after the last try (each try asks the TSA). The log has `run
+<run_id>: couldn't be closed (<word>)`, once per word and again every hour: `vault` (the vault
+can't be read, or holds no signing key), `not_signed`, `not_written`, `holds_secret`,
+`changed`, `invalid` (the result written afterwards isn't valid itself), or `untrusted`
+(below). When the key is the reason, nothing can be signed, so nothing is sent: the
+heartbeat's `last_error` (`run_not_closed`) is the Cloud's only word of it.
+
+### A folder that already has its `result.json`
+
+It is complete and is only queued: nothing is signed twice. That is the folder of a run whose
+queueing failed (`run <run_id>: couldn't be queued (<the outbox's word>)`, tried again at every
+poll), or of a run the process ended between `result.json` and the rename. Its manifest says
+`timestamped` when `timestamp.tst` is in the folder and else `not_timestamped` with `code`
+`null`: why the run got no token was only ever in memory.
+
+What is queued is uploaded as the Worker's own word. So a complete folder whose `result.json`,
+`signature.json` or `timestamp.tst` is owned by neither SYSTEM, Administrators nor the
+service's account is not queued: `couldn't be closed (untrusted)` and one `SECURITY: service:
+run <run_id>: result.json, signature.json or timestamp.tst is owned by neither SYSTEM,
+Administrators nor this account; the folder is not queued` line. The record stays, as for any
+close that fails. The owners of the text files of a complete folder are not asked: a flush
+holds them to the hashes the result lists.
+
+A run that reached the outbox while the service ran is never closed again, whatever the outbox
+answers later: `sent\` is pruned, and a run that is gone from there was sent, not lost.
+
+### It doesn't say what the run found
+
+A result written afterwards is `error`, whatever the run had found. A run killed during the
+TSA's wait had its verdict, its clean after and its two text files; the result written for it
+is still `error interrupted`, because the verdict was only ever in memory. The `items.csv`
+kept beside it shows the rows that run wrote, and `veeam-session.log` what Veeam said.
+
+Here `error` is "the test didn't reach a result". The attachments are evidence of what was
+done, not a second verdict: no reader and no report takes a `pass` or a `fail` from an
+`items.csv` beside an `error`. The interrupted job is not run again under its run ID either:
+the first attempt may have restored, and a second run couldn't tell its items from the
+first's.
+
+### A stop during a run
+
+The pipeline is handed the service's stop check (`RestoreCommandEnv::stop_requested`; null, as
+for a command, means never), its sleep is the stop signal's wait, and the connector learns of
+a stop through `ConnectorOptions::stop_requested` and `before_restore_request`. The common
+case is then a signed `error interrupted` written by the run itself; the record covers the
+rest.
+
+| Where the stop is found | What the run does |
+|---|---|
+| before the run mutex and the first Veeam call | no run line: `restore error: the Worker was asked to stop; nothing was done` on stderr, exit 4, no result; the record is deleted and the job is offered again |
+| after the run line, before each of the clean before, the sample, the read before and the restore | `restore error: the Worker was asked to stop; nothing was restored`, then `status error interrupted: the run stopped before the restore: the run was interrupted (interrupted); nothing was restored`; the clean after skipped; the folder signed and queued, when the 25 s allow |
+| before the first restore request | the request is not sent (no certificate exported, no POST): `connector::Interrupted` ending `; nothing was restored`; `the restore didn't start: the run was interrupted (interrupted); nothing was restored`, `restore_sent` false |
+| before a later restore request | not sent either; the earlier ones of the call were: `the restore didn't complete: the run was interrupted (interrupted); items may be in the restore targets`, `restore_sent` true |
+| in the restore's poll, after a wait | the poll ends with `connector::Interrupted`, no verdict, the explore sessions left open as at the 20 min deadline: the restore goes on in Veeam; `restore_sent` true |
+
+`connector::Interrupted` is a type of its own, not a `connector::Error`, so no handler written
+for Veeam's failures takes it; `stop_reason` gives it the code `interrupted` and reads `;
+nothing was restored` from its text as for the others. A run that couldn't be put on record
+as started (the record's write right after the run line failed) ends the same way as the
+second row, with `restore error: the run couldn't be recorded as started; nothing was
+restored`; a restore request the record couldn't be written for is withdrawn like one after a
+stop.
+
+In the last two rows a restore may still be running: the clean after is skipped ("Cleaning the
+restore targets" above, `cleanup.after` `null`, `restore_may_still_run` true), the record
+stays, and no job starts until nothing of the run is running in Veeam and the targets were
+cleaned once.
+
+**The code is `interrupted`, not the service that was waiting.** After a stop every other
+wait (the HTTP retries, the statistics' tries, the duplicate check's looks, Graph's waits and
+rechecks, the download client's) returns at once, and its loop gives up as it does at its own
+limit. That reads as the failure of whichever service was being waited for: `graph_transient`,
+`backup_transient`. So the stop is read right before the status is decided, and when it was
+asked for by then and the table gives an `error`, the verdict is replaced by
+`verification::interrupted(verdict)`: `the Worker was stopped during the run; the run itself
+ended error <code>`, keeping the item count, `restore_sent` and the warnings. The exceptions:
+
+- a `pass` or a `fail` reached in spite of the stop stays what it is;
+- `target_guard` stays: a guard refusal is never renamed;
+- `interrupted` is already the stop's own;
+- every verdict decided before the stop came stays, and `result_invalid`, decided after this
+  rule from the result that was built, replaces whatever it left.
+
+**The timestamp after a stop.** The Timestamper makes no further attempt once a stop was asked
+for ("No token" above). The stop check still says yes when an interrupted run's folder is
+written, so such a run is signed and complete with `timestamp warning: <folder>: not
+timestamped: timestamp_internal after 0 attempt(s)`, and its manifest says `not_timestamped`,
+`timestamp_internal`. A result written afterwards at the next start asks the TSA like any run.
+
+**What isn't promised.** A request in flight ends only by its own timeout, and 25 s after the
+stop the process is ended whatever it is doing. That run is the record's: the next start
+finds it and writes its result afterwards.
+
+### The shared cases and the closed-folder vector
+
+`shared/testdata/result-v1/cases.json` has 185 cases, 47 valid and 138 invalid. The two W4.8
+added, both valid, are results written afterwards:
+`written-afterwards-error-interrupted-every-step-null` (a record that reached its run line,
+`restore_sent` true) and `written-afterwards-error-job-invalid-nothing-known` (`started_at`
+`null`, an empty `api`, the empty restore point). The made-up code of the case
+`status-unknown-error-code` is now `teapot`, since `job_invalid` became a real one. Both
+builds run the file and pin the three counts (`worker/tests/result_schema_test.cpp`,
+`cloud/tests/test_result_schema.py`).
+
+`shared/testdata/signing-v1/closed-folder.json` is one folder the service closed, as texts, in
+`bundle.json`'s shape (`description`, `key`, `bundle_sha256`, `key_id`, `files`): a run whose
+process ended after a restore request and before its result, closed as `error interrupted`
+with `restore_sent` true, its `items.csv` the header row alone and its `veeam-session.log`
+empty, signed with RFC 8032's test key 1 and without a token (the stop is asked for before
+the close, so no TSA is asked). It is a file of its own, not a
+case of `cases.json` or a change to `bundle.json`, which are held byte for byte to what the
+code makes. The hidden `rptests "[.write_shared_closed]"` writes it. A Worker test
+(`tests/worker_body_test.cpp`) closes the same folder and compares it with the file, but for
+`worker_version`, and `Signer::verify_folder` says `verified`;
+`cloud/tests/test_verify_bundle_closed.py` runs `verify_bundle.py` over it and gets the same
+word.

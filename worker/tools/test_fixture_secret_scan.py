@@ -12,6 +12,7 @@ import io
 import json
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 import fixture_secret_scan as scan
@@ -22,64 +23,11 @@ REPO = Path(__file__).resolve().parents[2]
 RFC_KEY_1 = "MC4CAQAwBQYDK2VwBCIEIJ1hsZ3v/VpguoRK9JLsLMREScVpezJpGXA7rAMcrn9g"
 PLACEHOLDER_JWT = "eyJ0eXAiOiJKV1QiLCJhbGciOiJub25lIn0.eyJzY3J1YmJlZCI6dHJ1ZX0."
 
-# One text per shape that must be found, as a (shape, text) pair.
-PLANTED = [
-    ("jwt", "token eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abcdefghij"),
-    ("jwt", "a token without dots eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9eyJzdWIiOiIxMjM0 here"),
-    ("bearer", "Authorization: Bearer AbCdEfGhIjKlMnOpQrStUvWxYz0123456789"),
-    ("bearer", "Bearer   dGhpcyBpcyBhIHRva2VuIHRoYXQgaXM=="),
-    ("pem_private_key", "-----BEGIN PRIVATE KEY-----\nMC4C\n-----END PRIVATE KEY-----"),
-    ("pem_private_key", "-----BEGIN RSA PRIVATE KEY-----\nMIIE\n-----END RSA PRIVATE KEY-----"),
-    ("pem_private_key", "-----BEGIN ENCRYPTED PRIVATE KEY-----\nMIIF"),
-    ("pem_private_key", "-----BEGIN EC PRIVATE KEY-----"),
-    ("ed25519_pkcs8", RFC_KEY_1),
-    ("rsa_pkcs8", "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC"),
-    ("rsa_pkcs8", "MIIJQgIBADANBgkqhkiG9w0BAQEFAASCCSwwggkoAgEAAoICAQD"),
-    ("rsa_pkcs1", "MIIEpAIBAAKCAQEAx4UbaDzY5xjW6hc9jwO0BkK3gUkTjqWXMd"),
-    ("ec_pkcs8", "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQg"),
-    ("ec_sec1", "MHcCAQEEIFZyB1234567890abcdefghijklmnopqrstuvwxyzAB"),
-    ("ec_sec1", "MIGkAgEBBDAabcdefghijklmnopqrstuvwxyz0123456789ABCDEFGH"),
-    ("pkcs12", "MIIKsQIBAzCCCncGCSqGSIb3DQEHAaCCCmgEggpkMIIKYDCCBh"),
-    ("pkcs12", "MIMBAgQCAQMwggQAAgEDMIIEGAYJKoZIhvcNAQcBoIIECQSCBAUw"),
-    ("keyed_secret", '"access_token": "AQABAAAAAAD-3b7f-very-real-looking"'),
-    ("keyed_secret", "grant_type=password&username=x&password=hunter2hunter2&client_id=y"),
-    ("keyed_secret", '"applicationCertificatePassword": "P@ssw0rd!"'),
-    ("keyed_secret", '"Password": "upper-case-key-counts"'),
-    ("keyed_secret", "client_assertion=eyJ"),
-    ("keyed_secret", '"signing_key_base64": "x"'),
-    ("keyed_secret", '"pfx_base64": "MIIK"'),
-]
-
-# Texts no shape may match.
-CLEAN = [
-    "a certificate MIIBmTCCAT6gAwIBAgIBATAKBggqhkjOPQQDAjBCMUAwPgYDVQQD is public",
-    "a TimeStampResp MIIXczADAgEAMIIXagYJKoZIhvcNAQcCoIIXWzCCF1cCAQMxDTALBglghkgBZQMEAgEw",
-    "a request MEQCAQEwMTANBglghkgBZQMEAgEFAAQglZJ85mJS",
-    "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA\n-----END PUBLIC KEY-----",
-    "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----",
-    'WWW-Authenticate: Bearer error="invalid_token", error_description="The token expired"',
-    'WWW-Authenticate: Bearer realm="https://login.microsoftonline.com/"',
-    'Bearer [REDACTED]"invalid_token"',
-    "Authorization: Bearer [REDACTED]",
-    "Bearer short",
-    '"access_token": "[REDACTED]"',
-    '"refresh_token": ""',
-    '"password": null',
-    '"applicationCertificate": "<Base64 PFX>"',
-    '"applicationCertificatePassword": "…"',
-    '"applicationCertificate": "[not exported yet]"',
-    "grant_type=password&username=rp-veeam&password=[REDACTED]",
-    "tempauth=SCRUBBED&x=1",
-    "password = $pw; refresh_token = (Get-VeeamRefreshToken)",  # a script's variable, a call
-    "password_hash=abc",  # the key is password_hash, not password
-    "xpassword=abc",
-    "a hash 9fb19e0e604c9be49f83d8e508efa8ea0986a952377c783e5035cea2d772a213 is no shape",
-    "a signature sTOWRl9yH1gX4Ugf5m1z2k5HS9lVt1gOGoXwdWmiXCg5Nq9S5c0YCe+N3xMuMrx1dS/CZ5lP3zkTvY+9dK8eDw==",
-    "base64url run into a jwt start: AAeyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9eyJzdWIiOiIxMjM0NTY3ODkwIn0",
-    "a short tail eyJhbGciOiJSUzI1NiJ9.e30.",
-    PLACEHOLDER_JWT,  # is a shape; it passes only through the allowlist (tested below)
-]
-CLEAN_SHAPED = {PLACEHOLDER_JWT}
+# The shapes' examples, shared with the Worker's secret_audit_lab.hpp, which the
+# C++ side is held to as well (secret_audit_test.cpp).
+CASES = json.loads((Path(__file__).with_name("secret_shapes_cases.json")).read_text(encoding="utf-8"))
+PLANTED = [(case["shape"], case["text"]) for case in CASES["shaped"]]
+CLEAN = CASES["clean"]
 
 
 class Tree:
@@ -118,10 +66,25 @@ class ShapeTests(unittest.TestCase):
 
     def test_clean_texts_match_no_shape(self):
         for text in CLEAN:
-            if text in CLEAN_SHAPED:
-                continue
             with self.subTest(text=text[:40]):
                 self.assertEqual([], scan.find_shapes(text))
+
+    def test_the_shared_cases_hold_every_shape_and_only_known_ones(self):
+        self.assertEqual(set(scan.SHAPES), {shape for shape, _ in PLANTED})
+        self.assertGreater(len(CLEAN), 20)
+
+    def test_a_keyed_value_is_the_text_the_allowlist_compares(self):
+        for text, value in [
+            ('"veeam_password": "hunter2"', "hunter2"),
+            ('{\\"password\\":\\"hunter2\\"}', "hunter2"),
+            ('password="Hunter2!"', "Hunter2!"),
+            ("password='Hunter2!'", "Hunter2!"),
+            ("db.password=hunter2", "hunter2"),
+        ]:
+            with self.subTest(text=text):
+                found = scan.find_shapes(text)
+                self.assertEqual(["keyed_secret"], [f.shape for f in found])
+                self.assertEqual(value, found[0].value)
 
     def test_a_finding_carries_the_value_for_the_allowlist_only(self):
         found = scan.find_shapes("x " + RFC_KEY_1 + " y")
@@ -157,7 +120,7 @@ class TreeTests(unittest.TestCase):
 
     def test_a_clean_tree_has_no_findings(self):
         self.tree.write("fixtures/a.json", json.dumps({"access_token": "[REDACTED]"}))
-        self.tree.write("fixtures/b.txt", "\n".join(t for t in CLEAN if t not in CLEAN_SHAPED))
+        self.tree.write("fixtures/b.txt", "\n".join(CLEAN))
         result = self.tree.run()
         self.assertEqual([], result.findings)
         self.assertEqual(2, result.files)
@@ -191,6 +154,39 @@ class TreeTests(unittest.TestCase):
         result = self.tree.run(trees=("nowhere",))
         self.assertEqual(["nowhere"], result.missing_trees)
         self.assertFalse(result.ok())
+
+    def test_a_tree_given_as_an_absolute_path_is_scanned_and_named_from_the_root(self):
+        self.tree.write("fixtures/a.json", RFC_KEY_1)
+        result = self.tree.run(trees=(str(self.tree.root / "fixtures"),))
+        self.assertEqual(["fixtures/a.json"], [f.path for f in result.findings])
+
+    def test_a_file_that_cannot_be_read_is_no_pass(self):
+        self.tree.write("fixtures/a.json", "{}")
+        self.tree.write("fixtures/b.json", "{}")
+        original = Path.read_bytes
+
+        def failing(self_path):
+            if self_path.name == "b.json":
+                raise PermissionError(13, "Permission denied")
+            return original(self_path)
+
+        with unittest.mock.patch.object(Path, "read_bytes", failing):
+            result = self.tree.run()
+        self.assertEqual([], result.findings)
+        self.assertEqual(1, result.files)
+        self.assertEqual(["fixtures/b.json: Permission denied"], result.unreadable)
+        self.assertFalse(result.ok())
+
+    @unittest.skipUnless(hasattr(__import__("_winapi"), "CreateJunction"), "a junction needs Windows")
+    def test_a_junction_or_link_is_not_entered(self):
+        import _winapi
+
+        self.tree.write("fixtures/kept/x.txt", RFC_KEY_1)
+        # A junction inside the tree pointing at the tree's parent: a loop.
+        _winapi.CreateJunction(str(self.tree.root), str(self.tree.root / "fixtures" / "loop"))
+        result = self.tree.run()
+        self.assertEqual(["fixtures/kept/x.txt"], [f.path for f in result.findings])
+        self.assertEqual(1, result.files)
 
 
 class AllowlistTests(unittest.TestCase):
@@ -309,6 +305,14 @@ class MainTests(unittest.TestCase):
         self.assertIn("fixtures/a.json:1: ed25519_pkcs8", out)
         self.assertNotIn(RFC_KEY_1[21:], out)
 
+    def test_an_unreadable_file_is_2(self):
+        self.tree.write("fixtures/a.json", "{}")
+        allowlist = self.tree.write("allow.json", json.dumps({"entries": []}))
+        with unittest.mock.patch.object(Path, "read_bytes", side_effect=PermissionError(13, "Permission denied")):
+            code, out = self.run_main("--allowlist", str(allowlist), "--tree", "fixtures")
+        self.assertEqual(2, code)
+        self.assertIn("a file can't be read: fixtures/a.json", out)
+
     def test_an_unreadable_allowlist_or_missing_tree_is_2(self):
         self.tree.write("fixtures/a.json", "{}")
         bad = self.tree.write("allow.json", "{not json")
@@ -335,8 +339,8 @@ class RepositoryTest(unittest.TestCase):
 
     def test_the_default_trees_are_the_documented_ones(self):
         self.assertEqual(
-            ["worker/tests/fixtures", "shared/testdata", "docs/api", "lab/canary",
-             "lab/seed-manifest.json"],
+            ["worker/tests/fixtures", "shared/testdata", "docs/api", "tests/e2e", "lab/canary",
+             "lab/seed-manifest.json", "lab/tenant.md"],
             scan.DEFAULT_TREES,
         )
 

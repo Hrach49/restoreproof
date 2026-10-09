@@ -144,7 +144,10 @@ public:
     void add_with_pieces(const std::string& label, const std::string& text)
     {
         add(label, text);
-        for (std::size_t at = 0; at + kPiece <= text.size() && text.size() > kPiece; at += kPiece) {
+        if (text.size() <= kPiece) {
+            return;
+        }
+        for (std::size_t at = 0; at + kPiece <= text.size(); at += kPiece) {
             add(label + " piece @" + std::to_string(at), text.substr(at, kPiece));
         }
     }
@@ -234,8 +237,13 @@ struct Outputs {
             if (!entry.is_regular_file()) {
                 continue;
             }
+            // A file that can't be read whole is no output searched: the
+            // audit must fail, never pass over it.
             std::ifstream file(entry.path(), std::ios::binary);
+            REQUIRE(file);
             std::string bytes{std::istreambuf_iterator<char>(file), {}};
+            REQUIRE_FALSE(file.bad());
+            REQUIRE(bytes.size() == std::filesystem::file_size(entry.path()));
             const std::u8string rel = entry.path().lexically_relative(root).generic_u8string();
             add(std::string{label} + "/" + std::string(rel.begin(), rel.end()), std::move(bytes));
         }
@@ -303,6 +311,44 @@ inline bool is_alnum(char c) noexcept
     return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9');
 }
 
+// A word character, as the scan's \b takes it.
+inline bool is_word_char(char c) noexcept
+{
+    return is_alnum(c) || c == '_';
+}
+
+// A PEM label of upper-case words and digits, single spaces between, ending
+// in PRIVATE KEY: "PRIVATE KEY", "RSA PRIVATE KEY", "ENCRYPTED PRIVATE KEY";
+// not "XPRIVATE KEY" (the scan's `(?:[A-Z0-9]+ )*PRIVATE KEY`).
+inline bool is_private_key_label(std::string_view label) noexcept
+{
+    constexpr std::string_view kEnd = "PRIVATE KEY";
+    if (!label.ends_with(kEnd)) {
+        return false;
+    }
+    const std::string_view head = label.substr(0, label.size() - kEnd.size());
+    if (head.empty()) {
+        return true;
+    }
+    if (!head.ends_with(' ')) {
+        return false;
+    }
+    bool in_word = false;
+    for (const char c : head) {
+        if (c == ' ') {
+            if (!in_word) {
+                return false;
+            }
+            in_word = false;
+        } else if ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) {
+            in_word = true;
+        } else {
+            return false;
+        }
+    }
+    return true;
+}
+
 inline bool one_of(char c, std::string_view set) noexcept
 {
     return set.find(c) != std::string_view::npos;
@@ -337,7 +383,7 @@ inline std::vector<ShapeHit> shapes_in(std::string_view text)
     // followed by a letter, a digit or '=' (an auth-param's name is).
     for (std::size_t at = text.find("Bearer"); at != std::string_view::npos;
          at = text.find("Bearer", at + 1)) {
-        if (at > 0 && is_alnum(text[at - 1])) {
+        if (at > 0 && is_word_char(text[at - 1])) {
             continue;
         }
         std::size_t p = at + 6;
@@ -369,7 +415,7 @@ inline std::vector<ShapeHit> shapes_in(std::string_view text)
     for (std::size_t at = text.find("-----BEGIN "); at != std::string_view::npos;
          at = text.find("-----BEGIN ", at + 1)) {
         const std::size_t end = text.find("-----", at + 11);
-        if (end != std::string_view::npos && text.substr(at + 11, end - (at + 11)).ends_with("PRIVATE KEY")) {
+        if (end != std::string_view::npos && is_private_key_label(text.substr(at + 11, end - (at + 11)))) {
             hits.push_back({"pem_private_key", at});
         }
     }

@@ -97,6 +97,38 @@ Args with_run_id(std::string_view run_id, Args args = kThree)
 
 } // namespace
 
+// --- the shapes: the fixture scan's cases, which the C++ side is held to too -----------
+
+TEST_CASE("secret audit: the shapes are the fixture scan's, on its shared cases", "[secret_audit]")
+{
+    const std::filesystem::path file =
+        std::filesystem::path{RP_SOURCE_DIR} / "tools" / "secret_shapes_cases.json";
+    const std::optional<std::string> text = file_bytes(file);
+    REQUIRE(text);
+    const json cases = json::parse(*text);
+    std::size_t shaped = 0;
+    for (const json& c : cases.at("shaped")) {
+        const std::string shape = c.at("shape").get<std::string>();
+        if (shape == "keyed_secret") {
+            continue; // the values' own rule here; the scan's keyed rule has no C++ twin
+        }
+        const std::string example = c.at("text").get<std::string>();
+        CAPTURE(shape, example);
+        bool found = false;
+        for (const audit::ShapeHit& hit : audit::shapes_in(example)) {
+            found = found || hit.shape == shape;
+        }
+        CHECK(found);
+        ++shaped;
+    }
+    CHECK(shaped >= 20);
+    for (const json& c : cases.at("clean")) {
+        const std::string example = c.get<std::string>();
+        CAPTURE(example);
+        CHECK(audit::shapes_in(example).empty());
+    }
+}
+
 // --- A to H: the pipeline ------------------------------------------------------------
 
 TEST_CASE("secret audit A: rpworker restore, a pass", "[secret_audit]")

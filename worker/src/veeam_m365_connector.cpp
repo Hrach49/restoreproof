@@ -1079,8 +1079,8 @@ VeeamM365Connector::VeeamM365Connector(std::unique_ptr<IHttpClient> http, std::s
       cert_exporter_(std::move(options.cert_exporter)), wall_now_(std::move(options.wall_now)),
       before_restore_request_(std::move(options.before_restore_request)),
       on_session_opened_(std::move(options.on_session_opened)),
-      stop_requested_(std::move(options.stop_requested)), logger_(options.client.logger),
-      account_(vr::bare_account(username))
+      stop_requested_(std::move(options.stop_requested)), profile_(std::move(options.profile)),
+      logger_(options.client.logger), account_(vr::bare_account(username))
 {
     if (!http_) {
         throw std::invalid_argument("veeam_m365: no HTTP client");
@@ -1122,6 +1122,7 @@ std::vector<connector::RestorePoint> VeeamM365Connector::list_restore_points(
     // VeeamError's what() went through rp::redact(), so it is passed on as it is.
     try {
         const Organization org = find_organization(*client_, client_ref);
+        found_ = std::pair{client_ref, org};
         const std::vector<RestorePoint> points = client_->list_restore_points(org.id);
         std::vector<connector::RestorePoint> out;
         out.reserve(points.size());
@@ -1138,8 +1139,39 @@ std::vector<connector::RestorePoint> VeeamM365Connector::list_restore_points(
     }
 }
 
+connector::ClientFacts VeeamM365Connector::client_facts(const std::string& client_ref)
+{
+    if (client_ref.empty()) {
+        throw std::invalid_argument("veeam_m365: the client reference is empty");
+    }
+    try {
+        const Organization org = found_ && ascii_iequals(found_->first, client_ref)
+                                     ? found_->second
+                                     : find_organization(*client_, client_ref);
+        return {.name = org.name,
+                .tenant_id = org.msid,
+                .organization_type = org.type,
+                .region = org.region};
+    } catch (const AuthError& e) {
+        throw connector::AuthError(e.what());
+    } catch (const TransientError& e) {
+        throw connector::TransientError(e.what());
+    } catch (const NotFoundError& e) {
+        throw connector::NotFoundError(e.what());
+    } catch (const VeeamError& e) {
+        throw connector::Error(e.what());
+    }
+}
+
 connector::RestoreResult VeeamM365Connector::restore_sample(const connector::RestoreSpec& spec)
 {
+    // W4.11 point 8: the spec is the profile's the connector was made for.
+    if (profile_ && (!ascii_iequals(spec.client_ref, profile_->veeam_org_name) ||
+                     spec.targets != connector::RestoreTargets::from_profile(*profile_))) {
+        throw std::invalid_argument(
+            "veeam_m365: the restore spec isn't the connector's client's" +
+            std::string{connector::kNothingRestored});
+    }
     // The guard is the first line (W2.7, #32): nothing reaches Veeam before
     // layer 1 passed. Its SafetyViolation passes out as it is: status `error`,
     // exit code 4, never `fail`.
@@ -1348,6 +1380,7 @@ std::unique_ptr<connector::IConnector> make_veeam_m365_connector(
     connector_options.before_restore_request = options.before_restore_request;
     connector_options.on_session_opened = options.on_session_opened;
     connector_options.stop_requested = options.stop_requested;
+    connector_options.profile = options.client;
     connector_options.client.logger = logger;
     connector_options.client.now = options.now;
     connector_options.client.sleep = options.sleep;

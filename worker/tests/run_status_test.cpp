@@ -14,6 +14,7 @@
 #include <rp/canary_manifest.hpp>
 #include <rp/checker.hpp>
 #include <rp/cli.hpp>
+#include <rp/client_check.hpp>
 #include <rp/config.hpp>
 #include <rp/connector.hpp>
 #include <rp/connector_registry.hpp>
@@ -821,8 +822,9 @@ TEST_CASE("run status, error codes: each exception type is its code, in every ph
          "config", true},
         {"E3", [] { throw rp::sampling::ManifestError("canary manifest: /entries/0: bad"); },
          "config", true},
-        {"E4", [] { throw connector::UnknownConnectorError("nope", {"veeam_m365"}); }, "config",
-         true},
+        // W4.11: one type, one code; the pipeline meets it before its run line.
+        {"E4", [] { throw connector::UnknownConnectorError("nope", {"veeam_m365"}); },
+         "connector_unknown", true},
         {"E5", [] { throw rp::graph::WrongTargetError("not the RestoreTarget library"); },
          "target_guard", true},
         {"E6", [] { throw rp::graph::AuthError("AADSTS700027"); }, "graph_auth", true},
@@ -846,6 +848,14 @@ TEST_CASE("run status, error codes: each exception type is its code, in every ph
         // A stop asked of the Worker (W4.8 point 13): not a connector::Error.
         {"E19", [] { throw connector::Interrupted("the restore was interrupted"); },
          "interrupted", true},
+        // W4.11: the client check's refusal, a type of its own.
+        {"E20",
+         [] {
+             throw rp::ClientMismatchError(
+                 {rp::ClientMismatchReason::tenant_id,
+                  "the backup's organisation's tenant ID isn't the profile's graph_tenant_id"});
+         },
+         "client_mismatch", true},
     }));
     const RunPhase phase =
         GENERATE(RunPhase::before_restore, RunPhase::restore, RunPhase::check);
@@ -1259,6 +1269,10 @@ TEST_CASE("run status: the exit code of each status and error code", "[run_statu
         {"X21", RunStatus::error, "interrupted", rp::exit_code::service},
         // The job is the Worker's own input, as the configuration is.
         {"X22", RunStatus::error, "job_invalid", rp::exit_code::config},
+        // W4.11: the job's claim and the backup's facts disagree: no service refused.
+        {"X23", RunStatus::error, "client_mismatch", rp::exit_code::service},
+        // W4.11: the job asks for what this installation doesn't have, as job_invalid.
+        {"X24", RunStatus::error, "connector_unknown", rp::exit_code::config},
     }));
     INFO(row.id << ": " << row.code);
     verification::RunVerdict verdict;
@@ -1280,7 +1294,8 @@ TEST_CASE("run status: the exit-code rows name every error code", "[run_status]"
         "graph_permission", "backup_transient", "graph_transient",       "not_in_backup",
         "no_restore_point", "target_guard",     "backup",                "backup_infrastructure",
         "empty_sample",     "not_run",          "restore_contradiction", "graph",
-        "stale_target",     "result_invalid",   "interrupted",           "job_invalid"};
+        "stale_target",     "result_invalid",   "interrupted",           "job_invalid",
+        "client_mismatch",  "connector_unknown"};
     const std::vector<std::string_view> codes = verification::error_codes();
     CHECK(std::set<std::string_view>(codes.begin(), codes.end()) == rows);
 }
@@ -1375,10 +1390,11 @@ TEST_CASE("run status: the public lists of error, unchecked-item and warning cod
             "graph_permission", "backup_infrastructure", "graph",
             "graph_transient",  "stale_target",          "empty_sample",
             "not_run",          "restore_contradiction", "result_invalid",
-            "interrupted",      "job_invalid"};
+            "interrupted",      "job_invalid",           "client_mismatch",
+            "connector_unknown"};
         const std::vector<std::string_view> codes = verification::error_codes();
         CHECK(codes == want);
-        CHECK(codes.size() == 20);
+        CHECK(codes.size() == 22);
         CHECK(std::set<std::string_view>(codes.begin(), codes.end()).size() == codes.size());
     }
     SECTION("unchecked_item_codes: the codes an unchecked item carries, most severe first")
@@ -1628,6 +1644,13 @@ TEST_CASE("run status: interrupted replaces an error a stop of the Worker came b
          "error internal", true, true, 1, {}},
         {"N8 an empty sample", [] { return sample_only({}); }, "error empty_sample", true, false,
          0, {}},
+        // W4.11: a fact about the client, found while a stop was pending, stays.
+        {"N9 the client check's refusal stays the check's",
+         [] { return stop_only(RunPhase::before_restore, "client_mismatch"); },
+         "error client_mismatch", false, false, 0, {}},
+        {"N10 a connector this Worker lacks stays so",
+         [] { return stop_only(RunPhase::before_restore, "connector_unknown"); },
+         "error connector_unknown", false, false, 0, {}},
     }));
     INFO(row.id);
     const Run run = row.make();
@@ -1745,6 +1768,11 @@ TEST_CASE("run status: the verdicts of a result written afterwards", "[run_statu
         {"A10 a job with a key the Worker doesn't know",
          [] { return verification::job_invalid("unknown key"); }, "job_invalid",
          "the job isn't a valid job (unknown key); nothing was done", false,
+         rp::exit_code::config},
+        // W4.11 point 4.
+        {"A11 a job whose connector this Worker lacks",
+         [] { return verification::connector_unknown(); }, "connector_unknown",
+         "the job's connector type isn't one this Worker has; nothing was done", false,
          rp::exit_code::config},
     }));
     INFO(row.id);

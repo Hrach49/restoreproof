@@ -15,6 +15,11 @@
 //                        restoreproof.client-profile.v1 object (W4.10,
 //                        rp/client_profile.hpp): the tenant, the organisation
 //                        and the restore targets the run uses
+//   connector            required; {"type": <name>}, the connector the run is
+//                        made with, by the registry's name rule
+//                        (connector::is_connector_name; W4.11). The shape is
+//                        the reader's; whether this Worker has the connector
+//                        is the loop's (J3b, connector_unknown)
 //   sample_mail, sample_sp, sample_od
 //                        required integers 0 to 100, not all 0
 //   restore_point        required; `latest` or a restore point ID (--point's rule)
@@ -62,6 +67,11 @@ inline constexpr std::string_view kJobUnknownKey = "unknown key";
 // profile's format or has a key that isn't the profile's; one of the profile's
 // eight keys at fault is "client.<key>".
 inline constexpr std::string_view kJobClientKey = "client";
+// A JobEntry's `fault` for a `connector` that is missing, not an object or has
+// a key beside `type`; "connector.type" for a `type` that is missing, no
+// string or no connector name (W4.11).
+inline constexpr std::string_view kJobConnectorKey = "connector";
+inline constexpr std::string_view kJobConnectorTypeKey = "connector.type";
 
 // A job that passed every rule.
 struct Job {
@@ -74,6 +84,8 @@ struct Job {
     // organisation and targets. Set for a valid job; for an invalid one, set
     // when it could be read.
     std::optional<ClientProfile> client;
+    // The connector's registry name (W4.11), as the document wrote it.
+    std::string connector_type;
     int sample_mail = 0;
     int sample_sp = 0;
     int sample_od = 0;
@@ -100,6 +112,7 @@ struct JobEntry {
     std::size_t position = 0;
     // invalid: the first key at fault, in the order client_id, client
     // (kJobClientKey, or "client.<key>" for one of the profile's keys),
+    // connector (kJobConnectorKey or kJobConnectorTypeKey, W4.11),
     // sample_mail, sample_sp, sample_od, restore_point, screenshots_enabled,
     // canary_cursor (three sizes that are each valid and all 0 are
     // sample_mail's fault), or kJobUnknownKey when those all pass and the job

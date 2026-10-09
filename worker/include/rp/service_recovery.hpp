@@ -61,9 +61,12 @@ enum class RecordKind {
 
 // What the run's folder is to be closed as when it has no result.json; a
 // record without one is of a run the process ended during: interrupted.
-enum class CloseAs { result_invalid, internal, job_invalid };
+// connector_unknown (W4.11, J3b): a job asking for a connector this Worker
+// lacks, a `job_invalid` record whose close_detail is the type.
+enum class CloseAs { result_invalid, internal, job_invalid, connector_unknown };
 
-// "run" or "job_invalid"; "result_invalid", "internal" or "job_invalid".
+// "run" or "job_invalid"; "result_invalid", "internal", "job_invalid" or
+// "connector_unknown".
 std::string_view to_string(RecordKind kind) noexcept;
 std::string_view to_string(CloseAs close_as) noexcept;
 
@@ -86,8 +89,10 @@ struct RunningRecord {
     std::optional<CloseAs> close_as;
     // With close_as: `internal`, the run folder's word (not_written, changed,
     // holds_secret, not_signed, invalid); `job_invalid`, the jobs reader's
-    // word for the key at fault; `result_invalid`, how the run itself had
-    // ended (ended_detail), or nothing when that isn't known. Without
+    // word for the key at fault; `connector_unknown`, the connector type the
+    // job asked for (connector::is_connector_name, W4.11); `result_invalid`,
+    // how the run itself had ended (ended_detail), or nothing when that
+    // isn't known. Without
     // close_as: nothing. And one more word, written by
     // with_changed_text_files after a close that itself found a text file
     // changed: `changed` without close_as and for `internal`, and
@@ -130,6 +135,16 @@ RunningRecord new_job_invalid_record(std::string_view run_id,
 
 // Write (b), right after the run line: started_at, the restore point and the
 // connector.
+// W4.11 point 6: the same for a job whose connector type this Worker has no
+// connector for (the loop's J3b): kind job_invalid, close_as
+// connector_unknown with `connector_type` as close_detail, and `connector`
+// {type, ""} from this first write, so the close's result names the type.
+RunningRecord new_connector_unknown_record(std::string_view run_id,
+                                           std::optional<std::string> client_id,
+                                           std::optional<ClientProfile> client,
+                                           std::chrono::system_clock::time_point taken_at,
+                                           std::string_view connector_type);
+
 RunningRecord with_run_started(RunningRecord record, const RunStarted& started);
 
 // Write (c), at every session the run opens and is to close itself: `id`
@@ -170,9 +185,11 @@ std::string record_text(const RunningRecord& record);
 // a restoreproof.running.v1 record (nullopt). The words: `format`; `kind`;
 // `run_id` a run ID that can name a folder; `client` the result's client
 // object within the schema's lengths, its client_id null; `client_id` null
-// or 1 to 128 printable ASCII characters; `close_as` null or its three
-// words, job_invalid exactly when `kind` is; `close_detail` as RunningRecord
-// says (so null or `changed` without close_as); `connector` null or {type "veeam_m365", api at most 64 bytes};
+// or 1 to 128 printable ASCII characters; `close_as` null or its four
+// words, job_invalid or connector_unknown exactly when `kind` is job_invalid;
+// `close_detail` as RunningRecord says (so null or `changed` without
+// close_as); `connector` null or {type a connector name
+// (connector::is_connector_name, W4.11), api at most 64 bytes};
 // `restore_point` null or two strings of at most 1024 bytes;
 // `restore_requested_at` a time exactly when restore_requested is true;
 // `sessions` strings of 1 to 128 printable ASCII characters; `started_at`

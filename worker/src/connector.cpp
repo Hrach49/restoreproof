@@ -1,5 +1,6 @@
 #include <rp/connector.hpp>
 
+#include <algorithm>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -112,6 +113,19 @@ std::vector<OwnSession> IConnector::own_sessions(std::chrono::system_clock::time
 {
     throw NotImplementedError(describe().name +
                               ": listing the account's sessions isn't implemented");
+}
+
+ClientFacts IConnector::client_facts(const std::string& /*client_ref*/)
+{
+    throw NotImplementedError(describe().name + ": the client's facts aren't implemented");
+}
+
+bool is_connector_name(std::string_view name) noexcept
+{
+    return !name.empty() && name.size() <= kMaxConnectorNameLength &&
+           std::ranges::all_of(name, [](char c) {
+               return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_';
+           });
 }
 
 void IConnector::end_session(const std::string& /*id*/)

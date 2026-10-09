@@ -244,11 +244,13 @@ inline json lab_profile_json()
     return profile;
 }
 
-inline json job(const std::string& id, int mail = 2, int sp = 1, int od = 0)
+inline json job(const std::string& id, int mail = 2, int sp = 1, int od = 0,
+                const std::string& connector = "veeam_m365")
 {
     return {{"run_id", id},
             {"client_id", nullptr},
             {"client", lab_profile_json()},
+            {"connector", json{{"type", connector}}},
             {"sample_mail", mail},
             {"sample_sp", sp},
             {"sample_od", od},

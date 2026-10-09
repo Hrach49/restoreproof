@@ -84,6 +84,9 @@ std::string restore_part(const std::string& run_id, const std::string& seed,
     std::vector<std::string> out{
         "restore point " + point + "  (veeam_org_name RestoreProofLab.onmicrosoft.com)",
         "run " + run_id + "  seed " + seed,
+        // W4.11: the client check, before the clean before.
+        "client ok: tenant bcd6bd1a-ea42-489d-aa28-2c19a44ad146, Office365, Worldwide; mailbox, "
+        "library and folder resolved",
         "cleanup before ok: deleted 0 mail, 0 sharepoint, 0 onedrive",
         "canary cursor 0,0,0 -> 3,3,3",
         "  KIND        REQUESTED  CANARIES  RANDOM  NOTE",
@@ -270,8 +273,9 @@ void check_replayed_as_recorded(const Replay& replay)
         listings += replay.graph.count(rp::HttpMethod::get, url);
     }
     // Q3.2: and the library root's count, once per read of the library: the
-    // before snapshot, the after read and each clean.
-    CHECK(replay.graph.requests().size() == replay.graph_files + listings + 6 + 4);
+    // before snapshot, the after read and each clean. W4.11: and the client
+    // check's three identity GETs, which the recordings predate.
+    CHECK(replay.graph.requests().size() == replay.graph_files + listings + 6 + 4 + 3);
     CHECK(replay.restore_posts() == 4);
     CHECK(replay.exporter->calls == 4);
     check_downloads_as_recorded(replay);
@@ -623,13 +627,27 @@ TEST_CASE("replay of the W3.4 live run: the clean before finds the targets empty
     // clean's first), is the one route the recording doesn't hold. The OneDrive
     // folder's count is in the recorded guard replies, and every recorded
     // listing was as long as its count.
+    const json config = lab_config();
     const std::string root_count =
-        "GET /v1.0/drives/" + lab_config().at("test_library_id").get<std::string>() +
+        "GET /v1.0/drives/" + config.at("test_library_id").get<std::string>() +
         "/root?$select=id,folder: sent 4, recorded 0";
-    CHECK(replay.graph.requests().size() == replay.graph_files + 4);
+    // W4.11: and the client check's three identity GETs, one more each than
+    // the recording holds (the clean before, the sample's guard and the
+    // after read made the five recorded ones).
+    const std::string library_check =
+        "GET /v1.0/drives/" + config.at("test_library_id").get<std::string>() +
+        "?$select=id,name,driveType,webUrl,sharePointIds: sent 6, recorded 5";
+    const std::string folder_check =
+        "GET /v1.0/drives/" + config.at("test_onedrive_drive_id").get<std::string>() + "/items/" +
+        config.at("test_onedrive_folder_id").get<std::string>() +
+        "?$select=id,name,folder,parentReference,sharepointIds: sent 6, recorded 5";
+    const std::string inbox_check = "GET /v1.0/users/" +
+                                    config.at("test_mailbox").get<std::string>() +
+                                    "/mailFolders/inbox?$select=id: sent 6, recorded 5";
+    CHECK(replay.graph.requests().size() == replay.graph_files + 4 + 3);
     CHECK(routes_not_as_recorded(replay.veeam, replay.dir / "veeam").empty());
     CHECK(routes_not_as_recorded(replay.graph, replay.dir / "graph") ==
-          std::vector<std::string>{root_count});
+          std::vector<std::string>{root_count, library_check, folder_check, inbox_check});
     CHECK(replay.restore_posts() == 4);
     CHECK(replay.exporter->calls == 4);
     check_downloads_as_recorded(replay);
@@ -722,4 +740,41 @@ TEST_CASE("replay check: a route asked once too often and another once too rarel
     REQUIRE(differences.size() == 2);
     CHECK_THAT(differences[0] + "\n" + differences[1], ContainsSubstring(skipped + ": sent "));
     CHECK_THAT(differences[0] + "\n" + differences[1], ContainsSubstring(doubled + ": sent "));
+}
+
+// --- The Done-when of W4.11 (#134) -----------------------------------------------------------
+// "A fixture test where the job's graph_tenant_id differs from the
+// organisation's msid ends as error / client_mismatch and the fake HTTP
+// client records no restore POST."
+
+TEST_CASE("replay of the W3.4 live run with a profile whose tenant isn't the organisation's "
+          "msid: error client_mismatch after the run line, no restore POST, no explore session, "
+          "no Graph request",
+          "[restore_replay][client_check][acceptance][w4.11]")
+{
+    Replay replay("w34-live-run1");
+    replay.rewrite_config(
+        [](json& config) { config["graph_tenant_id"] = "11111111-2222-3333-4444-555555555555"; });
+
+    const Run run = replay.run(kW34Run);
+
+    INFO(run.err);
+    CHECK(run.exit_code == rp::exit_code::service);
+    CHECK(run.out.starts_with("restore point "));
+    CHECK_THAT(run.out, ContainsSubstring("\nrun " + std::string{kW34Run} + "  seed "));
+    CHECK_THAT(run.out, ContainsSubstring(
+                            "\nstatus error client_mismatch: the run stopped before the restore: "
+                            "the backup's organisation doesn't match the client's profile "
+                            "(client_mismatch); nothing was restored\n"));
+    CHECK(run.err == "client error: client mismatch: the backup's organisation's tenant ID isn't "
+                     "the profile's graph_tenant_id; nothing was restored\n");
+    CHECK(replay.restore_posts() == 0);
+    // No session was opened and nothing of Graph was asked: the recording's
+    // Veeam requests stop at the organisation list.
+    for (const rp::HttpRequest& request : replay.veeam.requests()) {
+        CHECK((request.method == rp::HttpMethod::get || request.url.ends_with("/v8/token") ||
+              request.url.ends_with("/v8/token/logout")));
+        CHECK(request.url.find("/explore") == std::string::npos);
+    }
+    CHECK(replay.graph.requests().empty());
 }

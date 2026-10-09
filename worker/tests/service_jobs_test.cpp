@@ -42,10 +42,15 @@ const json& profile()
 // A job that passes every rule.
 json valid_job()
 {
-    return json{{"run_id", "job-0001"},      {"client_id", "client-7"},
-                {"client", profile()},       {"sample_mail", 5},
-                {"sample_sp", 3},            {"sample_od", 2},
-                {"restore_point", "latest"}, {"screenshots_enabled", false}};
+    return json{{"run_id", "job-0001"},
+                {"client_id", "client-7"},
+                {"client", profile()},
+                {"connector", json{{"type", "veeam_m365"}}},
+                {"sample_mail", 5},
+                {"sample_sp", 3},
+                {"sample_od", 2},
+                {"restore_point", "latest"},
+                {"screenshots_enabled", false}};
 }
 
 // `job` with its client's `key` set to `value`.
@@ -325,6 +330,26 @@ TEST_CASE("jobs: a job with a usable run_id and a broken rule is J3, with the fi
             "client.test_onedrive_folder_id"},
         Row{"client with a control character in the organisation's name",
             with_client(valid_job(), "veeam_org_name", "a\nb"), "client.veeam_org_name"},
+        // the connector (W4.11 point 5)
+        Row{"no connector", without(valid_job(), "connector"), "connector"},
+        Row{"connector a string", with(valid_job(), "connector", "veeam_m365"), "connector"},
+        Row{"connector null", with(valid_job(), "connector", nullptr), "connector"},
+        Row{"connector an empty object", with(valid_job(), "connector", json::object()),
+            "connector"},
+        Row{"connector with a key beside type",
+            with(valid_job(), "connector", json{{"type", "veeam_m365"}, {"api", "v8"}}),
+            "connector"},
+        Row{"connector.type a number", with(valid_job(), "connector", json{{"type", 1}}),
+            "connector.type"},
+        Row{"connector.type empty", with(valid_job(), "connector", json{{"type", ""}}),
+            "connector.type"},
+        Row{"connector.type with a space",
+            with(valid_job(), "connector", json{{"type", "veeam m365"}}), "connector.type"},
+        Row{"connector.type in capitals",
+            with(valid_job(), "connector", json{{"type", "Veeam_M365"}}), "connector.type"},
+        Row{"connector.type of 65 characters",
+            with(valid_job(), "connector", json{{"type", std::string(65, 'a')}}),
+            "connector.type"},
         // the sizes
         Row{"no sample_mail", without(valid_job(), "sample_mail"), "sample_mail"},
         Row{"sample_mail a string", with(valid_job(), "sample_mail", "5"), "sample_mail"},
@@ -459,6 +484,14 @@ TEST_CASE("jobs: a valid job is read as it is written", "[service_jobs]")
         CHECK(entry.job.canary_cursor.mail == 1);
         CHECK(entry.job.canary_cursor.sharepoint == 999999);
         CHECK(entry.job.canary_cursor.onedrive == 0);
+        CHECK(entry.job.connector_type == "veeam_m365");
+    }
+    SECTION("a connector type the reader can't know is read as written: the loop decides (W4.11)")
+    {
+        const rp::JobEntry entry =
+            entry_of(with(valid_job(), "connector", json{{"type", "other_backup"}}));
+        CHECK(entry.state == rp::JobState::valid);
+        CHECK(entry.job.connector_type == "other_backup");
     }
     SECTION("no cursor is 0,0,0, a null client_id no client, and latest stays as written")
     {
@@ -559,6 +592,11 @@ TEST_CASE("jobs: the jobs schema is in the shared subset, its client the profile
         CAPTURE(key);
         CHECK(job.at("properties").at(key).at("not").at("pattern") == "\n");
     }
+    // W4.11: the connector's name, by the registry's rule.
+    const json& type = job.at("properties").at("connector").at("properties").at("type");
+    CHECK(type.at("pattern") == "^[a-z0-9_]{1,64}$");
+    CHECK(type.at("not").at("pattern") == "\n");
+    CHECK(job.at("properties").at("connector").at("additionalProperties") == false);
 }
 
 TEST_CASE("jobs: every shared jobs case is judged by the reader as the file says",
@@ -571,14 +609,14 @@ TEST_CASE("jobs: every shared jobs case is judged by the reader as the file says
     const json& cases = cases_file.at("cases");
     REQUIRE(cases_file.at("format") == std::string{rp::kJobsFormat});
     // The file can't shrink unnoticed: the Cloud pins the same counts.
-    REQUIRE(cases.size() == 72);
+    REQUIRE(cases.size() == 84);
     std::size_t valid = 0;
     std::size_t code_refuses = 0;
     for (const json& entry : cases) {
         valid += entry.at("valid").get<bool>() ? 1 : 0;
         code_refuses += entry.value("code_refuses", false) ? 1 : 0;
     }
-    REQUIRE(valid == 17);
+    REQUIRE(valid == 18);
     REQUIRE(code_refuses == 3);
     // The base is its own canonical form: what the Worker would write.
     REQUIRE(rp::test::read_shared("testdata/jobs-v1/valid.json") == rp::canonical_json(base));

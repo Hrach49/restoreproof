@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://restoreproof.local/schemas/jobs.v1.json",
   "title": "RestoreProof jobs v1",
-  "description": "restoreproof.jobs.v1: the jobs document the Worker's service reads (W4.8, the stub file; W5.1, the Cloud's answer to GET /v1/jobs). An object with exactly format and jobs, jobs an array of at most five jobs. A job is a closed object: run_id (a run ID that names a folder), client_id (the Cloud's label for the client, or null), client (the client's profile, restoreproof.client-profile.v1, W4.10: the tenant, the organisation and the restore targets the run uses), the three sample sizes (not all 0), restore_point (latest or a restore point ID), screenshots_enabled and, optionally, canary_cursor. What a schema can't say the Worker's reader still holds a job to: a run_id that is a DOS device's name, ends in a dot or is . or .., a key twice in any object, a float where an integer is wanted. The schema uses only keywords JSON Schema draft 7 and 2020-12 read alike; client refers to client-profile.v1.json beside it.",
+  "description": "restoreproof.jobs.v1: the jobs document the Worker's service reads (W4.8, the stub file; W5.1, the Cloud's answer to GET /v1/jobs). An object with exactly format and jobs, jobs an array of at most five jobs. A job is a closed object: run_id (a run ID that names a folder), client_id (the Cloud's label for the client, or null), client (the client's profile, restoreproof.client-profile.v1, W4.10: the tenant, the organisation and the restore targets the run uses), connector ({type}: the connector's registry name, W4.11; a job naming one the Worker lacks is reported as error connector_unknown), the three sample sizes (not all 0), restore_point (latest or a restore point ID), screenshots_enabled and, optionally, canary_cursor. What a schema can't say the Worker's reader still holds a job to: a run_id that is a DOS device's name, ends in a dot or is . or .., a key twice in any object, a float where an integer is wanted. The schema uses only keywords JSON Schema draft 7 and 2020-12 read alike; client refers to client-profile.v1.json beside it.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -29,6 +29,7 @@
         "run_id",
         "client_id",
         "client",
+        "connector",
         "sample_mail",
         "sample_sp",
         "sample_od",
@@ -60,6 +61,24 @@
         },
         "client": {
           "$ref": "client-profile.v1.json"
+        },
+        "connector": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[a-z0-9_]{1,64}$",
+              "not": {
+                "pattern": "\n"
+              }
+            }
+          }
         },
         "sample_mail": {
           "$ref": "#/$defs/sample_size"

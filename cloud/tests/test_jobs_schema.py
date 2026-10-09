@@ -35,6 +35,7 @@ JOB_KEYS = [
     "run_id",
     "client_id",
     "client",
+    "connector",  # W4.11
     "sample_mail",
     "sample_sp",
     "sample_od",
@@ -73,9 +74,9 @@ def test_the_base_document_is_valid_and_its_own_canonical_text():
 
 def test_the_cases_are_pinned_and_code_refuses_marks_valid_ones_only():
     # The counts worker/tests/service_jobs_test.cpp pins, held here too.
-    assert len(CASES) == 72
-    assert sum(1 for case in CASES if case["valid"]) == 17
-    assert sum(1 for case in CASES if not case["valid"]) == 55
+    assert len(CASES) == 84
+    assert sum(1 for case in CASES if case["valid"]) == 18
+    assert sum(1 for case in CASES if not case["valid"]) == 66
     assert sum(1 for case in CASES if case.get("code_refuses")) == 3
     assert all(case["valid"] for case in CASES if case.get("code_refuses"))
     assert len({case["name"] for case in CASES}) == len(CASES)

@@ -27,9 +27,32 @@ namespace rp {
 
 inline constexpr std::string_view kResultFormat = "restoreproof.result.v1";
 
+// What the client check resolved (W4.11, docs/decisions.md 2026-10-09 point
+// 7): the backup product's organisation as it reported it, and the names and
+// URLs the three restore targets resolved to in the tenant. Set exactly when
+// the check passed; the result's `client.resolved`, with `client.scope`
+// "same_tenant" beside it.
+struct ResolvedClient {
+    std::string organization_name;   // the product's name for the organisation
+    std::string organization_tenant; // its tenant ID (Veeam's msid), as sent
+    std::string organization_type;   // e.g. Office365
+    std::string organization_region; // e.g. Worldwide
+    std::string inbox_id;            // the mailbox's Inbox, as Graph wrote it
+    std::string library_name;        // RestoreTarget
+    std::string library_list_id;     // sharePointIds.listId
+    std::string library_site_url;    // sharePointIds.siteUrl
+    std::string folder_name;         // RestoreTarget
+    std::string folder_site_url;     // the OneDrive's sharepointIds.siteUrl
+
+    bool operator==(const ResolvedClient&) const = default;
+};
+
 // The result's `client` object (point 6; W4.10): the job's client_id (null
 // at a prompt), and of the client's profile the tenant, the backup product's
-// organisation and the three restore targets' IDs. Not the app's ID.
+// organisation and the three restore targets' IDs. Not the app's ID. Since
+// W4.11 also `scope` ("same_tenant" when the client check passed, else null)
+// and `resolved` (what it resolved, else null): one field, `resolved`, set
+// exactly when the check passed.
 struct ResultClient {
     std::optional<std::string> client_id;
     std::string tenant_id;          // graph_tenant_id
@@ -39,13 +62,18 @@ struct ResultClient {
     std::string library_id;         // test_library_id
     std::string onedrive_drive_id;  // test_onedrive_drive_id
     std::string onedrive_folder_id; // test_onedrive_folder_id
+    std::optional<ResolvedClient> resolved;
 
     bool operator==(const ResultClient&) const = default;
 };
 
+// The word `client.scope` holds when the check passed.
+inline constexpr std::string_view kScopeSameTenant = "same_tenant";
+
 // The client as a profile gives it (W4.10): the one mapping of a profile to
 // the result's object, for the result and for the service's close of a run
-// (W4.8). `client_id` is the job's, nullopt at a prompt.
+// (W4.8). `client_id` is the job's, nullopt at a prompt. `resolved` is left
+// unset: the pipeline fills it once the client check passed (W4.11).
 ResultClient result_client(const ClientProfile& profile, std::optional<std::string> client_id);
 
 // One run's parts. The pointers are borrowed for the call only; null where a
@@ -107,9 +135,13 @@ struct ResultError {
 class ResultBuilder {
 public:
     // The seventeen keys, always all: format, worker_version, run_id,
-    // started_at, ended_at, connector {type, api}, client {client_id (null
-    // until jobs carry one, W4.10), tenant_id, veeam_org_name, targets
-    // {mailbox, site_id, library_id, onedrive_drive_id, onedrive_folder_id}},
+    // started_at, ended_at, connector {type, api}, client {client_id (the
+    // job's, W4.10), tenant_id, veeam_org_name, targets {mailbox, site_id,
+    // library_id, onedrive_drive_id, onedrive_folder_id}, scope, resolved
+    // (W4.11: "same_tenant" and {organization {name, tenant_id, type,
+    // region}, mailbox {inbox_id}, library {name, list_id, site_url},
+    // onedrive_folder {name, site_url}}, both null unless the client check
+    // passed)},
     // restore_point {id, backup_time_raw, backup_time}, sample, expected,
     // restore, check, status, cleanup, timings, attachments, screenshot;
     // sample, expected, restore, check, cleanup, attachments and screenshot

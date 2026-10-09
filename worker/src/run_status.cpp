@@ -2,6 +2,7 @@
 
 #include <rp/canary_manifest.hpp>
 #include <rp/cli.hpp>
+#include <rp/client_check.hpp>
 #include <rp/config.hpp>
 #include <rp/connector_registry.hpp>
 #include <rp/graph_errors.hpp>
@@ -39,6 +40,8 @@ constexpr std::string_view kRestoreContradiction = "restore_contradiction";
 constexpr std::string_view kResultInvalid = "result_invalid";
 constexpr std::string_view kInterrupted = "interrupted";
 constexpr std::string_view kJobInvalid = "job_invalid";
+constexpr std::string_view kClientMismatch = "client_mismatch";
+constexpr std::string_view kConnectorUnknown = "connector_unknown";
 constexpr std::string_view kTargetGuard = "target_guard";
 
 // StatusWarning's codes, in the order a verdict lists them: warning_codes().
@@ -66,7 +69,7 @@ struct ErrorCode {
     int exit = exit_code::service;
 };
 
-constexpr std::array<ErrorCode, 20> kCodes{{
+constexpr std::array<ErrorCode, 22> kCodes{{
     {"config", "the configuration isn't usable", false, kNoSeverity, exit_code::config},
     {"internal", "an unexpected failure", false, kNoSeverity, exit_code::config},
     {"backup_auth", "the backup product refused the credentials", false, kNoSeverity,
@@ -99,6 +102,14 @@ constexpr std::array<ErrorCode, 20> kCodes{{
     {kInterrupted, "the run was interrupted", false, kNoSeverity, exit_code::service},
     // job_invalid()'s: a job the Worker was handed and can't run (W4.8 point 4).
     {kJobInvalid, "", false, kNoSeverity, exit_code::config},
+    // W4.11 point 4: the client check's refusal, a stop's code; the job's
+    // claim and the backup's facts disagree, no service refused the Worker.
+    {kClientMismatch, "the backup's organisation doesn't match the client's profile", false,
+     kNoSeverity, exit_code::service},
+    // W4.11 point 4: a job asking for a connector this Worker lacks, as
+    // job_invalid; a stop's code too (one type, one code), and the loop's.
+    {kConnectorUnknown, "the connector type isn't one this Worker has", false, kNoSeverity,
+     exit_code::config},
 }};
 
 // Every item error's code ranks, or row 7 would have nothing to pick; each
@@ -598,7 +609,9 @@ RunStop stop_reason(std::exception_ptr error, RunPhase phase)
     } catch (const sampling::ManifestError& e) {
         return stop("config", e);
     } catch (const connector::UnknownConnectorError& e) {
-        return stop("config", e);
+        return stop(kConnectorUnknown, e);
+    } catch (const ClientMismatchError& e) {
+        return stop(kClientMismatch, e);
     } catch (const graph::GraphError& e) {
         // The check's own mapping: a Graph failure has one code wherever it happens.
         return stop(read_error_code(std::current_exception()), e);
@@ -749,7 +762,8 @@ RunVerdict result_invalid(const RunVerdict& verdict)
 bool interrupt_replaces(const RunVerdict& verdict) noexcept
 {
     return verdict.status == RunStatus::error && verdict.error_code != kInterrupted &&
-           verdict.error_code != kTargetGuard && verdict.error_code != kResultInvalid;
+           verdict.error_code != kTargetGuard && verdict.error_code != kResultInvalid &&
+           verdict.error_code != kClientMismatch && verdict.error_code != kConnectorUnknown;
 }
 
 RunVerdict interrupted(const RunVerdict& verdict)
@@ -783,6 +797,12 @@ RunVerdict result_invalid_afterwards(RunStatus ended_status, std::string_view en
     ended.status = ended_status;
     ended.error_code = std::string{ended_code};
     return result_invalid(ended);
+}
+
+RunVerdict connector_unknown()
+{
+    return error_verdict(bare_verdict(false), kConnectorUnknown,
+                         "the job's connector type isn't one this Worker has; nothing was done");
 }
 
 RunVerdict job_invalid(std::string_view key)

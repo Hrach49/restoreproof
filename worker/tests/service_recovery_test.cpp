@@ -36,17 +36,20 @@ using TimePoint = std::chrono::system_clock::time_point;
 
 namespace {
 
-rp::Config short_config()
+// The client a record carries (W4.10): a profile.
+rp::ClientProfile short_profile()
 {
-    rp::Config config;
-    config.graph_tenant_id = "T";
-    config.veeam_org_name = "O";
-    config.test_mailbox = "M";
-    config.test_site_id = "S";
-    config.test_library_id = "L";
-    config.test_onedrive_drive_id = "D";
-    config.test_onedrive_folder_id = "F";
-    return config;
+    rp::ClientProfile profile;
+    profile.veeam_org_name = "contoso.onmicrosoft.com";
+    profile.graph_tenant_id = "11111111-2222-3333-4444-555555555555";
+    profile.graph_client_id = "22222222-3333-4444-5555-666666666666";
+    profile.test_mailbox = "restoretest@contoso.onmicrosoft.com";
+    profile.test_site_id = "contoso.sharepoint.com,aaaaaaaa-0000-0000-0000-000000000001,"
+                           "aaaaaaaa-0000-0000-0000-000000000002";
+    profile.test_library_id = "b!library";
+    profile.test_onedrive_drive_id = "b!onedrive";
+    profile.test_onedrive_folder_id = "01FOLDER";
+    return profile;
 }
 
 TimePoint at(std::string_view text)
@@ -62,7 +65,7 @@ const char* const kRequested = "2026-10-08T10:01:00.000Z";
 
 RunningRecord taken()
 {
-    return rp::new_run_record("job-0001", std::string{"client-7"}, short_config(), at(kTaken));
+    return rp::new_run_record("job-0001", std::string{"client-7"}, short_profile(), at(kTaken));
 }
 
 rp::RunStarted run_started()
@@ -97,10 +100,15 @@ json as_json(const RunningRecord& record)
     return json::parse(rp::record_text(record));
 }
 
+// The record's client: the profile's closed object (W4.10).
 const std::string kClientText =
-    R"("client":{"client_id":null,"targets":{"library_id":"L","mailbox":"M",)"
-    R"("onedrive_drive_id":"D","onedrive_folder_id":"F","site_id":"S"},)"
-    R"("tenant_id":"T","veeam_org_name":"O"})";
+    R"("client":{"format":"restoreproof.client-profile.v1",)"
+    R"("graph_client_id":"22222222-3333-4444-5555-666666666666",)"
+    R"("graph_tenant_id":"11111111-2222-3333-4444-555555555555","test_library_id":"b!library",)"
+    R"("test_mailbox":"restoretest@contoso.onmicrosoft.com","test_onedrive_drive_id":"b!onedrive",)"
+    R"("test_onedrive_folder_id":"01FOLDER","test_site_id":"contoso.sharepoint.com,)"
+    R"(aaaaaaaa-0000-0000-0000-000000000001,aaaaaaaa-0000-0000-0000-000000000002",)"
+    R"("veeam_org_name":"contoso.onmicrosoft.com"})";
 
 rp::Evidence two_empty_files(bool screenshots = false)
 {
@@ -204,7 +212,8 @@ TEST_CASE("a text that isn't its own canonical form is no record", "[service_rec
         {"a key twice", twice},
         {"keys in another order", reordered},
         {"a number the form refuses", floated.dump()},
-        {"bytes that aren't UTF-8", std::string{good}.replace(good.find("\"T\""), 3, "\"\xFF\"")},
+        {"bytes that aren't UTF-8",
+         std::string{good}.replace(good.find("\"contoso.onmicrosoft.com\""), 25, "\"\xFF\"")},
     };
     for (const auto& [name, text] : rows) {
         CAPTURE(name);
@@ -233,7 +242,7 @@ TEST_CASE("a record nested past the limit is no record, and is never handed to t
     CHECK_FALSE(rp::parse_record(deep));
     CHECK_FALSE(rp::parse_record(nested(rp::kMaxJsonNesting)));
     // What a record itself needs is far below the limit.
-    CHECK(rp::json_nesting_depth(good) == 3);
+    CHECK(rp::json_nesting_depth(good) == 2);
     CHECK(rp::parse_record(good));
 }
 
@@ -279,22 +288,28 @@ TEST_CASE("a record with a key missing, one too many or a wrong kind or word is 
         {"run_id with a colon", set("/run_id", "a:b")},
         {"run_id a device", set("/run_id", "PRN")},
         {"run_id a number", set("/run_id", 5)},
-        {"client null", set("/client", nullptr)},
-        {"client without tenant_id", drop("/client", "tenant_id")},
-        {"client with a fifth key", set("/client/zz", 1)},
+        // The client is a profile by the profile's rules (W4.10); null only
+        // for a job_invalid record.
+        {"client null for a run", set("/client", nullptr)},
+        {"client without graph_tenant_id", drop("/client", "graph_tenant_id")},
+        {"client with a tenth key", set("/client/zz", 1)},
         {"client with a client_id", set("/client/client_id", "client-7")},
-        {"tenant_id a number", set("/client/tenant_id", 1)},
-        {"tenant_id over the schema's length", set("/client/tenant_id", long129)},
+        {"client as W4.8's result object",
+         set("/client", json{{"client_id", nullptr},
+                             {"tenant_id", "T"},
+                             {"veeam_org_name", "O"},
+                             {"targets", json::object()}})},
+        {"graph_tenant_id a number", set("/client/graph_tenant_id", 1)},
+        {"graph_tenant_id not a GUID", set("/client/graph_tenant_id", "T")},
         {"veeam_org_name over the schema's length", set("/client/veeam_org_name", long1025)},
         {"veeam_org_name null", set("/client/veeam_org_name", nullptr)},
-        {"targets null", set("/client/targets", nullptr)},
-        {"targets missing", drop("/client", "targets")},
-        {"targets without mailbox", drop("/client/targets", "mailbox")},
-        {"targets with a sixth key", set("/client/targets/zz", "")},
-        {"site_id a number", set("/client/targets/site_id", 5)},
-        {"library_id over the schema's length", set("/client/targets/library_id", long1025)},
-        {"onedrive_drive_id null", set("/client/targets/onedrive_drive_id", nullptr)},
-        {"onedrive_folder_id an array", set("/client/targets/onedrive_folder_id", json::array())},
+        {"client format another document's", set("/client/format", "restoreproof.jobs.v1")},
+        {"test_mailbox another user", set("/client/test_mailbox", "alice@contoso.onmicrosoft.com")},
+        {"test_site_id a number", set("/client/test_site_id", 5)},
+        {"test_library_id over its length",
+         set("/client/test_library_id", "b!" + std::string(201, 'x'))},
+        {"test_onedrive_drive_id null", set("/client/test_onedrive_drive_id", nullptr)},
+        {"test_onedrive_folder_id an array", set("/client/test_onedrive_folder_id", json::array())},
         {"client_id empty", set("/client_id", "")},
         {"client_id of 129 characters", set("/client_id", long129)},
         {"client_id with a tab", set("/client_id", "a\tb")},
@@ -402,9 +417,13 @@ TEST_CASE("a record reads with each word and each null it may hold", "[service_r
         {"client_id of 128 characters",
          [](RunningRecord& record) { record.client_id = std::string(128, '~'); }},
         {"an empty api", [](RunningRecord& record) { record.connector->version.clear(); }},
-        {"an empty client", [](RunningRecord& record) { record.client = {}; }},
         {"a tenant's name that isn't ASCII",
-         [](RunningRecord& record) { record.client.veeam_org_name = "caf\xC3\xA9"; }},
+         [](RunningRecord& record) { record.client->veeam_org_name = "caf\xC3\xA9"; }},
+        {"job_invalid without a client, a profile that couldn't be read",
+         [](RunningRecord& record) {
+             record = rp::new_job_invalid_record("job-0002", std::string{"c"}, std::nullopt,
+                                                 at(kTaken), "client.test_mailbox");
+         }},
         {"interrupted, a text file changed at the close",
          [](RunningRecord& record) { record.close_detail = "changed"; }},
         {"result_invalid after pass, a text file changed at the close",
@@ -424,12 +443,12 @@ TEST_CASE("a record reads with each word and each null it may hold", "[service_r
          closed(CloseAs::result_invalid, "error graph_transient")},
         {"job_invalid sample_mail",
          [](RunningRecord& record) {
-             record = rp::new_job_invalid_record("job-0002", std::nullopt, short_config(),
+             record = rp::new_job_invalid_record("job-0002", std::nullopt, short_profile(),
                                                  at(kTaken), "sample_mail");
          }},
         {"job_invalid unknown key",
          [](RunningRecord& record) {
-             record = rp::new_job_invalid_record("job-0002", std::string{"c"}, short_config(),
+             record = rp::new_job_invalid_record("job-0002", std::string{"c"}, short_profile(),
                                                  at(kTaken), "unknown key");
          }},
     };
@@ -448,7 +467,8 @@ TEST_CASE("two records differ when any one field does", "[service_recovery]")
 {
     using Change = std::function<void(RunningRecord&)>;
     const std::vector<Change> rows{
-        [](RunningRecord& r) { r.client.mailbox = "other"; },
+        [](RunningRecord& r) { r.client->test_mailbox = "restoretest@other.example"; },
+        [](RunningRecord& r) { r.client.reset(); },
         [](RunningRecord& r) { r.client_id = "other"; },
         [](RunningRecord& r) { r.close_as = CloseAs::internal; },
         [](RunningRecord& r) { r.close_detail = "changed"; },
@@ -539,7 +559,7 @@ TEST_CASE("a job that is no job is recorded with its key from the first write",
           "[service_recovery]")
 {
     const RunningRecord record = rp::new_job_invalid_record("job-0002", std::nullopt,
-                                                            short_config(), at(kTaken),
+                                                            short_profile(), at(kTaken),
                                                             "restore_point");
     CHECK(rp::record_text(record) ==
           "{" + kClientText +
@@ -550,33 +570,91 @@ TEST_CASE("a job that is no job is recorded with its key from the first write",
               R"("taken_at":"2026-10-08T10:00:00.123Z"})");
 }
 
-TEST_CASE("the record's client is the result's client object as the config gives it",
+// W4.10 point 4: the record carries the job's profile whole, and the result
+// written afterwards takes its client from it with the job's client_id.
+TEST_CASE("the record's client is the job's profile, and the close's result is made from it",
           "[service_recovery]")
 {
-    rp::Config config = short_config();
-    config.graph_tenant_id = "tenant";
-    config.veeam_org_name = "org";
-    config.test_mailbox = "mailbox";
-    config.test_site_id = "site";
-    config.test_library_id = "library";
-    config.test_onedrive_drive_id = "drive";
-    config.test_onedrive_folder_id = "folder";
-    const RunningRecord record = rp::new_run_record("job-0001", std::nullopt, config, at(kTaken));
+    const RunningRecord record =
+        rp::new_run_record("job-0001", std::string{"client-7"}, short_profile(), at(kTaken));
+    CHECK(as_json(record)["client"] == rp::to_json(short_profile()));
 
     const rp::ClosePlan plan = rp::plan_close(record, {});
     const auto built = rp::build_close_result(plan, two_empty_files());
     REQUIRE(std::holds_alternative<rp::BuiltResult>(built));
-    CHECK(as_json(record)["client"] == std::get<rp::BuiltResult>(built).document["client"]);
-    CHECK(as_json(record)["client"] ==
-          json{{"client_id", nullptr},
-               {"tenant_id", "tenant"},
-               {"veeam_org_name", "org"},
+    CHECK(std::get<rp::BuiltResult>(built).document["client"] ==
+          json{{"client_id", "client-7"},
+               {"tenant_id", "11111111-2222-3333-4444-555555555555"},
+               {"veeam_org_name", "contoso.onmicrosoft.com"},
                {"targets",
-                {{"mailbox", "mailbox"},
-                 {"site_id", "site"},
-                 {"library_id", "library"},
-                 {"onedrive_drive_id", "drive"},
-                 {"onedrive_folder_id", "folder"}}}});
+                {{"mailbox", "restoretest@contoso.onmicrosoft.com"},
+                 {"site_id", "contoso.sharepoint.com,aaaaaaaa-0000-0000-0000-000000000001,"
+                             "aaaaaaaa-0000-0000-0000-000000000002"},
+                 {"library_id", "b!library"},
+                 {"onedrive_drive_id", "b!onedrive"},
+                 {"onedrive_folder_id", "01FOLDER"}}}});
+
+    // A job whose profile couldn't be read: the empty strings the schema
+    // allows, beside the job's client_id.
+    const RunningRecord no_profile = rp::new_job_invalid_record(
+        "job-0002", std::string{"client-8"}, std::nullopt, at(kTaken), "client");
+    CHECK(as_json(no_profile)["client"].is_null());
+    const auto closed = rp::build_close_result(rp::plan_close(no_profile, {}), two_empty_files());
+    REQUIRE(std::holds_alternative<rp::BuiltResult>(closed));
+    const json& client = std::get<rp::BuiltResult>(closed).document["client"];
+    CHECK(client["client_id"] == "client-8");
+    CHECK(client["tenant_id"] == "");
+    CHECK(client["targets"]["mailbox"] == "");
+}
+
+TEST_CASE("a record is read only with a client the profile's rules take, and a run record "
+          "never without one",
+          "[service_recovery]")
+{
+    const RunningRecord run = started();
+    json document = as_json(run);
+    SECTION("a run record with client null")
+    {
+        document["client"] = nullptr;
+        CHECK_FALSE(rp::parse_record(rp::canonical_json(document)));
+    }
+    SECTION("a client that is the result's object, as W4.8 wrote it")
+    {
+        document["client"] = json{{"client_id", nullptr},
+                                  {"tenant_id", "T"},
+                                  {"veeam_org_name", "O"},
+                                  {"targets",
+                                   {{"mailbox", "M"},
+                                    {"site_id", "S"},
+                                    {"library_id", "L"},
+                                    {"onedrive_drive_id", "D"},
+                                    {"onedrive_folder_id", "F"}}}};
+        CHECK_FALSE(rp::parse_record(rp::canonical_json(document)));
+    }
+    SECTION("a client with a key at fault")
+    {
+        document["client"]["test_mailbox"] = "alice@contoso.onmicrosoft.com";
+        CHECK_FALSE(rp::parse_record(rp::canonical_json(document)));
+    }
+    SECTION("a job_invalid record with client null is read")
+    {
+        const RunningRecord no_profile = rp::new_job_invalid_record(
+            "job-0002", std::nullopt, std::nullopt, at(kTaken), "client");
+        const std::optional<RunningRecord> read = rp::parse_record(rp::record_text(no_profile));
+        REQUIRE(read);
+        CHECK_FALSE(read->client);
+        CHECK(*read == no_profile);
+    }
+    SECTION("the key words a J3 fault may be")
+    {
+        for (const char* key : {"client", "client.test_mailbox", "client.test_onedrive_folder_id",
+                                "unknown key", "sample_mail"}) {
+            CAPTURE(key);
+            const RunningRecord made =
+                rp::new_job_invalid_record("job-0002", std::nullopt, short_profile(), at(kTaken), key);
+            CHECK(rp::parse_record(rp::record_text(made)));
+        }
+    }
 }
 
 TEST_CASE("how a run had ended, as close_detail keeps it", "[service_recovery]")
@@ -640,7 +718,7 @@ TEST_CASE("the store writes nothing that wouldn't read back as a record", "[serv
     SECTION("a string that isn't UTF-8")
     {
         RunningRecord record = requested();
-        record.client.veeam_org_name = "\xFF";
+        record.client->veeam_org_name = "\xFF";
         CHECK_FALSE(store.write(record));
     }
     SECTION("a session ID that isn't one")
@@ -818,7 +896,7 @@ std::vector<CodeRow> code_rows()
          closed(requested(), CloseAs::result_invalid, std::nullopt), "result_invalid",
          invalid + "error", true, false},
         {"job_invalid",
-         rp::new_job_invalid_record("job-0001", std::string{"client-7"}, short_config(),
+         rp::new_job_invalid_record("job-0001", std::string{"client-7"}, short_profile(),
                                     at(kTaken), "sample_mail"),
          "job_invalid", "the job isn't a valid job (sample_mail); nothing was done", false,
          // Nothing in the folder of a job that is no job is a run's evidence.
@@ -898,7 +976,20 @@ TEST_CASE("the result written afterwards, for each code, is valid restoreproof.r
         CHECK(span.is_null());
     }
     CHECK(document["timings"]["spans"].size() == 11);
-    CHECK(document["client"] == as_json(row.record)["client"]);
+    // The result's client: the record's profile cut to the result's object,
+    // with the job's client_id (W4.10).
+    REQUIRE(row.record.client);
+    const rp::ClientProfile& profile = *row.record.client;
+    CHECK(document["client"] ==
+          json{{"client_id", row.record.client_id ? json(*row.record.client_id) : json()},
+               {"tenant_id", profile.graph_tenant_id},
+               {"veeam_org_name", profile.veeam_org_name},
+               {"targets",
+                {{"mailbox", profile.test_mailbox},
+                 {"site_id", profile.test_site_id},
+                 {"library_id", profile.test_library_id},
+                 {"onedrive_drive_id", profile.test_onedrive_drive_id},
+                 {"onedrive_folder_id", profile.test_onedrive_folder_id}}}});
     CHECK(document["attachments"].size() == 2);
     CHECK(document["screenshot"] ==
           json{{"state", "unavailable"}, {"reason", screenshots ? "no_page" : "disabled"}});
@@ -958,7 +1049,7 @@ TEST_CASE("a job that is no job has nothing to put on record for changed text fi
           "[service_recovery]")
 {
     const RunningRecord record = rp::new_job_invalid_record(
-        "job-0001", std::string{"client-7"}, short_config(), at(kTaken), "sample_mail");
+        "job-0001", std::string{"client-7"}, short_profile(), at(kTaken), "sample_mail");
     CHECK(rp::with_changed_text_files(record) == record);
 }
 
@@ -1249,7 +1340,7 @@ TEST_CASE("a close in point 7's order, the tail handed the result written afterw
     }
     SECTION("a job that is no job gets its folder and its result")
     {
-        record = rp::new_job_invalid_record("job-0001", std::nullopt, short_config(), at(kTaken),
+        record = rp::new_job_invalid_record("job-0001", std::nullopt, short_profile(), at(kTaken),
                                             "unknown key");
         calls = {"look", "make_folder", "finish"};
         code = "job_invalid";
@@ -1405,30 +1496,6 @@ TEST_CASE("which record needs the hold when only the record is known", "[service
     CHECK(rp::needs_hold(requested()));
 }
 
-TEST_CASE("the restore targets are cleaned only for the config's own client",
-          "[service_recovery]")
-{
-    const RunningRecord record = taken();
-    CHECK(rp::is_records_client(short_config(), record));
-
-    using Change = std::function<void(rp::Config&)>;
-    const std::vector<Change> rows{
-        [](rp::Config& c) { c.graph_tenant_id = "t"; },
-        [](rp::Config& c) { c.veeam_org_name = "other"; },
-        [](rp::Config& c) { c.test_mailbox = "other"; },
-        [](rp::Config& c) { c.test_site_id = "other"; },
-        [](rp::Config& c) { c.test_library_id = "other"; },
-        [](rp::Config& c) { c.test_onedrive_drive_id = "other"; },
-        [](rp::Config& c) { c.test_onedrive_folder_id = ""; },
-    };
-    for (std::size_t i = 0; i < rows.size(); ++i) {
-        CAPTURE(i);
-        rp::Config config = short_config();
-        rows[i](config);
-        CHECK_FALSE(rp::is_records_client(config, record));
-    }
-}
-
 // ------------------------------------------------------------ when it goes
 
 namespace {
@@ -1501,7 +1568,7 @@ TEST_CASE("the record goes once the run is in the outbox and nothing of it can b
     // Found at start with nothing to hold for: a job that is no job, a run
     // killed before it opened a session.
     CHECK(rp::record_may_go(taken(), OutboxHolds::queued, nullptr, false));
-    CHECK(rp::record_may_go(rp::new_job_invalid_record("job-0002", std::nullopt, short_config(),
+    CHECK(rp::record_may_go(rp::new_job_invalid_record("job-0002", std::nullopt, short_profile(),
                                                        at(kTaken), "sample_od"),
                             OutboxHolds::sent, nullptr, false));
 }

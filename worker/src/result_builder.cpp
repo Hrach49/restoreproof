@@ -34,15 +34,16 @@ std::string_view to_string(ResultFailure failure) noexcept
     return "unknown";
 }
 
-ResultClient result_client(const Config& config)
+ResultClient result_client(const ClientProfile& profile, std::optional<std::string> client_id)
 {
-    return {.tenant_id = config.graph_tenant_id,
-            .veeam_org_name = config.veeam_org_name,
-            .mailbox = config.test_mailbox,
-            .site_id = config.test_site_id,
-            .library_id = config.test_library_id,
-            .onedrive_drive_id = config.test_onedrive_drive_id,
-            .onedrive_folder_id = config.test_onedrive_folder_id};
+    return {.client_id = std::move(client_id),
+            .tenant_id = profile.graph_tenant_id,
+            .veeam_org_name = profile.veeam_org_name,
+            .mailbox = profile.test_mailbox,
+            .site_id = profile.test_site_id,
+            .library_id = profile.test_library_id,
+            .onedrive_drive_id = profile.test_onedrive_drive_id,
+            .onedrive_folder_id = profile.test_onedrive_folder_id};
 }
 
 json ResultBuilder::document(const ResultParts& parts)
@@ -57,7 +58,7 @@ json ResultBuilder::document(const ResultParts& parts)
     result["started_at"] = text_or_null(parts.started_at);
     result["ended_at"] = text_or_null(parts.ended_at);
     result["connector"] = {{"type", parts.connector.name}, {"api", parts.connector.version}};
-    result["client"] = {{"client_id", nullptr},
+    result["client"] = {{"client_id", text_or_null(parts.client.client_id)},
                         {"tenant_id", parts.client.tenant_id},
                         {"veeam_org_name", parts.client.veeam_org_name},
                         {"targets",

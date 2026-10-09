@@ -6,7 +6,10 @@
 // and whose every call is written down. No test waits, starts a thread or
 // touches a file.
 
+#include <rp/client_profile.hpp>
 #include <rp/service_loop.hpp>
+
+#include <nlohmann/json.hpp>
 
 #include <spdlog/details/null_mutex.h>
 #include <spdlog/logger.h>
@@ -23,6 +26,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <variant>
 #include <vector>
 
 namespace rp::test {
@@ -53,6 +57,12 @@ inline constexpr std::string_view kProfileText =
     R"("test_onedrive_folder_id":"01FOLDER","test_site_id":"contoso.sharepoint.com,)"
     R"(aaaaaaaa-0000-0000-0000-000000000001,aaaaaaaa-0000-0000-0000-000000000002",)"
     R"("veeam_org_name":"contoso.onmicrosoft.com"})";
+
+// kProfileText as the loop's records carry it.
+inline ClientProfile lab_profile()
+{
+    return std::get<ClientProfile>(parse_client_profile(nlohmann::json::parse(kProfileText)));
+}
 
 inline std::string job_text(std::string_view run_id, int mail = 5, int sp = 5, int od = 5)
 {
@@ -199,7 +209,7 @@ struct LoopLab {
     // `requested`, a restore request sent five minutes before the start.
     RunningRecord found(std::vector<std::string> sessions = {}, bool requested = false) const
     {
-        RunningRecord made = new_run_record("job-1", std::string{"client-7"}, config,
+        RunningRecord made = new_run_record("job-1", std::string{"client-7"}, lab_profile(),
                                             wall0 - std::chrono::minutes{10});
         made = with_run_started(std::move(made), run_started("job-1"));
         for (const std::string& id : sessions) {

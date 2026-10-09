@@ -737,6 +737,25 @@ TEST_CASE("rpworker veeam list prints the lab's organisation and its two restore
     REQUIRE(result.exit_code == 0);
 }
 
+// W4.10 point 4: a config without client keys names no organisation; every
+// organisation is listed and none is marked or missing.
+TEST_CASE("rpworker veeam list on a config without client keys marks nothing and reports no "
+          "missing organisation",
+          "[veeam_command][client_profile]")
+{
+    Harness lab(R"({"cloud_url": "https://cloud.example.invalid", "veeam_url": ")" + kBase +
+                R"("})");
+
+    const Run result = lab.run_list();
+    REQUIRE(result.exit_code == 0);
+    REQUIRE(result.err.empty());
+    // No row is marked: every row starts with two spaces, and the footer's
+    // "* = veeam_org_name" is the only asterisk.
+    REQUIRE(result.out.find("\n* ") == std::string::npos);
+    REQUIRE_FALSE(result.out.starts_with("* "));
+    REQUIRE(result.out.find("RestoreProofLab.onmicrosoft.com") != std::string::npos);
+}
+
 TEST_CASE("rpworker veeam list marks veeam_org_name in any case", "[veeam_command]")
 {
     Harness lab(config_json("RESTOREPROOFLAB.onmicrosoft.COM"));

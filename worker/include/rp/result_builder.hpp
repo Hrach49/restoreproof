@@ -6,6 +6,7 @@
 // The builder adds nothing the parts' own to_json objects don't say.
 
 #include <rp/checker.hpp>
+#include <rp/client_profile.hpp>
 #include <rp/connector.hpp>
 #include <rp/evidence_builder.hpp>
 #include <rp/expected_set.hpp>
@@ -26,9 +27,11 @@ namespace rp {
 
 inline constexpr std::string_view kResultFormat = "restoreproof.result.v1";
 
-// What the config knows of the client today (point 6): the tenant, the backup
-// product's organisation and the three restore targets' IDs.
+// The result's `client` object (point 6; W4.10): the job's client_id (null
+// at a prompt), and of the client's profile the tenant, the backup product's
+// organisation and the three restore targets' IDs. Not the app's ID.
 struct ResultClient {
+    std::optional<std::string> client_id;
     std::string tenant_id;          // graph_tenant_id
     std::string veeam_org_name;
     std::string mailbox;            // test_mailbox
@@ -40,9 +43,10 @@ struct ResultClient {
     bool operator==(const ResultClient&) const = default;
 };
 
-// The client as `config` gives it: the one mapping of the config's client
-// keys, for the result and for the service's record of a run (W4.8).
-ResultClient result_client(const Config& config);
+// The client as a profile gives it (W4.10): the one mapping of a profile to
+// the result's object, for the result and for the service's close of a run
+// (W4.8). `client_id` is the job's, nullopt at a prompt.
+ResultClient result_client(const ClientProfile& profile, std::optional<std::string> client_id);
 
 // One run's parts. The pointers are borrowed for the call only; null where a
 // step didn't run.

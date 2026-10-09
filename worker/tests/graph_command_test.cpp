@@ -10,6 +10,7 @@
 #include "test_support.hpp"
 
 #include <rp/cli.hpp>
+#include <rp/client_profile.hpp>
 #include <rp/config.hpp>
 #include <rp/graph_client.hpp>
 #include <rp/graph_command.hpp>
@@ -396,6 +397,28 @@ TEST_CASE("rpworker graph list exits 1 with the error when the config doesn't lo
     CHECK(result.exit_code == rp::exit_code::config);
     CHECK(result.out.empty());
     CHECK(result.err == "config error: " + path_arg + ": cannot read config file\n");
+    CHECK(lab.load_secrets_calls == 0);
+    CHECK(lab.make_graph_http_calls == 0);
+}
+
+// W4.10 point 5: graph list runs on the config's local profile; without one
+// it says so, before the vault and any request.
+TEST_CASE("rpworker graph list refuses a config without client keys, before the vault",
+          "[graph_command][client_profile]")
+{
+    Harness lab;
+    json doc = json::parse(config_json());
+    for (const std::string_view key : rp::kClientProfileKeys) {
+        doc.erase(std::string{key});
+    }
+    const std::filesystem::path config = lab.dir.write("no-client.json", doc.dump(2));
+
+    const Run result = lab.run(Args{"list", "--config", utf8(config)});
+
+    CHECK(result.exit_code == rp::exit_code::config);
+    CHECK(result.out.empty());
+    CHECK(result.err == "config error: the config has no client keys; set the eight client keys, "
+                        "or use rpworker client check --profile-file <file>\n");
     CHECK(lab.load_secrets_calls == 0);
     CHECK(lab.make_graph_http_calls == 0);
 }

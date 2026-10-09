@@ -241,7 +241,7 @@ std::string format_elapsed(std::chrono::nanoseconds elapsed);
 // in UTF-8:
 //   [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>]
 //   [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>]
-//   [--vault <file>] [--record <dir>]
+//   [--vault <file>] [--record <dir>] [--profile-file <file>]
 // in any order, each at most once, each with its value. <n> is 1 to 3 ASCII
 // digits, 0 to 100; an absent size is config's sample_mail, sample_sp or
 // sample_od. --point is `latest` in any ASCII case (the default: the newest
@@ -253,7 +253,13 @@ std::string format_elapsed(std::chrono::nanoseconds elapsed);
 // commas, nothing else (default 0,0,0). --manifest defaults to
 // seed-manifest.json in the config file's folder.
 //
-// In this order: the arguments; the config, the vault (W4.5: --vault or the
+// In this order: the arguments; the config; the client's profile (W4.10,
+// rp/client_profile.hpp: --profile-file's, read whole and held to the
+// profile's rules, "config error: --profile-file <file>: <problem>", else
+// the config's eight client keys, else "config error: the config has no
+// client keys; give --profile-file <file> or set the eight client keys", exit
+// 1: the run's tenant, app, organisation and restore targets are the
+// profile's and nothing else's); the vault (W4.5: --vault or the
 // default, read once into Secrets), the Veeam secrets
 // (rp::require_veeam_secrets) and the Graph certificate, opened and checked
 // as restore_sample will (graph::certificate_from_secrets at

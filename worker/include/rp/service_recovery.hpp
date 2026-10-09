@@ -77,9 +77,11 @@ struct RecordRestorePoint {
 // running.json (point 6): IDs, times and fixed words, never a secret or an
 // item's name. Exactly these keys and `format`, fourteen, in the file under these names.
 struct RunningRecord {
-    // The result's client object as the config gives it (its client_id null).
-    ResultClient client;
-    // The job's client_id: the record's and the log's alone until W4.11.
+    // The job's client profile (W4.10): what the run used, and what a
+    // recovery clean cleans. Never null for a `run` record; null for a
+    // `job_invalid` record of a job whose profile couldn't be read.
+    std::optional<ClientProfile> client;
+    // The job's client_id: the result's client.client_id.
     std::optional<std::string> client_id;
     std::optional<CloseAs> close_as;
     // With close_as: `internal`, the run folder's word (not_written, changed,
@@ -110,18 +112,19 @@ struct RunningRecord {
 };
 
 // Write (a) of point 6, before the pipeline is called: the run, the job's
-// client_id, the config's client and the time; everything else null, empty
-// or false.
+// client_id, the job's client profile and the time; everything else null,
+// empty or false.
 RunningRecord new_run_record(std::string_view run_id, std::optional<std::string> client_id,
-                             const Config& config,
+                             const ClientProfile& client,
                              std::chrono::system_clock::time_point taken_at);
 
 // The same for a job that is no job, before its folder is made: kind
 // job_invalid, and from the first write close_as job_invalid with `key`, the
 // jobs reader's word for the key at fault, so that a close cut short by a
-// kill still knows why.
+// kill still knows why. `client` is the job's profile when it could be read.
 RunningRecord new_job_invalid_record(std::string_view run_id,
-                                     std::optional<std::string> client_id, const Config& config,
+                                     std::optional<std::string> client_id,
+                                     std::optional<ClientProfile> client,
                                      std::chrono::system_clock::time_point taken_at,
                                      std::string_view key);
 
@@ -410,9 +413,6 @@ HoldDecision decide_hold(const RunningRecord& record,
                          std::chrono::system_clock::time_point now,
                          std::chrono::system_clock::time_point hold_began);
 
-// Whether the config's client is the record's: only then are the restore
-// targets cleaned for the record's run.
-bool is_records_client(const Config& config, const RunningRecord& record);
 
 // Whether the record goes (point 6): the run's folder is in the outbox or
 // under sent\, or the run ended before its run line and has none; and no

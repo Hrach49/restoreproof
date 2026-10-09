@@ -113,7 +113,7 @@ int run_restore_command(std::span<const std::string_view> args, std::ostream& ou
     PipelineArgs parsed;
     const std::optional<CommandOptions> options =
         parse_options(args, {"--mail", "--sp", "--od", "--point", "--run-id", "--canary-cursor",
-                             "--manifest", "--config", "--vault", "--record"});
+                             "--manifest", "--config", "--vault", "--record", "--profile-file"});
     if (!options || !parse_pipeline_args(*options, parsed)) {
         err << kCliUsage;
         return exit_code::usage;

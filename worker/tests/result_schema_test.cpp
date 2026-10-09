@@ -509,9 +509,9 @@ TEST_CASE("the shared result documents validate as they say", "[result_schema]")
     const json& cases = cases_file().at("cases");
     REQUIRE(cases_file().at("format") == std::string{rp::kResultFormat});
     // The file can't shrink unnoticed.
-    REQUIRE(cases.size() == 183);
+    REQUIRE(cases.size() == 185);
 
-    const std::size_t i = GENERATE(range(std::size_t{0}, std::size_t{183}));
+    const std::size_t i = GENERATE(range(std::size_t{0}, std::size_t{185}));
     const json& entry = cases.at(i);
     const std::string name = entry.at("name");
     INFO(name);
@@ -539,7 +539,7 @@ TEST_CASE("the shared result documents' names are unique and both kinds are ther
         REQUIRE(entry.size() == 3);
         REQUIRE(entry.at("patch").is_array());
     }
-    REQUIRE(valid == 45);
+    REQUIRE(valid == 47);
     REQUIRE(names.contains("base"));
     // valid.json is canonical-json-v1: one line, no trailing newline.
     const std::string text = rp::test::read_shared("testdata/result-v1/valid.json");

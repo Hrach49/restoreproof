@@ -21,17 +21,16 @@
 #include <rp/run_status.hpp>
 #include <rp/sample_rng.hpp>
 #include <rp/secrets.hpp>
-#include <rp/signer.hpp>
 #include <rp/target_guard_graph.hpp>
-#include <rp/timestamper.hpp>
 #include <rp/sample_selector.hpp>
 #include <rp/step_timer.hpp>
 #include <rp/version.hpp>
 
 #include "command_config.hpp"
 #include "duration_text.hpp"
-#include "file_read.hpp"
+#include "job_rules.hpp"
 #include "path_utf8.hpp"
+#include "run_folder_tail.hpp"
 #include "text_table.hpp"
 #include "text_util.hpp"
 #include "veeam_time.hpp"
@@ -53,7 +52,6 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
-#include <thread>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -68,10 +66,7 @@ namespace verification = rp::verification;
 using connector::ItemKind;
 
 constexpr std::size_t kMaxSizeDigits = 3;
-constexpr int kMaxSampleSize = 100;
 constexpr std::size_t kMaxCursorDigits = 6;
-constexpr std::size_t kMaxPointIdLength = 128;
-constexpr std::string_view kLatest = "latest";
 constexpr std::string_view kManifestFile = "seed-manifest.json";
 
 bool all_digits(std::string_view text) noexcept
@@ -95,7 +90,7 @@ std::optional<std::uint32_t> parse_number(std::string_view text, std::size_t max
 std::optional<int> parse_size(std::string_view text)
 {
     const std::optional<std::uint32_t> n = parse_number(text, kMaxSizeDigits);
-    if (!n || *n > static_cast<std::uint32_t>(kMaxSampleSize)) {
+    if (!n || !job_rules::is_sample_size(*n)) {
         return std::nullopt;
     }
     return static_cast<int>(*n);
@@ -111,32 +106,12 @@ std::optional<sampling::CanaryCursor> parse_cursor(std::string_view text)
             return std::nullopt;
         }
         parts[i] = parse_number(text.substr(0, comma), kMaxCursorDigits);
-        if (!parts[i]) {
+        if (!parts[i] || !job_rules::is_cursor_value(*parts[i])) {
             return std::nullopt;
         }
         text.remove_prefix(i < 2 ? comma + 1 : comma);
     }
     return sampling::CanaryCursor{*parts[0], *parts[1], *parts[2]};
-}
-
-// 1 to 128 ASCII letters, digits and hyphens: safe to echo in a message.
-bool is_point_id(std::string_view text) noexcept
-{
-    return !text.empty() && text.size() <= kMaxPointIdLength &&
-           std::ranges::all_of(text, [](char c) {
-               return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
-                      c == '-';
-           });
-}
-
-bool valid_run_id(std::string_view text)
-{
-    try {
-        sampling::check_run_id(text);
-        return true;
-    } catch (const std::invalid_argument&) {
-        return false;
-    }
 }
 
 // The manifest --manifest names, or seed-manifest.json beside the config file.
@@ -162,13 +137,13 @@ const connector::RestorePoint* pick_point(const std::vector<connector::RestorePo
         err << "restore error: no restore points for veeam_org_name\n";
         return nullptr;
     }
-    if (!id || ascii_iequals(*id, kLatest)) {
+    if (!id || ascii_iequals(*id, job_rules::kLatest)) {
         return &points.front();
     }
     const auto it = std::ranges::find_if(
         points, [&](const connector::RestorePoint& p) { return ascii_iequals(p.id, *id); });
     if (it == points.end()) {
-        // The ID passed is_point_id: safe to echo.
+        // The ID passed job_rules::is_point: safe to echo.
         err << "restore error: restore point " << *id << " not found for veeam_org_name\n";
         return nullptr;
     }
@@ -343,8 +318,8 @@ void flush_or_throw(std::ostream& out)
     }
 }
 
-// what() is safe to print: connector::Error's never holds a credential.
-int report(std::ostream& err, std::string_view prefix, const std::exception& e, int code)
+// what() is safe to print: a ConfigError's names no secret.
+int say(std::ostream& err, std::string_view prefix, const std::exception& e, int code)
 {
     err << prefix << e.what() << '\n';
     return code;
@@ -439,13 +414,13 @@ std::string_view cleanup_error_text(std::string_view code) noexcept
 
 // A clean's line on stdout (W3.4 point 8): counts and codes, never a name or
 // an ID.
-std::string format_cleanup(const graph::CleanupResult& result, bool may_still_run)
+std::string format_cleanup(const graph::CleanupResult& result)
 {
     const auto targets = cleaned_targets(result);
     std::string line = std::format(
         "cleanup {} {}: deleted {} mail, {} sharepoint, {} onedrive",
         result.when == graph::CleanupWhen::before_run ? "before" : "after",
-        result.ok() && !may_still_run ? "ok" : "incomplete", result.mail.deleted,
+        result.ok() ? "ok" : "incomplete", result.mail.deleted,
         result.sharepoint.deleted, result.onedrive.deleted);
     if (result.mail.left + result.sharepoint.left + result.onedrive.left > 0) {
         line += std::format("; left {} mail, {} sharepoint, {} onedrive", result.mail.left,
@@ -460,9 +435,6 @@ std::string format_cleanup(const graph::CleanupResult& result, bool may_still_ru
         if (!target->error_code.empty()) {
             line += std::format("; {} {}", name, target->error_code);
         }
-    }
-    if (may_still_run) {
-        line += "; the restore may still be running; the next run cleans before";
     }
     return line + '\n';
 }
@@ -498,6 +470,29 @@ bool refused_by_guard(const graph::CleanupResult& result)
     return std::ranges::any_of(targets, [](const auto& target) {
         return target.second->error_code == "target_guard";
     });
+}
+
+// A run's Graph client, for the cleanup and the check (W3.2, W3.4), and the
+// Cleaner over it: made with the connector's logger, clocks, sleep and
+// jitter, on `http`, which must outlive both. One construction, the run's
+// and the recovery clean's (clean_restore_targets).
+void make_graph_and_cleaner(std::optional<graph::GraphClient>& client,
+                            std::optional<graph::Cleaner>& cleaner, IHttpClient& http,
+                            const Config& config, graph::ClientCertificate certificate,
+                            const connector::RestoreTargets& targets,
+                            const connector::ConnectorOptions& options)
+{
+    graph::GraphClientOptions client_options;
+    client_options.logger = options.logger;
+    client_options.now = options.now;
+    client_options.wall_now = options.wall_now;
+    client_options.sleep = options.sleep;
+    client_options.jitter = options.jitter;
+    client.emplace(http, config.graph_tenant_id, config.graph_client_id, std::move(certificate),
+                   client_options);
+    graph::CleanerOptions cleaner_options;
+    cleaner_options.logger = options.logger;
+    cleaner.emplace(*client, targets, cleaner_options);
 }
 
 // The connector's options with every HTTP client it makes recorded: Veeam's
@@ -620,110 +615,9 @@ void read_after(graph::GraphClient& client, IHttpClient& download,
     refusals("onedrive", after.onedrive);
 }
 
-// The run's signing key (W4.3 point 3): the text the vault's
-// signing_key_base64 carried and, for a run that signs, the key parsed from it, in one holder
-// that wipes both on every way out of the run, the returns before the run
-// line included. The text stays in the run's Secrets until take() moves it
-// here (wiped there), which the pipeline does before the connector is made,
-// so the connector's copy of the secrets never holds it; a holder that goes
-// before that wipes it where it is.
-class RunSigningKey {
-public:
-    // `secrets` must outlive the holder.
-    explicit RunSigningKey(Secrets& secrets) noexcept : secrets_(secrets) {}
-    RunSigningKey(const RunSigningKey&) = delete;
-    RunSigningKey& operator=(const RunSigningKey&) = delete;
-    ~RunSigningKey()
-    {
-        take();
-        secure_wipe(text_);
-    }
-
-    // The key the secrets carry, parsed (rp::SigningKey::from_base64). Throws
-    // ConfigError, naming the secret and never its value, when it isn't in
-    // the vault or isn't a key. Only a run that signs calls it.
-    void parse()
-    {
-        const std::string name{kNameSigningKeyBase64};
-        const std::optional<std::string>& text = secrets_.signing_key_base64;
-        if (!text || text->empty()) {
-            throw ConfigError(name, not_in_vault(name) + "; --evidence signs the result");
-        }
-        key_ = SigningKey::from_base64(*text);
-        if (!key_) {
-            throw ConfigError(name,
-                              name + " is not an Ed25519 private key (Base64 of PKCS#8 DER)");
-        }
-    }
-
-    // Moves the text out of the Secrets, which no longer hold it.
-    void take() noexcept
-    {
-        if (secrets_.signing_key_base64) {
-            text_.swap(*secrets_.signing_key_base64);
-            secure_wipe(*secrets_.signing_key_base64);
-            secrets_.signing_key_base64.reset();
-        }
-    }
-
-    // Empty until take(), and when the vault had no key.
-    const std::string& text() const noexcept { return text_; }
-    // Null unless parse() made one.
-    const SigningKey* key() const noexcept { return key_ ? &*key_ : nullptr; }
-
-private:
-    Secrets& secrets_;
-    std::string text_;
-    std::optional<SigningKey> key_;
-};
-
 // The --evidence root (W4.2 point 8), checked before the secrets: a UTF-8
 // path, and a --run-id that can name the run's folder in it. Throws
 // ConfigError otherwise. Whether the folder can be made is found when it is.
-// The TSA a run with --evidence asks (W4.4): its URL and the PEM
-// certificates a token must chain to.
-struct TsaSettings {
-    std::string url;
-    std::string ca_pem;
-};
-
-// The TSA's time and the Worker's clock further apart than this is said
-// (W7.2's threshold), never refused.
-constexpr std::chrono::seconds kClockSkewWarning{120};
-
-// A CA file larger than this isn't one.
-constexpr std::uintmax_t kMaxTsaCaFileBytes = 64u * 1024u;
-
-// Config's tsa_url and tsa_ca_file, or the default TSA and the embedded root.
-// Throws ConfigError (key tsa_ca_file) for a CA file that can't be read whole
-// or holds no certificate: a run that could take no token says so before
-// anything is done, not after the restore.
-TsaSettings tsa_settings(const Config& config)
-{
-    constexpr std::string_view key = "tsa_ca_file";
-    TsaSettings out;
-    out.url = config.tsa_url.value_or(std::string{kDefaultTsaUrl});
-    out.ca_pem = std::string{default_tsa_ca_pem()};
-    if (config.tsa_ca_file) {
-        const std::optional<std::filesystem::path> path = path_from_utf8(*config.tsa_ca_file);
-        FileRead read;
-        if (path) {
-            read = read_whole_file(*path, kMaxTsaCaFileBytes);
-        }
-        if (read.state != FileState::read) {
-            throw ConfigError(std::string{key},
-                              "config key \"tsa_ca_file\" names a file that can't be read");
-        }
-        out.ca_pem = std::move(read.bytes);
-    }
-    if (openssl_rfc3161().certificates_in(out.ca_pem) == 0) {
-        throw ConfigError(std::string{key},
-                          "config key \"tsa_ca_file\" names a file that holds no "
-                          "certificate (PEM)");
-    }
-    return out;
-}
-
 std::filesystem::path check_evidence_root(std::string_view arg,
                                           std::optional<std::string_view> run_id)
 {
@@ -731,7 +625,7 @@ std::filesystem::path check_evidence_root(std::string_view arg,
     if (!root) {
         throw ConfigError("--evidence", "--evidence " + table_cell(arg) + ": not a UTF-8 path");
     }
-    if (run_id && !EvidenceBuilder::can_name_folder(*run_id)) {
+    if (run_id && !job_rules::is_folder_run_id(*run_id)) {
         throw ConfigError("--evidence", "--evidence: the run ID can't name a folder");
     }
     return std::move(*root);
@@ -754,11 +648,11 @@ bool parse_pipeline_args(const CommandOptions& options, PipelineArgs& parsed)
     }
     parsed.point = options.value("--point");
     // `latest`, in any case, is a point ID too.
-    if (parsed.point && !is_point_id(*parsed.point)) {
+    if (parsed.point && !job_rules::is_point(*parsed.point)) {
         return false;
     }
     parsed.run_id = options.value("--run-id");
-    if (parsed.run_id && !valid_run_id(*parsed.run_id)) {
+    if (parsed.run_id && !job_rules::is_run_id(*parsed.run_id)) {
         return false;
     }
     if (const std::optional<std::string_view> cursor = options.value("--canary-cursor")) {
@@ -772,6 +666,73 @@ bool parse_pipeline_args(const CommandOptions& options, PipelineArgs& parsed)
     parsed.vault = options.value("--vault");
     parsed.record = options.value("--record");
     return true;
+}
+
+std::string_view to_string(TargetsClean clean) noexcept
+{
+    switch (clean) {
+    case TargetsClean::ok:
+        return "ok";
+    case TargetsClean::incomplete:
+        return "incomplete";
+    case TargetsClean::lock_held:
+        return "lock_held";
+    case TargetsClean::not_started:
+        break;
+    }
+    return "not_started";
+}
+
+TargetsClean clean_restore_targets(const Config& config, const std::filesystem::path& vault,
+                                   std::ostream& out, const RestoreCommandEnv& env) noexcept
+{
+    try {
+        // The mutex first, and held to the end: no run reads or fills the
+        // targets while they are emptied. Declared first, so it goes last.
+        std::unique_ptr<RunLock> lock;
+        try {
+            lock = env.take_run_lock ? env.take_run_lock() : try_take_restore_targets_lock();
+        } catch (const AbandonedRunLock&) {
+            // Taken for this one try, as for a run: the next try has it.
+            return TargetsClean::lock_held;
+        }
+        if (!lock) {
+            return TargetsClean::lock_held;
+        }
+        Secrets secrets = env.load_secrets(vault);
+        // Nothing here signs: the key's text is wiped with the holder.
+        const RunSigningKey signing(secrets);
+        connector::ConnectorOptions options = env.connector_options;
+        // Never spdlog's default logger, which writes to stdout.
+        if (!options.logger) {
+            options.logger = make_command_logger();
+        }
+        graph::ClientCertificate certificate = check_graph_certificate(secrets, options);
+        const connector::RestoreTargets targets = connector::RestoreTargets::from_config(config);
+        const std::unique_ptr<IHttpClient> http =
+            options.make_graph_http ? options.make_graph_http(options.logger)
+                                    : graph::make_graph_http_client(options.logger);
+        if (!http) {
+            return TargetsClean::not_started;
+        }
+        std::optional<graph::GraphClient> client;
+        std::optional<graph::Cleaner> cleaner;
+        make_graph_and_cleaner(client, cleaner, *http, config, std::move(certificate), targets,
+                               options);
+        // The Cleaner's clean before, as it is: every target, whatever a run
+        // sampled, each resolved through the guard's own checks first.
+        const graph::CleanupResult result = cleaner->clean(graph::CleanupWhen::before_run);
+        // Lines that can't be written change nothing that was done.
+        try {
+            out << format_cleanup(result);
+            report_cleanup(out, result);
+            out.flush();
+        } catch (...) {
+        }
+        return result.ok() ? TargetsClean::ok : TargetsClean::incomplete;
+    } catch (...) {
+        return TargetsClean::not_started;
+    }
 }
 
 std::string kind_name(ItemKind kind)
@@ -799,8 +760,26 @@ std::string format_check_counts(const verification::CheckResult& check)
 
 int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& err,
                  const RestoreCommandEnv& env, std::shared_ptr<FixtureRecorder>& recorder,
-                 const Presentation& presentation)
+                 const Presentation& presentation, PipelineReport* report_out)
 {
+    // W4.8 point 5: what became of the run, written as it becomes known, so
+    // every way out leaves it filled; a caller that asked for none gets
+    // this one.
+    PipelineReport own_report;
+    PipelineReport& report = report_out ? *report_out : own_report;
+    report = {};
+    if (parsed.run_id) {
+        report.run_id = *parsed.run_id;
+    }
+    // W4.8 point 13: whether the Worker was asked to stop. A check that
+    // throws answered yes: nothing new is started on a doubt.
+    const auto stop_asked = [&env]() noexcept {
+        try {
+            return env.stop_requested && env.stop_requested();
+        } catch (...) {
+            return true;
+        }
+    };
     std::filesystem::path config_path;
     Config config;
     Secrets secrets;
@@ -816,7 +795,12 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
     std::optional<TsaSettings> tsa;
     try {
         config_path = command_config_path(parsed.config, env.default_config_path);
-        config = load_config(config_path);
+        // W4.8 point 2: the service's config was loaded at its start, and an
+        // edit of the file waits for the next one.
+        config = parsed.loaded ? *parsed.loaded : load_config(config_path);
+        if (parsed.screenshots) {
+            config.screenshots_enabled = *parsed.screenshots;
+        }
         if (presentation.after_config) {
             presentation.after_config();
         }
@@ -859,7 +843,7 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
             tsa = tsa_settings(config);
         }
     } catch (const ConfigError& e) {
-        return report(err, "config error: ", e, exit_code::config);
+        return say(err, "config error: ", e, exit_code::config);
     } catch (...) {
         // Not a ConfigError, so its message may not be safe to show.
         err << "config error: unexpected failure\n";
@@ -868,7 +852,7 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
     const sampling::SamplePlan plan{parsed.mail.value_or(config.sample_mail),
                                     parsed.sharepoint.value_or(config.sample_sp),
                                     parsed.onedrive.value_or(config.sample_od)};
-    if (plan.mail == 0 && plan.sharepoint == 0 && plan.onedrive == 0) {
+    if (job_rules::is_empty_sample(plan.mail, plan.sharepoint, plan.onedrive)) {
         err << "usage error: every sample size is 0 (--mail, --sp, --od, or config's "
                "sample_mail, sample_sp, sample_od): nothing to restore\n";
         return exit_code::usage;
@@ -950,13 +934,19 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
             std::string line;
             if (!restore_sent) {
                 line = "cleanup after skipped: nothing was restored\n";
+            } else if (may_still_run) {
+                // W4.8 point 9: never a clean under a restore that may still
+                // be writing. The next run cleans before; in the service the
+                // hold waits for Veeam first.
+                line = "cleanup after skipped: the restore may still be running; the next "
+                       "run cleans before\n";
             } else if (!cleaner) {
                 line = "cleanup after skipped: no Graph client\n";
             } else {
                 timer.start(timing::Span::cleanup_after, timer.try_now());
                 cleanup.after = cleaner->clean(graph::CleanupWhen::after_run);
                 timer.end(timing::Span::cleanup_after, timer.try_now());
-                line = format_cleanup(*cleanup.after, may_still_run);
+                line = format_cleanup(*cleanup.after);
             }
             (output_lost ? err : out) << line;
             out.flush();
@@ -1028,13 +1018,7 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
             if (connector_info) {
                 parts.connector = *connector_info;
             }
-            parts.client = {.tenant_id = config.graph_tenant_id,
-                            .veeam_org_name = config.veeam_org_name,
-                            .mailbox = config.test_mailbox,
-                            .site_id = config.test_site_id,
-                            .library_id = config.test_library_id,
-                            .onedrive_drive_id = config.test_onedrive_drive_id,
-                            .onedrive_folder_id = config.test_onedrive_folder_id};
+            parts.client = result_client(config);
             if (chosen) {
                 parts.restore_point_id = chosen->id;
                 parts.restore_point_time = chosen->backup_time;
@@ -1058,180 +1042,52 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
     // also for a run with no valid result), the screenshot's answer, then the
     // finished result with what it lists, validated, each attachment read
     // back against its hash, the result signed with the run's key (W4.3:
-    // signature.json), and result.json. Nothing here changes the
-    // status: what fails is one line on `err` and an exit code of 0 becoming
-    // 1 (the W3.6 rule). Returns the exit code.
+    // signature.json), and result.json: the tail the service's close of a
+    // run folder shares (finish_run_folder, src/run_folder_tail.hpp). Nothing
+    // here changes the status: what fails is one line on `err` and an exit
+    // code of 0 becoming 1 (the W3.6 rule). Returns the exit code.
     const auto write_evidence = [&](const std::optional<verification::RunVerdict>& verdict,
                                     bool invalid, const verification::CheckResult* check,
                                     const timing::RunTimings& timings, int code,
                                     bool output_lost) noexcept {
-        const auto failed = [&](std::string_view what, std::string_view why) {
-            err << "evidence error: " << what << ": " << why << '\n';
-            code = code == exit_code::ok ? exit_code::config : code;
-        };
         try {
-            const std::string shown = table_cell(path_to_utf8(*evidence_folder));
-            EvidenceOptions options;
-            options.screenshots_enabled = config.screenshots_enabled;
-            options.capture = env.capture_screenshot;
-            options.write_file = env.write_evidence_file;
-            // The run's secret values: the Secrets', the signing key's text,
-            // which is no longer among them, and the other shapes the key
-            // could leak in. The builder wipes its copy when it goes. Room
-            // for the three added here, so the list never grows.
-            options.secrets = secret_values(secrets, 3);
-            if (!signing.text().empty()) {
-                options.secrets.push_back(signing.text());
-            }
-            if (const SigningKey* key = signing.key()) {
-                options.secrets.insert(options.secrets.end(), key->secret_shapes().begin(),
-                                       key->secret_shapes().end());
-                options.sign = [&env, key](std::string_view canonical) {
-                    return env.sign_result ? env.sign_result(canonical, *key)
-                                           : Signer::sign(canonical, *key);
-                };
-            }
-            options.logger = env.connector_options.logger ? env.connector_options.logger
-                                                          : make_command_logger();
-            // W4.4: the TSA, asked once the result is signed. Its client is
-            // made only now; with --record its exchanges are the recording's
-            // "tsa" folder, both bodies as Base64.
-            std::unique_ptr<IHttpClient> tsa_http;
-            std::optional<Timestamper> timestamper;
-            if (tsa && options.sign) {
-                HttpClientOptions http_options;
-                http_options.logger = options.logger;
-                tsa_http = recorded(env.make_tsa_http ? env.make_tsa_http()
-                                                      : std::make_unique<HttpClient>(http_options),
-                                    recorder, "tsa", RecordedBody::base64);
-                TimestamperOptions stamp_options;
-                stamp_options.url = tsa->url;
-                stamp_options.ca_pem = tsa->ca_pem;
-                stamp_options.http = tsa_http.get();
-                stamp_options.nonce = env.timestamp_nonce;
-                stamp_options.sleep = env.connector_options.sleep;
-                if (!stamp_options.sleep) {
-                    stamp_options.sleep = [](std::chrono::milliseconds wait) {
-                        std::this_thread::sleep_for(wait);
-                    };
-                }
-                stamp_options.logger = options.logger;
-                timestamper.emplace(std::move(stamp_options));
-                options.timestamp = [&timestamper](
-                                        std::span<const unsigned char, kSha256Bytes> digest) {
-                    return timestamper->stamp(digest);
-                };
-            }
-            EvidenceBuilder builder(*evidence_folder, std::move(options));
+            RunFolderTail tail;
+            tail.folder = *evidence_folder;
+            tail.run_id = run_id;
+            tail.screenshots_enabled = config.screenshots_enabled;
+            tail.secrets = &secrets;
+            tail.signing = &signing;
+            tail.tsa = tsa ? &*tsa : nullptr;
+            tail.env = &env;
+            tail.recorder = recorder;
+            tail.outbox_root = outbox_root ? &*outbox_root : nullptr;
             // No screenshot for a run that has no valid result to list it.
-            const EvidenceBuilder::Written written = builder.write_attachments(
-                {expected ? &*expected : nullptr, result ? &*result : nullptr, check,
-                 verdict ? &*verdict : nullptr},
-                verdict && !invalid);
-            for (const EvidenceError& error : written.errors) {
-                failed(shown + '\\' + error.file, "could not be written");
-            }
-            if (!written.evidence) {
-                return code;
-            }
-            std::optional<std::string> text;
-            if (verdict && !invalid) {
+            tail.attachments = [&](EvidenceBuilder& builder) {
+                return builder.write_attachments({expected ? &*expected : nullptr,
+                                                  result ? &*result : nullptr, check,
+                                                  verdict ? &*verdict : nullptr},
+                                                 verdict && !invalid);
+            };
+            tail.result = [&](const Evidence& evidence) -> std::optional<std::string> {
+                if (!verdict || invalid) {
+                    return std::nullopt;
+                }
                 std::variant<BuiltResult, ResultError> finished =
-                    build_result(*verdict, check, timings, &*written.evidence);
+                    build_result(*verdict, check, timings, &evidence);
                 if (const ResultError* error = std::get_if<ResultError>(&finished)) {
                     // The status line is out and stays.
                     err << format_result_error(*error);
-                } else {
-                    text = std::move(std::get<BuiltResult>(finished).canonical);
+                    return std::nullopt;
                 }
-            }
-            if (!text) {
-                failed(shown, "the result isn't valid restoreproof.result.v1; no result.json was "
-                              "written");
-                return code;
-            }
-            SignedResult signature;
-            TimestampOutcome timestamp;
-            if (const std::optional<EvidenceError> error =
-                    builder.write_result(*written.evidence, *text, &signature, &timestamp)) {
-                if (error->cause == EvidenceFailure::holds_secret) {
-                    failed(shown, "the result holds a secret value; no result.json was written");
-                } else if (error->cause == EvidenceFailure::not_signed) {
-                    failed(shown, "the result couldn't be signed; no result.json was written");
-                } else {
-                    failed(shown + '\\' + error->file,
-                           error->cause == EvidenceFailure::changed ? "changed after it was hashed"
-                                                                    : "could not be written");
-                }
-                return code;
-            }
-            // W4.4: no token is a warning, never the run's failure: the
-            // status, the exit code and the folder stay. Nor is a clock that
-            // disagrees with the TSA's one: the token is the better clock.
-            if (!timestamp.stamped() && !timestamp.error.empty()) {
-                err << "timestamp warning: " << shown << ": not timestamped: " << timestamp.error
-                    << " after " << timestamp.attempts << " attempt(s)\n";
-            } else if (timestamp.stamped()) {
-                const auto now = env.connector_options.wall_now
-                                     ? env.connector_options.wall_now()
-                                     : std::chrono::system_clock::now();
-                const std::int64_t apart =
-                    std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch())
-                        .count() -
-                    timestamp.gen_time;
-                if (apart > kClockSkewWarning.count() || apart < -kClockSkewWarning.count()) {
-                    err << "timestamp warning: the TSA's time and this machine's clock differ by "
-                        << (apart < 0 ? -apart : apart) << " s\n";
-                }
-            }
-            // The signature's line (W4.3), the timestamp's (W4.4) and the
-            // folder's, all only now that result.json is written, the
-            // folder's last. Lost, they change nothing: the files are written
-            // (W3.6 review point 4).
-            if (!output_lost) {
-                try {
-                    out << "signed " << signature.bundle_sha256 << " key " << signature.key_id
-                        << '\n';
-                    if (timestamp.stamped()) {
-                        out << "timestamped " << timestamp_time_text(timestamp.gen_time) << '\n';
-                    }
-                    out << "evidence " << shown << ": " << kResultFileName << ", "
-                        << kSignatureFileName << ", "
-                        << (timestamp.stamped() ? kTimestampFileName : std::string_view{})
-                        << (timestamp.stamped() ? ", " : "") << kItemsCsvName << ", "
-                        << kSessionLogName
-                        << (written.evidence->screenshot.captured ? ", " : "")
-                        << (written.evidence->screenshot.captured ? kScreenshotName : "")
-                        << '\n';
-                    out.flush();
-                } catch (...) {
-                }
-            }
-            // W4.6: the folder is complete and its lines are out: queued by
-            // one rename, then its manifest, the only file written in it from
-            // here on. A folder that can't be queued stays where and as it
-            // is; the status stays too.
-            if (outbox_root) {
-                Outbox outbox({*outbox_root, env.outbox_files, nullptr});
-                const QueueOutcome queued =
-                    outbox.queue(*evidence_folder, run_id,
-                                 env.connector_options.wall_now ? env.connector_options.wall_now()
-                                                                : std::chrono::system_clock::now(),
-                                 timestamp.stamped(), timestamp.error);
-                const bool in_outbox = queued.result == QueueResult::queued ||
-                                       queued.result == QueueResult::queued_without_manifest;
-                if (in_outbox && !output_lost) {
-                    try {
-                        out << "queued " << table_cell(path_to_utf8(queued.folder)) << '\n';
-                        out.flush();
-                    } catch (...) {
-                    }
-                }
-                if (queued.result != QueueResult::queued) {
-                    err << outbox.queue_error(queued, *evidence_folder) << '\n';
-                    code = code == exit_code::ok ? exit_code::config : code;
-                }
-            }
+                return std::move(std::get<BuiltResult>(finished).canonical);
+            };
+            // Whatever happens from here on, the folder is there.
+            report.folder = RunFolderState::incomplete;
+            report.folder_word = "not_written";
+            RunFolderOutcome outcome;
+            code = finish_run_folder(tail, out, err, code, output_lost, outcome);
+            report.folder = outcome.state;
+            report.folder_word = outcome.word;
         } catch (...) {
             // Never an exit code without its line.
             try {
@@ -1251,8 +1107,8 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
     // With `output_lost` (or the check's table or the status line failing
     // too) the output is incomplete: after a restore that says so, with the
     // run and the restore's own account, and a pass becomes 1. Then the clean
-    // after (W3.4), only when the status says a restore was sent: the verdict
-    // never waits on housekeeping. Then the step timings (W3.5). Then, for a
+    // after (W3.4), only when the status says a restore was sent and none
+    // may still be running: the verdict never waits on housekeeping. Then the step timings (W3.5). Then, for a
     // command with an end-of-run hook (W3.6), the finished result is built
     // and validated again and handed to the hook, last: no result when that
     // fails (said on `err`), when the run ended result_invalid or when there
@@ -1270,15 +1126,31 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
             // connector's promise that nothing was sent.
             const bool may_still_run = stop && stop->phase == verification::RunPhase::restore &&
                                        !stop->nothing_restored;
+            report.restore_may_still_run = may_still_run;
+            // W4.8 point 13: asked before the verdict is decided. A wait the
+            // stop cut short reads as the failure of whatever was waited
+            // for, so an error decided after it is the stop's; a pass or a
+            // fail reached in spite of it stays, and so does every verdict
+            // decided before the stop came.
+            const bool stopped_before_verdict = stop_asked();
             verdict = verification::decide_status(
                 {expected ? &*expected : nullptr, shortfalls, std::move(stop),
                  result ? &*result : nullptr, check,
                  chosen ? chosen->backup_time : std::string{}});
+            if (stopped_before_verdict && verification::interrupt_replaces(*verdict)) {
+                verdict = verification::interrupted(*verdict);
+            }
+            report.status = verdict->status;
+            report.error_code = verdict->error_code;
             const std::variant<BuiltResult, ResultError> provisional =
                 build_result(*verdict, check, timer.timings());
             if (const ResultError* error = std::get_if<ResultError>(&provisional)) {
                 invalid = true;
+                report.replaced_status = verdict->status;
+                report.replaced_code = verdict->error_code;
                 verdict = verification::result_invalid(*verdict);
+                report.status = verdict->status;
+                report.error_code = verdict->error_code;
                 err << format_result_error(*error);
             }
             code = verification::exit_code_of(*verdict);
@@ -1373,6 +1245,19 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
         restore_note(e.what());
         return stopped();
     };
+    // W4.8 point 13: a stop found at a step's boundary once the run line is
+    // out, or a run that couldn't be put on record (point 6): `line` on
+    // `err`, then the run ends as every stopped run does, before the
+    // restore: error interrupted, nothing restored, the clean after skipped.
+    const auto interrupted_before = [&](std::string_view line) {
+        err << "restore error: " << line << connector::kNothingRestored << '\n';
+        return finish(verification::stop_reason(
+                          std::make_exception_ptr(connector::Interrupted(
+                              std::string{line} + std::string{connector::kNothingRestored})),
+                          verification::RunPhase::before_restore),
+                      nullptr, false);
+    };
+    constexpr std::string_view kAskedToStop = "the Worker was asked to stop";
 
     // Everything that can throw is in here, the output included, so no
     // exception escapes.
@@ -1386,6 +1271,13 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
         if (const std::optional<std::string> problem = sampling::cursor_problem(manifest, cursor)) {
             err << "usage error: --canary-cursor: " << *problem << '\n';
             return exit_code::usage;
+        }
+        // W4.8 point 13: the first boundary. A stop asked for by now ends
+        // the run before the mutex and any call to a service: nothing was
+        // done, and there is no run line.
+        if (stop_asked()) {
+            err << "restore error: " << kAskedToStop << "; nothing was done\n";
+            return verification::exit_code_of("interrupted");
         }
         // W3.4: one run at a time on the restore targets, held until the
         // clean after is over (`finish`), or until the command returns when
@@ -1420,6 +1312,11 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
         if (!options.logger) {
             options.logger = make_command_logger();
         }
+        // W4.8 point 13: the connector learns of a stop through its options,
+        // unless its caller put a check of its own there.
+        if (!options.stop_requested) {
+            options.stop_requested = env.stop_requested;
+        }
         const std::unique_ptr<connector::IConnector> source =
             env.make_connector ? env.make_connector(config, secrets, options)
                                : connector::default_connector_registry().create(
@@ -1447,6 +1344,7 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
                  : env.make_run_id ? env.make_run_id()
                                    : make_run_id();
         sampling::check_run_id(run_id); // env.make_run_id's: nothing printed if it fails
+        report.run_id = run_id;
 
         // W4.2 point 8: the run's folder, before the run line and anything
         // that writes. One that is there already is another run's: never
@@ -1477,9 +1375,37 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
         // The run has its run line, and with it its folder: nothing is
         // written into it before the end, so a run that ended before this
         // line left none (and no level of the root made for it).
+        report.run_line = true;
         if (evidence_root) {
             new_folder.keep();
             evidence_folder = new_folder.path();
+            report.folder = RunFolderState::incomplete;
+            report.folder_word = "not_written";
+        }
+
+        // W4.8 point 6: the run is told to whoever keeps a record of it,
+        // before it does anything in the tenant or opens a session in the
+        // backup product. A record that couldn't be written ends the run
+        // here: nothing is done that nobody wrote down.
+        if (env.on_run_started) {
+            bool recorded_run = false;
+            try {
+                recorded_run = env.on_run_started({.run_id = run_id,
+                                                   .started_at = started_at,
+                                                   .restore_point_id = point->id,
+                                                   .restore_point_time = point->backup_time,
+                                                   .connector_type = connector_info->name,
+                                                   .connector_api = connector_info->version});
+            } catch (...) {
+                recorded_run = false;
+            }
+            if (!recorded_run) {
+                return interrupted_before("the run couldn't be recorded as started");
+            }
+        }
+        // W4.8 point 13: a stop before the clean before.
+        if (stop_asked()) {
+            return interrupted_before(kAskedToStop);
         }
 
         // Graph for the cleanup and the check (W3.2, W3.4), one client for
@@ -1488,23 +1414,16 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
         // and SHA-256 only.
         graph_http = options.make_graph_http ? options.make_graph_http(options.logger)
                                              : graph::make_graph_http_client(options.logger);
-        download_http = recorded(env.make_download_http ? env.make_download_http()
-                                                         : graph::make_download_http_client(),
-                                 recorder, "download", RecordedBody::digest);
+        // The download client's own retries wait on the run's sleep too.
+        download_http =
+            recorded(env.make_download_http ? env.make_download_http(options.sleep)
+                                            : graph::make_download_http_client(options.sleep),
+                     recorder, "download", RecordedBody::digest);
         if (!graph_http || !download_http) {
             throw std::logic_error("no HTTP client");
         }
-        graph::GraphClientOptions client_options;
-        client_options.logger = options.logger;
-        client_options.now = options.now;
-        client_options.wall_now = options.wall_now;
-        client_options.sleep = options.sleep;
-        client_options.jitter = options.jitter;
-        graph_client.emplace(*graph_http, config.graph_tenant_id, config.graph_client_id,
-                             std::move(*certificate), client_options);
-        graph::CleanerOptions cleaner_options;
-        cleaner_options.logger = options.logger;
-        cleaner.emplace(*graph_client, targets, cleaner_options);
+        make_graph_and_cleaner(graph_client, cleaner, *graph_http, config,
+                               std::move(*certificate), targets, options);
 
         // W3.4: every run with a run line empties all three targets first,
         // whatever it samples, so an earlier run's copies can't pass for this
@@ -1515,7 +1434,7 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
         timer.start(timing::Span::cleanup_before, timer.try_now());
         cleanup.before = cleaner->clean(graph::CleanupWhen::before_run);
         timer.end(timing::Span::cleanup_before, timer.try_now());
-        out << format_cleanup(*cleanup.before, false);
+        out << format_cleanup(*cleanup.before);
         flush_or_throw(out);
         report_cleanup(err, *cleanup.before);
         if (refused_by_guard(*cleanup.before)) {
@@ -1527,6 +1446,11 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
                           nullptr, false);
         }
 
+        // W4.8 point 13: a stop before choose_sample, which opens the run's
+        // first sessions in the backup product.
+        if (stop_asked()) {
+            return interrupted_before(kAskedToStop);
+        }
         timer.start(timing::Span::sample_select, timer.try_now());
         selection = sampling::choose_sample(*source, config.veeam_org_name, *point, targets,
                                             config.graph_tenant_id, plan, manifest, cursor, run_id);
@@ -1554,6 +1478,10 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
         // W3.2: the targets as they are before the restore, read through
         // Graph as `graph list` reads them. A failure here stops the run
         // before anything is restored.
+        // W4.8 point 13: a stop before the read before.
+        if (stop_asked()) {
+            return interrupted_before(kAskedToStop);
+        }
         verification::TargetsRead before;
         timer.start(timing::Span::target_snapshot, timer.try_now());
         if (const std::exception_ptr failed = read_before(*graph_client, *download_http, targets,
@@ -1561,6 +1489,12 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
             return finish(verification::stop_reason(failed, *phase), nullptr, false);
         }
 
+        // W4.8 point 13: the last boundary, a stop before restore_sample.
+        // From there on the connector asks before each restore request.
+        if (stop_asked()) {
+            timer.end(timing::Span::target_snapshot, timer.try_now());
+            return interrupted_before(kAskedToStop);
+        }
         // The restore's own two readings bound `restore` (W3.5), and no other
         // reading falls between them; `recovery` runs from here to the last
         // item's verdict.
@@ -1640,6 +1574,11 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
         err << "config error: " << e.what() << '\n';
         return stopped();
     } catch (const connector::Error& e) {
+        return restore_failed(e);
+    } catch (const connector::Interrupted& e) {
+        // W4.8 point 13: the connector withdrew a restore request, or left
+        // its poll, on a stop. Its text says whether anything was sent, as
+        // the connector's errors do.
         return restore_failed(e);
     } catch (const graph::GraphError& e) {
         // restore_sample's target guard, which lets Graph's errors out as Graph's.

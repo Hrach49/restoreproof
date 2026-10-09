@@ -10,12 +10,16 @@
 #include <rp/uploader.hpp>
 
 #include <httplib.h>
+#include <spdlog/logger.h>
+#include <spdlog/sinks/ostream_sink.h>
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
 
 #include <chrono>
 #include <functional>
+#include <memory>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -179,4 +183,36 @@ TEST_CASE("uploader: over a real connection every part arrives byte for byte, an
     const rp::UploadAnswer refused = rp::CloudUploader(http, closed).upload("run-0001", parts);
     CHECK_FALSE(refused.accepted);
     CHECK(refused.error == "upload_unreachable");
+}
+
+// W4.8 (docs/decisions.md 2026-10-08 point 12): the service has no stderr, so
+// the cloud client logs where its caller says.
+TEST_CASE("the cloud client logs to the logger it is given; without one it still answers",
+          "[uploader][http]")
+{
+    rp::test::LocalHttpServer server;
+    server.server().Get("/v1/ping", [](const httplib::Request&, httplib::Response& res) {
+        res.status = 204;
+    });
+    std::ostringstream log;
+    const auto logger = std::make_shared<spdlog::logger>(
+        "cloud-test", std::make_shared<spdlog::sinks::ostream_sink_mt>(log));
+    logger->set_level(spdlog::level::debug);
+    const rp::Config config;
+
+    const std::unique_ptr<rp::IHttpClient> given = rp::make_cloud_http_client(config, logger);
+    REQUIRE(given);
+    CHECK(given->get(server.url("/v1/ping")).status == 204);
+    logger->flush();
+    // HttpClient's one debug line per request, and on this logger.
+    CHECK(log.str().find("/v1/ping") != std::string::npos);
+
+    // Null: the commands' stderr logger, which keeps warnings and worse.
+    const std::size_t logged = log.str().size();
+    const std::unique_ptr<rp::IHttpClient> plain = rp::make_cloud_http_client(config);
+    REQUIRE(plain);
+    CHECK(plain->get(server.url("/v1/ping")).status == 204);
+    CHECK(rp::make_cloud_http_client(config, nullptr)->get(server.url("/v1/ping")).status == 204);
+    logger->flush();
+    CHECK(log.str().size() == logged);
 }

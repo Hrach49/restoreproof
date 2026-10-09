@@ -95,4 +95,15 @@ CandidatePool IConnector::list_candidates(const CandidateQuery& /*query*/)
     throw NotImplementedError(describe().name + ": listing candidates isn't implemented");
 }
 
+std::vector<OwnSession> IConnector::own_sessions(std::chrono::system_clock::time_point /*since*/)
+{
+    throw NotImplementedError(describe().name +
+                              ": listing the account's sessions isn't implemented");
+}
+
+void IConnector::end_session(const std::string& /*id*/)
+{
+    throw NotImplementedError(describe().name + ": ending a session isn't implemented");
+}
+
 } // namespace rp::connector

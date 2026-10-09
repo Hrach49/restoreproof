@@ -23,6 +23,14 @@ namespace {
 using nlohmann::json;
 namespace vr = veeam_restore;
 
+// Whether GET /v8/RestoreSessions/{id} says Working.
+bool is_working(VeeamClient& client, const std::string& id)
+{
+    const json session = client.get_json("/v8/RestoreSessions/" + id);
+    const std::string* state = string_at(session, "state");
+    return state != nullptr && *state == "Working";
+}
+
 } // namespace
 
 std::string shown(std::string_view client_ref)
@@ -114,6 +122,28 @@ void preflight(VeeamClient& client, const std::string& account, std::string_view
     }
 }
 
+void stop_working_session(VeeamClient& client, const std::shared_ptr<spdlog::logger>& logger,
+                          const std::string& id)
+{
+    if (!is_working(client, id)) {
+        return;
+    }
+    try {
+        client.stop_session(id);
+    } catch (const TransientError& e) {
+        // 2026-09-30 (veeam-notes §4.4): a Stop timed out with the session
+        // still Working, and a second Stop minutes later stopped it at
+        // once. Read it again and send one more Stop only if it is still
+        // Working; an auth error or a 4xx is not retried.
+        if (!is_working(client, id)) {
+            return;
+        }
+        warn(logger, "veeam_m365: stopping explore session " + id + " failed (" + e.what() +
+                         ") and it is still Working; sending Stop once more");
+        client.stop_session(id);
+    }
+}
+
 void ExploreSessions::set_organization(std::string id, std::string name)
 {
     organization_id_ = std::move(id);
@@ -137,9 +167,26 @@ std::string ExploreSessions::open(connector::ItemKind kind)
         throw;
     }
     // Recorded at once, so the finally path can stop it.
+    record(id);
+    return id;
+}
+
+void ExploreSessions::record(const std::string& id) noexcept
+{
     opened_.push_back(id);
     known_.insert(id);
-    return id;
+    if (!c_.on_opened) {
+        return;
+    }
+    // The caller's note of the session (W4.8 point 6): one that fails costs
+    // the caller a session it doesn't know of, never the call. Whatever it
+    // throws stops here, so no handler written for Veeam's failures reads it.
+    try {
+        c_.on_opened(id);
+    } catch (...) {
+        warn(c_.logger, "veeam_m365: the caller couldn't be told of explore session " + id +
+                            "; it is closed with the others");
+    }
 }
 
 void ExploreSessions::adopt_orphans(connector::ItemKind kind,
@@ -156,8 +203,7 @@ void ExploreSessions::adopt_orphans(connector::ItemKind kind,
             warn(c_.logger, "veeam_m365: the " + kind_name +
                                 " explore POST failed, but Veeam lists explore session " +
                                 found.front() + " made by it; it is closed with the others");
-            opened_.push_back(found.front());
-            known_.insert(found.front());
+            record(found.front());
         } else if (found.size() > 1) {
             std::string ids;
             for (const std::string& id : found) {
@@ -219,33 +265,10 @@ std::string ExploreSessions::left_open() const
     return out;
 }
 
-bool ExploreSessions::is_working(const std::string& id)
-{
-    const json session = c_.client.get_json("/v8/RestoreSessions/" + id);
-    const std::string* state = string_at(session, "state");
-    return state != nullptr && *state == "Working";
-}
-
 bool ExploreSessions::stop_if_working(const std::string& id) noexcept
 {
     try {
-        if (!is_working(id)) {
-            return true;
-        }
-        try {
-            c_.client.stop_session(id);
-        } catch (const TransientError& e) {
-            // 2026-09-30 (veeam-notes §4.4): a Stop timed out with the session
-            // still Working, and a second Stop minutes later stopped it at
-            // once. Read it again and send one more Stop only if it is still
-            // Working; an auth error or a 4xx is not retried.
-            if (!is_working(id)) {
-                return true;
-            }
-            warn(c_.logger, "veeam_m365: stopping explore session " + id + " failed (" +
-                                e.what() + ") and it is still Working; sending Stop once more");
-            c_.client.stop_session(id);
-        }
+        stop_working_session(c_.client, c_.logger, id);
         return true;
     } catch (const std::exception& e) {
         warn(c_.logger, "veeam_m365: couldn't close explore session " + id + ": " + e.what());

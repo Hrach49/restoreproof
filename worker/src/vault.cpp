@@ -147,6 +147,56 @@ struct Security {
     PACL dacl = nullptr;
 };
 
+// One open of `file` with `access` (`flags` is CreateFileW's): the handle,
+// valid or not, and whether it isn't because nothing is at the path.
+File open_once(const std::filesystem::path& file, DWORD access, DWORD flags, bool& absent)
+{
+    File opened{CreateFileW(file.c_str(), access, kShareAll, nullptr, OPEN_EXISTING, flags, nullptr)};
+    const DWORD error = GetLastError();
+    absent = !opened.valid() &&
+             (error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND ||
+              error == ERROR_INVALID_NAME || error == ERROR_BAD_NETPATH ||
+              error == ERROR_BAD_NET_NAME);
+    return opened;
+}
+
+// The owner rule on what open_once answered: `security` is the open file's
+// owner and DACL. Something that is no file on a disk (a device, a pipe) is
+// unreadable.
+OwnerTrust owner_trust(const File& opened, bool absent, Security& security)
+{
+    if (!opened.valid()) {
+        return absent ? OwnerTrust::absent : OwnerTrust::unreadable;
+    }
+    PSID owner = nullptr;
+    PSECURITY_DESCRIPTOR descriptor = nullptr;
+    const DWORD result =
+        GetSecurityInfo(opened.handle, SE_FILE_OBJECT,
+                        OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION, &owner, nullptr,
+                        &security.dacl, nullptr, &descriptor);
+    security.descriptor.pointer = descriptor;
+    const bool disk_file = result == ERROR_SUCCESS && GetFileType(opened.handle) == FILE_TYPE_DISK;
+    return !disk_file ? OwnerTrust::unreadable
+                      : owner_allowed(owner) ? OwnerTrust::trusted : OwnerTrust::not_trusted;
+}
+
+// Reads the open file from its start into `bytes`, as much as `bytes` holds:
+// how many bytes that was, or nullopt when a read failed.
+std::optional<std::size_t> read_into(HANDLE file, std::string& bytes)
+{
+    std::size_t total = 0;
+    bool ok = true;
+    bool ended = false;
+    while (ok && !ended && total < bytes.size()) {
+        DWORD got = 0;
+        ok = ReadFile(file, bytes.data() + total, static_cast<DWORD>(bytes.size() - total), &got,
+                      nullptr) != FALSE;
+        total += got;
+        ended = got == 0;
+    }
+    return ok ? std::optional<std::size_t>{total} : std::nullopt;
+}
+
 // Opens `file` once, with the `access` its caller needs for everything it
 // will do: the owner rule, the read and a grant all work on this one handle,
 // so the file that passed the rule is the file that is read or changed,
@@ -156,11 +206,8 @@ struct Security {
 std::optional<File> open_present(const std::filesystem::path& file, const std::string& name,
                                  DWORD access, DWORD flags)
 {
-    File opened{CreateFileW(file.c_str(), access, kShareAll, nullptr, OPEN_EXISTING, flags, nullptr)};
-    const DWORD error = GetLastError();
-    const bool absent = error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND ||
-                        error == ERROR_INVALID_NAME || error == ERROR_BAD_NETPATH ||
-                        error == ERROR_BAD_NET_NAME;
+    bool absent = false;
+    File opened = open_once(file, access, flags, absent);
     // No throw as the last statement: the brace after it would be a line no
     // test runs.
     if (!opened.valid() && !absent) {
@@ -181,20 +228,14 @@ File open_vault(const std::filesystem::path& file, const std::string& name, DWOR
 
 // The open file's owner and DACL, the owner rule applied. Something that is
 // no file on a disk (a device, a pipe) is never a vault.
-Security inspect(HANDLE file, const std::string& name)
+Security inspect(const File& file, const std::string& name)
 {
     Security security;
-    PSID owner = nullptr;
-    PSECURITY_DESCRIPTOR descriptor = nullptr;
-    const DWORD result =
-        GetSecurityInfo(file, SE_FILE_OBJECT,
-                        OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION, &owner, nullptr,
-                        &security.dacl, nullptr, &descriptor);
-    security.descriptor.pointer = descriptor;
-    if (result != ERROR_SUCCESS || GetFileType(file) != FILE_TYPE_DISK) {
+    const OwnerTrust owner = owner_trust(file, false, security);
+    if (owner == OwnerTrust::unreadable) {
         throw VaultError(name + ": the vault file can't be read");
     }
-    if (!owner_allowed(owner)) {
+    if (owner == OwnerTrust::not_trusted) {
         throw VaultError(name +
                          ": the vault file is owned by neither SYSTEM, Administrators nor this "
                          "account");
@@ -304,7 +345,7 @@ FileSecurity security_for(const std::filesystem::path& file, const std::string& 
         security.buffer = Local{descriptor};
         return security;
     }
-    Security old = inspect(opened->handle, name);
+    Security old = inspect(*opened, name);
     // Kept protected whatever the old file's flags said, so no entry of the
     // folder's is added to the new file.
     InitializeSecurityDescriptor(&security.absolute, SECURITY_DESCRIPTOR_REVISION);
@@ -403,28 +444,57 @@ std::filesystem::path default_vault_path()
     return program_data_dir() / "RestoreProof" / kVaultFileName;
 }
 
+OwnerTrust check_trusted_owner(const std::filesystem::path& file)
+{
+    bool absent = false;
+    // READ_CONTROL alone: the rule needs the owner, never the bytes.
+    const File opened = open_once(file, READ_CONTROL, 0, absent);
+    Security security;
+    return owner_trust(opened, absent, security);
+}
+
+TrustedFile read_trusted_file(const std::filesystem::path& file, std::uintmax_t max_bytes)
+{
+    TrustedFile out;
+    bool absent = false;
+    const File opened = open_once(file, GENERIC_READ, 0, absent);
+    Security security;
+    const OwnerTrust owner = owner_trust(opened, absent, security);
+    out.state = owner == OwnerTrust::absent
+                    ? TrustedRead::absent
+                    : owner == OwnerTrust::not_trusted ? TrustedRead::not_trusted
+                                                       : TrustedRead::unreadable;
+    if (owner != OwnerTrust::trusted) {
+        return out;
+    }
+    if (owner_checked_hook()) {
+        owner_checked_hook()();
+    }
+    // One byte more than the limit, which shows a file that is too large.
+    std::string bytes(static_cast<std::size_t>(max_bytes) + 1, '\0');
+    const std::optional<std::size_t> total = read_into(opened.handle, bytes);
+    out.state = !total ? TrustedRead::unreadable
+                       : *total > max_bytes ? TrustedRead::too_large : TrustedRead::read;
+    if (out.state == TrustedRead::read) {
+        bytes.resize(*total);
+        out.bytes = std::move(bytes);
+    }
+    return out;
+}
+
 Secrets read_vault(const std::filesystem::path& file)
 {
     const std::string name = path_to_utf8(file);
     const File opened = open_vault(file, name, GENERIC_READ);
-    inspect(opened.handle, name);
+    inspect(opened, name);
     // One byte more than the limit, which shows a file that is too large.
     std::string bytes(static_cast<std::size_t>(kMaxVaultFileBytes) + 1, '\0');
     const Wiped wiped_bytes{bytes};
-    std::size_t total = 0;
-    bool ok = true;
-    bool ended = false;
-    while (ok && !ended && total < bytes.size()) {
-        DWORD got = 0;
-        ok = ReadFile(opened.handle, bytes.data() + total,
-                      static_cast<DWORD>(bytes.size() - total), &got, nullptr) != FALSE;
-        total += got;
-        ended = got == 0;
-    }
-    if (!ok || total > kMaxVaultFileBytes) {
+    const std::optional<std::size_t> total = read_into(opened.handle, bytes);
+    if (!total || *total > kMaxVaultFileBytes) {
         throw VaultError(name + ": the vault file can't be read");
     }
-    std::string text = unprotect(std::string_view{bytes.data(), total}, name);
+    std::string text = unprotect(std::string_view{bytes.data(), *total}, name);
     const Wiped wiped_text{text};
     return parse_vault(text, name);
 }
@@ -469,7 +539,7 @@ void grant_vault_read(const std::filesystem::path& file, std::string_view accoun
     const bool may_change = changeable.valid();
     const File opened =
         may_change ? std::move(changeable) : open_vault(file, name, READ_CONTROL);
-    const Security security = inspect(opened.handle, name);
+    const Security security = inspect(opened, name);
     std::vector<BYTE> sid = sid_of(account);
     if (sid.empty()) {
         throw VaultError(name + ": the account " + table_cell(account) +

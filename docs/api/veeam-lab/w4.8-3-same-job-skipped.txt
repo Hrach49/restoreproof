@@ -1,0 +1,58 @@
+W4.8 (#51) live Done-when, step (c): the same jobs file left as it is for two more polls. 2026-10-09T00:59:46Z, commit 995c4ba
+
+-- worker.log from the run's end on, every line
+2026-10-09T00:58:09.894Z info [w48-live-1]   SESSION                               KIND        RESULT   RESTORED  STARTED                       ENDED                         ELAPSED
+2026-10-09T00:58:09.894Z info [w48-live-1]   41fac67c-75be-4187-a499-6df24ff63e18  mail        Success  3 of 3    2026-10-09T00:55:26.8667342Z  2026-10-09T00:55:56.9637216Z  0:00:30
+2026-10-09T00:58:09.894Z info [w48-live-1]   73fbd6eb-4d61-448a-b95a-a2d41dd116a0  mail        Success  1 of 1    2026-10-09T00:55:57.4875118Z  2026-10-09T00:56:22.1274532Z  0:00:24
+2026-10-09T00:58:09.894Z info [w48-live-1]   76f5c300-faa0-47fa-8119-3c8a43dace94  mail        Success  1 of 1    2026-10-09T00:56:22.8804554Z  2026-10-09T00:56:47.2062522Z  0:00:24
+2026-10-09T00:58:09.894Z info [w48-live-1]   69b271b1-3d80-409c-8cf6-25594de798af  sharepoint  Success  5 of 5    2026-10-09T00:56:48.4886945Z  2026-10-09T00:57:32.4732988Z  0:00:43
+2026-10-09T00:58:09.894Z info [w48-live-1]   17392060-f401-4bb7-ac0f-503055848950  onedrive    Success  5 of 5    2026-10-09T00:57:34.0743661Z  2026-10-09T00:58:07.8061151Z  0:00:33
+2026-10-09T00:58:09.894Z info [w48-live-1] restore succeeded: 15 of 15 item(s) restored in 0:02:47
+2026-10-09T00:58:10.143Z info listed 5 item(s) in the test mailbox's Inbox
+2026-10-09T00:58:11.984Z info listed 5 item(s) in the RestoreTarget library
+2026-10-09T00:58:13.886Z info listed 5 item(s) in the test OneDrive folder
+2026-10-09T00:58:13.940Z info [w48-live-1]   TYPE        NAME                                EXPECTED  FOUND  MATCH  VERDICT   REASON  MS
+2026-10-09T00:58:13.940Z info [w48-live-1]   mail        RP-CANARY-0001                      manifest  yes    match  verified  -       0
+2026-10-09T00:58:13.940Z info [w48-live-1]   mail        RP-CANARY-0002                      manifest  yes    match  verified  -       0
+2026-10-09T00:58:13.940Z info [w48-live-1]   mail        RP-CANARY-0003                      manifest  yes    match  verified  -       0
+2026-10-09T00:58:13.940Z info [w48-live-1]   mail        Laptop replacement request          fields    yes    match  verified  -       0
+2026-10-09T00:58:13.941Z info [w48-live-1]   mail        RestoreProof W2.2 second mail 3n5w  fields    yes    match  verified  -       0
+2026-10-09T00:58:13.941Z info [w48-live-1]   sharepoint  rp-canary-01.pdf                    manifest  yes    match  verified  -       305
+2026-10-09T00:58:13.941Z info [w48-live-1]   sharepoint  rp-canary-02.docx                   manifest  yes    match  verified  -       340
+2026-10-09T00:58:13.941Z info [w48-live-1]   sharepoint  rp-canary-03.xlsx                   manifest  yes    match  verified  -       439
+2026-10-09T00:58:13.941Z info [w48-live-1]   sharepoint  room-bookings.xlsx                  metadata  yes    match  verified  -       0
+2026-10-09T00:58:13.941Z info [w48-live-1]   sharepoint  office-floor-plan.png               metadata  yes    match  verified  -       392
+2026-10-09T00:58:13.941Z info [w48-live-1]   onedrive    rp-canary-11.pdf                    manifest  yes    match  verified  -       287
+2026-10-09T00:58:13.941Z info [w48-live-1]   onedrive    rp-canary-12.docx                   manifest  yes    match  verified  -       332
+2026-10-09T00:58:13.941Z info [w48-live-1]   onedrive    rp-canary-13.xlsx                   manifest  yes    match  verified  -       318
+2026-10-09T00:58:13.941Z info [w48-live-1]   onedrive    travel-notes.txt                    metadata  yes    match  verified  -       371
+2026-10-09T00:58:13.942Z info [w48-live-1]   onedrive    whiteboard-sketch.png               metadata  yes    match  verified  -       326
+2026-10-09T00:58:13.942Z info [w48-live-1] check: 15 match, 0 mismatch, 0 missing, 0 error
+2026-10-09T00:58:13.942Z info [w48-live-1] status pass: 15 of 15 item(s) verified: manifest 9, fields 2, metadata 4
+2026-10-09T00:58:14.870Z info cleanup after: the test mailbox's Inbox: deleted 5, gone 0, left 0, skipped 0 in 1 round(s)
+2026-10-09T00:58:16.203Z info cleanup after: the RestoreTarget library: deleted 5, gone 0, left 0, skipped 0 in 1 round(s)
+2026-10-09T00:58:17.426Z info cleanup after: the test OneDrive folder: deleted 5, gone 0, left 0, skipped 0 in 1 round(s)
+2026-10-09T00:58:17.426Z info [w48-live-1] cleanup after ok: deleted 5 mail, 5 sharepoint, 5 onedrive
+2026-10-09T00:58:17.429Z info [w48-live-1] STEP                  TIME         NOTE
+2026-10-09T00:58:17.429Z info [w48-live-1] restore_point_lookup  0:00:00.096
+2026-10-09T00:58:17.429Z info [w48-live-1] cleanup_before        0:00:01.493
+2026-10-09T00:58:17.429Z info [w48-live-1] sample_select         0:00:05.674
+2026-10-09T00:58:17.429Z info [w48-live-1] target_snapshot       0:00:00.811
+2026-10-09T00:58:17.429Z info [w48-live-1] restore               0:02:47.198
+2026-10-09T00:58:17.429Z info [w48-live-1] restore_submit        0:00:01.088
+2026-10-09T00:58:17.430Z info [w48-live-1] restore_wait          0:02:41.304
+2026-10-09T00:58:17.430Z info [w48-live-1] verify                0:00:03.994
+2026-10-09T00:58:17.430Z info [w48-live-1] recovery              0:02:51.192
+2026-10-09T00:58:17.430Z info [w48-live-1] cleanup_after         0:00:03.484
+2026-10-09T00:58:17.430Z info [w48-live-1] total                 0:03:02.816
+2026-10-09T00:58:17.923Z info [w48-live-1] signed 91e80b4b18d6bed6185b0a27516b513a54af515510ca2d731c96a6e3bacd7e3f key 9dfab6eadaa1d04a22dcc966aac7a53bcff8bbe0077232485f6143cd9c4d0ca5
+2026-10-09T00:58:17.923Z info [w48-live-1] timestamped 2026-10-09T00:56:57Z
+2026-10-09T00:58:17.923Z info [w48-live-1] evidence C:\ProgramData\RestoreProof\runs\w48-live-1: result.json, signature.json, timestamp.tst, items.csv, veeam-session.log
+2026-10-09T00:58:17.932Z info [w48-live-1] queued C:\ProgramData\RestoreProof\outbox\w48-live-1
+2026-10-09T00:58:17.944Z info run w48-live-1: ended pass; queued
+2026-10-09T00:58:17.992Z info sent w48-live-1
+2026-10-09T00:58:18.006Z info skipped w48-live-1: already sent
+
+
+-- runs started in that time: 0
+(no running.json) at 2026-10-09T00:59:46Z

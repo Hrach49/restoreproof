@@ -153,7 +153,7 @@ TEST_CASE("ResultBuilder: a document the schema refuses is `schema`, with where"
     SECTION("a status code outside the table")
     {
         facts.verdict.status = rp::verification::RunStatus::error;
-        facts.verdict.error_code = "job_invalid";
+        facts.verdict.error_code = "teapot";
         where = "/status/error_code";
     }
     const ResultError error = error_of(parts);

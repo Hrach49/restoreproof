@@ -1,0 +1,56 @@
+W4.8 (#51) live Done-when, step (g): the teardown. 2026-10-09T01:09:28Z, commit 995c4ba
+
+command: rpworker service stop
+2026-10-09T01:09:28Z to 2026-10-09T01:09:29Z
+exit code: 0
+--- stdout
+stopped RestoreProof in 0.0 s
+--- stderr
+
+
+-- worker.log (165 lines) searched for the vault's values and key shapes, counts only: veeam_password 0, graph_cert_pfx_base64 0, graph_cert_password 0, signing_key_base64 0, jwt 0, pem 0, mii 0
+
+-- the four sent folders and worker.log kept outside the repository (C:\restoreproof-runs\w48-live)
+
+-- the account's entries taken away, before the uninstall
+entries of NT SERVICE\RestoreProof removed
+C:\ProgramData\RestoreProof\vault.bin: owner BUILTIN\Administrators; the account's entries: none
+C:\ProgramData\Microsoft\Crypto\RSA\MachineKeys\<Veeam key file>: owner BUILTIN\Administrators; the account's entries: none
+C:\ProgramData\RestoreProof\state: owner BUILTIN\Administrators; the account's entries: none
+C:\ProgramData\RestoreProof\runs: owner BUILTIN\Administrators; the account's entries: none
+C:\ProgramData\RestoreProof\outbox: owner BUILTIN\Administrators; the account's entries: none
+C:\ProgramData\RestoreProof\sent: owner BUILTIN\Administrators; the account's entries: none
+
+command: rpworker service uninstall
+2026-10-09T01:09:29Z to 2026-10-09T01:09:30Z
+exit code: 0
+--- stdout
+uninstalled RestoreProof
+--- stderr
+
+
+config copy removed: True; state removed: True; logs removed: True
+
+-- afterwards
+> sc query RestoreProof
+[SC] EnumQueryServicesStatus:OpenService FAILED 1060:
+The specified service does not exist as an installed service.
+
+runs\:
+  w42-done-when-1: items.csv 5746, result.json 22606, veeam-session.log 7371
+  w43-done-when-1: items.csv 5749, result.json 22347, signature.json 322, veeam-session.log 7490
+  w44-done-when-1: items.csv 5753, result.json 21997, signature.json 322, timestamp.tst 5998, veeam-session.log 7370
+  w44-tsa-down-1: items.csv 5741, result.json 21954, signature.json 322, veeam-session.log 7363
+  w45-done-when-1: items.csv 5807, result.json 22239, signature.json 322, timestamp.tst 5999, veeam-session.log 7510
+outbox\:
+sent\:
+  w46-done-when-1: items.csv 145, manifest.json 371, result.json 2291, signature.json 322, timestamp.tst 5998, veeam-session.log 0
+  w46-done-when-2: items.csv 5739, manifest.json 371, result.json 21971, signature.json 322, timestamp.tst 5997, veeam-session.log 7360
+state\: False  w48\: False  logs\: False
+
+C:\ProgramData\RestoreProof\vault.bin: 0 entry(ies) of the account or of an unresolved service SID
+C:\ProgramData\RestoreProof\runs: 0 entry(ies) of the account or of an unresolved service SID
+C:\ProgramData\RestoreProof\outbox: 0 entry(ies) of the account or of an unresolved service SID
+C:\ProgramData\RestoreProof\sent: 0 entry(ies) of the account or of an unresolved service SID
+
+-- Veeam: no session Working at 2026-10-09T01:09:31Z

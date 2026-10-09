@@ -1482,7 +1482,9 @@
             "empty_sample",
             "not_run",
             "restore_contradiction",
-            "result_invalid"
+            "result_invalid",
+            "interrupted",
+            "job_invalid"
           ]
         },
         "message": {

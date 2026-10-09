@@ -37,6 +37,9 @@ constexpr std::string_view kBackupInfrastructure = "backup_infrastructure";
 constexpr std::string_view kNotInBackup = "not_in_backup";
 constexpr std::string_view kRestoreContradiction = "restore_contradiction";
 constexpr std::string_view kResultInvalid = "result_invalid";
+constexpr std::string_view kInterrupted = "interrupted";
+constexpr std::string_view kJobInvalid = "job_invalid";
+constexpr std::string_view kTargetGuard = "target_guard";
 
 // StatusWarning's codes, in the order a verdict lists them: warning_codes().
 constexpr std::string_view kBackupSession = "backup_session";
@@ -63,7 +66,7 @@ struct ErrorCode {
     int exit = exit_code::service;
 };
 
-constexpr std::array<ErrorCode, 18> kCodes{{
+constexpr std::array<ErrorCode, 20> kCodes{{
     {"config", "the configuration isn't usable", false, kNoSeverity, exit_code::config},
     {"internal", "an unexpected failure", false, kNoSeverity, exit_code::config},
     {"backup_auth", "the backup product refused the credentials", false, kNoSeverity,
@@ -75,7 +78,7 @@ constexpr std::array<ErrorCode, 18> kCodes{{
     // In the vocabulary, not yet a stop's (docs/decisions.md, W3.3 build notes 8).
     {"no_restore_point", "no restore point to restore from", false, kNoSeverity,
      exit_code::service},
-    {"target_guard", "the restore-target guard refused", true, 0, exit_code::service},
+    {kTargetGuard, "the restore-target guard refused", true, 0, exit_code::service},
     {"backup", "the backup product reported an error", false, kNoSeverity, exit_code::service},
     {"graph_auth", "Microsoft Graph refused the Worker's sign-in", true, 1, exit_code::auth},
     {"graph_permission", "Microsoft Graph refused a permission the Worker relies on", true, 2,
@@ -91,6 +94,11 @@ constexpr std::array<ErrorCode, 18> kCodes{{
     {kRestoreContradiction, "", false, kNoSeverity, exit_code::service},
     // result_invalid()'s: the Worker's own fault, as internal (W4.1 point 5).
     {kResultInvalid, "", false, kNoSeverity, exit_code::config},
+    // A stop asked of the Worker itself (W4.8 points 13 and 14): a stop's
+    // code, no service's fault.
+    {kInterrupted, "the run was interrupted", false, kNoSeverity, exit_code::service},
+    // job_invalid()'s: a job the Worker was handed and can't run (W4.8 point 4).
+    {kJobInvalid, "", false, kNoSeverity, exit_code::config},
 }};
 
 // Every item error's code ranks, or row 7 would have nothing to pick; each
@@ -501,6 +509,36 @@ bool restore_sent(const RunFacts& facts) noexcept
     return facts.stop && facts.stop->phase == RunPhase::restore && !facts.stop->nothing_restored;
 }
 
+// How a run ended, in the status's own words: "pass", "fail", "error <code>",
+// the code only when the table holds it, so nothing else is ever repeated.
+std::string ended_as(RunStatus status, std::string_view code)
+{
+    std::string ended{to_string(status)};
+    if (status == RunStatus::error && find_code(code)) {
+        ended += " " + std::string{code};
+    }
+    return ended;
+}
+
+// What a replaced verdict keeps: whether items may be in the targets, the
+// item count and the warnings. The item verdicts go, as rows 1 to 4 leave them.
+RunVerdict kept_of(const RunVerdict& verdict)
+{
+    RunVerdict out;
+    out.restore_sent = verdict.restore_sent;
+    out.items = verdict.items;
+    out.warnings = verdict.warnings;
+    return out;
+}
+
+// A verdict that says nothing of items, for a result written afterwards.
+RunVerdict bare_verdict(bool restore_sent)
+{
+    RunVerdict out;
+    out.restore_sent = restore_sent;
+    return out;
+}
+
 // "<code> <n>, ..." for the unchecked items, in severity order.
 std::string unchecked_codes(const std::vector<UncheckedItem>& unchecked)
 {
@@ -565,7 +603,9 @@ RunStop stop_reason(std::exception_ptr error, RunPhase phase)
         // The check's own mapping: a Graph failure has one code wherever it happens.
         return stop(read_error_code(std::current_exception()), e);
     } catch (const connector::SafetyViolation& e) {
-        return stop("target_guard", e);
+        return stop(kTargetGuard, e);
+    } catch (const connector::Interrupted& e) {
+        return stop(kInterrupted, e);
     } catch (const connector::AuthError& e) {
         return stop("backup_auth", e);
     } catch (const connector::TransientError& e) {
@@ -701,17 +741,54 @@ RunVerdict result_invalid(const RunVerdict& verdict)
 {
     // Only words of the status's own: a code the table doesn't hold isn't
     // repeated.
-    std::string ended{to_string(verdict.status)};
-    if (verdict.status == RunStatus::error && find_code(verdict.error_code)) {
-        ended += " " + verdict.error_code;
-    }
-    RunVerdict out;
-    out.restore_sent = verdict.restore_sent;
-    out.items = verdict.items;
-    out.warnings = verdict.warnings;
+    return error_verdict(kept_of(verdict), kResultInvalid,
+                         "the result isn't valid restoreproof.result.v1; the run itself ended " +
+                             ended_as(verdict.status, verdict.error_code));
+}
+
+bool interrupt_replaces(const RunVerdict& verdict) noexcept
+{
+    return verdict.status == RunStatus::error && verdict.error_code != kInterrupted &&
+           verdict.error_code != kTargetGuard && verdict.error_code != kResultInvalid;
+}
+
+RunVerdict interrupted(const RunVerdict& verdict)
+{
+    return error_verdict(kept_of(verdict), kInterrupted,
+                         "the Worker was stopped during the run; the run itself ended " +
+                             ended_as(verdict.status, verdict.error_code));
+}
+
+RunVerdict interrupted_before_result(bool restore_requested)
+{
     return error_verdict(
-        std::move(out), kResultInvalid,
-        "the result isn't valid restoreproof.result.v1; the run itself ended " + ended);
+        bare_verdict(restore_requested), kInterrupted,
+        restore_requested ? "the run was interrupted before its result was written; a restore "
+                            "request may have been sent, so items may be in the restore targets"
+                          : "the run was interrupted before its result was written; no restore "
+                            "request had been sent");
+}
+
+RunVerdict ended_without_result(bool restore_requested)
+{
+    return error_verdict(bare_verdict(restore_requested), kInternal,
+                         "the run ended without a result the Worker could write; this result "
+                         "was written afterwards");
+}
+
+RunVerdict result_invalid_afterwards(RunStatus ended_status, std::string_view ended_code,
+                                     bool restore_requested)
+{
+    RunVerdict ended = bare_verdict(restore_requested);
+    ended.status = ended_status;
+    ended.error_code = std::string{ended_code};
+    return result_invalid(ended);
+}
+
+RunVerdict job_invalid(std::string_view key)
+{
+    return error_verdict(bare_verdict(false), kJobInvalid,
+                         std::format("the job isn't a valid job ({}); nothing was done", key));
 }
 
 std::vector<std::string_view> error_codes()

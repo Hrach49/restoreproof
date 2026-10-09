@@ -17,6 +17,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -47,8 +48,12 @@ struct DownloadOptions {
 // Windows store, full verification, no CA file, no pin) with a logger whose
 // only sink is a null sink, so the download URL, which carries a credential,
 // is never logged by HttpClient whatever redact() knows. A separate instance
-// from GraphClient's, so no state is shared.
-std::unique_ptr<IHttpClient> make_download_http_client();
+// from GraphClient's, so no state is shared. `sleep` is the wait between the
+// client's own attempts (HttpClientOptions::sleep; null =
+// std::this_thread::sleep_for): the pipeline hands its own, which the service
+// ends early on a stop (W4.8 point 13).
+std::unique_ptr<IHttpClient>
+make_download_http_client(std::function<void(std::chrono::milliseconds)> sleep = {});
 
 // nullopt when `url` may be fetched without a token, else why not (never
 // quoting the URL). `tenant_host` is the host of test_site_id,

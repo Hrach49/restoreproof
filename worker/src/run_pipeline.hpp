@@ -9,6 +9,7 @@
 // run_restore_command (rp/restore_command.hpp).
 
 #include "command_config.hpp"
+#include "run_folder_tail.hpp"
 
 #include <rp/canary_manifest.hpp>
 #include <rp/checker.hpp>
@@ -49,6 +50,44 @@ struct PipelineArgs {
     // finished run folder is queued as <root>\outbox\<run_id>. Only with
     // `evidence`; set by the command, as it is.
     std::optional<std::string_view> outbox;
+    // W4.8 point 2: the config, already loaded (the service's, read at its
+    // start); the file isn't read again, and everything load_config holds a
+    // file to was held when it was loaded. `config` still names the file:
+    // the manifest's default place is beside it. Null = the file is read.
+    // Borrowed for the run.
+    const Config* loaded = nullptr;
+    // W4.8 point 3: a job's screenshots_enabled, replacing the config's for
+    // this run; nullopt = the config's.
+    std::optional<bool> screenshots;
+};
+
+// What became of one call of run_pipeline (docs/decisions.md 2026-10-08, W4.8
+// point 5), filled on every way out: what the service decides from, never
+// from the exit code, which can't tell a config error from a pass whose
+// folder couldn't be queued.
+struct PipelineReport {
+    // The run's ID once it is known: --run-id's, or the one the run made;
+    // empty for a run without --run-id that ended before it made one.
+    std::string run_id;
+    // Whether the run line was written: from then on the run has a status,
+    // and with --evidence a folder.
+    bool run_line = false;
+    // The run's status and its error code (empty for pass and fail), as the
+    // status line has them; nullopt when none was decided: no run line, or an
+    // unexpected failure deciding it.
+    std::optional<verification::RunStatus> status;
+    std::string error_code;
+    // Only when the status is error result_invalid: the status and code the
+    // run itself had ended with, which result_invalid replaced.
+    std::optional<verification::RunStatus> replaced_status;
+    std::string replaced_code;
+    // The run folder, and why (RunFolderOutcome::word).
+    RunFolderState folder = RunFolderState::none;
+    std::string folder_word;
+    // The run stopped in its restore phase without the connector's promise
+    // that nothing was sent: Veeam may still be writing into the restore
+    // targets, and the run skipped its clean after.
+    bool restore_may_still_run = false;
 };
 
 // Whether each of those options in `options` (--mail --sp --od --point
@@ -163,10 +202,41 @@ struct Presentation {
 //
 // The run but for what --record wrote, which the command prints last:
 // `recorder` is set once the recording is open. Returns an rp::exit_code.
-// No exception escapes.
+// No exception escapes. `report`, when given, says what became of the run.
 int run_pipeline(const PipelineArgs& args, std::ostream& out, std::ostream& err,
                  const RestoreCommandEnv& env, std::shared_ptr<FixtureRecorder>& recorder,
-                 const Presentation& presentation);
+                 const Presentation& presentation, PipelineReport* report = nullptr);
+
+// What clean_restore_targets answers.
+enum class TargetsClean {
+    ok,          // all three targets are empty
+    incomplete,  // the clean ran and left something, skipped something or met an error
+    lock_held,   // another run holds the run mutex: nothing was done, not yet
+    not_started  // the vault, the certificate or the Graph client failed: nothing was done
+};
+
+// "ok", "incomplete", "lock_held" or "not_started".
+std::string_view to_string(TargetsClean clean) noexcept;
+
+// The clean a run that didn't reach its own never made (docs/decisions.md
+// 2026-10-08, W4.8 point 9): the Cleaner's before_run clean (rp/cleaner.hpp,
+// unchanged) over `config`'s three restore targets, under the run mutex
+// (env.take_run_lock, without waiting; an abandoned one is `lock_held` for
+// this try, as for a run), with the Graph certificate of the vault `vault`
+// names (env.load_secrets) and the Graph client made as a run makes its own
+// (env.connector_options: make_graph_http, logger, clocks, sleep). Writes to
+// `out` what a run prints for its clean before: "cleanup before
+// <ok|incomplete>: deleted ...", then each target's "cleanup error: ..." and
+// "warning: cleanup: ..." line; nothing for lock_held and not_started. Asks
+// nothing of the backup product. Never throws.
+TargetsClean clean_restore_targets(const Config& config, const std::filesystem::path& vault,
+                                   std::ostream& out, const RestoreCommandEnv& env) noexcept;
+
+// `rpworker test`'s presentation without --json (src/test_command.cpp): the
+// recording's label "test", no per-item rows after the restore, its one
+// table after the check, no hooks. What the service runs a job with (W4.8
+// point 5).
+Presentation test_presentation();
 
 // "<blank line>\ncheck: <a> match, <b> mismatch, <c> missing, <d> error\n":
 // the check's count line, the same in both commands.

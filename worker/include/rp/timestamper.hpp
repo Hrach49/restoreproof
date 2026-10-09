@@ -75,7 +75,10 @@ struct TimestampOutcome {
     std::string token;         // the TimeStampToken's DER; empty when there is none
     std::int64_t gen_time = 0; // the token's genTime, seconds since 1970 UTC
     std::string_view error;    // a timestamp_code, with no token only
-    int attempts = 0;          // requests sent or tried, 1 to kTimestampAttempts
+    // Requests sent or tried, 1 to kTimestampAttempts; 0 only when a stop
+    // came before the first (TimestamperOptions::stop_requested), the error
+    // then timestamp_internal.
+    int attempts = 0;
 
     bool stamped() const noexcept { return !token.empty(); }
 };
@@ -91,9 +94,14 @@ struct TimestamperOptions {
     const Rfc3161* primitive = &openssl_rfc3161();
     // The nonce of each request; null = the primitive's random_nonce.
     std::function<std::optional<std::uint64_t>()> nonce;
-    // The wait between attempts (the pipeline's own sleep, which W4.8 can
-    // interrupt); null = the attempts follow at once.
+    // The wait between attempts (the pipeline's own sleep, which the service
+    // ends early on a stop); null = the attempts follow at once.
     std::function<void(std::chrono::milliseconds)> sleep;
+    // Whether the Worker was asked to stop (W4.8 point 13); null = never.
+    // Asked before each attempt, and before the wait that precedes it: after
+    // a yes no further attempt is made and no wait begun. What it throws is
+    // that attempt's failure (timestamp_internal), as for the sleep.
+    std::function<bool()> stop_requested;
     // One debug line per attempt (never a body); null = none.
     std::shared_ptr<spdlog::logger> logger;
 };
@@ -111,7 +119,12 @@ public:
     // TimeStampResp; status granted (0), never grantedWithMods; a token that
     // is one TimeStampToken; the nonce sent; a SHA-256 imprint equal to
     // `digest`; and the token verifies under the CA at its own time
-    // (Rfc3161::verify_token, the verifiers' own check). Never throws.
+    // (Rfc3161::verify_token, the verifiers' own check). After a stop
+    // (stop_requested) no further attempt is made: the answer is the last
+    // attempt's code with the attempts made, or timestamp_internal with 0
+    // attempts when the stop came before the first, never tsa_unreachable for
+    // a TSA that wasn't asked. An answer already taken stays taken. Never
+    // throws.
     TimestampOutcome stamp(std::span<const unsigned char, kSha256Bytes> digest) const noexcept;
 
 private:

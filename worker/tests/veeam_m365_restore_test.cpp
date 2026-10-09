@@ -20,9 +20,12 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <functional>
+#include <memory>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -2075,4 +2078,602 @@ TEST_CASE("restore_sample timings: each session measured on its own", "[veeam_m3
     CHECK(result.sessions[1].wait_time == std::chrono::nanoseconds{15s});
     CHECK(result.sessions[2].submit_time == std::chrono::nanoseconds{10s});
     CHECK(result.sessions[2].wait_time == std::chrono::nanoseconds{5s});
+}
+
+// ---- W4.8: the caller's word before a restore POST, a stop, the sessions opened ------------
+// docs/decisions.md 2026-10-08, W4.8 points 6, 9 and 13. Failure paths first.
+
+namespace {
+
+std::string not_let_go(const std::string& kind)
+{
+    return "veeam_m365: the " + kind + " restore request was not let go";
+}
+
+std::string stopped_before(const std::string& kind)
+{
+    return "veeam_m365: the Worker was asked to stop before the " + kind +
+           " restore request was sent";
+}
+
+const std::string kEarlierSent = "; the earlier restore request(s) of this call were sent";
+
+bool ends_nothing_restored(const std::string& text)
+{
+    return text.ends_with(connector::kNothingRestored);
+}
+
+// A Stop that times out `failures` times, then 204. No Catch2 assertion in it.
+rp::test::FakeHttpClient::Handler stop_times_out(int failures)
+{
+    auto sent = std::make_shared<std::atomic<int>>(0);
+    return [sent, failures](const HttpRequest& request) -> HttpResponse {
+        if (sent->fetch_add(1) < failures) {
+            throw rp::HttpError("POST " + request.url + ": Operation timed out",
+                                rp::TransportError::timeout, 0, 1);
+        }
+        return load_fixture("veeam", "stop-204");
+    };
+}
+
+// One entry of GET /v8/RestoreSessions: the recorded list's first, edited by
+// hand here (id, state, account, creation time), not recorded as such.
+json listed_session(const std::string& id, const std::string& state, const std::string& by,
+                    const std::string& created)
+{
+    json entry = load_fixture_json("veeam", "w24-mail-x1-sessions-after-post")
+                     .at("body")
+                     .at("results")
+                     .at(0);
+    entry["id"] = id;
+    entry["state"] = state;
+    entry["initiatedBy"] = by;
+    entry["creationTime"] = created;
+    return entry;
+}
+
+HttpResponse session_page(int limit, int offset, const json& results)
+{
+    return make_response(
+        200, json{{"offset", offset}, {"limit", limit}, {"results", results}}.dump());
+}
+
+const std::string kOwnSince = "2026-09-28T21:26:28Z";
+
+std::string own_sessions_path()
+{
+    return "/v8/RestoreSessions?startTimeFrom=" + kOwnSince +
+           "&orderBy=CreationTime&orderAsc=false";
+}
+
+std::string session_id(int n)
+{
+    return "a0000000-0000-4000-8000-00000000000" + std::to_string(n);
+}
+
+} // namespace
+
+TEST_CASE("restore_sample: a restore request the caller doesn't let go is never sent, and the "
+          "certificate isn't exported",
+          "[veeam_m365][w4.8]")
+{
+    RestoreRig rig;
+    const Run run = mail_x1();
+    rig.serve(run);
+    int asked = 0;
+    SECTION("answered false")
+    {
+        rig.before_restore_request = [&] {
+            ++asked;
+            return false;
+        };
+    }
+    SECTION("a callback that throws answered false")
+    {
+        rig.before_restore_request = [&]() -> bool {
+            ++asked;
+            throw std::runtime_error("the record couldn't be written");
+        };
+    }
+
+    const Caught thrown = caught_by([&] { rig.restore(restore_spec({mail_x1_item()})); });
+
+    CHECK(thrown.kind == "Interrupted");
+    CHECK(thrown.what == not_let_go("mail") + "; nothing was restored");
+    CHECK(ends_nothing_restored(thrown.what));
+    CHECK(asked == 1);
+    CHECK(rig.restore_posts().empty());
+    CHECK(rig.exporter->calls == 0);
+    // Nothing runs: the explore session is closed as after any other end.
+    CHECK(rig.stops(run.explore()) == 1);
+    check_no_secrets(rig, thrown.what);
+}
+
+TEST_CASE("restore_sample: a later restore request not let go: the first was sent, so the text "
+          "doesn't say nothing was restored",
+          "[veeam_m365][w4.8]")
+{
+    RestoreRig rig;
+    const std::vector<Run> runs{mail_x5(), sp_x1(), od_x1()};
+    for (const Run& run : runs) {
+        rig.serve(run);
+    }
+    int asked = 0;
+    std::vector<std::size_t> posts_when_asked;
+    std::vector<int> exports_when_asked;
+    rig.before_restore_request = [&] {
+        posts_when_asked.push_back(rig.restore_posts().size());
+        exports_when_asked.push_back(rig.exporter->calls);
+        return ++asked == 1;
+    };
+
+    const Caught thrown = caught_by(
+        [&] { rig.restore(restore_spec(mail_x5_items(), {sp_x1_item()}, {od_x1_item()})); });
+
+    CHECK(thrown.kind == "Interrupted");
+    CHECK(thrown.what == not_let_go("sharepoint") + kEarlierSent);
+    CHECK_FALSE(ends_nothing_restored(thrown.what));
+    CHECK(asked == 2);
+    // Asked before each POST and before its certificate is exported.
+    CHECK(posts_when_asked == std::vector<std::size_t>{0, 1});
+    CHECK(exports_when_asked == std::vector<int>{0, 1});
+    const std::vector<HttpRequest> posts = rig.restore_posts();
+    REQUIRE(posts.size() == 1);
+    CHECK(posts[0].url == restore_url(runs[0]));
+    CHECK(rig.exporter->calls == 1);
+    // The first restore stopped and was listed alone: every explore session is closed.
+    for (const Run& run : runs) {
+        CHECK(rig.stops(run.explore()) == 1);
+    }
+    CHECK_THAT(thrown.what, !ContainsSubstring("left open"));
+}
+
+TEST_CASE("restore_sample: a stop before the first restore request: no POST, no export, nothing "
+          "was restored, and the caller isn't asked",
+          "[veeam_m365][w4.8]")
+{
+    RestoreRig rig;
+    const Run run = mail_x1();
+    rig.serve(run);
+    int asked = 0;
+    rig.before_restore_request = [&] {
+        ++asked;
+        return true;
+    };
+    SECTION("stop asked for")
+    {
+        rig.stop_requested = [] { return true; };
+    }
+    SECTION("a stop check that throws answered yes")
+    {
+        rig.stop_requested = []() -> bool { throw std::runtime_error("no signal"); };
+    }
+
+    const Caught thrown = caught_by([&] { rig.restore(restore_spec({mail_x1_item()})); });
+
+    CHECK(thrown.kind == "Interrupted");
+    CHECK(thrown.what == stopped_before("mail") + "; nothing was restored");
+    CHECK(asked == 0);
+    CHECK(rig.restore_posts().empty());
+    CHECK(rig.exporter->calls == 0);
+    CHECK(rig.stops(run.explore()) == 1);
+}
+
+TEST_CASE("restore_sample: a stop before the second restore request: one POST, and no further "
+          "one",
+          "[veeam_m365][w4.8]")
+{
+    RestoreRig rig;
+    const std::vector<Run> runs{mail_x5(), sp_x1(), od_x1()};
+    for (const Run& run : runs) {
+        rig.serve(run);
+    }
+    int asked = 0;
+    rig.before_restore_request = [&] {
+        ++asked;
+        return true;
+    };
+    // The stop comes once the first restore has stopped and been read.
+    const std::string statistics = "/v8/RestoreSessions/" + runs[0].restore() + "/Statistics";
+    rig.stop_requested = [&] { return rig.gets(statistics) >= 1; };
+
+    const Caught thrown = caught_by(
+        [&] { rig.restore(restore_spec(mail_x5_items(), {sp_x1_item()}, {od_x1_item()})); });
+
+    CHECK(thrown.kind == "Interrupted");
+    CHECK(thrown.what == stopped_before("sharepoint") + kEarlierSent);
+    CHECK_FALSE(ends_nothing_restored(thrown.what));
+    CHECK(asked == 1);
+    CHECK(rig.restore_posts().size() == 1);
+    CHECK(rig.exporter->calls == 1);
+    for (const Run& run : runs) {
+        CHECK(rig.stops(run.explore()) == 1);
+    }
+}
+
+TEST_CASE("restore_sample: a stop during the poll ends it after that wait: no verdict, the "
+          "sessions left open, no tight loop",
+          "[veeam_m365][w4.8]")
+{
+    // After how many poll waits the stop is asked for; 0: while the POST was out.
+    const std::size_t waits = GENERATE(as<std::size_t>{}, 0, 1, 3);
+    CAPTURE(waits);
+    RestoreRig rig;
+    const Run run = mail_x1();
+    rig.serve(run);
+    rig.veeam.on(HttpMethod::get, run.session_url(run.restore()),
+                 {fixture(run.file("session-working"))});
+    rig.stop_requested = [&] {
+        return !rig.restore_posts().empty() && rig.clock.count(5s) >= waits;
+    };
+
+    const Caught thrown = caught_by([&] { rig.restore(restore_spec({mail_x1_item()})); });
+
+    CHECK(thrown.kind == "Interrupted");
+    CHECK(thrown.what == "veeam_m365: restore session " + run.restore() +
+                             " (mail) was still Working when the Worker was asked to stop; no "
+                             "verdict; left open, as a restore may still be running: restore "
+                             "session " +
+                             run.restore() + ", explore session(s) " + run.explore());
+    CHECK_FALSE(ends_nothing_restored(thrown.what));
+    // One read per wait and no more: the stop is seen after the wait it ended.
+    const std::size_t expected = std::max<std::size_t>(waits, 1);
+    CHECK(rig.clock.count(5s) == expected);
+    CHECK(rig.veeam.count(HttpMethod::get, run.session_url(run.restore())) == expected);
+    CHECK(rig.restore_posts().size() == 1);
+    // As at the 20 min deadline: nothing of ours is stopped under a running restore.
+    CHECK(rig.stops(run.explore()) == 0);
+    CHECK(rig.gets("/v8/RestoreSessions/" + run.explore()) == 0);
+    CHECK(rig.gets("/v8/RestoreSessions/" + run.restore() + "/Statistics") == 0);
+    CHECK_THAT(rig.log(), ContainsSubstring("explore session(s) left open"));
+}
+
+TEST_CASE("restore_sample: a restore that has stopped when a stop is asked for still gets its "
+          "verdict",
+          "[veeam_m365][w4.8]")
+{
+    RestoreRig rig;
+    const Run run = mail_x1();
+    rig.serve(run);
+    rig.veeam.on(HttpMethod::get, run.session_url(run.restore()), {fixture(run.file("session"))});
+    rig.stop_requested = [&] { return !rig.restore_posts().empty(); };
+
+    const connector::RestoreResult result = rig.restore(restore_spec({mail_x1_item()}));
+
+    CHECK(result.status == connector::RestoreStatus::succeeded);
+    CHECK(rig.clock.count(5s) == 0);
+    CHECK(rig.stops(run.explore()) == 1);
+}
+
+TEST_CASE("restore_sample: the caller is told every explore session, once, before any restore "
+          "request",
+          "[veeam_m365][w4.8]")
+{
+    RestoreRig rig;
+    const std::vector<Run> runs{mail_x5(), sp_x1(), od_x1()};
+    for (const Run& run : runs) {
+        rig.serve(run);
+    }
+    std::vector<std::string> told;
+    std::size_t posts_when_told = 0;
+    rig.on_session_opened = [&](std::string_view id) {
+        told.emplace_back(id);
+        posts_when_told += rig.restore_posts().size();
+    };
+
+    const connector::RestoreResult result =
+        rig.restore(restore_spec(mail_x5_items(), {sp_x1_item()}, {od_x1_item()}));
+
+    CHECK(result.status == connector::RestoreStatus::succeeded);
+    CHECK(told == std::vector<std::string>{runs[0].explore(), runs[1].explore(), runs[2].explore()});
+    CHECK(posts_when_told == 0);
+}
+
+TEST_CASE("restore_sample: a callback for an opened session that throws is a warning, and the "
+          "run goes on",
+          "[veeam_m365][w4.8]")
+{
+    RestoreRig rig;
+    const Run run = mail_x1();
+    rig.serve(run);
+    int told = 0;
+    rig.on_session_opened = [&](std::string_view) {
+        ++told;
+        throw std::runtime_error("the record couldn't be written");
+    };
+
+    const connector::RestoreResult result = rig.restore(restore_spec({mail_x1_item()}));
+
+    CHECK(result.status == connector::RestoreStatus::succeeded);
+    CHECK(told == 1);
+    CHECK(rig.restore_posts().size() == 1);
+    // Still the run's own to close.
+    CHECK(rig.stops(run.explore()) == 1);
+    CHECK_THAT(rig.log(), ContainsSubstring("veeam_m365: the caller couldn't be told of explore "
+                                            "session " +
+                                            run.explore()));
+}
+
+TEST_CASE("restore_sample: an explore session found after its POST failed is told to the caller "
+          "too",
+          "[veeam_m365][w4.8]")
+{
+    RestoreRig rig;
+    const Run run = mail_x1();
+    rig.serve(run);
+    rig.veeam.on(HttpMethod::post, url("/v8/Organizations/" + kOrgId + "/explore"), dropped);
+    const std::string orphan = "e0000000-0000-4000-8000-000000000003";
+    const std::string restore = run.restore();
+    const std::string explore = run.explore();
+    rig.veeam.on(HttpMethod::get, run.duplicate_url(),
+                 {fixture(run.file("sessions-after-post"), [&](json& b) {
+                     json kept = json::array();
+                     for (json& s : b["results"]) {
+                         if (s["id"] == explore) {
+                             s["id"] = orphan;
+                         }
+                         if (s["id"] != restore) {
+                             kept.push_back(s);
+                         }
+                     }
+                     b["results"] = kept;
+                 })});
+    rig.get("/v8/RestoreSessions/" + orphan,
+            make_response(200, json{{"id", orphan}, {"state", "Working"}}.dump()));
+    rig.veeam.on(HttpMethod::post, url("/v8/RestoreSessions/" + orphan + "/Stop"),
+                 {load_fixture("veeam", "stop-204")});
+    std::vector<std::string> told;
+    SECTION("told")
+    {
+        rig.on_session_opened = [&](std::string_view id) { told.emplace_back(id); };
+        const Caught thrown = caught_by([&] { rig.restore(restore_spec({mail_x1_item()})); });
+        CHECK(thrown.kind == "TransientError");
+        CHECK(told == std::vector<std::string>{orphan});
+    }
+    SECTION("a callback that throws changes nothing")
+    {
+        rig.on_session_opened = [&](std::string_view) { throw std::runtime_error("no"); };
+        const Caught thrown = caught_by([&] { rig.restore(restore_spec({mail_x1_item()})); });
+        CHECK(thrown.kind == "TransientError");
+    }
+    CHECK(rig.stops(orphan) == 1);
+}
+
+// ---- W4.8: the account's sessions, and ending one ------------------------------------------
+
+TEST_CASE("own_sessions: a list Veeam can't be believed on, or doesn't give, is an error and "
+          "never a shorter list",
+          "[veeam_m365][w4.8]")
+{
+    struct Row {
+        std::string name;
+        HttpResponse response;
+        std::string kind;
+        std::string part;
+    };
+    const auto one = [](json entry) {
+        return session_page(1000, 0, json::array({std::move(entry)}));
+    };
+    json no_state = listed_session(session_id(1), "Working", "rp-veeam", kOwnSince);
+    no_state.erase("state");
+    json no_account = listed_session(session_id(1), "Working", "rp-veeam", kOwnSince);
+    no_account.erase("initiatedBy");
+    json state_number = listed_session(session_id(1), "Working", "rp-veeam", kOwnSince);
+    state_number["state"] = 1;
+    const std::string unexpected = "veeam_m365: unexpected response from Veeam: ";
+    const Row row = GENERATE_COPY(values<Row>({
+        {"401", load_fixture("veeam", "api-expired-token-401"), "AuthError", "HTTP 401"},
+        {"503", make_response(503), "TransientError", "HTTP 503"},
+        {"404", veeam_error(404, "Not found", "ResourceNotFound"), "Error", "HTTP 404"},
+        {"no results", make_response(200, "{}"), "Error", "no \"results\" list"},
+        {"an entry without a state", one(no_state), "Error",
+         unexpected + "a session without a \"state\""},
+        {"a state that isn't a string", one(state_number), "Error",
+         unexpected + "a session without a \"state\""},
+        {"an entry without an account", one(no_account), "Error",
+         unexpected + "a session without an \"initiatedBy\""},
+        {"one of ours whose ID isn't a UUID",
+         one(listed_session("not-a-uuid", "Working", "rp-veeam", kOwnSince)), "Error",
+         unexpected + "a session ID that isn't a UUID"},
+        {"one of ours without a readable creation time",
+         one(listed_session(session_id(1), "Working", "rp-veeam", "yesterday")), "Error",
+         unexpected + "a session without a \"creationTime\" in Veeam's UTC form"},
+    }));
+    CAPTURE(row.name);
+    RestoreRig rig;
+    rig.get(paged(own_sessions_path()), row.response);
+
+    const Caught thrown = caught_by([&] { rig.connector().own_sessions(utc(kOwnSince)); });
+
+    CHECK(thrown.kind == row.kind);
+    CHECK_THAT(thrown.what, ContainsSubstring(row.part));
+    check_no_secrets(rig, thrown.what);
+}
+
+TEST_CASE("own_sessions: every page, this account's Working sessions from `since` on, newest "
+          "first, whatever the organisation",
+          "[veeam_m365][w4.8]")
+{
+    RestoreRig rig;
+    rig.page_size = 2;
+    const std::string path = own_sessions_path();
+    const auto page = [&](int offset) {
+        return path + "&limit=2&offset=" + std::to_string(offset);
+    };
+    // `since` is 900 ms into its second: Veeam is asked from the second on,
+    // and lists a session made 500 ms into it.
+    const auto since = utc(kOwnSince) + 900ms;
+    json other_org = listed_session(session_id(6), "Working", "rp-veeam", "2026-09-28T21:26:40Z");
+    other_org["organization"] = "Other.onmicrosoft.com";
+    other_org["type"] = "Veod";
+    rig.get(page(0), session_page(2, 0,
+                                  {listed_session(session_id(1), "Working", "rp-veeam",
+                                                  "2026-09-28T21:27:28.3281642Z"),
+                                   listed_session(session_id(2), "Stopped", "rp-veeam",
+                                                  "2026-09-28T21:27:20Z")}));
+    rig.get(page(2), session_page(2, 2,
+                                  {listed_session(session_id(3), "Working", "administrator",
+                                                  "2026-09-28T21:27:10Z"),
+                                   // Listed out of order, in upper case, the account in another case.
+                                   listed_session("A0000000-0000-4000-8000-00000000000D", "Working",
+                                                  "RP-Veeam", "2026-09-28T21:27:30Z")}));
+    rig.get(page(4), session_page(2, 4,
+                                  {listed_session(session_id(5), "Working", "rp-veeam",
+                                                  "2026-09-28T21:26:28.5Z"),
+                                   other_org}));
+    rig.get(page(6), session_page(2, 6, json::array()));
+
+    const std::vector<connector::OwnSession> found = rig.connector().own_sessions(since);
+
+    REQUIRE(found.size() == 3);
+    CHECK(found[0].id == "a0000000-0000-4000-8000-00000000000d");
+    CHECK(found[0].created_at == utc("2026-09-28T21:27:30Z"));
+    CHECK(found[1].id == session_id(1));
+    CHECK(std::chrono::floor<std::chrono::seconds>(found[1].created_at) ==
+          utc("2026-09-28T21:27:28Z"));
+    CHECK(found[1].created_at > utc("2026-09-28T21:27:28Z"));
+    CHECK(found[2].id == session_id(6));
+    for (const int offset : {0, 2, 4, 6}) {
+        CHECK(rig.gets(page(offset)) == 1);
+    }
+    // Read-only: the sign-in is the only POST.
+    for (const HttpRequest& request : rig.veeam.requests()) {
+        CHECK((request.method == HttpMethod::get || request.url == url("/v8/token")));
+    }
+}
+
+TEST_CASE("own_sessions: the recorded list's two Working sessions, and an empty list",
+          "[veeam_m365][w4.8]")
+{
+    RestoreRig rig;
+    // Recorded after W2.4's single-mail POST: the restore session and its
+    // explore session Working, four explore sessions Stopped.
+    const Run run = mail_x1();
+    SECTION("the recorded list as it is")
+    {
+        rig.get(paged(own_sessions_path()), fixture(run.file("sessions-after-post")));
+        const std::vector<connector::OwnSession> found =
+            rig.connector().own_sessions(utc(kOwnSince));
+        REQUIRE(found.size() == 2);
+        CHECK(found[0].id == run.restore());
+        CHECK(found[1].id == run.explore());
+    }
+    SECTION("nothing listed")
+    {
+        rig.get(paged(own_sessions_path()), session_page(1000, 0, json::array()));
+        CHECK(rig.connector().own_sessions(utc(kOwnSince)).empty());
+    }
+}
+
+TEST_CASE("end_session: an ID that isn't a UUID asks Veeam nothing", "[veeam_m365][w4.8]")
+{
+    const std::string id =
+        GENERATE(as<std::string>{}, "", "not-a-uuid", "../Organizations",
+                 "a0000000-0000-4000-8000-000000000001/Stop");
+    CAPTURE(id);
+    RestoreRig rig;
+
+    const Caught thrown = caught_by([&] { rig.connector().end_session(id); });
+
+    CHECK(thrown.kind == "invalid_argument");
+    CHECK(thrown.what == "veeam_m365: a session ID must be a UUID");
+    CHECK(rig.veeam.requests().empty());
+}
+
+TEST_CASE("end_session: a session that can't be read or stopped is the matching connector error",
+          "[veeam_m365][w4.8]")
+{
+    RestoreRig rig;
+    const std::string id = session_id(1);
+    const std::string path = "/v8/RestoreSessions/" + id;
+    const json working = {{"id", id}, {"state", "Working"}};
+    rig.get(path, make_response(200, working.dump()));
+    std::string kind;
+    std::size_t stops = 1;
+    SECTION("the read refused")
+    {
+        rig.get(path, load_fixture("veeam", "api-expired-token-401"));
+        kind = "AuthError";
+        stops = 0;
+    }
+    SECTION("the session gone")
+    {
+        rig.get(path, veeam_error(404, "Restore session does not exist", "ResourceNotFound"));
+        kind = "Error";
+        stops = 0;
+    }
+    SECTION("the Stop refused: not sent again")
+    {
+        rig.veeam.on(HttpMethod::post, url(path + "/Stop"),
+                     {veeam_error(400, "Bad request."), load_fixture("veeam", "stop-204")});
+        kind = "Error";
+    }
+    SECTION("two Stops that time out: no third")
+    {
+        rig.veeam.on(HttpMethod::post, url(path + "/Stop"), stop_times_out(99));
+        kind = "TransientError";
+        stops = 2;
+    }
+
+    const Caught thrown = caught_by([&] { rig.connector().end_session(id); });
+
+    CHECK(thrown.kind == kind);
+    CHECK_THAT(thrown.what, StartsWith("Veeam "));
+    CHECK(rig.stops(id) == stops);
+    check_no_secrets(rig, thrown.what);
+}
+
+TEST_CASE("end_session: a Working session is read and stopped, a stopped one left alone",
+          "[veeam_m365][w4.8]")
+{
+    RestoreRig rig;
+    const std::string id = session_id(1);
+    const std::string path = "/v8/RestoreSessions/" + id;
+    const auto in_state = [&](const std::string& state) {
+        return make_response(200, json{{"id", id}, {"state", state}}.dump());
+    };
+    rig.veeam.on(HttpMethod::post, url(path + "/Stop"), {load_fixture("veeam", "stop-204")});
+    SECTION("Working: one Stop")
+    {
+        rig.get(path, in_state("Working"));
+        rig.connector().end_session(id);
+        CHECK(rig.gets(path) == 1);
+        CHECK(rig.stops(id) == 1);
+    }
+    SECTION("an ID in upper case is the same session")
+    {
+        rig.get(path, in_state("Working"));
+        rig.connector().end_session("A0000000-0000-4000-8000-000000000001");
+        CHECK(rig.stops(id) == 1);
+    }
+    SECTION("already Stopped: no Stop")
+    {
+        rig.get(path, in_state("Stopped"));
+        rig.connector().end_session(id);
+        CHECK(rig.gets(path) == 1);
+        CHECK(rig.stops(id) == 0);
+    }
+    SECTION("a Stop that times out while it stays Working: one more")
+    {
+        rig.get(path, in_state("Working"));
+        rig.veeam.on(HttpMethod::post, url(path + "/Stop"), stop_times_out(1));
+        rig.connector().end_session(id);
+        CHECK(rig.gets(path) == 2);
+        CHECK(rig.stops(id) == 2);
+        CHECK_THAT(rig.log(), ContainsSubstring("explore session " + id) &&
+                                  ContainsSubstring("still Working"));
+    }
+    SECTION("a Stop that times out but stopped it: not sent again")
+    {
+        rig.veeam.on(HttpMethod::get, url(path), {in_state("Working"), in_state("Stopped")});
+        rig.veeam.on(HttpMethod::post, url(path + "/Stop"), stop_times_out(1));
+        rig.connector().end_session(id);
+        CHECK(rig.gets(path) == 2);
+        CHECK(rig.stops(id) == 1);
+    }
+    // Nothing but the session's own read and Stop (and the sign-in).
+    for (const HttpRequest& request : rig.veeam.requests()) {
+        CHECK((request.url == url(path) || request.url == url(path + "/Stop") ||
+               request.url == url("/v8/token")));
+    }
 }

@@ -435,6 +435,17 @@ TEST_CASE("a connector that can't list candidates says so by name", "[connector]
                            Catch::Matchers::Message("fake: listing candidates isn't implemented"));
 }
 
+TEST_CASE("a connector that can't list or end its account's sessions says so by name",
+          "[connector][w4.8]")
+{
+    FakeConnector fake;
+    REQUIRE_THROWS_MATCHES(
+        fake.own_sessions(std::chrono::system_clock::time_point{}), connector::NotImplementedError,
+        Catch::Matchers::Message("fake: listing the account's sessions isn't implemented"));
+    REQUIRE_THROWS_MATCHES(fake.end_session("session-1"), connector::NotImplementedError,
+                           Catch::Matchers::Message("fake: ending a session isn't implemented"));
+}
+
 TEST_CASE("candidate limits and records start at the documented values", "[connector]")
 {
     const connector::CandidateLimits limits;

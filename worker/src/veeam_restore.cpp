@@ -277,6 +277,47 @@ std::vector<std::string> working_sessions(const json& list, std::string_view acc
     return out;
 }
 
+std::vector<connector::OwnSession> own_working_sessions(const std::vector<json>& entries,
+                                                        std::string_view account, UtcTime since)
+{
+    std::vector<std::pair<UtcTime, std::string>> found;
+    for (const json& session : entries) {
+        const std::string* state = string_at(session, "state");
+        if (state == nullptr) {
+            throw ShapeError("a session without a \"state\"");
+        }
+        const std::string* by = string_at(session, "initiatedBy");
+        if (by == nullptr) {
+            throw ShapeError("a session without an \"initiatedBy\"");
+        }
+        if (*state != "Working" || !ascii_iequals(*by, account)) {
+            continue;
+        }
+        const std::string* id = string_at(session, "id");
+        if (id == nullptr || !is_uuid(*id)) {
+            throw ShapeError("a session ID that isn't a UUID");
+        }
+        const std::string* created = string_at(session, "creationTime");
+        const std::optional<UtcTime> at =
+            created != nullptr ? parse_veeam_time(*created) : std::nullopt;
+        if (!at) {
+            throw ShapeError("a session without a \"creationTime\" in Veeam's UTC form");
+        }
+        if (*at >= since) {
+            found.emplace_back(*at, ascii_lower(*id));
+        }
+    }
+    // Veeam was asked for them newest first; not relied on.
+    std::ranges::stable_sort(found, [](const auto& a, const auto& b) { return a.first > b.first; });
+    std::vector<connector::OwnSession> out;
+    out.reserve(found.size());
+    for (auto& [at, id] : found) {
+        out.push_back({std::move(id),
+                       std::chrono::time_point_cast<std::chrono::system_clock::duration>(at)});
+    }
+    return out;
+}
+
 std::vector<std::string> new_restore_sessions(const json& list, const DuplicateFilter& filter)
 {
     std::vector<std::string> out;

@@ -65,6 +65,7 @@ struct RunStop {
 //    backup_auth; connector::TransientError: backup_transient;
 //    connector::NotFoundError: not_in_backup; any other connector::Error:
 //    backup;
+//  - connector::Interrupted (a stop asked of the Worker, W4.8): interrupted;
 //  - anything else: internal.
 // In the restore phase, nothing_restored is whether a known exception's
 // what() ends with connector::kNothingRestored (never for internal).
@@ -203,12 +204,52 @@ RunVerdict decide_status(const RunFacts& facts);
 // unchecked items and the verified counts, as rows 1 to 4 leave them.
 RunVerdict result_invalid(const RunVerdict& verdict);
 
+// A stop asked of the Worker during a run (docs/decisions.md 2026-10-08, W4.8
+// point 13). Whether a verdict decided after the stop came is replaced by
+// interrupted(): an error with a code other than interrupted, target_guard
+// and result_invalid, since a wait the stop cut short reads as the failure
+// of whichever service was being waited for. A pass or a fail reached in
+// spite of the stop stays what it is.
+bool interrupt_replaces(const RunVerdict& verdict) noexcept;
+
+// The verdict that replaces `verdict` then: error interrupted, "the Worker
+// was stopped during the run; the run itself ended <pass|fail|error <code>>",
+// the words as result_invalid() writes them. Keeps and clears what
+// result_invalid() does.
+RunVerdict interrupted(const RunVerdict& verdict);
+
+// The verdicts of a result written afterwards, for a run whose folder was
+// left without one (W4.8 point 7): every count 0, no failed or unchecked
+// item, no warning. `restore_requested` is the run record's word that a
+// restore request may have gone out, and becomes restore_sent.
+//  - error interrupted, the process ended during the run: "the run was
+//    interrupted before its result was written; no restore request had been
+//    sent", or "...; a restore request may have been sent, so items may be in
+//    the restore targets";
+RunVerdict interrupted_before_result(bool restore_requested);
+//  - error internal, the run returned and its folder couldn't be completed:
+//    "the run ended without a result the Worker could write; this result was
+//    written afterwards";
+RunVerdict ended_without_result(bool restore_requested);
+//  - error result_invalid, the run's own result wasn't valid:
+//    result_invalid()'s message, naming how the run had ended (`ended_code`
+//    read for an error only, and only when it is one of error_codes()).
+RunVerdict result_invalid_afterwards(RunStatus ended_status, std::string_view ended_code,
+                                     bool restore_requested);
+
+// The verdict of a job the Worker was handed and can't run (W4.8 point 4,
+// J3): error job_invalid, "the job isn't a valid job (<key>); nothing was
+// done", restore_sent false, every count 0. `key` is the jobs reader's word
+// for the first key at fault (a key of the job's format, or "unknown key"),
+// never text taken from the job.
+RunVerdict job_invalid(std::string_view key);
+
 // The vocabularies, which the result's schema is held to (W4.1 point 3).
 // Every code a verdict's error_code can carry, in the table's order:
 // config, internal, backup_auth, backup_transient, not_in_backup,
 // no_restore_point, target_guard, backup, graph_auth, graph_permission,
 // backup_infrastructure, graph, graph_transient, stale_target, empty_sample,
-// not_run, restore_contradiction, result_invalid.
+// not_run, restore_contradiction, result_invalid, interrupted, job_invalid.
 std::vector<std::string_view> error_codes();
 
 // The codes an UncheckedItem can carry, most severe first (row 7's order).
@@ -244,9 +285,9 @@ nlohmann::json to_json(const connector::RestoreResult& result);
 
 // rpworker's exit code for an error code (rp::exit_code), from the one table
 // of codes the status line's texts and row 7's severity come from too:
-// config, internal and result_invalid 1; backup_auth, graph_auth and
-// graph_permission 2; backup_transient and graph_transient 3; any other
-// (a code the table doesn't hold too) 4.
+// config, internal, result_invalid and job_invalid 1; backup_auth,
+// graph_auth and graph_permission 2; backup_transient and graph_transient 3;
+// any other (interrupted, and a code the table doesn't hold too) 4.
 int exit_code_of(std::string_view error_code) noexcept;
 
 // rpworker's exit code for a verdict: pass 0; fail 5 (exit_code::restore);

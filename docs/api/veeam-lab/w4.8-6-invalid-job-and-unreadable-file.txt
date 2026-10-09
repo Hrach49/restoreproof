@@ -1,0 +1,65 @@
+W4.8 (#51) live Done-when, step (f): a job that isn't valid, then a jobs file that isn't JSON. 2026-10-09T01:06:25Z, commit 995c4ba
+
+jobs file written at 2026-10-09T01:06:25Z:
+{
+  "format": "restoreproof.jobs.v1",
+  "jobs": [
+    {
+      "run_id": "w48-live-4",
+      "client_id": "lab-client",
+      "sample_mail": 0,
+      "sample_sp": 0,
+      "sample_od": 0,
+      "restore_point": "latest",
+      "screenshots_enabled": false
+    }
+  ]
+}
+
+-- worker.log since
+2026-10-09T01:06:40.473Z warning job w48-live-4: not a valid job (sample_mail)
+2026-10-09T01:06:41.028Z info [w48-live-4] signed 839a2d09650b0346e2a4b080eadcce3f323f1a341e5f55da2919377acea76d82 key 9dfab6eadaa1d04a22dcc966aac7a53bcff8bbe0077232485f6143cd9c4d0ca5
+2026-10-09T01:06:41.029Z info [w48-live-4] timestamped 2026-10-09T01:05:20Z
+2026-10-09T01:06:41.029Z info [w48-live-4] evidence C:\ProgramData\RestoreProof\runs\w48-live-4: result.json, signature.json, timestamp.tst, items.csv, veeam-session.log
+2026-10-09T01:06:41.038Z info [w48-live-4] queued C:\ProgramData\RestoreProof\outbox\w48-live-4
+2026-10-09T01:06:41.038Z info run w48-live-4: queued
+2026-10-09T01:06:41.069Z info sent w48-live-4
+2026-10-09T01:07:10.474Z info skipped w48-live-4: already sent
+
+
+(no running.json) at 2026-10-09T01:07:16Z
+-- the stub's lines for it
+2026-10-09T01:06:41Z POST /v1/results: 9048 bytes, Authorization absent -> 202
+  part result  file result.json  1694 bytes  sha256 839a2d09650b0346e2a4b080eadcce3f323f1a341e5f55da2919377acea76d82
+  part signature  file signature.json  322 bytes  sha256 1a3d54a32c73d7c5636fcee52b09270d6790eb8271cdceb7eb50007a34f58727
+  part timestamp  file timestamp.tst  5997 bytes  sha256 754ffa16304ff5201abb3a56c9ed95c97fa859c6079c9119c8317578e12372df
+  part items.csv  file items.csv  145 bytes  sha256 f6cdac16ba9a2294082ac4fe0031146c38b5623b7baca927a497be8644850b4b
+  part veeam-session.log  file veeam-session.log  0 bytes  sha256 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+
+-- both verifiers over the sent folder
+folder: C:\ProgramData\RestoreProof\sent\w48-live-4
+command: rpworker signer verify C:\ProgramData\RestoreProof\sent\w48-live-4 --public-key C:\ProgramData\RestoreProof\w48\worker-signing.pub.pem --tsa-ca C:\restoreproof\shared\tsa\tsa-ca.pem
+2026-10-09T01:07:16Z to 2026-10-09T01:07:17Z
+exit code: 0
+--- stdout
+verified 839a2d09650b0346e2a4b080eadcce3f323f1a341e5f55da2919377acea76d82 key 9dfab6eadaa1d04a22dcc966aac7a53bcff8bbe0077232485f6143cd9c4d0ca5 timestamp 2026-10-09T01:05:20Z
+--- stderr
+note: not listed in the result: manifest.json
+
+verify_bundle.py (exit code 0): note: not listed in the result: manifest.json | verified 839a2d09650b0346e2a4b080eadcce3f323f1a341e5f55da2919377acea76d82 key 9dfab6eadaa1d04a22dcc966aac7a53bcff8bbe0077232485f6143cd9c4d0ca5 timestamp 2026-10-09T01:05:20Z
+result.json: run_id w48-live-4, status error job_invalid, restore_sent False, message: the job isn't a valid job (sample_mail); nothing was done
+result.json sha256 839a2d09650b0346e2a4b080eadcce3f323f1a341e5f55da2919377acea76d82
+
+-- Veeam: no session Working at 2026-10-09T01:07:18Z
+
+
+jobs file written at 2026-10-09T01:07:18Z:
+{"format":"restoreproof.jobs.v1","jobs":[
+
+-- worker.log since (four polls)
+2026-10-09T01:07:40.485Z warning jobs error: C:\ProgramData\RestoreProof\w48\jobs.json: not JSON
+
+
+-- the stub's heartbeats since
+2026-10-09T01:08:10Z POST /v1/heartbeat: 125 bytes, Content-Type application/json, Authorization absent -> 204  {"last_error":"jobs_unreadable","last_error_at":"2026-10-09T01:07:40.485Z","outbox_depth":0,"uptime_s":240,"version":"0.0.0"}
+2026-10-09T01:09:10Z POST /v1/heartbeat: 125 bytes, Content-Type application/json, Authorization absent -> 204  {"last_error":"jobs_unreadable","last_error_at":"2026-10-09T01:08:40.498Z","outbox_depth":0,"uptime_s":300,"version":"0.0.0"}

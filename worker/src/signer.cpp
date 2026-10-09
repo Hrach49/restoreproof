@@ -74,36 +74,6 @@ bool is_lower_sha256_hex(std::string_view text) noexcept
                        [](char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'); });
 }
 
-// The most arrays and objects open at once in `bytes`, counted on the bytes
-// and outside strings, without parsing: what keeps a file of a hundred
-// thousand '[' from the parser. Counts as verify_bundle.py's nesting_depth.
-std::size_t nesting_depth(std::string_view bytes) noexcept
-{
-    std::size_t depth = 0;
-    std::size_t deepest = 0;
-    bool in_string = false;
-    bool escaped = false;
-    for (const char c : bytes) {
-        if (in_string) {
-            if (escaped) {
-                escaped = false;
-            } else if (c == '\\') {
-                escaped = true;
-            } else if (c == '"') {
-                in_string = false;
-            }
-        } else if (c == '"') {
-            in_string = true;
-        } else if (c == '[' || c == '{') {
-            ++depth;
-            deepest = std::max(deepest, depth);
-        } else if ((c == ']' || c == '}') && depth > 0) {
-            --depth;
-        }
-    }
-    return deepest;
-}
-
 // The document `bytes` is the canonical-json-v1 form of, or nullopt: nested
 // too deep, not JSON (whatever the parser calls it: a syntax error, bytes that
 // aren't UTF-8, a number it can't hold), a value the canonical form refuses (a
@@ -114,7 +84,7 @@ std::size_t nesting_depth(std::string_view bytes) noexcept
 std::optional<json> parse_canonical(std::string_view bytes)
 {
     std::optional<json> document;
-    if (nesting_depth(bytes) > kMaxJsonNesting) {
+    if (json_nesting_depth(bytes) > kMaxJsonNesting) {
         return document;
     }
     try {

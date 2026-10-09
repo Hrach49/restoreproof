@@ -22,6 +22,13 @@ find_package(ZLIB REQUIRED)
 
 enable_testing()
 
+# W4.9: the fixture secret scan (tools/fixture_secret_scan.py) runs as a ctest
+# test when a Python is found; the gate's own tools need none at build time.
+find_package(Python3 COMPONENTS Interpreter)
+if(NOT Python3_Interpreter_FOUND)
+    message(WARNING "No Python 3 found: the ctest test 'fixture secret scan' (W4.9) is not registered")
+endif()
+
 # rpcore: static library holding all Worker logic. rpworker (the exe) and
 # rptests both link it; coverage is measured on its sources (src/, include/).
 add_library(rpcore STATIC
@@ -227,6 +234,7 @@ add_executable(rptests
     tests/sample_selector_live_test.cpp
     tests/sample_selector_test.cpp
     tests/scm_test.cpp
+    tests/secret_audit_test.cpp
     tests/secrets_test.cpp
     tests/service_command_test.cpp
     tests/service_errors_test.cpp
@@ -682,3 +690,16 @@ set_tests_properties(
     "run_exe_test fails on wrong stdout"
     "run_exe_test fails on unexpected stderr"
     PROPERTIES WILL_FAIL TRUE)
+
+# W4.9: the committed fixture, vector and evidence trees hold no secret shape
+# (a JWT, a Bearer token, a PEM private key block, a private key's or a PFX's
+# Base64 opening, a keyed secret with a value) but what
+# tools/fixture_secret_scan_allowlist.json names by file, shape and value.
+# The same scan runs in CI without a Worker build (.github/workflows/worker.yml,
+# job fixture-scan). Label `scan`: the coverage run leaves it out.
+if(Python3_Interpreter_FOUND)
+    add_test(NAME "fixture secret scan" COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tools/fixture_secret_scan.py
+        --root ${CMAKE_CURRENT_SOURCE_DIR}/..)
+    set_tests_properties("fixture secret scan" PROPERTIES LABELS scan)
+endif()

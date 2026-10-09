@@ -2,7 +2,7 @@
 
 import pytest
 
-from app.settings import Settings, SettingsError, load_settings
+from app.settings import Settings, SettingsError, database_url_from_environment, load_settings
 
 SENTINEL = "Sentinel-Settings-7c1e"
 
@@ -181,3 +181,34 @@ def test_settings_cannot_be_built_around_load_settings_from_the_environment(monk
         Settings()
 
     assert SENTINEL not in str(raised.value)
+
+
+def test_a_migration_needs_database_url_and_nothing_else():
+    url = "postgresql+asyncpg://user:pw@db.test:5432/rp"
+
+    assert database_url_from_environment({"database_url": url}) == url
+
+
+def test_the_process_environment_is_the_migration_s_default(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://user:pw@db.test:5432/from-process")
+
+    assert database_url_from_environment().endswith("/from-process")
+
+
+@pytest.mark.parametrize("environ", [{}, {"DATABASE_URL": ""}, {"S3_BUCKET": "bucket"}])
+def test_a_migration_without_database_url_names_it(environ):
+    with pytest.raises(SettingsError) as raised:
+        database_url_from_environment(environ)
+
+    assert str(raised.value) == "settings error: DATABASE_URL is missing"
+
+
+@pytest.mark.parametrize(
+    "url", [f"postgresql://user:{SENTINEL}@db.test/rp", f"sqlite:///{SENTINEL}.db"]
+)
+def test_a_migration_refuses_another_driver_without_showing_the_url(url):
+    with pytest.raises(SettingsError) as raised:
+        database_url_from_environment({"DATABASE_URL": url})
+
+    assert str(raised.value) == "settings error: DATABASE_URL is not valid"
+    assert SENTINEL not in f"{raised.value!r}{raised.value.__cause__}{raised.value.__context__}"

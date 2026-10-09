@@ -6,6 +6,7 @@
 // hands out IConnector.
 
 #include <rp/cert_export.hpp>
+#include <rp/client_profile.hpp>
 #include <rp/config.hpp>
 #include <rp/connector.hpp>
 #include <rp/http_client.hpp>
@@ -57,6 +58,12 @@ struct ConnectorOptions {
     // Exports the backup product's restore credential (W2.5); null =
     // make_local_machine_cert_exporter(wall_now).
     std::shared_ptr<CertificateExporter> cert_exporter;
+    // W4.10 (docs/decisions.md 2026-10-09 point 4): the client the run is
+    // for, whose tenant and app the guard's Graph client signs in as. The
+    // pipeline always sets it; a connector made without one (the service's
+    // hold, which lists and ends sessions) refuses the first restore_sample
+    // with a ConfigError, before any request.
+    std::optional<ClientProfile> client;
     // W4.8 (docs/decisions.md 2026-10-08, W4.8 points 6 and 13): the three a
     // caller that keeps a record of its run hands a connector.
     // Asked before every restore request, before the credential is exported:

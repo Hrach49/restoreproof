@@ -207,7 +207,8 @@ struct BodyLab {
     // it.
     rp::RunningRecord record(const std::string& id) const
     {
-        return rp::new_run_record(id, std::nullopt, context->config, rp::test::graph_lab::kNow);
+        return rp::new_run_record(id, std::nullopt, *rp::local_profile(context->config),
+                                  rp::test::graph_lab::kNow);
     }
 
     // The same once its run line was out.

@@ -2,6 +2,7 @@
 
 #include <rp/cli.hpp>
 #include <rp/client_assertion.hpp>
+#include <rp/client_profile.hpp>
 #include <rp/config.hpp>
 #include <rp/connector.hpp>
 #include <rp/graph_download.hpp>
@@ -10,6 +11,7 @@
 #include <rp/vault.hpp>
 
 #include "command_config.hpp"
+#include "target_listing.hpp"
 #include "text_table.hpp"
 
 #include <chrono>
@@ -152,6 +154,64 @@ GraphCommandEnv default_graph_command_env()
     return env;
 }
 
+int list_restore_targets(const ClientProfile& profile, bool hash, const std::string& heading,
+                         graph::ClientCertificate certificate,
+                         const graph::GraphClientOptions& client_options,
+                         const GraphCommandEnv& env,
+                         const std::shared_ptr<FixtureRecorder>& recorder, std::ostream& out,
+                         std::ostream& err)
+{
+    const std::shared_ptr<spdlog::logger>& logger = client_options.logger;
+    // Everything that can throw is in here, the tables' formatting and
+    // printing included, so no exception escapes.
+    try {
+        // Declared in this order so the reader and the client, which hold
+        // references to the HTTP clients, go first.
+        // Downloads are recorded as their size and SHA-256 only, never the bytes.
+        const std::unique_ptr<IHttpClient> http =
+            recorded(env.make_graph_http(logger), recorder, "graph");
+        const std::unique_ptr<IHttpClient> download =
+            hash ? recorded(env.make_download_http(), recorder, "download", RecordedBody::digest)
+                 : std::make_unique<NoDownloads>();
+        if (!http || !download) {
+            throw std::logic_error("no HTTP client");
+        }
+        graph::GraphClient client(*http, profile.graph_tenant_id, profile.graph_client_id,
+                                  std::move(certificate), client_options);
+        graph::TargetReaderOptions options;
+        options.logger = logger;
+        options.hash_items = hash;
+        options.download.logger = logger;
+        graph::TargetReader reader(client, *download,
+                                   connector::RestoreTargets::from_profile(profile), options);
+        // Every list first, in the order printed: a failure prints no partial table.
+        Listing listing;
+        listing.mail = reader.list_mail();
+        listing.sharepoint = reader.list_sharepoint();
+        listing.sharepoint_unlisted = reader.unlisted();
+        listing.onedrive = reader.list_onedrive();
+        listing.onedrive_unlisted = reader.unlisted();
+        out << heading << format_listing(profile.test_mailbox, listing, hash);
+        // A full disk or a closed pipe: never exit 0 with a short listing.
+        if (!out.flush()) {
+            throw std::runtime_error("writing the tables failed");
+        }
+        return exit_code::ok;
+    } catch (const graph::AuthError& e) {
+        return report_graph_error(err, e, exit_code::auth);
+    } catch (const graph::PermissionError& e) {
+        return report_graph_error(err, e, exit_code::auth);
+    } catch (const graph::TransientError& e) {
+        return report_graph_error(err, e, exit_code::transient);
+    } catch (const graph::GraphError& e) {
+        return report_graph_error(err, e, exit_code::service);
+    } catch (...) {
+        // Its message, if it has one, may not be safe to show.
+        err << "error: unexpected failure\n";
+        return exit_code::config;
+    }
+}
+
 namespace {
 
 // The command but for what --record wrote, which run_graph_command prints
@@ -176,9 +236,17 @@ int run_list(std::span<const std::string_view> args, std::ostream& out, std::ost
     }
     const std::shared_ptr<spdlog::logger>& logger = client_options.logger;
     Config config;
+    ClientProfile profile;
     std::optional<graph::ClientCertificate> certificate;
     try {
         config = load_config(command_config_path(config_arg, env.default_config_path));
+        // W4.10: the config's local profile; a profile file is `client check`'s.
+        const std::optional<ClientProfile> local = local_profile(config);
+        if (!local) {
+            throw ConfigError("", "the config has no client keys; set the eight client keys, or "
+                                  "use rpworker client check --profile-file <file>");
+        }
+        profile = *local;
         const auto wall_now = client_options.wall_now ? client_options.wall_now()
                                                       : std::chrono::system_clock::now();
         // A CertificateError is a ConfigError: an unset or unusable certificate
@@ -196,54 +264,8 @@ int run_list(std::span<const std::string_view> args, std::ostream& out, std::ost
         return exit_code::config;
     }
 
-    // Everything that can throw is in here, the tables' formatting and
-    // printing included, so no exception escapes.
-    try {
-        // Declared in this order so the reader and the client, which hold
-        // references to the HTTP clients, go first.
-        // Downloads are recorded as their size and SHA-256 only, never the bytes.
-        const std::unique_ptr<IHttpClient> http =
-            recorded(env.make_graph_http(logger), recorder, "graph");
-        const std::unique_ptr<IHttpClient> download =
-            hash ? recorded(env.make_download_http(), recorder, "download", RecordedBody::digest)
-                 : std::make_unique<NoDownloads>();
-        if (!http || !download) {
-            throw std::logic_error("no HTTP client");
-        }
-        graph::GraphClient client(*http, config.graph_tenant_id, config.graph_client_id,
-                                  std::move(*certificate), client_options);
-        graph::TargetReaderOptions options;
-        options.logger = logger;
-        options.hash_items = hash;
-        options.download.logger = logger;
-        graph::TargetReader reader(client, *download,
-                                   connector::RestoreTargets::from_config(config), options);
-        // Every list first, in the order printed: a failure prints no partial table.
-        Listing listing;
-        listing.mail = reader.list_mail();
-        listing.sharepoint = reader.list_sharepoint();
-        listing.sharepoint_unlisted = reader.unlisted();
-        listing.onedrive = reader.list_onedrive();
-        listing.onedrive_unlisted = reader.unlisted();
-        out << format_listing(config.test_mailbox, listing, hash);
-        // A full disk or a closed pipe: never exit 0 with a short listing.
-        if (!out.flush()) {
-            throw std::runtime_error("writing the tables failed");
-        }
-        return exit_code::ok;
-    } catch (const graph::AuthError& e) {
-        return report_graph_error(err, e, exit_code::auth);
-    } catch (const graph::PermissionError& e) {
-        return report_graph_error(err, e, exit_code::auth);
-    } catch (const graph::TransientError& e) {
-        return report_graph_error(err, e, exit_code::transient);
-    } catch (const graph::GraphError& e) {
-        return report_graph_error(err, e, exit_code::service);
-    } catch (...) {
-        // Its message, if it has one, may not be safe to show.
-        err << "error: unexpected failure\n";
-        return exit_code::config;
-    }
+    return list_restore_targets(profile, hash, std::string{}, std::move(*certificate),
+                                client_options, env, recorder, out, err);
 }
 
 } // namespace

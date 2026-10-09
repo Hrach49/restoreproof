@@ -478,7 +478,7 @@ bool refused_by_guard(const graph::CleanupResult& result)
 // and the recovery clean's (clean_restore_targets).
 void make_graph_and_cleaner(std::optional<graph::GraphClient>& client,
                             std::optional<graph::Cleaner>& cleaner, IHttpClient& http,
-                            const Config& config, graph::ClientCertificate certificate,
+                            const ClientProfile& profile, graph::ClientCertificate certificate,
                             const connector::RestoreTargets& targets,
                             const connector::ConnectorOptions& options)
 {
@@ -488,8 +488,8 @@ void make_graph_and_cleaner(std::optional<graph::GraphClient>& client,
     client_options.wall_now = options.wall_now;
     client_options.sleep = options.sleep;
     client_options.jitter = options.jitter;
-    client.emplace(http, config.graph_tenant_id, config.graph_client_id, std::move(certificate),
-                   client_options);
+    client.emplace(http, profile.graph_tenant_id, profile.graph_client_id,
+                   std::move(certificate), client_options);
     graph::CleanerOptions cleaner_options;
     cleaner_options.logger = options.logger;
     cleaner.emplace(*client, targets, cleaner_options);
@@ -665,6 +665,11 @@ bool parse_pipeline_args(const CommandOptions& options, PipelineArgs& parsed)
     parsed.config = options.value("--config");
     parsed.vault = options.value("--vault");
     parsed.record = options.value("--record");
+    parsed.profile_file = options.value("--profile-file");
+    // An empty --profile-file value is a missing one: no file has that name.
+    if (parsed.profile_file && parsed.profile_file->empty()) {
+        return false;
+    }
     return true;
 }
 
@@ -683,9 +688,11 @@ std::string_view to_string(TargetsClean clean) noexcept
     return "not_started";
 }
 
-TargetsClean clean_restore_targets(const Config& config, const std::filesystem::path& vault,
-                                   std::ostream& out, const RestoreCommandEnv& env) noexcept
+TargetsClean clean_restore_targets(const Config& config, const ClientProfile& client,
+                                   const std::filesystem::path& vault, std::ostream& out,
+                                   const RestoreCommandEnv& env) noexcept
 {
+    static_cast<void>(config);
     try {
         // The mutex first, and held to the end: no run reads or fills the
         // targets while they are emptied. Declared first, so it goes last.
@@ -708,17 +715,17 @@ TargetsClean clean_restore_targets(const Config& config, const std::filesystem::
             options.logger = make_command_logger();
         }
         graph::ClientCertificate certificate = check_graph_certificate(secrets, options);
-        const connector::RestoreTargets targets = connector::RestoreTargets::from_config(config);
+        const connector::RestoreTargets targets = connector::RestoreTargets::from_profile(client);
         const std::unique_ptr<IHttpClient> http =
             options.make_graph_http ? options.make_graph_http(options.logger)
                                     : graph::make_graph_http_client(options.logger);
         if (!http) {
             return TargetsClean::not_started;
         }
-        std::optional<graph::GraphClient> client;
+        std::optional<graph::GraphClient> graph_client;
         std::optional<graph::Cleaner> cleaner;
-        make_graph_and_cleaner(client, cleaner, *http, config, std::move(certificate), targets,
-                               options);
+        make_graph_and_cleaner(graph_client, cleaner, *http, client, std::move(certificate),
+                               targets, options);
         // The Cleaner's clean before, as it is: every target, whatever a run
         // sampled, each resolved through the guard's own checks first.
         const graph::CleanupResult result = cleaner->clean(graph::CleanupWhen::before_run);
@@ -782,6 +789,8 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
     };
     std::filesystem::path config_path;
     Config config;
+    // W4.10: the client the run is for, read once, right after the config.
+    ClientProfile profile;
     Secrets secrets;
     // After `secrets`, so it goes first: whichever way the run ends, the
     // signing key's text is wiped, here or where it still is.
@@ -800,6 +809,23 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
         config = parsed.loaded ? *parsed.loaded : load_config(config_path);
         if (parsed.screenshots) {
             config.screenshots_enabled = *parsed.screenshots;
+        }
+        // W4.10 point 4: a job's profile, a file's, or the config's local one.
+        if (parsed.client) {
+            profile = *parsed.client;
+        } else if (parsed.profile_file) {
+            const std::optional<std::filesystem::path> file = path_from_utf8(*parsed.profile_file);
+            if (!file) {
+                throw ConfigError("--profile-file", "--profile-file " +
+                                                        table_cell(*parsed.profile_file) +
+                                                        ": not a UTF-8 path");
+            }
+            profile = read_client_profile_file(*file);
+        } else if (const std::optional<ClientProfile> local = local_profile(config)) {
+            profile = *local;
+        } else {
+            throw ConfigError("", "the config has no client keys; give --profile-file <file> or "
+                                  "set the eight client keys");
         }
         if (presentation.after_config) {
             presentation.after_config();
@@ -1018,7 +1044,7 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
             if (connector_info) {
                 parts.connector = *connector_info;
             }
-            parts.client = result_client(config);
+            parts.client = result_client(profile, parsed.client_id);
             if (chosen) {
                 parts.restore_point_id = chosen->id;
                 parts.restore_point_time = chosen->backup_time;
@@ -1264,10 +1290,10 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
     try {
         const sampling::CanaryManifest manifest =
             sampling::load_canary_manifest(manifest_path(parsed.manifest, config_path));
-        const connector::RestoreTargets targets = connector::RestoreTargets::from_config(config);
+        const connector::RestoreTargets targets = connector::RestoreTargets::from_profile(profile);
         // choose_sample's own checks, said before the connector is made: an
         // unreachable Veeam can't hide a manifest that names a restore target.
-        sampling::check_manifest(manifest, targets, config.graph_tenant_id);
+        sampling::check_manifest(manifest, targets, profile.graph_tenant_id);
         if (const std::optional<std::string> problem = sampling::cursor_problem(manifest, cursor)) {
             err << "usage error: --canary-cursor: " << *problem << '\n';
             return exit_code::usage;
@@ -1317,6 +1343,8 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
         if (!options.stop_requested) {
             options.stop_requested = env.stop_requested;
         }
+        // W4.10: the guard's Graph client signs in as the run's client.
+        options.client = profile;
         const std::unique_ptr<connector::IConnector> source =
             env.make_connector ? env.make_connector(config, secrets, options)
                                : connector::default_connector_registry().create(
@@ -1334,7 +1362,7 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
         timer.start(timing::Span::total, listing);
         timer.start(timing::Span::restore_point_lookup, listing);
         const std::vector<connector::RestorePoint> points =
-            source->list_restore_points(config.veeam_org_name);
+            source->list_restore_points(profile.veeam_org_name);
         const connector::RestorePoint* point = pick_point(points, parsed.point, err);
         if (!point) {
             return exit_code::service;
@@ -1368,7 +1396,7 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
         // Once the run ID exists, before the sample is chosen (it browses
         // Veeam) and the restore (it takes minutes): a run that fails from
         // here on still shows its run ID and seed, and ends with its status.
-        out << format_intro(config.veeam_org_name, *point, run_id);
+        out << format_intro(profile.veeam_org_name, *point, run_id);
         flush_or_throw(out);
         chosen = *point;
         phase = verification::RunPhase::before_restore;
@@ -1422,7 +1450,7 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
         if (!graph_http || !download_http) {
             throw std::logic_error("no HTTP client");
         }
-        make_graph_and_cleaner(graph_client, cleaner, *graph_http, config,
+        make_graph_and_cleaner(graph_client, cleaner, *graph_http, profile,
                                std::move(*certificate), targets, options);
 
         // W3.4: every run with a run line empties all three targets first,
@@ -1452,11 +1480,11 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
             return interrupted_before(kAskedToStop);
         }
         timer.start(timing::Span::sample_select, timer.try_now());
-        selection = sampling::choose_sample(*source, config.veeam_org_name, *point, targets,
-                                            config.graph_tenant_id, plan, manifest, cursor, run_id);
+        selection = sampling::choose_sample(*source, profile.veeam_org_name, *point, targets,
+                                            profile.graph_tenant_id, plan, manifest, cursor, run_id);
         timer.end(timing::Span::sample_select, timer.try_now());
         shortfalls = verification::shortfalls_of(selection->record);
-        const connector::RestoreSpec spec{.client_ref = config.veeam_org_name,
+        const connector::RestoreSpec spec{.client_ref = profile.veeam_org_name,
                                           .restore_point = *point,
                                           .targets = targets,
                                           .mail = selection->mail,

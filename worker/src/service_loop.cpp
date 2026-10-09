@@ -490,11 +490,7 @@ bool ServiceLoop::end_session(const std::string& id)
 
 void ServiceLoop::clean_after_hold()
 {
-    if (!is_records_client(env_.config, *record_)) {
-        env_.logger->warn(
-            "the config's client is not the run's; the restore targets were not cleaned");
-        return;
-    }
+    // W4.10: by the record's profile, never a comparison with the config.
     env_.logger->info("recovery clean for {}:", record_->run_id);
     const std::string word = env_.clean_targets(*record_);
     if (word != kCleanOk) {
@@ -646,7 +642,7 @@ void ServiceLoop::take_job(const JobEntry& entry, const JobsDocument& document)
         // Graph.
         trouble(service_error::kJobInvalid);
         env_.logger->warn("job {}: not a valid job ({})", job.run_id, entry.fault);
-        if (take_record(new_job_invalid_record(job.run_id, job.client_id, env_.config,
+        if (take_record(new_job_invalid_record(job.run_id, job.client_id, job.client,
                                                env_.wall_now(), entry.fault))) {
             settle_record(true);
         }
@@ -682,7 +678,8 @@ bool ServiceLoop::skip_job(const std::string& run_id)
 void ServiceLoop::run_job(const Job& job)
 {
     const std::string& id = job.run_id;
-    if (!take_record(new_run_record(id, job.client_id, env_.config, env_.wall_now()))) {
+    // A valid job has its profile (the reader's rule); the record carries it.
+    if (!job.client || !take_record(new_run_record(id, job.client_id, *job.client, env_.wall_now()))) {
         return;
     }
     session_unrecorded_ = false;

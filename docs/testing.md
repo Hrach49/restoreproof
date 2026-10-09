@@ -24,7 +24,7 @@ How we test, what CI enforces, and the once-per-sprint mutation run. Set up in L
 
 | Guard | Where | Rule |
 |---|---|---|
-| Worker coverage | `.github/workflows/worker.yml`, OpenCppCoverage + `worker/tools/coverage_gate.py` | 80% line on `rpcore` (`worker/src/`, `worker/include/`) plus `rpworker`'s `main()` (`worker/app/`); 100% **line** on vault, signer, target_guard, run_status, cleaner, timestamper, outbox and service (the vault once it exists), meaning any file with a path part named or prefixed `vault`, `signer`, `target_guard`, `run_status`, `cleaner`, `timestamper`, `outbox` or `service` (W4.7's `src/service.cpp`, the running service's state machine, `src/service_command.cpp`, the `rpworker service` commands, and `src/service_log.cpp`, which decides what reaches the log file, while `src/scm.cpp`, the calls into the Service Control Manager, and `src/stop_signal.cpp` are outside; W4.6's `src/outbox.cpp`, which decides what is queued, sent, kept and pruned, and `src/outbox_command.cpp`, while `src/uploader.cpp`, the one HTTP call, and `src/folder_ops.cpp`, the file-system calls under it, are outside; W4.4's `src/timestamper.cpp`, which decides which RFC 3161 token is written, while `src/rfc3161.cpp`, the calls into OpenSSL under it, is outside like `src/ed25519.cpp`; `src/vault_dpapi.cpp`; W4.3's `src/signer.cpp`, the Signer, and `src/signer_command.cpp`, the two `rpworker signer` commands, with their headers, while `src/ed25519.cpp`, the calls into OpenSSL under the Signer, is deliberately outside: the library's failure lines for a valid key can't be reached by a test, and folding them onto their calls' own lines would hide them, `docs/decisions.md` 2026-10-05 W4.3 point 4; W2.7's `src/target_guard.cpp`, `src/target_guard_graph.cpp`, `src/target_guard_veeam.cpp` and their headers; W3.3's `src/run_status.cpp`, the status decision table; W3.4's `src/cleaner.cpp` and `include/rp/cleaner.hpp`, the only Worker code that deletes in the tenant); every `.cpp` on disk under `src/`, `include/` and `app/` must appear in the report, so a file no test links into `rptests` (or, for `app/`, that ctest's runs of `rpworker.exe` don't reach) fails (headers of declarations may be absent) |
+| Worker coverage | `.github/workflows/worker.yml`, OpenCppCoverage + `worker/tools/coverage_gate.py` | 80% line on `rpcore` (`worker/src/`, `worker/include/`) plus `rpworker`'s `main()` (`worker/app/`); 100% **line** on vault, signer, target_guard, run_status, cleaner, timestamper, outbox and service (the vault once it exists), meaning any file with a path part named or prefixed `vault`, `signer`, `target_guard`, `run_status`, `cleaner`, `timestamper`, `outbox` or `service` (W4.8's five by the `service` prefix: `src/service_loop.cpp`, the scheduler loop, which decides what is due, which job runs, what is skipped and what becomes of a run's record, `src/service_jobs.cpp`, the jobs document's reader, `src/service_recovery.cpp`, `running.json`, the plan for a run folder without a result and the rule for Veeam's sessions after one, `src/service_log_stream.cpp`, the streams that turn a run's lines into log lines, and `src/service_errors.cpp`, the words a heartbeat's `last_error` may be, with their headers, while `src/worker_body.cpp`, the real calls the loop is handed, `src/heartbeat.cpp`, the one POST, `src/run_folder_tail.cpp`, the end of a run folder that the pipeline and the close share, and `src/job_rules.cpp`, the rules a command line and a job are both held to, are outside; W4.7's `src/service.cpp`, the running service's state machine, `src/service_command.cpp`, the `rpworker service` commands, and `src/service_log.cpp`, which decides what reaches the log file, while `src/scm.cpp`, the calls into the Service Control Manager, and `src/stop_signal.cpp` are outside; W4.6's `src/outbox.cpp`, which decides what is queued, sent, kept and pruned, and `src/outbox_command.cpp`, while `src/uploader.cpp`, the one HTTP call, and `src/folder_ops.cpp`, the file-system calls under it, are outside; W4.4's `src/timestamper.cpp`, which decides which RFC 3161 token is written, while `src/rfc3161.cpp`, the calls into OpenSSL under it, is outside like `src/ed25519.cpp`; `src/vault_dpapi.cpp`; W4.3's `src/signer.cpp`, the Signer, and `src/signer_command.cpp`, the two `rpworker signer` commands, with their headers, while `src/ed25519.cpp`, the calls into OpenSSL under the Signer, is deliberately outside: the library's failure lines for a valid key can't be reached by a test, and folding them onto their calls' own lines would hide them, `docs/decisions.md` 2026-10-05 W4.3 point 4; W2.7's `src/target_guard.cpp`, `src/target_guard_graph.cpp`, `src/target_guard_veeam.cpp` and their headers; W3.3's `src/run_status.cpp`, the status decision table; W3.4's `src/cleaner.cpp` and `include/rp/cleaner.hpp`, the only Worker code that deletes in the tenant); every `.cpp` on disk under `src/`, `include/` and `app/` must appear in the report, so a file no test links into `rptests` (or, for `app/`, that ctest's runs of `rpworker.exe` don't reach) fails (headers of declarations may be absent) |
 | Cloud coverage | `.github/workflows/cloud.yml`, pytest-cov | 80% on `app/`, measured as coverage's combined line + branch figure; 100% line + branch on `app/auth`, `app/results.py` and `app/repo` (skipped while absent), checked by `cloud/tools/check_coverage.py` |
 | Lab tests and canary hashes | `.github/workflows/lab.yml` | `lab/`'s pytest suite passes (offline, fake Graph tenant), and `python -m seeder hash` reproduces every hash in `lab/seed-manifest.json` from the committed `lab/canary/` files and the catalog (L1.2's Done when). No coverage floor |
 | No test, no merge | `.github/workflows/pr-guards.yml`, `.github/scripts/tests_touched.py` | Each side needs its own tests: a PR that changes `worker/src/`, `worker/include/` or `worker/app/` must add or change a C++ file (`.cpp`, `.hpp`, `.h`) under `worker/tests/`, and one that changes `cloud/app/` must add or change a `.py` under `cloud/tests/`. Deleting a test, editing fixtures or editing `tests/e2e/scenarios.md` doesn't count |
@@ -40,6 +40,22 @@ also uploads the Cobertura XML as the `worker-coverage-cobertura` artifact.
 **Known gap:** OpenCppCoverage reports line coverage only, not branch coverage. CLAUDE.md asks
 for 100% branch on vault, signer, target_guard, run_status and cleaner; until the Worker has a branch-capable tool,
 those files are held to 100% line instead. See `docs/decisions.md`.
+
+**Two rules for a strict file, which the gate taught (W4.8).** OpenCppCoverage counts a
+closing brace as a line of its own when the only thing it carries is a destructor, and such a
+line is unreached when every path has already returned. No test can reach it, so the code is
+written without it:
+
+- No `return` inside a catch handler: the handler's closing line is never reached. The handler
+  notes what happened (a flag, a word) and the function returns once, after the handlers.
+- No function that ends in a braced `return`, or in a `switch` whose every case returns, while
+  a local of its own or a by-value parameter with a destructor is alive: the function's closing
+  line only destroys it and is never reached. The value is taken by reference, given a scope of
+  its own, or the function is one expression over helpers that hold no local.
+
+Both leave the behaviour as it is. W4.8's review met six such lines in `src/service_loop.cpp`,
+`src/service_recovery.cpp` and `src/service_jobs.cpp` (commit 5a3052c), and `src/outbox.cpp`
+had one from W4.6 (`docs/decisions.md` 2026-10-08, W4.7 build notes point 3).
 
 ### Live tests
 
@@ -497,24 +513,35 @@ W4.2). The unit tests show it on the recorded lab (`rptests "[evidence]"`); this
 once against the live lab. It was run on 2026-10-05, before W4.3: since then `--evidence` also
 needs the signing key and signs (the W4.3 run below), and the lines here are as a run prints
 them now. Check the same things first as above, then, from `worker\`, in an
-elevated shell (the runs root is under `%ProgramData%`):
+elevated shell:
 
 ```powershell
-.\build\dev\rpworker.exe test --mail 10 --sp 10 --od 10 --run-id w42-done-when-1 --config <your config.json> --manifest ..\lab\seed-manifest.json --evidence $env:ProgramData\RestoreProof\runs
+.\build\dev\rpworker.exe test --mail 10 --sp 10 --od 10 --run-id w42-done-when-1 --config <your config.json> --manifest ..\lab\seed-manifest.json --evidence C:\restoreproof-runs\evidence
 ```
 
-The run ID must be new: a folder `runs\w42-done-when-1` that is already there stops the run
+**A hand run's `--evidence` root is a folder of its own, not
+`%ProgramData%\RestoreProof\runs`.** Since W4.8 that root is the service's
+(`docs/worker-config.md`, "The service's loop"). The service never closes, signs, queues or
+uploads a folder it finds there, but it skips a job whose run ID names one (`skipped <run_id>:
+a run folder is already there`), and a hand run there under a run ID the service is using is
+refused (`the run folder already exists`). The runs of 2026-10-05 to 2026-10-07 below were
+made into `%ProgramData%\RestoreProof\runs`, before the service had a body; their folders are
+still there on the lab machine and the service leaves them alone. Any folder outside the
+repository does, here `C:\restoreproof-runs\evidence`; `--evidence` makes it when it isn't
+there.
+
+The run ID must be new: a folder `evidence\w42-done-when-1` that is already there stops the run
 before its run line (`evidence error: ...: the run folder already exists; nothing was done`).
 `--evidence` can't be combined with `--json`. The run ends `status pass: ...`, the clean
 after's line, the timings' table, `signed <bundle_sha256> key <key_id>` and `evidence
-C:\ProgramData\RestoreProof\runs\w42-done-when-1: result.json, signature.json, items.csv,
+C:\restoreproof-runs\evidence\w42-done-when-1: result.json, signature.json, items.csv,
 veeam-session.log`, exit 0, stderr empty. Then check the folder
 offline: `result.json` valid by the repository's schema and its own canonical form, the files
 beside it and `signature.json` exactly the ones `attachments` lists, and each with the size and
 SHA-256 listed. From `cloud\`:
 
 ```powershell
-uv run python -c "import hashlib,json,sys,pathlib; from jsonschema import Draft202012Validator; f=pathlib.Path(sys.argv[1]); b=(f/'result.json').read_bytes(); d=json.loads(b); s=json.loads(pathlib.Path('../shared/schemas/result.v1.json').read_bytes()); errs=sorted(Draft202012Validator(s).iter_errors(d), key=lambda e: e.json_path); print('schema:', 'valid' if not errs else [e.json_path for e in errs]); print('canonical:', json.dumps(d, sort_keys=True, separators=(',', ':'), ensure_ascii=False).encode('utf-8') == b); print('files:', {a['name'] for a in d['attachments']} == {p.name for p in f.iterdir()} - {'result.json', 'signature.json'}); [print(a['name'], len(x) == a['size_bytes'], hashlib.sha256(x).hexdigest() == a['sha256']) for a in d['attachments'] for x in [(f/a['name']).read_bytes()]]" $env:ProgramData\RestoreProof\runs\w42-done-when-1
+uv run python -c "import hashlib,json,sys,pathlib; from jsonschema import Draft202012Validator; f=pathlib.Path(sys.argv[1]); b=(f/'result.json').read_bytes(); d=json.loads(b); s=json.loads(pathlib.Path('../shared/schemas/result.v1.json').read_bytes()); errs=sorted(Draft202012Validator(s).iter_errors(d), key=lambda e: e.json_path); print('schema:', 'valid' if not errs else [e.json_path for e in errs]); print('canonical:', json.dumps(d, sort_keys=True, separators=(',', ':'), ensure_ascii=False).encode('utf-8') == b); print('files:', {a['name'] for a in d['attachments']} == {p.name for p in f.iterdir()} - {'result.json', 'signature.json'}); [print(a['name'], len(x) == a['size_bytes'], hashlib.sha256(x).hexdigest() == a['sha256']) for a in d['attachments'] for x in [(f/a['name']).read_bytes()]]" C:\restoreproof-runs\evidence\w42-done-when-1
 ```
 
 It must print `schema: valid`, `canonical: True`, `files: True` and `True True` after each
@@ -545,7 +572,7 @@ lab's signing key:
    from `worker\`:
 
    ```powershell
-   .\build\dev\rpworker.exe test --mail 10 --sp 10 --od 10 --run-id w43-done-when-1 --point <restore point ID> --config <your config.json> --manifest ..\lab\seed-manifest.json --evidence $env:ProgramData\RestoreProof\runs
+   .\build\dev\rpworker.exe test --mail 10 --sp 10 --od 10 --run-id w43-done-when-1 --point <restore point ID> --config <your config.json> --manifest ..\lab\seed-manifest.json --evidence C:\restoreproof-runs\evidence
    ```
 
    It must end `status pass: ...`, the clean after's line, the timings' table, `signed
@@ -580,10 +607,10 @@ build notes point 15). The same command as W4.3's run above with a new run ID (a
 <a new folder outside the repository>` to keep the TSA's exchange): it must end `signed ...`,
 `timestamped <time>` and an `evidence` line that lists `timestamp.tst`, exit 0, stderr empty.
 Then steps 3 to 5 of "Verify a run folder by hand" below, with `--tsa-ca
-shared	sa	sa-ca.pem` for both tools: `Verification: OK` from OpenSSL for `-digest` and for
+shared\tsa\tsa-ca.pem` for both tools: `Verification: OK` from OpenSSL for `-digest` and for
 `-data`, and one line from both verifiers whose third field is the token's time. To see a run
 without a TSA, copy the config, set `tsa_url` to `http://127.0.0.1:9/` and `tsa_ca_file` to the
-full path of `shared	sa	sa-ca.pem`, and run again with another run ID: the same status and
+full path of `shared\tsa\tsa-ca.pem`, and run again with another run ID: the same status and
 exit code, one `timestamp warning: ... tsa_unreachable after 3 attempt(s)` on stderr, a folder
 without `timestamp.tst`, about 90 s later than usual.
 
@@ -609,7 +636,9 @@ before any Veeam call. Everything temporary is taken away by the harness's `Remo
 
 Read-only, offline, no config and no secret. The two tools must agree on the stdout line
 (`docs/verification.md`, "The checks, and the thirteen words"); their exit codes are their
-own.
+own. `<run folder>` below is the run's folder wherever it is: `<--evidence root>\<run_id>` for
+a hand run, `%ProgramData%\RestoreProof\outbox\<run_id>` or `sent\<run_id>` for a queued or a
+sent one, the service's runs included.
 
 1. **The public key.** The file the Worker's key was exported to: `new-signing-key
    --public-key-out <file>` in the lab, or, from the vault (from `worker\`, PowerShell 7; an
@@ -626,13 +655,13 @@ own.
 2. **The hash.** `bundle_sha256` is `result.json`'s own SHA-256:
 
    ```powershell
-   (Get-FileHash $env:ProgramData\RestoreProof\runs\<run_id>\result.json -Algorithm SHA256).Hash.ToLower()
+   (Get-FileHash <run folder>\result.json -Algorithm SHA256).Hash.ToLower()
    ```
 
 3. **The Worker's verifier**, from `worker\`:
 
    ```powershell
-   .\build\dev\rpworker.exe signer verify $env:ProgramData\RestoreProof\runs\<run_id> --public-key C:\restoreproof-runs\worker-signing.pub.pem
+   .\build\dev\rpworker.exe signer verify <run folder> --public-key C:\restoreproof-runs\worker-signing.pub.pem
    $LASTEXITCODE
    ```
 
@@ -647,7 +676,7 @@ own.
    (`--tsa-ca shared/tsa/tsa-ca.pem`):
 
    ```powershell
-   uv run shared/tools/verify_bundle.py $env:ProgramData\RestoreProof\runs\<run_id> --public-key C:\restoreproof-runs\worker-signing.pub.pem
+   uv run shared/tools/verify_bundle.py <run folder> --public-key C:\restoreproof-runs\worker-signing.pub.pem
    $LASTEXITCODE
    ```
 
@@ -716,7 +745,7 @@ Initialize-W46Harness
 # (a) a run, queued
 worker\build\dev\rpworker.exe test --mail 10 --sp 10 --od 10 --run-id <run id> --point <restore point ID> `
     --config $W46Config --manifest lab\seed-manifest.json `
-    --evidence $env:ProgramData\RestoreProof\runs --outbox $env:ProgramData\RestoreProof
+    --evidence C:\restoreproof-runs\evidence --outbox $env:ProgramData\RestoreProof
 worker\build\dev\rpworker.exe outbox list
 # (b) the Cloud down: kept, attempt 1, exit 3
 worker\build\dev\rpworker.exe outbox flush --config $W46Config
@@ -738,7 +767,10 @@ before then prints `waiting <run id>: next at <time>` and sends nothing. Compare
 folder before and after (c) with `Get-W46Hashes <folder>`: only `manifest.json` differs.
 `rpworker graph list` must show 0 in all three targets afterwards, as after any run. The sent
 folder stays outside the repository; the 2026-10-07 run's evidence is
-`docs/api/veeam-lab/w4.6-*`.
+`docs/api/veeam-lab/w4.6-*`. That run's `--evidence` root was `%ProgramData%\RestoreProof\runs`;
+since W4.8 it is a folder of its own on the outbox root's volume ("Test by hand" above). Run
+this with the service stopped or not installed: a running service flushes the same outbox
+(`%ProgramData%\RestoreProof`) at every poll, with its own config's `cloud_url`.
 
 ### The service by hand (W4.7)
 
@@ -789,6 +821,214 @@ Remove-W47Harness
 `sc qc RestoreProof` answers 1060 afterwards. The 2026-10-08 run's evidence is
 `docs/api/veeam-lab/w4.7-*`. `services.msc` held open on the service keeps it "marked for
 deletion" after an uninstall until it is closed.
+
+### The service's loop by hand (W4.8)
+
+The loop is the body of `rpworker service run` (`docs/worker-config.md`, "The service's loop";
+`docs/decisions.md` 2026-10-08, W4.8). It has no command of its own, so no exe test starts it,
+and no automated test waits, starts the service or touches `%ProgramData%`. What the tests
+cover:
+
+- `tests/service_loop_test.cpp` (`[service_loop]`): the loop on `ServiceLoopEnv` fakes
+  (`tests/service_loop_lab.hpp`: `LoopLab`, a fake clock whose `wait` advances it and answers
+  a stop at a scripted step, the log's lines, every call in order). What is due and in which
+  order, each job's rule and its line, the record's writes, the close and its retries, the
+  hold's table, the heartbeat, the flush, a step that throws, a stop at every point.
+- `tests/service_recovery_test.cpp` (`[service_recovery]`): `running.json`'s text after each
+  write and its strict reader, the plan for a folder at every point a kill can leave it, the
+  close on fakes, the result written afterwards for each code, the hold's rule, when the
+  record goes.
+- `tests/service_jobs_test.cpp` (`[service_jobs]`): the jobs document, one `GENERATE` row per
+  document and per job against the exact `jobs error` line or the key at fault.
+- `tests/service_log_stream_test.cpp` (`[service_log_stream]`): a run's lines as log lines.
+  `tests/service_errors_test.cpp` (`[service_errors]`): the heartbeat's `last_error` words.
+  `tests/heartbeat_test.cpp` (`[heartbeat]`): the body's exact bytes and each failure word, on
+  the local HTTP server.
+- `tests/worker_body_test.cpp` (`[worker_body]`): the real body over a temp folder, the
+  command tests' Harness, a fake Cloud and a fake lock: one job from the stub file to `sent\`
+  with every line, a killed run's folder closed, signed and queued at every point a kill can
+  leave it, the hold and the recovery clean, the abandoned run mutex, and `service run` on the
+  fake host with the real body. Its `[owner]` tests give a file to another account and skip
+  unless elevated ("Running the gates locally" below). The hidden `[.write_shared_closed]`
+  writes the shared closed folder ("The shared signing vectors" below).
+- The pipeline's side, in the files that were there: `tests/test_command_test.cpp` `[report]`
+  (`PipelineReport` at every way out of `run_pipeline`) and `[stop]`;
+  `tests/restore_command_test.cpp` `[stop]` (a stop at each step boundary), `[job_rules]` (the
+  rules a command line and a job share, `src/job_rules.hpp`) and `[recovery_clean]`
+  (`clean_restore_targets`); `tests/evidence_builder_test.cpp` `[adopt]` (the text files a
+  close keeps or replaces); `tests/timestamper_test.cpp` `[stop]`; `tests/outbox_test.cpp`
+  `[stop]`, `[holds]` and `[lock]`; `tests/vault_test.cpp` `[owner]` (the owner rule as a
+  function of its own); `tests/veeam_m365_restore_test.cpp`,
+  `tests/veeam_m365_connector_test.cpp`, `tests/veeam_m365_candidates_test.cpp` and
+  `tests/connector_test.cpp` `[w4.8]` (the record's seams, no POST after a stop, the poll
+  ended by a stop, `own_sessions`, `end_session`); `tests/config_test.cpp` and
+  `tests/config_check_test.cpp` `[jobs]` (`jobs_file`); `tests/run_status_test.cpp` (the two
+  codes).
+- One exe test: `rpworker config check refuses a jobs_file that isn't an absolute path`.
+
+`rptests.exe "[service_loop],[service_recovery],[service_jobs],[service_log_stream],[service_errors],[heartbeat],[worker_body]"`
+runs the new files alone.
+
+**By hand.** The Done-when ("dropping a job into the stub file produces a signed bundle in the
+outbox within one poll interval") is run on the lab machine with the harness
+`docs/api/veeam-lab/w4.8-harness/`: `w48-run.ps1`, which is W4.7's `w47-run.ps1` grown by the
+grants, the config copy, the jobs file and the reads of `running.json` and the folders, and
+`stub-cloud.py`, W4.6's stub Cloud with `POST /v1/heartbeat` answering 204 and printing the
+body. Both are committed with the live run, and so are the names of the harness's functions;
+the steps below are the commands they wrap. The live run: see the build notes.
+
+This writes into the lab tenant and deletes there, as every run does. Before the first step:
+
+- **An elevated PowerShell 7**, no restore session of the Veeam account still `Working`, no
+  other RestoreProof run, the vault filled with all five secrets (`rpworker vault test`), the
+  signing key among them: every run of the service signs.
+- **The stub Cloud** on `https://localhost:8443` with its own certificate, as for "The outbox
+  by hand".
+- **A config copy** in a work folder of its own outside the repository (`<work>` below, which
+  also holds the stub's CA file and the jobs file): the lab's config with `jobs_file` (an
+  absolute path, `<work>\jobs.json`; the file needn't exist yet), `cloud_url` and
+  `cloud_ca_file` of the stub, `poll_interval_s` 30 and `heartbeat_interval_s` 60, and
+  **`seed-manifest.json` copied beside it**: the service finds the manifest beside its config
+  and has no `--manifest`. The service reads the config once, at its start.
+- **The jobs file's owner** must be SYSTEM, Administrators or the service's account, or the
+  loop reads nothing from it (`jobs error: <file>: owned by neither SYSTEM, Administrators nor
+  this account`). A file written from the elevated shell is owned by Administrators;
+  `(Get-Acl <jobs file>).Owner` shows it.
+- **W7.1 isn't built**, so nothing grants the account `NT SERVICE\RestoreProof` what the loop
+  needs: step 2 makes the grants by hand and step 12 takes them away.
+- The folders of earlier hand runs under `%ProgramData%\RestoreProof\runs` stay where they
+  are. List them before and after: they must be untouched.
+
+1. **Install.** The account exists only once the service is installed.
+
+   ```powershell
+   worker\build\dev\rpworker.exe service install --config <config copy>
+   ```
+
+2. **Grant**, and keep `icacls` of the vault and of the key file from before and after:
+
+   ```powershell
+   $acct = 'NT SERVICE\RestoreProof'
+   $root = "$env:ProgramData\RestoreProof"
+   worker\build\dev\rpworker.exe vault grant $acct
+   icacls "C:\ProgramData\Microsoft\Crypto\RSA\MachineKeys\<UniqueKeyContainerName>" /grant "${acct}:(R)"
+   foreach ($d in 'state','runs','outbox','sent') {
+       New-Item -ItemType Directory -Force "$root\$d" | Out-Null
+       icacls "$root\$d" /grant "${acct}:(OI)(CI)M"
+   }
+   icacls '<work>' /grant "${acct}:(OI)(CI)R"
+   ```
+
+   The key file is the private key of Veeam's organisation app certificate (W4.12; "The restore
+   credential under a service account" above). Read on `<work>` is inherited by the config
+   copy, the manifest, the stub's CA file and every jobs file written or renamed there. Modify
+   on the four folders and Read on `<work>` is all the account gets; a `veeam_ca_file` or
+   `tsa_ca_file` kept elsewhere needs Read too.
+3. **Start.** Start the stub, then `rpworker service start`. `worker.log`
+   (`%ProgramData%\RestoreProof\logs\worker.log`) must hold `scheduler started: poll 30 s,
+   heartbeat 60 s, jobs <jobs file>, runs C:\ProgramData\RestoreProof\runs, outbox
+   C:\ProgramData\RestoreProof`, and the stub shows a heartbeat at once and one a minute:
+   `{"last_error":null,"last_error_at":null,"outbox_depth":0,"uptime_s":<n>,"version":"<rpworker's>"}`.
+4. **Drop a job.** From the elevated shell, write the document under another name in `<work>`
+   and rename it to `jobs.json`, so the loop never reads half a file, and note the time:
+
+   ```json
+   {"format": "restoreproof.jobs.v1",
+    "jobs": [
+      {"run_id": "w48-job-1", "client_id": null,
+       "sample_mail": 5, "sample_sp": 5, "sample_od": 5,
+       "restore_point": "latest", "screenshots_enabled": false}
+    ]}
+   ```
+
+5. **Watch `worker.log`** (`Get-Content <worker.log> -Wait -Tail 20`). No later than one poll
+   interval after the file's time: `run w48-job-1: starting (mail 5, sharepoint 5, onedrive 5,
+   point latest)`. Then the run's own lines, each as `[w48-job-1] <line>`, what `rpworker test
+   --evidence --outbox` prints at a prompt: the restore point, the run line, the sample, the
+   check's table, `status pass: ...`, `cleanup after ok: ...`, the timings, `signed
+   <bundle_sha256> key <key_id>`, `timestamped <time>`, the `evidence` line and `queued
+   C:\ProgramData\RestoreProof\outbox\w48-job-1`. Then `run w48-job-1: ended pass; queued` and,
+   from the flush the loop makes right after the run, `sent w48-job-1`. The job is taken within
+   one poll interval; its folder is in the outbox when the run has ended, some minutes later.
+6. **The folders.** `runs\w48-job-1` and `outbox\w48-job-1` are gone and `sent\w48-job-1` holds
+   `result.json`, `signature.json`, `timestamp.tst`, `items.csv`, `veeam-session.log` and
+   `manifest.json`; the loop flushes at once, so the folder may only ever be seen under
+   `sent\`. `state\running.json` is gone. `rpworker outbox list` counts no queued run and one
+   sent. The stub printed every part with the sizes and hashes `result.json` lists. `rpworker
+   graph list` shows 0 in all three targets.
+7. **The verifiers**, both on `sent\w48-job-1` with the Worker's public key and `--tsa-ca
+   shared\tsa\tsa-ca.pem` ("Verify a run folder by hand" above): the same `verified
+   <bundle_sha256> key <key_id> timestamp <time>` line from both, with `note: not listed in the
+   result: manifest.json` on stderr.
+8. **The same job is skipped.** Leave the jobs file as it is for two more polls: one line,
+   `skipped w48-job-1: already sent`, and no second `starting` line.
+9. **A kill in the middle of a run.** Put a second job (`w48-job-2`) in the file. Read
+   `state\running.json` until it says `"restore_requested":true`, then end the process:
+
+   ```powershell
+   Stop-Process -Id (Get-CimInstance Win32_Service -Filter "Name='RestoreProof'").ProcessId -Force
+   ```
+
+   `runs\w48-job-2` is empty and `running.json` is still there. Windows starts the service
+   again after 60 s. **What the next start does**, from the record alone: `scheduler started:
+   ...`, then `interrupted run w48-job-2 found: taken <time>, restore requested yes`; the
+   folder is closed by the run's own signing path (`[w48-job-2] signed ...`, `[w48-job-2]
+   timestamped <time>`, `[w48-job-2] queued <outbox folder>`, then `run w48-job-2: queued`)
+   and sent. Its `result.json` says `error` `interrupted` with `restore_sent` `true`, every
+   step `null`, and the message `the run was interrupted before its result was written; a
+   restore request may have been sent, so items may be in the restore targets`; `items.csv` is
+   its header row alone and `veeam-session.log` is empty. Then the hold: while a session of the
+   Veeam account that the record doesn't list is running, nothing is ended and no job starts
+   (`waiting for Veeam: <n> session(s) of <account> still Working since <time>`, once and again
+   every hour); when none is, and 120 s have passed, the explore sessions the record lists are
+   ended. Then `recovery clean for w48-job-2:` and `[w48-job-2] cleanup before ok: deleted
+   ...`, and the record is deleted. `graph list` shows 0 in all three targets, and both
+   verifiers say `verified` for `sent\w48-job-2`. No other job starts before the record is
+   gone.
+10. **A stop during a run.** A third job; during its restore:
+
+    ```powershell
+    worker\build\dev\rpworker.exe service stop        # stopped RestoreProof in <s.s> s, under 30
+    Get-Content $env:ProgramData\RestoreProof\state\running.json
+    worker\build\dev\rpworker.exe service start
+    ```
+
+    The record of a run that reached its run line is kept across a stop, so the start writes
+    `interrupted run <run_id> found: ...` in both of the two cases. When the stop check ended
+    the run inside the 25 s, the run signed and queued itself as `error interrupted` (`status
+    error interrupted: ...` among its lines, and no token: the TSA isn't asked after a stop)
+    and nothing is closed again. When
+    the process was cut off first, the folder is closed at the start as step 9's was. Either
+    way: sent, the hold, the clean when a restore was requested, the record gone, `graph list`
+    0. The table of what a stop leaves is in `docs/worker-config.md`, "A stop during a run".
+11. **An invalid job, and a file that is no document.** A job with all three sizes 0: `job
+    <run_id>: not a valid job (sample_mail)`, then a folder closed, signed, queued and sent
+    whose result says `error` `job_invalid`, `the job isn't a valid job (sample_mail); nothing
+    was done`. Nothing is asked of Veeam or Graph for it, and from then on the job is skipped
+    as `already sent`. Then a jobs file that isn't JSON: `jobs error: <file>: not JSON`, once,
+    and `"last_error":"jobs_unreadable"` in the next heartbeat. A job without a usable `run_id`
+    is not reported at all: `job <n> of <file>: no usable run_id; not run`.
+12. **Revoke, before the uninstall.** `rpworker service stop`, then take away everything step 2
+    gave while the account's name still resolves; after the uninstall `NT SERVICE\RestoreProof`
+    names nothing and the entries could only be removed by their SID:
+
+    ```powershell
+    icacls "$root\vault.bin" /remove $acct
+    icacls "C:\ProgramData\Microsoft\Crypto\RSA\MachineKeys\<UniqueKeyContainerName>" /remove $acct
+    foreach ($p in "$root\state","$root\runs","$root\outbox","$root\sent",'<work>') {
+        icacls $p /remove $acct
+    }
+    ```
+
+    `icacls` of the vault and of the key file must show what they showed before step 2.
+13. **Uninstall.** `rpworker service uninstall`; `sc query RestoreProof` answers 1060. Take
+    away `<work>` and the stub; keep the `sent\` folders of these runs, outside the repository.
+    `vault.bin` stays.
+
+If a step leaves the loop held (a session that stays `Working`, a folder that can't be closed
+or queued), the two ways out are in `docs/worker-config.md`, "The operator's two ways out".
+Evidence goes under `docs/api/veeam-lab/w4.8-*` as text, by the W4.5 harness's rule: refused if
+a secret, a token or a key survives.
 
 ### Recording fixtures (`--record <dir>`)
 
@@ -869,7 +1109,7 @@ embeds.
 | `shared/schemas/result.v1.json` | the result's schema, the only copy | `worker/tests/result_schema_test.cpp` (`[result_schema]`): the embedded bytes are the file's, only the allowed keywords, the seventeen keys, the enums against the code | `cloud/tests/test_result_schema.py`: `check_schema`, `$schema` is draft 2020-12 |
 | `shared/testdata/canonical-json-v1.json` | `canonical-json-v1`: 33 `cases` (`input`, `canonical`, `sha256`) and 9 `rejects` (`input_text`, `reason`: `float`, `integer_out_of_range` or `non_ascii_key`) | `worker/tests/canonical_json_test.cpp` (`[canonical_json]`): every case and every reject; invalid UTF-8, which a JSON file can't hold, on bytes | `cloud/tests/test_canonical_json.py`, since W4.3 on the Python canonicaliser in `shared/tools/verify_bundle.py` (`parse_strict`, `canonical_json`), loaded by path: the 33 cases byte for byte, the 9 rejects by their reason, and what a vector's JSON text can't hold built in the test (a duplicate key, a BOM, `NaN`, invalid UTF-8, a lone surrogate, 33 levels of nesting) |
 | `shared/testdata/result-v1/valid.json` | a valid result, as canonical bytes | `worker/tests/test_command_test.cpp`: the pipeline's run reproduces it byte for byte | `test_result_schema.py`: valid, and equal to its own canonical dump |
-| `shared/testdata/result-v1/cases.json` | 183 documents, each `valid.json` with an RFC 6902 `patch` (add, remove, replace) and whether the schema accepts it (`valid`): 45 valid, 138 invalid (the three newest hold W4.3's cut of `containers_listed` to the count `containers_drawn`). Both sides pin the two counts | `result_schema_test.cpp`, one `GENERATE` row per case | `test_result_schema.py`, one parametrised test per case |
+| `shared/testdata/result-v1/cases.json` | 185 documents, each `valid.json` with an RFC 6902 `patch` (add, remove, replace) and whether the schema accepts it (`valid`): 47 valid, 138 invalid (three hold W4.3's cut of `containers_listed` to the count `containers_drawn`; the two newest, both valid, are W4.8's results written afterwards, `written-afterwards-error-interrupted-every-step-null` and `written-afterwards-error-job-invalid-nothing-known`, and the made-up code of `status-unknown-error-code` is now `teapot`, since `job_invalid` is a real one). Both sides pin the counts | `result_schema_test.cpp`, one `GENERATE` row per case | `test_result_schema.py`, one parametrised test per case |
 
 The Python tests find `shared/` by walking up from their own file, so they also run from
 mutmut's copy. The Worker tests read it through `RP_SHARED_DIR`. No case holds a float:
@@ -898,7 +1138,7 @@ Then read the diff, and run both sides: `ctest --preset dev -R "result"` and, fr
 `uv run pytest tests/test_result_schema.py`. The patches in `cases.json` point into `valid.json`
 by position (`/expected/items/1` is the random mail, `/check/items/3` the item restored twice):
 if the run's layout changed, the patches must follow, and the two counts pinned in
-`result_schema_test.cpp` and `test_result_schema.py` (183 cases, 45 valid) with them. Then
+`result_schema_test.cpp` and `test_result_schema.py` (185 cases, 47 valid, 138 invalid) with them. Then
 write the signing vectors again too (below): their `result.json` is made from `valid.json`. It also changes when
 `lab/seed-manifest.json` is re-seeded, since the canaries' hashes and the manifest's are in it.
 A change to the schema alone needs no C++ change to be tested: both suites run `cases.json`
@@ -955,6 +1195,7 @@ known to everyone: never a secret, and never to sign anything real.
 | `bundle.json` | one signed run folder as texts: `result.json` (`result-v1/valid.json` with its `attachments` replaced by two small made-up files), `signature.json`, `items.csv`, `veeam-session.log`, with the `bundle_sha256` and `key_id` both verifiers must print | `rptests "[.write_shared_signing]"` |
 | `cases.json` | 38 changes to that folder, each with the one word expected: a file's bytes replaced (as text, or as Base64 for bytes that aren't UTF-8 or start with a BOM), a file removed, or another public key given. 37 fail, one is the untouched folder, `verified` | `rptests "[.write_shared_signing]"` |
 | `key-files.json` | 46 public key files, 11 accepted and 35 refused, with the one rule both verifiers hold for a key file (`docs/verification.md`, "The public key file") | a one-off script that isn't committed (the W4.3 review); changed by hand |
+| `closed-folder.json` | one run folder the service closed afterwards (W4.8), as texts in `bundle.json`'s shape: `key` (`rfc8032-test-1`), `bundle_sha256`, `key_id` and `files`. The run's process ended after a restore request and before its result was written, so `result.json` says `error interrupted` with `restore_sent` true and every step `null`, `items.csv` is its header row alone, `veeam-session.log` is empty, and there is no `timestamp.tst` | `rptests "[.write_shared_closed]"` |
 
 The 38 cases by word, pinned on both sides: `result_unreadable` 1, `result_not_canonical` 12,
 `result_schema` 1, `attachment_twice` 1, `screenshot_missing` 1, `signature_file` 10,
@@ -977,6 +1218,35 @@ compares the word.
   line and exit code through `main`, the 46 key files through `public_key_from_pem` and
   through `main`, `ed25519.json` and `keys.json` on `cryptography`. It holds the set of words
   the cases expect equal to the set the script can answer.
+
+**The closed folder (W4.8).** `closed-folder.json` shows that a result the service wrote
+afterwards is signed by the same path as a run's own and read alike by both verifiers
+(`docs/verification.md`, "A result written afterwards (W4.8)"). It is made by the service's
+real close over a temp folder: a record of a run with a restore request, no folder, the vault's
+key RFC 8032's test key 1, the stop already asked for, so the TSA isn't asked.
+
+- Worker: `worker/tests/worker_body_test.cpp`, "worker body: a folder closed after a stop has
+  no token, and is what the shared vector holds" (`[worker_body][close][signer]`). It makes the
+  folder again and compares it with the file: `items.csv` byte for byte, `result.json` as JSON
+  without `worker_version`, the whole `status` object; then `Signer::verify_folder` over the
+  file's four texts must say `verified` with the file's `bundle_sha256` and `key_id` and no
+  timestamp.
+- Cloud: `cloud/tests/test_verify_bundle_closed.py` writes the four files into a temp folder:
+  `verify_folder` says `verified`, `main` prints `verified <bundle_sha256> key <key_id>
+  timestamp none` with `note: not timestamped` on stderr and exit 0, the hash is
+  `result.json`'s own, and `restore_sent` changed to `false` is `hash_mismatch`.
+
+The result names the Worker's version of the day it was written, so unlike `bundle.json` the
+file is not held to the code byte for byte: both tests verify it as it is, and a version bump
+needs no rewrite. After a deliberate change to the result, to a result written afterwards or to
+the signature file, write it again from `worker\`, read the diff and run both sides:
+
+```powershell
+.\build\dev\rptests.exe "[.write_shared_closed]"
+.\build\dev\rptests.exe "[worker_body]"
+```
+
+and, from `cloud\`, `uv run pytest tests/test_verify_bundle_closed.py`.
 
 The script is outside `--cov=app` and mutmut, so no gate holds its coverage; `cryptography` is
 in Cloud's dev group for these tests.
@@ -1022,6 +1292,22 @@ hour; this takes about 13 minutes on the dev laptop. `ctest --preset dev` and CI
 `ctest --preset ci` still run each test case in its own process, so a test that only passes
 because of an earlier one shows up there (`docs/decisions.md`, 2026-10-01 "Worker coverage in
 one process").
+
+**One exe test fails on a console in code page 437.** `rpworker config check keeps a --config
+path outside the ANSI code page` gives `rpworker.exe` a Cyrillic file name and compares stderr
+exactly. Run from a console whose code page is 437 (PowerShell started through another shell,
+for one) it fails; after `chcp 65001`, or from a PowerShell window opened directly, it passes.
+It is the console's doing, not the Worker's, and it is older than W4.8, whose build met it in
+every step.
+
+**Tests that skip unless elevated.** Changing a file's owner needs `SeRestorePrivilege`, so
+the tests that give a file to another account (`tests/owner_lab.hpp`: `elevated()`,
+`give_to()`; the other account is LocalService, `S-1-5-19`) skip themselves in an unelevated
+shell with `changing a file's owner needs SeRestorePrivilege: run elevated`: the `[owner]`
+tests of `tests/vault_test.cpp` and `tests/worker_body_test.cpp`. So does the one `scm_test`
+that creates a service (W4.7). In an unelevated run what the W4.8 ones decide is still covered,
+by the same rules on fakes (`[service_recovery]`, `[service_loop]`). Run `rptests.exe
+"[owner]"` once from an elevated shell after a change to the owner rule.
 
 Lab, from `lab/` (the same commands as CI; see `lab/README.md`):
 

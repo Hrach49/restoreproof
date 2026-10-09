@@ -14,6 +14,7 @@
 
 #include "owner_lab.hpp"
 #include "restore_command_lab.hpp"
+#include "result_lab.hpp"
 #include "service_lab.hpp"
 #include "worker_body_lab.hpp"
 
@@ -817,7 +818,11 @@ TEST_CASE("worker body: one job from the stub file to the outbox and the Cloud, 
           "[worker_body][loop]")
 {
     BodyLab lab;
-    lab.write_jobs(json::array({job("job-1")}));
+    // W4.10: the job's client_id goes into the result, and the record
+    // carries the job's profile.
+    json one = job("job-1");
+    one["client_id"] = "client-7";
+    lab.write_jobs(json::array({one}));
     // The fake connector tells its caller as the real one does: a session
     // opened, then the request about to go. What running.json held then.
     std::optional<bool> let_go;
@@ -910,7 +915,11 @@ TEST_CASE("worker body: one job from the stub file to the outbox and the Cloud, 
     CHECK(rp::to_string(verify(sent).word) == "verified");
     const json result = result_in(sent);
     CHECK(result.at("status").at("status") == "pass");
-    CHECK(result.at("client").at("client_id").is_null());
+    CHECK(result.at("client").at("client_id") == "client-7");
+    CHECK(result.at("client").at("veeam_org_name") == kOrgName);
+    REQUIRE(before->client);
+    CHECK(rp::to_json(*before->client) == lab_profile_json());
+    CHECK(before->client_id == std::optional<std::string>{"client-7"});
     CHECK_FALSE(std::filesystem::exists(lab.runs() / "job-1"));
     CHECK_FALSE(std::filesystem::exists(lab.queued("job-1")));
     CHECK_FALSE(std::filesystem::exists(lab.record_file()));
@@ -1153,15 +1162,10 @@ const char* const kClosedVector = "testdata/signing-v1/closed-folder.json";
 ordered_json closed_vector()
 {
     BodyLab lab;
-    rp::Config& config = lab.context->config;
-    config.veeam_org_name = "contoso.onmicrosoft.com";
-    config.graph_tenant_id = "11111111-2222-3333-4444-555555555555";
-    config.test_mailbox = "restoretest@contoso.onmicrosoft.com";
-    config.test_site_id = "contoso.sharepoint.com,aaaaaaaa-0000-0000-0000-000000000001,"
-                          "aaaaaaaa-0000-0000-0000-000000000002";
-    config.test_library_id = "b!library";
-    config.test_onedrive_drive_id = "b!onedrive";
-    config.test_onedrive_folder_id = "01FOLDER";
+    // The record's client is the shared profile vector's (W4.10): the same
+    // made-up names result-v1's valid.json has.
+    const rp::ClientProfile profile = std::get<rp::ClientProfile>(rp::parse_client_profile(
+        json::parse(rp::test::read_shared("testdata/client-profile-v1/valid.json"))));
     rp::RunStarted started;
     started.run_id = "closed-run-1";
     started.started_at = "2026-10-08T09:00:01.000Z";
@@ -1170,7 +1174,10 @@ ordered_json closed_vector()
     started.connector_type = std::string{connector::kVeeamM365};
     started.connector_api = "v8";
     const rp::RunningRecord record = rp::with_restore_request(
-        rp::with_run_started(lab.record("closed-run-1"), started), rp::test::graph_lab::kNow);
+        rp::with_run_started(
+            rp::new_run_record("closed-run-1", std::nullopt, profile, rp::test::graph_lab::kNow),
+            started),
+        rp::test::graph_lab::kNow);
     lab.context->stop.request();
 
     const rp::CloseRunOutcome outcome = lab.env().close_run(record);

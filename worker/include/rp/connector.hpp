@@ -8,6 +8,7 @@
 // rp/veeam_m365_connector.hpp, and code that holds an IConnector& never needs
 // it. The choices are the 2026-09-27 W1.7 entry in docs/decisions.md.
 
+#include <rp/client_profile.hpp>
 #include <rp/config.hpp>
 
 #include <chrono>
@@ -48,11 +49,19 @@ struct RestorePoint {
 // restore_sample, before any call to the backup product.
 class RestoreTargets {
 public:
-    // Copies Config's test_* values and checks them as parse_config does, since
-    // a Config built in code skips that. Throws std::invalid_argument ("restore
-    // target <key> is empty") for an empty one, and ("restore target
-    // test_mailbox must be restoretest@<domain>") for a mailbox that
-    // rp::is_restore_mailbox refuses.
+    // The factory (W4.10, docs/decisions.md 2026-10-09 point 4): copies the
+    // profile's five target values and checks them as parse_config checks
+    // the config's, since a profile built in code skips that. Throws
+    // std::invalid_argument ("restore target <key> is empty") for an empty
+    // one, ("restore target test_mailbox must be restoretest@<domain>") for a
+    // mailbox that rp::is_restore_mailbox refuses, and ("restore target <key>
+    // <rule>") for an ID that isn't a Graph ID (rp::kGraphSiteIdRule and the
+    // others). The guard (W2.7) still resolves every target per item through
+    // Graph: this holds the shapes, not the identity.
+    static RestoreTargets from_profile(const ClientProfile& profile);
+    // The config's test_* values as a profile, through from_profile: the five
+    // target keys must be set; the organisation, tenant and app needn't be
+    // (the test lab's Config holds the five alone).
     static RestoreTargets from_config(const Config& config);
 
     const std::string& mailbox() const noexcept { return mailbox_; }

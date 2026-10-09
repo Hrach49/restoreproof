@@ -1,0 +1,1066 @@
+{
+  "format": "restoreproof.jobs.v1",
+  "description": "Documents the Worker's rp::parse_jobs and Python's jsonschema must judge alike against shared/schemas/jobs.v1.json, with client-profile.v1.json for each job's client (W4.10, docs/decisions.md 2026-10-09 point 8). `base` is a valid jobs document as canonical-json-v1 (one line, no trailing newline); each case is base with its RFC 6902 patch applied, `valid` says whether the schema accepts it, and `code_refuses` marks a case the schema accepts and the Worker's reader refuses (a run_id that is a DOS device's name, ends in a dot or is `..`: no folder can carry it). For the Worker a document is valid when it reads and every job of it passes every rule. No case holds a float.",
+  "base": "valid.json",
+  "cases": [
+    {
+      "name": "base",
+      "valid": true,
+      "patch": []
+    },
+    {
+      "name": "no-jobs",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/jobs",
+          "value": []
+        }
+      ]
+    },
+    {
+      "name": "two-jobs",
+      "valid": true,
+      "patch": [
+        {
+          "op": "add",
+          "path": "/jobs/-",
+          "value": {
+            "run_id": "job-0002",
+            "client_id": "client-7",
+            "client": {
+              "format": "restoreproof.client-profile.v1",
+              "graph_client_id": "22222222-3333-4444-5555-666666666666",
+              "graph_tenant_id": "11111111-2222-3333-4444-555555555555",
+              "test_library_id": "b!library",
+              "test_mailbox": "restoretest@contoso.onmicrosoft.com",
+              "test_onedrive_drive_id": "b!onedrive",
+              "test_onedrive_folder_id": "01FOLDER",
+              "test_site_id": "contoso.sharepoint.com,aaaaaaaa-0000-0000-0000-000000000001,aaaaaaaa-0000-0000-0000-000000000002",
+              "veeam_org_name": "contoso.onmicrosoft.com"
+            },
+            "sample_mail": 5,
+            "sample_sp": 3,
+            "sample_od": 2,
+            "restore_point": "latest",
+            "screenshots_enabled": false
+          }
+        }
+      ]
+    },
+    {
+      "name": "five-jobs",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/jobs",
+          "value": [
+            {
+              "run_id": "job-0001",
+              "client_id": "client-7",
+              "client": {
+                "format": "restoreproof.client-profile.v1",
+                "graph_client_id": "22222222-3333-4444-5555-666666666666",
+                "graph_tenant_id": "11111111-2222-3333-4444-555555555555",
+                "test_library_id": "b!library",
+                "test_mailbox": "restoretest@contoso.onmicrosoft.com",
+                "test_onedrive_drive_id": "b!onedrive",
+                "test_onedrive_folder_id": "01FOLDER",
+                "test_site_id": "contoso.sharepoint.com,aaaaaaaa-0000-0000-0000-000000000001,aaaaaaaa-0000-0000-0000-000000000002",
+                "veeam_org_name": "contoso.onmicrosoft.com"
+              },
+              "sample_mail": 5,
+              "sample_sp": 3,
+              "sample_od": 2,
+              "restore_point": "latest",
+              "screenshots_enabled": false
+            },
+            {
+              "run_id": "job-0002",
+              "client_id": "client-7",
+              "client": {
+                "format": "restoreproof.client-profile.v1",
+                "graph_client_id": "22222222-3333-4444-5555-666666666666",
+                "graph_tenant_id": "11111111-2222-3333-4444-555555555555",
+                "test_library_id": "b!library",
+                "test_mailbox": "restoretest@contoso.onmicrosoft.com",
+                "test_onedrive_drive_id": "b!onedrive",
+                "test_onedrive_folder_id": "01FOLDER",
+                "test_site_id": "contoso.sharepoint.com,aaaaaaaa-0000-0000-0000-000000000001,aaaaaaaa-0000-0000-0000-000000000002",
+                "veeam_org_name": "contoso.onmicrosoft.com"
+              },
+              "sample_mail": 5,
+              "sample_sp": 3,
+              "sample_od": 2,
+              "restore_point": "latest",
+              "screenshots_enabled": false
+            },
+            {
+              "run_id": "job-0003",
+              "client_id": "client-7",
+              "client": {
+                "format": "restoreproof.client-profile.v1",
+                "graph_client_id": "22222222-3333-4444-5555-666666666666",
+                "graph_tenant_id": "11111111-2222-3333-4444-555555555555",
+                "test_library_id": "b!library",
+                "test_mailbox": "restoretest@contoso.onmicrosoft.com",
+                "test_onedrive_drive_id": "b!onedrive",
+                "test_onedrive_folder_id": "01FOLDER",
+                "test_site_id": "contoso.sharepoint.com,aaaaaaaa-0000-0000-0000-000000000001,aaaaaaaa-0000-0000-0000-000000000002",
+                "veeam_org_name": "contoso.onmicrosoft.com"
+              },
+              "sample_mail": 5,
+              "sample_sp": 3,
+              "sample_od": 2,
+              "restore_point": "latest",
+              "screenshots_enabled": false
+            },
+            {
+              "run_id": "job-0004",
+              "client_id": "client-7",
+              "client": {
+                "format": "restoreproof.client-profile.v1",
+                "graph_client_id": "22222222-3333-4444-5555-666666666666",
+                "graph_tenant_id": "11111111-2222-3333-4444-555555555555",
+                "test_library_id": "b!library",
+                "test_mailbox": "restoretest@contoso.onmicrosoft.com",
+                "test_onedrive_drive_id": "b!onedrive",
+                "test_onedrive_folder_id": "01FOLDER",
+                "test_site_id": "contoso.sharepoint.com,aaaaaaaa-0000-0000-0000-000000000001,aaaaaaaa-0000-0000-0000-000000000002",
+                "veeam_org_name": "contoso.onmicrosoft.com"
+              },
+              "sample_mail": 5,
+              "sample_sp": 3,
+              "sample_od": 2,
+              "restore_point": "latest",
+              "screenshots_enabled": false
+            },
+            {
+              "run_id": "job-0005",
+              "client_id": "client-7",
+              "client": {
+                "format": "restoreproof.client-profile.v1",
+                "graph_client_id": "22222222-3333-4444-5555-666666666666",
+                "graph_tenant_id": "11111111-2222-3333-4444-555555555555",
+                "test_library_id": "b!library",
+                "test_mailbox": "restoretest@contoso.onmicrosoft.com",
+                "test_onedrive_drive_id": "b!onedrive",
+                "test_onedrive_folder_id": "01FOLDER",
+                "test_site_id": "contoso.sharepoint.com,aaaaaaaa-0000-0000-0000-000000000001,aaaaaaaa-0000-0000-0000-000000000002",
+                "veeam_org_name": "contoso.onmicrosoft.com"
+              },
+              "sample_mail": 5,
+              "sample_sp": 3,
+              "sample_od": 2,
+              "restore_point": "latest",
+              "screenshots_enabled": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "client-id-null",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/jobs/0/client_id",
+          "value": null
+        }
+      ]
+    },
+    {
+      "name": "client-id-128-chars",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/jobs/0/client_id",
+          "value": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        }
+      ]
+    },
+    {
+      "name": "cursor-given",
+      "valid": true,
+      "patch": [
+        {
+          "op": "add",
+          "path": "/jobs/0/canary_cursor",
+          "value": [
+            1,
+            999999,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "name": "restore-point-an-id",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/jobs/0/restore_point",
+          "value": "c2f0f2e7-177f-48ac-992b-93a50cf702e33f589dc6-03b8-44c1-8bfe-1c32d63d5849"
+        }
+      ]
+    },
+    {
+      "name": "restore-point-latest-upper-case",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/jobs/0/restore_point",
+          "value": "LATEST"
+        }
+      ]
+    },
+    {
+      "name": "screenshots-true",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/jobs/0/screenshots_enabled",
+          "value": true
+        }
+      ]
+    },
+    {
+      "name": "sizes-100-0-0",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/jobs/0/sample_mail",
+          "value": 100
+        },
+        {
+          "op": "replace",
+          "path": "/jobs/0/sample_sp",
+          "value": 0
+        },
+        {
+          "op": "replace",
+          "path": "/jobs/0/sample_od",
+          "value": 0
+        }
+      ]
+    },
+    {
+      "name": "run-id-with-dots-and-underscores",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/jobs/0/run_id",
+          "value": "rp-2026.10.09_a"
+        }
+      ]
+    },
+    {
+      "name": "run-id-128-chars",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/jobs/0/run_id",
+          "value": "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr"
+        }
+      ]
+    },
+    {
+      "name": "client-upper-case-guids",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/jobs/0/client/graph_tenant_id",
+          "value": "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE"
+        }
+      ]
+    },
+    {
+      "name": "run-id-a-device-name-the-schema-cannot-say",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/jobs/0/run_id",
+          "value": "PRN"
+        }
+      ],
+      "code_refuses": true
+    },
+    {
+      "name": "run-id-trailing-dot-the-schema-cannot-say",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/jobs/0/run_id",
+          "value": "job."
+        }
+      ],
+      "code_refuses": true
+    },
+    {
+      "name": "run-id-dot-dot-the-schema-cannot-say",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/jobs/0/run_id",
+          "value": ".."
+        }
+      ],
+      "code_refuses": true
+    },
+    {
+      "name": "six-jobs",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/jobs",
+          "value": [
+            {
+              "run_id": "job-0001",
+              "client_id": "client-7",
+              "client": {
+                "format": "restoreproof.client-profile.v1",
+                "graph_client_id": "22222222-3333-4444-5555-666666666666",
+                "graph_tenant_id": "11111111-2222-3333-4444-555555555555",
+                "test_library_id": "b!library",
+                "test_mailbox": "restoretest@contoso.onmicrosoft.com",
+                "test_onedrive_drive_id": "b!onedrive",
+                "test_onedrive_folder_id": "01FOLDER",
+                "test_site_id": "contoso.sharepoint.com,aaaaaaaa-0000-0000-0000-000000000001,aaaaaaaa-0000-0000-0000-000000000002",
+                "veeam_org_name": "contoso.onmicrosoft.com"
+              },
+              "sample_mail": 5,
+              "sample_sp": 3,
+              "sample_od": 2,
+              "restore_point": "latest",
+              "screenshots_enabled": false
+            },
+            {
+              "run_id": "job-0002",
+              "client_id": "client-7",
+              "client": {
+                "format": "restoreproof.client-profile.v1",
+                "graph_client_id": "22222222-3333-4444-5555-666666666666",
+                "graph_tenant_id": "11111111-2222-3333-4444-555555555555",
+                "test_library_id": "b!library",
+                "test_mailbox": "restoretest@contoso.onmicrosoft.com",
+                "test_onedrive_drive_id": "b!onedrive",
+                "test_onedrive_folder_id": "01FOLDER",
+                "test_site_id": "contoso.sharepoint.com,aaaaaaaa-0000-0000-0000-000000000001,aaaaaaaa-0000-0000-0000-000000000002",
+                "veeam_org_name": "contoso.onmicrosoft.com"
+              },
+              "sample_mail": 5,
+              "sample_sp": 3,
+              "sample_od": 2,
+              "restore_point": "latest",
+              "screenshots_enabled": false
+            },
+            {
+              "run_id": "job-0003",
+              "client_id": "client-7",
+              "client": {
+                "format": "restoreproof.client-profile.v1",
+                "graph_client_id": "22222222-3333-4444-5555-666666666666",
+                "graph_tenant_id": "11111111-2222-3333-4444-555555555555",
+                "test_library_id": "b!library",
+                "test_mailbox": "restoretest@contoso.onmicrosoft.com",
+                "test_onedrive_drive_id": "b!onedrive",
+                "test_onedrive_folder_id": "01FOLDER",
+                "test_site_id": "contoso.sharepoint.com,aaaaaaaa-0000-0000-0000-000000000001,aaaaaaaa-0000-0000-0000-000000000002",
+                "veeam_org_name": "contoso.onmicrosoft.com"
+              },
+              "sample_mail": 5,
+              "sample_sp": 3,
+              "sample_od": 2,
+              "restore_point": "latest",
+              "screenshots_enabled": false
+            },
+            {
+              "run_id": "job-0004",
+              "client_id": "client-7",
+              "client": {
+                "format": "restoreproof.client-profile.v1",
+                "graph_client_id": "22222222-3333-4444-5555-666666666666",
+                "graph_tenant_id": "11111111-2222-3333-4444-555555555555",
+                "test_library_id": "b!library",
+                "test_mailbox": "restoretest@contoso.onmicrosoft.com",
+                "test_onedrive_drive_id": "b!onedrive",
+                "test_onedrive_folder_id": "01FOLDER",
+                "test_site_id": "contoso.sharepoint.com,aaaaaaaa-0000-0000-0000-000000000001,aaaaaaaa-0000-0000-0000-000000000002",
+                "veeam_org_name": "contoso.onmicrosoft.com"
+              },
+              "sample_mail": 5,
+              "sample_sp": 3,
+              "sample_od": 2,
+              "restore_point": "latest",
+              "screenshots_enabled": false
+            },
+            {
+              "run_id": "job-0005",
+              "client_id": "client-7",
+              "client": {
+                "format": "restoreproof.client-profile.v1",
+                "graph_client_id": "22222222-3333-4444-5555-666666666666",
+                "graph_tenant_id": "11111111-2222-3333-4444-555555555555",
+                "test_library_id": "b!library",
+                "test_mailbox": "restoretest@contoso.onmicrosoft.com",
+                "test_onedrive_drive_id": "b!onedrive",
+                "test_onedrive_folder_id": "01FOLDER",
+                "test_site_id": "contoso.sharepoint.com,aaaaaaaa-0000-0000-0000-000000000001,aaaaaaaa-0000-0000-0000-000000000002",
+                "veeam_org_name": "contoso.onmicrosoft.com"
+              },
+              "sample_mail": 5,
+              "sample_sp": 3,
+              "sample_od": 2,
+              "restore_point": "latest",
+              "screenshots_enabled": false
+            },
+            {
+              "run_id": "job-0006",
+              "client_id": "client-7",
+              "client": {
+                "format": "restoreproof.client-profile.v1",
+                "graph_client_id": "22222222-3333-4444-5555-666666666666",
+                "graph_tenant_id": "11111111-2222-3333-4444-555555555555",
+                "test_library_id": "b!library",
+                "test_mailbox": "restoretest@contoso.onmicrosoft.com",
+                "test_onedrive_drive_id": "b!onedrive",
+                "test_onedrive_folder_id": "01FOLDER",
+                "test_site_id": "contoso.sharepoint.com,aaaaaaaa-0000-0000-0000-000000000001,aaaaaaaa-0000-0000-0000-000000000002",
+                "veeam_org_name": "contoso.onmicrosoft.com"
+              },
+              "sample_mail": 5,
+              "sample_sp": 3,
+              "sample_od": 2,
+              "restore_point": "latest",
+              "screenshots_enabled": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "no-format",
+      "valid": false,
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/format"
+        }
+      ]
+    },
+    {
+      "name": "wrong-format",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/format",
+          "value": "restoreproof.jobs.v2"
+        }
+      ]
+    },
+    {
+      "name": "no-jobs-key",
+      "valid": false,
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/jobs"
+        }
+      ]
+    },
+    {
+      "name": "jobs-not-an-array",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/jobs",
+          "value": {}
+        }
+      ]
+    },
+    {
+      "name": "extra-top-level-key",
+      "valid": false,
+      "patch": [
+        {
+          "op": "add",
+          "path": "/next_poll",
+          "value": 300
+        }
+      ]
+    },
+    {
+      "name": "document-is-an-array",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "",
+          "value": []
+        }
+      ]
+    },
+    {
+      "name": "job-without-run-id",
+      "valid": false,
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/jobs/0/run_id"
+        }
+      ]
+    },
+    {
+      "name": "job-without-client-id",
+      "valid": false,
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/jobs/0/client_id"
+        }
+      ]
+    },
+    {
+      "name": "job-without-client",
+      "valid": false,
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/jobs/0/client"
+        }
+      ]
+    },
+    {
+      "name": "job-without-sample-mail",
+      "valid": false,
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/jobs/0/sample_mail"
+        }
+      ]
+    },
+    {
+      "name": "job-without-sample-sp",
+      "valid": false,
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/jobs/0/sample_sp"
+        }
+      ]
+    },
+    {
+      "name": "job-without-sample-od",
+      "valid": false,
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/jobs/0/sample_od"
+        }
+      ]
+    },
+    {
+      "name": "job-without-restore-point",
+      "valid": false,
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/jobs/0/restore_point"
+        }
+      ]
+    },
+    {
+      "name": "job-without-screenshots-enabled",
+      "valid": false,
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/jobs/0/screenshots_enabled"
+        }
+      ]
+    },
+    {
+      "name": "job-is-a-string",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/jobs/0",
+          "value": "job-0001"
+        }
+      ]
+    },
+    {
+      "name": "job-unknown-key",
+      "valid": false,
+      "patch": [
+        {
+          "op": "add",
+          "path": "/jobs/0/profile",
+          "value": {}
+        }
+      ]
+    },
+    {
+      "name": "run-id-with-a-colon",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/jobs/0/run_id",
+          "value": "job:1"
+        }
+      ]
+    },
+    {
+      "name": "run-id-with-a-slash",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/jobs/0/run_id",
+          "value": "job/1"
+        }
+      ]
+    },
+    {
+      "name": "run-id-129-chars",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/jobs/0/run_id",
+          "value": "rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr"
+        }
+      ]
+    },
+    {
+      "name": "run-id-empty",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/jobs/0/run_id",
+          "value": ""
+        }
+      ]
+    },
+    {
+      "name": "run-id-a-number",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/jobs/0/run_id",
+          "value": 1
+        }
+      ]
+    },
+    {
+      "name": "client-id-a-number",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/jobs/0/client_id",
+          "value": 7
+        }
+      ]
+    },
+    {
+      "name": "client-id-empty",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/jobs/0/client_id",
+          "value": ""
+        }
+      ]
+    },
+    {
+      "name": "client-id-129-chars",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/jobs/0/client_id",
+          "value": "ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        }
+      ]
+    },
+    {
+      "name": "client-id-with-a-tab",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/jobs/0/client_id",
+          "value": "a\tb"
+        }
+      ]
+    },
+    {
+      "name": "client-id-outside-ascii",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/jobs/0/client_id",
+          "value": "kundé"
+        }
+      ]
+    },
+    {
+      "name": "client-a-string",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/jobs/0/client",
+          "value": "contoso"
+        }
+      ]
+    },
+    {
+      "name": "client-null",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/jobs/0/client",
+          "value": null
+        }
+      ]
+    },
+    {
+      "name": "client-empty-object",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/jobs/0/client",
+          "value": {}
+        }
+      ]
+    },
+    {
+      "name": "client-wrong-format",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/jobs/0/client/format",
+          "value": "restoreproof.jobs.v1"
+        }
+      ]
+    },
+    {
+      "name": "client-tenant-not-a-guid",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/jobs/0/client/graph_tenant_id",
+          "value": "contoso.onmicrosoft.com"
+        }
+      ]
+    },
+    {
+      "name": "client-another-mailbox",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/jobs/0/client/test_mailbox",
+          "value": "alice@contoso.onmicrosoft.com"
+        }
+      ]
+    },
+    {
+      "name": "client-without-library",
+      "valid": false,
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/jobs/0/client/test_library_id"
+        }
+      ]
+    },
+    {
+      "name": "client-unknown-key",
+      "valid": false,
+      "patch": [
+        {
+          "op": "add",
+          "path": "/jobs/0/client/client_id",
+          "value": "client-7"
+        }
+      ]
+    },
+    {
+      "name": "sample-mail-101",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/jobs/0/sample_mail",
+          "value": 101
+        }
+      ]
+    },
+    {
+      "name": "sample-sp-negative",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/jobs/0/sample_sp",
+          "value": -1
+        }
+      ]
+    },
+    {
+      "name": "sample-od-a-string",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/jobs/0/sample_od",
+          "value": "5"
+        }
+      ]
+    },
+    {
+      "name": "sample-mail-null",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/jobs/0/sample_mail",
+          "value": null
+        }
+      ]
+    },
+    {
+      "name": "all-sizes-0",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/jobs/0/sample_mail",
+          "value": 0
+        },
+        {
+          "op": "replace",
+          "path": "/jobs/0/sample_sp",
+          "value": 0
+        },
+        {
+          "op": "replace",
+          "path": "/jobs/0/sample_od",
+          "value": 0
+        }
+      ]
+    },
+    {
+      "name": "restore-point-empty",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/jobs/0/restore_point",
+          "value": ""
+        }
+      ]
+    },
+    {
+      "name": "restore-point-with-a-colon",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/jobs/0/restore_point",
+          "value": "a:b"
+        }
+      ]
+    },
+    {
+      "name": "restore-point-129-chars",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/jobs/0/restore_point",
+          "value": "ppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppppp"
+        }
+      ]
+    },
+    {
+      "name": "restore-point-a-number",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/jobs/0/restore_point",
+          "value": 1
+        }
+      ]
+    },
+    {
+      "name": "screenshots-a-string",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/jobs/0/screenshots_enabled",
+          "value": "true"
+        }
+      ]
+    },
+    {
+      "name": "screenshots-a-number",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/jobs/0/screenshots_enabled",
+          "value": 1
+        }
+      ]
+    },
+    {
+      "name": "cursor-two-values",
+      "valid": false,
+      "patch": [
+        {
+          "op": "add",
+          "path": "/jobs/0/canary_cursor",
+          "value": [
+            0,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "name": "cursor-four-values",
+      "valid": false,
+      "patch": [
+        {
+          "op": "add",
+          "path": "/jobs/0/canary_cursor",
+          "value": [
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "name": "cursor-value-1000000",
+      "valid": false,
+      "patch": [
+        {
+          "op": "add",
+          "path": "/jobs/0/canary_cursor",
+          "value": [
+            0,
+            0,
+            1000000
+          ]
+        }
+      ]
+    },
+    {
+      "name": "cursor-value-negative",
+      "valid": false,
+      "patch": [
+        {
+          "op": "add",
+          "path": "/jobs/0/canary_cursor",
+          "value": [
+            -1,
+            0,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "name": "cursor-a-string",
+      "valid": false,
+      "patch": [
+        {
+          "op": "add",
+          "path": "/jobs/0/canary_cursor",
+          "value": "0,0,0"
+        }
+      ]
+    },
+    {
+      "name": "cursor-null",
+      "valid": false,
+      "patch": [
+        {
+          "op": "add",
+          "path": "/jobs/0/canary_cursor",
+          "value": null
+        }
+      ]
+    },
+    {
+      "name": "run-id-trailing-newline",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/jobs/0/run_id",
+          "value": "job-0001\n"
+        }
+      ]
+    },
+    {
+      "name": "client-id-trailing-newline",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/jobs/0/client_id",
+          "value": "client-7\n"
+        }
+      ]
+    },
+    {
+      "name": "restore-point-trailing-newline",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/jobs/0/restore_point",
+          "value": "latest\n"
+        }
+      ]
+    }
+  ]
+}

@@ -15,6 +15,7 @@
 
 #include "restore_command_lab.hpp"
 
+#include <rp/client_profile.hpp>
 #include <rp/evidence_builder.hpp>
 #include <rp/outbox.hpp>
 #include <rp/service.hpp>
@@ -206,7 +207,8 @@ struct BodyLab {
     // it.
     rp::RunningRecord record(const std::string& id) const
     {
-        return rp::new_run_record(id, std::nullopt, context->config, rp::test::graph_lab::kNow);
+        return rp::new_run_record(id, std::nullopt, *rp::local_profile(context->config),
+                                  rp::test::graph_lab::kNow);
     }
 
     // The same once its run line was out.
@@ -230,10 +232,23 @@ struct BodyLab {
     }
 };
 
+// The lab client's profile (W4.10): the Harness's config values as a
+// restoreproof.client-profile.v1 object, what a job of this lab carries.
+inline json lab_profile_json()
+{
+    const json config = rp::test::restore_command_lab::config_values();
+    json profile = {{"format", std::string{rp::kClientProfileFormat}}};
+    for (const std::string_view key : rp::kClientProfileKeys) {
+        profile[std::string{key}] = config.at(key);
+    }
+    return profile;
+}
+
 inline json job(const std::string& id, int mail = 2, int sp = 1, int od = 0)
 {
     return {{"run_id", id},
             {"client_id", nullptr},
+            {"client", lab_profile_json()},
             {"sample_mail", mail},
             {"sample_sp", sp},
             {"sample_od", od},

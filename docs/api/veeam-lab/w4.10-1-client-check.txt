@@ -1,0 +1,152 @@
+W4.10 (#133) live Done-when, step (a): the commands at a prompt on a config without client keys, and client check on the lab's profile. 2026-10-09T13:56:31Z, commit 023d932
+
+-- the config copy (no client keys; the two URLs and Veeam's certificate alone)
+{
+  "cloud_url": "https://localhost",
+  "veeam_url": "https://localhost:4443",
+  "veeam_ca_file": "C:\\restoreproof\\worker\\tests\\fixtures\\veeam\\rest-certificate.pem",
+  "veeam_cert_sha256": "9FB19E0E604C9BE49F83D8E508EFA8EA0986A952377C783E5035CEA2D772A213"
+}
+
+command: rpworker config check --config C:\Users\minas\AppData\Local\RestoreProof\lab\config-no-client.json
+2026-10-09T13:56:31Z to 2026-10-09T13:56:32Z
+exit code: 0
+--- stdout
+config file: C:\Users\minas\AppData\Local\RestoreProof\lab\config-no-client.json
+cloud_url                 https://localhost
+veeam_url                 https://localhost:4443
+veeam_org_name            (not set)
+graph_tenant_id           (not set)
+graph_client_id           (not set)
+test_mailbox              (not set)
+test_site_id              (not set)
+test_library_id           (not set)
+test_onedrive_drive_id    (not set)
+test_onedrive_folder_id   (not set)
+poll_interval_s           300
+heartbeat_interval_s      900
+sample_mail               5
+sample_sp                 5
+sample_od                 5
+log_level                 info
+veeam_ca_file             C:\restoreproof\worker\tests\fixtures\veeam\rest-certificate.pem
+veeam_cert_sha256         9FB19E0E604C9BE49F83D8E508EFA8EA0986A952377C783E5035CEA2D772A213
+tsa_url                   (not set)
+tsa_ca_file               (not set)
+cloud_ca_file             (not set)
+jobs_file                 (not set)
+screenshots_enabled       false
+secrets (vault C:\ProgramData\RestoreProof\vault.bin; values are never shown):
+veeam_username            **** (set)
+veeam_password            **** (set)
+graph_cert_pfx_base64     **** (set)
+graph_cert_password       **** (set)
+signing_key_base64        **** (set)
+--- stderr
+
+
+command: rpworker graph list --config C:\Users\minas\AppData\Local\RestoreProof\lab\config-no-client.json
+2026-10-09T13:56:32Z to 2026-10-09T13:56:33Z
+exit code: 1
+--- stdout
+--- stderr
+config error: the config has no client keys; set the eight client keys, or use rpworker client check --profile-file <file>
+
+
+-- the profile file: the eight keys of lab/tenant.md's restore targets and the Worker app, IDs only
+{
+  "format": "restoreproof.client-profile.v1",
+  "veeam_org_name": "RestoreProofLab.onmicrosoft.com",
+  "graph_tenant_id": "bcd6bd1a-ea42-489d-aa28-2c19a44ad146",
+  "graph_client_id": "737da5ef-baf2-4198-b009-e160d8ca77c9",
+  "test_mailbox": "restoretest@RestoreProofLab.onmicrosoft.com",
+  "test_site_id": "restoreprooflab.sharepoint.com,fe08085d-eb70-42e8-95a6-470189bd98eb,4ecaf399-cc0e-4d95-b3fe-cd091a09e689",
+  "test_library_id": "b!XQgI_nDr6EKVpkcBib2Y65nzyk4OzJVNs_7NCRoJ5omdBuz_5GU6TJ2irAhs-dr6",
+  "test_onedrive_drive_id": "b!wA9gbfhlEUitGAluxbfoNBr_z5gEtDhErm5pJ6bMwyXfZJ8a_dkCQ696RX0r7_U3",
+  "test_onedrive_folder_id": "01ZK75LGDGB6QOO3MGNFGYOY6C6VBDG5OH"
+}
+
+command: rpworker client check --profile-file C:\Users\minas\AppData\Local\RestoreProof\lab\lab-profile.json
+2026-10-09T13:56:33Z to 2026-10-09T13:56:38Z
+exit code: 0
+--- stdout
+client profile: veeam_org_name RestoreProofLab.onmicrosoft.com, tenant bcd6bd1a-ea42-489d-aa28-2c19a44ad146, app 737da5ef-baf2-4198-b009-e160d8ca77c9
+
+Mail (restoretest@RestoreProofLab.onmicrosoft.com, Inbox): 0 item(s)
+
+SharePoint (RestoreTarget library): 0 item(s)
+
+OneDrive (RestoreTarget folder): 0 item(s)
+
+0 item(s) in the three restore targets
+--- stderr
+
+
+-- the same, through the lab config's own targets for comparison
+command: rpworker graph list --config C:\Users\minas\AppData\Local\RestoreProof\lab\config.json
+2026-10-09T13:56:38Z to 2026-10-09T13:56:43Z
+exit code: 0
+--- stdout
+Mail (restoretest@RestoreProofLab.onmicrosoft.com, Inbox): 0 item(s)
+
+SharePoint (RestoreTarget library): 0 item(s)
+
+OneDrive (RestoreTarget folder): 0 item(s)
+
+0 item(s) in the three restore targets
+--- stderr
+
+
+-- a profile that breaks the schema: test_mailbox another user
+command: rpworker client check --profile-file C:\Users\minas\AppData\Local\RestoreProof\lab\lab-profile-bad-mailbox.json
+2026-10-09T13:56:43Z to 2026-10-09T13:56:44Z
+exit code: 1
+--- stdout
+--- stderr
+config error: --profile-file C:\Users\minas\AppData\Local\RestoreProof\lab\lab-profile-bad-mailbox.json: key "test_mailbox" must be restoretest@<domain>: restores only ever go to the restoretest mailbox
+
+
+-- a profile that breaks the schema: graph_tenant_id in braces
+command: rpworker client check --profile-file C:\Users\minas\AppData\Local\RestoreProof\lab\lab-profile-braces.json
+2026-10-09T13:56:45Z to 2026-10-09T13:56:46Z
+exit code: 1
+--- stdout
+--- stderr
+config error: --profile-file C:\Users\minas\AppData\Local\RestoreProof\lab\lab-profile-braces.json: key "graph_tenant_id" must be a GUID (8-4-4-4-12 hexadecimal digits, as the Entra admin center shows it), not a name
+
+
+-- a profile file that isn't there
+command: rpworker client check --profile-file C:\Users\minas\AppData\Local\RestoreProof\lab\no-such-profile.json
+2026-10-09T13:56:46Z to 2026-10-09T13:56:47Z
+exit code: 1
+--- stdout
+--- stderr
+config error: --profile-file C:\Users\minas\AppData\Local\RestoreProof\lab\no-such-profile.json: can't be read
+
+
+-- veeam list on the copy: every organisation, none marked
+command: rpworker veeam list --config C:\Users\minas\AppData\Local\RestoreProof\lab\config-no-client.json
+2026-10-09T13:56:47Z to 2026-10-09T13:57:03Z
+exit code: 0
+--- stdout
+  ORGANIZATION                     BACKUP TIME                   EX  SP  OD  TM  LONG-TERM  RESTORE POINT ID
+  RestoreProofLab.onmicrosoft.com  2026-10-08T23:43:58.1565721Z  x   x   x   -   no         c2f0f2e7-177f-48ac-992b-93a50cf702e33f589dc6-03b8-44c1-8bfe-1c32d63d5849
+  RestoreProofLab.onmicrosoft.com  2026-10-07T22:00:47.7503951Z  x   x   x   -   no         c2f0f2e7-177f-48ac-992b-93a50cf702e3717f026d-c7b5-4d23-af38-4aced2565420
+  RestoreProofLab.onmicrosoft.com  2026-10-07T12:30:28.1971698Z  x   x   x   -   no         c2f0f2e7-177f-48ac-992b-93a50cf702e3effb928a-1e91-4a84-82c1-826a22b238ed
+  RestoreProofLab.onmicrosoft.com  2026-10-05T01:14:32.2221915Z  x   x   x   -   no         c2f0f2e7-177f-48ac-992b-93a50cf702e345a44e25-0a57-4ab8-9999-a3d0c0df61ef
+  RestoreProofLab.onmicrosoft.com  2026-10-04T14:38:15.6089519Z  x   x   x   -   no         c2f0f2e7-177f-48ac-992b-93a50cf702e310efa194-b487-4e83-ade5-6b278e82cc19
+  RestoreProofLab.onmicrosoft.com  2026-10-04T14:04:19.5424301Z  x   x   x   -   no         c2f0f2e7-177f-48ac-992b-93a50cf702e3294339e3-a983-43b1-aed3-e826de7c0d07
+  RestoreProofLab.onmicrosoft.com  2026-10-04T00:14:55.447798Z   x   x   x   -   no         c2f0f2e7-177f-48ac-992b-93a50cf702e339a81e90-c7a7-4991-90b4-e43e58c57325
+  RestoreProofLab.onmicrosoft.com  2026-10-03T16:16:54.0154727Z  x   x   x   -   no         c2f0f2e7-177f-48ac-992b-93a50cf702e332f28a6a-67e7-46bf-844b-6b9f9ea7dc73
+  RestoreProofLab.onmicrosoft.com  2026-10-02T22:00:49.7194293Z  x   x   x   -   no         c2f0f2e7-177f-48ac-992b-93a50cf702e3b928b975-17eb-4845-840c-2beecfa1efb8
+  RestoreProofLab.onmicrosoft.com  2026-10-01T22:01:38.761857Z   x   x   x   -   no         c2f0f2e7-177f-48ac-992b-93a50cf702e35492ac04-4228-4bb8-bca4-b68172c5c582
+  RestoreProofLab.onmicrosoft.com  2026-09-30T22:00:43.4764524Z  x   x   x   -   no         c2f0f2e7-177f-48ac-992b-93a50cf702e305134a51-8a9e-4298-b39a-1be364acd660
+  RestoreProofLab.onmicrosoft.com  2026-09-29T22:00:45.6603083Z  x   x   x   -   no         c2f0f2e7-177f-48ac-992b-93a50cf702e395c23640-eb99-4bad-ae72-f5f9cf21aac1
+  RestoreProofLab.onmicrosoft.com  2026-09-28T22:00:53.2665624Z  x   x   x   -   no         c2f0f2e7-177f-48ac-992b-93a50cf702e3fca73965-27c5-4087-9008-4292ec265ec3
+  RestoreProofLab.onmicrosoft.com  2026-09-27T22:00:48.1447833Z  x   x   x   -   no         c2f0f2e7-177f-48ac-992b-93a50cf702e377858499-919b-4609-9b15-5b7fb33b5004
+  RestoreProofLab.onmicrosoft.com  2026-09-27T11:23:13.4561092Z  x   x   x   -   no         c2f0f2e7-177f-48ac-992b-93a50cf702e3d2839f5c-9512-47c6-b812-b4940b77de6a
+  RestoreProofLab.onmicrosoft.com  2026-09-25T19:37:15.2145203Z  x   x   x   -   no         c2f0f2e7-177f-48ac-992b-93a50cf702e371ac3d9c-eb29-42b6-a391-ae81fcc4681c
+  RestoreProofLab.onmicrosoft.com  2026-09-25T19:24:31.0936821Z  x   x   x   -   no         c2f0f2e7-177f-48ac-992b-93a50cf702e32fb3c7e0-ff6e-4949-8b2d-ae32ecf9e9a7
+
+1 organisation(s), 17 restore point(s); * = veeam_org_name
+--- stderr

@@ -148,6 +148,8 @@ struct Harness {
     connector::ConnectorOptions options()
     {
         connector::ConnectorOptions o;
+        // W4.10: the client's profile, as the pipeline hands it.
+        o.client = rp::local_profile(config);
         o.make_http = [this](const rp::HttpClientOptions& given) -> std::unique_ptr<rp::IHttpClient> {
             ++make_http_calls;
             http_options = given;
@@ -551,6 +553,56 @@ TEST_CASE("veeam_m365: restore_sample refuses Graph IDs that aren't GUIDs, befor
     REQUIRE(lab.http.requests().empty());
 }
 
+// W4.10 point 4: the guard's Graph client signs in as the run's client, from
+// the options and never from the config.
+TEST_CASE("veeam_m365: a connector made without a client profile refuses restore_sample before "
+          "any request, and lists restore points still",
+          "[veeam_m365][client_profile]")
+{
+    Harness lab;
+    connector::ConnectorOptions options = lab.options();
+    options.client.reset();
+    const std::unique_ptr<connector::IConnector> made =
+        connector::default_connector_registry().create(connector::kVeeamM365, lab.config,
+                                                       lab.secrets, options);
+    CHECK_FALSE(made->list_restore_points(kOrgName).empty());
+
+    try {
+        (void)made->restore_sample(one_mail_spec(lab.config));
+        FAIL("no exception");
+    } catch (const rp::ConfigError& e) {
+        CHECK(std::string{e.what()} ==
+              "veeam_m365: the connector has no client profile; nothing was restored");
+    }
+    CHECK(lab.make_graph_http_calls == 0);
+}
+
+TEST_CASE("veeam_m365: the guard's Graph client is the profile's tenant and app, not the "
+          "config's",
+          "[veeam_m365][client_profile]")
+{
+    Harness lab;
+    // The config names another tenant and app; the profile the run's.
+    lab.config.graph_tenant_id = "99999999-9999-9999-9999-999999999999";
+    lab.config.graph_client_id = "88888888-8888-8888-8888-888888888888";
+    connector::ConnectorOptions options = lab.options();
+    options.client->graph_tenant_id = rp::test::graph_lab::kTenant;
+    options.client->graph_client_id = rp::test::graph_lab::kClient;
+    const std::unique_ptr<connector::IConnector> made =
+        connector::default_connector_registry().create(connector::kVeeamM365, lab.config,
+                                                       lab.secrets, options);
+    // The token is asked for in the profile's tenant (graph_lab's token URL).
+    try {
+        (void)made->restore_sample(one_mail_spec(lab.config));
+    } catch (const std::exception&) {
+    }
+    bool asked_profile_tenant = false;
+    for (const rp::HttpRequest& request : lab.guard_lab.graph_http.requests()) {
+        asked_profile_tenant |= request.url == rp::test::graph_lab::kTokenUrl;
+    }
+    CHECK(asked_profile_tenant);
+}
+
 TEST_CASE("veeam_m365: a factory whose Graph HTTP client is missing is refused", "[veeam_m365]")
 {
     Harness lab;
@@ -835,6 +887,7 @@ TEST_CASE("veeam_m365: the registry's connector asks and tells its caller: the s
     const rp::Secrets secrets{vrl::kUsername, vrl::kPassword, rp::test::graph_lab::pfx_base64(),
                               std::string{rp::test::graph_lab::kPfxPassword}};
     connector::ConnectorOptions options;
+    options.client = rp::local_profile(config);
     options.make_http = [&rig](const rp::HttpClientOptions&) -> std::unique_ptr<rp::IHttpClient> {
         return std::make_unique<rp::test::ForwardingHttpClient>(rig.veeam);
     };
@@ -897,6 +950,7 @@ TEST_CASE("veeam_m365: the registry's connector restores through the clients it 
     const rp::Secrets secrets{vrl::kUsername, vrl::kPassword, rp::test::graph_lab::pfx_base64(),
                               std::string{rp::test::graph_lab::kPfxPassword}};
     connector::ConnectorOptions options;
+    options.client = rp::local_profile(config);
     options.make_http = [&rig](const rp::HttpClientOptions&) -> std::unique_ptr<rp::IHttpClient> {
         return std::make_unique<rp::test::ForwardingHttpClient>(rig.veeam);
     };

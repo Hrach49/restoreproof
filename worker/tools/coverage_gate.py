@@ -18,7 +18,11 @@ Rules (CLAUDE.md, "Coverage floors"):
     decides what is queued, sent, kept and pruned) and service (W4.7: the
     service's state machine, its subcommands and its log, which decide when a
     process holding a run is ended, whether a SECURITY line is written and
-    whether a line is redacted) need 100%
+    whether a line is redacted) and client_profile and strict_json (W4.10:
+    src/client_profile.cpp and src/strict_json.hpp hold what the strict
+    src/service_jobs.cpp and src/service_recovery.cpp decided before it: whether
+    a job's or a record's client is a profile, and that a document with a key
+    twice or nested too deep is never read) need 100%
     *branch* coverage. OpenCppCoverage only measures lines (its Cobertura
     branch-rate is always 0), so this gate enforces 100% *line* coverage on
     those files as the closest proxy.
@@ -52,13 +56,16 @@ STRICT_NAMES = (
     "timestamper",
     "outbox",
     "service",
+    "client_profile",
+    "strict_json",
 )
 SOURCE_DIRS = ("src", "include", "app")
 SOURCE_EXTS = (".cpp", ".cc", ".cxx", ".c")
 HEADER_EXTS = (".h", ".hpp", ".hh", ".hxx", ".ipp", ".inl")
 BRANCH_NOTE = (
     "Branch coverage is not measured: OpenCppCoverage reports line coverage only. "
-    "`vault`, `signer`, `target_guard`, `run_status`, `cleaner`, `timestamper`, `outbox` and `service` are held "
+    "`vault`, `signer`, `target_guard`, `run_status`, `cleaner`, `timestamper`, `outbox`, `service`, "
+    "`client_profile` and `strict_json` are held "
     "to 100% **line** "
     "coverage as a proxy for the required 100% branch coverage."
 )

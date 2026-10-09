@@ -25,7 +25,6 @@ using std::chrono::system_clock;
 
 // The schema's lengths for what a record hands on to a result, and the
 // record's own for what it doesn't.
-constexpr std::size_t kMaxTenantId = 128;
 constexpr std::size_t kMaxClientText = 1024;
 constexpr std::size_t kMaxApi = 64;
 constexpr std::size_t kMaxClientId = 128;
@@ -61,9 +60,11 @@ bool is_printable(std::string_view text, std::size_t max) noexcept
 // The jobs reader's word for a key: lower-case letters, '_' and a blank.
 bool is_job_key(std::string_view text) noexcept
 {
+    // A key name, `unknown key`, or `client.<key>` (W4.10).
     return !text.empty() && text.size() <= kMaxJobKey &&
-           std::ranges::all_of(text,
-                               [](char c) { return (c >= 'a' && c <= 'z') || c == '_' || c == ' '; });
+           std::ranges::all_of(text, [](char c) {
+               return (c >= 'a' && c <= 'z') || c == '_' || c == ' ' || c == '.';
+           });
 }
 
 bool is_error_code(std::string_view code)
@@ -132,17 +133,11 @@ json nullable(const std::optional<std::string>& text)
     return text ? json(*text) : json(nullptr);
 }
 
-json client_json(const ResultClient& client)
+// The record's `client`: the profile's object (W4.10), or null for a job
+// whose profile couldn't be read.
+json client_json(const std::optional<ClientProfile>& client)
 {
-    return {{"client_id", nullptr},
-            {"tenant_id", client.tenant_id},
-            {"veeam_org_name", client.veeam_org_name},
-            {"targets",
-             {{"mailbox", client.mailbox},
-              {"site_id", client.site_id},
-              {"library_id", client.library_id},
-              {"onedrive_drive_id", client.onedrive_drive_id},
-              {"onedrive_folder_id", client.onedrive_folder_id}}}};
+    return client ? to_json(*client) : json(nullptr);
 }
 
 json record_json(const RunningRecord& record)
@@ -231,19 +226,23 @@ const json* object_at(const json& object, std::string_view key, std::size_t keys
     return value != nullptr && value->is_object() && value->size() == keys ? value : nullptr;
 }
 
-bool read_client(const json& document, ResultClient& into)
+// client: null, or a profile by the profile's own rules (W4.10): a record
+// the service wrote came from a job that passed them.
+bool read_client(const json& document, std::optional<ClientProfile>& into)
 {
-    const json* client = object_at(document, "client", 4);
-    const json* id = client != nullptr ? value_at(*client, "client_id") : nullptr;
-    const json* targets = client != nullptr ? object_at(*client, "targets", 5) : nullptr;
-    return id != nullptr && id->is_null() && targets != nullptr &&
-           read_text(*client, "tenant_id", kMaxTenantId, into.tenant_id) &&
-           read_text(*client, "veeam_org_name", kMaxClientText, into.veeam_org_name) &&
-           read_text(*targets, "mailbox", kMaxClientText, into.mailbox) &&
-           read_text(*targets, "site_id", kMaxClientText, into.site_id) &&
-           read_text(*targets, "library_id", kMaxClientText, into.library_id) &&
-           read_text(*targets, "onedrive_drive_id", kMaxClientText, into.onedrive_drive_id) &&
-           read_text(*targets, "onedrive_folder_id", kMaxClientText, into.onedrive_folder_id);
+    const json* value = value_at(document, "client");
+    if (value == nullptr) {
+        return false;
+    }
+    if (value->is_null()) {
+        return true;
+    }
+    std::variant<ClientProfile, ProfileFault> parsed = parse_client_profile(*value);
+    if (std::holds_alternative<ProfileFault>(parsed)) {
+        return false;
+    }
+    into = std::get<ClientProfile>(std::move(parsed));
+    return true;
 }
 
 // connector: null, or {type, api} of the one connector the result's schema
@@ -315,17 +314,19 @@ bool read_close(const json& document, RunningRecord& into)
     } else if (close_as) {
         return false;
     }
+    // A run record always has its client; only a job that is no job may lack one.
     return (into.kind == RecordKind::job_invalid) == (into.close_as == CloseAs::job_invalid) &&
+           (into.kind == RecordKind::job_invalid || into.client.has_value()) &&
            is_close_detail(into.close_as, into.close_detail);
 }
 
 RunningRecord new_record(std::string_view run_id, std::optional<std::string> client_id,
-                         const Config& config, system_clock::time_point taken_at)
+                         std::optional<ClientProfile> client, system_clock::time_point taken_at)
 {
     RunningRecord record;
     record.run_id = std::string{run_id};
     record.client_id = std::move(client_id);
-    record.client = result_client(config);
+    record.client = std::move(client);
     record.taken_at = record_time_text(taken_at);
     return record;
 }
@@ -430,16 +431,17 @@ bool RunningRecord::operator==(const RunningRecord& other) const
 }
 
 RunningRecord new_run_record(std::string_view run_id, std::optional<std::string> client_id,
-                             const Config& config, system_clock::time_point taken_at)
+                             const ClientProfile& client, system_clock::time_point taken_at)
 {
-    return new_record(run_id, std::move(client_id), config, taken_at);
+    return new_record(run_id, std::move(client_id), client, taken_at);
 }
 
 RunningRecord new_job_invalid_record(std::string_view run_id,
-                                     std::optional<std::string> client_id, const Config& config,
+                                     std::optional<std::string> client_id,
+                                     std::optional<ClientProfile> client,
                                      system_clock::time_point taken_at, std::string_view key)
 {
-    RunningRecord record = new_record(run_id, std::move(client_id), config, taken_at);
+    RunningRecord record = new_record(run_id, std::move(client_id), std::move(client), taken_at);
     record.kind = RecordKind::job_invalid;
     record.close_as = CloseAs::job_invalid;
     record.close_detail = std::string{key};
@@ -637,7 +639,10 @@ ClosePlan plan_close(const RunningRecord& record, const FolderContents& folder)
     const RecordRestorePoint point = record.restore_point.value_or(RecordRestorePoint{});
     plan.restore_point_id = point.id;
     plan.restore_point_time = point.backup_time_raw;
-    plan.client = record.client;
+    // The result's client: the record's profile with the job's client_id, or,
+    // for a job whose profile couldn't be read, the empty strings the schema
+    // allows beside the job's client_id.
+    plan.client = result_client(record.client.value_or(ClientProfile{}), record.client_id);
     return plan;
 }
 
@@ -740,11 +745,6 @@ HoldDecision decide_hold(const RunningRecord& record,
         decision.end = std::move(recorded);
     }
     return decision;
-}
-
-bool is_records_client(const Config& config, const RunningRecord& record)
-{
-    return result_client(config) == record.client;
 }
 
 bool record_may_go(const RunningRecord& record, OutboxHolds holds, const PipelineReport* report,

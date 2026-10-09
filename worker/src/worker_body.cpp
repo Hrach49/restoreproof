@@ -264,6 +264,9 @@ struct Body {
             args.outbox = outbox_arg;
             args.loaded = &config();
             args.screenshots = job.screenshots_enabled;
+            // W4.10: the job's client, never the config's keys.
+            args.client = job.client ? &*job.client : nullptr;
+            args.client_id = job.client_id;
             // Point 12: the run's two streams are the log's.
             LogLineStream out(logger(), spdlog::level::info, job.run_id);
             LogLineStream err(logger(), spdlog::level::warn, job.run_id);
@@ -550,8 +553,13 @@ ServiceLoopEnv make_worker_loop_env(const std::shared_ptr<ServiceContext>& conte
     env.release_hold = [body] { body->hold_connector.reset(); };
     env.clean_targets = [body](const RunningRecord& record) {
         LogLineStream out(body->logger(), spdlog::level::info, record.run_id);
-        return std::string{to_string(
-            clean_restore_targets(body->config(), body->vault, out, body->pipeline_env()))};
+        // W4.10: by the record's profile. A record without one is a job that
+        // was no job, which never restored: nothing to clean.
+        if (!record.client) {
+            return std::string{to_string(TargetsClean::not_started)};
+        }
+        return std::string{to_string(clean_restore_targets(
+            body->config(), *record.client, body->vault, out, body->pipeline_env()))};
     };
 
     env.flush = [body](const std::function<bool()>& stop) { return body->flush(stop); };

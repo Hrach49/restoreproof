@@ -188,13 +188,17 @@ int run_list(std::span<const std::string_view> args, std::ostream& out, std::ost
         std::vector<OrgListing> listing;
         for (Organization& org : orgs) {
             std::vector<RestorePoint> points = client->list_restore_points(org.id);
-            const bool configured = ascii_lower(org.name) == ascii_lower(config.veeam_org_name);
+            // W4.10: marked only when the config has a local profile; the
+            // service's config may name no organisation.
+            const bool configured = !config.veeam_org_name.empty() &&
+                                    ascii_lower(org.name) == ascii_lower(config.veeam_org_name);
             listing.push_back({std::move(org), std::move(points), configured});
         }
         // Before the logout: everything is read, so the table needn't wait for
         // Veeam to answer it.
         out << format_listing(listing);
-        if (std::ranges::none_of(listing, &OrgListing::configured)) {
+        if (!config.veeam_org_name.empty() &&
+            std::ranges::none_of(listing, &OrgListing::configured)) {
             err << "veeam error: organisation " << config.veeam_org_name
                 << " (veeam_org_name) not found in Veeam\n";
             code = exit_code::service;

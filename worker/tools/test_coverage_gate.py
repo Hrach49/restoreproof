@@ -140,6 +140,7 @@ class GateTest(unittest.TestCase):
             ("src/vault.cpp", "vault"),
             ("src/signer/ed25519.cpp", "signer"),
             ("src/service_log.cpp", "service"),
+            ("src/client_profile.cpp", "client_profile"),
         ):
             with self.subTest(rel=rel):
                 code, out, summary = self.run_gate(
@@ -173,6 +174,10 @@ class GateTest(unittest.TestCase):
             r"src\outbox.cpp",
             r"src\service.cpp",
             r"include\rp\service.hpp",
+            # W4.10: the profile reader and the strict JSON reader.
+            r"src\client_profile.cpp",
+            r"include\rp\client_profile.hpp",
+            r"src\strict_json.hpp",
         ):
             with self.subTest(name=name):
                 xml = cobertura((r"src\big.cpp", covered(1000)), (name, mixed(1, 1)))
@@ -213,6 +218,8 @@ class GateTest(unittest.TestCase):
             r"src\run_service.cpp",
             r"src\scm.cpp",
             r"src\stop_signal.cpp",
+            # W4.10: the command over the profile is not the profile reader.
+            r"src\client_command.cpp",
         ):
             with self.subTest(name=name):
                 xml = cobertura((r"src\big.cpp", covered(1000)), (name, mixed(1, 1)))
@@ -265,6 +272,8 @@ class GateTest(unittest.TestCase):
             "timestamper",
             "outbox",
             "service",
+            "client_profile",
+            "strict_json",
         ):
             self.assertIn(f"`{name}`: not present yet", summary)
 

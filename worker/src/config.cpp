@@ -61,9 +61,16 @@ struct IntField {
 
 // Declaration order of Config: fields are checked, and errors reported, in
 // this order.
-constexpr std::array<StringField, 10> kRequiredStrings{{
+constexpr std::array<StringField, 2> kRequiredStrings{{
     {"cloud_url", &Config::cloud_url, true, StringRule::https_url},
     {"veeam_url", &Config::veeam_url, true, StringRule::https_url},
+}};
+
+// The eight client keys (W4.10 point 5): the config's local profile, read
+// after the required strings, all of them or none. Each is a required string
+// once any is set; with none set each stays empty and the service takes the
+// client from its jobs.
+constexpr std::array<StringField, 8> kClientStrings{{
     {"veeam_org_name", &Config::veeam_org_name, true, StringRule::non_empty},
     {"graph_tenant_id", &Config::graph_tenant_id, true, StringRule::guid},
     {"graph_client_id", &Config::graph_client_id, true, StringRule::guid},
@@ -119,16 +126,6 @@ ConfigError key_error(std::string_view key, std::string_view problem)
     return ConfigError(std::string{key}, message);
 }
 
-// Whether a key name from the file may be printed: 1-64 of [A-Za-z0-9_.-].
-// Anything else could be a pasted secret, forge output lines with control
-// characters, or flood the output.
-bool is_printable_key(std::string_view key)
-{
-    return !key.empty() && key.size() <= 64 && std::all_of(key.begin(), key.end(), [](char c) {
-        return std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '.' || c == '-';
-    });
-}
-
 // The error for a key from the file: named when is_printable_key(), otherwise
 // "config has a key that <problem><unnamed_note>" with an empty key().
 ConfigError file_key_error(std::string_view key, std::string_view problem,
@@ -146,6 +143,7 @@ bool is_known_key(std::string_view key)
 {
     const auto named = [key](const auto& field) { return field.key == key; };
     return std::any_of(kRequiredStrings.begin(), kRequiredStrings.end(), named) ||
+           std::any_of(kClientStrings.begin(), kClientStrings.end(), named) ||
            std::any_of(kIntFields.begin(), kIntFields.end(), named) || key == kLogLevel.key ||
            key == kCaFileKey || key == kCertSha256Key || key == kTsaUrlKey ||
            key == kTsaCaFileKey || key == kCloudCaFileKey || key == kJobsFileKey ||
@@ -204,20 +202,6 @@ bool is_https_url(std::string_view value)
     return is_url_of("https://", value);
 }
 
-// Control and invisible formatting characters that could forge, hide or
-// reorder lines of `config check` output (control_chars.hpp lists them). The
-// JSON parser has already rejected invalid UTF-8, so matching byte sequences
-// is enough.
-bool has_control_character(std::string_view value)
-{
-    for (std::size_t i = 0; i < value.size(); ++i) {
-        if (control_character_length(value, i) != 0) {
-            return true;
-        }
-    }
-    return false;
-}
-
 // What is wrong with `value` under `rule`, or nothing when it follows it. One
 // switch holds each rule's check and its message together, with no default:
 // a rule added to StringRule without a case is a build error (/we4062).
@@ -237,13 +221,12 @@ std::optional<std::string_view> rule_problem(StringRule rule, std::string_view v
         if (is_uuid(value)) {
             return std::nullopt;
         }
-        return "must be a GUID (8-4-4-4-12 hexadecimal digits, as the Entra admin center shows "
-               "it), not a name";
+        return kGuidRule;
     case StringRule::restore_mailbox:
         if (is_restore_mailbox(value)) {
             return std::nullopt;
         }
-        return "must be restoretest@<domain>: restores only ever go to the restoretest mailbox";
+        return kRestoreMailboxRule;
     case StringRule::graph_site_id:
         if (parse_graph_site_id(value)) {
             return std::nullopt;
@@ -303,6 +286,31 @@ void read_string(const json& doc, const StringField& field, Config& config)
         throw key_error(field.key, *problem);
     }
     config.*field.member = *value;
+}
+
+// The eight client keys together or not at all: a key missing while another
+// is set is reported, the first in the table's order, before any rule of the
+// others, so a half-written local profile can't pass as none. With none set
+// nothing is read.
+void read_client_keys(const json& doc, Config& config)
+{
+    const auto present = [&doc](const StringField& field) { return doc.contains(field.key); };
+    if (std::none_of(kClientStrings.begin(), kClientStrings.end(), present)) {
+        return;
+    }
+    for (const StringField& field : kClientStrings) {
+        if (!present(field)) {
+            std::string names;
+            for (const StringField& each : kClientStrings) {
+                names += (names.empty() ? "" : ", ") + std::string{each.key};
+            }
+            throw key_error(field.key, "is missing: the eight client keys (" + names +
+                                           ") are set together or not at all");
+        }
+    }
+    for (const StringField& field : kClientStrings) {
+        read_string(doc, field, config);
+    }
 }
 
 // A path with a drive and a root (C:\...) or a UNC share (\\server\share\...).
@@ -456,6 +464,25 @@ bool is_ascii_id(std::string_view text, std::string_view extra, std::size_t max_
 
 } // namespace
 
+bool is_printable_key(std::string_view key)
+{
+    return !key.empty() && key.size() <= 64 && std::all_of(key.begin(), key.end(), [](char c) {
+        return std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '.' || c == '-';
+    });
+}
+
+// The JSON parser has already rejected invalid UTF-8, so matching byte
+// sequences (control_chars.hpp) is enough.
+bool has_control_character(std::string_view value)
+{
+    for (std::size_t i = 0; i < value.size(); ++i) {
+        if (control_character_length(value, i) != 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
 std::optional<GraphSiteId> parse_graph_site_id(std::string_view value)
 {
     const std::size_t first = value.find(',');
@@ -574,6 +601,7 @@ Config parse_config(std::string_view json_text)
     for (const StringField& field : kRequiredStrings) {
         read_string(doc, field, config);
     }
+    read_client_keys(doc, config);
     for (const IntField& field : kIntFields) {
         read_int(doc, field, config);
     }

@@ -79,14 +79,19 @@ int run_config_command(std::span<const std::string_view> args, std::ostream& out
     out << "config file: " << path_to_utf8(path) << '\n';
     print_setting(out, "cloud_url", config.cloud_url);
     print_setting(out, "veeam_url", config.veeam_url);
-    print_setting(out, "veeam_org_name", config.veeam_org_name);
-    print_setting(out, "graph_tenant_id", config.graph_tenant_id);
-    print_setting(out, "graph_client_id", config.graph_client_id);
-    print_setting(out, "test_mailbox", config.test_mailbox);
-    print_setting(out, "test_site_id", config.test_site_id);
-    print_setting(out, "test_library_id", config.test_library_id);
-    print_setting(out, "test_onedrive_drive_id", config.test_onedrive_drive_id);
-    print_setting(out, "test_onedrive_folder_id", config.test_onedrive_folder_id);
+    // W4.10: the eight client keys are the config's local profile, there
+    // together or not at all; the service's config needs none.
+    const auto or_not_set = [](const std::string& value) {
+        return value.empty() ? std::string{"(not set)"} : value;
+    };
+    print_setting(out, "veeam_org_name", or_not_set(config.veeam_org_name));
+    print_setting(out, "graph_tenant_id", or_not_set(config.graph_tenant_id));
+    print_setting(out, "graph_client_id", or_not_set(config.graph_client_id));
+    print_setting(out, "test_mailbox", or_not_set(config.test_mailbox));
+    print_setting(out, "test_site_id", or_not_set(config.test_site_id));
+    print_setting(out, "test_library_id", or_not_set(config.test_library_id));
+    print_setting(out, "test_onedrive_drive_id", or_not_set(config.test_onedrive_drive_id));
+    print_setting(out, "test_onedrive_folder_id", or_not_set(config.test_onedrive_folder_id));
     print_setting(out, "poll_interval_s", config.poll_interval_s);
     print_setting(out, "heartbeat_interval_s", config.heartbeat_interval_s);
     print_setting(out, "sample_mail", config.sample_mail);

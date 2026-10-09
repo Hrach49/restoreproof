@@ -355,6 +355,57 @@ TEST_CASE("restore targets take restoretest@<domain> in any case", "[connector]"
 
 // --- Happy paths -------------------------------------------------------------------
 
+// W4.10 point 4: from_profile is the factory; from_config wraps it.
+TEST_CASE("restore targets come from a client profile, with the same checks", "[connector]")
+{
+    rp::ClientProfile profile;
+    profile.veeam_org_name = "example.onmicrosoft.com";
+    profile.graph_tenant_id = "00000000-0000-0000-0000-000000000001";
+    profile.graph_client_id = "00000000-0000-0000-0000-000000000002";
+    profile.test_mailbox = "restoretest@example.onmicrosoft.com";
+    profile.test_site_id = "example.sharepoint.com,00000000-0000-4000-8000-000000000001,00000000-0000-4000-8000-000000000002";
+    profile.test_library_id = "b!library-id";
+    profile.test_onedrive_drive_id = "b!drive-id";
+    profile.test_onedrive_folder_id = "folder-id";
+
+    const connector::RestoreTargets targets = connector::RestoreTargets::from_profile(profile);
+    REQUIRE(targets.mailbox() == "restoretest@example.onmicrosoft.com");
+    REQUIRE(targets.site_id() == profile.test_site_id);
+    REQUIRE(targets.library_id() == "b!library-id");
+    REQUIRE(targets.onedrive_drive_id() == "b!drive-id");
+    REQUIRE(targets.onedrive_folder_id() == "folder-id");
+
+    SECTION("an empty target")
+    {
+        profile.test_library_id.clear();
+        REQUIRE_THROWS_MATCHES(connector::RestoreTargets::from_profile(profile),
+                               std::invalid_argument,
+                               Catch::Matchers::Message("restore target test_library_id is empty"));
+    }
+    SECTION("another mailbox")
+    {
+        profile.test_mailbox = "alice@example.onmicrosoft.com";
+        REQUIRE_THROWS_MATCHES(
+            connector::RestoreTargets::from_profile(profile), std::invalid_argument,
+            Catch::Matchers::Message("restore target test_mailbox must be restoretest@<domain>"));
+    }
+    SECTION("an ID that can't be a Graph ID")
+    {
+        profile.test_onedrive_folder_id = "01/ABC";
+        REQUIRE_THROWS_MATCHES(connector::RestoreTargets::from_profile(profile),
+                               std::invalid_argument,
+                               Catch::Matchers::Message("restore target test_onedrive_folder_id " +
+                                                        std::string{rp::kGraphItemIdRule}));
+    }
+    SECTION("the organisation, tenant and app are no target: not checked here")
+    {
+        profile.veeam_org_name.clear();
+        profile.graph_tenant_id = "not a guid";
+        REQUIRE(connector::RestoreTargets::from_profile(profile).mailbox() ==
+                "restoretest@example.onmicrosoft.com");
+    }
+}
+
 TEST_CASE("restore targets are the configured test locations", "[connector]")
 {
     const connector::RestoreTargets targets =

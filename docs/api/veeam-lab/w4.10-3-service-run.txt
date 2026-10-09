@@ -1,0 +1,245 @@
+W4.10 (#133) live Done-when, step (c): a short service run through the W4.8 harness, the service's config without client keys, one job carrying the profile. 2026-10-09T14:06:29Z, commit 023d932
+
+-- the config copy
+config copy: C:\ProgramData\RestoreProof\w48\config.json (cloud_url https://localhost:8443, cloud_ca_file and veeam_ca_file copies beside it, jobs_file C:\ProgramData\RestoreProof\w48\jobs.json, poll_interval_s 30, heartbeat_interval_s 60); seed-manifest.json copied beside it
+
+-- the eight client keys taken out of the service's config copy
+command: rpworker config check --config C:\ProgramData\RestoreProof\w48\config.json
+2026-10-09T14:06:29Z to 2026-10-09T14:06:30Z
+exit code: 0
+--- stdout
+config file: C:\ProgramData\RestoreProof\w48\config.json
+cloud_url                 https://localhost:8443
+veeam_url                 https://localhost:4443
+veeam_org_name            (not set)
+graph_tenant_id           (not set)
+graph_client_id           (not set)
+test_mailbox              (not set)
+test_site_id              (not set)
+test_library_id           (not set)
+test_onedrive_drive_id    (not set)
+test_onedrive_folder_id   (not set)
+poll_interval_s           30
+heartbeat_interval_s      60
+sample_mail               5
+sample_sp                 5
+sample_od                 5
+log_level                 info
+veeam_ca_file             C:\ProgramData\RestoreProof\w48\veeam-ca.pem
+veeam_cert_sha256         9FB19E0E604C9BE49F83D8E508EFA8EA0986A952377C783E5035CEA2D772A213
+tsa_url                   (not set)
+tsa_ca_file               (not set)
+cloud_ca_file             C:\ProgramData\RestoreProof\w48\stub-cert.pem
+jobs_file                 C:\ProgramData\RestoreProof\w48\jobs.json
+screenshots_enabled       false
+secrets (vault C:\ProgramData\RestoreProof\vault.bin; values are never shown):
+veeam_username            **** (set)
+veeam_password            **** (set)
+graph_cert_pfx_base64     **** (set)
+graph_cert_password       **** (set)
+signing_key_base64        **** (set)
+--- stderr
+
+
+-- the stub Cloud
+stub started (pid 17064)
+
+command: rpworker service install --config C:\ProgramData\RestoreProof\w48\config.json
+2026-10-09T14:06:31Z to 2026-10-09T14:06:32Z
+exit code: 0
+--- stdout
+installed RestoreProof: "C:\restoreproof\worker\build\dev\rpworker.exe" service run --config "C:\ProgramData\RestoreProof\w48\config.json"
+account NT SERVICE\RestoreProof, automatic start, restart after 60 s up to 3 times; not started: run rpworker service start
+--- stderr
+
+
+-- the grants
+command: rpworker vault grant NT SERVICE\RestoreProof
+2026-10-09T14:06:32Z to 2026-10-09T14:06:33Z
+exit code: 0
+--- stdout
+granted read on C:\ProgramData\RestoreProof\vault.bin to NT SERVICE\RestoreProof
+--- stderr
+
+key file of certificate AC3220B58A2B4C438DA13816C2DD1E25D1F783A7: Read granted to NT SERVICE\RestoreProof
+C:\ProgramData\RestoreProof\state: Modify granted to NT SERVICE\RestoreProof
+C:\ProgramData\RestoreProof\runs: Modify granted to NT SERVICE\RestoreProof
+C:\ProgramData\RestoreProof\outbox: Modify granted to NT SERVICE\RestoreProof
+C:\ProgramData\RestoreProof\sent: Modify granted to NT SERVICE\RestoreProof
+C:\ProgramData\RestoreProof\vault.bin: owner BUILTIN\Administrators; the account's entries: NT SERVICE\RestoreProof Read, Synchronize
+C:\ProgramData\Microsoft\Crypto\RSA\MachineKeys\<Veeam key file>: owner BUILTIN\Administrators; the account's entries: NT SERVICE\RestoreProof Read, Synchronize
+C:\ProgramData\RestoreProof\state: owner BUILTIN\Administrators; the account's entries: NT SERVICE\RestoreProof Modify, Synchronize
+C:\ProgramData\RestoreProof\runs: owner BUILTIN\Administrators; the account's entries: NT SERVICE\RestoreProof Modify, Synchronize
+C:\ProgramData\RestoreProof\outbox: owner BUILTIN\Administrators; the account's entries: NT SERVICE\RestoreProof Modify, Synchronize
+C:\ProgramData\RestoreProof\sent: owner BUILTIN\Administrators; the account's entries: NT SERVICE\RestoreProof Modify, Synchronize
+
+command: rpworker service start
+2026-10-09T14:06:33Z to 2026-10-09T14:06:34Z
+exit code: 0
+--- stdout
+started RestoreProof
+--- stderr
+
+
+jobs file written at 2026-10-09T14:06:34Z:
+{
+  "format": "restoreproof.jobs.v1",
+  "jobs": [
+    {
+      "run_id": "w410-2",
+      "client_id": "lab-client",
+      "sample_mail": 1,
+      "sample_sp": 1,
+      "sample_od": 1,
+      "restore_point": "latest",
+      "screenshots_enabled": false,
+      "client": {
+        "format": "restoreproof.client-profile.v1",
+        "veeam_org_name": "RestoreProofLab.onmicrosoft.com",
+        "graph_tenant_id": "bcd6bd1a-ea42-489d-aa28-2c19a44ad146",
+        "graph_client_id": "737da5ef-baf2-4198-b009-e160d8ca77c9",
+        "test_mailbox": "restoretest@RestoreProofLab.onmicrosoft.com",
+        "test_site_id": "restoreprooflab.sharepoint.com,fe08085d-eb70-42e8-95a6-470189bd98eb,4ecaf399-cc0e-4d95-b3fe-cd091a09e689",
+        "test_library_id": "b!XQgI_nDr6EKVpkcBib2Y65nzyk4OzJVNs_7NCRoJ5omdBuz_5GU6TJ2irAhs-dr6",
+        "test_onedrive_drive_id": "b!wA9gbfhlEUitGAluxbfoNBr_z5gEtDhErm5pJ6bMwyXfZJ8a_dkCQ696RX0r7_U3",
+        "test_onedrive_folder_id": "01ZK75LGDGB6QOO3MGNFGYOY6C6VBDG5OH"
+      }
+    }
+  ]
+}
+
+-- taken: 2026-10-09T14:07:03.947Z info run w410-2: starting (mail 1, sharepoint 1, onedrive 1, point latest)
+
+-- the record while the run goes
+running.json at 2026-10-09T14:07:05Z:
+{"client":{"format":"restoreproof.client-profile.v1","graph_client_id":"737da5ef-baf2-4198-b009-e160d8ca77c9","graph_tenant_id":"bcd6bd1a-ea42-489d-aa28-2c19a44ad146","test_library_id":"b!XQgI_nDr6EKVpkcBib2Y65nzyk4OzJVNs_7NCRoJ5omdBuz_5GU6TJ2irAhs-dr6","test_mailbox":"restoretest@RestoreProofLab.onmicrosoft.com","test_onedrive_drive_id":"b!wA9gbfhlEUitGAluxbfoNBr_z5gEtDhErm5pJ6bMwyXfZJ8a_dkCQ696RX0r7_U3","test_onedrive_folder_id":"01ZK75LGDGB6QOO3MGNFGYOY6C6VBDG5OH","test_site_id":"restoreprooflab.sharepoint.com,fe08085d-eb70-42e8-95a6-470189bd98eb,4ecaf399-cc0e-4d95-b3fe-cd091a09e689","veeam_org_name":"RestoreProofLab.onmicrosoft.com"},"client_id":"lab-client","close_as":null,"close_detail":null,"connector":{"api":"v8","type":"veeam_m365"},"format":"restoreproof.running.v1","kind":"run","restore_point":{"backup_time_raw":"2026-10-08T23:43:58.1565721Z","id":"c2f0f2e7-177f-48ac-992b-93a50cf702e33f589dc6-03b8-44c1-8bfe-1c32d63d5849"},"restore_requested":false,"restore_requested_at":null,"run_id":"w410-2","sessions":[],"started_at":"2026-10-09T14:07:04.228Z","taken_at":"2026-10-09T14:07:03.941Z"}
+
+-- ended: 2026-10-09T14:09:01.985Z info run w410-2: ended pass; queued
+
+-- sent: 2026-10-09T14:09:02.029Z info sent w410-2
+
+command: rpworker service stop
+2026-10-09T14:09:08Z to 2026-10-09T14:09:09Z
+exit code: 0
+--- stdout
+stopped RestoreProof in 0.2 s
+--- stderr
+
+
+-- worker.log from the start on
+2026-10-09T14:06:33.852Z info service running: rpworker 0.0.0, config C:\ProgramData\RestoreProof\w48\config.json, log_level info
+2026-10-09T14:06:33.855Z info scheduler started: poll 30 s, heartbeat 60 s, jobs C:\ProgramData\RestoreProof\w48\jobs.json, runs C:\ProgramData\RestoreProof\runs, outbox C:\ProgramData\RestoreProof
+2026-10-09T14:07:03.947Z info run w410-2: starting (mail 1, sharepoint 1, onedrive 1, point latest)
+2026-10-09T14:07:04.326Z info [w410-2] restore point 2026-10-08T23:43:58.1565721Z  c2f0f2e7-177f-48ac-992b-93a50cf702e33f589dc6-03b8-44c1-8bfe-1c32d63d5849  (veeam_org_name RestoreProofLab.onmicrosoft.com)
+2026-10-09T14:07:04.326Z info [w410-2] run w410-2  seed 954529e1
+2026-10-09T14:07:04.810Z info cleanup before: the test mailbox's Inbox: deleted 0, gone 0, left 0, skipped 0 in 1 round(s)
+2026-10-09T14:07:05.308Z info cleanup before: the RestoreTarget library: deleted 0, gone 0, left 0, skipped 0 in 1 round(s)
+2026-10-09T14:07:05.717Z info cleanup before: the test OneDrive folder: deleted 0, gone 0, left 0, skipped 0 in 1 round(s)
+2026-10-09T14:07:05.717Z info [w410-2] cleanup before ok: deleted 0 mail, 0 sharepoint, 0 onedrive
+2026-10-09T14:07:05.719Z info [w410-2] canary cursor 0,0,0 -> 1,1,1
+2026-10-09T14:07:05.719Z info [w410-2]   KIND        REQUESTED  CANARIES  RANDOM  NOTE
+2026-10-09T14:07:05.719Z info [w410-2]   mail        1          1 of 1    0 of 0
+2026-10-09T14:07:05.719Z info [w410-2]   sharepoint  1          1 of 1    0 of 0
+2026-10-09T14:07:05.719Z info [w410-2]   onedrive    1          1 of 1    0 of 0
+2026-10-09T14:07:05.719Z info [w410-2] restoring 3 item(s) ...
+2026-10-09T14:07:05.858Z info listed 0 item(s) in the test mailbox's Inbox
+2026-10-09T14:07:06.193Z info listed 0 item(s) in the RestoreTarget library
+2026-10-09T14:07:06.443Z info listed 0 item(s) in the test OneDrive folder
+2026-10-09T14:08:58.290Z info [w410-2]   SESSION                               KIND        RESULT   RESTORED  STARTED                       ENDED                         ELAPSED
+2026-10-09T14:08:58.290Z info [w410-2]   8d2ea12b-83b3-4416-87fa-030efae63815  mail        Success  1 of 1    2026-10-09T14:07:10.7303474Z  2026-10-09T14:07:38.2740317Z  0:00:27
+2026-10-09T14:08:58.291Z info [w410-2]   b6664524-4505-4f81-9773-fd56459f6a88  sharepoint  Success  1 of 1    2026-10-09T14:07:41.3584695Z  2026-10-09T14:08:18.4426601Z  0:00:37
+2026-10-09T14:08:58.291Z info [w410-2]   d7929b7d-990b-4eb9-88ec-8a854631cc46  onedrive    Success  1 of 1    2026-10-09T14:08:22.1454829Z  2026-10-09T14:08:53.5629895Z  0:00:31
+2026-10-09T14:08:58.291Z info [w410-2] restore succeeded: 3 of 3 item(s) restored in 0:01:51
+2026-10-09T14:08:58.499Z info listed 1 item(s) in the test mailbox's Inbox
+2026-10-09T14:08:59.198Z info listed 1 item(s) in the RestoreTarget library
+2026-10-09T14:08:59.939Z info listed 1 item(s) in the test OneDrive folder
+2026-10-09T14:08:59.965Z info [w410-2]   TYPE        NAME              EXPECTED  FOUND  MATCH  VERDICT   REASON  MS
+2026-10-09T14:08:59.965Z info [w410-2]   mail        RP-CANARY-0001    manifest  yes    match  verified  -       0
+2026-10-09T14:08:59.965Z info [w410-2]   sharepoint  rp-canary-01.pdf  manifest  yes    match  verified  -       318
+2026-10-09T14:08:59.965Z info [w410-2]   onedrive    rp-canary-11.pdf  manifest  yes    match  verified  -       351
+2026-10-09T14:08:59.966Z info [w410-2] check: 3 match, 0 mismatch, 0 missing, 0 error
+2026-10-09T14:08:59.966Z info [w410-2] status pass: 3 of 3 item(s) verified: manifest 3, fields 0, metadata 0
+2026-10-09T14:09:00.292Z info cleanup after: the test mailbox's Inbox: deleted 1, gone 0, left 0, skipped 0 in 1 round(s)
+2026-10-09T14:09:01.006Z info cleanup after: the RestoreTarget library: deleted 1, gone 0, left 0, skipped 0 in 1 round(s)
+2026-10-09T14:09:01.530Z info cleanup after: the test OneDrive folder: deleted 1, gone 0, left 0, skipped 0 in 1 round(s)
+2026-10-09T14:09:01.530Z info [w410-2] cleanup after ok: deleted 1 mail, 1 sharepoint, 1 onedrive
+2026-10-09T14:09:01.531Z info [w410-2] STEP                  TIME         NOTE
+2026-10-09T14:09:01.531Z info [w410-2] restore_point_lookup  0:00:00.096
+2026-10-09T14:09:01.531Z info [w410-2] cleanup_before        0:00:01.359
+2026-10-09T14:09:01.531Z info [w410-2] sample_select         0:00:00.001
+2026-10-09T14:09:01.531Z info [w410-2] target_snapshot       0:00:00.723
+2026-10-09T14:09:01.531Z info [w410-2] restore               0:01:51.846
+2026-10-09T14:09:01.531Z info [w410-2] restore_submit        0:00:00.709
+2026-10-09T14:09:01.531Z info [w410-2] restore_wait          0:01:46.118
+2026-10-09T14:09:01.531Z info [w410-2] verify                0:00:01.648
+2026-10-09T14:09:01.532Z info [w410-2] recovery              0:01:53.495
+2026-10-09T14:09:01.532Z info [w410-2] cleanup_after         0:00:01.564
+2026-10-09T14:09:01.532Z info [w410-2] total                 0:01:57.302
+2026-10-09T14:09:01.957Z info [w410-2] signed f09d8bf463219e18a2abb2cd2a624cffadb076a4a40c948b08ad3017143f2153 key 9dfab6eadaa1d04a22dcc966aac7a53bcff8bbe0077232485f6143cd9c4d0ca5
+2026-10-09T14:09:01.958Z info [w410-2] timestamped 2026-10-09T14:07:40Z
+2026-10-09T14:09:01.958Z info [w410-2] evidence C:\ProgramData\RestoreProof\runs\w410-2: result.json, signature.json, timestamp.tst, items.csv, veeam-session.log
+2026-10-09T14:09:01.966Z info [w410-2] queued C:\ProgramData\RestoreProof\outbox\w410-2
+2026-10-09T14:09:01.985Z info run w410-2: ended pass; queued
+2026-10-09T14:09:02.029Z info sent w410-2
+2026-10-09T14:09:02.051Z info skipped w410-2: already sent
+2026-10-09T14:09:08.979Z info stop requested (stop)
+2026-10-09T14:09:08.979Z info service stopped after 0 ms
+
+
+-- afterwards
+(no running.json) at 2026-10-09T14:09:09Z
+runs\:
+  w42-done-when-1: items.csv 5746, result.json 22606, veeam-session.log 7371
+  w43-done-when-1: items.csv 5749, result.json 22347, signature.json 322, veeam-session.log 7490
+  w44-done-when-1: items.csv 5753, result.json 21997, signature.json 322, timestamp.tst 5998, veeam-session.log 7370
+  w44-tsa-down-1: items.csv 5741, result.json 21954, signature.json 322, veeam-session.log 7363
+  w45-done-when-1: items.csv 5807, result.json 22239, signature.json 322, timestamp.tst 5999, veeam-session.log 7510
+outbox\:
+sent\:
+  w410-2: items.csv 916, manifest.json 362, result.json 6304, signature.json 322, timestamp.tst 5999, veeam-session.log 954
+  w46-done-when-1: items.csv 145, manifest.json 371, result.json 2291, signature.json 322, timestamp.tst 5998, veeam-session.log 0
+  w46-done-when-2: items.csv 5739, manifest.json 371, result.json 21971, signature.json 322, timestamp.tst 5997, veeam-session.log 7360
+
+-- the stub's lines
+2026-10-09T14:06:31Z stub Cloud on https://localhost:8443
+2026-10-09T14:06:33Z POST /v1/heartbeat: 88 bytes, Content-Type application/json, Authorization absent -> 204  {"last_error":null,"last_error_at":null,"outbox_depth":0,"uptime_s":0,"version":"0.0.0"}
+2026-10-09T14:09:02Z POST /v1/results: 15385 bytes, Authorization absent -> 202
+  part result  file result.json  6304 bytes  sha256 f09d8bf463219e18a2abb2cd2a624cffadb076a4a40c948b08ad3017143f2153
+  part signature  file signature.json  322 bytes  sha256 b9153c13ad643f301eac53756e7041177d0edaf46ff7735541b01f3b29215684
+  part timestamp  file timestamp.tst  5999 bytes  sha256 ba41c9864a8952b536fde1202f85d2f52559d3315d7bfac71ed7d7a52782a8e0
+  part items.csv  file items.csv  916 bytes  sha256 a16b139363df46afc71c5edc9d2ba131d85d9d3e8bb08574a219a257b8cb2bcb
+  part veeam-session.log  file veeam-session.log  954 bytes  sha256 c27f016ac51ebe92d2b5ed0af42d9a7c30ee5a4400025224847a143c212d358c
+2026-10-09T14:09:02Z POST /v1/heartbeat: 90 bytes, Content-Type application/json, Authorization absent -> 204  {"last_error":null,"last_error_at":null,"outbox_depth":0,"uptime_s":148,"version":"0.0.0"}
+
+-- the sent folder
+folder: C:\ProgramData\RestoreProof\sent\w410-2
+command: rpworker signer verify C:\ProgramData\RestoreProof\sent\w410-2 --public-key C:\ProgramData\RestoreProof\w48\worker-signing.pub.pem --tsa-ca C:\restoreproof\shared\tsa\tsa-ca.pem
+2026-10-09T14:09:10Z to 2026-10-09T14:09:11Z
+exit code: 0
+--- stdout
+verified f09d8bf463219e18a2abb2cd2a624cffadb076a4a40c948b08ad3017143f2153 key 9dfab6eadaa1d04a22dcc966aac7a53bcff8bbe0077232485f6143cd9c4d0ca5 timestamp 2026-10-09T14:07:40Z
+--- stderr
+note: not listed in the result: manifest.json
+
+verify_bundle.py (exit code 0): note: not listed in the result: manifest.json | verified f09d8bf463219e18a2abb2cd2a624cffadb076a4a40c948b08ad3017143f2153 key 9dfab6eadaa1d04a22dcc966aac7a53bcff8bbe0077232485f6143cd9c4d0ca5 timestamp 2026-10-09T14:07:40Z
+result.json: run_id w410-2, status pass, restore_sent True, message: 3 of 3 item(s) verified: manifest 3, fields 0, metadata 0
+result.json sha256 f09d8bf463219e18a2abb2cd2a624cffadb076a4a40c948b08ad3017143f2153
+
+-- result.json client: {"client_id":"lab-client","targets":{"library_id":"b!XQgI_nDr6EKVpkcBib2Y65nzyk4OzJVNs_7NCRoJ5omdBuz_5GU6TJ2irAhs-dr6","mailbox":"restoretest@RestoreProofLab.onmicrosoft.com","onedrive_drive_id":"b!wA9gbfhlEUitGAluxbfoNBr_z5gEtDhErm5pJ6bMwyXfZJ8a_dkCQ696RX0r7_U3","onedrive_folder_id":"01ZK75LGDGB6QOO3MGNFGYOY6C6VBDG5OH","site_id":"restoreprooflab.sharepoint.com,fe08085d-eb70-42e8-95a6-470189bd98eb,4ecaf399-cc0e-4d95-b3fe-cd091a09e689"},"tenant_id":"bcd6bd1a-ea42-489d-aa28-2c19a44ad146","veeam_org_name":"RestoreProofLab.onmicrosoft.com"}
+
+-- Veeam after: no session Working at 2026-10-09T14:09:12Z
+
+-- the grants taken away, the service uninstalled
+entries of NT SERVICE\RestoreProof removed
+C:\ProgramData\RestoreProof\vault.bin: owner BUILTIN\Administrators; the account's entries: none
+C:\ProgramData\Microsoft\Crypto\RSA\MachineKeys\<Veeam key file>: owner BUILTIN\Administrators; the account's entries: none
+C:\ProgramData\RestoreProof\state: owner BUILTIN\Administrators; the account's entries: none
+C:\ProgramData\RestoreProof\runs: owner BUILTIN\Administrators; the account's entries: none
+C:\ProgramData\RestoreProof\outbox: owner BUILTIN\Administrators; the account's entries: none
+C:\ProgramData\RestoreProof\sent: owner BUILTIN\Administrators; the account's entries: none
+command: rpworker service uninstall
+2026-10-09T14:09:13Z to 2026-10-09T14:09:14Z
+exit code: 0
+--- stdout
+uninstalled RestoreProof
+--- stderr

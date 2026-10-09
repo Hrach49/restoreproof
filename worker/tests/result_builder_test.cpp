@@ -440,3 +440,39 @@ TEST_CASE("ResultBuilder: attachments the schema doesn't take are a schema error
     REQUIRE(std::holds_alternative<ResultError>(built));
     REQUIRE(std::get<ResultError>(built).cause == ResultFailure::schema);
 }
+
+// W4.10 point 3: the job's client_id goes into the result.
+TEST_CASE("the result's client is the profile's with the job's client_id", "[result_builder]")
+{
+    rp::ClientProfile profile;
+    profile.veeam_org_name = "contoso.onmicrosoft.com";
+    profile.graph_tenant_id = "11111111-2222-3333-4444-555555555555";
+    profile.graph_client_id = "22222222-3333-4444-5555-666666666666";
+    profile.test_mailbox = "restoretest@contoso.onmicrosoft.com";
+    profile.test_site_id = "contoso.sharepoint.com,aaaaaaaa-0000-0000-0000-000000000001,"
+                           "aaaaaaaa-0000-0000-0000-000000000002";
+    profile.test_library_id = "b!library";
+    profile.test_onedrive_drive_id = "b!onedrive";
+    profile.test_onedrive_folder_id = "01FOLDER";
+
+    const rp::ResultClient with_id = rp::result_client(profile, std::string{"client-7"});
+    CHECK(with_id.client_id == std::optional<std::string>{"client-7"});
+    CHECK(with_id.tenant_id == profile.graph_tenant_id);
+    CHECK(with_id.veeam_org_name == profile.veeam_org_name);
+    CHECK(with_id.mailbox == profile.test_mailbox);
+    CHECK(with_id.site_id == profile.test_site_id);
+    CHECK(with_id.library_id == profile.test_library_id);
+    CHECK(with_id.onedrive_drive_id == profile.test_onedrive_drive_id);
+    CHECK(with_id.onedrive_folder_id == profile.test_onedrive_folder_id);
+    CHECK_FALSE(rp::result_client(profile, std::nullopt).client_id);
+
+    ResultFacts facts = full_result_facts();
+    rp::ResultParts parts = facts.parts();
+    parts.client = with_id;
+    const json document = rp::ResultBuilder::document(parts);
+    CHECK(document.at("client").at("client_id") == "client-7");
+    // The app's ID is the profile's, not the result's.
+    CHECK_FALSE(document.at("client").contains("graph_client_id"));
+    CHECK(document.at("client").size() == 4);
+    REQUIRE(std::holds_alternative<rp::BuiltResult>(rp::ResultBuilder::build(parts)));
+}

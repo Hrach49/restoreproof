@@ -2,8 +2,8 @@
 
 #include "job_rules.hpp"
 #include "path_utf8.hpp"
+#include "strict_json.hpp"
 
-#include <rp/canonical_json.hpp>
 #include <rp/sha256.hpp>
 
 #include <nlohmann/json.hpp>
@@ -13,7 +13,7 @@
 #include <cstdint>
 #include <format>
 #include <limits>
-#include <set>
+#include <variant>
 #include <utility>
 
 namespace rp {
@@ -26,6 +26,7 @@ constexpr std::string_view kFormatKey = "format";
 constexpr std::string_view kJobsKey = "jobs";
 constexpr std::string_view kRunId = "run_id";
 constexpr std::string_view kClientId = "client_id";
+constexpr std::string_view kClient = "client";
 constexpr std::string_view kSampleMail = "sample_mail";
 constexpr std::string_view kSampleSp = "sample_sp";
 constexpr std::string_view kSampleOd = "sample_od";
@@ -34,43 +35,8 @@ constexpr std::string_view kScreenshots = "screenshots_enabled";
 constexpr std::string_view kCanaryCursor = "canary_cursor";
 
 // Every key a job may have.
-constexpr std::array kJobKeys{kRunId,        kClientId,    kSampleMail, kSampleSp,
+constexpr std::array kJobKeys{kRunId,        kClientId,    kClient,      kSampleMail, kSampleSp,
                               kSampleOd,     kRestorePoint, kScreenshots, kCanaryCursor};
-
-// `text` as JSON, or nothing: nested past kMaxJsonNesting, not JSON (whatever
-// the parser calls it), or an object at any depth with a key twice, of which
-// nlohmann would silently keep the last.
-std::optional<json> parse_strict(std::string_view text)
-{
-    // Nested deeper than any jobs document: not handed to the parser at all.
-    if (json_nesting_depth(text) > kMaxJsonNesting) {
-        return std::nullopt;
-    }
-    // The keys of each object being read, innermost last.
-    std::vector<std::set<std::string>> open;
-    bool twice = false;
-    const auto watch = [&](int, json::parse_event_t event, json& parsed) {
-        if (event == json::parse_event_t::object_start) {
-            open.emplace_back();
-        } else if (event == json::parse_event_t::key) {
-            twice |= !open.back().insert(parsed.get_ref<const std::string&>()).second;
-        } else if (event == json::parse_event_t::object_end) {
-            open.pop_back();
-        }
-        return true;
-    };
-    std::optional<json> document;
-    try {
-        document = json::parse(text.begin(), text.end(), watch);
-    } catch (const json::exception&) {
-        // Its message quotes the text around the error: never passed on.
-        document.reset();
-    }
-    if (twice) {
-        document.reset();
-    }
-    return document;
-}
 
 // An integer value as a signed one, or nothing for any other kind (a float,
 // 1.0 too). One past the signed range reads as the range's largest, which
@@ -115,6 +81,26 @@ bool read_client_id(const json& job, std::optional<std::string>& into)
     }
     into = it->get<std::string>();
     return true;
+}
+
+// client: the profile, by its own reader (rp/client_profile.hpp). The fault
+// word is `client` for a client that is missing, not an object, not the
+// profile's format or has a key that isn't the profile's, and
+// `client.<key>` for one of the profile's keys at fault; empty when the
+// profile was read into `into`.
+std::string client_fault(const json& job, std::optional<ClientProfile>& into)
+{
+    const auto it = job.find(kClient);
+    if (it == job.end()) {
+        return std::string{kJobClientKey};
+    }
+    std::variant<ClientProfile, ProfileFault> parsed = parse_client_profile(*it);
+    if (const ProfileFault* fault = std::get_if<ProfileFault>(&parsed)) {
+        return fault->key.empty() ? std::string{kJobClientKey}
+                                  : std::string{kJobClientKey} + "." + fault->key;
+    }
+    into = std::get<ClientProfile>(std::move(parsed));
+    return {};
 }
 
 bool read_size(const json& job, std::string_view key, int& into)
@@ -183,33 +169,36 @@ bool has_unknown_key(const json& job)
 // The first key at fault of a job whose run_id passed, in the header's
 // order, or empty when it is valid; `into` takes each value that passed
 // before it.
-std::string_view fault_of(const json& job, Job& into)
+std::string fault_of(const json& job, Job& into)
 {
     if (!read_client_id(job, into.client_id)) {
-        return kClientId;
+        return std::string{kClientId};
+    }
+    if (std::string fault = client_fault(job, into.client); !fault.empty()) {
+        return fault;
     }
     if (!read_size(job, kSampleMail, into.sample_mail)) {
-        return kSampleMail;
+        return std::string{kSampleMail};
     }
     if (!read_size(job, kSampleSp, into.sample_sp)) {
-        return kSampleSp;
+        return std::string{kSampleSp};
     }
     if (!read_size(job, kSampleOd, into.sample_od)) {
-        return kSampleOd;
+        return std::string{kSampleOd};
     }
     if (job_rules::is_empty_sample(into.sample_mail, into.sample_sp, into.sample_od)) {
-        return kSampleMail;
+        return std::string{kSampleMail};
     }
     if (!read_point(job, into.restore_point)) {
-        return kRestorePoint;
+        return std::string{kRestorePoint};
     }
     if (!read_screenshots(job, into.screenshots_enabled)) {
-        return kScreenshots;
+        return std::string{kScreenshots};
     }
     if (!read_cursor(job, into.canary_cursor)) {
-        return kCanaryCursor;
+        return std::string{kCanaryCursor};
     }
-    return has_unknown_key(job) ? kJobUnknownKey : std::string_view{};
+    return has_unknown_key(job) ? std::string{kJobUnknownKey} : std::string{};
 }
 
 JobEntry entry_of(const json& job, std::size_t position)
@@ -222,7 +211,7 @@ JobEntry entry_of(const json& job, std::size_t position)
     }
     Job read;
     read.run_id = *run_id;
-    entry.fault = std::string{fault_of(job, read)};
+    entry.fault = fault_of(job, read);
     if (entry.fault.empty()) {
         entry.state = JobState::valid;
         entry.job = std::move(read);
@@ -233,6 +222,7 @@ JobEntry entry_of(const json& job, std::size_t position)
     entry.state = JobState::invalid;
     entry.job.run_id = std::move(read.run_id);
     entry.job.client_id = std::move(read.client_id);
+    entry.job.client = std::move(read.client);
     return entry;
 }
 
@@ -285,7 +275,7 @@ JobsDocument parse_jobs(std::string_view text)
 {
     JobsDocument out;
     out.sha256 = sha256_hex(text);
-    const std::optional<json> document = parse_strict(text);
+    const std::optional<json> document = parse_strict_json(text);
     if (!document) {
         return failed(std::move(out), JobsFault::not_json);
     }

@@ -1305,9 +1305,16 @@ std::unique_ptr<connector::IConnector> make_veeam_m365_connector(
     // certificate and IDs first, before any HTTP client is made (a
     // CertificateError, a ConfigError, keyed by the variable when one is
     // unset, or a Graph ID that isn't a GUID stops there).
-    connector_options.make_graph = [tenant_id = config.graph_tenant_id,
-                                    client_id = config.graph_client_id, secrets, logger, wall_now,
+    connector_options.make_graph = [client = options.client, secrets, logger, wall_now,
                                     options]() -> VeeamM365GraphParts {
+        // W4.10: the client's tenant and app, from the run's profile and
+        // never from the config.
+        if (!client) {
+            throw ConfigError("", "veeam_m365: the connector has no client profile" +
+                                      std::string{connector::kNothingRestored});
+        }
+        const std::string& tenant_id = client->graph_tenant_id;
+        const std::string& client_id = client->graph_client_id;
         graph::ClientCertificate certificate =
             graph::certificate_from_secrets(secrets, wall_now(), logger);
         if (!is_uuid(tenant_id)) {

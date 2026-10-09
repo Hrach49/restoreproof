@@ -42,6 +42,8 @@ add_library(rpcore STATIC
     src/cleaner.cpp
     src/cli.cpp
     src/client_assertion.cpp
+    src/client_command.cpp
+    src/client_profile.cpp
     src/command_config.cpp
     src/config.cpp
     src/config_check.cpp
@@ -190,6 +192,9 @@ add_executable(rptests
     tests/cleaner_test.cpp
     tests/client_assertion_test.cpp
     tests/cli_test.cpp
+    tests/client_command_live_test.cpp
+    tests/client_command_test.cpp
+    tests/client_profile_test.cpp
     tests/command_config_test.cpp
     tests/config_check_test.cpp
     tests/config_test.cpp
@@ -326,7 +331,7 @@ endfunction()
 
 rp_add_exe_test("rpworker --version prints the project version"
     ARGS --version EXIT_CODE 0 STDOUT ${PROJECT_VERSION} STDERR "")
-set(RP_USAGE "usage: rpworker --version | rpworker config check [--config <path>] [--vault <file>] | rpworker vault set|remove <name> [--vault <file>] | rpworker vault list|test [--vault <file>] | rpworker vault grant <account> [--vault <file>] | rpworker veeam list [--config <path>] [--vault <file>] [--record <dir>] | rpworker graph list [--hash] [--config <path>] [--vault <file>] [--record <dir>] | rpworker restore [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--vault <file>] [--record <dir>] | rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--vault <file>] [--record <dir>] [--json <file> | --evidence <dir> [--outbox <root>]] | rpworker outbox flush [--config <path>] [--outbox <root>] [--record <dir>] | rpworker outbox list [--outbox <root>] | rpworker signer public-key [--vault <file>] | rpworker signer verify <folder> --public-key <pem file> [--tsa-ca <pem file>] | rpworker service install [--config <path>] | rpworker service uninstall|start|stop | rpworker service run [--config <path>]")
+set(RP_USAGE "usage: rpworker --version | rpworker config check [--config <path>] [--vault <file>] | rpworker vault set|remove <name> [--vault <file>] | rpworker vault list|test [--vault <file>] | rpworker vault grant <account> [--vault <file>] | rpworker veeam list [--config <path>] [--vault <file>] [--record <dir>] | rpworker graph list [--hash] [--config <path>] [--vault <file>] [--record <dir>] | rpworker client check --profile-file <file> [--vault <file>] [--record <dir>] | rpworker restore [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--vault <file>] [--record <dir>] [--profile-file <file>] | rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--vault <file>] [--record <dir>] [--profile-file <file>] [--json <file> | --evidence <dir> [--outbox <root>]] | rpworker outbox flush [--config <path>] [--outbox <root>] [--record <dir>] | rpworker outbox list [--outbox <root>] | rpworker signer public-key [--vault <file>] | rpworker signer verify <folder> --public-key <pem file> [--tsa-ca <pem file>] | rpworker service install [--config <path>] | rpworker service uninstall|start|stop | rpworker service run [--config <path>]")
 rp_add_exe_test("rpworker rejects unknown arguments"
     ARGS --no-such-option EXIT_CODE 64 STDOUT "" STDERR "${RP_USAGE}")
 rp_add_exe_test("rpworker config without a subcommand prints usage"
@@ -475,6 +480,32 @@ rp_add_exe_test("rpworker graph list needs graph_cert_pfx_base64"
     EXIT_CODE 1 STDOUT "" STDERR "config error: graph_cert_pfx_base64 is not in the vault")
 set_tests_properties(
     "rpworker graph list needs graph_cert_pfx_base64"
+    PROPERTIES FIXTURES_REQUIRED exe-vault)
+
+# client check (W4.10) stops before any request in each of these: the
+# arguments, the profile file, then the vault come first.
+rp_add_exe_test("rpworker client without a subcommand prints usage"
+    ARGS client EXIT_CODE 64 STDOUT "" STDERR "${RP_USAGE}")
+rp_add_exe_test("rpworker client check needs --profile-file"
+    ARGS client check EXIT_CODE 64 STDOUT "" STDERR "${RP_USAGE}")
+rp_add_exe_test("rpworker client check rejects --config"
+    ARGS client check --profile-file p.json --config c.json EXIT_CODE 64 STDOUT "" STDERR "${RP_USAGE}")
+rp_add_exe_test("rpworker client check reports a profile file that isn't there"
+    ARGS client check --profile-file no-such-profile.json EXIT_CODE 1 STDOUT ""
+    STDERR "config error: --profile-file no-such-profile.json: can't be read")
+rp_add_exe_test("rpworker client check refuses a profile that names another mailbox, naming the key"
+    ARGS client check --profile-file ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/client-profile/alice-mailbox.json
+    EXIT_CODE 1 STDOUT ""
+    STDERR "config error: --profile-file ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/client-profile/alice-mailbox.json: key \"test_mailbox\" must be restoretest@<domain>: restores only ever go to the restoretest mailbox")
+rp_add_exe_test("rpworker client check refuses a profile missing a key, naming it"
+    ARGS client check --profile-file ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/client-profile/missing-site.json
+    EXIT_CODE 1 STDOUT ""
+    STDERR "config error: --profile-file ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/client-profile/missing-site.json: key \"test_site_id\" is missing (required)")
+rp_add_exe_test("rpworker client check needs graph_cert_pfx_base64, after the profile"
+    ARGS client check --profile-file ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/client-profile/valid.json --vault ${RP_VAULT_TWO}
+    EXIT_CODE 1 STDOUT "" STDERR "config error: graph_cert_pfx_base64 is not in the vault")
+set_tests_properties(
+    "rpworker client check needs graph_cert_pfx_base64, after the profile"
     PROPERTIES FIXTURES_REQUIRED exe-vault)
 
 # restore stops before any request in each of these too: the arguments, the

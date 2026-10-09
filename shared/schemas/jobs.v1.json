@@ -1,0 +1,121 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://restoreproof.local/schemas/jobs.v1.json",
+  "title": "RestoreProof jobs v1",
+  "description": "restoreproof.jobs.v1: the jobs document the Worker's service reads (W4.8, the stub file; W5.1, the Cloud's answer to GET /v1/jobs). An object with exactly format and jobs, jobs an array of at most five jobs. A job is a closed object: run_id (a run ID that names a folder), client_id (the Cloud's label for the client, or null), client (the client's profile, restoreproof.client-profile.v1, W4.10: the tenant, the organisation and the restore targets the run uses), the three sample sizes (not all 0), restore_point (latest or a restore point ID), screenshots_enabled and, optionally, canary_cursor. What a schema can't say the Worker's reader still holds a job to: a run_id that is a DOS device's name, ends in a dot or is . or .., a key twice in any object, a float where an integer is wanted. The schema uses only keywords JSON Schema draft 7 and 2020-12 read alike; client refers to client-profile.v1.json beside it.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "format",
+    "jobs"
+  ],
+  "properties": {
+    "format": {
+      "const": "restoreproof.jobs.v1"
+    },
+    "jobs": {
+      "type": "array",
+      "maxItems": 5,
+      "items": {
+        "$ref": "#/$defs/job"
+      }
+    }
+  },
+  "$defs": {
+    "job": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "run_id",
+        "client_id",
+        "client",
+        "sample_mail",
+        "sample_sp",
+        "sample_od",
+        "restore_point",
+        "screenshots_enabled"
+      ],
+      "properties": {
+        "run_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9._-]{1,128}$",
+          "not": {
+            "pattern": "\n"
+          }
+        },
+        "client_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[ -~]{1,128}$",
+          "not": {
+            "type": "string",
+            "pattern": "\n"
+          }
+        },
+        "client": {
+          "$ref": "client-profile.v1.json"
+        },
+        "sample_mail": {
+          "$ref": "#/$defs/sample_size"
+        },
+        "sample_sp": {
+          "$ref": "#/$defs/sample_size"
+        },
+        "sample_od": {
+          "$ref": "#/$defs/sample_size"
+        },
+        "restore_point": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9-]{1,128}$",
+          "not": {
+            "pattern": "\n"
+          }
+        },
+        "screenshots_enabled": {
+          "type": "boolean"
+        },
+        "canary_cursor": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 999999
+          }
+        }
+      },
+      "not": {
+        "required": [
+          "sample_mail",
+          "sample_sp",
+          "sample_od"
+        ],
+        "properties": {
+          "sample_mail": {
+            "const": 0
+          },
+          "sample_sp": {
+            "const": 0
+          },
+          "sample_od": {
+            "const": 0
+          }
+        }
+      }
+    },
+    "sample_size": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100
+    }
+  }
+}

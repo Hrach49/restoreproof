@@ -13,6 +13,7 @@
 
 #include <rp/canary_manifest.hpp>
 #include <rp/checker.hpp>
+#include <rp/client_profile.hpp>
 #include <rp/connector.hpp>
 #include <rp/expected_set.hpp>
 #include <rp/recording_http_client.hpp>
@@ -59,6 +60,16 @@ struct PipelineArgs {
     // W4.8 point 3: a job's screenshots_enabled, replacing the config's for
     // this run; nullopt = the config's.
     std::optional<bool> screenshots;
+    // W4.10 (docs/decisions.md 2026-10-09 point 4): the client the run is
+    // for. `client` is a job's profile, borrowed for the run (the service
+    // sets it); null: `profile_file`'s (--profile-file, read right after the
+    // config and before the secrets), else the config's local profile, else
+    // "config error: the config has no client keys; give --profile-file
+    // <file> or set the eight client keys", exit 1. `client_id` is the job's,
+    // the result's client.client_id; nullopt at a prompt.
+    const ClientProfile* client = nullptr;
+    std::optional<std::string> client_id;
+    std::optional<std::string_view> profile_file;
 };
 
 // What became of one call of run_pipeline (docs/decisions.md 2026-10-08, W4.8
@@ -91,9 +102,9 @@ struct PipelineReport {
 };
 
 // Whether each of those options in `options` (--mail --sp --od --point
-// --run-id --canary-cursor --manifest --config --vault --record, each with its
-// value) is well-formed by the rules on run_restore_command, each copied
-// into `parsed`.
+// --run-id --canary-cursor --manifest --config --vault --record
+// --profile-file, each with its value) is well-formed by the rules on
+// run_restore_command, each copied into `parsed`.
 bool parse_pipeline_args(const CommandOptions& options, PipelineArgs& parsed);
 
 // What one run produced, handed on once at its end (W3.6 point 4, W4.1
@@ -220,7 +231,8 @@ std::string_view to_string(TargetsClean clean) noexcept;
 
 // The clean a run that didn't reach its own never made (docs/decisions.md
 // 2026-10-08, W4.8 point 9): the Cleaner's before_run clean (rp/cleaner.hpp,
-// unchanged) over `config`'s three restore targets, under the run mutex
+// unchanged) over `client`'s three restore targets (W4.10: the record's
+// profile, never the config's), under the run mutex
 // (env.take_run_lock, without waiting; an abandoned one is `lock_held` for
 // this try, as for a run), with the Graph certificate of the vault `vault`
 // names (env.load_secrets) and the Graph client made as a run makes its own
@@ -229,8 +241,9 @@ std::string_view to_string(TargetsClean clean) noexcept;
 // <ok|incomplete>: deleted ...", then each target's "cleanup error: ..." and
 // "warning: cleanup: ..." line; nothing for lock_held and not_started. Asks
 // nothing of the backup product. Never throws.
-TargetsClean clean_restore_targets(const Config& config, const std::filesystem::path& vault,
-                                   std::ostream& out, const RestoreCommandEnv& env) noexcept;
+TargetsClean clean_restore_targets(const Config& config, const ClientProfile& client,
+                                   const std::filesystem::path& vault, std::ostream& out,
+                                   const RestoreCommandEnv& env) noexcept;
 
 // `rpworker test`'s presentation without --json (src/test_command.cpp): the
 // recording's label "test", no per-item rows after the restore, its one

@@ -84,10 +84,18 @@ std::string with_raw_sample_mail(const std::string& number)
     return text + ",\"sample_mail\":" + number + "}";
 }
 
-const std::vector<std::string> kRequiredKeys{
-    "cloud_url",       "veeam_url",       "veeam_org_name",         "graph_tenant_id",
-    "graph_client_id", "test_mailbox",    "test_site_id",           "test_library_id",
-    "test_onedrive_drive_id", "test_onedrive_folder_id"};
+const std::vector<std::string> kRequiredKeys{"cloud_url", "veeam_url"};
+
+// The eight client keys (W4.10): the config's local profile, set together or
+// not at all, in the order a missing one is reported in.
+const std::vector<std::string> kClientKeys{
+    "veeam_org_name",  "graph_tenant_id",        "graph_client_id",        "test_mailbox",
+    "test_site_id",    "test_library_id",        "test_onedrive_drive_id", "test_onedrive_folder_id"};
+
+const std::string kTogether =
+    "the eight client keys (veeam_org_name, graph_tenant_id, graph_client_id, test_mailbox, "
+    "test_site_id, test_library_id, test_onedrive_drive_id, test_onedrive_folder_id) are set "
+    "together or not at all";
 
 const std::vector<std::string> kIntKeys{"poll_interval_s", "heartbeat_interval_s", "sample_mail",
                                         "sample_sp", "sample_od"};
@@ -350,9 +358,70 @@ TEST_CASE("parse_config rejects a config missing a required key", "[config]")
     REQUIRE(std::string{e.what()} == "config key \"" + key + "\" is missing (required)");
 }
 
+// W4.10 point 5: the eight client keys are the config's local profile, all
+// or nothing.
+TEST_CASE("parse_config rejects a config with some of the eight client keys and not all",
+          "[config][client_profile]")
+{
+    const std::string key = GENERATE_REF(from_range(kClientKeys));
+    CAPTURE(key);
+    json doc = valid_doc();
+    doc.erase(key);
+
+    const rp::ConfigError e = parse_error(doc.dump());
+    REQUIRE(e.key() == key);
+    REQUIRE(std::string{e.what()} == "config key \"" + key + "\" is missing: " + kTogether);
+}
+
+TEST_CASE("parse_config names the first missing client key in the table's order, before any "
+          "rule of the others",
+          "[config][client_profile]")
+{
+    json doc = valid_doc();
+    doc.erase("test_site_id");
+    doc.erase("graph_client_id");
+    // A rule broken on a present key is reported only once all eight are there.
+    doc["test_mailbox"] = "alice@example.onmicrosoft.com";
+
+    const rp::ConfigError e = parse_error(doc.dump());
+    REQUIRE(e.key() == "graph_client_id");
+    REQUIRE(std::string{e.what()} == "config key \"graph_client_id\" is missing: " + kTogether);
+    // With one key alone the same: it is the seven missing that are named.
+    json one = valid_doc();
+    for (const std::string& client_key : kClientKeys) {
+        if (client_key != "test_library_id") {
+            one.erase(client_key);
+        }
+    }
+    REQUIRE(parse_error(one.dump()).key() == "veeam_org_name");
+}
+
+TEST_CASE("parse_config takes a config with none of the eight client keys, each then empty",
+          "[config][client_profile]")
+{
+    json doc = valid_doc();
+    for (const std::string& key : kClientKeys) {
+        doc.erase(key);
+    }
+
+    const rp::Config config = rp::parse_config(doc.dump());
+    CHECK(config.cloud_url == "https://cloud.example.invalid");
+    CHECK(config.veeam_org_name.empty());
+    CHECK(config.graph_tenant_id.empty());
+    CHECK(config.graph_client_id.empty());
+    CHECK(config.test_mailbox.empty());
+    CHECK(config.test_site_id.empty());
+    CHECK(config.test_library_id.empty());
+    CHECK(config.test_onedrive_drive_id.empty());
+    CHECK(config.test_onedrive_folder_id.empty());
+    // The rest is read as before.
+    CHECK(config.sample_sp == 2);
+}
+
 TEST_CASE("parse_config rejects a string setting of the wrong JSON type", "[config]")
 {
     std::vector<std::string> keys = kRequiredKeys;
+    keys.insert(keys.end(), kClientKeys.begin(), kClientKeys.end());
     keys.push_back("log_level");
     keys.push_back("veeam_ca_file");
     keys.push_back("veeam_cert_sha256");
@@ -948,7 +1017,7 @@ TEST_CASE("load_config prefixes validation errors with the path and keeps the ke
     const rp::ConfigError e = load_error(path);
     REQUIRE(e.key() == "test_mailbox");
     REQUIRE(std::string{e.what()} ==
-            utf8(path) + ": config key \"test_mailbox\" is missing (required)");
+            utf8(path) + ": config key \"test_mailbox\" is missing: " + kTogether);
 }
 
 TEST_CASE("load_config reports an empty file as invalid JSON", "[config]")

@@ -184,6 +184,25 @@ inline constexpr std::string_view kGraphDriveIdRule =
     "must be a Graph drive ID (\"b!\" then letters, digits, '-' and '_'), not a list ID";
 inline constexpr std::string_view kGraphItemIdRule =
     "must be a Graph item ID (letters, digits, '!', '-' and '_')";
+// The GUID and mailbox rules' texts (W4.10): one text each for the config's
+// keys and a client profile's (rp/client_profile.hpp).
+inline constexpr std::string_view kGuidRule =
+    "must be a GUID (8-4-4-4-12 hexadecimal digits, as the Entra admin center shows it), not a "
+    "name";
+inline constexpr std::string_view kRestoreMailboxRule =
+    "must be restoretest@<domain>: restores only ever go to the restoretest mailbox";
+
+// Whether `value` holds a control or invisible formatting character that
+// could forge, hide or reorder lines of output (src/control_chars.hpp lists
+// them: ASCII controls, C1, U+2028, U+2029 and the bidi controls). The rule
+// every string setting and every profile value is held to. `value` must be
+// valid UTF-8.
+bool has_control_character(std::string_view value);
+
+// Whether a key name from a file may be printed: 1 to 64 of [A-Za-z0-9_.-].
+// Anything else could be a pasted secret, forge output lines with control
+// characters, or flood the output.
+bool is_printable_key(std::string_view key);
 
 struct GraphSiteId {
     std::string host; // "<tenant>.sharepoint.com", lower case

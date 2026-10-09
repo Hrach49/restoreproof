@@ -606,11 +606,13 @@ W3.5 times the two cleans as the spans `cleanup_before` and `cleanup_after` (`do
 running keeps its record (`running.json`), and no job starts while it does. The loop looks at
 Veeam's sessions until nothing of that run is running any more (the hold) and then cleans the
 restore targets once: `rp::clean_restore_targets` beside `run_pipeline`, under the run mutex,
-with the vault's Graph certificate, the same Cleaner over the config's targets. It is the
+with the vault's Graph certificate, the same Cleaner over the targets of the record's own
+profile (W4.10; never the config's client keys). It is the
 Cleaner's `before_run` clean, unchanged, and its line is the clean before's (`cleanup before
 ok|incomplete: ...`), logged after `recovery clean for <run_id>:`. It is made only when a
-restore request is on record and the config's client is the record's (`the config's client is
-not the run's; the restore targets were not cleaned` otherwise). Whatever it answers, the
+restore request is on record (W4.8 also compared the config's client with the record's and
+wrote `the config's client is not the run's; the restore targets were not cleaned`; since
+W4.10 the record's profile names the targets and that line is gone). Whatever it answers, the
 record goes and jobs run again: every run cleans before anyway. This clean is in no result:
 the run's own result was written before it, with `cleanup.after` `null`. The hold, its lines
 and the operator's way out are in `docs/worker-config.md`.
@@ -639,7 +641,7 @@ the result invalid.
 | `run_id` | the run ID (`--run-id`, or the one the run made) | never |
 | `started_at`, `ended_at` | the wall clock where the `total` span starts and ends, `YYYY-MM-DDTHH:MM:SS.mmmZ`, UTC | the wall clock failed at that reading; `ended_at` also in the result as it is first validated (below) |
 | `connector` | `{type, api}` from `IConnector::describe()`, read once when the connector is made: `type` is its name (`veeam_m365`, the only one the schema knows), `api` its version | never |
-| `client` | the config: `client_id` (`null` until jobs carry one, W4.10), `tenant_id` (`graph_tenant_id`), `veeam_org_name`, and `targets` `{mailbox, site_id, library_id, onedrive_drive_id, onedrive_folder_id}` (`test_mailbox`, `test_site_id`, `test_library_id`, `test_onedrive_drive_id`, `test_onedrive_folder_id`) | never (`client_id` always, today) |
+| `client` | the run's client profile (W4.10, `rp::ClientProfile`: a job's `client`, `--profile-file`'s, or the config's eight client keys), as `rp::result_client` cuts it: `client_id` (the job's, the Cloud's label for the client; `null` at a prompt), `tenant_id` (`graph_tenant_id`), `veeam_org_name`, and `targets` `{mailbox, site_id, library_id, onedrive_drive_id, onedrive_folder_id}` (`test_mailbox`, `test_site_id`, `test_library_id`, `test_onedrive_drive_id`, `test_onedrive_folder_id`); not the app's ID, which the profile holds and the result doesn't | never (`client_id` at a prompt) |
 | `restore_point` | `{id, backup_time_raw, backup_time}`: the chosen point's ID, Veeam's time text as it is (what an explore session needs), and that time cut to whole seconds, `YYYY-MM-DDTHH:MM:SSZ` (`to_whole_seconds`, `src/veeam_time.hpp`) | never; `backup_time` when Veeam's text doesn't parse |
 | `sample` | `sampling::to_json(SampleRecord)` (W2.6) | the run stopped before the sample was chosen |
 | `expected` | `verification::to_json(ExpectedSet)` (W3.1, above) | the run stopped before the expected set was built |
@@ -791,8 +793,8 @@ limits can be told from a broken file (`docs/decisions.md` 2026-10-05, "W4.1 cod
 
 No secret, and no exception's text. But more tenant data than stdout:
 
-- `client`: the tenant ID, the organisation's name, the test mailbox's address and the four
-  target IDs;
+- `client`: the job's `client_id`, the tenant ID, the organisation's name, the test mailbox's
+  address and the four target IDs (the profile's, W4.10; not the app's ID);
 - `expected.items`: subjects, sender addresses and names, Internet message IDs, sent and
   received times, and file names;
 - `sample.*.random.keys`: mailbox addresses, folder names and paths, mail subjects and
@@ -1571,7 +1573,7 @@ A valid `restoreproof.result.v1` with what the record knows and `null` for the r
 | `started_at` | the record's, written right after the run line; `null` when the run line was never reached |
 | `ended_at` | `null` |
 | `connector`, `restore_point` | the record's, written right after the run line; else `{"api": "", "type": "veeam_m365"}` and the empty restore point the pipeline writes when none was chosen (`id` and `backup_time_raw` empty, `backup_time` `null`) |
-| `client` | the record's: the result's client object as the config gave it when the job was taken; `client_id` `null` (the job's `client_id` is in the record and the log only, until W4.11) |
+| `client` | the record's profile (the job's, W4.10) with the job's `client_id`; for a `job_invalid` record of a job whose profile couldn't be read, empty strings beside the job's `client_id` (the schema holds the strings to a length alone) |
 | `sample`, `expected`, `restore`, `check`, `cleanup` | `null` |
 | `timings` | every one of the eleven spans `null` |
 | `attachments` | `items.csv` and `veeam-session.log`, with their hashes and sizes (below) |

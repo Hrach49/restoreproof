@@ -17,6 +17,7 @@
 
 #include <rp/canary_manifest.hpp>
 #include <rp/cli.hpp>
+#include <rp/client_profile.hpp>
 #include <rp/config.hpp>
 #include <rp/connector.hpp>
 #include <rp/connector_registry.hpp>
@@ -3916,7 +3917,8 @@ CleanRun clean_targets(Harness& lab, const rp::RestoreCommandEnv& env)
     const rp::Config config = loaded_config(lab);
     std::ostringstream out;
     const rp::TargetsClean answer =
-        rp::clean_restore_targets(config, lab.dir.path() / "the-vault.bin", out, env);
+        rp::clean_restore_targets(config, *rp::local_profile(config),
+                                  lab.dir.path() / "the-vault.bin", out, env);
     return {answer, out.str()};
 }
 
@@ -4135,4 +4137,119 @@ TEST_CASE("the recovery clean on the W3.4 live run's recording: every item the t
         CHECK(written.insert(id).second);
     }
     CHECK(written.size() == 11);
+}
+
+// --- W4.10: the client's profile -------------------------------------------------------
+
+namespace {
+
+// The lab client's profile as a file: the Harness's config values.
+json profile_json()
+{
+    const json config = config_values();
+    json profile = {{"format", std::string{rp::kClientProfileFormat}}};
+    for (const std::string_view key : rp::kClientProfileKeys) {
+        profile[std::string{key}] = config.at(key);
+    }
+    return profile;
+}
+
+// The Harness's config without its eight client keys.
+std::filesystem::path no_client_config(const Harness& lab)
+{
+    json config = json::parse(file_bytes(lab.config_path).value());
+    for (const std::string_view key : rp::kClientProfileKeys) {
+        config.erase(std::string{key});
+    }
+    return lab.dir.write("no-client.json", config.dump(2));
+}
+
+} // namespace
+
+TEST_CASE("rpworker restore takes --profile-file and runs on the file's client, not the config's",
+          "[restore_command][client_profile]")
+{
+    Harness lab;
+    json profile = profile_json();
+    profile["veeam_org_name"] = "FromFile.onmicrosoft.com";
+    const std::filesystem::path file = lab.dir.write("profile.json", profile.dump(2));
+
+    SECTION("with the config's client keys there too, the file wins")
+    {
+        const Run run = lab.run({"--profile-file", utf8(file)});
+        CHECK(run.exit_code == rp::exit_code::ok);
+        CHECK(lab.fake.client_ref == "FromFile.onmicrosoft.com");
+        CHECK_THAT(run.out, ContainsSubstring("(veeam_org_name FromFile.onmicrosoft.com)"));
+        REQUIRE(lab.connector_options);
+        REQUIRE(lab.connector_options->client);
+        CHECK(lab.connector_options->client->veeam_org_name == "FromFile.onmicrosoft.com");
+        CHECK(lab.connector_options->client->test_mailbox == lab_values().mailbox);
+    }
+    SECTION("with a config without client keys")
+    {
+        const std::string config = utf8(no_client_config(lab));
+        const std::string file_arg = utf8(file);
+        std::ostringstream out;
+        std::ostringstream err;
+        const int code = rp::run_restore_command(
+            Args{"--profile-file", file_arg, "--config", config}, out, err, lab.env());
+        CHECK(code == rp::exit_code::ok);
+        CHECK(lab.fake.client_ref == "FromFile.onmicrosoft.com");
+        CHECK_THAT(err.str(), !ContainsSubstring("error"));
+    }
+}
+
+TEST_CASE("rpworker restore refuses a profile file at fault, and a config without client keys, "
+          "before the vault and the connector",
+          "[restore_command][client_profile]")
+{
+    Harness lab;
+    json bad = profile_json();
+    bad["test_mailbox"] = "alice@example.onmicrosoft.com";
+    const std::filesystem::path bad_file = lab.dir.write("bad-profile.json", bad.dump(2));
+    const std::string no_client = utf8(no_client_config(lab));
+    const std::string bad_arg = utf8(bad_file);
+    const std::string none_arg = utf8(lab.dir.path() / "none.json");
+    const std::string config_arg = utf8(lab.config_path);
+    struct Row {
+        const char* name;
+        Args args;
+        std::string err;
+    };
+    const std::vector<Row> rows{
+        {"a key at fault", Args{"--profile-file", bad_arg, "--config", config_arg},
+         "config error: --profile-file " + bad_arg + ": key \"test_mailbox\" " +
+             std::string{rp::kRestoreMailboxRule} + "\n"},
+        {"a file that isn't there", Args{"--profile-file", none_arg, "--config", config_arg},
+         "config error: --profile-file " + none_arg + ": can't be read\n"},
+        {"no client keys and no file", Args{"--config", no_client},
+         "config error: the config has no client keys; give --profile-file <file> or set the "
+         "eight client keys\n"},
+    };
+    for (const Row& row : rows) {
+        CAPTURE(row.name);
+        std::ostringstream out;
+        std::ostringstream err;
+        const int code = rp::run_restore_command(row.args, out, err, lab.env());
+        CHECK(code == rp::exit_code::config);
+        CHECK(out.str().empty());
+        CHECK(err.str() == row.err);
+    }
+    CHECK(lab.load_secrets_calls == 0);
+    CHECK(lab.make_connector_calls == 0);
+    CHECK(lab.fake.points_calls == 0);
+}
+
+TEST_CASE("rpworker restore: --profile-file needs a value, and is taken once",
+          "[restore_command][client_profile]")
+{
+    Harness lab;
+    const Args args = GENERATE(Args{"--profile-file"}, Args{"--profile-file", ""},
+                               Args{"--profile-file", "a.json", "--profile-file", "b.json"});
+    std::ostringstream out;
+    std::ostringstream err;
+    const int code = rp::run_restore_command(args, out, err, lab.env());
+    CHECK(code == rp::exit_code::usage);
+    CHECK(err.str() == std::string{rp::kCliUsage});
+    CHECK(lab.default_path_calls == 0);
 }

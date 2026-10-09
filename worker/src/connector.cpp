@@ -18,19 +18,20 @@ const std::string& require_set(const std::string& value, std::string_view key)
 
 } // namespace
 
-RestoreTargets RestoreTargets::from_config(const Config& config)
+RestoreTargets RestoreTargets::from_profile(const ClientProfile& profile)
 {
     RestoreTargets targets;
-    targets.mailbox_ = require_set(config.test_mailbox, "test_mailbox");
+    targets.mailbox_ = require_set(profile.test_mailbox, "test_mailbox");
     // The same rule parse_config applies: never a mailbox other than restoretest.
     if (!is_restore_mailbox(targets.mailbox_)) {
         throw std::invalid_argument("restore target test_mailbox must be restoretest@<domain>");
     }
-    targets.site_id_ = require_set(config.test_site_id, "test_site_id");
-    targets.library_id_ = require_set(config.test_library_id, "test_library_id");
-    targets.onedrive_drive_id_ = require_set(config.test_onedrive_drive_id, "test_onedrive_drive_id");
+    targets.site_id_ = require_set(profile.test_site_id, "test_site_id");
+    targets.library_id_ = require_set(profile.test_library_id, "test_library_id");
+    targets.onedrive_drive_id_ =
+        require_set(profile.test_onedrive_drive_id, "test_onedrive_drive_id");
     targets.onedrive_folder_id_ =
-        require_set(config.test_onedrive_folder_id, "test_onedrive_folder_id");
+        require_set(profile.test_onedrive_folder_id, "test_onedrive_folder_id");
     // The shapes parse_config applies: the IDs go into Graph URL paths.
     const auto check = [](bool ok, std::string_view key, std::string_view rule) {
         if (!ok) {
@@ -45,6 +46,18 @@ RestoreTargets RestoreTargets::from_config(const Config& config)
     check(is_graph_item_id(targets.onedrive_folder_id_), "test_onedrive_folder_id",
           kGraphItemIdRule);
     return targets;
+}
+
+RestoreTargets RestoreTargets::from_config(const Config& config)
+{
+    return from_profile({.veeam_org_name = config.veeam_org_name,
+                         .graph_tenant_id = config.graph_tenant_id,
+                         .graph_client_id = config.graph_client_id,
+                         .test_mailbox = config.test_mailbox,
+                         .test_site_id = config.test_site_id,
+                         .test_library_id = config.test_library_id,
+                         .test_onedrive_drive_id = config.test_onedrive_drive_id,
+                         .test_onedrive_folder_id = config.test_onedrive_folder_id});
 }
 
 std::string_view to_string(RestoreStatus status) noexcept

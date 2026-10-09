@@ -27,6 +27,7 @@ using rp::JobRun;
 using rp::SessionsLook;
 using rp::test::job_text;
 using rp::test::jobs_text;
+using rp::test::lab_profile;
 using rp::test::LoopLab;
 using rp::test::session;
 using rp::verification::RunStatus;
@@ -613,7 +614,7 @@ TEST_CASE("changed text files that can't be put on record are said, and nothing 
     }
     SECTION("a job that is no job")
     {
-        lab.put_record(rp::new_job_invalid_record("job-1", std::nullopt, lab.config,
+        lab.put_record(rp::new_job_invalid_record("job-1", std::nullopt, lab_profile(),
                                                   lab.wall0 - 10min, "sample_mail"));
 
         lab.run();
@@ -1065,35 +1066,34 @@ TEST_CASE("an end of a session that fails is not yet", "[service_loop]")
     CHECK(lab.last_error == rp::service_error::kVeeamLookFailed);
 }
 
-TEST_CASE("the recovery clean is not made for a config whose client is not the run's, and an "
-          "incomplete one still lets the record go",
+// W4.10 point 4: the clean runs by the record's profile, whatever the config
+// holds (a config without client keys, or another client's), and an
+// incomplete one still lets the record go.
+TEST_CASE("the recovery clean is made by the record's profile whatever the config's client keys "
+          "say, and an incomplete one still lets the record go",
           "[service_loop]")
 {
-    const bool other_client = GENERATE(true, false);
-    CAPTURE(other_client);
+    const int config_case = GENERATE(0, 1, 2);
+    CAPTURE(config_case);
     LoopLab lab;
     lab.put_record(lab.found({}, true));
     lab.queued.insert("job-1");
     lab.clean_word = "incomplete";
-    if (other_client) {
-        lab.config.test_mailbox = "another@example.test";
+    if (config_case == 1) {
+        lab.config.test_mailbox = "restoretest@another.example";
+    } else if (config_case == 2) {
+        lab.config = rp::Config{};
+        lab.config.poll_interval_s = 60;
+        lab.config.heartbeat_interval_s = 600;
     }
     lab.on_flush = [] { return rp::FlushReport{}; };
 
     lab.run();
 
-    if (other_client) {
-        CHECK(lab.lines == Lines{kStarted, kFound + "yes",
-                                 "warning the config's client is not the run's; the restore "
-                                 "targets were not cleaned"});
-        CHECK(lab.cleans == 0);
-        CHECK_FALSE(lab.last_error);
-    } else {
-        CHECK(lab.lines == Lines{kStarted, kFound + "yes", "info recovery clean for job-1:",
-                                 "warning recovery clean for job-1: not completed (incomplete)"});
-        CHECK(lab.cleans == 1);
-        CHECK(lab.last_error == rp::service_error::kRecoveryCleanIncomplete);
-    }
+    CHECK(lab.lines == Lines{kStarted, kFound + "yes", "info recovery clean for job-1:",
+                             "warning recovery clean for job-1: not completed (incomplete)"});
+    CHECK(lab.cleans == 1);
+    CHECK(lab.last_error == rp::service_error::kRecoveryCleanIncomplete);
     CHECK_FALSE(lab.has_record());
 }
 
@@ -1723,7 +1723,7 @@ TEST_CASE("one job from poll to queued and sent: every line in order, the record
         CHECK(job.sample_od == 2);
         // The record is on disk before the pipeline is called.
         CHECK(lab.on_disk() ==
-              rp::new_run_record("job-1", std::string{"client-7"}, lab.config, lab.wall0));
+              rp::new_run_record("job-1", std::string{"client-7"}, lab_profile(), lab.wall0));
         lab.t += 1s;
         CHECK(callbacks.on_run_started(LoopLab::run_started(job.run_id)));
         callbacks.on_session_opened("s1");

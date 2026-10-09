@@ -63,6 +63,18 @@ backup product knows it by. For Veeam, the organisation's name as in `veeam_org_
 `RestoreProofLab.onmicrosoft.com`), matched ASCII case-insensitively; the connector looks up
 Veeam's organisation ID itself.
 
+**Client profile (`restoreproof.client-profile.v1`).** One client as a job carries it and a
+profile file holds it (W4.10, `rp::ClientProfile`, `shared/schemas/client-profile.v1.json`):
+a closed object of nine required keys, `format` and the eight client keys of `config.json`
+under the same names and rules (`veeam_org_name`, `graph_tenant_id`, `graph_client_id`,
+`test_mailbox`, the four target IDs). IDs, a name and an address: no URL and no secret. The
+service's runs, its record and its recovery clean take the client from the job's profile and
+never from the config; `rpworker client check --profile-file` lists a profile's three restore
+targets; `restore` and `test` take `--profile-file` too. The config's eight keys, set
+together or not at all, are its **local client profile**, what the commands at a prompt run
+on without a file. What the profile claims about the tenant is checked against Veeam in
+W4.11.
+
 **Connector.** The Worker's adapter to one backup product (`rp::connector::IConnector`,
 W1.7): it lists a client's restore points and restores a sample into the restore targets.
 Registered by name; the only one is `veeam_m365` (Veeam Backup for Microsoft 365). Nothing
@@ -314,9 +326,9 @@ And, while the hold lasts, a look at Veeam's sessions at least every 30 s. A job
 longer than the interval makes the next poll late, never a second run. After a stop nothing
 new is started.
 
-**Job.** One test the service is to run: a closed object with `run_id`, `client_id`,
-`sample_mail`, `sample_sp`, `sample_od`, `restore_point` (`latest` or a restore point ID),
-`screenshots_enabled` and, optionally, `canary_cursor`. It is run through `rpworker test`'s
+**Job.** One test the service is to run: a closed object with `run_id`, `client_id`, `client`
+(the client's profile, W4.10), `sample_mail`, `sample_sp`, `sample_od`, `restore_point`
+(`latest` or a restore point ID), `screenshots_enabled` and, optionally, `canary_cursor`. It is run through `rpworker test`'s
 pipeline, in process, into a run folder and the outbox. A job whose run is already queued or
 sent, or whose run folder is already there, is skipped; the run ID is what makes a job run
 once.
@@ -335,7 +347,7 @@ moved aside.
 
 **Record (`running.json`).** The service's written-ahead note of the one run it has taken
 (W4.8, `restoreproof.running.v1`, `canonical-json-v1`, in the state folder, never in a run
-folder): the run ID, when it was taken, the client, then the start time, the restore point
+folder): the run ID, when it was taken, the client (the job's profile, W4.10), then the start time, the restore point
 and the connector once the run line is out, the ID of every explore session the run opens,
 and `restore_requested`, set before every restore request. False is a promise that no restore
 request went out; true means one may have. It holds IDs, times and fixed words, never a

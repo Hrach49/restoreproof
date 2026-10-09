@@ -22,7 +22,12 @@ example, fill in your own values, and add those two keys if you need them.
 
 ## Settings
 
-Ten keys are required; the other thirteen are optional. Seven of those have defaults; without
+Two keys are required, the two URLs. The eight client keys (`veeam_org_name` to
+`test_onedrive_folder_id`) are the config's **local client profile** (W4.10): set together or
+not at all, they are what `rpworker restore`, `rpworker test` and `rpworker graph list` run on
+at a prompt, and what `rpworker veeam list` marks; the service never reads them, since each of
+its jobs carries its client's profile ("The jobs file"), so the service's config may hold none.
+The other thirteen keys are optional. Seven of those have defaults; without
 `veeam_ca_file` the Worker trusts the Windows certificate store for Veeam (and without
 `cloud_ca_file` for the Cloud), without `veeam_cert_sha256` it checks the Veeam server's
 host name, without `tsa_url` and `tsa_ca_file` it asks the default timestamp authority, and
@@ -32,14 +37,14 @@ without `jobs_file` the service gets no jobs.
 |---|---|---|---|---|
 | `cloud_url` | yes | | `https://` URL, printable ASCII only, no user name, password, query or fragment | The RestoreProof Cloud the Worker gets jobs from and uploads results to. |
 | `veeam_url` | yes | | `https://` URL, printable ASCII only, no user name, password, query or fragment | The Veeam Backup for Microsoft 365 REST API, e.g. `https://veeam.example.invalid:4443`. |
-| `veeam_org_name` | yes | | non-empty string | The Microsoft 365 organisation as Veeam names it, e.g. `example.onmicrosoft.com`. |
-| `graph_tenant_id` | yes | | a GUID: see below | The Microsoft 365 tenant ID, for Microsoft Graph sign-in: see "Microsoft Graph app" below. Not the tenant's domain name. |
-| `graph_client_id` | yes | | a GUID: see below | The application (client) ID of the Worker's own app registration, "RestoreProof Worker": see "Microsoft Graph app" below. |
-| `test_mailbox` | yes | | `restoretest@<domain>`: see below | The `restoretest` mailbox: the only restore target for mail. |
-| `test_site_id` | yes | | Graph's site ID `<tenant>.sharepoint.com,<site GUID>,<web GUID>`: see below | The SharePoint site holding the `RestoreTarget` library (the RestoreTest site in the lab). |
-| `test_library_id` | yes | | a Graph **drive ID** (`b!…`): see below | Graph **drive ID** (`b!…`) of the `RestoreTarget` library; not the list ID. The only restore target for SharePoint items. Not the `RestoreTest` library, which holds the canary files. |
-| `test_onedrive_drive_id` | yes | | a Graph drive ID (`b!…`): see below | The OneDrive drive holding the `RestoreTarget` folder. |
-| `test_onedrive_folder_id` | yes | | a Graph item ID: see below | The `RestoreTarget` folder's item ID: the only restore target for OneDrive items. Not `/RestoreTest`, which holds the canary files. |
+| `veeam_org_name` | all eight or none | | non-empty string | The Microsoft 365 organisation as Veeam names it, e.g. `example.onmicrosoft.com`. |
+| `graph_tenant_id` | all eight or none | | a GUID: see below | The Microsoft 365 tenant ID, for Microsoft Graph sign-in: see "Microsoft Graph app" below. Not the tenant's domain name. |
+| `graph_client_id` | all eight or none | | a GUID: see below | The application (client) ID of the Worker's own app registration, "RestoreProof Worker": see "Microsoft Graph app" below. |
+| `test_mailbox` | all eight or none | | `restoretest@<domain>`: see below | The `restoretest` mailbox: the only restore target for mail. |
+| `test_site_id` | all eight or none | | Graph's site ID `<tenant>.sharepoint.com,<site GUID>,<web GUID>`: see below | The SharePoint site holding the `RestoreTarget` library (the RestoreTest site in the lab). |
+| `test_library_id` | all eight or none | | a Graph **drive ID** (`b!…`): see below | Graph **drive ID** (`b!…`) of the `RestoreTarget` library; not the list ID. The only restore target for SharePoint items. Not the `RestoreTest` library, which holds the canary files. |
+| `test_onedrive_drive_id` | all eight or none | | a Graph drive ID (`b!…`): see below | The OneDrive drive holding the `RestoreTarget` folder. |
+| `test_onedrive_folder_id` | all eight or none | | a Graph item ID: see below | The `RestoreTarget` folder's item ID: the only restore target for OneDrive items. Not `/RestoreTest`, which holds the canary files. |
 | `poll_interval_s` | no | `300` | integer, 1 to 86400 | Seconds between the service's polls, counted from the start of the last one: the jobs are read and the outbox is flushed at each ("The service's loop"). |
 | `heartbeat_interval_s` | no | `900` | integer, 1 to 86400 | Seconds between the service's heartbeats to the Cloud ("The heartbeat"). |
 | `sample_mail` | no | `5` | integer, 0 to 100 | Mail items restored per test run. |
@@ -91,6 +96,14 @@ connection reads it. Fix the reported problem and run
   fragment, where tokens often hide), because `config check` prints both URLs. They must be
   printable ASCII (no spaces), so a look-alike such as a fullwidth `＠` can't hide userinfo;
   write an internationalised host name in its `xn--` form.
+- **The eight client keys come together or not at all** (W4.10). With some set and some
+  missing the file is refused, before any rule of the others, naming the first missing one in
+  the table's order: `config key "test_site_id" is missing: the eight client keys
+  (veeam_org_name, graph_tenant_id, graph_client_id, test_mailbox, test_site_id,
+  test_library_id, test_onedrive_drive_id, test_onedrive_folder_id) are set together or not at
+  all`. With none set, `restore`, `test` and `graph list` say `config error: the config has no
+  client keys; ...` and `config check` prints `(not set)` for each; the service runs its jobs
+  on their own profiles all the same.
 - **`test_mailbox` must be the `restoretest` mailbox.** Restores only ever go there, so the
   file can't name any other mailbox: a typo that named a live one would overwrite its mail.
   The value is `restoretest@` (in any case) followed by the tenant's domain, two or more
@@ -551,7 +564,8 @@ signing_key_base64        **** (set)
 
 Without `veeam_ca_file` its line reads `veeam_ca_file             (not set)`, and likewise
 `veeam_cert_sha256`, `tsa_url`, `tsa_ca_file`, `cloud_ca_file` and `jobs_file` (W4.8) without
-their keys. `jobs_file` prints the path as the file gives it, whether or not a file is there.
+their keys, and each of the eight client keys of a config that has none (W4.10: the service's,
+whose jobs carry their client). `jobs_file` prints the path as the file gives it, whether or not a file is there.
 `screenshots_enabled` always has a line: `false` when the file doesn't set it.
 
 A secret prints only as `**** (set)` or `(not set)`: never any character of its value, nor its
@@ -591,7 +605,8 @@ With the lab's organisation (the recorded responses in `worker/tests/fixtures/ve
 - **Every organisation** Veeam returns is listed, sorted by name (ignoring ASCII case), then
   by ID. The one `veeam_org_name` names (ignoring ASCII case) is marked `*`. If none is, the
   table is still printed, so the right name can be copied from it, and the command fails
-  with exit code 4.
+  with exit code 4. A config without client keys (W4.10) names no organisation: every one is
+  listed, none is marked, and no organisation is missing (exit 0).
 - **Restore points** are newest first. `BACKUP TIME` is exactly what Veeam sent, the form
   the Worker opens explore sessions with. `EX`, `SP`, `OD` and `TM` are `x` when the point
   holds Exchange, SharePoint, OneDrive or Teams data, `-` when not. `LONG-TERM` is `yes` for
@@ -642,7 +657,10 @@ error: Graph refused the Worker app the Inbox of the mailbox test_mailbox names 
 the Worker reads only the restoretest mailbox; nothing was listed`, exit 4 (the address is
 another mailbox, or the Exchange grant is missing; `docs/security/graph-permissions.md`). The
 flags may come in either order. The code is `rp::run_graph_command` in
-`worker/include/rp/graph_command.hpp`.
+`worker/include/rp/graph_command.hpp`. It runs on the config's local client profile, the
+eight client keys (W4.10): a config without them is `config error: the config has no client
+keys; set the eight client keys, or use rpworker client check --profile-file <file>`, exit 1,
+before the vault is read. To list the targets of a profile file, `rpworker client check`.
 
 With one item in each target (the recorded responses in `worker/tests/fixtures/graph/`):
 
@@ -695,12 +713,77 @@ graph error: Graph denied GET /v1.0/drives/b!XQgI_nDr6EKVpkcBib2Y65nzyk4OzJVNs_7
 Graph's messages never contain a token, the certificate or a download link. Debug lines are
 not shown.
 
+## `rpworker client check`
+
+```
+rpworker client check --profile-file <file> [--vault <file>] [--record <dir>]
+```
+
+Reads a client profile from a file and shows what is in its three restore targets right now,
+as `rpworker graph list` shows the config's (W4.10, `docs/decisions.md` 2026-10-09, point 6).
+It is the check to run on a profile the Cloud will dispatch, or on a `lab-profile.json`,
+before any job carries it: the tenant and app the profile names must sign in, and each of
+its targets must be a `RestoreTarget` the app can reach. It reads only, and it reads no
+config: nothing of `config.json` reaches a Graph call (Graph is trusted through the Windows
+store, the certificate is the vault's), so there is no `--config`, and a config without
+client keys is no obstacle. The code is `rp::run_client_command` in
+`worker/include/rp/client_command.hpp`, over the listing `graph list` uses.
+
+A client profile is a `restoreproof.client-profile.v1` document (`shared/schemas/client-profile.v1.json`):
+one closed object of nine keys, every one required: `format`, and the eight client keys of
+"Settings" under the same names and with the same rules, `veeam_org_name`, `graph_tenant_id`,
+`graph_client_id`, `test_mailbox`, `test_site_id`, `test_library_id`,
+`test_onedrive_drive_id` and `test_onedrive_folder_id`. IDs, a name and an address: no URL and
+no secret. The file is JSON as a person writes it (white space, any key order, a byte order
+mark taken), at most 64 KiB; a key twice in any object makes it `not JSON`.
+
+```json
+{"format": "restoreproof.client-profile.v1",
+ "veeam_org_name": "contoso.onmicrosoft.com",
+ "graph_tenant_id": "11111111-2222-3333-4444-555555555555",
+ "graph_client_id": "22222222-3333-4444-5555-666666666666",
+ "test_mailbox": "restoretest@contoso.onmicrosoft.com",
+ "test_site_id": "contoso.sharepoint.com,aaaaaaaa-0000-0000-0000-000000000001,aaaaaaaa-0000-0000-0000-000000000002",
+ "test_library_id": "b!...", "test_onedrive_drive_id": "b!...", "test_onedrive_folder_id": "01..."}
+```
+
+In this order: the profile file; the vault (`--vault`, or the default) and the Worker app's
+certificate, as `graph list` opens them; `--record`; then the three targets, read as `graph
+list` reads them without `--hash` (each file target's guard first, the mailbox's check first
+too, nothing downloaded). Only once everything is read it prints the profile's heading, a
+blank line, and `graph list`'s three tables and summary line:
+
+```
+client profile: veeam_org_name contoso.onmicrosoft.com, tenant 11111111-2222-3333-4444-555555555555, app 22222222-3333-4444-5555-666666666666
+
+Mail (restoretest@contoso.onmicrosoft.com, Inbox): 0 item(s)
+
+SharePoint (RestoreTarget library): 0 item(s)
+
+OneDrive (RestoreTarget folder): 0 item(s)
+
+0 item(s) in the three restore targets
+```
+
+| Exit code | Meaning |
+|---|---|
+| 0 | The three targets were listed. |
+| 1 | The profile file can't be used: `config error: --profile-file <file>: <problem>`, with `can't be read`, `over 64 KiB`, `not JSON`, `not a restoreproof.client-profile.v1 document` (not an object, or `format` missing or another document's), `key "<key>" <problem>` (the key's rule, in `config check`'s words: `is missing (required)`, `must be a string`, `must not be empty`, `must not contain control characters`, `must be at most 1024 characters`, `must be a GUID (...)`, `must be restoretest@<domain>: ...`, `must be a Graph site ID (...)`, `must be a Graph drive ID (...)`, `must be a Graph item ID (...)`) or `has a key that isn't the profile's: "<key>"` (the name shown only when it is 1 to 64 letters, digits, `_`, `.` or `-`); never a value of the file. Said before the vault is read. Or, as for `graph list`: the vault can't be used, a secret isn't in it, the certificate doesn't open, a `--record` folder that isn't new or empty, or an unexpected failure. |
+| 2 | `graph error: ...`: Entra refused the sign-in for that tenant and app, or Graph denied a call for want of a grant; the message names the grant the call relies on (`docs/security/graph-permissions.md`), so a target the app can't reach says which grant is missing. |
+| 3 | `graph error: ...`: Graph or Entra couldn't be reached or asked to try later, after the retries. |
+| 4 | `graph error: ...`: anything else Graph answered: a mailbox, drive or folder that isn't there, or the guard's refusal, when a target the profile names isn't a `RestoreTarget` (`the drive test_library_id names is "...", not "RestoreTarget"`; the OneDrive folder, and the mailbox's Inbox the Worker app's scope doesn't cover). |
+| 64 | Arguments not understood: `--profile-file` missing or empty, `--config` or `--hash` (neither is taken), an option twice. |
+
+The same profile, in a job's `client` key, is what the service runs on ("The jobs file");
+`rpworker restore --profile-file <file>` and `rpworker test --profile-file <file>` run on it
+at a prompt.
+
 ## `rpworker restore`
 
 ```
 rpworker restore [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>]
                  [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>]
-                 [--vault <file>] [--record <dir>]
+                 [--vault <file>] [--record <dir>] [--profile-file <file>]
 ```
 
 **It writes to the tenant.** It picks a restore point of `veeam_org_name`, chooses a sample
@@ -777,6 +860,7 @@ The flags come in any order, each at most once:
 | `--canary-cursor <m>,<s>,<o>` | `0,0,0` | Where each type's canary rotation starts: three numbers of 1 to 6 digits, no spaces, each below that type's canaries in the manifest (0 for a type it has none of). Nothing is stored on the Worker: carry the printed next cursor to the next run by hand. |
 | `--manifest <path>` | `seed-manifest.json` beside the config file | The canary manifest: `%ProgramData%\RestoreProof\seed-manifest.json`, or in the `--config` file's folder. |
 | `--config <path>` | `%ProgramData%\RestoreProof\config.json` | As for every command. |
+| `--profile-file <file>` | the config's local client profile | The client the run is for (W4.10): a `restoreproof.client-profile.v1` file ("`rpworker client check`"), read right after the config and before the vault. Its tenant, app, organisation and restore targets are the run's and nothing else's, whatever the config's client keys say. Without it the config's eight client keys; with neither, `config error: the config has no client keys; give --profile-file <file> or set the eight client keys`, exit 1. A file at fault is `config error: --profile-file <file>: <problem>`, as `client check` says it. The guard still resolves every target per item: a profile is a set of IDs the guard checks, never a way around it. |
 
 With W2.4's recorded single-mail restore (`worker/tests/restore_command_test.cpp`, through the
 real connector; the restore point ID is the fixtures' made-up one, and the times there are the
@@ -1053,7 +1137,7 @@ lines are not shown.
 ```
 rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>]
               [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>]
-              [--vault <file>] [--record <dir>]
+              [--vault <file>] [--record <dir>] [--profile-file <file>]
               [--json <file> | --evidence <dir> [--outbox <root>]]
 ```
 
@@ -1854,11 +1938,23 @@ still flushes, deals with a record and sends heartbeats.
 {"format": "restoreproof.jobs.v1",
  "jobs": [
    {"run_id": "job-0001", "client_id": null,
+    "client": {"format": "restoreproof.client-profile.v1",
+               "veeam_org_name": "contoso.onmicrosoft.com",
+               "graph_tenant_id": "11111111-2222-3333-4444-555555555555",
+               "graph_client_id": "22222222-3333-4444-5555-666666666666",
+               "test_mailbox": "restoretest@contoso.onmicrosoft.com",
+               "test_site_id": "contoso.sharepoint.com,aaaaaaaa-0000-0000-0000-000000000001,aaaaaaaa-0000-0000-0000-000000000002",
+               "test_library_id": "b!...", "test_onedrive_drive_id": "b!...",
+               "test_onedrive_folder_id": "01..."},
     "sample_mail": 5, "sample_sp": 5, "sample_od": 5,
     "restore_point": "latest", "screenshots_enabled": false,
     "canary_cursor": [0, 0, 0]}
  ]}
 ```
+
+The schema is `shared/schemas/jobs.v1.json`, the job's `client` a reference to
+`client-profile.v1.json` beside it; the shared vectors `shared/testdata/jobs-v1/` hold the
+Worker's reader and the schema together (`docs/testing.md`).
 
 The document is `restoreproof.jobs.v1`, read whole at every poll: an object with exactly the
 two keys `format` and `jobs`, `jobs` an array of at most five jobs, the file at most 1 MiB.
@@ -1871,15 +1967,18 @@ A job is a closed object:
 | Key | Required | Rule |
 |---|---|---|
 | `run_id` | yes | `--run-id`'s rule (1 to 128 of `A-Z a-z 0-9 . _ : -`) and a plain file name, since it names the run's folder: no `:`, not `.` or `..`, no `.` at its end, not a DOS device's name (the list is under "`--json <file>`") |
-| `client_id` | yes | a string of 1 to 128 printable ASCII characters, or `null`. Kept in `running.json` only: until W4.11 it is checked against nothing and is not written into the result, whose `client.client_id` stays `null` |
+| `client_id` | yes | a string of 1 to 128 printable ASCII characters, or `null`: the Cloud's label for the client, written into the result's `client.client_id` (W4.10) and into `running.json`; checked against nothing until W4.11 |
+| `client` | yes | the client's profile, a `restoreproof.client-profile.v1` object ("`rpworker client check`"): the tenant, the app, the organisation and the four target IDs the run uses, and nothing else's (W4.10). A profile at fault makes the job invalid with the key named: `client` when the object is missing, not an object, not the format or has a key that isn't the profile's, `client.<key>` (`client.test_mailbox`) when one of its eight keys breaks its rule |
 | `sample_mail`, `sample_sp`, `sample_od` | yes | JSON integers 0 to 100 (`5.0` and `"5"` are wrong kinds), not all three 0 |
 | `restore_point` | yes | `latest` in any case, or a restore point ID by `--point`'s rule (1 to 128 ASCII letters, digits and hyphens) |
 | `screenshots_enabled` | yes | `true` or `false`; replaces the config's value for this run |
 | `canary_cursor` | no | an array of three integers, each 0 to 999999; without the key `0,0,0`. `null` is a wrong kind. The cursor is the Cloud's to keep and hand on; the Worker stores none |
 
-Any other key makes the job invalid. A job names no client and no targets: the run uses the
-config's client keys, as every command does (W4.10 and W4.11 change that). The rules are the
-ones a command line is held to, the same functions (`worker/src/job_rules.hpp`).
+Any other key makes the job invalid. The run uses the job's profile and never the config's
+client keys, which the service's config may lack (W4.10); the guard still resolves every
+target of it per item before any restore call. What the profile claims about the tenant is
+checked against Veeam in W4.11 (`client_mismatch`). The rules are the ones a command line is
+held to, the same functions (`worker/src/job_rules.hpp`).
 
 **Whoever can write that file commands the Worker**: restores into the test targets, and
 signed results under run IDs of their choice. So the file is read only when its owner is
@@ -1911,9 +2010,12 @@ until its folder is in the outbox. Each job of the document, in its order, first
 | J4 | passes every rule | run | below |
 
 `<key>` in J3's line, in the result's message and in the record is the first key at fault, in
-the order `client_id`, `sample_mail`, `sample_sp`, `sample_od`, `restore_point`,
-`screenshots_enabled`, `canary_cursor` (a key missing, of a wrong kind or out of range), or
-`unknown key` when those all pass and the job has another key. Three sizes that are each valid
+the order `client_id`, `client` (or `client.<key>` for one of the profile's eight keys),
+`sample_mail`, `sample_sp`, `sample_od`, `restore_point`, `screenshots_enabled`,
+`canary_cursor` (a key missing, of a wrong kind or out of range), or `unknown key` when those
+all pass and the job has another key. A J3 job whose profile could be read keeps it in its
+record, so its result names the client; one whose profile couldn't has a record with `client`
+`null` and a result whose `client` holds empty strings beside the job's `client_id`. Three sizes that are each valid
 and all 0 are `sample_mail`. No text of the file reaches a line or a result but a `run_id`
 that passed its rule.
 
@@ -1971,7 +2073,7 @@ written with the atomic writer over the file before it. Exactly fourteen keys:
 
 | Key | Value |
 |---|---|
-| `client` | the result's `client` object as the config gives it: `{"client_id": null, "tenant_id", "veeam_org_name", "targets": {"mailbox", "site_id", "library_id", "onedrive_drive_id", "onedrive_folder_id"}}` |
+| `client` | the job's client profile, the `restoreproof.client-profile.v1` object as the job carried it (W4.10): what the run used, and what a recovery clean cleans; `null` only for a `job_invalid` record of a job whose profile couldn't be read |
 | `client_id` | the job's `client_id`, a string or `null` |
 | `close_as` | `null`, `"result_invalid"`, `"internal"` or `"job_invalid"`: what the run's folder is to be closed as when it has no `result.json`; `null` means `interrupted` |
 | `close_detail` | a word for `close_as`, or `null` (below) |
@@ -1992,7 +2094,7 @@ Times are UTC to the millisecond, `YYYY-MM-DDTHH:MM:SS.mmmZ`, as the result writ
 
 | | When | What | If the write fails |
 |---|---|---|---|
-| (a) | by the loop, before the pipeline is called and before a J3 folder is made | `run_id`, `kind`, `client_id`, `client`, `taken_at`; the rest `null`, empty or `false`. A J3 record has `close_as` `job_invalid` and the key at fault as `close_detail` from this first write | `error` `run <run_id>: running.json couldn't be written; not run` |
+| (a) | by the loop, before the pipeline is called and before a J3 folder is made | `run_id`, `kind`, `client_id`, `client` (the job's profile), `taken_at`; the rest `null`, empty or `false`. A J3 record has `close_as` `job_invalid` and the key at fault as `close_detail` from this first write | `error` `run <run_id>: running.json couldn't be written; not run` |
 | (b) | right after the run line, before any clean and any session in Veeam | `started_at`, `restore_point`, `connector` | `error` `run <run_id>: running.json couldn't be written; the run ends`; the run's own line is `restore error: the run couldn't be recorded as started; nothing was restored`, and it ends `error interrupted`, signed and queued |
 | (c) | at every explore session the run opens (the sample's browsing included) | the session's ID added to `sessions` | `warning` `run <run_id>: running.json couldn't be written; a session the run opened is not on record`; the run goes on, but no restore request of it is sent: at the next one, `error` `run <run_id>: a session the run opened is not on record; the restore request is not sent`, and the run ends `error interrupted` as for (d). Veeam lists an explore session and a restore session alike, so after a request the hold would wait on that session for ever; every explore session is opened before the first request. The price is one session nobody ends |
 | (d) | before every restore POST, before the certificate is exported | `restore_requested` `true` and `restore_requested_at` | `error` `run <run_id>: running.json couldn't be written; the restore request is not sent`: the POST is not sent and the run ends `error interrupted` (`nothing was restored` when it was the first) |
@@ -2043,7 +2145,9 @@ closed again, an ended session isn't `Working`, a clean of empty targets deletes
 
 **A record the service can't trust or read.** The file is read only when its owner is SYSTEM,
 Administrators or the service's account, and it must be its own canonical form, nested no
-deeper than 32 levels, with exactly the fourteen keys and their words. Otherwise nothing is
+deeper than 32 levels, with exactly the fourteen keys and their words (its `client` a profile
+by the profile's own rules; a record W4.8's build wrote, with the result's client object in
+its place, is one the service can't read). Otherwise nothing is
 known: nothing is closed, signed, ended or cleaned on its word, and `last_error` is
 `record_unreadable`.
 
@@ -2079,7 +2183,8 @@ only. `docs/verification.md` has what such a result means.
 The result is valid `restoreproof.result.v1` with what the record knows and `null` for the
 rest: `run_id`; `started_at`, `connector` and `restore_point` from the record (before the run
 line: `started_at` `null`, `veeam_m365` with an empty `api`, a restore point of empty
-strings); `client` from the record, its `client_id` `null`; `ended_at`, `sample`, `expected`,
+strings); `client` from the record's profile with the job's `client_id` (W4.10; empty strings
+beside the `client_id` for a job whose profile couldn't be read); `ended_at`, `sample`, `expected`,
 `restore`, `check` and `cleanup` `null`, every span `null`; `attachments` the two text files;
 `screenshot` `unavailable` with `disabled`, or `no_page` when the config's
 `screenshots_enabled` is `true`. `status.restore_sent` is the record's `restore_requested`
@@ -2212,7 +2317,6 @@ Without a restore request nothing was restored and nothing is cleaned.
 | `waiting for Veeam: <n> session(s) of <account> still Working since <time>` | `restore_requested` is `true` and `<n>` other sessions run; `<time>` is the oldest one's creation time. Once and again every hour | `veeam_sessions_working` |
 | `the look at Veeam's sessions failed: <auth\|transient\|other>` | the look threw: Veeam refused the sign-in, couldn't be reached, or anything else (the vault, an answer that doesn't read: a session is never left out on a doubt). Once per reason and again every hour | `veeam_look_failed` |
 | `ending session <id> failed` | Veeam refused the stop; the other recorded sessions wait for the next look. Once per session and again every hour | `veeam_look_failed` |
-| `the config's client is not the run's; the restore targets were not cleaned` | the config's tenant, organisation or targets are no longer the record's: the clean is not made, and the record goes | (none) |
 | `recovery clean for <run_id>: not completed (<incomplete\|lock_held\|not_started>)` | the clean left something or met an error, a command held the run mutex, or the vault, the certificate or Graph's client failed. The record goes all the same | `recovery_clean_incomplete` |
 
 `<account>` is the vault's `veeam_username`: a name, not a secret, and in the log. A hung
@@ -2431,5 +2535,5 @@ The same for every `rpworker` command (`rp::exit_code` in `worker/include/rp/cli
 The usage line is:
 
 ```
-usage: rpworker --version | rpworker config check [--config <path>] [--vault <file>] | rpworker vault set|remove <name> [--vault <file>] | rpworker vault list|test [--vault <file>] | rpworker vault grant <account> [--vault <file>] | rpworker veeam list [--config <path>] [--vault <file>] [--record <dir>] | rpworker graph list [--hash] [--config <path>] [--vault <file>] [--record <dir>] | rpworker restore [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--vault <file>] [--record <dir>] | rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--vault <file>] [--record <dir>] [--json <file> | --evidence <dir> [--outbox <root>]] | rpworker outbox flush [--config <path>] [--outbox <root>] [--record <dir>] | rpworker outbox list [--outbox <root>] | rpworker signer public-key [--vault <file>] | rpworker signer verify <folder> --public-key <pem file> [--tsa-ca <pem file>] | rpworker service install [--config <path>] | rpworker service uninstall|start|stop | rpworker service run [--config <path>]
+usage: rpworker --version | rpworker config check [--config <path>] [--vault <file>] | rpworker vault set|remove <name> [--vault <file>] | rpworker vault list|test [--vault <file>] | rpworker vault grant <account> [--vault <file>] | rpworker veeam list [--config <path>] [--vault <file>] [--record <dir>] | rpworker graph list [--hash] [--config <path>] [--vault <file>] [--record <dir>] | rpworker client check --profile-file <file> [--vault <file>] [--record <dir>] | rpworker restore [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--vault <file>] [--record <dir>] [--profile-file <file>] | rpworker test [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run-id <id>] [--canary-cursor <m>,<s>,<o>] [--manifest <path>] [--config <path>] [--vault <file>] [--record <dir>] [--profile-file <file>] [--json <file> | --evidence <dir> [--outbox <root>]] | rpworker outbox flush [--config <path>] [--outbox <root>] [--record <dir>] | rpworker outbox list [--outbox <root>] | rpworker signer public-key [--vault <file>] | rpworker signer verify <folder> --public-key <pem file> [--tsa-ca <pem file>] | rpworker service install [--config <path>] | rpworker service uninstall|start|stop | rpworker service run [--config <path>]
 ```

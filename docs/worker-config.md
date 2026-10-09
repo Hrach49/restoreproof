@@ -1800,6 +1800,7 @@ one outbox and one run mutex:
 | `%ProgramData%\RestoreProof\runs` | the `--evidence` root: a run writes `runs\<run_id>\` |
 | `%ProgramData%\RestoreProof` | the `--outbox` root: `outbox\<run_id>\` queued, `sent\<run_id>\` uploaded |
 | `%ProgramData%\RestoreProof\state\running.json` | the record of the one run the service has taken; `state\` is made when the first record is written |
+| `%ProgramData%\RestoreProof\state\done\<run_id>` | an empty file per run the service made, so its job is never run again; `done\` is made at the first mark |
 
 The vault is the default one (`%ProgramData%\RestoreProof\vault.bin`) and the manifest is
 `seed-manifest.json` beside the config file, as for the commands. Until the installer exists
@@ -1900,7 +1901,7 @@ until its folder is in the outbox. Each job of the document, in its order, first
 | | The job | What happens | Line |
 |---|---|---|---|
 | J1 | has no usable `run_id`: the entry is no object, the key is missing, no string, or fails its rule | not run and not reported: nothing can be signed under a name the Cloud knows. `last_error` `job_invalid` | `warning` `job <n> of <file>: no usable run_id; not run`, `<n>` its place from 1; once per place while the file's content stays the same |
-| J2 | is already there: something is at `outbox\<run_id>`, `sent\<run_id>` or `runs\<run_id>` | skipped | `info` `skipped <run_id>: already queued`, `skipped <run_id>: already sent` or `skipped <run_id>: a run folder is already there`; one line per run ID for as long as the document names it |
+| J2 | is already there: something is at `outbox\<run_id>`, `sent\<run_id>` or `runs\<run_id>`, or the run is marked as run (`state\done\<run_id>`, below) | skipped | `info` `skipped <run_id>: already queued`, `skipped <run_id>: already sent`, `skipped <run_id>: a run folder is already there` or `skipped <run_id>: already run`; one line per run ID for as long as the document names it |
 | J3 | breaks another rule | not run, but reported: a record of `kind` `job_invalid` is written, a run folder is made and closed with a signed result `error job_invalid`, and queued ("A run without a result"). Nothing is asked of Veeam or Graph. `last_error` `job_invalid`. J2 skips it from then on | `warning` `job <run_id>: not a valid job (<key>)` |
 | J4 | passes every rule | run | below |
 
@@ -1988,7 +1989,7 @@ Times are UTC to the millisecond, `YYYY-MM-DDTHH:MM:SS.mmmZ`, as the result writ
 |---|---|---|---|
 | (a) | by the loop, before the pipeline is called and before a J3 folder is made | `run_id`, `kind`, `client_id`, `client`, `taken_at`; the rest `null`, empty or `false`. A J3 record has `close_as` `job_invalid` and the key at fault as `close_detail` from this first write | `error` `run <run_id>: running.json couldn't be written; not run` |
 | (b) | right after the run line, before any clean and any session in Veeam | `started_at`, `restore_point`, `connector` | `error` `run <run_id>: running.json couldn't be written; the run ends`; the run's own line is `restore error: the run couldn't be recorded as started; nothing was restored`, and it ends `error interrupted`, signed and queued |
-| (c) | at every explore session the run opens (the sample's browsing included) | the session's ID added to `sessions` | `warning` `run <run_id>: running.json couldn't be written; a session the run opened is not on record`; the run goes on. The price is one session nobody ends |
+| (c) | at every explore session the run opens (the sample's browsing included) | the session's ID added to `sessions` | `warning` `run <run_id>: running.json couldn't be written; a session the run opened is not on record`; the run goes on, but no restore request of it is sent: at the next one, `error` `run <run_id>: a session the run opened is not on record; the restore request is not sent`, and the run ends `error interrupted` as for (d). Veeam lists an explore session and a restore session alike, so after a request the hold would wait on that session for ever; every explore session is opened before the first request. The price is one session nobody ends |
 | (d) | before every restore POST, before the certificate is exported | `restore_requested` `true` and `restore_requested_at` | `error` `run <run_id>: running.json couldn't be written; the restore request is not sent`: the POST is not sent and the run ends `error interrupted` (`nothing was restored` when it was the first) |
 | (e) | by the loop, after a run that returned and left its folder without a result | `close_as` and `close_detail` | `error` `run <run_id>: running.json couldn't be written; not closed`; the next poll tries again |
 
@@ -2014,6 +2015,14 @@ may still be running ("The hold"). A run that reached the outbox while this proc
 as there from then on, also after `sent\` was pruned. A record that can't be deleted: `error`
 `running.json couldn't be removed`, once and again every hour, `last_error`
 `record_not_removed`, tried again at every poll, and no job runs.
+
+**The run is marked as run** right before its record goes, by an empty file
+`state\done\<run_id>`, so a job that names it is never run again (J2, `already run`), also once
+the outbox has pruned it from `sent\` (30 days, or the 500 MB cap). A run that ended before its
+run line made nothing and is not marked: the job is offered again. A mark that can't be
+written keeps the record, so no job runs: `error` `run <run_id>: couldn't be marked as run;
+running.json is kept`, once and again every hour, `last_error` `record_not_removed`, tried again
+at every poll. The marks are never deleted; each is an empty file.
 
 **A record found** when the loop holds none in memory, which is at start, is one line:
 
@@ -2119,6 +2128,7 @@ run <run_id>: couldn't be queued (<word>)
 | `changed` | a text file wasn't the bytes hashed when it was read back. The record is marked `changed` at once, so the next try replaces both text files (`error` `run <run_id>: running.json couldn't be written; the changed text files are not on record` when that write fails) |
 | `invalid` | the result built for the folder isn't valid |
 | `untrusted` | step 1: a `result.json`, `signature.json` or `timestamp.tst` of another owner |
+| `not_read` | the folder couldn't be listed whole (a listing that failed or stopped short, a folder the account may not list or ask about, or something there that is no folder): nothing is made, taken away, written or queued, since a `result.json` left out of the listing would lose its signature |
 
 `couldn't be queued (...)` has the outbox's word: `already_queued`, `already_sent`,
 `no_outbox_folder`, `not_same_volume`, `not_moved` or `not_complete` (the `outbox error` lines
@@ -2340,7 +2350,7 @@ way: without the record the loop is free.
    disk); `not_moved` (a program holding a file of the folder open); `not_same_volume`,
    `no_outbox_folder` (the folders under `%ProgramData%\RestoreProof`); `already_queued`,
    `already_sent` (a folder of that run ID is in the outbox already); `untrusted` (who put
-   that file there). The loop tries again by itself: a queue at the next poll, a close within
+   that file there); `not_read` (the account's rights on the run's folder). The loop tries again by itself: a queue at the next poll, a close within
    15 minutes.
 2. If it can't be mended: `rpworker service stop`.
 3. Read `state\running.json` and note `restore_requested` and `sessions`.

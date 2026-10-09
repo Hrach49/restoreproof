@@ -38,6 +38,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
 
+#include <fstream>
 #include <random>
 #include <thread>
 
@@ -413,6 +414,27 @@ TEST_CASE("worker body: a result that would hold a secret value is not written",
     CHECK(has(lab.h.log(), "[killed-1] evidence error: "));
     CHECK(has(lab.h.log(), "the result holds a secret value; no result.json was written"));
     CHECK_FALSE(std::filesystem::exists(lab.queued("killed-1")));
+}
+
+TEST_CASE("worker body: a run folder that can't be listed is not closed: nothing taken away, "
+          "nothing signed",
+          "[worker_body][close]")
+{
+    // A listing that stops short could leave out the result.json that is
+    // there, and the close would take its signature.json away.
+    BodyLab lab;
+    const std::filesystem::path folder = lab.runs() / "killed-1";
+    std::filesystem::create_directories(folder);
+    { std::ofstream{folder / "signature.json"} << "{}"; }
+    rp::test::set_dacl(folder, L"D:P(D;;0x1;;;WD)(A;OICI;FA;;;WD)");
+
+    const rp::CloseRunOutcome outcome = lab.env().close_run(lab.record("killed-1"));
+
+    rp::test::set_dacl(folder, L"D:P(A;OICI;FA;;;WD)");
+    CHECK(outcome.state == rp::CloseRunState::not_closed);
+    CHECK(outcome.word == "not_read");
+    CHECK(names_in(folder) == std::set<std::string>{"signature.json"});
+    CHECK(lab.h.tsa_clients == 0);
 }
 
 TEST_CASE("worker body: a folder that can't be queued stays complete, and the next close only "
@@ -1209,6 +1231,82 @@ TEST_CASE("worker body: a pipeline env that can't be made is a run that did noth
     CHECK_FALSE(run.run_line);
     CHECK(run.folder == rp::JobFolder::none);
     CHECK_FALSE(run.status);
+}
+
+TEST_CASE("worker body: what escapes the pipeline after its run line keeps what the report "
+          "knew, and a restore may still be running",
+          "[worker_body]")
+{
+    rp::PipelineReport report;
+    report.run_id = "job-1";
+    report.run_line = true;
+    report.folder = rp::RunFolderState::incomplete;
+    report.folder_word = "not_written";
+
+    const rp::JobRun run = rp::job_run_after_throw(report);
+
+    CHECK(run.exit_code == 1);
+    CHECK(run.run_line);
+    CHECK(run.folder == rp::JobFolder::incomplete);
+    CHECK(run.folder_word == "not_written");
+    // Unknown is "may": the loop holds when the record says a request went.
+    CHECK(run.restore_may_still_run);
+    CHECK_FALSE(run.status);
+}
+
+TEST_CASE("worker body: what escapes the pipeline before its run line is a run that did nothing",
+          "[worker_body]")
+{
+    rp::PipelineReport report;
+    report.run_id = "job-1";
+
+    const rp::JobRun run = rp::job_run_after_throw(report);
+
+    CHECK(run.exit_code == 1);
+    CHECK_FALSE(run.run_line);
+    CHECK(run.folder == rp::JobFolder::none);
+    CHECK_FALSE(run.restore_may_still_run);
+}
+
+TEST_CASE("worker body: a run's report is what the loop is told", "[worker_body]")
+{
+    rp::PipelineReport report;
+    report.run_line = true;
+    report.status = rp::verification::RunStatus::error;
+    report.error_code = "result_invalid";
+    report.replaced_status = rp::verification::RunStatus::fail;
+    report.replaced_code = "";
+    report.folder = rp::RunFolderState::queued;
+    report.folder_word = "queued";
+    report.restore_may_still_run = true;
+
+    const rp::JobRun run = rp::job_run_of(report, 4);
+
+    CHECK(run.exit_code == 4);
+    CHECK(run.run_line);
+    CHECK(run.status == rp::verification::RunStatus::error);
+    CHECK(run.error_code == "result_invalid");
+    CHECK(run.replaced_status == rp::verification::RunStatus::fail);
+    CHECK(run.folder == rp::JobFolder::queued);
+    CHECK(run.folder_word == "queued");
+    CHECK(run.restore_may_still_run);
+}
+
+TEST_CASE("worker body: a run marked as run is known by the next env, and a mark that can't be "
+          "written says so",
+          "[worker_body]")
+{
+    BodyLab lab;
+    CHECK_FALSE(lab.env().run_done("job-1"));
+    CHECK(lab.env().mark_run_done("job-1"));
+    CHECK(lab.env().run_done("job-1"));
+    CHECK(lab.env().mark_run_done("job-1"));
+    CHECK_FALSE(lab.env().run_done("job-2"));
+    // A file where the marks' folder would be.
+    BodyLab blocked;
+    blocked.h.dir.write("state", "not a folder");
+    CHECK_FALSE(blocked.env().mark_run_done("job-1"));
+    CHECK_FALSE(blocked.env().run_done("job-1"));
 }
 
 // --- the wiring: `service run` -------------------------------------------------------

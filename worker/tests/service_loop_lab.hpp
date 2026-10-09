@@ -98,6 +98,10 @@ struct LoopLab {
     std::set<std::string, std::less<>> queued;
     std::set<std::string, std::less<>> sent;
     std::set<std::string, std::less<>> folders; // under the runs root
+    // The runs marked as run (under the state folder), and whether a mark
+    // can be written.
+    std::set<std::string, std::less<>> done;
+    bool done_ok = true;
 
     std::vector<std::string> runs;
     std::function<JobRun(const Job&, const JobCallbacks&)> on_run;
@@ -294,6 +298,14 @@ struct LoopLab {
         };
         env.run_folder_exists = [this](std::string_view run_id) {
             return folders.contains(run_id);
+        };
+        env.run_done = [this](std::string_view run_id) { return done.contains(run_id); };
+        env.mark_run_done = [this](std::string_view run_id) {
+            calls.push_back("mark " + std::string{run_id});
+            if (done_ok) {
+                done.emplace(run_id);
+            }
+            return done_ok;
         };
         env.outbox_depth = [this] { return static_cast<std::uint64_t>(queued.size()); };
 

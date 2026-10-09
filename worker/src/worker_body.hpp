@@ -18,6 +18,8 @@
 #include <rp/service.hpp>
 #include <rp/service_loop.hpp>
 
+#include "run_pipeline.hpp"
+
 #include <spdlog/logger.h>
 
 #include <chrono>
@@ -78,6 +80,16 @@ struct WorkerBodyOptions {
 // goes on to the caller.
 std::unique_ptr<RunLock>
 retaking_abandoned(const std::function<std::unique_ptr<RunLock>()>& take);
+
+// What the loop is told of a job's run: the pipeline's report and its exit
+// code.
+JobRun job_run_of(const PipelineReport& report, int exit_code);
+
+// The same when something escaped run_pipeline: what the report had become
+// by then, exit code 1, and, once the run line was out, a restore that may
+// still be running (nothing says it isn't; the loop holds when the record
+// says a request was sent). Before its run line it is a run that did nothing.
+JobRun job_run_after_throw(const PipelineReport& report);
 
 // The loop's env over the real calls. `context` is kept by the env's
 // functions; none of them may be called from another thread than the one

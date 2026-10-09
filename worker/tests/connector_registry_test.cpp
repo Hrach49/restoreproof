@@ -114,6 +114,14 @@ TEST_CASE("a registry refuses an empty name, a null factory and a duplicate",
                            Message("a connector needs a name"));
     REQUIRE_THROWS_MATCHES(registry.add("beta", nullptr), std::invalid_argument,
                            Message(R"(connector "beta" has no factory)"));
+    // W4.11: a name a job may ask for.
+    for (const char* bad : {"Beta", "beta-2", "beta 2", "veeam/m365"}) {
+        REQUIRE_THROWS_MATCHES(registry.add(bad, factory_for("x")), std::invalid_argument,
+                               Message("a connector's name is 1 to 64 of a-z, 0-9 and _"));
+    }
+    REQUIRE_THROWS_MATCHES(registry.add(std::string(65, 'a'), factory_for("x")),
+                           std::invalid_argument,
+                           Message("a connector's name is 1 to 64 of a-z, 0-9 and _"));
     REQUIRE_THROWS_MATCHES(registry.add("alpha", factory_for("other")), std::invalid_argument,
                            Message(R"(connector "alpha" is already registered)"));
     // The first registration stands.

@@ -55,8 +55,8 @@ struct RunStop {
 
 // The stop an exception makes, by its type (decision point 2), the same in
 // every phase:
-//  - rp::ConfigError (graph::CertificateError too), sampling::ManifestError,
-//    connector::UnknownConnectorError: config;
+//  - rp::ConfigError (graph::CertificateError too), sampling::ManifestError:
+//    config;
 //  - a graph::GraphError: the check's code for it (read_error_code,
 //    rp/checker.hpp): target_guard, graph_auth, graph_permission,
 //    graph_transient or graph, wherever it was thrown (the connector's guard
@@ -66,6 +66,8 @@ struct RunStop {
 //    connector::NotFoundError: not_in_backup; any other connector::Error:
 //    backup;
 //  - connector::Interrupted (a stop asked of the Worker, W4.8): interrupted;
+//  - rp::ClientMismatchError (the client check, W4.11): client_mismatch;
+//    connector::UnknownConnectorError: connector_unknown (W4.11; before, config);
 //  - anything else: internal.
 // In the restore phase, nothing_restored is whether a known exception's
 // what() ends with connector::kNothingRestored (never for internal).
@@ -206,8 +208,9 @@ RunVerdict result_invalid(const RunVerdict& verdict);
 
 // A stop asked of the Worker during a run (docs/decisions.md 2026-10-08, W4.8
 // point 13). Whether a verdict decided after the stop came is replaced by
-// interrupted(): an error with a code other than interrupted, target_guard
-// and result_invalid, since a wait the stop cut short reads as the failure
+// interrupted(): an error with a code other than interrupted, target_guard,
+// result_invalid, client_mismatch and connector_unknown (facts about the run's
+// input, not a wait), since a wait the stop cut short reads as the failure
 // of whichever service was being waited for. A pass or a fail reached in
 // spite of the stop stays what it is.
 bool interrupt_replaces(const RunVerdict& verdict) noexcept;
@@ -237,6 +240,12 @@ RunVerdict ended_without_result(bool restore_requested);
 RunVerdict result_invalid_afterwards(RunStatus ended_status, std::string_view ended_code,
                                      bool restore_requested);
 
+// The verdict of a job whose connector type this Worker has no connector
+// for (W4.11 point 4; the loop's J3b): error connector_unknown, "the job's
+// connector type isn't one this Worker has; nothing was done", restore_sent
+// false, every count 0.
+RunVerdict connector_unknown();
+
 // The verdict of a job the Worker was handed and can't run (W4.8 point 4,
 // J3): error job_invalid, "the job isn't a valid job (<key>); nothing was
 // done", restore_sent false, every count 0. `key` is the jobs reader's word
@@ -249,7 +258,8 @@ RunVerdict job_invalid(std::string_view key);
 // config, internal, backup_auth, backup_transient, not_in_backup,
 // no_restore_point, target_guard, backup, graph_auth, graph_permission,
 // backup_infrastructure, graph, graph_transient, stale_target, empty_sample,
-// not_run, restore_contradiction, result_invalid, interrupted, job_invalid.
+// not_run, restore_contradiction, result_invalid, interrupted, job_invalid,
+// client_mismatch, connector_unknown.
 std::vector<std::string_view> error_codes();
 
 // The codes an UncheckedItem can carry, most severe first (row 7's order).
@@ -285,9 +295,10 @@ nlohmann::json to_json(const connector::RestoreResult& result);
 
 // rpworker's exit code for an error code (rp::exit_code), from the one table
 // of codes the status line's texts and row 7's severity come from too:
-// config, internal, result_invalid and job_invalid 1; backup_auth,
-// graph_auth and graph_permission 2; backup_transient and graph_transient 3;
-// any other (interrupted, and a code the table doesn't hold too) 4.
+// config, internal, result_invalid, job_invalid and connector_unknown 1;
+// backup_auth, graph_auth and graph_permission 2; backup_transient and
+// graph_transient 3; any other (interrupted, client_mismatch, and a code the
+// table doesn't hold too) 4.
 int exit_code_of(std::string_view error_code) noexcept;
 
 // rpworker's exit code for a verdict: pass 0; fail 5 (exit_code::restore);

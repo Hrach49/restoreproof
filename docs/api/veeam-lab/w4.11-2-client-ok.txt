@@ -1,0 +1,91 @@
+W4.11 (#134) live Done-when, step (b): the same on the lab's own profile: the client check passes, the result says scope same_tenant and what resolved. 2026-10-09T20:24:28Z, commit 01b88dd
+
+-- Veeam before: no session Working at 2026-10-09T20:24:28Z
+
+command: rpworker test --mail 2 --sp 1 --od 1 --run-id w411-2 --config C:\Users\minas\AppData\Local\RestoreProof\lab\config-no-client.json --manifest C:\restoreproof\lab\seed-manifest.json --profile-file C:\Users\minas\AppData\Local\RestoreProof\lab\lab-profile.json --evidence C:\ProgramData\RestoreProof\w411\runs --outbox C:\ProgramData\RestoreProof\w411\box
+2026-10-09T20:24:28Z to 2026-10-09T20:26:58Z
+exit code: 0
+--- stdout
+restore point 2026-10-08T23:43:58.1565721Z  c2f0f2e7-177f-48ac-992b-93a50cf702e33f589dc6-03b8-44c1-8bfe-1c32d63d5849  (veeam_org_name RestoreProofLab.onmicrosoft.com)
+run w411-2  seed 9485681f
+client ok: tenant bcd6bd1a-ea42-489d-aa28-2c19a44ad146, Office365, Worldwide; mailbox, library and folder resolved
+cleanup before ok: deleted 0 mail, 0 sharepoint, 0 onedrive
+canary cursor 0,0,0 -> 1,1,1
+  KIND        REQUESTED  CANARIES  RANDOM  NOTE
+  mail        2          1 of 1    1 of 1
+  sharepoint  1          1 of 1    0 of 0
+  onedrive    1          1 of 1    0 of 0
+restoring 4 item(s) ...
+
+  SESSION                               KIND        RESULT   RESTORED  STARTED                       ENDED                         ELAPSED
+  5c0b6330-c2b8-450a-a57e-2ce15a499cbf  mail        Success  1 of 1    2026-10-09T20:24:36.596144Z   2026-10-09T20:25:05.9051515Z  0:00:29
+  d42a81d2-8f4c-45ef-9c5b-87ea49c57fa3  mail        Success  1 of 1    2026-10-09T20:25:07.1583626Z  2026-10-09T20:25:36.0232544Z  0:00:28
+  7c386030-dd24-49c8-b50e-1d1008e7622d  sharepoint  Success  1 of 1    2026-10-09T20:25:37.7336491Z  2026-10-09T20:26:16.1650557Z  0:00:38
+  f5161024-c6be-4853-aa44-ea89e6528402  onedrive    Success  1 of 1    2026-10-09T20:26:18.5304843Z  2026-10-09T20:26:51.2995001Z  0:00:32
+
+restore succeeded: 4 of 4 item(s) restored in 0:02:21
+
+  TYPE        NAME                          EXPECTED  FOUND  MATCH  VERDICT   REASON  MS
+  mail        RP-CANARY-0001                manifest  yes    match  verified  -       0
+  mail        Notes from the supplier call  fields    yes    match  verified  -       0
+  sharepoint  rp-canary-01.pdf              manifest  yes    match  verified  -       532
+  onedrive    rp-canary-11.pdf              manifest  yes    match  verified  -       321
+
+check: 4 match, 0 mismatch, 0 missing, 0 error
+
+status pass: 4 of 4 item(s) verified: manifest 3, fields 1, metadata 0
+cleanup after ok: deleted 2 mail, 1 sharepoint, 1 onedrive
+
+STEP                  TIME         NOTE
+restore_point_lookup  0:00:00.079
+cleanup_before        0:00:01.087
+sample_select         0:00:01.343
+target_snapshot       0:00:00.779
+restore               0:02:21.368
+restore_submit        0:00:00.762
+restore_wait          0:02:16.542
+verify                0:00:01.866
+recovery              0:02:23.235
+cleanup_after         0:00:01.890
+total                 0:02:29.206
+signed 6a1da01bbefa1e39a65c0875d042d90d8ce76d9ee3924e98427e8291577496f3 key 9dfab6eadaa1d04a22dcc966aac7a53bcff8bbe0077232485f6143cd9c4d0ca5
+timestamped 2026-10-09T20:25:37Z
+evidence C:\ProgramData\RestoreProof\w411\runs\w411-2: result.json, signature.json, timestamp.tst, items.csv, veeam-session.log
+queued C:\ProgramData\RestoreProof\w411\box\outbox\w411-2
+--- stderr
+
+
+-- the queued folder
+folder: C:\ProgramData\RestoreProof\w411\box\outbox\w411-2
+command: rpworker signer verify C:\ProgramData\RestoreProof\w411\box\outbox\w411-2 --public-key C:\ProgramData\RestoreProof\w48\worker-signing.pub.pem --tsa-ca C:\restoreproof\shared\tsa\tsa-ca.pem
+2026-10-09T20:26:58Z to 2026-10-09T20:26:59Z
+exit code: 0
+--- stdout
+verified 6a1da01bbefa1e39a65c0875d042d90d8ce76d9ee3924e98427e8291577496f3 key 9dfab6eadaa1d04a22dcc966aac7a53bcff8bbe0077232485f6143cd9c4d0ca5 timestamp 2026-10-09T20:25:37Z
+--- stderr
+note: not listed in the result: manifest.json
+
+verify_bundle.py (exit code 0): verified 6a1da01bbefa1e39a65c0875d042d90d8ce76d9ee3924e98427e8291577496f3 key 9dfab6eadaa1d04a22dcc966aac7a53bcff8bbe0077232485f6143cd9c4d0ca5 timestamp 2026-10-09T20:25:37Z | note: not listed in the result: manifest.json
+result.json: run_id w411-2, status pass, restore_sent True, message: 4 of 4 item(s) verified: manifest 3, fields 1, metadata 0
+result.json sha256 6a1da01bbefa1e39a65c0875d042d90d8ce76d9ee3924e98427e8291577496f3
+
+-- result.json status: pass
+result.json client: {"client_id":null,"resolved":{"library":{"list_id":"ffec069d-65e4-4c3a-9da2-ac086cf9dafa","name":"RestoreTarget","site_url":"https://restoreprooflab.sharepoint.com/sites/RestoreTest"},"mailbox":{"inbox_id":"AAMkADYyNGRlZDhkLTM1MmEtNGI1NS05Y2I5LTM4OTliNzZhMTRjOAAuAAAAAADjrcyzRbMCTbaiTPZo3n0vAQCnL_u8BR8BT6morC7OYUFaAAAAAAEMAAA="},"onedrive_folder":{"name":"RestoreTarget","site_url":"https://restoreprooflab-my.sharepoint.com/personal/alice_restoreprooflab_onmicrosoft_com"},"organization":{"name":"RestoreProofLab.onmicrosoft.com","region":"Worldwide","tenant_id":"bcd6bd1a-ea42-489d-aa28-2c19a44ad146","type":"Office365"}},"scope":"same_tenant","targets":{"library_id":"b!XQgI_nDr6EKVpkcBib2Y65nzyk4OzJVNs_7NCRoJ5omdBuz_5GU6TJ2irAhs-dr6","mailbox":"restoretest@RestoreProofLab.onmicrosoft.com","onedrive_drive_id":"b!wA9gbfhlEUitGAluxbfoNBr_z5gEtDhErm5pJ6bMwyXfZJ8a_dkCQ696RX0r7_U3","onedrive_folder_id":"01ZK75LGDGB6QOO3MGNFGYOY6C6VBDG5OH","site_id":"restoreprooflab.sharepoint.com,fe08085d-eb70-42e8-95a6-470189bd98eb,4ecaf399-cc0e-4d95-b3fe-cd091a09e689"},"tenant_id":"bcd6bd1a-ea42-489d-aa28-2c19a44ad146","veeam_org_name":"RestoreProofLab.onmicrosoft.com"}
+result.json connector: {"api":"v8","type":"veeam_m365"}
+
+-- the three restore targets after
+command: rpworker graph list --config C:\Users\minas\AppData\Local\RestoreProof\lab\config.json
+2026-10-09T20:27:00Z to 2026-10-09T20:27:02Z
+exit code: 0
+--- stdout
+Mail (restoretest@RestoreProofLab.onmicrosoft.com, Inbox): 0 item(s)
+
+SharePoint (RestoreTarget library): 0 item(s)
+
+OneDrive (RestoreTarget folder): 0 item(s)
+
+0 item(s) in the three restore targets
+--- stderr
+
+
+-- Veeam after: no session Working at 2026-10-09T20:27:02Z

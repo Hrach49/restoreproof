@@ -140,7 +140,7 @@ TEST_CASE("ResultBuilder: a document the schema refuses is `schema`, with where"
     }
     SECTION("a connector the schema doesn't know")
     {
-        parts.connector.name = "fake";
+        parts.connector.name = "Fake Connector"; // W4.11: a name the rule refuses
         where = "/connector/type";
     }
     SECTION("a hand-made check reason")
@@ -229,7 +229,10 @@ TEST_CASE("ResultBuilder: the full run's document", "[result_builder]")
                    {"site_id", parts.client.site_id},
                    {"library_id", "b!library"},
                    {"onedrive_drive_id", "b!onedrive"},
-                   {"onedrive_folder_id", "01FOLDER"}}}});
+                   {"onedrive_folder_id", "01FOLDER"}}},
+                 // W4.11: the facts' client check isn't part of these parts.
+                 {"scope", nullptr},
+                 {"resolved", nullptr}});
     // Each part is its own to_json, nothing added and nothing left out.
     REQUIRE(document.at("sample") == rp::sampling::to_json(facts.sample));
     REQUIRE(document.at("expected") == rp::verification::to_json(facts.expected));
@@ -473,6 +476,61 @@ TEST_CASE("the result's client is the profile's with the job's client_id", "[res
     CHECK(document.at("client").at("client_id") == "client-7");
     // The app's ID is the profile's, not the result's.
     CHECK_FALSE(document.at("client").contains("graph_client_id"));
-    CHECK(document.at("client").size() == 4);
+    CHECK(document.at("client").size() == 6);
     REQUIRE(std::holds_alternative<rp::BuiltResult>(rp::ResultBuilder::build(parts)));
+}
+
+// W4.11 point 7: the claim and what earned it, together or neither.
+TEST_CASE("the result's client says scope same_tenant with what the client check resolved, or "
+          "null for both",
+          "[result_builder][client_check][w4.11]")
+{
+    ResultFacts facts = full_result_facts();
+    rp::ResultParts parts = facts.parts();
+    SECTION("the check didn't pass: both null, and the document still validates")
+    {
+        parts.client.resolved.reset();
+        const json document = rp::ResultBuilder::document(parts);
+        CHECK(document.at("client").size() == 6);
+        CHECK(document.at("client").at("scope").is_null());
+        CHECK(document.at("client").at("resolved").is_null());
+        REQUIRE(std::holds_alternative<rp::BuiltResult>(rp::ResultBuilder::build(parts)));
+    }
+    SECTION("the check passed: the word and the object")
+    {
+        parts.client.resolved = rp::ResolvedClient{
+            .organization_name = "contoso.onmicrosoft.com",
+            .organization_tenant = "11111111-2222-3333-4444-555555555555",
+            .organization_type = "Office365",
+            .organization_region = "Worldwide",
+            .inbox_id = "AAMkADAwMDAwMDAwLUluYm94",
+            .library_name = "RestoreTarget",
+            .library_list_id = "cccccccc-0000-0000-0000-000000000003",
+            .library_site_url = "https://contoso.sharepoint.com/sites/RestoreTest",
+            .folder_name = "RestoreTarget",
+            .folder_site_url =
+                "https://contoso-my.sharepoint.com/personal/alice_contoso_onmicrosoft_com"};
+        const json document = rp::ResultBuilder::document(parts);
+        CHECK(document.at("client").at("scope") == "same_tenant");
+        CHECK(document.at("client").at("resolved") ==
+              json{{"organization",
+                    {{"name", "contoso.onmicrosoft.com"},
+                     {"tenant_id", "11111111-2222-3333-4444-555555555555"},
+                     {"type", "Office365"},
+                     {"region", "Worldwide"}}},
+                   {"mailbox", {{"inbox_id", "AAMkADAwMDAwMDAwLUluYm94"}}},
+                   {"library",
+                    {{"name", "RestoreTarget"},
+                     {"list_id", "cccccccc-0000-0000-0000-000000000003"},
+                     {"site_url", "https://contoso.sharepoint.com/sites/RestoreTest"}}},
+                   {"onedrive_folder",
+                    {{"name", "RestoreTarget"},
+                     {"site_url", "https://contoso-my.sharepoint.com/personal/"
+                                  "alice_contoso_onmicrosoft_com"}}}});
+        REQUIRE(std::holds_alternative<rp::BuiltResult>(rp::ResultBuilder::build(parts)));
+        // A resolved name that isn't RestoreTarget is no result: the schema
+        // holds the two names to the word the checks require.
+        parts.client.resolved->library_name = "Dokumenty";
+        REQUIRE(std::holds_alternative<rp::ResultError>(rp::ResultBuilder::build(parts)));
+    }
 }

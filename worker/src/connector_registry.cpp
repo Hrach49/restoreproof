@@ -53,6 +53,10 @@ void ConnectorRegistry::add(std::string name, ConnectorFactory factory)
     if (name.empty()) {
         throw std::invalid_argument("a connector needs a name");
     }
+    // W4.11: the name a job may ask for (is_connector_name).
+    if (!is_connector_name(name)) {
+        throw std::invalid_argument("a connector's name is 1 to 64 of a-z, 0-9 and _");
+    }
     if (!factory) {
         throw std::invalid_argument("connector \"" + name + "\" has no factory");
     }

@@ -58,15 +58,33 @@ json ResultBuilder::document(const ResultParts& parts)
     result["started_at"] = text_or_null(parts.started_at);
     result["ended_at"] = text_or_null(parts.ended_at);
     result["connector"] = {{"type", parts.connector.name}, {"api", parts.connector.version}};
-    result["client"] = {{"client_id", text_or_null(parts.client.client_id)},
-                        {"tenant_id", parts.client.tenant_id},
-                        {"veeam_org_name", parts.client.veeam_org_name},
-                        {"targets",
-                         {{"mailbox", parts.client.mailbox},
-                          {"site_id", parts.client.site_id},
-                          {"library_id", parts.client.library_id},
-                          {"onedrive_drive_id", parts.client.onedrive_drive_id},
-                          {"onedrive_folder_id", parts.client.onedrive_folder_id}}}};
+    const std::optional<ResolvedClient>& resolved = parts.client.resolved;
+    result["client"] = {
+        {"client_id", text_or_null(parts.client.client_id)},
+        {"tenant_id", parts.client.tenant_id},
+        {"veeam_org_name", parts.client.veeam_org_name},
+        {"targets",
+         {{"mailbox", parts.client.mailbox},
+          {"site_id", parts.client.site_id},
+          {"library_id", parts.client.library_id},
+          {"onedrive_drive_id", parts.client.onedrive_drive_id},
+          {"onedrive_folder_id", parts.client.onedrive_folder_id}}},
+        // W4.11 point 7: the claim and what earned it, together or neither.
+        {"scope", resolved ? json(kScopeSameTenant) : json()},
+        {"resolved", resolved ? json{{"organization",
+                                      {{"name", resolved->organization_name},
+                                       {"tenant_id", resolved->organization_tenant},
+                                       {"type", resolved->organization_type},
+                                       {"region", resolved->organization_region}}},
+                                     {"mailbox", {{"inbox_id", resolved->inbox_id}}},
+                                     {"library",
+                                      {{"name", resolved->library_name},
+                                       {"list_id", resolved->library_list_id},
+                                       {"site_url", resolved->library_site_url}}},
+                                     {"onedrive_folder",
+                                      {{"name", resolved->folder_name},
+                                       {"site_url", resolved->folder_site_url}}}}
+                              : json()}};
     result["restore_point"] = {
         {"id", parts.restore_point_id},
         {"backup_time_raw", parts.restore_point_time},

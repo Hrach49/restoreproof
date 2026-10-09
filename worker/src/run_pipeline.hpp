@@ -70,6 +70,11 @@ struct PipelineArgs {
     const ClientProfile* client = nullptr;
     std::optional<std::string> client_id;
     std::optional<std::string_view> profile_file;
+    // W4.11 point 5: the connector the run is made with, a registry name
+    // (the job's `connector.type`); nullopt = connector::kVeeamM365. One the
+    // registry doesn't have ends the run before its run line (the loop never
+    // hands one on: it reports such a job itself, J3b).
+    std::optional<std::string> connector_type;
 };
 
 // What became of one call of run_pipeline (docs/decisions.md 2026-10-08, W4.8

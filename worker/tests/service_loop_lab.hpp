@@ -11,6 +11,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
+
 #include <spdlog/details/null_mutex.h>
 #include <spdlog/logger.h>
 #include <spdlog/sinks/base_sink.h>
@@ -64,11 +66,13 @@ inline ClientProfile lab_profile()
     return std::get<ClientProfile>(parse_client_profile(nlohmann::json::parse(kProfileText)));
 }
 
-inline std::string job_text(std::string_view run_id, int mail = 5, int sp = 5, int od = 5)
+inline std::string job_text(std::string_view run_id, int mail = 5, int sp = 5, int od = 5,
+                            std::string_view connector = "veeam_m365")
 {
     return R"({"run_id":")" + std::string{run_id} + R"(","client_id":"client-7","client":)" +
-           std::string{kProfileText} + R"(,"sample_mail":)" + std::to_string(mail) +
-           R"(,"sample_sp":)" + std::to_string(sp) + R"(,"sample_od":)" + std::to_string(od) +
+           std::string{kProfileText} + R"(,"connector":{"type":")" + std::string{connector} +
+           R"("},"sample_mail":)" + std::to_string(mail) + R"(,"sample_sp":)" +
+           std::to_string(sp) + R"(,"sample_od":)" + std::to_string(od) +
            R"(,"restore_point":"latest","screenshots_enabled":false})";
 }
 
@@ -109,6 +113,13 @@ struct LoopLab {
     bool move_ok = true;
     std::vector<std::string> writes;
     std::optional<std::string> unread; // what was moved aside
+
+    // W4.11: the registry's names, and the connector type each look of the
+    // hold was told.
+    std::vector<std::string> connector_names{"veeam_m365"};
+    std::vector<std::string> hold_types;
+    // An env built without has_connector.
+    bool no_has_connector = false;
 
     // The jobs file: its text, or why it runs nothing; neither: no file.
     std::optional<std::string> jobs;
@@ -301,6 +312,15 @@ struct LoopLab {
         env.now = [this] { return t; };
         env.wall_now = [this] { return wall(); };
 
+        env.has_connector = [this](std::string_view type) {
+            return std::ranges::find(connector_names, type) != connector_names.end();
+        };
+        if (no_has_connector) {
+            env.has_connector = nullptr;
+        }
+        env.hold_connector_type = [this](std::string_view type) {
+            hold_types.emplace_back(type);
+        };
         env.read_jobs = [this](const std::filesystem::path&) {
             calls.push_back("read jobs");
             if (jobs_fault) {

@@ -1,0 +1,80 @@
+W4.11 (#134) live Done-when, step (a): rpworker test --evidence --outbox --profile-file on a profile whose tenant isn't the organisation's msid. 2026-10-09T20:20:47Z, commit 01b88dd
+
+-- the profile file: the lab's with a made-up graph_tenant_id
+{
+  "format": "restoreproof.client-profile.v1",
+  "veeam_org_name": "RestoreProofLab.onmicrosoft.com",
+  "graph_tenant_id": "11111111-2222-3333-4444-555555555555",
+  "graph_client_id": "737da5ef-baf2-4198-b009-e160d8ca77c9",
+  "test_mailbox": "restoretest@RestoreProofLab.onmicrosoft.com",
+  "test_site_id": "restoreprooflab.sharepoint.com,fe08085d-eb70-42e8-95a6-470189bd98eb,4ecaf399-cc0e-4d95-b3fe-cd091a09e689",
+  "test_library_id": "b!XQgI_nDr6EKVpkcBib2Y65nzyk4OzJVNs_7NCRoJ5omdBuz_5GU6TJ2irAhs-dr6",
+  "test_onedrive_drive_id": "b!wA9gbfhlEUitGAluxbfoNBr_z5gEtDhErm5pJ6bMwyXfZJ8a_dkCQ696RX0r7_U3",
+  "test_onedrive_folder_id": "01ZK75LGDGB6QOO3MGNFGYOY6C6VBDG5OH"
+}
+
+-- Veeam before: no session Working at 2026-10-09T20:20:48Z
+
+command: rpworker test --mail 2 --sp 1 --od 1 --run-id w411-1 --config C:\Users\minas\AppData\Local\RestoreProof\lab\config-no-client.json --manifest C:\restoreproof\lab\seed-manifest.json --profile-file C:\Users\minas\AppData\Local\RestoreProof\lab\lab-profile-other-tenant.json --evidence C:\ProgramData\RestoreProof\w411\runs --outbox C:\ProgramData\RestoreProof\w411\box
+2026-10-09T20:20:48Z to 2026-10-09T20:20:50Z
+exit code: 4
+--- stdout
+restore point 2026-10-08T23:43:58.1565721Z  c2f0f2e7-177f-48ac-992b-93a50cf702e33f589dc6-03b8-44c1-8bfe-1c32d63d5849  (veeam_org_name RestoreProofLab.onmicrosoft.com)
+run w411-1  seed 8682830d
+
+status error client_mismatch: the run stopped before the restore: the backup's organisation doesn't match the client's profile (client_mismatch); nothing was restored
+cleanup after skipped: nothing was restored
+
+STEP                  TIME         NOTE
+restore_point_lookup  0:00:00.137
+cleanup_before        -            not run
+sample_select         -            not run
+target_snapshot       -            not run
+restore               -            not run
+restore_submit        -            not run
+restore_wait          -            not run
+verify                -            not run
+recovery              -            not run
+cleanup_after         -            not run
+total                 0:00:00.185
+signed 628f0fc497ece5a556d1eea1f880f587e5f6e7b627ada0f8e0a275c2f4aae4e6 key 9dfab6eadaa1d04a22dcc966aac7a53bcff8bbe0077232485f6143cd9c4d0ca5
+timestamped 2026-10-09T20:19:28Z
+evidence C:\ProgramData\RestoreProof\w411\runs\w411-1: result.json, signature.json, timestamp.tst, items.csv, veeam-session.log
+queued C:\ProgramData\RestoreProof\w411\box\outbox\w411-1
+--- stderr
+client error: client mismatch: the backup's organisation's tenant ID isn't the profile's graph_tenant_id; nothing was restored
+
+
+-- the queued folder
+folder: C:\ProgramData\RestoreProof\w411\box\outbox\w411-1
+command: rpworker signer verify C:\ProgramData\RestoreProof\w411\box\outbox\w411-1 --public-key C:\ProgramData\RestoreProof\w48\worker-signing.pub.pem --tsa-ca C:\restoreproof\shared\tsa\tsa-ca.pem
+2026-10-09T20:20:50Z to 2026-10-09T20:20:51Z
+exit code: 0
+--- stdout
+verified 628f0fc497ece5a556d1eea1f880f587e5f6e7b627ada0f8e0a275c2f4aae4e6 key 9dfab6eadaa1d04a22dcc966aac7a53bcff8bbe0077232485f6143cd9c4d0ca5 timestamp 2026-10-09T20:19:28Z
+--- stderr
+note: not listed in the result: manifest.json
+
+verify_bundle.py (exit code 0): note: not listed in the result: manifest.json | verified 628f0fc497ece5a556d1eea1f880f587e5f6e7b627ada0f8e0a275c2f4aae4e6 key 9dfab6eadaa1d04a22dcc966aac7a53bcff8bbe0077232485f6143cd9c4d0ca5 timestamp 2026-10-09T20:19:28Z
+result.json: run_id w411-1, status error client_mismatch, restore_sent False, message: the run stopped before the restore: the backup's organisation doesn't match the client's profile (client_mismatch); nothing was restored
+result.json sha256 628f0fc497ece5a556d1eea1f880f587e5f6e7b627ada0f8e0a275c2f4aae4e6
+
+-- result.json status: error client_mismatch
+result.json client: {"client_id":null,"resolved":null,"scope":null,"targets":{"library_id":"b!XQgI_nDr6EKVpkcBib2Y65nzyk4OzJVNs_7NCRoJ5omdBuz_5GU6TJ2irAhs-dr6","mailbox":"restoretest@RestoreProofLab.onmicrosoft.com","onedrive_drive_id":"b!wA9gbfhlEUitGAluxbfoNBr_z5gEtDhErm5pJ6bMwyXfZJ8a_dkCQ696RX0r7_U3","onedrive_folder_id":"01ZK75LGDGB6QOO3MGNFGYOY6C6VBDG5OH","site_id":"restoreprooflab.sharepoint.com,fe08085d-eb70-42e8-95a6-470189bd98eb,4ecaf399-cc0e-4d95-b3fe-cd091a09e689"},"tenant_id":"11111111-2222-3333-4444-555555555555","veeam_org_name":"RestoreProofLab.onmicrosoft.com"}
+result.json connector: {"api":"v8","type":"veeam_m365"}
+
+-- Veeam after (no session opened by the run): no session Working at 2026-10-09T20:20:53Z
+
+-- the three restore targets after
+command: rpworker graph list --config C:\Users\minas\AppData\Local\RestoreProof\lab\config.json
+2026-10-09T20:20:53Z to 2026-10-09T20:20:55Z
+exit code: 0
+--- stdout
+Mail (restoretest@RestoreProofLab.onmicrosoft.com, Inbox): 0 item(s)
+
+SharePoint (RestoreTarget library): 0 item(s)
+
+OneDrive (RestoreTarget folder): 0 item(s)
+
+0 item(s) in the three restore targets
+--- stderr

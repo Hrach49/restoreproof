@@ -4,6 +4,7 @@
 #include "run_pipeline.hpp"
 #include "target_guard_refuse.hpp"
 
+#include <rp/connector_registry.hpp>
 #include <rp/service_errors.hpp>
 
 #include <algorithm>
@@ -204,6 +205,15 @@ bool ServiceLoop::record_business()
 bool ServiceLoop::find_record()
 {
     RecordRead read = store_.read();
+    // A run made with a connector this Worker lacks wasn't this Worker's: the
+    // hold couldn't look at its sessions, so it would never end. Not a record
+    // to act on, like one that doesn't parse. (A job reported as
+    // connector_unknown names such a type on purpose and is never held.)
+    if (read.state == RecordState::record && read.record->connector &&
+        read.record->close_as != CloseAs::connector_unknown &&
+        !env_.has_connector(read.record->connector->name)) {
+        read.state = RecordState::not_record;
+    }
     if (read.state == RecordState::none) {
         // No record: what was said of one is said anew of the next.
         said_at_.clear();
@@ -430,6 +440,12 @@ bool ServiceLoop::look_and_end(bool& clean)
         // One return after the handlers, so each of their lines is reached.
         std::string_view failed;
         try {
+            // W4.11: the hold's connector is the one the run was made with.
+            if (env_.hold_connector_type) {
+                env_.hold_connector_type(record_->connector
+                                             ? std::string_view{record_->connector->name}
+                                             : connector::kVeeamM365);
+            }
             sessions = env_.own_sessions(since);
         } catch (const connector::AuthError&) {
             failed = "auth";
@@ -644,6 +660,19 @@ void ServiceLoop::take_job(const JobEntry& entry, const JobsDocument& document)
         env_.logger->warn("job {}: not a valid job ({})", job.run_id, entry.fault);
         if (take_record(new_job_invalid_record(job.run_id, job.client_id, job.client,
                                                env_.wall_now(), entry.fault))) {
+            settle_record(true);
+        }
+        return;
+    }
+    if (!env_.has_connector(job.connector_type)) {
+        // J3b (W4.11 point 6): a job asking for a connector this Worker
+        // lacks, reported as J3 is; nothing is asked of Veeam or Graph. The
+        // type passed the reader's name rule, so it may be said.
+        trouble(service_error::kJobInvalid);
+        env_.logger->warn("job {}: connector type {} isn't one this Worker has", job.run_id,
+                          job.connector_type);
+        if (take_record(new_connector_unknown_record(job.run_id, job.client_id, job.client,
+                                                     env_.wall_now(), job.connector_type))) {
             settle_record(true);
         }
         return;

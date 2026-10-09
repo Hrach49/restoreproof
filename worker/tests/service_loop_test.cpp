@@ -372,6 +372,102 @@ TEST_CASE("a job that is no valid job is reported: its record, the close as job_
     CHECK(lab.last_error == rp::service_error::kJobInvalid);
 }
 
+// W4.11 point 6, J3b.
+TEST_CASE("a job asking for a connector this Worker lacks is reported: its record, the close as "
+          "connector_unknown, then skipped; nothing asked of Veeam or Graph",
+          "[service_loop][client_check][w4.11]")
+{
+    LoopLab lab;
+    lab.jobs = jobs_text({job_text("job-0", 5, 5, 5, "other_backup")});
+
+    lab.run(2);
+
+    CHECK(lab.lines == Lines{kStarted,
+                             "warning job job-0: connector type other_backup isn't one this Worker "
+                             "has",
+                             "info run job-0: queued", "info sent job-0",
+                             "info skipped job-0: already sent"});
+    REQUIRE(lab.writes.size() == 1);
+    REQUIRE(lab.closed.size() == 1);
+    CHECK(lab.closed[0].kind == rp::RecordKind::job_invalid);
+    CHECK(lab.closed[0].close_as == CloseAs::connector_unknown);
+    CHECK(lab.closed[0].close_detail == "other_backup");
+    REQUIRE(lab.closed[0].connector.has_value());
+    CHECK(lab.closed[0].connector->name == "other_backup");
+    CHECK(lab.closed[0].connector->version.empty());
+    CHECK(lab.closed[0].client_id == "client-7");
+    CHECK(lab.closed[0].client == lab_profile());
+    CHECK(lab.runs.empty());
+    CHECK(lab.count_call("look") == 0);
+    CHECK(lab.count_call("lock") == 0);
+    CHECK(lab.cleans == 0);
+    CHECK_FALSE(lab.has_record());
+    CHECK(lab.last_error == rp::service_error::kJobInvalid);
+}
+
+TEST_CASE("the registered connector's job runs, and the hold's connector is the record's type",
+          "[service_loop][client_check][w4.11]")
+{
+    LoopLab lab;
+    lab.connector_names = {"other_backup", "veeam_m365"};
+    rp::RunningRecord made = lab.found({"a"});
+    made.connector->name = "other_backup";
+    lab.put_record(made);
+    lab.queued.insert("job-1");
+    lab.looks.push_back([&] { return SessionsLook{"rp-veeam", {session("a", lab.wall0)}}; });
+    lab.looks.push_back([&] { return SessionsLook{"rp-veeam", {}}; });
+    lab.on_flush = [] { return rp::FlushReport{}; };
+
+    lab.run();
+
+    CHECK(lab.ended == Lines{"a"});
+    REQUIRE(lab.hold_types.size() == 2);
+    CHECK(lab.hold_types[0] == "other_backup");
+    CHECK(lab.hold_types[1] == "other_backup");
+}
+
+TEST_CASE("a run's record naming a connector this Worker lacks is moved aside: no hold that "
+          "could never end, nothing done on its word",
+          "[service_loop][client_check][w4.11]")
+{
+    LoopLab lab;
+    rp::RunningRecord made = lab.found({"a"});
+    made.connector->name = "other_backup";
+    lab.put_record(made);
+    lab.jobs = jobs_text({job_text("job-1")});
+
+    lab.run();
+
+    REQUIRE(lab.lines.size() > 1);
+    CHECK(lab.lines[1] == "error running.json isn't a restoreproof.running.v1 record; moved "
+                          "aside as running.json.unread");
+    CHECK(lab.count_call("move record to running.json.unread") == 1);
+    CHECK(lab.hold_types.empty());
+    CHECK(lab.count_call("look") == 0);
+    CHECK(lab.ended.empty());
+    CHECK(lab.closed.empty());
+    CHECK(lab.cleans == 0);
+    CHECK(lab.runs == Lines{"job-1"});
+    CHECK(lab.last_error == rp::service_error::kRecordUnreadable);
+}
+
+TEST_CASE("an env that doesn't say which connectors the Worker has runs no job and reports "
+          "none",
+          "[service_loop][client_check][w4.11]")
+{
+    LoopLab lab;
+    lab.jobs = jobs_text({job_text("job-1")});
+    lab.no_has_connector = true;
+
+    lab.run();
+
+    CHECK(lab.count("error scheduler: a step failed unexpectedly; the loop goes on") >= 1);
+    CHECK(lab.runs.empty());
+    CHECK(lab.closed.empty());
+    CHECK(lab.done.empty());
+    CHECK_FALSE(lab.has_record());
+}
+
 TEST_CASE("a job whose record can't be written is not run", "[service_loop]")
 {
     LoopLab lab;

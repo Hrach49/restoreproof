@@ -248,6 +248,16 @@ struct FakeConnector {
     // What describe() says: the one connector result.v1 knows (W4.1), so a
     // run's result is valid; a test sets another name to see it isn't.
     connector::ConnectorInfo info{std::string{connector::kVeeamM365}, "1"};
+    // W4.11: what client_facts answers. Null: facts that match the Harness's
+    // profile (its organisation name as asked, `tenant_id`, Office365,
+    // Worldwide); a test sets `facts` for a mismatch, or `facts_throw`.
+    std::optional<connector::ClientFacts> facts;
+    std::string tenant_id;
+    std::function<void()> facts_throw;
+    // Called first in client_facts, on the test's thread.
+    std::function<void()> at_facts;
+    int facts_calls = 0;
+    std::string facts_ref;
     // What the command's stdout held when restore_sample was called.
     const std::ostringstream* out = nullptr;
     std::shared_ptr<spdlog::logger> logger;
@@ -274,6 +284,25 @@ public:
             fake_.points_throw();
         }
         return fake_.points;
+    }
+
+    connector::ClientFacts client_facts(const std::string& client_ref) override
+    {
+        ++fake_.facts_calls;
+        fake_.facts_ref = client_ref;
+        if (fake_.at_facts) {
+            fake_.at_facts();
+        }
+        if (fake_.facts_throw) {
+            fake_.facts_throw();
+        }
+        if (fake_.facts) {
+            return *fake_.facts;
+        }
+        return {.name = client_ref,
+                .tenant_id = fake_.tenant_id,
+                .organization_type = "Office365",
+                .region = "Worldwide"};
     }
 
     connector::CandidatePool list_candidates(const connector::CandidateQuery&) override
@@ -753,6 +782,8 @@ struct Harness {
                     });
         config_path = dir.write("config.json", config.dump(2));
         manifest_path = dir.write("seed-manifest.json", lab_manifest_text());
+        // W4.11: the fake's organisation is the config's tenant's.
+        fake.tenant_id = config.at("graph_tenant_id").get<std::string>();
         auto sink = std::make_shared<spdlog::sinks::ostream_sink_mt>(log_stream);
         logger = std::make_shared<spdlog::logger>("restore_command_test", sink);
         logger->set_pattern("[%l] %v");
@@ -1096,11 +1127,19 @@ inline std::string expected_run_lines()
            seed_of(kRunId) + "\n";
 }
 
+// W4.11: the client check's line, after the run line and before the clean
+// before, for the Harness's own profile.
+inline std::string client_ok_line(const std::string& tenant = std::string{kTenant})
+{
+    return "client ok: tenant " + tenant + ", Office365, Worldwide; mailbox, library and folder "
+           "resolved\n";
+}
+
 // What `--run-id run-0001` on the newest point prints before the sample is
-// chosen: the run, then the clean before (W3.4).
+// chosen: the run, the client check (W4.11), then the clean before (W3.4).
 inline std::string expected_intro()
 {
-    return expected_run_lines() + kCleanBefore;
+    return expected_run_lines() + client_ok_line() + kCleanBefore;
 }
 
 // The header of `--mail 2 --sp 1 --od 0 --run-id run-0001` on the newest point

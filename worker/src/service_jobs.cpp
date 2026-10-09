@@ -1,5 +1,7 @@
 #include <rp/service_jobs.hpp>
 
+#include <rp/connector.hpp>
+
 #include "job_rules.hpp"
 #include "path_utf8.hpp"
 #include "strict_json.hpp"
@@ -27,6 +29,8 @@ constexpr std::string_view kJobsKey = "jobs";
 constexpr std::string_view kRunId = "run_id";
 constexpr std::string_view kClientId = "client_id";
 constexpr std::string_view kClient = "client";
+constexpr std::string_view kConnector = "connector";
+constexpr std::string_view kType = "type";
 constexpr std::string_view kSampleMail = "sample_mail";
 constexpr std::string_view kSampleSp = "sample_sp";
 constexpr std::string_view kSampleOd = "sample_od";
@@ -35,8 +39,8 @@ constexpr std::string_view kScreenshots = "screenshots_enabled";
 constexpr std::string_view kCanaryCursor = "canary_cursor";
 
 // Every key a job may have.
-constexpr std::array kJobKeys{kRunId,        kClientId,    kClient,      kSampleMail, kSampleSp,
-                              kSampleOd,     kRestorePoint, kScreenshots, kCanaryCursor};
+constexpr std::array kJobKeys{kRunId,       kClientId,     kClient,      kConnector,   kSampleMail,
+                              kSampleSp,    kSampleOd,     kRestorePoint, kScreenshots, kCanaryCursor};
 
 // An integer value as a signed one, or nothing for any other kind (a float,
 // 1.0 too). One past the signed range reads as the range's largest, which
@@ -166,6 +170,22 @@ bool has_unknown_key(const json& job)
     return unknown;
 }
 
+// connector (W4.11): {"type": <name>} and nothing else. The fault word, or
+// empty when `into` took the name.
+std::string connector_fault(const json& job, std::string& into)
+{
+    const auto it = job.find(kConnector);
+    if (it == job.end() || !it->is_object() || it->size() != 1) {
+        return std::string{kJobConnectorKey};
+    }
+    const std::string* type = string_at(*it, kType);
+    if (type == nullptr || !connector::is_connector_name(*type)) {
+        return std::string{kJobConnectorTypeKey};
+    }
+    into = *type;
+    return {};
+}
+
 // The first key at fault of a job whose run_id passed, in the header's
 // order, or empty when it is valid; `into` takes each value that passed
 // before it.
@@ -175,6 +195,9 @@ std::string fault_of(const json& job, Job& into)
         return std::string{kClientId};
     }
     if (std::string fault = client_fault(job, into.client); !fault.empty()) {
+        return fault;
+    }
+    if (std::string fault = connector_fault(job, into.connector_type); !fault.empty()) {
         return fault;
     }
     if (!read_size(job, kSampleMail, into.sample_mail)) {

@@ -146,6 +146,13 @@ std::optional<std::string> cursor_problem(const CanaryManifest& manifest,
 void check_manifest(const CanaryManifest& manifest, const connector::RestoreTargets& targets,
                     const std::string& graph_tenant_id);
 
+// Its two halves (W4.11 point 1): the tenant alone, which the pipeline's
+// client check runs after the run line so that a job of another tenant is
+// reported; and the canaries against the targets alone, which it runs before.
+void check_manifest_tenant(const CanaryManifest& manifest, const std::string& graph_tenant_id);
+void check_manifest_targets(const CanaryManifest& manifest,
+                            const connector::RestoreTargets& targets);
+
 // A run's sample: connector.list_candidates for the types whose random half is
 // above 0 (not called when none is), then SampleSelector::select. The query
 // excludes the manifest's canary libraries, subjects and names. Checks first,

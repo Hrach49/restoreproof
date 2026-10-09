@@ -1276,3 +1276,63 @@ TEST_CASE("worker body: a folder closed after a stop has no token, and is what t
     CHECK(verified.key_id == shared.at("key_id").get<std::string>());
     CHECK(verified.timestamp == rp::TimestampState::none);
 }
+
+// --- W4.11: a job of a connector this Worker lacks, and a job without a profile ----------------
+
+TEST_CASE("worker body: a job asking for a connector this Worker lacks is reported as error "
+          "connector_unknown, signed, queued and sent, with nothing asked of Veeam or Graph",
+          "[worker_body][loop][client_check][w4.11]")
+{
+    BodyLab lab;
+    lab.write_jobs(json::array({job("other-1", 2, 1, 0, "other_backup")}));
+
+    // Two polls: the second skips the job.
+    const std::optional<std::string> last_error = lab.run_loop(2);
+
+    // The heartbeat's word stays job_invalid: the result carries the code.
+    CHECK(last_error == "job_invalid");
+    const std::string log = lab.h.log();
+    CHECK(has(log, "[warning] job other-1: connector type other_backup isn't one this Worker "
+                   "has"));
+    CHECK(has(log, "[info] run other-1: queued"));
+    CHECK(has(log, "[info] sent other-1"));
+    CHECK(has(log, "[info] skipped other-1: already sent"));
+    CHECK(lab.h.make_connector_calls == 0);
+    CHECK(lab.h.graph_clients == 0);
+    CHECK_FALSE(std::filesystem::exists(lab.record_file()));
+    const std::filesystem::path sent = lab.sent("other-1");
+    CHECK(rp::to_string(verify(sent).word) == "verified");
+    const json result = result_in(sent);
+    CHECK(result.at("connector") == json{{"api", ""}, {"type", "other_backup"}});
+    const json& status = result.at("status");
+    CHECK(status.at("status") == "error");
+    CHECK(status.at("error_code") == "connector_unknown");
+    CHECK(status.at("restore_sent") == false);
+    CHECK(status.at("message") ==
+          "the job's connector type isn't one this Worker has; nothing was done");
+    CHECK(result.at("client").at("scope").is_null());
+    CHECK(result.at("client").at("resolved").is_null());
+    CHECK(result.at("client").at("tenant_id") == std::string{kTenant});
+    CHECK(bytes_of(sent / "items.csv") == empty_items_csv());
+    CHECK(bytes_of(sent / "veeam-session.log").empty());
+}
+
+TEST_CASE("worker body: a job without a profile is never run on the config's client: it ends "
+          "before its run line (the W4.10 review's finding 7)",
+          "[worker_body][client_check][w4.11]")
+{
+    BodyLab lab;
+    rp::Job job;
+    job.run_id = "no-profile-1";
+    job.connector_type = "veeam_m365";
+    job.sample_mail = 1;
+    job.client.reset();
+
+    const rp::JobRun run = lab.env().run_job(job, rp::JobCallbacks{});
+
+    CHECK_FALSE(run.run_line);
+    CHECK_FALSE(run.status.has_value());
+    CHECK(run.folder == rp::JobFolder::none);
+    CHECK(lab.h.make_connector_calls == 0);
+    CHECK(lab.h.fake.points_calls == 0);
+}

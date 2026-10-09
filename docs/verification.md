@@ -324,7 +324,8 @@ How the backup's own status reads (decision point 4):
 One flat vocabulary, the same in every phase, with `rpworker`'s exit code. In the code it is
 one table (`kCodes` in `src/run_status.cpp`: each code's stop text, whether the checker gives
 it, its severity rank and its exit code). Every code a status can carry has a row there,
-twenty since W4.8. W4.1 made it eighteen: `restore_contradiction`, R6's own code, was outside
+twenty-two since W4.11, which added `client_mismatch` and `connector_unknown` at the table's
+end (`docs/decisions.md` 2026-10-09, W4.11 point 4); twenty since W4.8. W4.1 made it eighteen: `restore_contradiction`, R6's own code, was outside
 the table before (exit 4 then as now), and `result_invalid` was new. Neither can be a stop's
 code or a check item's: given as one, it is R1's `internal`. W4.8 added two at the table's
 end, in this order (`docs/decisions.md` 2026-10-08, W4.8 point 14): `interrupted`, a stop's
@@ -340,7 +341,7 @@ schema, and a test holds the schema's enums to them: `error_codes()` (the table'
 
 | Code | From | Exit |
 |---|---|---|
-| `config` | `rp::ConfigError` (`graph::CertificateError` too), `sampling::ManifestError`, `connector::UnknownConnectorError`, in any phase (in the read-back too: a stop, never an item error) | 1 |
+| `config` | `rp::ConfigError` (`graph::CertificateError` too), `sampling::ManifestError` (the manifest's tenant, since W4.11 in the client check), in any phase (in the read-back too: a stop, never an item error) | 1 |
 | `internal` | any other exception (its `what()` is never shown); facts that don't add up (R1); a result written afterwards for a run that returned and left its folder without one (`ended_without_result()`, W4.8) | 1 |
 | `backup_auth` | `connector::AuthError` | 2 |
 | `backup_transient` | `connector::TransientError` (unreachable, a timeout, a gateway error) | 3 |
@@ -355,6 +356,8 @@ schema, and a test holds the schema's enums to them: `error_codes()` (the table'
 | `result_invalid` | the result built from the run isn't valid `restoreproof.result.v1`, or couldn't be built (`result_invalid()`, after the table); the Worker's own fault, as `internal` | 1 |
 | `interrupted` | `connector::Interrupted`, in any phase: a stop asked of the Worker during the run (a stop found at a step's boundary, a restore request withdrawn, the restore's poll left), or a run that couldn't be put on record as started; an `error` decided after a stop (`interrupted()`, after the table); a result written afterwards for a run the process ended during (`interrupted_before_result()`). No service's fault (W4.8) | 4 |
 | `job_invalid` | a job the service was handed that is no valid job (`job_invalid()`, W4.8): never decided by the table, only ever in a result written afterwards | 1 |
+| `client_mismatch` | `rp::ClientMismatchError` (W4.11): the client check found the backup's organisation isn't the profile's (its type isn't `Office365`, its tenant ID is missing or isn't `graph_tenant_id`, or its region isn't `Worldwide`); a stop before the restore, never an item's; a stop pending while it was decided doesn't replace it | 4 |
+| `connector_unknown` | `connector::UnknownConnectorError` (W4.11; `config` before): a connector type the registry doesn't have. The pipeline meets it before its run line, so as a status it only ever comes from a result written afterwards, for a job asking for a connector this Worker lacks (`connector_unknown()`, the service's J3b) | 1 |
 | `graph_auth` / `graph_permission` | `graph::AuthError` / `graph::PermissionError` | 2 |
 | `graph_transient` | `graph::TransientError` | 3 |
 | `graph` | any other `graph::GraphError` | 4 |
@@ -386,9 +389,11 @@ address or Graph ID) and never an exception's `what()`, which goes to stderr onl
 | `internal`, written afterwards | `the run ended without a result the Worker could write; this result was written afterwards` (`ended_without_result(restore_requested)`) |
 | `result_invalid`, written afterwards | `result_invalid`'s own message, naming how the run had ended (`result_invalid_afterwards(status, code, restore_requested)`; an ending that isn't known is `... ended error`) |
 | `job_invalid` | `the job isn't a valid job (<key>); nothing was done` (`job_invalid(key)`): `<key>` is the jobs reader's word for the first key at fault, a key of the job's format or `unknown key`, never text taken from the job |
+| `client_mismatch`, a stop (R2) | R2's message with the reason `the backup's organisation doesn't match the client's profile`: `the run stopped before the restore: the backup's organisation doesn't match the client's profile (client_mismatch); nothing was restored`. Which of the three facts was wrong is on stderr and in the log (`client error: client mismatch: ...`), never in the message |
+| `connector_unknown`, written afterwards | `the job's connector type isn't one this Worker has; nothing was done` (`connector_unknown()`); as a stop's code (never reached today) R2's message with the reason `the connector type isn't one this Worker has` |
 
-The five makers of the last five rows are in `rp/run_status.hpp` beside `result_invalid()`, so
-the words live with the codes. The four that make a result written afterwards
+The makers of those rows are in `rp/run_status.hpp` beside `result_invalid()`, so the words
+live with the codes. The four that make a result written afterwards
 (`interrupted_before_result`, `ended_without_result`, `result_invalid_afterwards`,
 `job_invalid`) give a verdict that says nothing of items: every count 0, no failed or
 unchecked item, no warning; `restore_sent` is the run record's `restore_requested`, and always
@@ -463,6 +468,37 @@ same way; its table after the check shows each item's verdict (`docs/worker-conf
 until restore point freshness is decided; finer `backup` codes need connector error
 subclasses. (A canary missing from a restore point dated after it is `fail` since Q3.1, I4
 and I5 above.)
+
+## The client check (W4.11)
+
+Before anything is cleaned, sampled or restored, the Worker holds the run's client profile
+(`rp::ClientProfile`: a job's `client`, `--profile-file`'s, or the config's eight client keys)
+to facts Veeam and Graph report. The decisions are `docs/decisions.md` 2026-10-09, W4.11; the
+rule is `rp::check_client` in `worker/include/rp/client_check.hpp` (strict, 100% line), the
+step is `check_client_step` in `src/run_pipeline.cpp`, right after the run line and its
+record (W4.8's `on_run_started`) and before the clean before. In order, the first failure
+ending the run as a `before_restore` stop with its code, nothing cleaned, no explore session,
+nothing restored, the result signed and queued as any run's:
+
+| Step | What is checked | Failure |
+|---|---|---|
+| (a) the organisation | `IConnector::client_facts(veeam_org_name)` (Veeam: the organisation found by name, its `type`, `msid` and `region` as sent) against the profile: `type` is `Office365`, `msid` is there and is `graph_tenant_id` (ASCII case-insensitive), `region` is `Worldwide`, in that order | `error client_mismatch` (exit 4); stderr `client error: client mismatch: <reason>; nothing was restored` with the reason `the backup's organisation isn't of type Office365 (<type>)`, `the backup's organisation reports no tenant ID`, `the backup's organisation's tenant ID isn't the profile's graph_tenant_id` or `the backup's organisation's region isn't Worldwide (<region>)`; `<type>` and `<region>` Veeam's words, printable ASCII only, at most 64 bytes, `none` when empty; never a tenant ID. The connector's own failure to say the facts is the backup's code (`backup_transient`, `backup_auth`, `not_in_backup` for a client Veeam doesn't know) |
+| (b) the manifest | the canary manifest's `tenant_id` is the profile's `graph_tenant_id` (`sampling::check_manifest_tenant`); until W4.11 checked before the run line, so a job of another tenant was never reported | `error config` (exit 1); stderr `client error: canary manifest: /tenant_id: isn't the client's tenant (graph_tenant_id); nothing was restored` |
+| (c) the targets | the three identity checks of `rp/target_guard_graph.hpp` (`check_restore_mailbox`, `check_restore_library`, `check_restore_onedrive_folder`) on the run's own Graph client, which signed in as the profile's tenant and app, with the guard's wording | the Graph codes: `target_guard` for a `WrongTargetError` (one `SECURITY: client check: ...` log line), else `graph_auth`, `graph_permission`, `graph_transient` or `graph` by `read_error_code`; stderr `client error: <Graph's message>; nothing was restored` |
+
+On success one stdout line between the run line and the clean before's:
+`client ok: tenant <tenant ID>, Office365, Worldwide; mailbox, library and folder resolved`.
+The guard still resolves every target per item inside `restore_sample` (W2.7) and the clean
+before still resolves each target before it deletes (W3.4): the step adds one organisation
+list (the one `list_restore_points` already made, kept by the connector) and three GETs, and
+makes every failure of a target to resolve a stop before any delete. The Graph token has been
+the profile's tenant's since W4.10, for the guard's client and the run's own alike. The result
+of a run that got past the step says `client.scope` `same_tenant` and `client.resolved`
+(below); a run that stopped in or before it says `null` for both (the schema refuses one
+without the other), and so does every result
+written afterwards. A job whose connector type this Worker lacks never reaches the step: the
+service reports it as `error connector_unknown` (`docs/worker-config.md`, "The jobs file",
+J3b).
 
 ## Cleaning the restore targets (W3.4)
 
@@ -640,8 +676,8 @@ the result invalid.
 | `worker_version` | `rp::version()` | never |
 | `run_id` | the run ID (`--run-id`, or the one the run made) | never |
 | `started_at`, `ended_at` | the wall clock where the `total` span starts and ends, `YYYY-MM-DDTHH:MM:SS.mmmZ`, UTC | the wall clock failed at that reading; `ended_at` also in the result as it is first validated (below) |
-| `connector` | `{type, api}` from `IConnector::describe()`, read once when the connector is made: `type` is its name (`veeam_m365`, the only one the schema knows), `api` its version | never |
-| `client` | the run's client profile (W4.10, `rp::ClientProfile`: a job's `client`, `--profile-file`'s, or the config's eight client keys), as `rp::result_client` cuts it: `client_id` (the job's, the Cloud's label for the client; `null` at a prompt), `tenant_id` (`graph_tenant_id`), `veeam_org_name`, and `targets` `{mailbox, site_id, library_id, onedrive_drive_id, onedrive_folder_id}` (`test_mailbox`, `test_site_id`, `test_library_id`, `test_onedrive_drive_id`, `test_onedrive_folder_id`); not the app's ID, which the profile holds and the result doesn't | never (`client_id` at a prompt) |
+| `connector` | `{type, api}` from `IConnector::describe()`, read once when the connector is made: `type` is its name (`veeam_m365`; since W4.11 the schema holds `type` to the registry's name rule, 1 to 64 of `a-z`, `0-9` and `_`, not to one word, since a result written afterwards for a job asking for a connector this Worker lacks names the type the job asked for), `api` its version | never |
+| `client` | the run's client profile (W4.10, `rp::ClientProfile`: a job's `client`, `--profile-file`'s, or the config's eight client keys), as `rp::result_client` cuts it: `client_id` (the job's, the Cloud's label for the client; `null` at a prompt), `tenant_id` (`graph_tenant_id`), `veeam_org_name`, and `targets` `{mailbox, site_id, library_id, onedrive_drive_id, onedrive_folder_id}` (`test_mailbox`, `test_site_id`, `test_library_id`, `test_onedrive_drive_id`, `test_onedrive_folder_id`); not the app's ID, which the profile holds and the result doesn't. Since W4.11 also `scope` and `resolved`: `scope` is `"same_tenant"` exactly when the client check passed ("The client check" above), and `resolved` is then `{organization {name, tenant_id, type, region} (Veeam's four texts as sent), mailbox {inbox_id}, library {name, list_id, site_url}, onedrive_folder {name, site_url}}`, the names and URLs the targets resolved to at run time (the two `name`s are `RestoreTarget` by the checks' own rule); both `null` when the run stopped in or before the check, and in every result written afterwards. The claim and what earned it, together or neither | never (`client_id` at a prompt; `scope` and `resolved` when the check didn't pass) |
 | `restore_point` | `{id, backup_time_raw, backup_time}`: the chosen point's ID, Veeam's time text as it is (what an explore session needs), and that time cut to whole seconds, `YYYY-MM-DDTHH:MM:SSZ` (`to_whole_seconds`, `src/veeam_time.hpp`) | never; `backup_time` when Veeam's text doesn't parse |
 | `sample` | `sampling::to_json(SampleRecord)` (W2.6) | the run stopped before the sample was chosen |
 | `expected` | `verification::to_json(ExpectedSet)` (W3.1, above) | the run stopped before the expected set was built |
@@ -794,7 +830,11 @@ limits can be told from a broken file (`docs/decisions.md` 2026-10-05, "W4.1 cod
 No secret, and no exception's text. But more tenant data than stdout:
 
 - `client`: the job's `client_id`, the tenant ID, the organisation's name, the test mailbox's
-  address and the four target IDs (the profile's, W4.10; not the app's ID);
+  address and the four target IDs (the profile's, W4.10; not the app's ID); and, when the
+  client check passed (W4.11), `client.resolved`: the organisation's name, tenant ID, type and
+  region as Veeam sent them, the mailbox's Inbox ID, the library's list ID and site URL
+  (`https://<tenant>.sharepoint.com/sites/...`) and the OneDrive's site URL
+  (`https://<tenant>-my.sharepoint.com/personal/<user>`), as Graph wrote them;
 - `expected.items`: subjects, sender addresses and names, Internet message IDs, sent and
   received times, and file names;
 - `sample.*.random.keys`: mailbox addresses, folder names and paths, mail subjects and
@@ -1546,6 +1586,7 @@ there: a folder a command left (`rpworker test --evidence`) stays as it is.
 | `close_as` `result_invalid` | the pipeline returned and its own result wasn't valid | `result_invalid` |
 | `close_as` `internal` | the pipeline returned and the folder couldn't be completed; `close_detail` is the run folder's word: `not_written`, `changed`, `holds_secret`, `not_signed` or `invalid` | `internal` |
 | `kind` `job_invalid` | a job that has a usable `run_id` and breaks another rule of the jobs document; no pipeline run, nothing asked of Veeam or Graph | `job_invalid` |
+| `kind` `job_invalid`, `close_as` `connector_unknown` | a valid job asking for a connector this Worker's registry doesn't have (W4.11, J3b); no pipeline run, nothing asked of Veeam or Graph; the record's `connector` is `{type: the job's, api: ""}` from its first write | `connector_unknown` |
 
 When the pipeline returns and leaves the folder incomplete, the loop first writes `close_as`
 and `close_detail` into the record and then closes, so a close that is itself cut short keeps
@@ -1572,8 +1613,8 @@ A valid `restoreproof.result.v1` with what the record knows and `null` for the r
 | `worker_version` | the Worker's that writes the result |
 | `started_at` | the record's, written right after the run line; `null` when the run line was never reached |
 | `ended_at` | `null` |
-| `connector`, `restore_point` | the record's, written right after the run line; else `{"api": "", "type": "veeam_m365"}` and the empty restore point the pipeline writes when none was chosen (`id` and `backup_time_raw` empty, `backup_time` `null`) |
-| `client` | the record's profile (the job's, W4.10) with the job's `client_id`; for a `job_invalid` record of a job whose profile couldn't be read, empty strings beside the job's `client_id` (the schema holds the strings to a length alone) |
+| `connector`, `restore_point` | the record's, written right after the run line (for a `connector_unknown` record, at its first write: the type the job asked for, `api` empty); else `{"api": "", "type": "veeam_m365"}` and the empty restore point the pipeline writes when none was chosen (`id` and `backup_time_raw` empty, `backup_time` `null`) |
+| `client` | the record's profile (the job's, W4.10) with the job's `client_id`; for a `job_invalid` record of a job whose profile couldn't be read, empty strings beside the job's `client_id` (the schema holds the strings to a length alone); `scope` and `resolved` `null` (W4.11: no result written afterwards passed the client check) |
 | `sample`, `expected`, `restore`, `check`, `cleanup` | `null` |
 | `timings` | every one of the eleven spans `null` |
 | `attachments` | `items.csv` and `veeam-session.log`, with their hashes and sizes (below) |

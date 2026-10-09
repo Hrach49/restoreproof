@@ -4,6 +4,7 @@
 // first key at fault (J3), or is a job. Failure paths first.
 
 #include "result_lab.hpp"
+#include "schema_walk.hpp"
 #include "test_support.hpp"
 
 #include <rp/canonical_json.hpp>
@@ -541,6 +542,25 @@ TEST_CASE("jobs: a file of this account's is read from disk whole", "[service_jo
 
 // --- the shared jobs vectors (W4.10 point 8) ---------------------------------
 
+TEST_CASE("jobs: the jobs schema is in the shared subset, its client the profile schema's file",
+          "[service_jobs][schema]")
+{
+    const std::string text = rp::test::read_shared("schemas/jobs.v1.json");
+    const json schema = json::parse(text);
+    CHECK(rp::test::problems_of(schema) == std::vector<std::string>{});
+    CHECK(text.find('\r') == std::string::npos);
+    CHECK(schema.at("properties").at("format").at("const") == std::string{rp::kJobsFormat});
+    const json& job = schema.at("$defs").at("job");
+    CHECK(job.at("additionalProperties") == false);
+    CHECK(job.at("properties").at("client") == json{{"$ref", "client-profile.v1.json"}});
+    // A string the reader takes whole never ends in a line break for the
+    // schema either (Python's `$` matches before one).
+    for (const char* key : {"run_id", "client_id", "restore_point"}) {
+        CAPTURE(key);
+        CHECK(job.at("properties").at(key).at("not").at("pattern") == "\n");
+    }
+}
+
 TEST_CASE("jobs: every shared jobs case is judged by the reader as the file says",
           "[service_jobs][schema]")
 {
@@ -551,7 +571,7 @@ TEST_CASE("jobs: every shared jobs case is judged by the reader as the file says
     const json& cases = cases_file.at("cases");
     REQUIRE(cases_file.at("format") == std::string{rp::kJobsFormat});
     // The file can't shrink unnoticed: the Cloud pins the same counts.
-    REQUIRE(cases.size() == 69);
+    REQUIRE(cases.size() == 72);
     std::size_t valid = 0;
     std::size_t code_refuses = 0;
     for (const json& entry : cases) {
@@ -563,7 +583,7 @@ TEST_CASE("jobs: every shared jobs case is judged by the reader as the file says
     // The base is its own canonical form: what the Worker would write.
     REQUIRE(rp::test::read_shared("testdata/jobs-v1/valid.json") == rp::canonical_json(base));
 
-    const std::size_t i = GENERATE(range(std::size_t{0}, std::size_t{69}));
+    const std::size_t i = GENERATE(range(std::size_t{0}, std::size_t{72}));
     const json& entry = cases.at(i);
     const std::string name = entry.at("name");
     INFO(name);

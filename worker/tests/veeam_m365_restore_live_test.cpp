@@ -27,6 +27,7 @@
 #include <rp/cert_export.hpp>
 #include <rp/cleaner.hpp>
 #include <rp/client_assertion.hpp>
+#include <rp/client_profile.hpp>
 #include <rp/config.hpp>
 #include <rp/connector.hpp>
 #include <rp/connector_registry.hpp>
@@ -244,6 +245,9 @@ TEST_CASE("live restore: restore_sample restores 10 canaries into the lab's rest
     connector::ConnectorOptions options;
     options.logger = logger;
     options.cert_exporter = rp::make_local_machine_cert_exporter();
+    // W4.10: the guard's Graph client signs in as the run's client.
+    options.client = rp::local_profile(config);
+    REQUIRE(options.client.has_value());
     const std::unique_ptr<connector::IConnector> made = connector::default_connector_registry()
         .create(connector::kVeeamM365, config, rp::test::live_secrets(), options);
     connector::IConnector& source = *made;

@@ -35,8 +35,8 @@ using rp::ProfileFault;
 namespace {
 
 constexpr const char* kSchemaFile = "schemas/client-profile.v1.json";
-constexpr std::size_t kCases = 97;
-constexpr std::size_t kValid = 17;
+constexpr std::size_t kCases = 104;
+constexpr std::size_t kValid = 18;
 constexpr std::size_t kCodeRefuses = 2;
 
 const json& schema()
@@ -64,6 +64,16 @@ json with(const std::string& key, json value)
     json document = base_profile();
     document[key] = std::move(value);
     return document;
+}
+
+// `count` Cyrillic letters: two UTF-8 bytes each, one character each.
+std::string two_byte_letters(std::size_t count)
+{
+    std::string text;
+    for (std::size_t i = 0; i < count; ++i) {
+        text += "\xd0\xb6";
+    }
+    return text;
 }
 
 json without(const std::string& key)
@@ -213,6 +223,10 @@ TEST_CASE("a bad profile is reported with its first key at fault and config.json
         Row{"a bidi control in the organisation's name", with("veeam_org_name", "a\xe2\x80\xae" "b"),
             {"veeam_org_name", "must not contain control characters"}},
         Row{"an organisation name of 1025 characters", with("veeam_org_name", std::string(1025, 'o')),
+            {"veeam_org_name", "must be at most 1024 characters"}},
+        // The limit counts characters as the schema does, not UTF-8 bytes.
+        Row{"an organisation name of 1025 two-byte characters",
+            with("veeam_org_name", two_byte_letters(1025)),
             {"veeam_org_name", "must be at most 1024 characters"}},
         Row{"a mailbox of 1025 characters",
             with("test_mailbox", "restoretest@" + std::string(1009, 'a') + ".com"),

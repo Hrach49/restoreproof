@@ -40,7 +40,10 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 128,
-          "pattern": "^[A-Za-z0-9._-]{1,128}$"
+          "pattern": "^[A-Za-z0-9._-]{1,128}$",
+          "not": {
+            "pattern": "\n"
+          }
         },
         "client_id": {
           "type": [
@@ -49,7 +52,11 @@
           ],
           "minLength": 1,
           "maxLength": 128,
-          "pattern": "^[ -~]{1,128}$"
+          "pattern": "^[ -~]{1,128}$",
+          "not": {
+            "type": "string",
+            "pattern": "\n"
+          }
         },
         "client": {
           "$ref": "client-profile.v1.json"
@@ -67,7 +74,10 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 128,
-          "pattern": "^[A-Za-z0-9-]{1,128}$"
+          "pattern": "^[A-Za-z0-9-]{1,128}$",
+          "not": {
+            "pattern": "\n"
+          }
         },
         "screenshots_enabled": {
           "type": "boolean"
@@ -84,7 +94,6 @@
         }
       },
       "not": {
-        "type": "object",
         "required": [
           "sample_mail",
           "sample_sp",

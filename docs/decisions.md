@@ -7,6 +7,30 @@ Format: date, decision, reason, alternatives rejected.
 
 ---
 
+## 2026-10-09 — W4.10 code review: findings 1 to 4 and 9 to 11 of fifteen fixed (the schemas' line-break guard, the organisation name's limit in characters, the jobs schema walked, the live restore test's profile, two strict names, the audit's case A, the stale docs); 5 to 8 and 12 to 15 open (proposed)
+
+A review of the branch `w4.10-client-profile` gave fifteen findings. The owner asked for 1 to 4 and 9 to 11; each was fixed test-first where a test can show it. The numbers are the review's order as reported to the owner.
+
+**Fixed.**
+
+1. **The live restore test had no client.** `tests/veeam_m365_restore_live_test.cpp` made its connector without `ConnectorOptions::client`, so since W4.10 `restore_sample` refused it (`the connector has no client profile; nothing was restored`). It now gives the config's local profile and requires that there is one. Compiled, **not run live**: it writes to the lab tenant and needs an elevated shell.
+2. **A value ending in a line break.** Python's `$` matches before a final `\n`, so `client-profile.v1.json` and `jobs.v1.json` accepted `"b!abc\n"`, a mailbox, a site ID, a folder ID, a `run_id`, a `client_id` and a `restore_point` with one, each of which the Worker's readers refuse. Every variable-length pattern of both schemas now carries W4.1's `not: {pattern: "\n"}`; `client_id`, which may be `null`, carries `not: {type: string, pattern: "\n"}`, since a bare `not: {pattern}` refuses `null`. The GUIDs need none (`minLength` = `maxLength`). `veeam_org_name` has no pattern and stays `code_refuses`. Eight new shared cases, seen failing in Python before the schemas changed.
+3. **`veeam_org_name`'s 1024 was counted in bytes.** The schema's `maxLength` counts code points; `client_profile.cpp` counted `size()`. It now counts every byte that isn't a UTF-8 continuation. Two new shared cases, 1024 two-byte letters (valid) and 1025 (not). `test_mailbox` is ASCII by its rule, so nothing changes for it.
+4. **`jobs.v1.json` was never walked.** `tests/service_jobs_test.cpp` now runs the shared-subset walk over it, as the entry's point 8 says, and holds `client` to the one `$ref` and the three strings to their guard. The walk found what the review said: the `not` of the sample sizes named `type: object` without closing it. The `type` is gone from the `not` (the job itself is an object already), which changes nothing it accepts.
+9. **Docs behind the code.** CLAUDE.md's "Restore targets" rule and its W4.8 paragraph still said the recovery clean is made only when the config's client is the record's; `docs/verification.md` said the same, and `docs/worker-config.md` that `client_id` is `null` until jobs carry one. All four now say what W4.10 built: the clean runs by the record's own profile, and the result's `client_id` is the job's.
+10. **Deciding code outside the strict gate.** `src/client_profile.cpp` (is a job's or a record's client a profile) and `src/strict_json.hpp` (a key twice, a document nested too deep) hold what the strict `service_jobs.cpp` and `service_recovery.cpp` decided before W4.10. `client_profile` and `strict_json` are now strict names in `worker/tools/coverage_gate.py`; both files were at 100% on the last report (114 of 114, 23 of 23). `src/client_command.cpp` is not matched and stays outside.
+11. **The audit's case A.** The entry's point 10 puts `restore --profile-file` into case A; only case C had gained `client check`. Case A now runs with a profile file, and then once more with a file that is no profile (`config error: --profile-file ...`, exit 1), both searched.
+
+The counts: `shared/testdata/client-profile-v1/cases.json` 104 cases (18 valid, 86 invalid, 2 `code_refuses`), `shared/testdata/jobs-v1/cases.json` 72 (17 valid, 55 invalid, 3 `code_refuses`). The runs: `ctest --preset dev` passed, 2160 tests (the live ones skipped); Cloud's pytest 920 passed; the gate's own tests 22; the gate on the last coverage report passes with the two new names. No new coverage run was made.
+
+**Open.**
+
+- 5: the canary manifest is one `seed-manifest.json` beside the config, and `check_manifest` holds its tenant to the profile's. A job for a second tenant ends before its run line as a `config error`, with no folder and no result, and the stub offers it again at every poll. Whether a job carries or names its manifest is undecided (W4.11 or W5.1).
+- 6: the record goes whatever the recovery clean answers, on "every run cleans before", which holds only while the next job is the same client's.
+- 7: `worker_body.cpp` maps a job without a profile to `args.client = nullptr`, which `run_pipeline` reads as "at a prompt"; only the loop's own check keeps such a job from the config's local profile.
+- 8: the run's client is split between `RestoreSpec` (organisation, targets) and the optional `ConnectorOptions::client` (tenant, app), with a refusal at run time in place of a required argument. Finding 1 was an instance.
+- 12 to 15: `read_key` and `shape_problem` beside `config.cpp`'s own, `run_check` beside `run_list`, `clean_restore_targets`' unused `Config`, and the harness script's `$Profile` and missing `try`/`finally`.
+
 ## 2026-10-09 — W4.10 build notes and the live Done-when: the profile in one schema and one type, the job's `client`, the run and the record on it, `rpworker client check`; the lab's three targets listed from a file with no client keys in the config, and the service's run on a job's profile sent and verified (proposed)
 
 W4.10 (#133) was built as the entry of 2026-10-09 says, test-first, in six commits of test and code together. This records where the build left the entry, what it settled beyond it, the runs, and what is open. `docs/worker-config.md` ("`rpworker client check`", "The jobs file", "`running.json`"), `docs/verification.md`, `docs/testing.md` and `docs/glossary.md` say the rest.

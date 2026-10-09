@@ -35,13 +35,19 @@
       "type": "string",
       "minLength": 15,
       "maxLength": 1024,
-      "pattern": "^[Rr][Ee][Ss][Tt][Oo][Rr][Ee][Tt][Ee][Ss][Tt]@[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)+$"
+      "pattern": "^[Rr][Ee][Ss][Tt][Oo][Rr][Ee][Tt][Ee][Ss][Tt]@[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)+$",
+      "not": {
+        "pattern": "\n"
+      }
     },
     "test_site_id": {
       "type": "string",
       "minLength": 90,
       "maxLength": 152,
-      "pattern": "^[A-Za-z0-9-]{1,63}\\.[Ss][Hh][Aa][Rr][Ee][Pp][Oo][Ii][Nn][Tt]\\.[Cc][Oo][Mm],[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12},[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$"
+      "pattern": "^[A-Za-z0-9-]{1,63}\\.[Ss][Hh][Aa][Rr][Ee][Pp][Oo][Ii][Nn][Tt]\\.[Cc][Oo][Mm],[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12},[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$",
+      "not": {
+        "pattern": "\n"
+      }
     },
     "test_library_id": {
       "$ref": "#/$defs/drive_id"
@@ -53,7 +59,10 @@
       "type": "string",
       "minLength": 1,
       "maxLength": 200,
-      "pattern": "^[A-Za-z0-9!_-]{1,200}$"
+      "pattern": "^[A-Za-z0-9!_-]{1,200}$",
+      "not": {
+        "pattern": "\n"
+      }
     }
   },
   "$defs": {
@@ -67,7 +76,10 @@
       "type": "string",
       "minLength": 3,
       "maxLength": 202,
-      "pattern": "^b![A-Za-z0-9_-]{1,200}$"
+      "pattern": "^b![A-Za-z0-9_-]{1,200}$",
+      "not": {
+        "pattern": "\n"
+      }
     }
   }
 }

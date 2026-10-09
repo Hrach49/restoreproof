@@ -69,6 +69,14 @@ std::optional<std::string_view> shape_problem(std::string_view key, std::string_
     return std::nullopt;
 }
 
+// The value's length as the schema's maxLength counts it: in code points,
+// not bytes (the text is UTF-8: every byte but a continuation starts one).
+std::size_t code_points(std::string_view text)
+{
+    return static_cast<std::size_t>(std::ranges::count_if(
+        text, [](char c) { return (static_cast<unsigned char>(c) & 0xC0u) != 0x80u; }));
+}
+
 bool is_text_key(std::string_view key)
 {
     return key == "veeam_org_name" || key == "test_mailbox";
@@ -93,7 +101,7 @@ std::optional<std::string_view> read_key(const json& object, std::string_view ke
     if (has_control_character(value)) {
         return "must not contain control characters";
     }
-    if (is_text_key(key) && value.size() > kMaxProfileText) {
+    if (is_text_key(key) && code_points(value) > kMaxProfileText) {
         return "must be at most 1024 characters";
     }
     if (const std::optional<std::string_view> problem = shape_problem(key, value)) {

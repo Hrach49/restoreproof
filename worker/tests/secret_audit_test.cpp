@@ -97,6 +97,18 @@ Args with_run_id(std::string_view run_id, Args args = kThree)
     return args;
 }
 
+// The profile a job would carry, written as a file from the config's eight
+// client keys (W4.10): the file's path, for --profile-file.
+std::string write_profile(AuditLab& lab)
+{
+    json profile = {{"format", std::string{rp::kClientProfileFormat}}};
+    const json config_doc = json::parse(file_bytes(lab.config_path).value());
+    for (const std::string_view key : rp::kClientProfileKeys) {
+        profile[std::string{key}] = config_doc.at(key);
+    }
+    return utf8(lab.dir.write("profile.json", profile.dump(2)));
+}
+
 } // namespace
 
 // --- the shapes: the fixture scan's cases, which the C++ side is held to too -----------
@@ -133,18 +145,37 @@ TEST_CASE("secret audit: the shapes are the fixture scan's, on its shared cases"
 
 // --- A to H: the pipeline ------------------------------------------------------------
 
-TEST_CASE("secret audit A: rpworker restore, a pass", "[secret_audit]")
+TEST_CASE("secret audit A: rpworker restore --profile-file, a pass; a profile file that is no "
+          "profile",
+          "[secret_audit]")
 {
     AuditLab lab;
+    // W4.10: the run's client read from a profile file, as a job's would be.
+    const std::string profile_file = write_profile(lab);
+    Args args = with_run_id("audit-a");
+    args.insert(args.end(), {"--profile-file", profile_file});
 
-    const Run run = lab.run(with_run_id("audit-a"));
+    const Run run = lab.run(args);
 
     INFO(run.out);
     INFO(run.err);
     REQUIRE(run.exit_code == rp::exit_code::ok);
     REQUIRE_THAT(run.out, ContainsSubstring("\nstatus pass: "));
-    lab.collect("restore", run);
+    lab.collect("restore --profile-file", run);
+
+    // And the refusal: a file that is no profile ends the command before the
+    // vault is read, its one line naming the file and never a value of it.
+    const std::string broken =
+        utf8(lab.dir.write("broken-profile.json", R"({"format":"restoreproof.client-profile.v1"})"));
+    Args refused_args = with_run_id("audit-a-refused");
+    refused_args.insert(refused_args.end(), {"--profile-file", broken});
+    const Run refused = lab.run(refused_args);
+    INFO(refused.err);
+    REQUIRE(refused.exit_code == rp::exit_code::config);
+    REQUIRE_THAT(refused.err, ContainsSubstring("config error: --profile-file "));
+    lab.collect("restore --profile-file, refused", refused);
     lab.finish();
+    CHECK(lab.outputs.has_output("temp/profile.json"));
     // The run signed in to Graph: the assertion was searched for.
     CHECK(audit::client_assertions_in(lab.targets.graph).size() >= 1);
 }
@@ -264,12 +295,7 @@ TEST_CASE("secret audit C: test --evidence --outbox --record, a pass; outbox flu
     // W4.10: client check --profile-file --record on the same targets, the
     // profile a job would carry written as a file from the config's keys
     // (IDs, a name and an address: nothing in it is a secret value).
-    json profile = {{"format", std::string{rp::kClientProfileFormat}}};
-    const json config_doc = json::parse(file_bytes(lab.config_path).value());
-    for (const std::string_view key : rp::kClientProfileKeys) {
-        profile[std::string{key}] = config_doc.at(key);
-    }
-    const std::string profile_file = utf8(lab.dir.write("profile.json", profile.dump(2)));
+    const std::string profile_file = write_profile(lab);
     const std::string client_record = utf8(lab.dir.path() / "rec-client");
     std::ostringstream client_out;
     std::ostringstream client_err;

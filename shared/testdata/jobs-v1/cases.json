@@ -1028,6 +1028,39 @@
           "value": null
         }
       ]
+    },
+    {
+      "name": "run-id-trailing-newline",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/jobs/0/run_id",
+          "value": "job-0001\n"
+        }
+      ]
+    },
+    {
+      "name": "client-id-trailing-newline",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/jobs/0/client_id",
+          "value": "client-7\n"
+        }
+      ]
+    },
+    {
+      "name": "restore-point-trailing-newline",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/jobs/0/restore_point",
+          "value": "latest\n"
+        }
+      ]
     }
   ]
 }

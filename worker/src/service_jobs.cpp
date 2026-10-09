@@ -2,8 +2,8 @@
 
 #include "job_rules.hpp"
 #include "path_utf8.hpp"
+#include "strict_json.hpp"
 
-#include <rp/canonical_json.hpp>
 #include <rp/sha256.hpp>
 
 #include <nlohmann/json.hpp>
@@ -13,7 +13,6 @@
 #include <cstdint>
 #include <format>
 #include <limits>
-#include <set>
 #include <utility>
 
 namespace rp {
@@ -36,41 +35,6 @@ constexpr std::string_view kCanaryCursor = "canary_cursor";
 // Every key a job may have.
 constexpr std::array kJobKeys{kRunId,        kClientId,    kSampleMail, kSampleSp,
                               kSampleOd,     kRestorePoint, kScreenshots, kCanaryCursor};
-
-// `text` as JSON, or nothing: nested past kMaxJsonNesting, not JSON (whatever
-// the parser calls it), or an object at any depth with a key twice, of which
-// nlohmann would silently keep the last.
-std::optional<json> parse_strict(std::string_view text)
-{
-    // Nested deeper than any jobs document: not handed to the parser at all.
-    if (json_nesting_depth(text) > kMaxJsonNesting) {
-        return std::nullopt;
-    }
-    // The keys of each object being read, innermost last.
-    std::vector<std::set<std::string>> open;
-    bool twice = false;
-    const auto watch = [&](int, json::parse_event_t event, json& parsed) {
-        if (event == json::parse_event_t::object_start) {
-            open.emplace_back();
-        } else if (event == json::parse_event_t::key) {
-            twice |= !open.back().insert(parsed.get_ref<const std::string&>()).second;
-        } else if (event == json::parse_event_t::object_end) {
-            open.pop_back();
-        }
-        return true;
-    };
-    std::optional<json> document;
-    try {
-        document = json::parse(text.begin(), text.end(), watch);
-    } catch (const json::exception&) {
-        // Its message quotes the text around the error: never passed on.
-        document.reset();
-    }
-    if (twice) {
-        document.reset();
-    }
-    return document;
-}
 
 // An integer value as a signed one, or nothing for any other kind (a float,
 // 1.0 too). One past the signed range reads as the range's largest, which
@@ -285,7 +249,7 @@ JobsDocument parse_jobs(std::string_view text)
 {
     JobsDocument out;
     out.sha256 = sha256_hex(text);
-    const std::optional<json> document = parse_strict(text);
+    const std::optional<json> document = parse_strict_json(text);
     if (!document) {
         return failed(std::move(out), JobsFault::not_json);
     }

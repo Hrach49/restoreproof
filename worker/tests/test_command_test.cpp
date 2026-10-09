@@ -217,6 +217,27 @@ private:
 
 // --- Failure paths: the command line and --json --------------------------------------
 
+// W4.11: what the client check resolves on the Harness's fixtures, the
+// result's client.resolved of a run that got past it.
+json resolved_of_lab()
+{
+    const json drive = rp::test::load_fixture_json("graph", "restoretarget-drive-200").at("body");
+    const json folder = rp::test::load_fixture_json("graph", "onedrive-folder-200").at("body");
+    const json inbox = rp::test::load_fixture_json("graph", "mailbox-inbox-200").at("body");
+    return json{{"organization",
+                 {{"name", kOrgName},
+                  {"tenant_id", std::string{kTenant}},
+                  {"type", "Office365"},
+                  {"region", "Worldwide"}}},
+                {"mailbox", {{"inbox_id", inbox.at("id")}}},
+                {"library",
+                 {{"name", "RestoreTarget"},
+                  {"list_id", drive.at("sharePointIds").at("listId")},
+                  {"site_url", drive.at("sharePointIds").at("siteUrl")}}},
+                {"onedrive_folder",
+                 {{"name", "RestoreTarget"}, {"site_url", folder.at("sharepointIds").at("siteUrl")}}}};
+}
+
 TEST_CASE("test: a command line it doesn't understand is a usage error, before the config; there "
           "is no --seed",
           "[test_command]")
@@ -704,10 +725,22 @@ TEST_CASE("test --json: the result is valid and has the seventeen keys for each 
          [](TestLab& lab) {
              json edited = rp::test::load_fixture_json("graph", "restoretarget-drive-200");
              edited["body"]["name"] = "Dokumenty";
+             // W4.11: the client check sees the library as recorded first.
+             lab.targets.graph.on(rp::HttpMethod::get, gl::drive_url(),
+                                  {rp::test::load_fixture("graph", "restoretarget-drive-200"),
+                                   rp::test::to_response(edited)});
+         },
+         three, rp::exit_code::service, "error target_guard", nothing_chosen},
+        // W4.11: the client check refuses before the clean: no clean ran.
+        {"the client check's guard refuses",
+         [](TestLab& lab) {
+             json edited = rp::test::load_fixture_json("graph", "restoretarget-drive-200");
+             edited["body"]["name"] = "Dokumenty";
              lab.targets.graph.on(rp::HttpMethod::get, gl::drive_url(),
                                   {rp::test::to_response(edited)});
          },
-         three, rp::exit_code::service, "error target_guard", nothing_chosen},
+         three, rp::exit_code::service, "error target_guard",
+         {"sample", "expected", "restore", "check", "cleanup"}},
         {"choose_sample throws",
          [](TestLab& lab) {
              lab.fake.candidates_throw = [] {
@@ -798,7 +831,7 @@ TEST_CASE("test --json: the result is valid and has the seventeen keys for each 
          "error internal",
          {"sample", "expected", "restore", "check", "cleanup"}},
     };
-    const Case& c = cases[GENERATE(range(std::size_t{0}, std::size_t{15}))];
+    const Case& c = cases[GENERATE(range(std::size_t{0}, std::size_t{16}))];
     CAPTURE(c.name);
     TestLab lab;
     lab.fake.pool.mail = {carol_mail(1)};
@@ -833,15 +866,21 @@ TEST_CASE("test --json: the result is valid and has the seventeen keys for each 
     CHECK(result.at("ended_at") == "2026-09-28T12:00:00.000Z");
     CHECK(result.at("connector") == json{{"type", "veeam_m365"}, {"api", "1"}});
     const gl::Lab_values& v = gl::lab_values();
-    CHECK(result.at("client") == json{{"client_id", nullptr},
-                                      {"tenant_id", kTenant},
-                                      {"veeam_org_name", kOrgName},
-                                      {"targets",
-                                       {{"mailbox", v.mailbox},
-                                        {"site_id", v.site_id},
-                                        {"library_id", v.library_id},
-                                        {"onedrive_drive_id", v.onedrive_drive_id},
-                                        {"onedrive_folder_id", v.folder_id}}}});
+    // W4.11: a run that got past the client check says so; one that stopped
+    // in or before it (no clean ran) says null for both.
+    const bool checked = !c.nulls.contains("cleanup");
+    CHECK(result.at("client") ==
+          json{{"client_id", nullptr},
+               {"tenant_id", kTenant},
+               {"veeam_org_name", kOrgName},
+               {"targets",
+                {{"mailbox", v.mailbox},
+                 {"site_id", v.site_id},
+                 {"library_id", v.library_id},
+                 {"onedrive_drive_id", v.onedrive_drive_id},
+                 {"onedrive_folder_id", v.folder_id}}},
+               {"scope", checked ? json("same_tenant") : json()},
+               {"resolved", checked ? resolved_of_lab() : json()}});
     CHECK(result.at("restore_point") == json{{"id", kNewestId},
                                              {"backup_time_raw", kNewestTime},
                                              {"backup_time", "2026-09-29T22:00:45Z"}});
@@ -939,7 +978,7 @@ TEST_CASE("test: a result that isn't valid when the status is decided is error r
     CAPTURE(c.name);
     TestLab lab;
     lab.fake.pool.mail = {carol_mail(1)};
-    lab.fake.info.name = "fake";
+    lab.fake.info.name = "Fake Connector";
     c.setup(lab);
     int writes = 0;
     lab.write_summary = [&](const std::filesystem::path&, std::string_view) {
@@ -983,7 +1022,7 @@ TEST_CASE("test: a result that isn't valid when the status is decided is error r
     CHECK(count_of(run.err, "result error: ") == 1);
     CHECK_THAT(run.err, ContainsSubstring(c.result_error));
     CHECK_THAT(run.err, EndsWith("json error: " + lab.json_arg() + kNotValid));
-    CHECK_THAT(run.err, !ContainsSubstring("fake"));
+    CHECK_THAT(run.err, !ContainsSubstring("Fake"));
     CHECK_THAT(run.out, !ContainsSubstring("wrote "));
     CHECK(writes == 0);
     CHECK_FALSE(std::filesystem::exists(lab.json_path()));
@@ -994,7 +1033,7 @@ TEST_CASE("test: without --json a result that isn't valid is still error result_
           "[test_command][result]")
 {
     TestLab lab;
-    lab.fake.info.name = "fake";
+    lab.fake.info.name = "Fake Connector";
 
     const Run run = lab.run({"--run-id", kRunId, "--mail", "1", "--sp", "0", "--od", "0"});
 
@@ -1413,6 +1452,18 @@ std::vector<std::pair<std::string, std::string>> shared_names()
         // The lab Veeam server's repository, the first half of a restore
         // point's ID.
         {kLabRepositoryId, "bbbbbbbb-0000-4000-8000-000000000001"},
+        // W4.11: what the client check resolved (client.resolved): the
+        // OneDrive's and the site's URLs, the Inbox's ID and the list's.
+        {"alice_restoreprooflab_onmicrosoft_com", "alice_contoso_onmicrosoft_com"},
+        {"restoreprooflab-my.sharepoint.com", "contoso-my.sharepoint.com"},
+        {"restoreprooflab.sharepoint.com", "contoso.sharepoint.com"},
+        {rp::test::load_fixture_json("graph", "mailbox-inbox-200").at("body").at("id"),
+         "AAMkADAwMDAwMDAwLUluYm94"},
+        {rp::test::load_fixture_json("graph", "restoretarget-drive-200")
+             .at("body")
+             .at("sharePointIds")
+             .at("listId"),
+         "cccccccc-0000-0000-0000-000000000003"},
     };
 }
 
@@ -1763,7 +1814,7 @@ TEST_CASE("test --evidence: a run that ended result_invalid leaves the text file
           "[test_command][evidence][result]")
 {
     TestLab lab({{"screenshots_enabled", true}});
-    lab.fake.info.name = "fake";
+    lab.fake.info.name = "Fake Connector";
     // No result to list a screenshot: none is asked for.
     int captures = 0;
     lab.capture_screenshot =
@@ -3500,12 +3551,12 @@ const std::vector<ReportCase>& report_cases()
          rp::exit_code::ok, kRunId, true, "pass", "-", RunFolderState::complete, "", false},
         // result_invalid, and what it replaced.
         {"a result that isn't valid, the run a pass",
-         [](Lab& lab, const OutboxRun&, Args&) { lab.fake.info.name = "fake"; },
+         [](Lab& lab, const OutboxRun&, Args&) { lab.fake.info.name = "Fake Connector"; },
          rp::exit_code::config, kRunId, true, "error result_invalid", "pass",
          RunFolderState::incomplete, "invalid", false},
         {"a result that isn't valid, the run an error",
          [](Lab& lab, const OutboxRun&, Args&) {
-             lab.fake.info.name = "fake";
+             lab.fake.info.name = "Fake Connector";
              lab.fake.candidates_throw = [] {
                  throw rp::connector::TransientError("Veeam unreachable");
              };
@@ -3762,4 +3813,61 @@ TEST_CASE("test --evidence: after a stop the TSA isn't asked: not timestamped af
     CHECK(names_in(lab.run_folder()) == kUnstampedFolder);
     CHECK(lab.tsa_http.requests().empty());
     CHECK(lab.slept.empty());
+}
+
+// --- The result's client.scope and client.resolved (W4.11 point 7) --------------------------
+
+TEST_CASE("test --json: a run whose client check passed says scope same_tenant and what the "
+          "check resolved; one it stopped says null for both",
+          "[test_command][json][client_check][w4.11]")
+{
+    namespace gl = rp::test::graph_lab;
+    TestLab lab;
+    lab.fake.pool.mail = {carol_mail(1)};
+    std::string written;
+    lab.write_summary = [&](const std::filesystem::path&, std::string_view text) {
+        written = std::string{text};
+        return true;
+    };
+    const bool mismatch = GENERATE(false, true);
+    if (mismatch) {
+        lab.fake.facts = connector::ClientFacts{kOrgName, "11111111-2222-3333-4444-555555555555",
+                                                "Office365", "Worldwide"};
+    }
+
+    const Run run = lab.run({"--json", "run.json", "--run-id", kRunId, "--mail", "2", "--sp", "1",
+                             "--od", "1"});
+
+    REQUIRE_FALSE(written.empty());
+    const json result = json::parse(written);
+    REQUIRE(rp::validate_result(result).valid);
+    const json& client = result.at("client");
+    REQUIRE(client.size() == 6);
+    if (mismatch) {
+        CHECK(run.exit_code == rp::exit_code::service);
+        CHECK(result.at("status").at("error_code") == "client_mismatch");
+        CHECK(client.at("scope").is_null());
+        CHECK(client.at("resolved").is_null());
+        CHECK(result.at("cleanup").is_null());
+        return;
+    }
+    CHECK(run.exit_code == rp::exit_code::ok);
+    CHECK(client.at("scope") == "same_tenant");
+    const json drive = rp::test::load_fixture_json("graph", "restoretarget-drive-200").at("body");
+    const json folder = rp::test::load_fixture_json("graph", "onedrive-folder-200").at("body");
+    const json inbox = rp::test::load_fixture_json("graph", "mailbox-inbox-200").at("body");
+    CHECK(client.at("resolved") ==
+          json{{"organization",
+                {{"name", kOrgName},
+                 {"tenant_id", std::string{kTenant}},
+                 {"type", "Office365"},
+                 {"region", "Worldwide"}}},
+               {"mailbox", {{"inbox_id", inbox.at("id")}}},
+               {"library",
+                {{"name", "RestoreTarget"},
+                 {"list_id", drive.at("sharePointIds").at("listId")},
+                 {"site_url", drive.at("sharePointIds").at("siteUrl")}}},
+               {"onedrive_folder",
+                {{"name", "RestoreTarget"},
+                 {"site_url", folder.at("sharepointIds").at("siteUrl")}}}});
 }

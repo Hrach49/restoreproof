@@ -188,10 +188,11 @@ TEST_CASE("the result schema's top level is the seventeen keys, all required", "
     REQUIRE(std::set<std::string>(required.begin(), required.end()) == wanted);
     REQUIRE(required.size() == 17);
 
-    // status and timings are objects, never null; no scope until W4.11.
+    // status and timings are objects, never null; scope and resolved since W4.11.
     REQUIRE(at("/properties/status") == json{{"$ref", "#/$defs/status"}});
     REQUIRE(at("/properties/timings") == json{{"$ref", "#/$defs/timings"}});
-    REQUIRE_FALSE(at("/properties/client/properties").contains("scope"));
+    REQUIRE(at("/properties/client/properties").contains("scope"));
+    REQUIRE(at("/properties/client/properties").contains("resolved"));
     for (const char* later : {"signature", "tsa_token", "tsa_error", "worker_id",
                               "bundle_sha256", "command", "exit_code", "veeam_org_name"}) {
         INFO(later);
@@ -216,10 +217,13 @@ TEST_CASE("the result schema's enums are the code's words", "[result_schema]")
         REQUIRE(at("/properties/format/const") == text(rp::kResultFormat));
         REQUIRE(at("/$defs/sample/properties/algorithm/const") ==
                 text(rp::sampling::kAlgorithm));
-        REQUIRE(list("/properties/connector/properties/type/enum") ==
-                rp::connector::default_connector_registry().names());
-        REQUIRE(list("/properties/connector/properties/type/enum") ==
-                std::vector<std::string>{text(rp::connector::kVeeamM365)});
+        // W4.11: a connector's registry name, by the rule the registry holds
+        // a name to; every registered name passes it.
+        REQUIRE(at("/properties/connector/properties/type/pattern") == "^[a-z0-9_]{1,64}$");
+        REQUIRE(at("/properties/connector/properties/type/not/pattern") == "\n");
+        for (const std::string& name : rp::connector::default_connector_registry().names()) {
+            REQUIRE(rp::connector::is_connector_name(name));
+        }
     }
 
     SECTION("the status's codes are run_status's lists")
@@ -509,9 +513,9 @@ TEST_CASE("the shared result documents validate as they say", "[result_schema]")
     const json& cases = cases_file().at("cases");
     REQUIRE(cases_file().at("format") == std::string{rp::kResultFormat});
     // The file can't shrink unnoticed.
-    REQUIRE(cases.size() == 185);
+    REQUIRE(cases.size() == 201);
 
-    const std::size_t i = GENERATE(range(std::size_t{0}, std::size_t{185}));
+    const std::size_t i = GENERATE(range(std::size_t{0}, std::size_t{201}));
     const json& entry = cases.at(i);
     const std::string name = entry.at("name");
     INFO(name);
@@ -539,7 +543,7 @@ TEST_CASE("the shared result documents' names are unique and both kinds are ther
         REQUIRE(entry.size() == 3);
         REQUIRE(entry.at("patch").is_array());
     }
-    REQUIRE(valid == 47);
+    REQUIRE(valid == 52);
     REQUIRE(names.contains("base"));
     // valid.json is canonical-json-v1: one line, no trailing newline.
     const std::string text = rp::test::read_shared("testdata/result-v1/valid.json");
@@ -681,7 +685,7 @@ TEST_CASE("validate_result names where, never what", "[result_schema]")
     SECTION("the first of several is the one named, and all are counted")
     {
         json document = with("/format", "x");
-        document["connector"]["type"] = "y";
+        document["connector"]["type"] = "Y";
         document["status"]["restore_sent"] = "z";
         const ResultValidation result = validate_result(document);
         REQUIRE_FALSE(result.valid);

@@ -438,26 +438,21 @@ TEST_CASE("restore: the vault --vault names is read, else the default one, after
     }
 }
 
-TEST_CASE("restore: a manifest that doesn't load or isn't the tenant's is a config error, "
-          "before the connector",
+// W4.11: a manifest of another tenant is the client check's, after the run
+// line ("the client check: a manifest of another tenant" below).
+TEST_CASE("restore: a manifest that doesn't load is a config error, before the connector",
           "[restore_command]")
 {
     const auto [what, message] = GENERATE(table<std::string, std::string>({
         {"missing", "cannot read the file"},
         {"not json", "config error: canary manifest: isn't valid JSON\n"},
-        {"another tenant",
-         "config error: canary manifest: /tenant_id: isn't the client's tenant (graph_tenant_id)\n"},
     }));
     CAPTURE(what);
     Harness lab;
     if (what == "missing") {
         std::filesystem::remove(lab.manifest_path);
-    } else if (what == "not json") {
-        lab.dir.write("seed-manifest.json", "{not json");
     } else {
-        json manifest = json::parse(lab_manifest_text());
-        manifest["tenant_id"] = "00000000-0000-4000-8000-000000000001";
-        lab.dir.write("seed-manifest.json", manifest.dump());
+        lab.dir.write("seed-manifest.json", "{not json");
     }
 
     const Run run = lab.run({});
@@ -893,10 +888,14 @@ TEST_CASE("restore: the run ID is flushed before the sample is chosen, the heade
 
     CHECK(code == rp::exit_code::ok);
     CHECK(err.empty());
-    // The run line before the clean before (W3.4), its line before the sample.
-    CHECK(synced_at_candidates == std::vector<std::string>{expected_run_lines(), expected_intro()});
-    CHECK(synced_at_restore == std::vector<std::string>{expected_run_lines(), expected_intro(),
-                                                         expected_header()});
+    // The run line before the client check (W4.11), its line before the
+    // clean before (W3.4), that line before the sample.
+    CHECK(synced_at_candidates ==
+          std::vector<std::string>{expected_run_lines(), expected_run_lines() + client_ok_line(),
+                                   expected_intro()});
+    CHECK(synced_at_restore ==
+          std::vector<std::string>{expected_run_lines(), expected_run_lines() + client_ok_line(),
+                                   expected_intro(), expected_header()});
     CHECK(lab.fake.restore_calls == 1);
 }
 
@@ -1075,7 +1074,7 @@ TEST_CASE("restore: a result that isn't valid restoreproof.result.v1 is error re
     Harness lab;
     lab.fake.pool.mail = {carol_mail(1)};
     // The one connector the result knows is veeam_m365.
-    lab.fake.info.name = "fake";
+    lab.fake.info.name = "Fake Connector";
 
     const Run run = lab.run({"--run-id", kRunId, "--mail", "2", "--sp", "1", "--od", "0"});
 
@@ -1537,8 +1536,8 @@ TEST_CASE("restore: without --run-id a run ID is made; with it, it is reused and
         CHECK(run.exit_code == rp::exit_code::ok);
         CHECK(lab.run_id_calls == 1);
         CHECK_THAT(run.out, ContainsSubstring("\nrun " + kGeneratedRunId + "  seed " +
-                                              seed_of(kGeneratedRunId) + "\n" + kCleanBefore +
-                                              "canary cursor "));
+                                              seed_of(kGeneratedRunId) + "\n" + client_ok_line() +
+                                              kCleanBefore + "canary cursor "));
     }
     SECTION("reused")
     {
@@ -1546,7 +1545,8 @@ TEST_CASE("restore: without --run-id a run ID is made; with it, it is reused and
         CHECK(run.exit_code == rp::exit_code::ok);
         CHECK(lab.run_id_calls == 0);
         CHECK_THAT(run.out, ContainsSubstring("\nrun repeat-me  seed " + seed_of("repeat-me") +
-                                              "\n" + kCleanBefore + "canary cursor "));
+                                              "\n" + client_ok_line() + kCleanBefore +
+                                              "canary cursor "));
     }
 }
 
@@ -1822,12 +1822,13 @@ TEST_CASE("restore: a failure reading the targets before the restore stops the r
     CAPTURE(c.name);
     Harness lab;
     if (c.fixture.empty()) {
-        // The clean before (W3.4) sees the library as recorded; the snapshot
-        // after it, another one.
+        // The client check (W4.11) and the clean before (W3.4) see the
+        // library as recorded; the snapshot after them, another one.
         json drive = rp::test::load_fixture_json("graph", "restoretarget-drive-200");
         drive["body"]["name"] = "Dokumenty";
         lab.targets.graph.on(rp::HttpMethod::get, gl::drive_url(),
                              {rp::test::load_fixture("graph", "restoretarget-drive-200"),
+                              rp::test::load_fixture("graph", "restoretarget-drive-200"),
                               rp::test::to_response(drive)});
     } else {
         const rp::HttpResponse answer = rp::test::load_fixture("graph", c.fixture);
@@ -2309,13 +2310,16 @@ TEST_CASE("restore: a clean before the guard refuses stops the run before the sa
     Harness lab;
     json edited = rp::test::load_fixture_json("graph", fixture);
     edited["body"]["name"] = "Dokumenty";
-    lab.targets.graph.on(rp::HttpMethod::get, url, {rp::test::to_response(edited)});
+    // W4.11: the client check sees the target as recorded; the clean after
+    // it, another one.
+    lab.targets.graph.on(rp::HttpMethod::get, url,
+                         {rp::test::load_fixture("graph", fixture), rp::test::to_response(edited)});
     lab.fake.pool.mail = {carol_mail(1)};
 
     const Run run = lab.run({"--run-id", kRunId, "--mail", "2", "--sp", "1", "--od", "1"});
 
     CHECK(run.exit_code == rp::exit_code::service);
-    CHECK(lab.body(run) == expected_run_lines() +
+    CHECK(lab.body(run) == expected_run_lines() + client_ok_line() +
                                "cleanup before incomplete: deleted 0 mail, 0 sharepoint, 0 onedrive; " +
                                which +
                                " target_guard\n"
@@ -2375,7 +2379,7 @@ TEST_CASE("restore: a clean before that fails otherwise lets the run go on; the 
     const Run run = lab.run({"--run-id", kRunId, "--mail", "2", "--sp", "1", "--od", "0"});
 
     CHECK(run.exit_code == rp::exit_code::ok);
-    CHECK_THAT(run.out, StartsWith(expected_run_lines() +
+    CHECK_THAT(run.out, StartsWith(expected_run_lines() + client_ok_line() +
                                    "cleanup before incomplete: deleted 0 mail, 0 sharepoint, 0 "
                                    "onedrive; " +
                                    name + " " + c.code + "\ncanary cursor "));
@@ -2407,7 +2411,7 @@ TEST_CASE("restore: leftovers are deleted before the run; the command's lines sa
     const Run run = lab.run({"--run-id", kRunId, "--mail", "2", "--sp", "1", "--od", "0"});
 
     CHECK(run.exit_code == rp::exit_code::ok);
-    CHECK_THAT(run.out, StartsWith(expected_run_lines() +
+    CHECK_THAT(run.out, StartsWith(expected_run_lines() + client_ok_line() +
                                    "cleanup before incomplete: deleted 1 mail, 1 sharepoint, 0 "
                                    "onedrive; skipped 1\n"
                                    "canary cursor "));
@@ -2694,8 +2698,10 @@ TEST_CASE("restore: step timings: each way a run ends has its spans; the table e
          [](Harness& lab) {
              json edited = rp::test::load_fixture_json("graph", "restoretarget-drive-200");
              edited["body"]["name"] = "Dokumenty";
+             // W4.11: the client check sees the library as recorded first.
              lab.targets.graph.on(rp::HttpMethod::get, gl::drive_url(),
-                                  {rp::test::to_response(edited)});
+                                  {rp::test::load_fixture("graph", "restoretarget-drive-200"),
+                                   rp::test::to_response(edited)});
          },
          three, rp::exit_code::service,
          {measured(1), measured(1), kNotRun, kNotRun, kNotRun, kNotRun, kNotRun, kNotRun, kNotRun,
@@ -3323,30 +3329,27 @@ TEST_CASE("restore through veeam_m365: a wrong target is refused, exit 4, before
     const Run run = real.run({"--run-id", kRunId, "--mail", "0", "--sp", "1", "--od", "0"});
 
     CHECK(run.exit_code == rp::exit_code::service);
-    // Since W3.4 the clean before resolves all three targets first, through
-    // the same guard checks (rp/target_guard_graph.hpp), so it is the one that
-    // refuses, and the run stops there (W3.4 point 8); the before snapshot's
-    // guard is "a failure reading the targets before the restore" above, the
-    // connector's veeam_m365_restore_guard_test.cpp's. The other two targets
-    // were cleaned all the same.
-    CHECK(run.err == "cleanup error: sharepoint: the restore-target guard refused the target; "
-                     "nothing was deleted in it (target_guard)\n"
-                     "warning: cleanup: sharepoint not emptied before the run (left 0, skipped 0, "
-                     "target_guard)\n");
+    // Since W4.11 the client check resolves all three targets first, through
+    // the same guard checks (rp/target_guard_graph.hpp), before the clean
+    // before, so it is the one that refuses, and the run stops there with
+    // nothing cleaned (W4.11 point 1); the before snapshot's guard is "a
+    // failure reading the targets before the restore" above, the connector's
+    // veeam_m365_restore_guard_test.cpp's.
+    CHECK(run.err == "client error: the drive test_library_id names is \"Dokumenty\", not "
+                     "\"RestoreTarget\": the Worker restores only into the RestoreTarget "
+                     "library; nothing was restored\n");
     CHECK_THAT(run.out,
                StartsWith("restore point " + vrl::kBackupTime + "  " + vrl::kRestorePointId));
     CHECK_THAT(real.body(run),
                EndsWith("\nrun run-0001  seed " + seed_of(kRunId) +
                         "\n"
-                        "cleanup before incomplete: deleted 0 mail, 0 sharepoint, 0 onedrive; "
-                        "sharepoint target_guard\n"
                         "\n"
                         "status error target_guard: the run stopped before the restore: the "
                         "restore-target guard refused (target_guard); nothing was restored\n" +
                         kNothingRestored));
     // The guard's refusal is one SECURITY line, as layer 1's.
-    CHECK_THAT(real.rig.log(), ContainsSubstring("SECURITY: cleanup: the drive test_library_id "
-                                                 "names is \"Dokumenty\""));
+    CHECK_THAT(real.rig.log(), ContainsSubstring("SECURITY: client check: the drive "
+                                                 "test_library_id names is \"Dokumenty\""));
     // Veeam saw only what comes before the guard: the sign-in, the restore
     // points and the sign-out. No candidates, no explore session, no restore
     // session list, no restore POST.
@@ -3387,7 +3390,7 @@ TEST_CASE("restore through veeam_m365: a canary restored on the recorded run, ex
           "restore point 2026-09-27T22:00:48.1447833Z  "
           "c2f0f2e7-177f-48ac-992b-93a50cf702e35e1c0a24-0000-4000-8000-000000000924  "
           "(veeam_org_name RestoreProofLab.onmicrosoft.com)\n"
-          "run run-0001  seed " + seed_of(kRunId) + "\n" + kCleanBefore +
+          "run run-0001  seed " + seed_of(kRunId) + "\n" + client_ok_line() + kCleanBefore +
           "canary cursor 10,0,0 -> 11,0,0\n"
           "  KIND        REQUESTED  CANARIES  RANDOM  NOTE\n"
           "  mail        1          1 of 1    0 of 0\n"
@@ -3576,8 +3579,12 @@ TEST_CASE("restore: a stop asked for after the run line ends the run at the next
     };
     const std::string before_read = rp::test::graph_lab::mail_list_url(false);
     const Row row = GENERATE_COPY(
-        Row{"the clean before", [](Harness& lab) { return !lab.run_started.empty(); },
+        Row{"the client check", [](Harness& lab) { return !lab.run_started.empty(); },
             expected_run_lines, 0, 0, 0, 0},
+        // A stop that came during the client check: the check's line is out,
+        // and the Cleaner lists and deletes nothing.
+        Row{"the clean before", [](Harness& lab) { return lab.fake.facts_calls > 0; },
+            [] { return expected_run_lines() + client_ok_line(); }, 1, 0, 0, 0},
         Row{"choose_sample", [](Harness& lab) { return lab.targets.clean_listings[0] > 0; },
             expected_intro, 1, 2, 0, 0},
         Row{"the read before", [](Harness& lab) { return lab.fake.candidate_calls > 0; },
@@ -4252,4 +4259,213 @@ TEST_CASE("rpworker restore: --profile-file needs a value, and is taken once",
     CHECK(code == rp::exit_code::usage);
     CHECK(err.str() == std::string{rp::kCliUsage});
     CHECK(lab.default_path_calls == 0);
+}
+
+// --- The client check (W4.11, docs/decisions.md 2026-10-09 point 1) -----------------------
+// Between the run line and the clean before: the organisation's facts against
+// the profile, the manifest's tenant, the three targets in the tenant. Every
+// failure a before_restore stop with its code: nothing cleaned, no session,
+// nothing restored, and the run reported under its run ID.
+
+namespace {
+
+const std::string kClientMismatchStatus =
+    "\nstatus error client_mismatch: the run stopped before the restore: the backup's "
+    "organisation doesn't match the client's profile (client_mismatch); nothing was restored\n";
+
+} // namespace
+
+TEST_CASE("restore: the client check: an organisation that isn't the profile's ends the run after "
+          "its run line as error client_mismatch, exit 4, nothing cleaned, no session, no Graph "
+          "request, nothing restored",
+          "[restore_command][client_check][w4.11]")
+{
+    struct Row {
+        const char* name;
+        connector::ClientFacts facts;
+        std::string what;
+    };
+    const Row row = GENERATE(
+        Row{"the type", {kOrgName, std::string{kTenant}, "Office365Germany", "Worldwide"},
+            "the backup's organisation isn't of type Office365 (Office365Germany)"},
+        Row{"no tenant ID", {kOrgName, "", "Office365", "Worldwide"},
+            "the backup's organisation reports no tenant ID"},
+        Row{"another tenant",
+            {kOrgName, "11111111-2222-3333-4444-555555555555", "Office365", "Worldwide"},
+            "the backup's organisation's tenant ID isn't the profile's graph_tenant_id"},
+        Row{"the region", {kOrgName, std::string{kTenant}, "Office365", "Germany"},
+            "the backup's organisation's region isn't Worldwide (Germany)"});
+    CAPTURE(row.name);
+    Harness lab;
+    lab.fake.facts = row.facts;
+    lab.fake.pool.mail = {carol_mail(1)};
+
+    const Run run = lab.run({"--run-id", kRunId, "--mail", "2", "--sp", "1", "--od", "1"});
+
+    CHECK(run.exit_code == rp::exit_code::service);
+    CHECK(lab.body(run) == expected_run_lines() + kClientMismatchStatus + kNothingRestored);
+    CHECK(run.err == "client error: client mismatch: " + row.what + "; nothing was restored\n");
+    CHECK(lab.fake.facts_calls == 1);
+    CHECK(lab.fake.facts_ref == kOrgName);
+    CHECK(lab.fake.candidate_calls == 0);
+    CHECK(lab.fake.restore_calls == 0);
+    // The facts come before Graph: no request, no clean, no listing.
+    CHECK(lab.targets.graph.requests().empty());
+    CHECK(lab.targets.clean_listings == std::array<int, 3>{});
+    REQUIRE(lab.cleanups.size() == 1);
+    CHECK_FALSE(lab.cleanups[0].before.has_value());
+    CHECK_FALSE(lab.cleanups[0].restore_sent);
+    // The run was recorded as started (W4.8): the Cloud learns the code.
+    CHECK(lab.run_started.size() == 1);
+}
+
+TEST_CASE("restore: the client check: a manifest of another tenant ends the run after its run "
+          "line as error config, reported, with no Graph request",
+          "[restore_command][client_check][w4.11]")
+{
+    Harness lab;
+    json manifest = json::parse(lab_manifest_text());
+    manifest["tenant_id"] = "22222222-3333-4444-5555-666666666666";
+    lab.dir.write("seed-manifest.json", manifest.dump(2));
+    lab.fake.pool.mail = {carol_mail(1)};
+
+    const Run run = lab.run({"--run-id", kRunId, "--mail", "2", "--sp", "1", "--od", "1"});
+
+    CHECK(run.exit_code == rp::exit_code::config);
+    CHECK(lab.body(run) == expected_run_lines() +
+                               "\nstatus error config: the run stopped before the restore: the "
+                               "configuration isn't usable (config); nothing was restored\n" +
+                               kNothingRestored);
+    CHECK(run.err == "client error: canary manifest: /tenant_id: isn't the client's tenant "
+                     "(graph_tenant_id); nothing was restored\n");
+    CHECK(lab.fake.facts_calls == 1);
+    CHECK(lab.fake.candidate_calls == 0);
+    CHECK(lab.fake.restore_calls == 0);
+    CHECK(lab.targets.graph.requests().empty());
+    CHECK(lab.run_started.size() == 1);
+}
+
+TEST_CASE("restore: the client check: a target that doesn't resolve in the tenant ends the run "
+          "after its run line with Graph's code, before any delete or session",
+          "[restore_command][client_check][w4.11]")
+{
+    namespace gl = rp::test::graph_lab;
+    struct Row {
+        const char* name;
+        std::string url;
+        rp::HttpResponse answer;
+        int exit;
+        std::string code;
+    };
+    json other_name = rp::test::load_fixture_json("graph", "restoretarget-drive-200");
+    other_name["body"]["name"] = "Dokumenty";
+    const Row row = GENERATE_COPY(
+        Row{"the library of another name", gl::drive_url(), rp::test::to_response(other_name),
+            rp::exit_code::service, "target_guard"},
+        Row{"a mailbox the app's scope doesn't reach", gl::inbox_url(),
+            rp::test::load_fixture("graph", "mailbox-inbox-403-exchange"), rp::exit_code::service,
+            "target_guard"},
+        Row{"a token Graph refuses", gl::inbox_url(),
+            rp::test::load_fixture("graph", "api-invalid-token-401"), rp::exit_code::auth,
+            "graph_auth"},
+        Row{"Graph unavailable", gl::folder_url(),
+            rp::test::load_fixture("graph", "messages-503-unavailable"), rp::exit_code::transient,
+            "graph_transient"},
+        Row{"a drive Graph doesn't know", gl::drive_url(),
+            rp::test::load_fixture("graph", "drive-404-itemnotfound"), rp::exit_code::service,
+            "graph"});
+    CAPTURE(row.name);
+    Harness lab;
+    lab.targets.graph.on(rp::HttpMethod::get, row.url, {row.answer});
+    lab.fake.pool.mail = {carol_mail(1)};
+
+    const Run run = lab.run({"--run-id", kRunId, "--mail", "2", "--sp", "1", "--od", "1"});
+
+    CHECK(run.exit_code == row.exit);
+    CHECK_THAT(lab.body(run), StartsWith(expected_run_lines() + "\nstatus error " + row.code +
+                                         ": the run stopped before the restore: "));
+    CHECK_THAT(lab.body(run), EndsWith(" (" + row.code + "); nothing was restored\n" +
+                                       kNothingRestored));
+    CHECK_THAT(run.err, StartsWith("client error: "));
+    CHECK(run.err.ends_with("; nothing was restored\n"));
+    CHECK(std::ranges::count(run.err, '\n') == 1);
+    CHECK(lab.fake.candidate_calls == 0);
+    CHECK(lab.fake.restore_calls == 0);
+    // No listing of any target, cleaned or read: the checks are three GETs.
+    CHECK(lab.targets.clean_listings == std::array<int, 3>{});
+    CHECK(lab.targets.graph.count(rp::HttpMethod::get, gl::mail_list_url(false)) == 0);
+    CHECK(lab.graph_clients == 1);
+    if (row.code == "target_guard") {
+        CHECK_THAT(lab.log(), ContainsSubstring("[critical] SECURITY: "));
+    }
+}
+
+TEST_CASE("restore: the client check: the connector's own failure to say the facts is the "
+          "backup's code",
+          "[restore_command][client_check][w4.11]")
+{
+    const auto [raise, code, exit] = GENERATE(table<std::function<void()>, std::string, int>({
+        {[] { throw connector::TransientError("Veeam GET /v8/Organizations: HTTP 503"); },
+         "backup_transient", rp::exit_code::transient},
+        {[] { throw connector::NotFoundError("client \"x\" not found in Veeam"); },
+         "not_in_backup", rp::exit_code::service},
+        {[] { throw connector::AuthError("Veeam POST /v8/token: HTTP 401"); }, "backup_auth",
+         rp::exit_code::auth},
+    }));
+    CAPTURE(code);
+    Harness lab;
+    lab.fake.facts_throw = raise;
+
+    const Run run = lab.run({"--run-id", kRunId, "--mail", "1", "--sp", "0", "--od", "0"});
+
+    CHECK(run.exit_code == exit);
+    CHECK_THAT(lab.body(run), StartsWith(expected_run_lines() + "\nstatus error " + code + ": "));
+    CHECK_THAT(run.err, StartsWith("client error: "));
+    CHECK(run.err.ends_with("; nothing was restored\n"));
+    CHECK(lab.targets.graph.requests().empty());
+    CHECK(lab.fake.restore_calls == 0);
+}
+
+TEST_CASE("restore: the client check's refusal stays client_mismatch when a stop came during it",
+          "[restore_command][client_check][stop][w4.11]")
+{
+    Harness lab;
+    bool stop = false;
+    lab.stop_requested = [&] { return stop; };
+    lab.fake.facts = connector::ClientFacts{kOrgName, "11111111-2222-3333-4444-555555555555",
+                                            "Office365", "Worldwide"};
+    lab.fake.at_facts = [&] { stop = true; };
+
+    const Run run = lab.run({"--run-id", kRunId, "--mail", "1", "--sp", "0", "--od", "0"});
+
+    CHECK(run.exit_code == rp::exit_code::service);
+    CHECK(lab.body(run) == expected_run_lines() + kClientMismatchStatus + kNothingRestored);
+}
+
+TEST_CASE("restore: the client check passes: its line follows the run line, the facts are asked "
+          "once for the profile's organisation, and the three targets are resolved before the "
+          "clean before lists anything",
+          "[restore_command][client_check][w4.11]")
+{
+    namespace gl = rp::test::graph_lab;
+    Harness lab;
+    lab.fake.pool.mail = {carol_mail(1)};
+    const Run run = lab.run({"--run-id", kRunId, "--mail", "2", "--sp", "1", "--od", "0"});
+
+    CHECK(run.exit_code == rp::exit_code::ok);
+    CHECK_THAT(lab.body(run), StartsWith(expected_intro()));
+    CHECK(lab.fake.facts_calls == 1);
+    CHECK(lab.fake.facts_ref == kOrgName);
+    // The three identity GETs are the Graph client's first GETs (after its
+    // sign-in), in the step's order: mailbox, library, folder.
+    std::vector<std::string> gets;
+    for (const rp::HttpRequest& request : lab.targets.graph.requests()) {
+        if (request.method == rp::HttpMethod::get) {
+            gets.push_back(request.url);
+        }
+    }
+    REQUIRE(gets.size() >= 3);
+    CHECK(gets[0] == gl::inbox_url());
+    CHECK(gets[1] == gl::drive_url());
+    CHECK(gets[2] == gl::folder_url());
 }

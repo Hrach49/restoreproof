@@ -497,6 +497,26 @@ TEST_CASE("a connector that can't list or end its account's sessions says so by 
                            Catch::Matchers::Message("fake: ending a session isn't implemented"));
 }
 
+TEST_CASE("a connector that can't say the client's facts says so by name",
+          "[connector][w4.11]")
+{
+    FakeConnector fake;
+    REQUIRE_THROWS_MATCHES(fake.client_facts("Contoso"), connector::NotImplementedError,
+                           Catch::Matchers::Message("fake: the client's facts aren't implemented"));
+}
+
+TEST_CASE("a connector's name is 1 to 64 of a-z, 0-9 and _", "[connector][w4.11]")
+{
+    CHECK(connector::is_connector_name("veeam_m365"));
+    CHECK(connector::is_connector_name("a"));
+    CHECK(connector::is_connector_name(std::string(64, 'z')));
+    for (const char* bad :
+         {"", "Veeam", "veeam-m365", "veeam m365", "veeam.m365", "vee\nam", "v\xc3\xa9"}) {
+        CHECK_FALSE(connector::is_connector_name(bad));
+    }
+    CHECK_FALSE(connector::is_connector_name(std::string(65, 'z')));
+}
+
 TEST_CASE("candidate limits and records start at the documented values", "[connector]")
 {
     const connector::CandidateLimits limits;

@@ -359,7 +359,27 @@ TEST_CASE("a record with a key missing, one too many or a wrong kind or word is 
               both(set("/close_as", "job_invalid"),
                    set("/close_detail", std::string(33, 'k'))))},
         {"connector a number", set("/connector", 5)},
-        {"another connector", set("/connector/type", "other")},
+        // W4.11: another connector's name reads (below); one that isn't a name doesn't.
+        {"connector type in capitals", set("/connector/type", "Other")},
+        {"connector type with a space", set("/connector/type", "other backup")},
+        {"connector type empty", set("/connector/type", "")},
+        {"connector_unknown for a run",
+         both(set("/close_as", "connector_unknown"), set("/close_detail", "other_backup"))},
+        {"connector_unknown without its type",
+         both(set("/kind", "job_invalid"), set("/close_as", "connector_unknown"))},
+        {"connector_unknown with a type that isn't a name",
+         both(set("/kind", "job_invalid"),
+              both(set("/close_as", "connector_unknown"), set("/close_detail", "Other Backup")))},
+        // The result written for it names the record's connector: it is the
+        // type the job asked for, or the record is none.
+        {"connector_unknown whose connector is another type",
+         both(set("/kind", "job_invalid"),
+              both(set("/close_as", "connector_unknown"), set("/close_detail", "other_backup")))},
+        {"connector_unknown without a connector",
+         both(set("/connector", nullptr),
+              both(set("/kind", "job_invalid"),
+                   both(set("/close_as", "connector_unknown"),
+                        set("/close_detail", "other_backup"))))},
         {"connector type a number", set("/connector/type", 5)},
         {"connector without api", drop("/connector", "api")},
         {"connector with a third key", set("/connector/zz", 1)},
@@ -450,6 +470,19 @@ TEST_CASE("a record reads with each word and each null it may hold", "[service_r
          [](RunningRecord& record) {
              record = rp::new_job_invalid_record("job-0002", std::string{"c"}, short_profile(),
                                                  at(kTaken), "unknown key");
+         }},
+        // W4.11
+        {"a connector of another name",
+         [](RunningRecord& record) { record.connector->name = "other_backup"; }},
+        {"connector_unknown other_backup",
+         [](RunningRecord& record) {
+             record = rp::new_connector_unknown_record("job-0002", std::string{"c"},
+                                                       short_profile(), at(kTaken), "other_backup");
+         }},
+        {"connector_unknown without a client",
+         [](RunningRecord& record) {
+             record = rp::new_connector_unknown_record("job-0002", std::nullopt, std::nullopt,
+                                                       at(kTaken), "other_backup");
          }},
     };
     for (const auto& [name, change] : rows) {
@@ -592,7 +625,10 @@ TEST_CASE("the record's client is the job's profile, and the close's result is m
                              "aaaaaaaa-0000-0000-0000-000000000002"},
                  {"library_id", "b!library"},
                  {"onedrive_drive_id", "b!onedrive"},
-                 {"onedrive_folder_id", "01FOLDER"}}}});
+                 {"onedrive_folder_id", "01FOLDER"}}},
+               // W4.11: a result written afterwards passed no client check.
+               {"scope", nullptr},
+               {"resolved", nullptr}});
 
     // A job whose profile couldn't be read: the empty strings the schema
     // allows, beside the job's client_id.
@@ -605,6 +641,41 @@ TEST_CASE("the record's client is the job's profile, and the close's result is m
     CHECK(client["client_id"] == "client-8");
     CHECK(client["tenant_id"] == "");
     CHECK(client["targets"]["mailbox"] == "");
+}
+
+// W4.11 point 6: a job whose connector this Worker lacks, closed afterwards.
+TEST_CASE("a connector_unknown record: its first write names the type, its close replaces the "
+          "text files and its result says error connector_unknown with that connector",
+          "[service_recovery][client_check][w4.11]")
+{
+    const RunningRecord record = rp::new_connector_unknown_record(
+        "job-0003", std::string{"client-9"}, short_profile(), at(kTaken), "other_backup");
+    CHECK(record.kind == rp::RecordKind::job_invalid);
+    CHECK(record.close_as == CloseAs::connector_unknown);
+    CHECK(record.close_detail == "other_backup");
+    CHECK(as_json(record)["connector"] == json{{"type", "other_backup"}, {"api", ""}});
+    CHECK(as_json(record)["close_as"] == "connector_unknown");
+    // A text file found changed at a close changes nothing: they are replaced anyway.
+    CHECK(rp::with_changed_text_files(record) == record);
+
+    const rp::ClosePlan plan = rp::plan_close(record, {});
+    CHECK(plan.code == "connector_unknown");
+    CHECK(plan.replace_text_files);
+    CHECK(plan.verdict.status == rp::verification::RunStatus::error);
+    CHECK(plan.verdict.error_code == "connector_unknown");
+    CHECK(plan.verdict.message ==
+          "the job's connector type isn't one this Worker has; nothing was done");
+    CHECK_FALSE(plan.verdict.restore_sent);
+    const auto built = rp::build_close_result(plan, two_empty_files());
+    REQUIRE(std::holds_alternative<rp::BuiltResult>(built));
+    const json& document = std::get<rp::BuiltResult>(built).document;
+    CHECK(document["connector"] == json{{"type", "other_backup"}, {"api", ""}});
+    CHECK(document["status"]["error_code"] == "connector_unknown");
+    CHECK(document["client"]["client_id"] == "client-9");
+    CHECK(document["client"]["tenant_id"] == "11111111-2222-3333-4444-555555555555");
+    CHECK(document["client"]["scope"].is_null());
+    CHECK(document["client"]["resolved"].is_null());
+    CHECK(document["started_at"].is_null());
 }
 
 TEST_CASE("a record is read only with a client the profile's rules take, and a run record "
@@ -989,7 +1060,9 @@ TEST_CASE("the result written afterwards, for each code, is valid restoreproof.r
                  {"site_id", profile.test_site_id},
                  {"library_id", profile.test_library_id},
                  {"onedrive_drive_id", profile.test_onedrive_drive_id},
-                 {"onedrive_folder_id", profile.test_onedrive_folder_id}}}});
+                 {"onedrive_folder_id", profile.test_onedrive_folder_id}}},
+               {"scope", nullptr},
+               {"resolved", nullptr}});
     CHECK(document["attachments"].size() == 2);
     CHECK(document["screenshot"] ==
           json{{"state", "unavailable"}, {"reason", screenshots ? "no_page" : "disabled"}});
@@ -1056,7 +1129,7 @@ TEST_CASE("a job that is no job has nothing to put on record for changed text fi
 TEST_CASE("a plan the schema doesn't take gives no result", "[service_recovery]")
 {
     rp::ClosePlan plan = rp::plan_close(requested(), {});
-    plan.connector.name = "other";
+    plan.connector.name = "Other Backup"; // W4.11: a name the rule refuses
     const auto built = rp::build_close_result(plan, two_empty_files());
     REQUIRE(std::holds_alternative<rp::ResultError>(built));
     CHECK(std::get<rp::ResultError>(built).cause == rp::ResultFailure::schema);
@@ -1193,7 +1266,7 @@ TEST_CASE("a record whose result the schema doesn't take is closed as nothing",
 {
     // Only a record made in code can be one: the reader refuses it.
     RunningRecord record = requested();
-    record.connector->name = "other";
+    record.connector->name = "Other Backup"; // W4.11: a name the rule refuses
     FakeClose fake;
     fake.folder = there();
 

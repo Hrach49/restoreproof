@@ -96,6 +96,7 @@ struct Organization {
     std::string id;          // Veeam's organisation ID, a UUID: every later call takes it
     std::string name;        // e.g. RestoreProofLab.onmicrosoft.com
     std::string msid;        // the Entra tenant ID; empty if Veeam sent none
+    std::string type;        // e.g. Office365 (W4.11); empty if none
     std::string region;      // e.g. Worldwide; empty if none
     std::string office_name; // officeName; empty if none
     // exchangeOnlineSettings.{applicationId, applicationCertificateThumbprint}

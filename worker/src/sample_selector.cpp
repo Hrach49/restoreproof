@@ -451,13 +451,24 @@ std::optional<std::string> cursor_problem(const CanaryManifest& manifest,
     return kind_cursor_problem(ItemKind::onedrive, cursor.onedrive, manifest.onedrive.size());
 }
 
-void check_manifest(const CanaryManifest& manifest, const connector::RestoreTargets& targets,
-                    const std::string& graph_tenant_id)
+void check_manifest_tenant(const CanaryManifest& manifest, const std::string& graph_tenant_id)
 {
     if (!ascii_iequals(manifest.tenant_id, graph_tenant_id)) {
         throw ManifestError("canary manifest: /tenant_id: isn't the client's tenant (graph_tenant_id)");
     }
+}
+
+void check_manifest_targets(const CanaryManifest& manifest,
+                            const connector::RestoreTargets& targets)
+{
     check_canaries(manifest, targets);
+}
+
+void check_manifest(const CanaryManifest& manifest, const connector::RestoreTargets& targets,
+                    const std::string& graph_tenant_id)
+{
+    check_manifest_tenant(manifest, graph_tenant_id);
+    check_manifest_targets(manifest, targets);
 }
 
 SamplePlan SamplePlan::from_config(const Config& config)

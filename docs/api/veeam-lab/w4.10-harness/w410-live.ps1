@@ -27,7 +27,7 @@ $W410Box = Join-Path $script:W410Dir 'box'
 $W410Kept = Join-Path $script:W410Dir 'sent-by-service'
 $Lab = Join-Path $env:LOCALAPPDATA 'RestoreProof\lab'
 $NoClientConfig = Join-Path $Lab 'config-no-client.json'
-$Profile = Join-Path $Lab 'lab-profile.json'
+$LabProfile = Join-Path $Lab 'lab-profile.json'
 $BadMailbox = Join-Path $Lab 'lab-profile-bad-mailbox.json'
 $Braces = Join-Path $Lab 'lab-profile-braces.json'
 $Manifest = Join-Path $script:Repo 'lab\seed-manifest.json'
@@ -40,7 +40,7 @@ function Get-W410Client([string]$Folder) {
     "result.json client: " + ($result.client | ConvertTo-Json -Compress)
 }
 
-foreach ($file in @($NoClientConfig, $Profile, $BadMailbox, $Braces)) {
+foreach ($file in @($NoClientConfig, $LabProfile, $BadMailbox, $Braces)) {
     if (-not (Test-Path $file)) { throw "$file is missing: write it as docs/testing.md says (Client check by hand)" }
 }
 $noClient = Get-Content $NoClientConfig -Raw | ConvertFrom-Json -AsHashtable
@@ -53,8 +53,8 @@ if ($Steps -contains 'a') {
     $t += "`n-- the config copy (no client keys; the two URLs and Veeam's certificate alone)`n$(Get-Content $NoClientConfig -Raw)"
     $t += "`n$(Invoke-W48 @('config', 'check', '--config', $NoClientConfig))"
     $t += "`n$(Invoke-W48 @('graph', 'list', '--config', $NoClientConfig))"
-    $t += "`n-- the profile file: the eight keys of lab/tenant.md's restore targets and the Worker app, IDs only`n$(Get-Content $Profile -Raw)"
-    $t += "`n$(Invoke-W48 @('client', 'check', '--profile-file', $Profile))"
+    $t += "`n-- the profile file: the eight keys of lab/tenant.md's restore targets and the Worker app, IDs only`n$(Get-Content $LabProfile -Raw)"
+    $t += "`n$(Invoke-W48 @('client', 'check', '--profile-file', $LabProfile))"
     $t += "`n-- the same, through the lab config's own targets for comparison`n$(Get-W48Targets)"
     $t += "`n-- a profile that breaks the schema: test_mailbox another user`n$(Invoke-W48 @('client', 'check', '--profile-file', $BadMailbox))"
     $t += "`n-- a profile that breaks the schema: graph_tenant_id in braces`n$(Invoke-W48 @('client', 'check', '--profile-file', $Braces))"
@@ -69,7 +69,7 @@ if ($Steps -contains 'b') {
     $t = @("W4.10 (#133) live Done-when, step (b): rpworker test --evidence --outbox --profile-file on the config copy without client keys. $(Get-Utc), commit $commit")
     $t += "`n-- Veeam before: $(Get-W48Sessions)"
     $t += "`n-- the three restore targets before`n$(Get-W48Targets)"
-    $t += "`n$(Invoke-W48 @('test', '--mail', '2', '--sp', '1', '--od', '1', '--run-id', "$Prefix-1", '--config', $NoClientConfig, '--manifest', $Manifest, '--profile-file', $Profile, '--evidence', $W410Runs, '--outbox', $W410Box))"
+    $t += "`n$(Invoke-W48 @('test', '--mail', '2', '--sp', '1', '--od', '1', '--run-id', "$Prefix-1", '--config', $NoClientConfig, '--manifest', $Manifest, '--profile-file', $LabProfile, '--evidence', $W410Runs, '--outbox', $W410Box))"
     $queued = Join-Path $W410Box "outbox\$Prefix-1"
     $t += "`n-- the queued folder`n$(Test-W48Folder $queued)"
     $t += "`n-- $(Get-W410Client $queued)"
@@ -88,11 +88,13 @@ if ($Steps -contains 'c') {
     $t += "`n-- the eight client keys taken out of the service's config copy`n$(Invoke-W48 @('config', 'check', '--config', $W48Config))"
     $t += "`n-- the stub Cloud`n$(Start-W48Stub)"
     $t += "`n$(Invoke-W48 @('service', 'install', '--config', $W48Config))"
+    try {
     $t += "`n-- the grants`n$(Grant-W48Account)"
     $since = [DateTime]::UtcNow
     $t += "`n$(Invoke-W48 @('service', 'start'))"
+    $done = $false
     $job = New-W48Job "$Prefix-2" 1 1 1
-    $job['client'] = Get-Content $Profile -Raw | ConvertFrom-Json -AsHashtable
+    $job['client'] = Get-Content $LabProfile -Raw | ConvertFrom-Json -AsHashtable
     $t += "`n$(Set-W48Jobs @($job))"
     $t += "`n-- taken: $(Wait-W48Log "run $Prefix-2: starting" $since 120)"
     $t += "`n-- the record while the run goes`n$(Get-W48Record)"
@@ -107,8 +109,20 @@ if ($Steps -contains 'c') {
     $t += "`n-- the sent folder`n$(Test-W48Folder $sent)"
     $t += "`n-- $(Get-W410Client $sent)"
     $t += "`n-- Veeam after: $(Get-W48Sessions)"
-    $t += "`n-- the grants taken away, the service uninstalled`n$(Revoke-W48Account)`n$(Invoke-W48 @('service', 'uninstall'))"
-    Save-W48Evidence 'w4.10-3-service-run.txt' ($t -join "`n")
+    $done = $true
+    } finally {
+        # The W4.10 review's finding 15: the grants and the service go whatever happened above,
+        # the service also when the grants can't be taken away (the W4.11 review's finding 7).
+        try {
+            $t += "`n-- the grants taken away`n$(Revoke-W48Account)"
+        } catch {
+            $t += "`n-- the grants couldn't be taken away: $($_.Exception.Message)"
+        } finally {
+            $t += "`n-- the service uninstalled`n$(Invoke-W48 @('service', 'uninstall'))"
+            # A run that failed never replaces the committed evidence.
+            Save-W48Evidence ($done ? 'w4.10-3-service-run.txt' : 'w4.10-3-service-run.failed.txt') ($t -join "`n")
+        }
+    }
 }
 
 if ($Steps -contains 'd') {

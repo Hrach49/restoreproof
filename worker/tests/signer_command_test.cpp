@@ -530,7 +530,7 @@ TEST_CASE("signer verify: the signed folder is `verified <bundle_sha256> key <ke
         const Ran ran = run({"verify", folder, "--public-key", key});
         CHECK(ran.code == 0);
         CHECK(ran.out == verified_line());
-        CHECK(ran.out == "verified 572bf1f9f884217782d8b6c13db88f16257eafa5fea5b707d53aac0252fa81bf "
+        CHECK(ran.out == "verified d89376890c804d4e4040e4dd51fc43520a29ce4659700cf7b10b4e36ef27df8b "
                          "key 06e3fd8fda29bb60ab59557de61edb0aecdb231134be30e75b455f8e1b792fa9 timestamp none\n");
         CHECK(ran.err == "note: not timestamped\n");
         CHECK(ran.secrets_asked == 0);

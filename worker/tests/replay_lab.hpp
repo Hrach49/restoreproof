@@ -341,6 +341,15 @@ struct Replay {
         return graph_log;
     }
 
+    // W4.11: the lab config with `edit` applied, written over the one the
+    // run reads (a profile of another tenant, for one).
+    void rewrite_config(const std::function<void(json&)>& edit)
+    {
+        json config = lab_config();
+        edit(config);
+        config_path = temp.write("config.json", config.dump(2));
+    }
+
     // The live runs' command line, with the live run's ID; `more` after it
     // (the W4.9 audit's --record).
     Run run(const std::string& run_id, const std::vector<std::string>& more = {})

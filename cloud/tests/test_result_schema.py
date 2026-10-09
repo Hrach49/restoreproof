@@ -114,9 +114,9 @@ def test_the_cases_are_both_kinds_and_none_holds_a_float():
     # the shared cases hold none (W4.1 point 3).
     # The counts worker/tests/result_schema_test.cpp pins, held here too: a
     # case dropped from cases.json is noticed on this side as well.
-    assert len(CASES) == 185
-    assert sum(1 for case in CASES if case["valid"]) == 47
-    assert sum(1 for case in CASES if not case["valid"]) == 138
+    assert len(CASES) == 201
+    assert sum(1 for case in CASES if case["valid"]) == 52
+    assert sum(1 for case in CASES if not case["valid"]) == 149
     assert len({case["name"] for case in CASES}) == len(CASES)
     assert "float" not in {type(value).__name__ for value in _values(CASES)}
 

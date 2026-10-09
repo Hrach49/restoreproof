@@ -70,6 +70,11 @@ struct VeeamM365ConnectorOptions {
     std::function<bool()> before_restore_request;
     std::function<void(std::string_view id)> on_session_opened;
     std::function<bool()> stop_requested;
+    // W4.11 (docs/decisions.md 2026-10-09 point 8): the client the connector
+    // was made for (ConnectorOptions::client, the factory's). With one,
+    // restore_sample refuses a spec whose client_ref isn't its
+    // veeam_org_name or whose targets aren't its, before anything else.
+    std::optional<ClientProfile> profile;
 };
 
 class VeeamM365Connector final : public connector::IConnector {
@@ -107,6 +112,11 @@ public:
     // organisation ID that isn't a UUID -> connector::Error. An empty
     // `client_ref` is std::invalid_argument, before any request.
     std::vector<connector::RestorePoint> list_restore_points(const std::string& client_ref) override;
+
+    // W4.11 point 2: the organisation `client_ref` names, as
+    // list_restore_points finds it (the same errors), and its `name`, `msid`,
+    // `type` and `region` as sent, each empty when Veeam sent none.
+    connector::ClientFacts client_facts(const std::string& client_ref) override;
 
     // Restores `spec` (W2.5; docs/api/veeam-restore-flow.md, the 2026-09-30
     // W2.5 entry in docs/decisions.md). In order:
@@ -248,6 +258,10 @@ private:
     std::unique_ptr<IHttpClient> http_;
     std::unique_ptr<IHttpClient> graph_http_;
     std::unique_ptr<VeeamClient> client_;
+    // W4.11: the organisation list_restore_points last found, and for which
+    // client reference, so client_facts for the same client asks Veeam
+    // nothing more (a replay sends exactly the recorded requests).
+    std::optional<std::pair<std::string, Organization>> found_;
     std::shared_ptr<graph::GraphClient> graph_;
     std::function<VeeamM365GraphParts()> make_graph_;
     TargetGuardOptions guard_options_;
@@ -258,6 +272,7 @@ private:
     std::function<bool()> before_restore_request_;
     std::function<void(std::string_view)> on_session_opened_;
     std::function<bool()> stop_requested_;
+    std::optional<ClientProfile> profile_;
     std::shared_ptr<spdlog::logger> logger_;
     std::string account_; // the username as Veeam lists it in initiatedBy
     // Every explore session list_candidates opened (or adopted), stopped or

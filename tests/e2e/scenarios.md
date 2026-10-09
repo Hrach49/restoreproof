@@ -263,6 +263,31 @@ manifest was never changed (`git status` shows it clean).
 
 ---
 
+## Scenario 8: a profile of another tenant (W4.11)
+
+**Purpose:** a job (or a profile file) whose `graph_tenant_id` isn't the Veeam organisation's
+`msid` never cleans, samples or restores anything, and is still reported under its run ID.
+
+1. Copy `lab-profile.json` (`docs/testing.md`, "Client check by hand") to
+   `lab-profile-other-tenant.json` and set `graph_tenant_id` to a made-up GUID.
+2. Run, on the config copy without client keys:
+
+   ```powershell
+   .\build\dev\rpworker.exe test --mail 1 --sp 0 --od 0 --config <config-no-client.json> --profile-file <lab-profile-other-tenant.json> --evidence <runs> --outbox <box>
+   $LASTEXITCODE
+   ```
+
+**Expected:** the run line, then no `client ok` and no `cleanup before` line; stderr exactly
+`client error: client mismatch: the backup's organisation's tenant ID isn't the profile's
+graph_tenant_id; nothing was restored`; stdout `status error client_mismatch: the run stopped
+before the restore: the backup's organisation doesn't match the client's profile
+(client_mismatch); nothing was restored`, `cleanup after skipped: nothing was restored`, the
+timings' table, then `signed`, `timestamped` and `queued`; exit 4; no explore session of
+`rp-veeam` in Veeam; the queued result's `client.scope` and `client.resolved` `null`, and both
+verifiers `verified`. Since W4.11 scenario 7b's wrong mailbox is also refused by the client
+check, before the clean before: its stderr starts `client error: ` and no `cleanup before`
+line is printed (the status and the exit code are as 7b says).
+
 ## Scenario 7: wrong restore mailbox in config (Q3.1)
 
 **Purpose:** a config that points the Worker at the wrong mailbox never ends as `pass` and never

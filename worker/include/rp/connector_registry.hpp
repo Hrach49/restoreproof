@@ -57,6 +57,25 @@ struct ConnectorOptions {
     // Exports the backup product's restore credential (W2.5); null =
     // make_local_machine_cert_exporter(wall_now).
     std::shared_ptr<CertificateExporter> cert_exporter;
+    // W4.8 (docs/decisions.md 2026-10-08, W4.8 points 6 and 13): the three a
+    // caller that keeps a record of its run hands a connector.
+    // Asked before every restore request, before the credential is exported:
+    // false, and the request is not sent and restore_sample ends with
+    // connector::Interrupted, its message ending with kNothingRestored when
+    // no request of that call had gone out. One that throws answered false.
+    // null = always true.
+    std::function<bool()> before_restore_request;
+    // Told the ID of every session the connector opens in the backup product
+    // and is to close itself (its browsing sessions, list_candidates'
+    // included, and one it found after its request to open it failed), once
+    // each, as soon as the ID is known. One that throws is a warning in the
+    // log and the call goes on. null = nothing.
+    std::function<void(std::string_view id)> on_session_opened;
+    // Whether the Worker was asked to stop: then no further restore request
+    // is sent (before_restore_request is not asked), and the wait for a
+    // restore ends after its next wait with connector::Interrupted, the
+    // restore left running. One that throws answered yes. null = never.
+    std::function<bool()> stop_requested;
 };
 
 // Makes one connector. Throws ConfigError for config or secrets it can't work

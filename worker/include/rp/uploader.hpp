@@ -18,6 +18,10 @@
 #include <string_view>
 #include <vector>
 
+namespace spdlog {
+class logger;
+}
+
 namespace rp {
 
 inline constexpr std::string_view kResultsPath = "/v1/results";
@@ -27,6 +31,10 @@ inline constexpr std::chrono::milliseconds kUploadTimeout{120000};
 inline constexpr std::uint64_t kMaxUploadAnswerBytes = 64u * 1024u;
 // The one status that means the Cloud has the run.
 inline constexpr int kUploadAccepted = 202;
+
+// A Cloud route's URL: `cloud_url` (Config::cloud_url) with every '/' at its
+// end dropped, then `path`, which starts with one ("/v1/results").
+std::string cloud_endpoint(std::string cloud_url, std::string_view path);
 
 class CloudUploader final : public IUploader {
 public:
@@ -56,7 +64,10 @@ private:
 // The HTTP client the Cloud is reached through: TLS verified against the
 // Windows certificate store, or, with config's cloud_ca_file, against that
 // PEM file in its place (the host name checked either way; nothing turns
-// verification off), logging warnings and worse to stderr.
-std::unique_ptr<IHttpClient> make_cloud_http_client(const Config& config);
+// verification off). It logs to `logger`; null is the commands' logger,
+// warnings and worse to stderr, which the service, having no stderr, replaces
+// with its own (W4.8 point 12).
+std::unique_ptr<IHttpClient>
+make_cloud_http_client(const Config& config, std::shared_ptr<spdlog::logger> logger = nullptr);
 
 } // namespace rp

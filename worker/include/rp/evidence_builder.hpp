@@ -40,6 +40,9 @@ inline constexpr std::string_view kScreenshotName = "screenshot.png";
 // replaced by (point 6).
 inline constexpr std::string_view kWithheld = "[withheld: held a secret value]";
 
+// A text file larger than this isn't adopted (adopt_attachments).
+inline constexpr std::uintmax_t kMaxAdoptedFileBytes = 64u * 1024u * 1024u;
+
 // A screenshot larger than this is `failed` (C7.2 caps an attachment at 25 MB).
 inline constexpr std::uintmax_t kMaxScreenshotBytes = 10u * 1024u * 1024u;
 
@@ -289,6 +292,33 @@ public:
                                               std::string_view canonical,
                                               SignedResult* signature = nullptr,
                                               TimestampOutcome* timestamp = nullptr) noexcept;
+
+    // For a run folder that was left without a result (docs/decisions.md
+    // 2026-10-08, W4.8 point 7), in place of write_attachments: items.csv
+    // and veeam-session.log as the folder has them. One that is there is
+    // listed as it is, its bytes hashed and never rewritten (the run only
+    // ever wrote each whole); one that isn't is written in its empty form,
+    // the CSV's header row alone and an empty log. With `replace` (the run
+    // had found one of them changed after it hashed it) both are taken away
+    // and written in their empty forms: the Worker lists no file it knows
+    // was changed. `not_written`, and no evidence, for a file that is there
+    // and can't be read whole (a folder, one over kMaxAdoptedFileBytes), one
+    // that can't be taken away, and an empty form the writer refused; the
+    // other file is still tried. The screenshot is unavailable, `disabled`
+    // or, with screenshots on, `no_page` (no restore session is known to
+    // show); the capturer isn't asked. write_result reads both back as it
+    // does a run's own. Never throws.
+    Written adopt_attachments(bool replace = false) noexcept;
+
+    // Takes away what a signing that didn't finish can leave beside no
+    // result.json (W4.8 point 7): signature.json and timestamp.tst (a
+    // signature without its result signs bytes that exist nowhere any more),
+    // screenshot.png (its writer is the one that isn't atomic), under any
+    // case of their names, and every "<name>.<16 lower-case hex>.tmp", the
+    // atomic writer's temp file. Nothing else in `folder` is touched, and
+    // nothing below it. False when the folder can't be listed or one of them
+    // is still there afterwards. Never throws.
+    static bool remove_unfinished(const std::filesystem::path& folder) noexcept;
 
     const std::filesystem::path& folder() const noexcept { return folder_; }
 

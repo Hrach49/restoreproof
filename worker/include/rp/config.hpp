@@ -34,6 +34,7 @@ namespace rp {
 //   tsa_url                  no        (none)   http:// or https:// URL (1); needs tsa_ca_file (7)
 //   tsa_ca_file              no        (none)   absolute path of a readable file (7)
 //   cloud_ca_file            no        (none)   absolute path of a readable PEM file holding a certificate (8)
+//   jobs_file                no        (none)   absolute path; the file needn't exist (9)
 //   screenshots_enabled      no        false    true or false (6)
 //
 // (1) Printable ASCII only, with no user name, password, query or fragment:
@@ -88,6 +89,13 @@ namespace rp {
 //     reading and holds at least one PEM certificate (the W4.6 review, finding
 //     2): one nothing could chain to would otherwise show only as
 //     upload_unreachable at every flush.
+// (9) The service's stub job source (W4.8): a restoreproof.jobs.v1 document
+//     the scheduler loop reads whole at every poll, until W5.1 asks the Cloud
+//     in its place. Without the key the loop gets no jobs. An absolute path as
+//     (3); neither parse_config nor load_config opens the file, which needn't
+//     be there (no file is no jobs), and `config check` only prints the path.
+//     Whoever can write that file commands the Worker, so the loop reads it
+//     only when its owner passes the vault's owner rule (rp/vault.hpp).
 // No string value may contain a control character: ASCII (below 0x20, 0x7F),
 // C1 (U+0080-U+009F), U+2028, U+2029 or a bidi control (U+200E, U+200F,
 // U+202A-U+202E, U+2066-U+2069, U+061C).
@@ -124,6 +132,8 @@ struct Config {
     // W4.6. UTF-8; nullopt when absent (the Cloud is trusted through the
     // Windows certificate store).
     std::optional<std::string> cloud_ca_file;
+    // W4.8. UTF-8; nullopt when absent (the service's loop gets no jobs).
+    std::optional<std::string> jobs_file;
 };
 
 // A config file that can't be read, isn't valid JSON or breaks a rule above,
@@ -205,5 +215,17 @@ std::filesystem::path program_data_dir();
 
 // program_data_dir() / "RestoreProof" / "config.json".
 std::filesystem::path default_config_path();
+
+// The service's two folders (W4.8, docs/decisions.md 2026-10-08 point 2),
+// fixed whatever --config names, since one machine has one runs root, one
+// outbox and one run mutex. Each throws what program_data_dir throws.
+//
+// program_data_dir() / "RestoreProof" / "runs": the --evidence root of the
+// runs the service makes, beside rp::default_outbox_root()'s outbox\ and
+// sent\, so that queueing a run is one rename.
+std::filesystem::path default_runs_root();
+// program_data_dir() / "RestoreProof" / "state": where the service keeps
+// running.json, its record of the run it has taken.
+std::filesystem::path default_state_dir();
 
 } // namespace rp

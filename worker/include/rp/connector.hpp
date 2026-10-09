@@ -275,6 +275,18 @@ public:
     using Error::Error;
 };
 
+// The Worker was asked to stop while the connector worked (W4.8;
+// docs/decisions.md 2026-10-08, W4.8 point 13): a restore request the caller
+// didn't let go, or a wait for a restore that a stop ended. Not an Error: no
+// handler written for the backup product's failures takes it, and the run's
+// status reads it as `error interrupted`, never as the product's fault.
+// what() is safe to print and log, and ends with kNothingRestored (below)
+// when no restore request of the call had gone out.
+class Interrupted : public std::runtime_error {
+public:
+    using std::runtime_error::runtime_error;
+};
+
 // W2.6: what the random half of a sample may be drawn from (docs/decisions.md
 // 2026-09-30, W2.6). The connector lists a few containers' items, drawn with
 // the query's seed, and keeps only those restore_sample will later find exactly
@@ -371,6 +383,14 @@ struct CandidatePool {
 // How a restore_sample error message ends when no restore was sent.
 inline constexpr std::string_view kNothingRestored = "; nothing was restored";
 
+// One of the backup product's sessions that the connector's account started
+// and that is still running (own_sessions, W4.8): a browsing session a run
+// opened, or a restore. The product's list can't tell the two apart.
+struct OwnSession {
+    std::string id;
+    std::chrono::system_clock::time_point created_at; // as the product says
+};
+
 // A backup product as the pipeline sees it. One instance talks to one backup
 // server with one set of credentials; each call names the client (an MSP's
 // customer: one Microsoft 365 tenant) it is about.
@@ -409,6 +429,27 @@ public:
     // default throws NotImplementedError("<describe().name>: listing
     // candidates isn't implemented").
     virtual CandidatePool list_candidates(const CandidateQuery& query);
+
+    // W4.8 (docs/decisions.md 2026-10-08, W4.8 point 9): every session the
+    // connector's account started at or after `since` that is still running,
+    // newest first, for the whole account (every client, every page of the
+    // product's list). Read-only. A session that can't be read for certain is
+    // an Error, never left out: the caller ends sessions only when it knows
+    // what else runs. The errors of list_restore_points, but never
+    // NotFoundError. The default throws NotImplementedError("<describe().name>:
+    // listing the account's sessions isn't implemented").
+    virtual std::vector<OwnSession> own_sessions(std::chrono::system_clock::time_point since);
+
+    // Ends the session `id` if it is still running: the stop a run sends for
+    // its own browsing sessions when it ends, nothing more. A session that
+    // already stopped is left alone and is no error. The caller names only a
+    // session it knows to be a run's browsing session, never a restore.
+    // Throws the Error subclasses when the session couldn't be read or
+    // stopped (never NotFoundError), and std::invalid_argument for an ID that
+    // can't be the product's. The default throws
+    // NotImplementedError("<describe().name>: ending a session isn't
+    // implemented").
+    virtual void end_session(const std::string& id);
 
 protected:
     IConnector() = default;

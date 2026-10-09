@@ -21,7 +21,8 @@ inline constexpr int ok = 0;
 // unexpected failure (whose message is never shown), an exception no command
 // handled included. For `rpworker restore` and `test` also a run whose status is
 // error config, internal or result_invalid (a result that isn't valid
-// restoreproof.result.v1), and a pass whose output was lost; for `test` also
+// restoreproof.result.v1; job_invalid, which only the service's loop gives a
+// job, W4.8, is this code's too), and a pass whose output was lost; for `test` also
 // a --json path refused (not UTF-8, a file already there, no such folder), a
 // pass whose --json file couldn't be written, and with --evidence a run ID
 // that can't name a folder, a run folder that is already there or can't be
@@ -62,7 +63,8 @@ inline constexpr int transient = 3;
 // code not named under 1, 2 or 3 (rp/run_status.hpp's error_codes():
 // not_in_backup, no_restore_point, target_guard, backup,
 // backup_infrastructure, graph, stale_target, empty_sample, not_run,
-// restore_contradiction). The service here is Veeam or Graph, never the
+// restore_contradiction, and interrupted: the Worker was asked to stop
+// during the run, W4.8). The service here is Veeam or Graph, never the
 // Windows service: `rpworker service` doesn't use this code.
 inline constexpr int service = 4;
 // The thing tested failed. For `rpworker restore` and `rpworker test`: the

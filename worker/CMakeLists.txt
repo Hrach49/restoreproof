@@ -53,7 +53,9 @@ add_library(rpcore STATIC
     src/graph_ids.cpp
     src/graph_paging.cpp
     src/graph_targets.cpp
+    src/heartbeat.cpp
     src/http_client.cpp
+    src/job_rules.cpp
     src/name_key.cpp
     src/office_v1.cpp
     src/outbox.cpp
@@ -65,6 +67,7 @@ add_library(rpcore STATIC
     src/result_schema.cpp
     src/retry_policy.cpp
     src/rfc3161.cpp
+    src/run_folder_tail.cpp
     src/run_lock.cpp
     src/run_pipeline.cpp
     src/run_status.cpp
@@ -74,7 +77,13 @@ add_library(rpcore STATIC
     src/secrets.cpp
     src/service.cpp
     src/service_command.cpp
+    src/service_errors.cpp
+    src/service_jobs.cpp
+    src/service_recovery.cpp
     src/service_log.cpp
+    src/service_log_stream.cpp
+    src/service_loop.cpp
+    src/worker_body.cpp
     src/sha256.cpp
     src/signer.cpp
     src/signer_command.cpp
@@ -194,6 +203,7 @@ add_executable(rptests
     tests/graph_ids_test.cpp
     tests/graph_paging_test.cpp
     tests/graph_write_rule_test.cpp
+    tests/heartbeat_test.cpp
     tests/graph_targets_live_test.cpp
     tests/graph_targets_test.cpp
     tests/http_client_test.cpp
@@ -219,7 +229,13 @@ add_executable(rptests
     tests/scm_test.cpp
     tests/secrets_test.cpp
     tests/service_command_test.cpp
+    tests/service_errors_test.cpp
+    tests/service_jobs_test.cpp
+    tests/service_recovery_test.cpp
     tests/service_log_test.cpp
+    tests/service_log_stream_test.cpp
+    tests/service_loop_test.cpp
+    tests/worker_body_test.cpp
     tests/service_test.cpp
     tests/sha256_test.cpp
     tests/signer_command_test.cpp
@@ -316,6 +332,19 @@ rp_add_exe_test("rpworker config check reports a missing config file"
 rp_add_exe_test("rpworker config check keeps a --config path outside the ANSI code page"
     ARGS config check --config "тест-no-such-config.json" EXIT_CODE 1 STDOUT ""
     STDERR "config error: тест-no-such-config.json: cannot read config file")
+
+# W4.8: a config whose jobs_file isn't an absolute path, made under the build
+# tree from the example config. The service's working directory is System32,
+# so a relative path would name a file that depends on where the process is.
+set(RP_EXE_CONFIGS ${CMAKE_CURRENT_BINARY_DIR}/config-exe-test)
+file(MAKE_DIRECTORY ${RP_EXE_CONFIGS})
+file(READ ${CMAKE_CURRENT_SOURCE_DIR}/config.example.json RP_EXAMPLE_CONFIG)
+string(REPLACE "\"screenshots_enabled\": false" "\"screenshots_enabled\": false,\n    \"jobs_file\": \"jobs.json\""
+    RP_RELATIVE_JOBS_CONFIG "${RP_EXAMPLE_CONFIG}")
+file(WRITE ${RP_EXE_CONFIGS}/relative-jobs.json "${RP_RELATIVE_JOBS_CONFIG}")
+rp_add_exe_test("rpworker config check refuses a jobs_file that isn't an absolute path"
+    ARGS config check --config ${RP_EXE_CONFIGS}/relative-jobs.json EXIT_CODE 1 STDOUT ""
+    STDERR "config error: ${RP_EXE_CONFIGS}/relative-jobs.json: config key \"jobs_file\" must be an absolute path, such as C:\\ProgramData\\RestoreProof\\jobs.json")
 
 # The vault (W4.5): the exe tests use vault files of their own under the build
 # tree, never %ProgramData%'s, each filled by `rpworker vault set` with the

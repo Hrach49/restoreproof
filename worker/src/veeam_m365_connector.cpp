@@ -252,11 +252,16 @@ public:
         const std::string& account;
         // Explore sessions list_candidates opened: never a duplicate restore.
         const std::map<std::string, std::chrono::system_clock::time_point>& candidate_sessions;
+        // VeeamM365ConnectorOptions' three (W4.8); each may be null.
+        const std::function<bool()>& before_restore_request;
+        const std::function<void(std::string_view)>& on_session_opened;
+        const std::function<bool()>& stop_requested;
     };
 
     explicit RestoreRun(Context context)
         : c_(context), sessions_({context.client, context.wall_now, context.logger,
-                                  context.account, context.spec.restore_point.backup_time})
+                                  context.account, context.spec.restore_point.backup_time,
+                                  context.on_session_opened})
     {
         for (const auto& entry : context.candidate_sessions) {
             sessions_.know(entry.first);
@@ -291,6 +296,14 @@ private:
     std::vector<vr::Event> events(const std::string& id);
     std::string no_verdict(const std::string& why) const;
     void warn(const std::string& line) const noexcept { veeam_explore::warn(c_.logger, line); }
+    // Whether the Worker was asked to stop; a check that throws answered yes.
+    bool stop_requested() const noexcept;
+    // Whether the caller lets the next restore request go; one that throws
+    // answered no.
+    bool let_go() const noexcept;
+    // Ends the call before `work`'s next restore request is sent: for a stop,
+    // or because the caller didn't let it go.
+    [[noreturn]] void withdraw(const TypeWork& work, bool stopped) const;
 
     Context c_;
     vr::OrganizationFacts facts_;
@@ -298,6 +311,8 @@ private:
     std::string organization_id_;
     bool all_succeeded_ = true;
     std::int64_t restored_ = 0;
+    // Whether a restore POST of this call has been handed to the client.
+    bool request_sent_ = false;
     // Destroyed first: the finally path (step 13), which never throws, stops
     // the explore sessions unless a restore may still be running.
     veeam_explore::ExploreSessions sessions_;
@@ -306,6 +321,41 @@ private:
 std::string RestoreRun::no_verdict(const std::string& why) const
 {
     return "veeam_m365: " + why + "; no verdict" + left_open();
+}
+
+bool RestoreRun::stop_requested() const noexcept
+{
+    try {
+        return c_.stop_requested && c_.stop_requested();
+    } catch (...) {
+        return true;
+    }
+}
+
+bool RestoreRun::let_go() const noexcept
+{
+    try {
+        return !c_.before_restore_request || c_.before_restore_request();
+    } catch (...) {
+        return false;
+    }
+}
+
+void RestoreRun::withdraw(const TypeWork& work, bool stopped) const
+{
+    // Before the first request nothing of this call runs in Veeam, and the
+    // text promises it (connector::kNothingRestored). After one, the sessions
+    // already made have stopped, but items may be in the targets.
+    const std::string kind{connector::to_string(work.kind)};
+    const std::string what =
+        stopped ? "veeam_m365: the Worker was asked to stop before the " + kind +
+                      " restore request was sent"
+                : "veeam_m365: the " + kind + " restore request was not let go";
+    if (!request_sent_) {
+        throw connector::Interrupted(what + std::string{connector::kNothingRestored});
+    }
+    throw connector::Interrupted(what + "; the earlier restore request(s) of this call were sent" +
+                                 left_open());
 }
 
 Organization RestoreRun::organization()
@@ -684,6 +734,14 @@ vr::SessionState RestoreRun::poll(const std::string& id, ItemKind kind)
             throw connector::TransientError(no_verdict(which + " still Working after 20 minutes"));
         }
         c_.sleep(vr::kPollInterval);
+        // A stop ends the wait at once (W4.8 point 13): without this the
+        // poll would ask Veeam in a tight loop until the process is ended.
+        // The restore goes on in Veeam, so nothing is closed under it, as at
+        // the deadline.
+        if (stop_requested()) {
+            throw connector::Interrupted(
+                no_verdict(which + " was still Working when the Worker was asked to stop"));
+        }
     }
 }
 
@@ -782,6 +840,17 @@ void RestoreRun::restore_call(const TypeWork& work, const std::vector<std::size_
     }
     }
 
+    // W4.8 points 6 and 13: no restore request after a stop, and none the
+    // caller doesn't let go (it writes down that one may be out before it
+    // is). Asked here, before the credential is in memory; after a stop the
+    // caller isn't asked, since nothing will be sent.
+    if (stop_requested()) {
+        withdraw(work, true);
+    }
+    if (!let_go()) {
+        withdraw(work, false);
+    }
+
     // The credential: exported now, spliced into the body's text once,
     // checked and sent as that exact text, then wiped (docs/decisions.md
     // 2026-09-30 W2.5 point 1, and its W2.5 review entry for the copies
@@ -804,6 +873,7 @@ void RestoreRun::restore_call(const TypeWork& work, const std::vector<std::size_
         text = with_credential(body, pfx);
         veeam::check_restore_request(c_.checked, ctx, path, text, c_.guard_options);
         posted = c_.wall_now();
+        request_sent_ = true;
         outcome = c_.client.post_restore_once(path, text, vr::kPostTimeout);
     }
 
@@ -1007,7 +1077,10 @@ VeeamM365Connector::VeeamM365Connector(std::unique_ptr<IHttpClient> http, std::s
       graph_(std::move(options.graph)), make_graph_(std::move(options.make_graph)),
       guard_options_(std::move(options.guard)),
       cert_exporter_(std::move(options.cert_exporter)), wall_now_(std::move(options.wall_now)),
-      logger_(options.client.logger), account_(vr::bare_account(username))
+      before_restore_request_(std::move(options.before_restore_request)),
+      on_session_opened_(std::move(options.on_session_opened)),
+      stop_requested_(std::move(options.stop_requested)), logger_(options.client.logger),
+      account_(vr::bare_account(username))
 {
     if (!http_) {
         throw std::invalid_argument("veeam_m365: no HTTP client");
@@ -1130,7 +1203,8 @@ connector::RestoreResult VeeamM365Connector::restore_sample(const connector::Res
     one_name_each("onedrive", spec.onedrive);
 
     RestoreRun run({*client_, spec, *checked, guard_options_, cert_exporter_.get(), wall_now_,
-                    now_, sleep_, logger_, account_, candidate_sessions_});
+                    now_, sleep_, logger_, account_, candidate_sessions_,
+                    before_restore_request_, on_session_opened_, stop_requested_});
     // Veeam's errors as list_restore_points maps them but for a 404, naming
     // what was left open if a restore may still be running. In restore_sample
     // connector::NotFoundError means a sampled item isn't in the restore point
@@ -1152,6 +1226,54 @@ connector::RestoreResult VeeamM365Connector::restore_sample(const connector::Res
         throw connector::Error(std::string{"veeam_m365: unexpected response from Veeam: "} +
                                e.what() + run.left_open());
     }
+}
+
+namespace {
+
+// `call`'s result, Veeam's errors mapped as restore_sample maps them: a 404
+// (a session or an organisation that is gone) is connector::Error, never
+// connector::NotFoundError.
+template <class Call>
+auto veeam_mapped(Call&& call)
+{
+    try {
+        return call();
+    } catch (const AuthError& e) {
+        throw connector::AuthError(e.what());
+    } catch (const TransientError& e) {
+        throw connector::TransientError(e.what());
+    } catch (const VeeamError& e) {
+        throw connector::Error(e.what());
+    } catch (const vr::ShapeError& e) {
+        throw connector::Error(std::string{"veeam_m365: unexpected response from Veeam: "} +
+                               e.what());
+    }
+}
+
+} // namespace
+
+std::vector<connector::OwnSession> VeeamM365Connector::own_sessions(
+    std::chrono::system_clock::time_point since)
+{
+    // Veeam takes the time to the second; the entries are then held to
+    // `since` itself. Every page, through VeeamClient's paging.
+    const std::string path = "/v8/RestoreSessions?startTimeFrom=" + vr::format_utc_seconds(since) +
+                             "&orderBy=CreationTime&orderAsc=false";
+    return veeam_mapped([&] {
+        return vr::own_working_sessions(
+            client_->get_all(path), account_,
+            std::chrono::time_point_cast<std::chrono::nanoseconds>(since));
+    });
+}
+
+void VeeamM365Connector::end_session(const std::string& id)
+{
+    // Veeam lists its session IDs in lower case; the ID goes into a path.
+    const std::string session = ascii_lower(id);
+    if (!is_uuid(session)) {
+        throw std::invalid_argument("veeam_m365: a session ID must be a UUID");
+    }
+    veeam_mapped([&] { veeam_explore::stop_working_session(*client_, logger_, session); });
 }
 
 std::unique_ptr<connector::IConnector> make_veeam_m365_connector(
@@ -1216,6 +1338,9 @@ std::unique_ptr<connector::IConnector> make_veeam_m365_connector(
                                           ? options.cert_exporter
                                           : make_local_machine_cert_exporter(wall_now);
     connector_options.wall_now = wall_now;
+    connector_options.before_restore_request = options.before_restore_request;
+    connector_options.on_session_opened = options.on_session_opened;
+    connector_options.stop_requested = options.stop_requested;
     connector_options.client.logger = logger;
     connector_options.client.now = options.now;
     connector_options.client.sleep = options.sleep;

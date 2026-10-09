@@ -6,6 +6,7 @@
 
 #include <rp/canonical_json.hpp>
 #include <rp/outbox.hpp>
+#include <rp/run_lock.hpp>
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
@@ -15,6 +16,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <map>
+#include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -455,6 +457,49 @@ TEST_CASE("outbox prepare: a runs root on another volume than the outbox is refu
     answer = true;
     CHECK(box.outbox().prepare(box.runs, kId).empty());
     CHECK(asked.size() == 3);
+}
+
+// --- holds ----------------------------------------------------------------------------
+
+TEST_CASE("outbox holds: anything at outbox\\<run_id> is queued, at sent\\<run_id> sent, else "
+          "none; reads only",
+          "[outbox][holds]")
+{
+    Box box;
+
+    // Nothing there, not even the root: none, and nothing is made.
+    CHECK(box.outbox().holds(kId) == rp::OutboxHolds::none);
+    CHECK_FALSE(std::filesystem::exists(box.root));
+
+    box.sent_run("was-sent", 0);
+    box.queue_run("is-queued");
+    // Anything at the path counts, as for queue and prepare: an empty folder
+    // and a file too.
+    std::filesystem::create_directories(box.queued("empty-folder"));
+    spit(box.root / "outbox" / "a-file", "x");
+    spit(box.root / "sent" / "sent-file", "x");
+    // Both: queued is asked first, as queue and prepare ask.
+    std::filesystem::create_directories(box.queued("both"));
+    std::filesystem::create_directories(box.sent("both"));
+
+    CHECK(box.outbox().holds("is-queued") == rp::OutboxHolds::queued);
+    CHECK(box.outbox().holds("empty-folder") == rp::OutboxHolds::queued);
+    CHECK(box.outbox().holds("a-file") == rp::OutboxHolds::queued);
+    CHECK(box.outbox().holds("was-sent") == rp::OutboxHolds::sent);
+    CHECK(box.outbox().holds("sent-file") == rp::OutboxHolds::sent);
+    CHECK(box.outbox().holds("both") == rp::OutboxHolds::queued);
+    CHECK(box.outbox().holds("another") == rp::OutboxHolds::none);
+}
+
+TEST_CASE("outbox holds: a run ID that is empty or not UTF-8 names no run", "[outbox][holds]")
+{
+    Box box;
+    box.queue_run(kId);
+    box.sent_run("was-sent", 0);
+
+    // The empty name would be outbox\ itself, which is there.
+    CHECK(box.outbox().holds("") == rp::OutboxHolds::none);
+    CHECK(box.outbox().holds("run-\xff") == rp::OutboxHolds::none);
 }
 
 // --- list -----------------------------------------------------------------------------
@@ -1052,6 +1097,139 @@ TEST_CASE("outbox flush: a 202 whose folder can't be moved is not sent again; th
     CHECK(uploader.runs == Lines{kId});
     CHECK(files_of(box.sent(kId)) == before);
     CHECK(box.manifest_of(box.sent(kId)).sent_at == text_at(10));
+}
+
+TEST_CASE("outbox flush: a stop is asked before each queued run; after it no upload is started "
+          "and every run left is still counted",
+          "[outbox][flush][stop]")
+{
+    Box box;
+    box.queue_run("run-a", 1);
+    box.queue_run("run-b", 2);
+    box.queue_run("run-c", 3);
+    box.sent_run("old", -31LL * 24 * 3600);
+    FakeUploader uploader;
+    // How many runs are let through before the stop.
+    const int let_through = GENERATE(0, 1, 2);
+    CAPTURE(let_through);
+    int asked = 0;
+
+    const rp::FlushReport report =
+        box.outbox().flush(uploader, at(100), [&] { return ++asked > let_through; });
+
+    const Lines all{"run-a", "run-b", "run-c"};
+    CHECK(uploader.runs == Lines(all.begin(), all.begin() + let_through));
+    // The caps come before the uploads, and so before the first question.
+    Lines out{"pruned old"};
+    for (int n = 0; n < let_through; ++n) {
+        out.push_back("sent " + all[static_cast<std::size_t>(n)]);
+    }
+    CHECK(report.out == out);
+    CHECK(report.err.empty());
+    CHECK(report.stopped);
+    CHECK(report.queued == static_cast<std::size_t>(3 - let_through));
+    CHECK(report.sent == static_cast<std::size_t>(let_through));
+    // Asked once per run until it says yes, then never again.
+    CHECK(asked == let_through + 1);
+    for (int n = let_through; n < 3; ++n) {
+        const std::string& id = all[static_cast<std::size_t>(n)];
+        CHECK(box.manifest_of(box.queued(id)).attempts == 0);
+    }
+}
+
+TEST_CASE("outbox flush: after a stop a run that was uploaded and only has to be moved stays "
+          "queued too",
+          "[outbox][flush][stop]")
+{
+    Box box;
+    const path folder = box.queue_run(kId);
+    box.files.move_folder = [](const path&, const path&) { return 5ul; };
+    FakeUploader uploader;
+    REQUIRE(box.outbox().flush(uploader, at(10)).queued == 1);
+    REQUIRE(box.manifest_of(folder).sent_at == text_at(10));
+    box.files.move_folder = nullptr;
+
+    const rp::FlushReport report = box.outbox().flush(uploader, at(20), [] { return true; });
+
+    CHECK(report.stopped);
+    CHECK(report.out.empty());
+    CHECK(report.err.empty());
+    CHECK(report.queued == 1);
+    CHECK(report.sent == 0);
+    CHECK(std::filesystem::exists(folder));
+}
+
+TEST_CASE("outbox flush: a stop that never comes, and no stop function, change nothing",
+          "[outbox][flush][stop]")
+{
+    Box box;
+    box.queue_run("run-a", 1);
+    box.queue_run("run-b", 2);
+    FakeUploader uploader;
+    const bool with_function = GENERATE(false, true);
+    int asked = 0;
+
+    const rp::FlushReport report =
+        with_function ? box.outbox().flush(uploader, at(100), [&] { return ++asked, false; })
+                      : box.outbox().flush(uploader, at(100));
+
+    CHECK(report.out == Lines{"sent run-a", "sent run-b"});
+    CHECK_FALSE(report.stopped);
+    CHECK(report.queued == 0);
+    CHECK(asked == (with_function ? 2 : 0));
+}
+
+// --- the flush mutex ------------------------------------------------------------------
+
+TEST_CASE("the flush lock: held elsewhere is null; one a dead flush left is taken at the second "
+          "try",
+          "[outbox][flush][lock]")
+{
+    int calls = 0;
+
+    SECTION("free: taken at the first try")
+    {
+        const std::unique_ptr<rp::RunLock> lock = rp::take_outbox_flush_lock([&] {
+            ++calls;
+            return std::make_unique<rp::RunLock>();
+        });
+        CHECK(lock);
+        CHECK(calls == 1);
+    }
+    SECTION("held by another flush: null, and not asked again")
+    {
+        const std::unique_ptr<rp::RunLock> lock =
+            rp::take_outbox_flush_lock([&]() -> std::unique_ptr<rp::RunLock> {
+                ++calls;
+                return nullptr;
+            });
+        CHECK_FALSE(lock);
+        CHECK(calls == 1);
+    }
+    SECTION("abandoned: the second try has it")
+    {
+        const std::unique_ptr<rp::RunLock> lock =
+            rp::take_outbox_flush_lock([&]() -> std::unique_ptr<rp::RunLock> {
+                if (++calls == 1) {
+                    throw rp::AbandonedRunLock();
+                }
+                return std::make_unique<rp::RunLock>();
+            });
+        CHECK(lock);
+        CHECK(calls == 2);
+    }
+    SECTION("abandoned, and taken by another flush before the second try: null")
+    {
+        const std::unique_ptr<rp::RunLock> lock =
+            rp::take_outbox_flush_lock([&]() -> std::unique_ptr<rp::RunLock> {
+                if (++calls == 1) {
+                    throw rp::AbandonedRunLock();
+                }
+                return nullptr;
+            });
+        CHECK_FALSE(lock);
+        CHECK(calls == 2);
+    }
 }
 
 // --- flush: the caps ------------------------------------------------------------------

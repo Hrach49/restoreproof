@@ -10,12 +10,14 @@
 // Cloud already has are ever deleted. docs/verification.md, "The outbox".
 
 #include <rp/rfc3161.hpp>
+#include <rp/run_lock.hpp>
 
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -41,8 +43,18 @@ inline constexpr std::chrono::seconds kSentKept{30 * 24 * 3600};
 inline constexpr std::chrono::seconds kFirstUploadRetry{60};
 inline constexpr std::chrono::seconds kMaxUploadRetry{3600};
 
-// One flush at a time (point 3): the named mutex `outbox flush` takes.
+// One flush at a time (point 3): the named mutex `outbox flush` and the
+// service's loop take.
 inline constexpr std::wstring_view kOutboxMutex = L"Global\\RestoreProof-outbox";
+
+// Takes the flush mutex without waiting: the lock, or null when another flush
+// holds it. `take` is one try (null = rp::try_take_named_lock(kOutboxMutex));
+// when it answers rp::AbandonedRunLock, the mutex's last holder ended without
+// releasing it and the try itself has released it, so it is taken again at
+// once: a flush that died left nothing half done. What a second try throws
+// goes on to the caller.
+std::unique_ptr<RunLock>
+take_outbox_flush_lock(const std::function<std::unique_ptr<RunLock>()>& take = {});
 
 // A manifest's last_error.
 namespace upload_code {
@@ -194,12 +206,22 @@ struct OutboxListing {
     std::vector<std::string> errors;
 };
 
+// Whether the outbox holds a run ID, and where.
+enum class OutboxHolds {
+    none,
+    queued, // something is at <root>\outbox\<run_id>
+    sent    // something is at <root>\sent\<run_id>
+};
+
 // What one flush did. The lines are whole, without their line end.
 struct FlushReport {
     bool readable = true;         // as OutboxListing's
     std::vector<std::string> out; // pruned, sent, kept, waiting, moved
     std::vector<std::string> err; // "outbox error: ..." and "outbox warning: ..."
     bool errors = false;          // an "outbox error" line is among them
+    // The stop function said yes: the runs it kept from being tried are
+    // counted in `queued` and have no line.
+    bool stopped = false;
     std::size_t queued = 0;       // runs still under outbox
     std::size_t sent = 0;         // folders under sent
 };
@@ -238,13 +260,24 @@ public:
     std::string prepare(const std::filesystem::path& runs_root,
                         std::optional<std::string_view> run_id) const;
 
+    // Whether a run of this ID is queued or sent: the rule queue and prepare
+    // apply, so anything at that path counts (a folder without a result.json,
+    // a file), the outbox asked before sent. Reads only and makes nothing. A
+    // run ID that is empty or not UTF-8 names no run: none. Never throws but
+    // for no memory.
+    OutboxHolds holds(std::string_view run_id) const;
+
     // What is queued and how many runs are sent; reads only.
     OutboxListing list() const;
 
     // One pass, no waiting (points 3 and 4): prunes sent\, then tries every
-    // queued run that is due, oldest queued_at first. Never throws but for no
-    // memory.
-    FlushReport flush(IUploader& uploader, std::chrono::system_clock::time_point now);
+    // queued run that is due, oldest queued_at first. `stop` (null: never) is
+    // asked before each queued run, after the caps: once it says yes it isn't
+    // asked again, no further upload is started and no folder moved, and the
+    // runs left are counted as queued (W4.8 point 10). An upload in flight is
+    // not ended by it. Never throws but for no memory and what `stop` throws.
+    FlushReport flush(IUploader& uploader, std::chrono::system_clock::time_point now,
+                      const std::function<bool()>& stop = {});
 
 private:
     OutboxOptions options_;

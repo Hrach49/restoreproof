@@ -36,7 +36,13 @@ struct ResultClient {
     std::string library_id;         // test_library_id
     std::string onedrive_drive_id;  // test_onedrive_drive_id
     std::string onedrive_folder_id; // test_onedrive_folder_id
+
+    bool operator==(const ResultClient&) const = default;
 };
+
+// The client as `config` gives it: the one mapping of the config's client
+// keys, for the result and for the service's record of a run (W4.8).
+ResultClient result_client(const Config& config);
 
 // One run's parts. The pointers are borrowed for the call only; null where a
 // step didn't run.

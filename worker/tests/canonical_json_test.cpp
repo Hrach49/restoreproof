@@ -276,6 +276,24 @@ TEST_CASE("canonical_json output parsed back and canonicalised again is identica
     CHECK(nlohmann::json::parse(once) == value);
 }
 
+TEST_CASE("json_nesting_depth counts the arrays and objects open at once, on the bytes and "
+          "outside strings",
+          "[canonical_json]")
+{
+    CHECK(rp::json_nesting_depth("") == 0);
+    CHECK(rp::json_nesting_depth("7") == 0);
+    CHECK(rp::json_nesting_depth("[]") == 1);
+    CHECK(rp::json_nesting_depth(R"({"a":[1,{"b":[]}],"c":{}})") == 4);
+    CHECK(rp::json_nesting_depth("[[],[],[[]]]") == 3);
+    // Brackets in a string don't count, nor does a quote that is escaped.
+    const std::string strings = R"(["[[[[","\"[[[","\\",[]])";
+    CHECK(rp::json_nesting_depth(strings) == 2);
+    // Text that isn't JSON is counted as it stands, never refused here.
+    CHECK(rp::json_nesting_depth("]]][[") == 2);
+    CHECK(rp::json_nesting_depth(std::string(100'000, '[')) == 100'000);
+    CHECK(rp::kMaxJsonNesting == 32);
+}
+
 TEST_CASE("canonical_sha256 is the SHA-256 of the canonical bytes", "[canonical_json]")
 {
     const nlohmann::json value = {{"b", 1}, {"a", "\xC3\xA9"}};

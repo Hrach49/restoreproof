@@ -125,6 +125,15 @@ std::filesystem::path check_json_path(std::string_view arg)
 
 } // namespace
 
+Presentation test_presentation()
+{
+    Presentation presentation;
+    presentation.command = "test";
+    presentation.restore_rows = false;
+    presentation.check_table = format_check_table;
+    return presentation;
+}
+
 int run_test_command(std::span<const std::string_view> args, std::ostream& out,
                      std::ostream& err, const RestoreCommandEnv& env)
 {
@@ -154,10 +163,7 @@ int run_test_command(std::span<const std::string_view> args, std::ostream& out,
     std::optional<std::filesystem::path> json_path;
     std::shared_ptr<FixtureRecorder> recorder;
 
-    Presentation presentation;
-    presentation.command = "test";
-    presentation.restore_rows = false;
-    presentation.check_table = format_check_table;
+    Presentation presentation = test_presentation();
     if (json_arg) {
         presentation.after_config = [&] { json_path = check_json_path(*json_arg); };
         // The result goes last, after the timings: the file is exactly its

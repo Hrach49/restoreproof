@@ -9,14 +9,6 @@ namespace rp {
 
 namespace {
 
-std::string results_url(std::string cloud_url)
-{
-    while (cloud_url.ends_with('/')) {
-        cloud_url.pop_back();
-    }
-    return cloud_url + std::string{kResultsPath};
-}
-
 std::string code_of(TransportError error)
 {
     switch (error) {
@@ -34,8 +26,16 @@ std::string code_of(TransportError error)
 
 } // namespace
 
+std::string cloud_endpoint(std::string cloud_url, std::string_view path)
+{
+    while (cloud_url.ends_with('/')) {
+        cloud_url.pop_back();
+    }
+    return cloud_url.append(path);
+}
+
 CloudUploader::CloudUploader(IHttpClient& http, std::string cloud_url)
-    : http_(http), url_(results_url(std::move(cloud_url)))
+    : http_(http), url_(cloud_endpoint(std::move(cloud_url), kResultsPath))
 {
 }
 
@@ -72,11 +72,12 @@ UploadAnswer CloudUploader::upload(const std::string&, const std::vector<UploadP
     }
 }
 
-std::unique_ptr<IHttpClient> make_cloud_http_client(const Config& config)
+std::unique_ptr<IHttpClient> make_cloud_http_client(const Config& config,
+                                                    std::shared_ptr<spdlog::logger> logger)
 {
     HttpClientOptions options;
     options.ca_file = config.cloud_ca_file;
-    options.logger = make_command_logger();
+    options.logger = logger ? std::move(logger) : make_command_logger();
     return std::make_unique<HttpClient>(std::move(options));
 }
 

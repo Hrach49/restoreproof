@@ -106,6 +106,16 @@ bool is_infrastructure_text(std::string_view text);
 // "results" list, or for a field of the wrong kind.
 std::vector<std::string> working_sessions(const nlohmann::json& list, std::string_view account);
 
+// The sessions of GET /v8/RestoreSessions entries that `account` started
+// (initiatedBy, ASCII case-insensitive), that are Working and were created at
+// or after `since`, newest first (W4.8 point 9): any type, any organisation.
+// Never left out on a doubt: ShapeError for an entry that isn't an object or
+// has no string "state" or "initiatedBy", and for a Working one of the
+// account's whose "id" isn't a UUID (returned in lower case) or whose
+// "creationTime" isn't Veeam's UTC form.
+std::vector<connector::OwnSession> own_working_sessions(const std::vector<nlohmann::json>& entries,
+                                                        std::string_view account, UtcTime since);
+
 // What the duplicate check keeps (restore-flow §8).
 struct DuplicateFilter {
     std::string account;          // the bare account name

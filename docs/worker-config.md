@@ -2,7 +2,8 @@
 
 How the Worker is configured: the settings file, the secrets, and how to check both with
 `rpworker config check`, then how `rpworker veeam list`, `rpworker graph list`, `rpworker
-restore`, `rpworker test` and `rpworker signer` use them, and the exit codes of every `rpworker` command. The contract is in `worker/include/rp/config.hpp` and
+restore`, `rpworker test` and `rpworker signer` use them, what the service does with them ("The
+service's loop"), and the exit codes of every `rpworker` command. The contract is in `worker/include/rp/config.hpp` and
 `worker/include/rp/secrets.hpp`; where this page and the code disagree, the code wins.
 
 ## Where the file lives
@@ -21,10 +22,11 @@ example, fill in your own values, and add those two keys if you need them.
 
 ## Settings
 
-Ten keys are required; the other ten are optional. Seven of those have defaults; without
+Ten keys are required; the other thirteen are optional. Seven of those have defaults; without
 `veeam_ca_file` the Worker trusts the Windows certificate store for Veeam (and without
-`cloud_ca_file` for the Cloud), and without `veeam_cert_sha256` it checks the Veeam server's
-host name.
+`cloud_ca_file` for the Cloud), without `veeam_cert_sha256` it checks the Veeam server's
+host name, without `tsa_url` and `tsa_ca_file` it asks the default timestamp authority, and
+without `jobs_file` the service gets no jobs.
 
 | Key | Required | Default | Valid values | What it is for |
 |---|---|---|---|---|
@@ -38,8 +40,8 @@ host name.
 | `test_library_id` | yes | | a Graph **drive ID** (`b!…`): see below | Graph **drive ID** (`b!…`) of the `RestoreTarget` library; not the list ID. The only restore target for SharePoint items. Not the `RestoreTest` library, which holds the canary files. |
 | `test_onedrive_drive_id` | yes | | a Graph drive ID (`b!…`): see below | The OneDrive drive holding the `RestoreTarget` folder. |
 | `test_onedrive_folder_id` | yes | | a Graph item ID: see below | The `RestoreTarget` folder's item ID: the only restore target for OneDrive items. Not `/RestoreTest`, which holds the canary files. |
-| `poll_interval_s` | no | `300` | integer, 1 to 86400 | Seconds between the Worker's requests to the Cloud for new jobs. |
-| `heartbeat_interval_s` | no | `900` | integer, 1 to 86400 | Seconds between the Worker's reports to the Cloud that it is alive. |
+| `poll_interval_s` | no | `300` | integer, 1 to 86400 | Seconds between the service's polls, counted from the start of the last one: the jobs are read and the outbox is flushed at each ("The service's loop"). |
+| `heartbeat_interval_s` | no | `900` | integer, 1 to 86400 | Seconds between the service's heartbeats to the Cloud ("The heartbeat"). |
 | `sample_mail` | no | `5` | integer, 0 to 100 | Mail items restored per test run. |
 | `sample_sp` | no | `5` | integer, 0 to 100 | SharePoint items restored per test run. |
 | `sample_od` | no | `5` | integer, 0 to 100 | OneDrive items restored per test run. |
@@ -49,7 +51,8 @@ host name.
 | `tsa_url` | no | (not set: `http://timestamp.digicert.com`) | an `http://` or `https://` URL, no user name, password, query or fragment; needs `tsa_ca_file` | The RFC 3161 timestamp authority `rpworker test --evidence` asks (W4.4). Plain HTTP is allowed for this key alone: see "The timestamp authority" below. |
 | `tsa_ca_file` | no | (not set: the embedded DigiCert root) | absolute path of a readable file | PEM file with the certificate(s) a timestamp token must chain to. Without it, the root embedded from `shared/tsa/tsa-ca.pem`. |
 | `cloud_ca_file` | no | (not set) | absolute path of a readable PEM file that holds at least one certificate | PEM file with the certificate(s) `cloud_url`'s server certificate must chain to, trusted for the Cloud instead of the Windows certificate store (W4.6): for a Cloud behind a private CA. `cloud_url` stays `https://`, the host name is still checked, and TLS verification can't be turned off. See "`rpworker outbox`". |
-| `screenshots_enabled` | no | `false` | `true` or `false`: see below | The client's screenshot setting: whether a run that writes a run folder asks for a picture of Veeam's restore session. Off by default. |
+| `jobs_file` | no | (not set) | absolute path; the file needn't exist: see below | The service's stub job source (W4.8): a `restoreproof.jobs.v1` document the service reads whole at every poll, until W5.1 asks the Cloud instead. Without the key the service runs no job. See "The jobs file". |
+| `screenshots_enabled` | no | `false` | `true` or `false`: see below | The client's screenshot setting: whether a run that writes a run folder asks for a picture of Veeam's restore session. Off by default. In the service a job's own `screenshots_enabled` replaces it for that run. |
 
 At least one of `sample_mail`, `sample_sp` and `sample_od` must be above 0.
 
@@ -64,7 +67,8 @@ to U+2069), which can reorder how a line displays. Other non-ASCII text, such as
 The Worker checks the file when it loads it and stops at the first problem, in a fixed order:
 the file can't be read; it isn't valid JSON; it isn't a JSON object; a key looks like a secret;
 a key is unknown; then each setting in the order of the table above (for `veeam_cert_sha256`,
-its form first, then that `veeam_ca_file` is set; `screenshots_enabled` last); then the sample
+its form first, then that `veeam_ca_file` is set; `jobs_file` after `cloud_ca_file`;
+`screenshots_enabled` last); then the sample
 sizes together; then that
 the `veeam_ca_file` named can be opened for reading; last, when `veeam_cert_sha256` is set,
 that `veeam_ca_file` holds a certificate with that SHA-256, read the way the Worker's TLS
@@ -160,12 +164,20 @@ connection reads it. Fix the reported problem and run
   boolean. JSON's own `true` and `false` are accepted; a string (`"true"`), a number (`1`) or
   `null` is rejected with `config key "screenshots_enabled" must be true or false`. It is a
   per-client setting, off by default, since a picture can't be passed through the redaction
-  that every logged string goes through. Until jobs exist (W4.8) the CLI reads it from
-  `config.json`; a job's value replaces it then. In W4.2 it changes only the reason the result
+  that every logged string goes through. The commands read it from `config.json`; in the
+  service a job's `screenshots_enabled` replaces it for that run (W4.8, "The jobs file"), and
+  a result written afterwards for a run without one takes the config's again ("A run without
+  a result"). In W4.2 it changes only the reason the result
   gives: the default capturer starts no browser and answers `unavailable` either way, with the
   reason `disabled` when the key is `false` and `no_page` when it is `true`, because no Veeam
   page shows a restore session without an interactive sign-in (`docs/decisions.md` 2026-10-05,
   W4.2, points 2 to 4). A screenshot never changes a run's status, a warning or the exit code.
+- **`jobs_file` must be an absolute path, and nothing more is asked of it here.** The same
+  path rule as `veeam_ca_file`; anything else is `config key "jobs_file" must be an absolute
+  path, such as C:\ProgramData\RestoreProof\jobs.json`. The file is not opened when the
+  config is loaded and needn't exist: no file is no jobs. `config check` prints the path and
+  nothing of the file. Only the service reads it, at every poll, and only when its owner is
+  SYSTEM, Administrators or the service's own account ("The jobs file").
 - **Control characters are rejected** in every string setting, for the same reason: a newline,
   escape sequence or bidi override in a value could forge, hide or reorder lines of
   `config check` output.
@@ -268,7 +280,7 @@ by default.
 `private_key`, `access_key`, `signing_key`, `connection_string`, `pfx` or `passphrase` is
 rejected, and checked before anything else so that the secret is removed first: `config key
 "<key>" looks like a secret; secrets don't belong in config.json. Put it in the vault with
-rpworker vault set <name> instead (veeam_username, ...)`. None of the 18 settings matches.
+rpworker vault set <name> instead (veeam_username, ...)`. None of the 23 settings matches.
 `cert` is not on the list: a certificate's hash or path is public, and `veeam_cert_sha256` is
 a setting. A key such as `graph_cert_thumbprint` is refused only as unknown.
 
@@ -519,6 +531,10 @@ sample_od                 5
 log_level                 info
 veeam_ca_file             C:\ProgramData\RestoreProof\veeam-rest.pem
 veeam_cert_sha256         9FB19E0E604C9BE49F83D8E508EFA8EA0986A952377C783E5035CEA2D772A213
+tsa_url                   (not set)
+tsa_ca_file               (not set)
+cloud_ca_file             (not set)
+jobs_file                 C:\ProgramData\RestoreProof\jobs.json
 screenshots_enabled       false
 secrets (vault C:\ProgramData\RestoreProof\vault.bin; values are never shown):
 veeam_username            **** (set)
@@ -529,8 +545,9 @@ signing_key_base64        **** (set)
 ```
 
 Without `veeam_ca_file` its line reads `veeam_ca_file             (not set)`, and likewise
-`veeam_cert_sha256         (not set)` without a pin. `screenshots_enabled` always has a line:
-`false` when the file doesn't set it.
+`veeam_cert_sha256`, `tsa_url`, `tsa_ca_file`, `cloud_ca_file` and `jobs_file` (W4.8) without
+their keys. `jobs_file` prints the path as the file gives it, whether or not a file is there.
+`screenshots_enabled` always has a line: `false` when the file doesn't set it.
 
 A secret prints only as `**** (set)` or `(not set)`: never any character of its value, nor its
 length. None is opened or parsed here: a signing key that isn't a key still reads `**** (set)`.
@@ -736,7 +753,8 @@ It needs:
   run line and no status. If its last holder ended without releasing it (a crashed run), this
   run is refused once with `restore error: the last RestoreProof run ended without releasing
   the restore targets; nothing was done; the next run cleans them before it restores`, exit 4,
-  and the mutex is let go, so the next run takes it. One run's cleanup
+  and the mutex is let go, so the next run takes it (the service takes such a mutex again at
+  once instead: "The service's loop"). One run's cleanup
   could otherwise delete another run's copies before they are read back, which would read as
   `missing`, a false `fail`. `graph list` only reads and doesn't take it; the two
   `[live][writes]` tests do (`docs/testing.md`);
@@ -855,7 +873,11 @@ total                 0:00:05.000
   it ended: `status <pass|fail|error>[ <code>]: <message>`, its own paragraph, then each warning
   as `warning: <code>: <message>` on stderr. The exit code is the status's: `pass` 0 (every
   sampled item verified), `fail` 5 (an item missing or a mismatch, its target read fine, not
-  blamed on infrastructure), `error` 1 to 4 by its code (table below). The message is counts
+  blamed on infrastructure), `error` 1 to 4 by its code (table below). There are twenty error
+  codes since W4.8, which added `interrupted` (the Worker was asked to stop during the run,
+  exit 4; only the service has a stop to ask with, "A stop during a run") and `job_invalid`
+  (exit 1; never a run's own code: the service's answer to a job that is no job, "The jobs
+  file"). The message is counts
   and fixed words, never a subject, a name, an address or an exception's message. Veeam's
   own status never decides: a `partial` restore whose items all verify is `pass` (with a
   `backup_session` warning per session that wasn't `Success`); a `failed` one whose items all
@@ -871,8 +893,9 @@ total                 0:00:05.000
 
   ```
   cleanup <before|after> ok: deleted <a> mail, <b> sharepoint, <c> onedrive
-  cleanup <before|after> incomplete: deleted <a> mail, <b> sharepoint, <c> onedrive[; left <x> mail, <y> sharepoint, <z> onedrive][; skipped <n>][; <target> <code>]...[; the restore may still be running; the next run cleans before]
+  cleanup <before|after> incomplete: deleted <a> mail, <b> sharepoint, <c> onedrive[; left <x> mail, <y> sharepoint, <z> onedrive][; skipped <n>][; <target> <code>]...
   cleanup after skipped: nothing was restored
+  cleanup after skipped: the restore may still be running; the next run cleans before
   cleanup after skipped: no Graph client
   ```
 
@@ -892,8 +915,14 @@ total                 0:00:05.000
     timings' table, which ends the run (W3.5, below). It runs after the
     check, so nothing is deleted before it is read back, and also after a check that threw.
     When the restore stopped with an error that doesn't promise `nothing was restored` (a POST
-    with no answer, a poll that gave up), it still runs, and its line ends `the restore may
-    still be running; the next run cleans before`: Veeam may still be writing.
+    with no answer, a poll that gave up, or in the service a poll left on a stop), Veeam may
+    still be writing, and nothing is deleted under a restore: the clean after is skipped and
+    its line is `cleanup after skipped: the restore may still be running; the next run cleans
+    before` (W4.8, which amends W3.4: until then the clean ran and its `incomplete` line
+    ended with those words). The `cleanup_after` span is then `not run`, and the result's
+    `cleanup.after` is `null` with `restore_may_still_run` true. At a prompt the next run's
+    clean before takes the copies up; the service waits for Veeam's sessions first ("The
+    hold").
   - **The cleanup never changes the status or the exit code**, but in one case: when the clean
     before's guard check refuses a target (it isn't the RestoreTarget the config says), the run
     stops there, before the sample is chosen and before any Veeam explore session: `cleanup
@@ -978,8 +1007,9 @@ total                 0:00:05.000
   ID>)`, and the status reads `the restore didn't complete: ...; items may be in the restore
   targets`; with that promise it reads `the restore didn't start: ...; nothing was restored`.
   The "had started" line (`restore_note` in the code) says what the restore did; the clean
-  after's line, after the status, says what is left (`the restore may still be running` when
-  Veeam may still be writing). Check with `rpworker graph list`.
+  after's line, after the status, says what is left (`cleanup after skipped: the restore may
+  still be running; the next run cleans before` when Veeam may still be writing, and nothing
+  was deleted). Check with `rpworker graph list`.
 - The output is UTF-8; control characters in Veeam's text are shown as spaces. Warnings go to
   stderr only.
 
@@ -1037,7 +1067,7 @@ timings' table, `--record`, and the exit codes. The code is `rp::run_test_comman
   gives the seed (`run <id>  seed <hex>`), so `--run-id` repeats a sample, with the same
   manifest, cursor and restore point (`--point`).
 - **Exit codes.** `restore`'s: 0 pass, 5 fail, 1 to 4 an error by its code (`result_invalid`
-  is 1), 64 usage (see
+  is 1, `interrupted` 4), 64 usage (see
   "Exit codes"). Not the guide's "0 pass, 1 fail, 3 error": 1 and 3 already mean config and
   transient.
 
@@ -1187,8 +1217,8 @@ Writes the run folder `<dir>\<run_id>\` (W4.2; `docs/verification.md`, "The run 
 `docs/decisions.md` 2026-10-05, W4.2) and signs its result (W4.3; `docs/verification.md`, "The
 signature"; `docs/decisions.md` 2026-10-05, W4.3). It always signs: there is no flag for an
 unsigned folder, so it needs the vault's `signing_key_base64` ("The signing key" above). `<dir>` is the runs root and is made if it isn't there;
-there is no default, so nothing is written without the flag (the service will pass
-`%ProgramData%\RestoreProof\runs`, W4.8). `--evidence` and `--json` can't be given together
+there is no default, so nothing is written without the flag (the service passes
+`%ProgramData%\RestoreProof\runs`, W4.8, "The service's loop"). `--evidence` and `--json` can't be given together
 (exit 64): the folder's `result.json` is the `--json` file. `restore` takes neither.
 
 | File | What it holds |
@@ -1203,7 +1233,8 @@ there is no default, so nothing is written without the flag (the service will pa
 `timestamp.tst` (which depend on that hash). It is there only when the folder is complete:
 signed, and the timestamp attempt over, with `timestamp.tst` beside it (W4.4: a TSA's RFC 3161
 token over the result's hash) or without. A folder without `result.json` is a run with no
-result.
+result. A command leaves such a folder as it is; the service closes the one its record names
+with a result written afterwards ("A run without a result").
 
 For example, `rpworker test --mail 2 --sp 1 --od 0 --run-id run-0001 --evidence C:\rp-runs`
 ends, after the timings' table:
@@ -1218,7 +1249,11 @@ and before `--record`'s `recorded ...` line. The lines are printed only once `re
 written, the folder's last. `timestamped <time>` (W4.4) is the TSA's token's own time, UTC; a
 run that got no token has neither that line nor `timestamp.tst` in the list, and one line on
 stderr instead, `timestamp warning: <folder>: not timestamped: <code> after <n> attempt(s)`
-(the codes: `docs/verification.md`, "The timestamp"). Its status and exit code are unchanged. `<bundle_sha256>` and `<key_id>` are 64 lower-case hex each, the
+(the codes: `docs/verification.md`, "The timestamp"). `<n>` is 1 to 3, and 0 in one case
+(W4.8): the Worker was asked to stop before the first attempt, so no TSA was asked, and the
+line reads `not timestamped: timestamp_internal after 0 attempt(s)`. After a stop no further
+attempt is made and no wait begun; the line then has the last attempt's code and the
+attempts made. Only the service has a stop ("A stop during a run"). Its status and exit code are unchanged. `<bundle_sha256>` and `<key_id>` are 64 lower-case hex each, the
 two values in `signature.json`; `Get-FileHash result.json` gives the first, `rpworker signer
 public-key`'s `key` line the second. With a screenshot the folder's line ends `,
 screenshot.png`.
@@ -1279,7 +1314,9 @@ removed again. The last line is for a signature that couldn't be made or didn't 
 the key's own public half; it leaves the two text files (and a screenshot, if one was taken),
 no `signature.json` and no `result.json`. A run that ended `fail` or `error` with a valid
 result is signed exactly as a `pass` is; a run that ended `error result_invalid` has no
-result to sign.
+result to sign: the invalid result is never signed. (In the service such a folder then gets a
+valid result that says `error result_invalid`, written afterwards and signed: "A run without
+a result".)
 
 The third is for a run that ended `error result_invalid`, or whose finished result isn't valid
 (after its `result error: ...` line): the two text files are there, `result.json` isn't.
@@ -1319,7 +1356,7 @@ Only with `--evidence` (alone, with `--json`, empty or twice it is the usage lin
 Queues the finished run folder for upload (W4.6; `docs/verification.md`, "The outbox";
 `docs/decisions.md` 2026-10-07, W4.6). `<root>` is the outbox's root: queued runs are under
 `<root>\outbox`, uploaded ones under `<root>\sent`; both are made when needed. There is no
-default: without the flag the folder stays in `<dir>` (the service will pass
+default: without the flag the folder stays in `<dir>` (the service passes
 `%ProgramData%\RestoreProof`, W4.8). `<root>` and `<dir>` must be on one volume.
 
 The run is the same run: the same lines, status and exit code, and `<dir>\<run_id>` written
@@ -1377,8 +1414,10 @@ command reads the vault: until W5.1 the upload carries no credential.
 
 ### `outbox flush`
 
-One pass, no waiting: until the service exists (W4.8), run it by hand or from a scheduled
-task. It reads the config for `cloud_url` (and `cloud_ca_file`), deletes old sent runs, then
+One pass, no waiting. The service makes the same pass itself, after each run it queued and
+at the end of every poll ("The service's loop"); by hand the command is for a machine where
+the service isn't running, and while the service's pass holds the flush mutex it answers
+`another flush is running`. It reads the config for `cloud_url` (and `cloud_ca_file`), deletes old sent runs, then
 tries every queued run that is due, oldest first, with one `POST <cloud_url>/v1/results` each.
 stdout, one line per run and then the counts:
 
@@ -1586,7 +1625,9 @@ rpworker service run [--config <path>]
 The Worker as a Windows service (W4.7; `docs/decisions.md` 2026-10-08, W4.7 and its build
 notes). `install`, `uninstall`, `start` and `stop` talk to Windows' Service Control Manager
 through its API and need an elevated prompt (Administrators); `run` is what the Service Control
-Manager itself starts. None of them reads the vault, and only `run` reads `config.json`.
+Manager itself starts. `install`, `uninstall`, `start` and `stop` read neither the vault nor
+`config.json`; `run` loads the config once, at its start, and its loop reads the vault for
+each run (W4.8, "The service's loop").
 
 The service is always the same one; nothing about it is an option:
 
@@ -1599,10 +1640,11 @@ The service is always the same one; nothing about it is an option:
 | Recovery | restarted 60 s after a failure, three times; after the third nothing more; the count starts again after a day without a failure |
 | Command line | `"<rpworker.exe's full path>" service run [--config "<path>"]` |
 
-**In W4.7 the service does no work.** It starts, loads the config, writes its log and waits
-for a stop. The poll loop, the runs and the outbox flush are W4.8's. The account is given
-nothing here either: read access to the vault, the folders' ACLs and Veeam's certificate key
-are the installer's (W7.1).
+**What the service does once it runs is the scheduler loop** (W4.8, "The service's loop"
+below): it reads the jobs, runs them one at a time through `rpworker test`'s pipeline, queues
+and uploads the run folders and sends heartbeats. The commands here give the account nothing:
+read access to the vault, the folders' ACLs and Veeam's certificate key are the installer's
+(W7.1), and until it exists they are set by hand.
 
 ### `service install [--config <path>]`
 
@@ -1675,6 +1717,8 @@ usage line for anything else on the command line.
    the log and stops with its own exit code 1. Both are a stop, not a failure, so Windows
    doesn't restart it: fix the config and `rpworker service start`.
 4. Reports running and writes `service running: rpworker <version>, config <path>, log_level <level>`.
+   Then its work begins, on one thread: the scheduler loop, whose first line is `scheduler
+   started: ...` ("The service's loop").
 5. On a stop (`rpworker service stop`, `services.msc`, `net stop`) or a shutdown of Windows:
    writes `stop requested (stop|shutdown)`, lets its work finish its current step, writes
    `service stopped after <n> ms`, closes the log and reports stopped.
@@ -1687,7 +1731,8 @@ service after a minute (the recovery above).
 ### The service's log
 
 `%ProgramData%\RestoreProof\logs\worker.log`. Only the service writes it; the commands log to
-stderr as before.
+stderr as before. Since W4.8 it also holds every line of the runs the service makes ("A run's
+lines in the log").
 
 - **Rotation.** At 10 MiB `worker.log` becomes `worker.1.log`, that one `worker.2.log`, and so
   on up to `worker.4.log`: five files, 50 MiB at most, the oldest dropped. A program that holds
@@ -1706,6 +1751,637 @@ stderr as before.
 - Every line is flushed as it is written, so the file is complete after a crash.
 
 A log that can't be written while the service runs never stops the service.
+
+## The service's loop
+
+What the running service does (W4.8; `docs/decisions.md` 2026-10-08, W4.8 and its build
+notes): the scheduler loop, the body of `rpworker service run`. It reads jobs from a stub
+file, runs them one at a time through `rpworker test`'s pipeline with `--evidence` and
+`--outbox`, flushes the outbox and sends heartbeats. It is one timeline on one thread: no
+second run, no heartbeat thread, no flush timer. The code is `rp::ServiceLoop` in
+`worker/include/rp/service_loop.hpp`, over the real calls of `worker/src/worker_body.cpp`.
+There is no command for it and no option: it starts with the service.
+
+**At start**, in this order:
+
+1. One line, `scheduler started: poll <n> s, heartbeat <n> s, jobs <file|none>, runs <dir>,
+   outbox <root>` (`none` without `jobs_file`).
+2. `running.json` is read, and a run found there is dealt with ("`running.json`", "A run
+   without a result", "The hold").
+3. The first heartbeat.
+4. The first poll.
+
+**A poll**, every `poll_interval_s`, counted from the start of the last one:
+
+1. The record's business, while there is a record: its run's folder closed and queued, the
+   hold, the record deleted, each only if still needed.
+2. Only when there is no record: the jobs file is read and its jobs are decided and run in the
+   document's order, one at a time ("The jobs file"). After a run that was queued the outbox
+   is flushed at once; a heartbeat that fell due is sent between two jobs.
+3. A flush of the outbox, in every case.
+
+A job that takes longer than the interval makes the next poll late, never a second run, and
+missed polls are not caught up. **A heartbeat** is sent every `heartbeat_interval_s` after the
+last one; one that falls due during a run is sent when the run has ended, once. **While a hold
+lasts** Veeam's sessions are looked at at every poll and at least every 30 s. Between these
+the loop waits for whichever is due first. A stop ends the wait and the loop returns ("A stop
+during a run").
+
+A step that fails in a way nobody foresaw is one line at `error`, `scheduler: a step failed
+unexpectedly; the loop goes on`, never the failure's own text, and the loop goes on with the
+next step: the record's business, reading the jobs, each job, each heartbeat and each flush
+are each such a step.
+
+**The three paths are fixed**, whatever `--config` names, since one machine has one runs root,
+one outbox and one run mutex:
+
+| Path | What it is |
+|---|---|
+| `%ProgramData%\RestoreProof\runs` | the `--evidence` root: a run writes `runs\<run_id>\` |
+| `%ProgramData%\RestoreProof` | the `--outbox` root: `outbox\<run_id>\` queued, `sent\<run_id>\` uploaded |
+| `%ProgramData%\RestoreProof\state\running.json` | the record of the one run the service has taken; `state\` is made when the first record is written |
+| `%ProgramData%\RestoreProof\state\done\<run_id>` | an empty file per run the service made, so its job is never run again; `done\` is made at the first mark |
+
+The vault is the default one (`%ProgramData%\RestoreProof\vault.bin`) and the manifest is
+`seed-manifest.json` beside the config file, as for the commands. Until the installer exists
+(W7.1) the account `NT SERVICE\RestoreProof` is given by hand what the loop needs: `rpworker
+vault grant "NT SERVICE\RestoreProof"`, the Read entry on Veeam's certificate key (W4.12),
+Read on the config, the manifest, the jobs file and the CA files, and Modify on `runs\`,
+`outbox\`, `sent\` and `state\`.
+
+**The service touches one folder under `runs\`: the one its record names.** It lists nothing
+there and adopts nothing it finds. A folder a run made by hand with `--evidence` in that root
+is never closed, signed, queued or uploaded by the service; the one thing it does with such a
+folder is skip a job of the same run ID.
+
+**The config is the one the service loaded at its start.** A run is handed it and doesn't read
+the file again, so an edit takes effect at the next `service start`, for the loop and the runs
+alike. The vault is read for each run, for each close of a run without a result, for the
+recovery clean and when the hold signs in to Veeam. The Cloud's client is made at the first
+flush or heartbeat and kept; a `cloud_ca_file` that can't be used any more shows as the `a
+step failed` line at each of them.
+
+**The run mutex.** A run takes `Global\RestoreProof-restore-targets` as the commands do, so a
+run at a prompt and the service's never overlap: held by a command, the job ends before its
+run line and is offered again at the next poll. One difference: a mutex its last holder
+abandoned (a killed run) is taken again at once by the service, where `rpworker restore` and
+`test` at a prompt refuse once. The record and the hold do in the service what that refusal
+is for at a prompt.
+
+**The flush** is `rpworker outbox flush`'s own pass ("`rpworker outbox`"), under the same
+mutex, with one client for the service's life. Its stdout lines go to the log at `info`
+(`waiting <run_id>: next at <time>` at `debug`), its `outbox error` and `outbox warning` lines
+at `warning`; there is no `<n> queued, <m> sent` line. The lines of a run that is never sent
+(`kept <run_id>: folder_changed` and `... changed since it was signed`) and of one that
+couldn't be read (`kept <run_id>: not_read` and `... couldn't be read`) are written once for
+as long as every pass names them, not at every pass. While another flush holds the mutex
+(the command, by hand) the pass is skipped: `flush skipped: another flush is running` at
+`debug`. After a stop no further upload is started.
+
+### The jobs file
+
+The job source is a file, `jobs_file` in `config.json`, until W5.1 puts `GET
+<cloud_url>/v1/jobs` in its place. Its shape is the Worker's proposal for the Cloud's answer.
+The code is `worker/include/rp/service_jobs.hpp`. Without the key the loop runs no job; it
+still flushes, deals with a record and sends heartbeats.
+
+```json
+{"format": "restoreproof.jobs.v1",
+ "jobs": [
+   {"run_id": "job-0001", "client_id": null,
+    "sample_mail": 5, "sample_sp": 5, "sample_od": 5,
+    "restore_point": "latest", "screenshots_enabled": false,
+    "canary_cursor": [0, 0, 0]}
+ ]}
+```
+
+The document is `restoreproof.jobs.v1`, read whole at every poll: an object with exactly the
+two keys `format` and `jobs`, `jobs` an array of at most five jobs, the file at most 1 MiB.
+It is JSON as a person writes it: white space, any key order and a UTF-8 byte order mark are
+taken (it need not be canonical). A key twice in any object, and nesting past 32 levels, make
+the whole document `not JSON`.
+
+A job is a closed object:
+
+| Key | Required | Rule |
+|---|---|---|
+| `run_id` | yes | `--run-id`'s rule (1 to 128 of `A-Z a-z 0-9 . _ : -`) and a plain file name, since it names the run's folder: no `:`, not `.` or `..`, no `.` at its end, not a DOS device's name (the list is under "`--json <file>`") |
+| `client_id` | yes | a string of 1 to 128 printable ASCII characters, or `null`. Kept in `running.json` only: until W4.11 it is checked against nothing and is not written into the result, whose `client.client_id` stays `null` |
+| `sample_mail`, `sample_sp`, `sample_od` | yes | JSON integers 0 to 100 (`5.0` and `"5"` are wrong kinds), not all three 0 |
+| `restore_point` | yes | `latest` in any case, or a restore point ID by `--point`'s rule (1 to 128 ASCII letters, digits and hyphens) |
+| `screenshots_enabled` | yes | `true` or `false`; replaces the config's value for this run |
+| `canary_cursor` | no | an array of three integers, each 0 to 999999; without the key `0,0,0`. `null` is a wrong kind. The cursor is the Cloud's to keep and hand on; the Worker stores none |
+
+Any other key makes the job invalid. A job names no client and no targets: the run uses the
+config's client keys, as every command does (W4.10 and W4.11 change that). The rules are the
+ones a command line is held to, the same functions (`worker/src/job_rules.hpp`).
+
+**Whoever can write that file commands the Worker**: restores into the test targets, and
+signed results under run IDs of their choice. So the file is read only when its owner is
+SYSTEM, Administrators or the service's own account, the vault's owner rule, and it is read
+through the handle the owner was checked on.
+
+**A file that runs nothing.** A file that isn't there is no jobs and no line. Any other fault
+runs no job of the document and is one line at `warning`, written when the reason differs
+from the last poll's (a poll that read the file, or found none, in between makes it be said
+again); the heartbeat's `last_error` becomes `jobs_unreadable`:
+
+| Line | When |
+|---|---|
+| `jobs error: <file>: can't be read` | there, and it can't be opened or read (a folder at the path included) |
+| `jobs error: <file>: owned by neither SYSTEM, Administrators nor this account` | the owner rule |
+| `jobs error: <file>: over 1 MiB` | |
+| `jobs error: <file>: not JSON` | not JSON, a key twice in any object, or nested past 32 levels |
+| `jobs error: <file>: not a restoreproof.jobs.v1 document` | not an object of exactly `format` (that name) and `jobs` (an array) |
+| `jobs error: <file>: more than 5 jobs` | checked before any job is looked at |
+
+**Which job runs.** Only while there is no record: one run at a time, and a run isn't over
+until its folder is in the outbox. Each job of the document, in its order, first fit:
+
+| | The job | What happens | Line |
+|---|---|---|---|
+| J1 | has no usable `run_id`: the entry is no object, the key is missing, no string, or fails its rule | not run and not reported: nothing can be signed under a name the Cloud knows. `last_error` `job_invalid` | `warning` `job <n> of <file>: no usable run_id; not run`, `<n>` its place from 1; once per place while the file's content stays the same |
+| J2 | is already there: something is at `outbox\<run_id>`, `sent\<run_id>` or `runs\<run_id>`, or the run is marked as run (`state\done\<run_id>`, below) | skipped | `info` `skipped <run_id>: already queued`, `skipped <run_id>: already sent`, `skipped <run_id>: a run folder is already there` or `skipped <run_id>: already run`; one line per run ID for as long as the document names it |
+| J3 | breaks another rule | not run, but reported: a record of `kind` `job_invalid` is written, a run folder is made and closed with a signed result `error job_invalid`, and queued ("A run without a result"). Nothing is asked of Veeam or Graph. `last_error` `job_invalid`. J2 skips it from then on | `warning` `job <run_id>: not a valid job (<key>)` |
+| J4 | passes every rule | run | below |
+
+`<key>` in J3's line, in the result's message and in the record is the first key at fault, in
+the order `client_id`, `sample_mail`, `sample_sp`, `sample_od`, `restore_point`,
+`screenshots_enabled`, `canary_cursor` (a key missing, of a wrong kind or out of range), or
+`unknown key` when those all pass and the job has another key. Three sizes that are each valid
+and all 0 are `sample_mail`. No text of the file reaches a line or a result but a `run_id`
+that passed its rule.
+
+The first two reasons of J2 are the idempotency rule: a job whose run is queued or sent is
+never run again. The third keeps the service's hands off a folder made by hand, or one an
+operator took out of the loop's hands (below). `sent\` is pruned after 30 days or over 500 MB
+(W4.6), after which a stub file that still holds an old job runs it again: take a job out of
+the stub file by hand once it is sent.
+
+**J4: running a job.** The record is written first; if it can't be, `error` `run <run_id>:
+running.json couldn't be written; not run` (`last_error` `record_not_written`) and the job is
+offered again at the next poll. Then:
+
+```
+info run <run_id>: starting (mail <m>, sharepoint <s>, onedrive <o>, point <p>)
+```
+
+then the run's own lines ("A run's lines in the log"), then one of:
+
+| Line | Level | Meaning |
+|---|---|---|
+| `run <run_id>: ended <pass\|fail\|error <code>>; queued` | `info` | the folder is in the outbox; the flush follows at once |
+| `run <run_id>: ended <pass\|fail\|error <code>>; not queued` | `warning` | the folder is complete and signed and the outbox didn't take it (the run's `outbox error` line is above); the next poll queues it. `last_error` `run_not_queued` |
+| `run <run_id>: ended without a result` | `warning` | the folder has no `result.json`; it is closed at once ("A run without a result") |
+| `run <run_id>: ended before its run line; nothing was done` | `warning` | no folder, no result, as for the command; the record is deleted. Written once per run ID and exit code for as long as the document names the job. `last_error` `job_not_started` |
+
+A run ends before its run line for what stops `rpworker test` there: the vault or the signing
+key, the manifest, a cursor past the manifest's canaries, a restore point ID the organisation
+doesn't have, the run mutex held by a command, Veeam not answering when the restore points
+are listed (the run's own `config error`, `usage error` or `restore error` line is above the loop's). The
+stub file offers the job again at every poll, which is the retry, at the cost of a vault read
+and a Veeam sign-in per poll.
+
+The whole of one job, as the log has it without the run's own lines:
+
+```
+info scheduler started: poll 60 s, heartbeat 900 s, jobs C:\ProgramData\RestoreProof\jobs.json, runs C:\ProgramData\RestoreProof\runs, outbox C:\ProgramData\RestoreProof
+info run job-1: starting (mail 5, sharepoint 3, onedrive 2, point latest)
+info run job-1: ended pass; queued
+info sent job-1
+info skipped job-1: already sent
+```
+
+### `running.json`
+
+`%ProgramData%\RestoreProof\state\running.json` is the service's record of the one run it has
+taken: "this run was taken and isn't in the outbox yet, or a restore of it may still be
+running". It is written ahead of everything a run does, so that whatever the next start finds
+follows from the record alone. While it is there no other job is started. It is never inside
+a run folder, never uploaded, and holds IDs, times and fixed words, never a secret or an
+item's name. The code is `worker/include/rp/service_recovery.hpp`.
+
+The file is `restoreproof.running.v1` in `canonical-json-v1` (one line), at most 64 KiB,
+written with the atomic writer over the file before it. Exactly fourteen keys:
+
+| Key | Value |
+|---|---|
+| `client` | the result's `client` object as the config gives it: `{"client_id": null, "tenant_id", "veeam_org_name", "targets": {"mailbox", "site_id", "library_id", "onedrive_drive_id", "onedrive_folder_id"}}` |
+| `client_id` | the job's `client_id`, a string or `null` |
+| `close_as` | `null`, `"result_invalid"`, `"internal"` or `"job_invalid"`: what the run's folder is to be closed as when it has no `result.json`; `null` means `interrupted` |
+| `close_detail` | a word for `close_as`, or `null` (below) |
+| `connector` | `null`, or `{"type": "veeam_m365", "api"}` once the run line is out |
+| `format` | `"restoreproof.running.v1"` |
+| `kind` | `"run"`, or `"job_invalid"` for a J3 job |
+| `restore_point` | `null`, or `{"id", "backup_time_raw"}` once the run line is out |
+| `restore_requested` | `false` is a promise that no restore request went out; `true` means one may have, whether or not Veeam took it |
+| `restore_requested_at` | the time of the last restore request; `null` exactly when `restore_requested` is `false` |
+| `run_id` | the job's `run_id` |
+| `sessions` | the IDs of the explore sessions the run opened in Veeam and is to close itself, in the order they were opened |
+| `started_at` | the result's `started_at`, or `null` before the run line |
+| `taken_at` | when the service took the job |
+
+Times are UTC to the millisecond, `YYYY-MM-DDTHH:MM:SS.mmmZ`, as the result writes its own.
+
+**When it is written.**
+
+| | When | What | If the write fails |
+|---|---|---|---|
+| (a) | by the loop, before the pipeline is called and before a J3 folder is made | `run_id`, `kind`, `client_id`, `client`, `taken_at`; the rest `null`, empty or `false`. A J3 record has `close_as` `job_invalid` and the key at fault as `close_detail` from this first write | `error` `run <run_id>: running.json couldn't be written; not run` |
+| (b) | right after the run line, before any clean and any session in Veeam | `started_at`, `restore_point`, `connector` | `error` `run <run_id>: running.json couldn't be written; the run ends`; the run's own line is `restore error: the run couldn't be recorded as started; nothing was restored`, and it ends `error interrupted`, signed and queued |
+| (c) | at every explore session the run opens (the sample's browsing included) | the session's ID added to `sessions` | `warning` `run <run_id>: running.json couldn't be written; a session the run opened is not on record`; the run goes on, but no restore request of it is sent: at the next one, `error` `run <run_id>: a session the run opened is not on record; the restore request is not sent`, and the run ends `error interrupted` as for (d). Veeam lists an explore session and a restore session alike, so after a request the hold would wait on that session for ever; every explore session is opened before the first request. The price is one session nobody ends |
+| (d) | before every restore POST, before the certificate is exported | `restore_requested` `true` and `restore_requested_at` | `error` `run <run_id>: running.json couldn't be written; the restore request is not sent`: the POST is not sent and the run ends `error interrupted` (`nothing was restored` when it was the first) |
+| (e) | by the loop, after a run that returned and left its folder without a result | `close_as` and `close_detail` | `error` `run <run_id>: running.json couldn't be written; not closed`; the next poll tries again |
+
+Each failed write makes the heartbeat's `last_error` `record_not_written`. What couldn't be
+written isn't believed in memory either. One more write follows a close that itself found a
+text file changed ("A run without a result").
+
+**`close_detail`** hangs on `close_as`:
+
+| `close_as` | `close_detail` |
+|---|---|
+| `null` | `null`, or `changed` |
+| `internal` | why the folder was left without a result, the run's `evidence error` line as a word ("`--evidence <dir>`"): `not_written` (could not be written), `changed` (changed after it was hashed), `holds_secret`, `not_signed` or `invalid` (no valid result to write) |
+| `result_invalid` | how the run itself had ended, which `result_invalid` replaced: `pass`, `fail`, `error <code>`, or `error` when that isn't known (a `null` is read as `error`); and each of them with `; changed` after it (`error; changed` for `null`) |
+| `job_invalid` | the key at fault, as in J3's line (`sample_mail`, `unknown key`, ...) |
+
+`changed`, alone or after `; `, says that a text file of the folder was found altered after it
+was hashed, by the run or by a close: the next close then replaces both text files.
+
+**When it goes.** The loop deletes the record when both hold: the run's folder is under
+`outbox\` or `sent\`, or the run ended before its run line and has none; and no restore of it
+may still be running ("The hold"). A run that reached the outbox while this process ran counts
+as there from then on, also after `sent\` was pruned. A record that can't be deleted: `error`
+`running.json couldn't be removed`, once and again every hour, `last_error`
+`record_not_removed`, tried again at every poll, and no job runs.
+
+**The run is marked as run** right before its record goes, by an empty file
+`state\done\<run_id>`, so a job that names it is never run again (J2, `already run`), also once
+the outbox has pruned it from `sent\` (30 days, or the 500 MB cap). A run that ended before its
+run line made nothing and is not marked: the job is offered again. A mark that can't be
+written keeps the record, so no job runs: `error` `run <run_id>: couldn't be marked as run;
+running.json is kept`, once and again every hour, `last_error` `record_not_removed`, tried again
+at every poll. The marks are never deleted; each is an empty file.
+
+**A record found** when the loop holds none in memory, which is at start, is one line:
+
+| Line | Level | The record |
+|---|---|---|
+| `interrupted run <run_id> found: taken <time>, restore requested <yes\|no>` | `warning` | has no `close_as`: the process ended, or was stopped, while the run was the service's |
+| `unfinished run <run_id> found: to be closed as <result_invalid\|internal\|job_invalid>` | `info` | has its `close_as`: a close that was itself cut short keeps its word |
+
+Then its business follows, at start and at each poll until it is gone, each step only if
+still needed: the folder closed and queued, the hold, the record deleted. No step is one that
+can't be done twice: a folder with its `result.json` is only queued, a queued run is not
+closed again, an ended session isn't `Working`, a clean of empty targets deletes nothing.
+
+**A record the service can't trust or read.** The file is read only when its owner is SYSTEM,
+Administrators or the service's account, and it must be its own canonical form, nested no
+deeper than 32 levels, with exactly the fourteen keys and their words. Otherwise nothing is
+known: nothing is closed, signed, ended or cleaned on its word, and `last_error` is
+`record_unreadable`.
+
+| Line | Level | What was done |
+|---|---|---|
+| `SECURITY: service: running.json is owned by neither SYSTEM, Administrators nor this account; moved aside` | `critical` | moved to `state\running.json.unread`, over an older one; the loop goes on without a record |
+| `running.json isn't a restoreproof.running.v1 record; moved aside as running.json.unread` | `error` | the same |
+| `SECURITY: service: running.json is owned by neither SYSTEM, Administrators nor this account; it couldn't be moved aside; no job runs` | `critical` | nothing; said again every hour, tried again at every poll |
+| `running.json isn't a restoreproof.running.v1 record and couldn't be moved aside; no job runs` | `error` | the same |
+| `running.json can't be read; no job runs` | `error` | there, and it can't be opened; no move is tried; said again every hour |
+
+After a record was moved aside the loop is where it was before W4.8: the next run cleans
+before, and its preflight refuses it while a session of the Veeam account is `Working`. When
+no job runs because the file can be neither believed nor moved, stop the service, look at the
+file and take it away by hand.
+
+### A run without a result
+
+A run folder is complete when it has its `result.json`. The service closes the folder its
+record names when it has none, with a result written afterwards, signed and queued, so that
+the Cloud gets a signed answer for every job the Worker took. It acts on that one folder
+only. `docs/verification.md` has what such a result means.
+
+**The four codes.** The result is `error` with:
+
+| Code | When | The result's message |
+|---|---|---|
+| `interrupted` | a record without `close_as`: the process ended, or was stopped, before the run's result was written | `the run was interrupted before its result was written; no restore request had been sent`, or `the run was interrupted before its result was written; a restore request may have been sent, so items may be in the restore targets` |
+| `result_invalid` | the run's own result wasn't valid `restoreproof.result.v1` | `the result isn't valid restoreproof.result.v1; the run itself ended <pass\|fail\|error <code>\|error>` |
+| `internal` | the run returned and its folder couldn't be completed (an `evidence error`) | `the run ended without a result the Worker could write; this result was written afterwards` |
+| `job_invalid` | a J3 job | `the job isn't a valid job (<key>); nothing was done` |
+
+The result is valid `restoreproof.result.v1` with what the record knows and `null` for the
+rest: `run_id`; `started_at`, `connector` and `restore_point` from the record (before the run
+line: `started_at` `null`, `veeam_m365` with an empty `api`, a restore point of empty
+strings); `client` from the record, its `client_id` `null`; `ended_at`, `sample`, `expected`,
+`restore`, `check` and `cleanup` `null`, every span `null`; `attachments` the two text files;
+`screenshot` `unavailable` with `disabled`, or `no_page` when the config's
+`screenshots_enabled` is `true`. `status.restore_sent` is the record's `restore_requested`
+(`false` for `job_invalid`), every count is 0 and there are no warnings. It says nothing of
+what the run found: a run killed during the TSA's wait had its verdict in memory only, and its
+result written afterwards is still `error interrupted`.
+
+**What the close does**, in order:
+
+1. A folder that has a `result.json` is only queued: nothing is signed twice. But when that
+   `result.json`, or a `signature.json` or `timestamp.tst` beside it, is owned by neither
+   SYSTEM, Administrators nor the service's account, the folder is left as it is and not
+   queued (`untrusted`, below).
+2. A folder that isn't there (a kill before the pipeline made it, a J3 job) is made.
+3. What a signing that didn't finish left is removed: `signature.json`, `timestamp.tst`,
+   `screenshot.png` and every `<name>.<16 hex>.tmp`.
+4. `items.csv` and `veeam-session.log` are kept when they are there, and one that isn't is
+   written in its empty form (the CSV's header alone, an empty log). Both are replaced by
+   their empty forms in three cases: the record says `changed`; one of them is owned by
+   neither SYSTEM, Administrators nor the service's account; the record is a J3 job's. A
+   file whose name differs from `items.csv` or `veeam-session.log` only in case is removed
+   and the empty form written under the exact name.
+5. The result is built, and then the tail every `--evidence` run ends with, the one signing
+   path: the secret scan, the attachments read back, the signature under the vault's key, the
+   TSA asked, `signature.json`, `timestamp.tst` when there is a token, `result.json` last,
+   then the folder queued by one rename. Its lines are in the log as a run's are: `[<run_id>]
+   signed ...`, `[<run_id>] timestamped ...`, `[<run_id>] evidence ...`, `[<run_id>] queued
+   <outbox folder>`.
+
+Anything else in the folder is left, and is the verifiers' `note: not listed in the result`.
+When it worked the loop writes `info` `run <run_id>: queued` and flushes. A `tsa_ca_file` that
+can't be used doesn't fail a close: `[<run_id>] timestamp warning: the TSA's CA file can't be
+used; not timestamped`, and the folder is signed and queued without a token. A folder that is
+only queued gets a manifest that says `timestamped` when `timestamp.tst` is there and
+`not_timestamped` with a `null` code when it isn't.
+
+**When the close fails, or the queue does**, one line at `error`, once per reason and again
+every hour:
+
+```
+run <run_id>: couldn't be closed (<word>)
+run <run_id>: couldn't be queued (<word>)
+```
+
+| `couldn't be closed (...)` | Why |
+|---|---|
+| `vault` | the vault can't be read, or has no signing key, or the key isn't one: nothing can be signed |
+| `not_signed` | the signature couldn't be made or didn't verify under the key's own public half |
+| `not_written` | the folder couldn't be made, a leftover couldn't be removed, or a file couldn't be written |
+| `holds_secret` | a string of the result holds one of the run's secret values |
+| `changed` | a text file wasn't the bytes hashed when it was read back. The record is marked `changed` at once, so the next try replaces both text files (`error` `run <run_id>: running.json couldn't be written; the changed text files are not on record` when that write fails) |
+| `invalid` | the result built for the folder isn't valid |
+| `untrusted` | step 1: a `result.json`, `signature.json` or `timestamp.tst` of another owner |
+| `not_read` | the folder couldn't be listed whole (a listing that failed or stopped short, a folder the account may not list or ask about, or something there that is no folder): nothing is made, taken away, written or queued, since a `result.json` left out of the listing would lose its signature |
+
+`couldn't be queued (...)` has the outbox's word: `already_queued`, `already_sent`,
+`no_outbox_folder`, `not_same_volume`, `not_moved` or `not_complete` (the `outbox error` lines
+of "`--outbox <root>`").
+
+The heartbeat's `last_error` is `run_not_closed` or `run_not_queued`. The record stays, so no
+other job runs. **The pacing:** a queue that failed is tried again at every poll; a close that
+failed at a poll no sooner than 15 minutes later, since each try asks the TSA. A record found
+by a new service start is closed at once. When the key itself is why nothing can be signed,
+nothing is sent and no job could be signed either: the heartbeat is the Cloud's only word of
+it. What to do when it doesn't pass: "The operator's two ways out".
+
+Two `SECURITY: ` lines belong to the owner rule, both at `critical`:
+
+```
+SECURITY: service: run <run_id>: items.csv or veeam-session.log is owned by neither SYSTEM, Administrators nor this account; neither is kept: the close replaces both by their empty forms
+SECURITY: service: run <run_id>: result.json, signature.json or timestamp.tst is owned by neither SYSTEM, Administrators nor this account; the folder is not queued
+```
+
+The first is written once and again every hour while a close meets it, and the close goes on; the second comes with `couldn't
+be closed (untrusted)`, once and hourly. Until W7.1 sets the folders' ACLs a local user can
+put a file under `runs\`; the rule keeps such a file from being signed or uploaded as the
+Worker's, not from being in the way.
+
+### The hold
+
+No job is started, and nothing is cleaned, while a restore of the record's run may still be
+running in Veeam. The hold is for a run that ended in this process in its restore phase
+without the connector's promise that nothing was sent (the 20 minutes' deadline, a POST
+without an answer, a stop during the poll: the runs whose clean after was skipped), and for a
+record found at start whose `restore_requested` is `true` or whose `sessions` isn't empty.
+
+**The look.** Every session the Veeam account started since the record's `taken_at` that is
+still `Working`, for the whole account, every page of `GET /v8/RestoreSessions`. Veeam's list
+can't tell an explore session from a restore session, so the running ones are split by the
+record: the **recorded** ones, whose IDs `sessions` holds (explore sessions the run opened),
+and the **others** (a restore session a POST made, or anybody else's session under that
+account). Each look is made under the run mutex, taken without waiting, so no `rpworker
+restore` or `test` at a prompt has a session open while the service ends any; held by a
+command, the look waits (`debug` `the run mutex is held; the look at Veeam's sessions waits`).
+Looks are made at every poll and at least every 30 s. One connector is made when the hold
+begins, with the vault's Veeam credentials, and kept until the record goes; a look that fails
+drops it.
+
+**The rule.**
+
+| `restore_requested` | Still running | What the service does |
+|---|---|---|
+| `false` | recorded sessions | ends each at once, as the run's own end would have; then looks once more |
+| `false` | others only, or none | the hold is over; the others are not the run's and are not touched |
+| `true` | any other session | nothing is ended; it waits, for as long as that session runs |
+| `true` | recorded sessions only | ends them once 120 s have passed since the later of `restore_requested_at` and the moment this process began the hold (a restore session Veeam hadn't listed yet); until then it waits |
+| `true` | none | the hold is over, and the restore targets are cleaned |
+
+The service ends only sessions it wrote down as the run's own explore sessions, and never one
+of them while another session of the account might be a restore. A session it didn't write
+down is never ended by it, and there is no deadline after which sessions are ended anyway. An
+end is the stop a run sends for its own explore sessions: a session that is no longer
+`Working` gets none. **The Veeam account is the service's alone while it is installed:** a
+person signing in to Veeam with it holds no run mutex, and their session is an "other" one
+that the hold waits for.
+
+**Then the clean, then the record goes.** When the hold is over after a restore request, the
+restore targets are cleaned once, the clean after the run never made: the Cleaner's clean
+before, under the run mutex, with the vault's Graph certificate. The log has `info` `recovery
+clean for <run_id>:` and then the clean's own lines under the run's prefix, all at `info`
+(`[<run_id>] cleanup before ok: deleted ...`, and its `cleanup error` and `warning: cleanup`
+lines).
+Whatever it answers, the record goes and jobs run again: every run cleans before anyway.
+Without a restore request nothing was restored and nothing is cleaned.
+
+**The warnings.** Each is "not yet"; the loop looks again:
+
+| Line (`warning`) | When | `last_error` |
+|---|---|---|
+| `waiting for Veeam: <n> session(s) of <account> still Working since <time>` | `restore_requested` is `true` and `<n>` other sessions run; `<time>` is the oldest one's creation time. Once and again every hour | `veeam_sessions_working` |
+| `the look at Veeam's sessions failed: <auth\|transient\|other>` | the look threw: Veeam refused the sign-in, couldn't be reached, or anything else (the vault, an answer that doesn't read: a session is never left out on a doubt). Once per reason and again every hour | `veeam_look_failed` |
+| `ending session <id> failed` | Veeam refused the stop; the other recorded sessions wait for the next look. Once per session and again every hour | `veeam_look_failed` |
+| `the config's client is not the run's; the restore targets were not cleaned` | the config's tenant, organisation or targets are no longer the record's: the clean is not made, and the record goes | (none) |
+| `recovery clean for <run_id>: not completed (<incomplete\|lock_held\|not_started>)` | the clean left something or met an error, a command held the run mutex, or the vault, the certificate or Graph's client failed. The record goes all the same | `recovery_clean_incomplete` |
+
+`<account>` is the vault's `veeam_username`: a name, not a secret, and in the log. A hung
+restore, or somebody else's session under the account, holds the loop for as long as it runs;
+an explore session whose ID never reached the record, until Veeam ends it (36 minutes were
+seen). What to do then: "The operator's two ways out".
+
+### The heartbeat
+
+`POST <cloud_url>/v1/heartbeat` every `heartbeat_interval_s`, `Content-Type:
+application/json`, the body in `canonical-json-v1` with exactly five keys:
+
+```json
+{"last_error":"upload_unreachable","last_error_at":"2026-10-08T10:04:11.250Z","outbox_depth":1,"uptime_s":1260,"version":"0.0.0"}
+```
+
+| Key | Value |
+|---|---|
+| `last_error` | the latest of the loop's own troubles since the service started, one word of the list below; `null` when there was none |
+| `last_error_at` | when that was, UTC to the millisecond; `null` beside no error |
+| `outbox_depth` | the number of run folders under `outbox\`, the ones that can't be sent included |
+| `uptime_s` | whole seconds since the loop started |
+| `version` | `rpworker --version`'s |
+
+It is sent once, with a 10 s timeout, through the client the uploads use (so `cloud_ca_file`
+holds and TLS is verified), with no `Authorization` and no credential until W5.1. Any 2xx is
+taken. Anything else is one line at `warning`:
+
+```
+heartbeat failed: <http_<status>|unreachable|timeout|internal>
+```
+
+`http_<status>` for any other answer; `unreachable` for no connection, a failed or broken-off
+TLS handshake, a certificate the Worker doesn't trust or a connection lost mid-request;
+`timeout` for no answer in 10 s; `internal` for anything else. The line is written when the
+word differs from the heartbeat before it (a heartbeat that was taken in between makes it be
+said again). Nothing is retried before the next interval, and a failed heartbeat is never the
+`last_error` it reports. The endpoint is the Worker's proposal for C5.8; until W5.1 it is a
+stub.
+
+**`last_error`** is one of sixteen fixed words (`rp::service_error_codes()` in
+`worker/include/rp/service_errors.hpp`), or `upload_http_<status>`:
+
+| Word | The trouble |
+|---|---|
+| `jobs_unreadable` | the jobs file runs nothing (a `jobs error` line) |
+| `job_invalid` | a job without a usable `run_id` (J1), or one that is no valid job (J3) |
+| `job_not_started` | a run ended before its run line |
+| `record_not_written` | `running.json` couldn't be written |
+| `record_not_removed` | `running.json` couldn't be deleted |
+| `record_unreadable` | `running.json` isn't the service's, isn't a record, or can't be read |
+| `run_not_closed` | a run folder without a result couldn't be closed |
+| `run_not_queued` | a complete run folder couldn't be queued |
+| `folder_changed` | the flush found a queued run that isn't what was signed; never sent |
+| `not_read` | the flush couldn't read a file of a queued run at this pass |
+| `veeam_look_failed` | the hold's look at Veeam's sessions, or an end of one, failed |
+| `veeam_sessions_working` | the hold waits for sessions that are still `Working` |
+| `recovery_clean_incomplete` | the clean after a hold wasn't completed |
+| `upload_unreachable`, `upload_timeout`, `upload_internal`, `upload_http_<status>` | the flush's word for an upload that failed (`kept <run_id>: <word>; ...`) |
+
+It is never a run's own `error` code (the result carries that), never an exception's text,
+never a path or a name. It is set at every occurrence of a trouble, whether or not its line
+was written again (`folder_changed` and `not_read` only when their line is), and it is not
+cleared by a later success: `last_error_at` says how old it is.
+
+### A stop during a run
+
+A stop (`rpworker service stop`, a shutdown) is given 25 s ("What the running service does").
+After a stop the loop starts nothing new: no job, no flush, no upload, no heartbeat, and no
+step for a record, which means no close, no look at Veeam, no clean and no delete of the
+record. A run that is under way is asked to end at its next step, and every wait of it (the
+restore poll's, the retries', the TSA's, a download's) returns at once.
+
+| Where the stop finds the run | The run's lines | What is left |
+|---|---|---|
+| before the run mutex is taken | `restore error: the Worker was asked to stop; nothing was done`, no run line | nothing; the loop's `ended before its run line` line, the record deleted (the one delete made after a stop), the job offered again at the next start |
+| after the run line, before the clean before, the sample, the read before or the restore | `restore error: the Worker was asked to stop; nothing was restored`, `status error interrupted: the run stopped before the restore: the run was interrupted (interrupted); nothing was restored`, `cleanup after skipped: nothing was restored` | the folder signed and queued as `error interrupted`, if the 25 s allow |
+| before the first restore POST | `restore error: veeam_m365: the Worker was asked to stop before the <kind> restore request was sent; nothing was restored`, `status error interrupted: the restore didn't start: the run was interrupted (interrupted); nothing was restored` | the same; the POST is not sent and the record still says `restore_requested` `false` |
+| before a later restore POST | the same error without the promise, then `restore error: the restore had started: items may be in the restore targets (run <run_id>)`, `status error interrupted: the restore didn't complete: the run was interrupted (interrupted); items may be in the restore targets`, `cleanup after skipped: the restore may still be running; the next run cleans before` | signed and queued with `restore_sent` `true`; the record stays for the hold |
+| in the restore poll | a `restore error` line saying `... was still Working when the Worker was asked to stop; no verdict...`, then as the row above | the same; the restore goes on in Veeam and the explore sessions are left open, as at the 20 minutes' deadline |
+| anywhere else (the read back, the check), when the run then ends `error` | `status error interrupted: the Worker was stopped during the run; the run itself ended error <code>` | signed and queued. A wait the stop cut short reads as the failure of whatever was waited for, so the code is the stop's. A `pass`, a `fail`, `error target_guard` and `error result_invalid` stay what they are, and so does every verdict decided before the stop came |
+
+No restore POST is sent after a stop. A run that ends after a stop is not timestamped: the
+TSA is not asked any more, and the folder is complete without a token, with `timestamp
+warning: <folder>: not timestamped: timestamp_internal after 0 attempt(s)` (a stop that
+comes between two attempts leaves the last attempt's code and count).
+
+**What the next start does.** The record of a run that reached its run line is kept across a
+stop, whatever became of the run, so the next start finds it and writes `interrupted run
+<run_id> found: ...`, also for a run that ended and was queued while the stop was coming. A
+run that is in the outbox is not closed again; a folder left without a result is closed as
+`error interrupted` (also when the run itself had returned: after a stop no `close_as` is
+written); then the hold, the clean when a restore was requested, and the record goes.
+
+**What isn't promised.** A request in flight ends only by its own timeout, and after 25 s the
+process is ended whatever it is doing. That run, and one whose process was killed or lost
+power, is the record's: its folder is closed as `error interrupted` at the next start, and the
+hold waits for whatever it left in Veeam. `rpworker restore` and `test` at a prompt have no
+stop check: Ctrl+C ends the process as before.
+
+### A run's lines in the log
+
+A run of the service writes to `worker.log` what `rpworker test` writes to a console. Each
+line is one log line with the run's ID in front:
+
+```
+2026-10-08T10:00:02.500Z info [job-1] run job-1  seed 8b26e36a
+2026-10-08T10:03:31.120Z info [job-1] status pass: 30 of 30 item(s) verified: manifest 15, fields 5, metadata 10
+2026-10-08T10:03:40.007Z warning [job-1] timestamp warning: C:\ProgramData\RestoreProof\runs\job-1: not timestamped: tsa_unreachable after 3 attempt(s)
+```
+
+- stdout's lines are at `info`, stderr's (`warning: ...`, `restore error: ...`, `check error:
+  ...`, `evidence error: ...`, `outbox error: ...`, `timestamp warning: ...`) at `warning`.
+  With `log_level` `warn` only those and the loop's own warnings and errors are kept.
+- The same prefix is on the lines of a close ("A run without a result") and of the recovery
+  clean ("The hold"). The loop's own lines (`run <run_id>: ...`, `skipped ...`, the flush's)
+  have none.
+- An empty line is skipped: the console's paragraphs say nothing in a log. A line ends at its
+  line feed; a last line without one is written when the run ends.
+- The stream never fails, so "stdout was lost" can't happen in the service.
+- Every line passes the log's sink, which redacts it ("The service's log").
+
+**The log therefore holds tenant names**: the sample's rows, the check's table with subjects
+and file names, a `check note`'s file name, Veeam's messages. It is the text `items.csv` and
+`veeam-session.log` hold in the run folder, on the same machine. A 30-item run is about 120
+lines. Keep the log out of the repository, as the run folders.
+
+### The operator's two ways out
+
+The loop runs one job at a time and holds on to a run until it is in the outbox and nothing
+of it can still be running. Two things can therefore keep every job from running for good.
+Both show in the log every hour and in the heartbeat's `last_error`, and both end the same
+way: without the record the loop is free.
+
+**A run that can't be closed or queued** (`run <run_id>: couldn't be closed (<word>)` or
+`couldn't be queued (<word>)`; `run_not_closed`, `run_not_queued`).
+
+1. Read the word and mend what it names, if it can be mended: `vault` (`rpworker vault test`,
+   the account's grant, the signing key); `not_written` (the account's rights on `runs\`, the
+   disk); `not_moved` (a program holding a file of the folder open); `not_same_volume`,
+   `no_outbox_folder` (the folders under `%ProgramData%\RestoreProof`); `already_queued`,
+   `already_sent` (a folder of that run ID is in the outbox already); `untrusted` (who put
+   that file there); `not_read` (the account's rights on the run's folder). The loop tries again by itself: a queue at the next poll, a close within
+   15 minutes.
+2. If it can't be mended: `rpworker service stop`.
+3. Read `state\running.json` and note `restore_requested` and `sessions`.
+4. Move the run's folder out of `runs\`, or leave it where it is.
+5. Delete `state\running.json`.
+6. `rpworker service start`.
+
+The folder is then nobody's: nothing is signed or uploaded for it, and while it stays under
+`runs\` its job is skipped (`skipped <run_id>: a run folder is already there`). When the
+record said `restore_requested` `true`, no hold and no recovery clean follow either: see the
+last paragraph.
+
+**Sessions stuck `Working`** (`waiting for Veeam: <n> session(s) of <account> still Working
+since <time>`; `veeam_sessions_working`). The run itself is in the outbox by then, or sent.
+
+1. Look at the account's sessions in Veeam (the console, or `GET /v8/RestoreSessions` with
+   the scripts in `docs/api/veeam-m365/`). A restore that is still running is what the hold is
+   for: let it end.
+2. When none of them is a restore that still runs (a session somebody else started under the
+   account, an explore session that never reached the record): `rpworker service stop`.
+3. Delete `state\running.json`.
+4. `rpworker service start`.
+
+`docs/api/veeam-m365/08-sweep-sessions.ps1` doesn't help while two sessions of the account of
+one type are `Working`: it stops nothing then.
+
+**Without the record there is no hold and no clean by the hold.** The loop is then where it
+was before W4.8: the next run cleans the restore targets before it restores, and its preflight
+refuses it (`error backup`) while a session of the Veeam account is still `Working`, a run
+that is signed, queued and has used up its run ID. So end the sessions that are left in Veeam
+before the service is started again, and check the targets with `rpworker graph list`.
 
 ## `--record <dir>`
 
@@ -1740,10 +2416,10 @@ The same for every `rpworker` command (`rp::exit_code` in `worker/include/rp/cli
 | Exit code | Meaning | stderr |
 |---|---|---|
 | 0 | Success. | (nothing) |
-| 1 | The config or a secret is missing or invalid, the vault can't be used (W4.5: not there, not readable by this account, owned by another account, not decryptable on this machine, not a vault, or a `--vault` path that isn't UTF-8), or something unexpected failed (an error no command handles ends here too, never in an `abort()`, whose exit code would be 3). For `graph list` this includes the certificate: `graph_cert_pfx_base64` not in the vault, a PFX that doesn't open with `graph_cert_password`, or a certificate that isn't valid now, all found before any request. For `restore`, also the same certificate problems as `graph list` (before any Veeam call; `graph_cert_password` absent is fine for a PFX without a password), the certificate failing as the check's reads before the restore sign in (nothing restored), a manifest that doesn't load, whose `tenant_id` isn't `graph_tenant_id` or that names a restore target (before any Veeam call), an unknown connector, a run whose status is `error config`, `error internal` (the facts not adding up, or the check failing for a reason that isn't Graph's) or `error result_invalid` (the result the Worker built isn't valid `restoreproof.result.v1`, W4.1), and stdout failing after a restore whose run passed. `test` exits as `restore` does; for `test` also a `--json` path that isn't UTF-8, isn't a plain file name, names a file already there or a folder that doesn't exist, or where a file can't be written (before the secrets), and a passing run whose `--json` file couldn't be written or whose finished result isn't valid (no file). With `--record`, a folder that isn't new or empty, and a command that succeeded but whose recording isn't complete. For `test --evidence` also (W4.3) `signing_key_base64` not in the vault or not an Ed25519 private key (before the schema check, the manifest and any Veeam call), and a passing run whose result couldn't be signed or whose `signature.json` couldn't be written (no `result.json`). For `signer public-key`, the key not in the vault or not a key; for `signer verify`, a key file that can't be read or isn't an Ed25519 public key in PEM, or a `<folder>` that can't be opened; for both, an answer that couldn't be written to stdout. For `vault` (W4.5), a vault that can't be used or a value `set` refuses. For `test --evidence --outbox` (W4.6), a `--outbox` path that isn't UTF-8 (before the secrets) and a passing run whose folder couldn't be queued (it stays in the runs root); for `outbox flush`, a config that doesn't load, a root that can't be read, and an `outbox error` when nothing stays queued; for `outbox list`, a root that can't be read. For `service` (W4.7): not elevated, a service that isn't installed or is already installed, one that is running at `uninstall`, one that stopped while starting, `run` from a prompt, and any other answer of the Service Control Manager. | `config error: <path>: <message>`, `config error: the --config path is not valid UTF-8`, `config error: the --vault path is not valid UTF-8`, `config error: the --manifest path is not valid UTF-8`, `config error: canary manifest: <message>`, `config error: cannot find the ProgramData folder`, `config error: <file>: vault file not found` (and the vault's other messages, "Secrets"), `config error: veeam_username is not in the vault` (then `veeam_password`), `config error: graph_cert_pfx_base64 is not in the vault` (or another message naming the certificate's names), for `restore` `config error: unknown connector "<name>" (known: <names>)`, `check error: <message>; nothing was restored`, `check error: unexpected failure` and `error: writing the output failed after the restore ran (run <run ID>, restore ...); run status ...`, with `--record` `config error: <dir>: the --record folder is not empty` and `record error: <service>/<file>: refused: ...`, for `test` `config error: --json <file>: not a UTF-8 path` (`... not a file name`, `... the file already exists`, `... the folder doesn't exist`, `... a file can't be written there`) `json error: <file>: could not be written` and `json error: <file>: the result isn't valid restoreproof.result.v1; no file was written`, for `test --evidence` `config error: signing_key_base64 is not in the vault; --evidence signs the result` (`config error: signing_key_base64 is not an Ed25519 private key (Base64 of PKCS#8 DER)`) and the `evidence error: ...` lines ("`--evidence <dir>`"), for `signer` the `signer error: ...` lines ("`rpworker signer`"), for `vault` the `vault error: ...` lines ("`rpworker vault`"), for `test --outbox` and `outbox` the `outbox error: ...` lines ("`--outbox <root>`", "`rpworker outbox`"), for `service` the `service error: ...` lines ("`rpworker service`"), for `restore` and `test` `result error: <n> schema violation(s), first at <JSON pointer>` (`result error: the result has no canonical form`, `result error: the result couldn't be built`), `config error: unexpected failure` or `error: unexpected failure`; an unexpected failure's own message is never shown |
+| 1 | The config or a secret is missing or invalid, the vault can't be used (W4.5: not there, not readable by this account, owned by another account, not decryptable on this machine, not a vault, or a `--vault` path that isn't UTF-8), or something unexpected failed (an error no command handles ends here too, never in an `abort()`, whose exit code would be 3). For `graph list` this includes the certificate: `graph_cert_pfx_base64` not in the vault, a PFX that doesn't open with `graph_cert_password`, or a certificate that isn't valid now, all found before any request. For `restore`, also the same certificate problems as `graph list` (before any Veeam call; `graph_cert_password` absent is fine for a PFX without a password), the certificate failing as the check's reads before the restore sign in (nothing restored), a manifest that doesn't load, whose `tenant_id` isn't `graph_tenant_id` or that names a restore target (before any Veeam call), an unknown connector, a run whose status is `error config`, `error internal` (the facts not adding up, or the check failing for a reason that isn't Graph's) or `error result_invalid` (the result the Worker built isn't valid `restoreproof.result.v1`, W4.1; `job_invalid`, W4.8, is this exit code's too, but never a command's status: only the service gives it, to a job that is no job, "The jobs file"), and stdout failing after a restore whose run passed. `test` exits as `restore` does; for `test` also a `--json` path that isn't UTF-8, isn't a plain file name, names a file already there or a folder that doesn't exist, or where a file can't be written (before the secrets), and a passing run whose `--json` file couldn't be written or whose finished result isn't valid (no file). With `--record`, a folder that isn't new or empty, and a command that succeeded but whose recording isn't complete. For `test --evidence` also (W4.3) `signing_key_base64` not in the vault or not an Ed25519 private key (before the schema check, the manifest and any Veeam call), and a passing run whose result couldn't be signed or whose `signature.json` couldn't be written (no `result.json`). For `signer public-key`, the key not in the vault or not a key; for `signer verify`, a key file that can't be read or isn't an Ed25519 public key in PEM, or a `<folder>` that can't be opened; for both, an answer that couldn't be written to stdout. For `vault` (W4.5), a vault that can't be used or a value `set` refuses. For `test --evidence --outbox` (W4.6), a `--outbox` path that isn't UTF-8 (before the secrets) and a passing run whose folder couldn't be queued (it stays in the runs root); for `outbox flush`, a config that doesn't load, a root that can't be read, and an `outbox error` when nothing stays queued; for `outbox list`, a root that can't be read. For `service` (W4.7): not elevated, a service that isn't installed or is already installed, one that is running at `uninstall`, one that stopped while starting, `run` from a prompt, and any other answer of the Service Control Manager. | `config error: <path>: <message>`, `config error: the --config path is not valid UTF-8`, `config error: the --vault path is not valid UTF-8`, `config error: the --manifest path is not valid UTF-8`, `config error: canary manifest: <message>`, `config error: cannot find the ProgramData folder`, `config error: <file>: vault file not found` (and the vault's other messages, "Secrets"), `config error: veeam_username is not in the vault` (then `veeam_password`), `config error: graph_cert_pfx_base64 is not in the vault` (or another message naming the certificate's names), for `restore` `config error: unknown connector "<name>" (known: <names>)`, `check error: <message>; nothing was restored`, `check error: unexpected failure` and `error: writing the output failed after the restore ran (run <run ID>, restore ...); run status ...`, with `--record` `config error: <dir>: the --record folder is not empty` and `record error: <service>/<file>: refused: ...`, for `test` `config error: --json <file>: not a UTF-8 path` (`... not a file name`, `... the file already exists`, `... the folder doesn't exist`, `... a file can't be written there`) `json error: <file>: could not be written` and `json error: <file>: the result isn't valid restoreproof.result.v1; no file was written`, for `test --evidence` `config error: signing_key_base64 is not in the vault; --evidence signs the result` (`config error: signing_key_base64 is not an Ed25519 private key (Base64 of PKCS#8 DER)`) and the `evidence error: ...` lines ("`--evidence <dir>`"), for `signer` the `signer error: ...` lines ("`rpworker signer`"), for `vault` the `vault error: ...` lines ("`rpworker vault`"), for `test --outbox` and `outbox` the `outbox error: ...` lines ("`--outbox <root>`", "`rpworker outbox`"), for `service` the `service error: ...` lines ("`rpworker service`"), for `restore` and `test` `result error: <n> schema violation(s), first at <JSON pointer>` (`result error: the result has no canonical form`, `result error: the result couldn't be built`), `config error: unexpected failure` or `error: unexpected failure`; an unexpected failure's own message is never shown |
 | 2 | The service refused the sign-in, the account's role, the token or a permission: Veeam's credentials or role; Entra refusing the Worker app's sign-in; Graph refusing the token, or denying a call for want of a grant (the message names the grant, see `docs/security/graph-permissions.md`); for `restore` and `test`, a run whose status is `error backup_auth`, `graph_auth` or `graph_permission`: on the check's reads before the restore (nothing restored) or after it (the item couldn't be checked). | `veeam error: <message>`, `graph error: <message>`, `restore error: <message>` or `check error: <message>; nothing was restored` |
 | 3 | The service couldn't be reached or asked to try later: no connection, a timeout, a TLS handshake that broke off, or a 502, 503 or 504 (for Graph also a 429 or another 5xx) after the retries; for `restore` and `test`, a run whose status is `error backup_transient` or `graph_transient`, before the restore or after it. For `outbox flush` (W4.6): a run is still queued afterwards (its upload failed, it isn't due yet, or its folder changed), or another flush is running. For `service` (W4.7): not yet, try again: the service is still starting or still stopping after the wait, is stopping when asked to start, or is marked for deletion. | `veeam error: <message>`, `graph error: <message>`, `restore error: <message>` or `check error: <message>; nothing was restored`; for `outbox flush` nothing (the `kept` and `waiting` lines are on stdout) or `outbox error: another flush is running; nothing was done`; for `service` a `service error: ...` line |
-| 4 | Any other error from the service. Veeam: an unknown organisation, a bad request, an unexpected answer, or no organisation named `veeam_org_name`; also Veeam's certificate failing verification, which a retry won't fix: `veeam_ca_file` doesn't hold Veeam's certificate or its CA, or Veeam's certificate was renewed and no longer matches `veeam_cert_sha256` (see "Veeam's default certificate"). Graph: the mailbox, drive or folder not found, a mailbox, drive or folder the guard refuses (not the RestoreTarget the config says; a 403 on the test mailbox's Inbox included), a download that failed, an unexpected answer. `restore` and `test`: another RestoreProof run holding the run mutex, no restore points or a `--point` ID that isn't one of them (before the run line), and a run whose status is `error` with any other code: `target_guard` (the restore-target guard refusing, in the clean before or later, nothing restored), `not_in_backup` (the organisation not in Veeam, or an item not in the restore point that it can't be shown to hold: a random item, or a canary in a point taken before the manifest's `seeded_at`; a canary missing from a later point is `fail`, Q3.1), `backup` (a restore session of the Veeam account still `Working`, the restore credential's export failing when not elevated, any other error of the restore), `empty_sample`, `not_run`, `restore_contradiction`, `backup_infrastructure` (an item Veeam failed for an infrastructure reason that the check didn't find), `graph` (any other Graph error, before the restore or reading an item back), `stale_target` (only an earlier run's copy of an item is there). | `veeam error: <message>` (`... TLS failure: ...` for a certificate), `veeam error: organisation <name> (veeam_org_name) not found in Veeam`, `graph error: <message>`, `restore error: <message>` (`restore error: target guard: ...` for the guard), `restore error: another RestoreProof run is using the restore targets; nothing was done`, `restore error: no restore points for veeam_org_name`, `restore error: restore point <id> not found for veeam_org_name`, `cleanup error: <target>: the restore-target guard refused the target; nothing was deleted in it (target_guard)`, `check error: <message>; nothing was restored`, or a `check error: <message>` per target that couldn't be read back; after an error of a restore that had started, also `restore error: the restore had started: items may be in the restore targets (run <run ID>)`; for a run, the status line is on stdout and its warnings follow on stderr |
+| 4 | Any other error from the service. Veeam: an unknown organisation, a bad request, an unexpected answer, or no organisation named `veeam_org_name`; also Veeam's certificate failing verification, which a retry won't fix: `veeam_ca_file` doesn't hold Veeam's certificate or its CA, or Veeam's certificate was renewed and no longer matches `veeam_cert_sha256` (see "Veeam's default certificate"). Graph: the mailbox, drive or folder not found, a mailbox, drive or folder the guard refuses (not the RestoreTarget the config says; a 403 on the test mailbox's Inbox included), a download that failed, an unexpected answer. `restore` and `test`: another RestoreProof run holding the run mutex, no restore points or a `--point` ID that isn't one of them (before the run line), and a run whose status is `error` with any other code: `target_guard` (the restore-target guard refusing, in the clean before or later, nothing restored), `not_in_backup` (the organisation not in Veeam, or an item not in the restore point that it can't be shown to hold: a random item, or a canary in a point taken before the manifest's `seeded_at`; a canary missing from a later point is `fail`, Q3.1), `backup` (a restore session of the Veeam account still `Working`, the restore credential's export failing when not elevated, any other error of the restore), `empty_sample`, `not_run`, `restore_contradiction`, `backup_infrastructure` (an item Veeam failed for an infrastructure reason that the check didn't find), `graph` (any other Graph error, before the restore or reading an item back), `stale_target` (only an earlier run's copy of an item is there), `interrupted` (W4.8: the Worker was asked to stop during the run; only the service has a stop to ask with, and there the run's lines are in its log, "A stop during a run"). | `veeam error: <message>` (`... TLS failure: ...` for a certificate), `veeam error: organisation <name> (veeam_org_name) not found in Veeam`, `graph error: <message>`, `restore error: <message>` (`restore error: target guard: ...` for the guard), `restore error: another RestoreProof run is using the restore targets; nothing was done`, `restore error: no restore points for veeam_org_name`, `restore error: restore point <id> not found for veeam_org_name`, `cleanup error: <target>: the restore-target guard refused the target; nothing was deleted in it (target_guard)`, `check error: <message>; nothing was restored`, or a `check error: <message>` per target that couldn't be read back; after an error of a restore that had started, also `restore error: the restore had started: items may be in the restore targets (run <run ID>)`; for a run, the status line is on stdout and its warnings follow on stderr |
 | 5 | The thing tested failed. `restore` and `test`: the run's status is `fail` (W3.3): an item is missing or doesn't match, its target read fine and Veeam didn't blame infrastructure for it, whatever Veeam's own status says (`status fail: ...` on stdout). A result about the backup, not an error: a run that couldn't run at all or couldn't tell is `error`, 1 to 4. `signer verify` (W4.3): the folder is not verified (`not verified: <word>` on stdout): anything wrong inside the folder, a missing file included. A folder or a key file that can't be read at all is 1. | (nothing but the run's warnings) |
 | 64 | The command line isn't understood (for `test` also `--seed`, which it doesn't take, `--json` with `--evidence`, and `--outbox` without `--evidence`; for `outbox` no subcommand, an unknown one, or an option of the other one; for `signer verify` a missing, empty or repeated `<folder>` or `--public-key <pem file>`; for `vault` a missing name or account, or `--vault` without a file; for `service` no subcommand, an unknown one, a word too many, or `--config` without a path). For `restore` and `test` also, once the config or the manifest is read: every sample size 0, or a `--canary-cursor` out of the manifest's range; for `vault set` and `remove` a name that isn't one of the five. | the usage line; for `vault`, `usage error: the name must be one of veeam_username, veeam_password, graph_cert_pfx_base64, graph_cert_password, signing_key_base64`; for `restore`, `usage error: every sample size is 0 (--mail, --sp, --od, or config's sample_mail, sample_sp, sample_od): nothing to restore` or `usage error: --canary-cursor: the <kind> cursor must be below <n>, the manifest's <kind> canaries` (`... must be 0: the manifest has no <kind> canaries`) |
 

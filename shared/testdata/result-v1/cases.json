@@ -1106,7 +1106,7 @@
         {
           "op": "add",
           "path": "/status/error_code",
-          "value": "job_invalid"
+          "value": "teapot"
         }
       ]
     },
@@ -2343,6 +2343,255 @@
         {
           "op": "remove",
           "path": "/sample/sharepoint/random/containers_drawn"
+        }
+      ]
+    },
+    {
+      "name": "written-afterwards-error-interrupted-every-step-null",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/ended_at",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/sample",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/expected",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/restore",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/check",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/cleanup",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/timings/spans/restore_point_lookup",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/timings/spans/cleanup_before",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/timings/spans/sample_select",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/timings/spans/target_snapshot",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/timings/spans/restore",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/timings/spans/restore_submit",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/timings/spans/restore_wait",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/timings/spans/verify",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/timings/spans/recovery",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/timings/spans/cleanup_after",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/timings/spans/total",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/status",
+          "value": {
+            "status": "error",
+            "error_code": "interrupted",
+            "message": "the run was interrupted before its result was written; a restore request may have been sent, so items may be in the restore targets",
+            "restore_sent": true,
+            "counts": {
+              "items": 0,
+              "verified": 0,
+              "failed": 0,
+              "unchecked": 0
+            },
+            "verified": {
+              "manifest": 0,
+              "fields": 0,
+              "metadata": 0
+            },
+            "failed_items": [],
+            "unchecked_items": [],
+            "warnings": []
+          }
+        }
+      ]
+    },
+    {
+      "name": "written-afterwards-error-job-invalid-nothing-known",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/started_at",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/ended_at",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/sample",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/expected",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/restore",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/check",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/cleanup",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/timings/spans/restore_point_lookup",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/timings/spans/cleanup_before",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/timings/spans/sample_select",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/timings/spans/target_snapshot",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/timings/spans/restore",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/timings/spans/restore_submit",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/timings/spans/restore_wait",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/timings/spans/verify",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/timings/spans/recovery",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/timings/spans/cleanup_after",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/timings/spans/total",
+          "value": null
+        },
+        {
+          "op": "replace",
+          "path": "/connector/api",
+          "value": ""
+        },
+        {
+          "op": "replace",
+          "path": "/restore_point",
+          "value": {
+            "id": "",
+            "backup_time_raw": "",
+            "backup_time": null
+          }
+        },
+        {
+          "op": "replace",
+          "path": "/status",
+          "value": {
+            "status": "error",
+            "error_code": "job_invalid",
+            "message": "the job isn't a valid job (sample_mail); nothing was done",
+            "restore_sent": false,
+            "counts": {
+              "items": 0,
+              "verified": 0,
+              "failed": 0,
+              "unchecked": 0
+            },
+            "verified": {
+              "manifest": 0,
+              "fields": 0,
+              "metadata": 0
+            },
+            "failed_items": [],
+            "unchecked_items": [],
+            "warnings": []
+          }
         }
       ]
     }

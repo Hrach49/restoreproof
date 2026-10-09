@@ -13,6 +13,8 @@
 #include "test_support.hpp"
 #include "veeam_restore_lab.hpp"
 
+#include "../src/job_rules.hpp"
+
 #include <rp/canary_manifest.hpp>
 #include <rp/cli.hpp>
 #include <rp/config.hpp>
@@ -47,6 +49,7 @@
 #include <fstream>
 #include <functional>
 #include <iterator>
+#include <limits>
 #include <map>
 #include <memory>
 #include <new>
@@ -606,8 +609,33 @@ TEST_CASE("restore: each failure of the restore has its exit code; the header is
          rp::exit_code::config, "error: unexpected failure\n" + started,
          "internal: the restore didn't complete: an unexpected failure (internal); items may be "
          "in the restore targets"},
+        // W4.8 point 13: the connector withdrew a restore request, or left
+        // its poll, because the Worker was asked to stop. Not a
+        // connector::Error, and never "an unexpected failure".
+        {"Interrupted before the first request",
+         [] {
+             throw connector::Interrupted(
+                 "veeam_m365: the Worker was asked to stop before the mail restore request was "
+                 "sent; nothing was restored");
+         },
+         rp::exit_code::service,
+         "restore error: veeam_m365: the Worker was asked to stop before the mail restore "
+         "request was sent; nothing was restored\n",
+         "interrupted: the restore didn't start: the run was interrupted (interrupted); nothing "
+         "was restored"},
+        {"Interrupted in the poll",
+         [] {
+             throw connector::Interrupted("veeam_m365: restore session 1 (mail) was still "
+                                          "Working when the Worker was asked to stop");
+         },
+         rp::exit_code::service,
+         "restore error: veeam_m365: restore session 1 (mail) was still Working when the Worker "
+         "was asked to stop\n" +
+             started,
+         "interrupted: the restore didn't complete: the run was interrupted (interrupted); "
+         "items may be in the restore targets"},
     };
-    const Case& c = cases[GENERATE(range(std::size_t{0}, std::size_t{11}))];
+    const Case& c = cases[GENERATE(range(std::size_t{0}, std::size_t{13}))];
     CAPTURE(c.name);
     Harness lab;
     lab.fake.pool.mail = {carol_mail(1)};
@@ -617,18 +645,23 @@ TEST_CASE("restore: each failure of the restore has its exit code; the header is
 
     CHECK(run.exit_code == c.code);
     CHECK(run.err == c.err);
-    // W3.4: unless the error promised nothing was sent, the clean after runs
-    // (here the fake had put its copies in), and says Veeam may still be
-    // writing: the state it leaves isn't ok.
+    // Unless the error promised nothing was sent, Veeam may still be
+    // writing: the clean after is skipped and says so (W4.8 point 9: nothing
+    // is deleted under a restore; here the fake had put its copies in, and
+    // they stay), and the state the run leaves isn't ok.
     const bool sent = !c.status.ends_with("nothing was restored");
     CHECK(lab.body(run) == expected_header() + "\nstatus error " + c.status + "\n" +
                                (sent ? kCleanAfterStillRunning : kNothingRestored));
     REQUIRE(lab.cleanups.size() == 1);
     CHECK(lab.cleanups[0].restore_sent == sent);
     CHECK(lab.cleanups[0].restore_may_still_run == sent);
-    CHECK(lab.cleanups[0].after.has_value() == sent);
+    CHECK_FALSE(lab.cleanups[0].after.has_value());
     CHECK(lab.cleanups[0].cleanup_ok() == !sent);
-    CHECK(lab.targets.deleted.size() == (sent ? 3u : 0u));
+    CHECK(lab.targets.deleted.empty());
+    // Not one listing of the Cleaner's after the clean before's own two.
+    for (const int listings : lab.targets.clean_listings) {
+        CHECK(listings == 2);
+    }
     CHECK_THAT(run.out, !ContainsSubstring("SENTINEL-UNSAFE-MESSAGE"));
     CHECK(lab.fake.restore_calls == 1);
     // The before snapshot was read; nothing is read back after a restore that threw.
@@ -1975,6 +2008,23 @@ TEST_CASE("restore: copies earlier runs left are ignored and counted; a file onl
     CHECK(lab.targets.download.requests().empty());
 }
 
+// W4.8 (docs/decisions.md 2026-10-08 point 13): the download client's own
+// retries were the one wait of a run outside the pipeline's sleep.
+TEST_CASE("restore: the download client is made with the pipeline's own sleep",
+          "[restore_command][checker]")
+{
+    Harness lab;
+
+    const Run run = lab.run({});
+
+    REQUIRE(run.exit_code == rp::exit_code::ok);
+    REQUIRE(lab.download_sleep);
+    const std::size_t before = lab.slept.size();
+    lab.download_sleep(std::chrono::milliseconds{7});
+    REQUIRE(lab.slept.size() == before + 1);
+    CHECK(lab.slept.back() == std::chrono::milliseconds{7});
+}
+
 TEST_CASE("restore: an earlier run's file that couldn't be downloaded doesn't touch the check; "
           "only this run's expected files are read",
           "[restore_command][checker]")
@@ -2683,9 +2733,10 @@ TEST_CASE("restore: step timings: each way a run ends has its spans; the table e
          [](Harness& lab) {
              lab.fake.restore_throw = [] { throw connector::TransientError("Veeam unreachable"); };
          },
+         // No clean after under a restore that may still run (W4.8 point 9).
          three, rp::exit_code::transient,
          {measured(1), measured(1), measured(1), measured(1), stopped(1), kNotReported,
-          kNotReported, kNotRun, stopped(1), measured(1), measured(11)}},
+          kNotReported, kNotRun, stopped(1), kNotRun, measured(9)}},
         {"the check throws",
          [](Harness& lab) {
              lab.fake.answer = timed_restore(2s, 7s);
@@ -2835,14 +2886,14 @@ TEST_CASE("restore: step timings: a clock that throws once the clean after is do
         {"a pass: total alone", [](Harness&) {}, rp::exit_code::ok,
          {measured(1), measured(1), measured(1), measured(1), measured(1), kNotReported,
           kNotReported, measured(9), measured(10), measured(1), kOpen}},
-        {"restore_sample throws, items may be in the targets: restore and recovery stopped "
-         "before the clean after",
+        {"restore_sample throws, items may be in the targets: restore and recovery stopped, "
+         "no clean after",
          [](Harness& lab) {
              lab.fake.restore_throw = [] { throw connector::TransientError("Veeam unreachable"); };
          },
          rp::exit_code::transient,
          {measured(1), measured(1), measured(1), measured(1), stopped(1), kNotReported,
-          kNotReported, kNotRun, stopped(1), measured(1), kOpen}},
+          kNotReported, kNotRun, stopped(1), kNotRun, kOpen}},
     };
     const Case& c = cases[GENERATE(range(std::size_t{0}, std::size_t{2}))];
     CAPTURE(c.name);
@@ -3161,7 +3212,8 @@ struct RealRig {
         };
         o.cert_exporter = rig.exporter;
         env.now = [this] { return rig.clock.now(); };
-        env.make_download_http = [this]() -> std::unique_ptr<rp::IHttpClient> {
+        env.make_download_http = [this](std::function<void(std::chrono::milliseconds)>)
+            -> std::unique_ptr<rp::IHttpClient> {
             return std::make_unique<rp::test::ForwardingHttpClient>(download);
         };
         // W3.4: a fake run mutex, never the machine's.
@@ -3460,4 +3512,627 @@ TEST_CASE("restore through veeam_m365 --record: every exchange written, the rest
     }
     CHECK(restore_posts == 1);
     CHECK(deletes == 1);
+}
+
+// --- W4.8: a stop asked of the Worker during a run, and the run's record --------------
+// (docs/decisions.md 2026-10-08, W4.8 points 6 and 13). Failure paths first.
+
+namespace {
+
+const std::string kStoppedBeforeRestore =
+    "\nstatus error interrupted: the run stopped before the restore: the run was interrupted "
+    "(interrupted); nothing was restored\n";
+
+const Args kStopArgs{"--run-id", kRunId, "--mail", "2", "--sp", "1", "--od", "0"};
+
+} // namespace
+
+TEST_CASE("restore: a stop asked for before the run mutex is taken ends the run there: nothing "
+          "done, no run line, exit 4",
+          "[restore_command][stop]")
+{
+    Harness lab;
+    lab.fake.pool.mail = {carol_mail(1)};
+    lab.stop_requested = [] { return true; };
+
+    const Run run = lab.run(kStopArgs);
+
+    CHECK(run.exit_code == rp::exit_code::service);
+    CHECK(run.err == "restore error: the Worker was asked to stop; nothing was done\n");
+    CHECK(run.out.empty());
+    CHECK(lab.lock_calls == 0);
+    CHECK(lab.make_connector_calls == 0);
+    CHECK(lab.fake.points_calls == 0);
+    CHECK(lab.run_started.empty());
+    CHECK(lab.timings.empty());
+}
+
+TEST_CASE("restore: a stop check that throws answered yes", "[restore_command][stop]")
+{
+    Harness lab;
+    lab.stop_requested = []() -> bool { throw std::runtime_error("SENTINEL-UNSAFE-MESSAGE"); };
+
+    const Run run = lab.run(kStopArgs);
+
+    CHECK(run.exit_code == rp::exit_code::service);
+    CHECK(run.err == "restore error: the Worker was asked to stop; nothing was done\n");
+    CHECK(lab.lock_calls == 0);
+}
+
+TEST_CASE("restore: a stop asked for after the run line ends the run at the next step's "
+          "boundary: error interrupted, nothing restored, the clean after skipped, and nothing "
+          "of the step it stood before",
+          "[restore_command][stop]")
+{
+    struct Row {
+        const char* before; // the step the stop came before
+        std::function<bool(Harness&)> stop_from;
+        std::function<std::string()> printed; // stdout before the status line
+        int graph_clients;
+        int clean_listings; // of the mailbox: the clean before lists it twice
+        int candidate_calls;
+        std::size_t before_reads;
+    };
+    const std::string before_read = rp::test::graph_lab::mail_list_url(false);
+    const Row row = GENERATE_COPY(
+        Row{"the clean before", [](Harness& lab) { return !lab.run_started.empty(); },
+            expected_run_lines, 0, 0, 0, 0},
+        Row{"choose_sample", [](Harness& lab) { return lab.targets.clean_listings[0] > 0; },
+            expected_intro, 1, 2, 0, 0},
+        Row{"the read before", [](Harness& lab) { return lab.fake.candidate_calls > 0; },
+            expected_header, 1, 2, 1, 0},
+        Row{"restore_sample",
+            [before_read](Harness& lab) {
+                return lab.targets.graph.count(rp::HttpMethod::get, before_read) > 0;
+            },
+            expected_header, 1, 2, 1, 1});
+    CAPTURE(row.before);
+    Harness lab;
+    lab.fake.pool.mail = {carol_mail(1)};
+    lab.stop_requested = [&] { return row.stop_from(lab); };
+
+    const Run run = lab.run(kStopArgs);
+
+    CHECK(run.exit_code == rp::exit_code::service);
+    CHECK(run.err == "restore error: the Worker was asked to stop; nothing was restored\n");
+    CHECK(lab.body(run) == row.printed() + kStoppedBeforeRestore + kNothingRestored);
+    // What was called by then, and nothing after it: no explore session,
+    // no restore request, no delete.
+    CHECK(lab.graph_clients == row.graph_clients);
+    CHECK(lab.targets.clean_listings[0] == row.clean_listings);
+    CHECK(lab.fake.candidate_calls == row.candidate_calls);
+    CHECK(lab.targets.graph.count(rp::HttpMethod::get, before_read) == row.before_reads);
+    CHECK(lab.fake.restore_calls == 0);
+    CHECK(lab.targets.deleted.empty());
+    REQUIRE(lab.cleanups.size() == 1);
+    CHECK_FALSE(lab.cleanups[0].restore_sent);
+    CHECK_FALSE(lab.cleanups[0].restore_may_still_run);
+    CHECK_FALSE(lab.cleanups[0].after.has_value());
+    // The mutex was held from before the run line and is let go.
+    CHECK(lab.lock_calls == 1);
+    CHECK_FALSE(lab.lock_held);
+}
+
+TEST_CASE("restore: on_run_started is told the run once, right after its run line and before "
+          "anything is asked of Graph or the backup",
+          "[restore_command][stop]")
+{
+    Harness lab;
+    lab.fake.pool.mail = {carol_mail(1)};
+    int candidates_then = -1;
+    int graph_clients_then = -1;
+    bool held_then = false;
+    lab.on_run_started = [&](const rp::RunStarted&) {
+        candidates_then = lab.fake.candidate_calls;
+        graph_clients_then = lab.graph_clients;
+        held_then = lab.lock_held;
+        return true;
+    };
+
+    const Run run = lab.run(kStopArgs);
+
+    CHECK(run.exit_code == rp::exit_code::ok);
+    REQUIRE(lab.run_started.size() == 1);
+    const rp::RunStarted& started = lab.run_started[0];
+    CHECK(started.run_id == kRunId);
+    CHECK(started.started_at == std::optional<std::string>{"2026-09-28T12:00:00.000Z"});
+    CHECK(started.restore_point_id == kNewestId);
+    CHECK(started.restore_point_time == kNewestTime);
+    CHECK(started.connector_type == "veeam_m365");
+    CHECK(started.connector_api == "1");
+    CHECK(lab.out_at_run_started[0] == expected_run_lines());
+    CHECK(lab.graph_requests_at_run_started == 0);
+    CHECK(graph_clients_then == 0);
+    CHECK(candidates_then == 0);
+    CHECK(held_then);
+}
+
+TEST_CASE("restore: a run that can't be put on record ends before any clean and any session: "
+          "error interrupted, nothing restored",
+          "[restore_command][stop]")
+{
+    const bool throws = GENERATE(false, true);
+    CAPTURE(throws);
+    Harness lab;
+    lab.fake.pool.mail = {carol_mail(1)};
+    lab.on_run_started = [throws](const rp::RunStarted&) -> bool {
+        if (throws) {
+            throw std::runtime_error("SENTINEL-UNSAFE-MESSAGE");
+        }
+        return false;
+    };
+
+    const Run run = lab.run(kStopArgs);
+
+    CHECK(run.exit_code == rp::exit_code::service);
+    CHECK(run.err ==
+          "restore error: the run couldn't be recorded as started; nothing was restored\n");
+    CHECK(lab.body(run) == expected_run_lines() + kStoppedBeforeRestore + kNothingRestored);
+    CHECK(lab.graph_clients == 0);
+    CHECK(lab.targets.graph.requests().empty());
+    CHECK(lab.fake.candidate_calls == 0);
+    CHECK(lab.fake.restore_calls == 0);
+    CHECK(lab.run_started.size() == 1);
+}
+
+TEST_CASE("restore: a verdict decided after a stop: an error becomes error interrupted, naming "
+          "how the run itself ended; a pass, a fail, a guard's refusal and every verdict "
+          "decided before the stop stay",
+          "[restore_command][stop]")
+{
+    struct Row {
+        const char* name;
+        // When the stop comes: as restore_sample is entered (after the last
+        // boundary), or only once the status is out.
+        bool before_verdict;
+        std::function<void(Harness&)> setup;
+        int code;
+        std::string status; // the status line, after "status "
+    };
+    const auto graph_429 = [](Harness& lab) {
+        lab.fake.restore_throw = [] {
+            throw rp::graph::TransientError("Graph 429; nothing was restored", 429);
+        };
+    };
+    const Row row = GENERATE_COPY(
+        Row{"an error graph_transient", true, graph_429, rp::exit_code::service,
+            "error interrupted: the Worker was stopped during the run; the run itself ended "
+            "error graph_transient\n"},
+        Row{"an error backup_transient with a restore sent", true,
+            [](Harness& lab) {
+                lab.fake.restore_throw = [] {
+                    throw connector::TransientError("Veeam unreachable");
+                };
+            },
+            rp::exit_code::service,
+            "error interrupted: the Worker was stopped during the run; the run itself ended "
+            "error backup_transient\n"},
+        Row{"a guard's refusal", true,
+            [](Harness& lab) {
+                lab.fake.restore_throw = [] {
+                    throw connector::SafetyViolation(
+                        "target guard: mail item 0 is sampled from a restore target; nothing "
+                        "was restored");
+                };
+            },
+            rp::exit_code::service,
+            "error target_guard: the restore didn't start: the restore-target guard refused "
+            "(target_guard); nothing was restored\n"},
+        Row{"a pass", true, [](Harness&) {}, rp::exit_code::ok,
+            "pass: 3 of 3 item(s) verified: manifest 2, fields 1, metadata 0\n"},
+        Row{"a fail", true,
+            [](Harness& lab) {
+                lab.targets.after[kind_slot(connector::ItemKind::sharepoint)] = json::array();
+            },
+            rp::exit_code::restore, "fail: "},
+        Row{"an error decided before the stop", false, graph_429, rp::exit_code::transient,
+            "error graph_transient: the restore didn't start: Microsoft Graph couldn't be "
+            "reached or asked to try later (graph_transient); nothing was restored\n"});
+    CAPTURE(row.name);
+    Harness lab;
+    lab.fake.pool.mail = {carol_mail(1)};
+    row.setup(lab);
+    bool stop = false;
+    if (row.before_verdict) {
+        lab.fake.at_restore = [&] { stop = true; };
+    }
+    lab.stop_requested = [&] { return row.before_verdict ? stop : !lab.cleanups.empty(); };
+
+    const Run run = lab.run(kStopArgs);
+
+    INFO(run.out);
+    INFO(run.err);
+    CHECK(run.exit_code == row.code);
+    CHECK_THAT(run.out, ContainsSubstring("\nstatus " + row.status));
+    CHECK(lab.fake.restore_calls == 1);
+    // One status line, whichever it is.
+    std::size_t lines = 0;
+    for (std::size_t at = run.out.find("\nstatus "); at != std::string::npos;
+         at = run.out.find("\nstatus ", at + 1)) {
+        ++lines;
+    }
+    CHECK(lines == 1);
+}
+
+TEST_CASE("restore: the stop check is handed on to the connector, unless its options already "
+          "carry one",
+          "[restore_command][stop]")
+{
+    const bool own = GENERATE(false, true);
+    CAPTURE(own);
+    Harness lab;
+    lab.fake.pool.mail = {carol_mail(1)};
+    int env_asked = 0;
+    int own_asked = 0;
+    lab.stop_requested = [&] {
+        ++env_asked;
+        return false;
+    };
+    if (own) {
+        lab.connector_stop = [&] {
+            ++own_asked;
+            return false;
+        };
+    }
+
+    const Run run = lab.run(kStopArgs);
+
+    CHECK(run.exit_code == rp::exit_code::ok);
+    REQUIRE(lab.connector_options);
+    REQUIRE(lab.connector_options->stop_requested);
+    const int env_before = env_asked;
+    CHECK_FALSE(lab.connector_options->stop_requested());
+    CHECK(own_asked == (own ? 1 : 0));
+    CHECK(env_asked == env_before + (own ? 0 : 1));
+}
+
+TEST_CASE("restore: without a stop check the connector is handed none", "[restore_command][stop]")
+{
+    Harness lab;
+    lab.fake.pool.mail = {carol_mail(1)};
+
+    const Run run = lab.run(kStopArgs);
+
+    CHECK(run.exit_code == rp::exit_code::ok);
+    REQUIRE(lab.connector_options);
+    CHECK_FALSE(lab.connector_options->stop_requested);
+}
+
+// --- W4.8 point 3: a run's rules, the command line's and a job's alike ----------------
+
+TEST_CASE("job rules: a sample size is 0 to 100, and three sizes of 0 ask for nothing",
+          "[restore_command][job_rules]")
+{
+    namespace rules = rp::job_rules;
+    CHECK(rules::is_sample_size(0));
+    CHECK(rules::is_sample_size(100));
+    CHECK_FALSE(rules::is_sample_size(-1));
+    CHECK_FALSE(rules::is_sample_size(101));
+    CHECK_FALSE(rules::is_sample_size(std::numeric_limits<std::int64_t>::max()));
+    CHECK(rules::is_empty_sample(0, 0, 0));
+    CHECK_FALSE(rules::is_empty_sample(1, 0, 0));
+    CHECK_FALSE(rules::is_empty_sample(0, 1, 0));
+    CHECK_FALSE(rules::is_empty_sample(0, 0, 1));
+}
+
+TEST_CASE("job rules: a restore point is `latest` or 1 to 128 letters, digits and hyphens",
+          "[restore_command][job_rules]")
+{
+    namespace rules = rp::job_rules;
+    CHECK(rules::is_point("latest"));
+    CHECK(rules::is_point("LATEST"));
+    CHECK(rules::is_point(kNewestId));
+    CHECK(rules::is_point(std::string(128, 'a')));
+    CHECK_FALSE(rules::is_point(""));
+    CHECK_FALSE(rules::is_point(std::string(129, 'a')));
+    CHECK_FALSE(rules::is_point("a b"));
+    CHECK_FALSE(rules::is_point("a_b"));
+    CHECK_FALSE(rules::is_point("a\n"));
+    CHECK_FALSE(rules::is_point("\xC3\xA9"));
+}
+
+TEST_CASE("job rules: a cursor's number is 0 to 999999", "[restore_command][job_rules]")
+{
+    namespace rules = rp::job_rules;
+    CHECK(rules::is_cursor_value(0));
+    CHECK(rules::is_cursor_value(999999));
+    CHECK_FALSE(rules::is_cursor_value(1000000));
+    CHECK_FALSE(rules::is_cursor_value(-1));
+}
+
+TEST_CASE("job rules: a run ID passes check_run_id, and one that names a folder is a plain file "
+          "name too",
+          "[restore_command][job_rules]")
+{
+    namespace rules = rp::job_rules;
+    const auto [id, run_id, folder] = GENERATE(table<std::string, bool, bool>({
+        {"run-0001", true, true},
+        {kGeneratedRunId, true, true},
+        {std::string(128, 'a'), true, true},
+        // check_run_id takes them; a folder can't have the name.
+        {"rp:1", true, false},
+        {"run.", true, false},
+        {"..", true, false},
+        {".", true, false},
+        {"PRN", true, false},
+        {"aux.json", true, false},
+        // Neither.
+        {"", false, false},
+        {std::string(129, 'a'), false, false},
+        {"run 1", false, false},
+        {"run/1", false, false},
+        {"run\\1", false, false},
+        {"r\xC3\xA9", false, false},
+    }));
+    CAPTURE(id);
+    CHECK(rules::is_run_id(id) == run_id);
+    CHECK(rules::is_folder_run_id(id) == folder);
+}
+
+TEST_CASE("restore: the command line is held to the job rules", "[restore_command][job_rules]")
+{
+    const auto [option, value, usage] = GENERATE(table<std::string, std::string, bool>({
+        {"--mail", "100", false},
+        {"--mail", "101", true},
+        {"--point", std::string(129, 'a'), true},
+        {"--run-id", "run 1", true},
+        // Not a folder's name, and no folder is asked for.
+        {"--run-id", "rp:1", false},
+        {"--canary-cursor", "0,0,1000000", true},
+    }));
+    CAPTURE(option, value);
+    Harness lab;
+    lab.fake.pool.mail = {carol_mail(1)};
+    // Whatever the option, the run goes no further than the mutex.
+    lab.lock_taken = true;
+    const std::string option_text = option;
+    const std::string value_text = value;
+
+    const Run run = lab.run({"--sp", "1", option_text, value_text});
+
+    CHECK(run.exit_code == (usage ? rp::exit_code::usage : rp::exit_code::service));
+    CHECK((run.err == kUsage) == usage);
+}
+
+// --- W4.8 point 9: the clean a run that didn't reach its own never made ----------------
+// rp::clean_restore_targets (src/run_pipeline.hpp): the Cleaner's clean before,
+// under the run mutex, with the vault's Graph certificate. Failure paths first.
+
+namespace {
+
+// The Harness's config, loaded as the service loads it at its start.
+rp::Config loaded_config(const Harness& lab)
+{
+    return rp::load_config(lab.config_path);
+}
+
+struct CleanRun {
+    rp::TargetsClean answer;
+    std::string out;
+};
+
+CleanRun clean_targets(Harness& lab, const rp::RestoreCommandEnv& env)
+{
+    const rp::Config config = loaded_config(lab);
+    std::ostringstream out;
+    const rp::TargetsClean answer =
+        rp::clean_restore_targets(config, lab.dir.path() / "the-vault.bin", out, env);
+    return {answer, out.str()};
+}
+
+CleanRun clean_targets(Harness& lab)
+{
+    return clean_targets(lab, lab.env());
+}
+
+} // namespace
+
+TEST_CASE("the recovery clean under a run mutex another run holds does nothing: no vault read, "
+          "no Graph client",
+          "[restore_command][cleanup][recovery_clean]")
+{
+    const bool abandoned = GENERATE(false, true);
+    CAPTURE(abandoned);
+    Harness lab;
+    if (abandoned) {
+        // The real mutex's word for a holder that ended without releasing
+        // it: taken for this one try, as for a run.
+        lab.lock_throw = [] { throw rp::AbandonedRunLock(); };
+    } else {
+        lab.lock_taken = true;
+    }
+
+    const CleanRun run = clean_targets(lab);
+
+    CHECK(run.answer == rp::TargetsClean::lock_held);
+    CHECK(rp::to_string(run.answer) == "lock_held");
+    CHECK(run.out.empty());
+    CHECK(lab.lock_calls == 1);
+    CHECK(lab.load_secrets_calls == 0);
+    CHECK(lab.graph_clients == 0);
+    CHECK(lab.targets.graph.requests().empty());
+}
+
+TEST_CASE("the recovery clean that can't start says so in one word and deletes nothing",
+          "[restore_command][cleanup][recovery_clean]")
+{
+    struct Row {
+        const char* name;
+        std::function<void(Harness&, rp::RestoreCommandEnv&)> setup;
+    };
+    const Row row = GENERATE_COPY(
+        Row{"the mutex can't be asked",
+            [](Harness& lab, rp::RestoreCommandEnv&) {
+                lab.lock_throw = [] { throw std::runtime_error("SENTINEL-UNSAFE-MESSAGE"); };
+            }},
+        Row{"the vault can't be read",
+            [](Harness& lab, rp::RestoreCommandEnv&) {
+                lab.load_secrets = []() -> rp::Secrets {
+                    throw rp::ConfigError("vault", "vault file not found");
+                };
+            }},
+        Row{"no Graph certificate in the vault",
+            [](Harness& lab, rp::RestoreCommandEnv&) {
+                lab.load_secrets = [] {
+                    return rp::Secrets{"rp-veeam", "Sentinel-Veeam-Password-9c2e", std::nullopt,
+                                       std::nullopt, std::nullopt};
+                };
+            }},
+        Row{"no Graph client",
+            [](Harness&, rp::RestoreCommandEnv& env) {
+                env.connector_options.make_graph_http =
+                    [](std::shared_ptr<spdlog::logger>) -> std::unique_ptr<rp::IHttpClient> {
+                    return nullptr;
+                };
+            }});
+    CAPTURE(row.name);
+    Harness lab;
+    lab.targets.leftovers[kind_slot(connector::ItemKind::mail)] = json::array(
+        {TargetsLab::clean_entry(connector::ItemKind::mail, "left-1")});
+    rp::RestoreCommandEnv env = lab.env();
+    row.setup(lab, env);
+    // The lab's own closures read the members row.setup changed.
+
+    const CleanRun run = clean_targets(lab, env);
+
+    CHECK(run.answer == rp::TargetsClean::not_started);
+    CHECK(rp::to_string(run.answer) == "not_started");
+    CHECK(run.out.empty());
+    CHECK(lab.targets.deleted.empty());
+    CHECK_FALSE(lab.lock_held);
+}
+
+TEST_CASE("the recovery clean that leaves something answers incomplete, with the lines a run's "
+          "clean before prints",
+          "[restore_command][cleanup][recovery_clean]")
+{
+    Harness lab;
+    lab.targets.leftovers[kind_slot(connector::ItemKind::mail)] = json::array(
+        {TargetsLab::clean_entry(connector::ItemKind::mail, "left-1")});
+    lab.targets.clean_fail = [](connector::ItemKind kind,
+                                bool) -> std::optional<rp::HttpResponse> {
+        return kind == connector::ItemKind::sharepoint
+                   ? std::optional{rp::test::load_fixture("graph", "site-403-accessdenied")}
+                   : std::nullopt;
+    };
+
+    const CleanRun run = clean_targets(lab);
+
+    CHECK(run.answer == rp::TargetsClean::incomplete);
+    CHECK(rp::to_string(run.answer) == "incomplete");
+    CHECK_THAT(run.out,
+               Catch::Matchers::StartsWith(
+                   "cleanup before incomplete: deleted 1 mail, 0 sharepoint, 0 onedrive; "
+                   "sharepoint graph_permission\n"
+                   "cleanup error: sharepoint: Microsoft Graph refused a permission the cleanup "
+                   "relies on (graph_permission)\n"
+                   "warning: cleanup: sharepoint not emptied before the run ("));
+    CHECK(lab.targets.deleted == std::set<std::string>{"left-1"});
+}
+
+TEST_CASE("the recovery clean empties the three targets under the run mutex, with the vault's "
+          "certificate, and asks nothing of the backup",
+          "[restore_command][cleanup][recovery_clean]")
+{
+    Harness lab;
+    lab.targets.leftovers[kind_slot(connector::ItemKind::mail)] = json::array(
+        {TargetsLab::clean_entry(connector::ItemKind::mail, "left-1"),
+         TargetsLab::clean_entry(connector::ItemKind::mail, "left-2")});
+    lab.targets.leftovers[kind_slot(connector::ItemKind::onedrive)] = json::array(
+        {TargetsLab::clean_entry(connector::ItemKind::onedrive, "left-3")});
+    std::vector<bool> held_at_delete;
+    lab.targets.at_delete = [&] { held_at_delete.push_back(lab.lock_held); };
+
+    const CleanRun run = clean_targets(lab);
+
+    CHECK(run.answer == rp::TargetsClean::ok);
+    CHECK(rp::to_string(run.answer) == "ok");
+    CHECK(run.out == "cleanup before ok: deleted 2 mail, 0 sharepoint, 1 onedrive\n");
+    CHECK(lab.targets.deleted == std::set<std::string>{"left-1", "left-2", "left-3"});
+    CHECK(held_at_delete == std::vector<bool>{true, true, true});
+    CHECK_FALSE(lab.lock_held);
+    CHECK(lab.vault_read == lab.dir.path() / "the-vault.bin");
+    CHECK(lab.load_secrets_calls == 1);
+    CHECK(lab.graph_clients == 1);
+    CHECK(lab.make_connector_calls == 0);
+    CHECK(lab.fake.points_calls == 0);
+    CHECK_THAT(lab.log(), !ContainsSubstring("Sentinel-Veeam-Password"));
+}
+
+TEST_CASE("the recovery clean on the W3.4 live run's recording: every item the three listings "
+          "held is deleted, and nothing else is written",
+          "[restore_command][cleanup][recovery_clean]")
+{
+    namespace gl = rp::test::graph_lab;
+    const char* const recording = "recordings/w34-live-run1/graph";
+    // The run's clean after as it was recorded: its first listing of each
+    // target (5 mails, 3 and 3 files) and its first permanentDelete and DELETE.
+    const std::array<std::pair<connector::ItemKind, const char*>, 3> listings{{
+        {connector::ItemKind::mail,
+         "034-get-v1-0-users-restoretest-restoreprooflab-onmicrosoft-com-mailf"},
+        {connector::ItemKind::sharepoint,
+         "042-get-v1-0-drives-b-xqgi-ndr6ekvpkcbib2y65nzyk4ozjvns-7ncroj5omdbu"},
+        {connector::ItemKind::onedrive,
+         "048-get-v1-0-drives-b-wa9gbfhleuitgaluxbfonbr-z5getdherm5pj6bmwyxfzj"},
+    }};
+    Harness lab;
+    rp::test::FakeHttpClient graph;
+    graph.on(rp::HttpMethod::post, gl::kTokenUrl, {gl::token_response()});
+    graph.on(rp::HttpMethod::get, gl::inbox_url(),
+             {rp::test::load_fixture("graph", "mailbox-inbox-200")});
+    graph.on(rp::HttpMethod::get, gl::drive_url(),
+             {rp::test::load_fixture("graph", "restoretarget-drive-200")});
+    gl::serve_library_root(graph);
+    graph.on(rp::HttpMethod::get, gl::folder_url(),
+             {rp::test::load_fixture("graph", "onedrive-folder-200")});
+    // Each listing as recorded once, then what the deletes left: nothing.
+    std::set<std::string> listed;
+    std::size_t recorded_items = 0;
+    for (const auto& [kind, name] : listings) {
+        const json fixture = rp::test::load_fixture_json(recording, name);
+        for (const json& item : fixture.at("body").at("value")) {
+            listed.insert(item.at("id").get<std::string>());
+            ++recorded_items;
+        }
+        json emptied = fixture;
+        emptied["body"]["value"] = json::array();
+        graph.on(rp::HttpMethod::get, TargetsLab::clean_listing_url(kind),
+                 {rp::test::to_response(fixture), rp::test::to_response(emptied)});
+    }
+    REQUIRE(recorded_items == 11);
+    graph.on_path(rp::HttpMethod::post, "/v1.0/users/*/messages/*/permanentDelete",
+                  [recording](const rp::HttpRequest&) {
+                      return rp::test::load_fixture(
+                          recording,
+                          "035-post-v1-0-users-restoretest-restoreprooflab-onmicrosoft-com-messa");
+                  });
+    graph.on_path(rp::HttpMethod::del, "/v1.0/drives/*/items/*",
+                  [recording](const rp::HttpRequest&) {
+                      return rp::test::load_fixture(
+                          recording,
+                          "043-delete-v1-0-drives-b-xqgi-ndr6ekvpkcbib2y65nzyk4ozjvns-7ncroj5omdbu");
+                  });
+    rp::RestoreCommandEnv env = lab.env();
+    env.connector_options.make_graph_http =
+        [&graph](std::shared_ptr<spdlog::logger>) -> std::unique_ptr<rp::IHttpClient> {
+        return std::make_unique<rp::test::ForwardingHttpClient>(graph);
+    };
+
+    const CleanRun run = clean_targets(lab, env);
+
+    INFO(lab.log());
+    CHECK(run.answer == rp::TargetsClean::ok);
+    CHECK(run.out == "cleanup before ok: deleted 5 mail, 3 sharepoint, 3 onedrive\n");
+    // Every write is the delete of an item a listing held, each once.
+    std::set<std::string> written;
+    for (const rp::HttpRequest& request : graph.requests()) {
+        if (request.method == rp::HttpMethod::get || request.url == gl::kTokenUrl) {
+            continue;
+        }
+        std::string id = request.url.substr(0, request.url.find("/permanentDelete"));
+        id = id.substr(id.rfind('/') + 1);
+        CHECK(listed.contains(id));
+        CHECK(written.insert(id).second);
+    }
+    CHECK(written.size() == 11);
 }

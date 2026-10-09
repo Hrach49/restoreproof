@@ -263,6 +263,20 @@ std::chrono::seconds upload_retry_delay(int attempts) noexcept
     return std::min(delay, kMaxUploadRetry);
 }
 
+std::unique_ptr<RunLock>
+take_outbox_flush_lock(const std::function<std::unique_ptr<RunLock>()>& take)
+{
+    const auto once = [&take] { return take ? take() : try_take_named_lock(kOutboxMutex); };
+    std::unique_ptr<RunLock> lock;
+    bool abandoned = false;
+    try {
+        lock = once();
+    } catch (const AbandonedRunLock&) {
+        abandoned = true;
+    }
+    return abandoned ? once() : std::move(lock);
+}
+
 std::string outbox_time_text(std::chrono::system_clock::time_point time)
 {
     return timestamp_time_text(
@@ -389,12 +403,9 @@ QueueOutcome Outbox::queue(const std::filesystem::path& run_folder, std::string_
         return outcome;
     }
     outcome.folder = outbox_folder() / *name;
-    if (path_kind(outcome.folder) != PathKind::none) {
-        outcome.result = QueueResult::already_queued;
-        return outcome;
-    }
-    if (path_kind(sent_folder() / *name) != PathKind::none) {
-        outcome.result = QueueResult::already_sent;
+    if (const OutboxHolds held = holds(run_id); held != OutboxHolds::none) {
+        outcome.result = held == OutboxHolds::queued ? QueueResult::already_queued
+                                                     : QueueResult::already_sent;
         return outcome;
     }
     if (!make_folder(outbox_folder())) {
@@ -468,11 +479,10 @@ std::string Outbox::prepare(const std::filesystem::path& runs_root,
         outcome.result = result;
         return queue_error(outcome, run_folder) + std::string{nothing_done};
     };
-    if (name && path_kind(outcome.folder) != PathKind::none) {
-        return refused(QueueResult::already_queued);
-    }
-    if (name && path_kind(sent_folder() / *name) != PathKind::none) {
-        return refused(QueueResult::already_sent);
+    if (const OutboxHolds held = run_id ? holds(*run_id) : OutboxHolds::none;
+        held != OutboxHolds::none) {
+        return refused(held == OutboxHolds::queued ? QueueResult::already_queued
+                                                   : QueueResult::already_sent);
     }
     if (!make_folder(outbox_folder())) {
         return refused(QueueResult::no_outbox_folder);
@@ -482,6 +492,18 @@ std::string Outbox::prepare(const std::filesystem::path& runs_root,
                shown(outbox_folder()) + std::string{nothing_done};
     }
     return {};
+}
+
+OutboxHolds Outbox::holds(std::string_view run_id) const
+{
+    const std::optional<path> name = path_from_utf8(run_id);
+    if (!name || name->empty()) {
+        return OutboxHolds::none;
+    }
+    return path_kind(outbox_folder() / *name) != PathKind::none
+               ? OutboxHolds::queued
+               : path_kind(sent_folder() / *name) != PathKind::none ? OutboxHolds::sent
+                                                                    : OutboxHolds::none;
 }
 
 OutboxListing Outbox::list() const
@@ -505,7 +527,8 @@ OutboxListing Outbox::list() const
     return listing;
 }
 
-FlushReport Outbox::flush(IUploader& uploader, std::chrono::system_clock::time_point now)
+FlushReport Outbox::flush(IUploader& uploader, std::chrono::system_clock::time_point now,
+                          const std::function<bool()>& stop)
 {
     FlushReport report;
     const std::string now_text = outbox_time_text(now);
@@ -600,6 +623,12 @@ FlushReport Outbox::flush(IUploader& uploader, std::chrono::system_clock::time_p
         return std::tie(run.queued_at, run.run_id);
     });
     for (OutboxManifest& manifest : queue) {
+        // After a stop nothing new is started: the run stays as it is.
+        report.stopped = report.stopped || (stop && stop());
+        if (report.stopped) {
+            ++report.queued;
+            continue;
+        }
         const std::string id = table_cell(manifest.run_id);
         const path name = *path_from_utf8(manifest.run_id);
         const path folder = outbox_folder() / name;

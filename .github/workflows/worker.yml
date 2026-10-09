@@ -21,6 +21,25 @@ env:
   RP_MIN_LINE_COVERAGE: 80
 
 jobs:
+  # W4.9: the committed fixture, vector and evidence trees searched for secret
+  # shapes (worker/tools/fixture_secret_scan.py, its allowlist beside it). It
+  # needs no compiler and no lab secret, so it runs on the cheapest runner and
+  # whether or not the Windows build job starts. ctest runs the same scan.
+  fixture-scan:
+    name: Fixture secret scan
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: worker
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Scan self-tests
+        run: python3 -m unittest discover -s tools -p "test_fixture_secret_scan.py" -v
+
+      - name: Scan the fixture, vector and evidence trees
+        run: python3 tools/fixture_secret_scan.py --root ..
+
   build-test:
     name: Worker build, test and coverage
     runs-on: windows-latest

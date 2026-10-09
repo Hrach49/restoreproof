@@ -26,6 +26,7 @@ LastCoverageResults.log
 # Secrets: never commit these
 .env
 .env.*
+!.env.example
 *.pfx
 *.key
 vault.bin

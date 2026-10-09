@@ -214,13 +214,18 @@ TEST_CASE("secret audit C: test --evidence --outbox --record, a pass; outbox flu
         const int code = rp::run_outbox_command(words, out, err, env);
         return Run{code, out.str(), err.str()};
     };
-    const Run refused = outbox({"flush"});
+    // Each flush with --record: the Cloud's answers, under cloud/.
+    const std::string refused_record = utf8(lab.dir.path() / "rec-flush-refused");
+    const std::string sent_record = utf8(lab.dir.path() / "rec-flush-sent");
+    const Run refused = outbox({"flush", "--record", refused_record});
     REQUIRE(refused.exit_code == rp::exit_code::transient);
     REQUIRE_THAT(refused.out, ContainsSubstring("kept audit-c: upload_http_500; attempt 1"));
+    REQUIRE_THAT(refused.out, ContainsSubstring("recorded "));
     now = 60;
-    const Run sent = outbox({"flush"});
+    const Run sent = outbox({"flush", "--record", sent_record});
     REQUIRE(sent.exit_code == rp::exit_code::ok);
     REQUIRE_THAT(sent.out, ContainsSubstring("sent audit-c\n"));
+    REQUIRE_THAT(sent.out, ContainsSubstring("recorded "));
     const Run listed = outbox({"list"});
     REQUIRE(listed.exit_code == rp::exit_code::ok);
     lab.collect("outbox flush (refused)", refused);
@@ -259,6 +264,8 @@ TEST_CASE("secret audit C: test --evidence --outbox --record, a pass; outbox flu
     CHECK(lab.outputs.has_output("temp/box/sent/audit-c/manifest.json"));
     CHECK(lab.outputs.has_output("temp/rec/graph/"));
     CHECK(lab.outputs.has_output("temp/rec/tsa/"));
+    CHECK(lab.outputs.has_output("temp/rec-flush-refused/cloud/"));
+    CHECK(lab.outputs.has_output("temp/rec-flush-sent/cloud/"));
     CHECK(lab.outputs.has_output("cloud request 2 part 1 content"));
     CHECK(lab.outputs.has_output("tsa request 1 body"));
 }
@@ -363,11 +370,37 @@ TEST_CASE("secret audit I: the real veeam_m365 connector over the W3.4 live reco
     replay.exporter->pfx = audit::exported_pfx();
     replay.exporter->password = std::string{audit::kExportedPfxPassword};
 
-    const replay_lab::Run run = replay.run(replay_lab::kW34Run);
+    // --record: the one recording whose requests carry the exported
+    // credential, the restore POSTs' own bodies.
+    const std::filesystem::path record = replay.temp.path() / "rec";
+    const std::u8string record_text = record.u8string();
 
+    const replay_lab::Run run =
+        replay.run(replay_lab::kW34Run, {"--record", {record_text.begin(), record_text.end()}});
+
+    INFO(run.out);
+    INFO(run.err);
     REQUIRE(run.exit_code == rp::exit_code::ok);
     REQUIRE_THAT(run.out, ContainsSubstring("\nstatus pass: 11 of 11 item(s) verified"));
+    REQUIRE_THAT(run.out, ContainsSubstring("\nrecorded "));
     REQUIRE(replay.exporter->calls == 4);
+    // Each restore POST was recorded with its body, the credential's two
+    // keys there and masked.
+    std::size_t recorded_posts = 0;
+    for (const std::filesystem::path& file : replay_lab::recorded_files(record / "veeam")) {
+        const json fixture = json::parse(replay_lab::read_file(file));
+        const std::string request = fixture.at("request").get<std::string>();
+        if (!request.starts_with("POST ") ||
+            !(request.ends_with("/restoreTo") || request.ends_with("/copyTo"))) {
+            continue;
+        }
+        ++recorded_posts;
+        REQUIRE(fixture.contains("request_body"));
+        const std::string body = fixture.at("request_body").dump();
+        CHECK_THAT(body, ContainsSubstring("applicationCertificate"));
+        CHECK_THAT(body, ContainsSubstring("applicationCertificatePassword"));
+    }
+    CHECK(recorded_posts == 4);
     audit::SecretSet searched = audit::searched();
     audit::add_client_assertions(searched, replay.graph);
     audit::Outputs outputs;
@@ -376,6 +409,8 @@ TEST_CASE("secret audit I: the real veeam_m365 connector over the W3.4 live reco
     outputs.add("logger", replay.log());
     outputs.add_folder(replay.temp.path(), "temp");
     audit::expect_clean(searched, outputs);
+    CHECK(outputs.has_output("temp/rec/veeam/"));
+    CHECK(outputs.has_output("temp/rec/graph/"));
     // The exported credential went to Veeam, four times, and nowhere else.
     std::size_t posts_with_credential = 0;
     for (const rp::HttpRequest& request : replay.veeam.requests()) {

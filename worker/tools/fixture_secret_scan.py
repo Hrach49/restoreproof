@@ -8,10 +8,12 @@ CI has no lab secret and must never be given one, so this looks for the shapes
 a secret takes, never a value: a JWT, a `Bearer` token, a PEM private key
 block, the Base64 opening of a private key's DER (Ed25519, RSA and EC in
 PKCS#8, RSA PKCS#1, EC SEC1) and of a PKCS#12 file, and a keyed secret
-(`"password": "..."`, `access_token=...`) whose value isn't a placeholder
-(`[REDACTED]`, `SCRUBBED`, `null`, empty, an ellipsis, or starting with `[`,
-`<`, `$`, `(` or a backtick: a bracketed placeholder, a script's variable, call
-or expression, Markdown's code). A
+(`"password": "..."`, `access_token=...`, and `password: ...` or an
+`Authorization: ...` header for the names rp::redact() takes in that form)
+whose value isn't a placeholder (`[REDACTED]`, `SCRUBBED`, `null`, empty, an
+ellipsis, a closed `[...]`, `<...>` or backtick form, or a script's variable,
+call or cast: `$pw`, `$(...)`, `(Get-...)`, `[Convert]::...`; never a value
+that only starts like one). A
 certificate or a signed token is public and no shape: `MII...` alone is
 nothing, only the openings a private key or a PFX has.
 
@@ -36,6 +38,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import stat
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -76,6 +79,21 @@ SECRET_KEYS = (
     "authorization",
 )
 _KEYS = "|".join(re.escape(k) for k in SECRET_KEYS)
+# The keys redact() also masks as "name: value" (its colon_form): not the
+# header names, nor names short enough to show up in prose ("sig: ...").
+COLON_KEYS = (
+    "password",
+    "client_secret",
+    "refresh_token",
+    "access_token",
+    "applicationCertificate",
+    "applicationCertificatePassword",
+    "signing_key",
+    "signing_key_base64",
+    "signing_private_key",
+    "pfx_base64",
+)
+_COLON_KEYS = "|".join(re.escape(k) for k in COLON_KEYS)
 
 # Shape name -> pattern. Group "value" is what the allowlist compares with;
 # without one the whole match is.
@@ -118,19 +136,73 @@ SHAPES: dict[str, re.Pattern[str]] = {
     ),
 }
 
+# The same keys as "name: value" (a transcript's `Password : ...`, YAML-like
+# text) and the two secret headers, whose names match exactly as redact()
+# takes them ("X-Authorization" is not Authorization). Blanks, never a line
+# break, around the colon; the value is the rest of the line.
+KEYED_COLON = re.compile(
+    r"(?:(?<![A-Za-z0-9])(?:" + _COLON_KEYS + r")(?![A-Za-z0-9_])"
+    r"|(?<![A-Za-z0-9_-])(?P<header>(?:proxy-)?authorization)(?![A-Za-z0-9_-]))"
+    r"[ \t]*:[ \t]*(?P<colon>[^\r\n]*)",
+    re.IGNORECASE,
+)
+
 PLACEHOLDERS = frozenset({"", "[REDACTED]", "SCRUBBED", "null"})
+# A placeholder that is the whole value: [REDACTED], [not exported yet],
+# <Base64 PFX>, Markdown's `name` or a lone backtick (`sig=`, in prose).
+_CLOSED = re.compile(r"\[[^\[\]]*\]|<[^<>]*>|`(?:[^`]*`)?")
+# Where a script's value comes from, not a value. A variable is the whole
+# value ($pw, $secrets.name, $env:NAME, ${NAME}, $x[1], with the statement's
+# own `;`, `,` or `)` after it) or calls a method ($cert.Export(...); a
+# subexpression, a call in parentheses and a type's static call or cast are
+# known by how they open: $(, (Get-Thing, ($x, ([Type], [Type]::, [type]$x.
+_SCRIPT = re.compile(
+    r"\$\{?(?:[A-Za-z_]\w*:)?[A-Za-z_]\w*\}?(?:\.[A-Za-z_]\w*|\[[^\]]*\])*(?:[;,)]*\Z|\()"
+    r"|\$\("
+    r"|\((?:[A-Za-z]+-[A-Za-z]+|\$[A-Za-z_({]|\[[A-Za-z_][\w.]*\])"
+    r"|\[[A-Za-z_][\w.]*(?:\[\])?\](?:::|\$|\()"
+)
 
 
 def is_placeholder(value: str) -> bool:
+    """Whether a keyed value is where a value would be, not one. A value that
+    only starts like a placeholder (`$tr0ng-Pa55`, `[half] closed`, `(Xy7`) is
+    a value: generated passwords often start with a symbol."""
     if value in PLACEHOLDERS:
         return True
-    # A bracketed placeholder ([REDACTED], <Base64 PFX>), a script's variable,
-    # call or expression (`password = $pw`, `refresh_token = (Get-...)`,
-    # `pfx = [Convert]::...`) or Markdown's backtick name where a value comes
-    # from, not a value.
-    if value[:1] in ("[", "<", "$", "(", "`"):
+    if _CLOSED.fullmatch(value) or _SCRIPT.match(value):
         return True
     return value.startswith("…") or value.startswith("...")
+
+
+def colon_value(match: re.Match[str]) -> str | None:
+    """The secret value of a "name: value" match, or None when there is none.
+
+    redact() masks the rest of the line, prose included; a scan that reported
+    prose would be switched off. So a key's value is the rest of the line when
+    that is one word or one quoted string (`Password : Hunter2!`,
+    `password: "two words"`), and words after a key are prose ("a one-time
+    password: bytes only"). A header's is its scheme and the word after it
+    (`Basic dXNlcjpwYXNz`), or its one word; what follows is not looked at, and
+    Markdown's punctuation after a placeholder (`Bearer <token>`.) is not part
+    of it."""
+    line = match.group("colon").strip()
+    if match.group("header"):
+        words = line.split()
+        if not words:
+            return None
+        with_scheme = len(words) > 1 and words[0].isalpha()
+        credential = words[1] if with_scheme else words[0]
+        if is_placeholder(credential) or is_placeholder(credential.rstrip("`.,;:)\"'")):
+            return None
+        return " ".join(words[:2]) if with_scheme else credential
+    if len(line) >= 2 and line[0] == line[-1] and line[0] in "\"'":
+        value = line[1:-1]
+    elif len(line.split()) > 1:
+        return None
+    else:
+        value = line
+    return None if is_placeholder(value) else value
 
 
 def pem_body(text: str, start: int) -> str:
@@ -166,6 +238,10 @@ def find_shapes(text: str) -> list[Shape]:
             else:
                 value = match.group("value")
             found.append(Shape(name, match.start(), value))
+    for match in KEYED_COLON.finditer(text):
+        value = colon_value(match)
+        if value is not None:
+            found.append(Shape("keyed_secret", match.start(), value))
     found.sort(key=lambda s: (s.start, s.shape))
     return found
 
@@ -294,6 +370,16 @@ def decode(data: bytes) -> str:
         return data.decode("latin-1")
 
 
+def is_junction(entry: Path) -> bool:
+    """Path.is_junction() where there is one (Python 3.12); before it, the
+    entry's own reparse tag, which only Windows has."""
+    ask = getattr(entry, "is_junction", None)
+    if ask is not None:
+        return ask()
+    tag = getattr(entry.lstat(), "st_reparse_tag", 0)
+    return tag == getattr(stat, "IO_REPARSE_TAG_MOUNT_POINT", 0xA0000003)
+
+
 def files_under(root: Path, tree: str) -> Iterable[Path] | None:
     """Every regular file under root/tree (or the file itself); None when
     nothing is there."""
@@ -307,7 +393,7 @@ def files_under(root: Path, tree: str) -> Iterable[Path] | None:
         for entry in sorted(folder.iterdir(), key=lambda p: p.name):
             # A link or a junction is never entered: it could point up the
             # tree, and what it points at is scanned where it is.
-            if entry.is_symlink() or entry.is_junction():
+            if entry.is_symlink() or is_junction(entry):
                 continue
             if entry.is_dir():
                 if entry.name not in SKIPPED_FOLDERS:

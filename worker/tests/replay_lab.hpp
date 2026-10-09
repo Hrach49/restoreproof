@@ -341,14 +341,16 @@ struct Replay {
         return graph_log;
     }
 
-    // The live runs' command line, with the live run's ID.
-    Run run(const std::string& run_id)
+    // The live runs' command line, with the live run's ID; `more` after it
+    // (the W4.9 audit's --record).
+    Run run(const std::string& run_id, const std::vector<std::string>& more = {})
     {
         const std::u8string path = config_path.u8string();
         const std::string config{path.begin(), path.end()};
-        const std::vector<std::string_view> args{
+        std::vector<std::string_view> args{
             "--run-id", run_id, "--mail", "5", "--sp", "5", "--od", "5",
             "--canary-cursor", "0,0,0", "--config", config};
+        args.insert(args.end(), more.begin(), more.end());
         std::ostringstream out;
         std::ostringstream err;
         const int code = rp::run_restore_command(args, out, err, env());

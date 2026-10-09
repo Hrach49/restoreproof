@@ -7,6 +7,20 @@ Format: date, decision, reason, alternatives rejected.
 
 ---
 
+## 2026-10-09 — W4.9 code review (the second), findings 1 to 4 and 9: the scan's tests import off Windows and the scan runs on a Python before 3.12; `name: value` and the two headers are keyed secrets; a placeholder is a closed form, not a first character; the recorder runs over a real restore POST (proposed)
+
+A second review of the branch (`/code-review high`, 2026-10-09) gave ten findings. Five are fixed here, test-first; 5 to 8 and 10 are open (below). Amends the build notes below where they describe the keyed rule and cases C and I.
+
+1. **The scan's tests import where there is no `_winapi`.** The junction test's `skipUnless` asked `__import__("_winapi")` when the class was defined, so the module couldn't be imported on Ubuntu and CI's `fixture-scan` job would have failed at its first step. The condition is `sys.platform == "win32"` and the import is inside the test. A test imports the module in a child process with `_winapi` taken away.
+2. **The scan runs on a Python before 3.12.** `Path.is_junction()` is 3.12's and CMake registers the ctest test with any Python 3. `is_junction(entry)` asks the method where there is one and the entry's reparse tag otherwise. The tests run on 3.9 too (their helper no longer uses `write_text(newline=)`), with the junction test once more under a `Path` without the method.
+3. **`name: value` and the two headers.** `redact()` masks `password: x` for its colon-form keys and the whole value of `Authorization:` and `Proxy-Authorization:`; the scan had neither form. It can't take `redact()`'s "the rest of the line": over-redacting prose is harmless, reporting prose would get the scan switched off (`# ... a one-time password: bytes only, never a file.` in a committed script). So a key's value is the rest of the line only when that is one word or one quoted string, and a header's is its scheme and the word after it. Not caught, knowingly: an unquoted value of several words after a colon.
+4. **A placeholder is a closed form.** Any keyed value starting with `[`, `<`, `$`, `(` or a backtick passed, a real password starting with one of them included. Now: `[...]`, `<...>` or a backtick form that is the whole value, or a script's variable (whole, or calling a method), `$(`, `(Verb-Noun`, `($x`, `([Type]`, `[Type]::`, `[type]$x`. Not told apart, knowingly: a password that reads as a variable name (`$ecret1`). The committed trees needed no new allowlist entry under either change.
+5. **(Finding 9.) The recorder over a real restore POST.** No audit case recorded the one exchange whose request carries the exported credential: case I ran without `--record`, case C's `--record` is on the fake connector. Case I now records (`Replay::run`'s `more` arguments) and requires the four restore POSTs' fixtures, each with its `request_body` and the credential's two keys in it, before the search; case C's two flushes run with `--record` and their `cloud/` folders are searched. Both were green on their first run: no leak found, and the recorder was not broken on purpose to see the case fail.
+
+**Open from this review:** a UTF-16 file is read but not decoded (5); the PFX and RSA openings miss a DER of 16 to 64 KiB (6) and `ec_pkcs8` is P-256 only (7), in both halves; staleness is per allowlist entry, not per value (8); no case asserts that the sentinel tokens were handed out and used (10).
+
+**Runs:** the scan's 32 tests on Python 3.12 and 3.9; the scan over the seven trees, 1143 files, 12 allowed, 0 findings; `rptests "[secret_audit]"` 17 cases; `ctest --preset dev` 2119 tests, 0 failed (the live tests skipped).
+
 ## 2026-10-09 — W4.9 build notes, the planted leaks and the live check: no secret reaches anything the Worker writes; every planted one was caught; the committed trees are clean (proposed)
 
 Amends the W4.9 entry below where it says so; nothing here reopens a point. The build was made test-first in two steps (the fixture scan, red on its 23 unit tests before the script existed; the sentinel audit, its sixteen cases green on their first full run), then the audit was shown to fail on planted leaks, then run live.

@@ -1,0 +1,130 @@
+W4.8 (#51) live Done-when, step (b): a job dropped into the stub file. 2026-10-09T00:54:55Z, commit 995c4ba
+
+jobs file written at 2026-10-09T00:54:55Z:
+{
+  "format": "restoreproof.jobs.v1",
+  "jobs": [
+    {
+      "run_id": "w48-live-1",
+      "client_id": "lab-client",
+      "sample_mail": 5,
+      "sample_sp": 5,
+      "sample_od": 5,
+      "restore_point": "latest",
+      "screenshots_enabled": false
+    }
+  ]
+}
+
+-- taken: 2026-10-09T00:55:14.396Z info run w48-live-1: starting (mail 5, sharepoint 5, onedrive 5, point latest)
+
+-- the record during the restore
+running.json at 2026-10-09T00:55:26Z:
+{"client":{"client_id":null,"targets":{"library_id":"b!XQgI_nDr6EKVpkcBib2Y65nzyk4OzJVNs_7NCRoJ5omdBuz_5GU6TJ2irAhs-dr6","mailbox":"restoretest@RestoreProofLab.onmicrosoft.com","onedrive_drive_id":"b!wA9gbfhlEUitGAluxbfoNBr_z5gEtDhErm5pJ6bMwyXfZJ8a_dkCQ696RX0r7_U3","onedrive_folder_id":"01ZK75LGDGB6QOO3MGNFGYOY6C6VBDG5OH","site_id":"restoreprooflab.sharepoint.com,fe08085d-eb70-42e8-95a6-470189bd98eb,4ecaf399-cc0e-4d95-b3fe-cd091a09e689"},"tenant_id":"bcd6bd1a-ea42-489d-aa28-2c19a44ad146","veeam_org_name":"RestoreProofLab.onmicrosoft.com"},"client_id":"lab-client","close_as":null,"close_detail":null,"connector":{"api":"v8","type":"veeam_m365"},"format":"restoreproof.running.v1","kind":"run","restore_point":{"backup_time_raw":"2026-10-08T23:43:58.1565721Z","id":"c2f0f2e7-177f-48ac-992b-93a50cf702e33f589dc6-03b8-44c1-8bfe-1c32d63d5849"},"restore_requested":true,"restore_requested_at":"2026-10-09T00:55:26.774Z","run_id":"w48-live-1","sessions":["dddf1d5b-6ad9-41fb-a8d2-f045892aca0b","e4b26e26-bd14-4e7a-bd6c-6fd0aba63249","1c40d519-72c8-403e-988f-62cd18e25b00","d2efd1b6-7d71-4cb6-9967-eb03b872b819","bef0512a-84e1-4761-993e-98eb8b515535","42892a72-74b0-44ec-83b8-82e5434cfa5b"],"started_at":"2026-10-09T00:55:14.612Z","taken_at":"2026-10-09T00:55:14.364Z"}
+
+-- worker.log from the drop on
+2026-10-09T00:55:14.396Z info run w48-live-1: starting (mail 5, sharepoint 5, onedrive 5, point latest)
+2026-10-09T00:55:14.709Z info [w48-live-1] restore point 2026-10-08T23:43:58.1565721Z  c2f0f2e7-177f-48ac-992b-93a50cf702e33f589dc6-03b8-44c1-8bfe-1c32d63d5849  (veeam_org_name RestoreProofLab.onmicrosoft.com)
+2026-10-09T00:55:14.710Z info [w48-live-1] run w48-live-1  seed 94cb005a
+2026-10-09T00:55:15.219Z info cleanup before: the test mailbox's Inbox: deleted 0, gone 0, left 0, skipped 0 in 1 round(s)
+2026-10-09T00:55:15.791Z info cleanup before: the RestoreTarget library: deleted 0, gone 0, left 0, skipped 0 in 1 round(s)
+2026-10-09T00:55:16.208Z info cleanup before: the test OneDrive folder: deleted 0, gone 0, left 0, skipped 0 in 1 round(s)
+2026-10-09T00:55:16.208Z info [w48-live-1] cleanup before ok: deleted 0 mail, 0 sharepoint, 0 onedrive
+2026-10-09T00:55:21.882Z info [w48-live-1] canary cursor 0,0,0 -> 3,3,3
+2026-10-09T00:55:21.883Z info [w48-live-1]   KIND        REQUESTED  CANARIES  RANDOM  NOTE
+2026-10-09T00:55:21.883Z info [w48-live-1]   mail        5          3 of 3    2 of 2
+2026-10-09T00:55:21.883Z info [w48-live-1]   sharepoint  5          3 of 3    2 of 2
+2026-10-09T00:55:21.883Z info [w48-live-1]   onedrive    5          3 of 3    2 of 2
+2026-10-09T00:55:21.883Z info [w48-live-1] restoring 15 item(s) ...
+2026-10-09T00:55:22.033Z info listed 0 item(s) in the test mailbox's Inbox
+2026-10-09T00:55:22.413Z info listed 0 item(s) in the RestoreTarget library
+2026-10-09T00:55:22.695Z info listed 0 item(s) in the test OneDrive folder
+2026-10-09T00:58:09.894Z info [w48-live-1]   SESSION                               KIND        RESULT   RESTORED  STARTED                       ENDED                         ELAPSED
+2026-10-09T00:58:09.894Z info [w48-live-1]   41fac67c-75be-4187-a499-6df24ff63e18  mail        Success  3 of 3    2026-10-09T00:55:26.8667342Z  2026-10-09T00:55:56.9637216Z  0:00:30
+2026-10-09T00:58:09.894Z info [w48-live-1]   73fbd6eb-4d61-448a-b95a-a2d41dd116a0  mail        Success  1 of 1    2026-10-09T00:55:57.4875118Z  2026-10-09T00:56:22.1274532Z  0:00:24
+2026-10-09T00:58:09.894Z info [w48-live-1]   76f5c300-faa0-47fa-8119-3c8a43dace94  mail        Success  1 of 1    2026-10-09T00:56:22.8804554Z  2026-10-09T00:56:47.2062522Z  0:00:24
+2026-10-09T00:58:09.894Z info [w48-live-1]   69b271b1-3d80-409c-8cf6-25594de798af  sharepoint  Success  5 of 5    2026-10-09T00:56:48.4886945Z  2026-10-09T00:57:32.4732988Z  0:00:43
+2026-10-09T00:58:09.894Z info [w48-live-1]   17392060-f401-4bb7-ac0f-503055848950  onedrive    Success  5 of 5    2026-10-09T00:57:34.0743661Z  2026-10-09T00:58:07.8061151Z  0:00:33
+2026-10-09T00:58:09.894Z info [w48-live-1] restore succeeded: 15 of 15 item(s) restored in 0:02:47
+2026-10-09T00:58:10.143Z info listed 5 item(s) in the test mailbox's Inbox
+2026-10-09T00:58:11.984Z info listed 5 item(s) in the RestoreTarget library
+2026-10-09T00:58:13.886Z info listed 5 item(s) in the test OneDrive folder
+2026-10-09T00:58:13.940Z info [w48-live-1]   TYPE        NAME                                EXPECTED  FOUND  MATCH  VERDICT   REASON  MS
+2026-10-09T00:58:13.940Z info [w48-live-1]   mail        RP-CANARY-0001                      manifest  yes    match  verified  -       0
+2026-10-09T00:58:13.940Z info [w48-live-1]   mail        RP-CANARY-0002                      manifest  yes    match  verified  -       0
+2026-10-09T00:58:13.940Z info [w48-live-1]   mail        RP-CANARY-0003                      manifest  yes    match  verified  -       0
+2026-10-09T00:58:13.940Z info [w48-live-1]   mail        Laptop replacement request          fields    yes    match  verified  -       0
+2026-10-09T00:58:13.941Z info [w48-live-1]   mail        RestoreProof W2.2 second mail 3n5w  fields    yes    match  verified  -       0
+2026-10-09T00:58:13.941Z info [w48-live-1]   sharepoint  rp-canary-01.pdf                    manifest  yes    match  verified  -       305
+2026-10-09T00:58:13.941Z info [w48-live-1]   sharepoint  rp-canary-02.docx                   manifest  yes    match  verified  -       340
+2026-10-09T00:58:13.941Z info [w48-live-1]   sharepoint  rp-canary-03.xlsx                   manifest  yes    match  verified  -       439
+2026-10-09T00:58:13.941Z info [w48-live-1]   sharepoint  room-bookings.xlsx                  metadata  yes    match  verified  -       0
+2026-10-09T00:58:13.941Z info [w48-live-1]   sharepoint  office-floor-plan.png               metadata  yes    match  verified  -       392
+2026-10-09T00:58:13.941Z info [w48-live-1]   onedrive    rp-canary-11.pdf                    manifest  yes    match  verified  -       287
+2026-10-09T00:58:13.941Z info [w48-live-1]   onedrive    rp-canary-12.docx                   manifest  yes    match  verified  -       332
+2026-10-09T00:58:13.941Z info [w48-live-1]   onedrive    rp-canary-13.xlsx                   manifest  yes    match  verified  -       318
+2026-10-09T00:58:13.941Z info [w48-live-1]   onedrive    travel-notes.txt                    metadata  yes    match  verified  -       371
+2026-10-09T00:58:13.942Z info [w48-live-1]   onedrive    whiteboard-sketch.png               metadata  yes    match  verified  -       326
+2026-10-09T00:58:13.942Z info [w48-live-1] check: 15 match, 0 mismatch, 0 missing, 0 error
+2026-10-09T00:58:13.942Z info [w48-live-1] status pass: 15 of 15 item(s) verified: manifest 9, fields 2, metadata 4
+2026-10-09T00:58:14.870Z info cleanup after: the test mailbox's Inbox: deleted 5, gone 0, left 0, skipped 0 in 1 round(s)
+2026-10-09T00:58:16.203Z info cleanup after: the RestoreTarget library: deleted 5, gone 0, left 0, skipped 0 in 1 round(s)
+2026-10-09T00:58:17.426Z info cleanup after: the test OneDrive folder: deleted 5, gone 0, left 0, skipped 0 in 1 round(s)
+2026-10-09T00:58:17.426Z info [w48-live-1] cleanup after ok: deleted 5 mail, 5 sharepoint, 5 onedrive
+2026-10-09T00:58:17.429Z info [w48-live-1] STEP                  TIME         NOTE
+2026-10-09T00:58:17.429Z info [w48-live-1] restore_point_lookup  0:00:00.096
+2026-10-09T00:58:17.429Z info [w48-live-1] cleanup_before        0:00:01.493
+2026-10-09T00:58:17.429Z info [w48-live-1] sample_select         0:00:05.674
+2026-10-09T00:58:17.429Z info [w48-live-1] target_snapshot       0:00:00.811
+2026-10-09T00:58:17.429Z info [w48-live-1] restore               0:02:47.198
+2026-10-09T00:58:17.429Z info [w48-live-1] restore_submit        0:00:01.088
+2026-10-09T00:58:17.430Z info [w48-live-1] restore_wait          0:02:41.304
+2026-10-09T00:58:17.430Z info [w48-live-1] verify                0:00:03.994
+2026-10-09T00:58:17.430Z info [w48-live-1] recovery              0:02:51.192
+2026-10-09T00:58:17.430Z info [w48-live-1] cleanup_after         0:00:03.484
+2026-10-09T00:58:17.430Z info [w48-live-1] total                 0:03:02.816
+2026-10-09T00:58:17.923Z info [w48-live-1] signed 91e80b4b18d6bed6185b0a27516b513a54af515510ca2d731c96a6e3bacd7e3f key 9dfab6eadaa1d04a22dcc966aac7a53bcff8bbe0077232485f6143cd9c4d0ca5
+2026-10-09T00:58:17.923Z info [w48-live-1] timestamped 2026-10-09T00:56:57Z
+2026-10-09T00:58:17.923Z info [w48-live-1] evidence C:\ProgramData\RestoreProof\runs\w48-live-1: result.json, signature.json, timestamp.tst, items.csv, veeam-session.log
+2026-10-09T00:58:17.932Z info [w48-live-1] queued C:\ProgramData\RestoreProof\outbox\w48-live-1
+2026-10-09T00:58:17.944Z info run w48-live-1: ended pass; queued
+2026-10-09T00:58:17.992Z info sent w48-live-1
+2026-10-09T00:58:18.006Z info skipped w48-live-1: already sent
+
+
+-- afterwards
+(no running.json) at 2026-10-09T00:58:29Z
+runs\:
+  w42-done-when-1: items.csv 5746, result.json 22606, veeam-session.log 7371
+  w43-done-when-1: items.csv 5749, result.json 22347, signature.json 322, veeam-session.log 7490
+  w44-done-when-1: items.csv 5753, result.json 21997, signature.json 322, timestamp.tst 5998, veeam-session.log 7370
+  w44-tsa-down-1: items.csv 5741, result.json 21954, signature.json 322, veeam-session.log 7363
+  w45-done-when-1: items.csv 5807, result.json 22239, signature.json 322, timestamp.tst 5999, veeam-session.log 7510
+outbox\:
+sent\:
+  w46-done-when-1: items.csv 145, manifest.json 371, result.json 2291, signature.json 322, timestamp.tst 5998, veeam-session.log 0
+  w46-done-when-2: items.csv 5739, manifest.json 371, result.json 21971, signature.json 322, timestamp.tst 5997, veeam-session.log 7360
+  w48-live-1: items.csv 3173, manifest.json 366, result.json 13636, signature.json 322, timestamp.tst 5999, veeam-session.log 3968
+
+-- the stub's lines since the drop
+2026-10-09T00:58:17Z POST /v1/results: 27988 bytes, Authorization absent -> 202
+  part result  file result.json  13636 bytes  sha256 91e80b4b18d6bed6185b0a27516b513a54af515510ca2d731c96a6e3bacd7e3f
+  part signature  file signature.json  322 bytes  sha256 68cdc5916d60cb4466842d885dedc8285d38145021182218c5446f4f64d418fa
+  part timestamp  file timestamp.tst  5999 bytes  sha256 b44971c156bf5c422fb26bfc7dea02bc164dae6f127dae2f4bb398fe0c1fce58
+  part items.csv  file items.csv  3173 bytes  sha256 f813b23fa45e7b59e3eca906a178b6d2f36b2f96c53e2c4a2971016941b57fc3
+  part veeam-session.log  file veeam-session.log  3968 bytes  sha256 77a310d7796f9e99e47672b45ed52fde9091511aec4786a24ca3833997ccddc5
+2026-10-09T00:58:17Z POST /v1/heartbeat: 90 bytes, Content-Type application/json, Authorization absent -> 204  {"last_error":null,"last_error_at":null,"outbox_depth":0,"uptime_s":273,"version":"0.0.0"}
+
+-- both verifiers over the sent folder
+folder: C:\ProgramData\RestoreProof\sent\w48-live-1
+command: rpworker signer verify C:\ProgramData\RestoreProof\sent\w48-live-1 --public-key C:\ProgramData\RestoreProof\w48\worker-signing.pub.pem --tsa-ca C:\restoreproof\shared\tsa\tsa-ca.pem
+2026-10-09T00:58:29Z to 2026-10-09T00:58:31Z
+exit code: 0
+--- stdout
+verified 91e80b4b18d6bed6185b0a27516b513a54af515510ca2d731c96a6e3bacd7e3f key 9dfab6eadaa1d04a22dcc966aac7a53bcff8bbe0077232485f6143cd9c4d0ca5 timestamp 2026-10-09T00:56:57Z
+--- stderr
+note: not listed in the result: manifest.json
+
+verify_bundle.py (exit code 0): note: not listed in the result: manifest.json | verified 91e80b4b18d6bed6185b0a27516b513a54af515510ca2d731c96a6e3bacd7e3f key 9dfab6eadaa1d04a22dcc966aac7a53bcff8bbe0077232485f6143cd9c4d0ca5 timestamp 2026-10-09T00:56:57Z
+result.json: run_id w48-live-1, status pass, restore_sent True, message: 15 of 15 item(s) verified: manifest 9, fields 2, metadata 4
+result.json sha256 91e80b4b18d6bed6185b0a27516b513a54af515510ca2d731c96a6e3bacd7e3f

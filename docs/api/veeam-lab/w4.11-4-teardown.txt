@@ -1,0 +1,42 @@
+W4.11 (#134) live Done-when, step (d): the teardown. 2026-10-09T20:29:55Z, commit 01b88dd
+
+-- sent\w411-3 moved to C:\ProgramData\RestoreProof\w411\sent-by-service
+
+-- sent\w411-4 moved to C:\ProgramData\RestoreProof\w411\sent-by-service
+
+-- sent\w411-5 moved to C:\ProgramData\RestoreProof\w411\sent-by-service
+
+config copy removed: True; state removed: True; logs removed: True
+
+-- sc query: [SC] EnumQueryServicesStatus:OpenService FAILED 1060:  The specified service does not exist as an installed service. 
+
+-- runs\:
+  w42-done-when-1: items.csv 5746, result.json 22606, veeam-session.log 7371
+  w43-done-when-1: items.csv 5749, result.json 22347, signature.json 322, veeam-session.log 7490
+  w44-done-when-1: items.csv 5753, result.json 21997, signature.json 322, timestamp.tst 5998, veeam-session.log 7370
+  w44-tsa-down-1: items.csv 5741, result.json 21954, signature.json 322, veeam-session.log 7363
+  w45-done-when-1: items.csv 5807, result.json 22239, signature.json 322, timestamp.tst 5999, veeam-session.log 7510
+outbox\:
+sent\:
+  w46-done-when-1: items.csv 145, manifest.json 371, result.json 2291, signature.json 322, timestamp.tst 5998, veeam-session.log 0
+  w46-done-when-2: items.csv 5739, manifest.json 371, result.json 21971, signature.json 322, timestamp.tst 5997, veeam-session.log 7360
+
+-- Veeam: no session Working at 2026-10-09T20:29:55Z
+
+-- the three restore targets after
+command: rpworker graph list --config C:\Users\minas\AppData\Local\RestoreProof\lab\config.json
+2026-10-09T20:29:55Z to 2026-10-09T20:29:57Z
+exit code: 0
+--- stdout
+Mail (restoretest@RestoreProofLab.onmicrosoft.com, Inbox): 0 item(s)
+
+SharePoint (RestoreTarget library): 0 item(s)
+
+OneDrive (RestoreTarget folder): 0 item(s)
+
+0 item(s) in the three restore targets
+--- stderr
+
+
+-- kept outside the repo: C:\ProgramData\RestoreProof\w411, System.Management.Automation.OrderedHashtable (the profile files and the config copy)
+(The last line's OrderedHashtable is the script's own slip: step (c) reused the name $lab for the profile it read, and PowerShell's variable names are case-insensitive; the folder meant is %LOCALAPPDATA%\RestoreProof\lab. Fixed in w411-live.ps1 afterwards; the run itself was not affected.)

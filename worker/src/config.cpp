@@ -119,16 +119,6 @@ ConfigError key_error(std::string_view key, std::string_view problem)
     return ConfigError(std::string{key}, message);
 }
 
-// Whether a key name from the file may be printed: 1-64 of [A-Za-z0-9_.-].
-// Anything else could be a pasted secret, forge output lines with control
-// characters, or flood the output.
-bool is_printable_key(std::string_view key)
-{
-    return !key.empty() && key.size() <= 64 && std::all_of(key.begin(), key.end(), [](char c) {
-        return std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '.' || c == '-';
-    });
-}
-
 // The error for a key from the file: named when is_printable_key(), otherwise
 // "config has a key that <problem><unnamed_note>" with an empty key().
 ConfigError file_key_error(std::string_view key, std::string_view problem,
@@ -204,20 +194,6 @@ bool is_https_url(std::string_view value)
     return is_url_of("https://", value);
 }
 
-// Control and invisible formatting characters that could forge, hide or
-// reorder lines of `config check` output (control_chars.hpp lists them). The
-// JSON parser has already rejected invalid UTF-8, so matching byte sequences
-// is enough.
-bool has_control_character(std::string_view value)
-{
-    for (std::size_t i = 0; i < value.size(); ++i) {
-        if (control_character_length(value, i) != 0) {
-            return true;
-        }
-    }
-    return false;
-}
-
 // What is wrong with `value` under `rule`, or nothing when it follows it. One
 // switch holds each rule's check and its message together, with no default:
 // a rule added to StringRule without a case is a build error (/we4062).
@@ -237,13 +213,12 @@ std::optional<std::string_view> rule_problem(StringRule rule, std::string_view v
         if (is_uuid(value)) {
             return std::nullopt;
         }
-        return "must be a GUID (8-4-4-4-12 hexadecimal digits, as the Entra admin center shows "
-               "it), not a name";
+        return kGuidRule;
     case StringRule::restore_mailbox:
         if (is_restore_mailbox(value)) {
             return std::nullopt;
         }
-        return "must be restoretest@<domain>: restores only ever go to the restoretest mailbox";
+        return kRestoreMailboxRule;
     case StringRule::graph_site_id:
         if (parse_graph_site_id(value)) {
             return std::nullopt;
@@ -455,6 +430,25 @@ bool is_ascii_id(std::string_view text, std::string_view extra, std::size_t max_
 }
 
 } // namespace
+
+bool is_printable_key(std::string_view key)
+{
+    return !key.empty() && key.size() <= 64 && std::all_of(key.begin(), key.end(), [](char c) {
+        return std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '.' || c == '-';
+    });
+}
+
+// The JSON parser has already rejected invalid UTF-8, so matching byte
+// sequences (control_chars.hpp) is enough.
+bool has_control_character(std::string_view value)
+{
+    for (std::size_t i = 0; i < value.size(); ++i) {
+        if (control_character_length(value, i) != 0) {
+            return true;
+        }
+    }
+    return false;
+}
 
 std::optional<GraphSiteId> parse_graph_site_id(std::string_view value)
 {

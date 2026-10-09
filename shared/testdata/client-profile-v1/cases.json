@@ -1,0 +1,1061 @@
+{
+  "format": "restoreproof.client-profile.v1",
+  "description": "Documents the Worker's rp::parse_client_profile and Python's jsonschema must judge alike against shared/schemas/client-profile.v1.json (W4.10, docs/decisions.md 2026-10-09 point 8). `base` is a valid profile as canonical-json-v1 (one line, no trailing newline); each case is base with its RFC 6902 patch applied, `valid` says whether the schema accepts it, and `code_refuses` marks a case the schema accepts and the Worker's reader refuses (a control character in veeam_org_name, which is tenant text and gets a length alone in the schema). Every other case is judged alike by both.",
+  "base": "valid.json",
+  "cases": [
+    {
+      "name": "base",
+      "valid": true,
+      "patch": []
+    },
+    {
+      "name": "tenant-upper-case",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/graph_tenant_id",
+          "value": "AAAAAAAA-2222-3333-4444-555555555555"
+        }
+      ]
+    },
+    {
+      "name": "client-id-upper-case",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/graph_client_id",
+          "value": "ABCDEF01-ABCD-ABCD-ABCD-ABCDEF012345"
+        }
+      ]
+    },
+    {
+      "name": "mailbox-upper-case",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/test_mailbox",
+          "value": "RESTORETEST@Contoso.OnMicrosoft.com"
+        }
+      ]
+    },
+    {
+      "name": "mailbox-three-labels",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/test_mailbox",
+          "value": "restoretest@mail.contoso.example"
+        }
+      ]
+    },
+    {
+      "name": "site-host-mixed-case",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/test_site_id",
+          "value": "Contoso.SharePoint.COM,aaaaaaaa-0000-0000-0000-000000000001,aaaaaaaa-0000-0000-0000-000000000002"
+        }
+      ]
+    },
+    {
+      "name": "site-guids-upper-case",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/test_site_id",
+          "value": "contoso.sharepoint.com,AAAAAAAA-0000-0000-0000-000000000001,AAAAAAAA-0000-0000-0000-000000000002"
+        }
+      ]
+    },
+    {
+      "name": "site-host-63-chars",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/test_site_id",
+          "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.sharepoint.com,aaaaaaaa-0000-0000-0000-000000000001,aaaaaaaa-0000-0000-0000-000000000002"
+        }
+      ]
+    },
+    {
+      "name": "library-id-dash-and-underscore",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/test_library_id",
+          "value": "b!a-b_c"
+        }
+      ]
+    },
+    {
+      "name": "library-id-200-chars",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/test_library_id",
+          "value": "b!xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        }
+      ]
+    },
+    {
+      "name": "onedrive-drive-id-one-char",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/test_onedrive_drive_id",
+          "value": "b!x"
+        }
+      ]
+    },
+    {
+      "name": "folder-id-with-bang",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/test_onedrive_folder_id",
+          "value": "01!ABC-def_"
+        }
+      ]
+    },
+    {
+      "name": "folder-id-200-chars",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/test_onedrive_folder_id",
+          "value": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        }
+      ]
+    },
+    {
+      "name": "org-name-non-ascii",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/veeam_org_name",
+          "value": "Zürich GmbH 東京"
+        }
+      ]
+    },
+    {
+      "name": "org-name-1024-chars",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/veeam_org_name",
+          "value": "oooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo"
+        }
+      ]
+    },
+    {
+      "name": "no-format",
+      "valid": false,
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/format"
+        }
+      ]
+    },
+    {
+      "name": "no-veeam-org-name",
+      "valid": false,
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/veeam_org_name"
+        }
+      ]
+    },
+    {
+      "name": "no-graph-tenant-id",
+      "valid": false,
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/graph_tenant_id"
+        }
+      ]
+    },
+    {
+      "name": "no-graph-client-id",
+      "valid": false,
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/graph_client_id"
+        }
+      ]
+    },
+    {
+      "name": "no-test-mailbox",
+      "valid": false,
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/test_mailbox"
+        }
+      ]
+    },
+    {
+      "name": "no-test-site-id",
+      "valid": false,
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/test_site_id"
+        }
+      ]
+    },
+    {
+      "name": "no-test-library-id",
+      "valid": false,
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/test_library_id"
+        }
+      ]
+    },
+    {
+      "name": "no-test-onedrive-drive-id",
+      "valid": false,
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/test_onedrive_drive_id"
+        }
+      ]
+    },
+    {
+      "name": "no-test-onedrive-folder-id",
+      "valid": false,
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/test_onedrive_folder_id"
+        }
+      ]
+    },
+    {
+      "name": "format-is-a-number",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/format",
+          "value": 7
+        }
+      ]
+    },
+    {
+      "name": "veeam-org-name-is-a-number",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/veeam_org_name",
+          "value": 7
+        }
+      ]
+    },
+    {
+      "name": "graph-tenant-id-is-a-number",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/graph_tenant_id",
+          "value": 7
+        }
+      ]
+    },
+    {
+      "name": "graph-client-id-is-a-number",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/graph_client_id",
+          "value": 7
+        }
+      ]
+    },
+    {
+      "name": "test-mailbox-is-a-number",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/test_mailbox",
+          "value": 7
+        }
+      ]
+    },
+    {
+      "name": "test-site-id-is-a-number",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/test_site_id",
+          "value": 7
+        }
+      ]
+    },
+    {
+      "name": "test-library-id-is-a-number",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/test_library_id",
+          "value": 7
+        }
+      ]
+    },
+    {
+      "name": "test-onedrive-drive-id-is-a-number",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/test_onedrive_drive_id",
+          "value": 7
+        }
+      ]
+    },
+    {
+      "name": "test-onedrive-folder-id-is-a-number",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/test_onedrive_folder_id",
+          "value": 7
+        }
+      ]
+    },
+    {
+      "name": "format-is-null",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/format",
+          "value": null
+        }
+      ]
+    },
+    {
+      "name": "veeam-org-name-is-null",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/veeam_org_name",
+          "value": null
+        }
+      ]
+    },
+    {
+      "name": "graph-tenant-id-is-null",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/graph_tenant_id",
+          "value": null
+        }
+      ]
+    },
+    {
+      "name": "graph-client-id-is-null",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/graph_client_id",
+          "value": null
+        }
+      ]
+    },
+    {
+      "name": "test-mailbox-is-null",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/test_mailbox",
+          "value": null
+        }
+      ]
+    },
+    {
+      "name": "test-site-id-is-null",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/test_site_id",
+          "value": null
+        }
+      ]
+    },
+    {
+      "name": "test-library-id-is-null",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/test_library_id",
+          "value": null
+        }
+      ]
+    },
+    {
+      "name": "test-onedrive-drive-id-is-null",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/test_onedrive_drive_id",
+          "value": null
+        }
+      ]
+    },
+    {
+      "name": "test-onedrive-folder-id-is-null",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/test_onedrive_folder_id",
+          "value": null
+        }
+      ]
+    },
+    {
+      "name": "format-wrong-version",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/format",
+          "value": "restoreproof.client-profile.v2"
+        }
+      ]
+    },
+    {
+      "name": "format-other-document",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/format",
+          "value": "restoreproof.jobs.v1"
+        }
+      ]
+    },
+    {
+      "name": "org-name-empty",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/veeam_org_name",
+          "value": ""
+        }
+      ]
+    },
+    {
+      "name": "org-name-1025-chars",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/veeam_org_name",
+          "value": "ooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo"
+        }
+      ]
+    },
+    {
+      "name": "org-name-with-newline-the-schema-cannot-say",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/veeam_org_name",
+          "value": "contoso\nonmicrosoft.com"
+        }
+      ],
+      "code_refuses": true
+    },
+    {
+      "name": "org-name-with-bidi-control-the-schema-cannot-say",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/veeam_org_name",
+          "value": "contoso‮onmicrosoft.com"
+        }
+      ],
+      "code_refuses": true
+    },
+    {
+      "name": "tenant-with-braces",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/graph_tenant_id",
+          "value": "{11111111-2222-3333-4444-555555555555}"
+        }
+      ]
+    },
+    {
+      "name": "tenant-is-a-domain-name",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/graph_tenant_id",
+          "value": "contoso.onmicrosoft.com"
+        }
+      ]
+    },
+    {
+      "name": "tenant-35-chars",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/graph_tenant_id",
+          "value": "11111111-2222-3333-4444-55555555555"
+        }
+      ]
+    },
+    {
+      "name": "tenant-37-chars",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/graph_tenant_id",
+          "value": "11111111-2222-3333-4444-5555555555555"
+        }
+      ]
+    },
+    {
+      "name": "tenant-with-a-letter-g",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/graph_tenant_id",
+          "value": "g1111111-2222-3333-4444-555555555555"
+        }
+      ]
+    },
+    {
+      "name": "tenant-with-a-tab",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/graph_tenant_id",
+          "value": "11111111-2222-3333-4444-55555555555\t"
+        }
+      ]
+    },
+    {
+      "name": "client-id-with-spaces",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/graph_client_id",
+          "value": " 2222222-3333-4444-5555-666666666666"
+        }
+      ]
+    },
+    {
+      "name": "client-id-empty",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/graph_client_id",
+          "value": ""
+        }
+      ]
+    },
+    {
+      "name": "mailbox-another-user",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/test_mailbox",
+          "value": "alice@contoso.onmicrosoft.com"
+        }
+      ]
+    },
+    {
+      "name": "mailbox-look-alike",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/test_mailbox",
+          "value": "rеstoretest@contoso.onmicrosoft.com"
+        }
+      ]
+    },
+    {
+      "name": "mailbox-one-label",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/test_mailbox",
+          "value": "restoretest@localhost"
+        }
+      ]
+    },
+    {
+      "name": "mailbox-empty-label",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/test_mailbox",
+          "value": "restoretest@contoso..com"
+        }
+      ]
+    },
+    {
+      "name": "mailbox-trailing-dot",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/test_mailbox",
+          "value": "restoretest@contoso.com."
+        }
+      ]
+    },
+    {
+      "name": "mailbox-with-space",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/test_mailbox",
+          "value": "restoretest@contoso .com"
+        }
+      ]
+    },
+    {
+      "name": "mailbox-prefix-only",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/test_mailbox",
+          "value": "restoretest@"
+        }
+      ]
+    },
+    {
+      "name": "mailbox-empty",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/test_mailbox",
+          "value": ""
+        }
+      ]
+    },
+    {
+      "name": "mailbox-prefix-then-subdomain-of-restoretest",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/test_mailbox",
+          "value": "restoretest2@contoso.onmicrosoft.com"
+        }
+      ]
+    },
+    {
+      "name": "mailbox-1025-chars",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/test_mailbox",
+          "value": "restoretest@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.com"
+        }
+      ]
+    },
+    {
+      "name": "site-not-sharepoint",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/test_site_id",
+          "value": "contoso.example.com,aaaaaaaa-0000-0000-0000-000000000001,aaaaaaaa-0000-0000-0000-000000000002"
+        }
+      ]
+    },
+    {
+      "name": "site-one-guid",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/test_site_id",
+          "value": "contoso.sharepoint.com,aaaaaaaa-0000-0000-0000-000000000001"
+        }
+      ]
+    },
+    {
+      "name": "site-web-not-a-guid",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/test_site_id",
+          "value": "contoso.sharepoint.com,aaaaaaaa-0000-0000-0000-000000000001,web"
+        }
+      ]
+    },
+    {
+      "name": "site-host-64-chars",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/test_site_id",
+          "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.sharepoint.com,aaaaaaaa-0000-0000-0000-000000000001,aaaaaaaa-0000-0000-0000-000000000002"
+        }
+      ]
+    },
+    {
+      "name": "site-host-with-a-dot",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/test_site_id",
+          "value": "con.toso.sharepoint.com,aaaaaaaa-0000-0000-0000-000000000001,aaaaaaaa-0000-0000-0000-000000000002"
+        }
+      ]
+    },
+    {
+      "name": "site-guid-with-braces",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/test_site_id",
+          "value": "contoso.sharepoint.com,{aaaaaaaa-0000-0000-0000-000000000001},aaaaaaaa-0000-0000-0000-000000000002"
+        }
+      ]
+    },
+    {
+      "name": "site-is-a-url",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/test_site_id",
+          "value": "https://contoso.sharepoint.com/sites/RestoreTest"
+        }
+      ]
+    },
+    {
+      "name": "site-empty",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/test_site_id",
+          "value": ""
+        }
+      ]
+    },
+    {
+      "name": "library-id-without-b-bang",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/test_library_id",
+          "value": "library"
+        }
+      ]
+    },
+    {
+      "name": "library-id-is-a-list-guid",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/test_library_id",
+          "value": "ffec069d-65e4-4c3a-9da2-ac086cf9dafa"
+        }
+      ]
+    },
+    {
+      "name": "library-id-upper-b",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/test_library_id",
+          "value": "B!library"
+        }
+      ]
+    },
+    {
+      "name": "library-id-b-bang-alone",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/test_library_id",
+          "value": "b!"
+        }
+      ]
+    },
+    {
+      "name": "library-id-201-chars",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/test_library_id",
+          "value": "b!xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        }
+      ]
+    },
+    {
+      "name": "library-id-with-bang",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/test_library_id",
+          "value": "b!lib!rary"
+        }
+      ]
+    },
+    {
+      "name": "library-id-empty",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/test_library_id",
+          "value": ""
+        }
+      ]
+    },
+    {
+      "name": "onedrive-drive-id-with-slash",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/test_onedrive_drive_id",
+          "value": "b!a/b"
+        }
+      ]
+    },
+    {
+      "name": "onedrive-drive-id-with-space",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/test_onedrive_drive_id",
+          "value": "b!a b"
+        }
+      ]
+    },
+    {
+      "name": "onedrive-drive-id-empty",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/test_onedrive_drive_id",
+          "value": ""
+        }
+      ]
+    },
+    {
+      "name": "folder-id-with-dot",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/test_onedrive_folder_id",
+          "value": "01.ABC"
+        }
+      ]
+    },
+    {
+      "name": "folder-id-with-slash",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/test_onedrive_folder_id",
+          "value": "01/ABC"
+        }
+      ]
+    },
+    {
+      "name": "folder-id-empty",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/test_onedrive_folder_id",
+          "value": ""
+        }
+      ]
+    },
+    {
+      "name": "folder-id-201-chars",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/test_onedrive_folder_id",
+          "value": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        }
+      ]
+    },
+    {
+      "name": "folder-id-non-ascii",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/test_onedrive_folder_id",
+          "value": "01FOLDÉR"
+        }
+      ]
+    },
+    {
+      "name": "unknown-key",
+      "valid": false,
+      "patch": [
+        {
+          "op": "add",
+          "path": "/client_id",
+          "value": "client-7"
+        }
+      ]
+    },
+    {
+      "name": "unknown-key-screenshots-enabled",
+      "valid": false,
+      "patch": [
+        {
+          "op": "add",
+          "path": "/screenshots_enabled",
+          "value": true
+        }
+      ]
+    },
+    {
+      "name": "unknown-key-looks-like-a-secret",
+      "valid": false,
+      "patch": [
+        {
+          "op": "add",
+          "path": "/graph_cert_password",
+          "value": "x"
+        }
+      ]
+    },
+    {
+      "name": "unknown-key-unprintable-name",
+      "valid": false,
+      "patch": [
+        {
+          "op": "add",
+          "path": "/bad key\u0007",
+          "value": 1
+        }
+      ]
+    },
+    {
+      "name": "profile-is-an-array",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "",
+          "value": []
+        }
+      ]
+    },
+    {
+      "name": "profile-is-a-string",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "",
+          "value": "restoreproof.client-profile.v1"
+        }
+      ]
+    },
+    {
+      "name": "profile-is-null",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "",
+          "value": null
+        }
+      ]
+    },
+    {
+      "name": "profile-is-empty",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "",
+          "value": {}
+        }
+      ]
+    }
+  ]
+}

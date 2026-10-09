@@ -1102,14 +1102,17 @@ TEST_CASE("a folder whose result.json or signature.json is of an owner the servi
           "trust is not queued",
           "[service_recovery]")
 {
-    const bool by_signature = GENERATE(false, true);
-    CAPTURE(by_signature);
+    // 0: result.json, 1: signature.json, 2: timestamp.tst (uploaded as a part too).
+    const int by = GENERATE(0, 1, 2);
+    CAPTURE(by);
     FakeClose fake;
     fake.folder = there();
     fake.folder.result = true;
     fake.folder.signature = true;
-    fake.folder.result_untrusted = !by_signature;
-    fake.folder.signature_untrusted = by_signature;
+    fake.folder.timestamp = true;
+    fake.folder.result_untrusted = by == 0;
+    fake.folder.signature_untrusted = by == 1;
+    fake.folder.timestamp_untrusted = by == 2;
     // The text files' owners don't matter here: the flush holds them to the
     // hashes the result lists.
     fake.folder.items_csv = true;

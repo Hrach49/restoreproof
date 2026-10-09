@@ -249,6 +249,7 @@ struct FolderContents {
     bool signature_untrusted = false;
     bool items_csv_untrusted = false;
     bool session_log_untrusted = false;
+    bool timestamp_untrusted = false;
 };
 
 enum class CloseAction {

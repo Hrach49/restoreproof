@@ -1,0 +1,27 @@
+"""${message}
+
+Written by hand and frozen: import nothing from app.models, and name every
+constraint and index in full (`op.f`).
+
+Revision ID: ${up_revision}
+Revises: ${down_revision | comma,n}
+"""
+
+from __future__ import annotations
+
+import sqlalchemy as sa
+from alembic import op
+${imports if imports else ""}
+
+revision = ${repr(up_revision)}
+down_revision = ${repr(down_revision)}
+branch_labels = ${repr(branch_labels)}
+depends_on = ${repr(depends_on)}
+
+
+def upgrade() -> None:
+    ${upgrades if upgrades else "pass"}
+
+
+def downgrade() -> None:
+    ${downgrades if downgrades else "pass"}

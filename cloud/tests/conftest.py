@@ -7,13 +7,21 @@ database that can't be reached fails them. `-m "not db"` deselects them.
 
 from __future__ import annotations
 
+import asyncio
 import os
+from pathlib import Path
 
 import asyncpg
 import pytest
+from alembic import command
+from alembic.config import Config
 from sqlalchemy.engine import make_url
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.pool import NullPool
 
 from app.settings import Settings, load_settings
+
+CLOUD_DIR = Path(__file__).resolve().parent.parent
 
 # The Compose stack's test database (cloud/docker-compose.yml). Local only.
 DEFAULT_TEST_DATABASE_URL = (
@@ -73,6 +81,66 @@ async def test_database_url() -> str:
         )
     await connection.close()
     return url
+
+
+def alembic_config(database_url: str) -> Config:
+    """alembic.ini with the database given by the caller, not the environment."""
+    config = Config(str(CLOUD_DIR / "alembic.ini"))
+    config.set_main_option("script_location", str(CLOUD_DIR / "app" / "migrations"))
+    config.attributes["database_url"] = database_url
+    return config
+
+
+async def alembic(database_url: str, name: str, *args, **kwargs) -> None:
+    """Run one alembic command as the command line does.
+
+    env.py starts an event loop of its own, so the command runs in a thread.
+    """
+    await asyncio.to_thread(getattr(command, name), alembic_config(database_url), *args, **kwargs)
+
+
+@pytest.fixture(scope="session")
+async def migrated_database(test_database_url: str) -> str:
+    """The test database, emptied and then built by `alembic upgrade head`, once.
+
+    Every test runs on what the migration made, never on `metadata.create_all`.
+    """
+    connection = await asyncpg.connect(asyncpg_dsn(test_database_url), timeout=5)
+    try:
+        await connection.execute("DROP SCHEMA public CASCADE")
+        await connection.execute("CREATE SCHEMA public")
+    finally:
+        await connection.close()
+    await alembic(test_database_url, "upgrade", "head")
+    return test_database_url
+
+
+@pytest.fixture(scope="session")
+async def test_engine(migrated_database: str):
+    engine = create_async_engine(
+        migrated_database,
+        poolclass=NullPool,
+        hide_parameters=True,
+        connect_args={"server_settings": {"timezone": "UTC"}},
+    )
+    yield engine
+    await engine.dispose()
+
+
+@pytest.fixture
+async def session(test_engine, test_database_url):
+    """A session inside one transaction that is rolled back when the test ends.
+
+    The code under test may commit: the session joins the outer transaction
+    with savepoints.
+    """
+    async with test_engine.connect() as connection:
+        outer = await connection.begin()
+        async with AsyncSession(
+            bind=connection, join_transaction_mode="create_savepoint", expire_on_commit=False
+        ) as session:
+            yield session
+        await outer.rollback()
 
 
 def make_settings(**changes: str) -> Settings:

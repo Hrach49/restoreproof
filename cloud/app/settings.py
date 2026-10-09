@@ -99,3 +99,17 @@ def load_settings(environ: Mapping[str, str] | None = None) -> Settings:
         }
     faults = [f"{name.upper()} {words[name]}" for name in Settings.model_fields if name in words]
     raise SettingsError("settings error: " + "; ".join(faults)) from None
+
+
+def database_url_from_environment(environ: Mapping[str, str] | None = None) -> str:
+    """DATABASE_URL alone, for a migration: it needs no other setting.
+
+    Held to the same shape as the app's, and a fault names the variable only.
+    """
+    source = os.environ if environ is None else environ
+    url = next((value for name, value in source.items() if name.lower() == "database_url"), "")
+    if not url:
+        raise SettingsError("settings error: DATABASE_URL is missing")
+    if not url.startswith(DATABASE_URL_SCHEME):
+        raise SettingsError("settings error: DATABASE_URL is not valid")
+    return url

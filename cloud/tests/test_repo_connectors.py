@@ -178,6 +178,47 @@ async def test_a_client_that_is_not_the_msp_s_is_no_client(session):
     assert await lab.audit_rows(lab.other_msp.id) == []
 
 
+async def test_a_worker_that_is_not_the_msp_s_is_no_worker(session):
+    """Code review finding 3: the Worker is held in the repo like the client, a
+    RepoError naming the key, never the database's IntegrityError (which would
+    leave the session failed)."""
+    lab = await Lab.make(session)
+    other_worker = await WorkerRepo(session).create(
+        lab.other_msp.id, name="other", public_key_pem=PEM, api_token_hash="c" * 64
+    )
+
+    for worker_id in (other_worker.id, uuid.uuid4()):
+        with pytest.raises(RepoError) as raised:
+            await lab.create(worker_id=worker_id)
+        assert (raised.value.key, raised.value.reason) == ("worker_id", "no such worker")
+        assert str(raised.value) == "worker_id: no such worker"
+        assert str(worker_id) not in str(raised.value)
+
+    assert await lab.connectors.list(lab.msp.id) == []  # the session still answers
+    assert await lab.audit_rows() == []
+    assert await lab.audit_rows(lab.other_msp.id) == []
+
+
+async def test_the_refusals_come_in_one_order_schema_client_tenant_worker(session):
+    """Code review finding 3: the schema first (the entry's order), then the
+    client, then its tenant, then the Worker; each case has every later fault too."""
+    lab = await Lab.make(session)
+    absent = uuid.uuid4()
+    cases = [
+        ("config_json", dict(client_id=absent, worker_id=absent, config_json={})),
+        ("client_id", dict(client_id=absent, worker_id=absent, config_json=profile_for(uuid.uuid4()))),
+        ("graph_tenant_id", dict(worker_id=absent, config_json=profile_for(uuid.uuid4()))),
+        ("worker_id", dict(worker_id=absent)),
+    ]
+
+    for key, changes in cases:
+        with pytest.raises(RepoError) as raised:
+            await lab.create(**changes)
+        assert raised.value.key == key, key
+
+    assert await lab.audit_rows() == []
+
+
 async def test_the_database_s_own_refusals_stay_integrity_errors(session):
     """A second connector for one Worker and client: the key's name, for the
     route or the CLI to word (C5.10, C5.13)."""
@@ -240,6 +281,28 @@ async def test_an_update_of_a_connector_that_is_not_the_msp_s_touches_nothing_an
 
     assert [row.action for row in await lab.audit_rows()] == ["connector.create"]
     assert await lab.audit_rows(lab.other_msp.id) == []
+
+
+async def test_an_update_of_a_connector_deleted_meanwhile_touches_nothing_and_writes_no_update_row(
+    session, monkeypatch
+):
+    """Code review finding 1: the row is read, then the UPDATE runs; a delete in
+    between makes the UPDATE touch 0 rows, and an update that touched no row
+    writes no audit row (as the delete path already held)."""
+    lab = await Lab.make(session)
+    connector = await lab.create()
+    original = ConnectorRepo._client
+
+    async def deleting_meanwhile(self, msp_id, client_id):
+        assert await ConnectorRepo(self.session).delete(msp_id, connector.id) == 1
+        return await original(self, msp_id, client_id)
+
+    monkeypatch.setattr(ConnectorRepo, "_client", deleting_meanwhile)
+
+    touched = await lab.connectors.update(lab.msp.id, connector.id, profile_for(lab.client.tenant_id))
+
+    assert touched == 0
+    assert sorted(row.action for row in await lab.audit_rows()) == ["connector.create", "connector.delete"]
 
 
 # --- Delete ------------------------------------------------------------------------

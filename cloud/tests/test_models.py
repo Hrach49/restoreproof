@@ -101,6 +101,7 @@ def a_run(msp, client, worker, plan, **changes) -> TestRun:
         "client_id": client.id,
         "worker_id": worker.id,
         "plan_id": plan.id,
+        "connector_id": plan.connector_id,
     }
     return TestRun(**{**values, **changes})
 
@@ -163,7 +164,7 @@ def test_every_other_foreign_key_is_composite_and_starts_with_msp_id():
             assert len(constraint.columns) >= 2, (name, constraint.name)
             assert constraint.column_keys[0] == "msp_id", (name, constraint.name)
             assert constraint.elements[0].column.name == "msp_id", (name, constraint.name)
-    assert seen == 10
+    assert seen == 11
 
 
 def test_no_foreign_key_cascades_or_sets_null():
@@ -432,8 +433,50 @@ async def test_a_run_cannot_be_filed_under_another_client_than_its_plan_s(sessio
     await refused(
         session,
         a_run(world.msp, other_client, world.worker, world.plan),
-        "fk_test_run_msp_id_plan_id_client_id_test_plan",
+        "fk_test_run_msp_id_plan_id_connector_id_client_id_test_plan",
     )
+
+
+async def test_a_run_cannot_name_a_worker_other_than_its_plan_s_connector_s(session):
+    """Finding 3 of the C5.1/C5.2 review: a run's Worker is its plan's
+    connector's, not any Worker of the MSP."""
+    world = await World.make(session)
+    other_worker = await new_worker(session, world.msp, "other worker")
+
+    await refused(
+        session,
+        a_run(world.msp, world.client, other_worker, world.plan),
+        "fk_test_run_msp_id_connector_id_worker_id_connector",
+    )
+
+
+async def test_a_run_cannot_name_another_connector_than_its_plan_s(session):
+    world = await World.make(session)
+    other_client = await new_client(session, world.msp, name="other client")
+    other_connector = await add(session, a_connector(world.msp, other_client, world.worker))
+
+    await refused(
+        session,
+        a_run(world.msp, world.client, world.worker, world.plan, connector_id=other_connector.id),
+        "fk_test_run_msp_id_plan_id_connector_id_client_id_test_plan",
+    )
+
+
+def test_a_run_names_its_connector():
+    column = TestRun.__table__.c["connector_id"]
+
+    assert column.nullable is False
+    assert isinstance(column.type, Uuid)
+    keys = {
+        constraint.name
+        for constraint in TestRun.__table__.constraints
+        if isinstance(constraint, ForeignKeyConstraint)
+    }
+    assert {
+        "fk_test_run_msp_id_connector_id_worker_id_connector",
+        "fk_test_run_msp_id_plan_id_connector_id_client_id_test_plan",
+    } <= keys
+    assert "fk_test_run_msp_id_plan_id_client_id_test_plan" not in keys
 
 
 async def test_a_run_cannot_name_another_msp_s_worker(session):

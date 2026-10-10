@@ -1,0 +1,153 @@
+C5.3 and C5.4 (#56, #57) Done-whens, run by hand on the dev laptop, 2026-10-10 (UTC).
+Branch c5.3-c5.4-repo-and-tokens. Windows, Python 3.12.9, Docker Desktop 29.4.3,
+the Compose postgres:16 on 127.0.0.1:55432. No CI run has started since 2026-10-03.
+
+=== C5.3: "The scope test passes and the lint test is in CI" ===
+
+The lint, planted and removed (cloud/, 10:4x UTC):
+
+  $ printf '\nfrom sqlalchemy import select\n\n\nasync def planted(session, msp_id):\n    return await session.execute(select(1))\n' >> app/routers/workers.py
+  $ uv run pytest tests/test_tenant_scope.py -q
+  >       assert offending == [], f"{path.relative_to(APP_DIR)}: a statement outside app/repo/"
+  E       assert [(7, 'from sq...(select(1))')] == []
+  FAILED tests/test_tenant_scope.py::test_no_statement_is_built_or_run_outside_the_repo[routers\\workers.py]
+  1 failed, 44 passed in 0.24s
+
+  (the plant removed; `git diff --stat -- app/routers/workers.py` empty)
+  $ uv run pytest tests/test_tenant_scope.py -q
+  45 passed in 0.20s
+
+The lint is plain pytest under cloud/tests/, so .github/workflows/cloud.yml's existing step
+`uv run --locked pytest` runs it. With app/auth/ added afterwards the file collects 48 tests.
+
+The scope test:
+
+  $ uv run pytest tests/test_repo_isolation.py -q
+  50 passed
+
+=== C5.4: "A revoked token gets 401 and a valid one passes" ===
+
+  $ uv run pytest tests/test_auth.py -q
+  8 passed
+
+  tests/test_auth.py::test_a_revoked_token_gets_401_and_a_valid_one_passes, on the probe route
+  GET /v1/workers/auth-probe guarded by Depends(current_worker):
+    Bearer <revoked Worker's token>  -> 401 {"detail":"not authenticated"}  WWW-Authenticate: Bearer
+    Bearer <live Worker's token>     -> 200 {"worker_id": ..., "state_worker_id": ..., "msp_id": ...}
+  The nine refusals (no header, Basic, two spaces, a word after, `bearer`, an empty token, an
+  unknown token, the hash as the token, a revoked Worker) answer the same status, body and header,
+  and each costs one lookup, as the success does. Neither token nor either hash is in any log line.
+
+=== The runs ===
+
+  $ uv run --locked pytest
+  1336 passed in 174.90s (0:02:54)            (before this PR: 1181)
+
+  $ uv run --locked pytest --cov=app --cov-branch --cov-report=term-missing --cov-report=json:coverage.json --cov-fail-under=80
+  app\__init__.py                               1      0      0      0   100%
+  app\auth\__init__.py                          0      0      0      0   100%
+  app\auth\dependency.py                       24      0      2      0   100%
+  app\auth\tokens.py                           27      0      4      0   100%
+  app\db.py                                    17      0      0      0   100%
+  app\health.py                                24      0      0      0   100%
+  app\logging.py                              113      0     30      0   100%
+  app\main.py                                  31      0      2      0   100%
+  app\migrations\env.py                        29      2      4      1    91%   44-45
+  app\migrations\versions\0001_initial.py      55      0      2      0   100%
+  app\models.py                               162      0      2      0   100%
+  app\repo\__init__.py                          0      0      0      0   100%
+  app\repo\audit.py                            10      0      0      0   100%
+  app\repo\base.py                             18      0      0      0   100%
+  app\repo\clients.py                          18      0      0      0   100%
+  app\repo\connectors.py                       57      0     14      0   100%
+  app\repo\errors.py                            6      0      0      0   100%
+  app\repo\install_tokens.py                   15      0      0      0   100%
+  app\repo\items.py                            10      0      0      0   100%
+  app\repo\lookup.py                            9      0      0      0   100%
+  app\repo\msps.py                             10      0      0      0   100%
+  app\repo\plans.py                            19      0      2      0   100%
+  app\repo\reports.py                          16      0      2      0   100%
+  app\repo\runs.py                             17      0      2      0   100%
+  app\repo\users.py                            12      0      0      0   100%
+  app\repo\workers.py                          15      0      0      0   100%
+  app\routers\__init__.py                       0      0      0      0   100%
+  app\routers\admin.py                          2      0      0      0   100%
+  app\routers\heartbeat.py                      2      0      0      0   100%
+  app\routers\jobs.py                           2      0      0      0   100%
+  app\routers\results.py                        2      0      0      0   100%
+  app\routers\ui.py                             2      0      0      0   100%
+  app\routers\workers.py                        2      0      0      0   100%
+  app\schemas.py                               18      0      6      0   100%
+  app\settings.py                              74      0     12      0   100%
+  app\storage.py                               22      0      2      0   100%
+  TOTAL                                       841      2     86      1    99%
+  Required test coverage of 80% reached. Total coverage: 99.68%
+
+  $ uv run --locked python tools/check_coverage.py coverage.json
+
+  ### Guarded paths (100% line + branch required)
+
+  | Status | Path | Lines | Branches | Note |
+  |---|---|---|---|---|
+  | OK | `app/auth/__init__.py` | 0/0 | 0/0 |  |
+  | OK | `app/auth/dependency.py` | 24/24 | 2/2 |  |
+  | OK | `app/auth/tokens.py` | 27/27 | 4/4 |  |
+  | SKIP | `app/results.py` | - | - | does not exist yet |
+  | OK | `app/repo/__init__.py` | 0/0 | 0/0 |  |
+  | OK | `app/repo/audit.py` | 10/10 | 0/0 |  |
+  | OK | `app/repo/base.py` | 18/18 | 0/0 |  |
+  | OK | `app/repo/clients.py` | 18/18 | 0/0 |  |
+  | OK | `app/repo/connectors.py` | 57/57 | 14/14 |  |
+  | OK | `app/repo/errors.py` | 6/6 | 0/0 |  |
+  | OK | `app/repo/install_tokens.py` | 15/15 | 0/0 |  |
+  | OK | `app/repo/items.py` | 10/10 | 0/0 |  |
+  | OK | `app/repo/lookup.py` | 9/9 | 0/0 |  |
+  | OK | `app/repo/msps.py` | 10/10 | 0/0 |  |
+  | OK | `app/repo/plans.py` | 19/19 | 2/2 |  |
+  | OK | `app/repo/reports.py` | 16/16 | 2/2 |  |
+  | OK | `app/repo/runs.py` | 17/17 | 2/2 |  |
+  | OK | `app/repo/users.py` | 12/12 | 0/0 |  |
+  | OK | `app/repo/workers.py` | 15/15 | 0/0 |  |
+
+  $ python worker/tools/fixture_secret_scan.py
+  fixture secret scan: 1162 file(s) in 7 tree(s), 12 allowed match(es), 0 finding(s), 0 stale allowlist entries; no secret shape found
+
+=== The image, built from the repository root (decision point 7) ===
+
+  $ docker compose up -d --wait --build          (2026-10-10T10:49:50Z, cloud/)
+   Container restoreproof-postgres-1 Healthy
+   Container restoreproof-minio-bucket-1 Exited
+   Container restoreproof-minio-1 Healthy
+   Container restoreproof-api-1 Healthy
+   Container restoreproof-scheduler-1 Healthy
+  exit=0
+
+  $ curl.exe -s -i http://127.0.0.1:8000/healthz
+  HTTP/1.1 200 OK
+  cache-control: no-store
+  content-type: application/json
+  x-request-id: 362ffafda7ea4669b6f559db939b0a5a
+
+  {"db":"ok","s3":"ok"}
+
+  $ docker compose exec -T api ls /srv/shared/schemas
+  client-profile.v1.json
+  jobs.v1.json
+  result.v1.json
+  seed-manifest.v1.json
+  signature.v1.json
+  $ docker compose exec -T api python -c "from app.schemas import shared_schemas_dir, load_schema; print(shared_schemas_dir()); print(load_schema('client-profile.v1.json')['$id'])"
+  /srv/shared/schemas
+  https://restoreproof.local/schemas/client-profile.v1.json
+
+The stack's own database had run the old 0001 (C5.1/C5.2's run), so the api's `alembic upgrade
+head` did nothing and `alembic check` listed the seven differences (the new column, the two
+keys, the two uniques). Once, in the api container:
+
+  $ docker compose exec -T api sh -c "alembic downgrade -1 && alembic upgrade head && alembic check"
+  Running downgrade 0001 -> , The initial schema: ...
+  Running upgrade  -> 0001, The initial schema: ...
+  No new upgrade operations detected.
+
+  $ curl.exe -s http://127.0.0.1:8000/healthz
+  {"db":"ok","s3":"ok"}

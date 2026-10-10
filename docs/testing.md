@@ -1480,8 +1480,9 @@ python -m unittest discover -s worker/tools -p "test_*.py"
 
 ## Cloud
 
-`cloud/` is the FastAPI backend (C5.1) and its data model (C5.2). Its tests are pytest, run with
-uv from `cloud/`. The rules are `docs/decisions.md` 2026-10-10, "C5.1 and C5.2".
+`cloud/` is the FastAPI backend (C5.1), its data model (C5.2), its repository layer (C5.3) and its
+tokens (C5.4). Its tests are pytest, run with uv from `cloud/`. The rules are `docs/decisions.md`
+2026-10-10, "C5.1 and C5.2" and "C5.3 and C5.4".
 
 ### The test database: a real PostgreSQL 16, never SQLite
 
@@ -1541,6 +1542,31 @@ docker compose stop postgres              # when done; `docker compose down -v` 
 | `tests/test_app.py` | the factory, the six routers under `/v1`, the OpenAPI document at `/v1/openapi.json` without `/healthz`, the engine's settings, the `_test` rule |
 | `tests/test_migrations.py` | on an empty database `upgrade head`, `downgrade -1`, `upgrade head`, in process and through `python -m alembic` with `DATABASE_URL` alone; `alembic check` finds no difference between the models and the migrated database (and does find a planted table and a planted server default); `LOG_LEVEL` on the command line; the CHECK constraints' names, which autogenerate doesn't compare |
 | `tests/test_models.py` | every rule of the model on the metadata, and each refusal on the database by the constraint that made it: a tenant twice in one MSP, in the other case, a connector twice for one Worker and client, a connector name or a run state outside its rule, a row that points into another MSP, a time without a zone |
+| `tests/test_tenant_scope.py` | the lint: no `select(`, `update(`, `delete(`, `insert(`, `session.execute|get|add|scalars|…` or a `from sqlalchemy import` of those names outside `app/repo/` (and `app/migrations/`), held against a table of allowed and refused lines and not vacuous (the repo itself matches); the AST walk: every public method under `app/repo/` takes `msp_id: UUID` first but `Lookup`'s two hash reads and `MspRepo.create` |
+| `tests/test_repo_isolation.py` | the scope test: MSP A and MSP B, one of everything each through the repos; every `get` and `list` with A's `msp_id` and B's ids answers nothing of B's; every `update`, `delete`, `revoke`, `set_enabled`, `set_state` and `mark_used` with A's `msp_id` on B's row answers 0 and leaves it; a table that must name every repo method; the repos never commit |
+| `tests/test_repo_connectors.py` | C5.13 in the repo: a profile that isn't a `client-profile.v1`, one naming another tenant (the other MSP's too), a client or a Worker that isn't the MSP's, each a `RepoError` naming the key and no value, in one order (schema, client, tenant, Worker; the code review's finding 3); the tenant compared as a uuid; one audit row per create, update and delete that touched a row, none for an update or delete of nothing, nor for an update whose row was deleted between the read and the statement (finding 1); nothing of the profile in the audit row |
+| `tests/test_schemas.py` | `app/schemas.py` finds `shared/schemas/` by walking up, from the tree and from a planted layout; the Dockerfile copies the schemas, the root `.dockerignore` allows the five paths and nothing else, Compose builds from the repository root; `jsonschema` is a runtime dependency |
+| `tests/test_tokens.py` | 43 characters of base64url, 32 bytes, never equal; the hash is SHA-256 hex; an install token stored as its hash with `now + 7 days`; accepted once, refused at exactly seven days and accepted a second before; an unknown token; two MSPs' tokens each their own; nothing commits |
+| `tests/test_auth.py` | the Done-when: a revoked Worker's token 401, a valid one 200 with the Worker and its `msp_id` on `request.state`; nine refusals (no header, `Basic`, two spaces, a word after, `bearer`, an empty token, an unknown one, the hash as the token, a revoked Worker) with one status, body and `WWW-Authenticate`; the same work (one lookup) for every refusal and the success; neither the token nor its hash in any log line; the session comes from `get_session`; no header, `Bearer ` and `Basic …` are 401 even with a Worker stored under the empty string's hash (the code review's finding 2); a `Lab` that fails to fill leaves no probe route on the shared router (finding 7) |
+
+### Tenant isolation: the lint and the scope test (C5.3)
+
+Every database statement lives in `app/repo/` (`docs/decisions.md` 2026-10-10, "C5.3 and C5.4",
+points 2 to 4). Two tests hold it, both plain pytest in CI's test step:
+
+- **The lint, `tests/test_tenant_scope.py`.** Outside `app/repo/` and `app/migrations/`, a line that
+  builds a statement (`select(`, `update(`, `delete(`, `insert(`, bare or as `sqlalchemy.`/`sa.`),
+  runs one (`session.execute`, `.get`, `.add`, `.scalars`, …) or imports one of the four names
+  from SQLAlchemy fails the test; a dict's `.update(` passes. To see it work, append a
+  `select(` to a router and run `uv run pytest tests/test_tenant_scope.py`: one parametrised case
+  fails naming the file. The same file walks the AST of `app/repo/` and holds every public method to
+  `msp_id: UUID` first, but for `Lookup.find_worker_by_token_hash`,
+  `Lookup.find_install_token_by_hash` and `MspRepo.create`.
+- **The scope test, `tests/test_repo_isolation.py`.** Two MSPs built through the repos; every read
+  with one's `msp_id` and the other's ids answers nothing, every write answers 0 and changes
+  nothing. `test_the_table_names_every_repo_method` fails when a repo gains a method that isn't in
+  `READS`, `WRITES` or `CREATES`: add it there with its arguments. A repo method that forgets
+  `msp_id` in a `where` is this test's to catch, not the lint's.
 
 ### The local stack (C5.1's Done-when)
 
@@ -1552,7 +1578,10 @@ docker compose logs api                   # the migration, then one JSON line pe
 docker compose down                       # `-v` also drops the volumes
 ```
 
-The api runs `alembic upgrade head` and then uvicorn with `--reload` on the mounted `app/`; a
+The image is built with the repository root as its context (`context: ..` in Compose, the
+`.dockerignore` at the root allowing `cloud/`'s four paths and `shared/schemas`), since the app reads
+the schemas by path (`app/schemas.py` walks up to `shared/schemas`, `/srv/shared/schemas` in the
+image). The api runs `alembic upgrade head` and then uvicorn with `--reload` on the mounted `app/`; a
 migration that fails stops the container. The scheduler is the same image with a placeholder
 command until C5.9. Every credential in `docker-compose.yml` is local only and every port is
 published on 127.0.0.1 alone; the app itself has no default for any of them
@@ -1578,6 +1607,12 @@ A new migration is written by hand, as `0001` is (`app/migrations/script.py.mako
 skeleton): explicit operations, every constraint named in full, nothing imported from
 `app.models`. `test_the_models_and_the_migrated_database_agree` fails until the models and
 the migrations agree.
+
+While nothing is deployed, `0001` may be edited in place (C5.3 did, for `test_run.connector_id`).
+A database that already ran the old `0001` keeps it: the api's `alembic upgrade head` sees the
+version and does nothing, and `alembic check` then fails. After such an edit, run the three
+commands above once on the stack's database (`downgrade -1`, `upgrade head`, `check`), or
+`docker compose down -v`. The test database needs nothing: its session drops the schema first.
 
 ## Once-per-sprint mutation run
 

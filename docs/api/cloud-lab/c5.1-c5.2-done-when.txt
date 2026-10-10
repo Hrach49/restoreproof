@@ -1,0 +1,144 @@
+# C5.1 and C5.2, the Done-when, run on the dev laptop on 2026-10-09T23:44:26Z from cloud/
+# Docker 29.4.3, Docker Compose version v5.1.3
+
+$ docker compose ps --all
+SERVICE        IMAGE                                                                                                     STATE     STATUS
+api            restoreproof-cloud:local                                                                                  running   Up 26 seconds (healthy)
+minio          cgr.dev/chainguard/minio@sha256:6476f81b9739912fa9f50ceae2bb049a30336527cccd24beccfbeb4145f8f696          running   Up 30 seconds (healthy)
+minio-bucket   cgr.dev/chainguard/minio-client@sha256:b0f5c2b2df15efb304bf8e752350d5549c06926cc981e1921a86188699606bfb   exited    Exited (0) 27 seconds ago
+postgres       postgres:16                                                                                               running   Up 21 minutes (healthy)
+scheduler      restoreproof-cloud:local                                                                                  running   Up 18 seconds
+
+$ curl -i http://127.0.0.1:8000/healthz   # the whole stack up
+HTTP/1.1 200 OK
+server: uvicorn
+cache-control: no-store
+content-length: 21
+content-type: application/json
+x-request-id: done-when-1
+
+{"db":"ok","s3":"ok"}
+
+
+$ docker compose stop minio
+
+$ curl -i http://127.0.0.1:8000/healthz   # minio stopped
+HTTP/1.1 503 Service Unavailable
+server: uvicorn
+cache-control: no-store
+content-length: 24
+content-type: application/json
+x-request-id: done-when-2
+
+{"db":"ok","s3":"error"}
+
+
+$ docker compose start minio; docker compose stop postgres
+
+$ curl -i http://127.0.0.1:8000/healthz   # postgres stopped
+HTTP/1.1 503 Service Unavailable
+server: uvicorn
+cache-control: no-store
+content-length: 24
+content-type: application/json
+x-request-id: done-when-3
+
+{"db":"error","s3":"ok"}
+
+
+$ docker compose stop minio
+
+$ curl -i http://127.0.0.1:8000/healthz   # both stopped
+HTTP/1.1 503 Service Unavailable
+server: uvicorn
+cache-control: no-store
+content-length: 27
+content-type: application/json
+x-request-id: done-when-4
+
+{"db":"error","s3":"error"}
+
+
+$ docker compose start postgres minio
+
+$ curl -i http://127.0.0.1:8000/healthz   # both up again
+HTTP/1.1 200 OK
+server: uvicorn
+cache-control: no-store
+content-length: 21
+content-type: application/json
+x-request-id: done-when-5
+
+{"db":"ok","s3":"ok"}
+
+
+$ curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:8000/v1/nothing?token=Sentinel-Done-When"
+404
+
+$ docker compose logs --no-log-prefix api   # the migration before uvicorn, then one JSON line per request
+{"event": "Context impl PostgresqlImpl.", "level": "info", "ts": "2026-10-09T23:44:02.202007Z"}
+{"event": "Will assume transactional DDL.", "level": "info", "ts": "2026-10-09T23:44:02.202187Z"}
+{"event": "Running upgrade  -> 0001, The initial schema: the eleven tables of C5.2 with C5.13's constraints.", "level": "info", "ts": "2026-10-09T23:44:02.271674Z"}
+INFO:     Will watch for changes in these directories: ['/srv/app']
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+INFO:     Started reloader process [1] using StatReload
+{"event": "Started server process [11]", "level": "info", "ts": "2026-10-09T23:44:06.888477Z"}
+{"event": "Waiting for application startup.", "level": "info", "ts": "2026-10-09T23:44:06.888817Z"}
+{"event": "Application startup complete.", "level": "info", "ts": "2026-10-09T23:44:06.890620Z"}
+{"method": "GET", "path": "/healthz", "status": 200, "duration_ms": 64, "event": "request", "request_id": "53c34ea38d674f37affbe67f16c5cbe5", "level": "info", "ts": "2026-10-09T23:44:08.394577Z"}
+{"method": "GET", "path": "/healthz", "status": 200, "duration_ms": 38, "event": "request", "request_id": "9eaba3ee0cf442e39d1037598ed895c2", "level": "info", "ts": "2026-10-09T23:44:12.067958Z"}
+{"method": "GET", "path": "/healthz", "status": 200, "duration_ms": 35, "event": "request", "request_id": "1f7d43f1ea484ff99a575885dee58779", "level": "info", "ts": "2026-10-09T23:44:16.926914Z"}
+{"method": "GET", "path": "/healthz", "status": 200, "duration_ms": 6, "event": "request", "request_id": "9e1549486c5c448fb5aeec63d6112cce", "level": "info", "ts": "2026-10-09T23:44:20.488363Z"}
+{"method": "GET", "path": "/healthz", "status": 200, "duration_ms": 4, "event": "request", "request_id": "c225950c6e794f1baca25c2394e2e9c8", "level": "info", "ts": "2026-10-09T23:44:23.909088Z"}
+{"method": "GET", "path": "/healthz", "status": 200, "duration_ms": 7, "event": "request", "request_id": "done-when-1", "level": "info", "ts": "2026-10-09T23:44:27.449533Z"}
+{"method": "GET", "path": "/healthz", "status": 200, "duration_ms": 6, "event": "request", "request_id": "c36c93e1bafc4d65af732fad37ff2d8a", "level": "info", "ts": "2026-10-09T23:44:27.761659Z"}
+{"check": "s3", "exc_type": "TimeoutError", "event": "health check failed", "request_id": "done-when-2", "level": "warning", "ts": "2026-10-09T23:44:30.389960Z"}
+{"method": "GET", "path": "/healthz", "status": 503, "duration_ms": 2002, "event": "request", "request_id": "done-when-2", "level": "info", "ts": "2026-10-09T23:44:30.391264Z"}
+{"check": "s3", "exc_type": "EndpointConnectionError", "event": "health check failed", "request_id": "518391a12f814a478360f43888f943f4", "level": "warning", "ts": "2026-10-09T23:44:31.610918Z"}
+{"method": "GET", "path": "/healthz", "status": 503, "duration_ms": 9, "event": "request", "request_id": "518391a12f814a478360f43888f943f4", "level": "info", "ts": "2026-10-09T23:44:31.611695Z"}
+{"check": "db", "exc_type": "TimeoutError", "event": "health check failed", "request_id": "6e0cff3b90354a18bafe22fec2c2b666", "level": "warning", "ts": "2026-10-09T23:44:37.147660Z"}
+{"method": "GET", "path": "/healthz", "status": 503, "duration_ms": 2001, "event": "request", "request_id": "6e0cff3b90354a18bafe22fec2c2b666", "level": "info", "ts": "2026-10-09T23:44:37.148467Z"}
+{"check": "db", "exc_type": "TimeoutError", "event": "health check failed", "request_id": "done-when-3", "level": "warning", "ts": "2026-10-09T23:44:37.585701Z"}
+{"method": "GET", "path": "/healthz", "status": 503, "duration_ms": 2001, "event": "request", "request_id": "done-when-3", "level": "info", "ts": "2026-10-09T23:44:37.586417Z"}
+{"check": "db", "exc_type": "TimeoutError", "event": "health check failed", "request_id": "done-when-4", "level": "warning", "ts": "2026-10-09T23:44:40.652395Z"}
+{"check": "s3", "exc_type": "TimeoutError", "event": "health check failed", "request_id": "done-when-4", "level": "warning", "ts": "2026-10-09T23:44:40.654187Z"}
+{"method": "GET", "path": "/healthz", "status": 503, "duration_ms": 2004, "event": "request", "request_id": "done-when-4", "level": "info", "ts": "2026-10-09T23:44:40.655307Z"}
+{"check": "db", "exc_type": "TimeoutError", "event": "health check failed", "request_id": "7b7286365ee5434f81a537fe70badc04", "level": "warning", "ts": "2026-10-09T23:44:42.561021Z"}
+{"check": "s3", "exc_type": "TimeoutError", "event": "health check failed", "request_id": "7b7286365ee5434f81a537fe70badc04", "level": "warning", "ts": "2026-10-09T23:44:42.561424Z"}
+{"method": "GET", "path": "/healthz", "status": 503, "duration_ms": 2004, "event": "request", "request_id": "7b7286365ee5434f81a537fe70badc04", "level": "info", "ts": "2026-10-09T23:44:42.562095Z"}
+{"method": "GET", "path": "/healthz", "status": 200, "duration_ms": 18, "event": "request", "request_id": "e5f0313d463d458d968abdd71ab71673", "level": "info", "ts": "2026-10-09T23:44:46.172329Z"}
+{"method": "GET", "path": "/healthz", "status": 200, "duration_ms": 15, "event": "request", "request_id": "8164db03cec140d38d3839562e3d31a4", "level": "info", "ts": "2026-10-09T23:44:49.621801Z"}
+{"method": "GET", "path": "/healthz", "status": 200, "duration_ms": 14, "event": "request", "request_id": "done-when-5", "level": "info", "ts": "2026-10-09T23:44:49.660285Z"}
+{"method": "GET", "path": "/v1/nothing", "status": 404, "duration_ms": 1, "event": "request", "request_id": "eab30dbb90fb440eb6e8985ae23fb161", "level": "info", "ts": "2026-10-09T23:44:49.720542Z"}
+
+$ docker compose logs api | grep -c Sentinel-Done-When
+0
+
+$ docker compose logs --no-log-prefix scheduler
+scheduler: the dispatcher is C5.9; nothing runs yet
+
+# C5.2 by hand, on the stack's own database
+$ psql: the tables
+alembic_version audit_log client connector install_token msp report test_item test_plan test_run user worker
+$ docker compose exec api alembic downgrade -1
+"event": "Context impl PostgresqlImpl."
+"event": "Will assume transactional DDL."
+"event": "Running downgrade 0001 -> , The initial schema: the eleven tables of C5.2 with C5.13's constraints."
+$ psql: the tables
+alembic_version
+$ docker compose exec api alembic upgrade head
+"event": "Context impl PostgresqlImpl."
+"event": "Will assume transactional DDL."
+"event": "Running upgrade  -> 0001, The initial schema: the eleven tables of C5.2 with C5.13's constraints."
+$ psql: the tables
+alembic_version audit_log client connector install_token msp report test_item test_plan test_run user worker
+$ docker compose exec api alembic check
+"event": "Context impl PostgresqlImpl."
+"event": "Will assume transactional DDL."
+"event": "setting up autogenerate plugin alembic.autogenerate.schemas"
+"event": "setting up autogenerate plugin alembic.autogenerate.tables"
+"event": "setting up autogenerate plugin alembic.autogenerate.types"
+"event": "setting up autogenerate plugin alembic.autogenerate.constraints"
+"event": "setting up autogenerate plugin alembic.autogenerate.defaults"
+"event": "setting up autogenerate plugin alembic.autogenerate.comments"
+No new upgrade operations detected.

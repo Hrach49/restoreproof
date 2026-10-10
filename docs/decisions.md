@@ -7,6 +7,30 @@ Format: date, decision, reason, alternatives rejected.
 
 ---
 
+## 2026-10-10 — C5.1 and C5.2 code review: findings 1, 2 and 4 to 15 of fifteen fixed, 3 open for the owner (proposed)
+
+The review of the branch `c5.1-c5.2-cloud-stack` against `main` gave fifteen findings. Fourteen are fixed, each with its test written first and seen to fail on the code as it was; 3 is a choice about the schema and stays with the owner. Nothing is committed until the owner asks.
+
+1. **A library's log line is its first line only, and a failed lifespan is logged by type and frames.** Only `exc_info` lost its message; a message that *is* a traceback passed. Starlette sends a failed startup or shutdown as `traceback.format_exc()` and uvicorn logs what it is sent; asyncio's "Task exception was never retrieved" has the exception's repr on its second line. `RequestLogMiddleware` now takes the `lifespan` scope: it puts `the app's startup failed` or `the app's shutdown failed` in the text's place and writes `lifespan failed` with `exc_type` and `stack`. And `first_line_only` cuts every standard-library record at its first line break. Tests run uvicorn's own `LifespanOn` and asyncio's own handler. Rejected: scrubbing by pattern, since a message can hold anything. Not covered: a library that puts an exception's text on the first line of its message.
+2. **`audit_log.ip` is read back as the text it was given.** asyncpg answers an `inet` with an `ipaddress` object while the model says `str`. `InetText` (a `TypeDecorator` over `INET`, beside `UtcDateTime`) makes the model's word true under any engine. Rejected: `native_inet_types=False`, which is per engine (the app's, the tests', the migration's) and so easy to hold on two of three. The column is still `inet`; the migration is unchanged.
+3. **Open: `test_run.worker_id` is held only to a Worker of the same MSP**, not to the Worker of the plan's connector. To settle before C5.6 dispatches by it: drop the column, or key `(msp_id, connector_id, worker_id)` to `connector`. Either changes migration `0001`, so it is the owner's.
+4. **/healthz asks through an S3 client of its own.** The 2 s limits and the single attempt were on the app's one client, which C5.7's put and get will use. `make_s3_client(settings, for_check=True)` is the probe's; the data client keeps botocore's limits and its standard retries. `Storage.check_client`.
+5. **`uv run mutmut run` finds `alembic.ini`.** `also_copy` names it; a test holds that. Not run: mutmut needs `fork()` and this laptop's WSL has Docker's distribution only. The Makefile's and `docs/testing.md`'s "exits 1 until app/ has functions" notes are gone.
+6. **`LOG_LEVEL` reaches uvicorn's lines and the migration's.** uvicorn gives `uvicorn.error` a level of its own before it calls the factory; `configure_logging` sets it. `env.py` reads `log_level_from_environment()` in place of a fixed `info`, and refuses a word that is no level before it connects.
+7. **The wiring probe's teardown takes away the probe alone**, not every route of the module's router.
+8. **The app and a migration read one environment the same way.** `_settings_in` is the one lookup: names in any case, an empty value a missing one. `database_url_from_environment` took the first match, even an empty one.
+9. **`test_the_checks_run_side_by_side` fails for a route that awaits one check after the other.** Both checks are slow and the answer must take as long as one. Seen to fail with `gather` taken out.
+10. **The Compose healthcheck asks Postgres over TCP** (`pg_isready -h 127.0.0.1`): on a fresh volume the image's first server listens on its unix socket alone. The same in `cloud.yml`'s service. Shown by `docker compose -p rpfresh up -d --wait --build` on new volumes: every service healthy, `/healthz` 200.
+11. **`LOG_LEVEL=INFO` is `info`.** The value is lower-cased before it is held to the four words; `WARN` is still not one of them.
+12. **The command-line test searches what all four runs printed** for the URL's password, its database and its driver, not the last run's alone.
+13. **`HEAD /healthz` answers as `GET` does.**
+14. **`alembic check` compares server defaults** (`compare_server_default=True`); a test plants one and the check finds it. No false difference on the migrated database.
+15. **The three bare `IntegrityError`s name their constraint.** Doing so showed that "filed under B, with A's worker and client" was refused by `uq_connector_worker_id_client_id` and never reached a key; the test now uses a pair with no connector yet. A delete is held to a key that points at the table deleted from.
+
+Runs (local, 2026-10-10; no CI): `uv run --locked pytest` 1181 passed (101 on the Compose Postgres), coverage 99.49% combined with `app/logging.py`, `settings.py`, `storage.py`, `health.py` and `models.py` at 100%.
+
+---
+
 ## 2026-10-10 — C5.1 and C5.2 build notes: built as the entry says but for MinIO's image, a time without a zone, two nullable columns and the libraries' log level; both Done-whens shown on the Compose stack; green locally, not in CI (proposed)
 
 The owner approved the entry below as written on 2026-10-10 and gave the go-ahead to start Docker Desktop. These notes say where the build left the entry or went beyond it. The points marked **against the entry** are the ones to read.

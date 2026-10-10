@@ -2,7 +2,13 @@
 
 import pytest
 
-from app.settings import Settings, SettingsError, database_url_from_environment, load_settings
+from app.settings import (
+    Settings,
+    SettingsError,
+    database_url_from_environment,
+    load_settings,
+    log_level_from_environment,
+)
 
 SENTINEL = "Sentinel-Settings-7c1e"
 
@@ -153,6 +159,18 @@ def test_names_are_read_in_any_case_and_other_variables_are_ignored():
     assert load_settings(env).s3_bucket == "bucket"
 
 
+@pytest.mark.parametrize("given", ["INFO", "Info", "info"])
+def test_log_level_is_read_in_any_case(given):
+    assert load_settings(environment(LOG_LEVEL=given)).log_level == "info"
+
+
+def test_a_log_level_that_is_no_level_names_its_variable():
+    with pytest.raises(SettingsError) as raised:
+        load_settings(environment(LOG_LEVEL="loud"))
+
+    assert str(raised.value) == "settings error: LOG_LEVEL is not valid"
+
+
 def test_the_process_environment_is_the_default_and_the_only_other_source(monkeypatch):
     for name, value in environment().items():
         monkeypatch.setenv(name, value)
@@ -193,6 +211,54 @@ def test_the_process_environment_is_the_migration_s_default(monkeypatch):
     monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://user:pw@db.test:5432/from-process")
 
     assert database_url_from_environment().endswith("/from-process")
+
+
+@pytest.mark.parametrize(
+    "names",
+    [("DATABASE_URL", "database_url"), ("database_url", "DATABASE_URL")],
+)
+def test_a_migration_and_the_app_read_the_same_database_from_one_environment(names):
+    """A container's environment can hold the name in two cases."""
+    first, second = (f"postgresql+asyncpg://user:pw@db.test:5432/{name}" for name in "ab")
+    env = environment(DATABASE_URL=None) | {names[0]: first, names[1]: second}
+
+    assert database_url_from_environment(env) == load_settings(env).database_url.get_secret_value()
+
+
+def test_an_empty_database_url_beside_a_set_one_is_no_fault_for_a_migration():
+    url = "postgresql+asyncpg://user:pw@db.test:5432/rp"
+    env = environment(DATABASE_URL="") | {"database_url": url}
+
+    assert load_settings(env).database_url.get_secret_value() == url
+    assert database_url_from_environment(env) == url
+
+
+@pytest.mark.parametrize(
+    ("environ", "level"),
+    [
+        ({}, "info"),
+        ({"LOG_LEVEL": ""}, "info"),
+        ({"LOG_LEVEL": "ERROR"}, "error"),
+        ({"log_level": "debug"}, "debug"),
+    ],
+)
+def test_a_migration_s_log_level_is_the_app_s(environ, level):
+    assert log_level_from_environment(environ) == level
+    assert load_settings(environment(**environ)).log_level == level
+
+
+def test_the_process_environment_is_the_default_for_a_migration_s_log_level(monkeypatch):
+    monkeypatch.setenv("LOG_LEVEL", "warning")
+
+    assert log_level_from_environment() == "warning"
+
+
+def test_a_migration_refuses_a_log_level_that_is_no_level():
+    with pytest.raises(SettingsError) as raised:
+        log_level_from_environment({"LOG_LEVEL": SENTINEL})
+
+    assert str(raised.value) == "settings error: LOG_LEVEL is not valid"
+    assert SENTINEL not in f"{raised.value!r}{raised.value.__cause__}{raised.value.__context__}"
 
 
 @pytest.mark.parametrize("environ", [{}, {"DATABASE_URL": ""}, {"S3_BUCKET": "bucket"}])

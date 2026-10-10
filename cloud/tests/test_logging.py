@@ -1,15 +1,21 @@
 """C5.1: one JSON line per request with its request ID; no line holds a token,
 a password or a request body."""
 
+import asyncio
 import io
 import json
 import logging as stdlib_logging
+import logging.config
 import re
+from contextlib import asynccontextmanager
 
 import httpx
 import pytest
 import structlog
+import uvicorn
+import uvicorn.config
 from fastapi import FastAPI, Request
+from uvicorn.lifespan.on import LifespanOn
 
 from app.logging import REDACTED, RequestLogMiddleware, configure_logging
 
@@ -258,6 +264,77 @@ async def test_a_library_s_exception_line_loses_its_message_too(lab):
     assert SENTINEL not in lab.text
 
 
+@pytest.mark.parametrize("fail_at", ["startup", "shutdown"])
+async def test_a_lifespan_failure_is_logged_by_type_and_frames_never_by_message(fail_at):
+    """Starlette hands uvicorn the whole traceback as text, and uvicorn logs it."""
+    lab = Lab()
+
+    @asynccontextmanager
+    async def lifespan(_app):
+        if fail_at == "startup":
+            raise RuntimeError(f"cannot reach the database at {SENTINEL}")
+        yield
+        raise RuntimeError(f"cannot close the pool of {SENTINEL}")
+
+    lab.app = FastAPI(lifespan=lifespan)
+    lab.app.add_middleware(RequestLogMiddleware)
+    server = LifespanOn(uvicorn.Config(lab.app, lifespan="on", log_config=None))
+
+    await server.startup()
+    if fail_at == "shutdown":
+        await server.shutdown()
+
+    assert server.should_exit is True
+    assert SENTINEL not in lab.text
+    assert "Traceback" not in lab.text
+    (failure,) = [line for line in lab.lines if line["event"] == "lifespan failed"]
+    assert failure["level"] == "error"
+    assert failure["exc_type"] == "RuntimeError"
+    assert any(frame.endswith(" in lifespan") for frame in failure["stack"])
+    # What uvicorn logs is the fixed words it was sent in the traceback's place.
+    assert f"the app's {fail_at} failed" in [line["event"] for line in lab.lines]
+
+
+async def test_a_lifespan_that_does_not_fail_logs_no_failure():
+    lab = Lab()
+    lab.app.add_middleware(RequestLogMiddleware)
+    server = LifespanOn(uvicorn.Config(lab.app, lifespan="on", log_config=None))
+
+    await server.startup()
+    await server.shutdown()
+
+    assert server.should_exit is False
+    assert [line["event"] for line in lab.lines] == [
+        "Waiting for application startup.",
+        "Application startup complete.",
+        "Waiting for application shutdown.",
+        "Application shutdown complete.",
+    ]
+
+
+async def test_a_library_s_line_is_its_first_line_only():
+    """asyncio's own handler puts the exception's repr on the lines after the first."""
+    lab = Lab()
+
+    try:
+        raise RuntimeError(SENTINEL)
+    except RuntimeError as error:
+        asyncio.get_running_loop().default_exception_handler(
+            {
+                "message": "Task exception was never retrieved",
+                "exception": error,
+                "future": f"<Task finished exception=RuntimeError({SENTINEL!r})>",
+            }
+        )
+    stdlib_logging.getLogger("some.library").warning("one line stays whole")
+
+    first, second = lab.lines
+    assert first["event"] == "Task exception was never retrieved"
+    assert first["exc_type"] == "RuntimeError"
+    assert second["event"] == "one line stays whole"
+    assert SENTINEL not in lab.text
+
+
 def test_an_exception_is_summarised_however_it_is_handed_over():
     lab = Lab()
     log = structlog.get_logger("lab")
@@ -323,6 +400,27 @@ def test_uvicorn_s_lines_take_our_form_and_its_access_log_is_off():
     assert theirs.stream.getvalue() == ""
 
 
+@pytest.mark.parametrize(
+    ("level", "shown"),
+    [
+        ("error", ["an error"]),
+        ("info", ["Started server process", "an error"]),
+        ("debug", ["a debug line", "Started server process", "an error"]),
+    ],
+)
+def test_the_level_reaches_uvicorn_s_own_lines(level, shown):
+    """uvicorn gives `uvicorn.error` a level of its own before it calls the factory."""
+    logging.config.dictConfig(uvicorn.config.LOGGING_CONFIG)
+
+    lab = Lab(level)
+    uvicorn_error = stdlib_logging.getLogger("uvicorn.error")
+    uvicorn_error.debug("a debug line")
+    uvicorn_error.info("Started server process")
+    uvicorn_error.error("an error")
+
+    assert [line["event"] for line in lab.lines] == shown
+
+
 async def test_a_response_that_failed_after_it_started_is_not_answered_twice():
     lab = Lab()
 
@@ -355,7 +453,7 @@ async def test_what_is_not_http_passes_through_untouched():
     async def inner(scope, receive, send):
         seen.append(scope["type"])
 
-    await RequestLogMiddleware(inner)({"type": "lifespan"}, None, None)
+    await RequestLogMiddleware(inner)({"type": "websocket"}, None, None)
 
-    assert seen == ["lifespan"]
+    assert seen == ["websocket"]
     assert lab.text == ""

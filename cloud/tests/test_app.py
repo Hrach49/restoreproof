@@ -52,6 +52,7 @@ def test_every_route_is_under_v1_but_healthz():
 async def test_a_route_added_to_a_router_is_served_under_v1_and_nowhere_else(name):
     """C5.5 to C5.11 add routes to a router and no wiring."""
     router = dict(ROUTERS)[name]
+    before = list(router.routes)
 
     async def answer():
         return {"router": name}
@@ -62,11 +63,12 @@ async def test_a_route_added_to_a_router_is_served_under_v1_and_nowhere_else(nam
         served = await get(application, f"/v1/{name}/wiring-probe")
         outside = await get(application, f"/{name}/wiring-probe")
     finally:
-        router.routes.clear()
+        # The probe alone: the router is the module's own, and its routes stay.
+        router.routes[:] = before
 
     assert (served.status_code, served.json()) == (200, {"router": name})
     assert outside.status_code == 404
-    assert router.routes == []
+    assert router.routes == before
 
 
 async def test_the_openapi_document_is_under_v1_and_leaves_healthz_out():

@@ -31,8 +31,7 @@ cov:
 
 # Once-per-sprint mutation run. Manual only; never run in CI.
 # Settings live in [tool.mutmut] in pyproject.toml; output goes to mutants/.
-# Exits 1 ("could not find any test case for any mutant") until app/ has real
-# functions to mutate.
+# Needs `make db`: the tests it runs include the database ones.
 mutate:
 	uv run mutmut run
 	uv run mutmut results

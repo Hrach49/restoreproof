@@ -35,7 +35,8 @@ async def _verdict(name: str, check: Callable[[], Awaitable[None]]) -> Verdict:
     return "ok"
 
 
-@router.get("/healthz", include_in_schema=False)
+# HEAD too: a load balancer or an uptime monitor may probe with it.
+@router.api_route("/healthz", methods=["GET", "HEAD"], include_in_schema=False)
 async def healthz(request: Request) -> JSONResponse:
     state = request.app.state
     db, s3 = await asyncio.gather(

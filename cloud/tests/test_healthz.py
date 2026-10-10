@@ -4,6 +4,7 @@
 exception's text in the body.
 """
 
+import asyncio
 import io
 import json
 import time
@@ -50,10 +51,10 @@ class Lab:
         )
         self.stubber.activate()
 
-    async def get(self, path: str = "/healthz", **kwargs) -> httpx.Response:
+    async def get(self, path: str = "/healthz", method: str = "GET", **kwargs) -> httpx.Response:
         transport = httpx.ASGITransport(app=self.app)
         async with httpx.AsyncClient(transport=transport, base_url="http://cloud.test") as client:
-            return await client.get(path, **kwargs)
+            return await client.request(method, path, **kwargs)
 
     async def close(self) -> None:
         await self.app.state.engine.dispose()
@@ -119,6 +120,18 @@ async def test_both_down_is_503_and_both_are_reported(offline):
     assert sorted(line["check"] for line in offline.failures()) == ["db", "s3"]
 
 
+async def test_a_head_probe_gets_the_same_status_as_a_get(lab, offline):
+    """A load balancer may probe with HEAD."""
+    lab.bucket_answers()
+
+    up = await lab.get(method="HEAD")
+    down = await offline.get(method="HEAD")
+
+    assert (up.status_code, down.status_code) == (200, 503)
+    assert up.headers["cache-control"] == "no-store"
+    assert (await lab.get(method="POST")).status_code == 405
+
+
 @pytest.mark.parametrize("code", ["AccessDenied", "NoSuchBucket", "InvalidAccessKeyId"])
 async def test_a_bucket_that_refuses_the_listing_is_an_error(lab, code):
     lab.bucket_refuses(code)
@@ -181,25 +194,25 @@ async def test_a_check_that_hangs_is_an_error_after_the_limit(lab, monkeypatch):
 
 
 async def test_the_checks_run_side_by_side(lab, monkeypatch):
-    """One being slow doesn't make the other wait for it."""
-    monkeypatch.setattr(app.health, "CHECK_TIMEOUT_S", 0.3)
-    order: list[str] = []
+    """Both slow, and the answer takes as long as one of them, not as both:
+    the per-check limit is the route's own."""
+    monkeypatch.setattr(app.health, "CHECK_TIMEOUT_S", 2.0)
 
     class Slow:
         def check(self) -> None:
-            time.sleep(0.15)
-            order.append("s3")
+            time.sleep(0.3)
 
     async def database(_engine) -> None:
-        order.append("db")
+        await asyncio.sleep(0.3)
 
     lab.app.state.storage = Slow()
     monkeypatch.setattr(app.health, "check_database", database)
+    started = time.perf_counter()
 
     response = await lab.get()
 
     assert response.json() == {"db": "ok", "s3": "ok"}
-    assert order == ["db", "s3"]
+    assert 0.25 <= time.perf_counter() - started < 0.55
 
 
 async def test_healthz_takes_part_in_request_logging(lab):
@@ -212,17 +225,46 @@ async def test_healthz_takes_part_in_request_logging(lab):
     assert (line["path"], line["status"], line["request_id"]) == ("/healthz", 200, "probe-7")
 
 
-def test_the_s3_client_is_path_style_sigv4_with_short_limits_and_no_retry():
-    client = make_s3_client(make_settings(S3_REGION="eu-central-1"))
+@pytest.mark.parametrize("for_check", [False, True])
+def test_an_s3_client_is_path_style_sigv4_at_the_settings_endpoint(for_check):
+    client = make_s3_client(make_settings(S3_REGION="eu-central-1"), for_check=for_check)
 
-    config = client.meta.config
     assert client.meta.endpoint_url == "http://127.0.0.1:1"
     assert client.meta.region_name == "eu-central-1"
-    assert config.signature_version == "s3v4"
-    assert config.s3 == {"addressing_style": "path"}
+    assert client.meta.config.signature_version == "s3v4"
+    assert client.meta.config.s3 == {"addressing_style": "path"}
+
+
+def test_the_check_s_client_has_short_limits_and_no_retry():
+    config = make_s3_client(make_settings(), for_check=True).meta.config
+
     assert config.connect_timeout == 2
     assert config.read_timeout == 2
     assert config.retries == {"total_max_attempts": 1, "mode": "standard"}
+
+
+def test_the_data_client_keeps_the_library_s_limits_and_retries():
+    """C5.7's put and get: a slow answer or one 503 must not fail an upload."""
+    config = make_s3_client(make_settings()).meta.config
+
+    assert config.connect_timeout == 60
+    assert config.read_timeout == 60
+    assert config.retries == {"mode": "standard"}
+
+
+def test_storage_from_settings_checks_through_a_client_of_the_check_s_own():
+    storage = Storage.from_settings(make_settings())
+
+    assert storage.check_client is not storage.client
+    assert storage.check_client.meta.config.read_timeout == 2
+    assert storage.client.meta.config.read_timeout == 60
+    assert storage.check_client.meta.endpoint_url == storage.client.meta.endpoint_url
+
+
+def test_a_storage_given_one_client_checks_through_it():
+    client = make_s3_client(make_settings())
+
+    assert Storage(client, "bucket").check_client is client
 
 
 def test_storage_from_settings_checks_the_settings_bucket():

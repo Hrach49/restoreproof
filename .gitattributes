@@ -13,3 +13,5 @@ shared/testdata/**/*.json text eol=lf
 # The pinned TSA root is embedded into the Worker as bytes and handed to
 # `openssl ts -verify` by an auditor (W4.4): keep it LF on every checkout.
 shared/tsa/*.pem text eol=lf
+docs/api/openapi-v1.json text eol=lf
+cloud/tests/registration-keys.json text eol=lf

@@ -25,7 +25,8 @@ How we test, what CI enforces, and the once-per-sprint mutation run. Set up in L
 | Guard | Where | Rule |
 |---|---|---|
 | Worker coverage | `.github/workflows/worker.yml`, OpenCppCoverage + `worker/tools/coverage_gate.py` | 80% line on `rpcore` (`worker/src/`, `worker/include/`) plus `rpworker`'s `main()` (`worker/app/`); 100% **line** on vault, signer, target_guard, run_status, cleaner, timestamper, outbox, service, client_profile, strict_json and client_check (the vault once it exists), meaning any file with a path part named or prefixed `vault`, `signer`, `target_guard`, `run_status`, `cleaner`, `timestamper`, `outbox`, `service`, `client_profile`, `strict_json` or `client_check` (W4.11's `src/client_check.cpp`, the rule that holds a job's client to the backup's organisation; W4.10's two: `src/client_profile.cpp`, the profile's reader, and `src/strict_json.hpp`, the strict JSON reader the jobs document and the profile file share; W4.8's five by the `service` prefix: `src/service_loop.cpp`, the scheduler loop, which decides what is due, which job runs, what is skipped and what becomes of a run's record, `src/service_jobs.cpp`, the jobs document's reader, `src/service_recovery.cpp`, `running.json`, the plan for a run folder without a result and the rule for Veeam's sessions after one, `src/service_log_stream.cpp`, the streams that turn a run's lines into log lines, and `src/service_errors.cpp`, the words a heartbeat's `last_error` may be, with their headers, while `src/worker_body.cpp`, the real calls the loop is handed, `src/heartbeat.cpp`, the one POST, `src/run_folder_tail.cpp`, the end of a run folder that the pipeline and the close share, and `src/job_rules.cpp`, the rules a command line and a job are both held to, are outside; W4.7's `src/service.cpp`, the running service's state machine, `src/service_command.cpp`, the `rpworker service` commands, and `src/service_log.cpp`, which decides what reaches the log file, while `src/scm.cpp`, the calls into the Service Control Manager, and `src/stop_signal.cpp` are outside; W4.6's `src/outbox.cpp`, which decides what is queued, sent, kept and pruned, and `src/outbox_command.cpp`, while `src/uploader.cpp`, the one HTTP call, and `src/folder_ops.cpp`, the file-system calls under it, are outside; W4.4's `src/timestamper.cpp`, which decides which RFC 3161 token is written, while `src/rfc3161.cpp`, the calls into OpenSSL under it, is outside like `src/ed25519.cpp`; `src/vault_dpapi.cpp`; W4.3's `src/signer.cpp`, the Signer, and `src/signer_command.cpp`, the two `rpworker signer` commands, with their headers, while `src/ed25519.cpp`, the calls into OpenSSL under the Signer, is deliberately outside: the library's failure lines for a valid key can't be reached by a test, and folding them onto their calls' own lines would hide them, `docs/decisions.md` 2026-10-05 W4.3 point 4; W2.7's `src/target_guard.cpp`, `src/target_guard_graph.cpp`, `src/target_guard_veeam.cpp` and their headers; W3.3's `src/run_status.cpp`, the status decision table; W3.4's `src/cleaner.cpp` and `include/rp/cleaner.hpp`, the only Worker code that deletes in the tenant); every `.cpp` on disk under `src/`, `include/` and `app/` must appear in the report, so a file no test links into `rptests` (or, for `app/`, that ctest's runs of `rpworker.exe` don't reach) fails (headers of declarations may be absent) |
-| Cloud coverage | `.github/workflows/cloud.yml`, pytest-cov | 80% on `app/`, measured as coverage's combined line + branch figure; 100% line + branch on `app/auth`, `app/results.py` and `app/repo` (skipped while absent), checked by `cloud/tools/check_coverage.py` |
+| Cloud coverage | `.github/workflows/cloud.yml`, pytest-cov | 80% on `app/`, measured as coverage's combined line + branch figure; 100% line + branch on `app/auth`, `app/results.py` and `app/repo` (skipped while absent), checked by `cloud/tools/check_coverage.py`. The job has a `postgres:16` service container: the database tests run on a real PostgreSQL 16 and never skip ("Cloud" below) |
+| Cloud local stack | `.github/workflows/cloud.yml`, the `compose` job | C5.1's Done-when: `docker compose up -d --wait --build` in `cloud/`, then `GET /healthz` must answer 200 `{"db":"ok","s3":"ok"}` |
 | Lab tests and canary hashes | `.github/workflows/lab.yml` | `lab/`'s pytest suite passes (offline, fake Graph tenant), and `python -m seeder hash` reproduces every hash in `lab/seed-manifest.json` from the committed `lab/canary/` files and the catalog (L1.2's Done when). No coverage floor |
 | Secret audit | `worker/tests/secret_audit_test.cpp` (ctest, `[secret_audit]`); `worker/tools/fixture_secret_scan.py` (ctest `fixture secret scan` and the `fixture-scan` job of `.github/workflows/worker.yml`) | W4.9: every path of the pipeline, the commands and the service's loop run on fixtures with five sentinel secrets, and every output (both streams, the log, every file, every request to the fake Cloud and TSA) holds no sentinel, no value derived from one and no secret shape; the committed fixture, vector and evidence trees hold no secret shape but what `worker/tools/fixture_secret_scan_allowlist.json` allows by file, shape and value. See "The secret audit (W4.9)" |
 | No test, no merge | `.github/workflows/pr-guards.yml`, `.github/scripts/tests_touched.py` | Each side needs its own tests: a PR that changes `worker/src/`, `worker/include/` or `worker/app/` must add or change a C++ file (`.cpp`, `.hpp`, `.h`) under `worker/tests/`, and one that changes `cloud/app/` must add or change a `.py` under `cloud/tests/`. Deleting a test, editing fixtures or editing `tests/e2e/scenarios.md` doesn't count |
@@ -1421,7 +1422,8 @@ reads `MII..` then `ADAgEAMII`, whose sixth character isn't `IB`.
 
 ### Running the gates locally
 
-Cloud, from `cloud/` (the same commands as CI; `make cov` runs both in WSL or Linux):
+Cloud, from `cloud/` (the same commands as CI; `make cov` runs both in WSL or Linux). The test
+database must be up first, `docker compose up -d --wait postgres` ("Cloud" below):
 
 ```bash
 uv run --locked pytest --cov=app --cov-branch --cov-report=term-missing --cov-report=json:coverage.json --cov-fail-under=80
@@ -1475,6 +1477,107 @@ The guard scripts' own tests (from the repo root):
 python -m pytest .github/scripts          # CI: uvx --python 3.12 pytest .github/scripts
 python -m unittest discover -s worker/tools -p "test_*.py"
 ```
+
+## Cloud
+
+`cloud/` is the FastAPI backend (C5.1) and its data model (C5.2). Its tests are pytest, run with
+uv from `cloud/`. The rules are `docs/decisions.md` 2026-10-10, "C5.1 and C5.2".
+
+### The test database: a real PostgreSQL 16, never SQLite
+
+The unique constraints, composite foreign keys, CHECKs, `uuid`, `jsonb` and `timestamptz` that
+tenant isolation rests on are what SQLite would fake, so there is no SQLite anywhere. The
+database is the `postgres` service of `cloud/docker-compose.yml`. Docker Desktop must be
+running:
+
+```powershell
+cd cloud
+docker compose up -d --wait postgres      # postgres:16 on 127.0.0.1:55432
+uv run pytest
+uv run pytest tests/test_models.py::test_a_client_without_a_tenant_is_refused   # one test
+uv run pytest -m "not db"                 # everything that needs no database
+docker compose stop postgres              # when done; `docker compose down -v` also drops the data
+```
+
+- **The port is 55432, not 5432.** The dev laptop's own `postgresql-x64-16` service has 5432.
+  That server is never used for tests.
+- **Two databases.** `restoreproof` is the local stack's own (the api migrates it at start).
+  `restoreproof_test` is the tests': `cloud/docker/postgres-init/01-test-database.sql` makes it
+  when the container first makes its data directory. If the volume is older than that file,
+  `docker compose down -v` and start again.
+- **`TEST_DATABASE_URL`** names the tests' database. Unset, it is the Compose one
+  (`tests/conftest.py`, `DEFAULT_TEST_DATABASE_URL`). CI sets it to its `postgres:16` service
+  container. It is never taken from `DATABASE_URL`, and **its database's name must end in
+  `_test`**: the session empties that database, so one that doesn't say it is a test database
+  is refused before anything is touched.
+- **The database tests never skip.** A database that can't be reached fails them with one line
+  naming `TEST_DATABASE_URL` and the Compose command, so a green run always ran them. A test
+  is a database test when it uses the `test_database_url` fixture, directly or through
+  `migrated_database`, `test_engine` or `session`; it gets the marker `db` by itself.
+- **Once per session** the `public` schema is dropped and made again and `alembic upgrade head`
+  runs (`migrated_database`), so every test runs on what the migration built, never on
+  `metadata.create_all`.
+- **Each test** that takes `session` runs in one connection inside one transaction that is
+  rolled back at the end; the code under test may commit (the session joins with savepoints).
+  A row the database must refuse is flushed inside `session.begin_nested()`, and the test holds
+  the refusal to the constraint's name (`tests/test_models.py`, `refused`).
+- **The migration tests** (`tests/test_migrations.py`) make a database of their own,
+  `restoreproof_test_<8 hex>`, and drop it again: upgrading and downgrading the session's
+  database would take the other tests' tables away. So the test role must be allowed to create
+  a database (the Compose and CI roles are superusers).
+- pytest-asyncio runs in auto mode with one event loop for the session (`pyproject.toml`), since
+  asyncpg's connections belong to the loop that made them. Alembic's `env.py` starts a loop of
+  its own, so a test runs an Alembic command in a thread (`tests/conftest.py`, `alembic`).
+- Coverage needs `concurrency = ["greenlet", "thread"]` (`pyproject.toml`): SQLAlchemy's asyncio
+  layer runs the driver inside greenlets.
+
+### What the tests hold
+
+| File | What |
+|---|---|
+| `tests/test_settings.py` | the six required variables, the defaults, a fault that names every faulty variable and never a value, no `.env` and no second look at the environment, `DATABASE_URL` alone for a migration |
+| `tests/test_logging.py` | one JSON line per request with its ID, `X-Request-ID` taken or made and echoed, no header, query string, body or exception message in any line, a value under a secret's name redacted, other libraries held to warnings |
+| `tests/test_healthz.py` | `/healthz`: both ok 200, either down 503 with the other still reported, nothing of an exception in the body or the log. The database half on the real test Postgres and on a closed port; the S3 half on botocore's `Stubber` and on a closed port. No MinIO runs in the unit tests |
+| `tests/test_app.py` | the factory, the six routers under `/v1`, the OpenAPI document at `/v1/openapi.json` without `/healthz`, the engine's settings, the `_test` rule |
+| `tests/test_migrations.py` | on an empty database `upgrade head`, `downgrade -1`, `upgrade head`, in process and through `python -m alembic` with `DATABASE_URL` alone; `alembic check` finds no difference between the models and the migrated database (and does find a planted one); the CHECK constraints' names, which autogenerate doesn't compare |
+| `tests/test_models.py` | every rule of the model on the metadata, and each refusal on the database by the constraint that made it: a tenant twice in one MSP, in the other case, a connector twice for one Worker and client, a connector name or a run state outside its rule, a row that points into another MSP, a time without a zone |
+
+### The local stack (C5.1's Done-when)
+
+```powershell
+cd cloud
+docker compose up -d --wait --build       # postgres, minio, the bucket maker, api, scheduler
+curl.exe -i http://127.0.0.1:8000/healthz # 200 {"db":"ok","s3":"ok"}
+docker compose logs api                   # the migration, then one JSON line per request
+docker compose down                       # `-v` also drops the volumes
+```
+
+The api runs `alembic upgrade head` and then uvicorn with `--reload` on the mounted `app/`; a
+migration that fails stops the container. The scheduler is the same image with a placeholder
+command until C5.9. Every credential in `docker-compose.yml` is local only and every port is
+published on 127.0.0.1 alone; the app itself has no default for any of them
+(`cloud/.env.example` lists what a deployment sets). `minio` is Chainguard's build, pinned by
+digest, since MinIO's own community images no longer pull; to move the pin,
+`docker pull cgr.dev/chainguard/minio:latest`, read the digest with `docker image inspect`, and
+run the stack. With `--reload`, uvicorn's reloader process prints three plain lines before the
+app's JSON ones; the image's own command (no reload) logs JSON only.
+
+Stop one service to see the other half: `docker compose stop minio` gives 503
+`{"db":"ok","s3":"error"}` within 2 s. The run of 2026-10-09 (UTC) is
+`docs/api/cloud-lab/c5.1-c5.2-done-when.txt`.
+
+A migration by hand, against the stack's own database:
+
+```powershell
+docker compose exec api alembic downgrade -1
+docker compose exec api alembic upgrade head
+docker compose exec api alembic check     # the models and the database agree
+```
+
+A new migration is written by hand, as `0001` is (`app/migrations/script.py.mako` is the
+skeleton): explicit operations, every constraint named in full, nothing imported from
+`app.models`. `test_the_models_and_the_migrated_database_agree` fails until the models and
+the migrations agree.
 
 ## Once-per-sprint mutation run
 

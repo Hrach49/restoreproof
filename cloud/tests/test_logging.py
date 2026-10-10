@@ -258,6 +258,26 @@ async def test_a_library_s_exception_line_loses_its_message_too(lab):
     assert SENTINEL not in lab.text
 
 
+def test_an_exception_is_summarised_however_it_is_handed_over():
+    lab = Lab()
+    log = structlog.get_logger("lab")
+
+    try:
+        raise KeyError(SENTINEL)
+    except KeyError as error:
+        log.exception("the current one")
+        log.error("a tuple", exc_info=(type(error), error, error.__traceback__))
+    log.error("true with none current", exc_info=True)
+    log.error("false", exc_info=False)
+
+    current, as_tuple, none_current, false = lab.lines
+    assert (current["exc_type"], as_tuple["exc_type"]) == ("KeyError", "KeyError")
+    assert current["stack"] == as_tuple["stack"] != []
+    for line in (none_current, false):
+        assert "exc_type" not in line and "stack" not in line and "exc_info" not in line
+    assert SENTINEL not in lab.text
+
+
 async def test_a_value_under_a_secret_s_name_is_redacted(lab):
     async with lab.client() as client:
         await client.get("/v1/keyed")

@@ -5,6 +5,7 @@ again leave no error and the expected tables, and the models' metadata and the
 migrated database agree.
 """
 
+import json
 import os
 import secrets
 import subprocess
@@ -174,11 +175,19 @@ async def test_the_command_line_migrates_from_database_url_alone(empty_database)
     env = bare_environment()
     env["DATABASE_URL"] = empty_database
 
+    logged = []
     for args in (("upgrade", "head"), ("downgrade", "-1"), ("upgrade", "head"), ("check",)):
         done = alembic_cli(env, *args)
         assert done.returncode == 0, done.stderr[-2000:]
+        logged += [json.loads(line) for line in done.stdout.splitlines() if line.startswith("{")]
 
     assert await tables(empty_database) == TABLES | {"alembic_version"}
+    # The container's log shows the migration, in the app's own JSON form.
+    events = [line["event"] for line in logged]
+    assert len([event for event in events if event.startswith("Running upgrade  -> 0001")]) == 2
+    assert len([event for event in events if event.startswith("Running downgrade 0001 -> ")]) == 1
+    assert all({"ts", "level", "event"} <= set(line) for line in logged)
+    assert "local-only" not in "".join(done.stdout + done.stderr for done in [done])
 
 
 def test_the_command_line_without_database_url_names_it():

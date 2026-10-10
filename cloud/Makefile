@@ -4,9 +4,22 @@
 # so run these from WSL or Linux: cd /mnt/c/restoreproof/cloud && make mutate
 # See docs/testing.md.
 
-.PHONY: test cov mutate
+.PHONY: db up down test cov mutate
 
-# Same as the CI test step.
+# The tests' database: PostgreSQL 16 on 127.0.0.1:55432 (docker-compose.yml).
+# The database tests never skip; without it they fail. See docs/testing.md, "Cloud".
+db:
+	docker compose up -d --wait postgres
+
+# The whole local stack; then GET http://127.0.0.1:8000/healthz.
+up:
+	docker compose up -d --wait --build
+
+# Stop the stack. The volumes stay; `docker compose down -v` drops them.
+down:
+	docker compose down
+
+# Same as the CI test step. Needs `make db` (or TEST_DATABASE_URL).
 test:
 	uv run --locked pytest
 

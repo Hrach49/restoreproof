@@ -256,6 +256,8 @@ def upgrade() -> None:
         _uuid("plan_id"),
         _uuid("connector_id"),
         _text("state", default="queued"),
+        _time("dispatched_at"),
+        sa.Column("attempt", sa.Integer(), server_default=sa.text("0"), nullable=False),
         _time("restore_point_at"),
         _time("started_at"),
         _time("finished_at"),
@@ -281,12 +283,18 @@ def upgrade() -> None:
             "state IN ('queued', 'dispatched', 'received', 'pass', 'fail', 'error', 'expired')",
         ),
         _check("test_run", "total_ms_not_negative", "total_ms >= 0"),
+        _check("test_run", "attempt_not_negative", "attempt >= 0"),
         _sha256("test_run", "bundle_sha256"),
     )
     op.create_index(
         op.f("ix_test_run_msp_id_client_id_created_at"),
         "test_run",
         ["msp_id", "client_id", "created_at"],
+    )
+    op.create_index(
+        op.f("ix_test_run_msp_id_worker_id_state_created_at"),
+        "test_run",
+        ["msp_id", "worker_id", "state", "created_at"],
     )
 
     op.create_table(

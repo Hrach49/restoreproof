@@ -198,7 +198,7 @@ def test_every_time_is_a_timestamp_with_time_zone_that_refuses_a_naive_value():
     times = [column for column in columns if isinstance(column.type, UtcDateTime)]
 
     assert not [column for column in columns if isinstance(column.type, DateTime)]
-    assert len(times) == 12
+    assert len(times) == 13
     assert all(column.type.impl.timezone is True for column in times)
     assert {column.name for column in times} >= {"created_at", "last_seen_at", "expires_at", "at"}
 
@@ -968,3 +968,42 @@ async def test_an_install_token_has_a_label_a_creation_time_and_maybe_its_maker(
             )
     assert "label" in str(raised.value.orig)
 
+# --- C5.6: dispatch -------------------------------------------------------------------
+
+
+async def test_a_run_starts_never_dispatched_with_no_attempt(session):
+    world = await World.make(session)
+    await session.refresh(world.run)
+
+    assert (world.run.dispatched_at, world.run.attempt) == (None, 0)
+
+
+async def test_a_dispatched_run_carries_its_time_and_its_count(session):
+    world = await World.make(session)
+    at = dt.datetime(2026, 10, 10, 12, 0, tzinfo=UTC)
+
+    run = await add(
+        session,
+        a_run(world.msp, world.client, world.worker, world.plan, state="dispatched", dispatched_at=at, attempt=3),
+    )
+    await session.refresh(run)
+
+    assert (run.state, run.dispatched_at, run.attempt) == ("dispatched", at, 3)
+
+
+async def test_a_negative_attempt_is_refused(session):
+    world = await World.make(session)
+
+    await refused(
+        session,
+        a_run(world.msp, world.client, world.worker, world.plan, attempt=-1),
+        "ck_test_run_attempt_not_negative",
+    )
+
+
+def test_the_poll_s_index_starts_with_the_tenant():
+    indexes = {index.name: [column.name for column in index.columns] for index in TestRun.__table__.indexes}
+
+    assert indexes["ix_test_run_msp_id_worker_id_state_created_at"] == ["msp_id", "worker_id", "state", "created_at"]
+    assert indexes["ix_test_run_msp_id_client_id_created_at"] == ["msp_id", "client_id", "created_at"]
+    assert all(columns[0] == "msp_id" for columns in indexes.values())

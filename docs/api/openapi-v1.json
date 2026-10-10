@@ -1,0 +1,277 @@
+{
+  "components": {
+    "schemas": {
+      "ConnectorRef": {
+        "additionalProperties": false,
+        "properties": {
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "title": "ConnectorRef",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "Job": {
+        "additionalProperties": false,
+        "properties": {
+          "client": {
+            "additionalProperties": true,
+            "title": "Client",
+            "type": "object"
+          },
+          "client_id": {
+            "title": "Client Id",
+            "type": "string"
+          },
+          "connector": {
+            "$ref": "#/components/schemas/ConnectorRef"
+          },
+          "restore_point": {
+            "title": "Restore Point",
+            "type": "string"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "sample_mail": {
+            "title": "Sample Mail",
+            "type": "integer"
+          },
+          "sample_od": {
+            "title": "Sample Od",
+            "type": "integer"
+          },
+          "sample_sp": {
+            "title": "Sample Sp",
+            "type": "integer"
+          },
+          "screenshots_enabled": {
+            "title": "Screenshots Enabled",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "run_id",
+          "client_id",
+          "client",
+          "connector",
+          "sample_mail",
+          "sample_sp",
+          "sample_od",
+          "restore_point",
+          "screenshots_enabled"
+        ],
+        "title": "Job",
+        "type": "object"
+      },
+      "JobsDocument": {
+        "additionalProperties": false,
+        "properties": {
+          "format": {
+            "const": "restoreproof.jobs.v1",
+            "default": "restoreproof.jobs.v1",
+            "title": "Format",
+            "type": "string"
+          },
+          "jobs": {
+            "items": {
+              "$ref": "#/components/schemas/Job"
+            },
+            "maxItems": 5,
+            "title": "Jobs",
+            "type": "array"
+          }
+        },
+        "required": [
+          "jobs"
+        ],
+        "title": "JobsDocument",
+        "type": "object"
+      },
+      "RegisterBody": {
+        "additionalProperties": false,
+        "properties": {
+          "install_token": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Install Token",
+            "type": "string"
+          },
+          "public_key_pem": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "title": "Public Key Pem",
+            "type": "string"
+          },
+          "version": {
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[ -~]{1,64}$",
+            "title": "Version",
+            "type": "string"
+          },
+          "worker_name": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[^\\x00-\\x1f\\x7f]{1,128}$",
+            "title": "Worker Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "install_token",
+          "public_key_pem",
+          "worker_name",
+          "version"
+        ],
+        "title": "RegisterBody",
+        "type": "object"
+      },
+      "Registered": {
+        "additionalProperties": false,
+        "properties": {
+          "api_token": {
+            "title": "Api Token",
+            "type": "string"
+          },
+          "key_id": {
+            "title": "Key Id",
+            "type": "string"
+          },
+          "worker_id": {
+            "title": "Worker Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "worker_id",
+          "api_token",
+          "key_id"
+        ],
+        "title": "Registered",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "title": "RestoreProof Cloud",
+    "version": "0.0.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/v1/jobs": {
+      "get": {
+        "operationId": "jobs_v1_jobs_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobsDocument"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Jobs"
+      }
+    },
+    "/v1/workers/register": {
+      "post": {
+        "operationId": "register_v1_workers_register_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Registered"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Register"
+      }
+    }
+  }
+}

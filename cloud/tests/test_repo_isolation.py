@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 import pytest
+from sqlalchemy import text
 from sqlalchemy import inspect as sa_inspect
 
 import app.repo
@@ -60,6 +61,7 @@ class World:
     connector: Any
     plan: Any
     run: Any
+    stale_run: Any = None
     items: list = field(default_factory=list)
     report: Any = None
     audit: Any = None
@@ -72,7 +74,7 @@ class World:
     @property
     def ids(self) -> set[uuid.UUID]:
         rows = [self.msp, self.user, self.client, self.worker, self.connector, self.plan, self.run,
-                *self.items, self.report, self.audit, self.token, self.spare_client,
+                self.stale_run, *self.items, self.report, self.audit, self.token, self.spare_client,
                 self.spare_worker, self.spare_connector, self.spare_plan]
         return {row.id for row in rows}
 
@@ -94,6 +96,15 @@ async def make_world(session, name: str) -> World:
         msp.id, plan_id=plan.id, client_id=client.id, connector_id=connector.id, worker_id=worker.id
     )
     world = World(msp, user, client, worker, connector, plan, run)
+    # A run dispatched at NOW, for the sweep to find (C5.6).
+    world.stale_run = await RunRepo(session).create(
+        msp.id, plan_id=plan.id, client_id=client.id, connector_id=connector.id, worker_id=worker.id
+    )
+    assert await RunRepo(session).set_state(msp.id, world.stale_run.id, "dispatched") == 1
+    await session.execute(
+        text("UPDATE test_run SET dispatched_at = :at, attempt = 1 WHERE id = :id"),
+        {"at": NOW, "id": world.stale_run.id},
+    )
     for number in (1, 2):
         world.items.append(
             await ItemRepo(session).create(
@@ -192,6 +203,9 @@ class Write:
     row: Callable[[World], Any]
     args: Args = lambda w: ()
     kwargs: Kwargs = lambda w: {}
+    # A sweep names no row: with A's msp_id it may touch A's own rows, and the
+    # other MSP's row must still be left as it was.
+    sweep: bool = False
 
     @property
     def id(self) -> str:
@@ -207,6 +221,10 @@ WRITES = [
     Write(PlanRepo, "set_enabled", lambda w: w.plan, lambda w: (w.plan.id, False)),
     Write(PlanRepo, "delete", lambda w: w.spare_plan, lambda w: (w.spare_plan.id,)),
     Write(RunRepo, "set_state", lambda w: w.run, lambda w: (w.run.id, "dispatched")),
+    # C5.6: with A's msp_id and B's Worker the dispatch answers [] and B's run
+    # stays queued; the sweep with A's msp_id leaves B's stale run dispatched.
+    Write(RunRepo, "dispatch", lambda w: w.run, lambda w: (w.worker.id, NOW)),
+    Write(RunRepo, "requeue_stale", lambda w: w.stale_run, lambda w: (NOW + dt.timedelta(hours=6),), sweep=True),
     Write(InstallTokenRepo, "mark_used", lambda w: w.token, lambda w: (w.token.id, NOW)),
 ]
 
@@ -249,6 +267,16 @@ def test_the_table_names_every_repo_method():
 
     assert every_repo_method() == in_table
     assert len(every_repo_method()) >= 40
+
+
+def rows_touched(answer) -> int:
+    """A write's answer as a count: an int, a list of rows (dispatch) or a
+    pair of counts (requeue_stale)."""
+    if isinstance(answer, int):
+        return answer
+    if isinstance(answer, tuple):
+        return sum(answer)
+    return len(answer)
 
 
 def snapshot(row) -> dict:
@@ -302,7 +330,7 @@ async def test_a_list_of_one_msp_is_the_whole_of_that_msp_s_rows(session, worlds
     assert {c.id for c in await ClientRepo(session).list(a.msp.id)} == {a.client.id, a.spare_client.id}
     assert {c.id for c in await ConnectorRepo(session).list(a.msp.id)} == {a.connector.id, a.spare_connector.id}
     assert {p.id for p in await PlanRepo(session).list(a.msp.id)} == {a.plan.id, a.spare_plan.id}
-    assert [r.id for r in await RunRepo(session).list(a.msp.id)] == [a.run.id]
+    assert {r.id for r in await RunRepo(session).list(a.msp.id)} == {a.run.id, a.stale_run.id}
     assert [i.id for i in await ItemRepo(session).list(a.msp.id, a.run.id)] == [i.id for i in a.items]
     assert [r.id for r in await ReportRepo(session).list(b.msp.id)] == [b.report.id]
     # The connector creates wrote audit rows of their own beside the one written by hand.
@@ -323,7 +351,8 @@ async def test_a_write_with_one_msp_s_id_on_the_other_s_row_changes_nothing(sess
 
         touched = await getattr(write.repo(session), write.method)(mine.msp.id, *write.args(other), **write.kwargs(other))
 
-        assert touched == 0, write.id
+        if not write.sweep:
+            assert rows_touched(touched) == 0, write.id
         await session.refresh(row)
         assert snapshot(row) == before, write.id
 
@@ -334,7 +363,7 @@ async def test_the_same_write_with_the_row_s_own_msp_id_touches_one_row(session,
 
     touched = await getattr(write.repo(session), write.method)(a.msp.id, *write.args(a), **write.kwargs(a))
 
-    assert touched == 1, write.id
+    assert rows_touched(touched) == 1, write.id
 
 
 async def test_a_write_on_a_row_that_does_not_exist_answers_zero(session, worlds):
@@ -349,6 +378,8 @@ async def test_a_write_on_a_row_that_does_not_exist_answers_zero(session, worlds
     assert await PlanRepo(session).set_enabled(a.msp.id, nothing, True) == 0
     assert await PlanRepo(session).delete(a.msp.id, nothing) == 0
     assert await RunRepo(session).set_state(a.msp.id, nothing, "error") == 0
+    assert await RunRepo(session).dispatch(a.msp.id, nothing, NOW) == []
+    assert await RunRepo(session).requeue_stale(a.msp.id, NOW - dt.timedelta(days=1)) == (0, 0)
     assert await InstallTokenRepo(session).mark_used(a.msp.id, nothing, NOW) == 0
 
 

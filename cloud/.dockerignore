@@ -1,7 +1,0 @@
-# Only pyproject.toml, uv.lock, alembic.ini and app/ go into the image.
-*
-!pyproject.toml
-!uv.lock
-!alembic.ini
-!app
-app/**/__pycache__

@@ -8,7 +8,9 @@ database that can't be reached fails them. `-m "not db"` deselects them.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
+import secrets
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -171,20 +173,30 @@ def session_override(session: AsyncSession):
     return dependency
 
 
+@contextlib.asynccontextmanager
+async def own_database_context(test_database_url: str):
+    """A migrated database of a test's own, dropped again. The admin
+    connection is closed whatever CREATE DATABASE does (the C5.5/C5.6
+    review's finding 9)."""
+    name = f"{make_url(test_database_url).database}_{secrets.token_hex(4)}"
+    url = make_url(test_database_url).set(database=name).render_as_string(hide_password=False)
+    admin = await asyncpg.connect(asyncpg_dsn(test_database_url), timeout=5)
+    try:
+        await admin.execute(f'CREATE DATABASE "{name}"')
+        try:
+            await alembic(url, "upgrade", "head")
+            yield url
+        finally:
+            await admin.execute(f'DROP DATABASE "{name}" WITH (FORCE)')
+    finally:
+        await admin.close()
+
+
 @pytest.fixture
 async def own_database(test_database_url: str):
-    """A migrated database of this test's own, dropped again: for a test whose
-    rows must be committed, so a second connection can see them (two requests
-    at once). The session fixture's rows never are."""
-    import secrets
-
-    name = f"{make_url(test_database_url).database}_{secrets.token_hex(4)}"
-    admin = await asyncpg.connect(asyncpg_dsn(test_database_url), timeout=5)
-    await admin.execute(f'CREATE DATABASE "{name}"')
-    url = make_url(test_database_url).set(database=name).render_as_string(hide_password=False)
-    try:
-        await alembic(url, "upgrade", "head")
+    """A migrated database of this test's own: for a test whose rows must be
+    committed, so a second connection can see them (two requests at once, a
+    commit seen at the response's start). The session fixture's rows never
+    are."""
+    async with own_database_context(test_database_url) as url:
         yield url
-    finally:
-        await admin.execute(f'DROP DATABASE "{name}" WITH (FORCE)')
-        await admin.close()

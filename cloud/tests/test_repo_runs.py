@@ -14,7 +14,7 @@ import datetime as dt
 import uuid
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import event, text
 
 from app.repo.clients import ClientRepo
 from app.repo.connectors import ConnectorRepo
@@ -106,14 +106,18 @@ async def test_a_dispatch_takes_the_oldest_five_in_order_and_marks_them(session)
 
     taken = await q.runs.dispatch(q.msp.id, q.worker.id, later)
 
-    assert [row.id for row in taken] == [row.id for row in rows[:5]]
-    for row in taken:
-        assert (row.state, row.dispatched_at, row.attempt) == ("dispatched", later, 1)
+    assert [d.run.id for d in taken] == [row.id for row in rows[:5]]
+    for d in taken:
+        assert (d.run.state, d.run.dispatched_at, d.run.attempt) == ("dispatched", later, 1)
+        # The review's finding 5: the plan, connector and client come with the
+        # run, in one joined statement, each its own.
+        assert (d.plan.id, d.connector.id, d.client.id) == (q.plan.id, q.connector.id, q.client.id)
+        assert (d.plan.msp_id, d.connector.msp_id, d.client.msp_id) == (q.msp.id, q.msp.id, q.msp.id)
     sixth = await q.fresh(rows[5])
     assert (sixth.state, sixth.dispatched_at, sixth.attempt) == ("queued", None, 0)
 
     second = await q.runs.dispatch(q.msp.id, q.worker.id, later + ONE_SECOND)
-    assert [row.id for row in second] == [rows[5].id]
+    assert [d.run.id for d in second] == [rows[5].id]
     assert await q.runs.dispatch(q.msp.id, q.worker.id, later + ONE_SECOND) == []
 
 
@@ -124,7 +128,7 @@ async def test_the_order_is_created_at_then_id(session):
 
     taken = await q.runs.dispatch(q.msp.id, q.worker.id, NOW)
 
-    assert [row.id for row in taken] == [older.id] + sorted(row.id for row in same_time)
+    assert [d.run.id for d in taken] == [older.id] + sorted(row.id for row in same_time)
 
 
 async def test_the_limit_is_the_caller_s_within_the_policy_s(session):
@@ -133,7 +137,7 @@ async def test_the_limit_is_the_caller_s_within_the_policy_s(session):
 
     taken = await q.runs.dispatch(q.msp.id, q.worker.id, NOW, limit=2)
 
-    assert [row.id for row in taken] == [row.id for row in rows[:2]]
+    assert [d.run.id for d in taken] == [row.id for row in rows[:2]]
     with pytest.raises(ValueError):
         await q.runs.dispatch(q.msp.id, q.worker.id, NOW, limit=6)
     with pytest.raises(ValueError):
@@ -150,7 +154,7 @@ async def test_another_worker_s_runs_and_another_msp_s_are_not_taken(session):
     taken = await a.runs.dispatch(a.msp.id, a.worker.id, NOW)
     crossed = await a.runs.dispatch(a.msp.id, b.worker.id, NOW)
 
-    assert [row.id for row in taken] == [row.id for row in mine]
+    assert [d.run.id for d in taken] == [row.id for row in mine]
     assert crossed == []
     for row in others + theirs:
         assert (await a.fresh(row)).state == "queued"
@@ -171,7 +175,7 @@ async def test_a_dispatch_counts_every_attempt(session):
 
     for attempt in (1, 2, 3):
         taken = await q.runs.dispatch(q.msp.id, q.worker.id, NOW + attempt * SIX_HOURS)
-        assert [(r.id, r.attempt) for r in taken] == [(row.id, attempt)]
+        assert [(d.run.id, d.run.attempt) for d in taken] == [(row.id, attempt)]
         assert await q.runs.requeue_stale(q.msp.id, NOW + (attempt + 1) * SIX_HOURS) == (
             (1, 0) if attempt < MAX_ATTEMPTS else (0, 1)
         )
@@ -179,6 +183,31 @@ async def test_a_dispatch_counts_every_attempt(session):
     final = await q.fresh(row)
     assert (final.state, final.attempt) == ("expired", 3)
     assert await q.runs.dispatch(q.msp.id, q.worker.id, NOW + 10 * SIX_HOURS) == []
+
+
+async def test_an_idle_dispatch_is_one_statement_and_a_busy_one_two(session, test_engine):
+    """The review's finding 5: no re-select when nothing was taken, and the
+    rows' plan, connector and client in one joined select."""
+    q = await Queue.make(session)
+    await q.queued(3)
+    counted: list[str] = []
+
+    def record(_conn, _cursor, statement, _params, _context, _executemany):
+        counted.append(statement.strip().split()[0].upper())
+
+    event.listen(test_engine.sync_engine, "before_cursor_execute", record)
+    try:
+        busy = await q.runs.dispatch(q.msp.id, q.worker.id, NOW)
+        busy_statements = [s for s in counted if s in ("SELECT", "UPDATE", "WITH")]
+        counted.clear()
+        idle = await q.runs.dispatch(q.msp.id, q.worker.id, NOW)
+        idle_statements = [s for s in counted if s in ("SELECT", "UPDATE", "WITH")]
+    finally:
+        event.remove(test_engine.sync_engine, "before_cursor_execute", record)
+
+    assert len(busy) == 3 and idle == []
+    assert busy_statements == ["WITH", "SELECT"]
+    assert idle_statements == ["WITH"]
 
 
 # --- requeue_stale -----------------------------------------------------------------------------

@@ -13,13 +13,14 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import random
 from pathlib import Path
 
 import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
-from app.auth.public_keys import DER_PREFIX, RegisteredKey, read_key_file, registered_key
+from app.auth.public_keys import DER_PREFIX, RegisteredKey, _is_canonical, _on_curve, read_key_file, registered_key
 from tests.test_verify_bundle import KEY_FILES, KEY_FILES_FILE, file_bytes, key_id_of_row, vb
 
 REGISTRATION_KEYS = json.loads(
@@ -113,11 +114,58 @@ def test_a_y_at_or_above_p_is_refused_whatever_the_point(y):
     assert registered_key(pem_of(raw.hex())) is None
 
 
-def test_a_y_just_below_p_passes_the_canonical_rule():
+def test_a_y_just_below_p_passes_the_canonical_rule_and_fails_the_curve():
     raw = (P - 1).to_bytes(32, "little")  # the point of order 2: refused by the list, not the rule
     assert registered_key(pem_of(raw.hex())) is None
-    raw = (P - 2).to_bytes(32, "little")  # no such point need exist: the rule passes it
-    assert registered_key(pem_of(raw.hex())) is not None
+    raw = (P - 2).to_bytes(32, "little")  # canonical, and no point of the curve has this y
+    assert _is_canonical(raw) and not _on_curve(raw)
+    assert registered_key(pem_of(raw.hex())) is None
+
+
+# --- A value that is no point of the curve (the review's finding 8) -------------------------------
+
+D = (-121665 * pow(121666, P - 2, P)) % P
+# RFC 8032 test 1's key with its first body character mistyped (`1` for `A`):
+# still 44 bytes with the prefix, canonical, and off the curve.
+SLIPPED_KEY = "035a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a"
+
+
+def legendre_on_curve(raw: bytes) -> bool:
+    """An independent answer: (y^2 - 1) / (d y^2 + 1) is a square mod p."""
+    y = int.from_bytes(raw, "little") & (2**255 - 1)
+    x2 = (y * y - 1) * pow(D * y * y + 1, P - 2, P) % P
+    return x2 == 0 or pow(x2, (P - 1) // 2, P) == 1
+
+
+def test_a_one_character_slip_of_a_real_key_is_refused_at_enrolment():
+    pem = pem_of(SLIPPED_KEY)
+
+    assert read_key_file(pem.encode("ascii")) is not None  # a well-formed key file
+    assert not legendre_on_curve(bytes.fromhex(SLIPPED_KEY))
+    assert registered_key(pem) is None
+    assert registered_key(pem_of(ACCEPTED[0]["raw"])) is not None
+
+
+def test_the_curve_check_agrees_with_the_legendre_symbol_on_random_values():
+    rng = random.Random(8032)
+    values = [rng.getrandbits(256).to_bytes(32, "little") for _ in range(200)]
+    values += [bytes.fromhex(row["raw"]) for row in ACCEPTED + REFUSED]
+
+    for raw in values:
+        if _is_canonical(raw):
+            assert _on_curve(raw) == legendre_on_curve(raw), raw.hex()
+    assert sum(1 for raw in values if _is_canonical(raw) and not _on_curve(raw)) > 50
+
+
+@pytest.mark.parametrize(
+    "raw_hex",
+    [
+        "3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c",
+        "fc51cd8e6218a1a38da47ed00230f0580816ed13ba3303ac5deb911548908025",
+    ],
+)
+def test_rfc_8032_s_other_published_keys_are_points(raw_hex):
+    assert registered_key(pem_of(raw_hex)) is not None
 
 
 # --- One stored form -------------------------------------------------------------------------

@@ -47,6 +47,17 @@ fixture secret scan: 1164 file(s) in 7 tree(s), 12 allowed match(es), 0 finding(
 $ uv run --locked python tools/dump_openapi.py
 wrote C:\restoreproof\docs\api\openapi-v1.json   (unchanged; tests/test_openapi.py holds it)
 
+== The gate after the code review (all ten findings fixed) ==
+
+$ uv run --locked pytest --cov=app --cov-branch --cov-report=term-missing --cov-report=json:coverage.json --cov-fail-under=80
+1553 passed in 619.67s (0:10:19)
+TOTAL  1065 statements, 2 missed; 116 branches, 1 partial; 99.75% combined
+(app/migrations/env.py 44-45 only; app/routers/jobs.py 100%)
+$ uv run --locked python tools/check_coverage.py coverage.json
+exit 0; every file of app/auth and app/repo OK at 100% line and branch; app/results.py SKIP
+The ordering tests (a row committed at the response's first ASGI message) fail with
+SessionDep's scope put back to "request"; the off-curve tests fail with the curve check out.
+
 == The stack ==
 
 $ docker compose up -d --wait --build          (from cloud/)

@@ -4,22 +4,24 @@ deletes a run but retention (C7.3).
 Dispatch (C5.6; docs/decisions.md 2026-10-10, "C5.5 and C5.6", points 4 and
 8): `dispatch` is one statement that moves the Worker's oldest queued runs,
 at most `DISPATCH_LIMIT`, to `dispatched` with `dispatched_at` set and
-`attempt` counted, the rows chosen under `FOR UPDATE SKIP LOCKED`, so two
-polls at once never take one row. `requeue_stale` is the scheduler's sweep,
-called per MSP (C5.9): a run dispatched `DISPATCH_TIMEOUT` ago or more goes
-back to `queued`, or to `expired` once it has had `MAX_ATTEMPTS`. "Received"
-is the state C5.7 sets when the run's bundle arrives; the Worker acknowledges
-nothing else.
+`attempt` counted, the rows chosen once under `FOR UPDATE SKIP LOCKED`, so two
+polls at once never take one row; then one joined select answers each run with
+its plan, connector and client, and nothing when nothing was taken.
+`requeue_stale` is the scheduler's sweep, called per MSP (C5.9): a run
+dispatched `DISPATCH_TIMEOUT` ago or more goes back to `queued`, or to
+`expired` once it has had `MAX_ATTEMPTS`. "Received" is the state C5.7 sets
+when the run's bundle arrives; the Worker acknowledges nothing else.
 """
 
 from __future__ import annotations
 
 import datetime as dt
+from typing import NamedTuple
 from uuid import UUID
 
-from sqlalchemy import select, update
+from sqlalchemy import and_, select, update
 
-from app.models import TestRun
+from app.models import Client, Connector, TestPlan, TestRun
 from app.repo.base import Repo
 
 # C5.6's "max 5": the Worker's kMaxJobs and the schema's maxItems.
@@ -28,6 +30,15 @@ DISPATCH_LIMIT = 5
 # attempts to expired."
 DISPATCH_TIMEOUT = dt.timedelta(hours=6)
 MAX_ATTEMPTS = 3
+
+
+class Dispatched(NamedTuple):
+    """A run handed to its Worker, with what a job is made of."""
+
+    run: TestRun
+    plan: TestPlan
+    connector: Connector
+    client: Client
 
 
 class RunRepo(Repo):
@@ -60,9 +71,10 @@ class RunRepo(Repo):
 
     async def dispatch(
         self, msp_id: UUID, worker_id: UUID, now: dt.datetime, *, limit: int = DISPATCH_LIMIT
-    ) -> list[TestRun]:
+    ) -> list[Dispatched]:
         """The Worker's oldest queued runs, at most `limit`, each now
-        `dispatched` at `now` with one more attempt, oldest first."""
+        `dispatched` at `now` with one more attempt, oldest first, each with
+        its plan, connector and client."""
         if not 1 <= limit <= DISPATCH_LIMIT:
             raise ValueError(f"limit must be 1 to {DISPATCH_LIMIT}")
         # A MATERIALIZED CTE, not `id IN (subquery)`: Postgres runs the latter
@@ -86,14 +98,21 @@ class RunRepo(Repo):
             .returning(TestRun.id)
             .execution_options(synchronize_session=False)
         )
+        if not taken:
+            return []
         # The rows as they now are, oldest first (RETURNING promises no order,
-        # and the session may hold stale instances of them).
-        return await self._all(
-            select(TestRun)
+        # and the session may hold stale instances of them), each joined to
+        # its plan, connector and client by keys that start with msp_id.
+        rows = await self._rows(
+            select(TestRun, TestPlan, Connector, Client)
+            .join(TestPlan, and_(TestPlan.msp_id == TestRun.msp_id, TestPlan.id == TestRun.plan_id))
+            .join(Connector, and_(Connector.msp_id == TestRun.msp_id, Connector.id == TestRun.connector_id))
+            .join(Client, and_(Client.msp_id == TestRun.msp_id, Client.id == TestRun.client_id))
             .where(TestRun.msp_id == msp_id, TestRun.id.in_(taken))
             .order_by(TestRun.created_at, TestRun.id)
             .execution_options(populate_existing=True)
         )
+        return [Dispatched(*row) for row in rows]
 
     async def requeue_stale(self, msp_id: UUID, now: dt.datetime) -> tuple[int, int]:
         """The sweep: every run dispatched `DISPATCH_TIMEOUT` ago or more goes

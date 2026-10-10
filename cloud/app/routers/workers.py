@@ -4,20 +4,22 @@
 C5.6", point 3): a closed body of the install token, the public key, the
 Worker's name and version; 201 with the Worker's id, its API token (once) and
 its key's id. The refusals are `app/auth/registration.py`'s: 401 for the
-token, 400 for the key, 409 for a key already registered, in that order; a
-body that isn't the model is FastAPI's 422. The transaction is `get_session`'s.
+token, 400 for the key, 409 for a key already registered, in that order, each
+in the OpenAPI document; a body that isn't the model is FastAPI's 422. The
+transaction is `get_session`'s, committed before the response starts
+(`SessionDep`).
 """
 
 from __future__ import annotations
 
 import datetime as dt
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Request
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.registration import register_worker
-from app.db import get_session
+from app.db import SessionDep
+from app.routers.errors import NOT_AUTHENTICATED, refusal
 
 router = APIRouter()
 
@@ -30,9 +32,10 @@ class RegisterBody(BaseModel):
     install_token: str = Field(min_length=1, max_length=256)
     # A key file is about 120 characters; the rule takes white space around.
     public_key_pem: str = Field(min_length=1, max_length=4096)
-    worker_name: str = Field(min_length=1, max_length=128, pattern=r"^[^\x00-\x1f\x7f]{1,128}$")
-    # What `rpworker --version` prints.
-    version: str = Field(min_length=1, max_length=64, pattern=r"^[ -~]{1,64}$")
+    # The lengths are the fields' own; the patterns say what a character may be.
+    worker_name: str = Field(min_length=1, max_length=128, pattern=r"^[^\x00-\x1f\x7f]+$")
+    # What `rpworker --version` prints: printable ASCII.
+    version: str = Field(min_length=1, max_length=64, pattern=r"^[ -~]+$")
 
 
 class Registered(BaseModel):
@@ -43,10 +46,17 @@ class Registered(BaseModel):
     key_id: str
 
 
-@router.post("/workers/register", status_code=201, response_model=Registered)
-async def register(
-    body: RegisterBody, request: Request, session: AsyncSession = Depends(get_session)
-) -> Registered:
+@router.post(
+    "/workers/register",
+    status_code=201,
+    response_model=Registered,
+    responses={
+        401: NOT_AUTHENTICATED,
+        400: refusal("The key is not an accepted Ed25519 public key (the file's form, a non-canonical encoding, no point of the curve, or a small-order point)."),
+        409: refusal("The key is already registered."),
+    },
+)
+async def register(body: RegisterBody, request: Request, session: SessionDep) -> Registered:
     registration = await register_worker(
         session,
         install_token=body.install_token,

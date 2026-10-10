@@ -15,6 +15,20 @@
         "title": "ConnectorRef",
         "type": "object"
       },
+      "ErrorBody": {
+        "additionalProperties": false,
+        "properties": {
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          }
+        },
+        "required": [
+          "detail"
+        ],
+        "title": "ErrorBody",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -124,14 +138,14 @@
           "version": {
             "maxLength": 64,
             "minLength": 1,
-            "pattern": "^[ -~]{1,64}$",
+            "pattern": "^[ -~]+$",
             "title": "Version",
             "type": "string"
           },
           "worker_name": {
             "maxLength": 128,
             "minLength": 1,
-            "pattern": "^[^\\x00-\\x1f\\x7f]{1,128}$",
+            "pattern": "^[^\\x00-\\x1f\\x7f]+$",
             "title": "Worker Name",
             "type": "string"
           }
@@ -230,6 +244,24 @@
               }
             },
             "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not authenticated: no valid token, whatever the reason.",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "`Bearer`",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           }
         },
         "summary": "Jobs"
@@ -258,6 +290,44 @@
               }
             },
             "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "The key is not an accepted Ed25519 public key (the file's form, a non-canonical encoding, no point of the curve, or a small-order point)."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not authenticated: no valid token, whatever the reason.",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "`Bearer`",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "The key is already registered."
           },
           "422": {
             "content": {

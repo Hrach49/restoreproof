@@ -15,6 +15,7 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import NullPool
 
+from app.logging import configure_logging
 from app.models import Base
 from app.settings import database_url_from_environment
 
@@ -29,7 +30,12 @@ def _run(connection: Connection) -> None:
 
 
 async def _run_online() -> None:
-    url = config.attributes.get("database_url") or database_url_from_environment()
+    url = config.attributes.get("database_url")
+    if url is None:
+        # The command line, as the api container runs it: the log shows the
+        # migration in the app's own form.
+        url = database_url_from_environment()
+        configure_logging("info")
     engine = create_async_engine(url, poolclass=NullPool, hide_parameters=True)
     try:
         async with engine.connect() as connection:

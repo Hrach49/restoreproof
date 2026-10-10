@@ -20,6 +20,26 @@ jobs:
     defaults:
       run:
         working-directory: cloud
+    # The database tests run on a real PostgreSQL 16 and never on SQLite
+    # (docs/decisions.md 2026-10-10, C5.1 and C5.2, point 2). They don't skip:
+    # without this service they fail. The credentials are local only, the same
+    # as cloud/docker-compose.yml's.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: restoreproof
+          POSTGRES_PASSWORD: local-only-postgres
+          POSTGRES_DB: restoreproof_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U restoreproof -d restoreproof_test"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+    env:
+      TEST_DATABASE_URL: postgresql+asyncpg://restoreproof:local-only-postgres@127.0.0.1:5432/restoreproof_test
     steps:
       - uses: actions/checkout@v7
 
@@ -57,3 +77,32 @@ jobs:
       - name: Guarded paths at 100% line + branch
         if: ${{ !cancelled() && hashFiles('cloud/coverage.json') != '' }}
         run: uv run --locked python tools/check_coverage.py coverage.json --summary "$GITHUB_STEP_SUMMARY"
+
+  # C5.1's Done-when: "docker compose up serves /healthz green". Builds the
+  # image, starts the whole local stack (the api migrates before it listens)
+  # and requires 200 with both checks ok.
+  compose:
+    name: Local stack serves /healthz
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cloud
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Start the stack
+        run: docker compose up -d --wait --build
+
+      - name: /healthz is 200 with db and s3 ok
+        run: |
+          body="$(curl --fail --silent --show-error http://127.0.0.1:8000/healthz)"
+          echo "$body"
+          test "$body" = '{"db":"ok","s3":"ok"}'
+
+      - name: The stack's logs
+        if: ${{ failure() }}
+        run: docker compose logs --no-color
+
+      - name: Stop the stack
+        if: ${{ always() }}
+        run: docker compose down -v

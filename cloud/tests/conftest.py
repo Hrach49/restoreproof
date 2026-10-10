@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 import asyncpg
@@ -155,3 +156,35 @@ def make_settings(**changes: str) -> Settings:
     }
     env.update(changes)
     return load_settings(env)
+
+
+def session_override(session: AsyncSession):
+    """What a test puts in place of `get_session`: the same generator over the
+    test's own session, with a savepoint where the real one has the
+    transaction (the test's is already open), so a test sees what a refused
+    request rolled back and keeps what a 201 committed."""
+
+    async def dependency() -> AsyncIterator[AsyncSession]:
+        async with session.begin_nested():
+            yield session
+
+    return dependency
+
+
+@pytest.fixture
+async def own_database(test_database_url: str):
+    """A migrated database of this test's own, dropped again: for a test whose
+    rows must be committed, so a second connection can see them (two requests
+    at once). The session fixture's rows never are."""
+    import secrets
+
+    name = f"{make_url(test_database_url).database}_{secrets.token_hex(4)}"
+    admin = await asyncpg.connect(asyncpg_dsn(test_database_url), timeout=5)
+    await admin.execute(f'CREATE DATABASE "{name}"')
+    url = make_url(test_database_url).set(database=name).render_as_string(hide_password=False)
+    try:
+        await alembic(url, "upgrade", "head")
+        yield url
+    finally:
+        await admin.execute(f'DROP DATABASE "{name}" WITH (FORCE)')
+        await admin.close()

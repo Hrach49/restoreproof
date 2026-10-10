@@ -82,7 +82,7 @@ async def make_world(session, name: str) -> World:
     user = await UserRepo(session).create(msp.id, email=f"{name}@example.test", password_hash="x", role="admin")
     client = await ClientRepo(session).create(msp.id, name=f"{name} client", tenant_id=uuid.uuid4())
     worker = await WorkerRepo(session).create(
-        msp.id, name=f"{name} worker", public_key_pem=PEM, api_token_hash=a_hash(f"{name} worker")
+        msp.id, f"{name} worker", public_key_pem=PEM, key_id=a_hash(f"{name} key"), api_token_hash=a_hash(f"{name} worker")
     )
     connector = await ConnectorRepo(session).create(
         msp.id, client.id, worker.id, profile_for(client.tenant_id), user_id=user.id
@@ -106,13 +106,13 @@ async def make_world(session, name: str) -> World:
     )
     world.audit = await AuditRepo(session).write(msp.id, action="test.write", target=f"{name}:x", user_id=user.id, ip="10.0.0.1")
     world.token = await InstallTokenRepo(session).create(
-        msp.id, token_hash=a_hash(f"{name} token"), expires_at=NOW + dt.timedelta(days=7)
+        msp.id, token_hash=a_hash(f"{name} token"), expires_at=NOW + dt.timedelta(days=7), label=f"{name} token"
     )
     world.spare_client = await ClientRepo(session).create(msp.id, name=f"{name} spare", tenant_id=uuid.uuid4())
     # The spare connector is the client on a spare Worker, so the spare client
     # has nothing pointing at it and can be deleted.
     world.spare_worker = await WorkerRepo(session).create(
-        msp.id, name=f"{name} spare worker", public_key_pem=PEM, api_token_hash=a_hash(f"{name} spare worker")
+        msp.id, f"{name} spare worker", public_key_pem=PEM, key_id=a_hash(f"{name} spare key"), api_token_hash=a_hash(f"{name} spare worker")
     )
     world.spare_connector = await ConnectorRepo(session).create(
         msp.id, client.id, world.spare_worker.id, profile_for(client.tenant_id)
@@ -231,8 +231,10 @@ LOOKUPS = {(Lookup, "find_worker_by_token_hash"), (Lookup, "find_install_token_b
 
 def every_repo_method() -> set[tuple[type, str]]:
     found = set()
-    for module_info in pkgutil.iter_modules(app.repo.__path__):
-        module = importlib.import_module(f"app.repo.{module_info.name}")
+    # walk_packages: a sub-package of the repo is in the table too (the
+    # C5.3/C5.4 review's finding 5).
+    for module_info in pkgutil.walk_packages(app.repo.__path__, prefix="app.repo."):
+        module = importlib.import_module(module_info.name)
         for _name, cls in inspect.getmembers(module, inspect.isclass):
             if issubclass(cls, Repo) and cls is not Repo and cls.__module__ == module.__name__:
                 for method, _ in inspect.getmembers(cls, inspect.isfunction):

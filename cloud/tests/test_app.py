@@ -3,17 +3,19 @@
 import importlib
 import io
 
+import asyncpg
 import httpx
 import pytest
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 import app
 from app import health
 from app.db import get_session, make_engine, make_session_factory
 from app.main import ROUTERS, create_app
 from app.settings import SettingsError
-from tests.conftest import checked_test_database_url, make_settings
+from tests.conftest import asyncpg_dsn, checked_test_database_url, make_settings
 
 ROUTER_NAMES = ("workers", "jobs", "results", "heartbeat", "admin", "ui")
 
@@ -196,3 +198,32 @@ def test_the_tests_database_is_never_taken_from_database_url():
     url = checked_test_database_url({"DATABASE_URL": "postgresql+asyncpg://u:p@prod/live"})
 
     assert url.endswith("@127.0.0.1:55432/restoreproof_test")
+
+
+async def test_get_session_commits_when_the_route_returns_and_rolls_back_when_it_raises(test_engine, test_database_url):
+    """C5.5, point 5: the dependency owns the request's transaction. A row a
+    route wrote is there after a 200 and not after a 400, seen from another
+    connection; the repos never commit, so nothing else could have."""
+    application = make_app()
+    application.state.session_factory = make_session_factory(test_engine)
+    router = APIRouter()
+
+    @router.get("/session-probe/{outcome}")
+    async def probe(outcome: str, session: AsyncSession = Depends(get_session)):
+        await session.execute(text("INSERT INTO msp (name) VALUES (:name)"), {"name": f"probe-{outcome}"})
+        if outcome == "raise":
+            raise HTTPException(status_code=400, detail="no")
+        return {"ok": True}
+
+    application.include_router(router, prefix="/v1")
+    reader = await asyncpg.connect(asyncpg_dsn(test_database_url), timeout=5)
+    try:
+        returned = await get(application, "/v1/session-probe/return")
+        raised = await get(application, "/v1/session-probe/raise")
+        names = await reader.fetch("SELECT name FROM msp WHERE name LIKE 'probe-%'")
+        await reader.execute("DELETE FROM msp WHERE name LIKE 'probe-%'")
+    finally:
+        await reader.close()
+
+    assert (returned.status_code, raised.status_code) == (200, 400)
+    assert [row["name"] for row in names] == ["probe-return"]

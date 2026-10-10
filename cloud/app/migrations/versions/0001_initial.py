@@ -27,8 +27,8 @@ TABLES = (
     "msp",
     "user",
     "client",
-    "worker",
     "install_token",
+    "worker",
     "audit_log",
     "connector",
     "report",
@@ -137,32 +137,42 @@ def upgrade() -> None:
     )
 
     op.create_table(
+        "install_token",
+        _id(),
+        _msp_id(),
+        _text("token_hash"),
+        _text("label"),
+        _time("created_at", nullable=False, default_now=True),
+        _uuid("created_by", nullable=True),
+        _time("expires_at", nullable=False),
+        _time("used_at"),
+        _pk("install_token"),
+        _fk_msp("install_token"),
+        _fk("install_token", ("created_by",), "user", ("id",)),
+        _unique("install_token", "msp_id", "id"),
+        _unique("install_token", "token_hash"),
+    )
+
+    op.create_table(
         "worker",
         _id(),
         _msp_id(),
         _text("name"),
         _text("public_key_pem"),
+        _text("key_id"),
         _text("api_token_hash"),
+        _uuid("install_token_id", nullable=True),
         _text("version", nullable=True),
         _time("last_seen_at"),
         _text("last_error", nullable=True),
         _time("revoked_at"),
         _pk("worker"),
         _fk_msp("worker"),
+        _fk("worker", ("install_token_id",), "install_token", ("id",)),
         _unique("worker", "msp_id", "id"),
         _unique("worker", "api_token_hash"),
-    )
-
-    op.create_table(
-        "install_token",
-        _id(),
-        _msp_id(),
-        _text("token_hash"),
-        _time("expires_at", nullable=False),
-        _time("used_at"),
-        _pk("install_token"),
-        _fk_msp("install_token"),
-        _unique("install_token", "token_hash"),
+        _unique("worker", "key_id"),
+        _sha256("worker", "key_id"),
     )
 
     op.create_table(

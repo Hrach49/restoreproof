@@ -8,7 +8,10 @@ database that can't be reached fails them. `-m "not db"` deselects them.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
+import secrets
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 import asyncpg
@@ -155,3 +158,45 @@ def make_settings(**changes: str) -> Settings:
     }
     env.update(changes)
     return load_settings(env)
+
+
+def session_override(session: AsyncSession):
+    """What a test puts in place of `get_session`: the same generator over the
+    test's own session, with a savepoint where the real one has the
+    transaction (the test's is already open), so a test sees what a refused
+    request rolled back and keeps what a 201 committed."""
+
+    async def dependency() -> AsyncIterator[AsyncSession]:
+        async with session.begin_nested():
+            yield session
+
+    return dependency
+
+
+@contextlib.asynccontextmanager
+async def own_database_context(test_database_url: str):
+    """A migrated database of a test's own, dropped again. The admin
+    connection is closed whatever CREATE DATABASE does (the C5.5/C5.6
+    review's finding 9)."""
+    name = f"{make_url(test_database_url).database}_{secrets.token_hex(4)}"
+    url = make_url(test_database_url).set(database=name).render_as_string(hide_password=False)
+    admin = await asyncpg.connect(asyncpg_dsn(test_database_url), timeout=5)
+    try:
+        await admin.execute(f'CREATE DATABASE "{name}"')
+        try:
+            await alembic(url, "upgrade", "head")
+            yield url
+        finally:
+            await admin.execute(f'DROP DATABASE "{name}" WITH (FORCE)')
+    finally:
+        await admin.close()
+
+
+@pytest.fixture
+async def own_database(test_database_url: str):
+    """A migrated database of this test's own: for a test whose rows must be
+    committed, so a second connection can see them (two requests at once, a
+    commit seen at the response's start). The session fixture's rows never
+    are."""
+    async with own_database_context(test_database_url) as url:
+        yield url

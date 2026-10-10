@@ -16,6 +16,7 @@ import io
 import httpx
 import pytest
 from fastapi import Depends, Request
+from sqlalchemy import text
 
 from app.auth.dependency import current_worker
 from app.auth.tokens import new_token, token_hash
@@ -64,11 +65,11 @@ class Lab:
         self.msp = await MspRepo(session).create(name="a")
         self.token = new_token()
         self.worker = await WorkerRepo(session).create(
-            self.msp.id, name="live", public_key_pem=PEM, api_token_hash=token_hash(self.token)
+            self.msp.id, "live", public_key_pem=PEM, key_id="1" * 64, api_token_hash=token_hash(self.token)
         )
         self.revoked_token = new_token()
         self.revoked = await WorkerRepo(session).create(
-            self.msp.id, name="revoked", public_key_pem=PEM, api_token_hash=token_hash(self.revoked_token)
+            self.msp.id, "revoked", public_key_pem=PEM, key_id="2" * 64, api_token_hash=token_hash(self.revoked_token)
         )
         assert await WorkerRepo(session).revoke(self.msp.id, self.revoked.id, NOW) == 1
 
@@ -174,7 +175,7 @@ async def test_a_revoked_worker_is_refused_whenever_revoked_at_is_set(lab):
     """The time doesn't matter: a revocation in the future is a revocation."""
     future_token = new_token()
     worker = await WorkerRepo(lab.session).create(
-        lab.msp.id, name="later", public_key_pem=PEM, api_token_hash=token_hash(future_token)
+        lab.msp.id, "later", public_key_pem=PEM, key_id="3" * 64, api_token_hash=token_hash(future_token)
     )
     await WorkerRepo(lab.session).revoke(lab.msp.id, worker.id, NOW + dt.timedelta(days=3650))
 
@@ -224,9 +225,14 @@ async def test_the_dependency_takes_its_session_from_get_session(lab):
 async def test_no_token_authenticates_nothing_whatever_the_database_holds(lab):
     """Code review finding 2: a missing or malformed header is the empty token,
     whose hash is looked up like any other; a Worker row registered under that
-    hash must still not be the answer."""
-    await WorkerRepo(lab.session).create(
-        lab.msp.id, name="blank", public_key_pem=PEM, api_token_hash=token_hash("")
+    hash must still not be the answer. The repo refuses that hash since C5.5
+    (tests/test_repo_workers.py), so the row is planted by SQL."""
+    await lab.session.execute(
+        text(
+            "INSERT INTO worker (msp_id, name, public_key_pem, key_id, api_token_hash) "
+            "VALUES (:m, 'blank', :pem, :key, :hash)"
+        ),
+        {"m": lab.msp.id, "pem": PEM, "key": "4" * 64, "hash": token_hash("")},
     )
 
     for headers in (None, {"Authorization": "Bearer "}, {"Authorization": "Basic dXNlcjpwYXNz"}):

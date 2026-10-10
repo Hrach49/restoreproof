@@ -16,11 +16,10 @@ from __future__ import annotations
 import hmac
 import re
 
-from fastapi import Depends, HTTPException, Request
-from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import HTTPException, Request
 
 from app.auth.tokens import token_hash
-from app.db import get_session
+from app.db import SessionDep
 from app.models import Worker
 from app.repo.lookup import Lookup
 
@@ -29,21 +28,27 @@ _BEARER = re.compile(r"Bearer (\S+)")
 _NO_HASH = "0" * 64
 
 
+def not_authenticated() -> HTTPException:
+    """The one 401 for every failure to authenticate: here and at
+    registration (app/auth/registration.py), the same words and header."""
+    return HTTPException(
+        status_code=401, detail="not authenticated", headers={"WWW-Authenticate": "Bearer"}
+    )
+
+
 def _presented_token(request: Request) -> str:
     match = _BEARER.fullmatch(request.headers.get("authorization", ""))
     return match.group(1) if match else ""
 
 
-async def current_worker(request: Request, session: AsyncSession = Depends(get_session)) -> Worker:
+async def current_worker(request: Request, session: SessionDep) -> Worker:
     token = _presented_token(request)
     presented = token_hash(token)
     worker = await Lookup(session).find_worker_by_token_hash(presented)
     stored = _NO_HASH if worker is None else worker.api_token_hash
     same = hmac.compare_digest(stored, presented)
     if not token or worker is None or not same or worker.revoked_at is not None:
-        raise HTTPException(
-            status_code=401, detail="not authenticated", headers={"WWW-Authenticate": "Bearer"}
-        )
+        raise not_authenticated()
     request.state.worker = worker
     request.state.msp_id = worker.msp_id
     return worker

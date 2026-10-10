@@ -412,11 +412,29 @@ Three different secrets, often confused, then the words for the Worker's Graph s
 **Install token.** A one-time, 7-day, single-use enrolment secret (32 random bytes,
 base64url) created by `manage.py create-worker-token` and printed once. The MSP types it into
 the Worker's setup wizard; the Worker calls `register`, receives its API token, and then
-deletes the install token. The Cloud stores only its SHA-256 hash.
+deletes the install token. The Cloud stores only its SHA-256 hash, with a label (what the admin
+typed), when and by whom it was made; it names no client (a Worker is an MSP's; connectors bind
+clients later). A registration that fails (a bad key, a key already registered) leaves the token
+unused: the whole of it is one transaction (C5.5).
 
 **API token.** The Worker's long-lived credential for calling the Cloud (32 random bytes),
-issued at registration and kept in the vault. The Cloud stores only its SHA-256 hash and
-compares in constant time; setting `revoked_at` blocks the worker immediately. Never logged.
+issued once by `POST /v1/workers/register` (C5.5) and kept in the vault. The Cloud stores only
+its SHA-256 hash and compares in constant time; setting `revoked_at` blocks the worker
+immediately. Never logged.
+
+**Key id.** The SHA-256 of a Worker's public key as SubjectPublicKeyInfo DER, 64 lower-case
+hex: the `key_id` of every `signature.json` the key makes, what `rpworker signer public-key`
+prints on stderr, and `worker.key_id` in the Cloud, unique across all MSPs since C5.5, so a
+public key is registered once. The Cloud accepts a key file by the verifiers' one rule, stores
+the key in the library's three-line PEM whatever layout it was sent in, and refuses a
+small-order or non-canonical point, under which a verifier would accept forgeries.
+
+**Dispatch.** The Cloud handing a queued run to its Worker: `GET /v1/jobs` (C5.6) moves the
+Worker's oldest queued runs, at most five, to `dispatched` with `dispatched_at` and one more
+`attempt`, in one locked statement, and answers them as a `restoreproof.jobs.v1` document whose
+`run_id` is the run's own id. A run not received (its bundle not arrived, C5.7) within six
+hours goes back to `queued` by the scheduler's sweep (C5.9, over `RunRepo.requeue_stale`), and
+after three attempts to `expired`.
 
 **Veeam / Graph tokens.** Access tokens (and, for Veeam, refresh tokens) for the systems
 under test. Distinct from both of the above: they let the Worker read and restore; the API

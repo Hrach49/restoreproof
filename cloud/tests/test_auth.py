@@ -9,6 +9,7 @@ session so the Worker rows the test made are the ones the dependency sees.
 
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
 import io
 
@@ -36,7 +37,11 @@ REFUSED_BODY = {"detail": "not authenticated"}
 
 
 class Lab:
-    """The app with the probe route, two Workers (one revoked) and the log."""
+    """The app with the probe route, two Workers (one revoked) and the log.
+
+    `__init__` puts the probe route on the shared `workers.router`; `fill`
+    makes the rows; `close` takes the route away. `open_lab` holds the three
+    in order so a failure in `fill` still closes."""
 
     def __init__(self, session):
         self.session = session
@@ -54,20 +59,18 @@ class Lab:
         self.app = create_app(make_settings(), log_stream=self.stream)
         self.app.dependency_overrides[get_session] = lambda: session
 
-    @classmethod
-    async def make(cls, session) -> "Lab":
-        lab = cls(session)
-        lab.msp = await MspRepo(session).create(name="a")
-        lab.token = new_token()
-        lab.worker = await WorkerRepo(session).create(
-            lab.msp.id, name="live", public_key_pem=PEM, api_token_hash=token_hash(lab.token)
+    async def fill(self) -> None:
+        session = self.session
+        self.msp = await MspRepo(session).create(name="a")
+        self.token = new_token()
+        self.worker = await WorkerRepo(session).create(
+            self.msp.id, name="live", public_key_pem=PEM, api_token_hash=token_hash(self.token)
         )
-        lab.revoked_token = new_token()
-        lab.revoked = await WorkerRepo(session).create(
-            lab.msp.id, name="revoked", public_key_pem=PEM, api_token_hash=token_hash(lab.revoked_token)
+        self.revoked_token = new_token()
+        self.revoked = await WorkerRepo(session).create(
+            self.msp.id, name="revoked", public_key_pem=PEM, api_token_hash=token_hash(self.revoked_token)
         )
-        assert await WorkerRepo(session).revoke(lab.msp.id, lab.revoked.id, NOW) == 1
-        return lab
+        assert await WorkerRepo(session).revoke(self.msp.id, self.revoked.id, NOW) == 1
 
     def close(self) -> None:
         workers.router.routes[:] = self.before
@@ -82,13 +85,22 @@ class Lab:
         return self.stream.getvalue()
 
 
-@pytest.fixture
-async def lab(session):
-    lab = await Lab.make(session)
+@contextlib.asynccontextmanager
+async def open_lab(session):
+    """The fixture's body: the probe route is on the router only between
+    `Lab()` and `close`, whatever `fill` does."""
+    lab = Lab(session)
     try:
+        await lab.fill()
         yield lab
     finally:
         lab.close()
+
+
+@pytest.fixture
+async def lab(session):
+    async with open_lab(session) as lab:
+        yield lab
 
 
 def refusals(lab: Lab) -> list[tuple[str, dict[str, str] | None]]:
@@ -207,6 +219,41 @@ async def test_the_dependency_takes_its_session_from_get_session(lab):
 
     assert response.status_code == 500
     assert response.json()["error"] == "internal"
+
+
+async def test_no_token_authenticates_nothing_whatever_the_database_holds(lab):
+    """Code review finding 2: a missing or malformed header is the empty token,
+    whose hash is looked up like any other; a Worker row registered under that
+    hash must still not be the answer."""
+    await WorkerRepo(lab.session).create(
+        lab.msp.id, name="blank", public_key_pem=PEM, api_token_hash=token_hash("")
+    )
+
+    for headers in (None, {"Authorization": "Bearer "}, {"Authorization": "Basic dXNlcjpwYXNz"}):
+        response = await lab.get(headers)
+        assert (response.status_code, response.json()) == (401, REFUSED_BODY), headers
+        assert response.headers["www-authenticate"] == "Bearer"
+
+
+# --- The probe route is the test's alone -------------------------------------------------------
+
+
+async def test_a_lab_that_fails_to_open_leaves_no_probe_route_behind(session, monkeypatch):
+    """Code review finding 7: the route is put on the shared router before the
+    rows are made; a failure making them must still take it away."""
+    before = list(workers.router.routes)
+
+    async def failing(*_args, **_kwargs):
+        raise RuntimeError("the database went away")
+
+    monkeypatch.setattr(WorkerRepo, "create", failing)
+    try:
+        with pytest.raises(RuntimeError):
+            async with open_lab(session):
+                pass  # pragma: no cover - never reached
+        assert PROBE not in [route.path for route in workers.router.routes]
+    finally:
+        workers.router.routes[:] = before
 
 
 async def test_the_probe_is_the_test_s_alone():

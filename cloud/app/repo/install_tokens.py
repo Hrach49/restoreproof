@@ -13,8 +13,26 @@ from app.repo.base import Repo
 
 
 class InstallTokenRepo(Repo):
-    async def create(self, msp_id: UUID, *, token_hash: str, expires_at: dt.datetime) -> InstallToken:
-        return await self._add(InstallToken(msp_id=msp_id, token_hash=token_hash, expires_at=expires_at))
+    async def create(
+        self,
+        msp_id: UUID,
+        *,
+        token_hash: str,
+        expires_at: dt.datetime,
+        label: str,
+        created_by: UUID | None = None,
+    ) -> InstallToken:
+        """`label` is what the admin typed; `created_by` the user, or None for
+        the CLI (C5.5). A token names no client."""
+        return await self._add(
+            InstallToken(
+                msp_id=msp_id,
+                token_hash=token_hash,
+                expires_at=expires_at,
+                label=label,
+                created_by=created_by,
+            )
+        )
 
     async def get(self, msp_id: UUID, token_id: UUID) -> InstallToken | None:
         return await self._one(

@@ -183,16 +183,26 @@ class Client(Base):
 class Worker(Base):
     __tablename__ = "worker"
     __table_args__ = (
+        # C5.5: which install token made this Worker; null for one made any other way.
+        _same_msp(("install_token_id",), "install_token", ("id",)),
         UniqueConstraint("msp_id", "id"),
         # C5.4 finds a Worker by its token's hash alone, before any MSP is known.
         UniqueConstraint("api_token_hash"),
+        # C5.5: a public key is registered once, across all MSPs. The key's id
+        # is the SHA-256 of its SubjectPublicKeyInfo DER (signature.v1.json),
+        # canonical bytes where the PEM text is not.
+        UniqueConstraint("key_id"),
+        _sha256_check("key_id"),
     )
 
     id: Mapped[uuid.UUID] = _id()
     msp_id: Mapped[uuid.UUID] = _msp_id()
     name: Mapped[str] = mapped_column(Text, nullable=False)
+    # The one serialisation of the key (C5.5): the library's three-line PEM.
     public_key_pem: Mapped[str] = mapped_column(Text, nullable=False)
+    key_id: Mapped[str] = mapped_column(Text, nullable=False)
     api_token_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    install_token_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
     version: Mapped[str | None] = mapped_column(Text)
     last_seen_at: Mapped[dt.datetime | None] = _time()
     last_error: Mapped[str | None] = mapped_column(Text)
@@ -269,8 +279,11 @@ class TestRun(Base):
             "state IN (" + ", ".join(f"'{state}'" for state in RUN_STATES) + ")", name="state"
         ),
         CheckConstraint("total_ms >= 0", name="total_ms_not_negative"),
+        CheckConstraint("attempt >= 0", name="attempt_not_negative"),
         _sha256_check("bundle_sha256"),
         Index(None, "msp_id", "client_id", "created_at"),
+        # The poll (C5.6): a Worker's oldest queued runs, one index walk.
+        Index(None, "msp_id", "worker_id", "state", "created_at"),
     )
 
     id: Mapped[uuid.UUID] = _id()
@@ -280,6 +293,10 @@ class TestRun(Base):
     plan_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     connector_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     state: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'queued'"))
+    # C5.6: the last dispatch's time, and how many times the run was handed to
+    # its Worker. "Received" is the state C5.7 sets when the bundle arrives.
+    dispatched_at: Mapped[dt.datetime | None] = _time()
+    attempt: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     restore_point_at: Mapped[dt.datetime | None] = _time()
     started_at: Mapped[dt.datetime | None] = _time()
     finished_at: Mapped[dt.datetime | None] = _time()
@@ -354,11 +371,22 @@ class AuditLog(Base):
 
 class InstallToken(Base):
     __tablename__ = "install_token"
-    # C5.4 finds a token by its hash alone, before any MSP is known.
-    __table_args__ = (UniqueConstraint("token_hash"),)
+    __table_args__ = (
+        # C5.5: who made the token; null for the CLI, as audit_log.user_id is.
+        _same_msp(("created_by",), "user", ("id",)),
+        # What worker.install_token_id points at.
+        UniqueConstraint("msp_id", "id"),
+        # C5.4 finds a token by its hash alone, before any MSP is known.
+        UniqueConstraint("token_hash"),
+    )
 
     id: Mapped[uuid.UUID] = _id()
     msp_id: Mapped[uuid.UUID] = _msp_id()
     token_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    # What the MSP admin typed when the token was made (C5.5). A token names
+    # no client: a Worker is an MSP's, and connectors bind clients later.
+    label: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[dt.datetime] = _time(nullable=False, default_now=True)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(Uuid)
     expires_at: Mapped[dt.datetime] = _time(nullable=False)
     used_at: Mapped[dt.datetime | None] = _time()

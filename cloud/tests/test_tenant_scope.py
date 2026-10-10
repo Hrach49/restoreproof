@@ -18,7 +18,10 @@ to catch, not these.
 from __future__ import annotations
 
 import ast
+import contextlib
 import re
+import shutil
+import sys
 from pathlib import Path
 
 import pytest
@@ -127,7 +130,7 @@ def test_the_patterns_refuse_a_statement_and_let_a_dict_s_update_through(line: s
 def test_the_lint_is_not_vacuous_the_repo_itself_selects():
     """If the patterns matched nothing, every file would pass: the repo's own
     statements must match them."""
-    repo_files = sorted(path for path in REPO_DIR.glob("*.py") if path.name != "__init__.py")
+    repo_files = sorted(path for path in REPO_DIR.rglob("*.py") if path.name != "__init__.py" and "__pycache__" not in path.parts)
     matched = {path.name for path in repo_files if offending_lines(path.read_text(encoding="utf-8"))}
 
     assert repo_files
@@ -166,7 +169,11 @@ def public_functions(path: Path) -> list[tuple[str | None, str, ast.FunctionDef 
 
 def all_repo_functions() -> list[tuple[str, str | None, str, ast.FunctionDef | ast.AsyncFunctionDef]]:
     found = []
-    for path in sorted(REPO_DIR.glob("*.py")):
+    # rglob: a sub-package of the repo is under the rule too (the C5.3/C5.4
+    # review's finding 5).
+    for path in sorted(REPO_DIR.rglob("*.py")):
+        if "__pycache__" in path.parts:
+            continue
         for class_name, name, node in public_functions(path):
             found.append((path.name, class_name, name, node))
     return found
@@ -210,3 +217,62 @@ def test_the_three_named_exist_and_take_no_msp_id_anywhere():
             assert "msp_id" not in names, key
 
     assert seen == WITHOUT_MSP_ID
+
+
+# --- Finding 5 of the C5.3/C5.4 review: a sub-package escapes nothing -----------------------
+
+
+@contextlib.contextmanager
+def planted_subpackage():
+    """`app/repo/sub/x.py`: a repo class whose method takes no msp_id, under a
+    sub-package. Both walks must find it; removed whatever happens."""
+    folder = REPO_DIR / "sub"
+    folder.mkdir()
+    try:
+        (folder / "__init__.py").write_text("", encoding="utf-8")
+        (folder / "x.py").write_text(
+            "from sqlalchemy import select\n"
+            "from app.models import Client\n"
+            "from app.repo.base import Repo\n\n\n"
+            "class PlantedRepo(Repo):\n"
+            "    async def leak(self, client_id):\n"
+            "        return await self._one(select(Client).where(Client.id == client_id))\n",
+            encoding="utf-8",
+        )
+        yield folder
+    finally:
+        for name in ("x.py", "__init__.py"):
+            (folder / name).unlink(missing_ok=True)
+        shutil.rmtree(folder / "__pycache__", ignore_errors=True)
+        folder.rmdir()
+
+
+def test_the_ast_walk_reaches_a_sub_package_of_the_repo():
+    with planted_subpackage():
+        found = {(file_name, class_name, name) for file_name, class_name, name, _ in all_repo_functions()}
+
+        assert ("x.py", "PlantedRepo", "leak") in found
+        without = {
+            (file_name, class_name, name)
+            for file_name, class_name, name, node in all_repo_functions()
+            if (first := first_parameter(node, in_class=class_name is not None)) is None or first.arg != "msp_id"
+        }
+        assert ("x.py", "PlantedRepo", "leak") in without
+        assert without - {("x.py", "PlantedRepo", "leak")} == WITHOUT_MSP_ID
+
+
+def test_the_isolation_test_s_module_scan_reaches_a_sub_package_of_the_repo():
+    from tests.test_repo_isolation import every_repo_method
+
+    with planted_subpackage():
+        try:
+            names = {(cls.__name__, method) for cls, method in every_repo_method()}
+        finally:
+            for module in [m for m in sys.modules if m.startswith("app.repo.sub")]:
+                del sys.modules[module]
+
+    assert ("PlantedRepo", "leak") in names
+
+
+def test_there_is_no_sub_package_under_the_repo_today():
+    assert [path for path in REPO_DIR.rglob("*.py") if path.parent != REPO_DIR] == []

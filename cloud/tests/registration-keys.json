@@ -1,0 +1,26 @@
+{
+  "description": "Public keys the Cloud's registration (C5.5, app/auth/public_keys.py) accepts or refuses beyond the key-file rule both verifiers hold (shared/testdata/signing-v1/key-files.json). Every row's `raw` is the 32-byte Ed25519 public key in hex; the file it is sent as is the library's own PEM of the 44-byte SubjectPublicKeyInfo (302a300506032b6570032100 then the key), which tests/test_public_keys.py builds. `refused` holds the fourteen encodings of the eight small-order points (the identity, the point of order 2, the two of order 4, the four of order 8) from 'Taming the many EdDSAs' (Chalkias, Garillot, Nikolaenko, 2020): eight canonical, and six non-canonical (`y` at or above 2^255 - 19, or the sign bit set where x is 0). Under any of them the library verifies a forged signature. `accepted` is RFC 8032's test 1, a published key and no secret. The list lives in the Cloud alone: the verifiers take such a file as a well-formed key, since only the registering side can vouch for a key (docs/decisions.md 2026-10-10, C5.5 and C5.6, point 2).",
+  "accepted": [
+    {
+      "name": "rfc8032-test-1",
+      "raw": "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+      "key_id": "06e3fd8fda29bb60ab59557de61edb0aecdb231134be30e75b455f8e1b792fa9"
+    }
+  ],
+  "refused": [
+    {"name": "identity", "raw": "0100000000000000000000000000000000000000000000000000000000000000", "why": "small_order"},
+    {"name": "order-2", "raw": "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f", "why": "small_order"},
+    {"name": "order-4-a", "raw": "0000000000000000000000000000000000000000000000000000000000000000", "why": "small_order"},
+    {"name": "order-4-b", "raw": "0000000000000000000000000000000000000000000000000000000000000080", "why": "small_order"},
+    {"name": "order-8-a", "raw": "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a", "why": "small_order"},
+    {"name": "order-8-b", "raw": "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa", "why": "small_order"},
+    {"name": "order-8-c", "raw": "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05", "why": "small_order"},
+    {"name": "order-8-d", "raw": "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc85", "why": "small_order"},
+    {"name": "y-equals-p", "raw": "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f", "why": "non_canonical"},
+    {"name": "y-equals-p-sign-set", "raw": "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff", "why": "non_canonical"},
+    {"name": "y-equals-p-plus-1", "raw": "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f", "why": "non_canonical"},
+    {"name": "y-equals-p-plus-1-sign-set", "raw": "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff", "why": "non_canonical"},
+    {"name": "order-2-sign-set", "raw": "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff", "why": "small_order"},
+    {"name": "identity-sign-set", "raw": "0100000000000000000000000000000000000000000000000000000000000080", "why": "small_order"}
+  ]
+}

@@ -24,6 +24,10 @@ class Repo:
     async def _all(self, statement: Executable) -> list:
         return list(await self.session.scalars(statement))
 
+    async def _rows(self, statement: Executable) -> list:
+        """Every row of a select of several entities, as tuples."""
+        return list((await self.session.execute(statement)).all())
+
     async def _touched(self, statement: Executable) -> int:
         """Run an update or delete and answer how many rows it reached."""
         result = await self.session.execute(statement)

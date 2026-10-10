@@ -45,7 +45,7 @@ class Lab:
         lab.client = await ClientRepo(session).create(lab.msp.id, name="client", tenant_id=uuid.uuid4())
         lab.other_client = await ClientRepo(session).create(lab.other_msp.id, name="other", tenant_id=uuid.uuid4())
         lab.worker = await WorkerRepo(session).create(
-            lab.msp.id, name="worker", public_key_pem=PEM, api_token_hash="a" * 64
+            lab.msp.id, "worker", public_key_pem=PEM, key_id="a" * 64, api_token_hash="a" * 64
         )
         lab.connectors = ConnectorRepo(session)
         lab.audit = AuditRepo(session)
@@ -184,7 +184,7 @@ async def test_a_worker_that_is_not_the_msp_s_is_no_worker(session):
     leave the session failed)."""
     lab = await Lab.make(session)
     other_worker = await WorkerRepo(session).create(
-        lab.other_msp.id, name="other", public_key_pem=PEM, api_token_hash="c" * 64
+        lab.other_msp.id, "other", public_key_pem=PEM, key_id="c" * 64, api_token_hash="c" * 64
     )
 
     for worker_id in (other_worker.id, uuid.uuid4()):
@@ -354,7 +354,7 @@ async def test_list_filters_by_client_and_by_worker(session):
     lab = await Lab.make(session)
     second_client = await ClientRepo(session).create(lab.msp.id, name="second", tenant_id=uuid.uuid4())
     second_worker = await WorkerRepo(session).create(
-        lab.msp.id, name="second", public_key_pem=PEM, api_token_hash="b" * 64
+        lab.msp.id, "second", public_key_pem=PEM, key_id="b" * 64, api_token_hash="b" * 64
     )
     one = await lab.create()
     two = await lab.create(client_id=second_client.id, config_json=profile_for(second_client.tenant_id))

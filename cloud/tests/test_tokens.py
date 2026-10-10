@@ -26,6 +26,7 @@ from app.auth.tokens import (
 from app.models import InstallToken
 from app.repo.install_tokens import InstallTokenRepo
 from app.repo.msps import MspRepo
+from app.repo.users import UserRepo
 
 UTC = dt.timezone.utc
 NOW = dt.datetime(2026, 10, 10, 12, 0, 0, tzinfo=UTC)
@@ -73,20 +74,21 @@ async def msp(session):
 
 
 async def test_an_install_token_is_stored_as_its_hash_with_its_expiry(session, msp):
-    token, row = await issue_install_token(session, msp.id, NOW)
+    token, row = await issue_install_token(session, msp.id, NOW, label="lab")
 
     assert TOKEN_SHAPE.fullmatch(token)
     assert isinstance(row, InstallToken)
     assert (row.msp_id, row.token_hash, row.expires_at, row.used_at) == (
         msp.id, token_hash(token), NOW + SEVEN_DAYS, None
     )
+    assert (row.label, row.created_by) == ("lab", None)
     # The token itself is nowhere in the row.
     assert token not in {str(value) for value in vars(row).values()}
     assert (await InstallTokenRepo(session).get(msp.id, row.id)).token_hash == token_hash(token)
 
 
 async def test_a_token_is_accepted_once_and_the_row_says_when(session, msp):
-    token, row = await issue_install_token(session, msp.id, NOW)
+    token, row = await issue_install_token(session, msp.id, NOW, label="lab")
     when = NOW + dt.timedelta(days=3)
 
     accepted = await accept_install_token(session, token, when)
@@ -102,7 +104,7 @@ async def test_a_token_is_accepted_once_and_the_row_says_when(session, msp):
 
 
 async def test_expiry_is_at_exactly_seven_days(session, msp):
-    token, row = await issue_install_token(session, msp.id, NOW)
+    token, row = await issue_install_token(session, msp.id, NOW, label="lab")
 
     assert await accept_install_token(session, token, NOW + SEVEN_DAYS) is None
     await session.refresh(row)
@@ -112,14 +114,14 @@ async def test_expiry_is_at_exactly_seven_days(session, msp):
 
 
 async def test_a_token_already_expired_when_asked_long_after_is_refused(session, msp):
-    token, _ = await issue_install_token(session, msp.id, NOW)
+    token, _ = await issue_install_token(session, msp.id, NOW, label="lab")
 
     assert await accept_install_token(session, token, NOW + dt.timedelta(days=30)) is None
 
 
 @pytest.mark.parametrize("token", ["", "not-a-token", "A" * 43, "Bearer x"])
 async def test_an_unknown_token_is_refused(session, msp, token):
-    await issue_install_token(session, msp.id, NOW)
+    await issue_install_token(session, msp.id, NOW, label="lab")
 
     assert await accept_install_token(session, token, NOW) is None
 
@@ -127,8 +129,8 @@ async def test_an_unknown_token_is_refused(session, msp, token):
 async def test_two_msps_tokens_are_each_their_own(session):
     a = await MspRepo(session).create(name="a")
     b = await MspRepo(session).create(name="b")
-    token_a, row_a = await issue_install_token(session, a.id, NOW)
-    token_b, row_b = await issue_install_token(session, b.id, NOW)
+    token_a, row_a = await issue_install_token(session, a.id, NOW, label="a")
+    token_b, row_b = await issue_install_token(session, b.id, NOW, label="b")
 
     accepted = await accept_install_token(session, token_b, NOW)
 
@@ -144,7 +146,17 @@ async def test_issuing_and_accepting_never_commit(session, msp, monkeypatch):
         committed.append(True)
 
     monkeypatch.setattr(session, "commit", commit)
-    token, _ = await issue_install_token(session, msp.id, NOW)
+    token, _ = await issue_install_token(session, msp.id, NOW, label="lab")
     await accept_install_token(session, token, NOW)
 
     assert committed == []
+
+
+async def test_an_install_token_names_its_maker_when_the_caller_gives_one(session, msp):
+    user = await UserRepo(session).create(msp.id, email="admin@example.test", password_hash="x", role="admin")
+
+    _token, row = await issue_install_token(session, msp.id, NOW, label="the Veeam VM", created_by=user.id)
+    await session.refresh(row)
+
+    assert (row.label, row.created_by) == ("the Veeam VM", user.id)
+    assert row.created_at.utcoffset() == dt.timedelta(0)

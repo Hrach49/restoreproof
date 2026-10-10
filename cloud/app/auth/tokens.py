@@ -36,12 +36,22 @@ def token_hash(token: str) -> str:
 
 
 async def issue_install_token(
-    session: AsyncSession, msp_id: UUID, now: dt.datetime
+    session: AsyncSession,
+    msp_id: UUID,
+    now: dt.datetime,
+    *,
+    label: str,
+    created_by: UUID | None = None,
 ) -> tuple[str, InstallToken]:
-    """A new install token for the MSP: the token, to show once, and its row."""
+    """A new install token for the MSP: the token, to show once, and its row.
+    `label` is what the admin typed, `created_by` the user or None for the CLI."""
     token = new_token()
     row = await InstallTokenRepo(session).create(
-        msp_id, token_hash=token_hash(token), expires_at=now + INSTALL_TOKEN_LIFETIME
+        msp_id,
+        token_hash=token_hash(token),
+        expires_at=now + INSTALL_TOKEN_LIFETIME,
+        label=label,
+        created_by=created_by,
     )
     return token, row
 

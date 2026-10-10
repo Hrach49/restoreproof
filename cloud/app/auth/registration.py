@@ -25,6 +25,7 @@ from fastapi import HTTPException
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth.dependency import not_authenticated
 from app.auth.public_keys import RegisteredKey, registered_key
 from app.auth.tokens import accept_install_token, new_token, token_hash
 from app.models import Worker
@@ -40,12 +41,6 @@ class Registration:
     worker: Worker
     api_token: str  # shown once, stored nowhere
     key: RegisteredKey
-
-
-def not_authenticated() -> HTTPException:
-    return HTTPException(
-        status_code=401, detail="not authenticated", headers={"WWW-Authenticate": "Bearer"}
-    )
 
 
 def key_refused() -> HTTPException:

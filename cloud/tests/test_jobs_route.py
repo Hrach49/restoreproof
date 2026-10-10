@@ -19,9 +19,10 @@ import uuid
 import asyncpg
 import httpx
 import pytest
-from sqlalchemy import text
+from sqlalchemy import event, text
 from sqlalchemy.ext.asyncio import create_async_engine
 
+from app.auth.dependency import current_worker
 from app.auth.tokens import new_token, token_hash
 from app.db import get_session, make_session_factory
 from app.main import create_app
@@ -29,7 +30,8 @@ from app.repo.clients import ClientRepo
 from app.repo.connectors import ConnectorRepo
 from app.repo.msps import MspRepo
 from app.repo.plans import PlanRepo
-from app.repo.runs import RunRepo
+from app.repo.runs import DISPATCH_LIMIT, RunRepo
+from app.routers.jobs import JobsDocument
 from app.repo.workers import WorkerRepo
 from tests.conftest import asyncpg_dsn, make_settings, session_override
 from tests.test_jobs_schema import VALIDATOR
@@ -329,11 +331,60 @@ async def test_two_polls_at_once_share_no_run(own_database):
 
     assert [response.status_code for response in answers] == [200, 200]
     taken = [[job["run_id"] for job in response.json()["jobs"]] for response in answers]
-    assert sorted(len(jobs) for jobs in taken) == [1, 5]
+    # Two backends locking row by row may split 5/1, 4/2 or 3/3 (the review's
+    # finding 4): what holds is disjoint, every run once, none over five.
     assert not set(taken[0]) & set(taken[1])
+    assert sum(len(jobs) for jobs in taken) == 6
+    assert max(len(jobs) for jobs in taken) <= 5
     connection = await asyncpg.connect(asyncpg_dsn(own_database), timeout=5)
     try:
         assert await connection.fetchval("SELECT count(*) FROM test_run WHERE state = 'dispatched'") == 6
         assert await connection.fetchval("SELECT count(*) FROM test_run WHERE attempt = 1") == 6
     finally:
         await connection.close()
+
+
+# --- The route's statements and its inputs (the review's findings 5 and 6) -----------------
+
+
+async def test_a_poll_is_three_statements_busy_and_two_idle(lab, test_engine):
+    """current_worker's lookup, the dispatch, and one joined select for the
+    runs' plan, connector and client; nothing per run."""
+    for _ in range(5):
+        await lab.run()
+    counted: list[str] = []
+
+    def record(_conn, _cursor, statement, _params, _context, _executemany):
+        counted.append(statement.strip().split()[0].upper())
+
+    event.listen(test_engine.sync_engine, "before_cursor_execute", record)
+    try:
+        assert len(await lab.poll()) == 5
+        busy = [s for s in counted if s in ("SELECT", "UPDATE", "WITH")]
+        counted.clear()
+        assert await lab.poll() == []
+        idle = [s for s in counted if s in ("SELECT", "UPDATE", "WITH")]
+    finally:
+        event.remove(test_engine.sync_engine, "before_cursor_execute", record)
+
+    assert busy == ["SELECT", "WITH", "SELECT"]
+    assert idle == ["SELECT", "WITH"]
+
+
+async def test_the_route_takes_the_msp_from_the_worker_it_was_given(lab):
+    """The review's finding 6: not from request.state, which only
+    current_worker sets; an override of the dependency still works."""
+    run_id = await lab.run()
+    worker = await WorkerRepo(lab.session).get(lab.msp_id, lab.worker_id)
+    lab.app.dependency_overrides[current_worker] = lambda: worker
+
+    response = await lab.get(None)
+
+    assert response.status_code == 200
+    assert [job["run_id"] for job in response.json()["jobs"]] == [str(run_id)]
+
+
+def test_the_document_s_limit_is_the_repo_s_constant():
+    (length,) = [m.max_length for m in JobsDocument.model_fields["jobs"].metadata if hasattr(m, "max_length")]
+
+    assert length == DISPATCH_LIMIT == 5

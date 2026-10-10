@@ -64,8 +64,16 @@ def test_the_document_holds_the_two_routes_and_not_healthz():
     assert set(document["paths"]) == {"/v1/workers/register", "/v1/jobs"}
     assert "/healthz" not in document["paths"]
     register = document["paths"]["/v1/workers/register"]["post"]
-    assert set(register["responses"]) == {"201", "422"}
-    assert document["paths"]["/v1/jobs"]["get"]["responses"]["200"]
+    # The review's finding 3: every refusal the routes make is in the contract.
+    assert set(register["responses"]) == {"201", "400", "401", "409", "422"}
+    jobs = document["paths"]["/v1/jobs"]["get"]
+    assert set(jobs["responses"]) == {"200", "401"}
+    error = {"$ref": "#/components/schemas/ErrorBody"}
+    for status in ("400", "401", "409"):
+        assert register["responses"][status]["content"]["application/json"]["schema"] == error
+    assert jobs["responses"]["401"]["content"]["application/json"]["schema"] == error
+    assert jobs["responses"]["401"]["headers"]["WWW-Authenticate"]
+    assert document["components"]["schemas"]["ErrorBody"]["required"] == ["detail"]
     body = document["components"]["schemas"]["RegisterBody"]
     assert body["additionalProperties"] is False
     assert sorted(body["required"]) == ["install_token", "public_key_pem", "version", "worker_name"]

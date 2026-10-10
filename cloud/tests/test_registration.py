@@ -451,3 +451,64 @@ async def test_another_refusal_of_the_database_is_not_dressed_as_a_409(lab, monk
     assert response.json()["error"] == "internal"
     assert (await InstallTokenRepo(lab.session).get(lab.msp_id, row_id)).used_at is None
     assert len(await WorkerRepo(lab.session).list(lab.msp_id)) == 1
+
+
+async def test_the_worker_row_is_committed_before_the_201_leaves(own_database):
+    """The review's finding 1: the Worker's immediate first poll with the new
+    token must find the row, so the commit runs before the response starts."""
+    (token,) = await issue_committed(own_database, dt.datetime.now(UTC), 1)
+    application, engine = await racing_app(own_database)
+    reader = await asyncpg.connect(asyncpg_dsn(own_database), timeout=5)
+    seen = {}
+
+    async def observing(scope, receive, send):
+        async def observe(message):
+            if message["type"] == "http.response.start":
+                seen["workers"] = await reader.fetchval("SELECT count(*) FROM worker")
+                seen["used"] = await reader.fetchval("SELECT count(*) FROM install_token WHERE used_at IS NOT NULL")
+            await send(message)
+
+        await application(scope, receive, observe)
+
+    try:
+        transport = httpx.ASGITransport(app=observing)
+        async with httpx.AsyncClient(transport=transport, base_url="http://cloud.test") as client:
+            response = await client.post(PATH, json=body(install_token=token))
+    finally:
+        await reader.close()
+        await engine.dispose()
+
+    assert response.status_code == 201
+    assert seen == {"workers": 1, "used": 1}
+
+
+def test_the_401_is_the_dependency_s_own():
+    """The review's finding 7: one helper builds the 401 for both."""
+    from app.auth import dependency, registration
+
+    assert registration.not_authenticated is dependency.not_authenticated
+    answer = dependency.not_authenticated()
+    assert (answer.status_code, answer.detail, answer.headers) == (401, "not authenticated", {"WWW-Authenticate": "Bearer"})
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "kind"),
+    [
+        ("worker_name", "n" * 129, "string_too_long"),
+        ("worker_name", "a\x01b", "string_pattern_mismatch"),
+        ("version", "v" * 65, "string_too_long"),
+        ("version", "\u00e9", "string_pattern_mismatch"),
+    ],
+)
+async def test_a_length_fault_is_reported_as_a_length_fault(lab, field, value, kind):
+    """The review's finding 10: the pattern no longer repeats the length, so a
+    string too long is `string_too_long`, not a pattern mismatch."""
+    from app.routers.workers import RegisterBody
+
+    response = await lab.post(body(install_token="x", **{field: value}))
+
+    assert response.status_code == 422
+    assert [error["type"] for error in response.json()["detail"]] == [kind]
+    patterns = {name: [m.pattern for m in info.metadata if hasattr(m, "pattern")] for name, info in RegisterBody.model_fields.items()}
+    assert patterns["worker_name"] == ["^[^\\x00-\\x1f\\x7f]+$"]
+    assert patterns["version"] == ["^[ -~]+$"]

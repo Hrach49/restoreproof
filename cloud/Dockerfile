@@ -14,13 +14,17 @@ WORKDIR /srv
 
 # Built with the repository as context (cloud/docker-compose.yml, .dockerignore
 # at the root): the app reads shared/schemas/ by path, so the schemas go in
-# beside app/, where app/schemas.py finds them by walking up.
+# beside app/, where app/schemas.py finds them by walking up; C5.7 reads the
+# verifier (shared/tools/verify_bundle.py) and the TSA root (shared/tsa) the
+# same way.
 # The dependencies first, so a change to the code doesn't install them again.
 COPY cloud/pyproject.toml cloud/uv.lock ./
 RUN uv sync --locked --no-dev
 
 COPY cloud/alembic.ini ./
 COPY shared/schemas ./shared/schemas
+COPY shared/tools ./shared/tools
+COPY shared/tsa ./shared/tsa
 COPY cloud/app ./app
 
 RUN useradd --system --no-create-home --uid 10001 restoreproof

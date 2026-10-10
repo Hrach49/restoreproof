@@ -16,6 +16,7 @@ import app as package
 from app import health
 from app.db import make_engine, make_session_factory
 from app.logging import RequestLogMiddleware, configure_logging
+from app.results import tsa_ca_pem
 from app.routers import admin, heartbeat, jobs, results, ui, workers
 from app.settings import Settings, load_settings
 from app.storage import Storage
@@ -58,6 +59,9 @@ def create_app(settings: Settings | None = None, *, log_stream: TextIO | None = 
     application.state.engine = make_engine(settings)
     application.state.session_factory = make_session_factory(application.state.engine)
     application.state.storage = Storage.from_settings(settings)
+    # C5.7: the one root a bundle's timestamp is held to, from the image; a
+    # test hands the route the shared vectors' test root here.
+    application.state.tsa_ca_pem = tsa_ca_pem()
 
     application.add_middleware(RequestLogMiddleware)
     application.include_router(health.router)

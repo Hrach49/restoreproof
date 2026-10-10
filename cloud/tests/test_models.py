@@ -121,6 +121,7 @@ def an_item(msp, run, **changes) -> TestItem:
     values = {
         "msp_id": msp.id,
         "run_id": run.id,
+        "position": 0,
         "type": "mail",
         "name": "a subject",
         "expected_kind": "manifest",
@@ -198,9 +199,9 @@ def test_every_time_is_a_timestamp_with_time_zone_that_refuses_a_naive_value():
     times = [column for column in columns if isinstance(column.type, UtcDateTime)]
 
     assert not [column for column in columns if isinstance(column.type, DateTime)]
-    assert len(times) == 13
+    assert len(times) == 14
     assert all(column.type.impl.timezone is True for column in times)
-    assert {column.name for column in times} >= {"created_at", "last_seen_at", "expires_at", "at"}
+    assert {column.name for column in times} >= {"created_at", "last_seen_at", "expires_at", "at", "tsa_time"}
 
 
 def test_every_table_another_points_at_is_unique_on_msp_id_and_id():
@@ -594,9 +595,7 @@ async def test_nothing_is_deleted_by_deleting_something_else(session):
 # --- test_run -----------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "state", ["queued", "dispatched", "received", "pass", "fail", "error", "expired"]
-)
+@pytest.mark.parametrize("state", ["queued", "dispatched", "pass", "fail", "error", "expired"])
 async def test_each_state_of_the_list_is_taken(session, state):
     world = await World.make(session)
 
@@ -605,7 +604,10 @@ async def test_each_state_of_the_list_is_taken(session, state):
     assert run.state == state
 
 
-@pytest.mark.parametrize("state", ["", "passed", "Pass", "PASS", "running", "pass ", "error\n"])
+# `received` (C5.7): the bundle's status is known in the request that receives
+# it, so a run goes from dispatched to pass, fail or error and no row is ever
+# received; the word is not in the list.
+@pytest.mark.parametrize("state", ["", "passed", "Pass", "PASS", "running", "pass ", "error\n", "received"])
 async def test_a_state_outside_the_list_is_refused(session, state):
     world = await World.make(session)
 
@@ -651,6 +653,7 @@ async def test_a_run_s_later_columns(session):
             bundle_sha256=SHA,
             signature_ok=True,
             tsa_ok=False,
+            tsa_time=started + dt.timedelta(minutes=5),
             cleanup_ok=True,
         ),
     )
@@ -662,6 +665,17 @@ async def test_a_run_s_later_columns(session):
     assert run.started_at.hour == 2
     assert (run.signature_ok, run.tsa_ok, run.cleanup_ok) == (True, False, True)
     assert run.total_ms == 240_000
+    # C5.7: the token's own time, beside whether it verified.
+    assert run.tsa_time == started + dt.timedelta(minutes=5)
+    assert run.tsa_time.utcoffset() == dt.timedelta(0)
+
+
+async def test_a_run_s_tsa_time_is_null_until_a_token_verified(session):
+    world = await World.make(session)
+
+    await session.refresh(world.run)
+
+    assert (world.run.tsa_ok, world.run.tsa_time) == (None, None)
 
 
 async def test_a_time_without_a_zone_is_refused_before_the_driver_sees_it(session):
@@ -781,6 +795,35 @@ async def test_an_item_as_a_result_gives_it(session):
     # Not known is null, never false.
     assert (unchecked.found, unchecked.match, unchecked.ms) == (None, None, None)
     assert (unchecked.expected_sha256, unchecked.found_sha256) == (None, None)
+
+
+async def test_an_item_has_its_position_in_the_result(session):
+    """C5.7: the result's `index`, so the rows join to the stored result and
+    to items.csv; no unique, since the schema can't hold `index` to its
+    position and the Cloud files what the signed result says."""
+    world = await World.make(session)
+
+    first = await add(session, an_item(world.msp, world.run, position=0))
+    again = await add(session, an_item(world.msp, world.run, position=0, name="another"))
+    last = await add(session, an_item(world.msp, world.run, position=2_147_483_647))
+
+    assert (first.position, again.position, last.position) == (0, 0, 2_147_483_647)
+
+
+async def test_an_item_without_a_position_is_refused(session):
+    world = await World.make(session)
+
+    with pytest.raises(IntegrityError) as raised:
+        async with session.begin_nested():
+            session.add(an_item(world.msp, world.run, position=None))
+            await session.flush()
+    assert '"position"' in str(raised.value.orig) and "not-null" in str(raised.value.orig)
+
+
+async def test_a_negative_position_is_refused(session):
+    world = await World.make(session)
+
+    await refused(session, an_item(world.msp, world.run, position=-1), "ck_test_item_position_not_negative")
 
 
 @pytest.mark.parametrize("column", ["expected_sha256", "found_sha256"])

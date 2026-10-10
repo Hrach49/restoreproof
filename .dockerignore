@@ -1,5 +1,5 @@
 # The Cloud's image is built with the repository as its context
-# (cloud/docker-compose.yml): only these five paths go in. No evidence file,
+# (cloud/docker-compose.yml): only these seven paths go in. No evidence file,
 # fixture, run folder or .env can reach the image.
 *
 !cloud/pyproject.toml
@@ -7,4 +7,6 @@
 !cloud/alembic.ini
 !cloud/app
 !shared/schemas
+!shared/tools
+!shared/tsa
 cloud/app/**/__pycache__

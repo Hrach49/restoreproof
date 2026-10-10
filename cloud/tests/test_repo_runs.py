@@ -20,7 +20,7 @@ from app.repo.clients import ClientRepo
 from app.repo.connectors import ConnectorRepo
 from app.repo.msps import MspRepo
 from app.repo.plans import PlanRepo
-from app.repo.runs import DISPATCH_LIMIT, DISPATCH_TIMEOUT, MAX_ATTEMPTS, RunRepo
+from app.repo.runs import DISPATCH_LIMIT, DISPATCH_TIMEOUT, MAX_ATTEMPTS, ReceivedRun, RunRepo
 from app.repo.workers import WorkerRepo
 from tests.test_repo_connectors import profile_for
 
@@ -160,7 +160,7 @@ async def test_another_worker_s_runs_and_another_msp_s_are_not_taken(session):
         assert (await a.fresh(row)).state == "queued"
 
 
-@pytest.mark.parametrize("state", ["dispatched", "received", "pass", "fail", "error", "expired"])
+@pytest.mark.parametrize("state", ["dispatched", "pass", "fail", "error", "expired"])
 async def test_a_run_in_any_other_state_is_never_dispatched(session, state):
     q = await Queue.make(session)
     row = await q.run(created_at=NOW, state=state)
@@ -245,12 +245,151 @@ async def test_the_sweep_leaves_the_other_states_and_the_other_msp_alone(session
     a = await Queue.make(session, "a")
     b = await Queue.make(session, "b")
     queued = await a.run(created_at=NOW)
-    received = await a.run(created_at=NOW, state="received")
+    passed = await a.run(created_at=NOW, state="pass")
     (theirs,) = await b.queued(1)
     await b.runs.dispatch(b.msp.id, b.worker.id, NOW)
 
     assert await a.runs.requeue_stale(a.msp.id, NOW + 2 * SIX_HOURS) == (0, 0)
     assert (await a.fresh(queued)).state == "queued"
-    assert (await a.fresh(received)).state == "received"
+    assert (await a.fresh(passed)).state == "pass"
     assert (await a.fresh(theirs)).state == "dispatched"
     assert await b.runs.requeue_stale(b.msp.id, NOW + 2 * SIX_HOURS) == (1, 0)
+
+
+# --- receive (C5.7) ---------------------------------------------------------------------
+
+
+def received(**changes) -> ReceivedRun:
+    """A bundle's columns as C5.7 maps them (docs/decisions.md 2026-10-10, C5.7, point 11)."""
+    values = dict(
+        state="pass",
+        error_code=None,
+        error_message=None,
+        started_at=NOW,
+        finished_at=NOW + dt.timedelta(minutes=4),
+        total_ms=240_000,
+        restore_point_at=NOW - dt.timedelta(hours=14),
+        bundle_key="msp/x/runs/y/",
+        bundle_sha256="ab" * 32,
+        tsa_ok=True,
+        tsa_time=NOW + dt.timedelta(minutes=5),
+        cleanup_ok=True,
+    )
+    return ReceivedRun(**{**values, **changes})
+
+
+async def dispatched_run(q: Queue, *, state: str = "dispatched", attempt: int = 1, other: bool = False):
+    """A run the Worker was handed `attempt` times, now in `state`."""
+    row = await q.run(created_at=NOW, other=other)
+    await q.session.execute(
+        text("UPDATE test_run SET state = :state, dispatched_at = :at, attempt = :attempt WHERE id = :id"),
+        {"state": state, "at": NOW, "attempt": attempt, "id": row.id},
+    )
+    return await q.fresh(row)
+
+
+@pytest.mark.parametrize("state", ["dispatched", "queued", "expired"])
+async def test_a_run_that_was_handed_out_takes_its_bundle_whatever_the_sweep_did_since(session, state):
+    """dispatched; queued again by the sweep and not yet polled; expired after
+    three attempts (the W4.8 case: a late `error interrupted`)."""
+    q = await Queue.make(session)
+    attempt = 3 if state == "expired" else 1
+    row = await dispatched_run(q, state=state, attempt=attempt)
+    update = received(state="error", error_code="interrupted", error_message="the run was interrupted")
+
+    touched = await q.runs.receive(q.msp.id, row.id, worker_id=q.worker.id, update=update)
+
+    assert touched == 1
+    row = await q.fresh(row)
+    assert (row.state, row.error_code, row.error_message) == ("error", "interrupted", "the run was interrupted")
+    # The dispatch's own columns are kept.
+    assert (row.dispatched_at, row.attempt) == (NOW, attempt)
+
+
+async def test_a_bundle_s_columns_are_written_as_given_and_signature_ok_is_true(session):
+    q = await Queue.make(session)
+    row = await dispatched_run(q)
+    update = received()
+
+    assert await q.runs.receive(q.msp.id, row.id, worker_id=q.worker.id, update=update) == 1
+
+    row = await q.fresh(row)
+    for column in ReceivedRun.__dataclass_fields__:
+        assert getattr(row, column) == getattr(update, column), column
+    assert row.signature_ok is True
+
+
+async def test_a_run_never_handed_out_takes_no_bundle(session):
+    q = await Queue.make(session)
+    row = await q.run(created_at=NOW)
+    assert (row.state, row.dispatched_at, row.attempt) == ("queued", None, 0)
+
+    assert await q.runs.receive(q.msp.id, row.id, worker_id=q.worker.id, update=received()) == 0
+
+    row = await q.fresh(row)
+    assert (row.state, row.bundle_sha256, row.signature_ok) == ("queued", None, None)
+
+
+@pytest.mark.parametrize("state", ["pass", "fail", "error"])
+async def test_a_run_that_holds_a_bundle_takes_no_second(session, state):
+    q = await Queue.make(session)
+    row = await dispatched_run(q)
+    first = received(state=state, error_code="internal" if state == "error" else None)
+    assert await q.runs.receive(q.msp.id, row.id, worker_id=q.worker.id, update=first) == 1
+
+    assert await q.runs.receive(q.msp.id, row.id, worker_id=q.worker.id, update=received(bundle_sha256="cd" * 32)) == 0
+
+    row = await q.fresh(row)
+    assert (row.state, row.bundle_sha256) == (state, "ab" * 32)
+
+
+async def test_another_worker_s_run_another_msp_s_and_an_absent_one_take_no_bundle(session):
+    q = await Queue.make(session)
+    b = await Queue.make(session, name="b")
+    mine = await dispatched_run(q)
+    others = await dispatched_run(q, other=True)
+    theirs = await dispatched_run(b)
+
+    assert await q.runs.receive(q.msp.id, others.id, worker_id=q.worker.id, update=received()) == 0
+    assert await q.runs.receive(q.msp.id, theirs.id, worker_id=b.worker.id, update=received()) == 0
+    assert await q.runs.receive(q.msp.id, uuid.uuid4(), worker_id=q.worker.id, update=received()) == 0
+    assert await q.runs.receive(q.msp.id, mine.id, worker_id=q.worker.id, update=received()) == 1
+
+    for row in (others, theirs):
+        row = await q.fresh(row)
+        assert (row.state, row.bundle_sha256) == ("dispatched", None)
+
+
+async def test_a_get_answers_the_row_as_the_database_has_it_not_the_session_s_stale_copy(session):
+    """C5.7 point 11: after an UPDATE that touched no row the route reads the
+    run again and must see what another transaction left, not the identity
+    map's copy."""
+    q = await Queue.make(session)
+    row = await dispatched_run(q)
+    first = await q.runs.get(q.msp.id, row.id)
+    assert first.state == "dispatched"
+    await session.execute(
+        text("UPDATE test_run SET state = 'pass', bundle_sha256 = :sha WHERE id = :id"), {"sha": "ef" * 32, "id": row.id}
+    )
+
+    again = await q.runs.get(q.msp.id, row.id)
+
+    assert again is first  # the one instance...
+    assert (again.state, again.bundle_sha256) == ("pass", "ef" * 32)  # ...with the database's values
+
+
+async def test_receive_is_one_update(session, test_engine):
+    q = await Queue.make(session)
+    row = await dispatched_run(q)
+    counted: list[str] = []
+
+    def record(_conn, _cursor, statement, _params, _context, _executemany):
+        counted.append(statement.strip().split()[0].upper())
+
+    event.listen(test_engine.sync_engine, "before_cursor_execute", record)
+    try:
+        assert await q.runs.receive(q.msp.id, row.id, worker_id=q.worker.id, update=received()) == 1
+    finally:
+        event.remove(test_engine.sync_engine, "before_cursor_execute", record)
+
+    assert counted == ["UPDATE"]

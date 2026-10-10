@@ -279,8 +279,11 @@ class TestRun(Base):
             "state IN (" + ", ".join(f"'{state}'" for state in RUN_STATES) + ")", name="state"
         ),
         CheckConstraint("total_ms >= 0", name="total_ms_not_negative"),
+        CheckConstraint("attempt >= 0", name="attempt_not_negative"),
         _sha256_check("bundle_sha256"),
         Index(None, "msp_id", "client_id", "created_at"),
+        # The poll (C5.6): a Worker's oldest queued runs, one index walk.
+        Index(None, "msp_id", "worker_id", "state", "created_at"),
     )
 
     id: Mapped[uuid.UUID] = _id()
@@ -290,6 +293,10 @@ class TestRun(Base):
     plan_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     connector_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     state: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'queued'"))
+    # C5.6: the last dispatch's time, and how many times the run was handed to
+    # its Worker. "Received" is the state C5.7 sets when the bundle arrives.
+    dispatched_at: Mapped[dt.datetime | None] = _time()
+    attempt: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     restore_point_at: Mapped[dt.datetime | None] = _time()
     started_at: Mapped[dt.datetime | None] = _time()
     finished_at: Mapped[dt.datetime | None] = _time()

@@ -178,7 +178,11 @@ async def test_every_constraint_and_index_has_the_convention_s_name(migrated_dat
     assert constraints
     assert all(name.startswith(("pk_", "fk_", "uq_", "ck_")) for name in constraints)
     assert all(name.startswith(("pk_", "uq_", "ix_")) for name in indexes)
-    assert {"ix_test_run_msp_id_client_id_created_at", "ix_test_item_msp_id_run_id"} <= set(indexes)
+    assert {
+        "ix_test_run_msp_id_client_id_created_at",
+        "ix_test_run_msp_id_worker_id_state_created_at",
+        "ix_test_item_msp_id_run_id",
+    } <= set(indexes)
 
 
 async def test_the_command_line_migrates_from_database_url_alone(empty_database):

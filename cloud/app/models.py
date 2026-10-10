@@ -207,6 +207,8 @@ class Connector(Base):
         UniqueConstraint("msp_id", "id"),
         # What test_plan's key points at: a plan is on its own client's connector.
         UniqueConstraint("msp_id", "id", "client_id"),
+        # What test_run's key points at: a run's Worker is its connector's.
+        UniqueConstraint("msp_id", "id", "worker_id"),
         # C5.13: one connector per Worker and client.
         UniqueConstraint("worker_id", "client_id"),
         CheckConstraint(f"type ~ '{CONNECTOR_TYPE_RULE}'", name="type_name"),
@@ -231,8 +233,9 @@ class TestPlan(Base):
         _same_msp(("client_id",), "client", ("id",)),
         _same_msp(("connector_id", "client_id"), "connector", ("id", "client_id")),
         UniqueConstraint("msp_id", "id"),
-        # What test_run's key points at: a run is filed under its plan's client.
-        UniqueConstraint("msp_id", "id", "client_id"),
+        # What test_run's key points at: a run is filed under its plan's client
+        # and on its plan's connector.
+        UniqueConstraint("msp_id", "id", "connector_id", "client_id"),
         # The Worker's job rule (W4.8 J3): 0 to 100 each, not all 0.
         CheckConstraint("sample_mail BETWEEN 0 AND 100", name="sample_mail_range"),
         CheckConstraint("sample_sp BETWEEN 0 AND 100", name="sample_sp_range"),
@@ -257,7 +260,10 @@ class TestRun(Base):
     __table_args__ = (
         _same_msp(("client_id",), "client", ("id",)),
         _same_msp(("worker_id",), "worker", ("id",)),
-        _same_msp(("plan_id", "client_id"), "test_plan", ("id", "client_id")),
+        # A run's connector is its plan's, and its Worker is that connector's:
+        # it can only name its plan's connector's Worker (C5.3, finding 3).
+        _same_msp(("plan_id", "connector_id", "client_id"), "test_plan", ("id", "connector_id", "client_id")),
+        _same_msp(("connector_id", "worker_id"), "connector", ("id", "worker_id")),
         UniqueConstraint("msp_id", "id"),
         CheckConstraint(
             "state IN (" + ", ".join(f"'{state}'" for state in RUN_STATES) + ")", name="state"
@@ -272,6 +278,7 @@ class TestRun(Base):
     client_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     worker_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     plan_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    connector_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     state: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'queued'"))
     restore_point_at: Mapped[dt.datetime | None] = _time()
     started_at: Mapped[dt.datetime | None] = _time()

@@ -1951,7 +1951,10 @@ as long as every pass names them, not at every pass. While another flush holds t
 ### The jobs file
 
 The job source is a file, `jobs_file` in `config.json`, until W5.1 puts `GET
-<cloud_url>/v1/jobs` in its place. Its shape is the Worker's proposal for the Cloud's answer.
+<cloud_url>/v1/jobs` in its place. Its shape is the Cloud's answer as C5.6 built it: the Cloud
+sends the run's own id as `run_id` (a UUID, so a folder name) and the client's id as
+`client_id`, the connector's profile as `client`, the plan's sizes, `latest`, and no
+`canary_cursor`.
 The code is `worker/include/rp/service_jobs.hpp`. Without the key the loop runs no job; it
 still flushes, deals with a record and sends heartbeats.
 

@@ -1,0 +1,71 @@
+C5.5 (#58) and C5.6 (#59) Done-when, run locally on 2026-10-10 (UTC) on the dev laptop
+(Windows, Python 3.12.9, Docker Desktop 29.4.3, the Compose postgres:16 on 127.0.0.1:55432).
+Branch c5.5-c5.6-register-and-jobs. No CI run: no job has started since 2026-10-03.
+
+== The two Done-whens by name, and the three races on a database of their own ==
+
+$ uv run --locked pytest <the five tests> -v
+tests/test_registration.py::test_the_registration_flow_succeeds_and_the_token_cannot_be_reused PASSED
+tests/test_jobs_route.py::test_two_polls_return_the_same_job_only_if_the_first_attempt_expired PASSED
+tests/test_jobs_route.py::test_two_polls_at_once_share_no_run PASSED
+tests/test_registration.py::test_one_token_sent_twice_at_once_registers_one_worker PASSED
+tests/test_registration.py::test_one_key_sent_with_two_tokens_at_once_registers_one_worker_and_keeps_the_other_token PASSED
+5 passed in 24.99s
+
+C5.5, "The Worker's registration flow succeeds and the token cannot be reused": a token issued
+by issue_install_token, RFC 8032's test-1 public key as `rpworker signer public-key` prints it,
+POST /v1/workers/register answers 201 {"worker_id", "api_token" (43 characters), "key_id" =
+key-files.json's accepted_key_id}; the API token passes current_worker on a probe route; the
+same install token sent again answers 401 {"detail":"not authenticated"} WWW-Authenticate:
+Bearer; the Worker row names the token and the token row is used.
+
+C5.6, "Two polls return the same job only if the first attempt expired": two queued runs for
+Worker A, one for Worker B, one for another MSP; A's first poll answers A's two oldest first,
+each dispatched (attempt 1); A's second poll answers []; B's poll answers B's one; the other
+MSP's run stays queued. RunRepo.requeue_stale at +6 h puts the dispatched runs back; A's third
+poll answers them again (attempt 2); after the third attempt the sweep expires them (0, 2) and
+the fourth poll answers []. Six queued runs and two polls at once take five and one, disjoint.
+
+== The gate ==
+
+$ uv run --locked pytest --cov=app --cov-branch --cov-report=term-missing --cov-report=json:coverage.json --cov-fail-under=80
+1535 passed in 580.00s (0:09:39)
+TOTAL  1043 statements, 3 missed; 114 branches, 2 partial; 99.57% combined
+(app/migrations/env.py 44-45, the command-line path run in a child process, as before;
+ app/routers/jobs.py 84, the RuntimeError for a dispatched run without its plan, connector or
+ client, unreachable through the database's keys)
+
+$ uv run --locked python tools/check_coverage.py coverage.json
+exit 0; app/auth (5 files) and app/repo (15 files) all OK at 100% line and branch:
+app/auth/public_keys.py 50/50 10/10, app/auth/registration.py 40/40 6/6,
+app/repo/runs.py 32/32 4/4, app/repo/workers.py 20/20 2/2, app/repo/install_tokens.py 15/15;
+app/results.py SKIP does not exist yet.
+
+$ python worker/tools/fixture_secret_scan.py
+fixture secret scan: 1164 file(s) in 7 tree(s), 12 allowed match(es), 0 finding(s)
+
+$ uv run --locked python tools/dump_openapi.py
+wrote C:\restoreproof\docs\api\openapi-v1.json   (unchanged; tests/test_openapi.py holds it)
+
+== The stack ==
+
+$ docker compose up -d --wait --build          (from cloud/)
+ Container restoreproof-api-1 Healthy
+ Container restoreproof-scheduler-1 Healthy
+ Container restoreproof-minio-bucket-1 Exited
+$ docker compose exec api alembic downgrade -1
+{"event": "Running downgrade 0001 -> , ...", "level": "info", "ts": "2026-10-10T13:04:52Z"}
+$ docker compose exec api alembic upgrade head
+{"event": "Running upgrade  -> 0001, ...", "level": "info", "ts": "2026-10-10T13:04:57Z"}
+$ docker compose exec api alembic check
+No new upgrade operations detected.
+$ curl -i http://127.0.0.1:8000/healthz
+HTTP/1.1 200 OK
+{"db":"ok","s3":"ok"}
+$ curl -i -X POST http://127.0.0.1:8000/v1/workers/register -H "Content-Type: application/json" \
+    -d '{"install_token":"nope","public_key_pem":"x","worker_name":"n","version":"0.0.0"}'
+HTTP/1.1 401 Unauthorized
+{"detail":"not authenticated"}
+$ curl -i http://127.0.0.1:8000/v1/jobs
+HTTP/1.1 401 Unauthorized
+{"detail":"not authenticated"}

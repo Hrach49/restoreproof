@@ -6,6 +6,7 @@ a savepoint, and the refusal is held to the constraint that made it.
 """
 
 import datetime as dt
+import re
 import uuid
 
 import pytest
@@ -282,7 +283,7 @@ async def test_the_same_tenant_in_the_other_case_is_the_same_tenant(session):
     assert '"uq_client_msp_id_tenant_id"' in str(raised.value.orig)
 
     # And as text, the way a hand-written statement would give it.
-    with pytest.raises(IntegrityError):
+    with pytest.raises(IntegrityError) as raised:
         async with session.begin_nested():
             await session.execute(
                 text(
@@ -290,6 +291,7 @@ async def test_the_same_tenant_in_the_other_case_is_the_same_tenant(session):
                     f"VALUES ('{msp.id}', 'upper', '{str(TENANT).upper()}')"
                 )
             )
+    assert '"uq_client_msp_id_tenant_id"' in str(raised.value.orig)
 
 
 async def test_a_client_without_a_tenant_is_refused(session):
@@ -387,11 +389,18 @@ async def test_a_connector_cannot_join_one_msp_s_worker_to_another_s_client(sess
     await refused(
         session, a_connector(a.msp, b.client, a.worker), "fk_connector_msp_id_client_id_client"
     )
-    # Filed under B, with A's worker and client: both keys refuse it.
-    with pytest.raises(IntegrityError):
+    # Filed under B, with a worker and a client of A's that have no connector
+    # yet (or the one-per-pair rule answers first): either key refuses it, and
+    # the database names the one it checked first.
+    worker = await new_worker(session, a.msp, "second")
+    client = await new_client(session, a.msp, name="second")
+    with pytest.raises(IntegrityError) as raised:
         async with session.begin_nested():
-            session.add(a_connector(b.msp, a.client, a.worker))
+            session.add(a_connector(b.msp, client, worker))
             await session.flush()
+    assert re.search(
+        '"fk_connector_msp_id_(worker_id_worker|client_id_client)"', str(raised.value.orig)
+    )
 
 
 async def test_a_plan_cannot_use_another_client_s_connector(session):
@@ -481,6 +490,30 @@ async def test_an_audit_row_needs_no_user(session):
     assert row.at.utcoffset() == dt.timedelta(0)
 
 
+@pytest.mark.parametrize("ip", ["203.0.113.7", "2001:db8::7"])
+async def test_an_audit_row_s_ip_is_read_back_as_the_text_it_was_given(session, ip):
+    """The driver's own answer for an `inet` is an `ipaddress` object."""
+    world = await World.make(session)
+
+    row = await add(session, AuditLog(msp_id=world.msp.id, action="login", target="-", ip=ip))
+    await session.refresh(row)
+
+    assert row.ip == ip
+    assert type(row.ip) is str
+    kind = await session.execute(text("SELECT pg_typeof(ip)::text FROM audit_log"))
+    assert kind.scalar_one() == "inet"
+
+
+async def test_an_audit_row_s_ip_that_is_no_address_is_refused(session):
+    world = await World.make(session)
+
+    with pytest.raises((DBAPIError, StatementError)):
+        async with session.begin_nested():
+            await add(
+                session, AuditLog(msp_id=world.msp.id, action="login", target="-", ip="nowhere")
+            )
+
+
 async def test_nothing_is_deleted_by_deleting_something_else(session):
     world = await World.make(session)
     await add(session, an_item(world.msp, world.run))
@@ -493,9 +526,12 @@ async def test_nothing_is_deleted_by_deleting_something_else(session):
         ("worker", world.worker.id),
         ("msp", world.msp.id),
     ):
-        with pytest.raises(IntegrityError):
+        with pytest.raises(IntegrityError) as raised:
             async with session.begin_nested():
                 await session.execute(text(f"DELETE FROM {table} WHERE id = :id"), {"id": key})
+        # A key that points at this table refused it (several do; the database
+        # names the first): by the convention its name ends in the table's.
+        assert re.search(f'"fk_[a-z_]+_{table}"', str(raised.value.orig)), table
 
     count = (await session.execute(text("SELECT count(*) FROM test_item"))).scalar_one()
     assert count == 1

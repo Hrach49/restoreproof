@@ -1535,11 +1535,11 @@ docker compose stop postgres              # when done; `docker compose down -v` 
 
 | File | What |
 |---|---|
-| `tests/test_settings.py` | the six required variables, the defaults, a fault that names every faulty variable and never a value, no `.env` and no second look at the environment, `DATABASE_URL` alone for a migration |
-| `tests/test_logging.py` | one JSON line per request with its ID, `X-Request-ID` taken or made and echoed, no header, query string, body or exception message in any line, a value under a secret's name redacted, other libraries held to warnings |
-| `tests/test_healthz.py` | `/healthz`: both ok 200, either down 503 with the other still reported, nothing of an exception in the body or the log. The database half on the real test Postgres and on a closed port; the S3 half on botocore's `Stubber` and on a closed port. No MinIO runs in the unit tests |
+| `tests/test_settings.py` | the six required variables, the defaults, a fault that names every faulty variable and never a value, no `.env` and no second look at the environment, `DATABASE_URL` alone for a migration, read by the same lookup as the app's, `LOG_LEVEL` in any case |
+| `tests/test_logging.py` | one JSON line per request with its ID, `X-Request-ID` taken or made and echoed, no header, query string, body or exception message in any line, a value under a secret's name redacted, other libraries held to warnings, a library's line cut at its first line break, a failed startup or shutdown through uvicorn's own lifespan code, `LOG_LEVEL` on uvicorn's own lines |
+| `tests/test_healthz.py` | `/healthz`: both ok 200, either down 503 with the other still reported, nothing of an exception in the body or the log. The database half on the real test Postgres and on a closed port; the S3 half on botocore's `Stubber` and on a closed port. No MinIO runs in the unit tests. `HEAD` as `GET`; both checks slow take as long as one; the check's S3 client has the short limits and the data client doesn't |
 | `tests/test_app.py` | the factory, the six routers under `/v1`, the OpenAPI document at `/v1/openapi.json` without `/healthz`, the engine's settings, the `_test` rule |
-| `tests/test_migrations.py` | on an empty database `upgrade head`, `downgrade -1`, `upgrade head`, in process and through `python -m alembic` with `DATABASE_URL` alone; `alembic check` finds no difference between the models and the migrated database (and does find a planted one); the CHECK constraints' names, which autogenerate doesn't compare |
+| `tests/test_migrations.py` | on an empty database `upgrade head`, `downgrade -1`, `upgrade head`, in process and through `python -m alembic` with `DATABASE_URL` alone; `alembic check` finds no difference between the models and the migrated database (and does find a planted table and a planted server default); `LOG_LEVEL` on the command line; the CHECK constraints' names, which autogenerate doesn't compare |
 | `tests/test_models.py` | every rule of the model on the metadata, and each refusal on the database by the constraint that made it: a tenant twice in one MSP, in the other case, a connector twice for one Worker and client, a connector name or a run state outside its rule, a row that points into another MSP, a time without a zone |
 
 ### The local stack (C5.1's Done-when)
@@ -1608,8 +1608,9 @@ The first `uv run` in WSL creates a Linux virtualenv. Sharing `.venv` with Windo
 both, so set `export UV_PROJECT_ENVIRONMENT=.venv-wsl` in the WSL shell first (`.venv-wsl/` is
 gitignored). mutmut writes its mutated copy of the code to `cloud/mutants/` (also gitignored).
 
-**Current state:** `app/` has no functions yet, so `make mutate` exits 1 with "could not find
-any test case for any mutant". That is expected until real code lands in `app/`.
+**Current state:** not yet run on `app/` as C5.1 and C5.2 left it (this laptop's WSL has
+Docker's distribution only). The run needs the test database (`make db`), and mutmut's copy
+holds `alembic.ini` beside `app/` (`also_copy` in `pyproject.toml`; a test holds that).
 
 Reading the result:
 

@@ -4,8 +4,9 @@ One JSON object per line. The rule: no line holds a token, a password or a
 request body. By construction: the request line has the path and never the
 query string, no header and no body; an exception is logged as its type and its
 stack's frames, never its message (a validation error's message quotes its
-input). And as a second line, a value under a key named like a secret is
-replaced.
+input). A library's line is its first line only: the lines after it are where
+a library prints a traceback or an exception's repr. And as a second line, a
+value under a key named like a secret is replaced.
 """
 
 from __future__ import annotations
@@ -34,6 +35,13 @@ _SECRET_ANYWHERE = ("secret", "password")
 _SECRET_ENDINGS = ("token", "authorization", "cookie", "api_key", "access_key", "private_key")
 
 _OWN_LOGGERS = ("app", "uvicorn", "alembic")
+
+# Starlette sends a failed lifespan's whole traceback as text, and uvicorn logs
+# what it is sent: these words go in its place.
+_LIFESPAN_FAILED = {
+    "lifespan.startup.failed": "the app's startup failed",
+    "lifespan.shutdown.failed": "the app's shutdown failed",
+}
 
 _LEVELS = {
     "debug": logging.DEBUG,
@@ -83,6 +91,18 @@ def exception_summary(_logger: Any, _method: str, event_dict: EventDict) -> Even
     return event_dict
 
 
+def first_line_only(_logger: Any, _method: str, event_dict: EventDict) -> EventDict:
+    """Cut a library's message at its first line break.
+
+    asyncio's "Task exception was never retrieved" carries the exception's repr
+    on its second line, and a traceback printed into a message has its text on
+    the last. `exc_info`, when the library gave it, still becomes the type and
+    the frames.
+    """
+    event_dict["event"] = str(event_dict["event"]).partition("\n")[0].rstrip("\r")
+    return event_dict
+
+
 def configure_logging(level: str = "info", stream: TextIO | None = None) -> None:
     """Send structlog's and the standard library's log lines to `stream` as JSON."""
     out = sys.stdout if stream is None else stream
@@ -102,7 +122,7 @@ def configure_logging(level: str = "info", stream: TextIO | None = None) -> None
     handler = logging.StreamHandler(out)
     handler.setFormatter(
         structlog.stdlib.ProcessorFormatter(
-            foreign_pre_chain=shared,
+            foreign_pre_chain=[*shared, first_line_only],
             processors=[structlog.stdlib.ProcessorFormatter.remove_processors_meta, *last],
         )
     )
@@ -113,13 +133,15 @@ def configure_logging(level: str = "info", stream: TextIO | None = None) -> None
     logging.basicConfig(handlers=[handler], level=logging.WARNING, force=True)
     for name in _OWN_LOGGERS:
         logging.getLogger(name).setLevel(_LEVELS[level])
-    # uvicorn installs handlers of its own before it calls the app factory:
-    # its lines go through ours instead, and its access log, which prints the
-    # query string, is off (the request line above replaces it).
+    # uvicorn installs handlers and levels of its own before it calls the app
+    # factory: its lines go through ours instead and at LOG_LEVEL (its server
+    # lines are `uvicorn.error`'s, which it sets to info), and its access log,
+    # which prints the query string, is off (the request line above replaces it).
     for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
         library = logging.getLogger(name)
         library.handlers.clear()
         library.propagate = True
+        library.setLevel(_LEVELS[level])
     logging.getLogger("uvicorn.access").disabled = True
 
 
@@ -139,7 +161,24 @@ class RequestLogMiddleware:
         self.app = app
         self.log = structlog.get_logger("app.request")
 
+    async def _lifespan(self, scope: dict, receive: Any, send: Any) -> None:
+        """A failed startup or shutdown: the type and the frames, never the text."""
+
+        async def send_fixed_words(message: dict) -> None:
+            if message["type"] in _LIFESPAN_FAILED:
+                message = {**message, "message": _LIFESPAN_FAILED[message["type"]]}
+            await send(message)
+
+        try:
+            await self.app(scope, receive, send_fixed_words)
+        except Exception as error:
+            self.log.error("lifespan failed", exc_info=error)
+            raise
+
     async def __call__(self, scope: dict, receive: Any, send: Any) -> None:
+        if scope["type"] == "lifespan":
+            await self._lifespan(scope, receive, send)
+            return
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return

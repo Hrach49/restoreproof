@@ -57,5 +57,6 @@ show_missing = true
 # it runs on Linux/macOS/WSL only, not native Windows. Output goes to mutants/.
 [tool.mutmut]
 source_paths = ["app/"]
-also_copy = ["tools/"]
+# alembic.ini: the migration tests read it beside app/ (tests/conftest.py).
+also_copy = ["tools/", "alembic.ini"]
 pytest_add_cli_args_test_selection = ["tests/"]

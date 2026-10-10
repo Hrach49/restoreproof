@@ -10,6 +10,7 @@ import os
 import secrets
 import subprocess
 import sys
+import tomllib
 
 import asyncpg
 import pytest
@@ -140,6 +141,17 @@ async def test_alembic_check_would_see_a_difference(empty_database):
         await alembic(empty_database, "check")
 
 
+async def test_alembic_check_would_see_another_server_default(empty_database):
+    """A default the database fills is compared too: the ORM leaves the column out."""
+    await alembic(empty_database, "upgrade", "head")
+    connection = await asyncpg.connect(asyncpg_dsn(empty_database), timeout=5)
+    await connection.execute("ALTER TABLE msp ALTER COLUMN retention_days SET DEFAULT 30")
+    await connection.close()
+
+    with pytest.raises(CommandError, match="New upgrade operations detected"):
+        await alembic(empty_database, "check")
+
+
 async def test_the_check_constraints_are_the_models(migrated_database):
     """Autogenerate doesn't compare CHECK constraints, so their names are
     compared here; tests/test_models.py shows each one refusing a row."""
@@ -176,10 +188,12 @@ async def test_the_command_line_migrates_from_database_url_alone(empty_database)
     env["DATABASE_URL"] = empty_database
 
     logged = []
+    printed = ""
     for args in (("upgrade", "head"), ("downgrade", "-1"), ("upgrade", "head"), ("check",)):
         done = alembic_cli(env, *args)
         assert done.returncode == 0, done.stderr[-2000:]
         logged += [json.loads(line) for line in done.stdout.splitlines() if line.startswith("{")]
+        printed += done.stdout + done.stderr
 
     assert await tables(empty_database) == TABLES | {"alembic_version"}
     # The container's log shows the migration, in the app's own JSON form.
@@ -187,7 +201,35 @@ async def test_the_command_line_migrates_from_database_url_alone(empty_database)
     assert len([event for event in events if event.startswith("Running upgrade  -> 0001")]) == 2
     assert len([event for event in events if event.startswith("Running downgrade 0001 -> ")]) == 1
     assert all({"ts", "level", "event"} <= set(line) for line in logged)
-    assert "local-only" not in "".join(done.stdout + done.stderr for done in [done])
+    # Nothing of the URL in what any of the four printed.
+    url = make_url(empty_database)
+    assert printed
+    for part in (url.password, url.database, "local-only", "postgresql+asyncpg"):
+        assert part not in printed
+
+
+async def test_the_command_line_s_log_follows_log_level(empty_database):
+    env = bare_environment()
+    env["DATABASE_URL"] = empty_database
+
+    quiet = alembic_cli(env | {"LOG_LEVEL": "ERROR"}, "upgrade", "head")
+    told = alembic_cli(env | {"LOG_LEVEL": "INFO"}, "downgrade", "-1")
+
+    assert (quiet.returncode, quiet.stdout) == (0, "")
+    assert told.returncode == 0
+    assert "Running downgrade 0001 -> " in told.stdout
+
+
+async def test_the_command_line_refuses_a_log_level_before_it_migrates(empty_database):
+    env = bare_environment()
+    env["DATABASE_URL"] = empty_database
+    env["LOG_LEVEL"] = "loud"
+
+    done = alembic_cli(env, "upgrade", "head")
+
+    assert done.returncode != 0
+    assert "settings error: LOG_LEVEL is not valid" in done.stderr
+    assert await tables(empty_database) == set()
 
 
 def test_the_command_line_without_database_url_names_it():
@@ -202,6 +244,14 @@ async def test_offline_mode_is_refused(empty_database):
         await alembic(empty_database, "upgrade", "head", sql=True)
 
     assert await tables(empty_database) == set()
+
+
+def test_mutmut_s_copy_holds_what_the_tests_read_beside_app():
+    """`uv run mutmut run` runs these tests in cloud/mutants/, which holds app/,
+    tests/ and what `also_copy` names: alembic.ini has to be there."""
+    pyproject = tomllib.loads((CLOUD_DIR / "pyproject.toml").read_text(encoding="utf-8"))
+
+    assert "alembic.ini" in pyproject["tool"]["mutmut"]["also_copy"]
 
 
 def test_alembic_ini_holds_no_database_url():

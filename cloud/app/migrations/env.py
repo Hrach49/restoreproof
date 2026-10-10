@@ -17,14 +17,21 @@ from sqlalchemy.pool import NullPool
 
 from app.logging import configure_logging
 from app.models import Base
-from app.settings import database_url_from_environment
+from app.settings import database_url_from_environment, log_level_from_environment
 
 config = context.config
 target_metadata = Base.metadata
 
 
 def _run(connection: Connection) -> None:
-    context.configure(connection=connection, target_metadata=target_metadata, compare_type=True)
+    # Alembic compares no server default unless told to: `alembic check` has
+    # to see one that differs between the models and the migration.
+    context.configure(
+        connection=connection,
+        target_metadata=target_metadata,
+        compare_type=True,
+        compare_server_default=True,
+    )
     with context.begin_transaction():
         context.run_migrations()
 
@@ -33,9 +40,9 @@ async def _run_online() -> None:
     url = config.attributes.get("database_url")
     if url is None:
         # The command line, as the api container runs it: the log shows the
-        # migration in the app's own form.
+        # migration in the app's own form and at the app's level.
         url = database_url_from_environment()
-        configure_logging("info")
+        configure_logging(log_level_from_environment())
     engine = create_async_engine(url, poolclass=NullPool, hide_parameters=True)
     try:
         async with engine.connect() as connection:

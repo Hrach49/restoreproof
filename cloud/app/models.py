@@ -88,6 +88,20 @@ class UtcDateTime(TypeDecorator):
         return value
 
 
+class InetText(TypeDecorator):
+    """An `inet` read back as the text it was given.
+
+    asyncpg answers an `inet` with an `ipaddress` object, whatever the engine
+    it runs under was told; the model's `str` is then true of every engine.
+    """
+
+    impl = INET
+    cache_ok = True
+
+    def process_result_value(self, value: Any, dialect: Any) -> str | None:
+        return None if value is None else str(value)
+
+
 class Base(DeclarativeBase):
     metadata = MetaData(naming_convention=NAMING_CONVENTION)
 
@@ -327,7 +341,7 @@ class AuditLog(Base):
     user_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
     action: Mapped[str] = mapped_column(Text, nullable=False)
     target: Mapped[str] = mapped_column(Text, nullable=False)
-    ip: Mapped[str | None] = mapped_column(INET)
+    ip: Mapped[str | None] = mapped_column(InetText)
     at: Mapped[dt.datetime] = _time(nullable=False, default_now=True)
 
 

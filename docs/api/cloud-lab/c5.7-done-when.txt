@@ -1,0 +1,150 @@
+C5.7 (#60) Done-when, "a real Worker bundle lands as pass in the DB", run locally on 2026-10-10 (UTC)
+on the dev laptop (Windows, Python 3.12.9, Docker Desktop 29.4.3, the Compose stack: postgres:16 on
+127.0.0.1:55432, MinIO on 127.0.0.1:9000, the api on 127.0.0.1:8000). Branch c5.7-results, commit
+3730633 (the route) for the live step. No CI run: no job has started since 2026-10-03.
+
+== In the tests ==
+
+$ uv run --locked pytest --cov=app --cov-branch --cov-report=term-missing --cov-report=json:coverage.json --cov-fail-under=80
+1707 passed in 654.32s; TOTAL 1412 statements, 7 missed; 218 branches, 4 partial; 99.20% combined
+(1708 with tests/test_results.py::test_two_different_bundles_for_one_run_at_once_file_one_and_refuse_the_other,
+added after this run and seen passing on its own)
+$ uv run --locked python tools/check_coverage.py coverage.json
+| OK | app/results.py       | 194/194 | 62/62 |      (measured for the first time; nothing SKIP)
+| OK | app/repo/items.py    |  30/30  |  2/2  |
+| OK | app/repo/runs.py     |  60/60  |  6/6  |
+every other file of app/repo and app/auth OK at 100/100; exit 0
+
+tests/test_results.py::test_the_tests_pass_and_a_real_worker_bundle_lands_as_pass_in_the_db PASSED
+  The Worker-made shared/testdata/signing-v1/bundle.json (the Harness's own pipeline run, 6 of 6),
+  re-keyed to a run the test dispatched and re-signed with the same published key (RFC 8032 test 1),
+  posted under the Worker's token: 202 {"run_id": "<uuid>", "state": "pass"}; the row pass with
+  started_at, finished_at, total_ms 3936000, restore_point_at, bundle_key msp/<msp>/runs/<run>/,
+  bundle_sha256, signature_ok true, tsa_ok null, cleanup_ok true; six test_item rows at positions 0
+  to 5 (three manifest with their hashes, every match true); one audit row result.received; four
+  put_object calls with the exact keys, bytes and content types; the same bundle again 202 with no
+  change and no put.
+tests/test_results.py::test_a_timestamped_worker_bundle_lands_with_the_token_s_time PASSED
+  The same with a token the test TSA made (tests/tsa_lab.py): tsa_ok true, tsa_time 2026-10-06T12:00:00Z.
+tests/test_results_vectors.py: 61 shared cases through the route (38 signing-v1, 23 timestamp-v1):
+  every failing case 400 with its own word, one audit row, nothing stored; every verified case
+  passes the whole verification and is then 404 run_id: no such run (the vectors' run_id is no uuid).
+
+== Live: the Worker's bundle from the Veeam VM to the stack ==
+
+The harness docs/api/cloud-lab/c5.7-harness/c57-live.ps1 ran steps (1) to (5) and was killed by the
+development tool for low system memory during step (5), while the service was restoring (16 GB laptop:
+Veeam, Docker Desktop with five containers, the service's run). The service kept running the job and
+finished it; the service was then stopped, its grants revoked and it was uninstalled by hand through the
+W4.8 harness, and steps (6) to (9) were run by c57-post.ps1 (beside c57-live.ps1). c57-post.ps1's own
+evidence text was refused by a guard of its own that took a 64-hex hash for a token shape (fixed in the
+committed script), so the record below is the api's request log, the stack's rows, the bucket and the
+two verifiers, read afterwards; the service's log lines are the ones watched during the run (the W4.8
+harness's teardown removed the log file).
+
+(1) the stack: docker compose up -d --wait --build from cloud/: every service healthy;
+    GET /healthz: HTTP/1.1 200 OK {"db":"ok","s3":"ok"}; alembic downgrade -1, upgrade head, check in
+    the api container: "No new upgrade operations detected"; the image holds /srv/shared/tools/verify_bundle.py
+    and /srv/shared/tsa/tsa-ca.pem.
+(2) c57-rows.py init bcd6bd1a-ea42-489d-aa28-2c19a44ad146 (the lab tenant, lab/tenant.md):
+    msp 9efc4fa6-678d-45d9-a9be-792433632f09, client RestoreProofLab 9d68b1e7-a43d-4ad1-adf7-b7106b7e19da,
+    one install token labelled "c5.7 done-when" (shown once, never written here).
+(3) rpworker signer public-key: key 9dfab6eadaa1d04a22dcc966aac7a53bcff8bbe0077232485f6143cd9c4d0ca5
+    (the lab's vault key, the same key_id as every signature.json below).
+    POST /v1/workers/register {install_token, public_key_pem, worker_name veeam-vm, version 0.0.0}:
+      2026-10-10T16:43:13.337954Z status 201 request_id ee90a150cdd0473799d64b794d65fdb2
+      worker f7ff2c3b-13a0-45f5-8ec8-dbf07b58add0, key_id 9dfab6ea...0ca5, version 0.0.0, install_token_id set;
+      the install token row used; the API token (43 characters) kept under %TEMP%\rp-c57 for the session.
+    the same install token again:
+      2026-10-10T16:43:13.472484Z status 401 request_id b0c92530ce03469dbb37e38b21f7d824
+(4) c57-rows.py run: the connector 28e87f49-cddc-49bf-a97d-0ce74c01cb15 on the lab's client-profile.v1
+    (audit row connector.create), a plan 10/10/10, one queued run 7ea872a9-d46e-4e99-b01a-1725d4b9262c.
+    GET /v1/jobs with the API token:
+      2026-10-10T16:43:15.810733Z status 200 request_id e54354740f244679b8888aa13c116b5a
+      {"format":"restoreproof.jobs.v1","jobs":[{"run_id":"7ea872a9-d46e-4e99-b01a-1725d4b9262c",
+       "client_id":"9d68b1e7-a43d-4ad1-adf7-b7106b7e19da","client":{the lab's profile, graph_tenant_id
+       bcd6bd1a-...},"connector":{"type":"veeam_m365"},"sample_mail":10,"sample_sp":10,"sample_od":10,
+       "restore_point":"latest","screenshots_enabled":false}]}
+      saved as %LOCALAPPDATA%\RestoreProof\lab\jobs.json; the run now dispatched, attempt 1,
+      dispatched_at 2026-10-10T16:43:15.788Z.
+    GET /v1/jobs again: 2026-10-10T16:43:15.887919Z status 200 (nothing left to dispatch).
+(5) the service on the W4.8 harness's config copy (the eight client keys taken out, jobs_file the
+    document above, cloud_url the W4.6 stub on https://localhost:8443, which answers the service's own
+    flush until W5.1 adds the token), worker.log:
+      2026-10-10T16:43:20.564Z info scheduler started: poll 30 s, heartbeat 60 s, jobs C:\ProgramData\RestoreProof\w48\jobs.json, runs C:\ProgramData\RestoreProof\runs, outbox C:\ProgramData\RestoreProof
+      2026-10-10T16:43:50.728Z info run 7ea872a9-d46e-4e99-b01a-1725d4b9262c: starting (mail 10, sharepoint 10, onedrive 10, point latest)
+      2026-10-10T16:44:07.719Z info [7ea872a9-...]   mail 10, 5 of 5 canaries, 5 of 5 random; sharepoint 10, 5 of 5, 5 of 5; onedrive 10, 5 of 5, 5 of 5
+      2026-10-10T16:44:07.719Z info [7ea872a9-...] restoring 30 item(s) ...
+      running.json meanwhile: kind run, restore_requested true at 2026-10-10T16:44:17.432Z, six sessions,
+      client the job's profile, client_id 9d68b1e7-..., restore_point c2f0f2e7-... (2026-10-09T22:00:56Z)
+      2026-10-10T16:47:20.520Z info [7ea872a9-...] queued C:\ProgramData\RestoreProof\outbox\7ea872a9-d46e-4e99-b01a-1725d4b9262c
+      2026-10-10T16:47:20.539Z info run 7ea872a9-d46e-4e99-b01a-1725d4b9262c: ended pass; queued
+      2026-10-10T16:47:20.579Z info kept 7ea872a9-d46e-4e99-b01a-1725d4b9262c: upload_unreachable; attempt 1, next at 2026-10-10T16:48:20Z
+      (the stub had died with the harness; the folder stayed queued, which is the Worker's rule)
+    then by hand: rpworker service stop ("stopped RestoreProof in 0.0 s"), the account's entries removed
+    from the vault, Veeam's key file and the four folders, rpworker service uninstall ("uninstalled
+    RestoreProof"), sc query: 1060, no running.json.
+    the queued folder outbox\7ea872a9-d46e-4e99-b01a-1725d4b9262c:
+      items.csv 5758, manifest.json 393, result.json 22701, signature.json 322, timestamp.tst 5998, veeam-session.log 7386
+      rpworker signer verify (--tsa-ca shared/tsa/tsa-ca.pem): verified 032aba19fc87c657fd5626aa4d7da00dafe55d3edf8126ddd4fd165b01d2c0f3 key 9dfab6eadaa1d04a22dcc966aac7a53bcff8bbe0077232485f6143cd9c4d0ca5 timestamp 2026-10-10T16:45:58Z, exit 0 (note: not listed in the result: manifest.json)
+      verify_bundle.py: the same line, exit 0
+      result.json: status pass, restore_sent True, "30 of 30 item(s) verified: manifest 15, fields 5, metadata 10"
+      result.json sha256 032aba19fc87c657fd5626aa4d7da00dafe55d3edf8126ddd4fd165b01d2c0f3
+    rpworker graph list afterwards: 0 item(s) in the three restore targets; Veeam: no session Working at 2026-10-10T16:47:54Z.
+(6) from that folder, curl.exe -s -i -X POST http://127.0.0.1:8000/v1/results -H "Authorization: Bearer <token>"
+      -F "result=@result.json;type=application/json" -F "signature=@signature.json;type=application/json"
+      -F "timestamp=@timestamp.tst;type=application/octet-stream" -F "items.csv=@items.csv;type=application/octet-stream"
+      -F "veeam-session.log=@veeam-session.log;type=application/octet-stream"
+    the api's request log:
+      2026-10-10T16:48:58.074743Z POST /v1/results status 202 duration_ms 842 request_id 6a6e2830b46d4e3e836ca9d6c82d035d
+    the same command again:
+      2026-10-10T16:48:58.185947Z POST /v1/results status 202 duration_ms 86 request_id d151b39acd51439e9243f22dbb29e6c2
+    (the first filed the run and put five objects; the repeat wrote nothing: one result.received row below)
+(7) c57-rows.py show 9efc4fa6-678d-45d9-a9be-792433632f09 7ea872a9-d46e-4e99-b01a-1725d4b9262c:
+    test_run:
+      state: pass
+      error_code: None
+      error_message: None
+      attempt: 1
+      dispatched_at: 2026-10-10 16:43:15.788132+00:00
+      started_at: 2026-10-10 16:43:51.126000+00:00
+      finished_at: 2026-10-10 16:47:19.925000+00:00
+      total_ms: 208798
+      restore_point_at: 2026-10-09 22:00:56+00:00
+      bundle_key: msp/9efc4fa6-678d-45d9-a9be-792433632f09/runs/7ea872a9-d46e-4e99-b01a-1725d4b9262c/
+      bundle_sha256: 032aba19fc87c657fd5626aa4d7da00dafe55d3edf8126ddd4fd165b01d2c0f3
+      signature_ok: True
+      tsa_ok: True
+      tsa_time: 2026-10-10 16:45:58+00:00
+      cleanup_ok: True
+    test_item: 30 row(s), positions 0 to 29: mail 0-4 manifest (hashes), 5-9 fields; sharepoint 10-14
+      manifest, 15-19 metadata; onedrive 20-24 manifest, 25-29 metadata; every found True, match True,
+      reason None; ms 0 for the mails (one read), 275 to 426 for the files
+    audit_log (the MSP's):
+      worker.register worker:f7ff2c3b-13a0-45f5-8ec8-dbf07b58add0
+      connector.create connector:28e87f49-cddc-49bf-a97d-0ce74c01cb15
+      result.received run:7ea872a9-d46e-4e99-b01a-1725d4b9262c
+      (and the one row of step 8)
+    the bucket under msp/9efc4fa6-678d-45d9-a9be-792433632f09/runs/7ea872a9-d46e-4e99-b01a-1725d4b9262c/ (boto3, the stack's local-only MinIO), each downloaded:
+      items.csv 5758 application/octet-stream
+      result.json 22701 application/json
+      signature.json 322 application/json
+      timestamp.tst 5998 application/octet-stream
+      veeam-session.log 7386 application/octet-stream
+    uv run shared/tools/verify_bundle.py <downloaded> --public-key worker.pub.pem --tsa-ca shared/tsa/tsa-ca.pem --schemas shared/schemas:
+      verified 032aba19fc87c657fd5626aa4d7da00dafe55d3edf8126ddd4fd165b01d2c0f3 key 9dfab6eadaa1d04a22dcc966aac7a53bcff8bbe0077232485f6143cd9c4d0ca5 timestamp 2026-10-10T16:45:58Z, exit 0
+    rpworker signer verify <downloaded> --public-key worker.pub.pem --tsa-ca shared/tsa/tsa-ca.pem:
+      the same line, exit 0
+    (no manifest.json note: the Cloud stores the five files the Worker sent and nothing else)
+(8) a copy of the folder with the last byte of items.csv changed, posted the same way:
+      2026-10-10T16:49:05.997043Z POST /v1/results status 400 duration_ms 244 request_id 7b34e1a358e34d7c9507f05756825a80
+      {"detail": "attachment_hash"}
+    audit_log gained: result.rejected worker:f7ff2c3b-13a0-45f5-8ec8-dbf07b58add0 attachment_hash
+    the row unchanged (state pass, the same bundle_sha256); the bucket still five objects.
+(9) outbox\7ea872a9-d46e-4e99-b01a-1725d4b9262c moved to C:\ProgramData\RestoreProof\c57\ (outside the
+    repo); the W4.8 harness's config copy, state and logs removed; %TEMP%\rp-c57 (the tokens, the PEM,
+    the copies) removed; sc query RestoreProof: 1060, not installed; the stack's rows left
+    (docker compose down -v drops them); the jobs document left under %LOCALAPPDATA%\RestoreProof\lab.
+
+Not shown: the Worker's own flush landing the bundle (W5.1 adds the Authorization header; until then the
+service's flush goes to the W4.6 stub or is kept), and CI.

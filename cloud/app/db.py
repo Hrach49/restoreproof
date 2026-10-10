@@ -1,4 +1,4 @@
-"""The database engine and its sessions (C5.1).
+"""The database engine and its sessions (C5.1; the transaction per request C5.5).
 
 Asynchronous SQLAlchemy on asyncpg. The engine never echoes and hides the
 parameters of a failed statement, so no row's content reaches a log line, and
@@ -34,9 +34,17 @@ def make_session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSession
 
 
 async def get_session(request: Request) -> AsyncIterator[AsyncSession]:
-    """FastAPI dependency: one session per request, closed when it ends."""
+    """FastAPI dependency: one session and one transaction per request (C5.5,
+    docs/decisions.md 2026-10-10, "C5.5 and C5.6", point 5).
+
+    Committed when the route returns, rolled back when it raises (an
+    HTTPException included: FastAPI throws it into this generator), and the
+    commit runs before the response is sent. The repos flush and never commit;
+    a route calls neither commit nor rollback.
+    """
     async with request.app.state.session_factory() as session:
-        yield session
+        async with session.begin():
+            yield session
 
 
 async def check_database(engine: AsyncEngine) -> None:

@@ -67,9 +67,20 @@ async def new_worker(session, msp, name="worker") -> Worker:
             msp_id=msp.id,
             name=name,
             public_key_pem="-----BEGIN PUBLIC KEY-----\n",
+            key_id=uuid.uuid4().hex * 2,
             api_token_hash=uuid.uuid4().hex,
         ),
     )
+
+
+def an_install_token(msp, **changes) -> InstallToken:
+    values = {
+        "msp_id": msp.id,
+        "token_hash": uuid.uuid4().hex * 2,
+        "expires_at": dt.datetime(2026, 10, 17, tzinfo=UTC),
+        "label": "the lab's token",
+    }
+    return InstallToken(**{**values, **changes})
 
 
 def a_connector(msp, client, worker, **changes) -> Connector:
@@ -164,7 +175,7 @@ def test_every_other_foreign_key_is_composite_and_starts_with_msp_id():
             assert len(constraint.columns) >= 2, (name, constraint.name)
             assert constraint.column_keys[0] == "msp_id", (name, constraint.name)
             assert constraint.elements[0].column.name == "msp_id", (name, constraint.name)
-    assert seen == 11
+    assert seen == 13
 
 
 def test_no_foreign_key_cascades_or_sets_null():
@@ -187,7 +198,7 @@ def test_every_time_is_a_timestamp_with_time_zone_that_refuses_a_naive_value():
     times = [column for column in columns if isinstance(column.type, UtcDateTime)]
 
     assert not [column for column in columns if isinstance(column.type, DateTime)]
-    assert len(times) == 11
+    assert len(times) == 12
     assert all(column.type.impl.timezone is True for column in times)
     assert {column.name for column in times} >= {"created_at", "last_seen_at", "expires_at", "at"}
 
@@ -823,6 +834,7 @@ async def test_a_worker_s_token_hash_is_unique_across_msps(session):
             msp_id=b.msp.id,
             name="copy",
             public_key_pem="-----BEGIN PUBLIC KEY-----\n",
+            key_id="d" * 64,
             api_token_hash=a.worker.api_token_hash,
         ),
         "uq_worker_api_token_hash",
@@ -833,13 +845,13 @@ async def test_an_install_token_s_hash_is_unique_across_msps(session):
     a = await new_msp(session, "a")
     b = await new_msp(session, "b")
     expires = dt.datetime(2026, 10, 17, tzinfo=UTC)
-    token = await add(session, InstallToken(msp_id=a.id, token_hash="h" * 64, expires_at=expires))
+    token = await add(session, an_install_token(a, token_hash="h" * 64, expires_at=expires))
     await session.refresh(token)
 
     assert token.used_at is None
     await refused(
         session,
-        InstallToken(msp_id=b.id, token_hash="h" * 64, expires_at=expires),
+        an_install_token(b, token_hash="h" * 64, expires_at=expires),
         "uq_install_token_token_hash",
     )
 
@@ -854,3 +866,105 @@ async def test_an_email_is_unique_without_regard_to_case_across_msps(session):
         "uq_user_email_lower",
     )
     assert a.user.email == "a@example.test"
+
+
+# --- C5.5: the key and the install token ----------------------------------------
+
+
+async def test_a_worker_s_key_id_is_unique_across_msps(session):
+    a = await new_msp(session, "a")
+    b = await new_msp(session, "b")
+    key_id = "c" * 64
+    first = await add(
+        session,
+        Worker(msp_id=a.id, name="first", public_key_pem="x", key_id=key_id, api_token_hash="1" * 64),
+    )
+
+    assert first.key_id == key_id
+    await refused(
+        session,
+        Worker(msp_id=b.id, name="second", public_key_pem="x", key_id=key_id, api_token_hash="2" * 64),
+        "uq_worker_key_id",
+    )
+
+
+@pytest.mark.parametrize("key_id", ["C" * 64, "c" * 63, "c" * 65, "", "c" * 63 + "\n", "g" * 64])
+async def test_a_key_id_is_64_lower_case_hex_digits(session, key_id):
+    msp = await new_msp(session)
+
+    await refused(
+        session,
+        Worker(msp_id=msp.id, name="w", public_key_pem="x", key_id=key_id, api_token_hash="1" * 64),
+        "ck_worker_key_id_hex",
+    )
+
+
+async def test_a_worker_without_a_key_id_is_refused(session):
+    msp = await new_msp(session)
+
+    with pytest.raises(IntegrityError) as raised:
+        async with session.begin_nested():
+            await session.execute(
+                text(
+                    "INSERT INTO worker (msp_id, name, public_key_pem, api_token_hash) "
+                    "VALUES (:m, 'w', 'x', :h)"
+                ),
+                {"m": msp.id, "h": "1" * 64},
+            )
+    assert "key_id" in str(raised.value.orig)
+
+
+async def test_a_worker_may_name_the_install_token_that_made_it_but_only_its_msp_s(session):
+    a = await new_msp(session, "a")
+    b = await new_msp(session, "b")
+    own = await add(session, an_install_token(a))
+    other = await add(session, an_install_token(b))
+
+    worker = await add(
+        session,
+        Worker(
+            msp_id=a.id, name="w", public_key_pem="x", key_id="a" * 64, api_token_hash="1" * 64,
+            install_token_id=own.id,
+        ),
+    )
+    await session.refresh(worker)
+
+    assert worker.install_token_id == own.id
+    await refused(
+        session,
+        Worker(
+            msp_id=a.id, name="w2", public_key_pem="x", key_id="b" * 64, api_token_hash="2" * 64,
+            install_token_id=other.id,
+        ),
+        "fk_worker_msp_id_install_token_id_install_token",
+    )
+    assert (await new_worker(session, a, "no token")).install_token_id is None
+
+
+async def test_an_install_token_has_a_label_a_creation_time_and_maybe_its_maker(session):
+    world = await World.make(session, "a")
+    b = await World.make(session, "b")
+
+    token = await add(session, an_install_token(world.msp, label="the lab", created_by=world.user.id))
+    await session.refresh(token)
+    assert (token.label, token.created_by) == ("the lab", world.user.id)
+    assert token.created_at.utcoffset() == dt.timedelta(0)
+    assert abs(dt.datetime.now(UTC) - token.created_at) < dt.timedelta(minutes=5)
+
+    unmade = await add(session, an_install_token(world.msp, label=""))
+    await session.refresh(unmade)
+    assert unmade.created_by is None
+
+    await refused(
+        session,
+        an_install_token(world.msp, created_by=b.user.id),
+        "fk_install_token_msp_id_created_by_user",
+    )
+    with pytest.raises(IntegrityError) as raised:
+        async with session.begin_nested():
+            await session.execute(
+                text("INSERT INTO install_token (msp_id, token_hash, expires_at) VALUES (:m, :h, now())"),
+                {"m": world.msp.id, "h": "9" * 64},
+            )
+    assert "label" in str(raised.value.orig)
+

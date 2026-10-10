@@ -122,10 +122,13 @@ __all__ = [
     "MAX_SIGNATURE_FILE_BYTES",
     "MAX_TIMESTAMP_FILE_BYTES",
     "NOT_CANONICAL",
+    "READ",
     "SLUGS",
     "TIMESTAMP_FILE",
     "TIMESTAMP_NONE",
     "TIMESTAMP_UNCHECKED",
+    "TOO_LARGE",
+    "UNREADABLE",
     "VERIFIED",
     "WORDS",
     "PublicKey",
@@ -135,6 +138,7 @@ __all__ = [
     "Verification",
     "canonical_fault",
     "canonical_json",
+    "check_attachment",
     "check_timestamp",
     "default_schemas_dir",
     "is_canonical",
@@ -788,9 +792,11 @@ def default_schemas_dir() -> Path:
     return Path(__file__).resolve().parent.parent / "schemas"
 
 
-_READ = "read"
-_UNREADABLE = "unreadable"  # not there, not a file, or it couldn't be read whole
-_TOO_LARGE = "too_large"  # more than the limit; not read
+# A reader's three answers (check_attachment, _read_file).
+READ = "read"
+UNREADABLE = "unreadable"  # not there, not a file, or it couldn't be read whole
+TOO_LARGE = "too_large"  # more than the limit; not read
+_READ, _UNREADABLE, _TOO_LARGE = READ, UNREADABLE, TOO_LARGE
 
 
 def _read_file(path: Path, limit: int) -> tuple[str, bytes]:
@@ -889,10 +895,13 @@ def verify(result: bytes, signature: bytes | None, key: PublicKey, schemas: Sche
     return _check(result, signature, key, schemas)[0]
 
 
-def _check_attachment(read, attachment: dict) -> str:
+def check_attachment(read, attachment: dict) -> str:
     """The word for one listed attachment as `read(name, limit)` finds it;
     VERIFIED when it is the file the result lists. One larger than listed isn't
-    read at all."""
+    read at all. `read` answers `(state, bytes)` with `state` one of READ,
+    UNREADABLE (not there, not a file, not read whole) and TOO_LARGE (over
+    `limit`, not read): the folder's reader here, the upload's parts in the
+    Cloud (C5.7), which checks an attachment through this one function."""
     state, data = read(attachment["name"], attachment["size_bytes"])
     if state == _UNREADABLE:
         return "attachment_missing"
@@ -985,7 +994,7 @@ def verify_folder(folder, key: PublicKey, schemas: Schemas, tsa_ca: bytes | None
     if verdict.word != VERIFIED:
         return verdict
     for attachment in listed:
-        word = _check_attachment(read, attachment)
+        word = check_attachment(read, attachment)
         if word != VERIFIED:
             return _failed(word)
     # The timestamp last: evidence about a result that is known good by now.

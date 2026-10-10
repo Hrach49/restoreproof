@@ -266,6 +266,7 @@ def upgrade() -> None:
         _text("bundle_sha256", nullable=True),
         _boolean("signature_ok"),
         _boolean("tsa_ok"),
+        _time("tsa_time"),
         _boolean("cleanup_ok"),
         _text("error_code", nullable=True),
         _text("error_message", nullable=True),
@@ -280,7 +281,7 @@ def upgrade() -> None:
         _check(
             "test_run",
             "state",
-            "state IN ('queued', 'dispatched', 'received', 'pass', 'fail', 'error', 'expired')",
+            "state IN ('queued', 'dispatched', 'pass', 'fail', 'error', 'expired')",
         ),
         _check("test_run", "total_ms_not_negative", "total_ms >= 0"),
         _check("test_run", "attempt_not_negative", "attempt >= 0"),
@@ -302,6 +303,7 @@ def upgrade() -> None:
         _id(),
         _msp_id(),
         _uuid("run_id"),
+        sa.Column("position", sa.Integer(), nullable=False),
         _text("type"),
         _text("name"),
         _text("expected_kind"),
@@ -315,6 +317,7 @@ def upgrade() -> None:
         _fk_msp("test_item"),
         _fk("test_item", ("run_id",), "test_run", ("id",)),
         _check("test_item", "ms_not_negative", "ms >= 0"),
+        _check("test_item", "position_not_negative", "position >= 0"),
         _sha256("test_item", "expected_sha256"),
         _sha256("test_item", "found_sha256"),
     )

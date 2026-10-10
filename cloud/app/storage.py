@@ -1,8 +1,12 @@
-"""The S3 client (C5.1).
+"""The S3 client (C5.1), and the bundle's put and get (C5.7).
 
-Any S3-compatible store: MinIO in the local stack. Putting and getting an
-object are C5.7's; this is the client and the check /healthz makes. The check
-has a client of its own: its short limits are a probe's, not an upload's.
+Any S3-compatible store: MinIO in the local stack. The check /healthz makes
+has a client of its own: its short limits are a probe's, not an upload's. A
+bundle's files go under `msp/<msp_id>/runs/<run_id>/<name>` through `put`,
+one object per file (docs/decisions.md 2026-10-10, C5.7, point 10); `get`
+reads one back whole. Both are synchronous, as boto3 is: a route runs them in
+a thread, and an error is the library's own, never swallowed, so the route's
+transaction rolls back.
 """
 
 from __future__ import annotations
@@ -67,3 +71,11 @@ class Storage:
         to list it. Synchronous, as boto3 is: call it from a thread.
         """
         self.check_client.list_objects_v2(Bucket=self.bucket, MaxKeys=1)
+
+    def put(self, key: str, body: bytes, content_type: str) -> None:
+        """Write `body` under `key`, replacing what was there."""
+        self.client.put_object(Bucket=self.bucket, Key=key, Body=body, ContentType=content_type)
+
+    def get(self, key: str) -> bytes:
+        """The object under `key`, whole."""
+        return self.client.get_object(Bucket=self.bucket, Key=key)["Body"].read()

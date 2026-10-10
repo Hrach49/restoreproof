@@ -12,12 +12,16 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /srv
 
+# Built with the repository as context (cloud/docker-compose.yml, .dockerignore
+# at the root): the app reads shared/schemas/ by path, so the schemas go in
+# beside app/, where app/schemas.py finds them by walking up.
 # The dependencies first, so a change to the code doesn't install them again.
-COPY pyproject.toml uv.lock ./
+COPY cloud/pyproject.toml cloud/uv.lock ./
 RUN uv sync --locked --no-dev
 
-COPY alembic.ini ./
-COPY app ./app
+COPY cloud/alembic.ini ./
+COPY shared/schemas ./shared/schemas
+COPY cloud/app ./app
 
 RUN useradd --system --no-create-home --uid 10001 restoreproof
 USER restoreproof

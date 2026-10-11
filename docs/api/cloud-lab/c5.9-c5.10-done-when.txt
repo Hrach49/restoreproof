@@ -1,0 +1,146 @@
+C5.10 (#63) and C5.9 (#62) Done-whens, by hand against the Compose stack: an MSP with one client and plan by CLI, timed; the scheduler's queued runs on a 5-minute cron. 2026-10-11T20:20:37Z, commit 7b2cd56, branch c5.9-c5.10
+Windows, Python 3.12, Docker Desktop, the Compose stack (postgres:16, MinIO, api, scheduler) on 127.0.0.1; the CLI runs in the api container
+
+== (1) the stack, the scheduler service running the dispatcher ==
+ Image restoreproof-cloud:local Building 
+ Image restoreproof-cloud:local Building 
+ Image restoreproof-cloud:local Built 
+ Image restoreproof-cloud:local Built 
+ Container restoreproof-minio-1 Running 
+ Container restoreproof-postgres-1 Running 
+ Container restoreproof-api-1 Recreate 
+ Container restoreproof-api-1 Recreated 
+ Container restoreproof-scheduler-1 Recreate 
+ Container restoreproof-scheduler-1 Recreated 
+ Container restoreproof-minio-1 Waiting 
+ Container restoreproof-minio-1 Healthy 
+ Container restoreproof-minio-bucket-1 Starting 
+ Container restoreproof-minio-bucket-1 Started 
+ Container restoreproof-postgres-1 Waiting 
+ Container restoreproof-minio-bucket-1 Waiting 
+ Container restoreproof-minio-bucket-1 Exited 
+ Container restoreproof-postgres-1 Healthy 
+ Container restoreproof-api-1 Starting 
+ Container restoreproof-api-1 Started 
+ Container restoreproof-api-1 Waiting 
+ Container restoreproof-api-1 Healthy 
+ Container restoreproof-scheduler-1 Starting 
+ Container restoreproof-scheduler-1 Started 
+ Container restoreproof-minio-bucket-1 Waiting 
+ Container restoreproof-api-1 Waiting 
+ Container restoreproof-scheduler-1 Waiting 
+ Container restoreproof-postgres-1 Waiting 
+ Container restoreproof-minio-1 Waiting 
+ Container restoreproof-scheduler-1 Healthy 
+ Container restoreproof-api-1 Healthy 
+ Container restoreproof-minio-1 Healthy 
+ Container restoreproof-minio-bucket-1 Exited 
+ Container restoreproof-postgres-1 Healthy 
+GET /healthz: HTTP/1.1 200 OK date: Sun, 11 Oct 2026 20:20:59 GMT server: uvicorn cache-control: no-store content-length: 21 content-type: application/json x-request-id: 04d42f667404467fb680fb529bf8a656 {"db":"ok","s3":"ok"}
+alembic check (the stack's rows are left as they are; nothing is downgraded):
+{"event": "Context impl PostgresqlImpl.", "level": "info", "ts": "2026-10-11T20:21:04.794288Z"}
+{"event": "Will assume transactional DDL.", "level": "info", "ts": "2026-10-11T20:21:04.794460Z"}
+{"event": "setting up autogenerate plugin alembic.autogenerate.schemas", "level": "info", "ts": "2026-10-11T20:21:04.819685Z"}
+{"event": "setting up autogenerate plugin alembic.autogenerate.tables", "level": "info", "ts": "2026-10-11T20:21:04.819883Z"}
+{"event": "setting up autogenerate plugin alembic.autogenerate.types", "level": "info", "ts": "2026-10-11T20:21:04.819967Z"}
+{"event": "setting up autogenerate plugin alembic.autogenerate.constraints", "level": "info", "ts": "2026-10-11T20:21:04.820040Z"}
+{"event": "setting up autogenerate plugin alembic.autogenerate.defaults", "level": "info", "ts": "2026-10-11T20:21:04.820105Z"}
+{"event": "setting up autogenerate plugin alembic.autogenerate.comments", "level": "info", "ts": "2026-10-11T20:21:04.820164Z"}
+No new upgrade operations detected.
+the period's unique and the plan's created_at: uq_test_run_msp_id_plan_id_scheduled_for | created_at timestamp with time zone
+manage.py in the image: -rwxr-xr-x 1 root root 7009 Oct 11 19:39 /srv/manage.py
+the scheduler's first lines:
+{"tick_s": 300, "event": "scheduler started", "level": "info", "ts": "2026-10-11T20:21:04.257080Z"}
+{"job": "plans", "msps": 0, "plans": 0, "created": 0, "skipped": 0, "failed": 0, "duration_ms": 52, "event": "tick", "level": "info", "ts": "2026-10-11T20:21:04.309628Z"}
+{"job": "sweep", "msps": 0, "requeued": 0, "expired": 0, "failed": 0, "duration_ms": 45, "event": "tick", "level": "info", "ts": "2026-10-11T20:21:04.312705Z"}
+
+== (2) the C5.10 Done-when, timed: an MSP with one client and plan by CLI ==
+create-msp --name 'c5.9-c5.10 done-when': exit 0
+msp_id 28069831-b1cf-4cb8-9677-1420748ea0d5
+create-client --msp-id <msp_id> --name Fabrikam --tenant-id <a tenant made for the run>: exit 0
+client_id 5ca87425-0e6a-40a0-8fe1-33db802b787b
+create-worker-token --msp-id <msp_id> --label veeam-vm: exit 0
+install_token_id b2e92b1d-c49a-4934-be83-ad9002ca6fa1
+expires_at 2026-10-18T20:21:23Z
+install_token <token>
+the install token is shown once; the Cloud stores its hash alone
+POST /v1/workers/register with curl (the token in the body on standard input, a key made for this run): 201 worker_id ba2fac3f-fe04-481f-bdab-f2c804be222e, key_id 492c335da4da680a8374b7df257f34adfdec348289c8adc01096b767309121f7; the API token kept in memory
+create-connector --msp-id <msp_id> --client-id <client_id> --worker-id <worker_id> --profile-file /tmp/profile.json (the shared valid profile naming the run's tenant, copied into the container): exit 0
+connector_id c04b749e-856a-4133-80e6-cd7dbd3fbc96
+create-plan --msp-id <msp_id> --client-id <client_id> --connector-id <connector_id> --mail 5 --sp 3 --od 2 --cron '*/5 * * * *': exit 0
+plan_id fcd5a058-53d8-4393-ba95-91ebefeba3e1
+** the six steps took 21.9 s (the Done-when says under 300) **
+the rows (c59-c510-rows.py show):
+test_plan (PlanRepo.list):
+  plan fcd5a058-53d8-4393-ba95-91ebefeba3e1 connector c04b749e-856a-4133-80e6-cd7dbd3fbc96 sizes 5/3/2 cadence '*/5 * * * *' enabled True created_at 2026-10-11T20:21:32.950Z
+test_run (RunRepo.list, newest first):
+worker (WorkerRepo.list):
+  worker ba2fac3f-fe04-481f-bdab-f2c804be222e name 'veeam-vm' version 0.0.0 revoked_at null
+audit_log:
+  2026-10-11T20:21:16.153Z msp.create msp:28069831-b1cf-4cb8-9677-1420748ea0d5
+  2026-10-11T20:21:20.204Z client.create client:5ca87425-0e6a-40a0-8fe1-33db802b787b
+  2026-10-11T20:21:23.120Z install_token.create install_token:b2e92b1d-c49a-4934-be83-ad9002ca6fa1
+  2026-10-11T20:21:26.150Z worker.register worker:ba2fac3f-fe04-481f-bdab-f2c804be222e
+  2026-10-11T20:21:29.676Z connector.create connector:c04b749e-856a-4133-80e6-cd7dbd3fbc96
+  2026-10-11T20:21:32.950Z plan.create plan:fcd5a058-53d8-4393-ba95-91ebefeba3e1
+
+== (3) the CLI's refusals, each exit 1 with one line and nothing written ==
+the same tenant again: exit 1: tenant_id: already a client of this MSP
+a profile naming another tenant: exit 1: graph_tenant_id: not the client's tenant
+a yearly cron: exit 1: cadence_cron: less than monthly
+a cron that is not one: exit 1: cadence_cron: not a cron expression
+sizes all 0: exit 1: sample sizes: all 0
+
+== (4) the C5.9 Done-when: the scheduler makes the plan's queued runs on its 5-minute cron (the plan made 2026-10-11T20:21:33Z; polled every 30 s, at most 720 s) ==
+2026-10-11T20:26:14Z: a queued run for the period 2026-10-11T20:25:00.000Z
+2026-10-11T20:31:34Z: a queued run for the period 2026-10-11T20:30:00.000Z
+the rows after two periods:
+test_plan (PlanRepo.list):
+  plan fcd5a058-53d8-4393-ba95-91ebefeba3e1 connector c04b749e-856a-4133-80e6-cd7dbd3fbc96 sizes 5/3/2 cadence '*/5 * * * *' enabled True created_at 2026-10-11T20:21:32.950Z
+test_run (RunRepo.list, newest first):
+  run 25b4fb25-84aa-4937-ba10-a40d217158b7 plan fcd5a058-53d8-4393-ba95-91ebefeba3e1 state queued scheduled_for 2026-10-11T20:30:00.000Z created_at 2026-10-11T20:31:04.354Z dispatched_at null attempt 0
+  run 007a72d5-a7bb-4bce-9610-08c443f174f5 plan fcd5a058-53d8-4393-ba95-91ebefeba3e1 state queued scheduled_for 2026-10-11T20:25:00.000Z created_at 2026-10-11T20:26:04.359Z dispatched_at null attempt 0
+worker (WorkerRepo.list):
+  worker ba2fac3f-fe04-481f-bdab-f2c804be222e name 'veeam-vm' version 0.0.0 revoked_at null
+audit_log:
+  2026-10-11T20:21:16.153Z msp.create msp:28069831-b1cf-4cb8-9677-1420748ea0d5
+  2026-10-11T20:21:20.204Z client.create client:5ca87425-0e6a-40a0-8fe1-33db802b787b
+  2026-10-11T20:21:23.120Z install_token.create install_token:b2e92b1d-c49a-4934-be83-ad9002ca6fa1
+  2026-10-11T20:21:26.150Z worker.register worker:ba2fac3f-fe04-481f-bdab-f2c804be222e
+  2026-10-11T20:21:29.676Z connector.create connector:c04b749e-856a-4133-80e6-cd7dbd3fbc96
+  2026-10-11T20:21:32.950Z plan.create plan:fcd5a058-53d8-4393-ba95-91ebefeba3e1
+the scheduler's lines for this MSP (docker compose logs --since the run's start, filtered to the MSP's id; the first two ticks too):
+{"msp_id": "28069831-b1cf-4cb8-9677-1420748ea0d5", "plan_id": "fcd5a058-53d8-4393-ba95-91ebefeba3e1", "run_id": "007a72d5-a7bb-4bce-9610-08c443f174f5", "scheduled_for": "2026-10-11T20:25:00+00:00", "event": "run created", "level": "info", "ts": "2026-10-11T20:26:04.402520Z"}
+{"msp_id": "28069831-b1cf-4cb8-9677-1420748ea0d5", "plan_id": "fcd5a058-53d8-4393-ba95-91ebefeba3e1", "run_id": "25b4fb25-84aa-4937-ba10-a40d217158b7", "scheduled_for": "2026-10-11T20:30:00+00:00", "event": "run created", "level": "info", "ts": "2026-10-11T20:31:04.373660Z"}
+{"job": "plans", "msps": 0, "plans": 0, "created": 0, "skipped": 0, "failed": 0, "duration_ms": 52, "event": "tick", "level": "info", "ts": "2026-10-11T20:21:04.309628Z"}
+{"job": "sweep", "msps": 0, "requeued": 0, "expired": 0, "failed": 0, "duration_ms": 45, "event": "tick", "level": "info", "ts": "2026-10-11T20:21:04.312705Z"}
+
+== (5) the Worker's poll takes the runs; revoke-worker; the poll is 401 ==
+GET /v1/jobs (the API token in a curl config on standard input): restoreproof.jobs.v1, 2 jobs, run_ids 007a72d5-a7bb-4bce-9610-08c443f174f5, 25b4fb25-84aa-4937-ba10-a40d217158b7; each job's client is the connector's profile (not shown)
+revoke-worker --msp-id <msp_id> --worker-id <worker_id>: exit 0
+revoked_at 2026-10-11T20:31:41Z
+GET /v1/jobs again: HTTP/1.1 401 Unauthorized {"detail":"not authenticated"}
+revoke-worker again: exit 1: worker_id: no such Worker or already revoked
+
+== (6) the rows at the end, and the api's request lines ==
+test_plan (PlanRepo.list):
+  plan fcd5a058-53d8-4393-ba95-91ebefeba3e1 connector c04b749e-856a-4133-80e6-cd7dbd3fbc96 sizes 5/3/2 cadence '*/5 * * * *' enabled True created_at 2026-10-11T20:21:32.950Z
+test_run (RunRepo.list, newest first):
+  run 25b4fb25-84aa-4937-ba10-a40d217158b7 plan fcd5a058-53d8-4393-ba95-91ebefeba3e1 state dispatched scheduled_for 2026-10-11T20:30:00.000Z created_at 2026-10-11T20:31:04.354Z dispatched_at 2026-10-11T20:31:37.894Z attempt 1
+  run 007a72d5-a7bb-4bce-9610-08c443f174f5 plan fcd5a058-53d8-4393-ba95-91ebefeba3e1 state dispatched scheduled_for 2026-10-11T20:25:00.000Z created_at 2026-10-11T20:26:04.359Z dispatched_at 2026-10-11T20:31:37.894Z attempt 1
+worker (WorkerRepo.list):
+  worker ba2fac3f-fe04-481f-bdab-f2c804be222e name 'veeam-vm' version 0.0.0 revoked_at 2026-10-11T20:31:41.156Z
+audit_log:
+  2026-10-11T20:21:16.153Z msp.create msp:28069831-b1cf-4cb8-9677-1420748ea0d5
+  2026-10-11T20:21:20.204Z client.create client:5ca87425-0e6a-40a0-8fe1-33db802b787b
+  2026-10-11T20:21:23.120Z install_token.create install_token:b2e92b1d-c49a-4934-be83-ad9002ca6fa1
+  2026-10-11T20:21:26.150Z worker.register worker:ba2fac3f-fe04-481f-bdab-f2c804be222e
+  2026-10-11T20:21:29.676Z connector.create connector:c04b749e-856a-4133-80e6-cd7dbd3fbc96
+  2026-10-11T20:21:32.950Z plan.create plan:fcd5a058-53d8-4393-ba95-91ebefeba3e1
+  2026-10-11T20:31:41.197Z worker.revoke worker:ba2fac3f-fe04-481f-bdab-f2c804be222e
+{"method": "POST", "path": "/v1/workers/register", "status": 201, "duration_ms": 56, "event": "request", "request_id": "48f9183ec9ad406d874484c6ecb26769", "level": "info", "ts": "2026-10-11T20:21:26.179537Z"}
+{"method": "GET", "path": "/v1/jobs", "status": 200, "duration_ms": 52, "event": "request", "request_id": "f74ab18830174a86a1fe02f4c12c1909", "level": "info", "ts": "2026-10-11T20:31:37.930901Z"}
+{"method": "GET", "path": "/v1/jobs", "status": 401, "duration_ms": 6, "event": "request", "request_id": "8cf1ef2ab6fc48aeb0885545efe1f840", "level": "info", "ts": "2026-10-11T20:31:41.677295Z"}
+
+== (7) the teardown ==
+C:\Users\minas\AppData\Local\Temp\rp-c59 and the container's two profile copies removed (ids only, no token in them); the install token went from the CLI's stdout into memory and to curl in the body on its standard input, the API token in a curl config on its standard input: neither was written to a file or put on a command line; this run's MSP and its rows are left in the stack's database and no other row was touched; the scheduler keeps running

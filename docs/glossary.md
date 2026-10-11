@@ -445,6 +445,21 @@ Worker's oldest queued runs, at most five, to `dispatched` with `dispatched_at` 
 back to `queued` by the scheduler's sweep (C5.9, over `RunRepo.requeue_stale`), and after three
 attempts to `expired`; its bundle is still taken when it comes.
 
+**Period.** The span between two occurrences of a plan's cadence (`cadence_cron`: five cron
+fields, UTC, at least monthly), named by its start. The scheduler (C5.9, `cloud/app/scheduler.py`,
+the Compose `scheduler` service) makes one queued run per enabled plan and current period,
+`test_run.scheduled_for` being the period's start under a unique on `(msp_id, plan_id,
+scheduled_for)`, so two ticks or two processes make one; a period that began before the plan was
+made is not the plan's, and only the current period is ever made up. A run made by hand
+(`RunRepo.create`, `create-plan --run-now`) has no period. See `docs/verification.md`, "The Cloud
+makes a run".
+
+**Onboarding CLI.** `cloud/manage.py` (C5.10, `docs/onboarding.md`): `create-msp`,
+`create-client --tenant-id`, `create-worker-token --label` (the install token, once),
+`create-connector --profile-file`, `create-plan` and `revoke-worker`, each one committed
+transaction through the repos, each refusal one `<key>: <reason>` line by constraint name and
+never a value. `create-user` waits for C6.1.
+
 **Bundle upload (`POST /v1/results`).** The Worker's multipart upload of a run folder (C5.7):
 the parts `result`, `signature`, `timestamp` when there, and one per listed attachment under its
 name. The Cloud verifies it with the auditor's own `verify_bundle.py` under the token's Worker's

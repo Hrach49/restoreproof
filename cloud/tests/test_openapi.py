@@ -103,8 +103,12 @@ def test_the_document_holds_the_four_routes_and_not_healthz():
     assert beat["responses"]["401"]["content"]["application/json"]["schema"] == error
     assert beat["responses"]["401"]["headers"]["WWW-Authenticate"]
     assert beat["requestBody"]["required"] is True
-    assert beat["requestBody"]["content"]["application/json"]["schema"] == {"$ref": "#/components/schemas/HeartbeatBody"}
-    body = document["components"]["schemas"]["HeartbeatBody"]
+    # The C5.8 review's finding 1: the route reads the body itself, after the
+    # token, so the model's schema is written into the operation, not referred to.
+    assert "HeartbeatBody" not in document["components"]["schemas"]
+    assert beat["responses"]["422"]["content"]["application/json"]["schema"] == {"$ref": "#/components/schemas/HTTPValidationError"}
+    body = beat["requestBody"]["content"]["application/json"]["schema"]
+    assert body["title"] == "HeartbeatBody"
     assert body["additionalProperties"] is False
     assert sorted(body["required"]) == ["last_error", "last_error_at", "outbox_depth", "uptime_s", "version"]
     assert body["properties"]["version"]["pattern"] == "^[ -~]+$"

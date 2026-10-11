@@ -10,27 +10,48 @@ form's bound, the error and its time both or neither. The Worker behind the
 bearer token gets its own row written in one `UPDATE` (`WorkerRepo.heartbeat`):
 `last_seen_at` from the Cloud's clock, the five fields as sent, a null
 replacing a value. A revoked or unknown Worker is `current_worker`'s one 401
-before any statement; a revoke that landed since the lookup makes the `UPDATE`
-touch nothing and is the same 401, nothing written. 204 with no body, as the
-Worker takes any 2xx and reads nothing. No audit row: the row is its own record.
-The transaction is `get_session`'s, committed before the response starts
-(`SessionDep`). Nothing of the body or the token reaches a log line: the route
-logs nothing of its own.
+after its lookup and before anything is written; a revoke that landed since
+the lookup makes the `UPDATE` touch nothing and is the same 401, nothing
+written. 204 with no body, as the Worker takes any 2xx and reads nothing. No
+audit row: the row is its own record. The transaction is `get_session`'s,
+committed before the response starts (`SessionDep`). Nothing of the body or
+the token reaches a log line: the route logs nothing of its own.
+
+The token before the body (the C5.8 review's finding 1): the body is no
+parameter of the route, which FastAPI would read and parse before any
+dependency ran. `heartbeat_body` depends on `current_worker` and reads the
+request itself, so a caller without a token is answered the 401 with nothing
+of its body read, and a body nothing can parse (not JSON, nested past the
+parser's depth, a number past the interpreter's digits, a key twice) is the
+same 422 as a body outside the model, never FastAPI's own 400.
 """
 
 from __future__ import annotations
 
 import datetime as dt
-from typing import Annotated
+import json
+import re
+from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Response
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
+from fastapi import APIRouter, Depends, Request, Response
+from fastapi.exceptions import RequestValidationError
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    ValidationError,
+    WithJsonSchema,
+    model_validator,
+)
 
 from app.auth.dependency import current_worker, not_authenticated
 from app.db import SessionDep
 from app.models import Worker
 from app.repo.workers import WorkerRepo
 from app.routers.errors import NOT_AUTHENTICATED
+from app.routers.workers import Version
 
 router = APIRouter()
 
@@ -39,13 +60,25 @@ MAX_COUNT = 2**53 - 1
 # heartbeat_time_text's form (worker/src/heartbeat.cpp): UTC to the millisecond.
 TIME_RULE = r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$"
 TIME_FORM = "%Y-%m-%dT%H:%M:%S.%fZ"
+# The rule as the contract's readers take it: `\d` is 0 to 9 and nothing else.
+_TIME = re.compile(TIME_RULE, re.ASCII)
 
-# What `rpworker --version` prints: printable ASCII, as RegisterBody.version.
-Version = Annotated[str, StringConstraints(min_length=1, max_length=64, pattern=r"^[ -~]+$")]
+
+def _error_time(value: object) -> dt.datetime:
+    """The Worker's time text as an aware UTC datetime, parsed here once: the
+    rule takes the shape, the calendar the value (a 30th of February or an
+    hour 24 is a 422, never a 500 at the row)."""
+    if not isinstance(value, str) or _TIME.fullmatch(value) is None:
+        raise ValueError("not the Worker's time form")
+    return dt.datetime.strptime(value, TIME_FORM).replace(tzinfo=dt.timezone.utc)
+
+
 # A service error word's shape: rp::service_error_codes()'s words and
 # upload_http_<status> all fit; the list itself is the Worker's.
 ErrorWord = Annotated[str, StringConstraints(pattern=r"^[a-z0-9_]{1,64}$")]
-ErrorTime = Annotated[str, StringConstraints(pattern=TIME_RULE)]
+ErrorTime = Annotated[
+    dt.datetime, BeforeValidator(_error_time), WithJsonSchema({"type": "string", "pattern": TIME_RULE})
+]
 Count = Annotated[int, Field(strict=True, ge=0, le=MAX_COUNT)]
 
 
@@ -58,26 +91,47 @@ class HeartbeatBody(BaseModel):
     outbox_depth: Count
     uptime_s: Count
 
-    @field_validator("last_error_at")
-    @classmethod
-    def a_real_time(cls, value: str | None) -> str | None:
-        """The pattern took the shape; the calendar takes the value (a 30th of
-        February or an hour 24 is a 422, never a 500 at the row)."""
-        if value is not None:
-            dt.datetime.strptime(value, TIME_FORM)
-        return value
-
     @model_validator(mode="after")
     def both_or_neither(self) -> HeartbeatBody:
         if (self.last_error is None) != (self.last_error_at is None):
             raise ValueError("last_error and last_error_at come together or not at all")
         return self
 
-    def error_time(self) -> dt.datetime | None:
-        """`last_error_at` as an aware UTC datetime, the Worker's own time."""
-        if self.last_error_at is None:
-            return None
-        return dt.datetime.strptime(self.last_error_at, TIME_FORM).replace(tzinfo=dt.timezone.utc)
+
+def _no_key_twice(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """A closed body names each key once; the parser alone keeps the last."""
+    members = dict(pairs)
+    if len(members) != len(pairs):
+        raise ValueError("a key twice")
+    return members
+
+
+def _is_json(content_type: str | None) -> bool:
+    return content_type is not None and content_type.split(";", 1)[0].strip().lower() == "application/json"
+
+
+def _unreadable(kind: str, message: str) -> RequestValidationError:
+    """FastAPI's 422 for a body it couldn't parse, with nothing of the body in it."""
+    return RequestValidationError([{"type": kind, "loc": ("body",), "msg": message, "input": None}])
+
+
+async def heartbeat_body(
+    request: Request, worker: Annotated[Worker, Depends(current_worker)]
+) -> HeartbeatBody:
+    """The body, read only for an authenticated Worker (`worker` is here for
+    that order alone)."""
+    if not _is_json(request.headers.get("content-type")):
+        raise _unreadable("json_type", "the body is application/json")
+    raw = await request.body()
+    try:
+        document = json.loads(raw, object_pairs_hook=_no_key_twice)
+    except (ValueError, RecursionError):
+        raise _unreadable("json_invalid", "JSON decode error") from None
+    try:
+        return HeartbeatBody.model_validate(document)
+    except ValidationError as fault:
+        errors = fault.errors(include_url=False)
+        raise RequestValidationError([{**e, "loc": ("body", *e["loc"])} for e in errors]) from None
 
 
 def now() -> dt.datetime:
@@ -89,10 +143,24 @@ def now() -> dt.datetime:
     "/heartbeat",
     status_code=204,
     response_class=Response,
-    responses={401: NOT_AUTHENTICATED},
+    responses={
+        401: NOT_AUTHENTICATED,
+        422: {
+            "description": "Validation Error",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HTTPValidationError"}}},
+        },
+    },
+    openapi_extra={
+        "requestBody": {
+            "required": True,
+            "content": {"application/json": {"schema": HeartbeatBody.model_json_schema()}},
+        }
+    },
 )
 async def heartbeat(
-    body: HeartbeatBody, worker: Annotated[Worker, Depends(current_worker)], session: SessionDep
+    body: Annotated[HeartbeatBody, Depends(heartbeat_body)],
+    worker: Annotated[Worker, Depends(current_worker)],
+    session: SessionDep,
 ) -> Response:
     touched = await WorkerRepo(session).heartbeat(
         worker.msp_id,
@@ -100,7 +168,7 @@ async def heartbeat(
         at=now(),
         version=body.version,
         last_error=body.last_error,
-        last_error_at=body.error_time(),
+        last_error_at=body.last_error_at,
         outbox_depth=body.outbox_depth,
         uptime_s=body.uptime_s,
     )

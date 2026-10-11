@@ -30,6 +30,7 @@ from app.models import Base
 from app.repo.msps import MspRepo
 from app.repo.workers import WorkerRepo
 from app.routers import heartbeat as heartbeat_module
+from app.routers import workers as workers_module
 from tests.conftest import make_settings, session_override
 
 UTC = dt.timezone.utc
@@ -167,8 +168,7 @@ async def test_the_dashboard_column_last_seen_updates_every_15_minutes(lab, cloc
     response = await lab.post(FIRST)
 
     assert (response.status_code, response.content) == (204, b"")
-    # The page's request would have a session of its own; this test has one.
-    lab.session.expire_all()
+    # No expire: the UPDATE keeps the session's loaded rows in step (the review's finding 4).
     rows = {w.name: w for w in await WorkerRepo(lab.session).list(lab.msp_id)}
     assert {name: w.last_seen_at for name, w in rows.items()} == {"w1": T + FIFTEEN_MINUTES, "w2": None}
     w1 = rows["w1"]
@@ -256,6 +256,8 @@ BAD_BODIES = {
     "time 30th of February": body_with(last_error_at="2026-02-30T00:00:00.000Z"),
     "time hour 24": body_with(last_error_at="2026-10-09T24:00:00.000Z"),
     "time a number": body_with(last_error_at=1760000000),
+    "time in other digits": body_with(last_error_at="\u0662\u0660\u0662\u0666-10-09T20:27:38.206Z"),
+    "time with a line end": body_with(last_error_at="2026-10-09T20:27:38.206Z\n"),
     "outbox_depth -1": body_with(outbox_depth=-1),
     "outbox_depth 2^53": body_with(outbox_depth=2**53),
     "outbox_depth 1.0": body_with(outbox_depth=1.0),
@@ -287,6 +289,89 @@ async def test_a_body_that_is_not_json_is_422(lab, clock):
     plain = await lab.post(AFTER_ERROR, content_type="text/plain")
 
     assert (not_json.status_code, plain.status_code) == (422, 422)
+    assert await lab.row() == UNTOUCHED
+
+
+# --- The token before the body (the C5.8 review's finding 1) ----------------------------------
+
+
+NESTED = b"[" * 100_000
+HUGE_NUMBER = b'{"last_error":null,"last_error_at":null,"outbox_depth":' + b"9" * 5000 + b',"uptime_s":0,"version":"0.0.0"}'
+UNREADABLE = {
+    "not json": b"last_error=null",
+    "nested past the parser's depth": NESTED,
+    "a 5000-digit integer": HUGE_NUMBER,
+    "not utf-8": b'{"version":"\xff"}',
+    "empty": b"",
+}
+
+
+@pytest.mark.parametrize("content", list(UNREADABLE.values()), ids=list(UNREADABLE))
+async def test_a_body_nothing_can_read_is_401_without_a_token_and_422_with_one(lab, clock, content):
+    """Never FastAPI's own 400, which the contract doesn't name."""
+    without = await lab.post(content, NO_TOKEN)
+    unknown = await lab.post(content, new_token())
+    known = await lab.post(content)
+
+    for response in (without, unknown):
+        assert (response.status_code, response.json()) == (401, REFUSED)
+        assert response.headers["www-authenticate"] == "Bearer"
+    assert known.status_code == 422, known.text
+    assert isinstance(known.json()["detail"], list)
+    assert await lab.row() == UNTOUCHED
+
+
+async def test_another_content_type_is_401_without_a_token(lab, clock):
+    response = await lab.post(AFTER_ERROR, NO_TOKEN, content_type="text/plain")
+
+    assert (response.status_code, response.json()) == (401, REFUSED)
+
+
+@pytest.mark.parametrize("content_type", ["application/json; charset=utf-8", "Application/JSON"])
+async def test_the_media_type_is_read_in_any_case_and_with_a_parameter(lab, clock, content_type):
+    assert (await lab.post(AFTER_ERROR, content_type=content_type)).status_code == 204
+
+
+async def test_a_request_without_a_content_type_is_422(lab, clock):
+    transport = httpx.ASGITransport(app=lab.app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://cloud.test") as client:
+        response = await client.post(PATH, headers={"Authorization": f"Bearer {lab.token}"}, content=AFTER_ERROR)
+
+    assert response.status_code == 422
+    assert await lab.row() == UNTOUCHED
+
+
+async def test_the_body_of_a_request_without_a_token_is_never_read(lab, clock):
+    pulled: list[int] = []
+
+    async def chunks():
+        for chunk in (AFTER_ERROR[:40], AFTER_ERROR[40:]):
+            pulled.append(len(chunk))
+            yield chunk
+
+    transport = httpx.ASGITransport(app=lab.app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://cloud.test") as client:
+        response = await client.post(PATH, headers={"Content-Type": "application/json"}, content=chunks())
+
+    assert (response.status_code, response.json()) == (401, REFUSED)
+    assert pulled == []
+
+
+# --- A key twice (finding 2) -------------------------------------------------------------------
+
+
+TWICE = {
+    "uptime_s twice": b'{"last_error":null,"last_error_at":null,"outbox_depth":0,"uptime_s":0,"uptime_s":5,"version":"0.0.0"}',
+    "version twice, the same": b'{"last_error":null,"last_error_at":null,"outbox_depth":0,"uptime_s":0,"version":"0.0.0","version":"0.0.0"}',
+    "last_error twice": b'{"last_error":"job_invalid","last_error":null,"last_error_at":null,"outbox_depth":0,"uptime_s":0,"version":"0.0.0"}',
+}
+
+
+@pytest.mark.parametrize("content", list(TWICE.values()), ids=list(TWICE))
+async def test_a_key_twice_is_422_and_the_row_is_untouched(lab, clock, content):
+    response = await lab.post(content)
+
+    assert response.status_code == 422, response.text
     assert await lab.row() == UNTOUCHED
 
 
@@ -449,9 +534,21 @@ def test_the_body_model_is_closed_and_names_the_five_keys():
     assert heartbeat_module.MAX_COUNT == 2**53 - 1
 
 
-def test_error_time_is_the_worker_s_time_as_an_aware_utc_datetime():
+def test_last_error_at_is_parsed_once_into_the_worker_s_time_as_an_aware_utc_datetime():
+    """Finding 8: the model holds the datetime; nothing parses the text again."""
     body = heartbeat_module.HeartbeatBody.model_validate(GOOD)
     first = heartbeat_module.HeartbeatBody.model_validate(json.loads(FIRST))
 
-    assert body.error_time() == ERROR_AT
-    assert first.error_time() is None
+    assert body.last_error_at == ERROR_AT and body.last_error_at.tzinfo is UTC
+    assert first.last_error_at is None
+    assert not hasattr(body, "error_time")
+    with pytest.raises(ValueError):
+        heartbeat_module.HeartbeatBody.model_validate(body_with(last_error_at=ERROR_AT))
+
+
+def test_the_version_rule_is_registration_s_own():
+    """Finding 7: one type, so a version registration takes the heartbeat takes."""
+    assert heartbeat_module.Version is workers_module.Version
+    registered = workers_module.RegisterBody.model_json_schema()["properties"]["version"]
+    assert heartbeat_module.HeartbeatBody.model_json_schema()["properties"]["version"] == registered
+    assert registered == {"maxLength": 64, "minLength": 1, "pattern": "^[ -~]+$", "title": "Version", "type": "string"}

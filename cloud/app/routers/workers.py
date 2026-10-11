@@ -13,15 +13,21 @@ transaction is `get_session`'s, committed before the response starts
 from __future__ import annotations
 
 import datetime as dt
+from typing import Annotated
 
 from fastapi import APIRouter, Request
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from app.auth.registration import register_worker
 from app.db import SessionDep
 from app.routers.errors import NOT_AUTHENTICATED, refusal
 
 router = APIRouter()
+
+# What `rpworker --version` prints: printable ASCII. The one rule for a
+# Worker's version, registration's and the heartbeat's (the C5.8 review's
+# finding 7): a version one takes the other takes.
+Version = Annotated[str, StringConstraints(min_length=1, max_length=64, pattern=r"^[ -~]+$")]
 
 
 class RegisterBody(BaseModel):
@@ -34,8 +40,7 @@ class RegisterBody(BaseModel):
     public_key_pem: str = Field(min_length=1, max_length=4096)
     # The lengths are the fields' own; the patterns say what a character may be.
     worker_name: str = Field(min_length=1, max_length=128, pattern=r"^[^\x00-\x1f\x7f]+$")
-    # What `rpworker --version` prints: printable ASCII.
-    version: str = Field(min_length=1, max_length=64, pattern=r"^[ -~]+$")
+    version: Version
 
 
 class Registered(BaseModel):

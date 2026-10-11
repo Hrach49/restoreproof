@@ -1966,20 +1966,33 @@ to 2^53 − 1, the canonical form's own bound, so every body that passes fits th
 columns. Anything else is FastAPI's 422, which quotes the sender's own input to the sender and
 nowhere else.
 
+**The token before the body** (the C5.8 review's findings 1 and 2). The body is not a parameter
+of the route, which FastAPI would read and parse before any dependency ran: `heartbeat_body`
+depends on `current_worker` and reads the request itself. A caller without a valid token is
+answered the 401 with nothing of its body read, whatever the body is. For the Worker, a body
+whose media type is not `application/json` (in any case, a parameter allowed), that is not
+JSON or not UTF-8, that is nested past the parser's depth, that carries a number past the
+interpreter's digits or **a key twice** (the parser alone would keep the last, so a closed body
+would not be closed) is the same 422 as a body outside the model, with nothing of the body in
+it; FastAPI's own 400 for a body it can't parse is never answered. `last_error_at` is parsed
+once, into the aware UTC time that is stored, and its digits are 0 to 9 alone. `version` is
+registration's own type (`app.routers.workers.Version`), so a version one route takes the other
+takes. Nothing bounds the body's size yet (C5.11, with registration's).
+
 **What is written** is one `UPDATE` of the token's Worker's row, `WHERE msp_id AND id AND
 revoked_at IS NULL`: `last_seen_at` is the Cloud's clock at the request, never a time from the
 body (C6.2's "red if older than 24 h" compares with the Cloud's clock); `version`,
 `last_error`, `last_error_at`, `outbox_depth` and `uptime_s` are stored as sent, a `null`
 replacing a value, so a restarted service's `null` clears the row's error and the row is
 always the Worker's latest word, never a mix of two heartbeats or of a heartbeat and the
-registration's `version`. A heartbeat is two statements, the token's lookup and the `UPDATE`;
-no row is read back and no audit row is written (the row is its own record, ninety-six times a
+registration's `version`. A heartbeat is two statements, the token's lookup and the `UPDATE`
+(which keeps the session's own copy of the row in step without a third); no row is read back and no audit row is written (the row is its own record, ninety-six times a
 day per Worker).
 
 **What is answered:** 204 with no body and no `Content-Type` (the Worker takes any 2xx and
 reads nothing). No header, another scheme, an unknown token and a revoked Worker are
 `current_worker`'s one 401 `{"detail": "not authenticated"}` with `WWW-Authenticate: Bearer`
-before any statement; a revoke that landed between the lookup and the `UPDATE` makes the
+after its one lookup, before the body is read or anything is written; a revoke that landed between the lookup and the `UPDATE` makes the
 `UPDATE` touch nothing and is the same 401, nothing written. A revoked Worker's `last_seen_at`
 therefore stops at the revoke: the Cloud's record of when its word was last taken. The log
 holds the request line (method, path, status, duration, request ID) and nothing of the body or

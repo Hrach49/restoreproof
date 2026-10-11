@@ -1,0 +1,498 @@
+"""C5.9's Done-when by name, and the dispatcher (docs/decisions.md 2026-10-11,
+"C5.10 and C5.9", points 7 to 9 and 11): every five minutes, for each MSP
+and each of its enabled plans, one queued run for the period that is current,
+unless one exists; the sweep per MSP; a plan whose cron can't be read skipped
+with one line while the rest go on; an MSP whose tick fails rolled back and
+logged while the next MSP's runs are made. On a migrated database of the
+test's own: a tick is one transaction per MSP, as the process runs it.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import datetime as dt
+import io
+import json
+import signal
+import uuid
+
+import pytest
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.interval import IntervalTrigger
+from sqlalchemy import event, text
+from sqlalchemy.ext.asyncio import create_async_engine
+
+from app import scheduler
+from app.db import make_session_factory
+from app.logging import configure_logging
+from app.repo.clients import ClientRepo
+from app.repo.connectors import ConnectorRepo
+from app.repo.msps import MspRepo
+from app.repo.plans import PlanRepo
+from app.repo.runs import RunRepo
+from app.repo.workers import WorkerRepo
+from app.scheduler import TICK_S, build_scheduler, tick_plans, tick_sweep
+from tests.test_repo_connectors import profile_for
+
+UTC = dt.timezone.utc
+T = dt.datetime(2026, 10, 11, 12, 0, 30, tzinfo=UTC)
+PEM = "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA\n-----END PUBLIC KEY-----\n"
+SENTINEL_ORG = "Sentinel-Organisation-7f3a"
+
+
+def a_hash(seed: str) -> str:
+    return uuid.uuid5(uuid.NAMESPACE_DNS, seed).hex * 2
+
+
+def at(*args) -> dt.datetime:
+    return dt.datetime(*args, tzinfo=UTC)
+
+
+class Lab:
+    """Two MSPs, each with a client, a Worker and a connector; plans made to
+    order with their own `created_at`; the log in a StringIO."""
+
+    def __init__(self, database: str):
+        self.engine = create_async_engine(database, connect_args={"server_settings": {"timezone": "UTC"}})
+        self.factory = make_session_factory(self.engine)
+        self.stream = io.StringIO()
+        configure_logging("info", stream=self.stream)
+
+    async def fill(self) -> "Lab":
+        async with self.factory() as s, s.begin():
+            self.msp_id = (await MspRepo(s).create(name="a")).id
+            self.other_msp_id = (await MspRepo(s).create(name="b")).id
+            self.client_id, self.worker_id, self.connector_id = await self._world(s, self.msp_id, "a")
+            self.other_client_id, self.other_worker_id, self.other_connector_id = await self._world(s, self.other_msp_id, "b")
+        return self
+
+    async def _world(self, s, msp_id, name):
+        client = await ClientRepo(s).create(msp_id, name=f"{name} client", tenant_id=uuid.uuid4())
+        worker = await WorkerRepo(s).create(
+            msp_id, f"{name} worker", public_key_pem=PEM, key_id=a_hash(f"{name} key"), api_token_hash=a_hash(f"{name} token")
+        )
+        profile = profile_for(client.tenant_id, veeam_org_name=SENTINEL_ORG)
+        connector = await ConnectorRepo(s).create(msp_id, client.id, worker.id, profile)
+        return client.id, worker.id, connector.id
+
+    async def plan(self, cron: str, *, created_at: dt.datetime, enabled: bool = True, other: bool = False) -> uuid.UUID:
+        msp_id = self.other_msp_id if other else self.msp_id
+        client_id = self.other_client_id if other else self.client_id
+        connector_id = self.other_connector_id if other else self.connector_id
+        async with self.factory() as s, s.begin():
+            plan = await PlanRepo(s).create(
+                msp_id, client_id, connector_id, sample_mail=5, sample_sp=3, sample_od=2,
+                cadence_cron=cron, now=created_at, enabled=enabled,
+            )
+            await s.execute(text("UPDATE test_plan SET created_at = :at WHERE id = :id"), {"at": created_at, "id": plan.id})
+            return plan.id
+
+    async def plant_cron(self, plan_id: uuid.UUID, cron: str) -> None:
+        """A cron past the repo's rule, by SQL: what a hand could leave in a row."""
+        async with self.factory() as s, s.begin():
+            await s.execute(text("UPDATE test_plan SET cadence_cron = :cron WHERE id = :id"), {"cron": cron, "id": plan_id})
+
+    async def runs(self, msp_id=None) -> list[tuple[uuid.UUID, dt.datetime | None, str]]:
+        async with self.factory() as s, s.begin():
+            rows = await RunRepo(s).list(self.msp_id if msp_id is None else msp_id)
+            return sorted((r.plan_id, r.scheduled_for, r.state) for r in rows)
+
+    async def run_rows(self, msp_id=None) -> list:
+        async with self.factory() as s, s.begin():
+            return await RunRepo(s).list(self.msp_id if msp_id is None else msp_id)
+
+    def log(self, event_name: str | None = None) -> list[dict]:
+        entries = [json.loads(line) for line in self.stream.getvalue().splitlines() if line.startswith("{")]
+        return [e for e in entries if event_name is None or e.get("event") == event_name]
+
+    async def close(self) -> None:
+        await self.engine.dispose()
+
+
+@pytest.fixture
+async def lab(own_database):
+    lab = await Lab(own_database).fill()
+    try:
+        yield lab
+    finally:
+        await lab.close()
+
+
+# --- The Done-when, by name ---------------------------------------------------------------------
+
+
+async def test_a_plan_with_a_5_minute_cron_creates_queued_runs_on_schedule(lab):
+    plan_id = await lab.plan("*/5 * * * *", created_at=T)
+    disabled = await lab.plan("*/5 * * * *", created_at=T, enabled=False)
+    theirs = await lab.plan("*/5 * * * *", created_at=T, other=True)
+    expected: list = []
+
+    for tick, period in [
+        # The plan was made at 12:00:30: the 12:00 period began before it and
+        # is not the plan's; its first run is the 12:05 period's.
+        (at(2026, 10, 11, 12, 0, 30), None),
+        (at(2026, 10, 11, 12, 3, 0), None),
+        (at(2026, 10, 11, 12, 5, 0), at(2026, 10, 11, 12, 5)),
+        (at(2026, 10, 11, 12, 5, 10), None),  # the same period again
+        (at(2026, 10, 11, 12, 10, 1), at(2026, 10, 11, 12, 10)),
+    ]:
+        summary = await tick_plans(lab.factory, tick)
+        if period is not None:
+            expected.append((plan_id, period, "queued"))
+        assert (summary.created, summary.failed) == (2 if period is not None else 0, 0), tick
+        assert await lab.runs() == sorted(expected), tick
+
+    assert disabled not in {plan for plan, _, _ in await lab.runs()}
+    assert await lab.runs(lab.other_msp_id) == [(theirs, p, "queued") for _, p, _ in expected]
+    rows = await lab.run_rows()
+    assert all((r.client_id, r.connector_id, r.worker_id, r.dispatched_at, r.attempt) == (lab.client_id, lab.connector_id, lab.worker_id, None, 0) for r in rows)
+    created = lab.log("run created")
+    assert len(created) == 4
+    assert {e["plan_id"] for e in created} == {str(plan_id), str(theirs)}
+    assert all(set(e) >= {"msp_id", "plan_id", "run_id", "scheduled_for"} for e in created)
+    every_row = rows + await lab.run_rows(lab.other_msp_id)
+    assert all(e["run_id"] in {str(r.id) for r in every_row} for e in created)
+    text_log = lab.stream.getvalue()
+    assert SENTINEL_ORG not in text_log and "tenant" not in text_log
+
+
+# --- Failure paths ----------------------------------------------------------------------------
+
+
+async def test_a_plan_whose_cron_cannot_be_read_is_skipped_and_the_others_run(lab):
+    bad = await lab.plan("*/5 * * * *", created_at=T)
+    await lab.plant_cron(bad, "0 2 * * * *; nonsense")
+    good = await lab.plan("*/5 * * * *", created_at=T)
+
+    summary = await tick_plans(lab.factory, at(2026, 10, 11, 12, 5, 0))
+
+    assert (summary.created, summary.skipped, summary.failed) == (1, 1, 0)
+    assert await lab.runs() == [(good, at(2026, 10, 11, 12, 5), "queued")]
+    (skipped,) = lab.log("plan skipped")
+    assert (skipped["msp_id"], skipped["plan_id"], skipped["reason"], skipped["level"]) == (str(lab.msp_id), str(bad), "cadence_cron", "warning")
+    assert "nonsense" not in lab.stream.getvalue()
+
+
+async def test_an_msp_whose_tick_fails_is_rolled_back_and_the_next_msp_runs(lab, monkeypatch):
+    mine = await lab.plan("*/5 * * * *", created_at=T)
+    await lab.plan("*/5 * * * *", created_at=T)  # a second plan of the same MSP, made before the fault
+    theirs = await lab.plan("*/5 * * * *", created_at=T, other=True)
+    original = ConnectorRepo.get
+
+    async def failing(self, msp_id, connector_id):
+        if connector_id == lab.connector_id:
+            raise RuntimeError("Sentinel-Fault")
+        return await original(self, msp_id, connector_id)
+
+    monkeypatch.setattr(ConnectorRepo, "get", failing)
+
+    summary = await tick_plans(lab.factory, at(2026, 10, 11, 12, 5, 0))
+
+    assert (summary.msps, summary.created, summary.failed) == (2, 1, 1)
+    assert await lab.runs() == []
+    assert await lab.runs(lab.other_msp_id) == [(theirs, at(2026, 10, 11, 12, 5), "queued")]
+    (failed,) = lab.log("tick failed")
+    assert (failed["msp_id"], failed["exc_type"], failed["level"]) == (str(lab.msp_id), "RuntimeError", "error")
+    assert "Sentinel-Fault" not in lab.stream.getvalue()
+    assert mine not in {plan for plan, _, _ in await lab.runs()}
+
+
+async def test_a_connector_the_keys_say_exists_but_is_gone_is_the_msp_s_failure(lab, monkeypatch):
+    await lab.plan("*/5 * * * *", created_at=T)
+
+    async def nothing(self, msp_id, connector_id):
+        return None
+
+    monkeypatch.setattr(ConnectorRepo, "get", nothing)
+
+    summary = await tick_plans(lab.factory, at(2026, 10, 11, 12, 5, 0))
+
+    assert (summary.created, summary.failed) == (0, 1)
+    assert lab.log("tick failed")[0]["exc_type"] == "RuntimeError"
+
+
+async def test_a_period_that_began_before_the_plan_was_made_gets_no_run(lab):
+    plan_id = await lab.plan("0 2 * * *", created_at=at(2026, 10, 11, 15, 10))
+
+    assert (await tick_plans(lab.factory, at(2026, 10, 11, 15, 10, 30))).created == 0
+    assert (await tick_plans(lab.factory, at(2026, 10, 11, 23, 59, 59))).created == 0
+    assert await lab.runs() == []
+    assert (await tick_plans(lab.factory, at(2026, 10, 12, 2, 0, 0))).created == 1
+    assert await lab.runs() == [(plan_id, at(2026, 10, 12, 2, 0), "queued")]
+
+
+async def test_a_plan_made_at_its_own_minute_gets_that_period(lab):
+    """created_at equal to the period's start: not before it."""
+    plan_id = await lab.plan("0 2 * * *", created_at=at(2026, 10, 12, 2, 0, 0))
+
+    assert (await tick_plans(lab.factory, at(2026, 10, 12, 2, 0, 0))).created == 1
+    assert await lab.runs() == [(plan_id, at(2026, 10, 12, 2, 0), "queued")]
+
+
+async def test_only_the_current_period_is_made_up_after_a_pause(lab):
+    plan_id = await lab.plan("0 2 * * *", created_at=at(2026, 10, 1))
+
+    summary = await tick_plans(lab.factory, at(2026, 10, 11, 14, 0))
+
+    assert summary.created == 1
+    assert await lab.runs() == [(plan_id, at(2026, 10, 11, 2, 0), "queued")]
+
+
+async def test_a_plan_re_enabled_gets_its_current_period_at_the_next_tick(lab):
+    plan_id = await lab.plan("0 2 * * *", created_at=at(2026, 10, 1), enabled=False)
+    assert (await tick_plans(lab.factory, at(2026, 10, 11, 14, 0))).created == 0
+    async with lab.factory() as s, s.begin():
+        assert await PlanRepo(s).set_enabled(lab.msp_id, plan_id, True) == 1
+
+    assert (await tick_plans(lab.factory, at(2026, 10, 11, 14, 5))).created == 1
+    assert await lab.runs() == [(plan_id, at(2026, 10, 11, 2, 0), "queued")]
+
+
+async def test_a_revoked_worker_s_plan_still_gets_its_run(lab):
+    plan_id = await lab.plan("*/5 * * * *", created_at=T)
+    async with lab.factory() as s, s.begin():
+        assert await WorkerRepo(s).revoke(lab.msp_id, lab.worker_id, T) == 1
+
+    assert (await tick_plans(lab.factory, at(2026, 10, 11, 12, 5))).created == 1
+    (row,) = await lab.run_rows()
+    assert (row.plan_id, row.state, row.dispatched_at) == (plan_id, "queued", None)
+
+
+async def test_two_ticks_at_once_make_one_run(lab):
+    plan_id = await lab.plan("*/5 * * * *", created_at=T)
+
+    summaries = await asyncio.gather(
+        tick_plans(lab.factory, at(2026, 10, 11, 12, 5)), tick_plans(lab.factory, at(2026, 10, 11, 12, 5, 1))
+    )
+
+    assert sorted(s.created for s in summaries) == [0, 1]
+    assert sum(s.failed for s in summaries) == 0
+    assert await lab.runs() == [(plan_id, at(2026, 10, 11, 12, 5), "queued")]
+
+
+async def test_a_tick_is_one_select_per_msp_and_two_statements_per_run_made(lab):
+    await lab.plan("*/5 * * * *", created_at=T)
+    counted: list[str] = []
+
+    def record(_conn, _cursor, statement, _params, _context, _executemany):
+        counted.append(statement.strip().split()[0].upper())
+
+    event.listen(lab.engine.sync_engine, "before_cursor_execute", record)
+    try:
+        await tick_plans(lab.factory, at(2026, 10, 11, 12, 5))
+        busy = [s for s in counted if s in ("SELECT", "INSERT", "UPDATE", "WITH")]
+        counted.clear()
+        await tick_plans(lab.factory, at(2026, 10, 11, 12, 5, 30))
+        idle = [s for s in counted if s in ("SELECT", "INSERT", "UPDATE", "WITH")]
+    finally:
+        event.remove(lab.engine.sync_engine, "before_cursor_execute", record)
+
+    # The MSPs, then per MSP its plans; the busy MSP's connector and the INSERT;
+    # a repeat is the INSERT alone, since the connector is read first.
+    assert busy == ["SELECT", "SELECT", "SELECT", "INSERT", "SELECT"]
+    assert idle == ["SELECT", "SELECT", "SELECT", "INSERT", "SELECT"]
+
+
+async def test_the_tick_takes_now_from_the_clock_when_none_is_given(lab, monkeypatch):
+    plan_id = await lab.plan("*/5 * * * *", created_at=T)
+    monkeypatch.setattr(scheduler, "now", lambda: at(2026, 10, 11, 12, 5, 7))
+
+    summary = await tick_plans(lab.factory)
+
+    assert summary.created == 1
+    assert await lab.runs() == [(plan_id, at(2026, 10, 11, 12, 5), "queued")]
+    (line,) = lab.log("tick")
+    assert (line["job"], line["msps"], line["plans"], line["created"], line["skipped"], line["failed"]) == ("plans", 2, 1, 1, 0, 0)
+    assert "duration_ms" in line
+
+
+def test_now_is_the_cloud_s_clock_in_utc():
+    stamp = scheduler.now()
+
+    assert stamp.utcoffset() == dt.timedelta(0)
+    assert abs((dt.datetime.now(UTC) - stamp).total_seconds()) < 5
+
+
+# --- The sweep ---------------------------------------------------------------------------------
+
+
+async def test_the_sweep_calls_requeue_stale_per_msp_and_logs_what_moved(lab):
+    plan_id = await lab.plan("*/5 * * * *", created_at=T)
+    theirs = await lab.plan("*/5 * * * *", created_at=T, other=True)
+    await tick_plans(lab.factory, at(2026, 10, 11, 12, 5))
+    async with lab.factory() as s, s.begin():
+        for msp_id, worker_id in ((lab.msp_id, lab.worker_id), (lab.other_msp_id, lab.other_worker_id)):
+            taken = await RunRepo(s).dispatch(msp_id, worker_id, at(2026, 10, 11, 12, 6))
+            assert len(taken) == 1
+        await s.execute(text("UPDATE test_run SET attempt = 3 WHERE msp_id = :msp"), {"msp": lab.other_msp_id})
+
+    early = await tick_sweep(lab.factory, at(2026, 10, 11, 18, 5, 59))
+    late = await tick_sweep(lab.factory, at(2026, 10, 11, 18, 6, 0))
+
+    assert (early.msps, early.requeued, early.expired, early.failed) == (2, 0, 0, 0)
+    assert (late.msps, late.requeued, late.expired, late.failed) == (2, 1, 1, 0)
+    assert await lab.runs() == [(plan_id, at(2026, 10, 11, 12, 5), "queued")]
+    assert await lab.runs(lab.other_msp_id) == [(theirs, at(2026, 10, 11, 12, 5), "expired")]
+    swept = lab.log("runs swept")
+    assert sorted((e["msp_id"], e["requeued"], e["expired"]) for e in swept) == sorted(
+        [(str(lab.msp_id), 1, 0), (str(lab.other_msp_id), 0, 1)]
+    )
+    ticks = lab.log("tick")
+    assert [t["job"] for t in ticks][-2:] == ["sweep", "sweep"]
+
+
+async def test_a_sweep_whose_msp_fails_logs_it_and_goes_on(lab, monkeypatch):
+    original = RunRepo.requeue_stale
+
+    async def failing(self, msp_id, now):
+        if msp_id == lab.msp_id:
+            raise RuntimeError("Sentinel-Fault")
+        return await original(self, msp_id, now)
+
+    monkeypatch.setattr(RunRepo, "requeue_stale", failing)
+
+    summary = await tick_sweep(lab.factory, T)
+
+    assert (summary.msps, summary.failed) == (2, 1)
+    (failed,) = lab.log("tick failed")
+    assert (failed["msp_id"], failed["job"], failed["exc_type"]) == (str(lab.msp_id), "sweep", "RuntimeError")
+    assert "Sentinel-Fault" not in lab.stream.getvalue()
+
+
+async def test_the_sweep_takes_now_from_the_clock_when_none_is_given(lab, monkeypatch):
+    monkeypatch.setattr(scheduler, "now", lambda: T)
+
+    summary = await tick_sweep(lab.factory)
+
+    assert (summary.msps, summary.requeued, summary.expired) == (2, 0, 0)
+    assert lab.log("runs swept") == []
+
+
+async def test_a_tick_that_cannot_list_the_msps_is_logged_and_raises_nothing(own_database):
+    """The database gone between two ticks: `tick failed` with no MSP, and
+    the next tick in five minutes."""
+    stream = io.StringIO()
+    configure_logging("info", stream=stream)
+    engine = create_async_engine("postgresql+asyncpg://nobody:nothing@127.0.0.1:1/none")
+    try:
+        plans = await tick_plans(make_session_factory(engine), T)
+        sweep = await tick_sweep(make_session_factory(engine), T)
+    finally:
+        await engine.dispose()
+
+    assert (plans.msps, plans.failed, sweep.msps, sweep.failed) == (0, 1, 0, 1)
+    failed = [json.loads(line) for line in stream.getvalue().splitlines() if '"tick failed"' in line]
+    assert [f.get("msp_id") for f in failed] == [None, None]
+    assert all("exc_type" in f and "stack" in f for f in failed)
+
+
+# --- The process ---------------------------------------------------------------------------------
+
+
+def test_the_scheduler_runs_the_two_jobs_every_five_minutes_and_both_at_once_at_start():
+    start = at(2026, 10, 11, 12, 0)
+
+    built = build_scheduler(object(), start_at=start)
+
+    assert isinstance(built, AsyncIOScheduler)
+    assert TICK_S == 300
+    jobs = {job.id: job for job in built.get_jobs()}
+    assert set(jobs) == {"plans", "sweep"}
+    for job in jobs.values():
+        assert isinstance(job.trigger, IntervalTrigger) and job.trigger.interval == dt.timedelta(seconds=TICK_S)
+        assert (job.max_instances, job.coalesce, job.misfire_grace_time) == (1, True, 60)
+        assert job.next_run_time == start
+    assert jobs["plans"].func is tick_plans and jobs["sweep"].func is tick_sweep
+    assert str(built.timezone) == "UTC"
+
+
+async def test_serve_starts_the_scheduler_waits_for_the_stop_and_shuts_down(monkeypatch):
+    stream = io.StringIO()
+    configure_logging("info", stream=stream)
+    events: list[str] = []
+
+    class FakeScheduler:
+        def __init__(self):
+            self.jobs = []
+
+        def start(self):
+            events.append("start")
+
+        def shutdown(self, wait=True):
+            events.append(f"shutdown wait={wait}")
+
+    def build(factory, *, start_at):
+        events.append("built")
+        return FakeScheduler()
+
+    monkeypatch.setattr(scheduler, "build_scheduler", build)
+    stop = asyncio.Event()
+
+    async def stop_soon():
+        await asyncio.sleep(0.05)
+        events.append("stop")
+        stop.set()
+
+    task = asyncio.create_task(stop_soon())
+    code = await scheduler.serve("postgresql+asyncpg://nobody:nothing@127.0.0.1:1/none", stop=stop)
+    await task
+
+    assert code == 0
+    assert events == ["built", "start", "stop", "shutdown wait=False"]
+    lines = [json.loads(line) for line in stream.getvalue().splitlines() if line.startswith("{")]
+    assert [l["event"] for l in lines if l["event"].startswith("scheduler")] == ["scheduler started", "scheduler stopped"]
+    assert [l for l in lines if l["event"] == "scheduler started"][0]["tick_s"] == TICK_S
+    assert "nothing" not in stream.getvalue() and "nobody" not in stream.getvalue()
+
+
+@pytest.mark.parametrize("available", [True, False])
+async def test_the_stop_signals_are_installed_where_the_loop_has_them(monkeypatch, available):
+    installed = []
+    loop = asyncio.get_running_loop()
+
+    def add(sig, callback):
+        if not available:
+            raise NotImplementedError
+        installed.append(sig)
+
+    monkeypatch.setattr(loop, "add_signal_handler", add)
+    stop = asyncio.Event()
+
+    scheduler.install_stop_signals(loop, stop)
+
+    assert installed == ([signal.SIGTERM, signal.SIGINT] if available else [])
+
+
+def test_main_reads_the_database_url_and_the_log_level_and_serves(monkeypatch):
+    seen = {}
+
+    async def fake_serve(url, *, stop=None):
+        seen["url"] = url
+        return 0
+
+    monkeypatch.setattr(scheduler, "serve", fake_serve)
+    monkeypatch.setattr(scheduler, "configure_logging", lambda level: seen.setdefault("level", level))
+    monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://nobody:nothing@127.0.0.1:1/none")
+    monkeypatch.setenv("LOG_LEVEL", "WARNING")
+
+    assert scheduler.main() == 0
+    assert seen == {"url": "postgresql+asyncpg://nobody:nothing@127.0.0.1:1/none", "level": "warning"}
+
+
+def test_main_stops_naming_the_variable_when_the_url_is_missing(monkeypatch, capsys):
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+
+    with pytest.raises(SystemExit) as raised:
+        scheduler.main()
+
+    assert raised.value.code == 1
+    assert capsys.readouterr().err.strip() == "settings error: DATABASE_URL is missing"
+
+
+def test_the_scheduler_reads_no_profile_and_no_token():
+    from pathlib import Path
+
+    source = Path(scheduler.__file__).read_text(encoding="utf-8")
+
+    assert "config_json" not in source and "token" not in source and "api_" not in source
+    assert "Storage" not in source and "load_settings" not in source

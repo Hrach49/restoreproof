@@ -52,8 +52,8 @@ def test_a_schema_that_does_not_exist_is_an_error_naming_the_file(tmp_path):
 
 IMAGE_PATHS = {
     "!cloud/pyproject.toml", "!cloud/uv.lock", "!cloud/alembic.ini", "!cloud/app",
-    # C5.3: the schemas; C5.7: the verifier and the TSA root.
-    "!shared/schemas", "!shared/tools", "!shared/tsa",
+    # C5.3: the schemas; C5.7: the verifier and the TSA root; C5.10: the CLI.
+    "!shared/schemas", "!shared/tools", "!shared/tsa", "!cloud/manage.py",
 }
 
 
@@ -74,6 +74,7 @@ def test_the_image_copies_the_schemas_the_verifier_and_the_tsa_root_beside_app_a
     assert "COPY shared/tools ./shared/tools" in dockerfile
     assert "COPY shared/tsa ./shared/tsa" in dockerfile
     assert "COPY cloud/app ./app" in dockerfile
+    assert "COPY cloud/manage.py ./" in dockerfile
     assert not (root / "cloud" / ".dockerignore").exists()
     assert ignore[0] == "*"
     assert IMAGE_PATHS <= set(ignore)
@@ -88,12 +89,17 @@ def test_the_image_copies_the_schemas_the_verifier_and_the_tsa_root_beside_app_a
     assert compose.count("context: ..") == 2
     assert compose.count("dockerfile: cloud/Dockerfile") == 2
     assert "build: ." not in compose
+    # C5.9: the scheduler service runs the dispatcher and never migrates.
+    assert 'command: ["python", "-m", "app.scheduler"]' in compose
+    assert "sleep infinity" not in compose
+    assert compose.count("alembic upgrade head") == 1
 
 
-@pytest.mark.parametrize("package", ["jsonschema", "cryptography", "asn1crypto", "python-multipart"])
+@pytest.mark.parametrize("package", ["jsonschema", "cryptography", "asn1crypto", "python-multipart", "typer", "apscheduler", "croniter"])
 def test_the_verifier_s_libraries_and_the_form_parser_are_runtime_dependencies(package):
     """jsonschema since C5.3; the verifier's two and starlette's form parser
-    since C5.7 (docs/decisions.md 2026-10-10, C5.7, point 1)."""
+    since C5.7 (docs/decisions.md 2026-10-10, C5.7, point 1); the CLI's and
+    the scheduler's three since C5.10 and C5.9."""
     import tomllib
 
     pyproject = tomllib.loads((Path(__file__).resolve().parent.parent / "pyproject.toml").read_text(encoding="utf-8"))

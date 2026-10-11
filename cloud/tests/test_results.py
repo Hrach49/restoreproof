@@ -961,7 +961,7 @@ async def committed_world(database_url: str):
             )
             connector = await ConnectorRepo(session).create(msp.id, client.id, worker.id, profile_for(TENANT_ID))
             plan = await PlanRepo(session).create(
-                msp.id, client.id, connector.id, sample_mail=1, sample_sp=1, sample_od=1, cadence_cron="0 2 * * *"
+                msp.id, client.id, connector.id, sample_mail=1, sample_sp=1, sample_od=1, cadence_cron="0 2 * * *", now=NOW
             )
             run = await RunRepo(session).create(
                 msp.id, plan_id=plan.id, client_id=client.id, connector_id=connector.id, worker_id=worker.id

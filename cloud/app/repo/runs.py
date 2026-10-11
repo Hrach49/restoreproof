@@ -8,7 +8,9 @@ polls at once never take one row; then one joined select answers each run with
 its plan, connector and client, and nothing when nothing was taken.
 `requeue_stale` is the scheduler's sweep, called per MSP (C5.9): a run
 dispatched `DISPATCH_TIMEOUT` ago or more goes back to `queued`, or to
-`expired` once it has had `MAX_ATTEMPTS`.
+`expired` once it has had `MAX_ATTEMPTS`. `create_scheduled` is the
+scheduler's other statement (C5.9): one queued run per plan and cron period,
+the period's unique deciding under two ticks or two processes.
 
 The bundle (C5.7; docs/decisions.md 2026-10-10, C5.7, points 5 and 11):
 `receive` is one `UPDATE` that moves a run the Worker was handed to its
@@ -31,6 +33,7 @@ from uuid import UUID
 
 from sqlalchemy import and_, select
 from sqlalchemy import update as sa_update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.models import Client, Connector, TestPlan, TestRun
 from app.repo.base import Repo
@@ -47,6 +50,9 @@ MAX_ATTEMPTS = 3
 # and not yet polled; expired after three attempts (a late upload, W4.8).
 # With `dispatched_at IS NOT NULL`: a run never handed out takes no bundle.
 RECEIVABLE_STATES = ("dispatched", "queued", "expired")
+
+# C5.9: one run per plan and cron period (app/models.py, TestRun).
+SCHEDULED_UNIQUE = "uq_test_run_msp_id_plan_id_scheduled_for"
 
 
 class Dispatched(NamedTuple):
@@ -90,6 +96,40 @@ class RunRepo(Repo):
                 worker_id=worker_id,
             )
         )
+
+    async def create_scheduled(
+        self,
+        msp_id: UUID,
+        *,
+        plan_id: UUID,
+        client_id: UUID,
+        connector_id: UUID,
+        worker_id: UUID,
+        scheduled_for: dt.datetime,
+    ) -> TestRun | None:
+        """The scheduler's run for the period starting at `scheduled_for`
+        (C5.9; docs/decisions.md 2026-10-11, "C5.10 and C5.9", point 8): one
+        `INSERT ... ON CONFLICT DO NOTHING` under
+        `uq_test_run_msp_id_plan_id_scheduled_for`, answering the row, or
+        `None` when the period has its run. The constraint and the statement
+        decide together, so two ticks or two scheduler processes make one
+        run with no lock, no read before the write and no error."""
+        if scheduled_for.utcoffset() is None:
+            raise ValueError("a time without a zone: give an aware UTC datetime")
+        statement = (
+            pg_insert(TestRun)
+            .values(
+                msp_id=msp_id,
+                plan_id=plan_id,
+                client_id=client_id,
+                connector_id=connector_id,
+                worker_id=worker_id,
+                scheduled_for=scheduled_for,
+            )
+            .on_conflict_do_nothing(constraint=SCHEDULED_UNIQUE)
+            .returning(TestRun)
+        )
+        return await self._one(statement.execution_options(populate_existing=True))
 
     async def get(self, msp_id: UUID, run_id: UUID) -> TestRun | None:
         return await self._one(

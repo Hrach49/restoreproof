@@ -117,15 +117,18 @@ services:
       timeout: 5s
       retries: 20
 
-  # The same image. The dispatcher is C5.9's; until then this only waits, and
-  # it never migrates.
+  # The same image: the dispatcher (C5.9, app/scheduler.py), every five
+  # minutes the plans' runs and the sweep. It never migrates: the api did,
+  # and this waits for it. It reads DATABASE_URL and LOG_LEVEL alone.
   scheduler:
     build:
       context: ..
       dockerfile: cloud/Dockerfile
     image: restoreproof-cloud:local
     environment: *app-environment
-    command: ["sh", "-c", "echo 'scheduler: the dispatcher is C5.9; nothing runs yet'; exec sleep infinity"]
+    command: ["python", "-m", "app.scheduler"]
+    volumes:
+      - ./app:/srv/app:ro
     depends_on:
       api:
         condition: service_healthy

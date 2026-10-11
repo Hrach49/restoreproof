@@ -4,7 +4,9 @@ here through the repos against the Compose stack's own database. Run from cloud/
 with uv:
 
     uv run python ../docs/api/cloud-lab/c5.8-harness/c58-rows.py init
-        one MSP, one install token (printed once)
+        one MSP, one install token (printed once), and the public half of an
+        Ed25519 key made for the run (the base64 line of its key file; the
+        private half is never kept: the heartbeat signs nothing)
     uv run python ../docs/api/cloud-lab/c5.8-harness/c58-rows.py show <msp_id>
         the MSP's Worker rows as C6.2's /workers page will read them
         (WorkerRepo.list), and the MSP's audit rows
@@ -16,6 +18,7 @@ reached on 127.0.0.1:55432); every value in it is local only.
 from __future__ import annotations
 
 import asyncio
+import base64
 import datetime as dt
 import sys
 import uuid
@@ -24,6 +27,8 @@ from pathlib import Path
 # docs/api/cloud-lab/c5.8-harness -> the repository root, then cloud/ for the app.
 sys.path.insert(0, str(Path(__file__).resolve().parents[4] / "cloud"))
 
+from cryptography.hazmat.primitives import serialization  # noqa: E402
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey  # noqa: E402
 from sqlalchemy.ext.asyncio import create_async_engine  # noqa: E402
 
 from app.auth.tokens import issue_install_token  # noqa: E402
@@ -47,7 +52,11 @@ async def main(argv: list[str]) -> None:
                     token, row = await issue_install_token(
                         session, msp.id, dt.datetime.now(dt.timezone.utc), label="c5.8 done-when"
                     )
+                    der = Ed25519PrivateKey.generate().public_key().public_bytes(
+                        serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo
+                    )
                     print(f"msp_id {msp.id}\ninstall_token_id {row.id}\ninstall_token {token}")
+                    print(f"public_key {base64.b64encode(der).decode('ascii')}")
                 elif command == "show":
                     msp_id = uuid.UUID(argv[1])
                     print("worker (WorkerRepo.list, what /workers will read):")

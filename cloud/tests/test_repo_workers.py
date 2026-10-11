@@ -151,6 +151,18 @@ async def test_a_heartbeat_writes_the_six_columns_and_answers_one(session, msp, 
     assert await heartbeat_of(session, msp.id, worker.id) == (AT, "0.0.0", "job_invalid", ERROR_AT, 0, 152)
 
 
+async def test_a_heartbeat_keeps_the_session_s_loaded_worker_in_step(session, msp, worker):
+    """The C5.8 review's finding 4: current_worker's row is in the session when
+    the UPDATE runs; it is not left stale for the rest of the request."""
+    loaded = await WorkerRepo(session).get(msp.id, worker.id)
+
+    assert await WorkerRepo(session).heartbeat(msp.id, worker.id, at=AT, **BEAT) == 1
+
+    assert (loaded.last_seen_at, loaded.version, loaded.last_error, loaded.last_error_at, loaded.outbox_depth, loaded.uptime_s) == (
+        AT, "0.0.0", "job_invalid", ERROR_AT, 0, 152,
+    )
+
+
 async def test_a_later_heartbeat_replaces_every_column_null_included(session, msp, worker):
     await WorkerRepo(session).heartbeat(msp.id, worker.id, at=AT, **BEAT)
     later = AT + dt.timedelta(minutes=15)

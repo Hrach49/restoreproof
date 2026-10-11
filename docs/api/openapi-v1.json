@@ -66,63 +66,6 @@
         "title": "HTTPValidationError",
         "type": "object"
       },
-      "HeartbeatBody": {
-        "additionalProperties": false,
-        "properties": {
-          "last_error": {
-            "anyOf": [
-              {
-                "pattern": "^[a-z0-9_]{1,64}$",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Last Error"
-          },
-          "last_error_at": {
-            "anyOf": [
-              {
-                "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Last Error At"
-          },
-          "outbox_depth": {
-            "maximum": 9007199254740991.0,
-            "minimum": 0.0,
-            "title": "Outbox Depth",
-            "type": "integer"
-          },
-          "uptime_s": {
-            "maximum": 9007199254740991.0,
-            "minimum": 0.0,
-            "title": "Uptime S",
-            "type": "integer"
-          },
-          "version": {
-            "maxLength": 64,
-            "minLength": 1,
-            "pattern": "^[ -~]+$",
-            "title": "Version",
-            "type": "string"
-          }
-        },
-        "required": [
-          "version",
-          "last_error",
-          "last_error_at",
-          "outbox_depth",
-          "uptime_s"
-        ],
-        "title": "HeartbeatBody",
-        "type": "object"
-      },
       "Job": {
         "additionalProperties": false,
         "properties": {
@@ -319,7 +262,61 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/HeartbeatBody"
+                "additionalProperties": false,
+                "properties": {
+                  "last_error": {
+                    "anyOf": [
+                      {
+                        "pattern": "^[a-z0-9_]{1,64}$",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "title": "Last Error"
+                  },
+                  "last_error_at": {
+                    "anyOf": [
+                      {
+                        "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "title": "Last Error At"
+                  },
+                  "outbox_depth": {
+                    "maximum": 9007199254740991.0,
+                    "minimum": 0.0,
+                    "title": "Outbox Depth",
+                    "type": "integer"
+                  },
+                  "uptime_s": {
+                    "maximum": 9007199254740991.0,
+                    "minimum": 0.0,
+                    "title": "Uptime S",
+                    "type": "integer"
+                  },
+                  "version": {
+                    "maxLength": 64,
+                    "minLength": 1,
+                    "pattern": "^[ -~]+$",
+                    "title": "Version",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "version",
+                  "last_error",
+                  "last_error_at",
+                  "outbox_depth",
+                  "uptime_s"
+                ],
+                "title": "HeartbeatBody",
+                "type": "object"
               }
             }
           },

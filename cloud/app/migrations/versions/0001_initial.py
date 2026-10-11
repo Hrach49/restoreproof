@@ -165,6 +165,9 @@ def upgrade() -> None:
         _text("version", nullable=True),
         _time("last_seen_at"),
         _text("last_error", nullable=True),
+        _time("last_error_at"),
+        sa.Column("outbox_depth", sa.BigInteger(), nullable=True),
+        sa.Column("uptime_s", sa.BigInteger(), nullable=True),
         _time("revoked_at"),
         _pk("worker"),
         _fk_msp("worker"),
@@ -173,6 +176,8 @@ def upgrade() -> None:
         _unique("worker", "api_token_hash"),
         _unique("worker", "key_id"),
         _sha256("worker", "key_id"),
+        _check("worker", "outbox_depth_not_negative", "outbox_depth >= 0"),
+        _check("worker", "uptime_s_not_negative", "uptime_s >= 0"),
     )
 
     op.create_table(

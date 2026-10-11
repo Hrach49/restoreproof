@@ -122,3 +122,62 @@ async def test_another_msp_s_user_cannot_be_the_maker(session, msp):
             )
     assert '"fk_install_token_msp_id_created_by_user"' in str(raised.value.orig)
     assert uuid.UUID(str(user.id)) == user.id
+
+
+# --- C5.8: the heartbeat ----------------------------------------------------------------------
+
+
+AT = dt.datetime(2026, 10, 11, 9, 0, 0, tzinfo=UTC)
+ERROR_AT = dt.datetime(2026, 10, 9, 20, 27, 38, 206000, tzinfo=UTC)
+BEAT = {"version": "0.0.0", "last_error": "job_invalid", "last_error_at": ERROR_AT, "outbox_depth": 0, "uptime_s": 152}
+
+
+@pytest.fixture
+async def worker(session, msp):
+    return await WorkerRepo(session).create(
+        msp.id, "lab", public_key_pem=PEM, key_id=KEY_ID, api_token_hash="1" * 64, version="0.0.0-registered"
+    )
+
+
+async def heartbeat_of(session, msp_id, worker_id) -> tuple:
+    row = await WorkerRepo(session).get(msp_id, worker_id)
+    await session.refresh(row)
+    return (row.last_seen_at, row.version, row.last_error, row.last_error_at, row.outbox_depth, row.uptime_s)
+
+
+async def test_a_heartbeat_writes_the_six_columns_and_answers_one(session, msp, worker):
+    assert await WorkerRepo(session).heartbeat(msp.id, worker.id, at=AT, **BEAT) == 1
+
+    assert await heartbeat_of(session, msp.id, worker.id) == (AT, "0.0.0", "job_invalid", ERROR_AT, 0, 152)
+
+
+async def test_a_later_heartbeat_replaces_every_column_null_included(session, msp, worker):
+    await WorkerRepo(session).heartbeat(msp.id, worker.id, at=AT, **BEAT)
+    later = AT + dt.timedelta(minutes=15)
+
+    assert await WorkerRepo(session).heartbeat(
+        msp.id, worker.id, at=later, version="0.0.1", last_error=None, last_error_at=None, outbox_depth=3, uptime_s=0
+    ) == 1
+
+    assert await heartbeat_of(session, msp.id, worker.id) == (later, "0.0.1", None, None, 3, 0)
+
+
+async def test_a_heartbeat_for_another_msp_s_worker_another_id_or_a_revoked_worker_writes_nothing(session, msp, worker):
+    other = await MspRepo(session).create(name="b")
+    repo = WorkerRepo(session)
+
+    assert await repo.heartbeat(other.id, worker.id, at=AT, **BEAT) == 0
+    assert await repo.heartbeat(msp.id, uuid.uuid4(), at=AT, **BEAT) == 0
+    assert await repo.revoke(msp.id, worker.id, NOW) == 1
+    assert await repo.heartbeat(msp.id, worker.id, at=AT, **BEAT) == 0
+
+    assert await heartbeat_of(session, msp.id, worker.id) == (None, "0.0.0-registered", None, None, None, None)
+
+
+async def test_a_heartbeat_takes_the_largest_count_the_body_may_carry(session, msp, worker):
+    assert await WorkerRepo(session).heartbeat(
+        msp.id, worker.id, at=AT, version="0.0.0", last_error=None, last_error_at=None,
+        outbox_depth=2**53 - 1, uptime_s=2**53 - 1,
+    ) == 1
+
+    assert (await heartbeat_of(session, msp.id, worker.id))[4:] == (2**53 - 1, 2**53 - 1)

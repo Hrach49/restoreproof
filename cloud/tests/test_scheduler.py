@@ -2,8 +2,9 @@
 "C5.10 and C5.9", points 7 to 9 and 11): every five minutes, for each MSP
 and each of its enabled plans, one queued run for the period that is current,
 unless one exists; the sweep per MSP; a plan whose cron can't be read skipped
-with one line while the rest go on; an MSP whose tick fails rolled back and
-logged while the next MSP's runs are made. On a migrated database of the
+with one line while the rest go on; a plan that raises rolled back alone;
+an MSP whose tick fails rolled back and logged while the next MSP's runs are
+made, and no run counted or named before its MSP's commit. On a migrated database of the
 test's own: a tick is one transaction per MSP, as the process runs it.
 """
 
@@ -173,21 +174,104 @@ async def test_a_plan_whose_cron_cannot_be_read_is_skipped_and_the_others_run(la
     assert "nonsense" not in lab.stream.getvalue()
 
 
-async def test_an_msp_whose_tick_fails_is_rolled_back_and_the_next_msp_runs(lab, monkeypatch):
-    mine = await lab.plan("*/5 * * * *", created_at=T)
-    await lab.plan("*/5 * * * *", created_at=T)  # a second plan of the same MSP, made before the fault
-    theirs = await lab.plan("*/5 * * * *", created_at=T, other=True)
-    original = ConnectorRepo.get
-
-    async def failing(self, msp_id, connector_id):
-        if connector_id == lab.connector_id:
-            raise RuntimeError("Sentinel-Fault")
-        return await original(self, msp_id, connector_id)
-
-    monkeypatch.setattr(ConnectorRepo, "get", failing)
+@pytest.mark.parametrize("cron", ["0 0 31 2 *", "0 2 30 2 *"])
+async def test_a_planted_cron_that_never_occurs_is_skipped_and_the_others_run(lab, cron):
+    """The review's finding 2: croniter takes the text and can't walk it;
+    the plan is skipped like any unreadable cron, not the MSP's tick lost."""
+    bad = await lab.plan("*/5 * * * *", created_at=T)
+    await lab.plant_cron(bad, cron)
+    good = await lab.plan("*/5 * * * *", created_at=T)
 
     summary = await tick_plans(lab.factory, at(2026, 10, 11, 12, 5, 0))
 
+    assert (summary.created, summary.skipped, summary.failed) == (1, 1, 0)
+    assert await lab.runs() == [(good, at(2026, 10, 11, 12, 5), "queued")]
+    (skipped,) = lab.log("plan skipped")
+    assert (skipped["plan_id"], skipped["reason"]) == (str(bad), "cadence_cron")
+    assert lab.log("tick failed") == []
+
+
+async def test_a_plan_whose_run_fails_is_rolled_back_alone_and_the_msp_s_other_plans_run(lab, monkeypatch):
+    """The review's finding 3: the plans before and after the one that
+    raises keep their runs, and the failed plan's insert is gone."""
+    first = await lab.plan("*/5 * * * *", created_at=T)
+    bad = await lab.plan("*/5 * * * *", created_at=T)
+    last = await lab.plan("*/5 * * * *", created_at=T)
+    theirs = await lab.plan("*/5 * * * *", created_at=T, other=True)
+    original = RunRepo.create_scheduled
+
+    async def failing(self, msp_id, **values):
+        run = await original(self, msp_id, **values)  # the row is in, then the fault
+        if values["plan_id"] == bad:
+            raise RuntimeError("Sentinel-Fault")
+        return run
+
+    monkeypatch.setattr(RunRepo, "create_scheduled", failing)
+
+    summary = await tick_plans(lab.factory, at(2026, 10, 11, 12, 5, 0))
+
+    period = at(2026, 10, 11, 12, 5)
+    assert (summary.msps, summary.plans, summary.created, summary.failed) == (2, 4, 3, 1)
+    assert await lab.runs() == sorted([(first, period, "queued"), (last, period, "queued")])
+    assert await lab.runs(lab.other_msp_id) == [(theirs, period, "queued")]
+    (failed,) = lab.log("plan failed")
+    assert (failed["msp_id"], failed["plan_id"], failed["exc_type"], failed["level"]) == (
+        str(lab.msp_id), str(bad), "RuntimeError", "error"
+    )
+    assert lab.log("tick failed") == []
+    assert {e["plan_id"] for e in lab.log("run created")} == {str(first), str(last), str(theirs)}
+    assert "Sentinel-Fault" not in lab.stream.getvalue()
+
+    # The fault gone, the next tick makes the plan's run for the same period.
+    monkeypatch.setattr(RunRepo, "create_scheduled", original)
+    summary = await tick_plans(lab.factory, at(2026, 10, 11, 12, 6, 0))
+    assert (summary.created, summary.failed) == (1, 0)
+    assert (bad, period, "queued") in await lab.runs()
+
+
+async def test_a_plan_the_database_refuses_is_rolled_back_alone(lab, monkeypatch):
+    """A statement the database refused leaves the transaction unusable
+    without the savepoint: the next plan's run shows it held."""
+    bad = await lab.plan("*/5 * * * *", created_at=T)
+    good = await lab.plan("*/5 * * * *", created_at=T)
+    original = RunRepo.create_scheduled
+
+    async def refused(self, msp_id, **values):
+        if values["plan_id"] == bad:
+            await self.session.execute(text("SELECT 1 / 0"))
+        return await original(self, msp_id, **values)
+
+    monkeypatch.setattr(RunRepo, "create_scheduled", refused)
+
+    summary = await tick_plans(lab.factory, at(2026, 10, 11, 12, 5, 0))
+
+    assert (summary.created, summary.failed) == (1, 1)
+    assert await lab.runs() == [(good, at(2026, 10, 11, 12, 5), "queued")]
+    assert lab.log("plan failed")[0]["plan_id"] == str(bad)
+
+
+async def test_an_msp_whose_tick_fails_is_rolled_back_and_the_next_msp_runs(lab, monkeypatch):
+    """The MSP's own failure, after its plans' runs were made: nothing of
+    it is committed, counted or named (the review's finding 3), and the
+    next MSP's run is made."""
+    mine = await lab.plan("*/5 * * * *", created_at=T)
+    await lab.plan("*/5 * * * *", created_at=T)
+    theirs = await lab.plan("*/5 * * * *", created_at=T, other=True)
+    original = scheduler._plans_of
+    made_before_the_fault = []
+
+    async def failing(session, msp_id, at_, summary):
+        made = await original(session, msp_id, at_, summary)
+        if msp_id == lab.msp_id:
+            made_before_the_fault.extend(made)
+            raise RuntimeError("Sentinel-Fault")
+        return made
+
+    monkeypatch.setattr(scheduler, "_plans_of", failing)
+
+    summary = await tick_plans(lab.factory, at(2026, 10, 11, 12, 5, 0))
+
+    assert len(made_before_the_fault) == 2
     assert (summary.msps, summary.created, summary.failed) == (2, 1, 1)
     assert await lab.runs() == []
     assert await lab.runs(lab.other_msp_id) == [(theirs, at(2026, 10, 11, 12, 5), "queued")]
@@ -195,9 +279,34 @@ async def test_an_msp_whose_tick_fails_is_rolled_back_and_the_next_msp_runs(lab,
     assert (failed["msp_id"], failed["exc_type"], failed["level"]) == (str(lab.msp_id), "RuntimeError", "error")
     assert "Sentinel-Fault" not in lab.stream.getvalue()
     assert mine not in {plan for plan, _, _ in await lab.runs()}
+    (created,) = lab.log("run created")
+    assert (created["msp_id"], created["plan_id"]) == (str(lab.other_msp_id), str(theirs))
+    assert all(str(run.run_id) not in lab.stream.getvalue() for run in made_before_the_fault)
+    (tick,) = [e for e in lab.log("tick") if e["job"] == "plans"]
+    assert (tick["created"], tick["failed"]) == (1, 1)
 
 
-async def test_a_connector_the_keys_say_exists_but_is_gone_is_the_msp_s_failure(lab, monkeypatch):
+async def test_a_run_is_named_only_after_its_msp_s_commit(lab, monkeypatch):
+    plan_id = await lab.plan("*/5 * * * *", created_at=T)
+    seen_at_commit = []
+    original = scheduler._plans_of
+
+    async def spying(session, msp_id, at_, summary):
+        made = await original(session, msp_id, at_, summary)
+        seen_at_commit.append((summary.created, len(lab.log("run created")), len(made)))
+        return made
+
+    monkeypatch.setattr(scheduler, "_plans_of", spying)
+
+    summary = await tick_plans(lab.factory, at(2026, 10, 11, 12, 5, 0))
+
+    # This MSP: its run made, nothing counted or named yet; the next MSP sees it done.
+    assert seen_at_commit == [(0, 0, 1), (1, 1, 0)]
+    assert summary.created == 1
+    assert [e["plan_id"] for e in lab.log("run created")] == [str(plan_id)]
+
+
+async def test_a_connector_the_keys_say_exists_but_is_gone_is_the_plan_s_failure(lab, monkeypatch):
     await lab.plan("*/5 * * * *", created_at=T)
 
     async def nothing(self, msp_id, connector_id):
@@ -208,7 +317,8 @@ async def test_a_connector_the_keys_say_exists_but_is_gone_is_the_msp_s_failure(
     summary = await tick_plans(lab.factory, at(2026, 10, 11, 12, 5, 0))
 
     assert (summary.created, summary.failed) == (0, 1)
-    assert lab.log("tick failed")[0]["exc_type"] == "RuntimeError"
+    assert lab.log("plan failed")[0]["exc_type"] == "RuntimeError"
+    assert lab.log("tick failed") == []
 
 
 async def test_a_period_that_began_before_the_plan_was_made_gets_no_run(lab):

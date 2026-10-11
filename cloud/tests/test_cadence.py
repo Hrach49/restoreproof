@@ -12,7 +12,7 @@ import datetime as dt
 import pytest
 
 from app import cadence
-from app.cadence import CadenceError, check_monthly, due_at, parse
+from app.cadence import CadenceError, check_monthly, check_spacing, due_at, parse
 
 UTC = dt.timezone.utc
 NOW = dt.datetime(2026, 10, 11, 12, 0, 30, tzinfo=UTC)
@@ -45,6 +45,16 @@ def at(*args) -> dt.datetime:
         "0 2 * * *\n",
         "0 2 * * *; DROP TABLE test_plan",
         "a b c d e",
+        # croniter's random field: a new value for every reader, so no period
+        # would have one start (the review's finding 1).
+        "R 2 * * *",
+        "r 2 * * *",
+        "0 R * * *",
+        "0 2 R * *",
+        "R(0-5) 2 * * *",
+        "0 2 R(1-5) * *",
+        "0 2 * * R",
+        "0,R 2 * * *",
     ],
 )
 def test_a_text_that_is_not_a_five_field_cron_is_refused(text):
@@ -59,6 +69,88 @@ def test_a_text_that_is_not_a_five_field_cron_is_refused(text):
 @pytest.mark.parametrize("text", ["0 2 * * *", "*/5 * * * *", "0 2 1 * *", "0 2 L * *", "0 2 * * 1", "30 23 */3 * *", "0 2 1 */2 *", "0 2 1 1 *"])
 def test_a_five_field_cron_is_parsed(text):
     assert parse(text).text == text
+
+
+@pytest.mark.parametrize("text", ["0 2 * MAR FRI", "0 2 * apr,mar thu", "0 2 * * fri", "0 2 * JAN-DEC *"])
+def test_a_name_with_an_r_in_it_is_no_random_field(text):
+    assert parse(text).text == text
+
+
+def test_two_readers_of_one_cadence_agree_on_the_period(monkeypatch):
+    """What the random field broke: `due_at` is one value however often it
+    is asked, for every form `parse` takes."""
+    for text in ["0 2 * * *", "*/5 * * * *", "0 2 L * *", "0 2 * MAR FRI"]:
+        assert len({due_at(parse(text), NOW) for _ in range(20)}) == 1
+
+
+# --- a cron no date can meet ------------------------------------------------------------
+
+
+@pytest.mark.parametrize("text", ["0 0 31 2 *", "0 2 30 2 *", "0 2 31 4,6 *"])
+def test_a_cron_that_never_occurs_is_refused_with_its_own_word(text):
+    """croniter takes it and then can't walk it (the review's finding 2):
+    a `CadenceError`, never croniter's own error."""
+    cron = parse(text)
+
+    for work in (
+        lambda: check_monthly(cron, NOW),
+        lambda: due_at(cron, NOW),
+        lambda: cron.next_after(NOW),
+        lambda: cron.previous_before(NOW),
+    ):
+        with pytest.raises(CadenceError) as raised:
+            work()
+        assert raised.value.reason == cadence.NEVER_OCCURS == "never occurs"
+        assert raised.value.__cause__ is None and raised.value.__suppress_context__
+
+
+# --- check_spacing: at most every five minutes -------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "*/5 * * * *",  # the tick itself: the Done-when's cron
+        "0 2 * * *",
+        "0,5 2 * * *",
+        "0,58 2 * * *",  # 58 and 0 of one hour alone: 58 minutes apart
+        "58 23 * * *",
+        "0,58 2,4 * * *",  # hours that never follow each other
+        "55 * * * *",
+        "0,30 * * * *",
+        "0 2 L * *",
+    ],
+)
+def test_a_cron_no_finer_than_five_minutes_passes(text):
+    check_spacing(parse(text))
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "* * * * *",  # every minute (the review's finding 4)
+        "*/1 * * * *",
+        "*/2 * * * *",
+        "*/4 * * * *",
+        "0,4 2 * * *",  # two minutes of one hour, four apart
+        "0-10 2 * * *",
+        "0,58 * * * *",  # 58 and the next hour's 0
+        "0,58 2,3 * * *",
+        "0,58 0,23 * * *",  # 23:58 and 00:00
+        "*/7 * * * *",  # 56 and the next hour's 0
+    ],
+)
+def test_a_cron_finer_than_five_minutes_is_refused(text):
+    with pytest.raises(CadenceError) as raised:
+        check_spacing(parse(text))
+
+    assert raised.value.reason == cadence.TOO_OFTEN == "more often than every 5 minutes"
+
+
+def test_the_floor_is_the_scheduler_s_tick():
+    from app.scheduler import TICK_S
+
+    assert cadence.MIN_PERIOD == dt.timedelta(seconds=TICK_S) == dt.timedelta(minutes=5)
 
 
 # --- check_monthly ------------------------------------------------------------------------

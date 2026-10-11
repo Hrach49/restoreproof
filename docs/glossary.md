@@ -446,7 +446,7 @@ back to `queued` by the scheduler's sweep (C5.9, over `RunRepo.requeue_stale`), 
 attempts to `expired`; its bundle is still taken when it comes.
 
 **Period.** The span between two occurrences of a plan's cadence (`cadence_cron`: five cron
-fields, UTC, at least monthly), named by its start. The scheduler (C5.9, `cloud/app/scheduler.py`,
+fields, UTC, at most every five minutes and at least monthly), named by its start. The scheduler (C5.9, `cloud/app/scheduler.py`,
 the Compose `scheduler` service) makes one queued run per enabled plan and current period,
 `test_run.scheduled_for` being the period's start under a unique on `(msp_id, plan_id,
 scheduled_for)`, so two ticks or two processes make one; a period that began before the plan was

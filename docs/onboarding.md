@@ -107,7 +107,7 @@ nothing and prints no secret but the one token it exists to print.
    ```
 
 5. **The plan**: the sample sizes (0 to 100 each, not all 0: the Worker's own rule) and the
-   cadence, five cron fields in UTC, at least monthly (`docs/verification.md`, "The Cloud makes a
+   cadence, five cron fields in UTC, at most every five minutes and at least monthly (`docs/verification.md`, "The Cloud makes a
    run"). The default is the guide's `0 2 * * *`, daily at 02:00 UTC. The scheduler makes the
    plan's first run at its first cron time after the plan was made; `--run-now` queues one run
    at once for a first test today.
@@ -150,7 +150,7 @@ user: the install token's `created_by` and every audit row's `user_id` are null 
 | `create-connector` | `client_id: no such client` / `worker_id: no such worker` | not this MSP's |
 | `create-connector` | `graph_tenant_id: not the client's tenant` | the profile names another tenant (C5.13) |
 | `create-connector` | `client_id: already a connector of this Worker` | one connector per Worker and client |
-| `create-plan` | `cadence_cron: not a cron expression` / `less than monthly` | five fields, UTC, at least monthly |
+| `create-plan` | `cadence_cron: not a cron expression` / `never occurs` / `more often than every 5 minutes` / `less than monthly` | five fields, UTC, no `R`, a date that exists, at most every five minutes, at least monthly |
 | `create-plan` | `sample_mail: not 0 to 100` (`_sp`, `_od`) / `sample sizes: all 0` | the Worker's J3 rule |
 | `create-plan` | `connector_id: not the client's connector` | the connector is another client's or absent |
 | `create-plan` | `client_id: no such client` | not this MSP's |

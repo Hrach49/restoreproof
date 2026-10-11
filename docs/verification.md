@@ -2011,11 +2011,15 @@ The job dispatcher, `cloud/app/scheduler.py`, the Compose `scheduler` service: t
 
 **A plan's cadence** (`test_plan.cadence_cron`) is exactly five space-separated cron fields, read in
 UTC and nothing else, parsed by croniter (`L`, ranges, steps and lists as croniter takes them;
-its six-field seconds form and `@daily` refused, so there is one form), and **at least monthly**:
+its six-field seconds form, `@daily` and its random `R` field refused, so there is one form and
+every reader of it agrees on a period's start), **at most every five minutes** (the scheduler's
+tick: no two minutes of an hour less than five apart, nor the last of one hour and the first of
+the next when the hours can follow each other; the day fields aren't read) and **at least monthly**:
 from the start of every day in the 400 days after the plan is made, the next occurrence is within
 31 days. So `0 2 * * *` (the default: daily at 02:00 UTC), `*/5 * * * *`, `0 2 1 * *`, `0 2 L * *`
 and `0 2 * * 1` pass, and `0 2 31 * *` (58 days from February), `0 2 1 */2 *` and `0 2 1 1 *` are
-refused where the plan is made, as `cadence_cron: not a cron expression` or `less than monthly`
+refused where the plan is made, as `cadence_cron: not a cron expression` or `less than monthly`;
+`* * * * *` is `more often than every 5 minutes` and `0 0 31 2 *`, which no date meets, `never occurs`
 (`PlanRepo.create`, so every writer of a plan is held). C6.4's monthly report wants a run in every
 period it covers; a plan that can't give one is not a plan.
 
@@ -2035,11 +2039,15 @@ never yesterday's. A plan re-enabled after a month gets its current period's run
 tick. A plan whose Worker is revoked still gets its runs: they sit `queued` with `dispatched_at`
 null, the truth of a plan nobody moved, for C6.2's page to show.
 
-**What can go wrong, and what it does to the tick.** A plan whose text the parser refuses (a row
-written past the repo) is skipped with one `plan skipped` line (`msp_id`, `plan_id`, `reason
-cadence_cron`, never the text) and the loop goes on: a bad cron stops no other plan. An MSP whose
-transaction raises (a connector the keys say exists but is gone, the database mid-tick) is rolled
+**What can go wrong, and what it does to the tick.** A plan whose text the parser refuses or whose
+cron never occurs (a row written past the repo) is skipped with one `plan skipped` line (`msp_id`,
+`plan_id`, `reason cadence_cron`, never the text) and the loop goes on: a bad cron stops no other
+plan. Each plan's run is made under a savepoint: a plan that raises (a connector the keys say
+exists but is gone, a statement the database refuses) is rolled back alone and logged as
+`plan failed` with its ids and the exception's type, and the MSP's other plans keep their runs.
+An MSP whose transaction raises (its plans can't be listed, the commit fails) is rolled
 back and logged as `tick failed` with the exception's type and frames, and the next MSP runs. A
+run is counted and its `run created` line written only after its MSP's commit. A
 tick that can't list the MSPs is `tick failed` with no MSP, and the next tick runs in five
 minutes; the process never exits on a tick's failure. **The sweep**, the second job, calls
 `RunRepo.requeue_stale` per MSP (six hours, three attempts, C5.6) in its own transaction and logs

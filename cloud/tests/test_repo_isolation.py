@@ -227,6 +227,8 @@ WRITES = [
     Write(ClientRepo, "update", lambda w: w.client, lambda w: (w.client.id,), lambda w: {"name": "changed", "screenshots_enabled": True}),
     Write(ClientRepo, "delete", lambda w: w.spare_client, lambda w: (w.spare_client.id,)),
     Write(WorkerRepo, "revoke", lambda w: w.worker, lambda w: (w.worker.id, NOW)),
+    # C5.8: with A's msp_id and B's Worker the heartbeat answers 0 and B's row stays.
+    Write(WorkerRepo, "heartbeat", lambda w: w.worker, lambda w: (w.worker.id,), lambda w: {"at": NOW, "version": "0.0.0", "last_error": None, "last_error_at": None, "outbox_depth": 0, "uptime_s": 1}),
     Write(ConnectorRepo, "update", lambda w: w.connector, lambda w: (w.connector.id, w.connector.config_json)),
     Write(ConnectorRepo, "delete", lambda w: w.spare_connector, lambda w: (w.spare_connector.id,)),
     Write(PlanRepo, "set_enabled", lambda w: w.plan, lambda w: (w.plan.id, False)),

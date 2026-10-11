@@ -196,6 +196,9 @@ class Worker(Base):
         # canonical bytes where the PEM text is not.
         UniqueConstraint("key_id"),
         _sha256_check("key_id"),
+        # C5.8: the heartbeat's two counts are never negative.
+        CheckConstraint("outbox_depth >= 0", name="outbox_depth_not_negative"),
+        CheckConstraint("uptime_s >= 0", name="uptime_s_not_negative"),
     )
 
     id: Mapped[uuid.UUID] = _id()
@@ -207,8 +210,15 @@ class Worker(Base):
     api_token_hash: Mapped[str] = mapped_column(Text, nullable=False)
     install_token_id: Mapped[uuid.UUID | None] = mapped_column(Uuid)
     version: Mapped[str | None] = mapped_column(Text)
+    # C5.8: the heartbeat's columns. `last_seen_at` is the Cloud's clock at
+    # the heartbeat; the rest are the Worker's own words, null until the first
+    # heartbeat and null again when the Worker says so (a restarted service
+    # has no error since its start).
     last_seen_at: Mapped[dt.datetime | None] = _time()
     last_error: Mapped[str | None] = mapped_column(Text)
+    last_error_at: Mapped[dt.datetime | None] = _time()
+    outbox_depth: Mapped[int | None] = mapped_column(BigInteger)
+    uptime_s: Mapped[int | None] = mapped_column(BigInteger)
     revoked_at: Mapped[dt.datetime | None] = _time()
 
 

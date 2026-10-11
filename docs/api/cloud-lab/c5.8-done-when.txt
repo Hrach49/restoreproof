@@ -1,0 +1,138 @@
+C5.8 (#61) Done-when, by hand against the Compose stack: the worker row's last_seen_at moves with each heartbeat, fifteen minutes apart. 2026-10-11T16:56:00Z, commit 5cfa4d3, branch c5.8-heartbeat
+Windows, Python 3.12, Docker Desktop, the Compose stack (postgres:16, MinIO, api) on 127.0.0.1; the bodies are the Worker's own recorded bytes
+
+== (1) the stack ==
+ Image restoreproof-cloud:local Building 
+ Image restoreproof-cloud:local Building 
+ Image restoreproof-cloud:local Built 
+ Image restoreproof-cloud:local Built 
+ Container restoreproof-minio-1 Running 
+ Container restoreproof-postgres-1 Running 
+ Container restoreproof-api-1 Recreate 
+ Container restoreproof-api-1 Recreated 
+ Container restoreproof-scheduler-1 Recreate 
+ Container restoreproof-scheduler-1 Recreated 
+ Container restoreproof-minio-1 Waiting 
+ Container restoreproof-minio-1 Healthy 
+ Container restoreproof-minio-bucket-1 Starting 
+ Container restoreproof-minio-bucket-1 Started 
+ Container restoreproof-postgres-1 Waiting 
+ Container restoreproof-minio-bucket-1 Waiting 
+ Container restoreproof-minio-bucket-1 Exited 
+ Container restoreproof-postgres-1 Healthy 
+ Container restoreproof-api-1 Starting 
+ Container restoreproof-api-1 Started 
+ Container restoreproof-api-1 Waiting 
+ Container restoreproof-api-1 Healthy 
+ Container restoreproof-scheduler-1 Starting 
+ Container restoreproof-scheduler-1 Started 
+ Container restoreproof-scheduler-1 Waiting 
+ Container restoreproof-postgres-1 Waiting 
+ Container restoreproof-minio-1 Waiting 
+ Container restoreproof-minio-bucket-1 Waiting 
+ Container restoreproof-api-1 Waiting 
+ Container restoreproof-api-1 Healthy 
+ Container restoreproof-postgres-1 Healthy 
+ Container restoreproof-minio-1 Healthy 
+ Container restoreproof-minio-bucket-1 Exited 
+ Container restoreproof-scheduler-1 Healthy 
+GET /healthz: HTTP/1.1 200 OK date: Sun, 11 Oct 2026 16:56:20 GMT server: uvicorn cache-control: no-store content-length: 21 content-type: application/json x-request-id: 4f92729fe6a84ffb93a79c90070dc19b {"db":"ok","s3":"ok"}
+alembic check (the stack's rows are left as they are; nothing is downgraded):
+{"event": "Context impl PostgresqlImpl.", "level": "info", "ts": "2026-10-11T16:56:24.039271Z"}
+{"event": "Will assume transactional DDL.", "level": "info", "ts": "2026-10-11T16:56:24.039932Z"}
+{"event": "setting up autogenerate plugin alembic.autogenerate.schemas", "level": "info", "ts": "2026-10-11T16:56:24.078886Z"}
+{"event": "setting up autogenerate plugin alembic.autogenerate.tables", "level": "info", "ts": "2026-10-11T16:56:24.080819Z"}
+{"event": "setting up autogenerate plugin alembic.autogenerate.types", "level": "info", "ts": "2026-10-11T16:56:24.081813Z"}
+{"event": "setting up autogenerate plugin alembic.autogenerate.constraints", "level": "info", "ts": "2026-10-11T16:56:24.082049Z"}
+{"event": "setting up autogenerate plugin alembic.autogenerate.defaults", "level": "info", "ts": "2026-10-11T16:56:24.082186Z"}
+{"event": "setting up autogenerate plugin alembic.autogenerate.comments", "level": "info", "ts": "2026-10-11T16:56:24.082304Z"}
+No new upgrade operations detected.
+the worker table's heartbeat columns:   column_name  |        data_type          | ---------------+-------------------------- |  last_error    | text |  last_error_at | timestamp with time zone |  last_seen_at  | timestamp with time zone |  outbox_depth  | bigint |  uptime_s      | bigint |  version       | text | (6 rows) | 
+its two CHECKs:                conname                | ------------------------------------- |  ck_worker_key_id_hex |  ck_worker_outbox_depth_not_negative |  ck_worker_uptime_s_not_negative | (3 rows) | 
+
+== (2) the rows: one MSP, one install token ==
+c58-rows.py init: msp_id 93c91322-5554-487a-b219-b40b0c32ad67; install_token (kept in memory for the session, not shown); an Ed25519 public key made for this run, its private half never kept (uq_worker_key_id takes one key once across the Cloud, so a fixed test key would register once per database)
+
+== (3) the Worker registers with the run's key ==
+POST /v1/workers/register (install_token, public_key_pem, worker_name 'c5.8 done-when', version 0.0.0-registered; the body on curl's standard input): 201 worker_id b18b9a25-7a3c-4d8a-ae23-e9f288399216, key_id e08344c4704a1706077ded200c620c571c86f632954ace156057b85352ea60a6; the API token kept in memory
+the row before any heartbeat:
+      name      |     version      | last_seen_at | last_error | last_error_at | outbox_depth | uptime_s | revoked_at 
+----------------+------------------+--------------+------------+---------------+--------------+----------+------------
+ c5.8 done-when | 0.0.0-registered |              |            |               |              |          | 
+(1 row)
+
+
+== (4) the first heartbeat: the service's recorded body after a job_invalid run (121 bytes) ==
+curl.exe -s -i -K - -X POST http://127.0.0.1:8000/v1/heartbeat -H 'Content-Type: application/json' --data-binary @beat-1.json   (the config on standard input: header = "Authorization: Bearer <token>")
+body: {"last_error":"job_invalid","last_error_at":"2026-10-09T20:27:38.206Z","outbox_depth":0,"uptime_s":152,"version":"0.0.0"}
+-- sent 2026-10-11T16:56:28Z, answered:
+HTTP/1.1 204 No Content
+date: Sun, 11 Oct 2026 16:56:27 GMT
+server: uvicorn
+x-request-id: c6816a72d60849b695e675441172cfc7
+
+the row (SELECT ... FROM worker WHERE id = the Worker's):
+      name      | version |         last_seen_at         | last_error  |       last_error_at        | outbox_depth | uptime_s | revoked_at 
+----------------+---------+------------------------------+-------------+----------------------------+--------------+----------+------------
+ c5.8 done-when | 0.0.0   | 2026-10-11 16:56:28.20323+00 | job_invalid | 2026-10-09 20:27:38.206+00 |            0 |      152 | 
+(1 row)
+
+
+== (5) fifteen minutes later (900 s, heartbeat_interval_s's default): the service's first heartbeat (88 bytes), a restart's clean slate ==
+body: {"last_error":null,"last_error_at":null,"outbox_depth":0,"uptime_s":0,"version":"0.0.0"}
+-- sent 2026-10-11T17:11:28Z, answered:
+HTTP/1.1 204 No Content
+date: Sun, 11 Oct 2026 17:11:27 GMT
+server: uvicorn
+x-request-id: d82e06efae904287a5ef28bde3030f6b
+
+the row:
+      name      | version |         last_seen_at          | last_error | last_error_at | outbox_depth | uptime_s | revoked_at 
+----------------+---------+-------------------------------+------------+---------------+--------------+----------+------------
+ c5.8 done-when | 0.0.0   | 2026-10-11 17:11:28.784056+00 |            |               |            0 |        0 | 
+(1 row)
+
+as C6.2's /workers page will read it (WorkerRepo.list):
+worker (WorkerRepo.list, what /workers will read):
+  name c5.8 done-when, version 0.0.0, last_seen_at 2026-10-11 17:11:28.784056+00:00, last_error None, last_error_at None, outbox_depth 0, uptime_s 0, revoked_at None
+audit_log:
+  2026-10-11T16:56:27.636897+00:00 worker.register worker:b18b9a25-7a3c-4d8a-ae23-e9f288399216
+
+== (6) the issue's four-key body, and no token ==
+body: {"last_error":null,"outbox_depth":0,"uptime_s":5,"version":"0.0.0"}
+-- with the token:
+HTTP/1.1 422 Unprocessable Entity
+date: Sun, 11 Oct 2026 17:11:29 GMT
+server: uvicorn
+content-length: 161
+content-type: application/json
+x-request-id: 6caf0f73e43f4df48c339bdc368a2606
+
+{"detail":[{"type":"missing","loc":["body","last_error_at"],"msg":"Field required","input":{"last_error":null,"outbox_depth":0,"uptime_s":5,"version":"0.0.0"}}]}
+-- the 121-byte body without a token:
+HTTP/1.1 401 Unauthorized
+date: Sun, 11 Oct 2026 17:11:29 GMT
+server: uvicorn
+www-authenticate: Bearer
+content-length: 30
+content-type: application/json
+x-request-id: f1d858f2882049b0a47eb4e95eaa8483
+
+{"detail":"not authenticated"}
+the row, unchanged by either:
+      name      | version |         last_seen_at          | last_error | last_error_at | outbox_depth | uptime_s | revoked_at 
+----------------+---------+-------------------------------+------------+---------------+--------------+----------+------------
+ c5.8 done-when | 0.0.0   | 2026-10-11 17:11:28.784056+00 |            |               |            0 |        0 | 
+(1 row)
+
+
+== (7) the api's request lines (nothing of a body), the audit rows ==
+{"method": "POST", "path": "/v1/workers/register", "status": 201, "duration_ms": 75, "event": "request", "request_id": "7deefabdc0e6473aaa2bfafe5917bf94", "level": "info", "ts": "2026-10-11T16:56:27.660790Z"}
+{"method": "POST", "path": "/v1/heartbeat", "status": 204, "duration_ms": 72, "event": "request", "request_id": "c6816a72d60849b695e675441172cfc7", "level": "info", "ts": "2026-10-11T16:56:28.239393Z"}
+{"method": "POST", "path": "/v1/heartbeat", "status": 204, "duration_ms": 14, "event": "request", "request_id": "d82e06efae904287a5ef28bde3030f6b", "level": "info", "ts": "2026-10-11T17:11:28.793249Z"}
+{"method": "POST", "path": "/v1/heartbeat", "status": 422, "duration_ms": 9, "event": "request", "request_id": "6caf0f73e43f4df48c339bdc368a2606", "level": "info", "ts": "2026-10-11T17:11:30.903920Z"}
+{"method": "POST", "path": "/v1/heartbeat", "status": 401, "duration_ms": 6, "event": "request", "request_id": "f1d858f2882049b0a47eb4e95eaa8483", "level": "info", "ts": "2026-10-11T17:11:30.948023Z"}
+the audit rows:      action      |                   target                     | -----------------+--------------------------------------------- |  worker.register | worker:b18b9a25-7a3c-4d8a-ae23-e9f288399216 | (1 row) | 
+
+== (8) the teardown ==
+C:\Users\minas\AppData\Local\Temp\rp-c58 removed (the three bodies, no token in them); the install token went to curl in the body on its standard input and the API token in a curl config on its standard input: neither was written to a file or put on a command line; this run's MSP, install token, Worker and audit rows are left in the stack's database and no other row was touched

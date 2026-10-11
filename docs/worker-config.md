@@ -2386,8 +2386,11 @@ TLS handshake, a certificate the Worker doesn't trust or a connection lost mid-r
 `timeout` for no answer in 10 s; `internal` for anything else. The line is written when the
 word differs from the heartbeat before it (a heartbeat that was taken in between makes it be
 said again). Nothing is retried before the next interval, and a failed heartbeat is never the
-`last_error` it reports. The endpoint is the Worker's proposal for C5.8; until W5.1 it is a
-stub.
+`last_error` it reports. The endpoint is built (C5.8, `docs/verification.md` "The Cloud
+receives a heartbeat"): it takes exactly these five keys, writes them and its own clock into the
+Worker's row and answers 204. Until W5.1 sends the `Authorization` header a real Cloud answers
+every heartbeat 401 (`heartbeat failed: http_401`, once); a 422 means the two sides disagree on
+the body.
 
 **`last_error`** is one of sixteen fixed words (`rp::service_error_codes()` in
 `worker/include/rp/service_errors.hpp`), or `upload_http_<status>`:

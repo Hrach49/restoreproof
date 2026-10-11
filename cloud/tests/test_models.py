@@ -10,7 +10,7 @@ import re
 import uuid
 
 import pytest
-from sqlalchemy import DateTime, ForeignKeyConstraint, Uuid, text
+from sqlalchemy import BigInteger, DateTime, ForeignKeyConstraint, Uuid, text
 from sqlalchemy.exc import DBAPIError, IntegrityError, StatementError
 
 from app.models import (
@@ -199,9 +199,9 @@ def test_every_time_is_a_timestamp_with_time_zone_that_refuses_a_naive_value():
     times = [column for column in columns if isinstance(column.type, UtcDateTime)]
 
     assert not [column for column in columns if isinstance(column.type, DateTime)]
-    assert len(times) == 14
+    assert len(times) == 15
     assert all(column.type.impl.timezone is True for column in times)
-    assert {column.name for column in times} >= {"created_at", "last_seen_at", "expires_at", "at", "tsa_time"}
+    assert {column.name for column in times} >= {"created_at", "last_seen_at", "last_error_at", "expires_at", "at", "tsa_time"}
 
 
 def test_every_table_another_points_at_is_unique_on_msp_id_and_id():
@@ -1050,3 +1050,77 @@ def test_the_poll_s_index_starts_with_the_tenant():
     assert indexes["ix_test_run_msp_id_worker_id_state_created_at"] == ["msp_id", "worker_id", "state", "created_at"]
     assert indexes["ix_test_run_msp_id_client_id_created_at"] == ["msp_id", "client_id", "created_at"]
     assert all(columns[0] == "msp_id" for columns in indexes.values())
+
+
+# --- C5.8: the heartbeat's columns ------------------------------------------------------------
+
+
+def test_the_worker_holds_the_heartbeat_s_three_new_columns():
+    columns = Worker.__table__.columns
+
+    assert isinstance(columns["last_error_at"].type, UtcDateTime) and columns["last_error_at"].nullable
+    assert isinstance(columns["outbox_depth"].type, BigInteger) and columns["outbox_depth"].nullable
+    assert isinstance(columns["uptime_s"].type, BigInteger) and columns["uptime_s"].nullable
+    assert all(columns[name].server_default is None for name in ("last_error_at", "outbox_depth", "uptime_s"))
+
+
+async def test_a_worker_s_heartbeat_columns_are_null_until_a_heartbeat(session):
+    msp = await new_msp(session)
+
+    worker = await new_worker(session, msp)
+    await session.refresh(worker)
+
+    assert (worker.last_seen_at, worker.last_error, worker.last_error_at) == (None, None, None)
+    assert (worker.outbox_depth, worker.uptime_s) == (None, None)
+
+
+async def test_a_worker_s_heartbeat_columns_take_the_worker_s_values(session):
+    msp = await new_msp(session)
+    at = dt.datetime(2026, 10, 9, 20, 27, 38, 206000, tzinfo=UTC)
+
+    worker = await add(
+        session,
+        Worker(
+            msp_id=msp.id,
+            name="w",
+            public_key_pem="x",
+            key_id="3" * 64,
+            api_token_hash="4" * 64,
+            last_error="job_invalid",
+            last_error_at=at,
+            outbox_depth=2**53 - 1,
+            uptime_s=152,
+        ),
+    )
+    await session.refresh(worker)
+
+    assert (worker.last_error, worker.last_error_at, worker.outbox_depth, worker.uptime_s) == ("job_invalid", at, 2**53 - 1, 152)
+
+
+@pytest.mark.parametrize("column", ["outbox_depth", "uptime_s"])
+async def test_a_negative_heartbeat_count_is_refused(session, column):
+    msp = await new_msp(session)
+
+    await refused(
+        session,
+        Worker(msp_id=msp.id, name="w", public_key_pem="x", key_id="5" * 64, api_token_hash="6" * 64, **{column: -1}),
+        f"ck_worker_{column}_not_negative",
+    )
+
+
+async def test_a_naive_last_error_at_is_refused_before_the_driver(session):
+    msp = await new_msp(session)
+
+    with pytest.raises(StatementError, match="a time without a zone"):
+        async with session.begin_nested():
+            session.add(
+                Worker(
+                    msp_id=msp.id,
+                    name="w",
+                    public_key_pem="x",
+                    key_id="7" * 64,
+                    api_token_hash="8" * 64,
+                    last_error_at=dt.datetime(2026, 10, 9, 20, 27, 38),
+                )
+            )
+            await session.flush()

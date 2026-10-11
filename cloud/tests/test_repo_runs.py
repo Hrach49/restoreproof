@@ -58,10 +58,10 @@ class Queue:
             q.msp.id, q.client.id, q.other_worker.id, profile_for(q.client.tenant_id)
         )
         q.plan = await PlanRepo(session).create(
-            q.msp.id, q.client.id, q.connector.id, sample_mail=5, sample_sp=3, sample_od=2, cadence_cron="0 2 * * *"
+            q.msp.id, q.client.id, q.connector.id, sample_mail=5, sample_sp=3, sample_od=2, cadence_cron="0 2 * * *", now=NOW
         )
         q.other_plan = await PlanRepo(session).create(
-            q.msp.id, q.client.id, q.other_connector.id, sample_mail=1, sample_sp=1, sample_od=1, cadence_cron="0 3 * * *"
+            q.msp.id, q.client.id, q.other_connector.id, sample_mail=1, sample_sp=1, sample_od=1, cadence_cron="0 3 * * *", now=NOW
         )
         q.runs = RunRepo(session)
         return q
@@ -393,3 +393,100 @@ async def test_receive_is_one_update(session, test_engine):
         event.remove(test_engine.sync_engine, "before_cursor_execute", record)
 
     assert counted == ["UPDATE"]
+
+
+# --- C5.9: create_scheduled, one INSERT under the period's unique ------------------------------
+
+
+PERIOD = dt.datetime(2026, 10, 11, 2, 0, tzinfo=UTC)
+
+
+async def test_a_scheduled_run_is_made_once_per_plan_and_period(session):
+    q = await Queue.make(session)
+    kwargs = {"plan_id": q.plan.id, "client_id": q.client.id, "connector_id": q.connector.id, "worker_id": q.worker.id}
+
+    first = await q.runs.create_scheduled(q.msp.id, scheduled_for=PERIOD, **kwargs)
+    again = await q.runs.create_scheduled(q.msp.id, scheduled_for=PERIOD, **kwargs)
+    next_period = await q.runs.create_scheduled(q.msp.id, scheduled_for=PERIOD + dt.timedelta(days=1), **kwargs)
+    other_plan = await q.runs.create_scheduled(
+        q.msp.id, plan_id=q.other_plan.id, client_id=q.client.id, connector_id=q.other_connector.id,
+        worker_id=q.other_worker.id, scheduled_for=PERIOD,
+    )
+
+    assert first is not None and again is None
+    assert next_period is not None and other_plan is not None
+    assert (first.state, first.scheduled_for, first.dispatched_at, first.attempt) == ("queued", PERIOD, None, 0)
+    assert (first.msp_id, first.plan_id, first.client_id, first.connector_id, first.worker_id) == (
+        q.msp.id, q.plan.id, q.client.id, q.connector.id, q.worker.id
+    )
+    assert first.created_at is not None
+    assert {r.id for r in await q.runs.list(q.msp.id)} == {first.id, next_period.id, other_plan.id}
+    # The session still answers: a conflict is no error.
+    assert (await q.fresh(first)).scheduled_for == PERIOD
+
+
+async def test_a_scheduled_run_is_one_insert_and_a_repeat_the_same_one(session, test_engine):
+    q = await Queue.make(session)
+    kwargs = {"plan_id": q.plan.id, "client_id": q.client.id, "connector_id": q.connector.id, "worker_id": q.worker.id}
+    counted: list[str] = []
+
+    def record(_conn, _cursor, statement, _params, _context, _executemany):
+        counted.append(statement.strip().split()[0].upper())
+
+    event.listen(test_engine.sync_engine, "before_cursor_execute", record)
+    try:
+        await q.runs.create_scheduled(q.msp.id, scheduled_for=PERIOD, **kwargs)
+        first = [s for s in counted if s in ("SELECT", "UPDATE", "INSERT", "WITH")]
+        counted.clear()
+        await q.runs.create_scheduled(q.msp.id, scheduled_for=PERIOD, **kwargs)
+        repeat = [s for s in counted if s in ("SELECT", "UPDATE", "INSERT", "WITH")]
+    finally:
+        event.remove(test_engine.sync_engine, "before_cursor_execute", record)
+
+    assert first == ["INSERT"] and repeat == ["INSERT"]
+
+
+async def test_a_scheduled_run_needs_the_period(session):
+    q = await Queue.make(session)
+
+    with pytest.raises(TypeError):
+        await q.runs.create_scheduled(q.msp.id, plan_id=q.plan.id, client_id=q.client.id, connector_id=q.connector.id, worker_id=q.worker.id)
+    with pytest.raises(ValueError):
+        await q.runs.create_scheduled(
+            q.msp.id, plan_id=q.plan.id, client_id=q.client.id, connector_id=q.connector.id, worker_id=q.worker.id,
+            scheduled_for=dt.datetime(2026, 10, 11, 2, 0),
+        )
+
+
+async def test_two_sessions_make_one_run_for_one_period(own_database):
+    """Two ticks or two scheduler processes: the unique and ON CONFLICT DO
+    NOTHING make one run, and both transactions commit."""
+    import asyncio
+
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from app.db import make_session_factory
+
+    engine = create_async_engine(own_database, connect_args={"server_settings": {"timezone": "UTC"}})
+    try:
+        factory = make_session_factory(engine)
+        async with factory() as setup, setup.begin():
+            q = await Queue.make(setup)
+            ids = (q.msp.id, q.plan.id, q.client.id, q.connector.id, q.worker.id)
+        msp_id, plan_id, client_id, connector_id, worker_id = ids
+
+        async def make():
+            async with factory() as s, s.begin():
+                row = await RunRepo(s).create_scheduled(
+                    msp_id, plan_id=plan_id, client_id=client_id, connector_id=connector_id, worker_id=worker_id, scheduled_for=PERIOD
+                )
+                return None if row is None else row.id
+
+        answers = await asyncio.gather(make(), make())
+        async with factory() as s, s.begin():
+            runs = await RunRepo(s).list(msp_id)
+    finally:
+        await engine.dispose()
+
+    assert sorted(a is None for a in answers) == [False, True]
+    assert [r.scheduled_for for r in runs] == [PERIOD]

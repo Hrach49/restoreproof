@@ -1,0 +1,158 @@
+# Onboarding an MSP by hand (C5.10)
+
+How an operator with the Cloud's database makes an MSP, its first client, a Worker's install
+token, the client's connector and a test plan, with `cloud/manage.py`; what each command prints;
+what it refuses. The decisions are `docs/decisions.md` 2026-10-11, "C5.10 and C5.9"; the code
+is `cloud/manage.py` (the Typer layer) over `cloud/app/onboarding.py` (the logic, through the
+repos) and `cloud/app/repo/errors.py` (the database's refusals worded). The Done-when, an MSP
+with one client and plan in under five minutes, is `cloud/tests/test_manage.py` and the by-hand
+run `docs/api/cloud-lab/c5.9-c5.10-done-when.txt` (the six steps took seconds).
+
+## Where to run it
+
+The CLI reads **`DATABASE_URL` alone** from the environment, as a migration does: no bucket, no
+`SECRET_KEY`. Two places:
+
+- **Inside the local stack**, where the api container has the database's address and the
+  image's own copy of `manage.py`:
+
+  ```powershell
+  cd cloud
+  docker compose up -d --wait
+  docker compose exec api python manage.py create-msp --name "Contoso MSP"
+  ```
+
+  A file the CLI must read (`--profile-file`) has to be in the container:
+  `docker compose cp .\profile.json api:/tmp/profile.json`, then `--profile-file /tmp/profile.json`,
+  then `docker compose exec api rm /tmp/profile.json`.
+
+- **From the host**, with the stack's Postgres on 127.0.0.1:55432 (every value local only):
+
+  ```powershell
+  cd cloud
+  $env:DATABASE_URL = "postgresql+asyncpg://restoreproof:local-only-postgres@127.0.0.1:55432/restoreproof"
+  uv run python manage.py create-msp --name "Contoso MSP"
+  ```
+
+A deployment runs it the same way on a host that has `DATABASE_URL` (C5.12). The CLI logs
+nothing and prints no secret but the one token it exists to print.
+
+## What every command has in common
+
+- **One transaction per command**, committed when the command returns, rolled back when it
+  refuses: exit 0 means every row of the command is in the database; exit 1 means none is.
+- **Stdout is one `<name> <value>` line per thing made**, in a fixed order, nothing else; a
+  script takes it with `split(' ')`. Notes go to stderr.
+- **A refusal is one line on stderr, `<key>: <reason>`, exit 1**, from fixed words and never a
+  value of yours: the repos' own (`graph_tenant_id: not the client's tenant`), the database's by
+  constraint name (`tenant_id: already a client of this MSP`), or the CLI's (`profile_file: not
+  JSON`). A usage fault (an option missing, a uuid that isn't one) is Typer's own message, exit
+  2, before any database is touched. A database that can't be reached is `database: unreachable`,
+  exit 1; a missing or malformed `DATABASE_URL` is `settings error: DATABASE_URL is missing|is not
+  valid`.
+- **One audit row per command that changed a row** (`msp.create`, `client.create`,
+  `install_token.create`, `connector.create` by the repo, `plan.create`, `run.create` with
+  `--run-now`, `worker.revoke`), `user_id` and `ip` null: the CLI has no user and no address.
+- Every uuid option is parsed as a uuid; every name or label is 1 to 128 characters without a
+  control character.
+
+## The sequence
+
+1. **The MSP.**
+
+   ```
+   manage.py create-msp --name "Contoso MSP" [--retention-days 1095]
+   msp_id 7d1e…
+   ```
+
+2. **The client**, one per Microsoft 365 tenant of the MSP. The tenant id is the GUID of the
+   client's tenant (`graph_tenant_id` in its profile; `lab/tenant.md` for the lab's). The same
+   tenant twice in one MSP is refused; the same tenant in another MSP is another client.
+
+   ```
+   manage.py create-client --msp-id <msp_id> --name Fabrikam --tenant-id <guid> [--screenshots-enabled]
+   client_id 3b9c…
+   ```
+
+3. **The Worker's install token.** Printed once; the Cloud stores its SHA-256 alone. It lasts
+   seven days and is used once, by the Worker's registration. The label is what you'll see
+   beside the Worker. The token names no client: a Worker is the MSP's, and connectors bind
+   clients to it next.
+
+   ```
+   manage.py create-worker-token --msp-id <msp_id> --label veeam-vm
+   install_token_id 5a2f…
+   expires_at 2026-10-18T12:00:30Z
+   install_token <43 characters>
+   the install token is shown once; the Cloud stores its hash alone      (stderr)
+   ```
+
+   Give the token to the Worker's operator by a channel of yours; it goes into the Worker's
+   vault as `cloud_install_token` (W5.1) and the Worker registers itself at its first start
+   (`POST /v1/workers/register`, C5.5), which prints nothing here. Until W5.1 is built, the
+   registration is a curl with the token in the body (`docs/testing.md`, "The onboarding CLI and
+   the scheduler"). The registration's answer carries the **`worker_id`** the next step needs
+   (it is also the Worker's row; C6.2's page lists it).
+
+4. **The connector**: the client on that Worker, with the client's profile. The profile file is
+   the same `restoreproof.client-profile.v1` document `rpworker client check --profile-file`
+   reads (`docs/worker-config.md`): the Veeam organisation's name, the tenant, the Worker app's
+   id, the `restoretest` mailbox and the four restore-target ids; IDs only, no secret. The
+   repo holds it to the schema and its `graph_tenant_id` to the client's tenant; a client twice
+   on one Worker is refused.
+
+   ```
+   manage.py create-connector --msp-id <msp_id> --client-id <client_id> --worker-id <worker_id> --profile-file profile.json [--type veeam_m365]
+   connector_id 9e0d…
+   ```
+
+5. **The plan**: the sample sizes (0 to 100 each, not all 0: the Worker's own rule) and the
+   cadence, five cron fields in UTC, at least monthly (`docs/verification.md`, "The Cloud makes a
+   run"). The default is the guide's `0 2 * * *`, daily at 02:00 UTC. The scheduler makes the
+   plan's first run at its first cron time after the plan was made; `--run-now` queues one run
+   at once for a first test today.
+
+   ```
+   manage.py create-plan --msp-id <msp_id> --client-id <client_id> --connector-id <connector_id> --mail 10 --sp 10 --od 10 [--cron "0 2 * * *"] [--disabled] [--run-now]
+   plan_id c4a1…
+   run_id 61f2…            (with --run-now)
+   ```
+
+   From here the scheduler (`cloud/app/scheduler.py`, the Compose `scheduler` service) makes one
+   queued run per period, the Worker polls them (`GET /v1/jobs`), runs them and uploads each
+   bundle (`POST /v1/results`).
+
+6. **Revoking a Worker**, when its machine is retired or its token may have leaked. From the
+   commit on, every request under its token is 401 (the poll, the upload, the heartbeat); its
+   runs stay as evidence, its plans keep making queued runs that nothing dispatches until they
+   are disabled (the admin pages, C6.x) or moved to a new Worker (a new token, a new
+   registration, a new connector, a new plan).
+
+   ```
+   manage.py revoke-worker --msp-id <msp_id> --worker-id <worker_id>
+   revoked_at 2026-10-11T12:00:30Z
+   ```
+
+**Not here: `create-user`.** The issue lists it; it waits for C6.1, which decides the words for
+`user.role`, the password hash and the login that checks them. The onboarding above needs no
+user: the install token's `created_by` and every audit row's `user_id` are null for the CLI.
+
+## The refusals, by command
+
+| Command | Line | Why |
+|---|---|---|
+| any | `name: not 1 to 128 characters without a control character` | the name's rule (`label:` for the token) |
+| any but `create-msp` | `msp_id: no such MSP` | the id names no MSP |
+| `create-msp` | `retention_days: not positive` | the database's CHECK |
+| `create-client` | `tenant_id: already a client of this MSP` | one client per tenant and MSP (C5.13) |
+| `create-connector` | `profile_file: not readable` / `not UTF-8` / `not JSON` | the file |
+| `create-connector` | `config_json: not a client-profile.v1` | the schema |
+| `create-connector` | `client_id: no such client` / `worker_id: no such worker` | not this MSP's |
+| `create-connector` | `graph_tenant_id: not the client's tenant` | the profile names another tenant (C5.13) |
+| `create-connector` | `client_id: already a connector of this Worker` | one connector per Worker and client |
+| `create-plan` | `cadence_cron: not a cron expression` / `less than monthly` | five fields, UTC, at least monthly |
+| `create-plan` | `sample_mail: not 0 to 100` (`_sp`, `_od`) / `sample sizes: all 0` | the Worker's J3 rule |
+| `create-plan` | `connector_id: not the client's connector` | the connector is another client's or absent |
+| `create-plan` | `client_id: no such client` | not this MSP's |
+| `revoke-worker` | `worker_id: no such Worker or already revoked` | one line for both |
+| any | `database: unreachable` / `settings error: DATABASE_URL …` / `internal: <type>` | the environment, or an error nobody foresaw (its type alone) |

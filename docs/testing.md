@@ -1667,18 +1667,27 @@ the test dispatched and re-signed with the same published key, and `tests/test_r
 runs every shared case through the route (a verified case is 404 at the run: the vectors' `run_id`
 is no uuid). The bucket is botocore's `Stubber` in the tests; the real one is the by-hand
 Done-when's below. `tests/tsa_lab.py` makes a token with the published test TSA key for the
-timestamped Done-when.
+timestamped Done-when. `tests/test_results_server.py` puts uvicorn on a loopback port in front of
+the route's own `_parts` and writes raw requests to the socket (no database): the body cap is
+held on what a real server hands over, which `httpx.ASGITransport` can't show, since it frames
+nothing. In `tests/test_results.py` a request body that must not be read is a `Body`, which
+counts the chunks the app asked for ("before any byte is read" is `pulled == 0`).
 
 **The by-hand live upload, from the Veeam VM to the Compose stack** (the Done-when's evidence
-step, `docs/api/cloud-lab/c5.7-done-when.txt`). The Worker sends no `Authorization` header until
-W5.1, so its own flush gets 401; the real Worker bundle is made by the service on the VM and
-posted by hand with the token, exactly as the Worker will post it:
+step, `docs/api/cloud-lab/c5.7-done-when.txt`, written by
+`docs/api/cloud-lab/c5.7-harness/c57-live.ps1` in one go; the steps below are what it does). The
+Worker sends no `Authorization` header until W5.1, so its own flush goes to the W4.6 stub Cloud
+(202), as in W4.8 to W4.11; the real Worker bundle is made by the service on the VM and posted by
+hand with the token, exactly as the Worker will post it. The harness reads an answer's status
+from its status line (never a search of the text: every `Date` header holds "202"), stops the
+service before it uninstalls it whatever step threw (`Remove-W48Service`), and passes a failed
+run's text through the same secret screen as the evidence:
 
 1. `cd cloud; docker compose up -d --wait --build`, then once on the stack's database
    `docker compose exec api alembic downgrade -1`, `upgrade head`, `check` (the edit of `0001`).
 2. The rows through the repos from a short `uv run python` script against the stack's
-   `DATABASE_URL` (C5.10's `manage.py` doesn't exist yet; the script is in the evidence file,
-   not the repository): one MSP, one client with the lab tenant's id (`lab/tenant.md`), one install
+   `DATABASE_URL` (C5.10's `manage.py` doesn't exist yet; the script is
+   `docs/api/cloud-lab/c5.7-harness/c57-rows.py`): one MSP, one client with the lab tenant's id (`lab/tenant.md`), one install
    token labelled `c5.7 done-when`, printed once.
 3. On the VM, `rpworker signer public-key > %TEMP%\rp-c57\worker.pub.pem`, then
    `curl.exe -s -X POST http://127.0.0.1:8000/v1/workers/register -H "Content-Type: application/json" -d @register.json`
@@ -1688,8 +1697,8 @@ posted by hand with the token, exactly as the Worker will post it:
    `curl.exe -s http://127.0.0.1:8000/v1/jobs -H "Authorization: Bearer <token>"`: the jobs
    document with the run's uuid, saved as `%LOCALAPPDATA%\RestoreProof\lab\jobs.json`.
 5. The service by hand ("The service's loop by hand" above) with `jobs_file` naming that
-   document: within one poll the run lands under `outbox\<run uuid>\`; the service's own flush
-   gets `upload_http_401` (expected until W5.1); the service stopped and uninstalled.
+   document: within one poll the run lands under `outbox\<run uuid>\` and the service's own
+   flush moves it to `sent\<run uuid>\` on the stub's 202; the service stopped and uninstalled.
 6. From that folder:
    `curl.exe -s -i -X POST http://127.0.0.1:8000/v1/results -H "Authorization: Bearer <token>" -F "result=@result.json;type=application/json" -F "signature=@signature.json;type=application/json" -F "timestamp=@timestamp.tst;type=application/octet-stream" -F "items.csv=@items.csv;type=application/octet-stream" -F "veeam-session.log=@veeam-session.log;type=application/octet-stream"`:
    202 `{"run_id": "<uuid>", "state": "pass"}`; the same command again: 202, the same body.
@@ -1701,8 +1710,9 @@ posted by hand with the token, exactly as the Worker will post it:
    prints `verified <bundle_sha256> key <key_id> timestamp <time>` with the row's values.
 8. A tampered copy (one byte of `items.csv`) posted: 400 `{"detail": "attachment_hash"}`, one
    audit row `result.rejected`, the row unchanged, no sixth object.
-9. `graph list` 0 in all three targets; the folder moved to `sent\` by hand; the token file and
-   `%TEMP%\rp-c57` removed. The run folder, the profile and the token stay outside the repository.
+9. `graph list` 0 in all three targets; the `sent\` folder moved to `%ProgramData%\RestoreProof\c57`;
+   the token file and `%TEMP%\rp-c57` removed. The run folder, the profile and the token stay
+   outside the repository.
 
 `docs/api/cloud-lab/c5.7-harness/c57-live.ps1` runs the nine steps in one go over the W4.8 harness,
 with `c57-rows.py` for the rows (what C5.10's `manage.py` will do); `c57-post.ps1` beside them runs

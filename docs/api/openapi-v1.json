@@ -360,7 +360,7 @@
                 }
               }
             },
-            "description": "The bundle doesn't verify (the verifier's word), or the body is malformed, has a part twice or a part the result doesn't list."
+            "description": "The bundle doesn't verify (the verifier's word), or the body is malformed, has a part twice or a part the result doesn't list, or the result verifies and the tables can't hold it (`result_unstorable`)."
           },
           "401": {
             "content": {

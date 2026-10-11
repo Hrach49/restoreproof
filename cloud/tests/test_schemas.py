@@ -78,6 +78,10 @@ def test_the_image_copies_the_schemas_the_verifier_and_the_tsa_root_beside_app_a
     assert ignore[0] == "*"
     assert IMAGE_PATHS <= set(ignore)
     assert not [line for line in ignore if line.startswith("!") and line not in IMAGE_PATHS]
+    # No bytecode of the build machine under any of the seven (the last match
+    # wins, so the line comes after them): the image runs the verifier's
+    # source as committed, never a `verify_bundle.cpython-312.pyc` beside it.
+    assert ignore[-1] == "**/__pycache__"
     # What the two folders hold is the one verifier and the one root, nothing else.
     assert sorted(p.name for p in (root / "shared" / "tools").iterdir() if p.name != "__pycache__") == ["verify_bundle.py"]
     assert sorted(p.name for p in (root / "shared" / "tsa").iterdir()) == ["tsa-ca.pem"]

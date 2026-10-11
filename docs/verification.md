@@ -1827,7 +1827,13 @@ signer verify`, the script and the Cloud, give one word for every case of
 `cloud/tests/test_results_vectors.py` posts each of the 61 cases through the route. Two cases
 differ from a folder by design: a token under another case of its name (`TIMESTAMP.TST`) is a
 file the verifiers note and a part the upload refuses, and a token with no CA, unchecked to the
-script, is checked under the root here, since the Cloud always has one. The key is always the
+script, is checked under the root here, since the Cloud always has one. A third difference is
+also by design and has no shared case (the C5.7 review's finding 12, left as it is): the upload
+holds every part's size before it reads any, in the sender's order, so a folder with two faults
+at once, one of them an oversized `signature`, `timestamp` or attachment, may get the size's
+word here and the other fault's word from the two verifiers. No bundle the Worker's flush sends
+is affected (it holds the sizes before it sends), and a part is never read past its limit to
+find a better word. The key is always the
 token's Worker's `public_key_pem` and `key_id` as registered (C5.5); nothing in the body names a
 key, an MSP or a Worker.
 
@@ -1838,20 +1844,36 @@ key, an MSP or a Worker.
 | no valid token | `not authenticated` | 401, before any byte of the body is parsed |
 | `Content-Type` not `multipart/form-data` | `body: not multipart/form-data` | 415 |
 | no `Content-Length` | `body: no Content-Length` | 411 |
+| `Content-Length` no ASCII number | `body: no Content-Length` | 411 |
 | `Content-Length` over 96 MiB | `body: too large` | 413, before the body is read |
-| the parser refuses the body (a bad boundary, a seventh file part, a part without a file name) | `body: malformed` | 400 |
+| the body itself passes 96 MiB, whatever `Content-Length` said | `body: too large` | 413, the reading stopped there |
+| the parser refuses the body (a bad boundary, a seventh file part, a part without a file name, a charset nothing decodes under), or the sender went away mid-body | `body: malformed` | 400 |
 | a part name twice | `part_twice` | 400 |
 | `result` missing or over 16 MiB; `signature` missing or over 4096 bytes; `timestamp` over 64 KiB | `result_unreadable`; `signature_file`; `timestamp_file` | 400, the part unread |
 | the result and the signature, in the verifiers' order | `result_not_canonical`, `result_schema`, `attachment_twice`, `screenshot_missing`, `signature_file`, `hash_mismatch`, `wrong_key`, `signature_invalid` | 400 |
 | a listed attachment's `size_bytes` over 25 MiB | `body: too large` | 413 |
 | each listed attachment, in the result's order | `attachment_missing`, `attachment_size`, `attachment_hash` | 400 |
-| a part the result doesn't list (`manifest.json`, a listed name in another case) | `part_unexpected` | 400 |
+| a part the result doesn't list (`manifest.json`) | `part_unexpected` | 400 |
 | the token, when there, under `shared/tsa/tsa-ca.pem` | `timestamp_file`, `timestamp_mismatch`, `timestamp_invalid` | 400 |
-| `run_id` no uuid, no such run, another MSP's, another Worker's | `run_id: no such run` | 404 |
+| a verified result the tables can't hold: an item `index` over 2^31-1, or a U+0000 in a text a row takes (an item's `subject` or `name`, an `error`'s `status.message`) | `result_unstorable` | 400 |
+| `run_id` not the text the Cloud dispatched (no uuid, or a uuid in another spelling), no such run, another MSP's, another Worker's | `run_id: no such run` | 404 |
 | a run never handed out (`dispatched_at` null) | `run_id: not dispatched` | 409 |
 | a run that holds a bundle of another hash | `bundle_conflict` | 409 |
 | the bundle's client isn't the run's | `client_mismatch` | 409 |
 | accepted | `{"run_id": "<uuid>", "state": "pass" \| "fail" \| "error"}` | 202 |
+
+The media type is read without regard to case, as HTTP has it. The 96 MiB cap is held twice: on
+the header before a byte is read, and on the bytes as they arrive, since a server that frames a
+body by its chunks (`Transfer-Encoding: chunked` beside a small `Content-Length`) hands the
+route more than the header said; `tests/test_results_server.py` holds it through uvicorn on
+loopback. A listed name under another case (`ITEMS.CSV` for `items.csv`) is not the listed part:
+the attachments are checked first, so the answer is `attachment_missing`. `result_unstorable` is
+the Cloud's own word, not a verifier's: the schema takes an index to 2^53-1 and any text, the
+`position` column is an int4 and PostgreSQL's `text` holds no U+0000, and a 500 would leave the
+Worker retrying for good. The run is named by `str(test_run.id)`, the text the job gave: capitals,
+no hyphens or `urn:uuid:` name no run, so the stored `result.json` and its row agree byte for
+byte. The verification runs in a thread (it is CPU work of up to seconds for a large plan and
+would otherwise hold every other request).
 
 Every 400 comes before the run is named, so a bundle that doesn't verify tells a caller nothing
 about what runs exist. A refusal after authentication writes one `audit_log` row,
@@ -1866,15 +1888,21 @@ as a uuid, must be the client row's; with `scope` `same_tenant`,
 `resolved.organization.tenant_id`, what the backup product said the organisation is, must be
 that tenant too; and a `pass` or `fail` without `scope` `same_tenant` is refused, since the
 Worker never writes a verdict without the client check (W4.11) and the Cloud files no verdict it
-wasn't shown to be about. An `error` without the check is filed.
+wasn't shown to be about. An `error` without the check is filed, and it alone may leave the
+tenant unsaid (`tenant_id` `""`): the Worker's `error job_invalid` for a job whose client profile
+it couldn't read knows no tenant and signs the empty strings beside the job's `client_id` ("A
+result written afterwards"). A tenant that is said must be the client's, in every result.
 
 **The run's state.** A bundle is taken for a run that is `dispatched`, `queued` again by the
 sweep and not yet polled, or `expired` after three attempts: all three were handed out, and a
 late upload (the service's `error interrupted` written at its next start, "A result written
 afterwards") is signed evidence of the job the Cloud dispatched, however late. The run goes to
 the bundle's own `pass`, `fail` or `error` in one `UPDATE` whose `WHERE` holds that rule
-(`RunRepo.receive`), so a second upload or the sweep running at the same moment is settled by
-the rowcount; `dispatched_at` and `attempt` are kept. There is no `received` state. A run that
+(`RunRepo.receive`), so a second upload at the same moment is settled by the rowcount (the
+sweep and the poll leave a run one that takes a bundle, so only another upload's commit makes
+the `UPDATE` miss; the row read again then answers 202 or `bundle_conflict`); `dispatched_at`
+and `attempt` are kept. There is no `received` state, and every state either takes a bundle or
+holds one (a test holds the two lists to `RUN_STATES`). A run that
 already holds this very bundle answers 202 with its stored state and nothing is written, not
 even an audit row; a different bundle for one run is `bundle_conflict`.
 

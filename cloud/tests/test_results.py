@@ -71,6 +71,20 @@ def refused_body(word: str) -> dict:
     return {"detail": word}
 
 
+class Body:
+    """A request body handed over chunk by chunk, counting the chunks the app
+    asked for: what shows that a body was, or was not, read."""
+
+    def __init__(self, chunks: list[bytes]):
+        self.chunks = chunks
+        self.pulled = 0
+
+    async def __aiter__(self):
+        for chunk in self.chunks:
+            self.pulled += 1
+            yield chunk
+
+
 async def assert_refused(lab: Lab, response: httpx.Response, status: int, word: str, *, run_id=None, before: dict) -> None:
     """A refusal: its status and word, one audit row naming the Worker (or
     the run, once known) and the word, nothing else written, no put."""
@@ -167,10 +181,13 @@ async def test_no_token_and_a_revoked_worker_are_401_before_the_body_is_parsed(l
     without = await lab.post(parts)
     revoked = await lab.post(parts, lab.other_token)
     garbage = await lab.post(None, lab.other_token, content=b"not even multipart", headers={"Content-Type": "text/plain"})
+    unread = Body([b"x" * 1024] * 8)
+    unpulled = await lab.post(None, None, content=unread, headers={"Content-Type": "multipart/form-data; boundary=x", "Content-Length": "8192"})
 
-    for response in (without, revoked, garbage):
+    for response in (without, revoked, garbage, unpulled):
         assert (response.status_code, response.json()) == (401, NOT_AUTHENTICATED)
         assert response.headers["WWW-Authenticate"] == "Bearer"
+    assert unread.pulled == 0  # what "before the body is parsed" means: not one chunk was asked for
     assert await lab.counts() == before  # no audit row before authentication
     lab.stubber.assert_no_pending_responses()
 
@@ -197,11 +214,147 @@ async def test_a_body_without_a_content_length_is_411(lab):
 @pytest.mark.parametrize("length", [str(results.MAX_UPLOAD_BYTES + 1), "100000000000"])
 async def test_a_content_length_over_the_cap_is_413_before_any_byte_is_read(lab, length):
     before = await lab.counts()
-    body = b"--x\r\nContent-Disposition: form-data; name=\"result\"; filename=\"result.json\"\r\n\r\n{}\r\n--x--\r\n"
+    body = Body([b"--x\r\nContent-Disposition: form-data; name=\"result\"; filename=\"result.json\"\r\n\r\n{}\r\n--x--\r\n"])
 
     response = await lab.upload(None, content=body, headers={"Content-Type": "multipart/form-data; boundary=x", "Content-Length": length})
 
     await assert_refused(lab, response, 413, results.BODY_TOO_LARGE, before=before)
+    assert body.pulled == 0
+
+
+def multipart_of(parts) -> tuple[bytes, str]:
+    """The parts as one multipart body and its Content-Type, as httpx frames them."""
+    request = httpx.Request("POST", "http://x", files=files_of(parts))
+    request.read()
+    return request.content, request.headers["Content-Type"]
+
+
+async def test_a_body_over_the_cap_is_413_whatever_its_content_length_says_and_is_not_read_to_its_end(lab, monkeypatch):
+    """The cap is held on the bytes that arrive, not on the header: a server
+    that frames a body by its chunks (`Transfer-Encoding: chunked` beside a
+    small Content-Length) hands the route more than the header said."""
+    monkeypatch.setattr(results, "MAX_UPLOAD_BYTES", 4096)
+    head = b"--x\r\nContent-Disposition: form-data; name=\"items.csv\"; filename=\"items.csv\"\r\n\r\n"
+    body = Body([head] + [b"z" * 1024] * 64)
+    before = await lab.counts()
+
+    response = await lab.upload(None, content=body, headers={"Content-Type": "multipart/form-data; boundary=x", "Content-Length": "10"})
+
+    await assert_refused(lab, response, 413, results.BODY_TOO_LARGE, before=before)
+    assert body.pulled <= 6  # the head, four chunks to the cap, the one over it
+
+
+async def test_a_body_of_exactly_the_cap_is_parsed_and_one_byte_more_is_413(lab, monkeypatch):
+    run_id = await lab.run()
+    parts = lab.bundle(run_id)
+    content, content_type = multipart_of(parts)
+    headers = {"Content-Type": content_type, "Content-Length": "10"}
+
+    monkeypatch.setattr(results, "MAX_UPLOAD_BYTES", len(content) - 1)
+    over = await lab.upload(None, content=Body([content]), headers=headers)
+    monkeypatch.setattr(results, "MAX_UPLOAD_BYTES", len(content))
+    lab.expect_puts(run_id, parts)
+    at = await lab.upload(None, content=Body([content]), headers=headers)
+
+    assert (over.status_code, over.json()) == (413, refused_body(results.BODY_TOO_LARGE))
+    assert at.status_code == 202, at.text
+
+
+@pytest.mark.parametrize("length", ["\u00b2", "1e3", "-1", "1 2", "0x10"])
+async def test_a_content_length_that_is_no_number_is_411(lab, length):
+    before = await lab.counts()
+
+    response = await lab.upload(
+        None, content=Body([b"x"]), headers={"Content-Type": "multipart/form-data; boundary=x", "Content-Length": length.encode("latin-1")}
+    )
+
+    await assert_refused(lab, response, 411, results.BODY_NO_LENGTH, before=before)
+
+
+async def test_a_media_type_in_another_case_is_the_same_media_type(lab):
+    """A media type is case-insensitive (RFC 9110): the body is parsed, never
+    answered with a verifier's word for a form that was not read."""
+    run_id = await lab.run()
+    parts = lab.bundle(run_id)
+    lab.expect_puts(run_id, parts)
+    content, content_type = multipart_of(parts)
+
+    response = await lab.upload(None, content=content, headers={"Content-Type": content_type.replace("multipart/form-data", "Multipart/Form-Data")})
+
+    assert response.status_code == 202, response.text
+
+
+async def test_a_charset_no_name_decodes_under_is_400_malformed(lab):
+    run_id = await lab.run()
+    content, content_type = multipart_of(lab.bundle(run_id))
+    before = await lab.counts()
+
+    response = await lab.upload(None, content=content, headers={"Content-Type": content_type + "; charset=undefined"})
+
+    await assert_refused(lab, response, 400, results.BODY_MALFORMED, before=before)
+
+
+async def test_a_sender_that_goes_away_mid_body_is_malformed_never_an_unhandled_exception():
+    from starlette.requests import Request
+
+    from app.routers.results import _parts
+
+    messages = [
+        {"type": "http.request", "body": b"--x\r\nContent-Disposition: form-data; name=\"result\"; filename=\"r\"\r\n\r\n{", "more_body": True},
+        {"type": "http.disconnect"},
+    ]
+
+    async def receive():
+        return messages.pop(0)
+
+    scope = {
+        "type": "http", "method": "POST", "path": PATH, "query_string": b"",
+        "headers": [(b"content-type", b"multipart/form-data; boundary=x"), (b"content-length", b"4096")],
+    }
+
+    assert await _parts(Request(scope, receive)) == results.Refused(400, results.BODY_MALFORMED)
+
+
+async def test_the_form_s_spooled_files_are_closed_when_the_parts_are_read(lab, monkeypatch):
+    from starlette.datastructures import UploadFile
+
+    opened = []
+    original = UploadFile.__init__
+
+    def record(self, *args, **kwargs):
+        original(self, *args, **kwargs)
+        opened.append(self)
+
+    monkeypatch.setattr(UploadFile, "__init__", record)
+    run_id = await lab.run()
+    parts = lab.bundle(run_id)
+    lab.expect_puts(run_id, parts)
+
+    assert (await lab.upload(parts)).status_code == 202
+    assert (await lab.upload({**parts, "signature": b"x" * 5000})).status_code == 400
+
+    assert len(opened) == 8 and all(upload.file.closed for upload in opened)
+
+
+async def test_the_bundle_is_verified_off_the_event_loop(lab, monkeypatch):
+    """Verification is CPU work of up to seconds: on the loop it would hold
+    every other request of every MSP."""
+    import threading
+
+    threads = []
+    original = results.verify_upload
+
+    def record(*args, **kwargs):
+        threads.append(threading.get_ident())
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(results, "verify_upload", record)
+    run_id = await lab.run()
+    parts = lab.bundle(run_id)
+    lab.expect_puts(run_id, parts)
+
+    assert (await lab.upload(parts)).status_code == 202
+    assert len(threads) == 1 and threads[0] != threading.get_ident()
 
 
 async def test_a_content_length_at_the_cap_is_read(lab):
@@ -390,6 +543,23 @@ async def test_a_run_that_is_not_this_worker_s_is_one_404(lab, which):
         assert (await lab.run_row(lab.b_run_id, lab.b_msp_id)).state == "dispatched"
 
 
+@pytest.mark.parametrize("spelling", ["upper", "no hyphens", "urn"])
+async def test_a_run_id_that_is_not_the_text_the_cloud_dispatched_is_no_such_run(lab, spelling):
+    """The job gave `str(test_run.id)`: the signed result names the run by
+    that text or it names no run, so the stored evidence and the row agree
+    byte for byte."""
+    run_id = await lab.run()
+    text_of = {"upper": str(run_id).upper(), "no hyphens": run_id.hex, "urn": f"urn:uuid:{run_id}"}[spelling]
+    assert uuid.UUID(text_of) == run_id and text_of != str(run_id)
+    parts = lab.bundle(text_of)
+    before = await lab.counts()
+
+    response = await lab.upload(parts)
+
+    await assert_refused(lab, response, 404, results.NO_SUCH_RUN, before=before)
+    assert (await lab.run_row(run_id)).state == "dispatched"
+
+
 async def test_a_run_never_handed_out_is_409(lab):
     run_id = await lab.run(state="queued", attempt=0)
     parts = lab.bundle(run_id)
@@ -501,6 +671,110 @@ async def test_an_error_without_the_client_check_is_filed_but_a_fail_is_not(lab)
     lab.expect_puts(run_id, parts)
     assert (await lab.upload(parts)).json() == {"run_id": str(run_id), "state": "error"}
     assert (await lab.run_row(run_id)).error_code == "client_mismatch"
+
+
+def profile_unread(document):
+    """What the Worker signs for a job whose client profile it couldn't read
+    (worker/src/service_recovery.cpp, `close_plan`): the job's client_id beside
+    the empty strings of a profile that was never known."""
+    document["client"].update({"tenant_id": "", "veeam_org_name": "", "scope": None, "resolved": None})
+    document["status"]["error_code"] = "job_invalid"
+    document["status"]["message"] = "the job is invalid (client.veeam_org_name)"
+
+
+async def test_the_worker_s_job_invalid_for_a_profile_it_could_not_read_is_filed(lab):
+    run_id = await lab.run()
+    parts = bundle(run_id, lab.client_id, base=CLOSED_RESULT, attachments=CLOSED_ATTACHMENTS, patch=profile_unread)
+    lab.expect_puts(run_id, parts)
+
+    response = await lab.upload(parts)
+
+    assert (response.status_code, response.json()) == (202, {"run_id": str(run_id), "state": "error"}), response.text
+    row = await lab.run_row(run_id)
+    assert (row.state, row.error_code, row.error_message) == ("error", "job_invalid", "the job is invalid (client.veeam_org_name)")
+
+
+@pytest.mark.parametrize("case", ["a pass", "another client", "a tenant that is said and wrong"])
+async def test_an_unknown_tenant_excuses_nothing_else(lab, case):
+    run_id = await lab.run()
+
+    def patch(document):
+        status = copy.deepcopy(document["status"])
+        profile_unread(document)
+        if case == "a pass":
+            document["status"] = status
+        elif case == "another client":
+            document["client"]["client_id"] = str(uuid.uuid4())
+        else:
+            document["client"]["tenant_id"] = str(uuid.uuid4())
+
+    if case == "a pass":
+        parts = lab.bundle(run_id, patch=patch)
+    else:
+        parts = bundle(run_id, lab.client_id, base=CLOSED_RESULT, attachments=CLOSED_ATTACHMENTS, patch=patch)
+    before = await lab.counts()
+
+    response = await lab.upload(parts)
+
+    await assert_refused(lab, response, 409, results.CLIENT_MISMATCH, run_id=run_id, before=before)
+
+
+# --- A result the tables can't hold --------------------------------------------------------------
+
+
+def index_over_int4(document):
+    document["expected"]["items"][5]["index"] = 2**31
+    document["check"]["items"][5]["index"] = 2**31
+
+
+def nul_in_a_subject(document):
+    document["expected"]["items"][1]["subject"] = "real\x00mail"
+
+
+def nul_in_a_file_name(document):
+    document["expected"]["items"][3]["name"] = "report\x00.pdf"
+
+
+def nul_in_the_status_message(document):
+    document["status"] = copy.deepcopy(CLOSED_RESULT["status"])
+    document["status"]["message"] = "the run\x00was interrupted"
+    document["client"]["scope"] = None
+    document["client"]["resolved"] = None
+
+
+@pytest.mark.parametrize("patch", [index_over_int4, nul_in_a_subject, nul_in_a_file_name, nul_in_the_status_message], ids=lambda f: f.__name__)
+async def test_a_verified_result_a_column_cannot_hold_is_a_worded_400_never_a_500(lab, patch):
+    """The schema takes an index to 2^53-1 and any text; `test_item.position`
+    is an int4 and PostgreSQL's text takes no U+0000. Refused with the
+    Cloud's own word before the run is named, so the Worker isn't left
+    retrying a 500 for good."""
+    run_id = await lab.run()
+    parts = lab.bundle(run_id, patch=patch)
+    script = results.verifier()
+    key = script.public_key_from_pem(KEYS["rfc8032-test-1"]["public_key_pem"].encode("ascii"))
+    assert script.verify(parts["result"], parts["signature"], key, script.SCHEMAS).word == script.VERIFIED
+    before = await lab.counts()
+
+    response = await lab.upload(parts)
+
+    await assert_refused(lab, response, 400, results.RESULT_UNSTORABLE, before=before)
+    assert (await lab.run_row(run_id)).state == "dispatched"
+
+
+async def test_the_largest_index_the_column_holds_is_filed(lab):
+    run_id = await lab.run()
+
+    def patch(document):
+        document["expected"]["items"][5]["index"] = 2**31 - 1
+        document["check"]["items"][5]["index"] = 2**31 - 1
+        # A pass's message is stored nowhere but in result.json: any text.
+        document["status"]["message"] = "6 of 6\x00item(s) verified"
+
+    parts = lab.bundle(run_id, patch=patch)
+    lab.expect_puts(run_id, parts)
+
+    assert (await lab.upload(parts)).status_code == 202
+    assert [i.position for i in await lab.items(run_id)][-1] == 2**31 - 1
 
 
 # --- The mapping (points 11 and 12) ------------------------------------------------------------
@@ -788,11 +1062,66 @@ async def test_a_put_that_fails_leaves_no_row_and_answers_500(lab):
 def test_the_words_the_route_can_answer_are_the_verifier_s_and_the_request_s_and_the_run_s():
     assert set(results.REQUEST_WORDS) == {
         results.BODY_NOT_MULTIPART, results.BODY_NO_LENGTH, results.BODY_TOO_LARGE, results.BODY_MALFORMED,
-        results.PART_TWICE, results.PART_UNEXPECTED,
+        results.PART_TWICE, results.PART_UNEXPECTED, results.RESULT_UNSTORABLE,
     }
     assert set(results.RUN_WORDS) == {results.NO_SUCH_RUN, results.NOT_DISPATCHED, results.CLIENT_MISMATCH, results.BUNDLE_CONFLICT}
     assert not set(results.REQUEST_WORDS) & set(vb.WORDS)
     assert results.verifier().WORDS == vb.WORDS
+
+
+def test_the_words_texts_are_the_contract():
+    """The Worker and an operator read these texts (docs/verification.md "The
+    Cloud receives a bundle"): a rename is a change of the API."""
+    assert results.REQUEST_WORDS == (
+        "body: not multipart/form-data", "body: no Content-Length", "body: too large", "body: malformed",
+        "part_twice", "part_unexpected", "result_unstorable",
+    )
+    assert results.RUN_WORDS == ("run_id: no such run", "run_id: not dispatched", "client_mismatch", "bundle_conflict")
+
+
+def test_every_run_state_either_takes_a_bundle_or_holds_one():
+    """A state added to `RUN_STATES` lands in one list or the other, never in
+    neither: `check_run` and `RunRepo.receive` between them cover every row."""
+    import typing
+
+    from app.models import RUN_STATES
+    from app.repo.runs import RECEIVABLE_STATES
+    from app.routers.results import Accepted
+
+    assert set(results.FINISHED_STATES) | set(RECEIVABLE_STATES) == set(RUN_STATES)
+    assert not set(results.FINISHED_STATES) & set(RECEIVABLE_STATES)
+    assert results.FINISHED_STATES == ("pass", "fail", "error")
+    assert typing.get_args(Accepted.model_fields["state"].annotation) == results.FINISHED_STATES
+
+
+async def test_an_update_that_touched_nothing_on_a_run_that_still_takes_a_bundle_is_the_app_s_failure(lab, monkeypatch):
+    """Only another upload's commit makes the UPDATE miss, and then the row
+    read again says so (the two races in this file). A miss on a row that
+    still takes a bundle is no state the Cloud knows: 500, nothing written."""
+    calls = []
+
+    async def touched_nothing(self, msp_id, run_id, *, worker_id, update):
+        calls.append(run_id)
+        return 0
+
+    monkeypatch.setattr(RunRepo, "receive", touched_nothing)
+    run_id = await lab.run()
+    parts = lab.bundle(run_id)
+    before = await lab.counts()
+
+    response = await lab.upload(parts)
+
+    assert response.status_code == 500
+    assert calls == [run_id]  # asked once: nothing is tried twice
+    assert await lab.counts() == before
+    lab.stubber.assert_no_pending_responses()
+
+
+def test_run_uuid_takes_the_canonical_text_alone():
+    run_id = uuid.uuid4()
+    assert results.run_uuid({"run_id": str(run_id)}) == run_id
+    for text_of in (str(run_id).upper(), run_id.hex, f"urn:uuid:{run_id}", "{" + str(run_id) + "}", "x"):
+        assert results.run_uuid({"run_id": text_of}) is None
 
 
 def test_the_limits_are_the_verifiers_and_the_entry_s():

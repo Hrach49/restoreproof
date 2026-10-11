@@ -23,6 +23,7 @@
 #   Get-W48Targets                   # rpworker graph list: the three restore targets
 #   Get-W48Sessions                  # Veeam's restore sessions of the account still Working
 #   Save-W48Evidence <name> <text>   # refused if a secret, a token or a key survives
+#   Remove-W48Service                # stop (when it still runs), then uninstall: a finally's line
 #   Remove-W48Harness
 Set-StrictMode -Version 3
 $ErrorActionPreference = 'Stop'
@@ -322,6 +323,18 @@ function Save-W48Evidence([string]$Name, [string]$Text) {
 # The config copy, the state folder and the logs taken away. Only once the service is gone.
 # runs\, outbox\ and sent\ stay: they hold the runs made by hand before, and this run's sent
 # folders are moved out by the caller first.
+# The service gone whatever state it was left in (the C5.7 review's finding 8): `service
+# uninstall` refuses a service that isn't stopped, so one that still runs (a step threw while it
+# ran) is stopped first. A stopped service gives the one uninstall block, as before. A service
+# that is still there afterwards is said in capitals, never passed over.
+function Remove-W48Service {
+    $text = @()
+    $service = Get-CimInstance Win32_Service -Filter "Name='$script:W48Service'"
+    if ($service -and $service.State -ne 'Stopped') { $text += "-- the service was $($service.State): stopped first`n$(Invoke-W48 @('service', 'stop'))" }
+    $text += Invoke-W48 @('service', 'uninstall')
+    if (Get-CimInstance Win32_Service -Filter "Name='$script:W48Service'") { $text += "!! THE SERVICE $script:W48Service IS STILL INSTALLED: rpworker service stop, then rpworker service uninstall, by hand" }
+    $text -join "`n"
+}
 function Remove-W48Harness {
     if (Get-CimInstance Win32_Service -Filter "Name='$script:W48Service'") { throw "the service $script:W48Service is still installed: revoke, stop, then uninstall" }
     Stop-W48Stub | Out-Null

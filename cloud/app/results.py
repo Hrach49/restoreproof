@@ -15,9 +15,11 @@ and the run, never a text of the body.
 
 The order: the parts' names and sizes, the result (canonical form first, then
 the schema), the signature under the token's Worker's key, each listed
-attachment, a part the result doesn't list, the timestamp; only then the run
-(this MSP's, this Worker's, handed out), the repeat, the client. A refusal
-before the run is known tells a caller nothing about what runs exist.
+attachment, a part the result doesn't list, the timestamp, then what the
+tables can't hold (`result_unstorable`); only then the run (this MSP's, this
+Worker's, handed out, named by the very text the Cloud dispatched), the repeat,
+the client. A refusal before the run is known tells a caller nothing about
+what runs exist.
 
 Strict (100% line and branch): this decides what the Cloud files as evidence.
 """
@@ -36,9 +38,9 @@ from types import ModuleType
 from typing import Any
 from uuid import UUID
 
-from app.models import Client, TestRun
+from app.models import RUN_STATES, Client, TestRun
 from app.repo.items import ItemRow
-from app.repo.runs import ReceivedRun
+from app.repo.runs import RECEIVABLE_STATES, ReceivedRun
 from app.schemas import shared_schemas_dir
 
 __all__ = [
@@ -58,6 +60,7 @@ __all__ = [
     "PART_UNEXPECTED",
     "REQUEST_WORDS",
     "RESULT_PART",
+    "RESULT_UNSTORABLE",
     "RUN_WORDS",
     "SIGNATURE_PART",
     "TIMESTAMP_PART",
@@ -100,7 +103,19 @@ BODY_TOO_LARGE = "body: too large"  # 413
 BODY_MALFORMED = "body: malformed"
 PART_TWICE = "part_twice"
 PART_UNEXPECTED = "part_unexpected"
-REQUEST_WORDS = (BODY_NOT_MULTIPART, BODY_NO_LENGTH, BODY_TOO_LARGE, BODY_MALFORMED, PART_TWICE, PART_UNEXPECTED)
+# A result that verifies and that the tables can't hold (an item's index over
+# int4, a U+0000 in a text a row takes): the Cloud's word, since the verifiers
+# say verified, and a 400, since no retry changes the bundle.
+RESULT_UNSTORABLE = "result_unstorable"
+REQUEST_WORDS = (
+    BODY_NOT_MULTIPART,
+    BODY_NO_LENGTH,
+    BODY_TOO_LARGE,
+    BODY_MALFORMED,
+    PART_TWICE,
+    PART_UNEXPECTED,
+    RESULT_UNSTORABLE,
+)
 
 # The run's words (points 5, 9 and 13).
 NO_SUCH_RUN = "run_id: no such run"  # 404: not a uuid, unknown, another MSP's, another Worker's
@@ -109,8 +124,14 @@ CLIENT_MISMATCH = "client_mismatch"  # 409
 BUNDLE_CONFLICT = "bundle_conflict"  # 409
 RUN_WORDS = (NO_SUCH_RUN, NOT_DISPATCHED, CLIENT_MISMATCH, BUNDLE_CONFLICT)
 
-FINISHED_STATES = ("pass", "fail", "error")
+# A run either takes a bundle (`RECEIVABLE_STATES`) or holds one: the two
+# lists are `RUN_STATES` between them (a test holds the partition and the
+# response's own list to it), so no row falls between `check_run` and
+# `RunRepo.receive`.
+FINISHED_STATES = tuple(state for state in RUN_STATES if state not in RECEIVABLE_STATES)
 SAME_TENANT = "same_tenant"
+# `test_item.position` is an int4.
+MAX_POSITION = 2**31 - 1
 
 TIME_MILLISECONDS = "%Y-%m-%dT%H:%M:%S.%fZ"
 TIME_SECONDS = "%Y-%m-%dT%H:%M:%SZ"
@@ -229,6 +250,8 @@ def verify_upload(parts: Mapping[str, bytes], *, public_key_pem: str, key_id: st
         if word != vb.VERIFIED:
             return Refused(400, word)
         stamped = dt.datetime.strptime(time_text, TIME_SECONDS).replace(tzinfo=dt.timezone.utc)
+    if not _storable(document):
+        return Refused(400, RESULT_UNSTORABLE)
     return Verified(
         result=document,
         result_bytes=result,
@@ -238,6 +261,20 @@ def verify_upload(parts: Mapping[str, bytes], *, public_key_pem: str, key_id: st
         tsa_time=stamped,
         attachments=attachments,
     )
+
+
+def _storable(result: Mapping[str, Any]) -> bool:
+    """Whether the rows of a verified result fit their columns: the schema
+    takes an index to 2^53-1 and any text, `test_item.position` is an int4
+    and PostgreSQL's text holds no U+0000. Only what a row takes is looked
+    at (a `pass`'s message is stored nowhere but in result.json)."""
+    status = result["status"]
+    texts: list[str | None] = [status["message"], status.get("error_code")] if status["status"] == "error" else []
+    for row in item_rows(result):
+        if row.position > MAX_POSITION:
+            return False
+        texts += [row.type, row.name, row.expected_kind, row.expected_sha256, row.reason]
+    return not any(text is not None and "\x00" in text for text in texts)
 
 
 def _reader(parts: Mapping[str, bytes]):
@@ -281,29 +318,39 @@ def already_received(run: TestRun, bundle_sha256: str) -> bool:
 
 
 def run_uuid(result: Mapping[str, Any]) -> UUID | None:
-    """The result's `run_id` as the run's uuid, or None when it is no uuid
-    (a run the Cloud never dispatched)."""
+    """The result's `run_id` as the run's uuid, or None when it isn't the
+    text the Cloud dispatched, `str(test_run.id)`: no uuid, or one in another
+    spelling (capitals, no hyphens, `urn:uuid:`), which `uuid.UUID` reads and
+    the job never gave. The stored result then names its row byte for byte."""
+    text = result["run_id"]
     try:
-        return uuid.UUID(result["run_id"])
+        parsed = uuid.UUID(text)
     except ValueError:
         return None
+    return parsed if str(parsed) == text else None
 
 
 def check_client(result: Mapping[str, Any], run: TestRun, client: Client) -> Refused | None:
     """The bundle's client is the run's (point 9): the job's `client_id`
     echoed, the profile's tenant, the organisation the backup product
     reported when the client check passed, and no verdict without that
-    check; one word."""
+    check; one word. An `error` without the check may leave the tenant
+    unsaid (""): the Worker's `job_invalid` for a job whose profile it could
+    not read knows none (worker/src/service_recovery.cpp). A tenant that is
+    said is the client's, always."""
     said = result["client"]
+    mismatch = Refused(409, CLIENT_MISMATCH, run.id)
     if said["client_id"] != str(client.id):
-        return Refused(409, CLIENT_MISMATCH, run.id)
-    if _uuid_or_none(said["tenant_id"]) != client.tenant_id:
-        return Refused(409, CLIENT_MISMATCH, run.id)
+        return mismatch
     if said["scope"] == SAME_TENANT:
         if _uuid_or_none(said["resolved"]["organization"]["tenant_id"]) != client.tenant_id:
-            return Refused(409, CLIENT_MISMATCH, run.id)
+            return mismatch
     elif result["status"]["status"] != "error":
-        return Refused(409, CLIENT_MISMATCH, run.id)
+        return mismatch
+    elif said["tenant_id"] == "":
+        return None
+    if _uuid_or_none(said["tenant_id"]) != client.tenant_id:
+        return mismatch
     return None
 
 

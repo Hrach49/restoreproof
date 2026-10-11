@@ -280,7 +280,9 @@ async def test_a_profile_naming_another_tenant_is_refused_through_the_cli(databa
 
 @pytest.mark.parametrize(
     ("cron", "line"),
-    [("nonsense", "cadence_cron: not a cron expression"), ("0 2 1 1 *", "cadence_cron: less than monthly"), ("0 2 * * * *", "cadence_cron: not a cron expression")],
+    [("nonsense", "cadence_cron: not a cron expression"), ("0 2 1 1 *", "cadence_cron: less than monthly"), ("0 2 * * * *", "cadence_cron: not a cron expression"),
+     ("R 2 * * *", "cadence_cron: not a cron expression"), ("0 0 31 2 *", "cadence_cron: never occurs"),
+     ("* * * * *", "cadence_cron: more often than every 5 minutes")],
 )
 async def test_a_cron_outside_the_rule_is_refused_through_the_cli(database, cron, line):
     msp = lines(await cli("create-msp", "--name", "a"))

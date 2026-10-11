@@ -317,11 +317,41 @@ async def test_run_now_queues_one_run_made_by_hand(session, clock):
     assert ("run.create", f"run:{run.id}") in await audit_actions(session, lab.msp_id)
 
 
+async def test_run_now_s_refusal_by_the_database_is_worded_like_any_other(session, clock, monkeypatch):
+    """The review's finding 6: the hand-made run's insert is under the same
+    wording as every other insert of the module."""
+    lab = await Lab.make(session)
+    connector_id = await lab.connector()
+    original = RunRepo.create
+
+    async def for_no_msp(self, msp_id, **values):
+        return await original(self, uuid.UUID(int=7), **values)
+
+    monkeypatch.setattr(RunRepo, "create", for_no_msp)
+
+    await refused(session, lab.plan(connector_id, run_now=True), "msp_id", "no such MSP")
+
+
+async def test_run_now_with_a_connector_that_is_gone_is_the_key_s_refusal(session, clock, monkeypatch):
+    lab = await Lab.make(session)
+    connector_id = await lab.connector()
+
+    async def nothing(self, msp_id, connector_id):
+        return None
+
+    monkeypatch.setattr(ConnectorRepo, "get", nothing)
+
+    await refused(session, lab.plan(connector_id, run_now=True), "connector_id", "not the client's connector")
+
+
 @pytest.mark.parametrize(
     ("changes", "key", "reason"),
     [
         ({"cadence_cron": "nonsense"}, "cadence_cron", "not a cron expression"),
         ({"cadence_cron": "0 2 1 1 *"}, "cadence_cron", "less than monthly"),
+        ({"cadence_cron": "R 2 * * *"}, "cadence_cron", "not a cron expression"),
+        ({"cadence_cron": "0 0 31 2 *"}, "cadence_cron", "never occurs"),
+        ({"cadence_cron": "* * * * *"}, "cadence_cron", "more often than every 5 minutes"),
         ({"sample_mail": 101}, "sample_mail", "not 0 to 100"),
         ({"sample_sp": -1}, "sample_sp", "not 0 to 100"),
         ({"sample_od": 101}, "sample_od", "not 0 to 100"),

@@ -11,9 +11,13 @@ Every `TICK_S` seconds, two jobs under APScheduler, each once at start too:
   the period's unique makes one run however many ticks or processes ask. Only
   the current period is made: a scheduler that was down makes today's run
   when it comes back, never yesterday's. A plan whose cron the parser refuses
-  (a row written past the repo) is skipped with one line and the other plans
-  go on; an MSP whose transaction raises is rolled back and logged, and the
-  next MSP runs. A plan whose Worker is revoked still gets its run (point 9).
+  (a row written past the repo), or whose cron never occurs, is skipped with
+  one line and the other plans go on; each plan's run is made under its own
+  savepoint, so a plan that raises is rolled back alone, logged by type, and
+  the MSP's other plans keep their runs; an MSP whose transaction raises is
+  rolled back and logged, and the next MSP runs. A run is counted and its
+  `run created` line written once its MSP's transaction has committed, never
+  before. A plan whose Worker is revoked still gets its run (point 9).
 - **sweep** (`tick_sweep`): `RunRepo.requeue_stale` per MSP, each in its own
   transaction.
 
@@ -31,7 +35,7 @@ import signal
 import sys
 import time
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, NamedTuple
 from uuid import UUID
 
 import structlog
@@ -85,38 +89,66 @@ async def _msp_ids(session_factory: async_sessionmaker, job: str) -> list[UUID] 
         return None
 
 
-async def _plans_of(session: Any, msp_id: UUID, at: dt.datetime, summary: PlansTick) -> None:
-    for plan in await PlanRepo(session).list(msp_id, enabled=True):
+class DuePlan(NamedTuple):
+    """A plan's values, read before any savepoint: one rolled back may
+    expire the session's rows."""
+
+    id: UUID
+    client_id: UUID
+    connector_id: UUID
+    cadence_cron: str
+    created_at: dt.datetime
+
+
+class MadeRun(NamedTuple):
+    plan_id: UUID
+    run_id: UUID
+    scheduled_for: dt.datetime
+
+
+async def _run_of(session: Any, msp_id: UUID, plan: DuePlan, due: dt.datetime) -> MadeRun | None:
+    connector = await ConnectorRepo(session).get(msp_id, plan.connector_id)
+    if connector is None:
+        raise RuntimeError("a plan's connector is gone")
+    run = await RunRepo(session).create_scheduled(
+        msp_id,
+        plan_id=plan.id,
+        client_id=plan.client_id,
+        connector_id=plan.connector_id,
+        worker_id=connector.worker_id,
+        scheduled_for=due,
+    )
+    return None if run is None else MadeRun(plan.id, run.id, due)
+
+
+async def _plans_of(session: Any, msp_id: UUID, at: dt.datetime, summary: PlansTick) -> list[MadeRun]:
+    """The runs made for the MSP's plans, for the caller to count and log
+    once the transaction has committed."""
+    made: list[MadeRun] = []
+    plans = [
+        DuePlan(plan.id, plan.client_id, plan.connector_id, plan.cadence_cron, plan.created_at)
+        for plan in await PlanRepo(session).list(msp_id, enabled=True)
+    ]
+    for plan in plans:
         summary.plans += 1
         try:
-            cadence = parse(plan.cadence_cron)
+            due = due_at(parse(plan.cadence_cron), at)
         except CadenceError:
             summary.skipped += 1
             log.warning("plan skipped", msp_id=str(msp_id), plan_id=str(plan.id), reason="cadence_cron")
             continue
-        due = due_at(cadence, at)
         if due < plan.created_at:
             continue
-        connector = await ConnectorRepo(session).get(msp_id, plan.connector_id)
-        if connector is None:
-            raise RuntimeError("a plan's connector is gone")
-        run = await RunRepo(session).create_scheduled(
-            msp_id,
-            plan_id=plan.id,
-            client_id=plan.client_id,
-            connector_id=plan.connector_id,
-            worker_id=connector.worker_id,
-            scheduled_for=due,
-        )
+        try:
+            async with session.begin_nested():
+                run = await _run_of(session, msp_id, plan, due)
+        except Exception as error:  # noqa: BLE001 - this plan's run rolled back; the next plan runs
+            summary.failed += 1
+            log.error("plan failed", msp_id=str(msp_id), plan_id=str(plan.id), exc_info=error)
+            continue
         if run is not None:
-            summary.created += 1
-            log.info(
-                "run created",
-                msp_id=str(msp_id),
-                plan_id=str(plan.id),
-                run_id=str(run.id),
-                scheduled_for=due.isoformat(),
-            )
+            made.append(run)
+    return made
 
 
 async def tick_plans(session_factory: async_sessionmaker, at: dt.datetime | None = None) -> PlansTick:
@@ -132,10 +164,21 @@ async def tick_plans(session_factory: async_sessionmaker, at: dt.datetime | None
             summary.msps += 1
             try:
                 async with session_factory() as session, session.begin():
-                    await _plans_of(session, msp_id, at, summary)
+                    made = await _plans_of(session, msp_id, at, summary)
             except Exception as error:  # noqa: BLE001 - this MSP's tick rolled back; the next MSP runs
                 summary.failed += 1
                 log.error("tick failed", job="plans", msp_id=str(msp_id), exc_info=error)
+                continue
+            # Committed: only now is a run counted and named.
+            summary.created += len(made)
+            for run in made:
+                log.info(
+                    "run created",
+                    msp_id=str(msp_id),
+                    plan_id=str(run.plan_id),
+                    run_id=str(run.run_id),
+                    scheduled_for=run.scheduled_for.isoformat(),
+                )
     log.info(
         "tick",
         job="plans",

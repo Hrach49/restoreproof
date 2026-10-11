@@ -2,15 +2,14 @@
 
 `constraint_refusal` (C5.10; docs/decisions.md 2026-10-11, "C5.10 and C5.9",
 point 2) words the database's own refusals the same way: an `IntegrityError`
-whose text names a constraint of `CONSTRAINT_WORDS` becomes a `RepoError`
-from that table alone, so a CLI line and a future admin route's 409 are one
+whose driver error names a constraint of `CONSTRAINT_WORDS` becomes a
+`RepoError` from that table alone (the name asyncpg gives as
+`constraint_name`, never read out of the message, whose DETAIL quotes the row), so a CLI line and a future admin route's 409 are one
 text and neither quotes the row. A name the table lacks answers `None`, for
 the caller to re-raise.
 """
 
 from __future__ import annotations
-
-import re
 
 from sqlalchemy.exc import IntegrityError
 
@@ -46,13 +45,9 @@ CONSTRAINT_WORDS: dict[str, tuple[str, str]] = {
     "fk_test_run_msp_id_msp": ("msp_id", "no such MSP"),
 }
 
-# asyncpg quotes the constraint's name: ... constraint "uq_client_msp_id_tenant_id"
-_QUOTED_NAME = re.compile(r'"([a-z0-9_]+)"')
-
-
 def constraint_refusal(error: IntegrityError) -> RepoError | None:
     """The `RepoError` for the constraint the error names, or `None`."""
-    for name in _QUOTED_NAME.findall(str(error.orig)):
-        if name in CONSTRAINT_WORDS:
-            return RepoError(*CONSTRAINT_WORDS[name])
-    return None
+    # SQLAlchemy raises its own error from asyncpg's, which holds the name.
+    name = getattr(error.orig.__cause__, "constraint_name", None)
+    words = CONSTRAINT_WORDS.get(name) if isinstance(name, str) else None
+    return None if words is None else RepoError(*words)

@@ -49,6 +49,7 @@ _NAME = re.compile(r"^[^\x00-\x1f\x7f]{1,128}$")
 
 SHOWN_ONCE = "the install token is shown once; the Cloud stores its hash alone"
 NO_SUCH_WORKER = "no such Worker or already revoked"
+NO_SUCH_CONNECTOR = "not the client's connector"
 
 T = TypeVar("T")
 
@@ -195,10 +196,16 @@ async def create_plan(
         # A run made by hand (no period): the pilot's first test without
         # waiting for the cadence, since the scheduler makes no run for a
         # period that began before the plan was made. The connector exists
-        # by the key the plan was just held to.
+        # by the key the plan was just held to; one that is gone all the same
+        # is that key's refusal.
         connector = await ConnectorRepo(session).get(msp_id, connector_id)
-        run = await RunRepo(session).create(
-            msp_id, plan_id=plan.id, client_id=client_id, connector_id=connector_id, worker_id=connector.worker_id
+        if connector is None:
+            raise RepoError("connector_id", NO_SUCH_CONNECTOR)
+        worker_id = connector.worker_id
+        run = await _refused_by_the_database(
+            lambda: RunRepo(session).create(
+                msp_id, plan_id=plan.id, client_id=client_id, connector_id=connector_id, worker_id=worker_id
+            )
         )
         await _audit(session, msp_id, "run.create", f"run:{run.id}")
         lines.append(("run_id", str(run.id)))

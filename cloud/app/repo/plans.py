@@ -1,8 +1,8 @@
 """The test plans of an MSP: a client's connector, the sample sizes and a cadence.
 
 `create` holds `cadence_cron` (C5.9; docs/decisions.md 2026-10-11, "C5.10 and
-C5.9", point 6): five fields, UTC, parsed by croniter, and at least monthly
-from `now`, refused as a `RepoError` naming the key and never the text, before
+C5.9", point 6): five fields, UTC, parsed by croniter, at most every five
+minutes and at least monthly from `now`, refused as a `RepoError` naming the key and never the text, before
 any row is written. The rule lives here and not in the CLI so every writer of
 a plan is held, as a connector's profile is. The sizes are the database's
 CHECKs (the Worker's J3 rule), worded by `constraint_refusal`.
@@ -15,7 +15,7 @@ from uuid import UUID
 
 from sqlalchemy import delete, select, update
 
-from app.cadence import CadenceError, check_monthly, parse
+from app.cadence import CadenceError, check_monthly, check_spacing, parse
 from app.models import TestPlan
 from app.repo.base import Repo
 from app.repo.errors import RepoError
@@ -23,7 +23,9 @@ from app.repo.errors import RepoError
 
 def _check_cadence(cadence_cron: str, now: dt.datetime) -> None:
     try:
-        check_monthly(parse(cadence_cron), now)
+        cadence = parse(cadence_cron)
+        check_spacing(cadence)
+        check_monthly(cadence, now)
     except CadenceError as error:
         raise RepoError("cadence_cron", error.reason) from None
 

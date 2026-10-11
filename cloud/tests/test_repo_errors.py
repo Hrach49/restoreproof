@@ -23,11 +23,26 @@ from tests.test_repo_connectors import profile_for
 UTC = dt.timezone.utc
 
 
-class FakeIntegrityError(IntegrityError):
-    """An IntegrityError whose `orig` says what asyncpg says: the name in quotes."""
+class DriverError(Exception):
+    """What asyncpg raises: the message, and the constraint's name beside it."""
 
-    def __init__(self, text: str) -> None:
-        super().__init__("INSERT ...", {}, Exception(text))
+    def __init__(self, text: str, constraint_name: object) -> None:
+        super().__init__(text)
+        self.constraint_name = constraint_name
+
+
+NO_CAUSE = object()
+
+
+class FakeIntegrityError(IntegrityError):
+    """An IntegrityError as the asyncpg dialect raises it: `orig` its own
+    error, raised from the driver's, which names the constraint."""
+
+    def __init__(self, text: str, constraint_name: object = NO_CAUSE) -> None:
+        orig = Exception(text)
+        if constraint_name is not NO_CAUSE:
+            orig.__cause__ = DriverError(text, constraint_name)
+        super().__init__("INSERT ...", {}, orig)
 
 
 @pytest.mark.parametrize(
@@ -50,7 +65,10 @@ class FakeIntegrityError(IntegrityError):
     ],
 )
 def test_a_known_constraint_is_worded_by_its_name(constraint, key, reason):
-    error = FakeIntegrityError(f'duplicate key value violates unique constraint "{constraint}"\nDETAIL: Key (x)=(secret-value) already exists.')
+    error = FakeIntegrityError(
+        f'duplicate key value violates unique constraint "{constraint}"\nDETAIL: Key (x)=(secret-value) already exists.',
+        constraint,
+    )
 
     refusal = constraint_refusal(error)
 
@@ -61,16 +79,46 @@ def test_a_known_constraint_is_worded_by_its_name(constraint, key, reason):
 
 
 @pytest.mark.parametrize(
-    "text",
+    ("text", "constraint_name"),
     [
-        "",
-        'violates unique constraint "uq_something_else"',
-        "uq_client_msp_id_tenant_id without quotes",
-        'constraint "UQ_CLIENT_MSP_ID_TENANT_ID"',
+        ("", NO_CAUSE),  # no driver error under it
+        ('violates unique constraint "uq_something_else"', "uq_something_else"),
+        ('constraint "UQ_CLIENT_MSP_ID_TENANT_ID"', "UQ_CLIENT_MSP_ID_TENANT_ID"),
+        ("null value in column violates not-null constraint", None),  # a NOT NULL names none
+        ("a name that is no text", 7),
+        # The message alone names nothing, with or without a driver error.
+        ('violates unique constraint "uq_client_msp_id_tenant_id"', NO_CAUSE),
+        ('violates unique constraint "uq_client_msp_id_tenant_id"', None),
     ],
 )
-def test_an_unknown_constraint_is_none_for_the_caller_to_re_raise(text):
-    assert constraint_refusal(FakeIntegrityError(text)) is None
+def test_an_unknown_constraint_is_none_for_the_caller_to_re_raise(text, constraint_name):
+    assert constraint_refusal(FakeIntegrityError(text, constraint_name)) is None
+
+
+def test_a_row_value_that_quotes_a_constraint_s_name_words_nothing():
+    """The review's finding 5: the DETAIL quotes the failing row, and a name
+    or a label in it may hold a constraint's name in quotes; only the name
+    the driver gives is read."""
+    text = (
+        'null value in column "x" of relation "client" violates not-null constraint\n'
+        'DETAIL: Failing row contains (1, My "uq_worker_key_id" MSP, null).'
+    )
+
+    assert constraint_refusal(FakeIntegrityError(text, None)) is None
+    assert constraint_refusal(FakeIntegrityError(text, "ck_some_later_check")) is None
+    # ... and the driver's name decides against the message's.
+    worded = constraint_refusal(FakeIntegrityError(text, "uq_client_msp_id_tenant_id"))
+    assert str(worded) == "tenant_id: already a client of this MSP"
+
+
+async def test_a_real_refusal_whose_row_quotes_another_constraint_is_worded_by_its_own(session):
+    msp = await new_msp(session)
+    tenant = uuid.uuid4()
+    await new_client(session, msp, tenant)
+
+    refusal = await _refused(session, Client(msp_id=msp.id, name='My "uq_worker_key_id" client', tenant_id=tenant))
+
+    assert str(refusal) == "tenant_id: already a client of this MSP"
 
 
 def test_the_table_names_every_constraint_an_onboarding_can_meet():

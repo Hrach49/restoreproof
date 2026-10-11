@@ -1946,3 +1946,46 @@ in a body. 202, first or repeated: `sent`. 401: never retried by schedule, one w
 stays queued. 400 (any word), 404, 409, 415, 422: permanent, the folder to `failed\<run_id>` for
 the operator's `rpworker signer verify`. 411, 413, 5xx, a timeout, no connection: retried by
 today's schedule.
+
+## The Cloud receives a heartbeat (C5.8)
+
+`POST /v1/heartbeat` is the Cloud's side of "The heartbeat" in `docs/worker-config.md`: the
+service's five-key body, posted every `heartbeat_interval_s` under the Worker's API token (from
+W5.1; until then the service sends no header and hears 401). The decisions are
+`docs/decisions.md` 2026-10-11, "C5.8"; the code is `cloud/app/routers/heartbeat.py` (the body
+model and the route) and `WorkerRepo.heartbeat` (`cloud/app/repo/workers.py`, strict at 100%
+line and branch). The Worker is not changed by it.
+
+**The body is the Worker's, as W4.8 built it:** `version`, `last_error`, `last_error_at`,
+`outbox_depth`, `uptime_s`, every key required, nothing else taken (`extra="forbid"`). Each is
+held to the Worker's own form and nothing looser: `version` 1 to 64 printable ASCII;
+`last_error` a word's shape `^[a-z0-9_]{1,64}$` or `null` (never the Worker's list, which grows
+with the Worker); `last_error_at` exactly `YYYY-MM-DDTHH:MM:SS.mmmZ` on a real calendar day or
+`null`, and the error and its time come both or neither; the two counts strict integers from 0
+to 2^53 − 1, the canonical form's own bound, so every body that passes fits the `bigint`
+columns. Anything else is FastAPI's 422, which quotes the sender's own input to the sender and
+nowhere else.
+
+**What is written** is one `UPDATE` of the token's Worker's row, `WHERE msp_id AND id AND
+revoked_at IS NULL`: `last_seen_at` is the Cloud's clock at the request, never a time from the
+body (C6.2's "red if older than 24 h" compares with the Cloud's clock); `version`,
+`last_error`, `last_error_at`, `outbox_depth` and `uptime_s` are stored as sent, a `null`
+replacing a value, so a restarted service's `null` clears the row's error and the row is
+always the Worker's latest word, never a mix of two heartbeats or of a heartbeat and the
+registration's `version`. A heartbeat is two statements, the token's lookup and the `UPDATE`;
+no row is read back and no audit row is written (the row is its own record, ninety-six times a
+day per Worker).
+
+**What is answered:** 204 with no body and no `Content-Type` (the Worker takes any 2xx and
+reads nothing). No header, another scheme, an unknown token and a revoked Worker are
+`current_worker`'s one 401 `{"detail": "not authenticated"}` with `WWW-Authenticate: Bearer`
+before any statement; a revoke that landed between the lookup and the `UPDATE` makes the
+`UPDATE` touch nothing and is the same 401, nothing written. A revoked Worker's `last_seen_at`
+therefore stops at the revoke: the Cloud's record of when its word was last taken. The log
+holds the request line (method, path, status, duration, request ID) and nothing of the body or
+the token.
+
+**What the Worker does with each answer (W5.1, built nowhere yet):** 204 taken; 401 one
+warning once and the heartbeat keeps going (it is the Cloud's only word of a Worker whose token
+was revoked); 422 the Worker's `http_422` word (the two sides disagree on the body, which an
+upgrade fixes); 5xx, a timeout, no connection: the next interval is the retry, as today.

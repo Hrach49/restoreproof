@@ -1,150 +1,421 @@
-C5.7 (#60) Done-when, "a real Worker bundle lands as pass in the DB", run locally on 2026-10-10 (UTC)
-on the dev laptop (Windows, Python 3.12.9, Docker Desktop 29.4.3, the Compose stack: postgres:16 on
-127.0.0.1:55432, MinIO on 127.0.0.1:9000, the api on 127.0.0.1:8000). Branch c5.7-results, commit
-3730633 (the route) for the live step. No CI run: no job has started since 2026-10-03.
+C5.7 (#60) Done-when, the live upload: a real Worker bundle from the Veeam VM lands as pass in the stack's DB. 2026-10-11T13:52:03Z, commit dbbe65c, branch c5.7-results
+Windows, Python 3.12, Docker Desktop, the Compose stack (postgres:16, MinIO, api) on 127.0.0.1; rpworker 0.0.0
 
-== In the tests ==
+== (1) the stack ==
+ Container restoreproof-api-1 Recreated 
+ Container restoreproof-scheduler-1 Recreated 
+ Container restoreproof-minio-1 Healthy 
+ Container restoreproof-minio-bucket-1 Started 
+ Container restoreproof-minio-bucket-1 Exited 
+ Container restoreproof-postgres-1 Healthy 
+ Container restoreproof-api-1 Started 
+ Container restoreproof-api-1 Healthy 
+ Container restoreproof-scheduler-1 Started 
+ Container restoreproof-minio-bucket-1 Exited 
+ Container restoreproof-scheduler-1 Healthy 
+ Container restoreproof-minio-1 Healthy 
+ Container restoreproof-api-1 Healthy 
+ Container restoreproof-postgres-1 Healthy 
+GET /healthz: HTTP/1.1 200 OK {"db":"ok","s3":"ok"}
+alembic (downgrade -1, upgrade head, check):
+{"event": "Running downgrade 0001 -> , The initial schema: the eleven tables of C5.2 with C5.13's constraints.", "level": "info", "ts": "2026-10-11T13:52:26.822932Z"}
+{"event": "Running upgrade  -> 0001, The initial schema: the eleven tables of C5.2 with C5.13's constraints.", "level": "info", "ts": "2026-10-11T13:52:28.872733Z"}
+No new upgrade operations detected.
+the image: /srv/shared/tools: verify_bundle.py  /srv/shared/tsa: tsa-ca.pem
 
-$ uv run --locked pytest --cov=app --cov-branch --cov-report=term-missing --cov-report=json:coverage.json --cov-fail-under=80
-1707 passed in 654.32s; TOTAL 1412 statements, 7 missed; 218 branches, 4 partial; 99.20% combined
-(1708 with tests/test_results.py::test_two_different_bundles_for_one_run_at_once_file_one_and_refuse_the_other,
-added after this run and seen passing on its own)
-$ uv run --locked python tools/check_coverage.py coverage.json
-| OK | app/results.py       | 194/194 | 62/62 |      (measured for the first time; nothing SKIP)
-| OK | app/repo/items.py    |  30/30  |  2/2  |
-| OK | app/repo/runs.py     |  60/60  |  6/6  |
-every other file of app/repo and app/auth OK at 100/100; exit 0
+== (2) the rows: one MSP, one client of the lab tenant, one install token ==
+c57-rows.py init bcd6bd1a-ea42-489d-aa28-2c19a44ad146:
+msp_id 095e3143-8753-4638-a73e-90b20c96c87f
+client_id b1ff9271-c665-4398-86b3-ee4ae40ee7ee
+install_token_id 4f4ea4b6-4a79-4b39-b2bf-e8d2a8a71e62
+install_token: (kept in C:\Users\minas\AppData\Local\Temp\rp-c57, not shown)
 
-tests/test_results.py::test_the_tests_pass_and_a_real_worker_bundle_lands_as_pass_in_the_db PASSED
-  The Worker-made shared/testdata/signing-v1/bundle.json (the Harness's own pipeline run, 6 of 6),
-  re-keyed to a run the test dispatched and re-signed with the same published key (RFC 8032 test 1),
-  posted under the Worker's token: 202 {"run_id": "<uuid>", "state": "pass"}; the row pass with
-  started_at, finished_at, total_ms 3936000, restore_point_at, bundle_key msp/<msp>/runs/<run>/,
-  bundle_sha256, signature_ok true, tsa_ok null, cleanup_ok true; six test_item rows at positions 0
-  to 5 (three manifest with their hashes, every match true); one audit row result.received; four
-  put_object calls with the exact keys, bytes and content types; the same bundle again 202 with no
-  change and no put.
-tests/test_results.py::test_a_timestamped_worker_bundle_lands_with_the_token_s_time PASSED
-  The same with a token the test TSA made (tests/tsa_lab.py): tsa_ok true, tsa_time 2026-10-06T12:00:00Z.
-tests/test_results_vectors.py: 61 shared cases through the route (38 signing-v1, 23 timestamp-v1):
-  every failing case 400 with its own word, one audit row, nothing stored; every verified case
-  passes the whole verification and is then 404 run_id: no such run (the vectors' run_id is no uuid).
+== (3) the Worker registers with its vault key ==
+rpworker signer public-key: the PEM written to C:\Users\minas\AppData\Local\Temp\rp-c57\worker.pub.pem, key key 9dfab6eadaa1d04a22dcc966aac7a53bcff8bbe0077232485f6143cd9c4d0ca5
+POST /v1/workers/register (install_token, public_key_pem, worker_name veeam-vm, version 0.0.0): 201 worker_id 97f83d99-1707-4eb1-ba29-37595e11cb74, key_id 9dfab6eadaa1d04a22dcc966aac7a53bcff8bbe0077232485f6143cd9c4d0ca5, api_token (43 characters: 43, kept in C:\Users\minas\AppData\Local\Temp\rp-c57, not shown)
+the same install token again: {"detail":"not authenticated"}
 
-== Live: the Worker's bundle from the Veeam VM to the stack ==
+== (4) the connector, the plan, one run; the poll ==
+c57-rows.py run (the lab's profile, a plan 10/10/10):
+connector_id 77ce7b56-0e11-43fc-9539-1005ae9e12af
+plan_id acf920e5-813c-43e2-aa2b-7881b4fab099
+run_id 06aa7c8f-3611-4f00-92c8-797428f58f1a
+GET /v1/jobs: format restoreproof.jobs.v1, 1 job(s): run_id 06aa7c8f-3611-4f00-92c8-797428f58f1a, client_id b1ff9271-c665-4398-86b3-ee4ae40ee7ee, connector veeam_m365, sizes 10/10/10, restore_point latest, screenshots_enabled False; client.graph_tenant_id bcd6bd1a-ea42-489d-aa28-2c19a44ad146; saved as C:\Users\minas\AppData\Local\RestoreProof\lab\jobs.json
+GET /v1/jobs again: {"format":"restoreproof.jobs.v1","jobs":[]}
 
-The harness docs/api/cloud-lab/c5.7-harness/c57-live.ps1 ran steps (1) to (5) and was killed by the
-development tool for low system memory during step (5), while the service was restoring (16 GB laptop:
-Veeam, Docker Desktop with five containers, the service's run). The service kept running the job and
-finished it; the service was then stopped, its grants revoked and it was uninstalled by hand through the
-W4.8 harness, and steps (6) to (9) were run by c57-post.ps1 (beside c57-live.ps1). c57-post.ps1's own
-evidence text was refused by a guard of its own that took a 64-hex hash for a token shape (fixed in the
-committed script), so the record below is the api's request log, the stack's rows, the bucket and the
-two verifiers, read afterwards; the service's log lines are the ones watched during the run (the W4.8
-harness's teardown removed the log file).
+== (5) the service runs the job ==
+-- the config copy
+config copy: C:\ProgramData\RestoreProof\w48\config.json (cloud_url https://localhost:8443, cloud_ca_file and veeam_ca_file copies beside it, jobs_file C:\ProgramData\RestoreProof\w48\jobs.json, poll_interval_s 30, heartbeat_interval_s 60); seed-manifest.json copied beside it
+-- the eight client keys taken out of the config copy; the stub Cloud answers the service's own flush (no token until W5.1)
+stub started (pid 19636)
 
-(1) the stack: docker compose up -d --wait --build from cloud/: every service healthy;
-    GET /healthz: HTTP/1.1 200 OK {"db":"ok","s3":"ok"}; alembic downgrade -1, upgrade head, check in
-    the api container: "No new upgrade operations detected"; the image holds /srv/shared/tools/verify_bundle.py
-    and /srv/shared/tsa/tsa-ca.pem.
-(2) c57-rows.py init bcd6bd1a-ea42-489d-aa28-2c19a44ad146 (the lab tenant, lab/tenant.md):
-    msp 9efc4fa6-678d-45d9-a9be-792433632f09, client RestoreProofLab 9d68b1e7-a43d-4ad1-adf7-b7106b7e19da,
-    one install token labelled "c5.7 done-when" (shown once, never written here).
-(3) rpworker signer public-key: key 9dfab6eadaa1d04a22dcc966aac7a53bcff8bbe0077232485f6143cd9c4d0ca5
-    (the lab's vault key, the same key_id as every signature.json below).
-    POST /v1/workers/register {install_token, public_key_pem, worker_name veeam-vm, version 0.0.0}:
-      2026-10-10T16:43:13.337954Z status 201 request_id ee90a150cdd0473799d64b794d65fdb2
-      worker f7ff2c3b-13a0-45f5-8ec8-dbf07b58add0, key_id 9dfab6ea...0ca5, version 0.0.0, install_token_id set;
-      the install token row used; the API token (43 characters) kept under %TEMP%\rp-c57 for the session.
-    the same install token again:
-      2026-10-10T16:43:13.472484Z status 401 request_id b0c92530ce03469dbb37e38b21f7d824
-(4) c57-rows.py run: the connector 28e87f49-cddc-49bf-a97d-0ce74c01cb15 on the lab's client-profile.v1
-    (audit row connector.create), a plan 10/10/10, one queued run 7ea872a9-d46e-4e99-b01a-1725d4b9262c.
-    GET /v1/jobs with the API token:
-      2026-10-10T16:43:15.810733Z status 200 request_id e54354740f244679b8888aa13c116b5a
-      {"format":"restoreproof.jobs.v1","jobs":[{"run_id":"7ea872a9-d46e-4e99-b01a-1725d4b9262c",
-       "client_id":"9d68b1e7-a43d-4ad1-adf7-b7106b7e19da","client":{the lab's profile, graph_tenant_id
-       bcd6bd1a-...},"connector":{"type":"veeam_m365"},"sample_mail":10,"sample_sp":10,"sample_od":10,
-       "restore_point":"latest","screenshots_enabled":false}]}
-      saved as %LOCALAPPDATA%\RestoreProof\lab\jobs.json; the run now dispatched, attempt 1,
-      dispatched_at 2026-10-10T16:43:15.788Z.
-    GET /v1/jobs again: 2026-10-10T16:43:15.887919Z status 200 (nothing left to dispatch).
-(5) the service on the W4.8 harness's config copy (the eight client keys taken out, jobs_file the
-    document above, cloud_url the W4.6 stub on https://localhost:8443, which answers the service's own
-    flush until W5.1 adds the token), worker.log:
-      2026-10-10T16:43:20.564Z info scheduler started: poll 30 s, heartbeat 60 s, jobs C:\ProgramData\RestoreProof\w48\jobs.json, runs C:\ProgramData\RestoreProof\runs, outbox C:\ProgramData\RestoreProof
-      2026-10-10T16:43:50.728Z info run 7ea872a9-d46e-4e99-b01a-1725d4b9262c: starting (mail 10, sharepoint 10, onedrive 10, point latest)
-      2026-10-10T16:44:07.719Z info [7ea872a9-...]   mail 10, 5 of 5 canaries, 5 of 5 random; sharepoint 10, 5 of 5, 5 of 5; onedrive 10, 5 of 5, 5 of 5
-      2026-10-10T16:44:07.719Z info [7ea872a9-...] restoring 30 item(s) ...
-      running.json meanwhile: kind run, restore_requested true at 2026-10-10T16:44:17.432Z, six sessions,
-      client the job's profile, client_id 9d68b1e7-..., restore_point c2f0f2e7-... (2026-10-09T22:00:56Z)
-      2026-10-10T16:47:20.520Z info [7ea872a9-...] queued C:\ProgramData\RestoreProof\outbox\7ea872a9-d46e-4e99-b01a-1725d4b9262c
-      2026-10-10T16:47:20.539Z info run 7ea872a9-d46e-4e99-b01a-1725d4b9262c: ended pass; queued
-      2026-10-10T16:47:20.579Z info kept 7ea872a9-d46e-4e99-b01a-1725d4b9262c: upload_unreachable; attempt 1, next at 2026-10-10T16:48:20Z
-      (the stub had died with the harness; the folder stayed queued, which is the Worker's rule)
-    then by hand: rpworker service stop ("stopped RestoreProof in 0.0 s"), the account's entries removed
-    from the vault, Veeam's key file and the four folders, rpworker service uninstall ("uninstalled
-    RestoreProof"), sc query: 1060, no running.json.
-    the queued folder outbox\7ea872a9-d46e-4e99-b01a-1725d4b9262c:
-      items.csv 5758, manifest.json 393, result.json 22701, signature.json 322, timestamp.tst 5998, veeam-session.log 7386
-      rpworker signer verify (--tsa-ca shared/tsa/tsa-ca.pem): verified 032aba19fc87c657fd5626aa4d7da00dafe55d3edf8126ddd4fd165b01d2c0f3 key 9dfab6eadaa1d04a22dcc966aac7a53bcff8bbe0077232485f6143cd9c4d0ca5 timestamp 2026-10-10T16:45:58Z, exit 0 (note: not listed in the result: manifest.json)
-      verify_bundle.py: the same line, exit 0
-      result.json: status pass, restore_sent True, "30 of 30 item(s) verified: manifest 15, fields 5, metadata 10"
-      result.json sha256 032aba19fc87c657fd5626aa4d7da00dafe55d3edf8126ddd4fd165b01d2c0f3
-    rpworker graph list afterwards: 0 item(s) in the three restore targets; Veeam: no session Working at 2026-10-10T16:47:54Z.
-(6) from that folder, curl.exe -s -i -X POST http://127.0.0.1:8000/v1/results -H "Authorization: Bearer <token>"
-      -F "result=@result.json;type=application/json" -F "signature=@signature.json;type=application/json"
-      -F "timestamp=@timestamp.tst;type=application/octet-stream" -F "items.csv=@items.csv;type=application/octet-stream"
-      -F "veeam-session.log=@veeam-session.log;type=application/octet-stream"
-    the api's request log:
-      2026-10-10T16:48:58.074743Z POST /v1/results status 202 duration_ms 842 request_id 6a6e2830b46d4e3e836ca9d6c82d035d
-    the same command again:
-      2026-10-10T16:48:58.185947Z POST /v1/results status 202 duration_ms 86 request_id d151b39acd51439e9243f22dbb29e6c2
-    (the first filed the run and put five objects; the repeat wrote nothing: one result.received row below)
-(7) c57-rows.py show 9efc4fa6-678d-45d9-a9be-792433632f09 7ea872a9-d46e-4e99-b01a-1725d4b9262c:
-    test_run:
-      state: pass
-      error_code: None
-      error_message: None
-      attempt: 1
-      dispatched_at: 2026-10-10 16:43:15.788132+00:00
-      started_at: 2026-10-10 16:43:51.126000+00:00
-      finished_at: 2026-10-10 16:47:19.925000+00:00
-      total_ms: 208798
-      restore_point_at: 2026-10-09 22:00:56+00:00
-      bundle_key: msp/9efc4fa6-678d-45d9-a9be-792433632f09/runs/7ea872a9-d46e-4e99-b01a-1725d4b9262c/
-      bundle_sha256: 032aba19fc87c657fd5626aa4d7da00dafe55d3edf8126ddd4fd165b01d2c0f3
-      signature_ok: True
-      tsa_ok: True
-      tsa_time: 2026-10-10 16:45:58+00:00
-      cleanup_ok: True
-    test_item: 30 row(s), positions 0 to 29: mail 0-4 manifest (hashes), 5-9 fields; sharepoint 10-14
-      manifest, 15-19 metadata; onedrive 20-24 manifest, 25-29 metadata; every found True, match True,
-      reason None; ms 0 for the mails (one read), 275 to 426 for the files
-    audit_log (the MSP's):
-      worker.register worker:f7ff2c3b-13a0-45f5-8ec8-dbf07b58add0
-      connector.create connector:28e87f49-cddc-49bf-a97d-0ce74c01cb15
-      result.received run:7ea872a9-d46e-4e99-b01a-1725d4b9262c
-      (and the one row of step 8)
-    the bucket under msp/9efc4fa6-678d-45d9-a9be-792433632f09/runs/7ea872a9-d46e-4e99-b01a-1725d4b9262c/ (boto3, the stack's local-only MinIO), each downloaded:
-      items.csv 5758 application/octet-stream
-      result.json 22701 application/json
-      signature.json 322 application/json
-      timestamp.tst 5998 application/octet-stream
-      veeam-session.log 7386 application/octet-stream
-    uv run shared/tools/verify_bundle.py <downloaded> --public-key worker.pub.pem --tsa-ca shared/tsa/tsa-ca.pem --schemas shared/schemas:
-      verified 032aba19fc87c657fd5626aa4d7da00dafe55d3edf8126ddd4fd165b01d2c0f3 key 9dfab6eadaa1d04a22dcc966aac7a53bcff8bbe0077232485f6143cd9c4d0ca5 timestamp 2026-10-10T16:45:58Z, exit 0
-    rpworker signer verify <downloaded> --public-key worker.pub.pem --tsa-ca shared/tsa/tsa-ca.pem:
-      the same line, exit 0
-    (no manifest.json note: the Cloud stores the five files the Worker sent and nothing else)
-(8) a copy of the folder with the last byte of items.csv changed, posted the same way:
-      2026-10-10T16:49:05.997043Z POST /v1/results status 400 duration_ms 244 request_id 7b34e1a358e34d7c9507f05756825a80
-      {"detail": "attachment_hash"}
-    audit_log gained: result.rejected worker:f7ff2c3b-13a0-45f5-8ec8-dbf07b58add0 attachment_hash
-    the row unchanged (state pass, the same bundle_sha256); the bucket still five objects.
-(9) outbox\7ea872a9-d46e-4e99-b01a-1725d4b9262c moved to C:\ProgramData\RestoreProof\c57\ (outside the
-    repo); the W4.8 harness's config copy, state and logs removed; %TEMP%\rp-c57 (the tokens, the PEM,
-    the copies) removed; sc query RestoreProof: 1060, not installed; the stack's rows left
-    (docker compose down -v drops them); the jobs document left under %LOCALAPPDATA%\RestoreProof\lab.
+command: rpworker service install --config C:\ProgramData\RestoreProof\w48\config.json
+2026-10-11T13:52:44Z to 2026-10-11T13:52:45Z
+exit code: 0
+--- stdout
+installed RestoreProof: "C:\restoreproof\worker\build\dev\rpworker.exe" service run --config "C:\ProgramData\RestoreProof\w48\config.json"
+account NT SERVICE\RestoreProof, automatic start, restart after 60 s up to 3 times; not started: run rpworker service start
+--- stderr
 
-Not shown: the Worker's own flush landing the bundle (W5.1 adds the Authorization header; until then the
-service's flush goes to the W4.6 stub or is kept), and CI.
+-- the grants
+command: rpworker vault grant NT SERVICE\RestoreProof
+2026-10-11T13:52:45Z to 2026-10-11T13:52:46Z
+exit code: 0
+--- stdout
+granted read on C:\ProgramData\RestoreProof\vault.bin to NT SERVICE\RestoreProof
+--- stderr
+
+key file of certificate AC3220B58A2B4C438DA13816C2DD1E25D1F783A7: Read granted to NT SERVICE\RestoreProof
+C:\ProgramData\RestoreProof\state: Modify granted to NT SERVICE\RestoreProof
+C:\ProgramData\RestoreProof\runs: Modify granted to NT SERVICE\RestoreProof
+C:\ProgramData\RestoreProof\outbox: Modify granted to NT SERVICE\RestoreProof
+C:\ProgramData\RestoreProof\sent: Modify granted to NT SERVICE\RestoreProof
+C:\ProgramData\RestoreProof\vault.bin: owner BUILTIN\Administrators; the account's entries: NT SERVICE\RestoreProof Read, Synchronize
+C:\ProgramData\Microsoft\Crypto\RSA\MachineKeys\<Veeam key file>: owner BUILTIN\Administrators; the account's entries: NT SERVICE\RestoreProof Read, Synchronize
+C:\ProgramData\RestoreProof\state: owner BUILTIN\Administrators; the account's entries: NT SERVICE\RestoreProof Modify, Synchronize
+C:\ProgramData\RestoreProof\runs: owner BUILTIN\Administrators; the account's entries: NT SERVICE\RestoreProof Modify, Synchronize
+C:\ProgramData\RestoreProof\outbox: owner BUILTIN\Administrators; the account's entries: NT SERVICE\RestoreProof Modify, Synchronize
+C:\ProgramData\RestoreProof\sent: owner BUILTIN\Administrators; the account's entries: NT SERVICE\RestoreProof Modify, Synchronize
+
+command: rpworker service start
+2026-10-11T13:52:47Z to 2026-10-11T13:52:48Z
+exit code: 0
+--- stdout
+started RestoreProof
+--- stderr
+
+
+jobs file written at 2026-10-11T13:52:48Z:
+{"format":"restoreproof.jobs.v1","jobs":[{"run_id":"06aa7c8f-3611-4f00-92c8-797428f58f1a","client_id":"b1ff9271-c665-4398-86b3-ee4ae40ee7ee","client":{"format":"restoreproof.client-profile.v1","test_mailbox":"restoretest@RestoreProofLab.onmicrosoft.com","test_site_id":"restoreprooflab.sharepoint.com,fe08085d-eb70-42e8-95a6-470189bd98eb,4ecaf399-cc0e-4d95-b3fe-cd091a09e689","veeam_org_name":"RestoreProofLab.onmicrosoft.com","graph_client_id":"737da5ef-baf2-4198-b009-e160d8ca77c9","graph_tenant_id":"bcd6bd1a-ea42-489d-aa28-2c19a44ad146","test_library_id":"b!XQgI_nDr6EKVpkcBib2Y65nzyk4OzJVNs_7NCRoJ5omdBuz_5GU6TJ2irAhs-dr6","test_onedrive_drive_id":"b!wA9gbfhlEUitGAluxbfoNBr_z5gEtDhErm5pJ6bMwyXfZJ8a_dkCQ696RX0r7_U3","test_onedrive_folder_id":"01ZK75LGDGB6QOO3MGNFGYOY6C6VBDG5OH"},"connector":{"type":"veeam_m365"},"sample_mail":10,"sample_sp":10,"sample_od":10,"restore_point":"latest","screenshots_enabled":false}]}
+-- taken: 2026-10-11T13:53:18.072Z info run 06aa7c8f-3611-4f00-92c8-797428f58f1a: starting (mail 10, sharepoint 10, onedrive 10, point latest)
+-- ended: 2026-10-11T13:56:56.938Z info run 06aa7c8f-3611-4f00-92c8-797428f58f1a: ended pass; queued
+-- sent to the stub: 2026-10-11T13:56:56.989Z info sent 06aa7c8f-3611-4f00-92c8-797428f58f1a
+
+command: rpworker service stop
+2026-10-11T13:57:03Z to 2026-10-11T13:57:04Z
+exit code: 0
+--- stdout
+stopped RestoreProof in 0.2 s
+--- stderr
+
+-- worker.log from the start on
+2026-10-11T13:52:47.969Z info service running: rpworker 0.0.0, config C:\ProgramData\RestoreProof\w48\config.json, log_level info
+2026-10-11T13:52:47.974Z info scheduler started: poll 30 s, heartbeat 60 s, jobs C:\ProgramData\RestoreProof\w48\jobs.json, runs C:\ProgramData\RestoreProof\runs, outbox C:\ProgramData\RestoreProof
+2026-10-11T13:53:18.072Z info run 06aa7c8f-3611-4f00-92c8-797428f58f1a: starting (mail 10, sharepoint 10, onedrive 10, point latest)
+2026-10-11T13:53:18.821Z info [06aa7c8f-3611-4f00-92c8-797428f58f1a] restore point 2026-10-10T22:00:40.1380461Z  c2f0f2e7-177f-48ac-992b-93a50cf702e320d226ff-1139-46f8-82d7-f4c2f239d294  (veeam_org_name RestoreProofLab.onmicrosoft.com)
+2026-10-11T13:53:18.822Z info [06aa7c8f-3611-4f00-92c8-797428f58f1a] run 06aa7c8f-3611-4f00-92c8-797428f58f1a  seed 2f0e87cf
+2026-10-11T13:53:20.329Z info [06aa7c8f-3611-4f00-92c8-797428f58f1a] client ok: tenant bcd6bd1a-ea42-489d-aa28-2c19a44ad146, Office365, Worldwide; mailbox, library and folder resolved
+2026-10-11T13:53:20.549Z info cleanup before: the test mailbox's Inbox: deleted 0, gone 0, left 0, skipped 0 in 1 round(s)
+2026-10-11T13:53:21.248Z info cleanup before: the RestoreTarget library: deleted 0, gone 0, left 0, skipped 0 in 1 round(s)
+2026-10-11T13:53:21.735Z info cleanup before: the test OneDrive folder: deleted 0, gone 0, left 0, skipped 0 in 1 round(s)
+2026-10-11T13:53:21.735Z info [06aa7c8f-3611-4f00-92c8-797428f58f1a] cleanup before ok: deleted 0 mail, 0 sharepoint, 0 onedrive
+2026-10-11T13:53:39.452Z info [06aa7c8f-3611-4f00-92c8-797428f58f1a] canary cursor 0,0,0 -> 5,5,5
+2026-10-11T13:53:39.452Z info [06aa7c8f-3611-4f00-92c8-797428f58f1a]   KIND        REQUESTED  CANARIES  RANDOM  NOTE
+2026-10-11T13:53:39.452Z info [06aa7c8f-3611-4f00-92c8-797428f58f1a]   mail        10         5 of 5    5 of 5
+2026-10-11T13:53:39.452Z info [06aa7c8f-3611-4f00-92c8-797428f58f1a]   sharepoint  10         5 of 5    5 of 5
+2026-10-11T13:53:39.452Z info [06aa7c8f-3611-4f00-92c8-797428f58f1a]   onedrive    10         5 of 5    5 of 5
+2026-10-11T13:53:39.452Z info [06aa7c8f-3611-4f00-92c8-797428f58f1a] restoring 30 item(s) ...
+2026-10-11T13:53:39.655Z info listed 0 item(s) in the test mailbox's Inbox
+2026-10-11T13:53:40.089Z info listed 0 item(s) in the RestoreTarget library
+2026-10-11T13:53:40.353Z info listed 0 item(s) in the test OneDrive folder
+2026-10-11T13:56:40.941Z info [06aa7c8f-3611-4f00-92c8-797428f58f1a]   SESSION                               KIND        RESULT   RESTORED  STARTED                       ENDED                         ELAPSED
+2026-10-11T13:56:40.941Z info [06aa7c8f-3611-4f00-92c8-797428f58f1a]   d8557878-f872-4f4a-b932-bbf2443350c6  mail        Success  5 of 5    2026-10-11T13:53:47.29874Z    2026-10-11T13:54:18.1519348Z  0:00:30
+2026-10-11T13:56:40.941Z info [06aa7c8f-3611-4f00-92c8-797428f58f1a]   9fc57bdb-4675-45f5-97dd-14285de0f48d  mail        Success  5 of 5    2026-10-11T13:54:23.0171142Z  2026-10-11T13:54:53.4825454Z  0:00:30
+2026-10-11T13:56:40.942Z info [06aa7c8f-3611-4f00-92c8-797428f58f1a]   1393f2a4-a863-4e54-a585-77c9175fa448  sharepoint  Success  10 of 10  2026-10-11T13:54:53.8944759Z  2026-10-11T13:55:54.1198223Z  0:01:00
+2026-10-11T13:56:40.942Z info [06aa7c8f-3611-4f00-92c8-797428f58f1a]   4afc00ef-7047-48f5-ae1d-df5ca44e809c  onedrive    Success  10 of 10  2026-10-11T13:55:54.8859778Z  2026-10-11T13:56:39.6245457Z  0:00:44
+2026-10-11T13:56:40.942Z info [06aa7c8f-3611-4f00-92c8-797428f58f1a] restore succeeded: 30 of 30 item(s) restored in 0:03:00
+2026-10-11T13:56:41.242Z info listed 10 item(s) in the test mailbox's Inbox
+2026-10-11T13:56:45.843Z info listed 10 item(s) in the RestoreTarget library
+2026-10-11T13:56:49.521Z info listed 10 item(s) in the test OneDrive folder
+2026-10-11T13:56:49.690Z info [06aa7c8f-3611-4f00-92c8-797428f58f1a]   TYPE        NAME                                EXPECTED  FOUND  MATCH  VERDICT   REASON  MS
+2026-10-11T13:56:49.691Z info [06aa7c8f-3611-4f00-92c8-797428f58f1a]   mail        RP-CANARY-0001                      manifest  yes    match  verified  -       0
+2026-10-11T13:56:49.691Z info [06aa7c8f-3611-4f00-92c8-797428f58f1a]   mail        RP-CANARY-0002                      manifest  yes    match  verified  -       0
+2026-10-11T13:56:49.691Z info [06aa7c8f-3611-4f00-92c8-797428f58f1a]   mail        RP-CANARY-0003                      manifest  yes    match  verified  -       0
+2026-10-11T13:56:49.691Z info [06aa7c8f-3611-4f00-92c8-797428f58f1a]   mail        RP-CANARY-0004                      manifest  yes    match  verified  -       0
+2026-10-11T13:56:49.691Z info [06aa7c8f-3611-4f00-92c8-797428f58f1a]   mail        RP-CANARY-0005                      manifest  yes    match  verified  -       0
+2026-10-11T13:56:49.691Z info [06aa7c8f-3611-4f00-92c8-797428f58f1a]   mail        Kitchen rota for next week          fields    yes    match  verified  -       0
+2026-10-11T13:56:49.691Z info [06aa7c8f-3611-4f00-92c8-797428f58f1a]   mail        Training session moved to Thursday  fields    yes    match  verified  -       0
+2026-10-11T13:56:49.692Z info [06aa7c8f-3611-4f00-92c8-797428f58f1a]   mail        Lunch on Friday                     fields    yes    match  verified  -       0
+2026-10-11T13:56:49.692Z info [06aa7c8f-3611-4f00-92c8-797428f58f1a]   mail        Client visit on Tuesday             fields    yes    match  verified  -       0
+2026-10-11T13:56:49.692Z info [06aa7c8f-3611-4f00-92c8-797428f58f1a]   mail        Printer on the second floor         fields    yes    match  verified  -       0
+2026-10-11T13:56:49.692Z info [06aa7c8f-3611-4f00-92c8-797428f58f1a]   sharepoint  rp-canary-01.pdf                    manifest  yes    match  verified  -       314
+2026-10-11T13:56:49.692Z info [06aa7c8f-3611-4f00-92c8-797428f58f1a]   sharepoint  rp-canary-02.docx                   manifest  yes    match  verified  -       326
+2026-10-11T13:56:49.692Z info [06aa7c8f-3611-4f00-92c8-797428f58f1a]   sharepoint  rp-canary-03.xlsx                   manifest  yes    match  verified  -       1353
+2026-10-11T13:56:49.692Z info [06aa7c8f-3611-4f00-92c8-797428f58f1a]   sharepoint  rp-canary-04.txt                    manifest  yes    match  verified  -       344
+2026-10-11T13:56:49.693Z info [06aa7c8f-3611-4f00-92c8-797428f58f1a]   sharepoint  rp-canary-05.png                    manifest  yes    match  verified  -       358
+2026-10-11T13:56:49.693Z info [06aa7c8f-3611-4f00-92c8-797428f58f1a]   sharepoint  budget-summary.pdf                  metadata  yes    match  verified  -       376
+2026-10-11T13:56:49.693Z info [06aa7c8f-3611-4f00-92c8-797428f58f1a]   sharepoint  room-bookings.xlsx                  metadata  yes    match  verified  -       0
+2026-10-11T13:56:49.693Z info [06aa7c8f-3611-4f00-92c8-797428f58f1a]   sharepoint  brand-colours-draft.png             metadata  yes    match  verified  -       434
+2026-10-11T13:56:49.693Z info [06aa7c8f-3611-4f00-92c8-797428f58f1a]   sharepoint  office-floor-plan.png               metadata  yes    match  verified  -       342
+2026-10-11T13:56:49.693Z info [06aa7c8f-3611-4f00-92c8-797428f58f1a]   sharepoint  project-brief.pdf                   metadata  yes    match  verified  -       321
+2026-10-11T13:56:49.694Z info [06aa7c8f-3611-4f00-92c8-797428f58f1a]   onedrive    rp-canary-11.pdf                    manifest  yes    match  verified  -       319
+2026-10-11T13:56:49.694Z info [06aa7c8f-3611-4f00-92c8-797428f58f1a]   onedrive    rp-canary-12.docx                   manifest  yes    match  verified  -       313
+2026-10-11T13:56:49.694Z info [06aa7c8f-3611-4f00-92c8-797428f58f1a]   onedrive    rp-canary-13.xlsx                   manifest  yes    match  verified  -       309
+2026-10-11T13:56:49.694Z info [06aa7c8f-3611-4f00-92c8-797428f58f1a]   onedrive    rp-canary-14.txt                    manifest  yes    match  verified  -       306
+2026-10-11T13:56:49.694Z info [06aa7c8f-3611-4f00-92c8-797428f58f1a]   onedrive    rp-canary-15.png                    manifest  yes    match  verified  -       276
+2026-10-11T13:56:49.694Z info [06aa7c8f-3611-4f00-92c8-797428f58f1a]   onedrive    whiteboard-sketch.png               metadata  yes    match  verified  -       379
+2026-10-11T13:56:49.695Z info [06aa7c8f-3611-4f00-92c8-797428f58f1a]   onedrive    reading-list.txt                    metadata  yes    match  verified  -       343
+2026-10-11T13:56:49.695Z info [06aa7c8f-3611-4f00-92c8-797428f58f1a]   onedrive    travel-notes.txt                    metadata  yes    match  verified  -       316
+2026-10-11T13:56:49.695Z info [06aa7c8f-3611-4f00-92c8-797428f58f1a]   onedrive    expense-report-march.pdf            metadata  yes    match  verified  -       344
+2026-10-11T13:56:49.695Z info [06aa7c8f-3611-4f00-92c8-797428f58f1a]   onedrive    course-certificate.pdf              metadata  yes    match  verified  -       479
+2026-10-11T13:56:49.695Z info [06aa7c8f-3611-4f00-92c8-797428f58f1a] check: 30 match, 0 mismatch, 0 missing, 0 error
+2026-10-11T13:56:49.695Z info [06aa7c8f-3611-4f00-92c8-797428f58f1a] status pass: 30 of 30 item(s) verified: manifest 15, fields 5, metadata 10
+2026-10-11T13:56:51.461Z info cleanup after: the test mailbox's Inbox: deleted 10, gone 0, left 0, skipped 0 in 1 round(s)
+2026-10-11T13:56:53.876Z info cleanup after: the RestoreTarget library: deleted 10, gone 0, left 0, skipped 0 in 1 round(s)
+2026-10-11T13:56:56.304Z info cleanup after: the test OneDrive folder: deleted 10, gone 0, left 0, skipped 0 in 1 round(s)
+2026-10-11T13:56:56.304Z info [06aa7c8f-3611-4f00-92c8-797428f58f1a] cleanup after ok: deleted 10 mail, 10 sharepoint, 10 onedrive
+2026-10-11T13:56:56.306Z info [06aa7c8f-3611-4f00-92c8-797428f58f1a] STEP                  TIME         NOTE
+2026-10-11T13:56:56.306Z info [06aa7c8f-3611-4f00-92c8-797428f58f1a] restore_point_lookup  0:00:00.423
+2026-10-11T13:56:56.306Z info [06aa7c8f-3611-4f00-92c8-797428f58f1a] cleanup_before        0:00:01.406
+2026-10-11T13:56:56.306Z info [06aa7c8f-3611-4f00-92c8-797428f58f1a] sample_select         0:00:17.716
+2026-10-11T13:56:56.306Z info [06aa7c8f-3611-4f00-92c8-797428f58f1a] target_snapshot       0:00:00.898
+2026-10-11T13:56:56.306Z info [06aa7c8f-3611-4f00-92c8-797428f58f1a] restore               0:03:00.586
+2026-10-11T13:56:56.307Z info [06aa7c8f-3611-4f00-92c8-797428f58f1a] restore_submit        0:00:01.101
+2026-10-11T13:56:56.307Z info [06aa7c8f-3611-4f00-92c8-797428f58f1a] restore_wait          0:02:51.847
+2026-10-11T13:56:56.307Z info [06aa7c8f-3611-4f00-92c8-797428f58f1a] verify                0:00:08.591
+2026-10-11T13:56:56.307Z info [06aa7c8f-3611-4f00-92c8-797428f58f1a] recovery              0:03:09.177
+2026-10-11T13:56:56.307Z info [06aa7c8f-3611-4f00-92c8-797428f58f1a] cleanup_after         0:00:06.608
+2026-10-11T13:56:56.307Z info [06aa7c8f-3611-4f00-92c8-797428f58f1a] total                 0:03:37.910
+2026-10-11T13:56:56.891Z info [06aa7c8f-3611-4f00-92c8-797428f58f1a] signed 98cee021d650744250c83827e9220c9ee6d35d20e38723836d9d83e18b72bcdc key 9dfab6eadaa1d04a22dcc966aac7a53bcff8bbe0077232485f6143cd9c4d0ca5
+2026-10-11T13:56:56.892Z info [06aa7c8f-3611-4f00-92c8-797428f58f1a] timestamped 2026-10-11T13:55:34Z
+2026-10-11T13:56:56.893Z info [06aa7c8f-3611-4f00-92c8-797428f58f1a] evidence C:\ProgramData\RestoreProof\runs\06aa7c8f-3611-4f00-92c8-797428f58f1a: result.json, signature.json, timestamp.tst, items.csv, veeam-session.log
+2026-10-11T13:56:56.910Z info [06aa7c8f-3611-4f00-92c8-797428f58f1a] queued C:\ProgramData\RestoreProof\outbox\06aa7c8f-3611-4f00-92c8-797428f58f1a
+2026-10-11T13:56:56.938Z info run 06aa7c8f-3611-4f00-92c8-797428f58f1a: ended pass; queued
+2026-10-11T13:56:56.989Z info sent 06aa7c8f-3611-4f00-92c8-797428f58f1a
+2026-10-11T13:56:57.009Z info skipped 06aa7c8f-3611-4f00-92c8-797428f58f1a: already sent
+2026-10-11T13:57:03.738Z info stop requested (stop)
+2026-10-11T13:57:03.740Z info service stopped after 0 ms
+
+-- afterwards
+(no running.json) at 2026-10-11T13:57:04Z
+runs\:
+  w42-done-when-1: items.csv 5746, result.json 22606, veeam-session.log 7371
+  w43-done-when-1: items.csv 5749, result.json 22347, signature.json 322, veeam-session.log 7490
+  w44-done-when-1: items.csv 5753, result.json 21997, signature.json 322, timestamp.tst 5998, veeam-session.log 7370
+  w44-tsa-down-1: items.csv 5741, result.json 21954, signature.json 322, veeam-session.log 7363
+  w45-done-when-1: items.csv 5807, result.json 22239, signature.json 322, timestamp.tst 5999, veeam-session.log 7510
+outbox\:
+sent\:
+  06aa7c8f-3611-4f00-92c8-797428f58f1a: items.csv 5744, manifest.json 392, result.json 22663, signature.json 322, timestamp.tst 5999, veeam-session.log 7360
+  w46-done-when-1: items.csv 145, manifest.json 371, result.json 2291, signature.json 322, timestamp.tst 5998, veeam-session.log 0
+  w46-done-when-2: items.csv 5739, manifest.json 371, result.json 21971, signature.json 322, timestamp.tst 5997, veeam-session.log 7360
+-- the stub's lines
+2026-10-11T13:52:44Z stub Cloud on https://localhost:8443
+2026-10-11T13:52:48Z POST /v1/heartbeat: 88 bytes, Content-Type application/json, Authorization absent -> 204  {"last_error":null,"last_error_at":null,"outbox_depth":0,"uptime_s":0,"version":"0.0.0"}
+2026-10-11T13:56:56Z POST /v1/results: 42978 bytes, Authorization absent -> 202
+  part result  file result.json  22663 bytes  sha256 98cee021d650744250c83827e9220c9ee6d35d20e38723836d9d83e18b72bcdc
+  part signature  file signature.json  322 bytes  sha256 5cd004478827dd8c3f31f7d0821519b04937af44477fd05984feac15d7411e6f
+  part timestamp  file timestamp.tst  5999 bytes  sha256 c3643eac2fb9bfe1fb8edb0867490b8d1578a84fa9330515315681f295420a3e
+  part items.csv  file items.csv  5744 bytes  sha256 c29aae5b0baf4425b80ac782335e5ca8530d91dd4edf47587a8721f1d9f6efeb
+  part veeam-session.log  file veeam-session.log  7360 bytes  sha256 73e6308fc6ec4314af37c3f25bef1e7c241770d5f70241fbfab641f38baea6f7
+2026-10-11T13:56:57Z POST /v1/heartbeat: 90 bytes, Content-Type application/json, Authorization absent -> 204  {"last_error":null,"last_error_at":null,"outbox_depth":0,"uptime_s":249,"version":"0.0.0"}
+
+-- the grants taken away
+entries of NT SERVICE\RestoreProof removed
+C:\ProgramData\RestoreProof\vault.bin: owner BUILTIN\Administrators; the account's entries: none
+C:\ProgramData\Microsoft\Crypto\RSA\MachineKeys\<Veeam key file>: owner BUILTIN\Administrators; the account's entries: none
+C:\ProgramData\RestoreProof\state: owner BUILTIN\Administrators; the account's entries: none
+C:\ProgramData\RestoreProof\runs: owner BUILTIN\Administrators; the account's entries: none
+C:\ProgramData\RestoreProof\outbox: owner BUILTIN\Administrators; the account's entries: none
+C:\ProgramData\RestoreProof\sent: owner BUILTIN\Administrators; the account's entries: none
+
+-- the service uninstalled
+command: rpworker service uninstall
+2026-10-11T13:57:06Z to 2026-10-11T13:57:07Z
+exit code: 0
+--- stdout
+uninstalled RestoreProof
+--- stderr
+
+
+-- the sent folder, both verifiers
+folder: C:\ProgramData\RestoreProof\sent\06aa7c8f-3611-4f00-92c8-797428f58f1a
+command: rpworker signer verify C:\ProgramData\RestoreProof\sent\06aa7c8f-3611-4f00-92c8-797428f58f1a --public-key C:\ProgramData\RestoreProof\w48\worker-signing.pub.pem --tsa-ca C:\restoreproof\shared\tsa\tsa-ca.pem
+2026-10-11T13:57:07Z to 2026-10-11T13:57:08Z
+exit code: 0
+--- stdout
+verified 98cee021d650744250c83827e9220c9ee6d35d20e38723836d9d83e18b72bcdc key 9dfab6eadaa1d04a22dcc966aac7a53bcff8bbe0077232485f6143cd9c4d0ca5 timestamp 2026-10-11T13:55:34Z
+--- stderr
+note: not listed in the result: manifest.json
+
+verify_bundle.py (exit code 0): note: not listed in the result: manifest.json | verified 98cee021d650744250c83827e9220c9ee6d35d20e38723836d9d83e18b72bcdc key 9dfab6eadaa1d04a22dcc966aac7a53bcff8bbe0077232485f6143cd9c4d0ca5 timestamp 2026-10-11T13:55:34Z
+result.json: run_id 06aa7c8f-3611-4f00-92c8-797428f58f1a, status pass, restore_sent True, message: 30 of 30 item(s) verified: manifest 15, fields 5, metadata 10
+result.json sha256 98cee021d650744250c83827e9220c9ee6d35d20e38723836d9d83e18b72bcdc
+result.json client: client_id b1ff9271-c665-4398-86b3-ee4ae40ee7ee, tenant_id bcd6bd1a-ea42-489d-aa28-2c19a44ad146, scope same_tenant, resolved.organization.tenant_id bcd6bd1a-ea42-489d-aa28-2c19a44ad146
+
+== (6) the folder posted by hand to POST /v1/results, as the Worker will post it ==
+curl.exe -s -i -X POST http://127.0.0.1:8000/v1/results -H 'Authorization: Bearer <token>' -F result=@result.json;type=application/json -F signature=@signature.json;type=application/json -F timestamp=@timestamp.tst;type=application/octet-stream -F items.csv=@items.csv;type=application/octet-stream -F veeam-session.log=@veeam-session.log;type=application/octet-stream
+-- the first upload:
+HTTP/1.1 202 Accepted
+date: Sun, 11 Oct 2026 13:57:11 GMT
+server: uvicorn
+content-length: 64
+content-type: application/json
+x-request-id: 49c07099577c4201b72ba9376d86109d
+
+{"run_id":"06aa7c8f-3611-4f00-92c8-797428f58f1a","state":"pass"}
+-- the same again:
+HTTP/1.1 202 Accepted
+date: Sun, 11 Oct 2026 13:57:11 GMT
+server: uvicorn
+content-length: 64
+content-type: application/json
+x-request-id: 449c83080d9240119473493b8a875a4e
+
+{"run_id":"06aa7c8f-3611-4f00-92c8-797428f58f1a","state":"pass"}
+
+== (7) the row, the items, the audit rows, the objects ==
+test_run:
+  state: pass
+  error_code: None
+  error_message: None
+  attempt: 1
+  dispatched_at: 2026-10-11 13:52:41.403991+00:00
+  started_at: 2026-10-11 13:53:18.395000+00:00
+  finished_at: 2026-10-11 13:56:56.305000+00:00
+  total_ms: 217910
+  restore_point_at: 2026-10-10 22:00:40+00:00
+  bundle_key: msp/095e3143-8753-4638-a73e-90b20c96c87f/runs/06aa7c8f-3611-4f00-92c8-797428f58f1a/
+  bundle_sha256: 98cee021d650744250c83827e9220c9ee6d35d20e38723836d9d83e18b72bcdc
+  signature_ok: True
+  tsa_ok: True
+  tsa_time: 2026-10-11 13:55:34+00:00
+  cleanup_ok: True
+test_item: 30 row(s)
+   0 mail       manifest found True match True ms 0 expected_sha256 4e1a95863121 reason None
+   1 mail       manifest found True match True ms 0 expected_sha256 6a6a8a3f0f0b reason None
+   2 mail       manifest found True match True ms 0 expected_sha256 fbf18a490608 reason None
+   3 mail       manifest found True match True ms 0 expected_sha256 775c6af18f76 reason None
+   4 mail       manifest found True match True ms 0 expected_sha256 ea2086718770 reason None
+   5 mail       fields   found True match True ms 0 expected_sha256 - reason None
+   6 mail       fields   found True match True ms 0 expected_sha256 - reason None
+   7 mail       fields   found True match True ms 0 expected_sha256 - reason None
+   8 mail       fields   found True match True ms 0 expected_sha256 - reason None
+   9 mail       fields   found True match True ms 0 expected_sha256 - reason None
+  10 sharepoint manifest found True match True ms 314 expected_sha256 9c79923653e6 reason None
+  11 sharepoint manifest found True match True ms 326 expected_sha256 5540efd7b59d reason None
+  12 sharepoint manifest found True match True ms 1353 expected_sha256 f06d33a67fed reason None
+  13 sharepoint manifest found True match True ms 344 expected_sha256 f2d6976ab80e reason None
+  14 sharepoint manifest found True match True ms 358 expected_sha256 8634d7930e23 reason None
+  15 sharepoint metadata found True match True ms 376 expected_sha256 - reason None
+  16 sharepoint metadata found True match True ms 0 expected_sha256 - reason None
+  17 sharepoint metadata found True match True ms 434 expected_sha256 - reason None
+  18 sharepoint metadata found True match True ms 342 expected_sha256 - reason None
+  19 sharepoint metadata found True match True ms 321 expected_sha256 - reason None
+  20 onedrive   manifest found True match True ms 319 expected_sha256 8cb6004f5024 reason None
+  21 onedrive   manifest found True match True ms 313 expected_sha256 1968cf8acd0a reason None
+  22 onedrive   manifest found True match True ms 309 expected_sha256 dc864e007350 reason None
+  23 onedrive   manifest found True match True ms 306 expected_sha256 bdd6b7a140ca reason None
+  24 onedrive   manifest found True match True ms 276 expected_sha256 ad83844fd22e reason None
+  25 onedrive   metadata found True match True ms 379 expected_sha256 - reason None
+  26 onedrive   metadata found True match True ms 343 expected_sha256 - reason None
+  27 onedrive   metadata found True match True ms 316 expected_sha256 - reason None
+  28 onedrive   metadata found True match True ms 344 expected_sha256 - reason None
+  29 onedrive   metadata found True match True ms 479 expected_sha256 - reason None
+audit_log:
+  worker.register worker:97f83d99-1707-4eb1-ba29-37595e11cb74
+  connector.create connector:77ce7b56-0e11-43fc-9539-1005ae9e12af
+  result.received run:06aa7c8f-3611-4f00-92c8-797428f58f1a
+the bucket under msp/095e3143-8753-4638-a73e-90b20c96c87f/runs/06aa7c8f-3611-4f00-92c8-797428f58f1a/ (boto3, the stack's local-only MinIO), each downloaded:
+msp/095e3143-8753-4638-a73e-90b20c96c87f/runs/06aa7c8f-3611-4f00-92c8-797428f58f1a/items.csv 5744 application/octet-stream
+msp/095e3143-8753-4638-a73e-90b20c96c87f/runs/06aa7c8f-3611-4f00-92c8-797428f58f1a/result.json 22663 application/json
+msp/095e3143-8753-4638-a73e-90b20c96c87f/runs/06aa7c8f-3611-4f00-92c8-797428f58f1a/signature.json 322 application/json
+msp/095e3143-8753-4638-a73e-90b20c96c87f/runs/06aa7c8f-3611-4f00-92c8-797428f58f1a/timestamp.tst 5999 application/octet-stream
+msp/095e3143-8753-4638-a73e-90b20c96c87f/runs/06aa7c8f-3611-4f00-92c8-797428f58f1a/veeam-session.log 7360 application/octet-stream
+-- verify_bundle.py on the downloaded objects:
+verified 98cee021d650744250c83827e9220c9ee6d35d20e38723836d9d83e18b72bcdc key 9dfab6eadaa1d04a22dcc966aac7a53bcff8bbe0077232485f6143cd9c4d0ca5 timestamp 2026-10-11T13:55:34Z (exit code 0)
+-- the same folder, rpworker signer verify:
+command: rpworker signer verify C:\Users\minas\AppData\Local\Temp\rp-c57\downloaded --public-key C:\Users\minas\AppData\Local\Temp\rp-c57\worker.pub.pem --tsa-ca C:\restoreproof\shared\tsa\tsa-ca.pem
+2026-10-11T13:57:18Z to 2026-10-11T13:57:19Z
+exit code: 0
+--- stdout
+verified 98cee021d650744250c83827e9220c9ee6d35d20e38723836d9d83e18b72bcdc key 9dfab6eadaa1d04a22dcc966aac7a53bcff8bbe0077232485f6143cd9c4d0ca5 timestamp 2026-10-11T13:55:34Z
+--- stderr
+
+result.json sha256 as stored: 98cee021d650744250c83827e9220c9ee6d35d20e38723836d9d83e18b72bcdc
+
+== (8) a tampered copy: one byte of items.csv ==
+-- POST /v1/results with items.csv changed:
+HTTP/1.1 400 Bad Request
+date: Sun, 11 Oct 2026 13:57:19 GMT
+server: uvicorn
+content-length: 28
+content-type: application/json
+x-request-id: d95cec745da04408b1f25a8fabb427a8
+
+{"detail":"attachment_hash"}
+test_run:
+  state: pass
+  error_code: None
+  error_message: None
+  attempt: 1
+  dispatched_at: 2026-10-11 13:52:41.403991+00:00
+  started_at: 2026-10-11 13:53:18.395000+00:00
+  finished_at: 2026-10-11 13:56:56.305000+00:00
+  total_ms: 217910
+  restore_point_at: 2026-10-10 22:00:40+00:00
+  bundle_key: msp/095e3143-8753-4638-a73e-90b20c96c87f/runs/06aa7c8f-3611-4f00-92c8-797428f58f1a/
+  bundle_sha256: 98cee021d650744250c83827e9220c9ee6d35d20e38723836d9d83e18b72bcdc
+  signature_ok: True
+  tsa_ok: True
+  tsa_time: 2026-10-11 13:55:34+00:00
+  cleanup_ok: True
+test_item: 30 row(s)
+   0 mail       manifest found True match True ms 0 expected_sha256 4e1a95863121 reason None
+   1 mail       manifest found True match True ms 0 expected_sha256 6a6a8a3f0f0b reason None
+   2 mail       manifest found True match True ms 0 expected_sha256 fbf18a490608 reason None
+   3 mail       manifest found True match True ms 0 expected_sha256 775c6af18f76 reason None
+   4 mail       manifest found True match True ms 0 expected_sha256 ea2086718770 reason None
+   5 mail       fields   found True match True ms 0 expected_sha256 - reason None
+   6 mail       fields   found True match True ms 0 expected_sha256 - reason None
+   7 mail       fields   found True match True ms 0 expected_sha256 - reason None
+   8 mail       fields   found True match True ms 0 expected_sha256 - reason None
+   9 mail       fields   found True match True ms 0 expected_sha256 - reason None
+  10 sharepoint manifest found True match True ms 314 expected_sha256 9c79923653e6 reason None
+  11 sharepoint manifest found True match True ms 326 expected_sha256 5540efd7b59d reason None
+  12 sharepoint manifest found True match True ms 1353 expected_sha256 f06d33a67fed reason None
+  13 sharepoint manifest found True match True ms 344 expected_sha256 f2d6976ab80e reason None
+  14 sharepoint manifest found True match True ms 358 expected_sha256 8634d7930e23 reason None
+  15 sharepoint metadata found True match True ms 376 expected_sha256 - reason None
+  16 sharepoint metadata found True match True ms 0 expected_sha256 - reason None
+  17 sharepoint metadata found True match True ms 434 expected_sha256 - reason None
+  18 sharepoint metadata found True match True ms 342 expected_sha256 - reason None
+  19 sharepoint metadata found True match True ms 321 expected_sha256 - reason None
+  20 onedrive   manifest found True match True ms 319 expected_sha256 8cb6004f5024 reason None
+  21 onedrive   manifest found True match True ms 313 expected_sha256 1968cf8acd0a reason None
+  22 onedrive   manifest found True match True ms 309 expected_sha256 dc864e007350 reason None
+  23 onedrive   manifest found True match True ms 306 expected_sha256 bdd6b7a140ca reason None
+  24 onedrive   manifest found True match True ms 276 expected_sha256 ad83844fd22e reason None
+  25 onedrive   metadata found True match True ms 379 expected_sha256 - reason None
+  26 onedrive   metadata found True match True ms 343 expected_sha256 - reason None
+  27 onedrive   metadata found True match True ms 316 expected_sha256 - reason None
+  28 onedrive   metadata found True match True ms 344 expected_sha256 - reason None
+  29 onedrive   metadata found True match True ms 479 expected_sha256 - reason None
+audit_log:
+  worker.register worker:97f83d99-1707-4eb1-ba29-37595e11cb74
+  connector.create connector:77ce7b56-0e11-43fc-9539-1005ae9e12af
+  result.received run:06aa7c8f-3611-4f00-92c8-797428f58f1a
+  result.rejected worker:97f83d99-1707-4eb1-ba29-37595e11cb74 attachment_hash
+the bucket afterwards: 5 object(s)
+
+== (9) the teardown ==
+-- the three restore targets after
+command: rpworker graph list --config C:\Users\minas\AppData\Local\RestoreProof\lab\config.json
+2026-10-11T13:57:22Z to 2026-10-11T13:57:24Z
+exit code: 0
+--- stdout
+Mail (restoretest@RestoreProofLab.onmicrosoft.com, Inbox): 0 item(s)
+
+SharePoint (RestoreTarget library): 0 item(s)
+
+OneDrive (RestoreTarget folder): 0 item(s)
+
+0 item(s) in the three restore targets
+--- stderr
+
+-- Veeam: no session Working at 2026-10-11T13:57:25Z
+sent\06aa7c8f-3611-4f00-92c8-797428f58f1a moved to C:\ProgramData\RestoreProof\c57 (outside the repo); the stack's rows left; C:\Users\minas\AppData\Local\RestoreProof\lab\jobs.json left
+config copy removed: True; state removed: True; logs removed: True
+sc query: [SC] EnumQueryServicesStatus:OpenService FAILED 1060:  The specified service does not exist as an installed service. 
+
+C:\Users\minas\AppData\Local\Temp\rp-c57 removed (the tokens, the PEM, the downloaded and tampered copies)

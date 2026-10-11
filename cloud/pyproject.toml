@@ -6,9 +6,11 @@ dependencies = [
     "alembic>=1.20.0",
     # C5.7: the verifier (shared/tools/verify_bundle.py) imports asn1crypto and
     # cryptography; python-multipart is starlette's form parser.
+    "apscheduler>=3.11.3",
     "asn1crypto>=1.5,<2",
     "asyncpg>=0.32.0",
     "boto3>=1.43.111",
+    "croniter>=6.2.4",
     "cryptography>=50",
     "fastapi>=0.143.0",
     "jsonschema>=4.26.0",
@@ -16,6 +18,7 @@ dependencies = [
     "python-multipart>=0.0.20",
     "sqlalchemy[asyncio]>=2.1.4",
     "structlog>=26.1.0",
+    "typer>=0.27.3",
     "uvicorn>=0.54.0",
 ]
 

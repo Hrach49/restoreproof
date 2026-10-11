@@ -10,7 +10,7 @@ import re
 import uuid
 
 import pytest
-from sqlalchemy import BigInteger, DateTime, ForeignKeyConstraint, Uuid, text
+from sqlalchemy import BigInteger, DateTime, ForeignKeyConstraint, UniqueConstraint, Uuid, text
 from sqlalchemy.exc import DBAPIError, IntegrityError, StatementError
 
 from app.models import (
@@ -199,9 +199,9 @@ def test_every_time_is_a_timestamp_with_time_zone_that_refuses_a_naive_value():
     times = [column for column in columns if isinstance(column.type, UtcDateTime)]
 
     assert not [column for column in columns if isinstance(column.type, DateTime)]
-    assert len(times) == 15
+    assert len(times) == 17
     assert all(column.type.impl.timezone is True for column in times)
-    assert {column.name for column in times} >= {"created_at", "last_seen_at", "last_error_at", "expires_at", "at", "tsa_time"}
+    assert {column.name for column in times} >= {"created_at", "last_seen_at", "last_error_at", "expires_at", "at", "tsa_time", "scheduled_for"}
 
 
 def test_every_table_another_points_at_is_unique_on_msp_id_and_id():
@@ -1124,3 +1124,57 @@ async def test_a_naive_last_error_at_is_refused_before_the_driver(session):
                 )
             )
             await session.flush()
+
+
+# --- C5.9: the period a scheduled run is for, and when a plan was made ---------------------
+
+
+def test_a_run_holds_the_period_it_is_for_and_a_plan_when_it_was_made():
+    """docs/decisions.md 2026-10-11, "C5.10 and C5.9", point 8."""
+    run_columns = TestRun.__table__.columns
+    plan_columns = TestPlan.__table__.columns
+
+    assert isinstance(run_columns["scheduled_for"].type, UtcDateTime) and run_columns["scheduled_for"].nullable
+    assert run_columns["scheduled_for"].server_default is None
+    assert isinstance(plan_columns["created_at"].type, UtcDateTime) and not plan_columns["created_at"].nullable
+    assert plan_columns["created_at"].server_default is not None
+    uniques = {
+        constraint.name: [column.name for column in constraint.columns]
+        for constraint in TestRun.__table__.constraints
+        if isinstance(constraint, UniqueConstraint)
+    }
+    assert uniques["uq_test_run_msp_id_plan_id_scheduled_for"] == ["msp_id", "plan_id", "scheduled_for"]
+
+
+async def test_a_second_run_of_one_plan_and_period_is_refused(session):
+    world = await World.make(session)
+    period = dt.datetime(2026, 10, 11, 2, 0, tzinfo=UTC)
+    await add(session, a_run(world.msp, world.client, world.worker, world.plan, scheduled_for=period))
+
+    await refused(
+        session,
+        a_run(world.msp, world.client, world.worker, world.plan, scheduled_for=period),
+        "uq_test_run_msp_id_plan_id_scheduled_for",
+    )
+
+
+async def test_another_period_another_plan_or_no_period_is_taken(session):
+    world = await World.make(session)
+    period = dt.datetime(2026, 10, 11, 2, 0, tzinfo=UTC)
+    other_plan = await add(session, a_plan(world.msp, world.client, world.connector, cadence_cron="0 3 * * *"))
+    await add(session, a_run(world.msp, world.client, world.worker, world.plan, scheduled_for=period))
+
+    await add(session, a_run(world.msp, world.client, world.worker, world.plan, scheduled_for=period + dt.timedelta(days=1)))
+    await add(session, a_run(world.msp, world.client, world.worker, other_plan, scheduled_for=period))
+    # Two runs made by hand: nulls are distinct, so the unique is the period rule alone.
+    await add(session, a_run(world.msp, world.client, world.worker, world.plan))
+    await add(session, a_run(world.msp, world.client, world.worker, world.plan))
+
+
+async def test_a_plan_s_created_at_is_the_database_s_now(session):
+    world = await World.make(session)
+    await session.refresh(world.plan)
+    (now,) = (await session.execute(text("SELECT now()"))).one()
+
+    assert world.plan.created_at == now
+    assert world.plan.created_at.tzinfo is not None

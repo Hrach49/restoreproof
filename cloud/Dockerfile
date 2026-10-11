@@ -26,6 +26,9 @@ COPY shared/schemas ./shared/schemas
 COPY shared/tools ./shared/tools
 COPY shared/tsa ./shared/tsa
 COPY cloud/app ./app
+# C5.10: the onboarding CLI, run as `docker compose exec api python manage.py ...`;
+# the scheduler service (C5.9) runs `python -m app.scheduler` from this image.
+COPY cloud/manage.py ./
 
 RUN useradd --system --no-create-home --uid 10001 restoreproof
 USER restoreproof

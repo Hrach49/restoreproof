@@ -1482,9 +1482,10 @@ python -m unittest discover -s worker/tools -p "test_*.py"
 
 `cloud/` is the FastAPI backend (C5.1), its data model (C5.2), its repository layer (C5.3), its
 tokens (C5.4), the Worker's registration (C5.5), the jobs poll (C5.6), the bundle's upload
-(C5.7) and the heartbeat (C5.8). Its tests are pytest, run with uv from `cloud/`. The rules are
-`docs/decisions.md` 2026-10-10, "C5.1 and C5.2", "C5.3 and C5.4", "C5.5 and C5.6" and "C5.7",
-and 2026-10-11, "C5.8".
+(C5.7), the heartbeat (C5.8), the job dispatcher (C5.9, the `scheduler` service) and the
+onboarding CLI (C5.10, `manage.py`). Its tests are pytest, run with uv from `cloud/`. The rules
+are `docs/decisions.md` 2026-10-10, "C5.1 and C5.2", "C5.3 and C5.4", "C5.5 and C5.6" and
+"C5.7", and 2026-10-11, "C5.8" and "C5.10 and C5.9".
 
 ### The test database: a real PostgreSQL 16, never SQLite
 
@@ -1566,6 +1567,13 @@ docker compose stop postgres              # when done; `docker compose down -v` 
 | `tests/test_registration.py` | C5.5's Done-when: a Worker registers with an install token and RFC 8032's test-1 key, gets 201 with a 43-character token that passes `current_worker`, and the same install token again is 401; the four answers in order (401 before 400 before 409); an unknown, a used and an expired token one 401; the token unused after a 400 and after a 409, and usable again; every small-order key the same 400; every accepted layout stored in the one form; a key registered in another MSP still 409; a body outside the model 422 before any lookup; the same lookup for every token; one audit row with the caller's address; neither token nor either hash in any log line; on a database of its own, one token sent twice at once, one key with two tokens at once, and the Worker's row committed before the 201's first ASGI message leaves; the 401 is `dependency.not_authenticated`'s; a name too long is `string_too_long`, not a pattern mismatch |
 | `tests/test_jobs_route.py` | C5.6's Done-when: two polls return the same job only if the first attempt expired (the sweep in between, `expired` after the third); the document validated against `jobs.v1.json` with the profile schema; field by field from the run, the connector, the plan and the client, no `canary_cursor`; the `run_id` a folder name on the Worker; at most five oldest first and the rest next; an empty document for a Worker with nothing queued or no connector; a revoked Worker, no token and an unknown token 401 with nothing dispatched; another Worker's and another MSP's runs never answered; `GET` only; the token in no log line; on a database of its own, two polls at once share no run (disjoint, six in all, none over five); a busy poll is three statements and an idle one two; the route takes the MSP from the Worker it was given; the document's limit is `DISPATCH_LIMIT` |
 | `tests/test_heartbeat.py` | C5.8's Done-when by name, `test_the_dashboard_column_last_seen_updates_every_15_minutes`: the Worker's two recorded bodies (121 and 88 bytes, `docs/api/veeam-lab/w4.11-3-service-run.txt`) posted under the Worker's token with the router's clock at T and T + 900 s, `WorkerRepo.list` (what C6.2's `/workers` page will read) answering `last_seen_at` T then T + 15 min with every column as sent and the restart's nulls, the other Worker and the other MSP untouched. Failure paths first: no token, `Basic`, an unknown token and a revoked Worker one 401 with nothing written; a Worker revoked between the lookup and the `UPDATE` 401 with nothing written; forty-two bodies outside the five keys 422 with the row untouched (a key missing, a sixth, not an object, each field's rule, the error without its time and the time without its error, a 30th of February, an hour 24, a time in digits outside 0 to 9, a time with a line end, each count negative, over 2^53 − 1, a float, a string, a boolean, null); not JSON and `text/plain` 422; `GET` and `PUT` 405. The C5.8 review: the token before the body (a body nothing can read, that is not JSON, 100,000 brackets deep, a 5000-digit integer, not UTF-8 or empty, is 401 without a token or with an unknown one and 422 with the Worker's, never FastAPI's own 400; `text/plain` without a token 401; the media type in any case and with a parameter; no `Content-Type` 422; a streamed body without a token answered 401 with no chunk pulled); a key twice 422 with the row untouched, the same value twice included. Then: the 204 has no body and no `Content-Type`; `version` replaced and a null clearing a stored error; `last_seen_at` the Cloud's clock whatever `last_error_at` says; the time stored to the millisecond; the counts at 2^53 − 1 taken; the Worker's row and nothing else written (every table's count); two statements; the Worker from the dependency it was given; neither the token nor any body value in a log line on a 204, a 401 and a 422; on a database of its own, two heartbeats at once both 204 and the row one of them whole; the model closed, `last_error_at` parsed once into the Worker's time as aware UTC (a datetime given to the model refused), and the version rule registration's own type |
+| `tests/test_cadence.py` | C5.9: `app/cadence.py`, strict: `parse` refuses anything but five space-separated fields croniter takes (four, six, `@daily`, a 60th minute, a line end); `check_monthly` passes daily, 5-minute, the 1st, the 15th, `L`, weekly and refuses `0 2 31 * *`, `0 2 30 * *`, bi-monthly, yearly and a leap day, walking 400 day starts from `now` against a 31-day bound; `due_at` is the latest occurrence at or before `now` (at the occurrence, half a second after, a second before, across a month's end, `L` in February), aware UTC, a naive `now` refused; after the review: croniter's random `R` refused while a name with an `r` passes, a cron no date meets `never occurs` from every reader, `check_spacing` at most every five minutes (the tick) on the minute and hour fields |
+| `tests/test_repo_plans.py` | C5.9 and C5.10 in the repo: `PlanRepo.create` refuses a cadence outside the rule as `cadence_cron: not a cron expression` or `less than monthly` without the text, before any row, and needs `now`; a cadence within it stored as given with `created_at`; `list(enabled=)`; `MspRepo.list` every MSP by name then id |
+| `tests/test_repo_errors.py` | C5.10: `constraint_refusal` words a known constraint by the name the driver gives (`constraint_name`; a row value that quotes another constraint's name words nothing) and answers `None` for an unknown one, a name without quotes or in another case; the table holds every unique, CHECK and `msp_id` key a CLI command can meet; each word shown on the database by the row it refuses |
+| `tests/test_onboarding.py` | C5.10's logic, `app/onboarding.py`, over the rolled-back session: each of the six functions makes its rows through the repos and answers the lines the CLI prints, with one audit row (`user_id` and `ip` null); a name or label outside its rule, an MSP that isn't there, a tenant twice, the repo's connector refusals unchanged, a profile file not readable, not UTF-8 or not JSON (no path, no text in the line), a cron outside the rule, sizes outside the Worker's rule, a connector that isn't the client's, a revoke of a Worker that isn't there or is revoked already: each a `RepoError` with no value and nothing written; the token on one line and its hash nowhere; `--run-now` one hand-made run; an unknown `IntegrityError` re-raised; nothing commits |
+| `tests/test_manage.py` | C5.10's Done-when by name, `test_a_new_msp_with_one_client_and_plan_is_created_in_under_5_minutes_by_cli`: the six commands through `typer.testing.CliRunner` in a thread against a database of the test's own (a command commits), a Worker registered through the app with the printed token, the rows read back, the seconds recorded; failure paths: no, an empty or a malformed `DATABASE_URL` naming the variable, a closed port `database: unreachable` with no host or user in the line, a refusal one stderr line and exit 1 with nothing committed, a usage fault Typer's exit 2 before any database, `create-user` and `delete-msp` no such command, a profile file refused without its path, a profile naming another tenant and a cron outside the rule refused through the CLI, an error nobody foresaw `internal: <type>`; the token on stdout once and its hash nowhere; `--run-now`, `--retention-days`, `--screenshots-enabled`, `--disabled`; the CLI builds no statement and logs nothing |
+| `tests/test_scheduler.py` | C5.9's Done-when by name, `test_a_plan_with_a_5_minute_cron_creates_queued_runs_on_schedule`: on a database of the test's own, a plan with `*/5 * * * *` made at 12:00:30 gets no run for the 12:00 period (it began before the plan), one at the 12:05 tick, none at 12:05:10, one at 12:10:01, each `queued` with the plan's client, connector and Worker, a disabled plan none, the other MSP's plan its own, the `run created` lines with ids alone (a sentinel in the profile in no line); failure paths: a cron planted past the repo skipped with one `plan skipped` line while the other plan's run is made, an MSP whose tick raises rolled back and logged by type while the next MSP's run is made, a plan that raises or that the database refuses rolled back alone under its savepoint (`plan failed`) while the MSP's other plans keep their runs, no run counted or named before its MSP's commit, a planted cron that never occurs skipped, a connector the keys say exists but is gone, a period before `created_at` skipped, a plan made at its own minute taken, only the current period made up after a pause, a re-enabled plan, a revoked Worker's plan still served, two ticks at once one run, the statement counts, the clock when no time is given; the sweep per MSP with `runs swept` and `tick` lines, an MSP that fails, the database gone (`tick failed` with no MSP); the two jobs every 300 s with `max_instances` 1, `coalesce` and both at start; `serve` starts, waits for the stop and shuts down; the stop signals where the loop has them; `main` reads `DATABASE_URL` and `LOG_LEVEL` alone and stops naming a missing one; the module reads no profile and no credential |
+| `tests/test_c513_done_when.py` | C5.13's Done-when (#136), one named parametrised test per line: a second client with the same tenant ID in one MSP rejected (the same text, upper case, through the CLI's `create_client`; the same tenant in another MSP taken), a connector whose profile names another tenant rejected (another client's of the same MSP, another MSP's client's, a GUID nobody has, each through the repo and through the CLI's `create_connector`; the client's own tenant in the other case taken), a bundle for a different client than dispatched 409 (the seven patches of `tests/test_results.py` on the C5.7 lab) |
 | `tests/test_openapi.py` | `docs/api/openapi-v1.json` equal to what `/v1/openapi.json` serves and to what `tools/dump_openapi.py` writes (sorted keys, two spaces, LF); the three routes and not `/healthz`; every refusal a route makes (401 with `WWW-Authenticate`, 400, 409; C5.7's 404, 411, 413, 415) in the document as `ErrorBody`, the upload's multipart body with its named parts and its 202 as `Accepted`; the tool writes to a path of the caller's with placeholder settings of closed loopback ports; C5.8: the fourth route with 204 without content, 401 and 422, `HeartbeatBody` closed with the five keys required and each field's rule |
 | `tests/test_repo_connectors.py` | C5.13 in the repo: a profile that isn't a `client-profile.v1`, one naming another tenant (the other MSP's too), a client or a Worker that isn't the MSP's, each a `RepoError` naming the key and no value, in one order (schema, client, tenant, Worker; the code review's finding 3); the tenant compared as a uuid; one audit row per create, update and delete that touched a row, none for an update or delete of nothing, nor for an update whose row was deleted between the read and the statement (finding 1); nothing of the profile in the audit row |
 | `tests/test_schemas.py` | `app/schemas.py` finds `shared/schemas/` by walking up, from the tree and from a planted layout; the Dockerfile copies the schemas, the verifier and the TSA root, the root `.dockerignore` allows the seven paths and nothing else, Compose builds from the repository root; `jsonschema`, `cryptography`, `asn1crypto` and `python-multipart` are runtime dependencies |
@@ -1602,11 +1610,13 @@ docker compose down                       # `-v` also drops the volumes
 ```
 
 The image is built with the repository root as its context (`context: ..` in Compose, the
-`.dockerignore` at the root allowing `cloud/`'s four paths and `shared/schemas`), since the app reads
+`.dockerignore` at the root allowing `cloud/`'s five paths, `manage.py` among them since C5.10, and
+`shared/schemas`, `shared/tools` and `shared/tsa`), since the app reads
 the schemas by path (`app/schemas.py` walks up to `shared/schemas`, `/srv/shared/schemas` in the
 image). The api runs `alembic upgrade head` and then uvicorn with `--reload` on the mounted `app/`; a
-migration that fails stops the container. The scheduler is the same image with a placeholder
-command until C5.9. Every credential in `docker-compose.yml` is local only and every port is
+migration that fails stops the container. The scheduler is the same image running
+`python -m app.scheduler` (C5.9): it never migrates, waits for the api to be healthy, and ticks
+every five minutes. Every credential in `docker-compose.yml` is local only and every port is
 published on 127.0.0.1 alone; the app itself has no default for any of them
 (`cloud/.env.example` lists what a deployment sets). `minio` is Chainguard's build, pinned by
 digest, since MinIO's own community images no longer pull; to move the pin,
@@ -1634,7 +1644,8 @@ the migrations agree.
 While nothing is deployed, `0001` may be edited in place (C5.3 did, for `test_run.connector_id`;
 C5.5 and C5.6 did, for the key's id, the install token's columns and the dispatch columns; C5.7
 did, for `test_run.tsa_time`, `test_item.position` and the `received` state, which is gone;
-C5.8 did, for `worker.last_error_at`, `outbox_depth` and `uptime_s`).
+C5.8 did, for `worker.last_error_at`, `outbox_depth` and `uptime_s`; C5.9 did, for
+`test_run.scheduled_for` with its unique and `test_plan.created_at`).
 A database that already ran the old `0001` keeps it: the api's `alembic upgrade head` sees the
 version and does nothing, and `alembic check` then fails. After such an edit, run the three
 commands above once on the stack's database (`downgrade -1`, `upgrade head`, `check`), or
@@ -1771,6 +1782,63 @@ review's findings 5 and 6), so it can be run again on a stack that holds another
    = '<msp_id>'`: `worker.register` alone.
 8. The temp folder with the three bodies removed (no token was ever in it); the run's MSP,
    install token, Worker and audit row stay in the stack's database and no other row is touched.
+
+### The onboarding CLI and the scheduler (C5.10, C5.9)
+
+`cloud/manage.py` (`docs/onboarding.md`; `docs/decisions.md` 2026-10-11, "C5.10 and C5.9") makes
+an MSP's rows through `app/onboarding.py` and the repos, one committed transaction per command;
+`cloud/app/scheduler.py` is the Compose `scheduler` service, every five minutes one queued run per
+enabled plan and current cron period under the period's unique, and the sweep per MSP
+(`docs/verification.md` "The Cloud makes a run"). `tests/test_manage.py` and `tests/test_scheduler.py`
+hold the two Done-whens by name, each on a migrated database of the test's own (a command commits;
+a tick is one transaction per MSP), and `tests/test_c513_done_when.py` C5.13's three lines.
+
+The CLI by hand, from `cloud/` with `DATABASE_URL` in the shell (the stack's database is
+`postgresql+asyncpg://restoreproof:local-only-postgres@127.0.0.1:55432/restoreproof`, local only), or
+in the api container, which has the image's own `manage.py` and its own `DATABASE_URL`:
+
+```powershell
+cd cloud
+docker compose exec api python manage.py create-msp --name "Contoso MSP"          # msp_id <uuid>
+docker compose exec api python manage.py create-worker-token --msp-id <msp_id> --label veeam-vm
+docker compose logs --since 10m scheduler                                        # "tick", "run created"
+```
+
+**The by-hand run of both Done-whens against the Compose stack** (the evidence step,
+`docs/api/cloud-lab/c5.9-c5.10-done-when.txt`, written by
+`docs/api/cloud-lab/c5.9-c5.10-harness/c59-c510-live.ps1` in one go, about twelve minutes; the
+steps below are what it does). The harness keeps both tokens in memory only (the install token
+goes from the CLI's stdout into a variable and to curl in the registration body on its standard
+input, the API token in a curl config on its standard input), screens the text for them and for
+every token-shaped value before anything is saved, never downgrades the stack's database and reads
+only the rows it made (the C5.8 review's findings 5 and 6):
+
+1. `cd cloud; docker compose up -d --wait --build` (the scheduler service now runs the
+   dispatcher); `/healthz` 200; `docker compose exec api alembic check`, and the harness stops
+   there when the database is not the models' (a database that ran an older `0001` is
+   re-migrated by hand first, "The local stack" above); the period's unique, the plan's
+   `created_at` and `/srv/manage.py` listed; the scheduler's `scheduler started` and first `tick`
+   lines.
+2. **Timed, the C5.10 Done-when:** in the api container, `manage.py create-msp`, `create-client
+   --tenant-id <a tenant made for the run>`, `create-worker-token --label veeam-vm` (the token on
+   stdout, once), the Worker registered with curl under a key made for the run
+   (`c59-c510-rows.py key`), `create-connector --profile-file /tmp/profile.json` (the shared valid
+   profile naming the run's tenant, copied into the container with `docker compose cp`),
+   `create-plan --mail 5 --sp 3 --od 2 --cron "*/5 * * * *"`; the stopwatch's seconds in the
+   text (the Done-when says under 300); the rows read back with `c59-c510-rows.py show <msp_id>`.
+3. The CLI's refusals, each exit 1 with one line: the same tenant again (in upper case), a
+   profile naming another tenant, a yearly cron, a cron that is not one, sizes all 0.
+4. **The C5.9 Done-when:** `c59-c510-rows.py show` every 30 s until two queued runs of the plan
+   with distinct `scheduled_for` exist (the next two 5-minute marks after the plan; at most
+   twelve minutes), each noted with the time it appeared; `docker compose logs --since <start>
+   scheduler` filtered to the MSP's id: the `run created` lines, ids and the period alone.
+5. `GET /v1/jobs` with the API token: the jobs document with the runs' ids; `revoke-worker`;
+   `GET /v1/jobs` again: 401; `revoke-worker` again: exit 1.
+6. The rows at the end (the runs `dispatched`, the Worker's `revoked_at`, the audit rows
+   `msp.create`, `client.create`, `install_token.create`, `worker.register`,
+   `connector.create`, `plan.create`, `worker.revoke`) and the api's request lines.
+7. The temp folder and the container's two profile copies removed; the run's MSP and its rows
+   stay in the stack's database; the scheduler keeps running.
 
 ## Once-per-sprint mutation run
 

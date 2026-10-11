@@ -2002,3 +2002,60 @@ the token.
 warning once and the heartbeat keeps going (it is the Cloud's only word of a Worker whose token
 was revoked); 422 the Worker's `http_422` word (the two sides disagree on the body, which an
 upgrade fixes); 5xx, a timeout, no connection: the next interval is the retry, as today.
+
+## The Cloud makes a run (C5.9)
+
+The job dispatcher, `cloud/app/scheduler.py`, the Compose `scheduler` service: the decisions are
+`docs/decisions.md` 2026-10-11, "C5.10 and C5.9", points 6 to 9; the cadence's rules are
+`cloud/app/cadence.py` (strict at 100% line and branch) and the statement `RunRepo.create_scheduled`.
+
+**A plan's cadence** (`test_plan.cadence_cron`) is exactly five space-separated cron fields, read in
+UTC and nothing else, parsed by croniter (`L`, ranges, steps and lists as croniter takes them;
+its six-field seconds form, `@daily` and its random `R` field refused, so there is one form and
+every reader of it agrees on a period's start), **at most every five minutes** (the scheduler's
+tick: no two minutes of an hour less than five apart, nor the last of one hour and the first of
+the next when the hours can follow each other; the day fields aren't read) and **at least monthly**:
+from the start of every day in the 400 days after the plan is made, the next occurrence is within
+31 days. So `0 2 * * *` (the default: daily at 02:00 UTC), `*/5 * * * *`, `0 2 1 * *`, `0 2 L * *`
+and `0 2 * * 1` pass, and `0 2 31 * *` (58 days from February), `0 2 1 */2 *` and `0 2 1 1 *` are
+refused where the plan is made, as `cadence_cron: not a cron expression` or `less than monthly`;
+`* * * * *` is `more often than every 5 minutes` and `0 0 31 2 *`, which no date meets, `never occurs`
+(`PlanRepo.create`, so every writer of a plan is held). C6.4's monthly report wants a run in every
+period it covers; a plan that can't give one is not a plan.
+
+**A period** is `[due, next)` between two occurrences of the cadence, named by its start. Every
+five minutes (`TICK_S`), for each MSP (`MspRepo.list`, the one read across MSPs) in a transaction
+of its own, for each enabled plan: `due` is the latest occurrence at or before now (`due_at`);
+a period that began before the plan was made is not the plan's (`test_plan.created_at`), so a
+plan's first run is at its first cron time after it was made (`create-plan --run-now` queues one
+by hand for a first test today); otherwise one queued run for the period through
+`RunRepo.create_scheduled`, one `INSERT ... ON CONFLICT DO NOTHING` under
+`uq_test_run_msp_id_plan_id_scheduled_for`, which answers the row or nothing when the period has
+its run. **The unique and the statement decide together**, so two ticks or two scheduler
+processes make one run, with no lock, no read before the write and no error; a run made by hand
+has no period (`scheduled_for` null; nulls are distinct) and never collides. **Only the current
+period is made:** a scheduler that was down for a day makes today's run when it comes back,
+never yesterday's. A plan re-enabled after a month gets its current period's run at the next
+tick. A plan whose Worker is revoked still gets its runs: they sit `queued` with `dispatched_at`
+null, the truth of a plan nobody moved, for C6.2's page to show.
+
+**What can go wrong, and what it does to the tick.** A plan whose text the parser refuses or whose
+cron never occurs (a row written past the repo) is skipped with one `plan skipped` line (`msp_id`,
+`plan_id`, `reason cadence_cron`, never the text) and the loop goes on: a bad cron stops no other
+plan. Each plan's run is made under a savepoint: a plan that raises (a connector the keys say
+exists but is gone, a statement the database refuses) is rolled back alone and logged as
+`plan failed` with its ids and the exception's type, and the MSP's other plans keep their runs.
+An MSP whose transaction raises (its plans can't be listed, the commit fails) is rolled
+back and logged as `tick failed` with the exception's type and frames, and the next MSP runs. A
+run is counted and its `run created` line written only after its MSP's commit. A
+tick that can't list the MSPs is `tick failed` with no MSP, and the next tick runs in five
+minutes; the process never exits on a tick's failure. **The sweep**, the second job, calls
+`RunRepo.requeue_stale` per MSP (six hours, three attempts, C5.6) in its own transaction and logs
+`runs swept` when anything moved.
+
+**What is logged:** `scheduler started` with the interval, one `tick` line per job with counts
+(`msps`, `plans`, `created`, `skipped`, `failed`, `duration_ms`; the sweep's `requeued` and
+`expired`), one `run created` per run with `msp_id`, `plan_id`, `run_id` and `scheduled_for`.
+The scheduler reads nothing of a profile, a credential or a tenant value, so none can reach a
+line.
+

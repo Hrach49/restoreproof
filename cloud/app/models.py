@@ -273,8 +273,12 @@ class TestPlan(Base):
     sample_mail: Mapped[int] = mapped_column(Integer, nullable=False)
     sample_sp: Mapped[int] = mapped_column(Integer, nullable=False)
     sample_od: Mapped[int] = mapped_column(Integer, nullable=False)
+    # C5.9: five fields, UTC, at least monthly; held by PlanRepo.create
+    # (app/cadence.py), not by the database.
     cadence_cron: Mapped[str] = mapped_column(Text, nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    # C5.9: the scheduler makes no run for a period that began before the plan.
+    created_at: Mapped[dt.datetime] = _time(nullable=False, default_now=True)
 
 
 class TestRun(Base):
@@ -288,6 +292,10 @@ class TestRun(Base):
         _same_msp(("plan_id", "connector_id", "client_id"), "test_plan", ("id", "connector_id", "client_id")),
         _same_msp(("connector_id", "worker_id"), "connector", ("id", "worker_id")),
         UniqueConstraint("msp_id", "id"),
+        # C5.9: one run per plan and cron period. Nulls are distinct, so a run
+        # made by hand (no period) never collides: the unique is the period
+        # rule alone, and two ticks or two scheduler processes make one run.
+        UniqueConstraint("msp_id", "plan_id", "scheduled_for"),
         CheckConstraint(
             "state IN (" + ", ".join(f"'{state}'" for state in RUN_STATES) + ")", name="state"
         ),
@@ -306,6 +314,9 @@ class TestRun(Base):
     plan_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     connector_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     state: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'queued'"))
+    # C5.9: the start of the cron period the scheduler made this run for;
+    # null for a run made by hand (RunRepo.create, create-plan --run-now).
+    scheduled_for: Mapped[dt.datetime | None] = _time()
     # C5.6: the last dispatch's time, and how many times the run was handed to
     # its Worker. C5.7's `RunRepo.receive` moves a run that was handed out to
     # its bundle's pass, fail or error.

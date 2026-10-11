@@ -38,6 +38,7 @@ from tests.test_jobs_schema import VALIDATOR
 from tests.test_repo_connectors import profile_for
 
 UTC = dt.timezone.utc
+NOW = dt.datetime(2026, 10, 10, 12, 0, 0, tzinfo=UTC)
 PATH = "/v1/jobs"
 FORMAT = "restoreproof.jobs.v1"
 PEM = "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA\n-----END PUBLIC KEY-----\n"
@@ -84,10 +85,10 @@ class Lab:
             self.msp_id, self.client_id, self.other_worker_id, self.profile
         )).id
         self.plan_id = (await PlanRepo(s).create(
-            self.msp_id, self.client_id, self.connector_id, sample_mail=7, sample_sp=0, sample_od=2, cadence_cron="0 2 * * *"
+            self.msp_id, self.client_id, self.connector_id, sample_mail=7, sample_sp=0, sample_od=2, cadence_cron="0 2 * * *", now=NOW
         )).id
         self.other_plan_id = (await PlanRepo(s).create(
-            self.msp_id, self.client_id, self.other_connector_id, sample_mail=1, sample_sp=1, sample_od=1, cadence_cron="0 3 * * *"
+            self.msp_id, self.client_id, self.other_connector_id, sample_mail=1, sample_sp=1, sample_od=1, cadence_cron="0 3 * * *", now=NOW
         )).id
         # The other MSP: its own client, Worker, connector, plan and one run.
         self.b_msp_id = (await MspRepo(s).create(name="b")).id
@@ -98,7 +99,7 @@ class Lab:
         )
         b_connector = await ConnectorRepo(s).create(self.b_msp_id, b_client.id, b_worker.id, profile_for(b_client.tenant_id))
         b_plan = await PlanRepo(s).create(
-            self.b_msp_id, b_client.id, b_connector.id, sample_mail=2, sample_sp=2, sample_od=2, cadence_cron="0 4 * * *"
+            self.b_msp_id, b_client.id, b_connector.id, sample_mail=2, sample_sp=2, sample_od=2, cadence_cron="0 4 * * *", now=NOW
         )
         self.b_run_id = (await RunRepo(s).create(
             self.b_msp_id, plan_id=b_plan.id, client_id=b_client.id, connector_id=b_connector.id, worker_id=b_worker.id
@@ -313,7 +314,7 @@ async def test_two_polls_at_once_share_no_run(own_database):
             )
             connector = await ConnectorRepo(session).create(msp.id, client.id, worker.id, profile_for(client.tenant_id))
             plan = await PlanRepo(session).create(
-                msp.id, client.id, connector.id, sample_mail=1, sample_sp=1, sample_od=1, cadence_cron="0 2 * * *"
+                msp.id, client.id, connector.id, sample_mail=1, sample_sp=1, sample_od=1, cadence_cron="0 2 * * *", now=NOW
             )
             for _ in range(6):
                 await RunRepo(session).create(

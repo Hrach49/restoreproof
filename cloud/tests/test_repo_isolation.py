@@ -97,7 +97,7 @@ async def make_world(session, name: str) -> World:
         msp.id, client.id, worker.id, profile_for(client.tenant_id), user_id=user.id
     )
     plan = await PlanRepo(session).create(
-        msp.id, client.id, connector.id, sample_mail=5, sample_sp=3, sample_od=2, cadence_cron="0 2 * * *"
+        msp.id, client.id, connector.id, sample_mail=5, sample_sp=3, sample_od=2, cadence_cron="0 2 * * *", now=NOW
     )
     run = await RunRepo(session).create(
         msp.id, plan_id=plan.id, client_id=client.id, connector_id=connector.id, worker_id=worker.id
@@ -140,7 +140,7 @@ async def make_world(session, name: str) -> World:
         msp.id, client.id, world.spare_worker.id, profile_for(client.tenant_id)
     )
     world.spare_plan = await PlanRepo(session).create(
-        msp.id, client.id, connector.id, sample_mail=1, sample_sp=0, sample_od=0, cadence_cron="0 3 * * *"
+        msp.id, client.id, connector.id, sample_mail=1, sample_sp=0, sample_od=0, cadence_cron="0 3 * * *", now=NOW
     )
     return world
 
@@ -194,6 +194,8 @@ READS = [
     Read(PlanRepo, "get", _args("plan", lambda w: (w.plan.id,))),
     Read(PlanRepo, "list"),
     Read(PlanRepo, "list", kwargs=_kwargs("client", lambda w: {"client_id": w.client.id})),
+    # C5.9: the scheduler's read of an MSP's enabled plans.
+    Read(PlanRepo, "list", kwargs=_kwargs("enabled", lambda w: {"enabled": True})),
     Read(RunRepo, "get", _args("run", lambda w: (w.run.id,))),
     Read(RunRepo, "list"),
     Read(RunRepo, "list", kwargs=_kwargs("client", lambda w: {"client_id": w.client.id})),
@@ -254,6 +256,7 @@ CREATES = {
     (ConnectorRepo, "create"),
     (PlanRepo, "create"),
     (RunRepo, "create"),
+    (RunRepo, "create_scheduled"),
     (ItemRepo, "create"),
     (ItemRepo, "create_many"),
     (ReportRepo, "create"),
@@ -262,6 +265,10 @@ CREATES = {
 }
 
 LOOKUPS = {(Lookup, "find_worker_by_token_hash"), (Lookup, "find_install_token_by_hash")}
+
+# C5.9: the one read across every MSP, the scheduler's; held below to answer
+# both worlds' MSPs and nothing else of either.
+CROSS_MSP = {(MspRepo, "list")}
 
 
 def every_repo_method() -> set[tuple[type, str]]:
@@ -280,7 +287,7 @@ def every_repo_method() -> set[tuple[type, str]]:
 
 def test_the_table_names_every_repo_method():
     """A method added later must be added to READS, WRITES or CREATES."""
-    in_table = {(r.repo, r.method) for r in READS} | {(w.repo, w.method) for w in WRITES} | CREATES | LOOKUPS
+    in_table = {(r.repo, r.method) for r in READS} | {(w.repo, w.method) for w in WRITES} | CREATES | LOOKUPS | CROSS_MSP
 
     assert every_repo_method() == in_table
     assert len(every_repo_method()) >= 40
@@ -442,6 +449,20 @@ async def test_the_lookups_find_a_row_by_its_hash_alone_and_the_row_carries_its_
     assert (token.id, token.msp_id) == (a.token.id, a.msp.id)
     assert await lookup.find_worker_by_token_hash(a_hash("nobody")) is None
     assert await lookup.find_install_token_by_hash(a_hash("nobody")) is None
+
+
+# --- The one read across MSPs (C5.9) ----------------------------------------------------------
+
+
+async def test_msp_list_answers_both_msps_and_nothing_of_either_s_rows(session, worlds):
+    a, b = worlds
+
+    listed = await MspRepo(session).list()
+
+    ids = {msp.id for msp in listed}
+    assert {a.msp.id, b.msp.id} <= ids
+    assert not ((a.ids | b.ids) - {a.msp.id, b.msp.id}) & ids
+    assert all(type(msp).__name__ == "Msp" for msp in listed)
 
 
 # --- The repos never commit -------------------------------------------------------------

@@ -66,3 +66,35 @@ class WorkerRepo(Repo):
             .where(Worker.msp_id == msp_id, Worker.id == worker_id, Worker.revoked_at.is_(None))
             .values(revoked_at=at)
         )
+
+    async def heartbeat(
+        self,
+        msp_id: UUID,
+        worker_id: UUID,
+        *,
+        at: dt.datetime,
+        version: str,
+        last_error: str | None,
+        last_error_at: dt.datetime | None,
+        outbox_depth: int,
+        uptime_s: int,
+    ) -> int:
+        """Write a heartbeat into the Worker's row (C5.8; docs/decisions.md
+        2026-10-11, "C5.8", point 3): `last_seen_at` is `at`, the Cloud's
+        clock, the rest the Worker's own words, a null replacing a value. One
+        `UPDATE` whose `WHERE` holds `revoked_at IS NULL`, so a revoke that
+        landed since the token's lookup answers 0 and writes nothing. The
+        session's own copy of the row, which `current_worker` loaded, is kept
+        in step (the default synchronisation, as `revoke`; still one statement)."""
+        return await self._touched(
+            update(Worker)
+            .where(Worker.msp_id == msp_id, Worker.id == worker_id, Worker.revoked_at.is_(None))
+            .values(
+                last_seen_at=at,
+                version=version,
+                last_error=last_error,
+                last_error_at=last_error_at,
+                outbox_depth=outbox_depth,
+                uptime_s=uptime_s,
+            )
+        )

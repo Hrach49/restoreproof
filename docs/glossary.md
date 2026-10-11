@@ -397,7 +397,16 @@ every `heartbeat_interval_s`, a canonical JSON body of `version`, `uptime_s`, `o
 started, one fixed word (`jobs_unreadable`, `run_not_closed`, `veeam_sessions_working`, an
 upload word, ...), never a run's `error_code`; it is not cleared by a later success. Sent
 once, no credential until W5.1; one that falls due during a run is sent once after it, and a
-failed one is a log line, never the last error it reports.
+failed one is a log line, never the last error it reports. The Cloud's side (C5.8) writes the
+five fields as sent into the token's Worker's row (`worker.version`, `last_error`,
+`last_error_at`, `outbox_depth`, `uptime_s`) and `last_seen_at` from its own clock, in one
+`UPDATE`, answering 204 with no body; a revoked or unknown Worker is the one 401 and nothing is
+written; a body outside the five keys is 422. `docs/verification.md` "The Cloud receives a
+heartbeat".
+
+**Last seen (`worker.last_seen_at`).** When the Cloud last took a heartbeat from a Worker: the
+Cloud's clock at that request, never a time the Worker sent. Null until the first heartbeat;
+stops moving at a revoke. C6.2's `/workers` page shows it, red when older than 24 h.
 
 **RFC 3161 timestamp token (`tsa_token`).** A third-party Time Stamping Authority's signature
 over the bundle hash, proving the bundle existed at that time — not merely that our server

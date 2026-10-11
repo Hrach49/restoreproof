@@ -58,10 +58,10 @@ def test_the_document_is_sorted_two_space_lf_with_a_final_newline():
     assert raw == (json.dumps(document, sort_keys=True, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
 
 
-def test_the_document_holds_the_three_routes_and_not_healthz():
+def test_the_document_holds_the_four_routes_and_not_healthz():
     document = json.loads(DOCUMENT.read_bytes().decode("utf-8"))
 
-    assert set(document["paths"]) == {"/v1/workers/register", "/v1/jobs", "/v1/results"}
+    assert set(document["paths"]) == {"/v1/workers/register", "/v1/jobs", "/v1/results", "/v1/heartbeat"}
     assert "/healthz" not in document["paths"]
     register = document["paths"]["/v1/workers/register"]["post"]
     # The review's finding 3: every refusal the routes make is in the contract.
@@ -95,6 +95,27 @@ def test_the_document_holds_the_three_routes_and_not_healthz():
     assert parts["required"] == ["result", "signature"] and parts["additionalProperties"] is False
     assert set(parts["properties"]) == {"result", "signature", "timestamp", "items.csv", "veeam-session.log", "screenshot.png"}
     assert all(p == {"type": "string", "format": "binary", "description": p["description"]} for p in parts["properties"].values())
+    # C5.8: the heartbeat, 204 without content, the 401 as ErrorBody, FastAPI's
+    # 422 for the closed body of the Worker's five keys.
+    beat = document["paths"]["/v1/heartbeat"]["post"]
+    assert set(beat["responses"]) == {"204", "401", "422"}
+    assert "content" not in beat["responses"]["204"]
+    assert beat["responses"]["401"]["content"]["application/json"]["schema"] == error
+    assert beat["responses"]["401"]["headers"]["WWW-Authenticate"]
+    assert beat["requestBody"]["required"] is True
+    # The C5.8 review's finding 1: the route reads the body itself, after the
+    # token, so the model's schema is written into the operation, not referred to.
+    assert "HeartbeatBody" not in document["components"]["schemas"]
+    assert beat["responses"]["422"]["content"]["application/json"]["schema"] == {"$ref": "#/components/schemas/HTTPValidationError"}
+    body = beat["requestBody"]["content"]["application/json"]["schema"]
+    assert body["title"] == "HeartbeatBody"
+    assert body["additionalProperties"] is False
+    assert sorted(body["required"]) == ["last_error", "last_error_at", "outbox_depth", "uptime_s", "version"]
+    assert body["properties"]["version"]["pattern"] == "^[ -~]+$"
+    assert {"type": "null"} in body["properties"]["last_error"]["anyOf"]
+    assert {"type": "null"} in body["properties"]["last_error_at"]["anyOf"]
+    for name in ("outbox_depth", "uptime_s"):
+        assert (body["properties"][name]["type"], body["properties"][name]["minimum"], body["properties"][name]["maximum"]) == ("integer", 0, 2**53 - 1)
 
 
 def test_the_tool_writes_the_same_bytes_to_a_path_of_the_caller_s(tmp_path):

@@ -1481,9 +1481,10 @@ python -m unittest discover -s worker/tools -p "test_*.py"
 ## Cloud
 
 `cloud/` is the FastAPI backend (C5.1), its data model (C5.2), its repository layer (C5.3), its
-tokens (C5.4), the Worker's registration (C5.5), the jobs poll (C5.6) and the bundle's upload
-(C5.7). Its tests are pytest, run with uv from `cloud/`. The rules are `docs/decisions.md`
-2026-10-10, "C5.1 and C5.2", "C5.3 and C5.4", "C5.5 and C5.6" and "C5.7".
+tokens (C5.4), the Worker's registration (C5.5), the jobs poll (C5.6), the bundle's upload
+(C5.7) and the heartbeat (C5.8). Its tests are pytest, run with uv from `cloud/`. The rules are
+`docs/decisions.md` 2026-10-10, "C5.1 and C5.2", "C5.3 and C5.4", "C5.5 and C5.6" and "C5.7",
+and 2026-10-11, "C5.8".
 
 ### The test database: a real PostgreSQL 16, never SQLite
 
@@ -1552,10 +1553,10 @@ docker compose stop postgres              # when done; `docker compose down -v` 
 | `tests/test_healthz.py` | `/healthz`: both ok 200, either down 503 with the other still reported, nothing of an exception in the body or the log. The database half on the real test Postgres and on a closed port; the S3 half on botocore's `Stubber` and on a closed port. No MinIO runs in the unit tests. `HEAD` as `GET`; both checks slow take as long as one; the check's S3 client has the short limits and the data client doesn't |
 | `tests/test_app.py` | the factory, the six routers under `/v1`, the OpenAPI document at `/v1/openapi.json` without `/healthz`, the engine's settings, the `_test` rule; `get_session` commits before the response's first ASGI message leaves and rolls back when the route raises, seen from a second connection inside `send` on a database of the test's own, and `SessionDep`'s scope is `function` (C5.5, the review's finding 1); `own_database_context` closes its admin connection when `CREATE DATABASE` fails (finding 9) |
 | `tests/test_migrations.py` | on an empty database `upgrade head`, `downgrade -1`, `upgrade head`, in process and through `python -m alembic` with `DATABASE_URL` alone; `alembic check` finds no difference between the models and the migrated database (and does find a planted table and a planted server default); `LOG_LEVEL` on the command line; the CHECK constraints' names, which autogenerate doesn't compare; the three indexes by name |
-| `tests/test_models.py` | every rule of the model on the metadata, and each refusal on the database by the constraint that made it: a tenant twice in one MSP, in the other case, a connector twice for one Worker and client, a connector name or a run state outside its rule, a row that points into another MSP, a time without a zone; C5.5: `worker.key_id` 64 hex and unique across MSPs, `worker.install_token_id` held to the MSP's own token, `install_token.label` required, `created_at`, `created_by` held to the MSP's own user; C5.6: `dispatched_at`, `attempt` 0 by default and never negative, the poll's index starting with `msp_id`; C5.7: no `received` state, `test_run.tsa_time`, `test_item.position` required and never negative |
+| `tests/test_models.py` | every rule of the model on the metadata, and each refusal on the database by the constraint that made it: a tenant twice in one MSP, in the other case, a connector twice for one Worker and client, a connector name or a run state outside its rule, a row that points into another MSP, a time without a zone; C5.5: `worker.key_id` 64 hex and unique across MSPs, `worker.install_token_id` held to the MSP's own token, `install_token.label` required, `created_at`, `created_by` held to the MSP's own user; C5.6: `dispatched_at`, `attempt` 0 by default and never negative, the poll's index starting with `msp_id`; C5.7: no `received` state, `test_run.tsa_time`, `test_item.position` required and never negative; C5.8: `worker.last_error_at` (`UtcDateTime`), `outbox_depth` and `uptime_s` (`bigint`, each with a named CHECK `>= 0` refused on the database), fifteen `UtcDateTime` columns |
 | `tests/test_tenant_scope.py` | the lint: no `select(`, `update(`, `delete(`, `insert(`, `session.execute|get|add|scalars|…` or a `from sqlalchemy import` of those names outside `app/repo/` (and `app/migrations/`), held against a table of allowed and refused lines and not vacuous (the repo itself matches); the AST walk: every public method under `app/repo/` takes `msp_id: UUID` first but `Lookup`'s two hash reads and `MspRepo.create`; a planted sub-package `app/repo/sub/` is reached by the walk and by the isolation test's module scan (the C5.3/C5.4 review's finding 5) |
-| `tests/test_repo_isolation.py` | the scope test: MSP A and MSP B, one of everything each through the repos; every `get` and `list` with A's `msp_id` and B's ids answers nothing of B's; every `update`, `delete`, `revoke`, `set_enabled`, `set_state`, `mark_used`, `dispatch` and `requeue_stale` with A's `msp_id` on B's row answers 0 and leaves it; a table that must name every repo method; the repos never commit |
-| `tests/test_repo_workers.py` | C5.5 in the repo: a Worker stored with its `key_id`, its version and the install token that made it; the empty token's hash refused as a `RepoError` before any statement, the constant from the standard library; a `key_id` twice refused by `uq_worker_key_id`; an install token's `label`, `created_at` and `created_by`, the maker held to the MSP |
+| `tests/test_repo_isolation.py` | the scope test: MSP A and MSP B, one of everything each through the repos; every `get` and `list` with A's `msp_id` and B's ids answers nothing of B's; every `update`, `delete`, `revoke`, `set_enabled`, `set_state`, `mark_used`, `dispatch` and `requeue_stale` with A's `msp_id` on B's row answers 0 and leaves it; a table that must name every repo method; the repos never commit; C5.8: `heartbeat` with A's `msp_id` on B's Worker answers 0 |
+| `tests/test_repo_workers.py` | C5.5 in the repo: a Worker stored with its `key_id`, its version and the install token that made it; the empty token's hash refused as a `RepoError` before any statement, the constant from the standard library; a `key_id` twice refused by `uq_worker_key_id`; an install token's `label`, `created_at` and `created_by`, the maker held to the MSP. C5.8: `heartbeat` writes the six columns and answers 1, replaces every column (a null included) at the next, answers 0 for another MSP's Worker, another id and a revoked Worker leaving the row, takes 2^53 − 1, and keeps the session's loaded Worker in step (the review's finding 4) |
 | `tests/test_repo_runs.py` | C5.6 in the repo: `dispatch` takes the oldest five by `(created_at, id)`, marks each `dispatched` at `now` with one more attempt, leaves the sixth, another Worker's and another MSP's, and never a run in another state; the limit 1 to 5; `requeue_stale` at exactly six hours, back to `queued` with the count kept or `expired` at three attempts, answering `(requeued, expired)` and leaving the other states and the other MSP alone; `dispatch` answers each run with its plan, connector and client from one joined select, two statements busy and one idle (the review's finding 5). C5.7: `receive` is one `UPDATE` that takes a run that was handed out (`dispatched`, requeued `queued`, `expired`) with the bundle's columns and `signature_ok` true, keeps `dispatched_at` and `attempt`, and answers 0 for a run never handed out, one that holds a bundle, another Worker's, another MSP's or none; `get` answers the row as the database has it, never the session's stale copy |
 | `tests/test_repo_items.py` | C5.7: `ItemRepo.create` takes the item's `position`; `create_many` writes 0, 1 or 6 rows in one `INSERT` (none for none) under the caller's MSP and run with every column of the row; `list` answers by `position` then `id` |
 | `tests/test_storage.py` | C5.7: `Storage.put` is one `put_object` with the exact key, bytes and content type and `get` one `get_object` read whole, on botocore's `Stubber`; a refusal and a closed port raise the library's error, never swallowed. No MinIO in the unit tests |
@@ -1564,7 +1565,8 @@ docker compose stop postgres              # when done; `docker compose down -v` 
 | `tests/test_public_keys.py` | C5.5's key reader: every row of `key-files.json` read or refused as `verify_bundle.py` reads it (the same DER or the same `None`); the fourteen small-order encodings of `tests/registration-keys.json` refused though the file rule takes them, and the library's own acceptance of them shown; a `y` at or above p refused; a `y` that is no point of the curve refused (a one-character slip of RFC 8032's test-1 key; the module's recovery of x held equal to an independent Legendre-symbol check on 200 random values; RFC 8032's tests 2 and 3 accepted; the review's finding 8); the ten accepted layouts of one key stored as one text under one `key_id`, the text the library's own serialisation |
 | `tests/test_registration.py` | C5.5's Done-when: a Worker registers with an install token and RFC 8032's test-1 key, gets 201 with a 43-character token that passes `current_worker`, and the same install token again is 401; the four answers in order (401 before 400 before 409); an unknown, a used and an expired token one 401; the token unused after a 400 and after a 409, and usable again; every small-order key the same 400; every accepted layout stored in the one form; a key registered in another MSP still 409; a body outside the model 422 before any lookup; the same lookup for every token; one audit row with the caller's address; neither token nor either hash in any log line; on a database of its own, one token sent twice at once, one key with two tokens at once, and the Worker's row committed before the 201's first ASGI message leaves; the 401 is `dependency.not_authenticated`'s; a name too long is `string_too_long`, not a pattern mismatch |
 | `tests/test_jobs_route.py` | C5.6's Done-when: two polls return the same job only if the first attempt expired (the sweep in between, `expired` after the third); the document validated against `jobs.v1.json` with the profile schema; field by field from the run, the connector, the plan and the client, no `canary_cursor`; the `run_id` a folder name on the Worker; at most five oldest first and the rest next; an empty document for a Worker with nothing queued or no connector; a revoked Worker, no token and an unknown token 401 with nothing dispatched; another Worker's and another MSP's runs never answered; `GET` only; the token in no log line; on a database of its own, two polls at once share no run (disjoint, six in all, none over five); a busy poll is three statements and an idle one two; the route takes the MSP from the Worker it was given; the document's limit is `DISPATCH_LIMIT` |
-| `tests/test_openapi.py` | `docs/api/openapi-v1.json` equal to what `/v1/openapi.json` serves and to what `tools/dump_openapi.py` writes (sorted keys, two spaces, LF); the three routes and not `/healthz`; every refusal a route makes (401 with `WWW-Authenticate`, 400, 409; C5.7's 404, 411, 413, 415) in the document as `ErrorBody`, the upload's multipart body with its named parts and its 202 as `Accepted`; the tool writes to a path of the caller's with placeholder settings of closed loopback ports |
+| `tests/test_heartbeat.py` | C5.8's Done-when by name, `test_the_dashboard_column_last_seen_updates_every_15_minutes`: the Worker's two recorded bodies (121 and 88 bytes, `docs/api/veeam-lab/w4.11-3-service-run.txt`) posted under the Worker's token with the router's clock at T and T + 900 s, `WorkerRepo.list` (what C6.2's `/workers` page will read) answering `last_seen_at` T then T + 15 min with every column as sent and the restart's nulls, the other Worker and the other MSP untouched. Failure paths first: no token, `Basic`, an unknown token and a revoked Worker one 401 with nothing written; a Worker revoked between the lookup and the `UPDATE` 401 with nothing written; forty-two bodies outside the five keys 422 with the row untouched (a key missing, a sixth, not an object, each field's rule, the error without its time and the time without its error, a 30th of February, an hour 24, a time in digits outside 0 to 9, a time with a line end, each count negative, over 2^53 − 1, a float, a string, a boolean, null); not JSON and `text/plain` 422; `GET` and `PUT` 405. The C5.8 review: the token before the body (a body nothing can read, that is not JSON, 100,000 brackets deep, a 5000-digit integer, not UTF-8 or empty, is 401 without a token or with an unknown one and 422 with the Worker's, never FastAPI's own 400; `text/plain` without a token 401; the media type in any case and with a parameter; no `Content-Type` 422; a streamed body without a token answered 401 with no chunk pulled); a key twice 422 with the row untouched, the same value twice included. Then: the 204 has no body and no `Content-Type`; `version` replaced and a null clearing a stored error; `last_seen_at` the Cloud's clock whatever `last_error_at` says; the time stored to the millisecond; the counts at 2^53 − 1 taken; the Worker's row and nothing else written (every table's count); two statements; the Worker from the dependency it was given; neither the token nor any body value in a log line on a 204, a 401 and a 422; on a database of its own, two heartbeats at once both 204 and the row one of them whole; the model closed, `last_error_at` parsed once into the Worker's time as aware UTC (a datetime given to the model refused), and the version rule registration's own type |
+| `tests/test_openapi.py` | `docs/api/openapi-v1.json` equal to what `/v1/openapi.json` serves and to what `tools/dump_openapi.py` writes (sorted keys, two spaces, LF); the three routes and not `/healthz`; every refusal a route makes (401 with `WWW-Authenticate`, 400, 409; C5.7's 404, 411, 413, 415) in the document as `ErrorBody`, the upload's multipart body with its named parts and its 202 as `Accepted`; the tool writes to a path of the caller's with placeholder settings of closed loopback ports; C5.8: the fourth route with 204 without content, 401 and 422, `HeartbeatBody` closed with the five keys required and each field's rule |
 | `tests/test_repo_connectors.py` | C5.13 in the repo: a profile that isn't a `client-profile.v1`, one naming another tenant (the other MSP's too), a client or a Worker that isn't the MSP's, each a `RepoError` naming the key and no value, in one order (schema, client, tenant, Worker; the code review's finding 3); the tenant compared as a uuid; one audit row per create, update and delete that touched a row, none for an update or delete of nothing, nor for an update whose row was deleted between the read and the statement (finding 1); nothing of the profile in the audit row |
 | `tests/test_schemas.py` | `app/schemas.py` finds `shared/schemas/` by walking up, from the tree and from a planted layout; the Dockerfile copies the schemas, the verifier and the TSA root, the root `.dockerignore` allows the seven paths and nothing else, Compose builds from the repository root; `jsonschema`, `cryptography`, `asn1crypto` and `python-multipart` are runtime dependencies |
 | `tests/test_tokens.py` | 43 characters of base64url, 32 bytes, never equal; the hash is SHA-256 hex; an install token stored as its hash with `now + 7 days`, its label and its maker; accepted once, refused at exactly seven days and accepted a second before; an unknown token; two MSPs' tokens each their own; nothing commits |
@@ -1631,7 +1633,8 @@ the migrations agree.
 
 While nothing is deployed, `0001` may be edited in place (C5.3 did, for `test_run.connector_id`;
 C5.5 and C5.6 did, for the key's id, the install token's columns and the dispatch columns; C5.7
-did, for `test_run.tsa_time`, `test_item.position` and the `received` state, which is gone).
+did, for `test_run.tsa_time`, `test_item.position` and the `received` state, which is gone;
+C5.8 did, for `worker.last_error_at`, `outbox_depth` and `uptime_s`).
 A database that already ran the old `0001` keeps it: the api's `alembic upgrade head` sees the
 version and does nothing, and `alembic check` then fails. After such an edit, run the three
 commands above once on the stack's database (`downgrade -1`, `upgrade head`, `check`), or
@@ -1718,6 +1721,56 @@ run's text through the same secret screen as the evidence:
 with `c57-rows.py` for the rows (what C5.10's `manage.py` will do); `c57-post.ps1` beside them runs
 steps (6) to (9) alone for a folder the service already made, which is how the run of 2026-10-10
 ended after the harness was killed for memory mid-restore (`docs/api/cloud-lab/c5.7-done-when.txt`).
+
+### The heartbeat (C5.8)
+
+`POST /v1/heartbeat` (`docs/decisions.md` 2026-10-11, "C5.8"; `docs/verification.md` "The Cloud
+receives a heartbeat") takes the service's five-key body under the Worker's token and writes it
+into the Worker's row. `tests/test_heartbeat.py` holds the Done-when by name on the service's own
+recorded bodies, with the router's clock (`app.routers.heartbeat.now`) moved by the test; the
+dashboard column it names is `worker.last_seen_at`, read through `WorkerRepo.list` as C6.2's
+`/workers` page will read it.
+
+**The by-hand run against the Compose stack** (the evidence step,
+`docs/api/cloud-lab/c5.8-done-when.txt`, written by `docs/api/cloud-lab/c5.8-harness/c58-live.ps1`
+in one go, about seventeen minutes; the steps below are what it does). The real service can't
+make this run until W5.1 sends the `Authorization` header (its heartbeats to a real Cloud are
+`heartbeat failed: http_401` until then), so the bodies posted are the service's own recorded
+bytes, as C5.7's evidence posted the Worker's own bundle. The harness keeps both tokens in memory
+only: the install token goes to curl in the registration body on its standard input, the API
+token in a curl config on its standard input (`-K -`), so neither is in a file or on a command
+line, and the text is screened for them and for every token-shaped value before anything is
+saved. It never downgrades the stack's database and reads only the rows it made (the C5.8
+review's findings 5 and 6), so it can be run again on a stack that holds another task's rows:
+
+1. `cd cloud; docker compose up -d --wait --build`; `/healthz` 200;
+   `docker compose exec api alembic check`, and the harness stops there when the database is not
+   the models' (a database that ran an older `0001` is re-migrated by hand first, "The local
+   stack" above; the harness drops nothing); the `worker` table's heartbeat columns and its
+   CHECKs listed.
+2. The rows through the repos (`c58-rows.py init`): one MSP, one install token labelled
+   `c5.8 done-when`, printed once, and the public half of an Ed25519 key made for the run
+   (`uq_worker_key_id` takes one key once across the Cloud, so a fixed test key would register
+   once per database; the private half is never kept, a heartbeat signs nothing).
+3. `POST /v1/workers/register` with curl, the body on its standard input (`--data-binary @-`;
+   the run's key, `version` `0.0.0-registered`): 201 with the API token; `SELECT name, version,
+   last_seen_at, last_error, last_error_at, outbox_depth, uptime_s, revoked_at FROM worker WHERE
+   id = '<worker_id>'`: the version alone, the rest null.
+4. The service's recorded 121-byte body (`job_invalid`, `uptime_s` 152) posted with
+   `curl.exe -s -i -K - -X POST http://127.0.0.1:8000/v1/heartbeat -H "Content-Type: application/json" --data-binary @beat-1.json`
+   (the config on standard input is the one line `header = "Authorization: Bearer <token>"`):
+   `HTTP/1.1 204 No Content`, no body; the `SELECT`: `last_seen_at` the Cloud's time, `0.0.0`,
+   `job_invalid`, its time, 0, 152.
+5. `Start-Sleep 900` (the Worker's default interval), then the service's 88-byte first heartbeat:
+   204; the `SELECT`: `last_seen_at` fifteen minutes on, `last_error` and `last_error_at` null,
+   `uptime_s` 0; `c58-rows.py show <msp_id>`, the row as `WorkerRepo.list` answers it.
+6. The issue's four-key body with the token: 422; the 121-byte body without a token: 401; the
+   `SELECT` unchanged by either.
+7. `docker compose logs --since <the run's start> api` filtered to the heartbeat and registration
+   lines (status and duration, no body value); `SELECT action, target FROM audit_log WHERE msp_id
+   = '<msp_id>'`: `worker.register` alone.
+8. The temp folder with the three bodies removed (no token was ever in it); the run's MSP,
+   install token, Worker and audit row stay in the stack's database and no other row is touched.
 
 ## Once-per-sprint mutation run
 

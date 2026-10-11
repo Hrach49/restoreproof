@@ -255,6 +255,109 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/v1/heartbeat": {
+      "post": {
+        "operationId": "heartbeat_v1_heartbeat_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "last_error": {
+                    "anyOf": [
+                      {
+                        "pattern": "^[a-z0-9_]{1,64}$",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "title": "Last Error"
+                  },
+                  "last_error_at": {
+                    "anyOf": [
+                      {
+                        "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ],
+                    "title": "Last Error At"
+                  },
+                  "outbox_depth": {
+                    "maximum": 9007199254740991.0,
+                    "minimum": 0.0,
+                    "title": "Outbox Depth",
+                    "type": "integer"
+                  },
+                  "uptime_s": {
+                    "maximum": 9007199254740991.0,
+                    "minimum": 0.0,
+                    "title": "Uptime S",
+                    "type": "integer"
+                  },
+                  "version": {
+                    "maxLength": 64,
+                    "minLength": 1,
+                    "pattern": "^[ -~]+$",
+                    "title": "Version",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "version",
+                  "last_error",
+                  "last_error_at",
+                  "outbox_depth",
+                  "uptime_s"
+                ],
+                "title": "HeartbeatBody",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not authenticated: no valid token, whatever the reason.",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "`Bearer`",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Heartbeat"
+      }
+    },
     "/v1/jobs": {
       "get": {
         "operationId": "jobs_v1_jobs_get",

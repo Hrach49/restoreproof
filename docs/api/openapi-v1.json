@@ -1,6 +1,30 @@
 {
   "components": {
     "schemas": {
+      "Accepted": {
+        "additionalProperties": false,
+        "properties": {
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "pass",
+              "fail",
+              "error"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_id",
+          "state"
+        ],
+        "title": "Accepted",
+        "type": "object"
+      },
       "ConnectorRef": {
         "additionalProperties": false,
         "properties": {
@@ -265,6 +289,149 @@
           }
         },
         "summary": "Jobs"
+      }
+    },
+    "/v1/results": {
+      "post": {
+        "operationId": "upload_v1_results_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "items.csv": {
+                    "description": "an attachment the result lists, under its name",
+                    "format": "binary",
+                    "type": "string"
+                  },
+                  "result": {
+                    "description": "result.json, the result's canonical bytes",
+                    "format": "binary",
+                    "type": "string"
+                  },
+                  "screenshot.png": {
+                    "description": "an attachment the result lists, under its name",
+                    "format": "binary",
+                    "type": "string"
+                  },
+                  "signature": {
+                    "description": "signature.json",
+                    "format": "binary",
+                    "type": "string"
+                  },
+                  "timestamp": {
+                    "description": "timestamp.tst, when the run was timestamped",
+                    "format": "binary",
+                    "type": "string"
+                  },
+                  "veeam-session.log": {
+                    "description": "an attachment the result lists, under its name",
+                    "format": "binary",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "result",
+                  "signature"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Accepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "The bundle doesn't verify (the verifier's word), or the body is malformed, has a part twice or a part the result doesn't list, or the result verifies and the tables can't hold it (`result_unstorable`)."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not authenticated: no valid token, whatever the reason.",
+            "headers": {
+              "WWW-Authenticate": {
+                "description": "`Bearer`",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No such run of this Worker (`run_id: no such run`)."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "The run was never handed out (`run_id: not dispatched`), the bundle's client isn't the run's (`client_mismatch`), or the run holds another bundle (`bundle_conflict`)."
+          },
+          "411": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No Content-Length."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "The body, or a listed attachment, is over the cap."
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not multipart/form-data."
+          }
+        },
+        "summary": "Upload"
       }
     },
     "/v1/workers/register": {

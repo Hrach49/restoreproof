@@ -118,7 +118,7 @@ if ($Steps -contains 'c') {
         } catch {
             $t += "`n-- the grants couldn't be taken away: $($_.Exception.Message)"
         } finally {
-            $t += "`n-- the service uninstalled`n$(Invoke-W48 @('service', 'uninstall'))"
+            $t += "`n-- the service uninstalled`n$(Remove-W48Service)"
             # A run that failed never replaces the committed evidence.
             Save-W48Evidence ($done ? 'w4.10-3-service-run.txt' : 'w4.10-3-service-run.failed.txt') ($t -join "`n")
         }

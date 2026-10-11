@@ -58,10 +58,10 @@ def test_the_document_is_sorted_two_space_lf_with_a_final_newline():
     assert raw == (json.dumps(document, sort_keys=True, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
 
 
-def test_the_document_holds_the_two_routes_and_not_healthz():
+def test_the_document_holds_the_three_routes_and_not_healthz():
     document = json.loads(DOCUMENT.read_bytes().decode("utf-8"))
 
-    assert set(document["paths"]) == {"/v1/workers/register", "/v1/jobs"}
+    assert set(document["paths"]) == {"/v1/workers/register", "/v1/jobs", "/v1/results"}
     assert "/healthz" not in document["paths"]
     register = document["paths"]["/v1/workers/register"]["post"]
     # The review's finding 3: every refusal the routes make is in the contract.
@@ -78,6 +78,23 @@ def test_the_document_holds_the_two_routes_and_not_healthz():
     assert body["additionalProperties"] is False
     assert sorted(body["required"]) == ["install_token", "public_key_pem", "version", "worker_name"]
     assert document["components"]["schemas"]["Registered"]["additionalProperties"] is False
+    # C5.7: the upload, every refusal as ErrorBody, the multipart body by hand
+    # (the route reads the form itself and declares no body model, so FastAPI
+    # adds no 422).
+    upload = document["paths"]["/v1/results"]["post"]
+    assert set(upload["responses"]) == {"202", "400", "401", "404", "409", "411", "413", "415"}
+    for status in ("400", "401", "404", "409", "411", "413", "415"):
+        assert upload["responses"][status]["content"]["application/json"]["schema"] == error
+    assert upload["responses"]["401"]["headers"]["WWW-Authenticate"]
+    assert upload["responses"]["202"]["content"]["application/json"]["schema"] == {"$ref": "#/components/schemas/Accepted"}
+    accepted = document["components"]["schemas"]["Accepted"]
+    assert accepted["additionalProperties"] is False and sorted(accepted["required"]) == ["run_id", "state"]
+    assert accepted["properties"]["state"]["enum"] == ["pass", "fail", "error"]
+    parts = upload["requestBody"]["content"]["multipart/form-data"]["schema"]
+    assert upload["requestBody"]["required"] is True
+    assert parts["required"] == ["result", "signature"] and parts["additionalProperties"] is False
+    assert set(parts["properties"]) == {"result", "signature", "timestamp", "items.csv", "veeam-session.log", "screenshot.png"}
+    assert all(p == {"type": "string", "format": "binary", "description": p["description"]} for p in parts["properties"].values())
 
 
 def test_the_tool_writes_the_same_bytes_to_a_path_of_the_caller_s(tmp_path):

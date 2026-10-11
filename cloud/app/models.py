@@ -63,7 +63,10 @@ NAMING_CONVENTION = {
 CONNECTOR_TYPE_RULE = "^[a-z0-9_]{1,64}$"
 DEFAULT_CONNECTOR_TYPE = "veeam_m365"
 
-RUN_STATES = ("queued", "dispatched", "received", "pass", "fail", "error", "expired")
+# No `received` (C5.7): the bundle's status is known in the request that
+# receives it, so a run goes from dispatched to pass, fail or error in one
+# statement and no row is ever "received".
+RUN_STATES = ("queued", "dispatched", "pass", "fail", "error", "expired")
 
 # A SHA-256 as the Worker writes it: 64 lower-case hex digits.
 SHA256_RULE = "^[0-9a-f]{64}$"
@@ -294,7 +297,8 @@ class TestRun(Base):
     connector_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     state: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'queued'"))
     # C5.6: the last dispatch's time, and how many times the run was handed to
-    # its Worker. "Received" is the state C5.7 sets when the bundle arrives.
+    # its Worker. C5.7's `RunRepo.receive` moves a run that was handed out to
+    # its bundle's pass, fail or error.
     dispatched_at: Mapped[dt.datetime | None] = _time()
     attempt: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     restore_point_at: Mapped[dt.datetime | None] = _time()
@@ -306,6 +310,8 @@ class TestRun(Base):
     # Null is "not known yet", never false.
     signature_ok: Mapped[bool | None] = mapped_column(Boolean)
     tsa_ok: Mapped[bool | None] = mapped_column(Boolean)
+    # C5.7: the token's own time (genTime, UTC, whole seconds), set with tsa_ok.
+    tsa_time: Mapped[dt.datetime | None] = _time()
     cleanup_ok: Mapped[bool | None] = mapped_column(Boolean)
     error_code: Mapped[str | None] = mapped_column(Text)
     error_message: Mapped[str | None] = mapped_column(Text)
@@ -318,6 +324,7 @@ class TestItem(Base):
     __table_args__ = (
         _same_msp(("run_id",), "test_run", ("id",)),
         CheckConstraint("ms >= 0", name="ms_not_negative"),
+        CheckConstraint("position >= 0", name="position_not_negative"),
         _sha256_check("expected_sha256"),
         _sha256_check("found_sha256"),
         Index(None, "msp_id", "run_id"),
@@ -326,6 +333,10 @@ class TestItem(Base):
     id: Mapped[uuid.UUID] = _id()
     msp_id: Mapped[uuid.UUID] = _msp_id()
     run_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    # C5.7: the item's `index` in the result, which items.csv and the status's
+    # failed_items name it by. No unique: the Cloud files what the signed
+    # result says.
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
     type: Mapped[str] = mapped_column(Text, nullable=False)
     name: Mapped[str] = mapped_column(Text, nullable=False)
     expected_kind: Mapped[str] = mapped_column(Text, nullable=False)

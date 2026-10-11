@@ -50,9 +50,17 @@ def test_a_schema_that_does_not_exist_is_an_error_naming_the_file(tmp_path):
         load_schema("nothing.v9.json")
 
 
-def test_the_image_copies_the_schemas_beside_app_and_nothing_else():
-    """The Dockerfile's build context is the repository: cloud/'s four paths and
-    shared/schemas go in, by a root .dockerignore that allows nothing else."""
+IMAGE_PATHS = {
+    "!cloud/pyproject.toml", "!cloud/uv.lock", "!cloud/alembic.ini", "!cloud/app",
+    # C5.3: the schemas; C5.7: the verifier and the TSA root.
+    "!shared/schemas", "!shared/tools", "!shared/tsa",
+}
+
+
+def test_the_image_copies_the_schemas_the_verifier_and_the_tsa_root_beside_app_and_nothing_else():
+    """The Dockerfile's build context is the repository: cloud/'s four paths,
+    shared/schemas, shared/tools and shared/tsa go in, by a root .dockerignore
+    that allows nothing else."""
     root = shared_dir().parent
     dockerfile = (root / "cloud" / "Dockerfile").read_text(encoding="utf-8")
     ignore = [
@@ -63,22 +71,32 @@ def test_the_image_copies_the_schemas_beside_app_and_nothing_else():
     compose = (root / "cloud" / "docker-compose.yml").read_text(encoding="utf-8")
 
     assert "COPY shared/schemas ./shared/schemas" in dockerfile
+    assert "COPY shared/tools ./shared/tools" in dockerfile
+    assert "COPY shared/tsa ./shared/tsa" in dockerfile
     assert "COPY cloud/app ./app" in dockerfile
     assert not (root / "cloud" / ".dockerignore").exists()
     assert ignore[0] == "*"
-    assert {"!cloud/pyproject.toml", "!cloud/uv.lock", "!cloud/alembic.ini", "!cloud/app", "!shared/schemas"} <= set(ignore)
-    assert not [line for line in ignore if line.startswith("!") and line not in {
-        "!cloud/pyproject.toml", "!cloud/uv.lock", "!cloud/alembic.ini", "!cloud/app", "!shared/schemas"
-    }]
+    assert IMAGE_PATHS <= set(ignore)
+    assert not [line for line in ignore if line.startswith("!") and line not in IMAGE_PATHS]
+    # No bytecode of the build machine under any of the seven (the last match
+    # wins, so the line comes after them): the image runs the verifier's
+    # source as committed, never a `verify_bundle.cpython-312.pyc` beside it.
+    assert ignore[-1] == "**/__pycache__"
+    # What the two folders hold is the one verifier and the one root, nothing else.
+    assert sorted(p.name for p in (root / "shared" / "tools").iterdir() if p.name != "__pycache__") == ["verify_bundle.py"]
+    assert sorted(p.name for p in (root / "shared" / "tsa").iterdir()) == ["tsa-ca.pem"]
     assert compose.count("context: ..") == 2
     assert compose.count("dockerfile: cloud/Dockerfile") == 2
     assert "build: ." not in compose
 
 
-def test_jsonschema_is_a_runtime_dependency():
+@pytest.mark.parametrize("package", ["jsonschema", "cryptography", "asn1crypto", "python-multipart"])
+def test_the_verifier_s_libraries_and_the_form_parser_are_runtime_dependencies(package):
+    """jsonschema since C5.3; the verifier's two and starlette's form parser
+    since C5.7 (docs/decisions.md 2026-10-10, C5.7, point 1)."""
     import tomllib
 
     pyproject = tomllib.loads((Path(__file__).resolve().parent.parent / "pyproject.toml").read_text(encoding="utf-8"))
 
-    assert any(dep.startswith("jsonschema") for dep in pyproject["project"]["dependencies"])
-    assert not any(dep.startswith("jsonschema") for dep in pyproject["dependency-groups"]["dev"])
+    assert any(dep.startswith(package) for dep in pyproject["project"]["dependencies"])
+    assert not any(dep.startswith(package) for dep in pyproject["dependency-groups"]["dev"])

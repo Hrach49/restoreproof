@@ -1,10 +1,14 @@
 # The Cloud's image is built with the repository as its context
-# (cloud/docker-compose.yml): only these five paths go in. No evidence file,
-# fixture, run folder or .env can reach the image.
+# (cloud/docker-compose.yml): only these seven paths go in. No evidence file,
+# fixture, run folder or .env can reach the image, and no bytecode of the
+# build machine: the image compiles the source it was given (the last line,
+# after the seven, since the last match wins).
 *
 !cloud/pyproject.toml
 !cloud/uv.lock
 !cloud/alembic.ini
 !cloud/app
 !shared/schemas
-cloud/app/**/__pycache__
+!shared/tools
+!shared/tsa
+**/__pycache__

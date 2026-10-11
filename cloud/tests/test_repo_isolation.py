@@ -30,12 +30,12 @@ from app.repo.base import Repo
 from app.repo.clients import ClientRepo
 from app.repo.connectors import ConnectorRepo
 from app.repo.install_tokens import InstallTokenRepo
-from app.repo.items import ItemRepo
+from app.repo.items import ItemRepo, ItemRow
 from app.repo.lookup import Lookup
 from app.repo.msps import MspRepo
 from app.repo.plans import PlanRepo
 from app.repo.reports import ReportRepo
-from app.repo.runs import RunRepo
+from app.repo.runs import ReceivedRun, RunRepo
 from app.repo.users import UserRepo
 from app.repo.workers import WorkerRepo
 from tests.test_repo_connectors import profile_for
@@ -47,6 +47,13 @@ PEM = "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA\n-----END PUBLIC KEY-----\n"
 
 def a_hash(seed: str) -> str:
     return uuid.uuid5(uuid.NAMESPACE_DNS, seed).hex * 2
+
+
+RECEIVED = ReceivedRun(
+    state="pass", error_code=None, error_message=None, started_at=NOW, finished_at=NOW, total_ms=1,
+    restore_point_at=NOW, bundle_key="msp/x/runs/y/", bundle_sha256="ab" * 32, tsa_ok=None, tsa_time=None,
+    cleanup_ok=True,
+)
 
 
 @dataclass
@@ -105,12 +112,16 @@ async def make_world(session, name: str) -> World:
         text("UPDATE test_run SET dispatched_at = :at, attempt = 1 WHERE id = :id"),
         {"at": NOW, "id": world.stale_run.id},
     )
-    for number in (1, 2):
-        world.items.append(
-            await ItemRepo(session).create(
-                msp.id, run.id, type="mail", name=f"{name} item {number}", expected_kind="manifest"
-            )
-        )
+    # One item by `create` and one by `create_many` (C5.7's one INSERT), so
+    # both are among the rows every read and write below is held to.
+    await ItemRepo(session).create(msp.id, run.id, position=0, type="mail", name=f"{name} item 1", expected_kind="manifest")
+    many = ItemRow(
+        position=1, type="mail", name=f"{name} item 2", expected_kind="manifest", expected_sha256=None,
+        found_sha256=None, found=None, match=None, reason=None, ms=None,
+    )
+    assert await ItemRepo(session).create_many(msp.id, run.id, [many]) == 1
+    world.items.extend(await ItemRepo(session).list(msp.id, run.id))
+    assert [item.name for item in world.items] == [f"{name} item 1", f"{name} item 2"]
     world.report = await ReportRepo(session).create(
         msp.id, client.id, period_start=dt.date(2026, 9, 1), period_end=dt.date(2026, 9, 30),
         storage_key=f"{name}/2026-09.pdf", sha256="ab" * 32,
@@ -225,6 +236,9 @@ WRITES = [
     # stays queued; the sweep with A's msp_id leaves B's stale run dispatched.
     Write(RunRepo, "dispatch", lambda w: w.run, lambda w: (w.worker.id, NOW)),
     Write(RunRepo, "requeue_stale", lambda w: w.stale_run, lambda w: (NOW + dt.timedelta(hours=6),), sweep=True),
+    # C5.7: with A's msp_id and B's dispatched run (B's Worker given, as the
+    # route gives the token's Worker) the bundle isn't filed and B's row stays.
+    Write(RunRepo, "receive", lambda w: w.stale_run, lambda w: (w.stale_run.id,), lambda w: {"worker_id": w.worker.id, "update": RECEIVED}),
     Write(InstallTokenRepo, "mark_used", lambda w: w.token, lambda w: (w.token.id, NOW)),
 ]
 
@@ -239,6 +253,7 @@ CREATES = {
     (PlanRepo, "create"),
     (RunRepo, "create"),
     (ItemRepo, "create"),
+    (ItemRepo, "create_many"),
     (ReportRepo, "create"),
     (AuditRepo, "write"),
     (InstallTokenRepo, "create"),
@@ -380,6 +395,7 @@ async def test_a_write_on_a_row_that_does_not_exist_answers_zero(session, worlds
     assert await RunRepo(session).set_state(a.msp.id, nothing, "error") == 0
     assert await RunRepo(session).dispatch(a.msp.id, nothing, NOW) == []
     assert await RunRepo(session).requeue_stale(a.msp.id, NOW - dt.timedelta(days=1)) == (0, 0)
+    assert await RunRepo(session).receive(a.msp.id, nothing, worker_id=a.worker.id, update=RECEIVED) == 0
     assert await InstallTokenRepo(session).mark_used(a.msp.id, nothing, NOW) == 0
 
 
@@ -394,6 +410,8 @@ async def test_the_writes_do_what_they_say_on_their_own_rows(session, worlds):
     assert await workers.revoke(a.msp.id, a.worker.id, NOW + dt.timedelta(days=1)) == 0  # once
     assert await plans.set_enabled(a.msp.id, a.plan.id, False) == 1
     assert await runs.set_state(a.msp.id, a.run.id, "dispatched") == 1
+    assert await runs.receive(a.msp.id, a.stale_run.id, worker_id=a.worker.id, update=RECEIVED) == 1
+    assert await runs.receive(a.msp.id, a.stale_run.id, worker_id=a.worker.id, update=RECEIVED) == 0  # once
     assert await tokens.mark_used(a.msp.id, a.token.id, NOW) == 1
     assert await tokens.mark_used(a.msp.id, a.token.id, NOW) == 0  # single use
     assert await clients.delete(a.msp.id, a.spare_client.id) == 1
@@ -403,6 +421,7 @@ async def test_the_writes_do_what_they_say_on_their_own_rows(session, worlds):
     assert (await workers.get(a.msp.id, a.worker.id)).revoked_at == NOW
     assert (await plans.get(a.msp.id, a.plan.id)).enabled is False
     assert (await runs.get(a.msp.id, a.run.id)).state == "dispatched"
+    assert (await runs.get(a.msp.id, a.stale_run.id)).state == "pass"
     assert (await tokens.get(a.msp.id, a.token.id)).used_at == NOW
     assert await clients.get(a.msp.id, a.spare_client.id) is None
 

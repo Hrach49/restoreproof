@@ -1481,9 +1481,9 @@ python -m unittest discover -s worker/tools -p "test_*.py"
 ## Cloud
 
 `cloud/` is the FastAPI backend (C5.1), its data model (C5.2), its repository layer (C5.3), its
-tokens (C5.4), the Worker's registration (C5.5) and the jobs poll (C5.6). Its tests are pytest, run
-with uv from `cloud/`. The rules are `docs/decisions.md` 2026-10-10, "C5.1 and C5.2", "C5.3 and
-C5.4" and "C5.5 and C5.6".
+tokens (C5.4), the Worker's registration (C5.5), the jobs poll (C5.6) and the bundle's upload
+(C5.7). Its tests are pytest, run with uv from `cloud/`. The rules are `docs/decisions.md`
+2026-10-10, "C5.1 and C5.2", "C5.3 and C5.4", "C5.5 and C5.6" and "C5.7".
 
 ### The test database: a real PostgreSQL 16, never SQLite
 
@@ -1552,17 +1552,21 @@ docker compose stop postgres              # when done; `docker compose down -v` 
 | `tests/test_healthz.py` | `/healthz`: both ok 200, either down 503 with the other still reported, nothing of an exception in the body or the log. The database half on the real test Postgres and on a closed port; the S3 half on botocore's `Stubber` and on a closed port. No MinIO runs in the unit tests. `HEAD` as `GET`; both checks slow take as long as one; the check's S3 client has the short limits and the data client doesn't |
 | `tests/test_app.py` | the factory, the six routers under `/v1`, the OpenAPI document at `/v1/openapi.json` without `/healthz`, the engine's settings, the `_test` rule; `get_session` commits before the response's first ASGI message leaves and rolls back when the route raises, seen from a second connection inside `send` on a database of the test's own, and `SessionDep`'s scope is `function` (C5.5, the review's finding 1); `own_database_context` closes its admin connection when `CREATE DATABASE` fails (finding 9) |
 | `tests/test_migrations.py` | on an empty database `upgrade head`, `downgrade -1`, `upgrade head`, in process and through `python -m alembic` with `DATABASE_URL` alone; `alembic check` finds no difference between the models and the migrated database (and does find a planted table and a planted server default); `LOG_LEVEL` on the command line; the CHECK constraints' names, which autogenerate doesn't compare; the three indexes by name |
-| `tests/test_models.py` | every rule of the model on the metadata, and each refusal on the database by the constraint that made it: a tenant twice in one MSP, in the other case, a connector twice for one Worker and client, a connector name or a run state outside its rule, a row that points into another MSP, a time without a zone; C5.5: `worker.key_id` 64 hex and unique across MSPs, `worker.install_token_id` held to the MSP's own token, `install_token.label` required, `created_at`, `created_by` held to the MSP's own user; C5.6: `dispatched_at`, `attempt` 0 by default and never negative, the poll's index starting with `msp_id` |
+| `tests/test_models.py` | every rule of the model on the metadata, and each refusal on the database by the constraint that made it: a tenant twice in one MSP, in the other case, a connector twice for one Worker and client, a connector name or a run state outside its rule, a row that points into another MSP, a time without a zone; C5.5: `worker.key_id` 64 hex and unique across MSPs, `worker.install_token_id` held to the MSP's own token, `install_token.label` required, `created_at`, `created_by` held to the MSP's own user; C5.6: `dispatched_at`, `attempt` 0 by default and never negative, the poll's index starting with `msp_id`; C5.7: no `received` state, `test_run.tsa_time`, `test_item.position` required and never negative |
 | `tests/test_tenant_scope.py` | the lint: no `select(`, `update(`, `delete(`, `insert(`, `session.execute|get|add|scalars|…` or a `from sqlalchemy import` of those names outside `app/repo/` (and `app/migrations/`), held against a table of allowed and refused lines and not vacuous (the repo itself matches); the AST walk: every public method under `app/repo/` takes `msp_id: UUID` first but `Lookup`'s two hash reads and `MspRepo.create`; a planted sub-package `app/repo/sub/` is reached by the walk and by the isolation test's module scan (the C5.3/C5.4 review's finding 5) |
 | `tests/test_repo_isolation.py` | the scope test: MSP A and MSP B, one of everything each through the repos; every `get` and `list` with A's `msp_id` and B's ids answers nothing of B's; every `update`, `delete`, `revoke`, `set_enabled`, `set_state`, `mark_used`, `dispatch` and `requeue_stale` with A's `msp_id` on B's row answers 0 and leaves it; a table that must name every repo method; the repos never commit |
 | `tests/test_repo_workers.py` | C5.5 in the repo: a Worker stored with its `key_id`, its version and the install token that made it; the empty token's hash refused as a `RepoError` before any statement, the constant from the standard library; a `key_id` twice refused by `uq_worker_key_id`; an install token's `label`, `created_at` and `created_by`, the maker held to the MSP |
-| `tests/test_repo_runs.py` | C5.6 in the repo: `dispatch` takes the oldest five by `(created_at, id)`, marks each `dispatched` at `now` with one more attempt, leaves the sixth, another Worker's and another MSP's, and never a run in another state; the limit 1 to 5; `requeue_stale` at exactly six hours, back to `queued` with the count kept or `expired` at three attempts, answering `(requeued, expired)` and leaving the other states and the other MSP alone; `dispatch` answers each run with its plan, connector and client from one joined select, two statements busy and one idle (the review's finding 5) |
+| `tests/test_repo_runs.py` | C5.6 in the repo: `dispatch` takes the oldest five by `(created_at, id)`, marks each `dispatched` at `now` with one more attempt, leaves the sixth, another Worker's and another MSP's, and never a run in another state; the limit 1 to 5; `requeue_stale` at exactly six hours, back to `queued` with the count kept or `expired` at three attempts, answering `(requeued, expired)` and leaving the other states and the other MSP alone; `dispatch` answers each run with its plan, connector and client from one joined select, two statements busy and one idle (the review's finding 5). C5.7: `receive` is one `UPDATE` that takes a run that was handed out (`dispatched`, requeued `queued`, `expired`) with the bundle's columns and `signature_ok` true, keeps `dispatched_at` and `attempt`, and answers 0 for a run never handed out, one that holds a bundle, another Worker's, another MSP's or none; `get` answers the row as the database has it, never the session's stale copy |
+| `tests/test_repo_items.py` | C5.7: `ItemRepo.create` takes the item's `position`; `create_many` writes 0, 1 or 6 rows in one `INSERT` (none for none) under the caller's MSP and run with every column of the row; `list` answers by `position` then `id` |
+| `tests/test_storage.py` | C5.7: `Storage.put` is one `put_object` with the exact key, bytes and content type and `get` one `get_object` read whole, on botocore's `Stubber`; a refusal and a closed port raise the library's error, never swallowed. No MinIO in the unit tests |
+| `tests/test_results.py` | C5.7's Done-when by name, `test_the_tests_pass_and_a_real_worker_bundle_lands_as_pass_in_the_db`: the Worker-made `signing-v1/bundle.json` re-keyed to a dispatched run and re-signed with the same published key (`tests/results_lab.py`) posted under the Worker's token answers 202 `{"run_id", "state": "pass"}`, the row with every column of the entry's point 11, six `test_item` rows by point 12, one audit row `result.received`, four `put_object`s under `msp/<msp_id>/runs/<run_id>/` with the exact bytes, and the same bundle again 202 with nothing written; the same with a token the test TSA made (`tests/tsa_lab.py`), `tsa_ok` true and `tsa_time` the token's. Failure paths: 401 before the body is parsed; 415, 411, 413 before any byte is read, `body: malformed` (a bad boundary, no boundary, a seventh file part, a part without a file name), `part_twice`, each part's limit (over: unread, its word; at: read), a listed size over the cap 413, `part_unexpected` (and a listed name in another case `attachment_missing`), the file name and content type not the contract; the key always the token's Worker's (`wrong_key` for the other Worker); a 400 before any run is named; no string of the result in a response or a log line; the run's one 404 (not a uuid, unknown, the other MSP's, the other Worker's), 409 for a run never handed out, `dispatched`, requeued and `expired` runs each taken (the W4.8 `error interrupted` case); seven client mismatches one 409, the tenant in the other case taken, an `error` without the client check filed and a `fail` not; the mapping (a `fail` with `mismatch`, `missing` and `error` items and a clock that went back, a run that sampled and wasn't checked, a check item missing, a 30th of February); `bundle_conflict`; a repeat verified again; six statements after the token's lookup and five without items; two uploads at once on a database of their own filed once with the puts run once; the rows committed before the 202's first ASGI message; a put that fails leaves no row (500); the module's own words, limits, the script and the root by path, a Worker row whose key is no key the app's failure, a token held to the root the route was given |
+| `tests/test_results_vectors.py` | C5.7: every case of `signing-v1/cases.json` and `timestamp-v1/cases.json` (61) posted as the Worker posts a folder, under the case's key and the case's TSA root: every failing case 400 with its own word, one audit row and nothing stored; every verified case passes the whole verification and is then 404 `run_id: no such run` (the vectors' `run_id` is no uuid); the two cases that differ by design named (`token-under-another-name` is `part_unexpected`, `token-and-no-ca` is checked under the root); the closed folder the same; the 404 after the fifteen words (the same folder under another Worker's token is `wrong_key`) |
 | `tests/test_public_keys.py` | C5.5's key reader: every row of `key-files.json` read or refused as `verify_bundle.py` reads it (the same DER or the same `None`); the fourteen small-order encodings of `tests/registration-keys.json` refused though the file rule takes them, and the library's own acceptance of them shown; a `y` at or above p refused; a `y` that is no point of the curve refused (a one-character slip of RFC 8032's test-1 key; the module's recovery of x held equal to an independent Legendre-symbol check on 200 random values; RFC 8032's tests 2 and 3 accepted; the review's finding 8); the ten accepted layouts of one key stored as one text under one `key_id`, the text the library's own serialisation |
 | `tests/test_registration.py` | C5.5's Done-when: a Worker registers with an install token and RFC 8032's test-1 key, gets 201 with a 43-character token that passes `current_worker`, and the same install token again is 401; the four answers in order (401 before 400 before 409); an unknown, a used and an expired token one 401; the token unused after a 400 and after a 409, and usable again; every small-order key the same 400; every accepted layout stored in the one form; a key registered in another MSP still 409; a body outside the model 422 before any lookup; the same lookup for every token; one audit row with the caller's address; neither token nor either hash in any log line; on a database of its own, one token sent twice at once, one key with two tokens at once, and the Worker's row committed before the 201's first ASGI message leaves; the 401 is `dependency.not_authenticated`'s; a name too long is `string_too_long`, not a pattern mismatch |
 | `tests/test_jobs_route.py` | C5.6's Done-when: two polls return the same job only if the first attempt expired (the sweep in between, `expired` after the third); the document validated against `jobs.v1.json` with the profile schema; field by field from the run, the connector, the plan and the client, no `canary_cursor`; the `run_id` a folder name on the Worker; at most five oldest first and the rest next; an empty document for a Worker with nothing queued or no connector; a revoked Worker, no token and an unknown token 401 with nothing dispatched; another Worker's and another MSP's runs never answered; `GET` only; the token in no log line; on a database of its own, two polls at once share no run (disjoint, six in all, none over five); a busy poll is three statements and an idle one two; the route takes the MSP from the Worker it was given; the document's limit is `DISPATCH_LIMIT` |
-| `tests/test_openapi.py` | `docs/api/openapi-v1.json` equal to what `/v1/openapi.json` serves and to what `tools/dump_openapi.py` writes (sorted keys, two spaces, LF); the two routes and not `/healthz`; every refusal a route makes (401 with `WWW-Authenticate`, 400, 409) in the document as `ErrorBody`; the tool writes to a path of the caller's with placeholder settings of closed loopback ports |
+| `tests/test_openapi.py` | `docs/api/openapi-v1.json` equal to what `/v1/openapi.json` serves and to what `tools/dump_openapi.py` writes (sorted keys, two spaces, LF); the three routes and not `/healthz`; every refusal a route makes (401 with `WWW-Authenticate`, 400, 409; C5.7's 404, 411, 413, 415) in the document as `ErrorBody`, the upload's multipart body with its named parts and its 202 as `Accepted`; the tool writes to a path of the caller's with placeholder settings of closed loopback ports |
 | `tests/test_repo_connectors.py` | C5.13 in the repo: a profile that isn't a `client-profile.v1`, one naming another tenant (the other MSP's too), a client or a Worker that isn't the MSP's, each a `RepoError` naming the key and no value, in one order (schema, client, tenant, Worker; the code review's finding 3); the tenant compared as a uuid; one audit row per create, update and delete that touched a row, none for an update or delete of nothing, nor for an update whose row was deleted between the read and the statement (finding 1); nothing of the profile in the audit row |
-| `tests/test_schemas.py` | `app/schemas.py` finds `shared/schemas/` by walking up, from the tree and from a planted layout; the Dockerfile copies the schemas, the root `.dockerignore` allows the five paths and nothing else, Compose builds from the repository root; `jsonschema` is a runtime dependency |
+| `tests/test_schemas.py` | `app/schemas.py` finds `shared/schemas/` by walking up, from the tree and from a planted layout; the Dockerfile copies the schemas, the verifier and the TSA root, the root `.dockerignore` allows the seven paths and nothing else, Compose builds from the repository root; `jsonschema`, `cryptography`, `asn1crypto` and `python-multipart` are runtime dependencies |
 | `tests/test_tokens.py` | 43 characters of base64url, 32 bytes, never equal; the hash is SHA-256 hex; an install token stored as its hash with `now + 7 days`, its label and its maker; accepted once, refused at exactly seven days and accepted a second before; an unknown token; two MSPs' tokens each their own; nothing commits |
 | `tests/test_auth.py` | the Done-when: a revoked Worker's token 401, a valid one 200 with the Worker and its `msp_id` on `request.state`; nine refusals (no header, `Basic`, two spaces, a word after, `bearer`, an empty token, an unknown one, the hash as the token, a revoked Worker) with one status, body and `WWW-Authenticate`; the same work (one lookup) for every refusal and the success; neither the token nor its hash in any log line; the session comes from `get_session`; no header, `Bearer ` and `Basic …` are 401 even with a Worker planted by SQL under the empty string's hash (the code review's finding 2; the repo refuses that hash since C5.5); a `Lab` that fails to fill leaves no probe route on the shared router (finding 7) |
 
@@ -1626,7 +1630,8 @@ skeleton): explicit operations, every constraint named in full, nothing imported
 the migrations agree.
 
 While nothing is deployed, `0001` may be edited in place (C5.3 did, for `test_run.connector_id`;
-C5.5 and C5.6 did, for the key's id, the install token's columns and the dispatch columns).
+C5.5 and C5.6 did, for the key's id, the install token's columns and the dispatch columns; C5.7
+did, for `test_run.tsa_time`, `test_item.position` and the `received` state, which is gone).
 A database that already ran the old `0001` keeps it: the api's `alembic upgrade head` sees the
 version and does nothing, and `alembic check` then fails. After such an edit, run the three
 commands above once on the stack's database (`downgrade -1`, `upgrade head`, `check`), or
@@ -1650,6 +1655,69 @@ cd cloud
 uv run python tools/dump_openapi.py       # rewrites docs/api/openapi-v1.json
 uv run pytest tests/test_openapi.py       # holds the file equal to what the app serves
 ```
+
+### The upload (C5.7)
+
+`POST /v1/results` (`docs/decisions.md` 2026-10-10, "C5.7"; `docs/verification.md` "The Cloud
+receives a bundle") takes the Worker's multipart upload of a run folder and verifies it with the
+auditor's own `shared/tools/verify_bundle.py`, loaded by path from the image (the Dockerfile
+copies `shared/tools` and `shared/tsa` beside `shared/schemas`). `tests/test_results.py` holds the
+Done-when by name on the Worker-made `shared/testdata/signing-v1/bundle.json`, re-keyed to a run
+the test dispatched and re-signed with the same published key, and `tests/test_results_vectors.py`
+runs every shared case through the route (a verified case is 404 at the run: the vectors' `run_id`
+is no uuid). The bucket is botocore's `Stubber` in the tests; the real one is the by-hand
+Done-when's below. `tests/tsa_lab.py` makes a token with the published test TSA key for the
+timestamped Done-when. `tests/test_results_server.py` puts uvicorn on a loopback port in front of
+the route's own `_parts` and writes raw requests to the socket (no database): the body cap is
+held on what a real server hands over, which `httpx.ASGITransport` can't show, since it frames
+nothing. In `tests/test_results.py` a request body that must not be read is a `Body`, which
+counts the chunks the app asked for ("before any byte is read" is `pulled == 0`).
+
+**The by-hand live upload, from the Veeam VM to the Compose stack** (the Done-when's evidence
+step, `docs/api/cloud-lab/c5.7-done-when.txt`, written by
+`docs/api/cloud-lab/c5.7-harness/c57-live.ps1` in one go; the steps below are what it does). The
+Worker sends no `Authorization` header until W5.1, so its own flush goes to the W4.6 stub Cloud
+(202), as in W4.8 to W4.11; the real Worker bundle is made by the service on the VM and posted by
+hand with the token, exactly as the Worker will post it. The harness reads an answer's status
+from its status line (never a search of the text: every `Date` header holds "202"), stops the
+service before it uninstalls it whatever step threw (`Remove-W48Service`), and passes a failed
+run's text through the same secret screen as the evidence:
+
+1. `cd cloud; docker compose up -d --wait --build`, then once on the stack's database
+   `docker compose exec api alembic downgrade -1`, `upgrade head`, `check` (the edit of `0001`).
+2. The rows through the repos from a short `uv run python` script against the stack's
+   `DATABASE_URL` (C5.10's `manage.py` doesn't exist yet; the script is
+   `docs/api/cloud-lab/c5.7-harness/c57-rows.py`): one MSP, one client with the lab tenant's id (`lab/tenant.md`), one install
+   token labelled `c5.7 done-when`, printed once.
+3. On the VM, `rpworker signer public-key > %TEMP%\rp-c57\worker.pub.pem`, then
+   `curl.exe -s -X POST http://127.0.0.1:8000/v1/workers/register -H "Content-Type: application/json" -d @register.json`
+   (the token, the PEM, `worker_name`, `version`): 201 with the API token, kept under
+   `%TEMP%\rp-c57` for the session.
+4. The connector (the lab's `client-profile.v1` file), a plan and one run through the repos;
+   `curl.exe -s http://127.0.0.1:8000/v1/jobs -H "Authorization: Bearer <token>"`: the jobs
+   document with the run's uuid, saved as `%LOCALAPPDATA%\RestoreProof\lab\jobs.json`.
+5. The service by hand ("The service's loop by hand" above) with `jobs_file` naming that
+   document: within one poll the run lands under `outbox\<run uuid>\` and the service's own
+   flush moves it to `sent\<run uuid>\` on the stub's 202; the service stopped and uninstalled.
+6. From that folder:
+   `curl.exe -s -i -X POST http://127.0.0.1:8000/v1/results -H "Authorization: Bearer <token>" -F "result=@result.json;type=application/json" -F "signature=@signature.json;type=application/json" -F "timestamp=@timestamp.tst;type=application/octet-stream" -F "items.csv=@items.csv;type=application/octet-stream" -F "veeam-session.log=@veeam-session.log;type=application/octet-stream"`:
+   202 `{"run_id": "<uuid>", "state": "pass"}`; the same command again: 202, the same body.
+7. `docker compose exec postgres psql -U restoreproof -d restoreproof -c "SELECT state, error_code, bundle_sha256, signature_ok, tsa_ok, tsa_time, cleanup_ok, total_ms FROM test_run"`
+   (one row, `pass`, `tsa_ok` true), the items by `position` (30 rows), the audit rows
+   (`worker.register`, `result.received`, none for the repeat); the bucket listed and the five
+   objects downloaded into a folder, on which
+   `uv run shared/tools/verify_bundle.py <folder> --public-key worker.pub.pem --tsa-ca shared/tsa/tsa-ca.pem`
+   prints `verified <bundle_sha256> key <key_id> timestamp <time>` with the row's values.
+8. A tampered copy (one byte of `items.csv`) posted: 400 `{"detail": "attachment_hash"}`, one
+   audit row `result.rejected`, the row unchanged, no sixth object.
+9. `graph list` 0 in all three targets; the `sent\` folder moved to `%ProgramData%\RestoreProof\c57`;
+   the token file and `%TEMP%\rp-c57` removed. The run folder, the profile and the token stay
+   outside the repository.
+
+`docs/api/cloud-lab/c5.7-harness/c57-live.ps1` runs the nine steps in one go over the W4.8 harness,
+with `c57-rows.py` for the rows (what C5.10's `manage.py` will do); `c57-post.ps1` beside them runs
+steps (6) to (9) alone for a folder the service already made, which is how the run of 2026-10-10
+ended after the harness was killed for memory mid-restore (`docs/api/cloud-lab/c5.7-done-when.txt`).
 
 ## Once-per-sprint mutation run
 

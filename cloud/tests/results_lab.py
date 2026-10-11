@@ -142,10 +142,10 @@ class Lab:
             self.msp_id, self.client_id, self.other_worker_id, profile_for(TENANT_ID)
         )).id
         self.plan_id = (await PlanRepo(s).create(
-            self.msp_id, self.client_id, self.connector_id, sample_mail=3, sample_sp=2, sample_od=1, cadence_cron="0 2 * * *"
+            self.msp_id, self.client_id, self.connector_id, sample_mail=3, sample_sp=2, sample_od=1, cadence_cron="0 2 * * *", now=NOW
         )).id
         self.other_plan_id = (await PlanRepo(s).create(
-            self.msp_id, self.client_id, self.other_connector_id, sample_mail=1, sample_sp=1, sample_od=1, cadence_cron="0 3 * * *"
+            self.msp_id, self.client_id, self.other_connector_id, sample_mail=1, sample_sp=1, sample_od=1, cadence_cron="0 3 * * *", now=NOW
         )).id
         # The other MSP: its own client of the same tenant, Worker under the
         # same published key is impossible (the key's unique), so a made-up one.
@@ -157,7 +157,7 @@ class Lab:
         )
         b_connector = await ConnectorRepo(s).create(self.b_msp_id, b_client.id, b_worker.id, profile_for(TENANT_ID))
         b_plan = await PlanRepo(s).create(
-            self.b_msp_id, b_client.id, b_connector.id, sample_mail=2, sample_sp=2, sample_od=2, cadence_cron="0 4 * * *"
+            self.b_msp_id, b_client.id, b_connector.id, sample_mail=2, sample_sp=2, sample_od=2, cadence_cron="0 4 * * *", now=NOW
         )
         self.b_run_id = (await RunRepo(s).create(
             self.b_msp_id, plan_id=b_plan.id, client_id=b_client.id, connector_id=b_connector.id, worker_id=b_worker.id

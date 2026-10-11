@@ -46,17 +46,30 @@ FORBIDDEN = (
     re.compile(r"^\s*from sqlalchemy[\w.]*\s+import\b.*\b(?:" + "|".join(STATEMENT_NAMES) + r")\b"),
 )
 
-# The three methods that take no msp_id: the two reads that happen before any
-# MSP is known, and the one that makes an MSP.
+# The four methods that take no msp_id: the two reads that happen before any
+# MSP is known, the one that makes an MSP, and the scheduler's one read across
+# every MSP (C5.9: the sweep and the dispatcher go MSP by MSP from it).
 WITHOUT_MSP_ID = {
     ("lookup.py", "Lookup", "find_worker_by_token_hash"),
     ("lookup.py", "Lookup", "find_install_token_by_hash"),
     ("msps.py", "MspRepo", "create"),
+    ("msps.py", "MspRepo", "list"),
 }
+
+# The one public function under app/repo/ that is no method: it words an
+# IntegrityError (C5.10) and runs no statement, so it has no MSP to be scoped to.
+MODULE_FUNCTIONS = {("errors.py", None, "constraint_refusal")}
+
+
+# C5.10: the CLI lives beside app/ and is held like a router.
+MANAGE = APP_DIR.parent / "manage.py"
 
 
 def app_files() -> list[Path]:
-    return sorted(path for path in APP_DIR.rglob("*.py") if "__pycache__" not in path.parts)
+    files = [path for path in APP_DIR.rglob("*.py") if "__pycache__" not in path.parts]
+    if MANAGE.is_file():
+        files.append(MANAGE)
+    return sorted(files)
 
 
 def outside_repo(path: Path) -> bool:
@@ -82,12 +95,16 @@ def test_the_lint_looks_at_the_whole_app_but_the_repo_and_the_migrations():
     assert APP_DIR / "main.py" in held
     assert APP_DIR / "db.py" in held
     assert APP_DIR / "routers" / "workers.py" in held
+    assert APP_DIR / "onboarding.py" in held
+    assert APP_DIR / "scheduler.py" in held
+    assert APP_DIR / "cadence.py" in held
+    assert MANAGE in held
     assert not [path for path in held if path.is_relative_to(REPO_DIR)]
     assert not [path for path in held if path.is_relative_to(APP_DIR / "migrations")]
     assert len(held) >= 12
 
 
-@pytest.mark.parametrize("path", [p for p in app_files() if outside_repo(p)], ids=lambda p: str(p.relative_to(APP_DIR)))
+@pytest.mark.parametrize("path", [p for p in app_files() if outside_repo(p)], ids=lambda p: str(p.relative_to(APP_DIR.parent)))
 def test_no_statement_is_built_or_run_outside_the_repo(path: Path):
     offending = offending_lines(path.read_text(encoding="utf-8"))
 
@@ -186,16 +203,21 @@ def first_parameter(node: ast.FunctionDef | ast.AsyncFunctionDef, in_class: bool
     return params[0] if params else None
 
 
-def test_every_public_repo_function_is_a_method_of_a_class():
+def test_every_public_repo_function_is_a_method_of_a_class_but_the_one_that_words_an_error():
     functions = all_repo_functions()
 
     assert functions
-    assert [f for f in functions if f[1] is None] == []
+    assert {(f[0], f[1], f[2]) for f in functions if f[1] is None} == MODULE_FUNCTIONS
+    for file_name, _class_name, name, node in functions:
+        if (file_name, None, name) in MODULE_FUNCTIONS:
+            assert [arg.arg for arg in node.args.args] == ["error"]
 
 
 def test_every_public_repo_method_takes_msp_id_first_but_the_three_named():
     without = set()
     for file_name, class_name, name, node in all_repo_functions():
+        if (file_name, class_name, name) in MODULE_FUNCTIONS:
+            continue
         first = first_parameter(node, in_class=class_name is not None)
         if first is None or first.arg != "msp_id":
             without.add((file_name, class_name, name))
@@ -255,7 +277,8 @@ def test_the_ast_walk_reaches_a_sub_package_of_the_repo():
         without = {
             (file_name, class_name, name)
             for file_name, class_name, name, node in all_repo_functions()
-            if (first := first_parameter(node, in_class=class_name is not None)) is None or first.arg != "msp_id"
+            if (file_name, class_name, name) not in MODULE_FUNCTIONS
+            and ((first := first_parameter(node, in_class=class_name is not None)) is None or first.arg != "msp_id")
         }
         assert ("x.py", "PlantedRepo", "leak") in without
         assert without - {("x.py", "PlantedRepo", "leak")} == WITHOUT_MSP_ID

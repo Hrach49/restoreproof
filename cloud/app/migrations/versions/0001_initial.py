@@ -240,6 +240,7 @@ def upgrade() -> None:
         sa.Column("sample_od", sa.Integer(), nullable=False),
         _text("cadence_cron"),
         _boolean("enabled", nullable=False, default="true"),
+        _time("created_at", nullable=False, default_now=True),
         _pk("test_plan"),
         _fk_msp("test_plan"),
         _fk("test_plan", ("client_id",), "client", ("id",)),
@@ -261,6 +262,7 @@ def upgrade() -> None:
         _uuid("plan_id"),
         _uuid("connector_id"),
         _text("state", default="queued"),
+        _time("scheduled_for"),
         _time("dispatched_at"),
         sa.Column("attempt", sa.Integer(), server_default=sa.text("0"), nullable=False),
         _time("restore_point_at"),
@@ -283,6 +285,7 @@ def upgrade() -> None:
         _fk("test_run", ("plan_id", "connector_id", "client_id"), "test_plan", ("id", "connector_id", "client_id")),
         _fk("test_run", ("connector_id", "worker_id"), "connector", ("id", "worker_id")),
         _unique("test_run", "msp_id", "id"),
+        _unique("test_run", "msp_id", "plan_id", "scheduled_for"),
         _check(
             "test_run",
             "state",

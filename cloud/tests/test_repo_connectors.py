@@ -8,6 +8,7 @@ one audit_log row in the same transaction.
 from __future__ import annotations
 
 import json
+import datetime as dt
 import uuid
 
 import pytest
@@ -26,6 +27,7 @@ VALID_PROFILE = json.loads(
     (shared_dir() / "testdata" / "client-profile-v1" / "valid.json").read_bytes().decode("utf-8")
 )
 PEM = "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA\n-----END PUBLIC KEY-----\n"
+NOW = dt.datetime(2026, 10, 10, 12, 0, 0, tzinfo=dt.timezone.utc)
 
 
 def profile_for(tenant_id: uuid.UUID, **changes) -> dict:
@@ -336,7 +338,7 @@ async def test_a_connector_a_plan_points_at_is_not_deleted(session):
     lab = await Lab.make(session)
     connector = await lab.create()
     await PlanRepo(session).create(
-        lab.msp.id, lab.client.id, connector.id, sample_mail=1, sample_sp=1, sample_od=1, cadence_cron="0 2 * * *"
+        lab.msp.id, lab.client.id, connector.id, sample_mail=1, sample_sp=1, sample_od=1, cadence_cron="0 2 * * *", now=NOW
     )
 
     with pytest.raises(IntegrityError) as raised:

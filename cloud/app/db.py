@@ -20,15 +20,23 @@ from app.settings import Settings
 CONNECT_TIMEOUT_S = 5
 
 
-def make_engine(settings: Settings) -> AsyncEngine:
-    """The app's engine. Making it connects to nothing."""
+def make_engine_for_url(url: str) -> AsyncEngine:
+    """An engine for `url` with the app's settings: no echo, the parameters
+    of a failed statement hidden, every session in UTC. The CLI and the
+    scheduler (C5.10, C5.9) make theirs from `DATABASE_URL` alone through
+    here; making it connects to nothing."""
     return create_async_engine(
-        settings.database_url.get_secret_value(),
+        url,
         echo=False,
         hide_parameters=True,
         pool_pre_ping=True,
         connect_args={"timeout": CONNECT_TIMEOUT_S, "server_settings": {"timezone": "UTC"}},
     )
+
+
+def make_engine(settings: Settings) -> AsyncEngine:
+    """The app's engine. Making it connects to nothing."""
+    return make_engine_for_url(settings.database_url.get_secret_value())
 
 
 def make_session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:

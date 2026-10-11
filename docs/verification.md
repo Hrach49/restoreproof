@@ -1807,3 +1807,142 @@ code makes. The hidden `rptests "[.write_shared_closed]"` writes it. A Worker te
 `worker_version`, and `Signer::verify_folder` says `verified`;
 `cloud/tests/test_verify_bundle_closed.py` runs `verify_bundle.py` over it and gets the same
 word.
+
+## The Cloud receives a bundle (C5.7)
+
+`POST /v1/results` is the Cloud's side of the upload "The outbox" describes: the Worker's parts
+`result`, `signature`, `timestamp` (when there) and one per listed attachment under its own
+name, posted under the Worker's API token. The decisions are `docs/decisions.md` 2026-10-10,
+"C5.7"; the code is `cloud/app/results.py` (every decision, strict at 100% line and branch) and
+`cloud/app/routers/results.py` (the request and the statements). The Worker is not changed by
+it: what W5.1 does with each answer is recorded in the entry's point 15.
+
+### The third verifier is the second one
+
+The Cloud imports `shared/tools/verify_bundle.py` from the image (`cloud/Dockerfile` copies
+`shared/tools` and `shared/tsa` beside `shared/schemas`) and runs the script's own `verify`,
+`check_attachment` and `check_timestamp` over the parts. So the three verifiers, `rpworker
+signer verify`, the script and the Cloud, give one word for every case of
+`shared/testdata/signing-v1/` and `shared/testdata/timestamp-v1/`;
+`cloud/tests/test_results_vectors.py` posts each of the 61 cases through the route. Two cases
+differ from a folder by design: a token under another case of its name (`TIMESTAMP.TST`) is a
+file the verifiers note and a part the upload refuses, and a token with no CA, unchecked to the
+script, is checked under the root here, since the Cloud always has one. A third difference is
+also by design and has no shared case (the C5.7 review's finding 12, left as it is): the upload
+holds every part's size before it reads any, in the sender's order, so a folder with two faults
+at once, one of them an oversized `signature`, `timestamp` or attachment, may get the size's
+word here and the other fault's word from the two verifiers. No bundle the Worker's flush sends
+is affected (it holds the sizes before it sends), and a part is never read past its limit to
+find a better word. The key is always the
+token's Worker's `public_key_pem` and `key_id` as registered (C5.5); nothing in the body names a
+key, an MSP or a Worker.
+
+### The checks, in one order, and what each answers
+
+| Step | Refusal | Status |
+|---|---|---|
+| no valid token | `not authenticated` | 401, before any byte of the body is parsed |
+| `Content-Type` not `multipart/form-data` | `body: not multipart/form-data` | 415 |
+| no `Content-Length` | `body: no Content-Length` | 411 |
+| `Content-Length` no ASCII number | `body: no Content-Length` | 411 |
+| `Content-Length` over 96 MiB | `body: too large` | 413, before the body is read |
+| the body itself passes 96 MiB, whatever `Content-Length` said | `body: too large` | 413, the reading stopped there |
+| the parser refuses the body (a bad boundary, a seventh file part, a part without a file name, a charset nothing decodes under), or the sender went away mid-body | `body: malformed` | 400 |
+| a part name twice | `part_twice` | 400 |
+| `result` missing or over 16 MiB; `signature` missing or over 4096 bytes; `timestamp` over 64 KiB | `result_unreadable`; `signature_file`; `timestamp_file` | 400, the part unread |
+| the result and the signature, in the verifiers' order | `result_not_canonical`, `result_schema`, `attachment_twice`, `screenshot_missing`, `signature_file`, `hash_mismatch`, `wrong_key`, `signature_invalid` | 400 |
+| a listed attachment's `size_bytes` over 25 MiB | `body: too large` | 413 |
+| each listed attachment, in the result's order | `attachment_missing`, `attachment_size`, `attachment_hash` | 400 |
+| a part the result doesn't list (`manifest.json`) | `part_unexpected` | 400 |
+| the token, when there, under `shared/tsa/tsa-ca.pem` | `timestamp_file`, `timestamp_mismatch`, `timestamp_invalid` | 400 |
+| a verified result the tables can't hold: an item `index` over 2^31-1, or a U+0000 in a text a row takes (an item's `subject` or `name`, an `error`'s `status.message`) | `result_unstorable` | 400 |
+| `run_id` not the text the Cloud dispatched (no uuid, or a uuid in another spelling), no such run, another MSP's, another Worker's | `run_id: no such run` | 404 |
+| a run never handed out (`dispatched_at` null) | `run_id: not dispatched` | 409 |
+| a run that holds a bundle of another hash | `bundle_conflict` | 409 |
+| the bundle's client isn't the run's | `client_mismatch` | 409 |
+| accepted | `{"run_id": "<uuid>", "state": "pass" \| "fail" \| "error"}` | 202 |
+
+The media type is read without regard to case, as HTTP has it. The 96 MiB cap is held twice: on
+the header before a byte is read, and on the bytes as they arrive, since a server that frames a
+body by its chunks (`Transfer-Encoding: chunked` beside a small `Content-Length`) hands the
+route more than the header said; `tests/test_results_server.py` holds it through uvicorn on
+loopback. A listed name under another case (`ITEMS.CSV` for `items.csv`) is not the listed part:
+the attachments are checked first, so the answer is `attachment_missing`. `result_unstorable` is
+the Cloud's own word, not a verifier's: the schema takes an index to 2^53-1 and any text, the
+`position` column is an int4 and PostgreSQL's `text` holds no U+0000, and a 500 would leave the
+Worker retrying for good. The run is named by `str(test_run.id)`, the text the job gave: capitals,
+no hyphens or `urn:uuid:` name no run, so the stored `result.json` and its row agree byte for
+byte. The verification runs in a thread (it is CPU work of up to seconds for a large plan and
+would otherwise hold every other request).
+
+Every 400 comes before the run is named, so a bundle that doesn't verify tells a caller nothing
+about what runs exist. A refusal after authentication writes one `audit_log` row,
+`result.rejected`, whose target is `worker:<id> <word>` or, once the run is known,
+`run:<id> <word>`, and nothing else; it is answered as a response rather than raised, so that
+one row commits. No refusal's text ever quotes the document, and no string of the body reaches
+a log line.
+
+**The client** (the entry's point 9): `client.client_id` must be the job's, `str(client.id)`
+(null is a mismatch: a run made at a prompt is not the Cloud's job); `client.tenant_id`, parsed
+as a uuid, must be the client row's; with `scope` `same_tenant`,
+`resolved.organization.tenant_id`, what the backup product said the organisation is, must be
+that tenant too; and a `pass` or `fail` without `scope` `same_tenant` is refused, since the
+Worker never writes a verdict without the client check (W4.11) and the Cloud files no verdict it
+wasn't shown to be about. An `error` without the check is filed, and it alone may leave the
+tenant unsaid (`tenant_id` `""`): the Worker's `error job_invalid` for a job whose client profile
+it couldn't read knows no tenant and signs the empty strings beside the job's `client_id` ("A
+result written afterwards"). A tenant that is said must be the client's, in every result.
+
+**The run's state.** A bundle is taken for a run that is `dispatched`, `queued` again by the
+sweep and not yet polled, or `expired` after three attempts: all three were handed out, and a
+late upload (the service's `error interrupted` written at its next start, "A result written
+afterwards") is signed evidence of the job the Cloud dispatched, however late. The run goes to
+the bundle's own `pass`, `fail` or `error` in one `UPDATE` whose `WHERE` holds that rule
+(`RunRepo.receive`), so a second upload at the same moment is settled by the rowcount (the
+sweep and the poll leave a run one that takes a bundle, so only another upload's commit makes
+the `UPDATE` miss; the row read again then answers 202 or `bundle_conflict`); `dispatched_at`
+and `attempt` are kept. There is no `received` state, and every state either takes a bundle or
+holds one (a test holds the two lists to `RUN_STATES`). A run that
+already holds this very bundle answers 202 with its stored state and nothing is written, not
+even an audit row; a different bundle for one run is `bundle_conflict`.
+
+**The timestamp.** No `timestamp` part is "not timestamped": `tsa_ok` null, never a refusal
+(W4.4). A token that is there is held to the one root the image carries, exactly as the
+verifiers hold it, and a bad one is refused: the three verifiers must agree, an honest Worker
+never sends one (the run verified the chain before it wrote the file and the flush holds the
+imprint before every upload), and a Worker configured for a TSA the Cloud doesn't trust should
+hear so at its first bundle rather than have months of runs quietly flagged. `tsa_ok` is true
+or null after this task, and `tsa_time` is the token's `genTime`.
+
+### What is filed
+
+Rows first, then the objects, in the request's one transaction, committed before the 202
+leaves (so the Worker's move to `sent\` never outruns the row):
+
+- **`test_run`:** `state` from `status.status`; `error_code` and `error_message` from `status`
+  when `error`; `started_at`, `finished_at` from `started_at`, `ended_at`; `total_ms` from
+  `timings.spans.total.ms`; `restore_point_at` from `restore_point.backup_time`; `bundle_key`
+  the prefix `msp/<msp_id>/runs/<run_id>/`; `bundle_sha256` the signature's (the SHA-256 of
+  `result.json`'s bytes); `signature_ok` true; `tsa_ok` and `tsa_time`; `cleanup_ok` from
+  `cleanup.cleanup_ok`. A time the pattern takes and the calendar refuses, a negative duration
+  and a span without `ms` are null, never a refusal. Everything else of the result stays in the
+  stored `result.json`.
+- **`test_item`:** one row per `expected.items[]` entry, joined to `check.items[]` by `index`,
+  in one `INSERT`: `position` the index, `type` the kind, `name` the subject or the file name,
+  `expected_kind`, `expected_sha256` for a `manifest` item, `found_sha256` always null (no found
+  value is ever in the result, W3.2; the canaries' are in `items.csv` for a person), `found`,
+  `match` (`match` true, `mismatch` and `missing` false, `error` not known), `reason`, `ms`. A
+  result that never sampled files no items.
+- **One audit row** `result.received`, target `run:<id>`.
+- **The objects:** `result.json` and `signature.json` as `application/json`, `timestamp.tst`
+  when there and each attachment under its own name as `application/octet-stream`, each the
+  part's bytes under the prefix. A put that fails rolls the rows back (the app's 500; the Worker
+  retries); an object already written is overwritten by the next upload of the same bundle.
+
+### What the Worker will do with each answer (W5.1, built nowhere yet)
+
+The status alone decides; the Worker may log the body's `detail` word and relies on nothing else
+in a body. 202, first or repeated: `sent`. 401: never retried by schedule, one warning, the run
+stays queued. 400 (any word), 404, 409, 415, 422: permanent, the folder to `failed\<run_id>` for
+the operator's `rpworker signer verify`. 411, 413, 5xx, a timeout, no connection: retried by
+today's schedule.

@@ -432,9 +432,23 @@ small-order or non-canonical point, under which a verifier would accept forgerie
 **Dispatch.** The Cloud handing a queued run to its Worker: `GET /v1/jobs` (C5.6) moves the
 Worker's oldest queued runs, at most five, to `dispatched` with `dispatched_at` and one more
 `attempt`, in one locked statement, and answers them as a `restoreproof.jobs.v1` document whose
-`run_id` is the run's own id. A run not received (its bundle not arrived, C5.7) within six
-hours goes back to `queued` by the scheduler's sweep (C5.9, over `RunRepo.requeue_stale`), and
-after three attempts to `expired`.
+`run_id` is the run's own id. A run whose bundle hasn't arrived (C5.7) within six hours goes
+back to `queued` by the scheduler's sweep (C5.9, over `RunRepo.requeue_stale`), and after three
+attempts to `expired`; its bundle is still taken when it comes.
+
+**Bundle upload (`POST /v1/results`).** The Worker's multipart upload of a run folder (C5.7):
+the parts `result`, `signature`, `timestamp` when there, and one per listed attachment under its
+name. The Cloud verifies it with the auditor's own `verify_bundle.py` under the token's Worker's
+registered key and the pinned TSA root, refuses anything that doesn't verify with the verifier's
+one word (400; `result_unstorable`, the Cloud's own, for a verified result whose item index or
+text a column can't hold), names the run only after that, by the very text the job gave (one 404
+for a run that isn't this Worker's; 409
+for one never handed out, for a bundle whose client isn't the run's, `client_mismatch`, and for a
+second bundle of one run, `bundle_conflict`), and files the run as its bundle's `pass`, `fail`
+or `error` with its items in one transaction, the files under `msp/<msp_id>/runs/<run_id>/`;
+202 `{"run_id", "state"}`, and the same bundle again 202 with no change. There is no `received`
+state: the bundle's status is known in the request that receives it. A missing token is
+`tsa_ok` null ("not timestamped"); a bad one is refused as the two verifiers refuse it.
 
 **Veeam / Graph tokens.** Access tokens (and, for Veeam, refresh tokens) for the systems
 under test. Distinct from both of the above: they let the Worker read and restore; the API

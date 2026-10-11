@@ -4,9 +4,12 @@
 multipart upload of a signed run folder, the parts `result`, `signature`,
 `timestamp` (when there) and one per listed attachment under its own name.
 The route reads the request under explicit limits (nothing else in the stack
-bounds a body), hands the parts to `app/results.py`, which decides everything,
+bounds a body: the cap is held on the bytes as they arrive, whatever
+Content-Length said), hands the parts to `app/results.py`, which decides
+everything (the verification in a thread: it is CPU work of up to seconds),
 and runs the statements: the run's one `UPDATE` (whose rowcount settles a
-race), the items in one `INSERT`, the audit row, then the objects under
+race with another upload), the items in one `INSERT`, the audit row, then the
+objects under
 `msp/<msp_id>/runs/<run_id>/`; 202 `{"run_id", "state"}` once the transaction
 is committed (`SessionDep`). A refusal is returned, not raised, so its one
 audit row commits and nothing else (nothing was written before it). The
@@ -18,12 +21,14 @@ from __future__ import annotations
 import asyncio
 from typing import Annotated, Any, Literal
 
+from collections.abc import AsyncGenerator
+
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict
-from starlette.datastructures import UploadFile
-from starlette.exceptions import HTTPException
-from starlette.formparsers import MultiPartException
+from starlette.datastructures import FormData
+from starlette.formparsers import MultiPartException, MultiPartParser
+from starlette.requests import ClientDisconnect
 
 from app import results
 from app.auth.dependency import current_worker
@@ -77,33 +82,67 @@ def _refused(detail: str, status: int) -> JSONResponse:
     return JSONResponse(status_code=status, content={"detail": detail})
 
 
+class _Body:
+    """The request's body, counted as it arrives: the cap is held on the
+    bytes themselves, since a server that frames a body by its chunks
+    (`Transfer-Encoding: chunked` beside a small Content-Length, which h11
+    takes) hands over more than the header said. Over the cap the stream ends
+    in the parser's own exception, so the parser closes what it spooled."""
+
+    def __init__(self, request: Request) -> None:
+        self._request = request
+        self.over = False
+
+    async def chunks(self) -> AsyncGenerator[bytes, None]:
+        taken = 0
+        async for chunk in self._request.stream():
+            taken += len(chunk)
+            if taken > results.MAX_UPLOAD_BYTES:
+                self.over = True
+                raise MultiPartException("over the cap")
+            yield chunk
+
+
 async def _parts(request: Request) -> dict[str, bytes] | results.Refused:
     """The request's parts as bytes by name, or the refusal: the headers
-    first (415, 411, 413), then the form under the limits (400 malformed, a
-    part twice), then each part's size against its limit before it is read."""
+    first (415, 411, 413), then the form under the limits (413 once the body
+    itself passes the cap, 400 malformed, a part twice), then each part's
+    size against its limit before it is read. The parser is starlette's,
+    called directly: `request.form()` reads a media type in another case as
+    no form at all, and answers the parser's text as an HTTPException."""
     media_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
     if media_type != MULTIPART:
         return results.Refused(415, results.BODY_NOT_MULTIPART)
     length = request.headers.get("content-length", "")
-    if not length.isdigit():
+    if not (length.isascii() and length.isdigit()):
         return results.Refused(411, results.BODY_NO_LENGTH)
     if int(length) > results.MAX_UPLOAD_BYTES:
         return results.Refused(413, results.BODY_TOO_LARGE)
+    body = _Body(request)
+    parser = MultiPartParser(request.headers, body.chunks(), max_files=results.MAX_FILE_PARTS, max_fields=0, max_part_size=4096)
     try:
-        form = await request.form(max_files=results.MAX_FILE_PARTS, max_fields=0, max_part_size=4096)
-    except (MultiPartException, HTTPException):
-        # starlette raises its own HTTPException(400, <the parser's text>)
-        # for a request that has an app; the text names the fault and is
-        # never answered: one fixed word.
+        form = await parser.parse()
+    except (MultiPartException, ClientDisconnect, UnicodeError):
+        # The parser's text names the fault and is never answered: one fixed
+        # word. A sender that went away mid-body and a charset no name
+        # decodes under are a body that doesn't read, not this app's failure.
+        if body.over:
+            return results.Refused(413, results.BODY_TOO_LARGE)
         return results.Refused(400, results.BODY_MALFORMED)
-    parts: dict[str, bytes] = {}
-    uploads: list[tuple[str, UploadFile]] = []
-    for name, upload in form.multi_items():
-        if name in parts:
+    try:
+        return await _read(form)
+    finally:
+        await form.close()  # the spooled files, on every path
+
+
+async def _read(form: FormData) -> dict[str, bytes] | results.Refused:
+    names: set[str] = set()
+    for name, _ in form.multi_items():
+        if name in names:
             return results.Refused(400, results.PART_TWICE)
-        parts[name] = b""
-        uploads.append((name, upload))
-    for name, upload in uploads:
+        names.add(name)
+    parts: dict[str, bytes] = {}
+    for name, upload in form.multi_items():
         refused = results.size_refusal(name, upload.size or 0)
         if refused is not None:
             return refused
@@ -118,7 +157,7 @@ async def _parts(request: Request) -> dict[str, bytes] | results.Refused:
     openapi_extra=UPLOAD_BODY,
     responses={
         401: NOT_AUTHENTICATED,
-        400: refusal("The bundle doesn't verify (the verifier's word), or the body is malformed, has a part twice or a part the result doesn't list."),
+        400: refusal("The bundle doesn't verify (the verifier's word), or the body is malformed, has a part twice or a part the result doesn't list, or the result verifies and the tables can't hold it (`result_unstorable`)."),
         404: refusal("No such run of this Worker (`run_id: no such run`)."),
         409: refusal("The run was never handed out (`run_id: not dispatched`), the bundle's client isn't the run's (`client_mismatch`), or the run holds another bundle (`bundle_conflict`)."),
         411: refusal("No Content-Length."),
@@ -138,8 +177,15 @@ async def upload(request: Request, worker: Annotated[Worker, Depends(current_wor
     parts = await _parts(request)
     if isinstance(parts, results.Refused):
         return await rejected(parts)
-    verified = results.verify_upload(
-        parts, public_key_pem=worker.public_key_pem, key_id=worker.key_id, tsa_ca=request.app.state.tsa_ca_pem
+    # In a thread: the scan, the parses, the schema and the hashes are CPU
+    # work of up to seconds, and on the loop they would hold every other
+    # request of every MSP.
+    verified = await asyncio.to_thread(
+        results.verify_upload,
+        parts,
+        public_key_pem=worker.public_key_pem,
+        key_id=worker.key_id,
+        tsa_ca=request.app.state.tsa_ca_pem,
     )
     if isinstance(verified, results.Refused):
         return await rejected(verified)
@@ -163,17 +209,18 @@ async def upload(request: Request, worker: Annotated[Worker, Depends(current_wor
     update = results.run_update(verified, key)
     touched = await runs.receive(worker.msp_id, run.id, worker_id=worker.id, update=update)
     if touched == 0:
-        # Another transaction moved the run meanwhile: a second upload, or the
-        # sweep. The row as it is now decides (point 11).
+        # Another upload filed the run meanwhile (the sweep and the poll leave
+        # a run one that takes a bundle, so they never make the UPDATE miss).
+        # The row as it is now decides: that bundle again, or another.
         run = await runs.get(worker.msp_id, run.id)
         refused = results.check_run(verified.result, run, worker.id, verified.bundle_sha256)
         if refused is not None:
             return await rejected(refused)
         if results.already_received(run, verified.bundle_sha256):
             return Accepted(run_id=str(run.id), state=run.state)
-        touched = await runs.receive(worker.msp_id, run.id, worker_id=worker.id, update=update)
-        if touched == 0:
-            raise RuntimeError("the run couldn't be filed twice over")
+        # Every state takes a bundle or holds one (`FINISHED_STATES`), so a
+        # miss on a row that still takes one is this app's failure.
+        raise RuntimeError("the run's UPDATE touched nothing and the run holds no bundle")
     await ItemRepo(session).create_many(worker.msp_id, run.id, results.item_rows(verified.result))
     await audit.write(worker.msp_id, AUDIT_RECEIVED, f"run:{run.id}", ip=ip)
 

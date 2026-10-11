@@ -14,8 +14,9 @@ The bundle (C5.7; docs/decisions.md 2026-10-10, C5.7, points 5 and 11):
 `receive` is one `UPDATE` that moves a run the Worker was handed to its
 bundle's `pass`, `fail` or `error` with the bundle's columns, and its `WHERE`
 holds the rule (this MSP, this run, this Worker, a state the Cloud handed out,
-`dispatched_at` set), so its rowcount settles a race with a second upload or
-the sweep. There is no `received` state: the bundle's status is known in the
+`dispatched_at` set), so its rowcount settles a race with a second upload
+(the sweep and the poll leave a run one that takes a bundle, so they never
+make it miss). There is no `received` state: the bundle's status is known in the
 request that receives it. `get` answers the row as the database has it
 (`populate_existing`), never the identity map's stale copy, since the route
 reads the run again after an `UPDATE` that touched nothing.

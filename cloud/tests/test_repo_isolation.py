@@ -30,7 +30,7 @@ from app.repo.base import Repo
 from app.repo.clients import ClientRepo
 from app.repo.connectors import ConnectorRepo
 from app.repo.install_tokens import InstallTokenRepo
-from app.repo.items import ItemRepo
+from app.repo.items import ItemRepo, ItemRow
 from app.repo.lookup import Lookup
 from app.repo.msps import MspRepo
 from app.repo.plans import PlanRepo
@@ -112,12 +112,16 @@ async def make_world(session, name: str) -> World:
         text("UPDATE test_run SET dispatched_at = :at, attempt = 1 WHERE id = :id"),
         {"at": NOW, "id": world.stale_run.id},
     )
-    for number in (1, 2):
-        world.items.append(
-            await ItemRepo(session).create(
-                msp.id, run.id, position=number - 1, type="mail", name=f"{name} item {number}", expected_kind="manifest"
-            )
-        )
+    # One item by `create` and one by `create_many` (C5.7's one INSERT), so
+    # both are among the rows every read and write below is held to.
+    await ItemRepo(session).create(msp.id, run.id, position=0, type="mail", name=f"{name} item 1", expected_kind="manifest")
+    many = ItemRow(
+        position=1, type="mail", name=f"{name} item 2", expected_kind="manifest", expected_sha256=None,
+        found_sha256=None, found=None, match=None, reason=None, ms=None,
+    )
+    assert await ItemRepo(session).create_many(msp.id, run.id, [many]) == 1
+    world.items.extend(await ItemRepo(session).list(msp.id, run.id))
+    assert [item.name for item in world.items] == [f"{name} item 1", f"{name} item 2"]
     world.report = await ReportRepo(session).create(
         msp.id, client.id, period_start=dt.date(2026, 9, 1), period_end=dt.date(2026, 9, 30),
         storage_key=f"{name}/2026-09.pdf", sha256="ab" * 32,

@@ -50,16 +50,29 @@ function Invoke-Curl([string[]]$Arguments) {
     $out = & curl.exe -s -S --max-time 300 -H "Authorization: Bearer $($token.Trim())" @Arguments 2>&1
     ($out -join "`n")
 }
-function Save-C57Evidence([string]$Text) {
-    foreach ($s in Get-W48Secrets) { if ($s -and $Text.Contains($s)) { throw 'a secret survived; nothing written' } }
+# The two tokens' values, read while their files are still there (the C5.7 review's finding 11:
+# the guard used to look for files the teardown had just removed).
+function Get-C57Tokens {
     foreach ($file in 'install-token.txt', 'api-token.txt') {
         $path = Join-Path $C57Temp $file
-        if (Test-Path $path) { $value = (Get-Content $path -Raw).Trim(); if ($value -and $Text.Contains($value)) { throw "the $file value survived; nothing written" } }
+        if (Test-Path $path) { $value = (Get-Content $path -Raw).Trim(); if ($value) { $value } }
     }
-    if ($Text -match 'eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.' -or $Text -match 'MII[A-Za-z0-9+/]{60,}' -or $Text -match 'PRIVATE KEY') { throw 'a token or key-shaped value; nothing written' }
-    $path = Join-Path $script:Repo 'docs\api\cloud-lab\c5.7-done-when.txt'
+}
+# The text of a run, the evidence or a failed run's, refused if a secret, a token or a key survives.
+function Save-C57Evidence([string]$Name, [string]$Text, [string[]]$Tokens) {
+    foreach ($s in Get-W48Secrets) { if ($s -and $Text.Contains($s)) { throw "a secret survived in $Name; nothing written" } }
+    foreach ($value in $Tokens) { if ($value -and $Text.Contains($value)) { throw "a token's value survived in $Name; nothing written" } }
+    if ($Text -match 'eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.' -or $Text -match 'MII[A-Za-z0-9+/]{60,}' -or $Text -match 'MC4CAQAwBQYDK2VwBCIEI[A-Za-z0-9+/]{43}' -or $Text -match 'PRIVATE KEY') { throw "a token or key-shaped value in $Name; nothing written" }
+    $path = Join-Path $script:Repo "docs\api\cloud-lab\$Name"
     [IO.File]::WriteAllText($path, $Text.Replace("`r`n", "`n").TrimEnd("`n") + "`n", [Text.UTF8Encoding]::new($false))
     "saved $path"
+}
+# The status of a `curl -i` answer: its last status line's (a `100 Continue` may come first).
+# Never a search of the whole text: every answer's Date header holds "202" until 2030.
+function Get-C57Status([string]$Response) {
+    $lines = @($Response -split "`r?`n" | Where-Object { $_ -match '^HTTP/\S+ \d{3}( |$)' })
+    if ($lines.Count -eq 0) { return 0 }
+    [int](($lines[-1] -split ' ')[1])
 }
 
 New-Item -ItemType Directory -Force $C57Temp, $C57Kept | Out-Null
@@ -142,7 +155,7 @@ try {
         $t += "-- the stub's lines`n$((Get-W48StubLog) -join "`n")"
     } finally {
         try { $t += "`n-- the grants taken away`n$(Revoke-W48Account)" } catch { $t += "`n-- the grants couldn't be taken away: $($_.Exception.Message)" }
-        finally { $t += "`n-- the service uninstalled`n$(Invoke-W48 @('service', 'uninstall'))" }
+        finally { $t += "`n-- the service uninstalled`n$(Remove-W48Service)" }
     }
     $sent = Join-Path $script:W48Root "sent\$runId"
     $t += "`n-- the sent folder, both verifiers`n$(Test-W48Folder $sent)"
@@ -162,7 +175,7 @@ try {
         $second = Invoke-Curl (@('-i', '-X', 'POST', "$Cloud/v1/results") + $parts)
         $t += "-- the same again:`n$second"
     } finally { Pop-Location }
-    if ($first -notmatch '202' -or $second -notmatch '202') { throw 'the upload was not accepted twice' }
+    if ((Get-C57Status $first) -ne 202 -or (Get-C57Status $second) -ne 202) { throw "the upload was not accepted twice: $(Get-C57Status $first), $(Get-C57Status $second)" }
 
     # (7)
     $t += "`n== (7) the row, the items, the audit rows, the objects =="
@@ -194,7 +207,9 @@ for obj in s3.list_objects_v2(Bucket='restoreproof', Prefix=prefix)['Contents']:
     Copy-Item $sent $tampered -Recurse -Force
     $bytes = [IO.File]::ReadAllBytes((Join-Path $tampered 'items.csv')); $bytes[-1] = $bytes[-1] -bxor 1; [IO.File]::WriteAllBytes((Join-Path $tampered 'items.csv'), $bytes)
     Push-Location $tampered
-    try { $t += "-- POST /v1/results with items.csv changed:`n$(Invoke-Curl (@('-i', '-X', 'POST', "$Cloud/v1/results") + $parts))" } finally { Pop-Location }
+    try { $tamperedAnswer = Invoke-Curl (@('-i', '-X', 'POST', "$Cloud/v1/results") + $parts) } finally { Pop-Location }
+    $t += "-- POST /v1/results with items.csv changed:`n$tamperedAnswer"
+    if ((Get-C57Status $tamperedAnswer) -ne 400) { throw "the tampered copy was answered $(Get-C57Status $tamperedAnswer), not 400" }
     $t += (Invoke-Rows @('show', $mspId, $runId) | Select-String -Pattern 'state:|bundle_sha256|audit_log|result\.' | ForEach-Object Line) -join "`n"
     Push-Location $CloudDir
     try { $t += "the bucket afterwards: $((& uv run python -c "import boto3; s3 = boto3.client('s3', endpoint_url='http://127.0.0.1:9000', region_name='us-east-1', aws_access_key_id='local-only-minio', aws_secret_access_key='local-only-minio-secret'); print(len(s3.list_objects_v2(Bucket='restoreproof', Prefix='msp/$mspId/runs/$runId/')['Contents']), 'object(s)')" 2>&1) -join ' ')" } finally { Pop-Location }
@@ -209,11 +224,10 @@ for obj in s3.list_objects_v2(Bucket='restoreproof', Prefix=prefix)['Contents']:
     $t += "sc query: $((sc.exe query $script:W48Service 2>&1) -join ' ')"
     $done = $true
 } finally {
+    $tokens = @(Get-C57Tokens)
     Remove-Item -Recurse -Force $C57Temp -ErrorAction SilentlyContinue
     $t += "`n$C57Temp removed (the tokens, the PEM, the downloaded and tampered copies)"
-    if ($done) { Save-C57Evidence ($t -join "`n") } else {
-        $path = Join-Path $script:Repo 'docs\api\cloud-lab\c5.7-done-when.failed.txt'
-        [IO.File]::WriteAllText($path, (($t -join "`n").Replace("`r`n", "`n") + "`n"), [Text.UTF8Encoding]::new($false))
-        "a step failed; the text is in $path (not the evidence file)"
-    }
+    # A run that failed never replaces the committed evidence, and its text passes the same screen.
+    Save-C57Evidence ($done ? 'c5.7-done-when.txt' : 'c5.7-done-when.failed.txt') ($t -join "`n") $tokens
+    if (-not $done) { 'a step failed; the text is in c5.7-done-when.failed.txt (not the evidence file)' }
 }

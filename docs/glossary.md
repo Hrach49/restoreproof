@@ -440,7 +440,9 @@ attempts to `expired`; its bundle is still taken when it comes.
 the parts `result`, `signature`, `timestamp` when there, and one per listed attachment under its
 name. The Cloud verifies it with the auditor's own `verify_bundle.py` under the token's Worker's
 registered key and the pinned TSA root, refuses anything that doesn't verify with the verifier's
-one word (400), names the run only after that (one 404 for a run that isn't this Worker's; 409
+one word (400; `result_unstorable`, the Cloud's own, for a verified result whose item index or
+text a column can't hold), names the run only after that, by the very text the job gave (one 404
+for a run that isn't this Worker's; 409
 for one never handed out, for a bundle whose client isn't the run's, `client_mismatch`, and for a
 second bundle of one run, `bundle_conflict`), and files the run as its bundle's `pass`, `fail`
 or `error` with its items in one transaction, the files under `msp/<msp_id>/runs/<run_id>/`;

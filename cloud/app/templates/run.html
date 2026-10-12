@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Run {{ run.id }} · {{ layout.msp.name }}{% endblock %}
+{% block content %}
+<h1>Run <code>{{ run.id }}</code> <span class="state {{ run.state|colour }}">{{ run.state }}</span></h1>
+<dl class="facts">
+  <dt>Client</dt><dd>{% if client %}<a href="/clients/{{ client.id }}">{{ client.name }}</a>{% else %}—{% endif %}</dd>
+  <dt>Worker</dt><dd>{% if worker %}{{ worker.name }}{% else %}—{% endif %}</dd>
+  <dt>Started</dt><dd>{{ run.started_at|utc(true) }}</dd>
+  <dt>Finished</dt><dd>{{ run.finished_at|utc(true) }}</dd>
+  <dt>Restore point</dt><dd>{{ run.restore_point_at|utc(true) }}</dd>
+  <dt>Total time</dt><dd>{{ run.total_ms|duration }}</dd>
+  <dt>Recovery time</dt><dd>{{ run.recovery_ms|duration }}</dd>
+  <dt>Cleanup ok</dt><dd>{{ run.cleanup_ok|yes_no }}</dd>
+  <dt>Timestamped</dt><dd>{{ run.tsa_ok|yes_no }}{% if run.tsa_time %} at {{ run.tsa_time|utc(true) }}{% endif %}</dd>
+  <dt>Bundle SHA-256</dt><dd><code>{{ run.bundle_sha256 or "—" }}</code></dd>
+  <dt>Scheduled</dt><dd>{% if run.scheduled_for %}{{ run.scheduled_for|utc }}{% else %}manual{% endif %}</dd>
+  <dt>Attempts</dt><dd>{{ run.attempt }}</dd>
+  {% if run.state == "error" %}
+  <dt>Error code</dt><dd><code>{{ run.error_code or "—" }}</code></dd>
+  <dt>Error message</dt><dd>{{ run.error_message or "—" }}</dd>
+  {% endif %}
+</dl>
+<h2>Files</h2>
+{% if bundle or attachments %}
+<p>Bundle: {% for name in bundle %}<a href="/runs/{{ run.id }}/files/{{ name }}">{{ name }}</a>{% if not loop.last %} · {% endif %}{% endfor %}</p>
+<p>Attachments: {% for name in attachments %}<a href="/runs/{{ run.id }}/files/{{ name }}">{{ name }}</a>{% if not loop.last %} · {% endif %}{% else %}none{% endfor %}</p>
+<p class="muted">Each link is good for ten minutes and is recorded in the audit log.</p>
+{% else %}
+<p class="muted">No bundle received.</p>
+{% endif %}
+<h2>Items</h2>
+<table class="items">
+  <thead><tr><th>#</th><th>Type</th><th>Name</th><th>Expected</th><th>Expected SHA-256</th><th>Found</th><th>Match</th><th>Reason</th><th>ms</th></tr></thead>
+  <tbody>
+  {% for item in items %}
+    <tr>
+      <td class="num">{{ item.position }}</td>
+      <td>{{ item.type }}</td>
+      <td>{{ item.name }}</td>
+      <td>{{ item.expected_kind }}</td>
+      <td><code>{{ item.expected_sha256 or "—" }}</code></td>
+      <td>{{ item.found|yes_no }}</td>
+      <td>{{ item.match|yes_no }}</td>
+      <td>{{ item.reason or "—" }}</td>
+      <td class="num">{{ item.ms if item.ms is not none else "—" }}</td>
+    </tr>
+  {% else %}
+    <tr><td colspan="9" class="muted">No item.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

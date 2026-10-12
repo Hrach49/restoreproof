@@ -46,12 +46,14 @@ FORBIDDEN = (
     re.compile(r"^\s*from sqlalchemy[\w.]*\s+import\b.*\b(?:" + "|".join(STATEMENT_NAMES) + r")\b"),
 )
 
-# The four methods that take no msp_id: the two reads that happen before any
-# MSP is known, the one that makes an MSP, and the scheduler's one read across
-# every MSP (C5.9: the sweep and the dispatcher go MSP by MSP from it).
+# The five methods that take no msp_id: the three reads that happen before any
+# MSP is known (C6.1: the login's address), the one that makes an MSP, and the
+# scheduler's one read across every MSP (C5.9: the sweep and the dispatcher go
+# MSP by MSP from it).
 WITHOUT_MSP_ID = {
     ("lookup.py", "Lookup", "find_worker_by_token_hash"),
     ("lookup.py", "Lookup", "find_install_token_by_hash"),
+    ("lookup.py", "Lookup", "find_user_by_email"),
     ("msps.py", "MspRepo", "create"),
     ("msps.py", "MspRepo", "list"),
 }

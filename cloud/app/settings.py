@@ -38,6 +38,12 @@ class Settings(BaseSettings):
     s3_bucket: str
     s3_region: str = "us-east-1"
     secret_key: SecretStr
+    # C6.2: the S3 endpoint a browser reaches, for the pre-signed URLs alone
+    # (SigV4 signs the host; the Compose stack's `minio:9000` is not one a
+    # browser can open). Unset, the data endpoint is signed for.
+    s3_public_endpoint: str | None = None
+    # C6.1: the session cookie's `Secure` flag; the Compose stack is http.
+    session_cookie_secure: bool = True
     smtp_host: str | None = None
     smtp_port: int = Field(default=587, ge=1, le=65535)
     smtp_username: str | None = None
@@ -65,10 +71,10 @@ class Settings(BaseSettings):
             raise ValueError("not a postgresql+asyncpg URL")
         return value
 
-    @field_validator("s3_endpoint")
+    @field_validator("s3_endpoint", "s3_public_endpoint")
     @classmethod
-    def _http_endpoint(cls, value: str) -> str:
-        if not value.startswith(("http://", "https://")):
+    def _http_endpoint(cls, value: str | None) -> str | None:
+        if value is not None and not value.startswith(("http://", "https://")):
             raise ValueError("not an http or https URL")
         return value
 

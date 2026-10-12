@@ -23,10 +23,13 @@ from app.onboarding import (
     create_connector,
     create_msp,
     create_plan,
+    create_user,
     create_worker_token,
     read_profile_file,
+    reset_password,
     revoke_worker,
 )
+from app.repo.users import UserRepo
 from app.repo.audit import AuditRepo
 from app.repo.clients import ClientRepo
 from app.repo.connectors import ConnectorRepo
@@ -42,7 +45,7 @@ from tests.test_repo_connectors import VALID_PROFILE, profile_for
 UTC = dt.timezone.utc
 NOW = dt.datetime(2026, 10, 11, 12, 0, 30, tzinfo=UTC)
 PEM = "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA\n-----END PUBLIC KEY-----\n"
-TABLES = ("msp", "client", "worker", "connector", "test_plan", "test_run", "install_token", "audit_log")
+TABLES = ("msp", "user", "client", "worker", "connector", "test_plan", "test_run", "install_token", "audit_log")
 
 
 def a_hash(seed: str) -> str:
@@ -430,5 +433,88 @@ async def test_nothing_commits(session, monkeypatch, clock):
     await lab.plan(connector_id, run_now=True)
     await create_worker_token(session, lab.msp_id, label="x")
     await revoke_worker(session, lab.msp_id, worker_id=lab.worker_id)
+    await create_user(session, lab.msp_id, email="u@example.test", role="admin", password=PASSWORD)
+    await reset_password(session, email="u@example.test", password=PASSWORD + "2")
 
     assert committed == []
+
+
+# --- C6.1: create_user and reset_password (docs/decisions.md 2026-10-12, point 12) --------------
+
+PASSWORD = "correct horse battery staple"
+
+
+async def test_create_user_hashes_the_password_stores_the_address_as_typed_and_writes_its_row(session, clock):
+    lab = await Lab.make(session)
+
+    created = await create_user(session, lab.msp_id, email="  Admin@Example.test ", role="admin", password=PASSWORD)
+
+    assert created.lines == (("user_id", created.values["user_id"]),) and created.notes == ()
+    user = await UserRepo(session).get(lab.msp_id, uuid.UUID(created.values["user_id"]))
+    assert (user.email, user.role) == ("Admin@Example.test", "admin")
+    assert user.password_hash.startswith("$argon2id$") and PASSWORD not in user.password_hash
+    assert user.password_changed_at is not None and user.created_at is not None
+    assert (await audit_actions(session, lab.msp_id))[-1] == ("user.create", f"user:{user.id}")
+    assert await Lookup(session).find_user_by_email("admin@example.test") is not None
+
+
+@pytest.mark.parametrize(
+    ("email", "role", "password", "key", "reason"),
+    [
+        ("no-at", "admin", PASSWORD, "email", "not an address"),
+        ("@example.test", "admin", PASSWORD, "email", "not an address"),
+        ("a@", "admin", PASSWORD, "email", "not an address"),
+        ("a b@example.test", "admin", PASSWORD, "email", "not an address"),
+        ("a@b@example.test", "admin", PASSWORD, "email", "not an address"),
+        ("a\tb@example.test", "admin", PASSWORD, "email", "not an address"),
+        ("", "admin", PASSWORD, "email", "not an address"),
+        ("a" * 250 + "@x.test", "admin", PASSWORD, "email", "not an address"),
+        ("a@example.test", "owner", PASSWORD, "role", "not admin or member"),
+        ("a@example.test", "Admin", PASSWORD, "role", "not admin or member"),
+        ("a@example.test", "admin", "short", "password", "not 12 to 1024 characters"),
+        ("a@example.test", "admin", "x" * 1025, "password", "not 12 to 1024 characters"),
+    ],
+)
+async def test_create_user_refuses_an_address_a_role_or_a_password_outside_its_rule(session, clock, email, role, password, key, reason):
+    lab = await Lab.make(session)
+
+    await refused(session, create_user(session, lab.msp_id, email=email, role=role, password=password), key, reason, password, email)
+
+
+async def test_create_user_refuses_the_same_address_in_another_case_and_an_unknown_msp(session, clock):
+    lab = await Lab.make(session)
+    await create_user(session, lab.msp_id, email="one@example.test", role="admin", password=PASSWORD)
+
+    await refused(session, create_user(session, lab.other_msp_id, email="ONE@Example.test", role="member", password=PASSWORD), "email", "already a user of this Cloud")
+    await refused(session, create_user(session, uuid.uuid4(), email="two@example.test", role="member", password=PASSWORD), "msp_id", "no such MSP")
+
+
+async def test_reset_password_replaces_the_hash_marks_the_change_and_writes_its_row(session, clock):
+    lab = await Lab.make(session)
+    made = uuid.UUID((await create_user(session, lab.msp_id, email="x@example.test", role="member", password=PASSWORD)).values["user_id"])
+    before = (await UserRepo(session).get(lab.msp_id, made)).password_hash
+
+    reset = await reset_password(session, email=" X@EXAMPLE.TEST", password="another password 1")
+
+    assert reset.lines == (("user_id", str(made)), ("password_changed_at", "2026-10-11T12:00:30Z"))
+    user = await UserRepo(session).get(lab.msp_id, made)
+    assert user.password_hash != before and user.password_changed_at == NOW
+    assert (await audit_actions(session, lab.msp_id))[-1] == ("user.reset_password", f"user:{made}")
+
+
+@pytest.mark.parametrize(
+    ("email", "password", "key", "reason"),
+    [
+        ("nobody@example.test", PASSWORD, "email", "no such user"),
+        ("not-an-address", PASSWORD, "email", "not an address"),
+        ("x@example.test", "short", "password", "not 12 to 1024 characters"),
+    ],
+)
+async def test_reset_password_refuses_an_unknown_user_or_a_rule_broken(session, clock, email, password, key, reason):
+    lab = await Lab.make(session)
+    await create_user(session, lab.msp_id, email="x@example.test", role="member", password=PASSWORD)
+    before = (await Lookup(session).find_user_by_email("x@example.test")).password_hash
+
+    await refused(session, reset_password(session, email=email, password=password), key, reason, password)
+
+    assert (await Lookup(session).find_user_by_email("x@example.test")).password_hash == before

@@ -199,7 +199,7 @@ def test_every_time_is_a_timestamp_with_time_zone_that_refuses_a_naive_value():
     times = [column for column in columns if isinstance(column.type, UtcDateTime)]
 
     assert not [column for column in columns if isinstance(column.type, DateTime)]
-    assert len(times) == 17
+    assert len(times) == 19
     assert all(column.type.impl.timezone is True for column in times)
     assert {column.name for column in times} >= {"created_at", "last_seen_at", "last_error_at", "expires_at", "at", "tsa_time", "scheduled_for"}
 
@@ -909,6 +909,45 @@ async def test_an_email_is_unique_without_regard_to_case_across_msps(session):
         "uq_user_email_lower",
     )
     assert a.user.email == "a@example.test"
+
+
+# --- C6.1: the user's role and times; C6.2: the run's recovery time ------------------------
+
+
+@pytest.mark.parametrize("role", ["owner", "Admin", "", "member "])
+async def test_a_role_outside_admin_and_member_is_refused(session, role):
+    msp = await new_msp(session)
+
+    await refused(session, User(msp_id=msp.id, email=f"{uuid.uuid4()}@example.test", password_hash="x", role=role), "ck_user_role")
+
+
+@pytest.mark.parametrize("role", ["admin", "member"])
+async def test_a_user_has_the_two_times_from_the_database_s_clock(session, role):
+    msp = await new_msp(session)
+    user = await add(session, User(msp_id=msp.id, email=f"{uuid.uuid4()}@example.test", password_hash="x", role=role))
+    await session.refresh(user)
+
+    assert user.password_changed_at.utcoffset() == dt.timedelta(0)
+    assert user.created_at == user.password_changed_at
+    assert abs(dt.datetime.now(UTC) - user.created_at) < dt.timedelta(minutes=5)
+
+
+def test_the_user_s_two_times_are_required_and_the_run_s_recovery_time_is_a_bigint():
+    user = User.__table__.c
+    run = TestRun.__table__.c
+
+    assert isinstance(user["password_changed_at"].type, UtcDateTime) and not user["password_changed_at"].nullable
+    assert isinstance(user["created_at"].type, UtcDateTime) and not user["created_at"].nullable
+    assert isinstance(run["recovery_ms"].type, BigInteger) and run["recovery_ms"].nullable
+
+
+async def test_a_negative_recovery_time_is_refused_and_a_zero_one_taken(session):
+    world = await World.make(session)
+
+    await refused(session, a_run(world.msp, world.client, world.worker, world.plan, recovery_ms=-1), "ck_test_run_recovery_ms_not_negative")
+    run = await add(session, a_run(world.msp, world.client, world.worker, world.plan, recovery_ms=0))
+    await session.refresh(run)
+    assert run.recovery_ms == 0
 
 
 # --- C5.5: the key and the install token ----------------------------------------

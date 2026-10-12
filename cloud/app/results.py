@@ -374,7 +374,11 @@ def run_update(verified: Verified, key: str) -> ReceivedRun:
     result = verified.result
     status = result["status"]
     is_error = status["status"] == "error"
-    span = result["timings"]["spans"]["total"]
+    spans = result["timings"]["spans"]
+    span = spans["total"]
+    # C6.2: the recovery span (restore start to last item verified, W3.2),
+    # the pages' and C6.4's "recovery time", filled as `total` is.
+    recovery = spans["recovery"]
     cleanup = result["cleanup"]
     return ReceivedRun(
         state=status["status"],
@@ -383,6 +387,7 @@ def run_update(verified: Verified, key: str) -> ReceivedRun:
         started_at=_time(result["started_at"], TIME_MILLISECONDS),
         finished_at=_time(result["ended_at"], TIME_MILLISECONDS),
         total_ms=_count(span.get("ms")) if span is not None else None,
+        recovery_ms=_count(recovery.get("ms")) if recovery is not None else None,
         restore_point_at=_time(result["restore_point"]["backup_time"], TIME_SECONDS),
         bundle_key=key,
         bundle_sha256=verified.bundle_sha256,

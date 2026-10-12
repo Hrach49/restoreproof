@@ -1518,11 +1518,13 @@ python -m unittest discover -s worker/tools -p "test_*.py"
 `cloud/` is the FastAPI backend (C5.1), its data model (C5.2), its repository layer (C5.3), its
 tokens (C5.4), the Worker's registration (C5.5), the jobs poll (C5.6), the bundle's upload
 (C5.7), the heartbeat (C5.8), the job dispatcher (C5.9, the `scheduler` service), the
-onboarding CLI (C5.10, `manage.py`) and the contract (C5.11: the API header, `/v1/version`,
-the body cap, the security scheme, the CI diff). Its tests are pytest, run with uv from
-`cloud/`. The rules are `docs/decisions.md` 2026-10-10, "C5.1 and C5.2", "C5.3 and C5.4",
-"C5.5 and C5.6" and "C5.7", 2026-10-11, "C5.8" and "C5.10 and C5.9", and 2026-10-12,
-"C5.11".
+onboarding CLI (C5.10, `manage.py`), the contract (C5.11: the API header, `/v1/version`,
+the body cap, the security scheme, the CI diff), and the login, the four dashboard pages and
+the audit page (C6.1, C6.2, C6.3: `app/auth/{passwords,sessions,login_limiter}.py`,
+`app/audit.py`, `app/ui.py`, `app/routers/ui/`, the templates and the two static files). Its
+tests are pytest, run with uv from `cloud/`. The rules are `docs/decisions.md` 2026-10-10,
+"C5.1 and C5.2", "C5.3 and C5.4", "C5.5 and C5.6" and "C5.7", 2026-10-11, "C5.8" and "C5.10 and
+C5.9", and 2026-10-12, "C5.11" and "C6.1, C6.2 and C6.3".
 
 ### The test database: a real PostgreSQL 16, never SQLite
 
@@ -1617,6 +1619,12 @@ docker compose stop postgres              # when done; `docker compose down -v` 
 | `tests/test_schemas.py` | `app/schemas.py` finds `shared/schemas/` by walking up, from the tree and from a planted layout; the Dockerfile copies the schemas, the verifier and the TSA root, the root `.dockerignore` allows the seven paths and nothing else, Compose builds from the repository root; `jsonschema`, `cryptography`, `asn1crypto` and `python-multipart` are runtime dependencies |
 | `tests/test_tokens.py` | 43 characters of base64url, 32 bytes, never equal; the hash is SHA-256 hex; an install token stored as its hash with `now + 7 days`, its label and its maker; accepted once, refused at exactly seven days and accepted a second before; an unknown token; two MSPs' tokens each their own; nothing commits |
 | `tests/test_auth.py` | the Done-when: a revoked Worker's token 401, a valid one 200 with the Worker and its `msp_id` on `request.state`; C5.11: the documented scheme is FastAPI's `HTTPBearer(auto_error=False)` named `workerToken`, whose result is never read, so `bearer x` and two spaces stay the one 401; nine refusals (no header, `Basic`, two spaces, a word after, `bearer`, an empty token, an unknown one, the hash as the token, a revoked Worker) with one status, body and `WWW-Authenticate`; the same work (one lookup) for every refusal and the success; neither the token nor its hash in any log line; the session comes from `get_session`; no header, `Bearer ` and `Basic …` are 401 even with a Worker planted by SQL under the empty string's hash (the code review's finding 2; the repo refuses that hash since C5.5); a `Lab` that fails to fill leaves no probe route on the shared router (finding 7) |
+| `tests/test_login.py` | C6.1's Done-when by name, `test_wrong_password_five_times_is_blocked_and_each_attempt_is_in_the_audit_log`: five wrong passwords 401 with five `login.failure` rows, the sixth and the right password inside the minute 429 with `Retry-After` and two `login.blocked` rows, the right one after the minute 303 with the cookie and `login.success`. Failure paths first: an unknown address answered like a wrong password with the same work (the hasher counted through a seam: the unknown hash) and no row, one `login refused` line with nothing of the form; the address repeated escaped and the password never; a body without the two fields, too long, or JSON 422 before any work; five attempts from one IP block the sixth whatever the address and not another IP, five on one address from anywhere block it in any case, a blocked unknown address writes no row, a blocked attempt does no password work; a cross-site or same-site `Sec-Fetch-Site` 403 on `/login` and `/logout`, `same-origin`, `none` and no header pass. Then the cookie's flags (`HttpOnly`, `SameSite=Lax`, `Path=/`, `Max-Age` 43200, `Secure` by default and not under the setting) and its payload; `/` and `/login` with a session 303 to `/clients`, without one 303 to `/login` and 401 with `HX-Redirect` for htmx; a tampered, another key's, another salt's, empty, garbage, expired (12 h + 1 s; 12 h exactly holds), future, seven other-shaped cookies, a gone user's and one with another MSP's id all no session; a reset ends a session and a later cookie holds; a rehash at login replaces the hash and keeps the sessions; logout clears the cookie, writes the row and sends the browser to the form, `GET /logout` 405; nothing of a login (address, password, cookie, `rp_session`, `password=`) in a log line; the pages in no document and not under `/v1`; the header and the cap on a page; the static files served and htmx the vendored file held to `HTMX_SHA256` and the tag's `integrity` to its SHA-384; every template autoescapes; the audit helper refuses a word outside `ACTIONS` |
+| `tests/test_login_limiter.py` | C6.1's limiter by itself: five pass and the sixth is refused with the seconds to wait (at least 1), a refused attempt counts under no key, the window slides at 60 s exactly, either key refuses and the longer wait wins, the table is bounded at `MAX_KEYS` dropping the least recently touched key, no key is never refused |
+| `tests/test_passwords.py` | C6.1's hashes: Argon2id under the library's defaults (64 MiB, 3, 4), a salt each, a wrong password and five texts that are no hash false and never an exception, an older hash verifies and needs a rehash, the unknown hash made once and verifying nothing, the rule 12 to 1024 characters by length alone |
+| `tests/test_pages.py` | C6.2's Done-when by name, `test_the_four_pages_render_real_data_from_the_sprint_5_runs_and_a_revoked_worker_gets_401_on_its_next_poll`: the Worker-written vector dispatched by its own poll and posted as the Worker posts it (`tests/pages_lab.py` over `tests/results_lab.py` and `tests/test_contract.py`'s world), then `/clients` (the client's row: `pass`, the finished time, 20:30, the next 02:00), `/clients/{id}` (the run's row with 2 items, cleanup and timestamp yes, "manual", ninety strip cells), `/runs/{id}` (the two items, the five file links, 41:00 and 20:30, the bundle's hash) and `/workers` (two Workers never seen, in red; no Revoke for the member) as the member with the frame's names and the API header; the admin's two Revoke buttons, the `POST` 303, the row "revoked", the Worker's poll 401 and the one `worker.revoke` row with the admin and the address. Failure paths first: every page without a session 303 and 401 for htmx; another MSP's client, run, file and Worker 404 and never listed, from both sides; a member's revoke 403; an id that is no uuid 422; a cross-site revoke 403; a Worker revoked already 409 with the CLI's words; nine file names outside the rule 404 without a list or a row; a file the bucket doesn't list and a run without a bundle 404; a planted `<script>` escaped on every page (five times on the run page). Then each cell of `/clients` against five clients (no run, a `fail` after a `pass` with 1:01:05, an `expired` after an `error`, a disabled plan, a revoked Worker: "no Worker"), `next_run`'s rules by themselves (pending first, a revoked Worker skipped, a cron the parser refuses or that never occurs skipped), the statement counts the same for one client and five (six on `/clients`, three on `/workers`, five on `/clients/{id}`); the history's columns and a pending run's dashes; paging at 50 with the `hx-get` row and without htmx, the vector's own queued run the oldest; the strip's ninety cells, the worst-state rule and the `title` counts, `strip` by itself; the download's 302 with `Cache-Control: no-store` to a URL signed for 600 s against the stack's data endpoint, the one `bundle.download` row with the user and the address, no bucket link on the page; the run page grouping the bundle and the attachments as the bucket lists them; `/workers`' columns at 24 hours exactly and one second past, `late` by itself, the `hx-confirm` and the form; an htmx revoke answering the row alone; the frame's MSP, user and the admin's audit link; the four filters |
+| `tests/test_audit_page.py` | C6.3's Done-when by name, `test_downloading_a_bundle_appears_in_audit_with_user_time_and_ip`: the member's download, then `/audit` as the admin with the row's time, `member@example.test`, `bundle.download`, `run:<id> items.csv` and the address, and nothing of it on the other MSP's admin's page. A member 403 and no session 303; `days` outside 1 to 3650, not a number, and a `before` that is no uuid 422; the last 30 days newest first with the users' addresses and a dash for the CLI's and the Worker's rows, `?days=90` wider; paging at 100 with and without htmx; nothing deleted; every word a page writes in `ACTIONS`; `AuditRepo.page` by itself: newest first from `since` (inclusive), the join's address, the keyset, another MSP's cursor empty, a naive `since` and a limit outside 1 to 100 refused |
+| C6.1 to C6.3 in the older files | `test_models.py`: `ck_user_role`, the user's two times from the database's clock, `recovery_ms` a `bigint` with its CHECK, nineteen `UtcDateTime` columns; `test_repo_errors.py`: the three user constraints worded and shown; `test_settings.py`: `S3_PUBLIC_ENDPOINT` and `SESSION_COOKIE_SECURE` with their defaults and shapes; `test_tenant_scope.py`: `find_user_by_email` the fifth method without `msp_id`; `test_repo_isolation.py`: the new reads and `set_password_hash` in the table, `daily_states` held by its own test (it answers counts); `test_repo_runs.py`, `test_repo_plans.py`, `test_storage.py`: the new reads and calls by themselves (keyset, counts, one statement each, the signed link's host and seconds, no secret in it); `test_results.py`: `recovery_ms` filed as `total_ms` is; `test_onboarding.py`, `test_manage.py`: `create_user` and `reset_password`, the password never an option and never in output, the console path asking twice; `test_app.py`: the `ui` router at the root and in no document, `/static` the one mount; `test_schemas.py`: the three runtime dependencies and no slowapi |
 
 ### The contract (C5.11)
 
@@ -1913,6 +1921,77 @@ only the rows it made (the C5.8 review's findings 5 and 6):
    `connector.create`, `plan.create`, `worker.revoke`) and the api's request lines.
 7. The temp folder and the container's two profile copies removed; the run's MSP and its rows
    stay in the stack's database; the scheduler keeps running.
+
+### The pages (C6.1, C6.2, C6.3)
+
+`docs/decisions.md` 2026-10-12, "C6.1, C6.2 and C6.3"; `docs/verification.md` "The Cloud's
+pages". What the tests hold is in the table above (`tests/test_login.py`,
+`tests/test_login_limiter.py`, `tests/test_passwords.py`, `tests/test_pages.py`,
+`tests/test_audit_page.py`, over `tests/pages_lab.py`). By hand, on the stack:
+
+```powershell
+cd cloud
+docker compose up -d --wait --build                                   # the image carries the templates, the static files and manage.py
+docker compose exec api alembic downgrade -1; docker compose exec api alembic upgrade head; docker compose exec api alembic check
+docker compose exec -i api python manage.py create-user --msp-id <msp_id> --email you@example.test --role admin   # the password asked for twice; with -T, one line on stdin
+docker compose exec -i api python manage.py reset-password --email you@example.test
+```
+
+Then `http://127.0.0.1:8000/login` in a browser: the pages, the download (the link goes to
+`127.0.0.1:9000`, the stack's `S3_PUBLIC_ENDPOINT`), the Revoke button and its dialog, `/audit`
+as an admin. A password is never typed on a command line; the install token and the API token
+are as in "The onboarding CLI and the scheduler".
+
+**The by-hand run of the three Done-whens against the Compose stack** (the evidence step,
+`docs/api/cloud-lab/c6.1-c6.3-done-when.txt`, written by
+`docs/api/cloud-lab/c6.1-c6.3-harness/c61-c63-live.ps1` in one go, about four minutes, one of
+them waiting for the limiter's window; the steps below are what it does). The harness keeps every
+secret off the command line and out of every file but curl's cookie jar under `%TEMP%`, removed
+at the end (the passwords go to the CLI and to curl on their standard input, the tokens into
+memory and to curl on its standard input), and screens the text for all of them and for every
+token-, cookie- and signature-shaped value before anything is saved. It re-migrates the stack's
+database once (the edit of `0001`; nothing is deployed) and reads only the rows it made:
+
+1. `docker compose up -d --wait --build`; `alembic downgrade -1`, `upgrade head`, `check`;
+   `/healthz`; the api's `S3_PUBLIC_ENDPOINT` and `SESSION_COOKIE_SECURE`; the new columns;
+   `/static/htmx.min.js` and its SHA-256.
+2. **MSP A** by CLI in the api container: `create-msp`; `create-user` for an admin and a member
+   (a 24-character password each, made in memory, on standard input); the admin's address in
+   another case and a 5-character password refused; `create-client` of the lab tenant, its id
+   then set by SQL to the kept C5.7 bundle's `client_id` (as `tests/test_contract.py` gives a
+   test's rows the vector's ids); `create-worker-token`; the lab Worker's own key
+   (`rpworker signer public-key`, from the vault on this machine) registered with curl;
+   `create-connector` on the lab profile (`%LOCALAPPDATA%\RestoreProof\lab\lab-profile.json`,
+   outside the repository); `create-plan --run-now`, the run's id set to the bundle's.
+3. `GET /v1/jobs` with the Worker's token (the run dispatched), then the kept bundle's five
+   files posted with curl as the Worker posts them: 202 `pass`; the row (30 items,
+   `recovery_ms` 189177, `tsa_ok` true).
+4. **MSP B** the same way for the Worker-written vector `dispatched-run.json` (its client of the
+   same lab tenant, so a second MSP: one client per tenant and MSP), a Worker under RFC 8032's
+   test key 1, the connector on the vector's job profile, the run's id the vector's; its four
+   files posted without the `timestamp` part (the stack trusts the real TSA root alone): 202
+   `pass`, 2 items, `tsa_ok` null.
+5. **The C6.1 Done-when:** `POST /login` with the admin's address and a wrong password five
+   times, 401 each; the sixth 429 with `Retry-After`; the right password inside the minute 429
+   with no cookie; the `login.failure` and `login.blocked` rows with the user and the address;
+   61 s later the right password 303 with the cookie (its flags shown, its value not); `GET /`
+   303 to `/clients` with the API header.
+6. **The C6.2 Done-when:** `/clients`, `/clients/{id}`, `/runs/{id}` and `/workers` as the admin,
+   each page's text (the `<main>` part, tags gone) in the evidence; the other MSP's run and
+   client 404; a page without a cookie 303.
+7. **The C6.3 Done-when:** the member logs in and downloads `items.csv`: 302 with
+   `Cache-Control: no-store` to the MinIO port on 127.0.0.1 (the signed query not shown), the
+   link followed and the bytes the kept file's by SHA-256; a name the bucket doesn't list 404;
+   the member's `/audit` 403; the admin's `/audit` with the download's row (user, time, IP) and
+   the logins'.
+8. The admin's Revoke (`POST /workers/{id}/revoke`): 303; the row "revoked"; the Worker's poll
+   401; the revoke again 409; `POST /logout` 303 with the cookie cleared; `/clients` after it 303.
+9. The rows at the end (the audit rows by action with whether a user wrote them and the IP, the
+   users with their hash's `$argon2id$` prefix, the Worker revoked) and the api's request lines
+   for the pages, with nothing of a login in them.
+10. The temp folder (the jar, the downloaded file, the vector's files and profile) and the
+    container's two profile copies removed; the two MSPs and their rows stay in the stack's
+    database.
 
 ## Once-per-sprint mutation run
 

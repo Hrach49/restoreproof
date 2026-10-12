@@ -26,6 +26,7 @@ from app.auth.sessions import SESSION_COOKIE, SESSION_MAX_AGE_S, make_session, r
 from app.db import get_session
 from app.main import create_app
 from app.repo.audit import AuditRepo
+from app.repo.lookup import Lookup
 from app.repo.msps import MspRepo
 from app.repo.users import UserRepo
 from app.routers.ui.login import HOME, TOO_MANY, WRONG
@@ -86,7 +87,7 @@ class Lab:
             return await client.post(path, headers=headers or {}, data=data)
 
     def cookie_for(self, user) -> str:
-        return make_session(SECRET, user.id, user.msp_id)
+        return make_session(SECRET, user.id, user.msp_id, user.password_changed_at)
 
     async def rows(self, msp_id=None) -> list[tuple[str, str, object, str | None]]:
         """The MSP's audit rows, sorted: every row of one test shares the
@@ -183,6 +184,89 @@ async def test_a_body_without_the_two_fields_is_422_before_any_work(lab, data, m
     assert await lab.row_count() == 0
 
 
+async def test_the_form_s_422_is_the_login_page_and_repeats_nothing_of_the_form(lab):
+    """The review's finding 10: FastAPI's own 422 repeats the value it
+    refused in `detail[].input`, so a password pasted too long came back in
+    clear. Every 422 of the form is the page, with neither field in it."""
+    long_password = "Sentinel-Long-" + "x" * 1011
+    long_address = "sentinel-" + "a" * 250 + "@example.test"
+    async with lab.client() as client:
+        answers = [
+            await client.post("/login", data=data)
+            for data in (
+                {"email": "admin@example.test", "password": long_password},
+                {"email": long_address, "password": PASSWORD},
+                {"email": "admin@example.test"},
+                {"password": PASSWORD},
+            )
+        ]
+
+    for response in answers:
+        assert response.status_code == 422
+        assert response.headers["content-type"].startswith("text/html")
+        assert 'name="password"' in response.text and WRONG in response.text
+        for forbidden in ("Sentinel", "sentinel", PASSWORD, "admin@example.test", '"detail"'):
+            assert forbidden not in response.text, forbidden
+    assert await lab.row_count() == 0
+
+
+@pytest.mark.parametrize("field", ["email", "password"])
+async def test_a_field_no_utf_8_can_hold_is_the_form_s_422_and_never_a_500(lab, field, monkeypatch):
+    """A multipart form may name its own charset: `+2AA-` in UTF-7 is a lone
+    surrogate, which no page, statement or hash can take."""
+    monkeypatch.setattr(passwords, "verify_password", lambda h, p: pytest.fail("verified"))
+    values = {"email": "admin@example.test", "password": PASSWORD, field: "+2AA-"}
+    body = "".join(f'--b\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n' for name, value in values.items()) + "--b--\r\n"
+    async with lab.client() as client:
+        response = await client.post("/login", content=body.encode(), headers={"Content-Type": "multipart/form-data; boundary=b; charset=utf-7"})
+
+    assert response.status_code == 422
+    assert response.headers["content-type"].startswith("text/html")
+    assert await lab.row_count() == 0
+
+
+@pytest.mark.parametrize("address", ["a\x00b@example.test", "admin@example.test\x00", "\x00", "admin@exam ple.test", "no-at-sign"])
+async def test_an_address_outside_the_rule_is_nobody_s_and_is_answered_and_counted_like_one(lab, address, monkeypatch):
+    """The review's finding 5: PostgreSQL takes no U+0000 in a text, so the
+    lookup of such an address was a 500, and never a 429. An address
+    `create-user` would refuse is no user's: the same answer and the same
+    password work with no statement."""
+    verified = []
+    real = passwords.verify_password
+    monkeypatch.setattr(passwords, "verify_password", lambda h, p: verified.append(h) or real(h, p))
+
+    answers = [await lab.login(address, PASSWORD) for _ in range(6)]
+
+    assert [r.status_code for r in answers] == [401] * 5 + [429]
+    assert all(WRONG in r.text for r in answers[:5]) and TOO_MANY in answers[5].text
+    assert verified == [passwords.unknown_hash()] * 5
+    assert await lab.row_count() == 0
+
+
+@pytest.mark.parametrize(
+    ("stored", "typed"),
+    [
+        ("\u0130lker@example.test", "\u0130lker@example.test"),
+        ("\u039d\u0399\u039a\u039f\u03a3@example.gr", "\u039d\u0399\u039a\u039f\u03a3@example.gr"),
+        ("J\u00d6RG@example.test", "j\u00f6rg@EXAMPLE.test"),
+        ("stra\u00dfe@example.test", "stra\u00dfe@example.test"),
+    ],
+    ids=["dotted capital I", "final sigma", "umlaut in the other case", "sharp s"],
+)
+async def test_an_address_outside_ascii_logs_in_as_it_was_stored(lab, stored, typed):
+    """The review's finding 11: the unique is on PostgreSQL's `lower(email)`,
+    and Python's `str.lower()` maps these otherwise, so the user that
+    `create-user` made was found by no login and no reset."""
+    user = await UserRepo(lab.session).create(lab.msp.id, email=stored, password_hash=HASH, role="member")
+
+    found = await Lookup(lab.session).find_user_by_email(f" {typed} ")
+    response = await lab.login(typed, PASSWORD)
+
+    assert found is not None and found.id == user.id
+    assert response.status_code == 303
+    assert await lab.rows() == [(words.LOGIN_SUCCESS, f"user:{user.id}", user.id, IP)]
+
+
 async def test_a_json_body_is_422(lab):
     async with lab.client() as client:
         response = await client.post("/login", json={"email": "admin@example.test", "password": PASSWORD})
@@ -262,6 +346,7 @@ async def test_the_right_password_sets_the_cookie_with_its_flags_and_sends_the_b
     assert morsel["max-age"] == str(SESSION_MAX_AGE_S) and not morsel["secure"]
     found = read_session(SECRET, morsel.value)
     assert (found.user_id, found.msp_id, found.issued_at) == (lab.admin.id, lab.msp.id, lab.time)
+    assert found.password_stamp == sessions.password_stamp(lab.admin.password_changed_at)
     assert await lab.rows() == [(words.LOGIN_SUCCESS, f"user:{lab.admin.id}", lab.admin.id, IP)]
 
     home = await lab.get("/", cookie=morsel.value)
@@ -299,18 +384,24 @@ def tampered(cookie: str) -> str:
 
 async def test_a_cookie_that_is_tampered_expired_of_another_shape_or_another_key_s_is_no_session(lab):
     good = lab.cookie_for(lab.admin)
-    other_key = make_session("another-secret-key-" + "1" * 32, lab.admin.id, lab.msp.id)
-    other_salt = sessions.URLSafeSerializer(SECRET, salt="other").dumps({"u": str(lab.admin.id), "m": str(lab.msp.id), "t": int(lab.time.timestamp())})
+    other_key = make_session("another-secret-key-" + "1" * 32, lab.admin.id, lab.msp.id, lab.admin.password_changed_at)
+    stamp = sessions.password_stamp(lab.admin.password_changed_at)
+    other_salt = sessions.URLSafeSerializer(SECRET, salt="other").dumps({"u": str(lab.admin.id), "m": str(lab.msp.id), "t": int(lab.time.timestamp()), "p": stamp})
     shapes = [
         sessions._serializer(SECRET).dumps(payload)
         for payload in (
-            ["u", "m", "t"],
-            {"u": str(lab.admin.id), "m": str(lab.msp.id)},
-            {"u": str(lab.admin.id), "m": str(lab.msp.id), "t": "123"},
-            {"u": str(lab.admin.id), "m": str(lab.msp.id), "t": 1.5},
-            {"u": "not-a-uuid", "m": str(lab.msp.id), "t": int(lab.time.timestamp())},
-            {"u": str(lab.admin.id), "m": 7, "t": int(lab.time.timestamp())},
-            {"u": str(lab.admin.id), "m": str(lab.msp.id), "t": int(lab.time.timestamp()), "x": 1},
+            ["u", "m", "t", "p"],
+            {"u": str(lab.admin.id), "m": str(lab.msp.id), "p": stamp},
+            {"u": str(lab.admin.id), "m": str(lab.msp.id), "t": "123", "p": stamp},
+            {"u": str(lab.admin.id), "m": str(lab.msp.id), "t": 1.5, "p": stamp},
+            {"u": "not-a-uuid", "m": str(lab.msp.id), "t": int(lab.time.timestamp()), "p": stamp},
+            {"u": str(lab.admin.id), "m": 7, "t": int(lab.time.timestamp()), "p": stamp},
+            {"u": str(lab.admin.id), "m": str(lab.msp.id), "t": int(lab.time.timestamp()), "p": stamp, "x": 1},
+            # The cookie of before the review: no stamp of the password.
+            {"u": str(lab.admin.id), "m": str(lab.msp.id), "t": int(lab.time.timestamp())},
+            {"u": str(lab.admin.id), "m": str(lab.msp.id), "t": int(lab.time.timestamp()), "p": str(stamp)},
+            {"u": str(lab.admin.id), "m": str(lab.msp.id), "t": int(lab.time.timestamp()), "p": float(stamp)},
+            {"u": str(lab.admin.id), "m": str(lab.msp.id), "t": int(lab.time.timestamp()), "p": True},
         )
     ]
     before = lab.time
@@ -330,7 +421,7 @@ async def test_a_cookie_that_is_tampered_expired_of_another_shape_or_another_key
 
 
 async def test_a_cookie_of_a_user_who_is_gone_or_of_another_msp_s_id_is_no_session(lab):
-    foreign = make_session(SECRET, lab.admin.id, lab.other_msp.id)
+    foreign = make_session(SECRET, lab.admin.id, lab.other_msp.id, lab.admin.password_changed_at)
     await lab.session.execute(text('DELETE FROM "user" WHERE id = :id'), {"id": lab.other.id})
     gone = lab.cookie_for(lab.other)
 
@@ -348,6 +439,53 @@ async def test_a_password_reset_ends_every_session_issued_before_it(lab):
     assert (await lab.get("/", cookie=cookie)).headers["location"] == "/login"
     lab.time += dt.timedelta(seconds=2)
     assert (await lab.get("/", cookie=lab.cookie_for(lab.admin))).headers["location"] == HOME
+
+
+async def test_a_login_in_the_second_the_password_was_set_is_a_session(lab):
+    """The review's finding 2 (a): the cookie's time is whole seconds and the
+    row's has microseconds from another clock; no clock decides a session."""
+    later_in_the_second = lab.time + dt.timedelta(microseconds=900_000)
+    assert await UserRepo(lab.session).set_password_hash(lab.msp.id, lab.admin.id, HASH, changed_at=later_in_the_second) == 1
+
+    response = await lab.login("admin@example.test", PASSWORD)
+    cookie = cookie_of(response)[SESSION_COOKIE].value
+
+    assert response.status_code == 303
+    assert (await lab.get("/", cookie=cookie)).headers["location"] == HOME
+
+
+@pytest.mark.parametrize("behind", [dt.timedelta(minutes=3), dt.timedelta(days=400), dt.timedelta(microseconds=1)])
+async def test_a_reset_from_a_clock_behind_the_cloud_s_still_ends_every_session(lab, behind):
+    """The review's finding 2 (b): `reset-password` runs wherever `DATABASE_URL`
+    is, on that machine's clock."""
+    cookie = lab.cookie_for(lab.admin)
+    assert (await lab.get("/", cookie=cookie)).headers["location"] == HOME
+
+    assert await UserRepo(lab.session).set_password_hash(lab.msp.id, lab.admin.id, HASH, changed_at=lab.time - behind) == 1
+    await lab.session.refresh(lab.admin)
+
+    assert (await lab.get("/", cookie=cookie)).headers["location"] == "/login"
+    assert (await lab.get("/", cookie=lab.cookie_for(lab.admin))).headers["location"] == HOME
+
+
+async def test_a_login_that_read_the_row_before_a_reset_is_no_session_after_it(lab):
+    """A login in flight across a reset: its cookie carries the stamp of the
+    row it verified against, whatever time it is signed at."""
+    read_before = lab.admin.password_changed_at
+    assert await UserRepo(lab.session).set_password_hash(lab.msp.id, lab.admin.id, HASH, changed_at=lab.time) == 1
+    lab.time += dt.timedelta(seconds=30)
+
+    late = make_session(SECRET, lab.admin.id, lab.msp.id, read_before)
+
+    assert (await lab.get("/", cookie=late)).headers["location"] == "/login"
+
+
+def test_the_password_s_stamp_is_its_time_in_whole_microseconds():
+    at = dt.datetime(2026, 10, 12, 12, 0, 0, 250_001, tzinfo=UTC)
+
+    assert sessions.password_stamp(at) == 1_791_806_400_250_001
+    assert sessions.password_stamp(at.astimezone(dt.timezone(dt.timedelta(hours=2)))) == sessions.password_stamp(at)
+    assert sessions.password_stamp(at + dt.timedelta(microseconds=1)) == sessions.password_stamp(at) + 1
 
 
 async def test_a_rehash_at_login_replaces_the_hash_and_keeps_the_sessions(lab):

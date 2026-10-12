@@ -11,6 +11,17 @@ row; an unknown address the same answer with no row (no MSP) and one log
 line with nothing of the form in it; the right password 303 to `/` with the
 cookie and one `login.success` row. A refusal is returned, not raised, so its
 row commits. Nothing of the form reaches a log line.
+
+After the code review (docs/decisions.md 2026-10-12, "C6.1, C6.2 and C6.3
+code review", findings 5 and 10). The two fields are read as optional and
+held here, never by FastAPI, whose own 422 repeats the refused value in
+`detail[].input` (a password pasted too long came back in clear): a field
+that is missing, longer than its limit or no UTF-8 can hold (a multipart
+form may name a charset that decodes to a lone surrogate) is 422 with the
+login page and neither field in it, before the limiter and any work. An
+address `check_email` refuses (a U+0000, which PostgreSQL takes in no text;
+a space; no `@`) is no user's: no statement, the unknown hash, the same 401,
+counted by the limiter like any other.
 """
 
 from __future__ import annotations
@@ -22,10 +33,12 @@ import structlog
 from fastapi import APIRouter, Form, Request, Response
 from fastapi.responses import RedirectResponse
 
-from app import audit
+from app import audit, onboarding
 from app.auth import passwords, sessions
 from app.auth.sessions import CurrentUser, OptionalUser
 from app.db import SessionDep
+from app.models import User
+from app.repo.errors import RepoError
 from app.repo.lookup import Lookup
 from app.repo.users import UserRepo
 from app.ui import SameOrigin, render
@@ -39,6 +52,27 @@ TOO_MANY = "too many attempts, try again in a minute"
 # What a form field may be: the address up to a mailbox's limit, the password
 # up to the hasher's rule; longer is the form's 422, never hashed.
 MAX_EMAIL = 254
+
+
+def _usable(field: str | None, limit: int) -> bool:
+    """Whether the form gave the field, within its limit, as text UTF-8 holds."""
+    if field is None or len(field) > limit:
+        return False
+    try:
+        field.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
+async def _user_of(lookup: Lookup, address: str) -> User | None:
+    """The user of the address, or None without a statement for an address
+    that can be nobody's (`create-user`'s own rule)."""
+    try:
+        onboarding.check_email(address)
+    except RepoError:
+        return None
+    return await lookup.find_user_by_email(address)
 
 
 def _secure(request: Request) -> bool:
@@ -61,9 +95,11 @@ async def login(
     request: Request,
     session: SessionDep,
     _same_origin: SameOrigin,
-    email: Annotated[str, Form(max_length=MAX_EMAIL)],
-    password: Annotated[str, Form(max_length=passwords.MAX_PASSWORD_CHARACTERS)],
+    email: Annotated[str | None, Form()] = None,
+    password: Annotated[str | None, Form()] = None,
 ) -> Response:
+    if not (_usable(email, MAX_EMAIL) and _usable(password, passwords.MAX_PASSWORD_CHARACTERS)):
+        return _login_page(422, WRONG, "")
     address = email.strip()
     keys = [f"email:{address.lower()}"]
     ip = audit.client_ip(request)
@@ -72,11 +108,11 @@ async def login(
     retry_after = request.app.state.login_limiter.attempt(keys)
     lookup = Lookup(session)
     if retry_after is not None:
-        user = await lookup.find_user_by_email(address)
+        user = await _user_of(lookup, address)
         if user is not None:
             await audit.record(session, request, user.msp_id, audit.LOGIN_BLOCKED, f"user:{user.id}", user_id=user.id)
         return _login_page(429, TOO_MANY, address, headers={"Retry-After": str(retry_after)})
-    user = await lookup.find_user_by_email(address)
+    user = await _user_of(lookup, address)
     stored = passwords.unknown_hash() if user is None else user.password_hash
     verified = await asyncio.to_thread(passwords.verify_password, stored, password)
     if user is None or not verified:
@@ -91,7 +127,7 @@ async def login(
     await audit.record(session, request, user.msp_id, audit.LOGIN_SUCCESS, f"user:{user.id}", user_id=user.id)
     response = RedirectResponse(HOME, status_code=303)
     secret = request.app.state.settings.secret_key.get_secret_value()
-    sessions.set_session_cookie(response, sessions.make_session(secret, user.id, user.msp_id), secure=_secure(request))
+    sessions.set_session_cookie(response, sessions.make_session(secret, user.id, user.msp_id, user.password_changed_at), secure=_secure(request))
     return response
 
 

@@ -103,7 +103,7 @@ class PagesLab:
     # --- requests ------------------------------------------------------------------------------
 
     def cookie(self, user) -> str:
-        return make_session(SECRET, user.id, user.msp_id)
+        return make_session(SECRET, user.id, user.msp_id, user.password_changed_at)
 
     def client(self, user=None, *, ip: str = IP) -> httpx.AsyncClient:
         cookies = {SESSION_COOKIE: self.cookie(user)} if user is not None else None

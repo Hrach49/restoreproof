@@ -416,6 +416,32 @@ async def test_the_download_writes_the_row_then_sends_the_browser_to_a_link_sign
     assert "X-Amz" not in page.text and "127.0.0.1:1" not in page.text
 
 
+@pytest.mark.parametrize("site", ["cross-site", "same-site", "Cross-Site"])
+async def test_a_download_another_site_sent_the_browser_to_is_403_with_no_list_no_row_and_no_link(lab, site):
+    """The review's finding 9: the download is a GET that writes a row in the
+    user's name, and a `SameSite=Lax` cookie travels on a link from another
+    site, so anyone who knew a run's id could plant `bundle.download` rows."""
+    run_id = await lab.land_vector()
+    before = await lab.written()
+
+    response = await lab.get(f"/runs/{run_id}/files/items.csv", lab.admin, headers={"Sec-Fetch-Site": site})
+
+    assert (response.status_code, response.json()) == (403, {"detail": "cross-site request"})
+    assert "location" not in response.headers
+    assert await lab.written() == before
+    lab.stubber.assert_no_pending_responses()  # the bucket was never asked
+
+
+@pytest.mark.parametrize("site", ["same-origin", "none", None])
+async def test_a_download_from_the_run_page_a_typed_address_or_without_the_header_passes(lab, site):
+    run_id = await lab.land_vector()
+    lab.expect_list(run_id, VECTOR_FILES)
+
+    response = await lab.get(f"/runs/{run_id}/files/items.csv", lab.member, headers={} if site is None else {"Sec-Fetch-Site": site})
+
+    assert response.status_code == 302
+
+
 async def test_the_run_page_groups_the_bundle_and_the_attachments_as_the_bucket_lists_them(lab):
     run_id = await lab.make_run(state="pass", bundle_key=f"msp/{lab.msp_id}/runs/{uuid.uuid4()}/")
     key = (await RunRepo(lab.session).get(lab.msp_id, run_id)).bundle_key

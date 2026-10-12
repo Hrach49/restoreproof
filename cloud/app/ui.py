@@ -42,7 +42,8 @@ HX_REQUEST = "hx-request"
 
 # A page's POST from another site is refused; `same-origin`, `none` and no
 # header (curl, an old browser) pass, and SameSite=Lax keeps the cookie off a
-# cross-site POST anyway.
+# cross-site POST anyway. It doesn't keep it off a cross-site link, so the
+# download, a GET that writes an audit row, is held the same way.
 CROSS_SITE = ("cross-site", "same-site")
 
 
@@ -119,7 +120,8 @@ LayoutDep = Annotated[Layout, Depends(layout)]
 
 
 def same_origin(request: Request) -> None:
-    """Refuse a POST whose `Sec-Fetch-Site` says another site sent it."""
+    """Refuse a request whose `Sec-Fetch-Site` says another site sent it:
+    every POST of the pages, and the one GET that writes (the download)."""
     if request.headers.get("sec-fetch-site", "").lower() in CROSS_SITE:
         raise HTTPException(status_code=403, detail="cross-site request")
 

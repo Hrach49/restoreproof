@@ -3,14 +3,22 @@ C6.2 and C6.3", points 4 and 5).
 
 The session is one signed cookie, `rp_session`: itsdangerous's URL-safe
 serializer under `SECRET_KEY` and the salt `restoreproof.session.v1` over
-`{"u": <user_id>, "m": <msp_id>, "t": <issued, whole seconds>}`, good for
-`SESSION_MAX_AGE_S` from `t` by the Cloud's clock (`now()`, which a test
-moves). `SECRET_KEY` signs this and nothing else. A cookie that is missing,
-unsigned, expired or of another shape is no session, all alike.
+`{"u": <user_id>, "m": <msp_id>, "t": <issued, whole seconds>, "p": <the
+password's stamp>}`, good for `SESSION_MAX_AGE_S` from `t` by the Cloud's
+clock (`now()`, which a test moves). `SECRET_KEY` signs this and nothing else.
+A cookie that is missing, unsigned, expired or of another shape is no
+session, all alike.
 
-`current_user` reads the user's row every time (`UserRepo.get`, both ids from
-the cookie): a user who is gone is no session, and a cookie issued before
-`user.password_changed_at` is no session, so a reset ends every session. No
+`p` is `password_stamp(user.password_changed_at)` of the row the login
+verified the password against: the session is of that password. `current_user`
+reads the user's row every time (`UserRepo.get`, both ids from the cookie): a
+user who is gone is no session, and a cookie whose stamp isn't the row's is no
+session, so a reset, which moves `password_changed_at`, ends every session.
+The two are compared for equality and never as times (the code review's
+finding 2): `t` is the API host's clock in whole seconds and
+`password_changed_at` the database's or the CLI host's in microseconds, so
+"issued before" made a login in the second of a `create-user` a dead session
+and let a reset from a clock behind the Cloud's leave sessions alive. No
 session sends a browser to `/login` (303) and answers an htmx request 401
 with `HX-Redirect`, since htmx follows no 303 across a swap. `current_admin`
 is `current_user` and the role: a member is 403 (the route exists and is the
@@ -51,16 +59,28 @@ class Session:
     user_id: UUID
     msp_id: UUID
     issued_at: dt.datetime
+    password_stamp: int
 
 
 def _serializer(secret_key: str) -> URLSafeSerializer:
     return URLSafeSerializer(secret_key, salt=SESSION_SALT)
 
 
-def make_session(secret_key: str, user_id: UUID, msp_id: UUID) -> str:
-    """The cookie's value for the user, issued now."""
+EPOCH = dt.datetime(1970, 1, 1, tzinfo=dt.timezone.utc)
+
+
+def password_stamp(password_changed_at: dt.datetime) -> int:
+    """The time as whole microseconds since 1970, the column's own precision:
+    what a cookie carries of the password it was issued for."""
+    return (password_changed_at - EPOCH) // dt.timedelta(microseconds=1)
+
+
+def make_session(secret_key: str, user_id: UUID, msp_id: UUID, password_changed_at: dt.datetime) -> str:
+    """The cookie's value for the user, issued now for the password of
+    `password_changed_at` (the row the login read)."""
     issued = int(now().timestamp())
-    return _serializer(secret_key).dumps({"u": str(user_id), "m": str(msp_id), "t": issued})
+    payload = {"u": str(user_id), "m": str(msp_id), "t": issued, "p": password_stamp(password_changed_at)}
+    return _serializer(secret_key).dumps(payload)
 
 
 def read_session(secret_key: str, cookie: str | None) -> Session | None:
@@ -72,7 +92,7 @@ def read_session(secret_key: str, cookie: str | None) -> Session | None:
         payload = _serializer(secret_key).loads(cookie)
     except BadData:
         return None
-    if not (isinstance(payload, dict) and set(payload) == {"u", "m", "t"} and type(payload["t"]) is int):
+    if not (isinstance(payload, dict) and set(payload) == {"u", "m", "t", "p"} and type(payload["t"]) is int and type(payload["p"]) is int):
         return None
     try:
         user_id, msp_id = UUID(payload["u"]), UUID(payload["m"])
@@ -82,7 +102,7 @@ def read_session(secret_key: str, cookie: str | None) -> Session | None:
     age = now() - issued
     if age < dt.timedelta(0) or age > dt.timedelta(seconds=SESSION_MAX_AGE_S):
         return None
-    return Session(user_id, msp_id, issued)
+    return Session(user_id, msp_id, issued, payload["p"])
 
 
 def set_session_cookie(response: Response, value: str, *, secure: bool) -> None:
@@ -114,7 +134,7 @@ async def session_user(request: Request, session: SessionDep) -> User | None:
     if found is None:
         return None
     user = await UserRepo(session).get(found.msp_id, found.user_id)
-    if user is None or found.issued_at < user.password_changed_at:
+    if user is None or found.password_stamp != password_stamp(user.password_changed_at):
         return None
     return user
 

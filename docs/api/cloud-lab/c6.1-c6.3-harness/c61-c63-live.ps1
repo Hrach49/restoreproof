@@ -59,7 +59,7 @@ function Header-Of([string]$Answer, [string]$Name) {
 }
 function Body-Of([string]$Answer) { ($Answer -split "`r?`n`r?`n", 2)[1] }
 function Random-Password { [Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(18)) }
-function Login-Config([string]$Email, [string]$Password) { "url = `"$Cloud/login`"`ndata-urlencode = `"email=$Email`"`ndata-urlencode = `"password=$Password`"" }
+function Login-Config([string]$Email, [string]$Password) { "url = `"$Cloud/login`"`ndata-urlencode = `"email=$Email`"`ndata-urlencode = `"password=$($Password)`"" }
 # A page as text: the <main> part, tags gone, a table row per line with its cells apart.
 function Page-Text([string]$Html) {
     $main = if ($Html -match '(?s)<main>(.*?)</main>') { $Matches[1] } else { $Html }

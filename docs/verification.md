@@ -2157,11 +2157,20 @@ hashed as **Argon2id** under argon2-cffi's defaults (64 MiB, 3 passes, 4 lanes;
 `user.password_hash`); the address is trimmed, must hold one `@` with something on each side and
 no space, is stored as typed and is one across the Cloud whatever its case
 (`uq_user_email_lower`); `user.role` is `admin` or `member` (`ck_user_role`). A reset sets
-`user.password_changed_at`, which ends every session issued before it.
+`user.password_changed_at`, which ends every session of the user (the cookie carries that
+time's stamp; "The session" below).
 
-**`POST /login`** (`email` and `password` as a form; both or 422): the limiter first (below);
+**`POST /login`** (`email` and `password` as a form): a field that is missing, over its limit
+(254 and 1024 characters) or that no UTF-8 can hold (a multipart form may name a charset that
+decodes to a lone surrogate) is 422 with the login page and neither field in it, before the
+limiter and any work; the route holds the two fields itself, since FastAPI's own 422 repeats
+the refused value in `detail[].input`. Then the limiter (below);
 then one lookup by address and one Argon2 verification, against the user's hash or against one
-fixed hash made for an address nobody has, so a known and an unknown address cost the same; a
+fixed hash made for an address nobody has, so a known and an unknown address cost the same
+(the lookup lowers both sides in PostgreSQL, as `uq_user_email_lower` does: Python's
+`str.lower()` maps a dotted capital I or a final sigma otherwise; an address `create-user`
+would refuse, such as one with a U+0000, a space or no `@`, is nobody's and is not looked
+up, with the same answer, the same hash work and its count on the limiter); a
 wrong password is 401 with the form again and one line, `wrong email or password`, and one
 `audit_log` row `login.failure` in the user's MSP with the user and the caller's address; an
 unknown address is the same answer with no row (it belongs to no MSP) and one log line
@@ -2175,19 +2184,26 @@ and per caller's IP, a sliding window in the process's memory, every `POST /logi
 or wrong; the sixth inside the window under either key is 429 with `Retry-After` and
 `too many attempts, try again in a minute`, before any password work (the lookup by address still
 runs, so a `login.blocked` row names the user when there is one); a refused attempt counts under
-no key, so the window clears a minute after the fifth. The count is per process and lost at a
+no key and adds none (the 429 path can neither grow the table nor push a block out of it; it
+touches the keys it already has, and a key whose attempts all fell out of the window is
+dropped), so the window clears a minute after the fifth. The count is per process and lost at a
 restart; the IP behind a proxy is the proxy's (C5.12).
 
 **The session** is one cookie, `rp_session`: itsdangerous's URL-safe serializer under
 `SECRET_KEY` (its one use) and the salt `restoreproof.session.v1` over `{"u": <user_id>,
-"m": <msp_id>, "t": <issued, whole seconds>}`, good for 12 hours from `t` by the Cloud's clock;
+"m": <msp_id>, "t": <issued, whole seconds>, "p": <the password's stamp>}`, good for 12 hours
+from `t` by the Cloud's clock; `p` is `user.password_changed_at` in whole microseconds, of the
+row the login verified the password against;
 `HttpOnly`, `SameSite=Lax`, `Path=/`, `Max-Age` 43200, `Secure` unless `SESSION_COOKIE_SECURE`
 is `false` (the http stack). A cookie that is missing, tampered, expired, from the future, of
-another shape, of a user who is gone or whose `password_changed_at` is after `t`, is no session,
+another shape, of a user who is gone or whose `password_changed_at` is not the cookie's `p`, is
+no session (the two are compared for equality and never as times: the API host's clock, the
+database's and the CLI host's needn't agree, and `t` has no fraction),
 all alike: a browser is sent to `/login` (303), an htmx request told to go there (401 with
 `HX-Redirect`). `current_user` reads the user's row on every request; a page reads the MSP's
 too. The cookie is not renewed while in use. A `POST` to a page whose `Sec-Fetch-Site` is
-`cross-site` or `same-site` is 403; no CSRF token.
+`cross-site` or `same-site` is 403, and so is the download, the one `GET` that writes a row
+(`SameSite=Lax` sends the cookie on a link from another site); no CSRF token.
 
 **Roles.** A member reads every page and downloads; an admin also revokes a Worker and reads
 `/audit`. A member on an admin route is 403 (the route exists and is the user's own MSP's); a

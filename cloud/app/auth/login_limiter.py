@@ -3,8 +3,10 @@ C6.3", point 7): five attempts a minute per key, a sliding window in the
 process's memory on a clock the caller gives. Every `POST /login` counts,
 right or wrong: the sixth inside the window for any of its keys is refused
 before any password work. The table is bounded: past `MAX_KEYS` keys the one
-least recently touched is dropped. The count is per process and lost at a
-restart (C7.2 owns a shared store).
+least recently touched is dropped. A refused attempt adds no key (so the 429
+path can't grow the table or push a block out of it), touches the keys it
+already has, and a key whose attempts all fell out of the window is dropped.
+The count is per process and lost at a restart (C7.2 owns a shared store).
 
 Guarded at 100% line and branch (tools/check_coverage.py).
 """
@@ -41,19 +43,26 @@ class LoginLimiter:
                 wait = recent[0] + self._window_s - now
                 retry_after = wait if retry_after is None else max(retry_after, wait)
         if retry_after is not None:
+            for key in keys:
+                if key in self._attempts:
+                    self._attempts.move_to_end(key)
             return max(1, math.ceil(retry_after))
         for key in keys:
-            self._recent(key, now).append(now)
+            self._attempts.setdefault(key, []).append(now)
             self._attempts.move_to_end(key)
         while len(self._attempts) > self._max_keys:
             self._attempts.popitem(last=False)
         return None
 
     def _recent(self, key: str, now: float) -> list[float]:
-        """The key's attempts inside the window, the older ones dropped."""
-        stamps = self._attempts.setdefault(key, [])
-        kept = [stamp for stamp in stamps if stamp > now - self._window_s]
-        stamps[:] = kept
+        """The key's attempts inside the window, the older ones dropped and
+        the key with them when none is left; a key never seen is not added."""
+        stamps = self._attempts.get(key)
+        if stamps is None:
+            return []
+        stamps[:] = [stamp for stamp in stamps if stamp > now - self._window_s]
+        if not stamps:
+            del self._attempts[key]
         return stamps
 
     def __len__(self) -> int:

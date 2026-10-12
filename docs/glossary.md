@@ -484,9 +484,9 @@ password asked for on the console or read from standard input, never an argument
 
 **Session cookie (`rp_session`).** C6.1's one session: itsdangerous's URL-safe serializer under
 `SECRET_KEY` (its one use) and the salt `restoreproof.session.v1` over the user's id, the MSP's
-id and the issue time, good for 12 hours; `HttpOnly`, `SameSite=Lax`, `Secure` unless
+id, the issue time and the stamp of the password it was issued for, good for 12 hours; `HttpOnly`, `SameSite=Lax`, `Secure` unless
 `SESSION_COOKIE_SECURE=false` (the http stack). `current_user` reads the user's row every time;
-a cookie issued before `user.password_changed_at` is no session, so `reset-password` ends every
+a cookie whose stamp is not `user.password_changed_at`'s is no session, so `reset-password` ends every
 session. No session sends a browser to `/login` and answers an htmx request 401 with
 `HX-Redirect`. See `docs/verification.md`, "The Cloud's pages".
 

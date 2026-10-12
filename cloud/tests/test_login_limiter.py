@@ -116,3 +116,58 @@ def test_no_key_is_never_refused_and_records_nothing(keys):
 
     assert limiter.attempt(keys) is None
     assert len(limiter) == 0
+
+
+# --- The code review's finding 1: a refused attempt costs the table nothing --------------------
+
+
+def test_a_refused_attempt_adds_no_key_to_the_table():
+    limiter = LoginLimiter(Clock())
+    for _ in range(5):
+        limiter.attempt(["ip:x"])
+
+    for n in range(100):
+        assert limiter.attempt(["ip:x", f"email:fresh{n}"]) == 60
+
+    assert len(limiter) == 1
+
+
+def test_refused_attempts_never_push_a_block_out_of_the_table():
+    limiter = LoginLimiter(Clock(), max_keys=10)
+    for _ in range(5):
+        limiter.attempt(["email:victim", "ip:a"])
+
+    for n in range(50):
+        assert limiter.attempt([f"email:fresh{n}", "ip:a"]) == 60
+    assert limiter.attempt(["email:other", "ip:b"]) is None  # an allowed attempt trims the table
+
+    assert limiter.attempt(["email:victim", "ip:c"]) == 60
+    assert limiter.attempt(["email:x", "ip:a"]) == 60
+
+
+def test_a_refused_attempt_touches_the_keys_it_has_so_a_block_in_use_is_not_the_oldest():
+    limiter = LoginLimiter(Clock(), max_keys=3)
+    for _ in range(5):
+        limiter.attempt(["a"])
+    limiter.attempt(["b"])
+    limiter.attempt(["c"])
+
+    assert limiter.attempt(["a"]) == 60  # refused: a is now the most recently touched
+    limiter.attempt(["d"])  # b is the oldest and goes
+
+    assert len(limiter) == 3
+    assert limiter.attempt(["a"]) == 60
+
+
+def test_a_key_whose_attempts_all_fell_out_of_the_window_leaves_the_table():
+    clock = Clock()
+    limiter = LoginLimiter(clock)
+    limiter.attempt(["y"])  # at 1000
+    clock.at = 1030.0
+    for _ in range(5):
+        limiter.attempt(["x"])
+    clock.at = 1061.0
+
+    assert limiter.attempt(["x", "y"]) == 29  # x refuses; y's one attempt is over a minute old
+
+    assert len(limiter) == 1

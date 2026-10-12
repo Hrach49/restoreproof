@@ -7,7 +7,10 @@ as the bucket lists them (one call, in a thread), each a link to the download
 route, grouped as the bundle (`result.json`, `signature.json`,
 `timestamp.tst`) and the attachments. A run without a bundle lists no file.
 
-The download: the name held to `FILE_NAME`, the run this MSP's, the name one
+The download: a request another site sent the browser to is 403 before
+anything (`SameOrigin`: this GET writes a row in the user's name and the
+`SameSite=Lax` cookie travels on a cross-site link; the code review's
+finding 9); the name held to `FILE_NAME`, the run this MSP's, the name one
 the bucket lists (404 otherwise); then one audit row `bundle.download`
 `run:<id> <name>` with the user and the address, committed before the answer;
 then 302 to a URL pre-signed for `LINK_SECONDS` against the endpoint a browser
@@ -30,7 +33,7 @@ from app.repo.clients import ClientRepo
 from app.repo.items import ItemRepo
 from app.repo.runs import RunRepo
 from app.repo.workers import WorkerRepo
-from app.ui import LayoutDep, render
+from app.ui import LayoutDep, SameOrigin, render
 
 router = APIRouter()
 
@@ -68,7 +71,7 @@ async def run_page(run_id: UUID, request: Request, layout: LayoutDep, session: S
 
 
 @router.get("/runs/{run_id}/files/{name}", response_class=Response)
-async def download(run_id: UUID, name: str, request: Request, layout: LayoutDep, session: SessionDep) -> Response:
+async def download(run_id: UUID, name: str, request: Request, _same_origin: SameOrigin, layout: LayoutDep, session: SessionDep) -> Response:
     if not FILE_NAME.fullmatch(name):
         raise HTTPException(status_code=404, detail=NO_SUCH_FILE)
     run = await _run_of(session, layout.user.msp_id, run_id)

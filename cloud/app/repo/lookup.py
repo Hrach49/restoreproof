@@ -22,5 +22,8 @@ class Lookup(Repo):
         return await self._one(select(InstallToken).where(InstallToken.token_hash == token_hash))
 
     async def find_user_by_email(self, email: str) -> User | None:
-        """The user of the address, in any case (the login's lookup, C6.1)."""
-        return await self._one(select(User).where(func.lower(User.email) == email.strip().lower()))
+        """The user of the address, in any case (the login's lookup, C6.1).
+        Both sides are lowered by PostgreSQL, as `uq_user_email_lower` is:
+        Python's `str.lower()` maps other letters (a dotted capital I, a final
+        sigma), and the user stored under one was found by no login."""
+        return await self._one(select(User).where(func.lower(User.email) == func.lower(email.strip())))

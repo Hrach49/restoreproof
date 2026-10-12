@@ -78,6 +78,58 @@ jobs:
         if: ${{ !cancelled() && hashFiles('cloud/coverage.json') != '' }}
         run: uv run --locked python tools/check_coverage.py coverage.json --summary "$GITHUB_STEP_SUMMARY"
 
+  # C5.11 (docs/decisions.md 2026-10-12, point 4): the committed contract is
+  # what the code serves. The tool regenerates docs/api/openapi-v1.json from
+  # the app with placeholder settings (it connects to nothing, so no Postgres
+  # here) and git shows the difference, so a route change without the
+  # regenerated file is a red check named for the contract, with the diff in
+  # the log. On a pull request the file's change against the base is also
+  # written into the step summary for the reviewer: shown, never failing.
+  contract:
+    name: OpenAPI document is current
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cloud
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: cloud/uv.lock
+
+      - name: Regenerate docs/api/openapi-v1.json
+        run: uv run --locked python tools/dump_openapi.py
+
+      - name: The committed document is the regenerated one
+        run: |
+          if ! git --no-pager diff --exit-code -- ../docs/api/openapi-v1.json; then
+            echo "::error::docs/api/openapi-v1.json is stale: run 'uv run python tools/dump_openapi.py' from cloud/ and commit the file"
+            exit 1
+          fi
+
+      - name: Contract change in this PR
+        if: ${{ github.event_name == 'pull_request' }}
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          {
+            echo "### Contract change in this PR (docs/api/openapi-v1.json)"
+            echo
+            if git --no-pager diff --quiet "$BASE_SHA...$HEAD_SHA" -- ../docs/api/openapi-v1.json; then
+              echo "none"
+            else
+              echo '```diff'
+              git --no-pager diff "$BASE_SHA...$HEAD_SHA" -- ../docs/api/openapi-v1.json
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
   # C5.1's Done-when: "docker compose up serves /healthz green". Builds the
   # image, starts the whole local stack (the api migrates before it listens)
   # and requires 200 with both checks ok.

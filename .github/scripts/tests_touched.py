@@ -6,11 +6,14 @@ Reads a pull request's changes on stdin, as printed by
 same side:
 
     worker/src/, worker/include/, worker/app/  need a change to test code under worker/tests/
-    cloud/app/                                 needs a change to test code under cloud/tests/
+    cloud/app/, cloud/manage.py                need a change to test code under cloud/tests/
+    shared/tools/                              needs a change to test code under cloud/tests/
 
 Test code means C++ files under worker/tests/ and .py files under cloud/tests/.
 Fixtures, docs and tests/e2e/scenarios.md don't count, and neither does a
-deleted test: removing a test is not writing one.
+deleted test: removing a test is not writing one. C5.11 (docs/decisions.md
+2026-10-12, point 6) added the onboarding CLI, outside cloud/app/, and the
+verifier the Cloud imports, whose tests are the Cloud's.
 
 Exit codes: 0 allowed, 1 blocked, 2 unreadable input.
 Stdlib only, so it runs on any runner Python without installing anything.
@@ -27,6 +30,8 @@ MESSAGE = "No test, no merge"
 
 
 class Side(NamedTuple):
+    # A directory (ending in "/") matches everything below it; a file matches
+    # that path alone.
     source_dirs: tuple[str, ...]
     test_dir: str
     test_suffixes: tuple[str, ...]
@@ -34,7 +39,8 @@ class Side(NamedTuple):
 
 SIDES = (
     Side(("worker/src/", "worker/include/", "worker/app/"), "worker/tests/", (".cpp", ".hpp", ".h")),
-    Side(("cloud/app/",), "cloud/tests/", (".py",)),
+    Side(("cloud/app/", "cloud/manage.py"), "cloud/tests/", (".py",)),
+    Side(("shared/tools/",), "cloud/tests/", (".py",)),
 )
 
 # Single-path statuses from `git diff --name-status --no-renames`.
@@ -53,6 +59,12 @@ def _is_test_code(side: Side, path: str) -> bool:
     return path.startswith(side.test_dir) and path.endswith(side.test_suffixes)
 
 
+def _is_source(side: Side, path: str) -> bool:
+    return any(
+        path.startswith(source) if source.endswith("/") else path == source for source in side.source_dirs
+    )
+
+
 def violations(changes: Iterable[tuple[str, str]]) -> list[str]:
     """Return the source paths that break the rule, or [] if the PR may merge.
 
@@ -69,7 +81,7 @@ def violations(changes: Iterable[tuple[str, str]]) -> list[str]:
             status != "D" and _is_test_code(side, path) for status, path in pairs
         )
         if not tested:
-            offending += [path for _, path in pairs if path.startswith(side.source_dirs)]
+            offending += [path for _, path in pairs if _is_source(side, path) and path not in offending]
     order = {path: i for i, (_, path) in enumerate(pairs)}
     return sorted(offending, key=order.__getitem__)
 
@@ -118,7 +130,7 @@ def main() -> int:
         return 0
     print(MESSAGE)
     for side in SIDES:
-        paths = [p for p in offending if p.startswith(side.source_dirs)]
+        paths = [p for p in offending if _is_source(side, p)]
         if not paths:
             continue
         print(

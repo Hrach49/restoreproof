@@ -1,9 +1,9 @@
 """Enforce 100% line and branch coverage on the security-critical Cloud paths.
 
 pytest-cov only supports one global threshold (--cov-fail-under). CLAUDE.md
-also requires 100% branch coverage on app/auth, app/results.py, app/repo and
-app/cadence.py, so this script reads coverage's JSON report and checks those
-paths file by file.
+also requires 100% branch coverage on app/auth, app/results.py, app/repo,
+app/cadence.py and app/contract.py, so this script reads coverage's JSON
+report and checks those paths file by file.
 
 Usage (from cloud/):
     uv run pytest --cov=app --cov-branch --cov-report=json:coverage.json
@@ -26,8 +26,9 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-# C5.9: app/cadence.py decides whether a run is made.
-GUARDED = ("app/auth", "app/results.py", "app/repo", "app/cadence.py")
+# C5.9: app/cadence.py decides whether a run is made. C5.11: app/contract.py
+# answers every request (the API header and the body cap).
+GUARDED = ("app/auth", "app/results.py", "app/repo", "app/cadence.py", "app/contract.py")
 
 
 @dataclass

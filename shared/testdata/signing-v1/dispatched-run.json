@@ -1,0 +1,71 @@
+{
+  "description": "One run folder the Worker's service made and sent for a job of the Cloud's shape (C5.11, docs/decisions.md 2026-10-12, point 7), as texts, in bundle.json's shape: `files` maps each file's name to its content, a file's bytes the UTF-8 of that string exactly, or the Base64 of a binary file (timestamp.tst). The job is one GET /v1/jobs writes (`job`): `run_id` a uuid the Cloud dispatched, `client_id` the client's, the client the test Harness's made-up tenant, so the result's `client.client_id` and `run_id` are the Cloud's and the Cloud's contract test posts these bytes unchanged to 202. `upload` is the request the Worker's outbox built from the folder, part by part (name, file name, content type), in order. Signed with the key `key` of keys.json; timestamped by the published test TSA of timestamp-v1/keys.json at `tsa_time`, so with that `tsa_root` and that key's `public_key_pem` both verifiers answer `verified <bundle_sha256> key <key_id> timestamp <tsa_time>`. Written by the Worker's hidden test `rptests \"[.write_shared_dispatched]\"`; the result names the Worker's version of that day and the token's signature is ECDSA (never the same twice), so the file is not held to the code byte for byte: a Worker test and a Cloud test verify it as it is, and the Worker test holds its result to what the lab makes but for `worker_version`.",
+  "key": "rfc8032-test-1",
+  "bundle_sha256": "578afefa43ba044bd243e231842b815bf5af8f2c504d73912ea153038644d282",
+  "key_id": "06e3fd8fda29bb60ab59557de61edb0aecdb231134be30e75b455f8e1b792fa9",
+  "run_id": "c5110000-0000-4000-8000-000000000001",
+  "client_id": "c5110000-0000-4000-8000-000000000002",
+  "tenant_id": "bcd6bd1a-ea42-489d-aa28-2c19a44ad146",
+  "worker_version": "0.0.0",
+  "tsa_root": "root",
+  "tsa_time": "2026-09-28T12:00:00Z",
+  "job": {
+    "client": {
+      "format": "restoreproof.client-profile.v1",
+      "graph_client_id": "737da5ef-baf2-4198-b009-e160d8ca77c9",
+      "graph_tenant_id": "bcd6bd1a-ea42-489d-aa28-2c19a44ad146",
+      "test_library_id": "b!XQgI_nDr6EKVpkcBib2Y65nzyk4OzJVNs_7NCRoJ5omdBuz_5GU6TJ2irAhs-dr6",
+      "test_mailbox": "restoretest@RestoreProofLab.onmicrosoft.com",
+      "test_onedrive_drive_id": "b!wA9gbfhlEUitGAluxbfoNBr_z5gEtDhErm5pJ6bMwyXfZJ8a_dkCQ696RX0r7_U3",
+      "test_onedrive_folder_id": "01ZK75LGDGB6QOO3MGNFGYOY6C6VBDG5OH",
+      "test_site_id": "restoreprooflab.sharepoint.com,fe08085d-eb70-42e8-95a6-470189bd98eb,4ecaf399-cc0e-4d95-b3fe-cd091a09e689",
+      "veeam_org_name": "RestoreProofLab.onmicrosoft.com"
+    },
+    "client_id": "c5110000-0000-4000-8000-000000000002",
+    "connector": {
+      "type": "veeam_m365"
+    },
+    "restore_point": "latest",
+    "run_id": "c5110000-0000-4000-8000-000000000001",
+    "sample_mail": 0,
+    "sample_od": 1,
+    "sample_sp": 1,
+    "screenshots_enabled": false
+  },
+  "upload": [
+    {
+      "name": "result",
+      "filename": "result.json",
+      "content_type": "application/json"
+    },
+    {
+      "name": "signature",
+      "filename": "signature.json",
+      "content_type": "application/json"
+    },
+    {
+      "name": "timestamp",
+      "filename": "timestamp.tst",
+      "content_type": "application/octet-stream"
+    },
+    {
+      "name": "items.csv",
+      "filename": "items.csv",
+      "content_type": "application/octet-stream"
+    },
+    {
+      "name": "veeam-session.log",
+      "filename": "veeam-session.log",
+      "content_type": "application/octet-stream"
+    }
+  ],
+  "files": {
+    "items.csv": "index,type,source,canary_id,name,expected_kind,sha256_rule,expected_sha256,found_sha256,restore_outcome,found,outcome,mismatches,verdict,code,ms\n0,\"sharepoint\",\"canary\",\"rp-canary-01.pdf\",\"rp-canary-01.pdf\",\"manifest\",\"bytes\",\"9c79923653e6c2890199e4973b83924eb44b9cf1a2d7f484ef87037ac169a886\",\"9c79923653e6c2890199e4973b83924eb44b9cf1a2d7f484ef87037ac169a886\",\"restored\",\"yes\",\"match\",\"\",\"verified\",\"\",246000\n1,\"onedrive\",\"canary\",\"rp-canary-11.pdf\",\"rp-canary-11.pdf\",\"manifest\",\"bytes\",\"8cb6004f5024ef81530f08da82dd9a949807d62af1eb71095a8b80e5b5923a2e\",\"8cb6004f5024ef81530f08da82dd9a949807d62af1eb71095a8b80e5b5923a2e\",\"restored\",\"yes\",\"match\",\"\",\"verified\",\"\",246000\n",
+    "result.json": "{\"attachments\":[{\"name\":\"items.csv\",\"sha256\":\"8bbe06e0162a4ac1dabb93da24a238ee6d816694d3a4af1b2a0d0ed3d656f3c6\",\"size_bytes\":671},{\"name\":\"veeam-session.log\",\"sha256\":\"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\",\"size_bytes\":0}],\"check\":{\"counts\":{\"error\":0,\"match\":2,\"mismatch\":0,\"missing\":0},\"items\":[{\"found\":true,\"index\":0,\"ms\":246000,\"outcome\":\"match\"},{\"found\":true,\"index\":1,\"ms\":246000,\"outcome\":\"match\"}],\"stale_copies\":{\"mail\":0,\"onedrive\":0,\"sharepoint\":0}},\"cleanup\":{\"after\":{\"mail\":{\"deleted\":0,\"found\":0,\"gone\":0,\"left\":0,\"rounds\":1,\"skipped\":0},\"onedrive\":{\"deleted\":1,\"found\":1,\"gone\":0,\"left\":0,\"rounds\":1,\"skipped\":0},\"sharepoint\":{\"deleted\":1,\"found\":1,\"gone\":0,\"left\":0,\"rounds\":1,\"skipped\":0}},\"before\":{\"mail\":{\"deleted\":0,\"found\":0,\"gone\":0,\"left\":0,\"rounds\":1,\"skipped\":0},\"onedrive\":{\"deleted\":0,\"found\":0,\"gone\":0,\"left\":0,\"rounds\":1,\"skipped\":0},\"sharepoint\":{\"deleted\":0,\"found\":0,\"gone\":0,\"left\":0,\"rounds\":1,\"skipped\":0}},\"cleanup_ok\":true,\"restore_may_still_run\":false},\"client\":{\"client_id\":\"c5110000-0000-4000-8000-000000000002\",\"resolved\":{\"library\":{\"list_id\":\"ffec069d-65e4-4c3a-9da2-ac086cf9dafa\",\"name\":\"RestoreTarget\",\"site_url\":\"https://restoreprooflab.sharepoint.com/sites/RestoreTest\"},\"mailbox\":{\"inbox_id\":\"AAMkADYyNGRlZDhkLTM1MmEtNGI1NS05Y2I5LTM4OTliNzZhMTRjOAAuAAAAAADjrcyzRbMCTbaiTPZo3n0vAQCnL_u8BR8BT6morC7OYUFaAAAAAAEMAAA=\"},\"onedrive_folder\":{\"name\":\"RestoreTarget\",\"site_url\":\"https://restoreprooflab-my.sharepoint.com/personal/alice_restoreprooflab_onmicrosoft_com\"},\"organization\":{\"name\":\"RestoreProofLab.onmicrosoft.com\",\"region\":\"Worldwide\",\"tenant_id\":\"bcd6bd1a-ea42-489d-aa28-2c19a44ad146\",\"type\":\"Office365\"}},\"scope\":\"same_tenant\",\"targets\":{\"library_id\":\"b!XQgI_nDr6EKVpkcBib2Y65nzyk4OzJVNs_7NCRoJ5omdBuz_5GU6TJ2irAhs-dr6\",\"mailbox\":\"restoretest@RestoreProofLab.onmicrosoft.com\",\"onedrive_drive_id\":\"b!wA9gbfhlEUitGAluxbfoNBr_z5gEtDhErm5pJ6bMwyXfZJ8a_dkCQ696RX0r7_U3\",\"onedrive_folder_id\":\"01ZK75LGDGB6QOO3MGNFGYOY6C6VBDG5OH\",\"site_id\":\"restoreprooflab.sharepoint.com,fe08085d-eb70-42e8-95a6-470189bd98eb,4ecaf399-cc0e-4d95-b3fe-cd091a09e689\"},\"tenant_id\":\"bcd6bd1a-ea42-489d-aa28-2c19a44ad146\",\"veeam_org_name\":\"RestoreProofLab.onmicrosoft.com\"},\"connector\":{\"api\":\"1\",\"type\":\"veeam_m365\"},\"ended_at\":\"2026-09-28T12:00:00.000Z\",\"expected\":{\"counts\":{\"fields\":0,\"manifest\":2,\"metadata\":0},\"items\":[{\"canary_id\":\"rp-canary-01.pdf\",\"expected_kind\":\"manifest\",\"index\":0,\"kind\":\"sharepoint\",\"name\":\"rp-canary-01.pdf\",\"sha256\":\"9c79923653e6c2890199e4973b83924eb44b9cf1a2d7f484ef87037ac169a886\",\"sha256_rule\":\"bytes\",\"size_bytes\":925,\"source\":\"canary\"},{\"canary_id\":\"rp-canary-11.pdf\",\"expected_kind\":\"manifest\",\"index\":1,\"kind\":\"onedrive\",\"name\":\"rp-canary-11.pdf\",\"sha256\":\"8cb6004f5024ef81530f08da82dd9a949807d62af1eb71095a8b80e5b5923a2e\",\"sha256_rule\":\"bytes\",\"size_bytes\":925,\"source\":\"canary\"}],\"manifest_sha256\":\"1add48bcde72384a55e9d7e0614eafdb3883b1f4921a78134339c6186a3deb60\"},\"format\":\"restoreproof.result.v1\",\"restore\":{\"items\":[{\"container_missing\":false,\"index\":0,\"infrastructure\":false,\"kind\":\"sharepoint\",\"outcome\":\"restored\",\"session_id\":\"sess-sharepoint\"},{\"container_missing\":false,\"index\":1,\"infrastructure\":false,\"kind\":\"onedrive\",\"outcome\":\"restored\",\"session_id\":\"sess-onedrive\"}],\"items_restored\":2,\"items_sent\":2,\"sessions\":[{\"details\":null,\"ended_at_raw\":\"2026-09-30T10:01:52.25Z\",\"id\":\"sess-sharepoint\",\"items_restored\":1,\"items_sent\":1,\"kind\":\"sharepoint\",\"result\":\"Success\",\"started_at_raw\":\"2026-09-30T10:01:10Z\"},{\"details\":null,\"ended_at_raw\":\"2026-09-30T10:04:00.5Z\",\"id\":\"sess-onedrive\",\"items_restored\":1,\"items_sent\":1,\"kind\":\"onedrive\",\"result\":\"Success\",\"started_at_raw\":\"2026-09-30T10:02:00Z\"}],\"status\":\"succeeded\"},\"restore_point\":{\"backup_time\":\"2026-09-29T22:00:45Z\",\"backup_time_raw\":\"2026-09-29T22:00:45.6603083Z\",\"id\":\"c2f0f2e7-177f-48ac-992b-93a50cf702e35e1c0a24-0000-4000-8000-000000000930\"},\"run_id\":\"c5110000-0000-4000-8000-000000000001\",\"sample\":{\"algorithm\":\"sample-v1\",\"mail\":{\"canary\":{\"cursor\":0,\"cursor_next\":0,\"ids\":[],\"wanted\":0},\"random\":{\"containers_drawn\":0,\"containers_eligible\":0,\"containers_unresolved\":0,\"folders_listed\":0,\"keys\":[],\"pool_sha256\":\"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945\",\"pool_size\":0,\"short_of_containers\":false,\"taken\":0,\"wanted\":0},\"requested\":0},\"manifest_sha256\":\"1add48bcde72384a55e9d7e0614eafdb3883b1f4921a78134339c6186a3deb60\",\"onedrive\":{\"canary\":{\"cursor\":0,\"cursor_next\":1,\"ids\":[\"rp-canary-11.pdf\"],\"wanted\":1},\"random\":{\"containers_drawn\":0,\"containers_eligible\":0,\"containers_unresolved\":0,\"folders_listed\":0,\"keys\":[],\"pool_sha256\":\"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945\",\"pool_size\":0,\"short_of_containers\":false,\"taken\":0,\"wanted\":0},\"requested\":1},\"run_id\":\"c5110000-0000-4000-8000-000000000001\",\"seed\":\"115c4e62\",\"sharepoint\":{\"canary\":{\"cursor\":0,\"cursor_next\":1,\"ids\":[\"rp-canary-01.pdf\"],\"wanted\":1},\"random\":{\"containers_drawn\":0,\"containers_eligible\":0,\"containers_unresolved\":0,\"folders_listed\":0,\"keys\":[],\"pool_sha256\":\"4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945\",\"pool_size\":0,\"short_of_containers\":false,\"taken\":0,\"wanted\":0},\"requested\":1}},\"screenshot\":{\"reason\":\"disabled\",\"state\":\"unavailable\"},\"started_at\":\"2026-09-28T12:00:00.000Z\",\"status\":{\"counts\":{\"failed\":0,\"items\":2,\"unchecked\":0,\"verified\":2},\"failed_items\":[],\"message\":\"2 of 2 item(s) verified: manifest 2, fields 0, metadata 0\",\"restore_sent\":true,\"status\":\"pass\",\"unchecked_items\":[],\"verified\":{\"fields\":0,\"manifest\":2,\"metadata\":0},\"warnings\":[]},\"timings\":{\"spans\":{\"cleanup_after\":{\"ms\":123000},\"cleanup_before\":{\"ms\":123000},\"recovery\":{\"ms\":1230000},\"restore\":{\"ms\":123000},\"restore_point_lookup\":{\"ms\":123000},\"restore_submit\":{\"note\":\"not_reported\"},\"restore_wait\":{\"note\":\"not_reported\"},\"sample_select\":{\"ms\":123000},\"target_snapshot\":{\"ms\":123000},\"total\":{\"ms\":2460000},\"verify\":{\"ms\":1107000}}},\"worker_version\":\"0.0.0\"}",
+    "signature.json": "{\"algorithm\":\"ed25519\",\"bundle_sha256\":\"578afefa43ba044bd243e231842b815bf5af8f2c504d73912ea153038644d282\",\"format\":\"restoreproof.signature.v1\",\"key_id\":\"06e3fd8fda29bb60ab59557de61edb0aecdb231134be30e75b455f8e1b792fa9\",\"signature\":\"9trzjDlEcu7c/Lpch9t8CWL6h1eOnbuvx83pdGtNycqmi7zf2rH06B8CtmP92vpzbCei617xUEN4HhU4l0ECCQ==\"}",
+    "timestamp.tst": {
+      "base64": "MIIDfQYJKoZIhvcNAQcCoIIDbjCCA2oCAQMxDzANBglghkgBZQMEAgEFADBvBgsqhkiG9w0BCRABBKBgBF4wXAIBAQYEKgMEATAxMA0GCWCGSAFlAwQCAQUABCBXiv76Q7oES9JD4jGEK4Fb9a+PLFBNc5EuoVMDhkTSggICETQYDzIwMjYwOTI4MTIwMDAwWgIJAPdg2iUltLAzoIIBjzCCAYswggEyoAMCAQICAQIwCgYIKoZIzj0EAwIwQjFAMD4GA1UEAww3UmVzdG9yZVByb29mIHRlc3QgVFNBIHJvb3QgKHRpbWVzdGFtcC12MSwgbm90IGEgc2VjcmV0KTAgFw0yNjAxMDEwMDAwMDBaGA8yMTI1MTIwODAwMDAwMFowLzEtMCsGA1UEAwwkUmVzdG9yZVByb29mIHRlc3QgVFNBIChub3QgYSBzZWNyZXQpMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEZTlCr8iWcyeSkgDoF+kRm5z/QQax2V++NSuYxTDEBmx6vRNlwWByaxPQUKX58X22gfJc9f1t9+1h+nBUr3ngXaMqMCgwDgYDVR0PAQH/BAQDAgeAMBYGA1UdJQEB/wQMMAoGCCsGAQUFBwMIMAoGCCqGSM49BAMCA0cAMEQCIH6H7Hx2uAgGcJadphX1unE7Or4aBv9JQIHjKPCuH0PuAiA9wYlvqL8sXqIF5UDOG+wB4QWdANPyO57b3/KguTx35TGCAU4wggFKAgEBMEcwQjFAMD4GA1UEAww3UmVzdG9yZVByb29mIHRlc3QgVFNBIHJvb3QgKHRpbWVzdGFtcC12MSwgbm90IGEgc2VjcmV0KQIBAjANBglghkgBZQMEAgEFAKCBmDAaBgkqhkiG9w0BCQMxDQYLKoZIhvcNAQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI2MTAxMTIzMDc0M1owKwYLKoZIhvcNAQkQAgwxHDAaMBgwFgQU1DzP5Hj4TpjmrzARxZS4bhF96fQwLwYJKoZIhvcNAQkEMSIEINtgqmF6uX6793tt3ynVEQLdz0aHepOJxW5qrOOP0iuIMAoGCCqGSM49BAMCBEYwRAIgYqMWFjJpaz8ZbMCNfLhVBKxBfAteHOOVddtW8vEOft8CIA19vcMJldEidYb5RzeBoNWWnj8uzL888rhFbVbNWaZW"
+    },
+    "veeam-session.log": ""
+  }
+}

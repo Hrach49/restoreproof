@@ -123,7 +123,7 @@ def test_fails_when_report_is_not_json(tmp_path, capsys):
 # ---- skip and pass paths -------------------------------------------------
 
 
-@pytest.mark.parametrize("guarded", ["app/auth", "app/results.py", "app/repo", "app/cadence.py"])
+@pytest.mark.parametrize("guarded", ["app/auth", "app/results.py", "app/repo", "app/cadence.py", "app/contract.py"])
 def test_missing_guarded_path_is_skipped_not_failed(tmp_path, capsys, guarded):
     report = write_report(tmp_path, {})
 

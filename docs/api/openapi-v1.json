@@ -246,6 +246,33 @@
         ],
         "title": "ValidationError",
         "type": "object"
+      },
+      "VersionBody": {
+        "additionalProperties": false,
+        "properties": {
+          "api": {
+            "const": 1,
+            "title": "Api",
+            "type": "integer"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "api",
+          "version"
+        ],
+        "title": "VersionBody",
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "workerToken": {
+        "description": "The Worker's API token, answered once by `POST /v1/workers/register` (`api_token`).",
+        "scheme": "bearer",
+        "type": "http"
       }
     }
   },
@@ -344,6 +371,16 @@
               }
             }
           },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "The body is over the 64 KiB cap every request but the upload has (`body: too large`)."
+          },
           "422": {
             "content": {
               "application/json": {
@@ -355,6 +392,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "workerToken": []
+          }
+        ],
         "summary": "Heartbeat"
       }
     },
@@ -391,6 +433,11 @@
             }
           }
         },
+        "security": [
+          {
+            "workerToken": []
+          }
+        ],
         "summary": "Jobs"
       }
     },
@@ -534,7 +581,30 @@
             "description": "Not multipart/form-data."
           }
         },
+        "security": [
+          {
+            "workerToken": []
+          }
+        ],
         "summary": "Upload"
+      }
+    },
+    "/v1/version": {
+      "get": {
+        "operationId": "version_v1_version_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VersionBody"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Version"
       }
     },
     "/v1/workers/register": {
@@ -598,6 +668,16 @@
               }
             },
             "description": "The key is already registered."
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "The body is over the 64 KiB cap every request but the upload has (`body: too large`)."
           },
           "422": {
             "content": {

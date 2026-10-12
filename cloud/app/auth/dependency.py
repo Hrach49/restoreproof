@@ -15,8 +15,10 @@ from __future__ import annotations
 
 import hmac
 import re
+from typing import Annotated
 
-from fastapi import HTTPException, Request
+from fastapi import Depends, HTTPException, Request
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.auth.tokens import token_hash
 from app.db import SessionDep
@@ -26,6 +28,17 @@ from app.repo.lookup import Lookup
 _BEARER = re.compile(r"Bearer (\S+)")
 # Compared against when no row was found, so the comparison always runs.
 _NO_HASH = "0" * 64
+
+# For the OpenAPI document alone (C5.11; docs/decisions.md 2026-10-12, point
+# 3): a route that depends on `current_worker` is documented as taking the
+# Worker's bearer token, with no second edit. Its result is never read
+# (`_presented_token` is the one parse) and with `auto_error=False` it never
+# answers, so every refusal stays the one 401 below.
+WORKER_TOKEN_SCHEME = HTTPBearer(
+    auto_error=False,
+    scheme_name="workerToken",
+    description="The Worker's API token, answered once by `POST /v1/workers/register` (`api_token`).",
+)
 
 
 def not_authenticated() -> HTTPException:
@@ -41,7 +54,11 @@ def _presented_token(request: Request) -> str:
     return match.group(1) if match else ""
 
 
-async def current_worker(request: Request, session: SessionDep) -> Worker:
+async def current_worker(
+    request: Request,
+    session: SessionDep,
+    _documented: Annotated[HTTPAuthorizationCredentials | None, Depends(WORKER_TOKEN_SCHEME)] = None,
+) -> Worker:
     token = _presented_token(request)
     presented = token_hash(token)
     worker = await Lookup(session).find_worker_by_token_hash(presented)

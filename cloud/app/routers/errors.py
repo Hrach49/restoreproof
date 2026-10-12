@@ -9,6 +9,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
+from app.contract import MAX_BODY_BYTES
+
 
 class ErrorBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -26,4 +28,9 @@ def refusal(description: str, *, header: str | None = None) -> dict[str, Any]:
 
 NOT_AUTHENTICATED = refusal(
     "Not authenticated: no valid token, whatever the reason.", header="WWW-Authenticate"
+)
+
+# C5.11: every request body but the upload's is held to app/contract.py's cap.
+BODY_OVER_THE_CAP = refusal(
+    f"The body is over the {MAX_BODY_BYTES // 1024} KiB cap every request but the upload has (`body: too large`)."
 )

@@ -1,0 +1,116 @@
+C5.11 Done-when on the Compose stack, 2026-10-12 02:25:21 (local), branch c5.11-contract, working tree uncommitted.
+docs/decisions.md 2026-10-12, C5.11: the header on every answer, GET /v1/version without a token, the body cap.
+
+> docker compose up -d --wait --build   (from cloud/; the api image rebuilt with app/contract.py and app/routers/version.py)
+ Image restoreproof-cloud:local Building 
+ Image restoreproof-cloud:local Building 
+#20 [api] exporting to image
+#21 [scheduler] exporting to image
+#20 [api] exporting to image
+#21 [scheduler] exporting to image
+#20 [api] exporting to image
+#21 [scheduler] exporting to image
+ Image restoreproof-cloud:local Built 
+ Image restoreproof-cloud:local Built 
+ Container restoreproof-minio-1 Running 
+ Container restoreproof-postgres-1 Running 
+ Container restoreproof-api-1 Recreate 
+ Container restoreproof-api-1 Recreated 
+ Container restoreproof-scheduler-1 Recreate 
+ Container restoreproof-scheduler-1 Recreated 
+ Container restoreproof-minio-1 Waiting 
+ Container restoreproof-minio-1 Healthy 
+ Container restoreproof-minio-bucket-1 Starting 
+ Container restoreproof-minio-bucket-1 Started 
+ Container restoreproof-postgres-1 Waiting 
+ Container restoreproof-minio-bucket-1 Waiting 
+ Container restoreproof-postgres-1 Healthy 
+ Container restoreproof-minio-bucket-1 Exited 
+ Container restoreproof-api-1 Starting 
+ Container restoreproof-api-1 Started 
+ Container restoreproof-api-1 Waiting 
+ Container restoreproof-api-1 Healthy 
+ Container restoreproof-scheduler-1 Starting 
+ Container restoreproof-scheduler-1 Started 
+ Container restoreproof-scheduler-1 Waiting 
+ Container restoreproof-postgres-1 Waiting 
+ Container restoreproof-minio-1 Waiting 
+ Container restoreproof-minio-bucket-1 Waiting 
+ Container restoreproof-api-1 Waiting 
+ Container restoreproof-api-1 Healthy 
+ Container restoreproof-scheduler-1 Healthy 
+ Container restoreproof-postgres-1 Healthy 
+ Container restoreproof-minio-1 Healthy 
+ Container restoreproof-minio-bucket-1 Exited 
+
+> curl.exe -s -i -X GET http://127.0.0.1:8000/healthz
+HTTP/1.1 200 OK
+date: Mon, 12 Oct 2026 00:26:58 GMT
+server: uvicorn
+cache-control: no-store
+content-length: 21
+content-type: application/json
+x-request-id: cd9c9bb0b0874bfa8bfd365fb56f83b2
+x-restoreproof-api: 1
+
+{"db":"ok","s3":"ok"}
+
+> curl.exe -s -i -X GET http://127.0.0.1:8000/v1/version
+HTTP/1.1 200 OK
+date: Mon, 12 Oct 2026 00:26:58 GMT
+server: uvicorn
+content-length: 27
+content-type: application/json
+cache-control: no-store
+x-request-id: 1a55d6f11d1b4c1a812bcf67f5e45761
+x-restoreproof-api: 1
+
+{"api":1,"version":"0.0.0"}
+
+> curl.exe -s -i -X GET http://127.0.0.1:8000/v1/nothing-here
+HTTP/1.1 404 Not Found
+date: Mon, 12 Oct 2026 00:26:59 GMT
+server: uvicorn
+content-length: 22
+content-type: application/json
+x-request-id: c8576074b3ce4a0faee173cd9a05250d
+x-restoreproof-api: 1
+
+{"detail":"Not Found"}
+
+> curl.exe -s -i -X GET http://127.0.0.1:8000/v1/jobs
+HTTP/1.1 401 Unauthorized
+date: Mon, 12 Oct 2026 00:26:59 GMT
+server: uvicorn
+www-authenticate: Bearer
+content-length: 30
+content-type: application/json
+x-request-id: 6d339f52107a4ee4af0189a8d6ebaed7
+x-restoreproof-api: 1
+
+{"detail":"not authenticated"}
+
+> curl.exe -s -i -X POST http://127.0.0.1:8000/v1/workers/register -H 'Content-Type: application/json' -H 'Content-Length: 65537'   (the header's 413 before a byte is read; curl is cut off by the answer)
+HTTP/1.1 413 Request Entity Too Large
+date: Mon, 12 Oct 2026 00:26:59 GMT
+server: uvicorn
+content-length: 28
+content-type: application/json
+x-request-id: ba72e5bc846e4bf480477456530ede71
+x-restoreproof-api: 1
+
+{"detail":"body: too large"}
+
+> docker compose exec -T api python -c "import json,urllib.request; r=urllib.request.urlopen('http://127.0.0.1:8000/v1/openapi.json'); d=json.load(r); print(sorted(d['paths'])); print(d['components']['securitySchemes']); print([p for p,o in d['paths'].items() for m,op in o.items() if 'security' in op])"
+['/v1/heartbeat', '/v1/jobs', '/v1/results', '/v1/version', '/v1/workers/register']
+{'workerToken': {'type': 'http', 'description': "The Worker's API token, answered once by `POST /v1/workers/register` (`api_token`).", 'scheme': 'bearer'}}
+['/v1/jobs', '/v1/results', '/v1/heartbeat']
+
+> docker compose logs --since 3m api  (the request lines; no body value)
+{"method": "GET", "path": "/healthz", "status": 200, "duration_ms": 202, "event": "request", "request_id": "1d631998042d4c5c8b03b3c497a4e274", "level": "info", "ts": "2026-10-12T00:26:57.699479Z"}
+{"method": "GET", "path": "/healthz", "status": 200, "duration_ms": 13, "event": "request", "request_id": "cd9c9bb0b0874bfa8bfd365fb56f83b2", "level": "info", "ts": "2026-10-12T00:26:59.333326Z"}
+{"method": "GET", "path": "/v1/version", "status": 200, "duration_ms": 41, "event": "request", "request_id": "1a55d6f11d1b4c1a812bcf67f5e45761", "level": "info", "ts": "2026-10-12T00:26:59.423483Z"}
+{"method": "GET", "path": "/v1/nothing-here", "status": 404, "duration_ms": 1, "event": "request", "request_id": "c8576074b3ce4a0faee173cd9a05250d", "level": "info", "ts": "2026-10-12T00:26:59.475520Z"}
+{"method": "GET", "path": "/v1/jobs", "status": 401, "duration_ms": 95, "event": "request", "request_id": "6d339f52107a4ee4af0189a8d6ebaed7", "level": "info", "ts": "2026-10-12T00:26:59.630434Z"}
+{"method": "POST", "path": "/v1/workers/register", "status": 413, "duration_ms": 1, "event": "request", "request_id": "ba72e5bc846e4bf480477456530ede71", "level": "info", "ts": "2026-10-12T00:26:59.674213Z"}
+{"method": "GET", "path": "/v1/openapi.json", "status": 200, "duration_ms": 103, "event": "request", "request_id": "b1d8be01b7444abcb3ac2046b4699a33", "level": "info", "ts": "2026-10-12T00:27:01.469976Z"}

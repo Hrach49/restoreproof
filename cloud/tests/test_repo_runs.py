@@ -623,3 +623,71 @@ async def test_daily_states_counts_each_utc_day_s_states_since_the_given_time(se
     assert await q.runs.daily_states(q.msp.id, b.client.id, since=dt.datetime(2026, 1, 1, tzinfo=UTC)) == []
     with pytest.raises(ValueError, match="without a zone"):
         await q.runs.daily_states(q.msp.id, q.client.id, since=dt.datetime(2026, 10, 1))
+
+
+# --- C6.4: the report's month (docs/decisions.md 2026-10-12, "C6.4", points 4 and 5) ------------
+
+OCT = dt.datetime(2026, 10, 1, tzinfo=UTC)
+NOV = dt.datetime(2026, 11, 1, tzinfo=UTC)
+
+
+async def finished(q: Queue, state: str, *, created_at: dt.datetime, finished_at: dt.datetime | None, other: bool = False):
+    row = await q.run(created_at=created_at, state=state, other=other)
+    await q.session.execute(text("UPDATE test_run SET finished_at = :f WHERE id = :id"), {"f": finished_at, "id": row.id})
+    return await q.fresh(row)
+
+
+async def test_period_answers_the_finished_runs_by_the_time_they_ended_and_the_expired_ones_by_creation(session):
+    """A pass, fail or error run is the month's by `coalesce(finished_at,
+    created_at)`; an expired run by `created_at`; queued and dispatched
+    never; oldest first by that time then id. Both edges: the month's first
+    second is in, the next month's first second is out."""
+    q = await Queue.make(session)
+    b = await Queue.make(session, "b")
+    first = await finished(q, "pass", created_at=dt.datetime(2026, 9, 30, 23, 58, tzinfo=UTC), finished_at=OCT)
+    last = await finished(q, "fail", created_at=dt.datetime(2026, 10, 31, 23, 0, tzinfo=UTC), finished_at=NOV - ONE_SECOND)
+    fallback = await finished(q, "error", created_at=dt.datetime(2026, 10, 15, 12, tzinfo=UTC), finished_at=None)
+    expired = await q.run(created_at=dt.datetime(2026, 10, 20, tzinfo=UTC), state="expired")
+    await finished(q, "pass", created_at=dt.datetime(2026, 10, 31, 23, 59, tzinfo=UTC), finished_at=NOV)  # next month's
+    await finished(q, "pass", created_at=dt.datetime(2026, 9, 1, tzinfo=UTC), finished_at=OCT - ONE_SECOND)  # last month's
+    await q.run(created_at=dt.datetime(2026, 10, 10, tzinfo=UTC))  # queued
+    await q.run(created_at=dt.datetime(2026, 10, 10, tzinfo=UTC), state="dispatched")
+    await q.run(created_at=dt.datetime(2026, 9, 10, tzinfo=UTC), state="expired")  # last month's
+    await finished(b, "pass", created_at=dt.datetime(2026, 10, 10, tzinfo=UTC), finished_at=dt.datetime(2026, 10, 10, tzinfo=UTC))
+
+    rows = await q.runs.period(q.msp.id, q.client.id, start=OCT, end=NOV)
+
+    assert [row.id for row in rows] == [first.id, fallback.id, expired.id, last.id]
+    assert await q.runs.period(q.msp.id, b.client.id, start=OCT, end=NOV) == []
+    assert await q.runs.period(b.msp.id, q.client.id, start=OCT, end=NOV) == []
+
+
+async def test_period_orders_runs_of_one_moment_by_id_and_refuses_a_naive_edge(session):
+    q = await Queue.make(session)
+    at = dt.datetime(2026, 10, 5, 12, tzinfo=UTC)
+    same = [await finished(q, "pass", created_at=at, finished_at=at) for _ in range(3)]
+
+    rows = await q.runs.period(q.msp.id, q.client.id, start=OCT, end=NOV)
+
+    assert [row.id for row in rows] == sorted(row.id for row in same)
+    for start, end in ((dt.datetime(2026, 10, 1), NOV), (OCT, dt.datetime(2026, 11, 1))):
+        with pytest.raises(ValueError, match="without a zone"):
+            await q.runs.period(q.msp.id, q.client.id, start=start, end=end)
+
+
+async def test_period_is_one_statement(session, test_engine):
+    q = await Queue.make(session)
+    await finished(q, "pass", created_at=OCT, finished_at=OCT)
+    statements: list[str] = []
+
+    def record(_conn, _cursor, statement, _params, _context, _executemany):
+        statements.append(statement.strip().split()[0].upper())
+
+    event.listen(test_engine.sync_engine, "before_cursor_execute", record)
+    try:
+        rows = await q.runs.period(q.msp.id, q.client.id, start=OCT, end=NOV)
+    finally:
+        event.remove(test_engine.sync_engine, "before_cursor_execute", record)
+
+    assert len(rows) == 1
+    assert statements == ["SELECT"]

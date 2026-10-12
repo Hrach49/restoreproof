@@ -27,6 +27,7 @@ Recorded for L0.2 on 2026-09-22. Update this file whenever a tool is upgraded.
 | Git | 2.53.0.windows.2 | |
 | Bruno | 4.1.0 | Installed with winget (`Bruno.Bruno`) |
 | OpenCppCoverage | 0.9.9.0 | Installed with winget (`OpenCppCoverage.OpenCppCoverage`); Worker line coverage (L0.5). CI pins the same release by SHA-256 |
+| GTK3 runtime | 3.24.31 (2022-01-04) | The "GTK for Windows Runtime Environment Installer" (tschoonj, GitHub release 2022-01-04, `gtk3-runtime-3.24.31-2022-01-04-ts-win64.exe`, installed silently 2026-10-12), under `C:\Program Files\GTK3-Runtime Win64`, its `bin` on the machine's `PATH`: Pango, GObject and HarfBuzz for WeasyPrint's PDF report (C6.4). No HarfBuzz-Subset, so WeasyPrint subsets fonts with fontTools here (the image has `libharfbuzz-subset0`) |
 
 ## Terminal setup
 

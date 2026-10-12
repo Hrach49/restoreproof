@@ -24,7 +24,7 @@ from typing import Any
 import boto3
 from botocore.config import Config
 
-from app.settings import Settings
+from app.settings import Settings, StorageSettings
 
 # One attempt under short limits: /healthz answers "error", it doesn't wait.
 CHECK_CONNECT_TIMEOUT_S = 2
@@ -34,12 +34,13 @@ CHECK_READ_TIMEOUT_S = 2
 LIST_MAX_KEYS = 1000
 
 
-def make_s3_client(settings: Settings, *, for_check: bool = False, endpoint: str | None = None) -> Any:
+def make_s3_client(settings: Settings | StorageSettings, *, for_check: bool = False, endpoint: str | None = None) -> Any:
     """A boto3 S3 client for the settings' endpoint (or `endpoint`). Making it
     connects to nothing.
 
     The data client keeps botocore's own limits and its standard retries;
-    `for_check` gives the one /healthz asks through.
+    `for_check` gives the one /healthz asks through. The five `s3_*` fields
+    are all it reads, so the CLI's `StorageSettings` (C6.4) serves too.
     """
     limits: dict[str, Any] = {"retries": {"mode": "standard"}}
     if for_check:
@@ -77,6 +78,12 @@ class Storage:
             make_s3_client(settings, for_check=True),
             make_s3_client(settings, endpoint=settings.s3_public_endpoint or settings.s3_endpoint),
         )
+
+    @classmethod
+    def for_writing(cls, settings: StorageSettings) -> Storage:
+        """The data client alone (C6.4's CLI puts a report and lists, checks
+        and signs nothing)."""
+        return cls(make_s3_client(settings), settings.s3_bucket)
 
     def check(self) -> None:
         """Raise unless the bucket can be listed.

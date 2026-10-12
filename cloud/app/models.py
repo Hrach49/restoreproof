@@ -386,10 +386,29 @@ class TestItem(Base):
 
 
 class Report(Base):
+    """A client's PDF report of one UTC calendar month (C6.4; docs/decisions.md
+    2026-10-12, "C6.4", point 1): the content hash (the SHA-256 of the report
+    rendered without it) and the file hash (the SHA-256 of the file), `interim`
+    for a period not yet over, one final report per client and period
+    (`uq_report_final_period`), a storage key written once, and the generator's
+    own clock as `generated_at`."""
+
     __tablename__ = "report"
     __table_args__ = (
         _same_msp(("client_id",), "client", ("id",)),
-        _sha256_check("sha256"),
+        UniqueConstraint("msp_id", "id"),
+        UniqueConstraint("storage_key"),
+        _sha256_check("content_sha256"),
+        _sha256_check("file_sha256"),
+        CheckConstraint("period_end >= period_start", name="period_order"),
+        Index(
+            "uq_report_final_period",
+            "msp_id",
+            "client_id",
+            "period_start",
+            unique=True,
+            postgresql_where=text("NOT interim"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = _id()
@@ -398,8 +417,10 @@ class Report(Base):
     period_start: Mapped[dt.date] = mapped_column(Date, nullable=False)
     period_end: Mapped[dt.date] = mapped_column(Date, nullable=False)
     storage_key: Mapped[str] = mapped_column(Text, nullable=False)
-    sha256: Mapped[str] = mapped_column(Text, nullable=False)
-    generated_at: Mapped[dt.datetime] = _time(nullable=False, default_now=True)
+    content_sha256: Mapped[str] = mapped_column(Text, nullable=False)
+    file_sha256: Mapped[str] = mapped_column(Text, nullable=False)
+    interim: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    generated_at: Mapped[dt.datetime] = _time(nullable=False)
 
 
 class AuditLog(Base):

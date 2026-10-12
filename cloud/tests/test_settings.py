@@ -5,9 +5,11 @@ import pytest
 from app.settings import (
     Settings,
     SettingsError,
+    StorageSettings,
     database_url_from_environment,
     load_settings,
     log_level_from_environment,
+    storage_settings_from_environment,
 )
 
 SENTINEL = "Sentinel-Settings-7c1e"
@@ -288,3 +290,61 @@ def test_a_migration_refuses_another_driver_without_showing_the_url(url):
 
     assert str(raised.value) == "settings error: DATABASE_URL is not valid"
     assert SENTINEL not in f"{raised.value!r}{raised.value.__cause__}{raised.value.__context__}"
+
+
+# --- C6.4: the S3 settings alone, for `generate-report` -------------------------------------------
+
+S3_NAMES = ("S3_ENDPOINT", "S3_ACCESS_KEY", "S3_SECRET_KEY", "S3_BUCKET")
+
+
+def test_a_report_command_needs_the_five_s3_variables_and_nothing_else():
+    env = {name: value for name, value in environment().items() if name.startswith("S3_")}
+
+    settings = storage_settings_from_environment(env)
+
+    assert (settings.s3_endpoint, settings.s3_access_key, settings.s3_bucket, settings.s3_region) == ("http://s3.test:9000", "access", "bucket", "us-east-1")
+    assert settings.s3_secret_key.get_secret_value() == f"{SENTINEL}-s3"
+    assert set(StorageSettings.model_fields) == {"s3_endpoint", "s3_access_key", "s3_secret_key", "s3_bucket", "s3_region"}
+    assert set(StorageSettings.model_fields) <= set(Settings.model_fields)
+    assert SENTINEL not in repr(settings) + str(settings)
+
+
+def test_the_other_variables_are_ignored_and_the_names_read_in_any_case(monkeypatch):
+    env = {"s3_endpoint": "https://s3.test", "S3_ACCESS_KEY": "a", "S3_SECRET_KEY": "s", "S3_Bucket": "b", "S3_REGION": "eu-west-1", "SECRET_KEY": "x" * 40, "DATABASE_URL": "not read", "NOT_A_SETTING": "ignored", "S3_PUBLIC_ENDPOINT": "http://public.test"}
+
+    settings = storage_settings_from_environment(env)
+
+    assert (settings.s3_endpoint, settings.s3_bucket, settings.s3_region) == ("https://s3.test", "b", "eu-west-1")
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+    assert storage_settings_from_environment().s3_region == "eu-west-1"
+
+
+@pytest.mark.parametrize("name", S3_NAMES)
+def test_a_missing_s3_variable_is_named_and_an_empty_one_is_missing(name):
+    env = {n: v for n, v in environment().items() if n.startswith("S3_")}
+    for value in (None, ""):
+        faulty = {n: v for n, v in env.items() if n != name} if value is None else {**env, name: value}
+
+        with pytest.raises(SettingsError) as raised:
+            storage_settings_from_environment(faulty)
+
+        assert str(raised.value) == f"settings error: {name} is missing"
+
+
+def test_every_faulty_s3_variable_is_named_at_once_without_a_value():
+    with pytest.raises(SettingsError) as raised:
+        storage_settings_from_environment({"S3_ENDPOINT": f"ftp://{SENTINEL}", "S3_BUCKET": "b"})
+
+    assert str(raised.value) == "settings error: S3_ENDPOINT is not valid; S3_ACCESS_KEY is missing; S3_SECRET_KEY is missing"
+    assert SENTINEL not in f"{raised.value!r}{raised.value.__cause__}{raised.value.__context__}"
+
+
+def test_storage_settings_read_no_environment_of_their_own(monkeypatch):
+    for name, value in environment().items():
+        monkeypatch.setenv(name, value)
+
+    with pytest.raises(Exception) as raised:
+        StorageSettings()
+
+    assert SENTINEL not in str(raised.value)

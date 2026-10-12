@@ -58,9 +58,15 @@ WITHOUT_MSP_ID = {
     ("msps.py", "MspRepo", "list"),
 }
 
-# The one public function under app/repo/ that is no method: it words an
-# IntegrityError (C5.10) and runs no statement, so it has no MSP to be scoped to.
-MODULE_FUNCTIONS = {("errors.py", None, "constraint_refusal")}
+# The public functions under app/repo/ that are no method: one words an
+# IntegrityError (C5.10) and runs no statement, so it has no MSP to be scoped
+# to; two build the condition that puts a run in a report's month (C6.4), a
+# fragment three methods put under their own `msp_id` and run.
+MODULE_FUNCTIONS = {
+    ("errors.py", None, "constraint_refusal"),
+    ("runs.py", None, "period_time"),
+    ("runs.py", None, "period_filter"),
+}
 
 
 # C5.10: the CLI lives beside app/ and is held like a router.
@@ -205,14 +211,21 @@ def first_parameter(node: ast.FunctionDef | ast.AsyncFunctionDef, in_class: bool
     return params[0] if params else None
 
 
-def test_every_public_repo_function_is_a_method_of_a_class_but_the_one_that_words_an_error():
+MODULE_FUNCTION_ARGS = {
+    "constraint_refusal": ["error"],
+    "period_time": [],
+    "period_filter": ["client_id", "start", "end"],
+}
+
+
+def test_every_public_repo_function_is_a_method_of_a_class_but_the_three_that_build_no_statement():
     functions = all_repo_functions()
 
     assert functions
     assert {(f[0], f[1], f[2]) for f in functions if f[1] is None} == MODULE_FUNCTIONS
     for file_name, _class_name, name, node in functions:
         if (file_name, None, name) in MODULE_FUNCTIONS:
-            assert [arg.arg for arg in node.args.args] == ["error"]
+            assert [arg.arg for arg in node.args.args] == MODULE_FUNCTION_ARGS[name]
 
 
 def test_every_public_repo_method_takes_msp_id_first_but_the_three_named():

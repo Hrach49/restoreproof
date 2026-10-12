@@ -1465,6 +1465,9 @@ uv run --locked pytest --cov=app --cov-branch --cov-report=term-missing --cov-re
 uv run --locked python tools/check_coverage.py coverage.json
 ```
 
+On this laptop the GTK3 runtime's `bin` must be on `PATH` for the shell that runs them (C6.4,
+"The report" under "Cloud" below): the tests that render a PDF fail, never skip, without it.
+
 Worker, from `worker/` in a VS 2022 Developer PowerShell with OpenCppCoverage on PATH:
 
 ```powershell
@@ -1625,6 +1628,8 @@ docker compose stop postgres              # when done; `docker compose down -v` 
 | `tests/test_pages.py` | C6.2's Done-when by name, `test_the_four_pages_render_real_data_from_the_sprint_5_runs_and_a_revoked_worker_gets_401_on_its_next_poll`: the Worker-written vector dispatched by its own poll and posted as the Worker posts it (`tests/pages_lab.py` over `tests/results_lab.py` and `tests/test_contract.py`'s world), then `/clients` (the client's row: `pass`, the finished time, 20:30, the next 02:00), `/clients/{id}` (the run's row with 2 items, cleanup and timestamp yes, "manual", ninety strip cells), `/runs/{id}` (the two items, the five file links, 41:00 and 20:30, the bundle's hash) and `/workers` (two Workers never seen, in red; no Revoke for the member) as the member with the frame's names and the API header; the admin's two Revoke buttons, the `POST` 303, the row "revoked", the Worker's poll 401 and the one `worker.revoke` row with the admin and the address. Failure paths first: every page without a session 303 and 401 for htmx; another MSP's client, run, file and Worker 404 and never listed, from both sides; a member's revoke 403; an id that is no uuid 422; a cross-site revoke 403; a Worker revoked already 409 with the CLI's words; nine file names outside the rule 404 without a list or a row; a file the bucket doesn't list and a run without a bundle 404; a planted `<script>` escaped on every page (five times on the run page). Then each cell of `/clients` against five clients (no run, a `fail` after a `pass` with 1:01:05, an `expired` after an `error`, a disabled plan, a revoked Worker: "no Worker"), `next_run`'s rules by themselves (pending first, a revoked Worker skipped, a cron the parser refuses or that never occurs skipped), the statement counts the same for one client and five (six on `/clients`, three on `/workers`, five on `/clients/{id}`); the history's columns and a pending run's dashes; paging at 50 with the `hx-get` row and without htmx, the vector's own queued run the oldest; the strip's ninety cells, the worst-state rule and the `title` counts, `strip` by itself; the download's 302 with `Cache-Control: no-store` to a URL signed for 600 s against the stack's data endpoint, the one `bundle.download` row with the user and the address, no bucket link on the page; the run page grouping the bundle and the attachments as the bucket lists them; `/workers`' columns at 24 hours exactly and one second past, `late` by itself, the `hx-confirm` and the form; an htmx revoke answering the row alone; the frame's MSP, user and the admin's audit link; the four filters. After the code review: a download with `Sec-Fetch-Site` `cross-site` or `same-site` is 403 with no list, no row and no link, and `same-origin`, `none` and no header are 302 |
 | `tests/test_audit_page.py` | C6.3's Done-when by name, `test_downloading_a_bundle_appears_in_audit_with_user_time_and_ip`: the member's download, then `/audit` as the admin with the row's time, `member@example.test`, `bundle.download`, `run:<id> items.csv` and the address, and nothing of it on the other MSP's admin's page. A member 403 and no session 303; `days` outside 1 to 3650, not a number, and a `before` that is no uuid 422; the last 30 days newest first with the users' addresses and a dash for the CLI's and the Worker's rows, `?days=90` wider; paging at 100 with and without htmx; nothing deleted; every word a page writes in `ACTIONS`; `AuditRepo.page` by itself: newest first from `since` (inclusive), the join's address, the keyset, another MSP's cursor empty, a naive `since` and a limit outside 1 to 100 refused |
 | C6.1 to C6.3 in the older files | `test_models.py`: `ck_user_role`, the user's two times from the database's clock, `recovery_ms` a `bigint` with its CHECK, nineteen `UtcDateTime` columns; `test_repo_errors.py`: the three user constraints worded and shown; `test_settings.py`: `S3_PUBLIC_ENDPOINT` and `SESSION_COOKIE_SECURE` with their defaults and shapes; `test_tenant_scope.py`: `find_user_by_email` the fifth method without `msp_id`; `test_repo_isolation.py`: the new reads and `set_password_hash` in the table, `daily_states` held by its own test (it answers counts); `test_repo_runs.py`, `test_repo_plans.py`, `test_storage.py`: the new reads and calls by themselves (keyset, counts, one statement each, the signed link's host and seconds, no secret in it); `test_results.py`: `recovery_ms` filed as `total_ms` is; `test_onboarding.py`, `test_manage.py`: `create_user` and `reset_password`, the password never an option and never in output, the console path asking twice; `test_app.py`: the `ui` router at the root and in no document, `/static` the one mount; `test_schemas.py`: the three runtime dependencies and no slowapi |
+| `tests/test_report.py` | C6.4's Done-when by name, `test_a_pdf_renders_for_a_client_with_one_failure_and_one_error_in_the_period_and_every_section_is_populated`: a September with the Worker-written vector's `pass`, a `fail` with a missing mail and a mismatched file, an `error` with its code, a later `pass` and an `expired` run (`tests/report_lab.py` over the pages' lab), `generate` answering its six lines, the row with both hashes, the one put under the issue's key with the PDF's bytes (the Stubber takes any body, a hook keeps what was sent) and the `report.create` row; the same data rendered again giving the same bytes, so the HTML checked cell by cell is the PDF's own; the six headings in order in pypdf's text with the overall lines, the re-test sentence, the content hash and the pending sentence. Failure paths first: another MSP's client from both sides with nothing written; a period outside `YYYY-MM`, a month not begun, a month with no run; a second final report refused before rendering (the renderer patched to fail) with no put; a put that fails leaving no row under a savepoint; the four banned phrases against the template, the stylesheet, the controls, both passes and the PDF's text; a planted `<script>` in a client's, MSP's, Worker's and item's name and an error message escaped in both passes; the secret scan (`Bearer`, `BEGIN `, `X-Amz`, `http`, `?`, the lab tenant id, the bucket, the test key's PEM, the token). Then membership (the month's first second in, the next month's first second out, `finished_at` null falling back, expired counted, queued and dispatched never, the other client's run never), the overall and error lines, a fail without a later pass, dashes without `recovery_ms`, "not checked" items with per-type counts; the two hashes (pass 1 rendered again equals the content hash, pass 2's bytes the file hash, the passes differ by the hash alone, the hash in the PDF's text and the placeholder not, two renders one answer); WeasyPrint's defaults (no date, id or producer) and `SOURCE_DATE_EPOCH` pinned when unset and left when set; the interim report (the current month's key with its time and title, two in a minute two rows and two objects of the same bytes, the same second the key's refusal, interim until the day after the month, a final after an interim taken with the audit rows' user and address); eight reads for three runs and for sixty, eleven statements then the put, rendering in a thread; `period_of`, `previous_month`, `storage_key`; the four controls; the report's environment (autoescape, `StrictUndefined`, the pages' filters); `ReportData` frozen and the backup source from the connector's type |
+| C6.4 in the older files | `test_models.py`: `report`'s two hashes each 64 hex, no `sha256` column, `interim` and `generated_at` given and never defaulted, `period_end` on or after `period_start`, one final report per client and period with any number of interim ones (`uq_report_final_period`, the other MSP's and another month's taken), a storage key once; `test_repo_errors.py`: the two words; `test_repo_isolation.py`: `ReportRepo.create`'s new columns, `RunRepo.period`, `ItemRepo.unmatched_in_period` and `ReportRepo.final` in the table, `counts_by_type_in_period` held by its own test (counts), the hand-written audit row placed after the MSP's newest row and the audit reads held on worlds whose clock is 2027 and 2040 (the C6.1–C6.3 review's finding 8); `test_repo_runs.py`, `test_repo_items.py`: the three reads by themselves (both edges of the span, the order, the states, the other client and MSP, one statement each, a naive edge refused); `test_tenant_scope.py`: `period_time` and `period_filter` the two module functions beside `constraint_refusal`; `test_settings.py`: `storage_settings_from_environment` (the five S3 variables alone, the others ignored, each missing or empty one named, every faulty one at once, no value, no environment of its own); `test_manage.py`: `generate-report` on a database of its own with the bucket on the Stubber (the six lines, the row, the audit row, the previous month as the default, each refusal one line and exit 1 with nothing put, twice the period's refusal, another MSP's client, the S3 variables needed and `SECRET_KEY` not, `DATABASE_URL` named after them, usage faults exit 2); `test_schemas.py`: `weasyprint` runtime and `pypdf` dev, the image's apt layer with the four packages before `uv sync`; `test_check_coverage.py`: `app/report` guarded; `test_login.py`: the report's environment autoescapes like the pages' |
 
 ### The contract (C5.11)
 
@@ -1992,6 +1997,76 @@ database once (the edit of `0001`; nothing is deployed) and reads only the rows 
 10. The temp folder (the jar, the downloaded file, the vector's files and profile) and the
     container's two profile copies removed; the two MSPs and their rows stay in the stack's
     database.
+
+### The report (C6.4)
+
+`docs/decisions.md` 2026-10-12, "C6.4"; `docs/verification.md` "The Cloud's report". What the
+tests hold is in the table above (`tests/test_report.py` over `tests/report_lab.py`, and the
+C6.4 rows of the older files).
+
+**WeasyPrint on this laptop.** The rendering tests run natively under `uv run pytest` like every
+other test, and never skip: WeasyPrint needs Pango, GObject and HarfBuzz, which on Windows come
+from the GTK3 runtime (`docs/environment.md`: the "GTK for Windows Runtime Environment
+Installer", 3.24.31, under `C:\Program Files\GTK3-Runtime Win64`, its `bin` on the machine's
+`PATH`). A shell opened before the install, or one whose `PATH` lacks it, fails every test that
+renders with the library's own `OSError`; put the folder first on `PATH` for that shell. The
+runtime has no HarfBuzz-Subset, so WeasyPrint subsets fonts with fontTools and logs a warning per
+font (`-W ignore` quiets the deprecation; the warnings are the library's, not the app's); the
+image has `libharfbuzz-subset0` and logs none. The PDF's look differs between the laptop (no
+DejaVu: the system's sans-serif) and the image (DejaVu Sans), which nothing depends on: both
+passes of one report run in one process.
+
+By hand, on the stack:
+
+```powershell
+cd cloud
+docker compose up -d --wait --build                                   # the image with Pango, HarfBuzz-Subset, DejaVu and a built font cache
+docker compose exec api alembic downgrade -1; docker compose exec api alembic upgrade head; docker compose exec api alembic check
+docker compose exec api python manage.py generate-report --msp-id <msp_id> --client-id <client_id> --period 2026-09
+```
+
+The six lines (`report_id`, `period`, `interim`, `storage_key`, `content_sha256`, `file_sha256`);
+the object under `storage_key` in MinIO (the console on `http://127.0.0.1:9001`, the stack's
+`local-only-minio` credentials); its SHA-256 is `file_sha256`. Without `--period` the previous
+month; the current month gives an interim report; a month that has its final report is `period:
+already reported`.
+
+**The by-hand run of the Done-when against the Compose stack** (the evidence step,
+`docs/api/cloud-lab/c6.4-done-when.txt`, written by
+`docs/api/cloud-lab/c6.4-harness/c64-live.ps1` in one go, about five minutes with the image's
+build; the steps below are what it does). The harness keeps every secret off every file and
+command line (the install token to curl on its standard input, the API token in memory and in
+a curl config on its standard input) and screens the text as the C6.1–C6.3 harness does. It
+re-migrates the stack's database once (the edit of `0001`; nothing is deployed) and reads only the
+rows it made:
+
+1. `docker compose up -d --wait --build`; the image's four rendering packages by `dpkg-query`
+   and its WeasyPrint version; `alembic downgrade -1`, `upgrade head`, `check`; `/healthz`; the
+   `report` table's columns and unique indexes.
+2. By CLI in the api container: `create-msp`; `create-client` of the lab tenant, its id then
+   set by SQL to the kept C5.7 bundle's `client_id`; `create-worker-token`; the lab Worker's own
+   key (`rpworker signer public-key`) registered with curl; `create-connector` on the lab
+   profile (outside the repository); `create-plan --run-now`, the run's id set to the bundle's;
+   `GET /v1/jobs`; the kept bundle's five files posted: 202 `pass` (a run of October 2026).
+3. By SQL, a September 2026 of the client: a `pass`, a `fail` with a missing mail and a
+   mismatched file beside a matched one, an `error` with its code, a later `pass`, an `expired`
+   run (the Done-when's shape; their bundle columns are synthetic and no object stands behind
+   them).
+4. **The Done-when:** `manage.py generate-report --period 2026-09`: the six lines; the row with
+   the printed hashes; the object fetched from MinIO through the api's own client (the
+   container's `/tmp`, copied out) and its SHA-256 equal to `file_sha256`; the PDF's text read
+   with pypdf on the host (`c64-pdf-text.py`): the page count, the six headings in order, the
+   content hash printed, the file hash not, no banned phrase.
+5. The same month again: `period: already reported`, exit 1, still one object.
+6. The current month: an interim report under a key with its time, "Interim report" in its
+   text and the kept bundle's `bundle_sha256` in its Integrity section; the rows and the two
+   `report.create` audit rows.
+7. The September PDF copied to `docs/api/cloud-lab/c6.4-sample-report.pdf` when its text names
+   no address, no person and not the tenant; the api's log lines since the start naming a
+   report, a signed query or a bucket path (none: the CLI runs in the container, not through
+   the api).
+8. The temp folder and the container's copies removed; the MSP, its rows and the two objects
+   stay in the stack.
 
 ## Once-per-sprint mutation run
 

@@ -81,10 +81,19 @@ def yes_no(value: bool | None) -> str:
     return "yes" if value else "no"
 
 
+def make_environment(folder: Path) -> Environment:
+    """A Jinja2 environment over `folder` with the pages' rules and filters:
+    autoescape for every template, an undefined name a fault. The pages'
+    environment and the report's (C6.4, `app/report/render.py`) are both made
+    here, so a template of either escapes the same way."""
+    env = Environment(loader=FileSystemLoader(folder), autoescape=True, undefined=StrictUndefined)
+    env.filters.update({"utc": utc, "duration": duration, "colour": colour, "yes_no": yes_no})
+    return env
+
+
 @lru_cache(maxsize=1)
 def environment() -> Environment:
-    env = Environment(loader=FileSystemLoader(TEMPLATES_DIR), autoescape=True, undefined=StrictUndefined)
-    env.filters.update({"utc": utc, "duration": duration, "colour": colour, "yes_no": yes_no})
+    env = make_environment(TEMPLATES_DIR)
     env.globals.update({"static": STATIC_PATH, "htmx_integrity": htmx_integrity()})
     return env
 

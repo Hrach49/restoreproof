@@ -42,6 +42,9 @@ from tests.test_repo_connectors import profile_for
 
 UTC = dt.timezone.utc
 NOW = dt.datetime(2026, 10, 10, 12, 0, tzinfo=UTC)
+# C6.4: the month the worlds' runs are in (their `created_at` is NOW's day or the day before).
+MONTH_START = dt.datetime(2026, 10, 1, tzinfo=UTC)
+MONTH_END = dt.datetime(2026, 11, 1, tzinfo=UTC)
 PEM = "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA\n-----END PUBLIC KEY-----\n"
 
 
@@ -70,6 +73,8 @@ class World:
     run: Any
     stale_run: Any = None
     done_run: Any = None
+    failed_run: Any = None
+    failed_item: Any = None
     items: list = field(default_factory=list)
     report: Any = None
     audit: Any = None
@@ -82,12 +87,14 @@ class World:
     @property
     def ids(self) -> set[uuid.UUID]:
         rows = [self.msp, self.user, self.client, self.worker, self.connector, self.plan, self.run,
-                self.stale_run, self.done_run, *self.items, self.report, self.audit, self.token, self.spare_client,
-                self.spare_worker, self.spare_connector, self.spare_plan]
+                self.stale_run, self.done_run, self.failed_run, self.failed_item, *self.items, self.report, self.audit,
+                self.token, self.spare_client, self.spare_worker, self.spare_connector, self.spare_plan]
         return {row.id for row in rows}
 
 
-async def make_world(session, name: str) -> World:
+async def make_world(session, name: str, *, clock: dt.datetime | None = None) -> World:
+    """One of everything for one MSP. With `clock`, every audit row the world
+    wrote takes that time (the finding-8 test moves the calendar)."""
     msp = await MspRepo(session).create(name=name)
     user = await UserRepo(session).create(msp.id, email=f"{name}@example.test", password_hash="x", role="admin")
     client = await ClientRepo(session).create(msp.id, name=f"{name} client", tenant_id=uuid.uuid4())
@@ -122,6 +129,24 @@ async def make_world(session, name: str) -> World:
     await session.execute(
         text("UPDATE test_run SET created_at = :at WHERE id = :id"), {"at": NOW - dt.timedelta(days=1), "id": run.id}
     )
+    # C6.4: the two finished runs are in NOW's month on any calendar (their
+    # times given, not the database's clock), and the failed one has an item
+    # that didn't match, for the report's reads.
+    await session.execute(
+        text("UPDATE test_run SET created_at = :at, finished_at = :at WHERE id = :id"), {"at": NOW, "id": world.done_run.id}
+    )
+    world.failed_run = await RunRepo(session).create(
+        msp.id, plan_id=plan.id, client_id=client.id, connector_id=connector.id, worker_id=worker.id
+    )
+    assert await RunRepo(session).set_state(msp.id, world.failed_run.id, "fail") == 1
+    await session.execute(
+        text("UPDATE test_run SET created_at = :at, finished_at = :at WHERE id = :id"),
+        {"at": NOW + dt.timedelta(hours=1), "id": world.failed_run.id},
+    )
+    world.failed_item = await ItemRepo(session).create(
+        msp.id, world.failed_run.id, position=0, type="mail", name=f"{name} missing", expected_kind="manifest",
+        found=False, match=False, reason="no restored copy found",
+    )
     # One item by `create` and one by `create_many` (C5.7's one INSERT), so
     # both are among the rows every read and write below is held to.
     await ItemRepo(session).create(msp.id, run.id, position=0, type="mail", name=f"{name} item 1", expected_kind="manifest")
@@ -134,12 +159,21 @@ async def make_world(session, name: str) -> World:
     assert [item.name for item in world.items] == [f"{name} item 1", f"{name} item 2"]
     world.report = await ReportRepo(session).create(
         msp.id, client.id, period_start=dt.date(2026, 9, 1), period_end=dt.date(2026, 9, 30),
-        storage_key=f"{name}/2026-09.pdf", sha256="ab" * 32,
+        storage_key=f"{name}/2026-09.pdf", content_sha256="ab" * 32, file_sha256="cd" * 32, interim=False,
+        generated_at=NOW,
     )
+    if clock is not None:
+        await session.execute(text("UPDATE audit_log SET at = :at WHERE msp_id = :msp"), {"at": clock, "msp": msp.id})
     world.audit = await AuditRepo(session).write(msp.id, action="test.write", target=f"{name}:x", user_id=user.id, ip="10.0.0.1")
-    # C6.3: the newest row by far, so a page before it has the connectors' rows.
+    # C6.3: the newest row by far, so a page before it has the connectors'
+    # rows: 30 days after the MSP's newest row, on any day's calendar (the
+    # C6.1-C6.3 review's finding 8: a fixed date was passed by the clock).
     await session.execute(
-        text("UPDATE audit_log SET at = :at WHERE id = :id"), {"at": NOW + dt.timedelta(days=30), "id": world.audit.id}
+        text(
+            "UPDATE audit_log SET at = (SELECT max(at) FROM audit_log WHERE msp_id = :msp AND id <> :id) + interval '30 days' "
+            "WHERE id = :id"
+        ),
+        {"msp": msp.id, "id": world.audit.id},
     )
     world.token = await InstallTokenRepo(session).create(
         msp.id, token_hash=a_hash(f"{name} token"), expires_at=NOW + dt.timedelta(days=7), label=f"{name} token"
@@ -224,7 +258,11 @@ READS = [
     Read(AuditRepo, "page", kwargs=_kwargs("since", lambda w: {"since": NOW - dt.timedelta(days=365)})),
     Read(AuditRepo, "page", kwargs=_kwargs("since, before", lambda w: {"since": NOW - dt.timedelta(days=365), "before": w.audit.id})),
     Read(ItemRepo, "list", _args("run", lambda w: (w.run.id,))),
+    # C6.4: the report's reads of a month (docs/decisions.md 2026-10-12, "C6.4", point 5).
+    Read(RunRepo, "period", _args("client", lambda w: (w.client.id,)), _kwargs("month", lambda w: {"start": MONTH_START, "end": MONTH_END})),
+    Read(ItemRepo, "unmatched_in_period", _args("client", lambda w: (w.client.id,)), _kwargs("month", lambda w: {"start": MONTH_START, "end": MONTH_END})),
     Read(ReportRepo, "get", _args("report", lambda w: (w.report.id,))),
+    Read(ReportRepo, "final", _args("client, period", lambda w: (w.client.id, w.report.period_start))),
     Read(ReportRepo, "list"),
     Read(ReportRepo, "list", kwargs=_kwargs("client", lambda w: {"client_id": w.client.id})),
     Read(AuditRepo, "list"),
@@ -297,7 +335,8 @@ LOOKUPS = {(Lookup, "find_worker_by_token_hash"), (Lookup, "find_install_token_b
 CROSS_MSP = {(MspRepo, "list")}
 
 # C6.2: a read that answers counts, not rows; held by its own test below.
-COUNTS = {(RunRepo, "daily_states")}
+# C6.4: the month's item counts per run and type, the same.
+COUNTS = {(RunRepo, "daily_states"), (ItemRepo, "counts_by_type_in_period")}
 
 
 def every_repo_method() -> set[tuple[type, str]]:
@@ -396,7 +435,7 @@ async def test_a_list_of_one_msp_is_the_whole_of_that_msp_s_rows(session, worlds
     assert {c.id for c in await ClientRepo(session).list(a.msp.id)} == {a.client.id, a.spare_client.id}
     assert {c.id for c in await ConnectorRepo(session).list(a.msp.id)} == {a.connector.id, a.spare_connector.id}
     assert {p.id for p in await PlanRepo(session).list(a.msp.id)} == {a.plan.id, a.spare_plan.id}
-    assert {r.id for r in await RunRepo(session).list(a.msp.id)} == {a.run.id, a.stale_run.id, a.done_run.id}
+    assert {r.id for r in await RunRepo(session).list(a.msp.id)} == {a.run.id, a.stale_run.id, a.done_run.id, a.failed_run.id}
     assert [i.id for i in await ItemRepo(session).list(a.msp.id, a.run.id)] == [i.id for i in a.items]
     assert [r.id for r in await ReportRepo(session).list(b.msp.id)] == [b.report.id]
     # The connector creates wrote audit rows of their own beside the one written by hand.
@@ -521,7 +560,42 @@ async def test_daily_states_with_one_msp_s_id_counts_nothing_of_the_other(sessio
 
     assert await RunRepo(session).daily_states(a.msp.id, b.client.id, since=since) == []
     own = await RunRepo(session).daily_states(a.msp.id, a.client.id, since=since)
-    assert sum(count.count for count in own) == 3  # a.run queued, a.stale_run dispatched, a.done_run pass
+    assert sum(count.count for count in own) == 4  # a.run queued, a.stale_run dispatched, a.done_run pass, a.failed_run fail
+
+
+async def test_counts_by_type_in_period_with_one_msp_s_id_counts_nothing_of_the_other(session, worlds):
+    """C6.4: of the world's runs in the month only the failed one has items
+    and is over (the queued run's two items are no test's), so the month's
+    counts are its one item."""
+    a, b = worlds
+
+    assert await ItemRepo(session).counts_by_type_in_period(a.msp.id, b.client.id, start=MONTH_START, end=MONTH_END) == []
+    own = await ItemRepo(session).counts_by_type_in_period(a.msp.id, a.client.id, start=MONTH_START, end=MONTH_END)
+    assert [(count.run_id, count.type, count.count) for count in own] == [(a.failed_run.id, "mail", 1)]
+
+
+# --- The audit reads on a moved calendar (the C6.1-C6.3 review's finding 8) ----------------
+
+
+@pytest.mark.parametrize("clock", [dt.datetime(2027, 6, 1, tzinfo=UTC), dt.datetime(2040, 1, 1, tzinfo=UTC)])
+async def test_the_audit_reads_hold_on_a_moved_clock(session, clock):
+    """The hand-written audit row is placed after the MSP's newest row, not at
+    a fixed date, so the keyset read before it answers the world's own rows
+    whatever the calendar says: here with every other row at `clock`, past the
+    fixed date the old world used (2026-11-09)."""
+    a = await make_world(session, "a", clock=clock)
+    b = await make_world(session, "b", clock=clock)
+    reads = [read for read in READS if read.repo is AuditRepo and read.method == "page"]
+
+    assert len(reads) == 2
+    for read in reads:
+        own = rows_of(await AuditRepo(session).page(a.msp.id, *read.args(a), **read.kwargs(a)))
+        crossed = rows_of(await AuditRepo(session).page(a.msp.id, *read.args(b), **read.kwargs(b)))
+        assert own and all(row.msp_id == a.msp.id for row in own), read.id
+        assert not [row for row in crossed if row.id in b.ids], read.id
+    assert (await session.execute(text("SELECT max(at) FROM audit_log WHERE msp_id = :m AND id <> :i"), {"m": a.msp.id, "i": a.audit.id})).scalar_one() == clock
+    await session.refresh(a.audit)
+    assert a.audit.at == clock + dt.timedelta(days=30)
 
 
 # --- The one read across MSPs (C5.9) ----------------------------------------------------------

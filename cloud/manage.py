@@ -7,6 +7,8 @@ C5.9", points 1 to 5; docs/onboarding.md). From cloud/:
     uv run python manage.py create-connector --msp-id <uuid> --client-id <uuid> --worker-id <uuid> --profile-file <path>
     uv run python manage.py create-plan --msp-id <uuid> --client-id <uuid> --connector-id <uuid> --mail 10 --sp 10 --od 10
     uv run python manage.py revoke-worker --msp-id <uuid> --worker-id <uuid>
+    uv run python manage.py create-user --msp-id <uuid> --email admin@example.test --role admin
+    uv run python manage.py reset-password --email admin@example.test
 
 or `docker compose exec api python manage.py <command> ...` inside the stack.
 `DATABASE_URL` alone, read as a migration reads it; no bucket, no SECRET_KEY.
@@ -16,12 +18,15 @@ and no statement is built here (tests/test_tenant_scope.py holds this file).
 Stdout is one `<name> <value>` line per thing made; a refusal is one
 `<key>: <reason>` line on stderr, exit 1; a usage fault is Typer's, exit 2.
 Nothing is logged, and the one secret ever printed is the install token
-`create-worker-token` exists to print, once. `create-user` is C6.1's.
+`create-worker-token` exists to print, once. A password (C6.1) is read from
+the console twice without echo, or from standard input as one line when that
+is no console; never from an argument or the environment; printed nowhere.
 """
 
 from __future__ import annotations
 
 import asyncio
+import getpass
 import sys
 import uuid
 from collections.abc import Awaitable, Callable
@@ -43,6 +48,20 @@ app = typer.Typer(add_completion=False, no_args_is_help=True, help=__doc__.split
 Work = Callable[[AsyncSession], Awaitable[onboarding.Created]]
 
 MspId = Annotated[uuid.UUID, typer.Option(help="the MSP's id")]
+Email = Annotated[str, typer.Option(help="the user's e-mail address")]
+
+PASSWORDS_DIFFER = "password: the two entries differ"
+
+
+def read_password() -> str:
+    """The password from the console (twice, no echo) or from standard input
+    (one line) when that is no console; never an argument."""
+    if sys.stdin.isatty():
+        first = getpass.getpass("Password: ")
+        if getpass.getpass("Again: ") != first:
+            _fail(PASSWORDS_DIFFER)
+        return first
+    return sys.stdin.readline().rstrip("\r\n")
 
 
 async def _in_transaction(url: str, work: Work) -> onboarding.Created:
@@ -167,6 +186,24 @@ def revoke_worker(
 ) -> None:
     """Revoke a Worker's token from now on; prints revoked_at."""
     run(lambda session: onboarding.revoke_worker(session, msp_id, worker_id=worker_id))
+
+
+@app.command("create-user")
+def create_user(
+    msp_id: MspId,
+    email: Email,
+    role: Annotated[str, typer.Option(help="admin or member")],
+) -> None:
+    """Make a user of the MSP; the password is asked for; prints user_id."""
+    password = read_password()
+    run(lambda session: onboarding.create_user(session, msp_id, email=email, role=role, password=password))
+
+
+@app.command("reset-password")
+def reset_password(email: Email) -> None:
+    """Give the user a new password (asked for) and end their sessions; prints user_id."""
+    password = read_password()
+    run(lambda session: onboarding.reset_password(session, email=email, password=password))
 
 
 if __name__ == "__main__":  # pragma: no cover - the process's entry

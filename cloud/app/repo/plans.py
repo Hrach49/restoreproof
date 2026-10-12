@@ -13,10 +13,10 @@ from __future__ import annotations
 import datetime as dt
 from uuid import UUID
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import and_, delete, select, update
 
 from app.cadence import CadenceError, check_monthly, check_spacing, parse
-from app.models import TestPlan
+from app.models import Connector, TestPlan, Worker
 from app.repo.base import Repo
 from app.repo.errors import RepoError
 
@@ -70,6 +70,20 @@ class PlanRepo(Repo):
         if enabled is not None:
             statement = statement.where(TestPlan.enabled.is_(enabled))
         return await self._all(statement.order_by(TestPlan.id))
+
+    async def list_with_workers(self, msp_id: UUID, *, enabled: bool | None = None) -> list[tuple[TestPlan, Worker]]:
+        """Each plan with its connector's Worker, by keys that start with
+        `msp_id` (C6.2, point 17: the `/clients` page's "next scheduled run"
+        and "no Worker"). One statement."""
+        statement = (
+            select(TestPlan, Worker)
+            .join(Connector, and_(Connector.msp_id == TestPlan.msp_id, Connector.id == TestPlan.connector_id))
+            .join(Worker, and_(Worker.msp_id == Connector.msp_id, Worker.id == Connector.worker_id))
+            .where(TestPlan.msp_id == msp_id)
+        )
+        if enabled is not None:
+            statement = statement.where(TestPlan.enabled.is_(enabled))
+        return [(plan, worker) for plan, worker in await self._rows(statement.order_by(TestPlan.id))]
 
     async def set_enabled(self, msp_id: UUID, plan_id: UUID, enabled: bool) -> int:
         return await self._touched(

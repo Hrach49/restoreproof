@@ -36,7 +36,11 @@ CONSTRAINT_WORDS: dict[str, tuple[str, str]] = {
     "fk_test_plan_msp_id_client_id_client": ("client_id", "no such client"),
     "ck_msp_retention_days_positive": ("retention_days", "not positive"),
     "uq_test_run_msp_id_plan_id_scheduled_for": ("scheduled_for", "a run exists for the period"),
+    # C6.1: one address across the Cloud, whatever its case; the role's list.
+    "uq_user_email_lower": ("email", "already a user of this Cloud"),
+    "ck_user_role": ("role", "not admin or member"),
     # The MSP's own key, on every row a command inserts.
+    "fk_user_msp_id_msp": ("msp_id", "no such MSP"),
     "fk_client_msp_id_msp": ("msp_id", "no such MSP"),
     "fk_install_token_msp_id_msp": ("msp_id", "no such MSP"),
     "fk_worker_msp_id_msp": ("msp_id", "no such MSP"),

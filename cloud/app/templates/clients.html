@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Clients · {{ layout.msp.name }}{% endblock %}
+{% block content %}
+<h1>Clients</h1>
+<table class="clients">
+  <thead><tr><th>Client</th><th>Last run</th><th>Last status</th><th>Last recovery time</th><th>Next scheduled run</th></tr></thead>
+  <tbody>
+  {% for row in rows %}
+    <tr>
+      <td><a href="/clients/{{ row.client.id }}">{{ row.client.name }}</a></td>
+      {% if row.last %}
+      <td>{{ (row.last.finished_at or row.last.created_at)|utc }}</td>
+      <td><span class="state {{ row.last.state|colour }}">{{ row.last.state }}</span></td>
+      <td class="num">{{ row.last.recovery_ms|duration }}</td>
+      {% else %}
+      <td>—</td>
+      <td><span class="state none">none</span></td>
+      <td class="num">—</td>
+      {% endif %}
+      <td>
+        {% if row.next.kind == "next" %}{{ row.next.at|utc }}
+        {% elif row.next.kind == "queued" %}queued since {{ row.next.at|utc }}
+        {% elif row.next.kind == "running" %}running since {{ row.next.at|utc }}
+        {% elif row.next.kind == "no_worker" %}<span class="late">no Worker</span>
+        {% else %}none{% endif %}
+      </td>
+    </tr>
+  {% else %}
+    <tr><td colspan="5" class="muted">No client yet.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

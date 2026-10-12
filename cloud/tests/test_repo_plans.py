@@ -133,3 +133,32 @@ async def test_msp_list_answers_every_msp_by_name_then_id(session):
     first_two = sorted([a.id, a2.id])
     assert [i for i in ids if i in first_two] == first_two
     assert ids.index(b.id) > max(ids.index(a.id), ids.index(a2.id))
+
+
+# --- C6.2: each plan with its Worker (docs/decisions.md 2026-10-12, point 16) --------------------
+
+
+async def test_list_with_workers_answers_each_plan_with_its_connector_s_worker(session):
+    pem = "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA\n-----END PUBLIC KEY-----\n"
+    now = dt.datetime(2026, 10, 12, 12, tzinfo=dt.timezone.utc)
+    msp = await MspRepo(session).create(name="a")
+    client = await ClientRepo(session).create(msp.id, name="c", tenant_id=uuid.uuid4())
+    workers = WorkerRepo(session)
+    w1 = await workers.create(msp.id, "w1", public_key_pem=pem, key_id="1" * 64, api_token_hash="a" * 64)
+    w2 = await workers.create(msp.id, "w2", public_key_pem=pem, key_id="2" * 64, api_token_hash="b" * 64)
+    c1 = await ConnectorRepo(session).create(msp.id, client.id, w1.id, profile_for(client.tenant_id))
+    c2 = await ConnectorRepo(session).create(msp.id, client.id, w2.id, profile_for(client.tenant_id))
+    plans = PlanRepo(session)
+    p1 = await plans.create(msp.id, client.id, c1.id, sample_mail=1, sample_sp=0, sample_od=0, cadence_cron="0 2 * * *", now=now)
+    p2 = await plans.create(msp.id, client.id, c2.id, sample_mail=1, sample_sp=0, sample_od=0, cadence_cron="0 3 * * *", now=now, enabled=False)
+    assert await workers.revoke(msp.id, w2.id, now) == 1
+    other = await MspRepo(session).create(name="b")
+
+    every = await plans.list_with_workers(msp.id)
+    enabled = await plans.list_with_workers(msp.id, enabled=True)
+    disabled = await plans.list_with_workers(msp.id, enabled=False)
+
+    assert [(plan.id, worker.id) for plan, worker in every] == sorted([(p1.id, w1.id), (p2.id, w2.id)])
+    assert [(plan.id, worker.id) for plan, worker in enabled] == [(p1.id, w1.id)]
+    assert [(plan.id, worker.id, worker.revoked_at) for plan, worker in disabled] == [(p2.id, w2.id, now)]
+    assert await plans.list_with_workers(other.id) == []

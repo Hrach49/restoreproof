@@ -18,6 +18,7 @@ The admin routes of C6.x can call these the same way.
 
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
 import json
 import re
@@ -30,22 +31,32 @@ from uuid import UUID
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth import passwords
 from app.auth.tokens import issue_install_token
 from app.cadence import DEFAULT_CADENCE
-from app.models import DEFAULT_CONNECTOR_TYPE, DEFAULT_RETENTION_DAYS
+from app.models import DEFAULT_CONNECTOR_TYPE, DEFAULT_RETENTION_DAYS, USER_ROLES
 from app.repo.audit import AuditRepo
 from app.repo.clients import ClientRepo
 from app.repo.connectors import ConnectorRepo
 from app.repo.errors import RepoError, constraint_refusal
+from app.repo.lookup import Lookup
 from app.repo.msps import MspRepo
 from app.repo.plans import PlanRepo
 from app.repo.runs import RunRepo
+from app.repo.users import UserRepo
 from app.repo.workers import WorkerRepo
 
 # A name or a label: 1 to 128 characters without a control character
 # (registration's rule for a Worker's name; the label is shown beside it).
 NAME_RULE = "not 1 to 128 characters without a control character"
 _NAME = re.compile(r"^[^\x00-\x1f\x7f]{1,128}$")
+# C6.1: an address is trimmed, holds one `@` with something on each side, no
+# space and no control character, at most a mailbox's 254; stored as typed.
+EMAIL_RULE = "not an address"
+_EMAIL = re.compile(r"^[^\s@\x00-\x1f\x7f]+@[^\s@\x00-\x1f\x7f]+$")
+MAX_EMAIL = 254
+ROLE_RULE = "not admin or member"
+NO_SUCH_USER = "no such user"
 
 SHOWN_ONCE = "the install token is shown once; the Cloud stores its hash alone"
 NO_SUCH_WORKER = "no such Worker or already revoked"
@@ -212,9 +223,59 @@ async def create_plan(
     return Created(tuple(lines))
 
 
-async def revoke_worker(session: AsyncSession, msp_id: UUID, *, worker_id: UUID) -> Created:
+async def revoke_worker(
+    session: AsyncSession, msp_id: UUID, *, worker_id: UUID, user_id: UUID | None = None, ip: str | None = None
+) -> Created:
+    """The CLI's (no user, no address) and the `/workers` page's (C6.2: the
+    user and the address on the one `worker.revoke` row)."""
     at = now()
     if await WorkerRepo(session).revoke(msp_id, worker_id, at) == 0:
         raise RepoError("worker_id", NO_SUCH_WORKER)
-    await _audit(session, msp_id, "worker.revoke", f"worker:{worker_id}")
+    await AuditRepo(session).write(msp_id, "worker.revoke", f"worker:{worker_id}", user_id=user_id, ip=ip)
     return Created((("revoked_at", _time_text(at)),))
+
+
+def check_email(email: str) -> str:
+    """The address trimmed, or `email: not an address`."""
+    address = email.strip()
+    if len(address) > MAX_EMAIL or not _EMAIL.fullmatch(address):
+        raise RepoError("email", EMAIL_RULE)
+    return address
+
+
+def _check_password(password: str) -> None:
+    reason = passwords.check_password_rule(password)
+    if reason is not None:
+        raise RepoError("password", reason)
+
+
+async def create_user(session: AsyncSession, msp_id: UUID, *, email: str, role: str, password: str) -> Created:
+    """A user of the MSP (C6.1, point 12): the address, the role and the
+    password each held to its rule before any work, the hash made in a
+    thread, one audit row `user.create`; the password reaches no line."""
+    address = check_email(email)
+    if role not in USER_ROLES:
+        raise RepoError("role", ROLE_RULE)
+    _check_password(password)
+    password_hash = await asyncio.to_thread(passwords.hash_password, password)
+    user = await _refused_by_the_database(
+        lambda: UserRepo(session).create(msp_id, email=address, password_hash=password_hash, role=role)
+    )
+    await _audit(session, msp_id, "user.create", f"user:{user.id}")
+    return Created((("user_id", str(user.id)),))
+
+
+async def reset_password(session: AsyncSession, *, email: str, password: str) -> Created:
+    """A new password for the user of the address (C6.1, point 12): the hash
+    replaced and `password_changed_at` set, so every session of the user
+    ends; one audit row `user.reset_password` in the user's MSP."""
+    address = check_email(email)
+    _check_password(password)
+    user = await Lookup(session).find_user_by_email(address)
+    if user is None:
+        raise RepoError("email", NO_SUCH_USER)
+    at = now()
+    password_hash = await asyncio.to_thread(passwords.hash_password, password)
+    await UserRepo(session).set_password_hash(user.msp_id, user.id, password_hash, changed_at=at)
+    await _audit(session, user.msp_id, "user.reset_password", f"user:{user.id}")
+    return Created((("user_id", str(user.id)), ("password_changed_at", _time_text(at))))

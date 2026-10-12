@@ -31,11 +31,12 @@ from dataclasses import dataclass
 from typing import NamedTuple
 from uuid import UUID
 
-from sqlalchemy import and_, select
+from sqlalchemy import and_, func, select, true, tuple_
 from sqlalchemy import update as sa_update
+from sqlalchemy.dialects.postgresql import distinct_on
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-from app.models import Client, Connector, TestPlan, TestRun
+from app.models import Client, Connector, TestItem, TestPlan, TestRun
 from app.repo.base import Repo
 
 # C5.6's "max 5": the Worker's kMaxJobs and the schema's maxItems.
@@ -51,6 +52,12 @@ MAX_ATTEMPTS = 3
 # With `dispatched_at IS NOT NULL`: a run never handed out takes no bundle.
 RECEIVABLE_STATES = ("dispatched", "queued", "expired")
 
+# C6.2 (docs/decisions.md 2026-10-12, "C6.1, C6.2 and C6.3", points 16 and
+# 17): a run that is over, for the pages' "last run"; one still to happen.
+FINAL_STATES = ("pass", "fail", "error", "expired")
+PENDING_STATES = ("queued", "dispatched")
+PAGE_SIZE = 50
+
 # C5.9: one run per plan and cron period (app/models.py, TestRun).
 SCHEDULED_UNIQUE = "uq_test_run_msp_id_plan_id_scheduled_for"
 
@@ -64,6 +71,21 @@ class Dispatched(NamedTuple):
     client: Client
 
 
+class RunRow(NamedTuple):
+    """A run of the history table with the count of its items (C6.2)."""
+
+    run: TestRun
+    items: int
+
+
+class DayCount(NamedTuple):
+    """How many runs of one state began on one UTC day (C6.2's strip)."""
+
+    day: dt.date
+    state: str
+    count: int
+
+
 @dataclass(frozen=True)
 class ReceivedRun:
     """What a bundle writes into its run (C5.7 point 11); `signature_ok` is
@@ -75,6 +97,7 @@ class ReceivedRun:
     started_at: dt.datetime | None
     finished_at: dt.datetime | None
     total_ms: int | None
+    recovery_ms: int | None
     restore_point_at: dt.datetime | None
     bundle_key: str
     bundle_sha256: str
@@ -157,6 +180,7 @@ class RunRepo(Repo):
                 started_at=update.started_at,
                 finished_at=update.finished_at,
                 total_ms=update.total_ms,
+                recovery_ms=update.recovery_ms,
                 restore_point_at=update.restore_point_at,
                 bundle_key=update.bundle_key,
                 bundle_sha256=update.bundle_sha256,
@@ -173,6 +197,72 @@ class RunRepo(Repo):
         if client_id is not None:
             statement = statement.where(TestRun.client_id == client_id)
         return await self._all(statement.order_by(TestRun.created_at.desc(), TestRun.id))
+
+    async def last_finished_per_client(self, msp_id: UUID) -> dict[UUID, TestRun]:
+        """Per client, its latest run that is over (`FINAL_STATES`), by
+        `(created_at, id)`: the `/clients` page's last run (C6.2, point 17)."""
+        rows = await self._all(
+            select(TestRun)
+            .ext(distinct_on(TestRun.client_id))
+            .where(TestRun.msp_id == msp_id, TestRun.state.in_(FINAL_STATES))
+            .order_by(TestRun.client_id, TestRun.created_at.desc(), TestRun.id.desc())
+        )
+        return {run.client_id: run for run in rows}
+
+    async def pending_per_client(self, msp_id: UUID) -> dict[UUID, TestRun]:
+        """Per client, its oldest run still to happen (`PENDING_STATES`)."""
+        rows = await self._all(
+            select(TestRun)
+            .ext(distinct_on(TestRun.client_id))
+            .where(TestRun.msp_id == msp_id, TestRun.state.in_(PENDING_STATES))
+            .order_by(TestRun.client_id, TestRun.created_at, TestRun.id)
+        )
+        return {run.client_id: run for run in rows}
+
+    async def page(self, msp_id: UUID, client_id: UUID, *, before: UUID | None = None, limit: int = PAGE_SIZE) -> list[RunRow]:
+        """The client's runs newest first by `(created_at, id)`, each with its
+        item count, at most `limit`: the rows before the run `before` names
+        (keyset; a run that isn't the client's gives an empty page), or the
+        newest when it is None (C6.2, point 18). One statement."""
+        if not 1 <= limit <= PAGE_SIZE:
+            raise ValueError(f"limit must be 1 to {PAGE_SIZE}")
+        counts = (
+            select(TestItem.run_id, func.count().label("n"))
+            .where(TestItem.msp_id == msp_id)
+            .group_by(TestItem.run_id)
+            .subquery("counts")
+        )
+        statement = (
+            select(TestRun, func.coalesce(counts.c.n, 0))
+            .outerjoin(counts, counts.c.run_id == TestRun.id)
+            .where(TestRun.msp_id == msp_id, TestRun.client_id == client_id)
+        )
+        if before is not None:
+            anchor = (
+                select(TestRun.created_at.label("created_at"), TestRun.id.label("id"))
+                .where(TestRun.msp_id == msp_id, TestRun.client_id == client_id, TestRun.id == before)
+                .subquery("anchor")
+            )
+            statement = statement.join(anchor, true()).where(
+                tuple_(TestRun.created_at, TestRun.id) < tuple_(anchor.c.created_at, anchor.c.id)
+            )
+        rows = await self._rows(statement.order_by(TestRun.created_at.desc(), TestRun.id.desc()).limit(limit))
+        return [RunRow(run, int(items)) for run, items in rows]
+
+    async def daily_states(self, msp_id: UUID, client_id: UUID, *, since: dt.datetime) -> list[DayCount]:
+        """How many of the client's runs of each state began on each UTC day
+        since `since`, for the strip (C6.2, point 18). One statement; the
+        session is in UTC, so the day is the UTC day."""
+        if since.utcoffset() is None:
+            raise ValueError("a time without a zone: give an aware UTC datetime")
+        day = func.date_trunc("day", TestRun.created_at)
+        rows = await self._rows(
+            select(day, TestRun.state, func.count())
+            .where(TestRun.msp_id == msp_id, TestRun.client_id == client_id, TestRun.created_at >= since)
+            .group_by(day, TestRun.state)
+            .order_by(day, TestRun.state)
+        )
+        return [DayCount(stamp.astimezone(dt.timezone.utc).date(), state, int(count)) for stamp, state, count in rows]
 
     async def set_state(self, msp_id: UUID, run_id: UUID, state: str) -> int:
         return await self._touched(

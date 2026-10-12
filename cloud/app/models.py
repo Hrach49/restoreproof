@@ -150,12 +150,19 @@ class Msp(Base):
     )
 
 
+# C6.1: what a user may do (docs/decisions.md 2026-10-12, "C6.1, C6.2 and
+# C6.3", points 3 and 22): a member reads and downloads, an admin also revokes
+# a Worker and reads /audit.
+USER_ROLES = ("admin", "member")
+
+
 class User(Base):
     __tablename__ = "user"
     __table_args__ = (
         UniqueConstraint("msp_id", "id"),
         # The login form has no MSP (C6.1): one address, whatever its case.
         Index("uq_user_email_lower", func.lower(text("email")), unique=True),
+        CheckConstraint("role IN (" + ", ".join(f"'{role}'" for role in USER_ROLES) + ")", name="role"),
     )
 
     id: Mapped[uuid.UUID] = _id()
@@ -163,6 +170,10 @@ class User(Base):
     email: Mapped[str] = mapped_column(Text, nullable=False)
     password_hash: Mapped[str] = mapped_column(Text, nullable=False)
     role: Mapped[str] = mapped_column(Text, nullable=False)
+    # C6.1: a session cookie signed before this time is no session, so a
+    # password reset ends every session of the user (point 5).
+    password_changed_at: Mapped[dt.datetime] = _time(nullable=False, default_now=True)
+    created_at: Mapped[dt.datetime] = _time(nullable=False, default_now=True)
 
 
 class Client(Base):
@@ -300,6 +311,7 @@ class TestRun(Base):
             "state IN (" + ", ".join(f"'{state}'" for state in RUN_STATES) + ")", name="state"
         ),
         CheckConstraint("total_ms >= 0", name="total_ms_not_negative"),
+        CheckConstraint("recovery_ms >= 0", name="recovery_ms_not_negative"),
         CheckConstraint("attempt >= 0", name="attempt_not_negative"),
         _sha256_check("bundle_sha256"),
         Index(None, "msp_id", "client_id", "created_at"),
@@ -326,6 +338,9 @@ class TestRun(Base):
     started_at: Mapped[dt.datetime | None] = _time()
     finished_at: Mapped[dt.datetime | None] = _time()
     total_ms: Mapped[int | None] = mapped_column(BigInteger)
+    # C6.2: `timings.spans.recovery.ms`, restore start to last item verified
+    # (W3.2); the pages' and C6.4's "recovery time". Null as `total_ms` is.
+    recovery_ms: Mapped[int | None] = mapped_column(BigInteger)
     bundle_key: Mapped[str | None] = mapped_column(Text)
     bundle_sha256: Mapped[str | None] = mapped_column(Text)
     # Null is "not known yet", never false.

@@ -117,9 +117,12 @@ def upgrade() -> None:
         _text("email"),
         _text("password_hash"),
         _text("role"),
+        _time("password_changed_at", nullable=False, default_now=True),
+        _time("created_at", nullable=False, default_now=True),
         _pk("user"),
         _fk_msp("user"),
         _unique("user", "msp_id", "id"),
+        _check("user", "role", "role IN ('admin', 'member')"),
     )
     op.create_index("uq_user_email_lower", "user", [sa.text("lower(email)")], unique=True)
 
@@ -269,6 +272,7 @@ def upgrade() -> None:
         _time("started_at"),
         _time("finished_at"),
         sa.Column("total_ms", sa.BigInteger(), nullable=True),
+        sa.Column("recovery_ms", sa.BigInteger(), nullable=True),
         _text("bundle_key", nullable=True),
         _text("bundle_sha256", nullable=True),
         _boolean("signature_ok"),
@@ -292,6 +296,7 @@ def upgrade() -> None:
             "state IN ('queued', 'dispatched', 'pass', 'fail', 'error', 'expired')",
         ),
         _check("test_run", "total_ms_not_negative", "total_ms >= 0"),
+        _check("test_run", "recovery_ms_not_negative", "recovery_ms >= 0"),
         _check("test_run", "attempt_not_negative", "attempt >= 0"),
         _sha256("test_run", "bundle_sha256"),
     )

@@ -16,7 +16,7 @@ from fastapi import params
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.db import SessionDep, get_session, make_engine, make_session_factory
-from app.main import ROUTERS, create_app
+from app.main import ROOT_ROUTERS, ROUTERS, create_app
 from app.settings import SettingsError
 from tests.conftest import asyncpg_dsn, checked_test_database_url, make_settings
 
@@ -41,21 +41,25 @@ def test_the_seven_routers_are_modules_with_a_router_each():
         assert isinstance(router, APIRouter)
 
 
-def test_every_route_is_under_v1_but_healthz():
+def test_every_api_route_is_under_v1_the_pages_at_the_root_and_healthz_the_one_probe():
     """FastAPI keeps an included router as one entry: the factory's own routes
-    are held by their paths, the included routers by which they are."""
+    are held by their paths, the included routers by which they are. C6.1:
+    the `ui` router is included at the root, outside the document, and the
+    static files are mounted at /static."""
     routes = make_app().routes
 
     own = [route.path for route in routes if hasattr(route, "path")]
     included = [route.original_router for route in routes if not hasattr(route, "path")]
-    assert own and all(path.startswith("/v1/") for path in own)
+    assert own and all(path.startswith("/v1/") or path == "/static" for path in own)
     assert included == [health.router, *(router for _, router in ROUTERS)]
     assert [route.path for route in health.router.routes] == ["/healthz"]
+    assert ROOT_ROUTERS == ("ui",)
 
 
 @pytest.mark.parametrize("name", ROUTER_NAMES)
 async def test_a_route_added_to_a_router_is_served_under_v1_and_nowhere_else(name):
-    """C5.5 to C5.11 add routes to a router and no wiring."""
+    """C5.5 to C5.11 add routes to a router and no wiring; C6.1: a page added
+    to the `ui` router is served at the root and never under /v1."""
     router = dict(ROUTERS)[name]
     before = list(router.routes)
 
@@ -67,10 +71,16 @@ async def test_a_route_added_to_a_router_is_served_under_v1_and_nowhere_else(nam
         application = make_app()
         served = await get(application, f"/v1/{name}/wiring-probe")
         outside = await get(application, f"/{name}/wiring-probe")
+        document = application.openapi()
     finally:
         # The probe alone: the router is the module's own, and its routes stay.
         router.routes[:] = before
 
+    if name in ROOT_ROUTERS:
+        served, outside = outside, served
+        assert f"/{name}/wiring-probe" not in document["paths"]
+    else:
+        assert f"/v1/{name}/wiring-probe" in document["paths"]
     assert (served.status_code, served.json()) == (200, {"router": name})
     assert outside.status_code == 404
     assert router.routes == before

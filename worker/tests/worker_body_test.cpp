@@ -40,8 +40,12 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
 
+#include <algorithm>
+#include <cctype>
 #include <fstream>
 #include <random>
+#include <regex>
+#include <set>
 #include <thread>
 
 namespace {
@@ -1297,6 +1301,36 @@ std::string base64_text(const std::string& bytes)
     return rp::base64_encode(std::vector<unsigned char>(bytes.begin(), bytes.end()));
 }
 
+// A shared document names no person (the W4.1 rule; the C5.11 review's
+// finding 5). The lab's one person is its admin, whose name reaches a
+// read-back as a display name, as a UPN or, in lower case, as a personal
+// site's path: so the name in any case, either half alone, and every account
+// a text names (an address's local part, a personal site's owner) is held to
+// the lab's test accounts (lab/tenant.md), which are nobody. Answers what it
+// found, in lower case, and "" for nothing.
+std::string person_named(const std::string& text)
+{
+    std::string lower = text;
+    std::transform(lower.begin(), lower.end(), lower.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    for (const char* name : {"hrachya", "harutyunyan"}) {
+        if (lower.find(name) != std::string::npos) {
+            return name;
+        }
+    }
+    static const std::set<std::string> kTestAccounts = {"alice", "bob", "restoretest"};
+    static const std::regex kAccount{R"(([a-z0-9._-]+)@|/personal/([a-z0-9]+))"};
+    for (std::sregex_iterator found{lower.begin(), lower.end(), kAccount}, end; found != end;
+         ++found) {
+        const std::string account =
+            (*found)[1].matched ? (*found)[1].str() : (*found)[2].str();
+        if (kTestAccounts.count(account) == 0) {
+            return account;
+        }
+    }
+    return {};
+}
+
 // The service's loop on one job of the Cloud's shape, to `sent`, under the
 // published test TSA; answers the vector as texts, with the job and the parts
 // the fake Cloud received. The job samples no mail: a mail canary's sender,
@@ -1341,7 +1375,7 @@ ordered_json dispatched_vector()
     // A shared document names no person.
     for (const char* name : {"items.csv", "result.json", "veeam-session.log"}) {
         CAPTURE(name);
-        REQUIRE(bytes_of(sent / name).find("Hrachya") == std::string::npos);
+        REQUIRE(person_named(bytes_of(sent / name)) == "");
     }
     rp::TimestampTrust trust;
     trust.ca_pem = root;
@@ -1356,9 +1390,13 @@ ordered_json dispatched_vector()
              "`files` maps each file's name to its content, a file's bytes the UTF-8 of that "
              "string exactly, or the Base64 of a binary file (timestamp.tst). The job is one "
              "GET /v1/jobs writes (`job`): `run_id` a uuid the Cloud dispatched, `client_id` the "
-             "client's, the client the test Harness's made-up tenant, so the result's "
-             "`client.client_id` and `run_id` are the Cloud's and the Cloud's contract test "
-             "posts these bytes unchanged to 202. `upload` is the request the Worker's outbox "
+             "client's, so the result's `client.client_id` and `run_id` are the Cloud's and the "
+             "Cloud's contract test posts these bytes unchanged to 202. The client is the lab's "
+             "test tenant, not a made-up one: the tenant, app, site, library, drive, folder and "
+             "mailbox identifiers in `job` and in the result are the real ones of lab/tenant.md, "
+             "which the recorded Graph fixtures resolve. They are identifiers, none a secret, "
+             "and the accounts named are the test accounts alice and restoretest, no person; no "
+             "other shared document carries them. `upload` is the request the Worker's outbox "
              "built from the folder, part by part (name, file name, content type), in order. "
              "Signed with the key `key` of keys.json; timestamped by the published test TSA of "
              "timestamp-v1/keys.json at `tsa_time`, so with that `tsa_root` and that key's "
@@ -1390,6 +1428,31 @@ ordered_json dispatched_vector()
 
 } // namespace
 
+TEST_CASE("worker body: the guard of a shared document finds a person's name in every form a "
+          "read-back carries it, and passes the lab's test accounts",
+          "[worker_body][c5.11]")
+{
+    struct Row {
+        const char* text;
+        const char* found;
+    };
+    const Row row = GENERATE(
+        Row{"createdBy: Hrachya Harutyunyan", "hrachya"},
+        Row{"HRACHYA", "hrachya"},
+        Row{"Mr Harutyunyan", "harutyunyan"},
+        Row{"https://x-my.sharepoint.com/personal/hrachyaharutyunyan_x_onmicrosoft_com", "hrachya"},
+        Row{"from carol.jones@RestoreProofLab.onmicrosoft.com", "carol.jones"},
+        Row{"https://x-my.sharepoint.com/personal/carol_jones_x_onmicrosoft_com/Documents", "carol"},
+        Row{"Alice@x and Carol@x", "carol"},
+        Row{"restoretest@RestoreProofLab.onmicrosoft.com", ""},
+        Row{"https://x-my.sharepoint.com/personal/alice_x_onmicrosoft_com", ""},
+        Row{"bob@RestoreProofLab.onmicrosoft.com, rp-canary-01.pdf, RP-CANARY-0001", ""},
+        Row{"", ""});
+    CAPTURE(row.text);
+
+    CHECK(person_named(row.text) == row.found);
+}
+
 TEST_CASE("worker body: writes the shared vector of a run from a job of the Cloud's shape",
           "[.write_shared_dispatched]")
 {
@@ -1419,6 +1482,10 @@ TEST_CASE("worker body: a run from a job of the Cloud's shape is what the shared
     CHECK(shared.at("client_id") == kDispatchedClientId);
     CHECK(shared.at("key") == std::string{rp::test::kSigningKey1Name});
     CHECK(shared.at("tsa_root") == "root");
+    // The file says of itself what the writer says today (the C5.11 review's
+    // finding 4: the text is no part of the signed bytes, so nothing else
+    // holds it).
+    CHECK(shared.at("description") == made.at("description"));
     const json job_shared = shared.at("job");
     const json job_made = made.at("job");
     CHECK(job_shared == job_made);
@@ -1444,7 +1511,7 @@ TEST_CASE("worker body: a run from a job of the Cloud's shape is what the shared
     CHECK(theirs.at("status").at("counts").at("items") == 2);
     CHECK(theirs.at("expected").at("items").at(0).at("kind") == "sharepoint");
     CHECK(theirs.at("expected").at("items").at(1).at("kind") == "onedrive");
-    CHECK(text->find("Hrachya") == std::string::npos);
+    CHECK(person_named(*text) == "");
     // The parts: the three fixed ones, then each listed attachment, with the
     // outbox's file names and content types.
     const json& upload = shared.at("upload");

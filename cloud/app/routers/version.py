@@ -23,7 +23,10 @@ router = APIRouter()
 class VersionBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    api: Literal[1]
+    # The contract's number and nothing else, from the constant (pydantic
+    # resolves the name when the model is built), so a bump of API_VERSION
+    # needs no second edit here.
+    api: Literal[API_VERSION]  # type: ignore[valid-type]
     version: str
 
 

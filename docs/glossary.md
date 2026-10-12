@@ -454,9 +454,10 @@ made is not the plan's, and only the current period is ever made up. A run made 
 (`RunRepo.create`, `create-plan --run-now`) has no period. See `docs/verification.md`, "The Cloud
 makes a run".
 
-**API version header.** `X-RestoreProof-API: 1` on every response the Cloud sends (C5.11,
+**API version header.** `X-RestoreProof-API: 1` on every response the Cloud's app sends (C5.11,
 `cloud/app/contract.py`): a route's answer, a refusal, a 404, the log middleware's 500,
-`/healthz`, the OpenAPI document. The value is the contract's number, the `1` of `/v1`, never
+`/healthz`, the OpenAPI document; not on the server's own 400 for a request it can't parse or
+its 503 when it is full, which never reach the app, so only a 2xx is held to it. The value is the contract's number, the `1` of `/v1`, never
 the Cloud's version (that is `GET /v1/version`'s `{"api": 1, "version": "0.0.0"}`, answered
 without a token or a statement). It tells a Worker or an operator that the thing at `cloud_url`
 is a RestoreProof Cloud speaking contract 1; W5.1 holds a 2xx of the upload to it. See

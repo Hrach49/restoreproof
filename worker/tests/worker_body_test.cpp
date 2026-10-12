@@ -1277,6 +1277,227 @@ TEST_CASE("worker body: a folder closed after a stop has no token, and is what t
     CHECK(verified.timestamp == rp::TimestampState::none);
 }
 
+// --- C5.11: the shared vector of a run from a job of the Cloud's shape ---------------------------
+// (docs/decisions.md 2026-10-12, point 7): the folder the service's body made
+// and sent for a job as GET /v1/jobs writes one, a uuid run_id and a
+// client_id, so the Cloud's contract test can post the Worker's bytes
+// unchanged to 202. The TSA is the published test TSA of timestamp-v1, so the
+// token verifies under that root on both sides.
+
+namespace {
+
+const char* const kDispatchedVector = "testdata/signing-v1/dispatched-run.json";
+// Two fixed, visibly made-up uuid4 texts: lower-case and hyphenated, so the
+// Cloud's `str(uuid.UUID(text)) == text` holds and the Worker's folder rule too.
+const std::string kDispatchedRunId = "c5110000-0000-4000-8000-000000000001";
+const std::string kDispatchedClientId = "c5110000-0000-4000-8000-000000000002";
+
+std::string base64_text(const std::string& bytes)
+{
+    return rp::base64_encode(std::vector<unsigned char>(bytes.begin(), bytes.end()));
+}
+
+// The service's loop on one job of the Cloud's shape, to `sent`, under the
+// published test TSA; answers the vector as texts, with the job and the parts
+// the fake Cloud received. The job samples no mail: a mail canary's sender,
+// read back from the recorded Graph fixtures, names a person, and a signed
+// folder can't be renamed afterwards as result-v1/valid.json is. The lab's
+// tenant and its target IDs stay in the result: the fake Graph resolves the
+// recorded fixtures' IDs, and lab/tenant.md has them.
+ordered_json dispatched_vector()
+{
+    BodyLab lab;
+    const json tsa_keys = json::parse(rp::test::read_shared("testdata/timestamp-v1/keys.json"));
+    const std::string root = tsa_keys.at("root_pem").get<std::string>();
+    lab.h.tsa = rp::test::TestTsa(root, tsa_keys.at("tsa_certificate_pem").get<std::string>(),
+                                  tsa_keys.at("tsa_private_key_pem").get<std::string>());
+    lab.h.tsa.time = std::chrono::system_clock::to_time_t(rp::test::graph_lab::kNow);
+    lab.h.dir.write("tsa-ca.pem", root);
+    json one = job(kDispatchedRunId, 0, 1, 1);
+    one["client_id"] = kDispatchedClientId;
+    lab.write_jobs(json::array({one}));
+
+    const std::optional<std::string> last_error = lab.run_loop();
+
+    REQUIRE_FALSE(last_error);
+    const std::filesystem::path sent = lab.sent(kDispatchedRunId);
+    REQUIRE(names_in(sent) == kQueuedFolder);
+    const rp::Verification verified = verify(sent);
+    REQUIRE(rp::to_string(verified.word) == "verified");
+    const std::vector<rp::HttpRequest> requests = lab.cloud.requests();
+    REQUIRE(requests.size() == 2);
+    REQUIRE(requests[1].url == kResultsUrl);
+    ordered_json upload = ordered_json::array();
+    for (const rp::MultipartPart& part : requests[1].parts) {
+        REQUIRE(part.content == bytes_of(sent / part.filename));
+        upload.push_back({{"name", part.name},
+                          {"filename", part.filename},
+                          {"content_type", part.content_type}});
+    }
+    const std::string result = bytes_of(sent / "result.json");
+    const json document = json::parse(result);
+    REQUIRE(document.at("status").at("status") == "pass");
+    REQUIRE(document.at("client").at("client_id") == kDispatchedClientId);
+    // A shared document names no person.
+    for (const char* name : {"items.csv", "result.json", "veeam-session.log"}) {
+        CAPTURE(name);
+        REQUIRE(bytes_of(sent / name).find("Hrachya") == std::string::npos);
+    }
+    rp::TimestampTrust trust;
+    trust.ca_pem = root;
+    const rp::Verification stamped = rp::Signer::verify_folder(
+        rp::folder_reader(sent), *rp::list_folder(sent),
+        rp::test::public_key_of(rp::test::signing_key()), trust);
+    REQUIRE(rp::to_string(stamped.word) == "verified");
+    REQUIRE(stamped.timestamp == rp::TimestampState::checked);
+    return {{"description",
+             "One run folder the Worker's service made and sent for a job of the Cloud's shape "
+             "(C5.11, docs/decisions.md 2026-10-12, point 7), as texts, in bundle.json's shape: "
+             "`files` maps each file's name to its content, a file's bytes the UTF-8 of that "
+             "string exactly, or the Base64 of a binary file (timestamp.tst). The job is one "
+             "GET /v1/jobs writes (`job`): `run_id` a uuid the Cloud dispatched, `client_id` the "
+             "client's, the client the test Harness's made-up tenant, so the result's "
+             "`client.client_id` and `run_id` are the Cloud's and the Cloud's contract test "
+             "posts these bytes unchanged to 202. `upload` is the request the Worker's outbox "
+             "built from the folder, part by part (name, file name, content type), in order. "
+             "Signed with the key `key` of keys.json; timestamped by the published test TSA of "
+             "timestamp-v1/keys.json at `tsa_time`, so with that `tsa_root` and that key's "
+             "`public_key_pem` both verifiers answer `verified <bundle_sha256> key <key_id> "
+             "timestamp <tsa_time>`. Written by the Worker's hidden test "
+             "`rptests \"[.write_shared_dispatched]\"`; the result names the Worker's version of "
+             "that day and the token's signature is ECDSA (never the same twice), so the file is "
+             "not held to the code byte for byte: a Worker test and a Cloud test verify it as it "
+             "is, and the Worker test holds its result to what the lab makes but for "
+             "`worker_version`."},
+            {"key", rp::test::kSigningKey1Name},
+            {"bundle_sha256", verified.bundle_sha256},
+            {"key_id", verified.key_id},
+            {"run_id", kDispatchedRunId},
+            {"client_id", kDispatchedClientId},
+            {"tenant_id", document.at("client").at("tenant_id")},
+            {"worker_version", document.at("worker_version")},
+            {"tsa_root", "root"},
+            {"tsa_time", rp::timestamp_field(stamped)},
+            {"job", one},
+            {"upload", upload},
+            {"files",
+             {{"items.csv", bytes_of(sent / "items.csv")},
+              {"result.json", result},
+              {"signature.json", bytes_of(sent / "signature.json")},
+              {"timestamp.tst", {{"base64", base64_text(bytes_of(sent / "timestamp.tst"))}}},
+              {"veeam-session.log", bytes_of(sent / "veeam-session.log")}}}};
+}
+
+} // namespace
+
+TEST_CASE("worker body: writes the shared vector of a run from a job of the Cloud's shape",
+          "[.write_shared_dispatched]")
+{
+    // The text first: a failure while it is made leaves the file as it was.
+    const std::string text = dispatched_vector().dump(2) + "\n";
+    std::ofstream file(std::filesystem::path{RP_SHARED_DIR} / kDispatchedVector,
+                       std::ios::binary | std::ios::trunc);
+    file << text;
+    file.close();
+    REQUIRE(file);
+}
+
+TEST_CASE("worker body: a run from a job of the Cloud's shape is what the shared vector holds, "
+          "and the vector verifies as it is under the published root",
+          "[worker_body][loop][signer][c5.11]")
+{
+    // As `json`, so it compares with the file's own parse.
+    const json made = json::parse(dispatched_vector().dump());
+    const std::optional<std::string> text =
+        file_bytes(std::filesystem::path{RP_SHARED_DIR} / kDispatchedVector);
+    REQUIRE(text);
+    const json shared = json::parse(*text);
+
+    // The ids, the job and the parts are fixed; the result is the lab's but
+    // for the version; the two text attachments byte for byte.
+    CHECK(shared.at("run_id") == kDispatchedRunId);
+    CHECK(shared.at("client_id") == kDispatchedClientId);
+    CHECK(shared.at("key") == std::string{rp::test::kSigningKey1Name});
+    CHECK(shared.at("tsa_root") == "root");
+    const json job_shared = shared.at("job");
+    const json job_made = made.at("job");
+    CHECK(job_shared == job_made);
+    const json upload_shared = shared.at("upload");
+    const json upload_made = made.at("upload");
+    CHECK(upload_shared == upload_made);
+    const json& files = shared.at("files");
+    CHECK(files.size() == 5);
+    CHECK(files.at("items.csv") == made.at("files").at("items.csv").get<std::string>());
+    CHECK(files.at("veeam-session.log") ==
+          made.at("files").at("veeam-session.log").get<std::string>());
+    json theirs = json::parse(files.at("result.json").get<std::string>());
+    json ours = json::parse(made.at("files").at("result.json").get<std::string>());
+    CHECK(theirs.at("worker_version") == shared.at("worker_version"));
+    theirs.erase("worker_version");
+    ours.erase("worker_version");
+    CHECK(theirs == ours);
+    CHECK(theirs.at("run_id") == kDispatchedRunId);
+    CHECK(theirs.at("client").at("client_id") == kDispatchedClientId);
+    CHECK(theirs.at("client").at("scope") == "same_tenant");
+    CHECK(theirs.at("client").at("tenant_id") == shared.at("tenant_id"));
+    CHECK(theirs.at("status").at("status") == "pass");
+    CHECK(theirs.at("status").at("counts").at("items") == 2);
+    CHECK(theirs.at("expected").at("items").at(0).at("kind") == "sharepoint");
+    CHECK(theirs.at("expected").at("items").at(1).at("kind") == "onedrive");
+    CHECK(text->find("Hrachya") == std::string::npos);
+    // The parts: the three fixed ones, then each listed attachment, with the
+    // outbox's file names and content types.
+    const json& upload = shared.at("upload");
+    REQUIRE(upload.size() == 5);
+    CHECK(upload.at(0) == json{{"name", "result"},
+                               {"filename", "result.json"},
+                               {"content_type", "application/json"}});
+    CHECK(upload.at(1) == json{{"name", "signature"},
+                               {"filename", "signature.json"},
+                               {"content_type", "application/json"}});
+    CHECK(upload.at(2) == json{{"name", "timestamp"},
+                               {"filename", "timestamp.tst"},
+                               {"content_type", "application/octet-stream"}});
+    CHECK(upload.at(3).at("name") == "items.csv");
+    CHECK(upload.at(4).at("name") == "veeam-session.log");
+
+    // The shared folder verifies as it is, under the key it names, the token
+    // under the published root at the time it says.
+    std::map<std::string, std::string> folder;
+    std::vector<std::string> names;
+    for (const auto& [name, content] : files.items()) {
+        if (content.is_object()) {
+            const std::optional<std::vector<unsigned char>> raw =
+                rp::base64_decode(content.at("base64").get<std::string>());
+            REQUIRE(raw);
+            folder[name] = std::string(raw->begin(), raw->end());
+        } else {
+            folder[name] = content.get<std::string>();
+        }
+        names.push_back(name);
+    }
+    const rp::FileReader read = [&folder](std::string_view name, std::uintmax_t) {
+        rp::FileRead file;
+        const auto found = folder.find(std::string{name});
+        if (found != folder.end()) {
+            file.state = rp::FileState::read;
+            file.bytes = found->second;
+        }
+        return file;
+    };
+    const json tsa_keys = json::parse(rp::test::read_shared("testdata/timestamp-v1/keys.json"));
+    rp::TimestampTrust trust;
+    trust.ca_pem = tsa_keys.at("root_pem").get<std::string>();
+    const rp::Verification verified = rp::Signer::verify_folder(
+        read, names, rp::test::public_key_of(rp::test::signing_key()), trust);
+    CHECK(rp::to_string(verified.word) == "verified");
+    CHECK(verified.bundle_sha256 == shared.at("bundle_sha256").get<std::string>());
+    CHECK(verified.key_id == shared.at("key_id").get<std::string>());
+    CHECK(verified.timestamp == rp::TimestampState::checked);
+    CHECK(rp::timestamp_field(verified) == shared.at("tsa_time").get<std::string>());
+    CHECK(verified.notes.empty());
+}
+
 // --- W4.11: a job of a connector this Worker lacks, and a job without a profile ----------------
 
 TEST_CASE("worker body: a job asking for a connector this Worker lacks is reported as error "

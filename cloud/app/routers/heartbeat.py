@@ -50,7 +50,7 @@ from app.auth.dependency import current_worker, not_authenticated
 from app.db import SessionDep
 from app.models import Worker
 from app.repo.workers import WorkerRepo
-from app.routers.errors import NOT_AUTHENTICATED
+from app.routers.errors import BODY_OVER_THE_CAP, NOT_AUTHENTICATED
 from app.routers.workers import Version
 
 router = APIRouter()
@@ -145,6 +145,7 @@ def now() -> dt.datetime:
     response_class=Response,
     responses={
         401: NOT_AUTHENTICATED,
+        413: BODY_OVER_THE_CAP,
         422: {
             "description": "Validation Error",
             "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HTTPValidationError"}}},

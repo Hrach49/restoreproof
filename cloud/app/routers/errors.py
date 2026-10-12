@@ -27,3 +27,6 @@ def refusal(description: str, *, header: str | None = None) -> dict[str, Any]:
 NOT_AUTHENTICATED = refusal(
     "Not authenticated: no valid token, whatever the reason.", header="WWW-Authenticate"
 )
+
+# C5.11: every request body but the upload's is held to app/contract.py's cap.
+BODY_OVER_THE_CAP = refusal("The body is over the 64 KiB cap every request but the upload has (`body: too large`).")

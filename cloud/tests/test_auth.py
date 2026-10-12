@@ -135,6 +135,30 @@ async def test_a_revoked_token_gets_401_and_a_valid_one_passes(lab):
     }
 
 
+# --- C5.11: the document's scheme changes no answer (docs/decisions.md 2026-10-12, point 3) ----
+
+
+async def test_the_documented_scheme_is_fastapi_s_bearer_that_never_answers(lab):
+    """`current_worker` depends on `HTTPBearer(auto_error=False)` so the document
+    shows the token; the dependency's result is never read, and the library
+    never refuses: `bearer x` and two spaces are still the one 401 of
+    `_presented_token`'s strict parse, and the probe still passes."""
+    from fastapi.security import HTTPBearer
+
+    from app.auth import dependency
+
+    assert isinstance(dependency.WORKER_TOKEN_SCHEME, HTTPBearer)
+    assert dependency.WORKER_TOKEN_SCHEME.auto_error is False
+    assert dependency.WORKER_TOKEN_SCHEME.model.scheme == "bearer"
+    assert dependency.WORKER_TOKEN_SCHEME.scheme_name == "workerToken"
+    loose = await lab.get({"Authorization": f"bearer {lab.token}"})
+    spaced = await lab.get({"Authorization": f"Bearer  {lab.token}"})
+    valid = await lab.get({"Authorization": f"Bearer {lab.token}"})
+    assert (loose.status_code, loose.json()) == (401, REFUSED_BODY)
+    assert (spaced.status_code, spaced.json()) == (401, REFUSED_BODY)
+    assert valid.status_code == 200
+
+
 # --- Every refusal is one and the same answer ----------------------------------------------
 
 

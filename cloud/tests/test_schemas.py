@@ -95,12 +95,39 @@ def test_the_image_copies_the_schemas_the_verifier_and_the_tsa_root_beside_app_a
     assert compose.count("alembic upgrade head") == 1
 
 
-@pytest.mark.parametrize("package", ["jsonschema", "cryptography", "asn1crypto", "python-multipart", "typer", "apscheduler", "croniter", "argon2-cffi", "itsdangerous", "jinja2"])
+REPORT_PACKAGES = ("libpango-1.0-0", "libpangoft2-1.0-0", "libharfbuzz-subset0", "fonts-dejavu-core", "fontconfig")
+
+
+def test_the_image_installs_what_weasyprint_renders_with_before_the_dependencies():
+    """C6.4 (docs/decisions.md 2026-10-12, "C6.4", point 2): Pango, the
+    HarfBuzz subsetter, one font and fontconfig's tool, in one apt layer with
+    its lists removed, before `uv sync` so a code change doesn't install them
+    again; the font cache built system-wide, since the service user has no
+    home to write one in."""
+    root = shared_dir().parent
+    dockerfile = (root / "cloud" / "Dockerfile").read_text(encoding="utf-8")
+    apt = dockerfile.index("apt-get install")
+
+    assert dockerfile.count("apt-get install") == 1
+    assert all(package in dockerfile[apt:] for package in REPORT_PACKAGES)
+    assert "--no-install-recommends" in dockerfile[apt:]
+    assert "fc-cache -fs" in dockerfile[apt:]
+    assert "rm -rf /var/lib/apt/lists/*" in dockerfile[apt:]
+    assert apt < dockerfile.index("uv sync")
+    # The service user has no home: fontconfig's own cache goes under /tmp,
+    # set after uv's layer (uv would write its cache there as root) and
+    # before the user switch.
+    cache = dockerfile.index("XDG_CACHE_HOME=/tmp/cache")
+    assert dockerfile.index("uv sync") < cache < dockerfile.index("USER restoreproof")
+
+
+@pytest.mark.parametrize("package", ["jsonschema", "cryptography", "asn1crypto", "python-multipart", "typer", "apscheduler", "croniter", "argon2-cffi", "itsdangerous", "jinja2", "weasyprint"])
 def test_the_verifier_s_libraries_and_the_form_parser_are_runtime_dependencies(package):
     """jsonschema since C5.3; the verifier's two and starlette's form parser
     since C5.7 (docs/decisions.md 2026-10-10, C5.7, point 1); the CLI's and
     the scheduler's three since C5.10 and C5.9; the login's three since C6.1
-    (slowapi is not among them, point 7)."""
+    (slowapi is not among them, point 7); weasyprint since C6.4 (pypdf, which
+    reads a PDF's text in the tests, is a dev dependency alone)."""
     import tomllib
 
     pyproject = tomllib.loads((Path(__file__).resolve().parent.parent / "pyproject.toml").read_text(encoding="utf-8"))
@@ -108,3 +135,5 @@ def test_the_verifier_s_libraries_and_the_form_parser_are_runtime_dependencies(p
     assert any(dep.startswith(package) for dep in pyproject["project"]["dependencies"])
     assert not any(dep.startswith(package) for dep in pyproject["dependency-groups"]["dev"])
     assert not any(dep.startswith("slowapi") for dep in pyproject["project"]["dependencies"])
+    assert any(dep.startswith("pypdf") for dep in pyproject["dependency-groups"]["dev"])
+    assert not any(dep.startswith("pypdf") for dep in pyproject["project"]["dependencies"])

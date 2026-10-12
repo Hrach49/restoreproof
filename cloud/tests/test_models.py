@@ -505,18 +505,7 @@ async def test_an_item_a_report_and_an_audit_row_stay_in_their_msp(session):
     b = await World.make(session, "b")
 
     await refused(session, an_item(a.msp, b.run), "fk_test_item_msp_id_run_id_test_run")
-    await refused(
-        session,
-        Report(
-            msp_id=a.msp.id,
-            client_id=b.client.id,
-            period_start=dt.date(2026, 9, 1),
-            period_end=dt.date(2026, 9, 30),
-            storage_key="k",
-            sha256=SHA,
-        ),
-        "fk_report_msp_id_client_id_client",
-    )
+    await refused(session, a_report(a.msp, b.client, storage_key="k"), "fk_report_msp_id_client_id_client")
     await refused(
         session,
         AuditLog(msp_id=a.msp.id, user_id=b.user.id, action="connector.create", target="x"),
@@ -838,25 +827,78 @@ async def test_an_item_s_hash_is_64_lower_case_hex_digits(session, column):
     )
 
 
-async def test_a_report_s_hash_is_64_lower_case_hex_digits(session):
+def a_report(msp, client, **changes) -> Report:
+    """C6.4 (docs/decisions.md 2026-10-12, "C6.4", point 1): a final report of
+    September with both hashes."""
+    values = {
+        "msp_id": msp.id,
+        "client_id": client.id,
+        "period_start": dt.date(2026, 9, 1),
+        "period_end": dt.date(2026, 9, 30),
+        "storage_key": f"msp/{msp.id}/reports/{client.id}/2026-09.pdf",
+        "content_sha256": SHA,
+        "file_sha256": "cd" * 32,
+        "interim": False,
+        "generated_at": dt.datetime(2026, 10, 1, 3, 0, tzinfo=UTC),
+    }
+    return Report(**{**values, **changes})
+
+
+@pytest.mark.parametrize("column", ["content_sha256", "file_sha256"])
+async def test_a_report_s_two_hashes_are_64_lower_case_hex_digits_each(session, column):
     world = await World.make(session)
 
-    def report(sha: str) -> Report:
-        return Report(
-            msp_id=world.msp.id,
-            client_id=world.client.id,
-            period_start=dt.date(2026, 9, 1),
-            period_end=dt.date(2026, 9, 30),
-            storage_key="reports/2026-09.pdf",
-            sha256=sha,
-        )
-
-    await refused(session, report("AB" * 32), "ck_report_sha256_hex")
-    kept = await add(session, report(SHA))
+    await refused(session, a_report(world.msp, world.client, **{column: "AB" * 32}), f"ck_report_{column}_hex")
+    kept = await add(session, a_report(world.msp, world.client))
     await session.refresh(kept)
 
+    assert (kept.content_sha256, kept.file_sha256, kept.interim) == (SHA, "cd" * 32, False)
     assert kept.period_start == dt.date(2026, 9, 1)
-    assert kept.generated_at.utcoffset() == dt.timedelta(0)
+    assert kept.generated_at == dt.datetime(2026, 10, 1, 3, 0, tzinfo=UTC)
+
+
+async def test_a_report_has_no_sha256_column_and_says_whether_it_is_interim(session):
+    """`sha256` is gone (point 1); `interim` and `generated_at` are given,
+    never defaulted."""
+    columns = Report.__table__.c
+
+    assert "sha256" not in columns
+    assert columns["interim"].nullable is False and columns["interim"].server_default is None
+    assert columns["generated_at"].nullable is False and columns["generated_at"].server_default is None
+    world = await World.make(session)
+    with pytest.raises(IntegrityError, match="interim"):
+        async with session.begin_nested():
+            session.add(a_report(world.msp, world.client, interim=None))
+            await session.flush()
+
+
+async def test_a_period_ends_on_or_after_its_start(session):
+    world = await World.make(session)
+
+    await refused(session, a_report(world.msp, world.client, period_end=dt.date(2026, 8, 31)), "ck_report_period_order")
+    await add(session, a_report(world.msp, world.client, period_end=dt.date(2026, 9, 1)))
+
+
+async def test_a_period_has_one_final_report_and_any_number_of_interim_ones(session):
+    """`uq_report_final_period`: a partial unique on (msp_id, client_id,
+    period_start) where not interim. The same period in the other MSP is its
+    own; another period of the client is another report."""
+    a = await World.make(session, "a")
+    b = await World.make(session, "b")
+    await add(session, a_report(a.msp, a.client))
+
+    await refused(session, a_report(a.msp, a.client, storage_key="again"), "uq_report_final_period")
+    await add(session, a_report(a.msp, a.client, interim=True, storage_key="interim-1"))
+    await add(session, a_report(a.msp, a.client, interim=True, storage_key="interim-2"))
+    await add(session, a_report(b.msp, b.client))
+    await add(session, a_report(a.msp, a.client, period_start=dt.date(2026, 10, 1), period_end=dt.date(2026, 10, 31), storage_key="october"))
+
+
+async def test_a_storage_key_is_written_once(session):
+    world = await World.make(session)
+    await add(session, a_report(world.msp, world.client, interim=True))
+
+    await refused(session, a_report(world.msp, world.client, interim=True), "uq_report_storage_key")
 
 
 @pytest.mark.parametrize("days", [0, -1])

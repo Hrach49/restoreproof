@@ -31,7 +31,7 @@ from dataclasses import dataclass
 from typing import NamedTuple
 from uuid import UUID
 
-from sqlalchemy import and_, func, select, true, tuple_
+from sqlalchemy import and_, func, or_, select, true, tuple_
 from sqlalchemy import update as sa_update
 from sqlalchemy.dialects.postgresql import distinct_on
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -60,6 +60,39 @@ PAGE_SIZE = 50
 
 # C5.9: one run per plan and cron period (app/models.py, TestRun).
 SCHEDULED_UNIQUE = "uq_test_run_msp_id_plan_id_scheduled_for"
+
+# C6.4 (docs/decisions.md 2026-10-12, "C6.4", point 4): the states a report
+# counts as tests, each the month's by the time it ended.
+TESTED_STATES = ("pass", "fail", "error")
+
+
+def _aware(name: str, value: dt.datetime) -> None:
+    if value.utcoffset() is None:
+        raise ValueError(f"{name}: a time without a zone: give an aware UTC datetime")
+
+
+def period_time():
+    """The time that puts a run in a month: when it ended, or when it was made
+    for one that never ended (a finished run whose `ended_at` the calendar
+    refused, or an expired one)."""
+    return func.coalesce(TestRun.finished_at, TestRun.created_at)
+
+
+def period_filter(client_id: UUID, start: dt.datetime, end: dt.datetime):
+    """The conditions that make a run of `client_id` one of the span `[start,
+    end)`: a tested run by the time it ended, an expired run by its creation
+    (not a test, counted as one that did not run); queued and dispatched
+    never. Shared by the run and item reads of a report, so the three agree."""
+    _aware("start", start)
+    _aware("end", end)
+    at = period_time()
+    return (
+        TestRun.client_id == client_id,
+        or_(
+            and_(TestRun.state.in_(TESTED_STATES), at >= start, at < end),
+            and_(TestRun.state == "expired", TestRun.created_at >= start, TestRun.created_at < end),
+        ),
+    )
 
 
 class Dispatched(NamedTuple):
@@ -263,6 +296,15 @@ class RunRepo(Repo):
             .order_by(day, TestRun.state)
         )
         return [DayCount(stamp.astimezone(dt.timezone.utc).date(), state, int(count)) for stamp, state, count in rows]
+
+    async def period(self, msp_id: UUID, client_id: UUID, *, start: dt.datetime, end: dt.datetime) -> list[TestRun]:
+        """The client's runs of the span `[start, end)` as `period_filter` has
+        them, oldest first by that time then id (C6.4, point 5). One statement."""
+        return await self._all(
+            select(TestRun)
+            .where(TestRun.msp_id == msp_id, *period_filter(client_id, start, end))
+            .order_by(period_time(), TestRun.id)
+        )
 
     async def set_state(self, msp_id: UUID, run_id: UUID, state: str) -> int:
         return await self._touched(

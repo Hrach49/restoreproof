@@ -278,6 +278,27 @@ signature is never a field of the result, and nothing is removed from the result
 hashed. The file is not itself signed, so a verifier takes the public key from its caller,
 never from the folder. See [verification.md](verification.md), "The signature".
 
+**Report.** A client's PDF of one period (C6.4): A4, six sections in a fixed order (Summary,
+Test log, Failures, Method, Integrity, Framework mapping), rendered with WeasyPrint from one
+template, stored under `msp/{msp_id}/reports/{client_id}/{period}.pdf` with a `report` row that
+holds its two hashes. Made by `manage.py generate-report` today, by C6.6's scheduler on the 1st
+and its "Generate now" later. It never claims more than was tested; four phrases are banned by a
+test. See [verification.md](verification.md), "The Cloud's report".
+
+**Period.** One UTC calendar month, named `YYYY-MM`, the span a report covers. A `pass`, `fail`
+or `error` run is the month's by the time it ended; an `expired` run by its creation, counted as
+a scheduled test that did not run; a `queued` or `dispatched` run is in no report.
+
+**Content hash and file hash.** A report's two SHA-256s (C6.4). The report is rendered twice:
+the first pass prints no hash and its SHA-256 is the *content hash*, printed by the second pass
+in the Integrity section; the second pass's SHA-256 is the *file hash*, stored beside the report
+and equal to the SHA-256 of the file a reader downloads. Two, because a file cannot contain its
+own hash. `report.content_sha256`, `report.file_sha256`.
+
+**Interim report.** A report of a period that is not over (C6.4): its last day is not before
+the day it was generated. Its title says so, its key carries its generation time, and a client
+may have any number of them for a month beside the one final report (`uq_report_final_period`).
+
 **Timestamp (`timestamp.tst`).** The file beside `result.json` that holds an RFC 3161
 TimeStampToken (W4.4): a timestamp authority's signed statement that the SHA-256 of
 `result.json`'s bytes existed at the token's time. The bare DER token as the TSA sent it, no

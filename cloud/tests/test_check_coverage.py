@@ -1,9 +1,9 @@
 """Tests for tools/check_coverage.py, the per-path 100% coverage gate.
 
 CLAUDE.md requires 100% line and branch coverage on app/auth, app/results.py,
-app/repo and, since C5.9, app/cadence.py. pytest-cov only has a global
-threshold, so this script reads coverage's JSON report and enforces the
-per-path floor.
+app/repo, since C5.9 app/cadence.py, since C5.11 app/contract.py and since
+C6.4 app/report. pytest-cov only has a global threshold, so this script reads
+coverage's JSON report and enforces the per-path floor.
 """
 
 import json
@@ -123,7 +123,7 @@ def test_fails_when_report_is_not_json(tmp_path, capsys):
 # ---- skip and pass paths -------------------------------------------------
 
 
-@pytest.mark.parametrize("guarded", ["app/auth", "app/results.py", "app/repo", "app/cadence.py", "app/contract.py"])
+@pytest.mark.parametrize("guarded", ["app/auth", "app/results.py", "app/repo", "app/cadence.py", "app/contract.py", "app/report"])
 def test_missing_guarded_path_is_skipped_not_failed(tmp_path, capsys, guarded):
     report = write_report(tmp_path, {})
 

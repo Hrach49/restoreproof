@@ -77,8 +77,31 @@ CASES = [
     # rpworker's main() in worker/app/ is Worker source too.
     (["worker/app/main.cpp"], ["worker/app/main.cpp"]),
     (["worker/app/main.cpp", "cloud/tests/test_a.py"], ["worker/app/main.cpp"]),
+    # C5.11: the onboarding CLI is Cloud source outside cloud/app/, and the
+    # verifier the Cloud imports is held by the Cloud's tests. Blocked first.
+    (["cloud/manage.py"], ["cloud/manage.py"]),
+    (["cloud/manage.py", "worker/tests/a_test.cpp"], ["cloud/manage.py"]),
+    (["shared/tools/verify_bundle.py"], ["shared/tools/verify_bundle.py"]),
+    (["shared/tools/verify_bundle.py", "worker/tests/signer_test.cpp"], ["shared/tools/verify_bundle.py"]),
+    (["shared/tools/verify_bundle.py", "shared/testdata/signing-v1/cases.json"], ["shared/tools/verify_bundle.py"]),
+    (["shared/tools/README.md"], ["shared/tools/README.md"]),
+    (
+        ["cloud/app/a.py", "shared/tools/verify_bundle.py", "worker/src/a.cpp"],
+        ["cloud/app/a.py", "shared/tools/verify_bundle.py", "worker/src/a.cpp"],
+    ),
     # --- allowed ---
     ([], []),
+    # C5.11: a Cloud test covers both the CLI and the verifier.
+    (["cloud/manage.py", "cloud/tests/test_manage.py"], []),
+    (["shared/tools/verify_bundle.py", "cloud/tests/test_verify_bundle.py"], []),
+    (["cloud/manage.py", "shared/tools/verify_bundle.py", "cloud/tests/conftest.py"], []),
+    # The file is matched as a path, not a prefix; the folder's look-alikes aren't it.
+    (["cloud/manage.pyc"], []),
+    (["cloud/manage.py.bak"], []),
+    (["cloud/manage/x.py"], []),
+    (["shared/toolsfoo/x.py"], []),
+    (["shared/tools.py"], []),
+    (["shared/schemas/result.v1.json", "shared/testdata/signing-v1/bundle.json"], []),
     (["docs/decisions.md"], []),
     (["README.md", ".github/workflows/worker.yml"], []),
     (["worker/src/a.cpp", "worker/tests/a_test.cpp"], []),
@@ -186,6 +209,14 @@ def test_cli_blocks_source_change_without_test():
     assert "worker/src/a.cpp" in result.stdout
     assert "docs/x.md" not in result.stdout
     assert "worker/tests/" in result.stdout
+
+
+def test_cli_names_the_file_and_the_shared_folder_it_blocks():
+    result = run_script("M\0cloud/manage.py\0M\0shared/tools/verify_bundle.py\0")
+    assert result.returncode == 1
+    assert "cloud/app/ or cloud/manage.py" in result.stdout
+    assert "shared/tools/" in result.stdout
+    assert result.stdout.count("cloud/tests/") == 2
 
 
 def test_cli_allows_source_change_with_test():

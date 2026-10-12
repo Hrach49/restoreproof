@@ -20,7 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from app.auth.registration import register_worker
 from app.db import SessionDep
-from app.routers.errors import NOT_AUTHENTICATED, refusal
+from app.routers.errors import BODY_OVER_THE_CAP, NOT_AUTHENTICATED, refusal
 
 router = APIRouter()
 
@@ -59,6 +59,7 @@ class Registered(BaseModel):
         401: NOT_AUTHENTICATED,
         400: refusal("The key is not an accepted Ed25519 public key (the file's form, a non-canonical encoding, no point of the curve, or a small-order point)."),
         409: refusal("The key is already registered."),
+        413: BODY_OVER_THE_CAP,
     },
 )
 async def register(body: RegisterBody, request: Request, session: SessionDep) -> Registered:

@@ -20,7 +20,7 @@ from app.main import ROUTERS, create_app
 from app.settings import SettingsError
 from tests.conftest import asyncpg_dsn, checked_test_database_url, make_settings
 
-ROUTER_NAMES = ("workers", "jobs", "results", "heartbeat", "admin", "ui")
+ROUTER_NAMES = ("workers", "jobs", "results", "heartbeat", "admin", "ui", "version")
 
 
 def make_app():
@@ -33,7 +33,7 @@ async def get(application, path: str) -> httpx.Response:
         return await client.get(path)
 
 
-def test_the_six_routers_are_modules_with_a_router_each():
+def test_the_seven_routers_are_modules_with_a_router_each():
     assert tuple(name for name, _ in ROUTERS) == ROUTER_NAMES
     for name, router in ROUTERS:
         module = importlib.import_module(f"app.routers.{name}")

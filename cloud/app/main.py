@@ -14,14 +14,16 @@ from fastapi import APIRouter, FastAPI
 
 import app as package
 from app import health
+from app.contract import API_VERSION, ApiVersionMiddleware, BodyCapMiddleware
 from app.db import make_engine, make_session_factory
 from app.logging import RequestLogMiddleware, configure_logging
 from app.results import tsa_ca_pem
-from app.routers import admin, heartbeat, jobs, results, ui, workers
+from app.routers import admin, heartbeat, jobs, results, ui, version, workers
 from app.settings import Settings, load_settings
 from app.storage import Storage
 
-API_PREFIX = "/v1"
+# The contract's number is the path's (C5.11; app/contract.py).
+API_PREFIX = f"/v{API_VERSION}"
 
 # Every API route lives in one of these. C5.5 to C5.11 add routes to a router;
 # the wiring is here and doesn't change.
@@ -32,7 +34,13 @@ ROUTERS: tuple[tuple[str, APIRouter], ...] = (
     ("heartbeat", heartbeat.router),
     ("admin", admin.router),
     ("ui", ui.router),
+    ("version", version.router),
 )
+
+# The one route that bounds its own body (96 MiB, on the bytes; C5.7): every
+# other request is held to app/contract.py's cap. A test holds this set equal
+# to the document's multipart operations.
+LARGE_BODY_PATHS = frozenset({f"{API_PREFIX}/results"})
 
 
 @asynccontextmanager
@@ -63,7 +71,11 @@ def create_app(settings: Settings | None = None, *, log_stream: TextIO | None = 
     # test hands the route the shared vectors' test root here.
     application.state.tsa_ca_pem = tsa_ca_pem()
 
+    # The last added is outermost: the API header stamps every answer, the
+    # log middleware's own 500 included; the cap's 413 is logged as a request.
+    application.add_middleware(BodyCapMiddleware, large_body_paths=LARGE_BODY_PATHS)
     application.add_middleware(RequestLogMiddleware)
+    application.add_middleware(ApiVersionMiddleware)
     application.include_router(health.router)
     for _name, router in ROUTERS:
         application.include_router(router, prefix=API_PREFIX)

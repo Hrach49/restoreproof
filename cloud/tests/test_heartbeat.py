@@ -295,7 +295,9 @@ async def test_a_body_that_is_not_json_is_422(lab, clock):
 # --- The token before the body (the C5.8 review's finding 1) ----------------------------------
 
 
-NESTED = b"[" * 100_000
+# Past the parser's recursion depth (about a thousand), and under C5.11's 64 KiB
+# body cap, which answers a longer body 413 before the route runs.
+NESTED = b"[" * 30_000
 HUGE_NUMBER = b'{"last_error":null,"last_error_at":null,"outbox_depth":' + b"9" * 5000 + b',"uptime_s":0,"version":"0.0.0"}'
 UNREADABLE = {
     "not json": b"last_error=null",

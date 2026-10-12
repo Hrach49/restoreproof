@@ -1862,6 +1862,9 @@ key, an MSP or a Worker.
 | the bundle's client isn't the run's | `client_mismatch` | 409 |
 | accepted | `{"run_id": "<uuid>", "state": "pass" \| "fail" \| "error"}` | 202 |
 
+Every answer, the 202 and each refusal, carries `X-RestoreProof-API: 1` (C5.11, below, "The
+contract"). The upload is the one request the body cap of C5.11 leaves to its own 96 MiB.
+
 The media type is read without regard to case, as HTTP has it. The 96 MiB cap is held twice: on
 the header before a byte is read, and on the bytes as they arrive, since a server that frames a
 body by its chunks (`Transfer-Encoding: chunked` beside a small `Content-Length`) hands the
@@ -1945,7 +1948,66 @@ The status alone decides; the Worker may log the body's `detail` word and relies
 in a body. 202, first or repeated: `sent`. 401: never retried by schedule, one warning, the run
 stays queued. 400 (any word), 404, 409, 415, 422: permanent, the folder to `failed\<run_id>` for
 the operator's `rpworker signer verify`. 411, 413, 5xx, a timeout, no connection: retried by
-today's schedule.
+today's schedule. C5.11 adds the header to this (below): a 2xx without `X-RestoreProof-API: 1`
+is not the Cloud's answer and never moves a run to `sent\`.
+
+## The contract (C5.11)
+
+`docs/decisions.md` 2026-10-12, "C5.11"; the code is `cloud/app/contract.py` (strict at 100%
+line and branch) and `cloud/app/routers/version.py`; the tests `cloud/tests/test_contract.py`
+and `cloud/tests/test_openapi.py`.
+
+**The header.** Every response the Cloud sends carries `X-RestoreProof-API: 1`: a route's
+answer, a refusal, FastAPI's 404, 405 and 422, the log middleware's own 500, `/healthz` and the
+OpenAPI document. The value is the contract's number, the `1` of `/v1`: it changes when `/v2`
+exists and the document breaks, not when a field is added. It says one thing, *this answer came
+from a RestoreProof Cloud speaking contract 1*, which a Worker pointed at a wrong host, a captive
+portal or a proxy's error page cannot otherwise tell from a 202.
+
+**`GET /v1/version`.** No token, no statement, a closed body `{"api": 1, "version": "<the
+Cloud's>"}` (`app/__init__.py`'s `__version__`, the document's `info.version`), `Cache-Control:
+no-store`. It answers before a Worker has a token, which is what W7.2's `rpworker doctor` needs,
+and says nothing the anonymous `/v1/openapi.json` doesn't.
+
+**The body cap.** Every request but `POST /v1/results` is held to 64 KiB: a `Content-Length` over
+it is 413 `{"detail": "body: too large"}` before the app runs, and a body whose bytes pass it
+(chunked beside any `Content-Length`, as h11 frames it) is the same 413 from the first byte over,
+the read ended there. The upload keeps its own 96 MiB cap on the header and on the bytes. The
+header check reads no byte and the counter counts only what the app pulls, so a heartbeat without
+a token is still the one 401 with nothing of its body read (C5.8); a 413 on the header before the
+401 tells a caller nothing of any token. The two routes that take a body, registration and the
+heartbeat, name the 413 in the document; a `GET` with a body gets it as the server's answer, like
+the 404. Nothing else in the stack bounds a JSON body, and the Compose stack has no proxy; a
+deployment's proxy (C5.12) is the second line, not the first.
+
+**The security scheme.** The document's `components.securitySchemes.workerToken` (`http`,
+`bearer`) and the `security` entry on `GET /v1/jobs`, `POST /v1/results` and `POST /v1/heartbeat`
+come from `current_worker` itself, which depends on FastAPI's `HTTPBearer(auto_error=False)` for
+the document alone: a route that depends on `current_worker` is documented as taking the token
+with no second edit, and a test holds the document's secured operations equal to the routes
+whose dependency tree holds `current_worker`. The dependency's result is never read and the
+library never answers: `_presented_token`'s strict parse (one space, nothing else) and the one
+401 are as C5.4 made them. `POST /v1/workers/register` takes the install token in its body and
+gets no bearer scheme.
+
+**The contract test.** `shared/testdata/signing-v1/dispatched-run.json` is a run folder the C++
+Worker's service made and sent for a job of the Cloud's shape (`run_id`
+`c5110000-0000-4000-8000-000000000001`, `client_id` `c5110000-…-0002`), signed with RFC 8032's
+test key 1 and timestamped by the published test TSA, with the job it came from and the part
+list the Worker's outbox built (`upload`: name, file name, content type, in order). The Cloud's
+Done-when posts those bytes unchanged under that part list to a run and a client that carry the
+vector's ids: 202 `pass` with the header, the row, the items, the audit row and the objects;
+nothing is re-signed. It is the one shared folder that reaches 202; every other shared case is
+404 after the whole verification, as before.
+
+**What the Worker will do with the header (W5.1, W7.2; built nowhere yet).** A 2xx of the
+upload without `X-RestoreProof-API: 1` is not the Cloud's answer: the run is not moved to
+`sent\`, the attempt is `upload_not_cloud` (retried by the schedule like `upload_unreachable`),
+one warning once. A jobs document from an answer without the header is not read. The heartbeat
+takes any 2xx and warns once of a missing header. A header with another value is treated as
+absent, with its own warning naming the number. `rpworker doctor` asks `GET <cloud_url>/v1/version`
+without a token and prints `cloud: RestoreProof Cloud <version>, API 1`, or `cloud: not a
+RestoreProof Cloud` for an answer without the header.
 
 ## The Cloud receives a heartbeat (C5.8)
 

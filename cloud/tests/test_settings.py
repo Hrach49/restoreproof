@@ -54,11 +54,17 @@ def test_the_required_six_and_the_defaults():
     assert settings.smtp_password is None
     assert settings.smtp_from is None
     assert settings.log_level == "info"
+    # C6.1, C6.2: the cookie is Secure and the links are signed for the data
+    # endpoint unless a deployment says otherwise.
+    assert settings.session_cookie_secure is True
+    assert settings.s3_public_endpoint is None
 
 
 def test_the_optional_ones_are_read_when_set():
     settings = load_settings(
         environment(
+            S3_PUBLIC_ENDPOINT="http://127.0.0.1:9000",
+            SESSION_COOKIE_SECURE="false",
             S3_REGION="eu-central-1",
             SMTP_HOST="smtp.test",
             SMTP_PORT="2525",
@@ -76,6 +82,8 @@ def test_the_optional_ones_are_read_when_set():
     assert settings.smtp_password.get_secret_value() == f"{SENTINEL}-smtp"
     assert settings.smtp_from == "reports@example.test"
     assert settings.log_level == "debug"
+    assert settings.s3_public_endpoint == "http://127.0.0.1:9000"
+    assert settings.session_cookie_secure is False
 
 
 @pytest.mark.parametrize("name", REQUIRED)
@@ -110,6 +118,8 @@ def test_every_faulty_variable_is_named_at_once_in_the_settings_own_order():
         ("DATABASE_URL", f"sqlite+aiosqlite:///{SENTINEL}.db"),
         ("S3_ENDPOINT", f"s3.test:9000/{SENTINEL}"),
         ("S3_ENDPOINT", f"ftp://{SENTINEL}.test"),
+        ("S3_PUBLIC_ENDPOINT", f"{SENTINEL}.test:9000"),
+        ("SESSION_COOKIE_SECURE", f"{SENTINEL}"),
         ("SECRET_KEY", f"{SENTINEL}-short"),
         ("SMTP_PORT", f"{SENTINEL}"),
         ("SMTP_PORT", "0"),

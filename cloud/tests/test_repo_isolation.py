@@ -50,7 +50,7 @@ def a_hash(seed: str) -> str:
 
 
 RECEIVED = ReceivedRun(
-    state="pass", error_code=None, error_message=None, started_at=NOW, finished_at=NOW, total_ms=1,
+    state="pass", error_code=None, error_message=None, started_at=NOW, finished_at=NOW, total_ms=1, recovery_ms=1,
     restore_point_at=NOW, bundle_key="msp/x/runs/y/", bundle_sha256="ab" * 32, tsa_ok=None, tsa_time=None,
     cleanup_ok=True,
 )
@@ -69,6 +69,7 @@ class World:
     plan: Any
     run: Any
     stale_run: Any = None
+    done_run: Any = None
     items: list = field(default_factory=list)
     report: Any = None
     audit: Any = None
@@ -81,7 +82,7 @@ class World:
     @property
     def ids(self) -> set[uuid.UUID]:
         rows = [self.msp, self.user, self.client, self.worker, self.connector, self.plan, self.run,
-                self.stale_run, *self.items, self.report, self.audit, self.token, self.spare_client,
+                self.stale_run, self.done_run, *self.items, self.report, self.audit, self.token, self.spare_client,
                 self.spare_worker, self.spare_connector, self.spare_plan]
         return {row.id for row in rows}
 
@@ -112,6 +113,15 @@ async def make_world(session, name: str) -> World:
         text("UPDATE test_run SET dispatched_at = :at, attempt = 1 WHERE id = :id"),
         {"at": NOW, "id": world.stale_run.id},
     )
+    # C6.2: a run that is over, for the pages' last-run read; the queued run
+    # made a day before the rest, so a page before the stale run has it.
+    world.done_run = await RunRepo(session).create(
+        msp.id, plan_id=plan.id, client_id=client.id, connector_id=connector.id, worker_id=worker.id
+    )
+    assert await RunRepo(session).set_state(msp.id, world.done_run.id, "pass") == 1
+    await session.execute(
+        text("UPDATE test_run SET created_at = :at WHERE id = :id"), {"at": NOW - dt.timedelta(days=1), "id": run.id}
+    )
     # One item by `create` and one by `create_many` (C5.7's one INSERT), so
     # both are among the rows every read and write below is held to.
     await ItemRepo(session).create(msp.id, run.id, position=0, type="mail", name=f"{name} item 1", expected_kind="manifest")
@@ -127,6 +137,10 @@ async def make_world(session, name: str) -> World:
         storage_key=f"{name}/2026-09.pdf", sha256="ab" * 32,
     )
     world.audit = await AuditRepo(session).write(msp.id, action="test.write", target=f"{name}:x", user_id=user.id, ip="10.0.0.1")
+    # C6.3: the newest row by far, so a page before it has the connectors' rows.
+    await session.execute(
+        text("UPDATE audit_log SET at = :at WHERE id = :id"), {"at": NOW + dt.timedelta(days=30), "id": world.audit.id}
+    )
     world.token = await InstallTokenRepo(session).create(
         msp.id, token_hash=a_hash(f"{name} token"), expires_at=NOW + dt.timedelta(days=7), label=f"{name} token"
     )
@@ -199,6 +213,16 @@ READS = [
     Read(RunRepo, "get", _args("run", lambda w: (w.run.id,))),
     Read(RunRepo, "list"),
     Read(RunRepo, "list", kwargs=_kwargs("client", lambda w: {"client_id": w.client.id})),
+    # C6.2: the pages' reads. The two per-client dicts are read as their rows.
+    Read(RunRepo, "last_finished_per_client"),
+    Read(RunRepo, "pending_per_client"),
+    Read(RunRepo, "page", _args("client", lambda w: (w.client.id,))),
+    Read(RunRepo, "page", _args("client, before", lambda w: (w.client.id,)), _kwargs("before", lambda w: {"before": w.stale_run.id})),
+    Read(PlanRepo, "list_with_workers"),
+    Read(PlanRepo, "list_with_workers", kwargs=_kwargs("enabled", lambda w: {"enabled": True})),
+    # C6.3: the audit page's read.
+    Read(AuditRepo, "page", kwargs=_kwargs("since", lambda w: {"since": NOW - dt.timedelta(days=365)})),
+    Read(AuditRepo, "page", kwargs=_kwargs("since, before", lambda w: {"since": NOW - dt.timedelta(days=365), "before": w.audit.id})),
     Read(ItemRepo, "list", _args("run", lambda w: (w.run.id,))),
     Read(ReportRepo, "get", _args("report", lambda w: (w.report.id,))),
     Read(ReportRepo, "list"),
@@ -244,6 +268,8 @@ WRITES = [
     # route gives the token's Worker) the bundle isn't filed and B's row stays.
     Write(RunRepo, "receive", lambda w: w.stale_run, lambda w: (w.stale_run.id,), lambda w: {"worker_id": w.worker.id, "update": RECEIVED}),
     Write(InstallTokenRepo, "mark_used", lambda w: w.token, lambda w: (w.token.id, NOW)),
+    # C6.1: with A's msp_id and B's user the reset answers 0 and B's hash stays.
+    Write(UserRepo, "set_password_hash", lambda w: w.user, lambda w: (w.user.id, "changed"), lambda w: {"changed_at": NOW}),
 ]
 
 # Exercised by make_world: a create with A's msp_id and B's ids is refused by
@@ -264,11 +290,14 @@ CREATES = {
     (InstallTokenRepo, "create"),
 }
 
-LOOKUPS = {(Lookup, "find_worker_by_token_hash"), (Lookup, "find_install_token_by_hash")}
+LOOKUPS = {(Lookup, "find_worker_by_token_hash"), (Lookup, "find_install_token_by_hash"), (Lookup, "find_user_by_email")}
 
 # C5.9: the one read across every MSP, the scheduler's; held below to answer
 # both worlds' MSPs and nothing else of either.
 CROSS_MSP = {(MspRepo, "list")}
+
+# C6.2: a read that answers counts, not rows; held by its own test below.
+COUNTS = {(RunRepo, "daily_states")}
 
 
 def every_repo_method() -> set[tuple[type, str]]:
@@ -287,7 +316,7 @@ def every_repo_method() -> set[tuple[type, str]]:
 
 def test_the_table_names_every_repo_method():
     """A method added later must be added to READS, WRITES or CREATES."""
-    in_table = {(r.repo, r.method) for r in READS} | {(w.repo, w.method) for w in WRITES} | CREATES | LOOKUPS | CROSS_MSP
+    in_table = {(r.repo, r.method) for r in READS} | {(w.repo, w.method) for w in WRITES} | CREATES | LOOKUPS | CROSS_MSP | COUNTS
 
     assert every_repo_method() == in_table
     assert len(every_repo_method()) >= 40
@@ -312,9 +341,22 @@ def msp_of(row) -> uuid.UUID:
 
 
 def rows_of(answer) -> list:
+    """The rows a read answered: a row, a list of rows, a dict of rows by
+    key, or a list of tuples of rows (a joined read) or of named tuples whose
+    first field is the row (a row with its count or its user's address)."""
     if answer is None:
         return []
-    return list(answer) if isinstance(answer, list) else [answer]
+    if isinstance(answer, dict):
+        return list(answer.values())
+    if not isinstance(answer, list):
+        return [answer]
+    rows = []
+    for entry in answer:
+        if isinstance(entry, tuple):
+            rows.extend(item for item in entry if hasattr(item, "msp_id") or hasattr(item, "retention_days"))
+        else:
+            rows.append(entry)
+    return rows
 
 
 # --- Reads -------------------------------------------------------------------------
@@ -354,7 +396,7 @@ async def test_a_list_of_one_msp_is_the_whole_of_that_msp_s_rows(session, worlds
     assert {c.id for c in await ClientRepo(session).list(a.msp.id)} == {a.client.id, a.spare_client.id}
     assert {c.id for c in await ConnectorRepo(session).list(a.msp.id)} == {a.connector.id, a.spare_connector.id}
     assert {p.id for p in await PlanRepo(session).list(a.msp.id)} == {a.plan.id, a.spare_plan.id}
-    assert {r.id for r in await RunRepo(session).list(a.msp.id)} == {a.run.id, a.stale_run.id}
+    assert {r.id for r in await RunRepo(session).list(a.msp.id)} == {a.run.id, a.stale_run.id, a.done_run.id}
     assert [i.id for i in await ItemRepo(session).list(a.msp.id, a.run.id)] == [i.id for i in a.items]
     assert [r.id for r in await ReportRepo(session).list(b.msp.id)] == [b.report.id]
     # The connector creates wrote audit rows of their own beside the one written by hand.
@@ -406,6 +448,20 @@ async def test_a_write_on_a_row_that_does_not_exist_answers_zero(session, worlds
     assert await RunRepo(session).requeue_stale(a.msp.id, NOW - dt.timedelta(days=1)) == (0, 0)
     assert await RunRepo(session).receive(a.msp.id, nothing, worker_id=a.worker.id, update=RECEIVED) == 0
     assert await InstallTokenRepo(session).mark_used(a.msp.id, nothing, NOW) == 0
+    assert await UserRepo(session).set_password_hash(a.msp.id, nothing, "x", changed_at=NOW) == 0
+
+
+async def test_set_password_hash_replaces_the_hash_and_marks_the_change_only_when_told(session, worlds):
+    a, _ = worlds
+    users = UserRepo(session)
+    before = (await users.get(a.msp.id, a.user.id)).password_changed_at
+
+    assert await users.set_password_hash(a.msp.id, a.user.id, "rehashed", changed_at=None) == 1
+    await session.refresh(a.user)
+    assert (a.user.password_hash, a.user.password_changed_at) == ("rehashed", before)
+    assert await users.set_password_hash(a.msp.id, a.user.id, "reset", changed_at=NOW) == 1
+    await session.refresh(a.user)
+    assert (a.user.password_hash, a.user.password_changed_at) == ("reset", NOW)
 
 
 async def test_the_writes_do_what_they_say_on_their_own_rows(session, worlds):
@@ -449,6 +505,23 @@ async def test_the_lookups_find_a_row_by_its_hash_alone_and_the_row_carries_its_
     assert (token.id, token.msp_id) == (a.token.id, a.msp.id)
     assert await lookup.find_worker_by_token_hash(a_hash("nobody")) is None
     assert await lookup.find_install_token_by_hash(a_hash("nobody")) is None
+    # C6.1: the address in any case, trimmed; nobody for an unknown one.
+    user = await lookup.find_user_by_email("  B@EXAMPLE.TEST ")
+    assert (user.id, user.msp_id) == (b.user.id, b.msp.id)
+    assert await lookup.find_user_by_email("nobody@example.test") is None
+    assert await lookup.find_user_by_email("") is None
+
+
+# --- The read that answers counts (C6.2) ---------------------------------------------------------
+
+
+async def test_daily_states_with_one_msp_s_id_counts_nothing_of_the_other(session, worlds):
+    a, b = worlds
+    since = NOW - dt.timedelta(days=365)
+
+    assert await RunRepo(session).daily_states(a.msp.id, b.client.id, since=since) == []
+    own = await RunRepo(session).daily_states(a.msp.id, a.client.id, since=since)
+    assert sum(count.count for count in own) == 3  # a.run queued, a.stale_run dispatched, a.done_run pass
 
 
 # --- The one read across MSPs (C5.9) ----------------------------------------------------------

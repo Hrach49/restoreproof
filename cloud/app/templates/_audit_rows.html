@@ -1,0 +1,14 @@
+{% for entry in rows %}
+  <tr>
+    <td>{{ entry.row.at|utc(true) }}</td>
+    <td>{{ entry.email or "—" }}</td>
+    <td><code>{{ entry.row.action }}</code></td>
+    <td>{{ entry.row.target }}</td>
+    <td>{{ entry.row.ip or "—" }}</td>
+  </tr>
+{% else %}
+  {% if not more %}<tr><td colspan="5" class="muted">No row in this span.</td></tr>{% endif %}
+{% endfor %}
+{% if more %}
+  <tr class="pager"><td colspan="5"><a href="/audit?days={{ days }}&amp;before={{ more }}" hx-get="/audit?days={{ days }}&amp;before={{ more }}" hx-target="closest tr" hx-swap="outerHTML">more</a></td></tr>
+{% endif %}

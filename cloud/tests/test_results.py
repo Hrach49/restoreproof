@@ -121,6 +121,7 @@ async def test_the_tests_pass_and_a_real_worker_bundle_lands_as_pass_in_the_db(l
     assert row.started_at == dt.datetime(2026, 9, 28, 12, 0, 0, tzinfo=UTC)
     assert row.finished_at == dt.datetime(2026, 9, 28, 12, 0, 0, tzinfo=UTC)
     assert row.total_ms == 3_936_000
+    assert row.recovery_ms == 2_706_000  # C6.2: timings.spans.recovery.ms
     assert row.restore_point_at == dt.datetime(2026, 9, 29, 22, 0, 45, tzinfo=UTC)
     assert row.bundle_key == key == f"msp/{lab.msp_id}/runs/{run_id}/"
     assert row.bundle_sha256 == hashlib.sha256(parts["result"]).hexdigest()
@@ -817,6 +818,34 @@ async def test_a_fail_s_items_and_columns(lab):
         (4, True, True, None, None),  # a clock that went back: not known
         (5, True, True, None, 123_000),
     ]
+
+
+@pytest.mark.parametrize(
+    ("span", "stored"),
+    [
+        (None, None),
+        ({"note": "open"}, None),
+        ({"note": "clock_backwards"}, None),
+        ({"ms": 0}, 0),
+        ({"ms": 61_000, "note": "stopped"}, 61_000),
+        ({"ms": 2**53 - 1}, 2**53 - 1),
+    ],
+    ids=["null", "open", "clock backwards", "zero", "stopped", "largest"],
+)
+async def test_the_recovery_span_is_filed_as_the_total_is(lab, span, stored):
+    """C6.2 (docs/decisions.md 2026-10-12, point 15): `timings.spans.recovery`
+    goes into `test_run.recovery_ms`, null for a span without `ms`."""
+    run_id = await lab.run()
+
+    def patch(document):
+        document["timings"]["spans"]["recovery"] = span
+
+    parts = lab.bundle(run_id, patch=patch)
+    lab.expect_puts(run_id, parts)
+
+    assert (await lab.upload(parts)).status_code == 202
+    row = await lab.run_row(run_id)
+    assert (row.recovery_ms, row.total_ms) == (stored, 3_936_000)
 
 
 async def test_a_run_that_sampled_but_was_not_checked_files_its_items_as_not_known(lab):

@@ -31,6 +31,7 @@ from app.repo.lookup import Lookup
 from app.repo.msps import MspRepo
 from app.repo.plans import PlanRepo
 from app.repo.runs import RunRepo
+from app.repo.users import UserRepo
 from app.repo.workers import WorkerRepo
 from tests.conftest import make_settings
 from tests.test_registration import KEY, KEY_ID
@@ -237,9 +238,104 @@ async def test_no_arguments_prints_the_commands(monkeypatch):
     result = await cli()
 
     text = result.stdout + result.stderr
-    for command in ("create-msp", "create-client", "create-worker-token", "create-connector", "create-plan", "revoke-worker"):
+    for command in ("create-msp", "create-client", "create-worker-token", "create-connector", "create-plan", "revoke-worker", "create-user", "reset-password"):
         assert command in text
-    assert "create-user" not in text
+
+
+# --- C6.1: create-user and reset-password (docs/decisions.md 2026-10-12, point 12) -------------
+
+
+PASSWORD = "correct horse battery staple"
+
+
+async def cli_with_password(password: str, *args: str):
+    """The command with the password on standard input (no console under
+    the runner, so one line is read); never on the command line."""
+    return await asyncio.to_thread(runner.invoke, manage.app, list(args), input=password + "\n")
+
+
+async def test_create_user_reads_the_password_from_stdin_and_prints_the_id_alone(database, rows):
+    msp = lines(await cli("create-msp", "--name", "a"))
+
+    result = await cli_with_password(PASSWORD, "create-user", "--msp-id", msp["msp_id"], "--email", " Admin@Example.test ", "--role", "admin")
+
+    assert result.exit_code == 0, result.stderr
+    made = lines(result)
+    assert set(made) == {"user_id"} and result.stderr == ""
+    assert PASSWORD not in result.stdout + result.stderr
+    user = await rows.read(lambda s: UserRepo(s).get(uuid.UUID(msp["msp_id"]), uuid.UUID(made["user_id"])))
+    assert (user.email, user.role) == ("Admin@Example.test", "admin")
+    assert user.password_hash.startswith("$argon2id$") and PASSWORD not in user.password_hash
+    actions = await rows.read(lambda s: AuditRepo(s).list(uuid.UUID(msp["msp_id"])))
+    assert [(a.action, a.target, a.user_id, a.ip) for a in actions][-1] == ("user.create", f"user:{made['user_id']}", None, None)
+
+
+async def test_reset_password_replaces_the_hash_marks_the_change_and_prints_the_time(database, rows):
+    msp = lines(await cli("create-msp", "--name", "a"))
+    made = lines(await cli_with_password(PASSWORD, "create-user", "--msp-id", msp["msp_id"], "--email", "x@example.test", "--role", "member"))
+    before = await rows.read(lambda s: UserRepo(s).get(uuid.UUID(msp["msp_id"]), uuid.UUID(made["user_id"])))
+
+    result = await cli_with_password("another password entirely", "reset-password", "--email", "X@EXAMPLE.TEST")
+
+    assert result.exit_code == 0, result.stderr
+    printed = lines(result)
+    assert set(printed) == {"user_id", "password_changed_at"} and printed["user_id"] == made["user_id"]
+    assert re.match(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$", printed["password_changed_at"])
+    after = await rows.read(lambda s: UserRepo(s).get(uuid.UUID(msp["msp_id"]), uuid.UUID(made["user_id"])))
+    assert after.password_hash != before.password_hash and after.password_changed_at > before.password_changed_at
+    actions = await rows.read(lambda s: AuditRepo(s).list(uuid.UUID(msp["msp_id"])))
+    assert [a.action for a in actions][-1] == "user.reset_password"
+
+
+@pytest.mark.parametrize(
+    ("password", "args", "line"),
+    [
+        (PASSWORD, ("create-user", "--msp-id", "{msp}", "--email", "no-at-sign", "--role", "admin"), "email: not an address"),
+        (PASSWORD, ("create-user", "--msp-id", "{msp}", "--email", "a@b.test", "--role", "owner"), "role: not admin or member"),
+        ("short", ("create-user", "--msp-id", "{msp}", "--email", "a@b.test", "--role", "admin"), "password: not 12 to 1024 characters"),
+        (PASSWORD, ("create-user", "--msp-id", str(uuid.UUID(int=9)), "--email", "a@b.test", "--role", "admin"), "msp_id: no such MSP"),
+        (PASSWORD, ("reset-password", "--email", "nobody@example.test"), "email: no such user"),
+        ("short", ("reset-password", "--email", "a@b.test"), "password: not 12 to 1024 characters"),
+    ],
+)
+async def test_a_user_command_s_refusal_is_one_line_with_nothing_of_the_password(database, rows, password, args, line):
+    msp = lines(await cli("create-msp", "--name", "a"))
+
+    result = await cli_with_password(password, *[a.format(msp=msp["msp_id"]) for a in args])
+
+    assert (result.exit_code, result.stdout, result.stderr.strip()) == (1, "", line)
+    assert password not in result.stderr
+    assert await rows.read(lambda s: UserRepo(s).list(uuid.UUID(msp["msp_id"]))) == []
+
+
+async def test_the_same_address_twice_in_any_case_is_refused_through_the_cli(database, rows):
+    msp = lines(await cli("create-msp", "--name", "a"))
+    await cli_with_password(PASSWORD, "create-user", "--msp-id", msp["msp_id"], "--email", "one@example.test", "--role", "admin")
+
+    result = await cli_with_password(PASSWORD, "create-user", "--msp-id", msp["msp_id"], "--email", "ONE@example.test", "--role", "member")
+
+    assert (result.exit_code, result.stdout, result.stderr.strip()) == (1, "", "email: already a user of this Cloud")
+
+
+def test_the_password_is_never_a_command_line_option():
+    for command in manage.app.registered_commands:
+        if command.name in ("create-user", "reset-password"):
+            import inspect
+
+            assert "password" not in inspect.signature(command.callback).parameters
+
+
+def test_the_console_path_asks_twice_and_refuses_two_entries_that_differ(monkeypatch):
+    answers = iter(["first entry 12", "second entry 12"])
+    monkeypatch.setattr(manage.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(manage.getpass, "getpass", lambda prompt: next(answers))
+
+    with pytest.raises(typer.Exit) as raised:
+        manage.read_password()
+    assert raised.value.exit_code == 1
+
+    answers = iter(["same entry 123", "same entry 123"])
+    assert manage.read_password() == "same entry 123"
 
 
 @pytest.mark.parametrize(

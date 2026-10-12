@@ -268,6 +268,7 @@ def received(**changes) -> ReceivedRun:
         started_at=NOW,
         finished_at=NOW + dt.timedelta(minutes=4),
         total_ms=240_000,
+        recovery_ms=200_000,
         restore_point_at=NOW - dt.timedelta(hours=14),
         bundle_key="msp/x/runs/y/",
         bundle_sha256="ab" * 32,
@@ -490,3 +491,135 @@ async def test_two_sessions_make_one_run_for_one_period(own_database):
 
     assert sorted(a is None for a in answers) == [False, True]
     assert [r.scheduled_for for r in runs] == [PERIOD]
+
+
+# --- C6.2: the pages' reads (docs/decisions.md 2026-10-12, "C6.1, C6.2 and C6.3", point 16) ---
+
+
+from app.repo.items import ItemRepo  # noqa: E402
+from app.repo.runs import FINAL_STATES, PAGE_SIZE, PENDING_STATES, DayCount, RunRow  # noqa: E402
+
+
+def test_the_pages_states_partition_the_run_states():
+    from app.models import RUN_STATES
+
+    assert set(FINAL_STATES) | set(PENDING_STATES) == set(RUN_STATES)
+    assert not set(FINAL_STATES) & set(PENDING_STATES)
+    assert PAGE_SIZE == 50
+
+
+async def test_last_finished_and_pending_per_client_answer_one_run_each(session):
+    q = await Queue.make(session)
+    b = await Queue.make(session, "b")
+    await q.run(created_at=NOW - dt.timedelta(hours=1), state="expired")
+    first_pass = await q.run(created_at=NOW, state="pass")
+    latest_final = await q.run(created_at=NOW + dt.timedelta(hours=1), state="fail")
+    oldest_pending = await q.run(created_at=NOW + dt.timedelta(hours=2))
+    await q.run(created_at=NOW + dt.timedelta(hours=3), state="dispatched")
+    theirs = await b.run(created_at=NOW + dt.timedelta(hours=9), state="error")
+
+    last = await q.runs.last_finished_per_client(q.msp.id)
+    pending = await q.runs.pending_per_client(q.msp.id)
+
+    assert {c: r.id for c, r in last.items()} == {q.client.id: latest_final.id}
+    assert {c: r.id for c, r in pending.items()} == {q.client.id: oldest_pending.id}
+    assert {c: r.id for c, r in (await b.runs.last_finished_per_client(b.msp.id)).items()} == {b.client.id: theirs.id}
+    assert await b.runs.pending_per_client(b.msp.id) == {}
+    assert first_pass.id not in {r.id for r in last.values()}
+
+
+async def test_last_finished_per_client_breaks_a_tie_on_created_at_by_the_larger_id(session):
+    q = await Queue.make(session)
+    runs = [await q.run(created_at=NOW, state="pass") for _ in range(3)]
+
+    last = await q.runs.last_finished_per_client(q.msp.id)
+
+    assert last[q.client.id].id == max(r.id for r in runs)
+
+
+async def test_a_page_is_newest_first_with_each_run_s_item_count_and_keysets_on_before(session):
+    q = await Queue.make(session)
+    runs = [await q.run(created_at=NOW + dt.timedelta(minutes=i), state="pass") for i in range(7)]
+    await ItemRepo(session).create(q.msp.id, runs[6].id, position=0, type="mail", name="a", expected_kind="fields")
+    await ItemRepo(session).create(q.msp.id, runs[6].id, position=1, type="mail", name="b", expected_kind="fields")
+    await ItemRepo(session).create(q.msp.id, runs[2].id, position=0, type="onedrive", name="c", expected_kind="metadata")
+
+    first = await q.runs.page(q.msp.id, q.client.id, limit=3)
+    second = await q.runs.page(q.msp.id, q.client.id, before=first[-1].run.id, limit=3)
+    third = await q.runs.page(q.msp.id, q.client.id, before=second[-1].run.id, limit=3)
+    fourth = await q.runs.page(q.msp.id, q.client.id, before=third[-1].run.id, limit=3)
+
+    assert all(isinstance(row, RunRow) for row in first)
+    assert [(row.run.id, row.items) for row in first] == [(runs[6].id, 2), (runs[5].id, 0), (runs[4].id, 0)]
+    assert [(row.run.id, row.items) for row in second] == [(runs[3].id, 0), (runs[2].id, 1), (runs[1].id, 0)]
+    assert [row.run.id for row in third] == [runs[0].id]
+    assert fourth == []
+    whole = await q.runs.page(q.msp.id, q.client.id)
+    assert [row.run.id for row in whole] == [r.id for r in reversed(runs)]
+
+
+async def test_a_page_before_a_run_that_is_not_the_client_s_is_empty(session):
+    q = await Queue.make(session)
+    b = await Queue.make(session, "b")
+    await q.run(created_at=NOW, state="pass")
+    theirs = await b.run(created_at=NOW + dt.timedelta(hours=1), state="pass")
+
+    assert await q.runs.page(q.msp.id, q.client.id, before=theirs.id) == []
+    assert await q.runs.page(q.msp.id, q.client.id, before=uuid.uuid4()) == []
+    assert await q.runs.page(q.msp.id, b.client.id) == []
+    assert len(await q.runs.page(q.msp.id, q.client.id)) == 1
+
+
+@pytest.mark.parametrize("limit", [0, 51, -1])
+async def test_a_page_limit_outside_the_size_is_refused(session, limit):
+    q = await Queue.make(session)
+
+    with pytest.raises(ValueError, match="limit must be 1 to 50"):
+        await q.runs.page(q.msp.id, q.client.id, limit=limit)
+
+
+async def test_a_page_s_items_are_one_statement_with_the_runs(session, test_engine):
+    q = await Queue.make(session)
+    for i in range(3):
+        await q.run(created_at=NOW + dt.timedelta(minutes=i), state="pass")
+    statements = []
+
+    @event.listens_for(test_engine.sync_engine, "before_cursor_execute")
+    def count(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement.split()[0])
+
+    try:
+        rows = await q.runs.page(q.msp.id, q.client.id)
+        paged = await q.runs.page(q.msp.id, q.client.id, before=rows[0].run.id)
+        strip = await q.runs.daily_states(q.msp.id, q.client.id, since=NOW - dt.timedelta(days=1))
+        last = await q.runs.last_finished_per_client(q.msp.id)
+        pending = await q.runs.pending_per_client(q.msp.id)
+    finally:
+        event.remove(test_engine.sync_engine, "before_cursor_execute", count)
+
+    assert (len(rows), len(paged), len(strip), len(last), len(pending)) == (3, 2, 1, 1, 0)
+    assert statements == ["SELECT"] * 5
+
+
+async def test_daily_states_counts_each_utc_day_s_states_since_the_given_time(session):
+    q = await Queue.make(session)
+    b = await Queue.make(session, "b")
+    await q.run(created_at=dt.datetime(2026, 9, 30, 12, tzinfo=UTC), state="pass")  # before since
+    await q.run(created_at=dt.datetime(2026, 10, 1, 23, 59, 59, tzinfo=UTC), state="pass")
+    await q.run(created_at=dt.datetime(2026, 10, 2, 0, 0, 0, tzinfo=UTC), state="fail")
+    await q.run(created_at=dt.datetime(2026, 10, 2, 12, tzinfo=UTC), state="pass")
+    await q.run(created_at=dt.datetime(2026, 10, 2, 13, tzinfo=UTC), state="pass")
+    await q.run(created_at=dt.datetime(2026, 10, 3, 1, tzinfo=UTC))  # queued counts as its own state
+    await b.run(created_at=dt.datetime(2026, 10, 2, 12, tzinfo=UTC), state="error")
+
+    counts = await q.runs.daily_states(q.msp.id, q.client.id, since=dt.datetime(2026, 10, 1, tzinfo=UTC))
+
+    assert counts == [
+        DayCount(dt.date(2026, 10, 1), "pass", 1),
+        DayCount(dt.date(2026, 10, 2), "fail", 1),
+        DayCount(dt.date(2026, 10, 2), "pass", 2),
+        DayCount(dt.date(2026, 10, 3), "queued", 1),
+    ]
+    assert await q.runs.daily_states(q.msp.id, b.client.id, since=dt.datetime(2026, 1, 1, tzinfo=UTC)) == []
+    with pytest.raises(ValueError, match="without a zone"):
+        await q.runs.daily_states(q.msp.id, q.client.id, since=dt.datetime(2026, 10, 1))

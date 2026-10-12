@@ -479,7 +479,44 @@ reaches 202. Written by `rptests "[.write_shared_dispatched]"`.
 `create-client --tenant-id`, `create-worker-token --label` (the install token, once),
 `create-connector --profile-file`, `create-plan` and `revoke-worker`, each one committed
 transaction through the repos, each refusal one `<key>: <reason>` line by constraint name and
-never a value. `create-user` waits for C6.1.
+never a value. Since C6.1 also `create-user --email --role` and `reset-password --email`, the
+password asked for on the console or read from standard input, never an argument.
+
+**Session cookie (`rp_session`).** C6.1's one session: itsdangerous's URL-safe serializer under
+`SECRET_KEY` (its one use) and the salt `restoreproof.session.v1` over the user's id, the MSP's
+id, the issue time and the stamp of the password it was issued for, good for 12 hours; `HttpOnly`, `SameSite=Lax`, `Secure` unless
+`SESSION_COOKIE_SECURE=false` (the http stack). `current_user` reads the user's row every time;
+a cookie whose stamp is not `user.password_changed_at`'s is no session, so `reset-password` ends every
+session. No session sends a browser to `/login` and answers an htmx request 401 with
+`HX-Redirect`. See `docs/verification.md`, "The Cloud's pages".
+
+**Login limiter.** C6.1's five attempts a minute per address and per IP
+(`cloud/app/auth/login_limiter.py`): a sliding window in the api process's memory, every
+`POST /login` counted right or wrong, the sixth 429 with `Retry-After` before any password work;
+an attempt on a known user is an `audit_log` row (`login.success`, `login.failure`,
+`login.blocked`), an unknown address has no MSP and no row. Not slowapi (it cannot key by the
+form's address); a shared store is C7.2's.
+
+**Role (`user.role`).** `admin` or `member` (`ck_user_role`). A member reads every page and
+downloads a bundle's files; an admin also revokes a Worker and reads `/audit`. A member on an
+admin route is 403; a row of another MSP is 404 on every page.
+
+**Pre-signed link.** C6.2's download: `GET /runs/{id}/files/{name}` writes one `bundle.download`
+audit row (user, time, IP) and answers 302 to a URL that SigV4-signs a GET of the one object for
+ten minutes against `S3_PUBLIC_ENDPOINT`, the S3 endpoint a browser reaches (the signature
+covers the host, so a URL signed for the stack's `minio:9000` doesn't open elsewhere; the
+stack sets `http://127.0.0.1:9000`). The page links the route, never the bucket.
+
+**Recovery time (`test_run.recovery_ms`).** The result's `timings.spans.recovery.ms` (W3.2:
+restore start to last item verified), filed by `POST /v1/results` since C6.2 as `total_ms` is,
+null for a span without a duration; the "recovery time" of `/clients`, `/clients/{id}`,
+`/runs/{id}` and C6.4's report. A run filed before the column has null.
+
+**Audit page (`/audit`).** C6.3: an admin's view of the MSP's `audit_log` newest first, the last
+30 days by default (`?days=`), paged by keyset, each row with its user's address, the action,
+the target and the IP; every row of the MSP, the Worker's and the CLI's included. Nothing
+deletes an audit row; `cloud/app/audit.py` holds the pages' words (`ACTIONS`) and the one
+reading of the caller's address.
 
 **Bundle upload (`POST /v1/results`).** The Worker's multipart upload of a run folder (C5.7):
 the parts `result`, `signature`, `timestamp` when there, and one per listed attachment under its

@@ -17,6 +17,11 @@ x-app-environment: &app-environment
   S3_SECRET_KEY: local-only-minio-secret
   S3_BUCKET: restoreproof
   SECRET_KEY: local-only-secret-key-not-for-any-deployment
+  # C6.2: the MinIO port as the browser on this machine reaches it, for the
+  # pre-signed URLs (the api signs for this host; `minio:9000` is not one a
+  # browser can open). C6.1: the stack is http, so the cookie isn't Secure.
+  S3_PUBLIC_ENDPOINT: http://127.0.0.1:9000
+  SESSION_COOKIE_SECURE: "false"
   LOG_LEVEL: info
 
 services:

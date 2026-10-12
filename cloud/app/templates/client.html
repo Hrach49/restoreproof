@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}{{ client.name }} · {{ layout.msp.name }}{% endblock %}
+{% block content %}
+<h1>{{ client.name }}</h1>
+<p class="muted">Tenant {{ client.tenant_id }}</p>
+<h2>Last 90 days</h2>
+<div class="strip" aria-label="one cell per day, the day's worst result">
+{% for day, worst, counts in cells %}<span class="day {{ worst or '' }}" title="{{ day.isoformat() }}{% for state, n in counts.items() %} {{ state }} {{ n }}{% endfor %}"></span>{% endfor %}
+</div>
+<h2>Runs</h2>
+<table class="runs">
+  <thead><tr><th>Date</th><th>Restore point</th><th>Items tested</th><th>Result</th><th>Recovery time</th><th>Cleanup ok</th><th>Timestamped</th><th>Scheduled</th></tr></thead>
+  <tbody id="runs">
+  {% include "_runs.html" %}
+  </tbody>
+</table>
+{% endblock %}

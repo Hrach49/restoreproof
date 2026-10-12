@@ -1,0 +1,41 @@
+/* RestoreProof's one stylesheet (C6.2): plain CSS, no build step. */
+:root {
+  --ink: #1f2933; --muted: #6b7280; --line: #d9dee3; --paper: #ffffff; --bg: #f4f6f8;
+  --pass: #15803d; --fail: #b91c1c; --error: #b45309; --quiet: #9ca3af; --none: #e5e7eb;
+  --link: #1d4ed8;
+}
+* { box-sizing: border-box; }
+body { margin: 0; font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--ink); background: var(--bg); }
+a { color: var(--link); }
+main { max-width: 1100px; margin: 0 auto; padding: 16px; }
+header.top { display: flex; align-items: center; gap: 24px; padding: 10px 16px; background: var(--paper); border-bottom: 1px solid var(--line); }
+header.top .brand { font-weight: 700; color: var(--ink); text-decoration: none; }
+header.top nav a { margin-right: 16px; text-decoration: none; }
+header.top .who { margin-left: auto; display: flex; align-items: center; gap: 12px; color: var(--muted); }
+header.top .who .msp { font-weight: 600; color: var(--ink); }
+header.top .who form { margin: 0; }
+h1 { font-size: 1.4em; margin: 8px 0 16px; }
+h2 { font-size: 1.1em; margin: 24px 0 8px; }
+table { width: 100%; border-collapse: collapse; background: var(--paper); }
+th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { color: var(--muted); font-weight: 600; font-size: 0.9em; }
+td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.state { display: inline-block; padding: 1px 8px; border-radius: 10px; color: #fff; font-size: 0.85em; }
+.state.pass { background: var(--pass); } .state.fail { background: var(--fail); } .state.error { background: var(--error); }
+.state.quiet { background: var(--quiet); } .state.none { background: var(--none); color: var(--muted); }
+.late { color: var(--fail); font-weight: 600; }
+.muted { color: var(--muted); }
+.notice { padding: 8px 12px; border: 1px solid var(--error); background: #fff7ed; }
+button { font: inherit; padding: 4px 12px; border: 1px solid var(--line); background: var(--paper); border-radius: 4px; cursor: pointer; }
+button.danger { border-color: var(--fail); color: var(--fail); }
+form.inline { display: inline; }
+section.login { max-width: 360px; margin: 48px auto; padding: 24px; background: var(--paper); border: 1px solid var(--line); }
+section.login label { display: block; margin-bottom: 12px; }
+section.login input { display: block; width: 100%; padding: 6px 8px; margin-top: 4px; font: inherit; border: 1px solid var(--line); }
+.strip { display: grid; grid-template-columns: repeat(90, 1fr); gap: 1px; margin: 8px 0 16px; }
+.strip .day { height: 18px; background: var(--none); }
+.strip .day.pass { background: var(--pass); } .strip .day.fail { background: var(--fail); } .strip .day.error { background: var(--error); }
+dl.facts { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; background: var(--paper); padding: 12px; border: 1px solid var(--line); }
+dl.facts dt { color: var(--muted); } dl.facts dd { margin: 0; }
+code { font-size: 0.9em; }
+.pager td { text-align: center; }

@@ -1,0 +1,16 @@
+<tr id="worker-{{ worker.id }}">
+  <td>{{ worker.name }}</td>
+  <td>{{ worker.version or "—" }}</td>
+  <td{% if late(worker.last_seen_at, at) %} class="late"{% endif %}>{% if worker.last_seen_at %}{{ worker.last_seen_at|utc }}{% else %}never{% endif %}</td>
+  <td>{% if worker.last_error %}<code>{{ worker.last_error }}</code> at {{ worker.last_error_at|utc }}{% else %}—{% endif %}</td>
+  <td class="num">{{ worker.outbox_depth if worker.outbox_depth is not none else "—" }}</td>
+  <td class="num">{% if worker.uptime_s is not none %}{{ (worker.uptime_s * 1000)|duration }}{% else %}—{% endif %}</td>
+  <td>
+    {% if worker.revoked_at %}revoked {{ worker.revoked_at|utc }}
+    {% elif layout.user.role == "admin" %}
+    <form class="inline" method="post" action="/workers/{{ worker.id }}/revoke" hx-post="/workers/{{ worker.id }}/revoke" hx-confirm="Revoke {{ worker.name }}? Its token stops working at its next request." hx-target="#worker-{{ worker.id }}" hx-swap="outerHTML">
+      <button type="submit" class="danger">Revoke</button>
+    </form>
+    {% endif %}
+  </td>
+</tr>

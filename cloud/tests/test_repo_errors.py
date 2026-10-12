@@ -15,7 +15,7 @@ import pytest
 from sqlalchemy import CheckConstraint, ForeignKeyConstraint, UniqueConstraint
 from sqlalchemy.exc import IntegrityError
 
-from app.models import Base, Client, Connector, Msp, TestPlan, TestRun, Worker
+from app.models import Base, Client, Connector, Msp, TestPlan, TestRun, User, Worker
 from app.repo.errors import CONSTRAINT_WORDS, RepoError, constraint_refusal
 from tests.test_models import PROFILE, a_plan, a_run, add, new_client, new_msp, new_worker
 from tests.test_repo_connectors import profile_for
@@ -62,6 +62,10 @@ class FakeIntegrityError(IntegrityError):
         ("fk_client_msp_id_msp", "msp_id", "no such MSP"),
         ("fk_install_token_msp_id_msp", "msp_id", "no such MSP"),
         ("fk_test_plan_msp_id_msp", "msp_id", "no such MSP"),
+        # C6.1
+        ("uq_user_email_lower", "email", "already a user of this Cloud"),
+        ("ck_user_role", "role", "not admin or member"),
+        ("fk_user_msp_id_msp", "msp_id", "no such MSP"),
     ],
 )
 def test_a_known_constraint_is_worded_by_its_name(constraint, key, reason):
@@ -138,11 +142,14 @@ def test_the_table_names_every_constraint_an_onboarding_can_meet():
         if not name.startswith("uq_") or name in ("uq_client_msp_id_tenant_id", "uq_connector_worker_id_client_id")
     } - {"ck_connector_type_name", "ck_worker_key_id_hex"}
     expected |= {"uq_worker_key_id", "fk_test_plan_msp_id_connector_id_client_id_connector", "fk_test_plan_msp_id_client_id_client", "uq_test_run_msp_id_plan_id_scheduled_for"}
-    expected |= {f"fk_{table}_msp_id_msp" for table in ("client", "install_token", "worker", "connector", "test_plan", "test_run")}
+    expected |= {f"fk_{table}_msp_id_msp" for table in ("user", "client", "install_token", "worker", "connector", "test_plan", "test_run")}
+    # C6.1: the user's address (a unique index, not a constraint) and role.
+    expected |= {"uq_user_email_lower", "ck_user_role"}
 
     assert set(CONSTRAINT_WORDS) == expected
     all_names = {c.name for t in Base.metadata.tables.values() for c in t.constraints if c.name}
     all_names |= {c.name for t in Base.metadata.tables.values() for c in t.constraints if isinstance(c, ForeignKeyConstraint) and c.name}
+    all_names |= {i.name for t in Base.metadata.tables.values() for i in t.indexes if i.unique}
     assert set(CONSTRAINT_WORDS) <= all_names
     assert all(word[0] and word[1] for word in CONSTRAINT_WORDS.values())
 
@@ -180,3 +187,8 @@ async def test_each_word_is_shown_on_the_database(session):
     assert str(await _refused(session, Msp(name="m", retention_days=0))) == "retention_days: not positive"
     assert str(await _refused(session, a_run(msp, client, worker, plan, scheduled_for=dt.datetime(2026, 10, 11, 2, tzinfo=UTC)))) == "scheduled_for: a run exists for the period"
     assert str(await _refused(session, Client(msp_id=uuid.uuid4(), name="nobody's", tenant_id=uuid.uuid4()))) == "msp_id: no such MSP"
+    # C6.1
+    await add(session, User(msp_id=msp.id, email="One@Example.test", password_hash="x", role="admin"))
+    assert str(await _refused(session, User(msp_id=msp.id, email="one@example.test", password_hash="x", role="member"))) == "email: already a user of this Cloud"
+    assert str(await _refused(session, User(msp_id=msp.id, email="two@example.test", password_hash="x", role="owner"))) == "role: not admin or member"
+    assert str(await _refused(session, User(msp_id=uuid.uuid4(), email="three@example.test", password_hash="x", role="admin"))) == "msp_id: no such MSP"

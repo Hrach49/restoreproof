@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Workers · {{ layout.msp.name }}{% endblock %}
+{% block content %}
+<h1>Workers</h1>
+<table class="workers">
+  <thead><tr><th>Name</th><th>Version</th><th>Last seen</th><th>Last error</th><th>Outbox depth</th><th>Uptime</th><th></th></tr></thead>
+  <tbody>
+  {% for worker in rows %}
+    {% include "_worker.html" %}
+  {% else %}
+    <tr><td colspan="7" class="muted">No Worker yet.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}RestoreProof{% endblock %}</title>
+<link rel="stylesheet" href="{{ static }}/style.css">
+<script src="{{ static }}/htmx.min.js" integrity="{{ htmx_integrity }}" defer></script>
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="/clients">RestoreProof</a>
+  {% if layout is defined %}
+  <nav>
+    <a href="/clients">Clients</a>
+    <a href="/workers">Workers</a>
+    {% if layout.user.role == "admin" %}<a href="/audit">Audit</a>{% endif %}
+  </nav>
+  <div class="who">
+    <span class="msp">{{ layout.msp.name }}</span>
+    <span class="user">{{ layout.user.email }}</span>
+    <form method="post" action="/logout"><button type="submit">Log out</button></form>
+  </div>
+  {% endif %}
+</header>
+<main>
+{% block content %}{% endblock %}
+</main>
+</body>
+</html>

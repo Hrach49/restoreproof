@@ -95,14 +95,16 @@ def test_the_image_copies_the_schemas_the_verifier_and_the_tsa_root_beside_app_a
     assert compose.count("alembic upgrade head") == 1
 
 
-@pytest.mark.parametrize("package", ["jsonschema", "cryptography", "asn1crypto", "python-multipart", "typer", "apscheduler", "croniter"])
+@pytest.mark.parametrize("package", ["jsonschema", "cryptography", "asn1crypto", "python-multipart", "typer", "apscheduler", "croniter", "argon2-cffi", "itsdangerous", "jinja2"])
 def test_the_verifier_s_libraries_and_the_form_parser_are_runtime_dependencies(package):
     """jsonschema since C5.3; the verifier's two and starlette's form parser
     since C5.7 (docs/decisions.md 2026-10-10, C5.7, point 1); the CLI's and
-    the scheduler's three since C5.10 and C5.9."""
+    the scheduler's three since C5.10 and C5.9; the login's three since C6.1
+    (slowapi is not among them, point 7)."""
     import tomllib
 
     pyproject = tomllib.loads((Path(__file__).resolve().parent.parent / "pyproject.toml").read_text(encoding="utf-8"))
 
     assert any(dep.startswith(package) for dep in pyproject["project"]["dependencies"])
     assert not any(dep.startswith(package) for dep in pyproject["dependency-groups"]["dev"])
+    assert not any(dep.startswith("slowapi") for dep in pyproject["project"]["dependencies"])

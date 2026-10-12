@@ -2138,3 +2138,124 @@ minutes; the process never exits on a tick's failure. **The sweep**, the second 
 The scheduler reads nothing of a profile, a credential or a tenant value, so none can reach a
 line.
 
+## The Cloud's pages (C6.1, C6.2, C6.3)
+
+`docs/decisions.md` 2026-10-12, "C6.1, C6.2 and C6.3"; the code `cloud/app/auth/{passwords,
+sessions,login_limiter}.py`, `cloud/app/audit.py`, `cloud/app/ui.py`, `cloud/app/routers/ui/`,
+`cloud/app/templates/`, `cloud/app/static/`. The pages live at the root (`/login`, `/clients`,
+`/clients/{id}`, `/runs/{id}`, `/runs/{id}/files/{name}`, `/workers`, `/workers/{id}/revoke`,
+`/audit`, `/static/`), outside `/v1` and outside the OpenAPI document; every one still carries
+`X-RestoreProof-API: 1` and is under the 64 KiB body cap. Every template autoescapes, and no page
+repeats a secret.
+
+### Login and sessions (C6.1)
+
+**The user.** `manage.py create-user --msp-id --email --role` and `reset-password --email`
+(`docs/onboarding.md`): the password is read from the console twice without echo, or from
+standard input as one line, never from an argument or the environment, 12 to 1024 characters,
+hashed as **Argon2id** under argon2-cffi's defaults (64 MiB, 3 passes, 4 lanes;
+`user.password_hash`); the address is trimmed, must hold one `@` with something on each side and
+no space, is stored as typed and is one across the Cloud whatever its case
+(`uq_user_email_lower`); `user.role` is `admin` or `member` (`ck_user_role`). A reset sets
+`user.password_changed_at`, which ends every session issued before it.
+
+**`POST /login`** (`email` and `password` as a form; both or 422): the limiter first (below);
+then one lookup by address and one Argon2 verification, against the user's hash or against one
+fixed hash made for an address nobody has, so a known and an unknown address cost the same; a
+wrong password is 401 with the form again and one line, `wrong email or password`, and one
+`audit_log` row `login.failure` in the user's MSP with the user and the caller's address; an
+unknown address is the same answer with no row (it belongs to no MSP) and one log line
+`login refused` with nothing of the form in it; the right password is 303 to `/` with the cookie
+and one `login.success` row. A hash made under older parameters is replaced at that login (the
+sessions kept). The page repeats the address escaped and never the password. `POST /logout`
+clears the cookie, writes `logout` for a session and sends the browser to `/login`.
+
+**The limiter** (`app/auth/login_limiter.py`): five attempts a minute per address (lower-cased)
+and per caller's IP, a sliding window in the process's memory, every `POST /login` counted right
+or wrong; the sixth inside the window under either key is 429 with `Retry-After` and
+`too many attempts, try again in a minute`, before any password work (the lookup by address still
+runs, so a `login.blocked` row names the user when there is one); a refused attempt counts under
+no key, so the window clears a minute after the fifth. The count is per process and lost at a
+restart; the IP behind a proxy is the proxy's (C5.12).
+
+**The session** is one cookie, `rp_session`: itsdangerous's URL-safe serializer under
+`SECRET_KEY` (its one use) and the salt `restoreproof.session.v1` over `{"u": <user_id>,
+"m": <msp_id>, "t": <issued, whole seconds>}`, good for 12 hours from `t` by the Cloud's clock;
+`HttpOnly`, `SameSite=Lax`, `Path=/`, `Max-Age` 43200, `Secure` unless `SESSION_COOKIE_SECURE`
+is `false` (the http stack). A cookie that is missing, tampered, expired, from the future, of
+another shape, of a user who is gone or whose `password_changed_at` is after `t`, is no session,
+all alike: a browser is sent to `/login` (303), an htmx request told to go there (401 with
+`HX-Redirect`). `current_user` reads the user's row on every request; a page reads the MSP's
+too. The cookie is not renewed while in use. A `POST` to a page whose `Sec-Fetch-Site` is
+`cross-site` or `same-site` is 403; no CSRF token.
+
+**Roles.** A member reads every page and downloads; an admin also revokes a Worker and reads
+`/audit`. A member on an admin route is 403 (the route exists and is the user's own MSP's); a
+row of another MSP is 404 on every page, never 403, and a list never holds another MSP's row.
+
+### The four pages (C6.2)
+
+Every read is a repo method with `msp_id` first; a page runs a fixed number of statements
+whatever its rows (held by a test). `test_run.recovery_ms` (new) is `timings.spans.recovery.ms`
+of the result, filed by `POST /v1/results` as `total_ms` is (null for a span without `ms`); a
+run that landed before the column has null, shown as "—".
+
+- **`/clients`:** one row per client: its last finished run (`pass`, `fail`, `error` or
+  `expired`, the latest by `(created_at, id)`), that run's `finished_at` (or `created_at` for an
+  `expired` one), its state coloured, its recovery time as `m:ss`; and **next scheduled run**:
+  the client's oldest `queued` or `dispatched` run ("queued since …", "running since …") first,
+  else the earliest next occurrence over its enabled plans (`app/cadence.py`, the scheduler's
+  own arithmetic), else **"no Worker"** when every enabled plan's Worker is revoked (the
+  scheduler keeps queuing; the page says why nothing will run), else "none".
+- **`/clients/{id}`:** 404 for a client not this MSP's; the run history newest first (date,
+  restore point, items tested as the count of `test_item` rows, result, recovery time, cleanup
+  ok, timestamped, scheduled: the period's start or "manual"; a `queued` or `dispatched` run
+  shows its state and dashes), in pages of 50 by keyset (`?before=<run id>`: a "more" row with
+  `hx-get` for htmx and the same URL as a plain link, which answers the rows alone to an htmx
+  request and the whole page from there otherwise); and **the 90-day strip**, one cell per UTC
+  day ending today, coloured by the day's worst test (`fail`, then `error`, then `pass`;
+  `expired`, `queued` and `dispatched` are no test), its `title` the date and the counts.
+- **`/runs/{id}`:** 404 for a run not this MSP's; the run's columns (the client, the Worker, the
+  times, the restore point, total and recovery time, cleanup ok, timestamped with `tsa_time`,
+  the bundle's SHA-256, the period, the attempts, `error_code` and `error_message` for an
+  `error`); the items from `test_item`; and **the files** as the bucket lists them under the
+  run's prefix (one `list_objects_v2` in a thread), grouped as the bundle (`result.json`,
+  `signature.json`, `timestamp.tst`) and the attachments, each a link to the download route,
+  never to the bucket. A run without a bundle lists no file.
+- **The download, `GET /runs/{id}/files/{name}`:** the name held to
+  `^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$` and to the bucket's list (404 otherwise; a bare `..`
+  never reaches the route, a browser folds it into the path); one audit row `bundle.download`,
+  target `run:<id> <name>`, with the user and the address, committed before the answer; then 302
+  with `Cache-Control: no-store` to a URL pre-signed for **ten minutes** against
+  `S3_PUBLIC_ENDPOINT` (the endpoint a browser reaches; SigV4 signs the host, so a URL signed for
+  the stack's `minio:9000` doesn't open; unset, `S3_ENDPOINT`). The row records the link being
+  handed out; the fetch goes to the bucket and may be repeated within the ten minutes unrecorded.
+- **`/workers`:** one row per Worker: name, version, **last seen** (`last_seen_at`; red when
+  more than 24 hours old by the Cloud's clock, or never), the last error with its time, the
+  outbox depth, the uptime as `h:mm:ss`, and for an unrevoked Worker the admin's **Revoke** form
+  (`POST /workers/{id}/revoke`, `hx-confirm` under htmx; without it the form posts without a
+  dialog). The route is `onboarding.revoke_worker` with the user and the address, the CLI's
+  function and its one `worker.revoke` row; 404 for a Worker not this MSP's; already revoked is
+  409 with the CLI's words `worker_id: no such Worker or already revoked`; a member is 403. The
+  Worker's next poll is `current_worker`'s 401.
+
+### The audit page and the words (C6.3)
+
+`app/audit.py` is the pages' one writer: `record(session, request, msp_id, action, target,
+user_id=)` writes `AuditRepo.write` with `client_ip(request)` (the one reading of
+`request.client.host` for the pages; C5.12 edits it for a proxy), and `ACTIONS` is the closed
+list of what a page writes: `login.success`, `login.failure`, `login.blocked`, `logout`,
+`bundle.download`, `worker.revoke`. The CLI's words are `app/onboarding.py`'s (`msp.create`,
+`client.create`, `install_token.create`, `plan.create`, `run.create`, `worker.revoke`,
+`user.create`, `user.reset_password`), the Worker's the routes' own (`worker.register`,
+`result.received`, `result.rejected`) and the connector's the repo's (`connector.create`,
+`connector.update`, `connector.delete`). `report.download` is C6.6's word and `settings.change`
+C7.3's.
+
+**`/audit`** (an admin; a member 403): the MSP's rows newest first by `(at, id)`, the last 30
+days by default (`?days=`, 1 to 3650), in pages of 100 by keyset (`?before=<row id>`, with and
+without htmx as the history), each with its time (UTC, seconds), its user's address (a dash for
+the CLI's and the Worker's rows), the action, the target and the IP; every row of the MSP, the
+Worker's and the CLI's included. **Nothing deletes an audit row**; a retention rule for them is
+C7.3's to give.
+

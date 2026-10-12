@@ -1,8 +1,10 @@
 # Onboarding an MSP by hand (C5.10)
 
 How an operator with the Cloud's database makes an MSP, its first client, a Worker's install
-token, the client's connector and a test plan, with `cloud/manage.py`; what each command prints;
-what it refuses. The decisions are `docs/decisions.md` 2026-10-11, "C5.10 and C5.9"; the code
+token, the client's connector, a test plan and, since C6.1, the MSP's users, with
+`cloud/manage.py`; what each command prints; what it refuses. The decisions are
+`docs/decisions.md` 2026-10-11, "C5.10 and C5.9" (and 2026-10-12, "C6.1, C6.2 and C6.3", point
+12, for the users); the code
 is `cloud/manage.py` (the Typer layer) over `cloud/app/onboarding.py` (the logic, through the
 repos) and `cloud/app/repo/errors.py` (the database's refusals worded). The Done-when, an MSP
 with one client and plan in under five minutes, is `cloud/tests/test_manage.py` and the by-hand
@@ -52,7 +54,13 @@ nothing and prints no secret but the one token it exists to print.
   valid`.
 - **One audit row per command that changed a row** (`msp.create`, `client.create`,
   `install_token.create`, `connector.create` by the repo, `plan.create`, `run.create` with
-  `--run-now`, `worker.revoke`), `user_id` and `ip` null: the CLI has no user and no address.
+  `--run-now`, `worker.revoke`, `user.create`, `user.reset_password`), `user_id` and `ip` null:
+  the CLI has no user and no address.
+- **A password is never an option.** `create-user` and `reset-password` ask for it on the
+  console, twice, without echo (`password: the two entries differ`, exit 1), or read one line
+  from standard input when that is no console (`docker compose exec -T api python manage.py
+  create-user ... < nothing`; a script pipes it). It is 12 to 1024 characters, reaches no row
+  but as its Argon2id hash, no line and no file.
 - Every uuid option is parsed as a uuid; every name or label is 1 to 128 characters without a
   control character.
 
@@ -133,9 +141,30 @@ nothing and prints no secret but the one token it exists to print.
    revoked_at 2026-10-11T12:00:30Z
    ```
 
-**Not here: `create-user`.** The issue lists it; it waits for C6.1, which decides the words for
-`user.role`, the password hash and the login that checks them. The onboarding above needs no
-user: the install token's `created_by` and every audit row's `user_id` are null for the CLI.
+7. **The users** (C6.1), who sign in at `/login` (`docs/verification.md` "The Cloud's pages").
+   The address is trimmed, must hold one `@` with something on each side and no space, is
+   stored as typed and is one across the whole Cloud whatever its case. The role is `admin`
+   (reads every page, downloads, revokes a Worker, reads `/audit`) or `member` (reads every
+   page and downloads). The password is asked for (above).
+
+   ```
+   manage.py create-user --msp-id <msp_id> --email admin@example.test --role admin
+   Password:                                                              (console only)
+   Again:
+   user_id 8c3e…
+   ```
+
+   A reset (an admin-driven one; there is no self-service in Stage 1) gives a new password and
+   ends every session the user had:
+
+   ```
+   manage.py reset-password --email admin@example.test
+   user_id 8c3e…
+   password_changed_at 2026-10-12T15:00:00Z
+   ```
+
+   The onboarding above needs no user: the install token's `created_by` and every audit row's
+   `user_id` are null for the CLI.
 
 ## The refusals, by command
 
@@ -155,4 +184,9 @@ user: the install token's `created_by` and every audit row's `user_id` are null 
 | `create-plan` | `connector_id: not the client's connector` | the connector is another client's or absent |
 | `create-plan` | `client_id: no such client` | not this MSP's |
 | `revoke-worker` | `worker_id: no such Worker or already revoked` | one line for both |
+| `create-user`, `reset-password` | `email: not an address` | the address's rule |
+| `create-user` | `email: already a user of this Cloud` | one address across the Cloud, in any case |
+| `create-user` | `role: not admin or member` | the two roles |
+| `create-user`, `reset-password` | `password: not 12 to 1024 characters` / `password: the two entries differ` | the password's rule; the console's two entries |
+| `reset-password` | `email: no such user` | the address names nobody |
 | any | `database: unreachable` / `settings error: DATABASE_URL …` / `internal: <type>` | the environment, or an error nobody foresaw (its type alone) |

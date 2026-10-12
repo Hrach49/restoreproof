@@ -19,18 +19,20 @@ import socket
 import threading
 import time
 import uuid
+from typing import Literal
 
 import httpx
 import pytest
 import uvicorn
 from fastapi import APIRouter, FastAPI, Request
+from pydantic import ValidationError
 from sqlalchemy import text
 from starlette.responses import JSONResponse
 
 import app as package
 from app import contract, results
 from app.contract import API_HEADER, API_VERSION, MAX_BODY_BYTES, ApiVersionMiddleware, BodyCapMiddleware
-from app.main import API_PREFIX, ROUTERS, create_app
+from app.main import API_PREFIX, LARGE_BODY_PATHS, ROUTERS, create_app
 from app.repo.clients import ClientRepo
 from app.repo.connectors import ConnectorRepo
 from app.repo.msps import MspRepo
@@ -40,9 +42,13 @@ from app.repo.workers import WorkerRepo
 from app.auth.tokens import new_token, token_hash
 from app.db import get_session
 from app.logging import RequestLogMiddleware
+from app.routers.jobs import JOBS_FORMAT
+from app.routers.version import VersionBody
 from tests.conftest import make_settings, session_override
 from tests.results_lab import NOW, Lab
-from tests.test_repo_connectors import profile_for
+from tests.test_jobs_schema import VALIDATOR as JOBS_VALIDATOR
+from tests.test_heartbeat import UNTOUCHED as HEARTBEAT_UNTOUCHED
+from tests.test_heartbeat import Lab as HeartbeatLab
 from tests.test_results import rows_only
 from tests.test_verify_bundle import KEYS, SCHEMAS_DIR, SIGNING_DIR, pem_file, public_key, run_main, vb
 from tests.test_verify_bundle_timestamp import ca_file, tsa_ca
@@ -59,8 +65,8 @@ def make_app(log_stream=None):
     return create_app(make_settings(), log_stream=log_stream or io.StringIO())
 
 
-async def send(application, method: str, path: str, **request) -> httpx.Response:
-    transport = httpx.ASGITransport(app=application)
+async def send(application, method: str, path: str, *, root_path: str = "", **request) -> httpx.Response:
+    transport = httpx.ASGITransport(app=application, root_path=root_path)
     async with httpx.AsyncClient(transport=transport, base_url="http://cloud.test") as client:
         return await client.request(method, path, **request)
 
@@ -293,6 +299,27 @@ async def test_the_heartbeat_s_body_is_capped_too_and_the_token_still_comes_firs
     assert body.pulled == 0
 
 
+async def test_an_authenticated_heartbeat_whose_streamed_body_passes_the_cap_is_413_and_nothing_is_written(session):
+    """The one read of a body inside a dependency (`heartbeat_body`'s
+    `request.body()`, after the real `current_worker`): the counter's
+    `BodyTooLarge` leaves it as the 413, never the route's 422 or a 500 (the
+    C5.11 review's finding 8)."""
+    lab = HeartbeatLab(session)
+    await lab.fill()
+    body = Body(b'{"version":"' + SENTINEL.encode() + b"x" * (4 * MAX_BODY_BYTES) + b'"}', size=MAX_BODY_BYTES // 4)
+
+    response = await send(
+        lab.app, "POST", f"{API_PREFIX}/heartbeat",
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {lab.token}"}, content=body.chunks(),
+    )
+
+    assert (response.status_code, response.json()) == (413, TOO_LARGE)
+    assert header_values(response) == [VALUE]
+    assert MAX_BODY_BYTES < body.pulled <= MAX_BODY_BYTES + MAX_BODY_BYTES // 4
+    assert await lab.row() == HEARTBEAT_UNTOUCHED
+    assert SENTINEL not in lab.log
+
+
 async def echo_length(request: Request):
     return JSONResponse({"length": len(await request.body())})
 
@@ -331,6 +358,28 @@ async def test_a_content_length_that_is_not_ascii_digits_is_left_to_the_server(l
     assert (status, json.loads(body)) == (200, {"length": 10})
 
 
+@pytest.mark.parametrize(
+    "length, status",
+    [
+        (b"100", 200),
+        (b"101", 413),
+        (b"0" * 8, 200),
+        (b"0" * 5000 + b"100", 200),
+        (b"0" * 5000 + b"101", 413),
+        (b"9" * 5000, 413),
+    ],
+    ids=["the cap", "one over", "zeros", "5000 zeros before the cap", "5000 zeros before one over", "5000 digits"],
+)
+async def test_a_content_length_of_any_number_of_digits_is_held_without_converting_it(length, status):
+    """`int()` refuses a text past the interpreter's 4300 digits: a length of
+    more digits than the cap's is over it as it stands, leading zeros aside
+    (the C5.11 review's finding 6: a 500 before)."""
+    answered, body = await call(capped_echo(cap=100), [(b"content-length", length)], b"x" * 10)
+
+    assert answered == status
+    assert json.loads(body) == ({"length": 10} if status == 200 else TOO_LARGE)
+
+
 async def test_the_upload_s_path_is_left_to_its_own_cap(session):
     """A 90 MiB Content-Length to the upload is the route's business (401
     first without a token, as C5.7 holds); every other path is 413 before
@@ -352,6 +401,36 @@ async def test_the_upload_s_path_is_left_to_its_own_cap(session):
     assert body.pulled == 0
 
 
+async def test_the_upload_s_exemption_holds_behind_a_root_path(session):
+    """`uvicorn --root-path /api` hands the app `/api/v1/results` as the path
+    and `/api` as the root: the exemption is on the path the router matches
+    (the C5.11 review's finding 2: the upload was 413 at 64 KiB before)."""
+    application = app_over(session)
+    body = Body(b"x" * 10)
+    large = {"Content-Length": str(90 * 1024 * 1024), "Content-Type": "multipart/form-data; boundary=x"}
+
+    version = await send(application, "GET", f"/api{VERSION}", root_path="/api")
+    upload = await send(application, "POST", f"/api{API_PREFIX}/results", root_path="/api", headers=large, content=body.chunks())
+    register = await send(application, "POST", f"/api{REGISTER}", root_path="/api", headers=large, content=body.chunks())
+
+    assert version.status_code == 200, version.text
+    assert (upload.status_code, upload.json()) == (401, {"detail": "not authenticated"})
+    assert (register.status_code, register.json()) == (413, TOO_LARGE)
+    assert body.pulled == 0
+
+
+async def test_the_cap_middleware_alone_compares_the_path_without_the_root():
+    capped = capped_echo(large_body_paths=frozenset({"/big"}), cap=100)
+    data = b"x" * 200
+
+    under_root = await send(capped, "POST", "/api/big", root_path="/api", content=data)
+    # A path that only ends like the exempt one is not it.
+    other = await send(capped, "POST", "/api/big", content=data)
+
+    assert (under_root.status_code, under_root.json()) == (200, {"length": 200})
+    assert other.status_code == 413
+
+
 def test_the_exempt_paths_are_the_document_s_multipart_operations():
     application = make_app()
     (cap,) = [m for m in application.user_middleware if m.cls is BodyCapMiddleware]
@@ -365,6 +444,27 @@ def test_the_exempt_paths_are_the_document_s_multipart_operations():
 
     assert cap.kwargs["large_body_paths"] == frozenset(multipart) == frozenset({f"{API_PREFIX}/results"})
     assert MAX_BODY_BYTES == 64 * 1024
+
+
+def test_the_document_s_cap_and_number_are_the_constants():
+    """The 413's description and the version body's `const` are made from
+    `MAX_BODY_BYTES` and `API_VERSION`, never typed a second time (the C5.11
+    review's finding 14)."""
+    document = make_app().openapi()
+    described = {
+        operation["responses"]["413"]["description"]
+        for path, operations in document["paths"].items()
+        for operation in operations.values()
+        if "413" in operation["responses"] and path not in LARGE_BODY_PATHS
+    }
+
+    assert described == {
+        f"The body is over the {MAX_BODY_BYTES // 1024} KiB cap every request but the upload has (`body: too large`)."
+    }
+    assert document["components"]["schemas"]["VersionBody"]["properties"]["api"]["const"] == API_VERSION
+    assert VersionBody.model_fields["api"].annotation == Literal[API_VERSION]
+    with pytest.raises(ValidationError):
+        VersionBody(api=API_VERSION + 1, version="x")
 
 
 async def test_the_cap_middleware_alone_passes_an_exempt_path_and_a_non_http_scope():
@@ -472,7 +572,11 @@ def chunked(data: bytes, size: int = 1024) -> bytes:
 
 
 def test_a_chunked_body_over_the_cap_beside_a_small_content_length_is_413_through_uvicorn(port):
-    body = b"{" + b"x" * (4 * MAX_BODY_BYTES)
+    """The body is only just over the cap: the server answers at the first
+    byte over and closes, and whatever it has not read by then resets the
+    connection, which can cut the answer's body off before this side reads it
+    (the C5.11 review's finding 1: 192 KiB left unread failed one run in seven)."""
+    body = b"{" + b"x" * (MAX_BODY_BYTES + 2048)
 
     status, headers, answer = exchange(port, ["Content-Length: 10", "Transfer-Encoding: chunked"], chunked(body))
 
@@ -554,7 +658,9 @@ def test_the_vector_is_a_run_of_a_job_of_the_cloud_s_shape():
     assert RESULT["client"]["scope"] == "same_tenant"
     assert RESULT["status"]["status"] == "pass"
     assert str(uuid.UUID(RESULT["client"]["tenant_id"])) == VECTOR["tenant_id"]
-    assert VECTOR["job"]["connector"] == {"type": "veeam_m365"} and VECTOR["job"]["restore_point"] == "latest"
+    # The job is a document the Worker's reader takes; that it is the one
+    # `GET /v1/jobs` writes is the poll's test, below.
+    JOBS_VALIDATOR.validate({"format": JOBS_FORMAT, "jobs": [VECTOR["job"]]})
     assert RESULT["worker_version"] == VECTOR["worker_version"]
     # The Worker's own part list: the three fixed parts, then the listed attachments.
     names = [part["name"] for part in VECTOR["upload"]]
@@ -589,10 +695,13 @@ def test_the_script_verifies_the_vector_as_it_is(tmp_path, capsys):
 
 
 async def fill_contract(lab: Lab) -> None:
-    """The world the vector names: the client row and the run row carry the
-    vector's ids, given by UPDATE before any row points at them (the repos
-    take no id for a test's sake)."""
+    """The world the vector names, queued: the connector holds the vector's
+    job's profile and the plan its three sizes, so the poll of these rows
+    writes the job the Worker ran (the C5.11 review's finding 3). The client
+    row and the run row carry the vector's ids, given by UPDATE before any row
+    points at them (the repos take no id for a test's sake)."""
     s = lab.session
+    job = VECTOR["job"]
     tenant = uuid.UUID(VECTOR["tenant_id"])
     lab.msp_id = (await MspRepo(s).create(name="contract")).id
     made = await ClientRepo(s).create(lab.msp_id, name="contoso", tenant_id=tenant)
@@ -608,26 +717,44 @@ async def fill_contract(lab: Lab) -> None:
         lab.msp_id, "w2", public_key_pem=KEYS["rfc8032-test-2"]["public_key_pem"],
         key_id=KEYS["rfc8032-test-2"]["key_id"], api_token_hash=token_hash(lab.other_token),
     )).id
-    lab.connector_id = (await ConnectorRepo(s).create(lab.msp_id, lab.client_id, lab.worker_id, profile_for(tenant))).id
+    lab.connector_id = (await ConnectorRepo(s).create(lab.msp_id, lab.client_id, lab.worker_id, job["client"])).id
     lab.plan_id = (await PlanRepo(s).create(
-        lab.msp_id, lab.client_id, lab.connector_id, sample_mail=2, sample_sp=1, sample_od=0, cadence_cron="0 2 * * *", now=NOW
+        lab.msp_id, lab.client_id, lab.connector_id, sample_mail=job["sample_mail"], sample_sp=job["sample_sp"],
+        sample_od=job["sample_od"], cadence_cron="0 2 * * *", now=NOW,
     )).id
     run = await RunRepo(s).create(
         lab.msp_id, plan_id=lab.plan_id, client_id=lab.client_id, connector_id=lab.connector_id, worker_id=lab.worker_id
     )
     lab.run_id = uuid.UUID(VECTOR["run_id"])
-    await s.execute(
-        text("UPDATE test_run SET id = :new, state = 'dispatched', dispatched_at = :at, attempt = 1 WHERE id = :old"),
-        {"new": lab.run_id, "old": run.id, "at": NOW},
-    )
+    await s.execute(text("UPDATE test_run SET id = :new WHERE id = :old"), {"new": lab.run_id, "old": run.id})
+
+
+async def poll(lab: Lab) -> httpx.Response:
+    return await send(lab.app, "GET", f"{API_PREFIX}/jobs", headers={"Authorization": f"Bearer {lab.token}"})
 
 
 @pytest.fixture
 async def lab(session):
+    """The run queued, then dispatched by the Worker's own poll: `polled` is
+    what `GET /v1/jobs` answered."""
     root = VECTOR["tsa_root"]
     lab = Lab(session, tsa_ca=tsa_ca(root)) if root is not None else Lab(session)
     await fill_contract(lab)
+    lab.polled = await poll(lab)
     return lab
+
+
+async def test_the_cloud_s_poll_writes_the_job_the_worker_ran(lab):
+    """The vector's `job` is the file the Worker's service read; the rows that
+    hold the vector's run answer the poll with that job, key for key, so a
+    change to what `job_of` writes fails here until the Worker has run the
+    new job and written the vector again."""
+    assert lab.polled.status_code == 200, lab.polled.text
+    assert lab.polled.json() == {"format": JOBS_FORMAT, "jobs": [VECTOR["job"]]}
+    assert header_values(lab.polled) == [VALUE]
+    row = await lab.run_row(lab.run_id)
+    assert (row.state, row.attempt, row.dispatched_at is not None) == ("dispatched", 1, True)
+    assert (await poll(lab)).json() == {"format": JOBS_FORMAT, "jobs": []}
 
 
 async def test_the_contract_test_passes_against_a_fixture_generated_by_the_cpp_worker(lab):

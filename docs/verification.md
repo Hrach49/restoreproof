@@ -1862,8 +1862,8 @@ key, an MSP or a Worker.
 | the bundle's client isn't the run's | `client_mismatch` | 409 |
 | accepted | `{"run_id": "<uuid>", "state": "pass" \| "fail" \| "error"}` | 202 |
 
-Every answer, the 202 and each refusal, carries `X-RestoreProof-API: 1` (C5.11, below, "The
-contract"). The upload is the one request the body cap of C5.11 leaves to its own 96 MiB.
+Every answer the app gives, the 202 and each refusal, carries `X-RestoreProof-API: 1` (C5.11,
+below, "The contract"). The upload is the one request the body cap of C5.11 leaves to its own 96 MiB.
 
 The media type is read without regard to case, as HTTP has it. The 96 MiB cap is held twice: on
 the header before a byte is read, and on the bytes as they arrive, since a server that frames a
@@ -1957,9 +1957,13 @@ is not the Cloud's answer and never moves a run to `sent\`.
 line and branch) and `cloud/app/routers/version.py`; the tests `cloud/tests/test_contract.py`
 and `cloud/tests/test_openapi.py`.
 
-**The header.** Every response the Cloud sends carries `X-RestoreProof-API: 1`: a route's
+**The header.** Every response the app sends carries `X-RestoreProof-API: 1`: a route's
 answer, a refusal, FastAPI's 404, 405 and 422, the log middleware's own 500, `/healthz` and the
-OpenAPI document. The value is the contract's number, the `1` of `/v1`: it changes when `/v2`
+OpenAPI document. Not the answers the server makes without calling the app: uvicorn's `400
+Invalid HTTP request received.` for a request it can't parse and its 503 under
+`--limit-concurrency` carry no header, and neither does a proxy's own page. So the header's
+absence means something on a 2xx alone; a 4xx or a 5xx without it may still be this Cloud's
+server. The value is the contract's number, the `1` of `/v1`: it changes when `/v2`
 exists and the document breaks, not when a field is added. It says one thing, *this answer came
 from a RestoreProof Cloud speaking contract 1*, which a Worker pointed at a wrong host, a captive
 portal or a proxy's error page cannot otherwise tell from a 202.
@@ -1972,7 +1976,10 @@ and says nothing the anonymous `/v1/openapi.json` doesn't.
 **The body cap.** Every request but `POST /v1/results` is held to 64 KiB: a `Content-Length` over
 it is 413 `{"detail": "body: too large"}` before the app runs, and a body whose bytes pass it
 (chunked beside any `Content-Length`, as h11 frames it) is the same 413 from the first byte over,
-the read ended there. The upload keeps its own 96 MiB cap on the header and on the bytes. The
+the read ended there. A `Content-Length` of more digits than the cap's is over it as it stands
+and is never converted to a number (Python refuses a text past 4300 digits). The upload keeps
+its own 96 MiB cap on the header and on the bytes; it is known by the path the router matches,
+without the server's `root_path`, so it stays exempt behind `uvicorn --root-path`. The
 header check reads no byte and the counter counts only what the app pulls, so a heartbeat without
 a token is still the one 401 with nothing of its body read (C5.8); a 413 on the header before the
 401 tells a caller nothing of any token. The two routes that take a body, registration and the
@@ -1995,9 +2002,16 @@ Worker's service made and sent for a job of the Cloud's shape (`run_id`
 `c5110000-0000-4000-8000-000000000001`, `client_id` `c5110000-…-0002`), signed with RFC 8032's
 test key 1 and timestamped by the published test TSA, with the job it came from and the part
 list the Worker's outbox built (`upload`: name, file name, content type, in order). The Cloud's
-Done-when posts those bytes unchanged under that part list to a run and a client that carry the
-vector's ids: 202 `pass` with the header, the row, the items, the audit row and the objects;
-nothing is re-signed. It is the one shared folder that reaches 202; every other shared case is
+test makes a client and a queued run that carry the vector's ids, with the job's profile on the
+connector and its three sizes on the plan, and polls `GET /v1/jobs` under the Worker's token:
+the answer's one job is the vector's `job`, key for key, so a change to what the Cloud writes
+into a job fails there until the Worker has run the new job and written the vector again. The
+Done-when then posts the vector's bytes unchanged under that part list to the run that poll
+dispatched: 202 `pass` with the header, the row, the items, the audit row and the objects;
+nothing is re-signed. The request is built by the test's HTTP client from the part list, not
+replayed from the Worker's wire bytes. The vector's client is the lab's test tenant, not a
+made-up one: its `job` and result carry the identifiers of `lab/tenant.md` (none a secret, no
+person), and its `description` says so. It is the one shared folder that reaches 202; every other shared case is
 404 after the whole verification, as before.
 
 **What the Worker will do with the header (W5.1, W7.2; built nowhere yet).** A 2xx of the
@@ -2007,7 +2021,10 @@ one warning once. A jobs document from an answer without the header is not read.
 takes any 2xx and warns once of a missing header. A header with another value is treated as
 absent, with its own warning naming the number. `rpworker doctor` asks `GET <cloud_url>/v1/version`
 without a token and prints `cloud: RestoreProof Cloud <version>, API 1`, or `cloud: not a
-RestoreProof Cloud` for an answer without the header.
+RestoreProof Cloud` for a 2xx without the header. Every one of these rules reads the header on
+a 2xx alone: an answer that is no 2xx is handled by its status as before (the upload's table
+above; `doctor` prints the status), with or without the header, since an overloaded or
+confused server of this Cloud answers a 503 or a 400 without it.
 
 ## The Cloud receives a heartbeat (C5.8)
 

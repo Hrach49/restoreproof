@@ -17,7 +17,10 @@ as it is (anything else it would turn into its own 400 while reading a body
 parameter) and starlette answers as 413. The header check reads no byte and
 the counter counts only what the app pulls, so a request without a token is
 still the one 401 with nothing of its body read (C5.8). The upload's path
-(`large_body_paths`) is left to the route's own cap.
+(`large_body_paths`) is left to the route's own cap; the path compared is the
+one the router matches, without the server's `root_path` (uvicorn puts
+`--root-path` in front of `scope["path"]`), so the exemption holds behind a
+prefix too (the C5.11 review's finding 2).
 
 Guarded at 100% line and branch (tools/check_coverage.py).
 """
@@ -28,6 +31,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from fastapi import HTTPException
+from starlette._utils import get_route_path
 from starlette.responses import JSONResponse
 
 from app.results import BODY_TOO_LARGE
@@ -86,7 +90,7 @@ class BodyCapMiddleware:
         self.cap = cap
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] != "http" or scope["path"] in self.large_body_paths:
+        if scope["type"] != "http" or get_route_path(scope) in self.large_body_paths:
             await self.app(scope, receive, send)
             return
         if _declared_over(scope, self.cap):
@@ -108,9 +112,14 @@ class BodyCapMiddleware:
 
 def _declared_over(scope: Scope, cap: int) -> bool:
     """`Content-Length` of ASCII digits over the cap; anything else is the
-    server's to refuse or the bytes' to show."""
+    server's to refuse or the bytes' to show. A number of more digits than the
+    cap's is over it by its length and is never converted: `int()` refuses a
+    text past the interpreter's digit limit (the C5.11 review's finding 6)."""
     for name, value in scope["headers"]:
         if name == b"content-length":
             text = value.decode("latin-1")
-            return text.isascii() and text.isdigit() and int(text) > cap
+            if not (text.isascii() and text.isdigit()):
+                return False
+            digits = text.lstrip("0")
+            return len(digits) > len(str(cap)) or int(digits or "0") > cap
     return False

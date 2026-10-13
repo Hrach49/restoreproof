@@ -2292,8 +2292,8 @@ the month of the time it ended: `finished_at`, and for a result written afterwar
 `ended_at` (the Worker's `interrupted`, `result_invalid`, `internal`, `job_invalid`,
 `connector_unknown`), the time it was stamped (`tsa_time`), else the time it was last handed out
 (`dispatched_at`), and `created_at` only when nothing later is known. So a run queued on the
-last night of a month and finished or closed on the 1st is the new month's (Q6.1 holds each
-run's `tsa_time` against the period). Every other run belongs to the month of `created_at` and
+last night of a month and finished or closed on the 1st is the new month's (Q6.1's check holds
+each run's token to its end and to the period: "The report checks" below). Every other run belongs to the month of `created_at` and
 **is not a test**: an `expired` run is counted in the Summary ("Scheduled tests that did not
 run: N") and shown in the Test log as "did not run"; a `queued` or `dispatched` run is counted
 as "Scheduled tests with no result when this report was made: N" and shown as "no result yet",
@@ -2313,8 +2313,9 @@ report such a run keeps its own date (the Test log and the Failures print when i
 month's order is by the tests' ends, so it stands first and "a later test of the same plan" is
 one that ended later), and the Summary counts it on a line of its own: "Tests that ended before
 this period and whose results arrived after that period had closed, counted here: N". A row no
-bundle wrote (`received_at` null) goes by its end. Q6.1's check of each run's `tsa_time` against
-the period allows for these: a run counted on that line is stamped before the period began.
+bundle wrote (`received_at` null) goes by its end. Q6.1's check of each run's token against
+the period allows for these: a run counted on that line is stamped before the period began, and
+the check accepts it by its arrival and counts it ("The report checks" below).
 **No final report is made before 03:00 UTC on the 1st** (`FINAL_AFTER`, three hours: the job's
 hour, and `generate`'s refusal `period: not closed until 03:00 UTC on the 1st` for whoever asks
 earlier, the job's start run and the CLI included), so the hour between the two is the room an
@@ -2507,3 +2508,77 @@ to one of them changes the list in the same commit. The C6.5 reviewer's and the 
 comments are the entries "C6.5 review" and "C6.7 reading" in `docs/decisions.md`, each closing
 its issue by its own commit.
 
+**The report checks (Q6.1)** (`docs/decisions.md` 2026-10-13, "Q6.1"; `app/report/check.py`,
+guarded at 100% line and branch; `manage.py check-report --msp-id <id> --report-id <id>`;
+`tests/test_report_checks.py`). One function, `check_report`, run by the tests on reports they
+made and by the command on any stored report, so a report an MSP has already handed over can be
+checked on the day someone doubts it. It reads the report's row and the month's runs by the
+report's own read (`RunRepo.period` with the row's period: the same `period_filter` the report
+was made from, every run the Summary counts, not the 200 the Test log lists), then the bucket,
+in a thread: the report's object, and per run one list of its `bundle_key` and at most two gets.
+Two statements whatever the runs. Another MSP's report is `report_id: no such report` before
+anything is read.
+
+- **The file.** The object under the row's `storage_key`, read back whole, hashes to
+  `file_sha256`, else `file_sha256: differs`; none there is `storage: no object`. The content
+  hash is not re-read (it is inside the PDF's text, which the app has no reader for;
+  `tests/test_report.py` holds it printed from the row and pass 1 re-rendered to it).
+- **Which runs.** A `pass`, `fail` or `error` run with `tsa_ok` true is *stamped* and checked
+  in full; a tested run with `tsa_ok` null ("not timestamped" in the Integrity section) is *not
+  stamped*: no `timestamp.tst` may be under its key (`storage: timestamp.tst unexpected`) and
+  its `tsa_time` must be null (`tsa_time: unexpected`); an `expired`, `queued` or `dispatched`
+  run ("did not run", "no result yet") has *no bundle*: nothing is read, it is counted, and its
+  `bundle_key`, `tsa_ok` and `tsa_time` must be null (`state: no bundle expected`). A tested run
+  without a `bundle_key` is `bundle_key: missing` (a row made by hand, as the harnesses make
+  them). The three counts and the late count are printed; a test holds them equal to the
+  Summary's lines.
+- **A stamped run**, in this order, the first miss its word: `storage: no result.json` or
+  `storage: no timestamp.tst`; `bundle_sha256: differs` (the stored `result.json` is not the
+  result the row names); the verifier's `check_timestamp` under the Cloud's root
+  (`timestamp_file`, `timestamp_mismatch`, `timestamp_invalid`, the same words as the upload);
+  `tsa_time: differs` (the token's time is not the row's, second for second); then the time
+  rule. **The allowance**: the report dates a run by `finished_at`, the Worker's clock read after
+  the clean after and before the evidence is written (the secret scan, the attachments'
+  read-back and the signature are milliseconds, then the TSA is asked), so the token's time
+  must be not before the second the test ended (`stamp_before_end`; a token's time is read in
+  whole seconds) and not more than **`STAMP_BUDGET`, 120 s**, after it (`stamp_after_budget`):
+  the Worker's whole timestamp budget, three attempts of ten seconds plus waits of thirty and
+  sixty (`worker/include/rp/timestamper.hpp`, held equal by a test that reads the header). A
+  test that ended at 23:59:58 on the last day and was stamped at 00:00:40 passes; at 00:01:59 it
+  does not. No clock allowance beyond that: the report prints the Worker's time as the test's
+  date and the token is the trusted time, and a Worker whose clock disagrees with the TSA by
+  more than its own budget is the one fault this check can catch that nothing else does.
+  A result written afterwards (`finished_at` null) is dated by its token's time, the only end it
+  has: no budget applies, only the period.
+- **Within the period.** A run that is not late is in the period by its date (`run_date`) and
+  its stamp follows the rule above, so the stamp is in the period or within the budget past its
+  end. A **late** result (`is_late`: `received_at` at or after `RESULTS_CLOSE` past the last day
+  of the month its end falls in, `period_time`'s arithmetic on the row) is the period's by its
+  arrival: accepted exactly when `received_at` is in the period, and counted; its end and its
+  stamp are before the period. A tested run that is neither is `period: not the run's` (the
+  filter makes it impossible; the word is for a row checked against another month).
+- **Received before generated** (the C6.6 review's finding 9). For a **final** report every
+  result (`received_at` not null) arrived before `generated_at`, else `received_after_report`:
+  by the rules (results close at 02:00, no final report before 03:00) a miss is a report made
+  against them or a row moved afterwards. For an **interim** report it is not held:
+  `generated_at` is the clock read before the month is read, and a result committed between the
+  two is honestly in the report with `received_at` after it by milliseconds. Finding 9 stays
+  open.
+- **What the check proves.** A token that does not verify is refused at the upload, so every
+  stored token verified once, under the same root, over the same digest. The check shows that
+  the object in the bucket is the token that was verified at the upload, over the result the row
+  names, that the row's `tsa_time` is that token's time, and that the test's date and that time
+  agree; a finding means the bucket or the row was changed after the upload, the Cloud filed the
+  wrong object, or the Worker's clock disagrees with the TSA.
+
+The command prints `report_id`, `final`, `file_sha256` (`ok` or `failed`), `runs`, `stamped`,
+`not_stamped`, `no_bundle`, `late` and `findings`, then one `<run id>: <word>` line per finding
+on stderr (`file: <word>` for the file) and `report: N check(s) failed`, exit 1; exit 0 with no
+finding. A month made by hand with SQL (the harnesses' Septembers) has rows with no bundle
+behind them, and the command says so (`bundle_key: missing` per row): it checks what is stored,
+never what a row claims.
+
+**The 30-second check** (Q6.1's third step) is a person's, not the code's: `docs/report-usability.md`
+holds the method (page 1 of the sample report alone, one question, the clock from the page in
+the reader's hands to the first answer, the expected answer "not all passed") and the result once
+the owner has run it.

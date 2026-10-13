@@ -299,6 +299,20 @@ in the Integrity section; the second pass's SHA-256 is the *file hash*, stored b
 and equal to the SHA-256 of the file a reader downloads. Two, because a file cannot contain its
 own hash. `report.content_sha256`, `report.file_sha256`.
 
+**Report check.** What a stored report is held to (Q6.1, `app/report/check.py`, run by the
+tests and by `manage.py check-report`): the object under its key hashes to its file hash; every
+run the Summary counts is as its row says, a stamped run's `timestamp.tst` read back from the
+bucket beside its `result.json`, verified under the Cloud's TSA root, its time the row's and
+within the stamp budget of the test's end; a late result the period's by its arrival; for a
+final report every result received before it. A finding is one `<run id>: <word>` line. See
+`docs/verification.md`, "The report checks".
+
+**Stamp budget.** The Worker's whole timestamp budget after a run's end, 120 s
+(`STAMP_BUDGET`: three attempts of ten seconds plus waits of thirty and sixty,
+`worker/include/rp/timestamper.hpp`). A token's time is not before the second the test ended
+and not more than the budget after it; no clock allowance beyond that, so a Worker whose clock
+disagrees with the TSA by more is a finding, not noise.
+
 **Interim report.** A report of a period that is not over (C6.4): its last day is not before
 the day it was generated. Its title says so, its key carries its generation time, and a client
 may have any number of them for a month beside the one final report (`uq_report_final_period`).

@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import datetime as dt
 import hashlib
+import io
 import json
 import re
 import sys
@@ -20,6 +21,7 @@ from pathlib import Path
 import httpx
 import pytest
 import typer
+from botocore.response import StreamingBody
 from botocore.stub import ANY, Stubber
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
@@ -229,6 +231,8 @@ async def test_a_refusal_is_one_line_on_stderr_exit_1_and_nothing_committed(data
         ("delete-msp",),
         ("generate-report", "--msp-id", str(uuid.UUID(int=1))),
         ("generate-report", "--msp-id", "x", "--client-id", str(uuid.UUID(int=1))),
+        ("check-report", "--msp-id", str(uuid.UUID(int=1))),
+        ("check-report", "--msp-id", str(uuid.UUID(int=1)), "--report-id", "x"),
     ],
 )
 async def test_a_usage_fault_is_typer_s_exit_2_before_any_database(monkeypatch, args):
@@ -247,7 +251,7 @@ async def test_no_arguments_prints_the_commands(monkeypatch):
     result = await cli()
 
     text = result.stdout + result.stderr
-    for command in ("create-msp", "create-client", "create-worker-token", "create-connector", "create-plan", "revoke-worker", "create-user", "reset-password", "generate-report"):
+    for command in ("create-msp", "create-client", "create-worker-token", "create-connector", "create-plan", "revoke-worker", "create-user", "reset-password", "generate-report", "check-report"):
         assert command in text
 
 
@@ -503,6 +507,9 @@ def bucket(monkeypatch):
         def bodies(self) -> list[bytes]:
             return bodies
 
+        def expect_get(self, key: str, body: bytes) -> None:
+            stubber.add_response("get_object", {"Body": StreamingBody(io.BytesIO(body), len(body))}, expected_params={"Bucket": "test-bucket", "Key": key})
+
         def done(self) -> None:
             stubber.assert_no_pending_responses()
 
@@ -669,3 +676,83 @@ def test_the_cli_builds_no_statement_and_logs_nothing():
     assert "configure_logging" not in source
     assert "select(" not in source and "session.execute" not in source
     assert "typer.Typer(" in source
+
+
+# --- Q6.1: check-report (docs/decisions.md 2026-10-13, "Q6.1", point 1) ---------------------------
+
+
+async def an_expired_september(rows, msp_id: str, client_id: str) -> None:
+    """A Worker, a connector, a plan and one expired run of September 2026:
+    a month with nothing to read from the bucket."""
+
+    async def work(s):
+        msp, client = uuid.UUID(msp_id), uuid.UUID(client_id)
+        worker = await WorkerRepo(s).create(msp, "w", public_key_pem="-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA\n-----END PUBLIC KEY-----\n", key_id="a" * 64, api_token_hash="b" * 64)
+        tenant = (await ClientRepo(s).get(msp, client)).tenant_id
+        connector = await ConnectorRepo(s).create(msp, client, worker.id, {**VALID_PROFILE, "graph_tenant_id": str(tenant)})
+        plan = await PlanRepo(s).create(msp, client, connector.id, sample_mail=2, sample_sp=0, sample_od=0, cadence_cron="0 2 * * *", now=REPORT_CLOCK)
+        run = await RunRepo(s).create(msp, plan_id=plan.id, client_id=client, connector_id=connector.id, worker_id=worker.id)
+        await s.execute(text("UPDATE test_run SET state = 'expired', created_at = '2026-09-12T02:00:00Z' WHERE id = :id"), {"id": run.id})
+
+    await rows.read(work)
+
+
+async def test_check_report_prints_the_counts_and_exits_0_when_every_check_holds(database, rows, report_clock, bucket):
+    msp = lines(await cli("create-msp", "--name", "a"))
+    client = lines(await cli("create-client", "--msp-id", msp["msp_id"], "--name", "contoso", "--tenant-id", str(uuid.uuid4())))
+    await an_expired_september(rows, msp["msp_id"], client["client_id"])
+    key = f"msp/{msp['msp_id']}/reports/{client['client_id']}/2026-09.pdf"
+    bucket.expect(key)
+    made = lines(await cli("generate-report", "--msp-id", msp["msp_id"], "--client-id", client["client_id"], "--period", "2026-09"))
+    bucket.expect_get(key, bucket.bodies[0])
+
+    result = await cli("check-report", "--msp-id", msp["msp_id"], "--report-id", made["report_id"])
+
+    assert (result.exit_code, result.stderr) == (0, ""), result.stderr
+    assert lines(result) == {
+        "report_id": made["report_id"], "final": "true", "file_sha256": "ok", "runs": "1", "stamped": "0", "not_stamped": "0", "no_bundle": "1", "late": "0", "findings": "0",
+    }
+    bucket.done()
+
+
+async def test_check_report_names_each_finding_on_stderr_and_exits_1(database, rows, report_clock, bucket):
+    """The CLI-made September's fail has no bundle behind it (a row by
+    hand), and the stored PDF is answered with one byte changed: two
+    findings, the file's first."""
+    msp = lines(await cli("create-msp", "--name", "a"))
+    client = lines(await cli("create-client", "--msp-id", msp["msp_id"], "--name", "contoso", "--tenant-id", str(uuid.uuid4())))
+    await a_september(rows, msp["msp_id"], client["client_id"])
+    key = f"msp/{msp['msp_id']}/reports/{client['client_id']}/2026-09.pdf"
+    bucket.expect(key)
+    made = lines(await cli("generate-report", "--msp-id", msp["msp_id"], "--client-id", client["client_id"], "--period", "2026-09"))
+    pdf = bucket.bodies[0]
+    bucket.expect_get(key, pdf[:-1] + bytes([pdf[-1] ^ 1]))
+    (run,) = await rows.read(lambda s: RunRepo(s).list(uuid.UUID(msp["msp_id"])))
+
+    result = await cli("check-report", "--msp-id", msp["msp_id"], "--report-id", made["report_id"])
+
+    assert result.exit_code == 1
+    assert lines(result)["findings"] == "2" and lines(result)["file_sha256"] == "failed"
+    assert result.stderr.splitlines() == ["file: file_sha256: differs", f"{run.id}: bundle_key: missing", "report: 2 check(s) failed"]
+    bucket.done()
+
+
+async def test_check_report_s_refusals_are_one_line_and_exit_1(database, rows, report_clock, bucket, monkeypatch):
+    msp = lines(await cli("create-msp", "--name", "a"))
+    other = lines(await cli("create-msp", "--name", "b"))
+    client = lines(await cli("create-client", "--msp-id", msp["msp_id"], "--name", "contoso", "--tenant-id", str(uuid.uuid4())))
+    await an_expired_september(rows, msp["msp_id"], client["client_id"])
+    key = f"msp/{msp['msp_id']}/reports/{client['client_id']}/2026-09.pdf"
+    bucket.expect(key)
+    made = lines(await cli("generate-report", "--msp-id", msp["msp_id"], "--client-id", client["client_id"], "--period", "2026-09"))
+
+    theirs = await cli("check-report", "--msp-id", other["msp_id"], "--report-id", made["report_id"])
+    unknown = await cli("check-report", "--msp-id", msp["msp_id"], "--report-id", str(uuid.uuid4()))
+    for name in ("S3_ENDPOINT", "S3_ACCESS_KEY", "S3_SECRET_KEY"):
+        monkeypatch.delenv(name)
+    unset = await cli("check-report", "--msp-id", msp["msp_id"], "--report-id", made["report_id"])
+
+    assert (theirs.exit_code, theirs.stdout, theirs.stderr.strip()) == (1, "", "report_id: no such report")
+    assert (unknown.exit_code, unknown.stdout, unknown.stderr.strip()) == (1, "", "report_id: no such report")
+    assert (unset.exit_code, unset.stdout, unset.stderr.strip()) == (1, "", "settings error: S3_ENDPOINT is missing; S3_ACCESS_KEY is missing; S3_SECRET_KEY is missing")
+    bucket.done()

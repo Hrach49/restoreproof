@@ -18,17 +18,23 @@ import uuid
 
 import pytest
 from botocore.exceptions import ClientError
+from markupsafe import escape
 from sqlalchemy import event, text
 
 from app import ui
 from app.report import frameworks, render
-from app.report.data import Period, ReportData, found_word, gather, interim_for, overall_class, period_of, previous_month, run_date
+from app.report.data import (
+    FINAL_AFTER, NOT_CLOSED, Period, ReportData, closed, closed_month, found_word, gather, interim_for, overall_class, period_of,
+    previous_month, run_date,
+)
 from app.report.generate import ReportFailed, generate, storage_key
 from app.report.render import PLACEHOLDER, Rendered, render_html, render_pdf, render_report
 from app.repo.audit import AuditRepo
 from app.repo.errors import RepoError
+from app.repo.items import ItemRepo
 from app.repo.plans import PlanRepo
 from app.repo.reports import ReportRepo
+from app.repo.runs import RESULTS_CLOSE, RunRepo
 from tests.pages_lab import IP, UTC
 from tests.report_lab import (
     OCTOBER_START, SEPTEMBER, SEPTEMBER_START, VECTOR_HASH, ReportLab, an_item, at, page_count, past_the_page, pdf_info, pdf_text,
@@ -104,7 +110,8 @@ async def test_a_pdf_renders_for_a_client_with_one_failure_and_one_error_in_the_
         "1 of 4 tests failed", "1 of 4 tests could not run (error)", "Scheduled tests that did not run: 1",
         "Scheduled tests with no result when this report was made: 2",
         "This report does not test full disaster recovery", "A later test of the same plan passed on 2026-09-25 02:20 UTC",
-        "A file cannot contain its own hash", row.content_sha256, "not part of this report yet",
+        "A file cannot contain its own hash", row.content_sha256, "it is not an assessment of the control",
+        "On the dates listed, a sample of items was restored from the backup copy",
     ):
         assert needle in words, needle
     assert row.file_sha256 not in words and PLACEHOLDER not in words and "Interim" not in words
@@ -168,11 +175,14 @@ async def test_a_pdf_renders_for_a_client_with_one_failure_and_one_error_in_the_
     ):
         assert needle in integrity, needle
     assert html.count("w2") == 0  # a Worker with no run in the month
-    # Framework mapping: the four controls and the pending sentence.
+    # Framework mapping: the four controls, their two sentences each (C6.7) and the sentence above the table.
     mapping = html[html.index('<h2 id="framework-mapping">'):]
-    for needle in ("ISO/IEC 27001:2022 A.8.13", "SOC 2 Availability A1.2, A1.3", "HIPAA 45 CFR 164.308(a)(7)(ii)(D)", "DORA Regulation (EU) 2022/2554 Article 12", frameworks.PENDING):
-        assert needle in mapping, needle
-    assert mapping.count("<td>—</td>") == 8
+    for control in frameworks.CONTROLS:
+        for needle in (control.identifier, control.name, control.demonstrates, control.not_covered):
+            assert needle.replace("'", "&#39;") in mapping, needle
+    assert frameworks.ABOUT.replace("'", "&#39;") in mapping
+    assert mapping.count("<td>—</td>") == 0 and mapping.count("<tr>") == 5
+    assert "more tests of this period are not listed here" not in html
 
 
 # --- Failure paths first ------------------------------------------------------------------------
@@ -241,6 +251,30 @@ async def test_a_second_final_report_of_one_month_is_refused_before_rendering_an
     assert await ReportRepo(lab.session).final(lab.msp_id, lab.client_id, SEPTEMBER.start) is not None
     assert await ReportRepo(lab.session).final(lab.msp_id, lab.client_id, dt.date(2026, 8, 1)) is None
     assert await ReportRepo(lab.session).final(lab.b_msp_id, lab.client_id, SEPTEMBER.start) is None
+
+
+async def test_a_month_that_has_its_final_report_is_refused_by_one_read_before_the_month_is_read(lab, test_engine, monkeypatch):
+    """C6.6 (docs/decisions.md 2026-10-13, point 1; the C6.4 review's cut
+    finding "ReportRepo.final after the eight reads"): the monthly job asks
+    `generate` for every client of a month, so a month already reported costs
+    one SELECT, not nine."""
+    await lab.month()
+    lab.expect_put(lab.final_key())
+    await make(lab)
+    monkeypatch.setattr("app.report.generate.render_report", lambda data: pytest.fail("rendered"))
+    seen: list[str] = []
+
+    def listen(_conn, _cursor, statement, _params, _context, _executemany):
+        seen.append(statement.split()[0].upper())
+
+    event.listen(test_engine.sync_engine, "before_cursor_execute", listen)
+    try:
+        with pytest.raises(RepoError, match="^period: already reported$"):
+            await make(lab)
+    finally:
+        event.remove(test_engine.sync_engine, "before_cursor_execute", listen)
+
+    assert seen == ["SELECT"]
 
 
 async def test_a_put_that_fails_is_worded_by_its_type_and_the_row_is_rolled_back_with_it(lab):
@@ -557,7 +591,7 @@ async def test_generate_is_the_nine_reads_the_row_and_the_audit_row_then_the_put
     finally:
         event.remove(test_engine.sync_engine, "before_cursor_execute", listen)
 
-    # The eight reads of `gather`, the read for a final report the month has, the row, the audit row, then the put.
+    # The read for a final report the month has (first, C6.6), the eight reads of `gather`, the row, the audit row, then the put.
     assert seen == ["SELECT"] * 9 + ["INSERT", "INSERT"]
     assert order == ["sql"] * 11 + ["put"]
 
@@ -614,13 +648,17 @@ def test_the_storage_key_is_the_issue_s_for_a_final_report_and_carries_the_time_
 # --- The frameworks (point 3) and the environment (point 7) -------------------------------------
 
 
-def test_the_four_controls_are_named_and_their_two_columns_wait_for_c6_7():
+def test_the_four_controls_are_named_by_their_own_words_and_each_has_its_two_sentences():
+    """C6.7: the SOC 2 row by the criteria's own words (the issue's "recovery
+    procedures tested" was a gloss); the sentences themselves are held
+    verbatim by tests/test_report_wording.py."""
     assert [control.identifier for control in frameworks.CONTROLS] == [
-        "ISO/IEC 27001:2022 A.8.13", "SOC 2 Availability A1.2, A1.3", "HIPAA 45 CFR 164.308(a)(7)(ii)(D)", "DORA Regulation (EU) 2022/2554 Article 12",
+        "ISO/IEC 27001:2022 A.8.13", "SOC 2 (2017 TSC) Availability A1.2 and A1.3", "HIPAA 45 CFR 164.308(a)(7)(ii)(D)", "DORA, Regulation (EU) 2022/2554, Article 12",
     ]
-    assert all(control.name for control in frameworks.CONTROLS)
-    assert all(control.demonstrates is None and control.not_covered is None for control in frameworks.CONTROLS)
-    assert "not part of this report yet" in frameworks.PENDING and "C6.7" in frameworks.PENDING
+    assert all(control.name and control.demonstrates and control.not_covered for control in frameworks.CONTROLS)
+    assert "Recovery procedures tested" not in [c.name for c in frameworks.CONTROLS]
+    assert "A1.2: …" in frameworks.CONTROLS[1].name and "A1.3: the entity tests recovery plan procedures" in frameworks.CONTROLS[1].name
+    assert "not an assessment of the control" in frameworks.ABOUT and "C6.7" not in frameworks.ABOUT
 
 
 def test_the_report_s_environment_autoescapes_with_strict_undefined_and_the_pages_filters():
@@ -976,3 +1014,261 @@ async def test_no_text_of_the_report_is_laid_out_past_the_page(lab):
 
     assert past_the_page(render_html(wide, "3" * 64)) == []
     assert past_the_page(render_html(data, None)) == []
+
+
+
+# --- C6.6: the job's read of a month's clients (docs/decisions.md 2026-10-13, "C6.6, C6.5 and C6.7", point 1) ---
+
+
+async def test_clients_in_period_names_each_client_with_a_run_of_the_month_once_whatever_its_state(lab):
+    """The second client's run of the month counts; a client whose only run
+    is expired counts (its report says so); a client whose runs are all
+    outside the month does not; another MSP's never; a naive time is refused."""
+    from app.repo.runs import RunRepo
+    from tests.test_pages import make_client
+
+    await lab.month()
+    third, third_connector, third_plan = await make_client(lab, "third")
+    fourth, fourth_connector, fourth_plan = await make_client(lab, "fourth")
+    await lab.make_run(state="expired", created_at=at(3), client_id=third.id, plan_id=third_plan.id, connector_id=third_connector.id)
+    await lab.tested("pass", finished_at=at(3, month=10), client_id=fourth.id, plan_id=fourth_plan.id, connector_id=fourth_connector.id)
+    repo = RunRepo(lab.session)
+
+    september = await repo.clients_in_period(lab.msp_id, start=SEPTEMBER.start_at, end=SEPTEMBER.end_at)
+    october = await repo.clients_in_period(lab.msp_id, start=OCTOBER_START, end=OCTOBER_START + dt.timedelta(days=31))
+
+    assert sorted(september) == sorted([lab.client_id, lab.client2_id, third.id])
+    assert sorted(october) == sorted([lab.client_id, fourth.id])
+    assert await repo.clients_in_period(lab.b_msp_id, start=SEPTEMBER.start_at, end=SEPTEMBER.end_at) == []
+    with pytest.raises(ValueError, match="without a zone"):
+        await repo.clients_in_period(lab.msp_id, start=dt.datetime(2026, 9, 1), end=SEPTEMBER.end_at)
+
+
+# --- C6.6: the cap on a month of thousands of runs (docs/decisions.md 2026-10-13, "C6.6, C6.5 and C6.7", point 3) ---
+
+
+def _plain_run(i: int, state: str) -> object:
+    from types import SimpleNamespace
+
+    finished = at(1 + i % 28, 3, i % 60, i // 60 % 60) if state in ("pass", "fail", "error") else None
+    return SimpleNamespace(
+        id=uuid.UUID(int=i + 1), state=state, finished_at=finished, created_at=at(1 + i % 28, 2, i % 60, i // 60 % 60), restore_point_at=at(1 + i % 28, 1),
+        recovery_ms=1000 + i, bundle_sha256=None, tsa_ok=None, tsa_time=None, worker_id=uuid.UUID(int=99), error_code=None, error_message=None,
+        plan_id=uuid.UUID(int=98), cleanup_ok=True, dispatched_at=None,
+    )
+
+
+@pytest.mark.parametrize(("total", "listed", "left"), [(200, 200, 0), (201, 200, 1), (1000, 200, 800)])
+def test_build_lists_the_first_200_runs_and_failures_in_order_and_counts_every_run(total, listed, left):
+    from types import SimpleNamespace
+
+    from app.report.data import MAX_LOG_ROWS, build
+
+    runs = [_plain_run(i, "fail") for i in range(total)]
+    data = build(SimpleNamespace(name="m"), SimpleNamespace(name="c"), SEPTEMBER, now=dt.datetime(2026, 10, 1, tzinfo=UTC), connectors=[], plans=[], workers=[], runs=runs, counts=[], unmatched=[])
+
+    assert MAX_LOG_ROWS == 200
+    assert (len(data.runs), data.runs_left_out) == (listed, left)
+    assert (len(data.failures), data.failures_left_out) == (listed, left)
+    assert [line.run_id for line in data.runs] == [run.id for run in runs[:listed]]
+    assert [failure.line.run_id for failure in data.failures] == [run.id for run in runs[:listed]]
+    # The Summary counts every run.
+    assert (data.tests, data.failed, data.ran) == (total, total, total)
+    assert data.overall == f"{total} of {total} tests failed"
+    assert data.max_recovery_ms == 1000 + total - 1 and len(data.restore_points) == 28
+
+
+async def test_a_capped_month_says_how_many_runs_are_not_listed_in_both_passes_and_the_pdf(lab, monkeypatch):
+    """The lab's September has seven runs; with the cap at five, two are left
+    out of the log and the run list, and the Summary still counts four tests."""
+    from app.report import data as report_data
+
+    runs = await lab.month()
+    monkeypatch.setattr(report_data, "MAX_LOG_ROWS", 5)
+
+    data = await gather(lab.session, lab.msp_id, lab.client_id, SEPTEMBER, now=lab.time)
+    rendered = render_report(data)
+
+    assert (len(data.runs), data.runs_left_out, data.tests, data.failures_left_out) == (5, 2, 4, 0)
+    assert [line.run_id for line in data.runs][-1] == runs["errored"] and runs["vector"] not in [line.run_id for line in data.runs]
+    for html in (rendered.html_1, rendered.html_2):
+        assert html.count("2 more tests of this period are not listed here; the Cloud's pages hold every one.") == 2
+        assert "<dt>Tests run</dt><dd>4</dd>" in html
+        assert html.count(f"<code>{runs['vector']}</code>") == 0
+    words = pdf_text(rendered.pdf)
+    assert words.count("2 more tests of this period are not listed here") == 2 and "1 of 4 tests failed" in words
+
+
+# --- The C6.6 review's findings 1, 2, 3 and 7 (docs/decisions.md 2026-10-13, "C6.6, C6.5 and C6.7 code review") ---
+
+OCTOBER = period_of("2026-10")
+LATE_LINE = "Tests that ended before this period and whose results arrived after that period had closed, counted here:"
+
+
+@pytest.mark.parametrize(
+    ("received_at", "month"),
+    [
+        (None, "2026-09"),  # a row no bundle wrote: by its end
+        (at(30, 23, 55), "2026-09"),
+        (at(1, 1, 59, 59, month=10), "2026-09"),  # inside the two hours
+        (at(1, 2, 0, 0, month=10), "2026-10"),  # the month has closed
+        (at(9, 12, month=10), "2026-10"),
+        (dt.datetime(2026, 11, 10, 8, tzinfo=UTC), "2026-11"),  # two reports later
+    ],
+)
+async def test_a_result_received_after_its_month_closed_is_the_month_s_it_arrived_in_in_every_read(lab, received_at, month):
+    """Finding 1: the run ended on 30 September 23:50. The four reads of a
+    month share the rule, so the run is in one month and in no other."""
+    run = await lab.tested("fail", finished_at=at(30, 23, 50), received_at=received_at)
+    await lab.items(run, [an_item(0, found=False, match=False, reason="no restored copy found")])
+    runs, items = RunRepo(lab.session), ItemRepo(lab.session)
+
+    found = {}
+    for name in ("2026-09", "2026-10", "2026-11"):
+        span = {"start": period_of(name).start_at, "end": period_of(name).end_at}
+        found[name] = (
+            [r.id for r in await runs.period(lab.msp_id, lab.client_id, **span)],
+            [c.run_id for c in await items.counts_by_type_in_period(lab.msp_id, lab.client_id, **span)],
+            [i.run_id for i in await items.unmatched_in_period(lab.msp_id, lab.client_id, **span)],
+            lab.client_id in await runs.clients_in_period(lab.msp_id, **span),
+        )
+
+    assert found == {name: (([run], [run], [run], True) if name == month else ([], [], [], False)) for name in found}
+
+
+@pytest.mark.parametrize("state", ["expired", "queued", "dispatched"])
+async def test_a_run_with_no_result_is_its_creation_s_month_whatever_else_its_row_holds(lab, state):
+    run = await lab.make_run(state=state, created_at=at(30, 23, 50), received_at=at(5, month=10), finished_at=at(5, month=10))
+
+    september = await RunRepo(lab.session).period(lab.msp_id, lab.client_id, start=SEPTEMBER.start_at, end=SEPTEMBER.end_at)
+
+    assert [r.id for r in september] == [run]
+
+
+async def test_a_late_result_is_counted_on_its_own_line_dated_by_its_end_and_first_in_the_month_s_order(lab):
+    late = await lab.tested("fail", finished_at=at(30, 23, 50), received_at=at(1, 3, 5, month=10), recovery_ms=1000)
+    passed = await lab.tested("pass", finished_at=at(5, month=10), received_at=at(5, 2, 1, month=10), recovery_ms=1000)
+    now = dt.datetime(2026, 11, 1, 3, tzinfo=UTC)
+
+    with pytest.raises(RepoError, match="^period: no run in the period$"):
+        await gather(lab.session, lab.msp_id, lab.client_id, SEPTEMBER, now=now)
+    october = await gather(lab.session, lab.msp_id, lab.client_id, OCTOBER, now=now)
+
+    assert [(line.run_id, line.date) for line in october.runs] == [(late, at(30, 23, 50)), (passed, at(5, month=10))]
+    assert (october.late, october.tests, october.failed, october.passed) == (1, 2, 1, 1)
+    (failure,) = october.failures
+    assert failure.retested_at == at(5, month=10)
+    html = render_html(october, "0" * 64)
+    assert f'<p class="overall quiet">{LATE_LINE} 1</p>' in html
+
+
+async def test_a_month_without_a_late_result_has_no_such_line(lab):
+    await lab.tested("pass", finished_at=at(5), received_at=at(5, 2, 1), recovery_ms=1000)
+
+    data = await gather(lab.session, lab.msp_id, lab.client_id, SEPTEMBER, now=lab.time)
+
+    assert data.late == 0 and LATE_LINE not in render_html(data, "0" * 64)
+
+
+async def test_a_late_pass_that_ended_before_a_failure_is_no_later_test_of_it(lab):
+    """The month's order is the tests' ends: a pass of 30 September that
+    arrived on 10 October did not come after the failure of 5 October."""
+    failed = await lab.tested("fail", finished_at=at(5, month=10), received_at=at(5, 2, 1, month=10))
+    late_pass = await lab.tested("pass", finished_at=at(30, 23, 50), received_at=at(10, month=10), recovery_ms=1000)
+
+    data = await gather(lab.session, lab.msp_id, lab.client_id, OCTOBER, now=dt.datetime(2026, 11, 1, 3, tzinfo=UTC))
+
+    assert [line.run_id for line in data.runs] == [late_pass, failed]
+    (failure,) = data.failures
+    assert failure.line.run_id == failed and failure.retested_at is None
+
+
+@pytest.mark.parametrize(
+    ("now", "september_closed", "job_month"),
+    [
+        (dt.datetime(2026, 9, 30, 23, 59, 59, tzinfo=UTC), False, "2026-08"),
+        (dt.datetime(2026, 10, 1, 0, 0, 30, tzinfo=UTC), False, "2026-08"),
+        (dt.datetime(2026, 10, 1, 2, 59, 59, tzinfo=UTC), False, "2026-08"),
+        (dt.datetime(2026, 10, 1, 3, 0, 0, tzinfo=UTC), True, "2026-09"),
+        (dt.datetime(2026, 10, 31, 23, 0, 0, tzinfo=UTC), True, "2026-09"),
+        (dt.datetime(2026, 11, 1, 1, 0, 0, tzinfo=UTC), True, "2026-09"),
+        (dt.datetime(2026, 11, 1, 5, 0, 0, tzinfo=dt.timezone(dt.timedelta(hours=2))), True, "2026-10"),  # 03:00 UTC
+    ],
+)
+def test_a_month_is_closed_three_hours_after_its_last_day_and_the_job_s_month_is_the_newest_closed_one(now, september_closed, job_month):
+    assert closed(SEPTEMBER, now) is september_closed
+    assert closed_month(now).name == job_month
+    assert closed(closed_month(now), now)
+
+
+def test_a_month_stops_taking_results_an_hour_before_its_final_report_may_be_made():
+    """The hour between the two is the room an upload stamped just inside
+    the close has to commit before the month is read."""
+    assert (RESULTS_CLOSE, FINAL_AFTER) == (dt.timedelta(hours=2), dt.timedelta(hours=3))
+    assert FINAL_AFTER - RESULTS_CLOSE >= dt.timedelta(hours=1)
+    assert NOT_CLOSED == "not closed until 03:00 UTC on the 1st"
+
+
+async def test_a_final_report_is_refused_while_its_month_still_takes_results_before_anything_is_read(lab, test_engine, monkeypatch):
+    """Finding 2, whoever asks (the job's start run, the CLI at 00:10 on the 1st)."""
+    await lab.month()
+    seen: list[str] = []
+
+    def listen(_conn, _cursor, statement, _params, _context, _executemany):
+        seen.append(statement.split()[0].upper())
+
+    with monkeypatch.context() as patch:
+        patch.setattr("app.report.generate.render_report", lambda data: pytest.fail("rendered a month that still takes results"))
+        event.listen(test_engine.sync_engine, "before_cursor_execute", listen)
+        try:
+            with pytest.raises(RepoError, match="^period: not closed until 03:00 UTC on the 1st$"):
+                await make(lab, now=dt.datetime(2026, 10, 1, 2, 59, 59, tzinfo=UTC))
+        finally:
+            event.remove(test_engine.sync_engine, "before_cursor_execute", listen)
+
+    assert seen == [] and await report_rows(lab) == [] and lab.bodies == []
+    lab.expect_put(lab.final_key())
+    made = await make(lab, now=dt.datetime(2026, 10, 1, 3, 0, 0, tzinfo=UTC))
+    assert made.values["interim"] == "false"
+
+
+async def test_the_loser_of_two_final_reports_at_once_is_told_the_month_is_reported_and_puts_nothing(lab, monkeypatch):
+    """Finding 7: both found no final report and rendered; the second's
+    insert is refused by a unique (the key's or the period's), and the word
+    is the period's either way."""
+    await lab.month()
+    lab.expect_put(lab.final_key())
+    await make(lab)
+
+    async def not_yet(self, msp_id, client_id, period_start):
+        return None
+
+    monkeypatch.setattr(ReportRepo, "final", not_yet)
+
+    with pytest.raises(RepoError, match="^period: already reported$"):
+        async with lab.session.begin_nested():
+            await make(lab)
+
+    assert len(lab.bodies) == 1 and len(await report_rows(lab)) == 1
+    lab.stubber.assert_no_pending_responses()
+
+
+async def test_a_report_without_a_pass_prints_no_control_s_first_sentence_and_one_with_a_pass_prints_all_four(lab):
+    """Finding 3: a month whose only run expired, failed or errored said
+    "On the dates listed, a sample of items was restored ..." four times."""
+    await lab.make_run(state="expired", created_at=at(3))
+    await lab.tested("fail", finished_at=at(4))
+    await lab.tested("error", finished_at=at(6), error_code="veeam_unreachable")
+
+    without = render_html(await gather(lab.session, lab.msp_id, lab.client_id, SEPTEMBER, now=lab.time), "0" * 64)
+
+    assert without.count(f"<td>{frameworks.NO_PASS}</td>") == 4 and "On the dates listed" not in without
+    for control in frameworks.CONTROLS:
+        assert str(escape(control.not_covered)) in without and control.identifier in without
+    await lab.tested("pass", finished_at=at(7), recovery_ms=1000)
+
+    with_one = render_html(await gather(lab.session, lab.msp_id, lab.client_id, SEPTEMBER, now=lab.time), "0" * 64)
+
+    assert frameworks.NO_PASS not in with_one
+    for control in frameworks.CONTROLS:
+        assert f"<td>{escape(control.demonstrates)}</td>" in with_one

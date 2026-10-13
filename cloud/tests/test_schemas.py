@@ -95,6 +95,19 @@ def test_the_image_copies_the_schemas_the_verifier_and_the_tsa_root_beside_app_a
     assert compose.count("alembic upgrade head") == 1
 
 
+def test_the_scheduler_service_has_the_five_s3_variables_for_the_report_job():
+    """C6.6 (docs/decisions.md 2026-10-13, point 1): the scheduler's process
+    reads them at start through `storage_settings_from_environment`; the
+    Compose service takes the one environment anchor the api takes."""
+    compose = (shared_dir().parent / "cloud" / "docker-compose.yml").read_text(encoding="utf-8")
+    anchor = compose[compose.index("x-app-environment: &app-environment"):compose.index("services:")]
+    scheduler = compose[compose.index("  scheduler:"):compose.index("volumes:", compose.index("  scheduler:"))]
+
+    assert all(f"\n  {name}:" in anchor for name in ("DATABASE_URL", "S3_ENDPOINT", "S3_ACCESS_KEY", "S3_SECRET_KEY", "S3_BUCKET"))
+    assert "environment: *app-environment" in scheduler
+    assert compose.count("environment: *app-environment") == 2  # the api and the scheduler, the same environment
+
+
 REPORT_PACKAGES = ("libpango-1.0-0", "libpangoft2-1.0-0", "libharfbuzz-subset0", "fonts-dejavu-core", "fontconfig")
 
 

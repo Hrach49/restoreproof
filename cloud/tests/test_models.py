@@ -199,9 +199,9 @@ def test_every_time_is_a_timestamp_with_time_zone_that_refuses_a_naive_value():
     times = [column for column in columns if isinstance(column.type, UtcDateTime)]
 
     assert not [column for column in columns if isinstance(column.type, DateTime)]
-    assert len(times) == 19
+    assert len(times) == 20
     assert all(column.type.impl.timezone is True for column in times)
-    assert {column.name for column in times} >= {"created_at", "last_seen_at", "last_error_at", "expires_at", "at", "tsa_time", "scheduled_for"}
+    assert {column.name for column in times} >= {"created_at", "last_seen_at", "last_error_at", "expires_at", "at", "tsa_time", "scheduled_for", "received_at"}
 
 
 def test_every_table_another_points_at_is_unique_on_msp_id_and_id():

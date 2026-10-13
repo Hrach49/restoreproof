@@ -6,6 +6,7 @@ so a missing variable ends the process before it listens.
 
 from __future__ import annotations
 
+import asyncio
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -80,6 +81,9 @@ def create_app(settings: Settings | None = None, *, log_stream: TextIO | None = 
     application.state.tsa_ca_pem = tsa_ca_pem()
     # C6.1: the login's limiter, in this process's memory on the monotonic clock.
     application.state.login_limiter = LoginLimiter(time.monotonic)
+    # C6.6: one report render at a time per process ("Generate now"; a render
+    # is CPU seconds in a thread).
+    application.state.render_slot = asyncio.Semaphore(1)
 
     # The last added is outermost: the API header stamps every answer, the
     # log middleware's own 500 included; the cap's 413 is logged as a request.

@@ -348,6 +348,11 @@ class TestRun(Base):
     tsa_ok: Mapped[bool | None] = mapped_column(Boolean)
     # C5.7: the token's own time (genTime, UTC, whole seconds), set with tsa_ok.
     tsa_time: Mapped[dt.datetime | None] = _time()
+    # The Cloud's clock when `RunRepo.receive` filed the bundle (the C6.6
+    # review's finding 1): a result that arrives once its month has closed is
+    # the month's it arrives in (`app/repo/runs.py`, `period_time`). Null for
+    # a run with no bundle.
+    received_at: Mapped[dt.datetime | None] = _time()
     cleanup_ok: Mapped[bool | None] = mapped_column(Boolean)
     error_code: Mapped[str | None] = mapped_column(Text)
     error_message: Mapped[str | None] = mapped_column(Text)

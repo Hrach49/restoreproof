@@ -281,9 +281,12 @@ never from the folder. See [verification.md](verification.md), "The signature".
 **Report.** A client's PDF of one period (C6.4): A4, six sections in a fixed order (Summary,
 Test log, Failures, Method, Integrity, Framework mapping), rendered with WeasyPrint from one
 template, stored under `msp/{msp_id}/reports/{client_id}/{period}.pdf` with a `report` row that
-holds its two hashes. Made by `manage.py generate-report` today, by C6.6's scheduler on the 1st
-and its "Generate now" later. It never claims more than was tested; four phrases are banned by a
-test. See [verification.md](verification.md), "The Cloud's report".
+holds its two hashes. Made by the scheduler's report job on the 1st for the previous month
+(C6.6), by "Generate now" on a client's reports page for the current month, and by `manage.py
+generate-report` by hand. It never claims more than was tested; four phrases are banned by a
+test, and the reviewed sentences are held verbatim by another (C6.5). The Test log, the
+Failures and the Integrity run list show at most 200 runs and say how many more there were; the
+Summary counts every run. See [verification.md](verification.md), "The Cloud's report".
 
 **Period.** One UTC calendar month, named `YYYY-MM`, the span a report covers. A `pass`, `fail`
 or `error` run is the month's by the time it ended (a result written afterwards: the time it was
@@ -299,6 +302,36 @@ own hash. `report.content_sha256`, `report.file_sha256`.
 **Interim report.** A report of a period that is not over (C6.4): its last day is not before
 the day it was generated. Its title says so, its key carries its generation time, and a client
 may have any number of them for a month beside the one final report (`uq_report_final_period`).
+"Generate now" on a client's reports page makes one (C6.6), at most one per client every ten
+minutes and one render at a time per process.
+
+**Late result.** A result the Cloud received (`test_run.received_at`, the Cloud's clock at the
+upload) at 02:00 UTC on the 1st after the month its run ended in, or later (`RESULTS_CLOSE`). It
+is a test of the month it arrived in, since the month it ended in may have its final report; the
+report prints it with its own date and counts it on a Summary line of its own.
+
+**Closed month.** A month whose final report may be made: from 03:00 UTC on the 1st after it
+(`FINAL_AFTER`, an hour after it stopped taking results). `generate` refuses a final report
+earlier (`period: not closed until 03:00 UTC on the 1st`).
+
+**Report job.** The scheduler's third job (C6.6, `tick_reports`): on the 1st at 03:00 UTC and
+once at the process's start, the newest closed month's final report for every client with a run
+in it, one transaction per client, a month that has its report skipped and never a failure, a
+client's failure logged by type while the next is made. A final report is never re-made.
+
+**Reports page.** `/reports` (the nav's "Reports", C6.6): every report of the MSP newest first,
+with the client, the period, the kind, the generation time, both hashes and a Download link;
+`/clients/{id}/reports` is one client's with "Generate now". The download,
+`GET /reports/{id}/file`, writes one `report.download` audit row (user, time, IP) and answers
+302 to a link pre-signed for ten minutes, as the bundle's download does.
+
+**Framework mapping.** The report's sixth section (C6.4, C6.7): the four controls (ISO/IEC
+27001:2022 A.8.13, SOC 2 Availability A1.2 and A1.3, HIPAA 45 CFR 164.308(a)(7)(ii)(D), DORA
+Article 12) by identifier and their own name, each with one sentence saying what a test marked
+pass shows ("On the dates listed, a sample of items was restored …") and one saying what the
+report does not look at; above the table, that it describes this evidence and is not an
+assessment of the control. `app/report/frameworks.py`, held verbatim by
+`tests/test_report_wording.py`; the outside reader's comments in `docs/decisions.md`.
 
 **Timestamp (`timestamp.tst`).** The file beside `result.json` that holds an RFC 3161
 TimeStampToken (W4.4): a timestamp authority's signed statement that the SHA-256 of

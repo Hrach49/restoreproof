@@ -8,7 +8,8 @@ bounds a body: the cap is held on the bytes as they arrive, whatever
 Content-Length said), hands the parts to `app/results.py`, which decides
 everything (the verification in a thread: it is CPU work of up to seconds),
 and runs the statements: the run's one `UPDATE` (whose rowcount settles a
-race with another upload), the items in one `INSERT`, the audit row, then the
+race with another upload; it stamps `received_at` with the Cloud's clock,
+which a report's month goes by for a result that arrives late), the items in one `INSERT`, the audit row, then the
 objects under
 `msp/<msp_id>/runs/<run_id>/`; 202 `{"run_id", "state"}` once the transaction
 is committed (`SessionDep`). A refusal is returned, not raised, so its one
@@ -19,6 +20,7 @@ transaction is `get_session`'s.
 from __future__ import annotations
 
 import asyncio
+import datetime as dt
 from typing import Annotated, Any, Literal
 
 from collections.abc import AsyncGenerator
@@ -45,6 +47,11 @@ router = APIRouter()
 MULTIPART = "multipart/form-data"
 AUDIT_RECEIVED = "result.received"
 AUDIT_REJECTED = "result.rejected"
+
+
+def now() -> dt.datetime:
+    """The Cloud's clock, the run's `received_at`; a test moves it."""
+    return dt.datetime.now(dt.timezone.utc)
 
 
 class Accepted(BaseModel):
@@ -207,7 +214,7 @@ async def upload(request: Request, worker: Annotated[Worker, Depends(current_wor
 
     key = results.bundle_key(worker.msp_id, run.id)
     update = results.run_update(verified, key)
-    touched = await runs.receive(worker.msp_id, run.id, worker_id=worker.id, update=update)
+    touched = await runs.receive(worker.msp_id, run.id, worker_id=worker.id, update=update, at=now())
     if touched == 0:
         # Another upload filed the run meanwhile (the sweep and the poll leave
         # a run one that takes a bundle, so they never make the UPDATE miss).

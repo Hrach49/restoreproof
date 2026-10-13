@@ -7,6 +7,20 @@ Format: date, decision, reason, alternatives rejected.
 
 ---
 
+## 2026-10-13 — C6.7 (#73): the Framework mapping read by the owner, no change asked; no reader with audit experience has read it
+
+The issue's step is "Have someone with audit experience read the four sentences; record their comments in docs/decisions.md", and its Done-when "the wording has been reviewed by one outside reader". **That reader was not found.** The owner read the table and closes the issue on that reading; this entry says so, so that the log does not claim an auditor's review.
+
+**What was read.** The last section of `docs/api/cloud-lab/c6.4-sample-report.pdf`: the sentence above the table (`ABOUT`, "The table describes this evidence; it is not an assessment of the control."), the four rows (ISO/IEC 27001:2022 A.8.13; SOC 2 A1.2 and A1.3, named by the criteria's own words shortened with an ellipsis; HIPAA 45 CFR 164.308(a)(7)(ii)(D); DORA Article 12), each with its sentence for what a test marked pass shows and its sentence for what the report does not look at; and `NO_PASS` ("No test in this report is marked pass, so it shows nothing for this control."), read from the text since the sample has passes and does not print it. Claude named the HIPAA row's "which is one input to the periodic testing of a contingency plan" as the table's strongest claim.
+
+**The owner's answer (2026-10-13):** "OK". No sentence is changed; `frameworks.py` and `tests/test_report_wording.py` stand as they are.
+
+**Open, and the owner's to pick up:** a reading by someone with audit experience, of the four rows and `NO_PASS`, before a report is given to an auditor as evidence for one of these controls. The questions to put: is the SOC 2 row's shortening of the criteria fair, and is "not of a recovery plan exercise" plain enough that the report is no A1.3 evidence on its own; does the HIPAA sentence say too much; is the restore time rightly named in the DORA row. A comment of theirs is a new entry and a wording change under the test.
+
+Closes #73.
+
+---
+
 ## 2026-10-13 — C6.5 (#71): the owner's reading of the Summary and the Method, no change asked; the late-result rule of the code review's finding 1 approved as written
 
 The "C6.6, C6.5 and C6.7" entry's point 5 has the owner name the C6.5 reviewer or be the reviewer. The owner is the reviewer.

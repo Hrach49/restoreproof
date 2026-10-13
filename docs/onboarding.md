@@ -192,6 +192,24 @@ nothing and prints no secret but the one token it exists to print.
    The file hash is the SHA-256 of the object; the content hash is printed inside the PDF (the
    file cannot hold its own hash). One audit row `report.create`.
 
+   **Checking a report** (Q6.1): any stored report, by its id (the pages list it), against what
+   the bucket holds: its object's hash, and every run's token read back and verified, its time
+   the row's and within two minutes of the test's end. Exit 0 with no finding; each finding one
+   `<run id>: <word>` line on stderr and exit 1. The same five `S3_*` variables.
+
+   ```
+   manage.py check-report --msp-id <msp_id> --report-id <report_id>
+   report_id 3f1a…
+   final true
+   file_sha256 ok
+   runs 5
+   stamped 4
+   not_stamped 1
+   no_bundle 0
+   late 0
+   findings 0
+   ```
+
 ## The refusals, by command
 
 | Command | Line | Why |
@@ -218,4 +236,7 @@ nothing and prints no secret but the one token it exists to print.
 | `generate-report` | `period: not YYYY-MM` / `has not begun` / `no run in the period` / `not closed until 03:00 UTC on the 1st` / `already reported` | the month's rule; a month not yet begun; no run of the client ended in it (and no expired one of it); a month that ended less than three hours ago; its final report exists (also when another process made it meanwhile) |
 | `generate-report` | `client_id: no such client` | not this MSP's |
 | `generate-report` | `settings error: S3_ENDPOINT is missing; …` | the five S3 variables, named at once, before the database |
+| `check-report` | `report_id: no such report` | not this MSP's, or no report of that id |
+| `check-report` | `settings error: S3_ENDPOINT is missing; …` | the five S3 variables, named at once, before the database |
+| `check-report` | `report: N check(s) failed`, after one `<run id>: <word>` line per finding (`file: <word>` for the object) | a check missed: the object's hash, a token, a time, a row's bundle columns (`docs/verification.md` "The report checks" lists the words) |
 | any | `database: unreachable` / `settings error: DATABASE_URL …` / `internal: <type>` | the environment, or an error nobody foresaw (its type alone) |

@@ -12,9 +12,12 @@ import datetime as dt
 import io
 import re
 import uuid
+from typing import Any
 
+from botocore.response import StreamingBody
 from botocore.stub import ANY
 from pypdf import PdfReader
+from sqlalchemy import text
 
 from app.repo.clients import ClientRepo
 from app.repo.connectors import ConnectorRepo
@@ -22,7 +25,7 @@ from app.repo.items import ItemRepo, ItemRow
 from app.repo.plans import PlanRepo
 from app.report.data import Period, period_of
 from tests.pages_lab import UTC, PagesLab
-from tests.results_lab import NOW
+from tests.results_lab import NOW, Parts
 from tests.test_contract import VECTOR
 from tests.test_repo_connectors import profile_for
 
@@ -57,6 +60,8 @@ class ReportLab(PagesLab):
             self.msp_id, self.client2_id, self.connector2_id, sample_mail=1, sample_sp=0, sample_od=0, cadence_cron="0 5 * * *", now=NOW
         )).id
         self.bodies: list[bytes] = []
+        # Every object put, by key (Q6.1: the check reads them back).
+        self.objects: dict[str, bytes] = {}
         self.storage.client.meta.events.register("before-parameter-build.s3.PutObject", self._keep_body)
 
     @property
@@ -67,6 +72,7 @@ class ReportLab(PagesLab):
         """The PDFs put, in order (the vector's own puts are not PDFs)."""
         if params.get("ContentType") == PDF_TYPE:
             self.bodies.append(params["Body"])
+        self.objects[params["Key"]] = params["Body"]
 
     def expect_put(self, key: str) -> None:
         """One put under `key` of a PDF: the Stubber takes any body and the
@@ -76,6 +82,77 @@ class ReportLab(PagesLab):
             {"ETag": '"x"'},
             expected_params={"Bucket": self.settings.s3_bucket, "Key": key, "Body": ANY, "ContentType": PDF_TYPE},
         )
+
+    def expect_get(self, key: str, body: bytes | None = None) -> None:
+        """One `get_object` of `key` answered with `body` (the bytes put under
+        it unless given: a planted fault answers other bytes)."""
+        data = self.objects[key] if body is None else body
+        self.stubber.add_response(
+            "get_object", {"Body": StreamingBody(io.BytesIO(data), len(data))}, expected_params={"Bucket": self.settings.s3_bucket, "Key": key}
+        )
+
+    def expect_missing(self, key: str) -> None:
+        """One `get_object` of `key` answered with S3's `NoSuchKey`."""
+        self.stubber.add_client_error("get_object", service_error_code="NoSuchKey", expected_params={"Bucket": self.settings.s3_bucket, "Key": key})
+
+    def expect_run_objects(self, run, *, names: list[str] | None = None, objects: dict[str, bytes] | None = None) -> None:
+        """What the check reads of one run, in its order: the prefix listed
+        (the bundle's files unless `names` is given), then, for a stamped run,
+        `result.json` and `timestamp.tst` when listed, each the bytes put
+        unless `objects` plants others."""
+        if run.state not in ("pass", "fail", "error") or run.bundle_key is None:
+            return
+        prefix = run.bundle_key
+        listed = sorted(k[len(prefix):] for k in self.objects if k.startswith(prefix)) if names is None else names
+        self.stubber.add_response(
+            "list_objects_v2",
+            {"Contents": [{"Key": prefix + name} for name in listed]} if listed else {},
+            expected_params={"Bucket": self.settings.s3_bucket, "Prefix": prefix, "MaxKeys": 1000},
+        )
+        if not run.tsa_ok:
+            return
+        for name in ("result.json", "timestamp.tst"):
+            if name in listed:
+                self.expect_get(prefix + name, (objects or {}).get(name))
+
+    async def land(
+        self,
+        *,
+        ended_at: str | None,
+        stamped_at: dt.datetime | None,
+        received_at: dt.datetime,
+        base: dict[str, Any] | None = None,
+        attachments: dict[str, bytes] | None = None,
+        dispatched_at: dt.datetime | None = None,
+    ) -> uuid.UUID:
+        """A run of the first Worker dispatched (at `dispatched_at` when
+        given) and its bundle posted as the Worker posts it, the result's
+        `ended_at` as given (None: a result written afterwards, on `base`),
+        a token of the test TSA at `stamped_at` (None: no token), the upload's
+        clock at `received_at`: 202."""
+        run_id = await self.inner.run()
+        if dispatched_at is not None:
+            await self.session.execute(text("UPDATE test_run SET dispatched_at = :at WHERE id = :id"), {"at": dispatched_at, "id": run_id})
+
+        def patch(document: dict[str, Any]) -> None:
+            # The pages' lab's client is the Worker vector's tenant, not the
+            # re-signed bundle's: the result names the lab's.
+            client = document["client"]
+            if client.get("tenant_id"):
+                client["tenant_id"] = VECTOR["tenant_id"]
+            if client.get("resolved"):
+                client["resolved"]["organization"]["tenant_id"] = VECTOR["tenant_id"]
+            if ended_at is not None:
+                ended = dt.datetime.strptime(ended_at, "%Y-%m-%dT%H:%M:%S.%fZ")
+                document["started_at"] = (ended - dt.timedelta(seconds=50)).strftime("%Y-%m-%dT%H:%M:%S.") + f"{ended.microsecond // 1000:03d}Z"
+                document["ended_at"] = ended_at
+
+        parts: Parts = self.inner.bundle(run_id, patch=patch, stamped_at=stamped_at, base=base, attachments=attachments)
+        self.inner.expect_puts(run_id, parts)
+        self.received = received_at
+        response = await self.inner.upload(parts)
+        assert response.status_code == 202, response.text
+        return run_id
 
     def final_key(self, period: Period = SEPTEMBER, client_id=None) -> str:
         return f"msp/{self.msp_id}/reports/{client_id or self.client_id}/{period.name}.pdf"

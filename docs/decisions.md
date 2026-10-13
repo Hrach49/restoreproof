@@ -7,6 +7,36 @@ Format: date, decision, reason, alternatives rejected.
 
 ---
 
+## 2026-10-13 — C6.7 (#73): the Framework mapping read by the owner, no change asked; no reader with audit experience has read it
+
+The issue's step is "Have someone with audit experience read the four sentences; record their comments in docs/decisions.md", and its Done-when "the wording has been reviewed by one outside reader". **That reader was not found.** The owner read the table and closes the issue on that reading; this entry says so, so that the log does not claim an auditor's review.
+
+**What was read.** The last section of `docs/api/cloud-lab/c6.4-sample-report.pdf`: the sentence above the table (`ABOUT`, "The table describes this evidence; it is not an assessment of the control."), the four rows (ISO/IEC 27001:2022 A.8.13; SOC 2 A1.2 and A1.3, named by the criteria's own words shortened with an ellipsis; HIPAA 45 CFR 164.308(a)(7)(ii)(D); DORA Article 12), each with its sentence for what a test marked pass shows and its sentence for what the report does not look at; and `NO_PASS` ("No test in this report is marked pass, so it shows nothing for this control."), read from the text since the sample has passes and does not print it. Claude named the HIPAA row's "which is one input to the periodic testing of a contingency plan" as the table's strongest claim.
+
+**The owner's answer (2026-10-13):** "OK". No sentence is changed; `frameworks.py` and `tests/test_report_wording.py` stand as they are.
+
+**Open, and the owner's to pick up:** a reading by someone with audit experience, of the four rows and `NO_PASS`, before a report is given to an auditor as evidence for one of these controls. The questions to put: is the SOC 2 row's shortening of the criteria fair, and is "not of a recovery plan exercise" plain enough that the report is no A1.3 evidence on its own; does the HIPAA sentence say too much; is the restore time rightly named in the DORA row. A comment of theirs is a new entry and a wording change under the test.
+
+Closes #73.
+
+---
+
+## 2026-10-13 — C6.5 (#71): the owner's reading of the Summary and the Method, no change asked; the late-result rule of the code review's finding 1 approved as written
+
+The "C6.6, C6.5 and C6.7" entry's point 5 has the owner name the C6.5 reviewer or be the reviewer. The owner is the reviewer.
+
+**What was read.** The Summary and the Method of `docs/api/cloud-lab/c6.4-sample-report.pdf` (the by-hand run of 2026-10-13T17:26Z, the code review's), with the question put for each sentence: could a customer take it to mean more than "these sampled items were restored and compared on these dates". Claude, which wrote the sentences, pointed at the ones that carry the most weight: what a pass means (the sampled items, not every item), the disaster-recovery sentence ("This report does not test full disaster recovery. …"), the new late-results line ("Tests that ended before this period and whose results arrived after that period had closed, counted here: N"), the sentence on how items are compared (a random file by its name and size, never its content) and the levels line ("level 4 partially").
+
+**The owner's answer (2026-10-13):** "OK". No sentence is changed, so `tests/test_report_wording.py`'s list stands as it is and the forbidden-phrase test (`tests/test_report.py`) is the one the code review's gate ran green. No comment was made on a single sentence; none is recorded here as if one had been.
+
+**What this reading is not.** It is the owner's, on Claude's list of where to look, and not a reading by someone outside the project. A pilot's first reader of a report is the next one; a comment of theirs on a sentence is a wording change under this test like any other.
+
+**The late-result rule.** The code review's entry marked its finding 1 as "a rule the entry did not have: the owner's to read": a result the Cloud receives at 02:00 UTC on the 1st after its month or later is a test of the month it arrives in (`test_run.received_at`, `RESULTS_CLOSE`), and no final report is made before 03:00 UTC on the 1st (`FINAL_AFTER`). It was put to the owner with its example (a test that ended on 30 September 23:50 and reached the Cloud on 1 October 03:05 is October's) and the alternative rejected (re-making September's final report, so that two September reports would exist). **Approved as written, 2026-10-13.** That entry's "(proposed)" is answered here; the entry is not rewritten.
+
+Closes #71.
+
+---
+
 ## 2026-10-13 — C6.6, C6.5 and C6.7 code review: findings 1 to 4, 6, 7 and 11 to 14 of fifteen fixed, 5, 8, 9, 10 and 15 open; finding 1 is fixed by a rule the entry did not have and the owner has not yet read (a result the Cloud receives once its month has closed is a test of the month it arrives in, by a new column `test_run.received_at`; no final report before 03:00 UTC on the 1st), with one new sentence in the Summary and one in the Framework mapping for the C6.5 reviewer and the C6.7 reader (proposed)
 
 The review of the branch `c6.5-c6.7-reports` against `main` (`/code-review xhigh`, commit `056aa17`) gave fifteen findings. The owner chose 1 to 4, 6, 7 and 11 to 14 to fix now. Nothing is committed or pushed until the owner asks.

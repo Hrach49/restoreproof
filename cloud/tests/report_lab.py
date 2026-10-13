@@ -95,9 +95,10 @@ class ReportLab(PagesLab):
         """The Done-when's September: the vector's pass (the 28th), a fail
         with a missing mail and a mismatched file (the 10th), an error with
         no item (the 20th), a later pass (the 25th), an expired run (the
-        15th); and, never in the report, a queued run of the month, a
-        dispatched one, a pass of October, a pass of August's last second,
-        and the second client's fail of the month."""
+        15th), a queued run (the 16th) and a dispatched one (the 17th), both
+        with no result yet; and, never in the report, a pass of October, a
+        pass of August's last second, and the second client's fail of the
+        month."""
         vector = await self.land_vector()
         failed = await self.tested(
             "fail", finished_at=at(10, 2, 30), restore_point_at=at(9, 23), recovery_ms=65000, bundle_sha256="ab" * 32, tsa_ok=True, tsa_time=at(10, 2, 30, 5),
@@ -116,21 +117,57 @@ class ReportLab(PagesLab):
         )
         await self.items(later, [an_item(0, name="RP-CANARY-0005")])
         expired = await self.make_run(state="expired", created_at=at(15))
-        await self.make_run(state="queued", created_at=at(16))
-        await self.make_run(state="dispatched", created_at=at(17), dispatched_at=at(17, 2, 1))
+        queued = await self.make_run(state="queued", created_at=at(16))
+        dispatched = await self.make_run(state="dispatched", created_at=at(17), dispatched_at=at(17, 2, 1))
         await self.tested("pass", finished_at=at(1, 0, 0, 0, month=10), recovery_ms=1000)
         await self.tested("pass", finished_at=SEPTEMBER_START - dt.timedelta(seconds=1), recovery_ms=1000)
         theirs = await self.tested(
             "fail", finished_at=at(12), client_id=self.client2_id, plan_id=self.plan2_id, connector_id=self.connector2_id, worker_id=self.other_worker_id,
         )
         await self.items(theirs, [an_item(0, name="THEIRS", found=False, match=False, reason="no restored copy found")])
-        return {"vector": vector, "failed": failed, "errored": errored, "later": later, "expired": expired, "theirs": theirs}
+        return {
+            "vector": vector, "failed": failed, "errored": errored, "later": later, "expired": expired, "queued": queued,
+            "dispatched": dispatched, "theirs": theirs,
+        }
 
 
 def pdf_text(pdf: bytes) -> str:
     """The PDF's text as pypdf reads it, whitespace folded to single spaces."""
     reader = PdfReader(io.BytesIO(pdf))
     return re.sub(r"\s+", " ", " ".join(page.extract_text() for page in reader.pages))
+
+
+def pdf_info(pdf: bytes) -> dict[str, str]:
+    """The PDF's Info dictionary as pypdf reads it. WeasyPrint writes it into
+    a compressed object stream, so a search of the raw bytes sees none of it
+    (the C6.4 review's finding 14)."""
+    return {str(key): str(value) for key, value in (PdfReader(io.BytesIO(pdf)).metadata or {}).items()}
+
+
+def pdf_trailer_keys(pdf: bytes) -> set[str]:
+    return {str(key) for key in PdfReader(io.BytesIO(pdf)).trailer}
+
+
+def past_the_page(html: str) -> list[str]:
+    """Every text of the laid-out report whose right edge is past its page's
+    content box: what pypdf's text cannot see (the review's finding 9)."""
+    from weasyprint import CSS, HTML
+
+    from app.report import render
+
+    document = HTML(string=html, base_url=str(render.REPORT_DIR)).render(stylesheets=[CSS(filename=str(render.REPORT_DIR / render.STYLESHEET))])
+    found: list[str] = []
+    boxes = 0
+    for page in document.pages:
+        box = page._page_box
+        limit = box.margin_left + box.padding_left + box.width + 0.5
+        for inner in box.descendants():
+            if type(inner).__name__ == "TextBox":
+                boxes += 1
+                if inner.position_x + inner.width > limit:
+                    found.append(inner.text)
+    assert boxes > 50, boxes
+    return found
 
 
 def page_count(pdf: bytes) -> int:

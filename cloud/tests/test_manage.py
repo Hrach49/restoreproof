@@ -568,6 +568,7 @@ async def test_generate_report_s_default_period_is_the_previous_month_of_the_clo
     ("period", "line"),
     [
         ("2026-9", "period: not YYYY-MM"),
+        ("0000-01", "period: not YYYY-MM"),
         ("2026-08", "period: no run in the period"),
         ("2027-01", "period: has not begun"),
     ],
@@ -618,6 +619,48 @@ async def test_generate_report_without_a_database_url_names_it_after_the_s3_vari
     result = await cli("generate-report", "--msp-id", str(uuid.UUID(int=1)), "--client-id", str(uuid.UUID(int=2)), "--period", "2026-09")
 
     assert (result.exit_code, result.stdout, result.stderr.strip()) == (1, "", "settings error: DATABASE_URL is missing")
+
+
+async def test_generate_report_words_a_render_or_a_put_that_fails_and_never_blames_the_database(database, rows, report_clock, bucket, monkeypatch):
+    """The C6.4 review's finding 11: a library that will not load and a
+    bucket that does not answer are OSErrors, which `run` worded `database:
+    unreachable` with the database healthy. One line each, the type alone,
+    exit 1, no row left."""
+    msp = lines(await cli("create-msp", "--name", "a"))
+    client = lines(await cli("create-client", "--msp-id", msp["msp_id"], "--name", "contoso", "--tenant-id", str(uuid.uuid4())))
+    await a_september(rows, msp["msp_id"], client["client_id"])
+    args = ("generate-report", "--msp-id", msp["msp_id"], "--client-id", client["client_id"], "--period", "2026-09")
+
+    def refused(self, key, body, content_type):
+        raise ConnectionError("Could not connect to the endpoint URL: http://secret-host:9000/bucket")
+
+    monkeypatch.setattr(manage.Storage, "put", refused)
+    put = await cli(*args)
+
+    def broken(_data):
+        raise OSError("cannot load library 'libpango-1.0-0'")
+
+    monkeypatch.setattr(manage.report_generate, "render_report", broken)
+    render = await cli(*args)
+
+    assert (put.exit_code, put.stdout, put.stderr.strip()) == (1, "", "storage: put failed (ConnectionError)")
+    assert (render.exit_code, render.stdout, render.stderr.strip()) == (1, "", "report: not rendered (OSError)")
+    assert await rows.read(lambda s: ReportRepo(s).list(uuid.UUID(msp["msp_id"]))) == []
+
+
+async def test_generate_report_with_an_endpoint_the_library_refuses_is_one_line_without_its_value(monkeypatch, report_clock):
+    """Finding 11: the settings take any `http` address; botocore refuses
+    this one with the address in its message, which was a traceback's last
+    line. The real `Storage.for_writing`, before the database."""
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    for name, value in S3_ENV.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setenv("S3_ENDPOINT", "http://my_minio:9000")
+
+    result = await cli("generate-report", "--msp-id", str(uuid.UUID(int=1)), "--client-id", str(uuid.UUID(int=2)), "--period", "2026-09")
+
+    assert (result.exit_code, result.stdout, result.stderr.strip()) == (1, "", "storage: not usable (ValueError)")
+    assert "my_minio" not in result.output
 
 
 def test_the_cli_builds_no_statement_and_logs_nothing():

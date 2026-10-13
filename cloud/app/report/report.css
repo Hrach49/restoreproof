@@ -32,3 +32,12 @@ thead { display: table-header-group; }
 code { font-family: "DejaVu Sans Mono", monospace; font-size: 8pt; }
 div.failure { page-break-inside: avoid; margin-bottom: 8pt; }
 p.retest { font-weight: 600; }
+/* A UUID or a hash has no place to break, so a table of them was wider than
+   the page (the C6.4 review's finding 9): the tables that hold identifiers
+   or an item's own text get fixed columns, and their cells, like every
+   identifier, may break anywhere. */
+table.runs, table.workers, table.items { table-layout: fixed; }
+table.runs col.a { width: 30%; } table.runs col.b { width: 42%; } table.runs col.c { width: 28%; }
+table.workers col.a { width: 22%; } table.workers col.b { width: 33%; } table.workers col.c { width: 45%; }
+table.items col.a { width: 13%; } table.items col.b { width: 36%; } table.items col.c { width: 13%; } table.items col.d { width: 38%; }
+table.runs td, table.workers td, table.items td, code, dd { overflow-wrap: anywhere; }

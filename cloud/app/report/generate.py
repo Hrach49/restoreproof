@@ -4,6 +4,13 @@ audit row `report.create`, then the object, in that order, so a refused row
 writes no object and a put that fails rolls the row back with the caller's
 transaction. The transaction is the caller's (the CLI commits one per
 command; C6.6's route and job will do the same); nothing here commits.
+
+What fails outside the database is a `ReportFailed`, worded here and never
+left to the caller's guess (the C6.4 review's finding 11: the CLI printed
+`database: unreachable` for a library that would not load and for a bucket
+that did not answer): the two passes `report: not rendered (<type>)`, the put
+`storage: put failed (<type>)`, the cause's type alone, never its message
+(botocore's quotes the endpoint).
 """
 
 from __future__ import annotations
@@ -25,6 +32,11 @@ from app.storage import Storage
 
 REPORT_CREATE = "report.create"
 PDF_TYPE = "application/pdf"
+
+
+class ReportFailed(RepoError):
+    """A report not made for a reason outside the database: no refusal of the
+    request, so a route answers it as its own fault, never a 409."""
 
 
 def now() -> dt.datetime:
@@ -57,7 +69,10 @@ async def generate(
     # the word is the period's; the index is the line for two at once.
     if not data.interim and await ReportRepo(session).final(msp_id, client_id, period.start) is not None:
         raise RepoError("period", ALREADY_REPORTED)
-    rendered = await asyncio.to_thread(render_report, data)
+    try:
+        rendered = await asyncio.to_thread(render_report, data)
+    except Exception as error:  # noqa: BLE001 - the libraries' and the template's faults alike; the type alone
+        raise ReportFailed("report", f"not rendered ({type(error).__name__})") from error
     key = storage_key(msp_id, client_id, period, data.interim, now)
     try:
         row = await ReportRepo(session).create(
@@ -74,7 +89,10 @@ async def generate(
     except IntegrityError as error:
         raise worded(error) from None
     await AuditRepo(session).write(msp_id, REPORT_CREATE, f"report:{row.id}", user_id=user_id, ip=ip)
-    await asyncio.to_thread(storage.put, key, rendered.pdf, PDF_TYPE)
+    try:
+        await asyncio.to_thread(storage.put, key, rendered.pdf, PDF_TYPE)
+    except Exception as error:  # noqa: BLE001 - botocore's errors are of several families; the type alone
+        raise ReportFailed("storage", f"put failed ({type(error).__name__})") from error
     return Created(
         (
             ("report_id", str(row.id)),

@@ -226,11 +226,15 @@ def generate_report(
     at = report_generate.now()
     try:
         month = report_data.period_of(period) if period is not None else report_data.previous_month(at.date())
-        storage = Storage.for_writing(storage_settings_from_environment())
+        settings = storage_settings_from_environment()
     except RepoError as error:
         _fail(str(error))
     except SettingsError as error:
         _fail(str(error))
+    try:
+        storage = Storage.for_writing(settings)
+    except Exception as error:  # noqa: BLE001 - botocore names the endpoint's value in its message; the type alone
+        _fail(f"storage: not usable ({type(error).__name__})")
     run(lambda session: report_generate.generate(session, storage, msp_id, client_id, month, now=at))
 
 

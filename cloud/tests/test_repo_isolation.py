@@ -162,19 +162,6 @@ async def make_world(session, name: str, *, clock: dt.datetime | None = None) ->
         storage_key=f"{name}/2026-09.pdf", content_sha256="ab" * 32, file_sha256="cd" * 32, interim=False,
         generated_at=NOW,
     )
-    if clock is not None:
-        await session.execute(text("UPDATE audit_log SET at = :at WHERE msp_id = :msp"), {"at": clock, "msp": msp.id})
-    world.audit = await AuditRepo(session).write(msp.id, action="test.write", target=f"{name}:x", user_id=user.id, ip="10.0.0.1")
-    # C6.3: the newest row by far, so a page before it has the connectors'
-    # rows: 30 days after the MSP's newest row, on any day's calendar (the
-    # C6.1-C6.3 review's finding 8: a fixed date was passed by the clock).
-    await session.execute(
-        text(
-            "UPDATE audit_log SET at = (SELECT max(at) FROM audit_log WHERE msp_id = :msp AND id <> :id) + interval '30 days' "
-            "WHERE id = :id"
-        ),
-        {"msp": msp.id, "id": world.audit.id},
-    )
     world.token = await InstallTokenRepo(session).create(
         msp.id, token_hash=a_hash(f"{name} token"), expires_at=NOW + dt.timedelta(days=7), label=f"{name} token"
     )
@@ -189,6 +176,22 @@ async def make_world(session, name: str, *, clock: dt.datetime | None = None) ->
     )
     world.spare_plan = await PlanRepo(session).create(
         msp.id, client.id, connector.id, sample_mail=1, sample_sp=0, sample_od=0, cadence_cron="0 3 * * *", now=NOW
+    )
+    # Last, after every row the world makes: the spare connector's audit row
+    # takes the database's now(), so moving the clock before it left one row
+    # at the real time (the C6.4 review's finding 15).
+    if clock is not None:
+        await session.execute(text("UPDATE audit_log SET at = :at WHERE msp_id = :msp"), {"at": clock, "msp": msp.id})
+    world.audit = await AuditRepo(session).write(msp.id, action="test.write", target=f"{name}:x", user_id=user.id, ip="10.0.0.1")
+    # C6.3: the newest row by far, so a page before it has the connectors'
+    # rows: 30 days after the MSP's newest row, on any day's calendar (the
+    # C6.1-C6.3 review's finding 8: a fixed date was passed by the clock).
+    await session.execute(
+        text(
+            "UPDATE audit_log SET at = (SELECT max(at) FROM audit_log WHERE msp_id = :msp AND id <> :id) + interval '30 days' "
+            "WHERE id = :id"
+        ),
+        {"msp": msp.id, "id": world.audit.id},
     )
     return world
 
@@ -564,25 +567,28 @@ async def test_daily_states_with_one_msp_s_id_counts_nothing_of_the_other(sessio
 
 
 async def test_counts_by_type_in_period_with_one_msp_s_id_counts_nothing_of_the_other(session, worlds):
-    """C6.4: of the world's runs in the month only the failed one has items
-    and is over (the queued run's two items are no test's), so the month's
-    counts are its one item."""
+    """C6.4: of the world's runs in the month two have items: the failed one
+    (one) and the queued one (two; a run with no result yet is the month's
+    since the C6.4 review's finding 2)."""
     a, b = worlds
 
     assert await ItemRepo(session).counts_by_type_in_period(a.msp.id, b.client.id, start=MONTH_START, end=MONTH_END) == []
     own = await ItemRepo(session).counts_by_type_in_period(a.msp.id, a.client.id, start=MONTH_START, end=MONTH_END)
-    assert [(count.run_id, count.type, count.count) for count in own] == [(a.failed_run.id, "mail", 1)]
+    assert sorted((str(count.run_id), count.type, count.count) for count in own) == sorted(
+        [(str(a.run.id), "mail", 2), (str(a.failed_run.id), "mail", 1)]
+    )
 
 
 # --- The audit reads on a moved calendar (the C6.1-C6.3 review's finding 8) ----------------
 
 
-@pytest.mark.parametrize("clock", [dt.datetime(2027, 6, 1, tzinfo=UTC), dt.datetime(2040, 1, 1, tzinfo=UTC)])
+@pytest.mark.parametrize("clock", [dt.datetime(2026, 1, 1, tzinfo=UTC), dt.datetime(2027, 6, 1, tzinfo=UTC), dt.datetime(2040, 1, 1, tzinfo=UTC)])
 async def test_the_audit_reads_hold_on_a_moved_clock(session, clock):
     """The hand-written audit row is placed after the MSP's newest row, not at
     a fixed date, so the keyset read before it answers the world's own rows
     whatever the calendar says: here with every other row at `clock`, past the
-    fixed date the old world used (2026-11-09)."""
+    fixed date the old world used (2026-11-09), and at a `clock` already
+    behind the real one, which is what every later day is to the other two."""
     a = await make_world(session, "a", clock=clock)
     b = await make_world(session, "b", clock=clock)
     reads = [read for read in READS if read.repo is AuditRepo and read.method == "page"]

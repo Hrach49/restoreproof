@@ -1,8 +1,8 @@
 """What a month's report says (C6.4; docs/decisions.md 2026-10-12, "C6.4",
 points 4, 5 and 9): the period (one UTC calendar month), which runs are its
 (`app/repo/runs.py`'s `period_filter`: a tested run by the time it ended, an
-expired run by its creation, queued and dispatched never), the eight repo
-reads with `msp_id` first, and the arithmetic every section prints. `gather`
+expired run by its creation as one that did not run, a queued or dispatched
+one by its creation as one with no result yet), the eight repo reads with `msp_id` first, and the arithmetic every section prints. `gather`
 reads; `build` decides, pure, from rows. Nothing here renders or writes.
 """
 
@@ -39,10 +39,17 @@ _PERIOD = re.compile(r"^(\d{4})-(\d{2})$")
 BACKUP_SOURCES = {"veeam_m365": "Veeam Backup for Microsoft 365"}
 UNKNOWN_SOURCE = "not recorded"
 
-# The result word per state: the three verdicts as the pages print them, and
-# an expired run as what it is (point 4).
-RESULT_WORDS = {"pass": "pass", "fail": "fail", "error": "error", "expired": "did not run"}
+# The result word per state: the three verdicts as the pages print them, an
+# expired run as what it is (point 4), and a run still queued or handed out
+# as one with no result when the report is made (the review's finding 2).
 DID_NOT_RUN = "did not run"
+NO_RESULT = "no result yet"
+RESULT_WORDS = {
+    "pass": "pass", "fail": "fail", "error": "error", "expired": DID_NOT_RUN, "queued": NO_RESULT, "dispatched": NO_RESULT,
+}
+# The runs whose restore ran: the ones a recovery time and a restore point
+# are read from (an error is a test that could not run; the review's finding 5).
+RAN_STATES = ("pass", "fail")
 
 
 @dataclass(frozen=True)
@@ -76,9 +83,10 @@ def month_of(day: dt.date) -> Period:
 
 
 def period_of(text: str) -> Period:
-    """The month `YYYY-MM` names, or `period: not YYYY-MM` (never the text)."""
+    """The month `YYYY-MM` names, or `period: not YYYY-MM` (never the text);
+    the year 0000 is no year of the calendar."""
     found = _PERIOD.match(text)
-    if found is None or not 1 <= int(found.group(2)) <= 12:
+    if found is None or not 1 <= int(found.group(2)) <= 12 or int(found.group(1)) < dt.MINYEAR:
         raise RepoError("period", PERIOD_RULE)
     return month_of(dt.date(int(found.group(1)), int(found.group(2)), 1))
 
@@ -111,6 +119,8 @@ class RunLine:
     tsa_ok: bool | None
     tsa_time: dt.datetime | None
     worker_id: UUID
+    plan_id: UUID
+    cleanup_ok: bool | None
     error_code: str | None
     error_message: str | None
 
@@ -121,6 +131,14 @@ class RunLine:
     @property
     def tested(self) -> bool:
         return self.state in TESTED_STATES
+
+    @property
+    def ran(self) -> bool:
+        return self.state in RAN_STATES
+
+    @property
+    def items(self) -> int:
+        return self.mail + self.sp + self.od
 
 
 @dataclass(frozen=True)
@@ -166,25 +184,48 @@ class ReportData:
     failed: int
     errored: int
     did_not_run: int
+    no_result: int
     overall: str
+    overall_class: str
     errors_line: str | None
     average_recovery_ms: int | None
     max_recovery_ms: int | None
     restore_points: list[dt.datetime]
     failures: list[Failure]
     plans: list[PlanSizes]
+    ran: int
+    files_sampled: bool
+    cleanup_incomplete: int
     workers: list[WorkerLine]
     controls: tuple[Control, ...]
     pending: str
 
 
 def found_word(item: TestItem) -> str:
-    """What the Failures section says of an item that did not match."""
-    if item.found is False:
-        return "missing"
-    if item.found is True and item.match is False:
-        return "mismatch"
-    return "not checked"
+    """What the Failures section says of an item that did not match. `match`
+    decides first: an item the Worker could not check (its target unreadable)
+    is stored as not found with `match` unknown, and that is "not checked",
+    never "missing" (the review's finding 1)."""
+    if item.match is not False:
+        return "not checked"
+    return "missing" if item.found is False else "mismatch"
+
+
+def run_date(run: TestRun) -> dt.datetime:
+    """The time that puts a run in a month and orders it there:
+    `app/repo/runs.py`'s `period_time` on a row."""
+    if run.state in TESTED_STATES:
+        return run.finished_at or run.tsa_time or run.dispatched_at or run.created_at
+    return run.created_at
+
+
+def overall_class(tests: int, failed: int, errored: int) -> str:
+    """The headline's colour: a month with no test is no pass (finding 8)."""
+    if failed:
+        return "fail"
+    if errored:
+        return "error"
+    return "pass" if tests else "quiet"
 
 
 def _tests_word(count: int) -> str:
@@ -224,7 +265,7 @@ def build(
             run_id=run.id,
             state=run.state,
             result=RESULT_WORDS[run.state],
-            date=run.finished_at or run.created_at,
+            date=run_date(run),
             restore_point_at=run.restore_point_at,
             mail=by_type.get((run.id, "mail"), 0),
             sp=by_type.get((run.id, "sharepoint"), 0),
@@ -234,6 +275,8 @@ def build(
             tsa_ok=run.tsa_ok,
             tsa_time=run.tsa_time,
             worker_id=run.worker_id,
+            plan_id=run.plan_id,
+            cleanup_ok=run.cleanup_ok,
             error_code=run.error_code,
             error_message=run.error_message,
         )
@@ -244,14 +287,23 @@ def build(
     failed = sum(1 for line in tested if line.state == "fail")
     errored = sum(1 for line in tested if line.state == "error")
     overall, errors = overall_line(len(tested), passed, failed, errored)
-    recoveries = [line.recovery_ms for line in tested if line.recovery_ms is not None]
+    ran = [line for line in tested if line.ran]
+    recoveries = [line.recovery_ms for line in ran if line.recovery_ms is not None]
+    unmatched_of: dict[UUID, list[FailedItem]] = {}
+    for item in unmatched:
+        unmatched_of.setdefault(item.run_id, []).append(FailedItem(item.type, item.name, found_word(item), item.reason))
+    # Newest first, so each plan's nearest later pass is known when its
+    # failure is met: a pass of another plan sampled other things and is no
+    # later test of this one (the review's finding 7).
+    later_pass: dict[UUID, dt.datetime] = {}
     failures = []
-    for index, line in enumerate(lines):
-        if line.state not in ("fail", "error"):
-            continue
-        items = [FailedItem(item.type, item.name, found_word(item), item.reason) for item in unmatched if item.run_id == line.run_id]
-        retested = next((later.date for later in lines[index + 1 :] if later.state == "pass"), None)
-        failures.append(Failure(line, items, retested))
+    for line in reversed(lines):
+        if line.state == "pass":
+            later_pass[line.plan_id] = line.date
+        elif line.state in ("fail", "error"):
+            failures.append(Failure(line, unmatched_of.get(line.run_id, []), later_pass.get(line.plan_id)))
+    failures.reverse()
+    tested_plans = {line.plan_id for line in tested}
     sources = []
     for connector in connectors:
         word = BACKUP_SOURCES.get(connector.type, UNKNOWN_SOURCE)
@@ -270,14 +322,19 @@ def build(
         passed=passed,
         failed=failed,
         errored=errored,
-        did_not_run=sum(1 for line in lines if not line.tested),
+        did_not_run=sum(1 for line in lines if line.result == DID_NOT_RUN),
+        no_result=sum(1 for line in lines if line.result == NO_RESULT),
         overall=overall,
+        overall_class=overall_class(len(tested), failed, errored),
         errors_line=errors,
         average_recovery_ms=sum(recoveries) // len(recoveries) if recoveries else None,
         max_recovery_ms=max(recoveries) if recoveries else None,
-        restore_points=sorted({line.restore_point_at for line in tested if line.restore_point_at is not None}),
+        restore_points=sorted({line.restore_point_at for line in ran if line.restore_point_at is not None}),
         failures=failures,
-        plans=[PlanSizes(plan.sample_mail, plan.sample_sp, plan.sample_od) for plan in plans],
+        plans=[PlanSizes(plan.sample_mail, plan.sample_sp, plan.sample_od) for plan in plans if plan.id in tested_plans],
+        ran=len(ran),
+        files_sampled=any(line.sp or line.od for line in ran),
+        cleanup_incomplete=sum(1 for line in tested if line.cleanup_ok is False),
         workers=[WorkerLine(w.id, w.name, w.key_id) for w in workers if w.id in run_workers],
         controls=CONTROLS,
         pending=PENDING,

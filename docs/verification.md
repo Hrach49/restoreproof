@@ -2284,26 +2284,33 @@ client's PDF of one UTC calendar month, `YYYY-MM`, A4, six sections in this orde
 log, Failures, Method, Integrity, Framework mapping. Made by the CLI today; C6.6 adds the
 scheduler's job on the 1st, the reports page, "Generate now" and `report.download`.
 
-**Which runs are the month's.** A `pass`, `fail` or `error` run belongs to the month of the time
-it ended (`finished_at`, or `created_at` for the one case where a result's `ended_at` was refused
-by the calendar), so a run queued on the last night of a month and finished on the 1st is the
-new month's, where its timestamp is (Q6.1 holds each run's `tsa_time` against the period). An
-`expired` run belongs to the month of `created_at` and **is not a test**: it is counted once in
-the Summary ("Scheduled tests that did not run: N") and shown in the Test log as "did not run"
-with dashes. A `queued` or `dispatched` run is in no report. `app/repo/runs.py`'s
-`period_filter` is the one condition, and the three reads of a month (`RunRepo.period`,
-`ItemRepo.counts_by_type_in_period`, `ItemRepo.unmatched_in_period`) share it. A month that
-has not begun is `period: has not begun`; a month with no run of the client is `period: no run
-in the period`; nothing is written for either.
+**Which runs are the month's** (`app/repo/runs.py` `period_time`; changed by the C6.4 review,
+`docs/decisions.md` 2026-10-13, findings 2 and 3). A `pass`, `fail` or `error` run belongs to
+the month of the time it ended: `finished_at`, and for a result written afterwards, which has no
+`ended_at` (the Worker's `interrupted`, `result_invalid`, `internal`, `job_invalid`,
+`connector_unknown`), the time it was stamped (`tsa_time`), else the time it was last handed out
+(`dispatched_at`), and `created_at` only when nothing later is known. So a run queued on the
+last night of a month and finished or closed on the 1st is the new month's (Q6.1 holds each
+run's `tsa_time` against the period). Every other run belongs to the month of `created_at` and
+**is not a test**: an `expired` run is counted in the Summary ("Scheduled tests that did not
+run: N") and shown in the Test log as "did not run"; a `queued` or `dispatched` run is counted
+as "Scheduled tests with no result when this report was made: N" and shown as "no result yet",
+so a month whose Worker was off never reads as a month of passes. A run with no result when its
+month's final report is made stays in that report as such; if its bundle lands later it is the
+next month's test, by the time it ended. `period_filter` is the one condition, and the three
+reads of a month (`RunRepo.period`, `ItemRepo.counts_by_type_in_period`,
+`ItemRepo.unmatched_in_period`) share it; `app/report/data.py`'s `run_date` is the same rule on
+a row. A month that has not begun is `period: has not begun`; a month with no run of the client
+at all is `period: no run in the period`; nothing is written for either.
 
 **What each section reads.**
 
 | Section | What | From |
 |---|---|---|
-| Summary | the client and MSP names, the period, the overall line, tests run, average and maximum recovery time, scheduled tests that did not run, the backup source, restore points covered, the meaning of the three words, C6.5's sentence | `client.name`, `msp.name`; the month's runs; `recovery_ms` over the tested runs that have it; `connector.type` worded (`veeam_m365` is "Veeam Backup for Microsoft 365"); the distinct `restore_point_at` values, their count, first and last |
-| Test log | one row per run, oldest first: date, restore point, items as `mail / SP / OD`, result, recovery time, the run id's first eight hex digits | `finished_at` or `created_at`, `restore_point_at`, `test_item` rows grouped by `type`, `state`, `recovery_ms`, `id` |
-| Failures | one block per `fail` or `error` run: the date, the result, for an `error` its code and message, the items that did not match (type, name, `missing` / `mismatch` / `not checked`, the `reason` word), and "Re-tested and passed on <date>" when a later `pass` of the month exists, else "No later test in this period passed." | `error_code`, `error_message`; `test_item` rows with `match` not true (`found` false is missing, `found` true and `match` false a mismatch, both null not checked) |
-| Method | the plans' sizes, canary plus random selection, the three restore targets by name, the comparison fields, the issue's "Verification levels covered: 1, 2, 3; level 4 partially (files opened and read via Microsoft Graph)" | `test_plan` sizes; fixed text |
+| Summary | the client and MSP names, the period, the overall line (in the pass colour only when a test ran and none failed or errored; a month without a test is grey), tests run, average and maximum recovery time, scheduled tests that did not run, scheduled tests with no result, the backup source, restore points covered, the meaning of the three words, C6.5's sentence ("It records what each test listed here found for the items it sampled, on the dates shown.") | `client.name`, `msp.name`; the month's runs; `recovery_ms` and the distinct `restore_point_at` values over the `pass` and `fail` runs alone (an `error` is a test that could not run: its stopped span and its restore point are no part of either, and the Summary says so); `connector.type` worded (`veeam_m365` is "Veeam Backup for Microsoft 365") |
+| Test log | one row per run, oldest first: date, restore point, items as `mail / SP / OD`, result (`pass`, `fail`, `error`, "did not run", "no result yet"), recovery time, the run id's first eight hex digits | the run's date as above, `restore_point_at`, `test_item` rows grouped by `type`, `state`, `recovery_ms`, `id` |
+| Failures | one block per `fail` or `error` run: the date, the result, for an `error` its code and message, the items that did not match (type, name, `missing` / `mismatch` / `not checked`, the `reason` word), "Every item that was checked matched." for a run with items and none unmatched, "No item was checked." for a run with none, and "A later test of the same plan passed on <date>." (the nearest later `pass` of the run's own plan in the month), else "No later test of the same plan passed in this period." | `error_code`, `error_message`; `test_item` rows with `match` not true: `match` false is `missing` when `found` is false and `mismatch` otherwise; `match` unknown is `not checked` whatever `found` says (the Worker stores an item whose target it could not read as not found) |
+| Method | the sizes of the plans that have a result in the period, canary plus random selection, the three restore targets by name, the comparison fields (a random mail's sender when the backup lists one, a random file's size unless it is an Office document), in how many tests the removal from the target did not complete (`cleanup_ok` false; nothing when none), and "Verification levels covered: 1, 2, 3" when a test passed or failed, with "; level 4 partially (files opened and read via Microsoft Graph)" only when such a test sampled a file; a month in which none did says no level was covered | `test_plan` sizes of the runs' plans; the month's runs; fixed text |
 | Integrity | the content hash, the file-hash sentence, the generation time, the Workers of the month's runs (name, id, `key_id` as the public key's fingerprint), every run's id with its `bundle_sha256` and "timestamped <tsa_time>" or "not timestamped" | `worker`, `test_run` |
 | Framework mapping | the four controls by identifier and name, two columns a dash, and the sentence that their text is C6.7's and not part of the report yet | `app/report/frameworks.py` |
 
@@ -2319,8 +2326,11 @@ template, the stylesheet, the controls and every rendered report by a test.
 hash cell; the SHA-256 of that PDF is the **content hash**. Pass 2 prints the content hash; the
 SHA-256 of that file is the **file hash**. Both are the `report` row's (`content_sha256`,
 `file_sha256`); the PDF says, in one sentence, why there are two: a file cannot contain its own
-hash. WeasyPrint's defaults embed no creation date, no identifier and no producer, so one HTML is
-one byte sequence and the hash cell is the one difference between the passes; where WeasyPrint
+hash. WeasyPrint's defaults embed no creation date and no identifier, so one HTML is one byte
+sequence by one WeasyPrint version and the hash cell is the one difference between the passes
+(the file names its producer, `WeasyPrint <version>`, so the bytes are the version's `uv.lock`
+pins; a stored report is never rendered again, and the test reads the Info dictionary through
+pypdf, since it lies in a compressed stream); where WeasyPrint
 subsets fonts with fontTools (no HarfBuzz-Subset, as on the dev laptop) the fonts' `head` table
 would carry the time of the render, so `render_pdf` pins fontTools' `SOURCE_DATE_EPOCH` when
 nothing set it. The same HTML renders to the same bytes again in a test; rendering runs in a

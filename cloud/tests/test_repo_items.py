@@ -107,8 +107,9 @@ async def a_month(session):
     """A pass with three matched items of three types, a fail with a missing
     mail, a mismatched file and a matched one, an error with an item nobody
     checked, an expired run with an item (none should have one, but the read
-    counts what is there), a queued run with an item (no test), a run of last
-    month, and the other MSP's run of this month."""
+    counts what is there), a queued run with an item (no test, but the
+    month's since the C6.4 review's finding 2: a run with no result yet), a
+    run of last month, and the other MSP's run of this month."""
     q = await Queue.make(session)
     b = await Queue.make(session, "b")
     items = ItemRepo(session)
@@ -137,11 +138,11 @@ async def a_month(session):
     theirs = await b.run(created_at=dt.datetime(2026, 10, 3, tzinfo=UTC), state="fail")
     await session.execute(text("UPDATE test_run SET finished_at = created_at WHERE id = :id"), {"id": theirs.id})
     await items.create_many(b.msp.id, theirs.id, [item(0, name="theirs", match=False)])
-    return q, b, passed, failed, errored, expired
+    return q, b, passed, failed, errored, expired, queued
 
 
 async def test_counts_by_type_in_period_counts_the_month_s_runs_items_per_run_and_type(session):
-    q, b, passed, failed, errored, expired = await a_month(session)
+    q, b, passed, failed, errored, expired, queued = await a_month(session)
 
     counts = await ItemRepo(session).counts_by_type_in_period(q.msp.id, q.client.id, start=OCT, end=NOV)
 
@@ -150,6 +151,7 @@ async def test_counts_by_type_in_period_counts_the_month_s_runs_items_per_run_an
         (failed.id, "mail", 1), (failed.id, "sharepoint", 2),
         (errored.id, "mail", 1),
         (expired.id, "mail", 1),
+        (queued.id, "mail", 1),
     ]
     assert await ItemRepo(session).counts_by_type_in_period(q.msp.id, b.client.id, start=OCT, end=NOV) == []
     assert await ItemRepo(session).counts_by_type_in_period(b.msp.id, q.client.id, start=OCT, end=NOV) == []
@@ -158,7 +160,7 @@ async def test_counts_by_type_in_period_counts_the_month_s_runs_items_per_run_an
 async def test_unmatched_in_period_answers_the_failed_and_errored_runs_items_that_did_not_match(session):
     """By run (the month's order) then position; a matched item, a queued
     run's, an expired run's, last month's and the other MSP's never."""
-    q, b, passed, failed, errored, expired = await a_month(session)
+    q, b, passed, failed, errored, expired, queued = await a_month(session)
 
     rows = await ItemRepo(session).unmatched_in_period(q.msp.id, q.client.id, start=OCT, end=NOV)
 

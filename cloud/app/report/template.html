@@ -37,6 +37,7 @@
 {% for line in data.runs %}<tr><td>{{ line.date|utc }}</td><td>{{ line.restore_point_at|utc }}</td><td>{{ line.mail }} / {{ line.sp }} / {{ line.od }}</td><td><span class="state {{ "quiet" if not line.tested else line.state }}">{{ line.result }}</span></td><td>{{ line.recovery_ms|duration }}</td><td><code>{{ line.short_id }}</code></td></tr>
 {% endfor %}</tbody>
 </table>
+{% if data.runs_left_out %}<p class="note">{{ data.runs_left_out }} more tests of this period are not listed here; the Cloud's pages hold every one.</p>{% endif %}
 </section>
 
 <section id="failures-section">
@@ -60,6 +61,7 @@
 {% else %}
 <p>No test failed or errored in this period.</p>
 {% endfor %}
+{% if data.failures_left_out %}<p class="note">{{ data.failures_left_out }} more tests of this period are not listed here; the Cloud's pages hold every one.</p>{% endif %}
 </section>
 
 <section id="method-section">
@@ -97,17 +99,19 @@
 {% for line in data.runs %}<tr><td><code>{{ line.run_id }}</code></td><td>{% if line.bundle_sha256 %}<code>{{ line.bundle_sha256 }}</code>{% else %}—{% endif %}</td><td>{% if not line.tested %}—{% elif line.tsa_ok and line.tsa_time %}timestamped {{ line.tsa_time|utc }}{% else %}not timestamped{% endif %}</td></tr>
 {% endfor %}</tbody>
 </table>
+{% if data.runs_left_out %}<p class="note">{{ data.runs_left_out }} more tests of this period are not listed here; the Cloud's pages hold every one.</p>{% endif %}
 </section>
 
 <section id="framework-mapping-section">
 <h2 id="framework-mapping">Framework mapping</h2>
+<p class="about">{{ data.about }}</p>
 <table class="frameworks">
+<colgroup><col class="a"><col class="b"><col class="c"><col class="d"></colgroup>
 <thead><tr><th>Control</th><th>Name</th><th>What this evidence demonstrates</th><th>What it does not cover</th></tr></thead>
 <tbody>
-{% for control in data.controls %}<tr><td>{{ control.identifier }}</td><td>{{ control.name }}</td><td>{{ control.demonstrates or "—" }}</td><td>{{ control.not_covered or "—" }}</td></tr>
+{% for control in data.controls %}<tr><td>{{ control.identifier }}</td><td>{{ control.name }}</td><td>{{ control.demonstrates }}</td><td>{{ control.not_covered }}</td></tr>
 {% endfor %}</tbody>
 </table>
-<p class="note">{{ data.pending }}</p>
 </section>
 </body>
 </html>

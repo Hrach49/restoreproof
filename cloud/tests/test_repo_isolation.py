@@ -77,6 +77,7 @@ class World:
     failed_item: Any = None
     items: list = field(default_factory=list)
     report: Any = None
+    interim_report: Any = None
     audit: Any = None
     token: Any = None
     spare_client: Any = None
@@ -87,7 +88,7 @@ class World:
     @property
     def ids(self) -> set[uuid.UUID]:
         rows = [self.msp, self.user, self.client, self.worker, self.connector, self.plan, self.run,
-                self.stale_run, self.done_run, self.failed_run, self.failed_item, *self.items, self.report, self.audit,
+                self.stale_run, self.done_run, self.failed_run, self.failed_item, *self.items, self.report, self.interim_report, self.audit,
                 self.token, self.spare_client, self.spare_worker, self.spare_connector, self.spare_plan]
         return {row.id for row in rows}
 
@@ -161,6 +162,12 @@ async def make_world(session, name: str, *, clock: dt.datetime | None = None) ->
         msp.id, client.id, period_start=dt.date(2026, 9, 1), period_end=dt.date(2026, 9, 30),
         storage_key=f"{name}/2026-09.pdf", content_sha256="ab" * 32, file_sha256="cd" * 32, interim=False,
         generated_at=NOW,
+    )
+    # C6.6: an interim report a day older, so a page before the final one has a row of its own.
+    world.interim_report = await ReportRepo(session).create(
+        msp.id, client.id, period_start=dt.date(2026, 9, 1), period_end=dt.date(2026, 9, 30),
+        storage_key=f"{name}/2026-09-interim.pdf", content_sha256="12" * 32, file_sha256="34" * 32, interim=True,
+        generated_at=NOW - dt.timedelta(days=1),
     )
     world.token = await InstallTokenRepo(session).create(
         msp.id, token_hash=a_hash(f"{name} token"), expires_at=NOW + dt.timedelta(days=7), label=f"{name} token"
@@ -268,6 +275,10 @@ READS = [
     Read(ReportRepo, "final", _args("client, period", lambda w: (w.client.id, w.report.period_start))),
     Read(ReportRepo, "list"),
     Read(ReportRepo, "list", kwargs=_kwargs("client", lambda w: {"client_id": w.client.id})),
+    # C6.6: the reports pages' read (docs/decisions.md 2026-10-13, "C6.6, C6.5 and C6.7", point 2).
+    Read(ReportRepo, "page"),
+    Read(ReportRepo, "page", kwargs=_kwargs("client", lambda w: {"client_id": w.client.id})),
+    Read(ReportRepo, "page", kwargs=_kwargs("before", lambda w: {"before": w.report.id})),
     Read(AuditRepo, "list"),
     Read(InstallTokenRepo, "get", _args("token", lambda w: (w.token.id,))),
     Read(InstallTokenRepo, "list"),
@@ -340,6 +351,8 @@ CROSS_MSP = {(MspRepo, "list")}
 # C6.2: a read that answers counts, not rows; held by its own test below.
 # C6.4: the month's item counts per run and type, the same.
 COUNTS = {(RunRepo, "daily_states"), (ItemRepo, "counts_by_type_in_period")}
+# C6.6: a read that answers ids, not rows (the monthly job's clients); held by its own test below.
+IDS = {(RunRepo, "clients_in_period")}
 
 
 def every_repo_method() -> set[tuple[type, str]]:
@@ -358,7 +371,7 @@ def every_repo_method() -> set[tuple[type, str]]:
 
 def test_the_table_names_every_repo_method():
     """A method added later must be added to READS, WRITES or CREATES."""
-    in_table = {(r.repo, r.method) for r in READS} | {(w.repo, w.method) for w in WRITES} | CREATES | LOOKUPS | CROSS_MSP | COUNTS
+    in_table = {(r.repo, r.method) for r in READS} | {(w.repo, w.method) for w in WRITES} | CREATES | LOOKUPS | CROSS_MSP | COUNTS | IDS
 
     assert every_repo_method() == in_table
     assert len(every_repo_method()) >= 40
@@ -440,7 +453,7 @@ async def test_a_list_of_one_msp_is_the_whole_of_that_msp_s_rows(session, worlds
     assert {p.id for p in await PlanRepo(session).list(a.msp.id)} == {a.plan.id, a.spare_plan.id}
     assert {r.id for r in await RunRepo(session).list(a.msp.id)} == {a.run.id, a.stale_run.id, a.done_run.id, a.failed_run.id}
     assert [i.id for i in await ItemRepo(session).list(a.msp.id, a.run.id)] == [i.id for i in a.items]
-    assert [r.id for r in await ReportRepo(session).list(b.msp.id)] == [b.report.id]
+    assert [r.id for r in await ReportRepo(session).list(b.msp.id)] == [b.report.id, b.interim_report.id]
     # The connector creates wrote audit rows of their own beside the one written by hand.
     assert {row.action for row in await AuditRepo(session).list(b.msp.id)} == {"test.write", "connector.create"}
     assert [t.id for t in await InstallTokenRepo(session).list(b.msp.id)] == [b.token.id]
@@ -577,6 +590,18 @@ async def test_counts_by_type_in_period_with_one_msp_s_id_counts_nothing_of_the_
     assert sorted((str(count.run_id), count.type, count.count) for count in own) == sorted(
         [(str(a.run.id), "mail", 2), (str(a.failed_run.id), "mail", 1)]
     )
+
+
+async def test_clients_in_period_with_one_msp_s_id_names_nothing_of_the_other(session, worlds):
+    """C6.6: the month's clients of an MSP are its own client alone (every run
+    of the world is in NOW's month), never the other's."""
+    a, b = worlds
+
+    own = await RunRepo(session).clients_in_period(a.msp.id, start=MONTH_START, end=MONTH_END)
+
+    assert own == [a.client.id]
+    assert b.client.id not in own
+    assert await RunRepo(session).clients_in_period(b.msp.id, start=MONTH_START, end=MONTH_END) == [b.client.id]
 
 
 # --- The audit reads on a moved calendar (the C6.1-C6.3 review's finding 8) ----------------

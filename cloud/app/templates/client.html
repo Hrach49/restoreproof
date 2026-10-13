@@ -2,7 +2,7 @@
 {% block title %}{{ client.name }} · {{ layout.msp.name }}{% endblock %}
 {% block content %}
 <h1>{{ client.name }}</h1>
-<p class="muted">Tenant {{ client.tenant_id }}</p>
+<p class="muted">Tenant {{ client.tenant_id }} · <a href="/clients/{{ client.id }}/reports">Reports</a></p>
 <h2>Last 90 days</h2>
 <div class="strip" aria-label="one cell per day, the day's worst result">
 {% for day, worst, counts in cells %}<span class="day {{ worst or '' }}" title="{{ day.isoformat() }}{% for state, n in counts.items() %} {{ state }} {{ n }}{% endfor %}"></span>{% endfor %}

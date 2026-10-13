@@ -610,7 +610,7 @@ async def test_a_user_whose_msp_is_gone_is_the_app_s_failure(lab):
 
 def test_the_session_s_constants_and_the_salt():
     assert (SESSION_COOKIE, SESSION_MAX_AGE_S, sessions.SESSION_SALT) == ("rp_session", 43200, "restoreproof.session.v1")
-    assert words.ACTIONS == ("login.success", "login.failure", "login.blocked", "logout", "bundle.download", "worker.revoke")
+    assert words.ACTIONS == ("login.success", "login.failure", "login.blocked", "logout", "bundle.download", "worker.revoke", "report.download")
 
 
 async def test_the_helper_refuses_a_word_outside_the_list(lab):

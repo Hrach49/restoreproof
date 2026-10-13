@@ -224,12 +224,26 @@ def upgrade() -> None:
         sa.Column("period_start", sa.Date(), nullable=False),
         sa.Column("period_end", sa.Date(), nullable=False),
         _text("storage_key"),
-        _text("sha256"),
-        _time("generated_at", nullable=False, default_now=True),
+        _text("content_sha256"),
+        _text("file_sha256"),
+        _boolean("interim", nullable=False),
+        _time("generated_at", nullable=False),
         _pk("report"),
         _fk_msp("report"),
         _fk("report", ("client_id",), "client", ("id",)),
-        _sha256("report", "sha256"),
+        _unique("report", "msp_id", "id"),
+        _unique("report", "storage_key"),
+        _sha256("report", "content_sha256"),
+        _sha256("report", "file_sha256"),
+        _check("report", "period_order", "period_end >= period_start"),
+    )
+    # C6.4: one final report per client and period; interim ones as many as asked for.
+    op.create_index(
+        "uq_report_final_period",
+        "report",
+        ["msp_id", "client_id", "period_start"],
+        unique=True,
+        postgresql_where=sa.text("NOT interim"),
     )
 
     op.create_table(

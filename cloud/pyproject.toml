@@ -23,12 +23,14 @@ dependencies = [
     "structlog>=26.1.0",
     "typer>=0.27.3",
     "uvicorn>=0.54.0",
+    "weasyprint>=70",
 ]
 
 [dependency-groups]
 dev = [
     "httpx>=0.28.1",
     "mutmut>=3.8.0",
+    "pypdf>=6",
     "pytest>=8",
     "pytest-asyncio>=1.4.0",
     "pytest-cov>=7.1.0",

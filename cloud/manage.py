@@ -9,9 +9,13 @@ C5.9", points 1 to 5; docs/onboarding.md). From cloud/:
     uv run python manage.py revoke-worker --msp-id <uuid> --worker-id <uuid>
     uv run python manage.py create-user --msp-id <uuid> --email admin@example.test --role admin
     uv run python manage.py reset-password --email admin@example.test
+    uv run python manage.py generate-report --msp-id <uuid> --client-id <uuid> [--period 2026-09]
 
 or `docker compose exec api python manage.py <command> ...` inside the stack.
-`DATABASE_URL` alone, read as a migration reads it; no bucket, no SECRET_KEY.
+`DATABASE_URL` alone, read as a migration reads it; no bucket, no SECRET_KEY,
+but for `generate-report` (C6.4), which writes the PDF to the bucket and so
+reads the five S3 variables too (`storage_settings_from_environment`), still
+no SECRET_KEY.
 Each command is one transaction, committed when its function returns and
 rolled back when it raises; the logic is app/onboarding.py's, over the repos,
 and no statement is built here (tests/test_tenant_scope.py holds this file).
@@ -41,7 +45,10 @@ from app.cadence import DEFAULT_CADENCE
 from app.db import make_engine_for_url, make_session_factory
 from app.models import DEFAULT_CONNECTOR_TYPE, DEFAULT_RETENTION_DAYS
 from app.repo.errors import RepoError
-from app.settings import SettingsError, database_url_from_environment
+from app.report import data as report_data
+from app.report import generate as report_generate
+from app.settings import SettingsError, database_url_from_environment, storage_settings_from_environment
+from app.storage import Storage
 
 app = typer.Typer(add_completion=False, no_args_is_help=True, help=__doc__.split("\n\n")[0])
 
@@ -204,6 +211,31 @@ def reset_password(email: Email) -> None:
     """Give the user a new password (asked for) and end their sessions; prints user_id."""
     password = read_password()
     run(lambda session: onboarding.reset_password(session, email=email, password=password))
+
+
+@app.command("generate-report")
+def generate_report(
+    msp_id: MspId,
+    client_id: Annotated[uuid.UUID, typer.Option(help="the client's id")],
+    period: Annotated[str | None, typer.Option(help="the month, YYYY-MM (UTC); the previous month when not given")] = None,
+) -> None:
+    """Make the client's PDF report of a month (C6.4) and store it; prints
+    report_id, period, interim, storage_key, content_sha256, file_sha256.
+    Needs the S3 variables beside DATABASE_URL; the current month gives an
+    interim report, a month before it the final one, made once."""
+    at = report_generate.now()
+    try:
+        month = report_data.period_of(period) if period is not None else report_data.previous_month(at.date())
+        settings = storage_settings_from_environment()
+    except RepoError as error:
+        _fail(str(error))
+    except SettingsError as error:
+        _fail(str(error))
+    try:
+        storage = Storage.for_writing(settings)
+    except Exception as error:  # noqa: BLE001 - botocore names the endpoint's value in its message; the type alone
+        _fail(f"storage: not usable ({type(error).__name__})")
+    run(lambda session: report_generate.generate(session, storage, msp_id, client_id, month, now=at))
 
 
 if __name__ == "__main__":  # pragma: no cover - the process's entry

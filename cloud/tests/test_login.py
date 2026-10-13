@@ -572,12 +572,20 @@ async def test_the_static_files_are_served_and_htmx_is_the_vendored_file_held_to
 
 
 def test_every_template_autoescapes():
-    env = ui.environment()
+    """The pages' environment and the report's (C6.4) are both
+    `ui.make_environment`'s: autoescape on, an undefined name a fault."""
+    from app.report import render
 
-    for name in env.list_templates():
-        assert env.get_template(name).environment.autoescape is True, name
-    assert env.autoescape is True
-    assert env.from_string("{{ x }}").render(x="<b>") == "&lt;b&gt;"
+    for env in (ui.environment(), render.environment()):
+        templates = env.list_templates(extensions=["html"])
+        assert templates
+        for name in templates:
+            template = env.get_template(name)
+            assert template.environment.autoescape is True, name
+            assert template.environment.undefined is ui.StrictUndefined, name
+        assert env.autoescape is True
+        assert env.from_string("{{ x }}").render(x="<b>") == "&lt;b&gt;"
+    assert ui.environment().list_templates(extensions=["html"]) == sorted(p.name for p in ui.TEMPLATES_DIR.iterdir())
 
 
 def test_the_two_clocks_are_the_cloud_s_in_utc():

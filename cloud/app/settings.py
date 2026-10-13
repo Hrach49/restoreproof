@@ -105,6 +105,7 @@ def _settings_in(environ: Mapping[str, str] | None) -> dict[str, str]:
         for name, value in source.items()
         if name.lower() in Settings.model_fields and value != ""
     }
+    # StorageSettings' five names are all among Settings', so one reading serves both.
 
 
 def load_settings(environ: Mapping[str, str] | None = None) -> Settings:
@@ -117,12 +118,61 @@ def load_settings(environ: Mapping[str, str] | None = None) -> Settings:
     try:
         return Settings(**values)
     except ValidationError as error:
-        words = {
-            str(fault["loc"][0]): "is missing" if fault["type"] == "missing" else "is not valid"
-            for fault in error.errors(include_input=False, include_context=False)
-        }
-    faults = [f"{name.upper()} {words[name]}" for name in Settings.model_fields if name in words]
-    raise SettingsError("settings error: " + "; ".join(faults)) from None
+        line = _faults(error, Settings.model_fields)
+    raise SettingsError(line) from None
+
+
+class StorageSettings(BaseSettings):
+    """The five S3 variables alone (C6.4): what `manage.py generate-report`
+    and, in C6.6, the scheduler's report job need beside `DATABASE_URL`;
+    neither reads `SECRET_KEY`. The same names, shapes and defaults as
+    `Settings`' own, so `make_s3_client` takes either."""
+
+    model_config = SettingsConfigDict(hide_input_in_errors=True, extra="forbid", frozen=True)
+
+    s3_endpoint: str
+    s3_access_key: str
+    s3_secret_key: SecretStr
+    s3_bucket: str
+    s3_region: str = "us-east-1"
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        # As `Settings`: what the reader hands over is the only source.
+        return (init_settings,)
+
+    @field_validator("s3_endpoint")
+    @classmethod
+    def _http_endpoint(cls, value: str) -> str:
+        if not value.startswith(("http://", "https://")):
+            raise ValueError("not an http or https URL")
+        return value
+
+
+def _faults(error: ValidationError, fields: Mapping[str, Any]) -> str:
+    words = {
+        str(fault["loc"][0]): "is missing" if fault["type"] == "missing" else "is not valid"
+        for fault in error.errors(include_input=False, include_context=False)
+    }
+    return "settings error: " + "; ".join(f"{name.upper()} {words[name]}" for name in fields if name in words)
+
+
+def storage_settings_from_environment(environ: Mapping[str, str] | None = None) -> StorageSettings:
+    """The S3 settings alone, for a command that writes to the bucket and
+    needs no other setting. A fault names every faulty variable, never a value."""
+    values = {name: value for name, value in _settings_in(environ).items() if name in StorageSettings.model_fields}
+    try:
+        return StorageSettings(**values)
+    except ValidationError as error:
+        line = _faults(error, StorageSettings.model_fields)
+    raise SettingsError(line) from None
 
 
 def database_url_from_environment(environ: Mapping[str, str] | None = None) -> str:

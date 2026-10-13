@@ -8,6 +8,8 @@ test's own, since a command commits.
 from __future__ import annotations
 
 import asyncio
+import datetime as dt
+import hashlib
 import json
 import re
 import sys
@@ -18,6 +20,8 @@ from pathlib import Path
 import httpx
 import pytest
 import typer
+from botocore.stub import ANY, Stubber
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 from typer.testing import CliRunner
 
@@ -27,12 +31,15 @@ from app.main import create_app
 from app.repo.audit import AuditRepo
 from app.repo.clients import ClientRepo
 from app.repo.connectors import ConnectorRepo
+from app.repo.items import ItemRepo
 from app.repo.lookup import Lookup
 from app.repo.msps import MspRepo
 from app.repo.plans import PlanRepo
+from app.repo.reports import ReportRepo
 from app.repo.runs import RunRepo
 from app.repo.users import UserRepo
 from app.repo.workers import WorkerRepo
+from app.storage import Storage, make_s3_client
 from tests.conftest import make_settings
 from tests.test_registration import KEY, KEY_ID
 from tests.test_repo_connectors import VALID_PROFILE
@@ -41,7 +48,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import manage  # noqa: E402
 
 TOKEN_SHAPE = re.compile(r"^[A-Za-z0-9_-]{43}$")
-LINE = re.compile(r"^[a-z_]+ \S+$")
+LINE = re.compile(r"^[a-z0-9_]+ \S+$")
 runner = CliRunner()
 
 
@@ -220,6 +227,8 @@ async def test_a_refusal_is_one_line_on_stderr_exit_1_and_nothing_committed(data
         ("create-plan", "--msp-id", str(uuid.UUID(int=1)), "--client-id", str(uuid.UUID(int=1)), "--connector-id", str(uuid.UUID(int=1)), "--mail", "x", "--sp", "1", "--od", "1"),
         ("create-user", "--msp-id", str(uuid.UUID(int=1))),
         ("delete-msp",),
+        ("generate-report", "--msp-id", str(uuid.UUID(int=1))),
+        ("generate-report", "--msp-id", "x", "--client-id", str(uuid.UUID(int=1))),
     ],
 )
 async def test_a_usage_fault_is_typer_s_exit_2_before_any_database(monkeypatch, args):
@@ -238,7 +247,7 @@ async def test_no_arguments_prints_the_commands(monkeypatch):
     result = await cli()
 
     text = result.stdout + result.stderr
-    for command in ("create-msp", "create-client", "create-worker-token", "create-connector", "create-plan", "revoke-worker", "create-user", "reset-password"):
+    for command in ("create-msp", "create-client", "create-worker-token", "create-connector", "create-plan", "revoke-worker", "create-user", "reset-password", "generate-report"):
         assert command in text
 
 
@@ -456,6 +465,202 @@ async def test_create_plan_run_now_prints_the_run_and_create_msp_takes_retention
     assert msp_row.retention_days == 30 and client_row.screenshots_enabled is True
     assert (plan_row.cadence_cron, plan_row.enabled) == ("*/5 * * * *", False)
     assert [(str(r.id), r.state, r.scheduled_for) for r in runs] == [(plan["run_id"], "queued", None)]
+
+
+# --- C6.4: generate-report (docs/decisions.md 2026-10-12, "C6.4", point 7) ------------------------
+
+REPORT_CLOCK = dt.datetime(2026, 10, 12, 9, 30, 0, tzinfo=dt.timezone.utc)
+S3_ENV = {"S3_ENDPOINT": "http://127.0.0.1:1", "S3_ACCESS_KEY": "test-access-key", "S3_SECRET_KEY": "test-secret-key", "S3_BUCKET": "test-bucket"}
+
+
+@pytest.fixture
+def report_clock(monkeypatch):
+    monkeypatch.setattr(manage.report_generate, "now", lambda: REPORT_CLOCK)
+    return REPORT_CLOCK
+
+
+@pytest.fixture
+def bucket(monkeypatch):
+    """The CLI's bucket on botocore's Stubber (the real client would reach
+    for S3_ENDPOINT): any PDF body is taken and kept."""
+    for name, value in S3_ENV.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.delenv("SECRET_KEY", raising=False)
+    settings = make_settings()
+    client = make_s3_client(settings)
+    stubber = Stubber(client)
+    bodies: list[bytes] = []
+    client.meta.events.register("before-parameter-build.s3.PutObject", lambda params, **_kw: bodies.append(params["Body"]))
+    storage = Storage(client, settings.s3_bucket)
+    monkeypatch.setattr(manage.Storage, "for_writing", staticmethod(lambda _settings: storage))
+    stubber.activate()
+
+    class Bucket:
+        def expect(self, key: str) -> None:
+            stubber.add_response("put_object", {"ETag": '"x"'}, expected_params={"Bucket": "test-bucket", "Key": key, "Body": ANY, "ContentType": "application/pdf"})
+
+        @property
+        def bodies(self) -> list[bytes]:
+            return bodies
+
+        def done(self) -> None:
+            stubber.assert_no_pending_responses()
+
+    yield Bucket()
+    stubber.deactivate()
+
+
+async def a_september(rows, msp_id: str, client_id: str) -> None:
+    """A Worker, a connector, a plan and one fail run of September 2026 with
+    a missing item, through the repos on the CLI's own database."""
+
+    async def work(s):
+        msp, client = uuid.UUID(msp_id), uuid.UUID(client_id)
+        worker = await WorkerRepo(s).create(msp, "w", public_key_pem="-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA\n-----END PUBLIC KEY-----\n", key_id="a" * 64, api_token_hash="b" * 64)
+        tenant = (await ClientRepo(s).get(msp, client)).tenant_id
+        connector = await ConnectorRepo(s).create(msp, client, worker.id, {**VALID_PROFILE, "graph_tenant_id": str(tenant)})
+        plan = await PlanRepo(s).create(msp, client, connector.id, sample_mail=2, sample_sp=0, sample_od=0, cadence_cron="0 2 * * *", now=REPORT_CLOCK)
+        run = await RunRepo(s).create(msp, plan_id=plan.id, client_id=client, connector_id=connector.id, worker_id=worker.id)
+        await s.execute(text("UPDATE test_run SET state = 'fail', finished_at = '2026-09-10T02:30:00Z', recovery_ms = 65000 WHERE id = :id"), {"id": run.id})
+        await ItemRepo(s).create(msp, run.id, position=0, type="mail", name="RP-CANARY-0003", expected_kind="manifest", found=False, match=False, reason="no restored copy found")
+
+    await rows.read(work)
+
+
+async def test_generate_report_makes_the_month_s_final_report_and_prints_its_six_lines(database, rows, report_clock, bucket):
+    msp = lines(await cli("create-msp", "--name", "a"))
+    client = lines(await cli("create-client", "--msp-id", msp["msp_id"], "--name", "contoso", "--tenant-id", str(uuid.uuid4())))
+    await a_september(rows, msp["msp_id"], client["client_id"])
+    key = f"msp/{msp['msp_id']}/reports/{client['client_id']}/2026-09.pdf"
+    bucket.expect(key)
+
+    result = await cli("generate-report", "--msp-id", msp["msp_id"], "--client-id", client["client_id"], "--period", "2026-09")
+
+    assert result.exit_code == 0, result.stderr
+    printed = lines(result)
+    assert list(printed) == ["report_id", "period", "interim", "storage_key", "content_sha256", "file_sha256"]
+    assert (printed["period"], printed["interim"], printed["storage_key"]) == ("2026-09", "false", key)
+    bucket.done()
+    (pdf,) = bucket.bodies
+    assert hashlib.sha256(pdf).hexdigest() == printed["file_sha256"] and pdf.startswith(b"%PDF-")
+    msp_id = uuid.UUID(msp["msp_id"])
+    (row,) = await rows.read(lambda s: ReportRepo(s).list(msp_id))
+    assert (str(row.id), row.content_sha256, row.file_sha256, row.interim, row.generated_at) == (printed["report_id"], printed["content_sha256"], printed["file_sha256"], False, REPORT_CLOCK)
+    audit = await rows.read(lambda s: AuditRepo(s).list(msp_id))
+    assert [(r.action, r.target, r.user_id, r.ip) for r in audit if r.action == "report.create"] == [("report.create", f"report:{row.id}", None, None)]
+    assert result.stderr == ""
+
+
+async def test_generate_report_s_default_period_is_the_previous_month_of_the_cloud_s_clock(database, rows, report_clock, bucket):
+    msp = lines(await cli("create-msp", "--name", "a"))
+    client = lines(await cli("create-client", "--msp-id", msp["msp_id"], "--name", "contoso", "--tenant-id", str(uuid.uuid4())))
+    await a_september(rows, msp["msp_id"], client["client_id"])
+    bucket.expect(f"msp/{msp['msp_id']}/reports/{client['client_id']}/2026-09.pdf")
+
+    result = await cli("generate-report", "--msp-id", msp["msp_id"], "--client-id", client["client_id"])
+
+    assert result.exit_code == 0, result.stderr
+    assert lines(result)["period"] == "2026-09"
+    bucket.done()
+
+
+@pytest.mark.parametrize(
+    ("period", "line"),
+    [
+        ("2026-9", "period: not YYYY-MM"),
+        ("0000-01", "period: not YYYY-MM"),
+        ("2026-08", "period: no run in the period"),
+        ("2027-01", "period: has not begun"),
+    ],
+)
+async def test_generate_report_s_refusals_are_one_line_and_exit_1_with_nothing_put(database, rows, report_clock, bucket, period, line):
+    msp = lines(await cli("create-msp", "--name", "a"))
+    client = lines(await cli("create-client", "--msp-id", msp["msp_id"], "--name", "contoso", "--tenant-id", str(uuid.uuid4())))
+    await a_september(rows, msp["msp_id"], client["client_id"])
+
+    result = await cli("generate-report", "--msp-id", msp["msp_id"], "--client-id", client["client_id"], "--period", period)
+
+    assert (result.exit_code, result.stdout, result.stderr.strip()) == (1, "", line)
+    assert bucket.bodies == []
+    assert await rows.read(lambda s: ReportRepo(s).list(uuid.UUID(msp["msp_id"]))) == []
+
+
+async def test_generate_report_twice_is_the_period_s_refusal_and_another_msp_s_client_is_no_client(database, rows, report_clock, bucket):
+    msp = lines(await cli("create-msp", "--name", "a"))
+    other = lines(await cli("create-msp", "--name", "b"))
+    client = lines(await cli("create-client", "--msp-id", msp["msp_id"], "--name", "contoso", "--tenant-id", str(uuid.uuid4())))
+    await a_september(rows, msp["msp_id"], client["client_id"])
+    bucket.expect(f"msp/{msp['msp_id']}/reports/{client['client_id']}/2026-09.pdf")
+    first = await cli("generate-report", "--msp-id", msp["msp_id"], "--client-id", client["client_id"], "--period", "2026-09")
+    assert first.exit_code == 0, first.stderr
+
+    again = await cli("generate-report", "--msp-id", msp["msp_id"], "--client-id", client["client_id"], "--period", "2026-09")
+    theirs = await cli("generate-report", "--msp-id", other["msp_id"], "--client-id", client["client_id"], "--period", "2026-09")
+
+    assert (again.exit_code, again.stdout, again.stderr.strip()) == (1, "", "period: already reported")
+    assert (theirs.exit_code, theirs.stdout, theirs.stderr.strip()) == (1, "", "client_id: no such client")
+    assert len(bucket.bodies) == 1
+
+
+async def test_generate_report_needs_the_s3_variables_and_no_secret_key_and_stops_before_the_database(monkeypatch, report_clock):
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    for name in S3_ENV:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("S3_BUCKET", "b")
+
+    result = await cli("generate-report", "--msp-id", str(uuid.UUID(int=1)), "--client-id", str(uuid.UUID(int=2)), "--period", "2026-09")
+
+    assert (result.exit_code, result.stdout, result.stderr.strip()) == (1, "", "settings error: S3_ENDPOINT is missing; S3_ACCESS_KEY is missing; S3_SECRET_KEY is missing")
+
+
+async def test_generate_report_without_a_database_url_names_it_after_the_s3_variables_pass(monkeypatch, report_clock, bucket):
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+
+    result = await cli("generate-report", "--msp-id", str(uuid.UUID(int=1)), "--client-id", str(uuid.UUID(int=2)), "--period", "2026-09")
+
+    assert (result.exit_code, result.stdout, result.stderr.strip()) == (1, "", "settings error: DATABASE_URL is missing")
+
+
+async def test_generate_report_words_a_render_or_a_put_that_fails_and_never_blames_the_database(database, rows, report_clock, bucket, monkeypatch):
+    """The C6.4 review's finding 11: a library that will not load and a
+    bucket that does not answer are OSErrors, which `run` worded `database:
+    unreachable` with the database healthy. One line each, the type alone,
+    exit 1, no row left."""
+    msp = lines(await cli("create-msp", "--name", "a"))
+    client = lines(await cli("create-client", "--msp-id", msp["msp_id"], "--name", "contoso", "--tenant-id", str(uuid.uuid4())))
+    await a_september(rows, msp["msp_id"], client["client_id"])
+    args = ("generate-report", "--msp-id", msp["msp_id"], "--client-id", client["client_id"], "--period", "2026-09")
+
+    def refused(self, key, body, content_type):
+        raise ConnectionError("Could not connect to the endpoint URL: http://secret-host:9000/bucket")
+
+    monkeypatch.setattr(manage.Storage, "put", refused)
+    put = await cli(*args)
+
+    def broken(_data):
+        raise OSError("cannot load library 'libpango-1.0-0'")
+
+    monkeypatch.setattr(manage.report_generate, "render_report", broken)
+    render = await cli(*args)
+
+    assert (put.exit_code, put.stdout, put.stderr.strip()) == (1, "", "storage: put failed (ConnectionError)")
+    assert (render.exit_code, render.stdout, render.stderr.strip()) == (1, "", "report: not rendered (OSError)")
+    assert await rows.read(lambda s: ReportRepo(s).list(uuid.UUID(msp["msp_id"]))) == []
+
+
+async def test_generate_report_with_an_endpoint_the_library_refuses_is_one_line_without_its_value(monkeypatch, report_clock):
+    """Finding 11: the settings take any `http` address; botocore refuses
+    this one with the address in its message, which was a traceback's last
+    line. The real `Storage.for_writing`, before the database."""
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    for name, value in S3_ENV.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setenv("S3_ENDPOINT", "http://my_minio:9000")
+
+    result = await cli("generate-report", "--msp-id", str(uuid.UUID(int=1)), "--client-id", str(uuid.UUID(int=2)), "--period", "2026-09")
+
+    assert (result.exit_code, result.stdout, result.stderr.strip()) == (1, "", "storage: not usable (ValueError)")
+    assert "my_minio" not in result.output
 
 
 def test_the_cli_builds_no_statement_and_logs_nothing():

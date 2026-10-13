@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{% if data.interim %}Interim restore test report{% else %}Restore test report{% endif %} · {{ data.client_name }} · {{ data.period.name }}</title>
+</head>
+<body>
+<section class="summary" id="summary">
+<h1>{% if data.interim %}Interim report{% else %}Restore test report{% endif %}</h1>
+<h2 id="summary-heading">Summary</h2>
+<dl class="facts">
+  <dt>Client</dt><dd>{{ data.client_name }}</dd>
+  <dt>MSP</dt><dd>{{ data.msp_name }}</dd>
+  <dt>Period</dt><dd>{{ data.period.title }} ({{ data.period.name }})</dd>
+</dl>
+{% if data.interim %}<p class="notice">The period is not over: this interim report covers the tests that have ended by {{ data.generated_at|utc }}. The month's final report replaces nothing; it is made when the month has ended.</p>{% endif %}
+<p class="overall {{ data.overall_class }}">{{ data.overall }}</p>
+{% if data.errors_line %}<p class="overall error">{{ data.errors_line }}</p>{% endif %}
+{% if data.did_not_run %}<p class="overall quiet">Scheduled tests that did not run: {{ data.did_not_run }}</p>{% endif %}
+{% if data.no_result %}<p class="overall quiet">Scheduled tests with no result when this report was made: {{ data.no_result }}</p>{% endif %}
+<dl class="facts">
+  <dt>Tests run</dt><dd>{{ data.tests }}</dd>
+  <dt>Average recovery time</dt><dd>{{ data.average_recovery_ms|duration }}</dd>
+  <dt>Maximum recovery time</dt><dd>{{ data.max_recovery_ms|duration }}</dd>
+  <dt>Backup source</dt><dd>{{ data.backup_source }}</dd>
+  <dt>Restore points covered</dt><dd>{% if data.restore_points %}{{ data.restore_points|length }}, from {{ data.restore_points[0]|utc }} to {{ data.restore_points[-1]|utc }}{% else %}none{% endif %}</dd>
+</dl>
+<p class="meaning">A <span class="state pass">pass</span> means every sampled item was restored from the backup and matched what was expected. A <span class="state fail">fail</span> means an item was missing or did not match. An <span class="state error">error</span> means the test itself could not run (the backup product, the tenant or the Worker was not available); it says nothing about the backup. The recovery times and the restore points above are those of the tests that passed or failed.</p>
+<p class="scope">This report does not test full disaster recovery. It records what each test listed here found for the items it sampled, on the dates shown.</p>
+</section>
+
+<section id="test-log-section">
+<h2 id="test-log">Test log</h2>
+<table class="log">
+<thead><tr><th>Date</th><th>Restore point</th><th>Items (mail / SP / OD)</th><th>Result</th><th>Recovery time</th><th>Run</th></tr></thead>
+<tbody>
+{% for line in data.runs %}<tr><td>{{ line.date|utc }}</td><td>{{ line.restore_point_at|utc }}</td><td>{{ line.mail }} / {{ line.sp }} / {{ line.od }}</td><td><span class="state {{ "quiet" if not line.tested else line.state }}">{{ line.result }}</span></td><td>{{ line.recovery_ms|duration }}</td><td><code>{{ line.short_id }}</code></td></tr>
+{% endfor %}</tbody>
+</table>
+</section>
+
+<section id="failures-section">
+<h2 id="failures">Failures</h2>
+{% for failure in data.failures %}
+<div class="failure">
+<h3>{{ failure.line.date|utc }} <span class="state {{ failure.line.state }}">{{ failure.line.result }}</span> <code>{{ failure.line.short_id }}</code></h3>
+{% if failure.line.state == "error" %}<p>Error <code>{{ failure.line.error_code or "—" }}</code>: {{ failure.line.error_message or "—" }}</p>{% endif %}
+{% if failure.items %}
+<table class="items">
+<colgroup><col class="a"><col class="b"><col class="c"><col class="d"></colgroup>
+<thead><tr><th>Type</th><th>Item</th><th>Found</th><th>Reason</th></tr></thead>
+<tbody>
+{% for item in failure.items %}<tr><td>{{ item.type }}</td><td>{{ item.name }}</td><td>{{ item.found_word }}</td><td>{{ item.reason or "—" }}</td></tr>
+{% endfor %}</tbody>
+</table>
+{% elif failure.line.items %}<p>Every item that was checked matched.</p>
+{% else %}<p>No item was checked.</p>{% endif %}
+{% if failure.retested_at %}<p class="retest">A later test of the same plan passed on {{ failure.retested_at|utc }}.</p>{% else %}<p class="retest">No later test of the same plan passed in this period.</p>{% endif %}
+</div>
+{% else %}
+<p>No test failed or errored in this period.</p>
+{% endfor %}
+</section>
+
+<section id="method-section">
+<h2 id="method">Method</h2>
+{% for plan in data.plans %}<p>Each test of the plan samples up to {{ plan.mail }} mail{{ "" if plan.mail == 1 else "s" }}, {{ plan.sp }} SharePoint file{{ "" if plan.sp == 1 else "s" }} and {{ plan.od }} OneDrive file{{ "" if plan.od == 1 else "s" }} from one restore point of the backup.</p>
+{% else %}<p>No test of a plan has a result in this period.</p>
+{% endfor %}
+<p>The items of a test are a sample: canary items seeded in the tenant for this purpose, whose content is known in advance, plus items chosen at random from the backup's own listing. A test restores each item into a restore target set aside for testing (the <code>restoretest</code> mailbox, the <code>RestoreTarget</code> library or the <code>RestoreTarget</code> OneDrive folder), reads it back through Microsoft Graph, compares it, and removes it from the target afterwards. A canary is compared by the SHA-256 of its content; a random mail by its subject and received time, and by its sender's name when the backup lists one; a random file by its name and, unless it is an Office document, its size.</p>
+{% if data.cleanup_incomplete %}<p>In {{ data.cleanup_incomplete }} test{{ "" if data.cleanup_incomplete == 1 else "s" }} of this period the removal from the restore target did not complete.</p>{% endif %}
+{% if data.ran %}<p>Verification levels covered: 1, 2, 3{% if data.files_sampled %}; level 4 partially (files opened and read via Microsoft Graph){% endif %}.</p>
+{% else %}<p>No test of this period reached the comparison, so no verification level was covered.</p>{% endif %}
+</section>
+
+<section id="integrity-section">
+<h2 id="integrity">Integrity</h2>
+<dl class="facts">
+  <dt>Content hash (SHA-256)</dt><dd><code>{{ content_hash }}</code></dd>
+  <dt>File hash (SHA-256)</dt><dd>stored by the Cloud beside this report</dd>
+  <dt>Generated</dt><dd>{{ data.generated_at|utc }}</dd>
+</dl>
+<p class="note">A file cannot contain its own hash. The content hash above is the SHA-256 of this report rendered without it; the file hash, which the Cloud stores beside this report and which you can check yourself, is the SHA-256 of the file you are reading.</p>
+<h3>Workers</h3>
+<table class="workers">
+<colgroup><col class="a"><col class="b"><col class="c"></colgroup>
+<thead><tr><th>Name</th><th>Worker id</th><th>Public key fingerprint (SHA-256 of the key)</th></tr></thead>
+<tbody>
+{% for worker in data.workers %}<tr><td>{{ worker.name }}</td><td><code>{{ worker.id }}</code></td><td><code>{{ worker.key_id }}</code></td></tr>
+{% endfor %}</tbody>
+</table>
+<h3>Runs</h3>
+<table class="runs">
+<colgroup><col class="a"><col class="b"><col class="c"></colgroup>
+<thead><tr><th>Run id</th><th>Bundle SHA-256</th><th>Timestamp</th></tr></thead>
+<tbody>
+{% for line in data.runs %}<tr><td><code>{{ line.run_id }}</code></td><td>{% if line.bundle_sha256 %}<code>{{ line.bundle_sha256 }}</code>{% else %}—{% endif %}</td><td>{% if not line.tested %}—{% elif line.tsa_ok and line.tsa_time %}timestamped {{ line.tsa_time|utc }}{% else %}not timestamped{% endif %}</td></tr>
+{% endfor %}</tbody>
+</table>
+</section>
+
+<section id="framework-mapping-section">
+<h2 id="framework-mapping">Framework mapping</h2>
+<table class="frameworks">
+<thead><tr><th>Control</th><th>Name</th><th>What this evidence demonstrates</th><th>What it does not cover</th></tr></thead>
+<tbody>
+{% for control in data.controls %}<tr><td>{{ control.identifier }}</td><td>{{ control.name }}</td><td>{{ control.demonstrates or "—" }}</td><td>{{ control.not_covered or "—" }}</td></tr>
+{% endfor %}</tbody>
+</table>
+<p class="note">{{ data.pending }}</p>
+</section>
+</body>
+</html>

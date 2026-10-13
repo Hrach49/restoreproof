@@ -39,6 +39,9 @@ CONSTRAINT_WORDS: dict[str, tuple[str, str]] = {
     # C6.1: one address across the Cloud, whatever its case; the role's list.
     "uq_user_email_lower": ("email", "already a user of this Cloud"),
     "ck_user_role": ("role", "not admin or member"),
+    # C6.4: one final report per client and period; a key written once.
+    "uq_report_final_period": ("period", "already reported"),
+    "uq_report_storage_key": ("storage_key", "already used"),
     # The MSP's own key, on every row a command inserts.
     "fk_user_msp_id_msp": ("msp_id", "no such MSP"),
     "fk_client_msp_id_msp": ("msp_id", "no such MSP"),

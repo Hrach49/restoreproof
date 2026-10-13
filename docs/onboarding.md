@@ -166,12 +166,16 @@ nothing and prints no secret but the one token it exists to print.
    The onboarding above needs no user: the install token's `created_by` and every audit row's
    `user_id` are null for the CLI.
 
-8. **A client's monthly report** (C6.4; `docs/verification.md` "The Cloud's report"), until
-   C6.6's scheduler makes them on the 1st and its page hands them out. The period is a UTC
-   calendar month, `YYYY-MM`, the previous month when not given; the current month gives an
-   interim report (as many as asked for, each its own object), a month that is over the final
-   one, made once. The command writes the PDF to the bucket, so it needs the five `S3_*`
-   variables beside `DATABASE_URL` (the api container has them); never `SECRET_KEY`.
+8. **A client's monthly report** (C6.4, C6.6; `docs/verification.md` "The Cloud's report").
+   The scheduler makes every client's final report of the previous month on the 1st at 03:00
+   UTC (and at its start, for a 1st it missed), and the users make an interim report of the
+   current month from the client's reports page ("Generate now") and download any report from
+   `/reports`; the command is for a month the job did not make (its `report failed` line names
+   the client) and for a run without the pages. The period is a UTC calendar month, `YYYY-MM`,
+   the previous month when not given; the current month gives an interim report (as many as
+   asked for, each its own object), a month that is over the final one, made once and never
+   re-made. The command writes the PDF to the bucket, so it needs the five `S3_*` variables
+   beside `DATABASE_URL` (the api container has them); never `SECRET_KEY`.
 
    ```
    manage.py generate-report --msp-id <msp_id> --client-id <client_id> --period 2026-09

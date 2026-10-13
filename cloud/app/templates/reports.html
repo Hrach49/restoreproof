@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Reports · {{ layout.msp.name }}{% endblock %}
+{% block content %}
+<h1>Reports</h1>
+<p class="muted">Every client's monthly report, newest first. The final report of a month is made on the 1st; an interim report is made from a client's page. Each download is recorded in the audit log.</p>
+<table class="reports">
+  <thead><tr><th>Client</th><th>Period</th><th>Kind</th><th>Generated</th><th>Content hash (SHA-256)</th><th>File hash (SHA-256)</th><th></th></tr></thead>
+  <tbody id="reports">
+  {% include "_reports.html" %}
+  </tbody>
+</table>
+{% endblock %}

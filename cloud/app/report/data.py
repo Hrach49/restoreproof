@@ -25,7 +25,7 @@ from app.repo.msps import MspRepo
 from app.repo.plans import PlanRepo
 from app.repo.runs import TESTED_STATES, RunRepo
 from app.repo.workers import WorkerRepo
-from app.report.frameworks import CONTROLS, PENDING, Control
+from app.report.frameworks import ABOUT, CONTROLS, Control
 
 UTC = dt.timezone.utc
 PERIOD_RULE = "not YYYY-MM"
@@ -50,6 +50,14 @@ RESULT_WORDS = {
 # The runs whose restore ran: the ones a recovery time and a restore point
 # are read from (an error is a test that could not run; the review's finding 5).
 RAN_STATES = ("pass", "fail")
+# C6.6 (docs/decisions.md 2026-10-13, point 3, and its build notes): the Test
+# log, the Failures and the Integrity run list show the first this many runs
+# of the month, in the month's order, and say how many more there were; the
+# Summary's numbers count every run. A run is one log row and three to four
+# lines of the Integrity table: 200 runs are about 23 pages, which the image
+# renders twice in about 45 s on the dev laptop's Docker (500 took 112 s,
+# past the Done-when's minute), so the entry's 500 became 200 in the build.
+MAX_LOG_ROWS = 200
 
 
 @dataclass(frozen=True)
@@ -179,6 +187,7 @@ class ReportData:
     generated_at: dt.datetime
     backup_source: str
     runs: list[RunLine]
+    runs_left_out: int
     tests: int
     passed: int
     failed: int
@@ -192,13 +201,14 @@ class ReportData:
     max_recovery_ms: int | None
     restore_points: list[dt.datetime]
     failures: list[Failure]
+    failures_left_out: int
     plans: list[PlanSizes]
     ran: int
     files_sampled: bool
     cleanup_incomplete: int
     workers: list[WorkerLine]
     controls: tuple[Control, ...]
-    pending: str
+    about: str
 
 
 def found_word(item: TestItem) -> str:
@@ -317,7 +327,8 @@ def build(
         interim=interim_for(period, now),
         generated_at=now,
         backup_source=", ".join(sources) if sources else UNKNOWN_SOURCE,
-        runs=lines,
+        runs=lines[:MAX_LOG_ROWS],
+        runs_left_out=max(0, len(lines) - MAX_LOG_ROWS),
         tests=len(tested),
         passed=passed,
         failed=failed,
@@ -330,14 +341,15 @@ def build(
         average_recovery_ms=sum(recoveries) // len(recoveries) if recoveries else None,
         max_recovery_ms=max(recoveries) if recoveries else None,
         restore_points=sorted({line.restore_point_at for line in ran if line.restore_point_at is not None}),
-        failures=failures,
+        failures=failures[:MAX_LOG_ROWS],
+        failures_left_out=max(0, len(failures) - MAX_LOG_ROWS),
         plans=[PlanSizes(plan.sample_mail, plan.sample_sp, plan.sample_od) for plan in plans if plan.id in tested_plans],
         ran=len(ran),
         files_sampled=any(line.sp or line.od for line in ran),
         cleanup_incomplete=sum(1 for line in tested if line.cleanup_ok is False),
         workers=[WorkerLine(w.id, w.name, w.key_id) for w in workers if w.id in run_workers],
         controls=CONTROLS,
-        pending=PENDING,
+        about=ABOUT,
     )
 
 

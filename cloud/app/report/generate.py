@@ -26,7 +26,7 @@ from app.onboarding import Created, worded
 from app.repo.audit import AuditRepo
 from app.repo.errors import CONSTRAINT_WORDS, RepoError
 from app.repo.reports import ReportRepo
-from app.report.data import Period, gather
+from app.report.data import Period, gather, interim_for
 from app.report.render import render_report
 from app.storage import Storage
 
@@ -64,11 +64,13 @@ async def generate(
     user_id: UUID | None = None,
     ip: str | None = None,
 ) -> Created:
-    data = await gather(session, msp_id, client_id, period, now=now)
-    # A month's final report is made once: asked before the two passes, so
-    # the word is the period's; the index is the line for two at once.
-    if not data.interim and await ReportRepo(session).final(msp_id, client_id, period.start) is not None:
+    # A month's final report is made once: asked first, before the month is
+    # read (C6.6's job asks for every client of a month, so a month that has
+    # its report costs one read), so the word is the period's; the index is
+    # the line for two at once.
+    if not interim_for(period, now) and await ReportRepo(session).final(msp_id, client_id, period.start) is not None:
         raise RepoError("period", ALREADY_REPORTED)
+    data = await gather(session, msp_id, client_id, period, now=now)
     try:
         rendered = await asyncio.to_thread(render_report, data)
     except Exception as error:  # noqa: BLE001 - the libraries' and the template's faults alike; the type alone

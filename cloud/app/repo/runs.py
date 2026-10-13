@@ -315,6 +315,19 @@ class RunRepo(Repo):
             .order_by(period_time(), TestRun.id)
         )
 
+    async def clients_in_period(self, msp_id: UUID, *, start: dt.datetime, end: dt.datetime) -> list[UUID]:
+        """The clients of the MSP with a run of the span `[start, end)` by
+        `period_time`, whatever its state (C6.6, docs/decisions.md 2026-10-13,
+        point 1: the clients the monthly job makes a report for; a client
+        whose only run expired or has no result gets one that says so), each
+        once, in no order. One statement."""
+        _aware("start", start)
+        _aware("end", end)
+        at = period_time()
+        return await self._all(
+            select(TestRun.client_id).where(TestRun.msp_id == msp_id, at >= start, at < end).distinct()
+        )
+
     async def set_state(self, msp_id: UUID, run_id: UUID, state: str) -> int:
         return await self._touched(
             sa_update(TestRun).where(TestRun.msp_id == msp_id, TestRun.id == run_id).values(state=state)

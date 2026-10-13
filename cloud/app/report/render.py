@@ -2,9 +2,13 @@
 template under `app/ui.py`'s rules (autoescape, `StrictUndefined`, the pages'
 filters), rendered twice. Pass 1 prints `PLACEHOLDER` where the content hash
 goes and its SHA-256 is the content hash; pass 2 prints that hash and its
-SHA-256 is the file hash. WeasyPrint's defaults embed no date, no identifier
-and no producer, so the same HTML is the same bytes (the entry's probe), and
-the hash cell is the one difference between the passes. WeasyPrint is
+SHA-256 is the file hash. WeasyPrint's defaults embed no date and no
+identifier, so the same HTML is the same bytes by one WeasyPrint (the entry's
+probe), and the hash cell is the one difference between the passes. The file
+does name its producer, `WeasyPrint <version>`, and a font is subset as that
+version does it, so the bytes and both hashes are one version's: the one
+`uv.lock` pins (the C6.4 review's finding 14; a stored report is never
+rendered again, so an upgrade changes no stored hash). WeasyPrint is
 imported where it is called, so nothing else of the app needs its libraries
 until a report is rendered.
 """
@@ -44,7 +48,8 @@ def render_html(data: ReportData, content_hash: str | None) -> str:
 
 def render_pdf(html: str) -> bytes:
     """The one WeasyPrint call: A4 under `report.css`, the library's defaults
-    otherwise (no `pdf_identifier`, no metadata). CPU work of seconds: a
+    otherwise (no `pdf_identifier`; the title and the library's own
+    `/Producer` are the Info dictionary). CPU work of seconds: a
     caller runs it in a thread.
 
     Without HarfBuzz-Subset (this laptop's GTK runtime has none; the image

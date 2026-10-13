@@ -31,7 +31,7 @@ from dataclasses import dataclass
 from typing import NamedTuple
 from uuid import UUID
 
-from sqlalchemy import and_, func, or_, select, true, tuple_
+from sqlalchemy import and_, case, func, select, true, tuple_
 from sqlalchemy import update as sa_update
 from sqlalchemy.dialects.postgresql import distinct_on
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -72,27 +72,36 @@ def _aware(name: str, value: dt.datetime) -> None:
 
 
 def period_time():
-    """The time that puts a run in a month: when it ended, or when it was made
-    for one that never ended (a finished run whose `ended_at` the calendar
-    refused, or an expired one)."""
-    return func.coalesce(TestRun.finished_at, TestRun.created_at)
+    """The time that puts a run in a month. A tested run: when it ended; a
+    result written afterwards has no `ended_at` (the Worker's `interrupted`,
+    `internal`, `job_invalid`, ...), so then the time it was stamped, else
+    the time it was last handed out, and only then its creation: a run is
+    never dated by the time it was queued when a later time of it is known
+    (the C6.4 review's finding 3). Every other run (expired, queued,
+    dispatched) never ended: by its creation. `app/report/data.py`'s
+    `run_date` is the same rule on a row."""
+    return case(
+        (
+            TestRun.state.in_(TESTED_STATES),
+            func.coalesce(TestRun.finished_at, TestRun.tsa_time, TestRun.dispatched_at, TestRun.created_at),
+        ),
+        else_=TestRun.created_at,
+    )
 
 
 def period_filter(client_id: UUID, start: dt.datetime, end: dt.datetime):
     """The conditions that make a run of `client_id` one of the span `[start,
-    end)`: a tested run by the time it ended, an expired run by its creation
-    (not a test, counted as one that did not run); queued and dispatched
-    never. Shared by the run and item reads of a report, so the three agree."""
+    end)`: its `period_time` is in it, whatever its state. A tested run is
+    there by the time it ended; an expired one by its creation (not a test:
+    one that did not run); a queued or dispatched one by its creation too
+    (not a test: one with no result when the report is made, so a month whose
+    Worker was off does not read as a month of passes; the C6.4 review's
+    finding 2). Shared by the run and item reads of a report, so the three
+    agree."""
     _aware("start", start)
     _aware("end", end)
     at = period_time()
-    return (
-        TestRun.client_id == client_id,
-        or_(
-            and_(TestRun.state.in_(TESTED_STATES), at >= start, at < end),
-            and_(TestRun.state == "expired", TestRun.created_at >= start, TestRun.created_at < end),
-        ),
-    )
+    return (TestRun.client_id == client_id, at >= start, at < end)
 
 
 class Dispatched(NamedTuple):

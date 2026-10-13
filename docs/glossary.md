@@ -286,8 +286,9 @@ and its "Generate now" later. It never claims more than was tested; four phrases
 test. See [verification.md](verification.md), "The Cloud's report".
 
 **Period.** One UTC calendar month, named `YYYY-MM`, the span a report covers. A `pass`, `fail`
-or `error` run is the month's by the time it ended; an `expired` run by its creation, counted as
-a scheduled test that did not run; a `queued` or `dispatched` run is in no report.
+or `error` run is the month's by the time it ended (a result written afterwards: the time it was
+stamped, else handed out); an `expired` run by its creation, counted as a scheduled test that did
+not run; a `queued` or `dispatched` run by its creation, counted as one with no result yet.
 
 **Content hash and file hash.** A report's two SHA-256s (C6.4). The report is rendered twice:
 the first pass prints no hash and its SHA-256 is the *content hash*, printed by the second pass

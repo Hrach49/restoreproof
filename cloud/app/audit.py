@@ -7,8 +7,8 @@ the address found) and `client_ip(request)`, the one reading of
 proxy's header; the Worker's routes keep their own). A function, not a
 middleware: it needs the session, the user and what the route decided.
 
-`ACTIONS` is closed: `report.download` is C6.6's word and `settings.change`
-C7.3's, added there. The CLI's words are app/onboarding.py's, the Worker's
+`ACTIONS` is closed: `report.download` is C6.6's word (the reports pages'
+download) and `settings.change` C7.3's, added there. The CLI's words are app/onboarding.py's, the Worker's
 the routes' own.
 """
 
@@ -27,8 +27,9 @@ LOGIN_BLOCKED = "login.blocked"
 LOGOUT = "logout"
 BUNDLE_DOWNLOAD = "bundle.download"
 WORKER_REVOKE = "worker.revoke"
+REPORT_DOWNLOAD = "report.download"
 
-ACTIONS = (LOGIN_SUCCESS, LOGIN_FAILURE, LOGIN_BLOCKED, LOGOUT, BUNDLE_DOWNLOAD, WORKER_REVOKE)
+ACTIONS = (LOGIN_SUCCESS, LOGIN_FAILURE, LOGIN_BLOCKED, LOGOUT, BUNDLE_DOWNLOAD, WORKER_REVOKE, REPORT_DOWNLOAD)
 
 
 def client_ip(request: Request) -> str | None:

@@ -123,8 +123,11 @@ services:
       retries: 20
 
   # The same image: the dispatcher (C5.9, app/scheduler.py), every five
-  # minutes the plans' runs and the sweep. It never migrates: the api did,
-  # and this waits for it. It reads DATABASE_URL and LOG_LEVEL alone.
+  # minutes the plans' runs and the sweep, and on the 1st the month's reports
+  # (C6.6). It never migrates: the api did, and this waits for it. It reads
+  # DATABASE_URL, LOG_LEVEL and the five S3_* variables (the report job
+  # writes the bucket) and stops at start naming one that is missing; never
+  # SECRET_KEY.
   scheduler:
     build:
       context: ..

@@ -29,6 +29,7 @@ from app.repo.plans import PlanRepo
 from app.repo.runs import RunRepo
 from app.repo.users import UserRepo
 from app.repo.workers import WorkerRepo
+from app.routers import results as results_route
 from tests.conftest import make_settings
 from tests.results_lab import NOW, Lab
 from tests.test_contract import VECTOR, fill_contract, poll, vector_bytes
@@ -58,6 +59,11 @@ class PagesLab:
         monkeypatch.setattr(sessions, "now", lambda: self.time)
         monkeypatch.setattr(ui, "now", lambda: self.time)
         monkeypatch.setattr(onboarding, "now", lambda: self.time)
+        # The upload's clock: a minute after the vector's stamp, as a Worker
+        # that reaches the Cloud uploads (a result received once its month
+        # had closed is the month's it arrived in); a test moves it.
+        self.received = dt.datetime.fromisoformat(VECTOR["tsa_time"].replace("Z", "+00:00")) + dt.timedelta(minutes=1)
+        monkeypatch.setattr(results_route, "now", lambda: self.received)
 
     async def fill(self) -> None:
         s = self.session

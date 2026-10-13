@@ -1,0 +1,18 @@
+{% set columns = 6 if client else 7 %}
+{% for row in rows %}
+  {% set report = row.report %}
+  <tr>
+    {% if not client %}<td><a href="/clients/{{ report.client_id }}/reports">{{ row.client_name }}</a></td>{% endif %}
+    <td>{{ report.period_start.strftime("%Y-%m") }}</td>
+    <td>{% if report.interim %}interim{% else %}final{% endif %}</td>
+    <td>{{ report.generated_at|utc }}</td>
+    <td><code>{{ report.content_sha256 }}</code></td>
+    <td><code>{{ report.file_sha256 }}</code></td>
+    <td><a href="/reports/{{ report.id }}/file">Download</a></td>
+  </tr>
+{% else %}
+  {% if first %}<tr><td colspan="{{ columns }}" class="muted">No report yet.</td></tr>{% endif %}
+{% endfor %}
+{% if more %}
+  <tr class="pager"><td colspan="{{ columns }}"><a href="{{ path }}?before={{ more }}" hx-get="{{ path }}?before={{ more }}" hx-target="closest tr" hx-swap="outerHTML">more</a></td></tr>
+{% endif %}

@@ -292,6 +292,7 @@ def upgrade() -> None:
         _boolean("signature_ok"),
         _boolean("tsa_ok"),
         _time("tsa_time"),
+        _time("received_at"),
         _boolean("cleanup_ok"),
         _text("error_code", nullable=True),
         _text("error_message", nullable=True),

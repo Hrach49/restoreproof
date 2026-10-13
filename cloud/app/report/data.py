@@ -2,7 +2,9 @@
 points 4, 5 and 9): the period (one UTC calendar month), which runs are its
 (`app/repo/runs.py`'s `period_filter`: a tested run by the time it ended, an
 expired run by its creation as one that did not run, a queued or dispatched
-one by its creation as one with no result yet), the eight repo reads with `msp_id` first, and the arithmetic every section prints. `gather`
+one by its creation as one with no result yet; a result the Cloud received
+after its month had closed by the month it arrived in, counted on a line of
+its own), the eight repo reads with `msp_id` first, and the arithmetic every section prints. `gather`
 reads; `build` decides, pure, from rows. Nothing here renders or writes.
 """
 
@@ -25,7 +27,7 @@ from app.repo.msps import MspRepo
 from app.repo.plans import PlanRepo
 from app.repo.runs import TESTED_STATES, RunRepo
 from app.repo.workers import WorkerRepo
-from app.report.frameworks import CONTROLS, PENDING, Control
+from app.report.frameworks import ABOUT, CONTROLS, NO_PASS, Control
 
 UTC = dt.timezone.utc
 PERIOD_RULE = "not YYYY-MM"
@@ -50,6 +52,21 @@ RESULT_WORDS = {
 # The runs whose restore ran: the ones a recovery time and a restore point
 # are read from (an error is a test that could not run; the review's finding 5).
 RAN_STATES = ("pass", "fail")
+# C6.6 (docs/decisions.md 2026-10-13, point 3, and its build notes): the Test
+# log, the Failures and the Integrity run list show the first this many runs
+# of the month, in the month's order, and say how many more there were; the
+# Summary's numbers count every run. A run is one log row and three to four
+# lines of the Integrity table: 200 runs are about 23 pages, which the image
+# renders twice in about 45 s on the dev laptop's Docker (500 took 112 s,
+# past the Done-when's minute), so the entry's 500 became 200 in the build.
+MAX_LOG_ROWS = 200
+# The C6.6 review's findings 1 and 2: a month has no final report until this
+# long after its last day, whoever asks (the job's hour on the 1st, the job's
+# run at start, the CLI). `app/repo/runs.py`'s `RESULTS_CLOSE` is shorter, so
+# every result that is the month's by that rule is committed before the
+# month is read for its one final report.
+FINAL_AFTER = dt.timedelta(hours=3)
+NOT_CLOSED = f"not closed until {int(FINAL_AFTER.total_seconds() // 3600):02d}:00 UTC on the 1st"
 
 
 @dataclass(frozen=True)
@@ -94,6 +111,17 @@ def period_of(text: str) -> Period:
 def previous_month(today: dt.date) -> Period:
     """The month before `today`'s: the CLI's default period."""
     return month_of(dt.date(today.year, today.month, 1) - dt.timedelta(days=1))
+
+
+def closed_month(now: dt.datetime) -> Period:
+    """The newest month that may have its final report at `now`: the job's
+    period (before `FINAL_AFTER` on the 1st, the month before the last)."""
+    return previous_month((now.astimezone(UTC) - FINAL_AFTER).date())
+
+
+def closed(period: Period, now: dt.datetime) -> bool:
+    """Whether the period's final report may be made at `now`."""
+    return now >= period.end_at + FINAL_AFTER
 
 
 def interim_for(period: Period, now: dt.datetime) -> bool:
@@ -179,6 +207,7 @@ class ReportData:
     generated_at: dt.datetime
     backup_source: str
     runs: list[RunLine]
+    runs_left_out: int
     tests: int
     passed: int
     failed: int
@@ -192,13 +221,16 @@ class ReportData:
     max_recovery_ms: int | None
     restore_points: list[dt.datetime]
     failures: list[Failure]
+    failures_left_out: int
     plans: list[PlanSizes]
     ran: int
     files_sampled: bool
+    late: int
     cleanup_incomplete: int
     workers: list[WorkerLine]
     controls: tuple[Control, ...]
-    pending: str
+    about: str
+    no_pass: str
 
 
 def found_word(item: TestItem) -> str:
@@ -212,8 +244,10 @@ def found_word(item: TestItem) -> str:
 
 
 def run_date(run: TestRun) -> dt.datetime:
-    """The time that puts a run in a month and orders it there:
-    `app/repo/runs.py`'s `period_time` on a row."""
+    """When a run ended (a run that never did: when it was made), the date
+    the report prints and the month's order: `app/repo/runs.py`'s `_run_time`
+    on a row. A tested run of the month whose date is before the month is one
+    whose result arrived after that month had closed (`period_time`)."""
     if run.state in TESTED_STATES:
         return run.finished_at or run.tsa_time or run.dispatched_at or run.created_at
     return run.created_at
@@ -317,7 +351,8 @@ def build(
         interim=interim_for(period, now),
         generated_at=now,
         backup_source=", ".join(sources) if sources else UNKNOWN_SOURCE,
-        runs=lines,
+        runs=lines[:MAX_LOG_ROWS],
+        runs_left_out=max(0, len(lines) - MAX_LOG_ROWS),
         tests=len(tested),
         passed=passed,
         failed=failed,
@@ -330,14 +365,17 @@ def build(
         average_recovery_ms=sum(recoveries) // len(recoveries) if recoveries else None,
         max_recovery_ms=max(recoveries) if recoveries else None,
         restore_points=sorted({line.restore_point_at for line in ran if line.restore_point_at is not None}),
-        failures=failures,
+        failures=failures[:MAX_LOG_ROWS],
+        failures_left_out=max(0, len(failures) - MAX_LOG_ROWS),
         plans=[PlanSizes(plan.sample_mail, plan.sample_sp, plan.sample_od) for plan in plans if plan.id in tested_plans],
         ran=len(ran),
         files_sampled=any(line.sp or line.od for line in ran),
+        late=sum(1 for line in tested if line.date < period.start_at),
         cleanup_incomplete=sum(1 for line in tested if line.cleanup_ok is False),
         workers=[WorkerLine(w.id, w.name, w.key_id) for w in workers if w.id in run_workers],
         controls=CONTROLS,
-        pending=PENDING,
+        about=ABOUT,
+        no_pass=NO_PASS,
     )
 
 

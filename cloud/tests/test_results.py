@@ -36,6 +36,7 @@ from app.repo.msps import MspRepo
 from app.repo.plans import PlanRepo
 from app.repo.runs import RunRepo
 from app.repo.workers import WorkerRepo
+from app.routers import results as results_route
 from app.storage import Storage, make_s3_client
 from tests.conftest import asyncpg_dsn, make_settings
 from tests.results_lab import (
@@ -798,6 +799,36 @@ def a_fail(document):
     document["cleanup"]["cleanup_ok"] = False
 
 
+async def test_the_run_is_stamped_with_the_cloud_s_clock_when_its_bundle_is_filed_and_a_refusal_stamps_nothing(lab, monkeypatch):
+    """The C6.6 review's finding 1: `received_at` is the Cloud's time, never a
+    time of the bundle, and a report's month goes by it for a late result."""
+    arrived = dt.datetime(2027, 1, 1, 3, 5, 0, 250000, tzinfo=dt.timezone.utc)
+    monkeypatch.setattr(results_route, "now", lambda: arrived)
+    run_id = await lab.run()
+    assert (await lab.run_row(run_id)).received_at is None
+    tampered = lab.bundle(run_id)
+    tampered["result"] = tampered["result"].replace(b'"pass"', b'"fail"', 1)
+
+    refused = await lab.upload(tampered)
+
+    assert refused.status_code == 400 and (await lab.run_row(run_id)).received_at is None
+    parts = lab.bundle(run_id)
+    lab.expect_puts(run_id, parts)
+
+    assert (await lab.upload(parts)).status_code == 202
+    assert (await lab.run_row(run_id)).received_at == arrived
+    # The same bundle again changes nothing, its time included.
+    monkeypatch.setattr(results_route, "now", lambda: arrived + dt.timedelta(days=1))
+    assert (await lab.upload(parts)).status_code == 202
+    assert (await lab.run_row(run_id)).received_at == arrived
+
+
+def test_the_upload_s_clock_is_the_cloud_s_in_utc():
+    before = dt.datetime.now(dt.timezone.utc)
+    stamped = results_route.now()
+    assert before <= stamped <= dt.datetime.now(dt.timezone.utc) and stamped.utcoffset() == dt.timedelta(0)
+
+
 async def test_a_fail_s_items_and_columns(lab):
     run_id = await lab.run()
     parts = lab.bundle(run_id, patch=a_fail)
@@ -1129,7 +1160,7 @@ async def test_an_update_that_touched_nothing_on_a_run_that_still_takes_a_bundle
     still takes a bundle is no state the Cloud knows: 500, nothing written."""
     calls = []
 
-    async def touched_nothing(self, msp_id, run_id, *, worker_id, update):
+    async def touched_nothing(self, msp_id, run_id, *, worker_id, update, at):
         calls.append(run_id)
         return 0
 

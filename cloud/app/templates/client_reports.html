@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Reports · {{ client.name }} · {{ layout.msp.name }}{% endblock %}
+{% block content %}
+<h1>Reports · <a href="/clients/{{ client.id }}">{{ client.name }}</a></h1>
+{% if notice %}<p class="notice" role="alert">{{ notice }}</p>{% endif %}
+<form class="inline" method="post" action="/clients/{{ client.id }}/reports/generate">
+  <button type="submit">Generate now</button>
+  <span class="muted">An interim report of the current month, {{ month.title }}, from the tests that have ended by now. The month's final report is made on the 1st. Making one takes a few seconds.</span>
+</form>
+<table class="reports">
+  <thead><tr><th>Period</th><th>Kind</th><th>Generated</th><th>Content hash (SHA-256)</th><th>File hash (SHA-256)</th><th></th></tr></thead>
+  <tbody id="reports">
+  {% include "_reports.html" %}
+  </tbody>
+</table>
+<p class="muted">The file hash is the SHA-256 of the downloaded file; the content hash is printed inside the report. Each download is recorded in the audit log.</p>
+{% endblock %}

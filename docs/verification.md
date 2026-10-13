@@ -2266,7 +2266,8 @@ list of what a page writes: `login.success`, `login.failure`, `login.blocked`, `
 `user.create`, `user.reset_password`), the Worker's the routes' own (`worker.register`,
 `result.received`, `result.rejected`) and the connector's the repo's (`connector.create`,
 `connector.update`, `connector.delete`), and the report generator's is `report.create` (C6.4,
-below). `report.download` is C6.6's word and `settings.change` C7.3's.
+below) and the reports pages' `report.download` (C6.6, the seventh word of `ACTIONS`).
+`settings.change` is C7.3's.
 
 **`/audit`** (an admin; a member 403): the MSP's rows newest first by `(at, id)`, the last 30
 days by default (`?days=`, 1 to 3650), in pages of 100 by keyset (`?before=<row id>`, with and
@@ -2281,8 +2282,9 @@ C7.3's to give.
 `generate.py`, `frameworks.py`, `template.html`, `report.css`; guarded at 100% line and branch),
 `cloud/app/repo/{reports,runs,items}.py`, `cloud/manage.py generate-report`. A report is one
 client's PDF of one UTC calendar month, `YYYY-MM`, A4, six sections in this order: Summary, Test
-log, Failures, Method, Integrity, Framework mapping. Made by the CLI today; C6.6 adds the
-scheduler's job on the 1st, the reports page, "Generate now" and `report.download`.
+log, Failures, Method, Integrity, Framework mapping. Made by the scheduler's job on the 1st
+(C6.6, below), by "Generate now" on a client's reports page (an interim one), and by
+`manage.py generate-report` by hand.
 
 **Which runs are the month's** (`app/repo/runs.py` `period_time`; changed by the C6.4 review,
 `docs/decisions.md` 2026-10-13, findings 2 and 3). A `pass`, `fail` or `error` run belongs to
@@ -2295,12 +2297,34 @@ run's `tsa_time` against the period). Every other run belongs to the month of `c
 **is not a test**: an `expired` run is counted in the Summary ("Scheduled tests that did not
 run: N") and shown in the Test log as "did not run"; a `queued` or `dispatched` run is counted
 as "Scheduled tests with no result when this report was made: N" and shown as "no result yet",
-so a month whose Worker was off never reads as a month of passes. A run with no result when its
-month's final report is made stays in that report as such; if its bundle lands later it is the
-next month's test, by the time it ended. `period_filter` is the one condition, and the three
-reads of a month (`RunRepo.period`, `ItemRepo.counts_by_type_in_period`,
-`ItemRepo.unmatched_in_period`) share it; `app/report/data.py`'s `run_date` is the same rule on
-a row. A month that has not begun is `period: has not begun`; a month with no run of the client
+so a month whose Worker was off never reads as a month of passes.
+
+**A result that arrives late** (the C6.6 review's finding 1; `period_time`, `RESULTS_CLOSE`,
+`test_run.received_at`). `POST /v1/results` stamps the run with the Cloud's clock when it files
+the bundle (`received_at`; never a time of the bundle). A month takes results until **02:00 UTC
+on the 1st after it** (`RESULTS_CLOSE`, two hours); a tested run whose result the Cloud received
+at that time or later is **the month's it was received in**, not the month it ended in, because
+that month may have its final report by then: a run that ended on 30 September 23:50 and whose
+Worker reached the Cloud on 1 October 03:05 is October's test, and one received on 10 November
+is November's. So every result is in exactly one month as a test, and none is lost to a report
+that was already made. A run with no result when its month's final report is made stays in that
+report as "no result yet"; when its bundle lands it is a test of the month it lands in. In the
+report such a run keeps its own date (the Test log and the Failures print when it ended, and the
+month's order is by the tests' ends, so it stands first and "a later test of the same plan" is
+one that ended later), and the Summary counts it on a line of its own: "Tests that ended before
+this period and whose results arrived after that period had closed, counted here: N". A row no
+bundle wrote (`received_at` null) goes by its end. Q6.1's check of each run's `tsa_time` against
+the period allows for these: a run counted on that line is stamped before the period began.
+**No final report is made before 03:00 UTC on the 1st** (`FINAL_AFTER`, three hours: the job's
+hour, and `generate`'s refusal `period: not closed until 03:00 UTC on the 1st` for whoever asks
+earlier, the job's start run and the CLI included), so the hour between the two is the room an
+upload stamped just inside the close has to commit before the month is read; a test holds the
+order of the two constants.
+
+`period_filter` is the one condition, and the four reads of a month (`RunRepo.period`,
+`ItemRepo.counts_by_type_in_period`, `ItemRepo.unmatched_in_period`,
+`RunRepo.clients_in_period`) share it; `app/report/data.py`'s `run_date` is `_run_time`, the
+date and the order, on a row. A month that has not begun is `period: has not begun`; a month with no run of the client
 at all is `period: no run in the period`; nothing is written for either.
 
 **What each section reads.**
@@ -2312,7 +2336,7 @@ at all is `period: no run in the period`; nothing is written for either.
 | Failures | one block per `fail` or `error` run: the date, the result, for an `error` its code and message, the items that did not match (type, name, `missing` / `mismatch` / `not checked`, the `reason` word), "Every item that was checked matched." for a run with items and none unmatched, "No item was checked." for a run with none, and "A later test of the same plan passed on <date>." (the nearest later `pass` of the run's own plan in the month), else "No later test of the same plan passed in this period." | `error_code`, `error_message`; `test_item` rows with `match` not true: `match` false is `missing` when `found` is false and `mismatch` otherwise; `match` unknown is `not checked` whatever `found` says (the Worker stores an item whose target it could not read as not found) |
 | Method | the sizes of the plans that have a result in the period, canary plus random selection, the three restore targets by name, the comparison fields (a random mail's sender when the backup lists one, a random file's size unless it is an Office document), in how many tests the removal from the target did not complete (`cleanup_ok` false; nothing when none), and "Verification levels covered: 1, 2, 3" when a test passed or failed, with "; level 4 partially (files opened and read via Microsoft Graph)" only when such a test sampled a file; a month in which none did says no level was covered | `test_plan` sizes of the runs' plans; the month's runs; fixed text |
 | Integrity | the content hash, the file-hash sentence, the generation time, the Workers of the month's runs (name, id, `key_id` as the public key's fingerprint), every run's id with its `bundle_sha256` and "timestamped <tsa_time>" or "not timestamped" | `worker`, `test_run` |
-| Framework mapping | the four controls by identifier and name, two columns a dash, and the sentence that their text is C6.7's and not part of the report yet | `app/report/frameworks.py` |
+| Framework mapping | the sentence above the table (what the table is: a description of this evidence, not an assessment of the control; a fail or error shows nothing for it), then the four controls by identifier and their own name (the SOC 2 row by the criteria's own words, never a gloss), each with what a test marked pass shows and what the report does not look at (C6.7, "The framework mapping" below) | `app/report/frameworks.py` |
 
 **The overall line** keeps `fail` and `error` apart (the status vocabulary above): "All N tests
 passed", or "N of M tests failed" with "K of M tests could not run (error)" on its own line, or
@@ -2343,13 +2367,21 @@ not before the generation day); the title says "Interim report" and the Summary 
 is not over. A month has **one final report** per client (`uq_report_final_period`, a partial
 unique on `(msp_id, client_id, period_start) WHERE NOT interim`; the generator asks
 `ReportRepo.final` before it renders and answers `period: already reported`, the index being the
-line for two at once) and as many interim ones as were asked for; a key is written once
+line for two at once: the loser's insert is refused by the key's unique or the period's, and
+since a final report's key is its period's the generator words either as `period: already
+reported`, which the job counts as `existing`; the C6.6 review's finding 7) and as many interim
+ones as were asked for; a key is written once
 (`uq_report_storage_key`). The object: `msp/{msp_id}/reports/{client_id}/{YYYY-MM}.pdf` for a
 final report, `…/{YYYY-MM}-interim-{YYYYMMDDTHHMMSSZ}.pdf` for an interim one, `application/pdf`,
 through `Storage.put` in a thread **after** the row and one audit row `report.create`
-`report:<id>` (the user and the address from a page's caller; null from the CLI), so a refused
-row writes no object and a failed put rolls the row back with the caller's transaction. Nothing
-edits, replaces or deletes a report; a late bundle is not in the month's final report.
+`report:<id>` (the user and the address from a page's caller; null from the CLI and the job), so
+a refused row writes no object and a failed put rolls the row back with the caller's
+transaction. Nothing edits, replaces or deletes a report; **a final report is never re-made**
+(C6.6): it says what the Cloud knew on the day it was made, a run with no result that day is in
+it as such, and that run's bundle, when it lands, is a test of the month it lands in ("A result
+that arrives late", above).
+The read for a final report the month already has comes first, before the month is read, so a
+month that has its report costs one statement (the C6.6 job asks for every client).
 
 **No secret, no link, no tenant identifier.** The PDF holds no token, no key PEM (the `key_id`
 alone), no pre-signed URL, no bucket name, no `http`, no tenant id and no person's address; the
@@ -2362,7 +2394,116 @@ scans both passes and the PDF's text.
 first (`MspRepo.get`, `ClientRepo.get`, `ConnectorRepo.list`, `PlanRepo.list`, `WorkerRepo.list`,
 `RunRepo.period`, `ItemRepo.counts_by_type_in_period`, `ItemRepo.unmatched_in_period`); no list
 of run ids travels to the database (the item reads join `test_item` to `test_run` under the
-period's condition). `generate` adds `ReportRepo.final`, the row, the audit row, then the put:
-eleven statements for a month of three runs and for a month of sixty. Another MSP's client is
-`client_id: no such client`, never a report.
+period's condition). `generate` adds `ReportRepo.final` (first), the row, the audit row, then
+the put: eleven statements for a month of three runs and for a month of sixty. Another MSP's
+client is `client_id: no such client`, never a report.
+
+**The cap on a month of thousands of runs** (C6.6; `app/report/data.py` `MAX_LOG_ROWS` 200). The
+Test log, the Failures and the Integrity run list show the first 200 runs of the month in the
+month's order (the same 200 in the log and the run list, so a run's hash is there when its row
+is), and under each capped table one line says "N more tests of this period are not listed here;
+the Cloud's pages hold every one." The Summary's numbers (tests, passed, failed, errored, did not
+run, no result, the recovery times, the restore points, the Workers, the plans) count every run:
+the month is read whole, one statement, and capped in Python. A `*/5` plan is 8,928 runs a
+month; uncapped that was hundreds of pages and a two-pass render of minutes. 200 runs are about
+23 pages: the entry said 500, and the build measured 500 at 112 s in the image on the dev
+laptop's Docker, past the Done-when's minute, so the cap is 200 (its build notes).
+
+**The monthly job** (C6.6; `app/scheduler.py` `tick_reports`; `docs/decisions.md` 2026-10-13,
+"C6.6, C6.5 and C6.7", point 1). The scheduler's third job, `CronTrigger(day=1, hour=3,
+minute=0)` in UTC with an hour's misfire grace, and once at the process's start like the other
+two: for every MSP, the clients with a run of **the newest closed month**
+(`app.report.data.closed_month`: the previous month from 03:00 UTC on the 1st, the month before
+it until then, so a scheduler started at 00:00:30 on the 1st makes nothing of the month that
+just ended and the 03:00 run makes it; the C6.6 review's finding 2) (`RunRepo.clients_in_period`:
+any state, so a client whose only run expired or has no result gets a report that says so; one
+read in its own transaction), then **one transaction per client** calling `generate` for that
+month's final report with no user and no address, committed as soon as it is made; a month that
+has its report is counted as `existing` (one read, no render), never a failure; a client whose
+report fails (a render, a put, the database) is rolled back alone and logged by type (`report
+failed`, the ids, the type, never a message), and the next client is made; a report is counted
+and named (`report created`: the ids and the report's id) after its commit; the tick line is
+`tick job=reports msps clients created existing failed duration_ms`. The start run makes a
+scheduler restarted after a 1st it missed catch up, and costs a restart on any other day one
+read per client with a run last month. The scheduler's process reads `DATABASE_URL`, `LOG_LEVEL`
+and the five `S3_*` variables at start (`storage_settings_from_environment`, `Storage.for_writing`;
+a missing one stops it naming the variable), never `SECRET_KEY`; the Compose `scheduler` service
+has them through the one environment anchor. A month whose report failed on the 1st is one
+`report failed` line and one `manage.py generate-report --period` by hand.
+
+**The reports pages** (C6.6; `app/routers/ui/reports.py`, the templates `reports.html`,
+`client_reports.html`, `_reports.html`; `docs/decisions.md` 2026-10-13, point 2). Both roles
+read, download and generate: a report is the client's own evidence, made in the user's name on
+one audit row (C6.1's line between the roles is at taking something away and at seeing other
+users' actions).
+
+- **`/reports`** (the "Reports" nav entry, every role): every report of the MSP, newest period
+  first then newest generation (`ReportRepo.page`, one statement joined to the client on the
+  key that starts with `msp_id`), in pages of 50 by keyset (`?before=<report id>`; the rows alone
+  for an htmx request; the read asks for one row more than a page, so "more" is offered only
+  when a row follows, and a continuation with no row says nothing), each row the client (a link to its reports), the period `YYYY-MM`, the
+  kind ("interim" or "final"), the generation time, the content hash, the file hash and a
+  **Download** link to the route below. Three statements (the user, the MSP, the page).
+- **`/clients/{id}/reports`:** 404 for a client not this MSP's; the same rows without the client
+  column; above them the **Generate now** form and what it makes; the client page links it.
+  Four statements.
+- **The download, `GET /reports/{id}/file`:** `SameOrigin` (the one GET that writes, as the
+  bundle's); 404 for a report not this MSP's; one audit row **`report.download`** `report:<id>`
+  with the user and the address, committed before the answer; then 302 with `Cache-Control:
+  no-store` to a URL pre-signed for ten minutes against `S3_PUBLIC_ENDPOINT`, as the bundle's
+  download. No bucket list (the key is the row's): three statements and one `INSERT`. The
+  browser's file name is the key's last part (`2026-09.pdf`,
+  `2026-10-interim-20261013T101500Z.pdf`).
+- **Generate now, `POST /clients/{id}/reports/generate`:** `SameOrigin`; 404 for another MSP's
+  client; **the client's row**: `ClientRepo.hold` takes it first (`FOR NO KEY UPDATE SKIP
+  LOCKED`: nothing waits, and a run or a report made for the client meanwhile is not kept
+  waiting) and keeps it until the request's transaction has committed, in whatever process, so
+  a second click while one is being made is the page with "A report is being made; try again in
+  a minute." and 429 at once, and a click after it reads the cap with the first's row there (two
+  clicks at once used to pass the cap together; the C6.6 review's finding 6); **the cap**: the
+  client's newest report read once under that hold, and if it is an interim one of the
+  current month made less than ten minutes ago (`GENERATE_EVERY` 600 s) the answer is the
+  client's reports page with "An interim report of this month was made at <time>; the next can
+  be made from <time>." and 429 with `Retry-After`, no render, no row (two reports a minute apart
+  render the same rows to the same bytes, and a render is CPU seconds); the time named is the
+  next whole minute at which the cap lets a click through and `Retry-After` the seconds rounded
+  up, never a time it still refuses at (finding 12); **the render slot**: one
+  render at a time per process (`app.state.render_slot`, a semaphore of one), a click while one
+  runs waits five seconds (`RENDER_WAIT_S`) for the slot and is then the page with "A report is
+  being made; try again in a minute." and 429; then `generate` for the current month with the
+  user and the address under a savepoint (`session.begin_nested()`), and 303 to the client's
+  reports page, where the new row is first. A `RepoError` (`period: no run in the period` for a
+  client with nothing this month) is the page with the error's own line and 409; a `ReportFailed` (`report: not rendered (<type>)`,
+  `storage: put failed (<type>)`) the page with that line and 503, the type logged with the ids
+  and never the message; the savepoint rolls the report's rows back alone and the request's
+  transaction commits nothing of it; **never a 500**. On success: the user, the MSP, the client,
+  its row's hold, the cap's read, the month's eight reads, the row and the audit row, then the put, the same for
+  a month of one run and of thirty. The form is a plain POST (no htmx: the render takes seconds
+  and a 303 keeps a refresh from posting again). The request's transaction is held across the
+  render and the put (the C6.4 review's finding 13, kept and bounded: one render at a time, a
+  waiter answered in five seconds, six renders an hour per client).
+
+**The framework mapping** (C6.7; `app/report/frameworks.py`, held verbatim by
+`tests/test_report_wording.py`). Above the table: *"For each control, the left sentence says
+what a test marked pass in this report shows, and the right sentence what this report does not
+look at. A test marked fail or error shows nothing for the control; it is listed under Failures.
+The table describes this evidence; it is not an assessment of the control."* The rows:
+
+| Control | Name (the control's own) | What a test marked pass shows | What this report does not look at |
+|---|---|---|---|
+| ISO/IEC 27001:2022 A.8.13 | Information backup | On the dates listed, a sample of items was restored from the backup copy into a test location, read back and compared with what was expected, and the outcome of each test is recorded here. | Whether every item in the backup can be restored, whether the backup policy is followed, how often backups are taken, or where and for how long the copies are kept. |
+| SOC 2 (2017 TSC) Availability A1.2 and A1.3 | A1.2: … data back-up processes, and recovery infrastructure to meet its objectives; A1.3: the entity tests recovery plan procedures supporting system recovery | On the dates listed, the restore of a sample of backed-up items was tested and what each test found is recorded here; this is a record of restore testing of items, not of a recovery plan exercise. | Recovery of a system or a service, the recovery plan and its exercise, recovery time or recovery point objectives, and whether the backup process meets the entity's objectives. |
+| HIPAA 45 CFR 164.308(a)(7)(ii)(D) | Testing and revision procedures | On the dates listed, the restore of a sample of items from the backup was tested and the outcome recorded, which is one input to the periodic testing of a contingency plan. | The contingency plan itself, its revision, its other parts (data backup plan, disaster recovery plan, emergency mode operation plan, criticality analysis), and whether the sampled items hold protected health information. |
+| DORA, Regulation (EU) 2022/2554, Article 12 | Backup policies and procedures, restoration and recovery procedures and methods | On the dates listed, the restoration of a sample of items from the backup was tested, with each test's outcome and the time the restore took recorded here. | The backup policy, the restoration and recovery procedures and methods as a whole, the recovery of ICT systems, the testing of those procedures beyond the sampled items, and any register, report or notification the regulation asks for. |
+
+Each "shows" sentence begins "On the dates listed", names the sample and says the outcome is
+recorded; none names a control met, an audit passed or a regulation complied with, and a test
+holds a list of such words out of every reviewed sentence. **The reviewed wording** (C6.5): the
+fixed sentences of the Summary (the three meanings, the recovery-times sentence, the
+disaster-recovery sentence as the C6.4 review's finding 6 left it), the Method (the sampling,
+the targets, the comparison, the clean-up line, the levels line), the cap's line, the Integrity
+sentence, and the mapping above are listed verbatim in `tests/test_report_wording.py`; a change
+to one of them changes the list in the same commit. The C6.5 reviewer's and the C6.7 reader's
+comments are the entries "C6.5 review" and "C6.7 reading" in `docs/decisions.md`, each closing
+its issue by its own commit.
 

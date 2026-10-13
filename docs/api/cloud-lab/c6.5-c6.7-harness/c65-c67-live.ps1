@@ -5,7 +5,8 @@
 # curl, the connector on the lab profile, a plan with one run whose id becomes the bundle's; the poll;
 # the real Worker bundle posted as the Worker posts it: 202 pass (a run of this month); then by SQL
 # the rows of the previous month (a pass, a fail with two unmatched items, an error, a later pass, an
-# expired run; the month computed from the clock); the scheduler restarted so its report job's start
+# expired run, and a pass that ended the month before and was received after that month had closed;
+# the month computed from the clock); the scheduler restarted so its report job's start
 # run makes that month's final report in the real process (no clock is moved); the row and the object
 # held to each other; the two pages as the member; the Done-when, timed: "Generate now" clicked, the
 # interim report listed and downloaded, its bytes' SHA-256 equal to file_sha256, under a minute; the
@@ -22,7 +23,9 @@
 # and for every token-, cookie- and signature-shaped value before it is saved; a screen that fires
 # leaves no file. The stack's database is re-migrated once (the rows it held are dropped: nothing is
 # deployed), and the harness reads only the rows it made. The harness never replaces committed
-# evidence with a failed run's: the PDF is kept only once every step before it has passed.
+# evidence with a failed run's (the C6.6 review's finding 4): every check goes through `Check`, which
+# prints its word and records a miss; a miss, a step that threw or a screen that fired leaves both the
+# evidence text and the kept PDF as they were, and the PDF is copied last, after the text is saved.
 param(
     [string]$Out,
     [string]$Bundle = 'C:\ProgramData\RestoreProof\c57\06aa7c8f-3611-4f00-92c8-797428f58f1a',
@@ -87,7 +90,11 @@ function Fetch-Object([string]$Key, [string]$To) {
 }
 function Pdf-Text([string]$Path) { Push-Location $CloudDir; try { (& uv run --no-sync python $PdfText $Path 2>&1) -join "`n" } finally { Pop-Location } }
 function Sha256([string]$Path) { (Get-FileHash -Algorithm SHA256 $Path).Hash.ToLower() }
-function Run-Sql([string]$State, [string]$CreatedAt, [string]$FinishedAt, [string]$RestorePoint, [string]$Recovery, [string]$Hash, [string]$TsaTime, [string]$ErrorCode, [string]$ErrorMessage) {
+# A check's word in the evidence, and the miss remembered: a run with one saves nothing.
+function Check([string]$Name, [bool]$Ok, [string]$Yes = 'yes', [string]$No = 'NO') { if (-not $Ok) { $script:missed += $Name }; if ($Ok) { $Yes } else { $No } }
+# A PDF's text with no white space: pypdf breaks a 64-character hash where the table wraps it.
+function Packed([string]$Text) { $Text -replace '\s', '' }
+function Run-Sql([string]$State, [string]$CreatedAt, [string]$FinishedAt, [string]$RestorePoint, [string]$Recovery, [string]$Hash, [string]$TsaTime, [string]$ErrorCode, [string]$ErrorMessage, [string]$ReceivedAt = '') {
     $finishedSql = if ($FinishedAt) { "'$FinishedAt'" } else { 'NULL' }
     $pointSql = if ($RestorePoint) { "'$RestorePoint'" } else { 'NULL' }
     $recoverySql = if ($Recovery) { $Recovery } else { 'NULL' }
@@ -98,8 +105,9 @@ function Run-Sql([string]$State, [string]$CreatedAt, [string]$FinishedAt, [strin
     $tsaSql = if ($TsaTime) { "true, '$TsaTime'" } else { 'NULL, NULL' }
     $codeSql = if ($ErrorCode) { "'$ErrorCode', '$ErrorMessage'" } else { 'NULL, NULL' }
     $dispatchedSql = if ($State -eq 'expired') { "'$CreatedAt', 3" } else { "'$CreatedAt', 1" }
-    $sql = "INSERT INTO test_run (msp_id, client_id, worker_id, plan_id, connector_id, state, dispatched_at, attempt, restore_point_at, started_at, finished_at, total_ms, recovery_ms, bundle_key, bundle_sha256, signature_ok, tsa_ok, tsa_time, cleanup_ok, error_code, error_message, created_at) " +
-        "VALUES ('$script:msp', '$script:client', '$script:worker', '$script:plan', '$script:connector', '$State', $dispatchedSql, $pointSql, $finishedSql, $finishedSql, $totalSql, $recoverySql, $keySql, $hashSql, $okSql, $tsaSql, $okSql, $codeSql, '$CreatedAt') RETURNING id"
+    $receivedSql = if ($ReceivedAt) { "'$ReceivedAt'" } else { 'NULL' }
+    $sql = "INSERT INTO test_run (msp_id, client_id, worker_id, plan_id, connector_id, state, dispatched_at, attempt, restore_point_at, started_at, finished_at, total_ms, recovery_ms, bundle_key, bundle_sha256, signature_ok, tsa_ok, tsa_time, received_at, cleanup_ok, error_code, error_message, created_at) " +
+        "VALUES ('$script:msp', '$script:client', '$script:worker', '$script:plan', '$script:connector', '$State', $dispatchedSql, $pointSql, $finishedSql, $finishedSql, $totalSql, $recoverySql, $keySql, $hashSql, $okSql, $tsaSql, $receivedSql, $okSql, $codeSql, '$CreatedAt') RETURNING id"
     return (Invoke-Psql $sql).Trim()
 }
 function Item-Sql([string]$RunId, [int]$Position, [string]$Type, [string]$Name, [string]$Found, [string]$Match, [string]$Reason) {
@@ -109,13 +117,20 @@ function Item-Sql([string]$RunId, [int]$Position, [string]$Type, [string]$Name, 
 
 $started = Now
 $secrets = @()
+$missed = @()
 $t = @()
 $nowUtc = [DateTime]::UtcNow
 $thisMonth = $nowUtc.ToString('yyyy-MM')
-$prev = [DateTime]::new($nowUtc.Year, $nowUtc.Month, 1).AddMonths(-1)
+# The job's month: the newest closed one (the previous month from 03:00 UTC on the 1st, app.report.data.closed_month).
+$closedAt = $nowUtc.AddHours(-3)
+$prev = [DateTime]::new($closedAt.Year, $closedAt.Month, 1).AddMonths(-1)
 $period = $prev.ToString('yyyy-MM')
+$before = $prev.AddDays(-1)
 function Day([int]$Day, [string]$Time) { "$period-$($Day.ToString('00'))T$Time" }
-$t += "C6.6 (#72) Done-when, with C6.7 (#73) and C6.5 (#71), by hand against the Compose stack. $(Now), commit $((git -C $Repo rev-parse --short HEAD 2>&1) -join ''), branch $((git -C $Repo rev-parse --abbrev-ref HEAD 2>&1) -join '')"
+# The tree the stack is built from: the commit, and whether the working tree differs from it.
+$dirty = @(git -C $Repo status --porcelain -- cloud shared 2>&1).Count
+$tree = if ($dirty) { "with $dirty uncommitted path(s) under cloud/ and shared/, which the image is built from" } else { 'the working tree clean under cloud/ and shared/' }
+$t += "C6.6 (#72) Done-when, with C6.7 (#73) and C6.5 (#71), by hand against the Compose stack. $(Now), commit $((git -C $Repo rev-parse --short HEAD 2>&1) -join '') $tree, branch $((git -C $Repo rev-parse --abbrev-ref HEAD 2>&1) -join '')"
 $t += "Windows, Python 3.12, Docker Desktop, the Compose stack (postgres:16, MinIO, api, scheduler) on 127.0.0.1; the CLI runs in the api container; curl.exe 8.x with a cookie jar under %TEMP%; the PDF is read on the host with pypdf. This month is $thisMonth, the previous month (the job's) $period"
 $passed = $false
 try {
@@ -177,7 +192,7 @@ try {
     $t += "the bundle's run moved into this month by SQL (its ended time is the bundle's own; the pages and the report date it by that): $(Invoke-Psql "UPDATE test_run SET finished_at = '$thisMonth-02T01:00:00Z', started_at = '$thisMonth-02T00:55:00Z', created_at = '$thisMonth-02T00:50:00Z', tsa_time = '$thisMonth-02T01:00:05Z' WHERE id = '$bundleRun'")"
     $t += "the run's row: $(Invoke-Psql "SELECT state, finished_at, recovery_ms, tsa_ok, bundle_sha256, (SELECT count(*) FROM test_item WHERE run_id = test_run.id) AS items FROM test_run WHERE id = '$bundleRun'")"
 
-    $t += "`n== (3) the previous month, $period, by SQL: a pass, a fail with two unmatched items, an error, a later pass, an expired run (the bundle columns synthetic, no object behind them) =="
+    $t += "`n== (3) the previous month, $period, by SQL: a pass, a fail with two unmatched items, an error, a later pass, an expired run, and a pass that ended on $($before.ToString('yyyy-MM-dd')) and was received on the 1st at 05:00, after that month had closed (the bundle columns synthetic, no object behind them) =="
     $passed1 = Run-Sql 'pass' (Day 5 '01:59:00Z') (Day 5 '02:03:20Z') (Day 4 '23:00:00Z') '40000' ('11' * 32) (Day 5 '02:03:24Z') '' ''
     Item-Sql $passed1 0 'mail' 'RP-CANARY-0001' 'true' 'true' ''
     Item-Sql $passed1 1 'sharepoint' 'rp-canary-02.docx' 'true' 'true' ''
@@ -189,8 +204,11 @@ try {
     $later = Run-Sql 'pass' (Day 25 '01:59:00Z') (Day 25 '02:20:00Z') (Day 24 '23:00:00Z') '40000' ('44' * 32) (Day 25 '02:20:04Z') '' ''
     Item-Sql $later 0 'mail' 'RP-CANARY-0005' 'true' 'true' ''
     $expired = Run-Sql 'expired' (Day 15 '02:00:00Z') '' '' '' '' '' '' ''
-    foreach ($id in @($passed1, $failed, $errored, $later, $expired)) { if ($id -notmatch '^[0-9a-f-]{36}$') { throw "a run's id was not read: $id" } }
-    $t += "runs: pass $passed1, fail $failed, error $errored, pass $later, expired $expired"
+    $beforeDay = $before.ToString('yyyy-MM-dd')
+    $late = Run-Sql 'pass' "${beforeDay}T23:40:00Z" "${beforeDay}T23:50:00Z" "${beforeDay}T20:00:00Z" '30000' ('77' * 32) "${beforeDay}T23:50:04Z" '' '' (Day 1 '05:00:00Z')
+    Item-Sql $late 0 'mail' 'RP-CANARY-0007' 'true' 'true' ''
+    foreach ($id in @($passed1, $failed, $errored, $later, $expired, $late)) { if ($id -notmatch '^[0-9a-f-]{36}$') { throw "a run's id was not read: $id" } }
+    $t += "runs: pass $passed1, fail $failed, error $errored, pass $later, expired $expired, the late pass $late"
 
     $t += "`n== (4) the job in the real process: the scheduler restarted, its start run makes the client's final report of $period; the row and the object =="
     $restartedAt = Now
@@ -216,7 +234,8 @@ try {
     $text = Pdf-Text $pdf
     $t += "the PDF read with pypdf:`n$text"
     $words = (($text -split "`n") | Select-Object -Skip 2) -join ' '
-    $t += "the content hash printed: $(if ($words.Contains($contentHash)) { 'yes' } else { 'NO' }); the file hash not printed: $(if ($words.Contains($fileHash)) { 'IT IS' } else { 'right' }); the four banned phrases: $(if ($words -match '(?i)fully recoverable|guarantee|certified|accepted by insurers') { 'FOUND' } else { 'none' }); the four controls' sentences (C6.7): $(if ($words.Contains('On the dates listed, a sample of items was restored from the backup copy') -and $words.Contains('not an assessment of the control')) { 'rendered' } else { 'MISSING' })"
+    $packed = Packed $words
+    $t += "the content hash printed: $(Check 'the content hash printed' $packed.Contains($contentHash)); the file hash not printed: $(Check 'the file hash not printed' (-not $packed.Contains($fileHash)) 'right' 'IT IS'); the four banned phrases: $(Check 'no banned phrase' (-not ($words -match '(?i)fully recoverable|guarantee|certified|accepted by insurers')) 'none' 'FOUND'); the four controls' sentences (C6.7): $(Check 'the controls rendered' ($words.Contains('On the dates listed, a sample of items was restored from the backup copy') -and $words.Contains('not an assessment of the control')) 'rendered' 'MISSING'); the late pass counted on its own line and listed by its bundle hash: $(Check 'the late result in the report' ($words.Contains('Tests that ended before this period and whose results arrived after that period had closed, counted here: 1') -and $packed.Contains('77' * 32)))"
     $t += "the audit row of the job's report: $(Invoke-Psql "SELECT action, user_id IS NOT NULL AS has_user, ip FROM audit_log WHERE msp_id = '$script:msp' AND target = 'report:$reportId'")"
     Invoke-Compose @('restart', 'scheduler') | Out-Null
     Start-Sleep -Seconds 8
@@ -227,8 +246,9 @@ try {
         $existing = [string]((Invoke-Compose @('logs', '--no-log-prefix', '--since', $restartedAt, 'scheduler')) -split "`n" | Where-Object { $_ -match '"job": "reports".*"event": "tick"' } | Select-Object -Last 1)
         if ($existing -notmatch '"existing": 1') { $existing = '' }
     }
-    $t += "the scheduler restarted once more, its start run: $($existing.Trim())"
-    $t += "report rows of the month after it: $(Invoke-Psql "SELECT count(*) FROM report WHERE msp_id = '$script:msp' AND period_start = '$period-01'")"
+    $t += "the scheduler restarted once more, its start run: $($existing.Trim()) ($(Check 'the second start run found the report' ($existing -match '"existing": 1') 'existing, none made' 'NOT EXISTING'))"
+    $rowsAfter = (Invoke-Psql "SELECT count(*) FROM report WHERE msp_id = '$script:msp' AND period_start = '$period-01'").Trim()
+    $t += "report rows of the month after it: $rowsAfter ($(Check 'one report row of the month' ($rowsAfter -eq '1') 'one' 'NOT ONE'))"
 
     $t += "`n== (5) the pages as the member: /reports (the nav entry) and /clients/{id}/reports =="
     $t += "POST /login as the member (the form in a curl config on standard input, the cookie into the jar): $(Login 'member@c66.example.test' $memberPassword)"
@@ -238,7 +258,7 @@ try {
     $t += "GET /clients/<client_id>/reports: $($p.Status)`n$($p.Text)"
     $clientPage = Get-Page "/clients/$script:client"
     $reportsLink = 'href="/clients/' + $script:client + '/reports"'
-    $t += "GET /clients/<client_id>: the Reports link: $(if ($clientPage.Raw.Contains($reportsLink)) { 'yes' } else { 'NO' })"
+    $t += "GET /clients/<client_id>: the Reports link: $(Check 'the Reports link' $clientPage.Raw.Contains($reportsLink))"
 
     $t += "`n== (6) the Done-when: 'Generate now' clicked as the member; the interim report listed and downloaded within a minute; the bytes' SHA-256 equal to file_sha256 =="
     $watch = [Diagnostics.Stopwatch]::StartNew()
@@ -250,7 +270,7 @@ try {
     $t += "GET /clients/<client_id>/reports after the click: $($p.Status)`n$($p.Text)"
     $interim = Invoke-Psql "SELECT id, storage_key, file_sha256, content_sha256, generated_at FROM report WHERE msp_id = '$script:msp' AND client_id = '$script:client' AND interim ORDER BY generated_at DESC LIMIT 1"
     $iparts = $interim.Split('|'); $interimId = $iparts[0]; $interimKey = $iparts[1]; $interimHash = $iparts[2]
-    $t += "the interim row: id $interimId, key $interimKey, file_sha256 $interimHash, content_sha256 $($iparts[3]), generated $($iparts[4]); listed first on the page: $(if ($p.Text.IndexOf($interimHash) -lt $p.Text.IndexOf($fileHash)) { 'yes' } else { 'NO' })"
+    $t += "the interim row: id $interimId, key $interimKey, file_sha256 $interimHash, content_sha256 $($iparts[3]), generated $($iparts[4]); listed first on the page: $(Check 'the interim report listed first' ($p.Text.IndexOf($interimHash) -ge 0 -and $p.Text.IndexOf($interimHash) -lt $p.Text.IndexOf($fileHash)))"
     $d = Invoke-Curl @('-i', '-b', $Jar, '-H', 'Sec-Fetch-Site: same-origin', "$Cloud/reports/$interimId/file")
     $location = Header-Of $d 'location'
     $locationShown = if ($location -match '^(https?://[^/]+/[^?]+)\?') { $Matches[1] + '?<the signed query, X-Amz-Expires=600>' } else { $location }
@@ -260,38 +280,40 @@ try {
     $watch.Stop()
     $interimGot = Sha256 $interimPdf
     $t += "the link followed: $((Get-Item $interimPdf).Length) bytes, sha256 $interimGot; file_sha256 $interimHash; $(if ($interimGot -eq $interimHash) { 'the same bytes' } else { 'DIFFERENT' })"
-    $t += "from the click to the downloaded bytes: $([int]$watch.Elapsed.TotalSeconds) s ($($watch.ElapsedMilliseconds) ms): $(if ($watch.Elapsed.TotalSeconds -lt 60) { 'within a minute' } else { 'OVER A MINUTE' })"
+    $t += "from the click to the downloaded bytes: $([int]$watch.Elapsed.TotalSeconds) s ($($watch.ElapsedMilliseconds) ms): $(Check 'within a minute' ($watch.Elapsed.TotalSeconds -lt 60) 'within a minute' 'OVER A MINUTE')"
     if ($interimGot -ne $interimHash) { throw 'the downloaded bytes and the row disagree' }
     $interimText = ((Pdf-Text $interimPdf) -split "`n" | Select-Object -Skip 2) -join ' '
-    $t += "its text says 'Interim report': $(if ($interimText.Contains('Interim report')) { 'yes' } else { 'NO' }); the kept bundle's bundle_sha256 in its Integrity section: $(if ($interimText.Contains($bundleSignature.bundle_sha256)) { 'yes' } else { 'NO' }); its first 300 characters: $($interimText.Substring(0, [Math]::Min(300, $interimText.Length)))"
+    $t += "its text says 'Interim report': $(Check 'the interim title' $interimText.Contains('Interim report')); the kept bundle's bundle_sha256 in its Integrity section (the text with its white space taken out: the table wraps the hash): $(Check 'the bundle hash in the interim report' (Packed $interimText).Contains($bundleSignature.bundle_sha256)); its first 300 characters: $($interimText.Substring(0, [Math]::Min(300, $interimText.Length)))"
 
     $t += "`n== (7) the cap, another site, another MSP =="
     $again = Invoke-Curl @('-i', '-b', $Jar, '-X', 'POST', "$Cloud/clients/$script:client/reports/generate")
-    $t += "POST /clients/<client_id>/reports/generate again at once: $(Status-Of $again) retry-after $(Header-Of $again 'retry-after'); the line: $((((Page-Text (Body-Of $again)) -split "`n") | Where-Object { $_ -match 'interim report of this month' } | Select-Object -First 1))"
+    $t += "POST /clients/<client_id>/reports/generate again at once ($(Check 'the cap' ((Status-Of $again) -match ' 429 ') '429' 'NOT 429')): $(Status-Of $again) retry-after $(Header-Of $again 'retry-after'); the line: $((((Page-Text (Body-Of $again)) -split "`n") | Where-Object { $_ -match 'interim report of this month' } | Select-Object -First 1))"
     $cross = Invoke-Curl @('-i', '-b', $Jar, '-X', 'POST', '-H', 'Sec-Fetch-Site: cross-site', "$Cloud/clients/$script:client/reports/generate")
-    $t += "POST ... with Sec-Fetch-Site: cross-site: $(Status-Of $cross) $((($cross -split "`n") | Select-Object -Last 1).Trim())"
+    $t += "POST ... with Sec-Fetch-Site: cross-site ($(Check 'the cross-site click' ((Status-Of $cross) -match ' 403 ') '403' 'NOT 403')): $(Status-Of $cross) $((($cross -split "`n") | Select-Object -Last 1).Trim())"
     $r = Invoke-Manage @('create-msp', '--name', 'C6.6 done-when MSP B'); if ($r.Exit -ne 0) { throw "create-msp B: $($r.Text)" }
     $mspB = Line-Of $r.Text 'msp_id'
     $r = Invoke-Manage @('create-client', '--msp-id', $mspB, '--name', 'B client', '--tenant-id', ([guid]::NewGuid().ToString())); if ($r.Exit -ne 0) { throw "create-client B: $($r.Text)" }
     $clientB = Line-Of $r.Text 'client_id'
-    $t += "MSP B by CLI: msp_id $mspB, client_id $clientB; its reports page and its button as MSP A's member: $(Status-Of (Invoke-Curl @('-i', '-b', $Jar, "$Cloud/clients/$clientB/reports"))), $(Status-Of (Invoke-Curl @('-i', '-b', $Jar, '-X', 'POST', "$Cloud/clients/$clientB/reports/generate")))"
+    $pageB = Status-Of (Invoke-Curl @('-i', '-b', $Jar, "$Cloud/clients/$clientB/reports")); $buttonB = Status-Of (Invoke-Curl @('-i', '-b', $Jar, '-X', 'POST', "$Cloud/clients/$clientB/reports/generate"))
+    $t += "MSP B by CLI: msp_id $mspB, client_id $clientB; its reports page and its button as MSP A's member ($(Check 'another MSP''s page and button' ($pageB -match ' 404 ' -and $buttonB -match ' 404 ') 'both 404' 'NOT 404')): $pageB, $buttonB"
     $rowB = Invoke-Psql "INSERT INTO report (msp_id, client_id, period_start, period_end, storage_key, content_sha256, file_sha256, interim, generated_at) VALUES ('$mspB', '$clientB', '$period-01', '$($prev.AddMonths(1).AddDays(-1).ToString('yyyy-MM-dd'))', 'msp/$mspB/reports/$clientB/$period.pdf', '$('55' * 32)', '$('66' * 32)', false, now()) RETURNING id"
-    $t += "a report row of MSP B by SQL (no object behind it): $rowB; GET /reports/<that id>/file as MSP A's member: $(Status-Of (Invoke-Curl @('-i', '-b', $Jar, "$Cloud/reports/$($rowB.Trim())/file")))"
-    $t += "GET /reports as the member: MSP B's row listed: $(if ((Get-Page '/reports').Text.Contains('B client')) { 'YES' } else { 'no' })"
+    $fileB = Status-Of (Invoke-Curl @('-i', '-b', $Jar, "$Cloud/reports/$($rowB.Trim())/file"))
+    $t += "a report row of MSP B by SQL (no object behind it): $rowB; GET /reports/<that id>/file as MSP A's member ($(Check 'another MSP''s report' ($fileB -match ' 404 ') '404' 'NOT 404')): $fileB"
+    $t += "GET /reports as the member: MSP B's row listed: $(Check 'another MSP''s row not listed' (-not (Get-Page '/reports').Text.Contains('B client')) 'no' 'YES')"
 
     $t += "`n== (8) /audit as the admin: the download's row with user, time and IP; the two report.create rows =="
     $t += "POST /login as the admin: $(Login 'admin@c66.example.test' $adminPassword)"
     $p = Get-Page '/audit'
     $t += "GET /audit as the admin: $($p.Status)`n$((($p.Text -split "`n") | Where-Object { $_ -match 'report\.' }) -join "`n")"
     $t += "the audit rows (action, has_user, ip): $(Invoke-Psql "SELECT action, user_id IS NOT NULL, ip FROM audit_log WHERE msp_id = '$script:msp' AND action LIKE 'report.%' ORDER BY at" -replace "`n", ' ; ')"
-    $passed = $true
 
     $t += "`n== (9) the $period PDF (the job's, the new template) kept beside the evidence when its text names no person and no tenant identifier =="
     $clean = -not ($words -match '@' -or $words.Contains($labTenant) -or $words -match '(?i)alice|bob|hrach|harutyunyan')
-    if ($clean) { Copy-Item $pdf $KeepPdf -Force; $t += "kept as $KeepPdf (sha256 $got): the client's name, the MSP's name, canary subjects and file names, run ids, the Worker's id and fingerprint, the four controls' sentences, no address, no tenant id" }
+    if ($clean) { $keep = Join-Path $env:TEMP 'rp-c65-keep.pdf'; Copy-Item $pdf $keep -Force; $t += "kept as $KeepPdf (sha256 $got) once this text is saved: the client's name, the MSP's name, canary subjects and file names, run ids, the Worker's id and fingerprint, the four controls' sentences, no address, no tenant id" }
     else { $t += "NOT kept: the text names a person or the tenant" }
     $apiLines = (Invoke-Compose @('logs', '--no-log-prefix', '--since', $started, 'api', 'scheduler')) -split "`n" | Where-Object { $_ -match 'X-Amz|restoreproof/|rp_session|password' }
-    $t += "the api's and the scheduler's lines since the start naming a signed query, a bucket path, a cookie value or a password value, counted: $(@($apiLines).Count)"
+    $t += "the api's and the scheduler's lines since the start naming a signed query, a bucket path, a cookie value or a password value, counted: $(@($apiLines).Count) ($(Check 'no secret-shaped log line' (@($apiLines).Count -eq 0) 'none' 'SOME'))"
+    $passed = $true
 } finally {
     $t += "`n== (10) the teardown =="
     Remove-Item -Recurse -Force $Temp -ErrorAction SilentlyContinue
@@ -302,5 +324,8 @@ $text = ($t -join "`n").Replace("`r`n", "`n")
 foreach ($s in $secrets) { if ($s -and $text.Contains($s)) { throw 'a secret survived; nothing written' } }
 if ($text -match '(?<![A-Za-z0-9_\-])[A-Za-z0-9_\-]{43}(?![A-Za-z0-9_\-=])' -or $text -match 'eyJ[A-Za-z0-9_\-]{10,}\.' -or $text -match 'PRIVATE KEY' -or $text -match 'X-Amz-Signature=[0-9a-f]' -or $text -match 'rp_session=[A-Za-z0-9]') { throw 'a secret-shaped value; nothing written' }
 if (-not $passed) { throw 'a step failed; nothing written' }
+if ($missed.Count) { throw "a check failed ($($missed -join '; ')); nothing written, the kept PDF left as it was" }
 [IO.File]::WriteAllText($Out, $text + "`n", $utf8)
 "saved $Out"
+# The PDF last: only a run whose every check held and whose text passed the screens replaces it.
+if ($keep) { Copy-Item $keep $KeepPdf -Force; Remove-Item $keep -Force; "kept $KeepPdf" }

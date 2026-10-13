@@ -18,6 +18,7 @@
 {% if data.errors_line %}<p class="overall error">{{ data.errors_line }}</p>{% endif %}
 {% if data.did_not_run %}<p class="overall quiet">Scheduled tests that did not run: {{ data.did_not_run }}</p>{% endif %}
 {% if data.no_result %}<p class="overall quiet">Scheduled tests with no result when this report was made: {{ data.no_result }}</p>{% endif %}
+{% if data.late %}<p class="overall quiet">Tests that ended before this period and whose results arrived after that period had closed, counted here: {{ data.late }}</p>{% endif %}
 <dl class="facts">
   <dt>Tests run</dt><dd>{{ data.tests }}</dd>
   <dt>Average recovery time</dt><dd>{{ data.average_recovery_ms|duration }}</dd>
@@ -109,7 +110,7 @@
 <colgroup><col class="a"><col class="b"><col class="c"><col class="d"></colgroup>
 <thead><tr><th>Control</th><th>Name</th><th>What this evidence demonstrates</th><th>What it does not cover</th></tr></thead>
 <tbody>
-{% for control in data.controls %}<tr><td>{{ control.identifier }}</td><td>{{ control.name }}</td><td>{{ control.demonstrates }}</td><td>{{ control.not_covered }}</td></tr>
+{% for control in data.controls %}<tr><td>{{ control.identifier }}</td><td>{{ control.name }}</td><td>{{ control.demonstrates if data.passed else data.no_pass }}</td><td>{{ control.not_covered }}</td></tr>
 {% endfor %}</tbody>
 </table>
 </section>

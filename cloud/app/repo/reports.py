@@ -80,10 +80,12 @@ class ReportRepo(Repo):
         rows before the report `before` names (keyset on `(period_start,
         generated_at, id)`; another MSP's report is no anchor and gives an
         empty page), or the newest when it is None (C6.6, docs/decisions.md
-        2026-10-13, point 2). One statement, joined on the key that starts
-        with msp_id."""
-        if not 1 <= limit <= PAGE_SIZE:
-            raise ValueError(f"limit must be 1 to {PAGE_SIZE}")
+        2026-10-13, point 2). `limit` may be one more than a page: the row a
+        caller asks for to know whether another page follows (the review's
+        finding 11). One statement, joined on the key that starts with
+        msp_id."""
+        if not 1 <= limit <= PAGE_SIZE + 1:
+            raise ValueError(f"limit must be 1 to {PAGE_SIZE + 1}")
         statement = (
             select(Report, Client.name)
             .join(Client, and_(Client.msp_id == Report.msp_id, Client.id == Report.client_id))

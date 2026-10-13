@@ -7,7 +7,9 @@ never a gloss), and for each the two sentences the issue asks for: what a
 test marked pass in a report shows, and what the report does not look at.
 Each claims only what a `pass` run shows (sampled items restored into a test
 location, read back and compared, on dates, with the outcome recorded), never
-a control met, an audit passed or a regulation complied with.
+a control met, an audit passed or a regulation complied with; a report with
+no test marked pass prints `NO_PASS` in place of the first sentence (the
+C6.6 review's finding 3: it has no dates to list).
 
 The sentences are held verbatim by tests/test_report_wording.py, the
 reviewed wording (C6.5, C6.7): a change here is a change there in the same
@@ -63,6 +65,10 @@ CONTROLS: tuple[Control, ...] = (
         "regulation asks for.",
     ),
 )
+
+# In place of a control's first sentence when the report has no test marked
+# pass: nothing was restored and compared, so nothing is shown.
+NO_PASS = "No test in this report is marked pass, so it shows nothing for this control."
 
 # Above the table: what the table is, and what a fail or error means for it.
 ABOUT = (

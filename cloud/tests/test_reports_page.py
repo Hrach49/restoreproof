@@ -1,8 +1,9 @@
 """C6.6 (docs/decisions.md 2026-10-13, "C6.6, C6.5 and C6.7", point 2), the
 Done-when by name: an interim report is downloadable from the dashboard
 within a minute of clicking. Failure paths first (another MSP's client,
-report and button; no session; another site; the cap; the slot; a client
-with nothing this month; a put and a render that fail), then the list, the
+report and button; no session; another site; the cap; the client's row
+held by another click; the slot; a client with nothing this month; a put and
+a render that fail), then the list, the
 download, the button, the nav entry, the planted script and the statement
 counts; the repo's `page` read by itself.
 """
@@ -24,9 +25,10 @@ from app.report import generate as report_generate
 from app.report.data import month_of
 from app.report.generate import storage_key
 from app.repo.audit import AuditRepo
+from app.repo.clients import ClientRepo
 from app.repo.reports import PAGE_SIZE, ReportRepo, ReportRow
 from app.routers.ui import reports as page
-from app.routers.ui.reports import GENERATE_EVERY, RENDER_WAIT_S, capped
+from app.routers.ui.reports import GENERATE_EVERY, RENDER_WAIT_S, capped, next_minute
 from tests.report_lab import ReportLab, period_of
 from tests.results_lab import NOW
 from tests.test_pages import SCRIPT, ESCAPED
@@ -81,20 +83,21 @@ def main_text(html: str) -> str:
 
 async def test_an_interim_report_is_downloadable_from_the_dashboard_within_a_minute_of_clicking(lab):
     await lab.month()
+    final = await a_report(lab)  # September's, so the list has an older row to stand under the new one
     key = interim_key(lab)
     lab.expect_put(key)
-    started = time.monotonic()
 
     clicked = await lab.post(f"/clients/{lab.client_id}/reports/generate", lab.member, ip=IP, headers={"Sec-Fetch-Site": "same-origin"})
     listed = await lab.get(f"/clients/{lab.client_id}/reports", lab.member)
-    (row,) = await rows_of(lab)
+    (row,) = [r for r in await rows_of(lab) if r.id != final]
     download = await lab.get(f"/reports/{row.id}/file", lab.member, ip=IP, headers={"Sec-Fetch-Site": "same-origin"})
-    seconds = time.monotonic() - started
 
     assert (clicked.status_code, clicked.headers["location"]) == (303, f"/clients/{lab.client_id}/reports")
     assert listed.status_code == 200
     text_ = main_text(listed.text)
-    assert text_.index("interim") < text_.index("final") if "final" in text_ else True
+    # The new report's row stands above September's: the rows' own links, not words the page's help text has too.
+    assert 0 < text_.index(f"/reports/{row.id}/file") < text_.index(f"/reports/{final}/file")
+    assert "<td>interim</td>" in text_ and "<td>final</td>" in text_
     for needle in ("2026-10", "interim", "2026-10-13 10:00 UTC", row.content_sha256, row.file_sha256, f"/reports/{row.id}/file", "Generate now"):
         assert needle in text_, needle
     assert (row.interim, row.period_start, row.storage_key, row.generated_at) == (True, dt.date(2026, 10, 1), key, TODAY)
@@ -106,7 +109,9 @@ async def test_an_interim_report_is_downloadable_from_the_dashboard_within_a_min
     assert pdf.startswith(b"%PDF-") and hashlib.sha256(pdf).hexdigest() == row.file_sha256
     lab.stubber.assert_no_pending_responses()
     assert sorted(await report_audit(lab)) == sorted([("report.create", f"report:{row.id}", lab.member.id, IP), ("report.download", f"report:{row.id}", lab.member.id, IP)])
-    assert seconds < 60
+    # "Within a minute" is not timed here: the render's seconds are the
+    # machine's (the by-hand run on the stack times the click to the bytes),
+    # and what bounds them is the cap on the rows (tests/test_report.py).
     # The page itself holds no link to the bucket.
     assert "X-Amz" not in listed.text and "127.0.0.1:1" not in listed.text
 
@@ -194,6 +199,39 @@ async def test_a_second_click_inside_ten_minutes_is_429_with_the_line_and_no_ren
     assert GENERATE_EVERY == dt.timedelta(seconds=600)
 
 
+async def test_the_refusal_names_no_time_and_no_wait_at_which_the_cap_still_refuses(lab):
+    """Finding 12: a report made at 10:00:59 may be followed at 10:10:59. The
+    line said "from 10:10 UTC" and the header 28 for 28.7 seconds left."""
+    await lab.month()
+    lab.time = TODAY + dt.timedelta(seconds=59)
+    lab.expect_put(interim_key(lab))
+    assert (await lab.post(f"/clients/{lab.client_id}/reports/generate", lab.admin)).status_code == 303
+
+    lab.time = TODAY + dt.timedelta(minutes=10, seconds=30, milliseconds=300)
+    refused = await lab.post(f"/clients/{lab.client_id}/reports/generate", lab.admin)
+
+    assert refused.status_code == 429 and refused.headers["retry-after"] == "29"
+    assert "An interim report of this month was made at 2026-10-13 10:00 UTC; the next can be made from 2026-10-13 10:11 UTC." in refused.text
+
+    # At the second the header named, the click is taken.
+    lab.time = TODAY + dt.timedelta(minutes=10, seconds=59, milliseconds=300)
+    lab.expect_put(interim_key(lab))
+    assert (await lab.post(f"/clients/{lab.client_id}/reports/generate", lab.admin)).status_code == 303
+
+
+@pytest.mark.parametrize(
+    ("given", "named"),
+    [
+        (dt.datetime(2026, 10, 13, 10, 10, 0, tzinfo=UTC), dt.datetime(2026, 10, 13, 10, 10, tzinfo=UTC)),
+        (dt.datetime(2026, 10, 13, 10, 10, 0, 1, tzinfo=UTC), dt.datetime(2026, 10, 13, 10, 11, tzinfo=UTC)),
+        (dt.datetime(2026, 10, 13, 10, 10, 59, tzinfo=UTC), dt.datetime(2026, 10, 13, 10, 11, tzinfo=UTC)),
+        (dt.datetime(2026, 10, 13, 23, 59, 1, tzinfo=UTC), dt.datetime(2026, 10, 14, 0, 0, tzinfo=UTC)),
+    ],
+)
+def test_next_minute_is_the_time_itself_or_the_whole_minute_after_it(given, named):
+    assert next_minute(given) == named
+
+
 async def test_a_click_while_a_report_is_being_made_waits_for_the_slot_and_is_then_429_with_no_row(lab, monkeypatch):
     await lab.month()
     monkeypatch.setattr(report_generate, "render_report", lambda data: pytest.fail("rendered without the slot"))
@@ -213,8 +251,108 @@ async def test_a_click_while_a_report_is_being_made_waits_for_the_slot_and_is_th
     assert 0.2 <= waited < 5
     assert await rows_of(lab) == [] and await lab.written() == before
     assert RENDER_WAIT_S == 5
-    # The slot is released after a report is made and after a refusal.
-    assert not slot.locked()
+
+
+async def test_the_slot_is_free_again_after_a_report_is_made_and_after_each_refusal_and_never_over_released(lab, monkeypatch):
+    """The route takes the slot once and gives it back once: after a report,
+    a 409 and a 503 it is free, and it still holds one (a release too many
+    would let two renders run)."""
+    await lab.month()
+    slot: asyncio.Semaphore = lab.app.state.render_slot
+
+    lab.expect_put(interim_key(lab))
+    made = await lab.post(f"/clients/{lab.client_id}/reports/generate", lab.member)
+    nothing = await lab.post(f"/clients/{lab.client2_id}/reports/generate", lab.member)
+    lab.time = TODAY + GENERATE_EVERY
+    lab.stubber.add_client_error("put_object", service_error_code="InternalError")
+    failed = await lab.post(f"/clients/{lab.client_id}/reports/generate", lab.member)
+
+    assert [made.status_code, nothing.status_code, failed.status_code] == [303, 409, 503]
+    assert not slot.locked() and slot._value == 1
+
+
+async def test_a_click_while_another_request_holds_the_client_s_row_is_429_at_once_with_no_render_and_no_row(lab, monkeypatch):
+    """Finding 6: two clicks at once both read the cap before either had a
+    row. The client's row is taken first and kept to the commit, so the
+    second is told at once that one is being made; with the row free again
+    it reads the cap, and the first's report is there."""
+    await lab.month()
+    before = await lab.written()
+    order: list[str] = []
+    real_hold, real_page = ClientRepo.hold, ReportRepo.page
+
+    async def held_by_another(self, msp_id, client_id):
+        order.append("hold")
+        return False
+
+    async def page_(self, msp_id, **kwargs):
+        order.append("page")
+        return await real_page(self, msp_id, **kwargs)
+
+    monkeypatch.setattr(ReportRepo, "page", page_)
+    with monkeypatch.context() as patch:
+        patch.setattr(ClientRepo, "hold", held_by_another)
+        patch.setattr(report_generate, "render_report", lambda data: pytest.fail("rendered beside another click's report"))
+        refused = await lab.post(f"/clients/{lab.client_id}/reports/generate", lab.member)
+
+    assert refused.status_code == 429 and refused.headers["retry-after"] == "60"
+    assert "A report is being made; try again in a minute." in refused.text and "Generate now" in refused.text
+    assert await rows_of(lab) == [] and await lab.written() == before
+    assert order == ["hold", "page"]  # the hold before the cap's read; the one page is the refusal's own list
+    assert not lab.app.state.render_slot.locked()
+
+    # The real hold on a free row, then the cap's read under it.
+    order.clear()
+    monkeypatch.setattr(ClientRepo, "hold", lambda self, msp_id, client_id: _note(order, real_hold(self, msp_id, client_id)))
+    lab.expect_put(interim_key(lab))
+    made = await lab.post(f"/clients/{lab.client_id}/reports/generate", lab.member)
+    again = await lab.post(f"/clients/{lab.client_id}/reports/generate", lab.member)
+
+    assert (made.status_code, again.status_code) == (303, 429)
+    assert order[:2] == ["hold", "page"] and "An interim report of this month was made at" in again.text
+    assert len(await rows_of(lab)) == 1
+
+
+def _note(order: list[str], answer):
+    order.append("hold")
+    return answer
+
+
+async def test_hold_takes_the_client_s_row_until_the_transaction_ends_and_keeps_no_run_waiting(own_database):
+    """`ClientRepo.hold` on two connections: the second is answered False at
+    once (SKIP LOCKED), a run made for the client meanwhile is not kept
+    waiting (FOR NO KEY UPDATE), and the row is free once the first has
+    committed."""
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from app.db import make_session_factory
+    from app.repo.runs import RunRepo
+    from tests.test_repo_runs import Queue
+
+    engine = create_async_engine(own_database, connect_args={"server_settings": {"timezone": "UTC"}})
+    statements: list[str] = []
+    event.listen(engine.sync_engine, "before_cursor_execute", lambda _c, _cur, statement, *_rest: statements.append(statement))
+    try:
+        factory = make_session_factory(engine)
+        async with factory() as setup, setup.begin():
+            q = await Queue.make(setup)
+            msp_id, client_id, ids = q.msp.id, q.client.id, dict(plan_id=q.plan.id, client_id=q.client.id, connector_id=q.connector.id, worker_id=q.worker.id)
+        async with factory() as first, first.begin():
+            assert await ClientRepo(first).hold(msp_id, client_id) is True
+            async with factory() as second, second.begin():
+                started = time.monotonic()
+                assert await ClientRepo(second).hold(msp_id, client_id) is False
+                assert time.monotonic() - started < 2
+                run = await asyncio.wait_for(RunRepo(second).create(msp_id, **ids), 5)
+                assert run.client_id == client_id
+        async with factory() as third, third.begin():
+            assert await ClientRepo(third).hold(msp_id, client_id) is True
+            assert await ClientRepo(third).hold(msp_id, uuid.uuid4()) is False
+    finally:
+        await engine.dispose()
+
+    holds = [s for s in statements if "FOR " in s]
+    assert len(holds) == 4 and all(s.rstrip().endswith("FOR NO KEY UPDATE SKIP LOCKED") for s in holds)
 
 
 async def test_a_client_with_nothing_this_month_is_409_with_the_repo_s_words_and_no_row(lab):
@@ -306,6 +444,32 @@ async def test_the_lists_page_by_fifty_with_and_without_htmx(lab):
     assert all(str(i) in rest.text for i in ids[PAGE_SIZE:])
 
 
+@pytest.mark.parametrize(("count", "more"), [(PAGE_SIZE - 1, False), (PAGE_SIZE, False), (PAGE_SIZE + 1, True)])
+async def test_more_is_offered_only_when_a_row_follows_the_page(lab, count, more):
+    """Finding 11: with exactly fifty reports the page offered "more", and
+    the click put "No report yet." under fifty rows."""
+    for n in range(count):
+        await a_report(lab, interim=True, generated_at=NOW - dt.timedelta(minutes=n))
+    ids = [r.id for r in await ReportRepo(lab.session).list(lab.msp_id)]
+
+    for path in ("/reports", f"/clients/{lab.client_id}/reports"):
+        first = await lab.get(path, lab.member)
+        assert first.text.count("/file\"") == min(count, PAGE_SIZE)
+        assert ("?before=" in first.text) is more and "No report yet." not in first.text
+        if more:
+            assert f"{path}?before={ids[PAGE_SIZE - 1]}" in first.text
+
+
+async def test_a_continuation_with_no_row_says_nothing_and_an_empty_first_page_says_no_report_yet(lab):
+    last = await a_report(lab)
+
+    empty = await lab.get(f"/reports?before={last}", lab.member, headers={"HX-Request": "true"})
+    theirs_first = await lab.get(f"/clients/{lab.client2_id}/reports", lab.member)
+
+    assert empty.status_code == 200 and "No report yet." not in empty.text and "<tr" not in empty.text
+    assert "No report yet." in theirs_first.text
+
+
 async def test_the_nav_names_reports_for_both_roles_and_the_client_page_links_its_reports(lab):
     for user in (lab.member, lab.admin):
         for path in ("/clients", "/workers", "/reports"):
@@ -368,7 +532,7 @@ async def test_the_pages_run_the_same_statements_whatever_their_rows(lab, test_e
     assert few[1] == ["SELECT"] * 4  # ... and the client
     assert few[2] == ["SELECT"] * 3 + ["INSERT"]  # the user, the MSP, the report, the audit row
 
-    # The button: the user, the MSP, the client, the cap's read, the month's eight reads, the row and the audit row, for one run and for thirty.
+    # The button: the user, the MSP, the client, its row's hold, the cap's read, the month's eight reads, the row and the audit row, for one run and for thirty.
     await lab.month()
     lab.expect_put(interim_key(lab))
     with_one = await count("post", f"/clients/{lab.client_id}/reports/generate", lab.member)
@@ -378,7 +542,7 @@ async def test_the_pages_run_the_same_statements_whatever_their_rows(lab, test_e
     lab.expect_put(interim_key(lab))
     with_thirty = await count("post", f"/clients/{lab.client_id}/reports/generate", lab.member)
 
-    assert with_one == with_thirty == ["SELECT"] * 12 + ["INSERT"] * 2
+    assert with_one == with_thirty == ["SELECT"] * 13 + ["INSERT"] * 2
 
 
 # --- `capped`, pure ----------------------------------------------------------------------------
@@ -430,7 +594,9 @@ async def test_page_is_newest_period_first_then_newest_generation_with_the_clien
     assert [row.report.id for row in after] == [ids["sep_interim_1"], ids["aug"]]
     assert len(two) == 2 and PAGE_SIZE == 50
     assert await repo.page(lab.msp_id, before=ids["b"]) == []  # another MSP's anchor is no anchor
+    # One more than a page is the row that says another page follows; no more.
+    assert len(await repo.page(lab.msp_id, limit=PAGE_SIZE + 1)) == 5
     with pytest.raises(ValueError):
         await repo.page(lab.msp_id, limit=0)
     with pytest.raises(ValueError):
-        await repo.page(lab.msp_id, limit=PAGE_SIZE + 1)
+        await repo.page(lab.msp_id, limit=PAGE_SIZE + 2)

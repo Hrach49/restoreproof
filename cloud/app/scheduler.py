@@ -24,7 +24,10 @@ Every `TICK_S` seconds, two jobs under APScheduler, each once at start too:
 And a third, **reports** (`tick_reports`; C6.6, docs/decisions.md 2026-10-13,
 "C6.6, C6.5 and C6.7", point 1), on the 1st of each month at
 `REPORT_HOUR_UTC` and once at start: for every MSP, the clients with a run
-of the previous month (`RunRepo.clients_in_period`, one read in its own
+of the newest closed month (`app.report.data.closed_month`: the previous
+month from `REPORT_HOUR_UTC` on the 1st, the one before it until then, so a
+start in the first hours of a month never makes a report of a month that
+still takes results; `RunRepo.clients_in_period`, one read in its own
 transaction), then **one transaction per client** calling
 `app.report.generate.generate` for that month's final report, committed as
 soon as it is made (its object is put inside that transaction, so an MSP-wide
@@ -37,9 +40,11 @@ restarted after a 1st it missed catch up, and costs a restart on any other
 day one read per client. A final report is never re-made.
 
 `DATABASE_URL`, `LOG_LEVEL` and, for the report job's bucket, the five `S3_*`
-variables (`storage_settings_from_environment`; never the app's session secret). Every
-line holds ids and counts: nothing of a profile, a credential or a tenant
-value is read here, so none can be written. The process never exits on a
+variables (`storage_settings_from_environment`; never the app's session
+secret): a process started without one of the seven exits naming it. Every
+line holds ids and counts. The plans and the sweep read nothing of a profile,
+a credential or a tenant value; the report job reads what a report prints
+(names, runs, items) and logs none of it. The process never exits on a
 tick's failure; SIGTERM and SIGINT (Compose's stop) end it.
 """
 
@@ -63,7 +68,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 from app.cadence import CadenceError, due_at, parse
 from app.db import make_engine_for_url, make_session_factory
 from app.logging import configure_logging
-from app.report.data import previous_month
+from app.report.data import FINAL_AFTER, closed_month
 from app.report.generate import ALREADY_REPORTED, generate
 from app.repo.connectors import ConnectorRepo
 from app.repo.errors import RepoError
@@ -80,9 +85,10 @@ from app.storage import Storage
 
 TICK_S = 300
 MISFIRE_GRACE_S = 60
-# C6.6: the report job's hour on the 1st, and how late it may still run that
+# C6.6: the report job's hour on the 1st (the hour a month's final report
+# may first be made, `FINAL_AFTER`), and how late it may still run that
 # morning (a scheduler busy or paused at 03:00).
-REPORT_HOUR_UTC = 3
+REPORT_HOUR_UTC = int(FINAL_AFTER.total_seconds() // 3600)
 REPORT_MISFIRE_GRACE_S = 3600
 
 log = structlog.get_logger("app.scheduler")
@@ -266,12 +272,12 @@ async def tick_sweep(session_factory: async_sessionmaker, at: dt.datetime | None
 
 
 async def tick_reports(session_factory: async_sessionmaker, storage: Storage, at: dt.datetime | None = None) -> ReportsTick:
-    """The previous month's final report for every client with a run in it,
-    one transaction per client (C6.6)."""
+    """The newest closed month's final report for every client with a run in
+    it, one transaction per client (C6.6)."""
     at = now() if at is None else at
     started = time.perf_counter()
     summary = ReportsTick()
-    period = previous_month(at.astimezone(dt.timezone.utc).date())
+    period = closed_month(at)
     msp_ids = await _msp_ids(session_factory, "reports")
     if msp_ids is None:
         summary.failed += 1

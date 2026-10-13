@@ -11,7 +11,7 @@
     <td><a href="/reports/{{ report.id }}/file">Download</a></td>
   </tr>
 {% else %}
-  {% if not more %}<tr><td colspan="{{ columns }}" class="muted">No report yet.</td></tr>{% endif %}
+  {% if first %}<tr><td colspan="{{ columns }}" class="muted">No report yet.</td></tr>{% endif %}
 {% endfor %}
 {% if more %}
   <tr class="pager"><td colspan="{{ columns }}"><a href="{{ path }}?before={{ more }}" hx-get="{{ path }}?before={{ more }}" hx-target="closest tr" hx-swap="outerHTML">more</a></td></tr>

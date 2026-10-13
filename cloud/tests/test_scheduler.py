@@ -573,7 +573,7 @@ async def test_the_stop_signals_are_installed_where_the_loop_has_them(monkeypatc
     assert installed == ([signal.SIGTERM, signal.SIGINT] if available else [])
 
 
-def test_main_reads_the_database_url_and_the_log_level_and_serves(monkeypatch):
+def test_main_reads_the_database_url_the_log_level_and_the_s3_variables_and_serves(monkeypatch):
     seen = {}
 
     async def fake_serve(url, storage, *, stop=None):
@@ -601,7 +601,7 @@ def test_main_stops_naming_the_variable_when_the_url_is_missing(monkeypatch, cap
     assert capsys.readouterr().err.strip() == "settings error: DATABASE_URL is missing"
 
 
-def test_the_scheduler_reads_no_profile_and_no_token():
+def test_the_scheduler_s_own_source_names_no_profile_no_token_and_no_session_secret():
     from pathlib import Path
 
     source = Path(scheduler.__file__).read_text(encoding="utf-8")
@@ -932,3 +932,75 @@ def test_main_reads_the_five_s3_variables_too_and_refuses_a_missing_one_by_name(
         scheduler.main()
     assert raised.value.code == 1
     assert capsys.readouterr().err.strip() == "settings error: S3_BUCKET is missing"
+
+
+# --- The C6.6 review's findings 1, 2 and 7 (docs/decisions.md 2026-10-13, "C6.6, C6.5 and C6.7 code review") ---
+
+
+@pytest.mark.parametrize("started", [at(2026, 10, 1, 0, 0, 30), at(2026, 10, 1, 2, 59, 59)])
+async def test_a_start_in_the_first_hours_of_a_month_makes_no_report_of_the_month_that_just_ended(rlab, monkeypatch, started):
+    """Finding 2: a scheduler redeployed at 00:00:30 on the 1st finalised
+    September thirty seconds after it ended, before its last results had
+    arrived. Until 03:00 the job's month is the one before; from 03:00 it is
+    September."""
+    await rlab.run()
+    monkeypatch.setattr(report_generate, "render_report", lambda data: pytest.fail("rendered a month that still takes results"))
+
+    early = await tick_reports(rlab.factory, rlab.storage, started)
+
+    assert (early.clients, early.created, early.existing, early.failed) == (0, 0, 0, 0)
+    assert await rlab.reports() == []
+    monkeypatch.setattr(report_generate, "render_report", lambda data: FAKE)
+    rlab.expect_put(rlab.key())
+
+    on_time = await tick_reports(rlab.factory, rlab.storage, FIRST)
+
+    assert (on_time.clients, on_time.created) == (1, 1)
+    (row,) = await rlab.reports()
+    assert (row.period_start, row.generated_at) == (dt.date(2026, 9, 1), FIRST)
+    assert scheduler.REPORT_HOUR_UTC * 3600 == scheduler.FINAL_AFTER.total_seconds()
+
+
+async def test_a_result_that_arrives_after_its_month_s_report_is_in_the_next_month_s_report_as_a_test(rlab):
+    """Finding 1: a run ended on 30 September 23:50 whose bundle reached the
+    Cloud on 1 October 03:05 was in September's report as one with no result
+    and in no report as the test it was."""
+    late = await rlab.run(state="dispatched", finished_at=None, created_at=at(2026, 9, 30, 23, 40))
+    rlab.expect_put(rlab.key())
+    assert (await tick_reports(rlab.factory, rlab.storage, FIRST)).created == 1
+    async with rlab.factory() as s, s.begin():
+        await s.execute(
+            text("UPDATE test_run SET state = 'fail', finished_at = :ended, received_at = :received WHERE id = :id"),
+            {"ended": at(2026, 9, 30, 23, 50), "received": at(2026, 10, 1, 3, 5), "id": late},
+        )
+    rlab.expect_put(rlab.key(period="2026-10"))
+
+    summary = await tick_reports(rlab.factory, rlab.storage, at(2026, 11, 1, 3, 0))
+
+    assert (summary.clients, summary.created, summary.existing, summary.failed) == (1, 1, 0, 0)
+    assert sorted(r.period_start for r in await rlab.reports()) == [dt.date(2026, 9, 1), dt.date(2026, 10, 1)]
+    async with rlab.factory() as s, s.begin():
+        october = await RunRepo(s).period(rlab.msp_id, rlab.client_id, start=at(2026, 10, 1), end=at(2026, 11, 1))
+        september = await RunRepo(s).period(rlab.msp_id, rlab.client_id, start=at(2026, 9, 1), end=at(2026, 10, 1))
+    assert [(r.id, r.state) for r in october] == [(late, "fail")] and september == []
+
+
+async def test_a_client_whose_final_report_another_process_made_meanwhile_is_existing_never_a_failure(rlab, monkeypatch):
+    """Finding 7: two schedulers, or the job and the CLI, both find no final
+    report and render; the second's insert is refused by a unique, and that
+    is a month that has its report."""
+    await rlab.run()
+    rlab.expect_put(rlab.key())
+    assert (await tick_reports(rlab.factory, rlab.storage, FIRST)).created == 1
+
+    async def not_yet(self, msp_id, client_id, period_start):
+        return None
+
+    monkeypatch.setattr(ReportRepo, "final", not_yet)
+
+    summary = await tick_reports(rlab.factory, rlab.storage, FIRST + dt.timedelta(seconds=5))
+
+    assert (summary.clients, summary.created, summary.existing, summary.failed) == (1, 0, 1, 0)
+    assert rlab.log("report failed") == [] and len(rlab.log("report created")) == 1
+    assert len(await rlab.reports()) == 1
+    rlab.stubber.assert_no_pending_responses()

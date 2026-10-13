@@ -166,6 +166,26 @@ nothing and prints no secret but the one token it exists to print.
    The onboarding above needs no user: the install token's `created_by` and every audit row's
    `user_id` are null for the CLI.
 
+8. **A client's monthly report** (C6.4; `docs/verification.md` "The Cloud's report"), until
+   C6.6's scheduler makes them on the 1st and its page hands them out. The period is a UTC
+   calendar month, `YYYY-MM`, the previous month when not given; the current month gives an
+   interim report (as many as asked for, each its own object), a month that is over the final
+   one, made once. The command writes the PDF to the bucket, so it needs the five `S3_*`
+   variables beside `DATABASE_URL` (the api container has them); never `SECRET_KEY`.
+
+   ```
+   manage.py generate-report --msp-id <msp_id> --client-id <client_id> --period 2026-09
+   report_id 3f1a…
+   period 2026-09
+   interim false
+   storage_key msp/<msp_id>/reports/<client_id>/2026-09.pdf
+   content_sha256 <64 hex>
+   file_sha256 <64 hex>
+   ```
+
+   The file hash is the SHA-256 of the object; the content hash is printed inside the PDF (the
+   file cannot hold its own hash). One audit row `report.create`.
+
 ## The refusals, by command
 
 | Command | Line | Why |
@@ -189,4 +209,7 @@ nothing and prints no secret but the one token it exists to print.
 | `create-user` | `role: not admin or member` | the two roles |
 | `create-user`, `reset-password` | `password: not 12 to 1024 characters` / `password: the two entries differ` | the password's rule; the console's two entries |
 | `reset-password` | `email: no such user` | the address names nobody |
+| `generate-report` | `period: not YYYY-MM` / `has not begun` / `no run in the period` / `already reported` | the month's rule; a month not yet begun; no run of the client ended in it (and no expired one of it); its final report exists |
+| `generate-report` | `client_id: no such client` | not this MSP's |
+| `generate-report` | `settings error: S3_ENDPOINT is missing; …` | the five S3 variables, named at once, before the database |
 | any | `database: unreachable` / `settings error: DATABASE_URL …` / `internal: <type>` | the environment, or an error nobody foresaw (its type alone) |

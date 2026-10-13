@@ -17,7 +17,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.models import Base, Client, Connector, Msp, TestPlan, TestRun, User, Worker
 from app.repo.errors import CONSTRAINT_WORDS, RepoError, constraint_refusal
-from tests.test_models import PROFILE, a_plan, a_run, add, new_client, new_msp, new_worker
+from tests.test_models import PROFILE, a_plan, a_report, a_run, add, new_client, new_msp, new_worker
 from tests.test_repo_connectors import profile_for
 
 UTC = dt.timezone.utc
@@ -66,6 +66,9 @@ class FakeIntegrityError(IntegrityError):
         ("uq_user_email_lower", "email", "already a user of this Cloud"),
         ("ck_user_role", "role", "not admin or member"),
         ("fk_user_msp_id_msp", "msp_id", "no such MSP"),
+        # C6.4
+        ("uq_report_final_period", "period", "already reported"),
+        ("uq_report_storage_key", "storage_key", "already used"),
     ],
 )
 def test_a_known_constraint_is_worded_by_its_name(constraint, key, reason):
@@ -145,6 +148,9 @@ def test_the_table_names_every_constraint_an_onboarding_can_meet():
     expected |= {f"fk_{table}_msp_id_msp" for table in ("user", "client", "install_token", "worker", "connector", "test_plan", "test_run")}
     # C6.1: the user's address (a unique index, not a constraint) and role.
     expected |= {"uq_user_email_lower", "ck_user_role"}
+    # C6.4: one final report per client and period (a partial unique index),
+    # and a storage key written once.
+    expected |= {"uq_report_final_period", "uq_report_storage_key"}
 
     assert set(CONSTRAINT_WORDS) == expected
     all_names = {c.name for t in Base.metadata.tables.values() for c in t.constraints if c.name}
@@ -192,3 +198,7 @@ async def test_each_word_is_shown_on_the_database(session):
     assert str(await _refused(session, User(msp_id=msp.id, email="one@example.test", password_hash="x", role="member"))) == "email: already a user of this Cloud"
     assert str(await _refused(session, User(msp_id=msp.id, email="two@example.test", password_hash="x", role="owner"))) == "role: not admin or member"
     assert str(await _refused(session, User(msp_id=uuid.uuid4(), email="three@example.test", password_hash="x", role="admin"))) == "msp_id: no such MSP"
+    # C6.4
+    await add(session, a_report(msp, client))
+    assert str(await _refused(session, a_report(msp, client, storage_key="again"))) == "period: already reported"
+    assert str(await _refused(session, a_report(msp, client, interim=True))) == "storage_key: already used"

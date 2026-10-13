@@ -623,3 +623,105 @@ async def test_daily_states_counts_each_utc_day_s_states_since_the_given_time(se
     assert await q.runs.daily_states(q.msp.id, b.client.id, since=dt.datetime(2026, 1, 1, tzinfo=UTC)) == []
     with pytest.raises(ValueError, match="without a zone"):
         await q.runs.daily_states(q.msp.id, q.client.id, since=dt.datetime(2026, 10, 1))
+
+
+# --- C6.4: the report's month (docs/decisions.md 2026-10-12, "C6.4", points 4 and 5) ------------
+
+OCT = dt.datetime(2026, 10, 1, tzinfo=UTC)
+NOV = dt.datetime(2026, 11, 1, tzinfo=UTC)
+
+
+async def finished(q: Queue, state: str, *, created_at: dt.datetime, finished_at: dt.datetime | None, other: bool = False):
+    row = await q.run(created_at=created_at, state=state, other=other)
+    await q.session.execute(text("UPDATE test_run SET finished_at = :f WHERE id = :id"), {"f": finished_at, "id": row.id})
+    return await q.fresh(row)
+
+
+async def test_period_answers_the_finished_runs_by_the_time_they_ended_and_the_others_by_creation(session):
+    """A pass, fail or error run is the month's by the time it ended (below:
+    the times a result written afterwards is dated by); an expired, queued
+    or dispatched run by `created_at` (the C6.4 review's finding 2: a run
+    with no result is the month's it was made in); oldest first by that time
+    then id. Both edges: the month's first second is in, the next month's
+    first second is out."""
+    q = await Queue.make(session)
+    b = await Queue.make(session, "b")
+    first = await finished(q, "pass", created_at=dt.datetime(2026, 9, 30, 23, 58, tzinfo=UTC), finished_at=OCT)
+    last = await finished(q, "fail", created_at=dt.datetime(2026, 10, 31, 23, 0, tzinfo=UTC), finished_at=NOV - ONE_SECOND)
+    fallback = await finished(q, "error", created_at=dt.datetime(2026, 10, 15, 12, tzinfo=UTC), finished_at=None)
+    expired = await q.run(created_at=dt.datetime(2026, 10, 20, tzinfo=UTC), state="expired")
+    await finished(q, "pass", created_at=dt.datetime(2026, 10, 31, 23, 59, tzinfo=UTC), finished_at=NOV)  # next month's
+    await finished(q, "pass", created_at=dt.datetime(2026, 9, 1, tzinfo=UTC), finished_at=OCT - ONE_SECOND)  # last month's
+    queued = await q.run(created_at=dt.datetime(2026, 10, 10, tzinfo=UTC))
+    dispatched = await q.run(created_at=dt.datetime(2026, 10, 11, tzinfo=UTC), state="dispatched")
+    await q.session.execute(text("UPDATE test_run SET dispatched_at = :d WHERE id = :id"), {"d": NOV, "id": dispatched.id})  # no time of its month
+    await q.run(created_at=dt.datetime(2026, 9, 10, tzinfo=UTC), state="expired")  # last month's
+    await q.run(created_at=dt.datetime(2026, 9, 30, 23, 59, tzinfo=UTC))  # last month's, still queued
+    await q.run(created_at=NOV, state="dispatched")  # next month's
+    await finished(b, "pass", created_at=dt.datetime(2026, 10, 10, tzinfo=UTC), finished_at=dt.datetime(2026, 10, 10, tzinfo=UTC))
+
+    rows = await q.runs.period(q.msp.id, q.client.id, start=OCT, end=NOV)
+
+    assert [row.id for row in rows] == [first.id, queued.id, dispatched.id, fallback.id, expired.id, last.id]
+    assert await q.runs.period(q.msp.id, b.client.id, start=OCT, end=NOV) == []
+    assert await q.runs.period(b.msp.id, q.client.id, start=OCT, end=NOV) == []
+
+
+async def test_period_dates_a_result_written_afterwards_by_its_stamp_then_its_dispatch_then_its_creation(session):
+    """The C6.4 review's finding 3: `interrupted`, `internal`, `job_invalid`
+    and the like have no `finished_at`; they were dated by the time they were
+    queued. An expired run keeps its creation whatever else it holds."""
+    q = await Queue.make(session)
+    made = dt.datetime(2026, 9, 30, 23, 58, tzinfo=UTC)
+
+    async def afterwards(state: str, *, tsa_time=None, dispatched_at=None, created_at=made):
+        row = await finished(q, state, created_at=created_at, finished_at=None)
+        await q.session.execute(
+            text("UPDATE test_run SET tsa_time = :t, dispatched_at = :d WHERE id = :id"), {"t": tsa_time, "d": dispatched_at, "id": row.id}
+        )
+        return row
+
+    stamped = await afterwards("error", tsa_time=OCT + dt.timedelta(hours=2), dispatched_at=made + ONE_SECOND)
+    handed = await afterwards("error", dispatched_at=OCT + dt.timedelta(hours=1))
+    ended = await finished(q, "pass", created_at=made, finished_at=OCT + dt.timedelta(hours=3))
+    await q.session.execute(text("UPDATE test_run SET tsa_time = :t WHERE id = :id"), {"t": NOV, "id": ended.id})  # the end decides, not the stamp
+    await afterwards("error")  # nothing later known: September's, by its creation
+    await afterwards("expired", tsa_time=OCT, dispatched_at=OCT)  # never ended: September's
+    late = await afterwards("fail", tsa_time=NOV, dispatched_at=OCT, created_at=OCT)  # stamped in November
+
+    rows = await q.runs.period(q.msp.id, q.client.id, start=OCT, end=NOV)
+
+    assert [row.id for row in rows] == [handed.id, stamped.id, ended.id]
+    assert late.id in [row.id for row in await q.runs.period(q.msp.id, q.client.id, start=NOV, end=NOV + dt.timedelta(days=30))]
+    assert len(await q.runs.period(q.msp.id, q.client.id, start=made, end=OCT)) == 2
+
+
+async def test_period_orders_runs_of_one_moment_by_id_and_refuses_a_naive_edge(session):
+    q = await Queue.make(session)
+    at = dt.datetime(2026, 10, 5, 12, tzinfo=UTC)
+    same = [await finished(q, "pass", created_at=at, finished_at=at) for _ in range(3)]
+
+    rows = await q.runs.period(q.msp.id, q.client.id, start=OCT, end=NOV)
+
+    assert [row.id for row in rows] == sorted(row.id for row in same)
+    for start, end in ((dt.datetime(2026, 10, 1), NOV), (OCT, dt.datetime(2026, 11, 1))):
+        with pytest.raises(ValueError, match="without a zone"):
+            await q.runs.period(q.msp.id, q.client.id, start=start, end=end)
+
+
+async def test_period_is_one_statement(session, test_engine):
+    q = await Queue.make(session)
+    await finished(q, "pass", created_at=OCT, finished_at=OCT)
+    statements: list[str] = []
+
+    def record(_conn, _cursor, statement, _params, _context, _executemany):
+        statements.append(statement.strip().split()[0].upper())
+
+    event.listen(test_engine.sync_engine, "before_cursor_execute", record)
+    try:
+        rows = await q.runs.period(q.msp.id, q.client.id, start=OCT, end=NOV)
+    finally:
+        event.remove(test_engine.sync_engine, "before_cursor_execute", record)
+
+    assert len(rows) == 1
+    assert statements == ["SELECT"]

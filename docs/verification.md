@@ -2265,8 +2265,8 @@ list of what a page writes: `login.success`, `login.failure`, `login.blocked`, `
 `client.create`, `install_token.create`, `plan.create`, `run.create`, `worker.revoke`,
 `user.create`, `user.reset_password`), the Worker's the routes' own (`worker.register`,
 `result.received`, `result.rejected`) and the connector's the repo's (`connector.create`,
-`connector.update`, `connector.delete`). `report.download` is C6.6's word and `settings.change`
-C7.3's.
+`connector.update`, `connector.delete`), and the report generator's is `report.create` (C6.4,
+below). `report.download` is C6.6's word and `settings.change` C7.3's.
 
 **`/audit`** (an admin; a member 403): the MSP's rows newest first by `(at, id)`, the last 30
 days by default (`?days=`, 1 to 3650), in pages of 100 by keyset (`?before=<row id>`, with and
@@ -2274,4 +2274,95 @@ without htmx as the history), each with its time (UTC, seconds), its user's addr
 the CLI's and the Worker's rows), the action, the target and the IP; every row of the MSP, the
 Worker's and the CLI's included. **Nothing deletes an audit row**; a retention rule for them is
 C7.3's to give.
+
+## The Cloud's report (C6.4)
+
+`docs/decisions.md` 2026-10-12, "C6.4"; the code `cloud/app/report/` (`data.py`, `render.py`,
+`generate.py`, `frameworks.py`, `template.html`, `report.css`; guarded at 100% line and branch),
+`cloud/app/repo/{reports,runs,items}.py`, `cloud/manage.py generate-report`. A report is one
+client's PDF of one UTC calendar month, `YYYY-MM`, A4, six sections in this order: Summary, Test
+log, Failures, Method, Integrity, Framework mapping. Made by the CLI today; C6.6 adds the
+scheduler's job on the 1st, the reports page, "Generate now" and `report.download`.
+
+**Which runs are the month's** (`app/repo/runs.py` `period_time`; changed by the C6.4 review,
+`docs/decisions.md` 2026-10-13, findings 2 and 3). A `pass`, `fail` or `error` run belongs to
+the month of the time it ended: `finished_at`, and for a result written afterwards, which has no
+`ended_at` (the Worker's `interrupted`, `result_invalid`, `internal`, `job_invalid`,
+`connector_unknown`), the time it was stamped (`tsa_time`), else the time it was last handed out
+(`dispatched_at`), and `created_at` only when nothing later is known. So a run queued on the
+last night of a month and finished or closed on the 1st is the new month's (Q6.1 holds each
+run's `tsa_time` against the period). Every other run belongs to the month of `created_at` and
+**is not a test**: an `expired` run is counted in the Summary ("Scheduled tests that did not
+run: N") and shown in the Test log as "did not run"; a `queued` or `dispatched` run is counted
+as "Scheduled tests with no result when this report was made: N" and shown as "no result yet",
+so a month whose Worker was off never reads as a month of passes. A run with no result when its
+month's final report is made stays in that report as such; if its bundle lands later it is the
+next month's test, by the time it ended. `period_filter` is the one condition, and the three
+reads of a month (`RunRepo.period`, `ItemRepo.counts_by_type_in_period`,
+`ItemRepo.unmatched_in_period`) share it; `app/report/data.py`'s `run_date` is the same rule on
+a row. A month that has not begun is `period: has not begun`; a month with no run of the client
+at all is `period: no run in the period`; nothing is written for either.
+
+**What each section reads.**
+
+| Section | What | From |
+|---|---|---|
+| Summary | the client and MSP names, the period, the overall line (in the pass colour only when a test ran and none failed or errored; a month without a test is grey), tests run, average and maximum recovery time, scheduled tests that did not run, scheduled tests with no result, the backup source, restore points covered, the meaning of the three words, C6.5's sentence ("It records what each test listed here found for the items it sampled, on the dates shown.") | `client.name`, `msp.name`; the month's runs; `recovery_ms` and the distinct `restore_point_at` values over the `pass` and `fail` runs alone (an `error` is a test that could not run: its stopped span and its restore point are no part of either, and the Summary says so); `connector.type` worded (`veeam_m365` is "Veeam Backup for Microsoft 365") |
+| Test log | one row per run, oldest first: date, restore point, items as `mail / SP / OD`, result (`pass`, `fail`, `error`, "did not run", "no result yet"), recovery time, the run id's first eight hex digits | the run's date as above, `restore_point_at`, `test_item` rows grouped by `type`, `state`, `recovery_ms`, `id` |
+| Failures | one block per `fail` or `error` run: the date, the result, for an `error` its code and message, the items that did not match (type, name, `missing` / `mismatch` / `not checked`, the `reason` word), "Every item that was checked matched." for a run with items and none unmatched, "No item was checked." for a run with none, and "A later test of the same plan passed on <date>." (the nearest later `pass` of the run's own plan in the month), else "No later test of the same plan passed in this period." | `error_code`, `error_message`; `test_item` rows with `match` not true: `match` false is `missing` when `found` is false and `mismatch` otherwise; `match` unknown is `not checked` whatever `found` says (the Worker stores an item whose target it could not read as not found) |
+| Method | the sizes of the plans that have a result in the period, canary plus random selection, the three restore targets by name, the comparison fields (a random mail's sender when the backup lists one, a random file's size unless it is an Office document), in how many tests the removal from the target did not complete (`cleanup_ok` false; nothing when none), and "Verification levels covered: 1, 2, 3" when a test passed or failed, with "; level 4 partially (files opened and read via Microsoft Graph)" only when such a test sampled a file; a month in which none did says no level was covered | `test_plan` sizes of the runs' plans; the month's runs; fixed text |
+| Integrity | the content hash, the file-hash sentence, the generation time, the Workers of the month's runs (name, id, `key_id` as the public key's fingerprint), every run's id with its `bundle_sha256` and "timestamped <tsa_time>" or "not timestamped" | `worker`, `test_run` |
+| Framework mapping | the four controls by identifier and name, two columns a dash, and the sentence that their text is C6.7's and not part of the report yet | `app/report/frameworks.py` |
+
+**The overall line** keeps `fail` and `error` apart (the status vocabulary above): "All N tests
+passed", or "N of M tests failed" with "K of M tests could not run (error)" on its own line, or
+"N of M tests passed" when only errors kept it from all; an infrastructure problem is never a
+`fail`, and the Summary says in one line each what the three words mean. The four banned phrases
+("fully recoverable", "guarantee", "certified", "accepted by insurers") are held out of the
+template, the stylesheet, the controls and every rendered report by a test.
+
+**Two passes, two hashes.** The template is rendered twice from one `ReportData`. Pass 1 prints
+"computed after this report was rendered; see the note below" in the Integrity section's content
+hash cell; the SHA-256 of that PDF is the **content hash**. Pass 2 prints the content hash; the
+SHA-256 of that file is the **file hash**. Both are the `report` row's (`content_sha256`,
+`file_sha256`); the PDF says, in one sentence, why there are two: a file cannot contain its own
+hash. WeasyPrint's defaults embed no creation date and no identifier, so one HTML is one byte
+sequence by one WeasyPrint version and the hash cell is the one difference between the passes
+(the file names its producer, `WeasyPrint <version>`, so the bytes are the version's `uv.lock`
+pins; a stored report is never rendered again, and the test reads the Info dictionary through
+pypdf, since it lies in a compressed stream); where WeasyPrint
+subsets fonts with fontTools (no HarfBuzz-Subset, as on the dev laptop) the fonts' `head` table
+would carry the time of the render, so `render_pdf` pins fontTools' `SOURCE_DATE_EPOCH` when
+nothing set it. The same HTML renders to the same bytes again in a test; rendering runs in a
+thread, never on the loop.
+
+**The row and the object.** `report`: `period_start` and `period_end` (the month's first and
+last day), `storage_key`, `content_sha256`, `file_sha256`, `interim`, `generated_at` (the
+generator's clock, given). A report is **interim** while its period is not over (its last day is
+not before the generation day); the title says "Interim report" and the Summary says the period
+is not over. A month has **one final report** per client (`uq_report_final_period`, a partial
+unique on `(msp_id, client_id, period_start) WHERE NOT interim`; the generator asks
+`ReportRepo.final` before it renders and answers `period: already reported`, the index being the
+line for two at once) and as many interim ones as were asked for; a key is written once
+(`uq_report_storage_key`). The object: `msp/{msp_id}/reports/{client_id}/{YYYY-MM}.pdf` for a
+final report, `…/{YYYY-MM}-interim-{YYYYMMDDTHHMMSSZ}.pdf` for an interim one, `application/pdf`,
+through `Storage.put` in a thread **after** the row and one audit row `report.create`
+`report:<id>` (the user and the address from a page's caller; null from the CLI), so a refused
+row writes no object and a failed put rolls the row back with the caller's transaction. Nothing
+edits, replaces or deletes a report; a late bundle is not in the month's final report.
+
+**No secret, no link, no tenant identifier.** The PDF holds no token, no key PEM (the `key_id`
+alone), no pre-signed URL, no bucket name, no `http`, no tenant id and no person's address; the
+client, the MSP and the Worker are named by their names; a mail item by its subject and a file
+by its name, as the run page shows them. Every value goes through the pages' autoescaping
+environment (`ui.make_environment`), a planted `<script>` is escaped in both passes, and a test
+scans both passes and the PDF's text.
+
+**The reads.** `gather` is eight statements whatever the rows, each a repo method with `msp_id`
+first (`MspRepo.get`, `ClientRepo.get`, `ConnectorRepo.list`, `PlanRepo.list`, `WorkerRepo.list`,
+`RunRepo.period`, `ItemRepo.counts_by_type_in_period`, `ItemRepo.unmatched_in_period`); no list
+of run ids travels to the database (the item reads join `test_item` to `test_run` under the
+period's condition). `generate` adds `ReportRepo.final`, the row, the audit row, then the put:
+eleven statements for a month of three runs and for a month of sixty. Another MSP's client is
+`client_id: no such client`, never a report.
 

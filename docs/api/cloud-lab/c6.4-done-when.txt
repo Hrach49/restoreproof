@@ -1,0 +1,121 @@
+C6.4 (#70) Done-when, by hand against the Compose stack. 2026-10-12T22:05:17Z, commit 574ffce, branch c6.4-report
+Windows, Python 3.12, Docker Desktop, the Compose stack (postgres:16, MinIO, api, scheduler) on 127.0.0.1; the CLI runs in the api container; the PDF is read on the host with pypdf
+
+== (1) the stack rebuilt with the four packages WeasyPrint renders with, the database re-migrated once (the edit of 0001), the report's new columns ==
+ Image restoreproof-cloud:local Building 
+ Image restoreproof-cloud:local Building 
+ Image restoreproof-cloud:local Built 
+ Image restoreproof-cloud:local Built 
+ Container restoreproof-minio-1 Running 
+ Container restoreproof-postgres-1 Running 
+ Container restoreproof-api-1 Recreate 
+ Container restoreproof-api-1 Recreated 
+ Container restoreproof-scheduler-1 Recreate 
+ Container restoreproof-scheduler-1 Recreated 
+ Container restoreproof-minio-1 Waiting 
+ Container restoreproof-minio-1 Healthy 
+ Container restoreproof-minio-bucket-1 Starting 
+ Container restoreproof-minio-bucket-1 Started 
+ Container restoreproof-postgres-1 Waiting 
+ Container restoreproof-minio-bucket-1 Waiting 
+ Container restoreproof-postgres-1 Healthy 
+ Container restoreproof-minio-bucket-1 Exited 
+ Container restoreproof-api-1 Starting 
+ Container restoreproof-api-1 Started 
+ Container restoreproof-api-1 Waiting 
+ Container restoreproof-api-1 Healthy 
+ Container restoreproof-scheduler-1 Starting 
+ Container restoreproof-scheduler-1 Started 
+ Container restoreproof-api-1 Waiting 
+ Container restoreproof-scheduler-1 Waiting 
+ Container restoreproof-postgres-1 Waiting 
+ Container restoreproof-minio-1 Waiting 
+ Container restoreproof-minio-bucket-1 Waiting 
+ Container restoreproof-minio-1 Healthy 
+ Container restoreproof-minio-bucket-1 Exited 
+ Container restoreproof-postgres-1 Healthy 
+ Container restoreproof-api-1 Healthy 
+ Container restoreproof-scheduler-1 Healthy 
+the image's packages: fonts-dejavu-core 2.37-8; libharfbuzz-subset0 10.2.0-1+deb13u1; libpango-1.0-0 1.56.3-1; libpangoft2-1.0-0 1.56.3-1
+weasyprint in the image: 70.0
+alembic downgrade -1: {"event": "Running downgrade 0001 -> , The initial schema: the eleven tables of C5.2 with C5.13's constraints.", "level": "info", "ts": "2026-10-12T22:06:34.198412Z"}
+alembic upgrade head: {"event": "Running upgrade  -> 0001, The initial schema: the eleven tables of C5.2 with C5.13's constraints.", "level": "info", "ts": "2026-10-12T22:06:38.142919Z"}
+alembic check: No new upgrade operations detected.
+GET /healthz: HTTP/1.1 200 OK date: Mon, 12 Oct 2026 22:06:42 GMT server: uvicorn cache-control: no-store content-length: 21 content-type: application/json x-request-id: ced47c508c074bf3a4762130c95de0a8 x-restoreproof-api: 1 {"db":"ok","s3":"ok"}
+report's columns: id uuid not null, msp_id uuid not null, client_id uuid not null, period_start date not null, period_end date not null, storage_key text not null, content_sha256 text not null, file_sha256 text not null, interim boolean not null, generated_at timestamp with time zone not null
+report's indexes and constraints: CREATE UNIQUE INDEX uq_report_msp_id_id ON public.report USING btree (msp_id, id) ; CREATE UNIQUE INDEX uq_report_storage_key ON public.report USING btree (storage_key) ; CREATE UNIQUE INDEX uq_report_final_period ON public.report USING btree (msp_id, client_id, period_start) WHERE (NOT interim)
+
+== (2) by CLI: the MSP, the lab client (its id the kept bundle's), the lab Worker's key, the connector, a plan with one run (its id the bundle's); the poll; the real Worker bundle posted: 202 pass ==
+the kept C5.7 bundle: run 06aa7c8f-3611-4f00-92c8-797428f58f1a, client b1ff9271-c665-4398-86b3-ee4ae40ee7ee, 30 items, status pass, ended 10/11/2026 13:56:56, recovery 189177 ms, bundle_sha256 98cee021d650744250c83827e9220c9ee6d35d20e38723836d9d83e18b72bcdc
+create-msp --name 'C6.4 done-when MSP': exit 0
+msp_id ad981200-46d6-4d9e-b75f-c4879d52f6a2
+create-client --msp-id <msp_id> --name 'Lab tenant' --tenant-id <the lab tenant>: exit 0
+client_id c8fc84ae-50cc-4a13-b94d-b63c5e5316c3
+the client's id set to the bundle's by SQL (as tests/test_contract.py gives a test's rows the vector's ids): 
+create-worker-token --msp-id <msp_id> --label veeam-vm: exit 0
+install_token_id 76df89d4-4b11-4994-bd67-2126a83bb1c4
+the install token is shown once; the Cloud stores its hash alone
+expires_at 2026-10-19T22:06:58Z
+install_token <token>
+POST /v1/workers/register with curl (the lab Worker's own key from rpworker signer public-key; the token in the body on standard input): 201 worker_id 44ec3ef4-60e2-44a7-a115-cac9f377e99c, key_id 9dfab6eadaa1d04a22dcc966aac7a53bcff8bbe0077232485f6143cd9c4d0ca5; the API token kept in memory
+create-connector --msp-id <msp_id> --client-id <client_id> --worker-id <worker_id> --profile-file /tmp/profile.json (the lab profile, outside the repository): exit 0
+connector_id c0c69cb8-d84e-458c-a979-07285e30c707
+create-plan --msp-id <msp_id> --client-id <client_id> --connector-id <connector_id> --mail 10 --sp 10 --od 10 --run-now: exit 0
+plan_id db33bee9-4792-4f6f-b548-a14787e28947
+run_id 20ec7157-4c98-47f6-b6f4-106b919a196e
+the run's id set to the bundle's by SQL: 
+GET /v1/jobs (the API token in a curl config on standard input): restoreproof.jobs.v1, 1 job, run_id 06aa7c8f-3611-4f00-92c8-797428f58f1a
+POST /v1/results with the kept bundle's five files: HTTP/1.1 202 Accepted {"run_id":"06aa7c8f-3611-4f00-92c8-797428f58f1a","state":"pass"}
+the run's row: pass|2026-10-11 13:56:56.305+00|189177|t|2026-10-11 13:55:34+00|98cee021d650744250c83827e9220c9ee6d35d20e38723836d9d83e18b72bcdc|30
+
+== (3) September 2026 by SQL: a pass, a fail with two unmatched items, an error, a later pass, an expired run (the Done-when's shape; the bundle columns synthetic, no object behind them) ==
+runs: pass 18c70593-78f4-40d4-9c6d-622ac49a0e90, fail d433ec53-7ca1-4283-ba0f-a2d7abbfc833, error 086ca475-ca2f-49da-92e8-ad7ccba23629, pass c4ede7cb-1fd5-4151-88fb-585fe436897d, expired 2b1b36c0-fb45-4027-a3fb-44e8d31f8e01
+the month's rows: pass|2026-09-05 02:03:20+00|40000||2
+fail|2026-09-10 02:30:00+00|65000||3
+expired||||0
+error|2026-09-20 02:05:00+00||veeam_unreachable|0
+pass|2026-09-25 02:20:00+00|40000||1
+
+== (4) the Done-when: manage.py generate-report --period 2026-09 in the api container; the row; the object fetched and held to file_sha256; the six sections in the PDF's text ==
+generate-report --msp-id <msp_id> --client-id <client_id> --period 2026-09: exit 0
+report_id 6acd1743-840f-4868-8a67-ac90d20a6e32
+period 2026-09
+interim false
+storage_key msp/ad981200-46d6-4d9e-b75f-c4879d52f6a2/reports/b1ff9271-c665-4398-86b3-ee4ae40ee7ee/2026-09.pdf
+content_sha256 eee2fe17da23ab2419c11ce478be83fc58ddc1ca5bc40566d7e960a419f7e9a1
+file_sha256 6d93c1a9bae1792b3779d38b2763330a9865d73b22e5b84f1568bb6294cbfbe7
+the row: 2026-09-01|2026-09-30|f|2026-10-12 22:07:22.963028+00|msp/ad981200-46d6-4d9e-b75f-c4879d52f6a2/reports/b1ff9271-c665-4398-86b3-ee4ae40ee7ee/2026-09.pdf|t|t
+the objects under msp/ad981200-46d6-4d9e-b75f-c4879d52f6a2/reports/b1ff9271-c665-4398-86b3-ee4ae40ee7ee/ (through the api's own client): 2026-09.pdf
+the object fetched: 28916 bytes, sha256 6d93c1a9bae1792b3779d38b2763330a9865d73b22e5b84f1568bb6294cbfbe7; file_sha256 6d93c1a9bae1792b3779d38b2763330a9865d73b22e5b84f1568bb6294cbfbe7; the same
+the PDF read with pypdf:
+pages 3
+the six headings in order: yes
+Restore test report Summary Client Lab tenant MSP C6.4 done-when MSP Period September 2026 (2026-09) 1 of 4 tests failed 1 of 4 tests could not run (error) Scheduled tests that did not run: 1 T ests run 4 Average recovery time 0:48 Maximum recovery time 1:05 Backup source Veeam Backup for Microsoft 365 Restore points covered 3, from 2026-09-04 23:00 UTC to 2026-09-24 23:00 UTC A pass means every sampled item was restored from the backup and matched what was expected. A fail means an item was missing or did not match. An error means the test itself could not run (the backup product, the tenant or the Worker was not available); it says nothing about the backup. This report does not test full disaster recovery. It shows that the sampled items listed here were restored and verified on the dates shown. RestoreProof · page 1 of 3 Test log Date Restore point Items (mail / SP / OD) Result Recovery time Run 2026-09-05 02:03 UTC 2026-09-04 23:00 UTC 1 / 1 / 0 pass 0:40 18c70593 2026-09-10 02:30 UTC 2026-09-09 23:00 UTC 1 / 1 / 1 fail 1:05 d433ec53 2026-09-15 02:00 UTC — 0 / 0 / 0 did not run — 2b1b36c0 2026-09-20 02:05 UTC — 0 / 0 / 0 error — 086ca475 2026-09-25 02:20 UTC 2026-09-24 23:00 UTC 1 / 0 / 0 pass 0:40 c4ede7cb Failures 2026-09-10 02:30 UTC fail d433ec53 Type Item Found Reason mail RP-CANARY-0003 missing no restored copy found sharepoint rp-canary-04.docx mismatch fields did not match: sha256 Re-tested and passed on 2026-09-25 02:20 UTC. 2026-09-20 02:05 UTC error 086ca475 Error veeam_unreachable: the backup product did not answer No item was checked. Re-tested and passed on 2026-09-25 02:20 UTC. Method Each test of the plan restored up to 10 mails, 10 SharePoint files and 10 OneDrive files from one restore point of the backup. The items of a test are a sample: canary items seeded in the tenant for this purpose, whose content is known in advance, plus items chosen at random from the backup's own listing. Each item was restored into a restore target set aside for testing (the restoretest mailbox, the RestoreTarget library or the RestoreTarget OneDrive folder), read back through Microsoft Graph, compared, and removed from the target. A canary is compared by the SHA-256 of its content; a random mail by its subject, received time and sender; a random file by its name and size. Verification levels covered: 1, 2, 3; level 4 partially (files opened and read via Microsoft Graph). RestoreProof · page 2 of 3 Integrity Content hash (SHA-256) eee2fe17da23ab2419c11ce478be83fc58ddc1ca5bc40566d7e960a419f7e9a1 File hash (SHA-256) stored by the Cloud beside this report Generated 2026-10-12 22:07 UTC A file cannot contain its own hash. The content hash above is the SHA-256 of this report rendered without it; the file hash, which the Cloud stores beside this report and which you can check yourself, is the SHA-256 of the file you are reading. Workers Name Worker id Public key fingerprint (SHA-256 of the key) veeam- vm 44ec3ef4-60e2-44a7- a115-cac9f377e99c 9dfab6eadaa1d04a22dcc966aac7a53bcff8bbe0077232485f6143cd9c4d0ca5 Runs Run id Bundle SHA-256 Timestamp 18c70593-78f4-40d4-9c6d-622ac49a0e90 1111111111111111111111111111111111111111111111111111111111111111 timestamped 2026-09-05 02:03 UTC d433ec53-7ca1-4283-ba0f-a2d7abbfc833 2222222222222222222222222222222222222222222222222222222222222222 timestamped 2026-09-10 02:30 UTC 2b1b36c0-fb45-4027-a3fb-44e8d31f8e01 — — 086ca475-ca2f-49da-92e8-ad7ccba23629 3333333333333333333333333333333333333333333333333333333333333333 not timestamped c4ede7cb-1fd5-4151-88fb-585fe436897d 4444444444444444444444444444444444444444444444444444444444444444 timestamped 2026-09-25 02:20 UTC Framework mapping Control Name What this evidence demonstrates What it does not cover ISO/IEC 27001:2022 A.8.13 Information backup — — SOC 2 Availability A1.2, A1.3 Recovery procedures tested — — HIPAA 45 CFR 164.308(a)(7)(ii)(D) T esting and revision procedures — — DORA Regulation (EU) 2022/2554 Article 12 Backup policies and procedures, restoration and recovery procedures and methods — — The sentences relating this evidence to each control are being written and reviewed by an outside reader (C6.7) and are not part of this report yet. RestoreProof · page 3 of 3
+the content hash printed in the Integrity section: yes; the file hash not printed: right; the four banned phrases: none
+
+== (5) the same month again: refused before rendering, no second object ==
+generate-report --period 2026-09 again: exit 1: period: already reported
+the rows of the month: 1
+
+== (6) the current month: an interim report under a key with its time, the real bundle's run in it ==
+generate-report --period 2026-10: exit 0
+report_id 302bcfe5-9e46-4b94-9a8d-72735e470082
+period 2026-10
+interim true
+storage_key msp/ad981200-46d6-4d9e-b75f-c4879d52f6a2/reports/b1ff9271-c665-4398-86b3-ee4ae40ee7ee/2026-10-interim-20261012T220741Z.pdf
+content_sha256 400d389b5c2aa8b45c55302cdeaac64cb1e585e0b918d0584a37c4881b96be1e
+file_sha256 b8b5ff383743ad215aa843ddbf021ae54997fa189ab81e57449a08a3d5a2a24b
+the objects under the prefix now: 2026-09.pdf 2026-10-interim-20261012T220741Z.pdf
+the interim object fetched: sha256 b8b5ff383743ad215aa843ddbf021ae54997fa189ab81e57449a08a3d5a2a24b; file_sha256 b8b5ff383743ad215aa843ddbf021ae54997fa189ab81e57449a08a3d5a2a24b; the same
+its text says 'Interim report': yes; the kept bundle's bundle_sha256 in its Integrity section: yes; its first 400 characters: Interim report Summary Client Lab tenant MSP C6.4 done-when MSP Period October 2026 (2026-10) The period is not over: this interim report covers the tests that have ended by 2026-10-12 22:07 UTC. The month's final report replaces nothing; it is made when the month has ended. The 1 test passed T ests run 1 Average recovery time 3:09 Maximum recovery time 3:09 Backup source Veeam Backup for Microsof
+the report rows at the end (period_start, interim, storage_key): 2026-09-01|f|msp/ad981200-46d6-4d9e-b75f-c4879d52f6a2/reports/b1ff9271-c665-4398-86b3-ee4ae40ee7ee/2026-09.pdf
+2026-10-01|t|msp/ad981200-46d6-4d9e-b75f-c4879d52f6a2/reports/b1ff9271-c665-4398-86b3-ee4ae40ee7ee/2026-10-interim-20261012T220741Z.pdf
+the audit rows (action, has_user, ip): report.create|f|
+report.create|f|
+
+== (7) the September PDF kept beside the evidence when its text names no person and no tenant identifier ==
+kept as C:\restoreproof\docs\api\cloud-lab\c6.4-sample-report.pdf (sha256 6d93c1a9bae1792b3779d38b2763330a9865d73b22e5b84f1568bb6294cbfbe7): the client's name, the MSP's name, canary subjects and file names, run ids, the Worker's id and fingerprint, no address, no tenant id
+the api's log lines since the start naming a report, a signed query or a bucket path: 0
+
+== (8) the teardown ==
+C:\Users\minas\AppData\Local\Temp\rp-c64 (the two fetched PDFs) and the container's profile copy and fetched object removed; the install token went to curl on its standard input, the API token into memory and to curl on its standard input: nothing was written to a file and nothing was put on a command line; the MSP and its rows, and the two objects, are left in the stack

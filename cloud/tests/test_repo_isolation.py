@@ -318,7 +318,7 @@ WRITES = [
     Write(RunRepo, "requeue_stale", lambda w: w.stale_run, lambda w: (NOW + dt.timedelta(hours=6),), sweep=True),
     # C5.7: with A's msp_id and B's dispatched run (B's Worker given, as the
     # route gives the token's Worker) the bundle isn't filed and B's row stays.
-    Write(RunRepo, "receive", lambda w: w.stale_run, lambda w: (w.stale_run.id,), lambda w: {"worker_id": w.worker.id, "update": RECEIVED}),
+    Write(RunRepo, "receive", lambda w: w.stale_run, lambda w: (w.stale_run.id,), lambda w: {"worker_id": w.worker.id, "update": RECEIVED, "at": NOW}),
     Write(InstallTokenRepo, "mark_used", lambda w: w.token, lambda w: (w.token.id, NOW)),
     # C6.1: with A's msp_id and B's user the reset answers 0 and B's hash stays.
     Write(UserRepo, "set_password_hash", lambda w: w.user, lambda w: (w.user.id, "changed"), lambda w: {"changed_at": NOW}),
@@ -353,6 +353,8 @@ CROSS_MSP = {(MspRepo, "list")}
 COUNTS = {(RunRepo, "daily_states"), (ItemRepo, "counts_by_type_in_period")}
 # C6.6: a read that answers ids, not rows (the monthly job's clients); held by its own test below.
 IDS = {(RunRepo, "clients_in_period")}
+# The C6.6 review's finding 6: a row lock that answers whether it was taken; held by its own test below.
+HOLDS = {(ClientRepo, "hold")}
 
 
 def every_repo_method() -> set[tuple[type, str]]:
@@ -371,7 +373,7 @@ def every_repo_method() -> set[tuple[type, str]]:
 
 def test_the_table_names_every_repo_method():
     """A method added later must be added to READS, WRITES or CREATES."""
-    in_table = {(r.repo, r.method) for r in READS} | {(w.repo, w.method) for w in WRITES} | CREATES | LOOKUPS | CROSS_MSP | COUNTS | IDS
+    in_table = {(r.repo, r.method) for r in READS} | {(w.repo, w.method) for w in WRITES} | CREATES | LOOKUPS | CROSS_MSP | COUNTS | IDS | HOLDS
 
     assert every_repo_method() == in_table
     assert len(every_repo_method()) >= 40
@@ -501,7 +503,7 @@ async def test_a_write_on_a_row_that_does_not_exist_answers_zero(session, worlds
     assert await RunRepo(session).set_state(a.msp.id, nothing, "error") == 0
     assert await RunRepo(session).dispatch(a.msp.id, nothing, NOW) == []
     assert await RunRepo(session).requeue_stale(a.msp.id, NOW - dt.timedelta(days=1)) == (0, 0)
-    assert await RunRepo(session).receive(a.msp.id, nothing, worker_id=a.worker.id, update=RECEIVED) == 0
+    assert await RunRepo(session).receive(a.msp.id, nothing, worker_id=a.worker.id, update=RECEIVED, at=NOW) == 0
     assert await InstallTokenRepo(session).mark_used(a.msp.id, nothing, NOW) == 0
     assert await UserRepo(session).set_password_hash(a.msp.id, nothing, "x", changed_at=NOW) == 0
 
@@ -530,8 +532,8 @@ async def test_the_writes_do_what_they_say_on_their_own_rows(session, worlds):
     assert await workers.revoke(a.msp.id, a.worker.id, NOW + dt.timedelta(days=1)) == 0  # once
     assert await plans.set_enabled(a.msp.id, a.plan.id, False) == 1
     assert await runs.set_state(a.msp.id, a.run.id, "dispatched") == 1
-    assert await runs.receive(a.msp.id, a.stale_run.id, worker_id=a.worker.id, update=RECEIVED) == 1
-    assert await runs.receive(a.msp.id, a.stale_run.id, worker_id=a.worker.id, update=RECEIVED) == 0  # once
+    assert await runs.receive(a.msp.id, a.stale_run.id, worker_id=a.worker.id, update=RECEIVED, at=NOW) == 1
+    assert await runs.receive(a.msp.id, a.stale_run.id, worker_id=a.worker.id, update=RECEIVED, at=NOW) == 0  # once
     assert await tokens.mark_used(a.msp.id, a.token.id, NOW) == 1
     assert await tokens.mark_used(a.msp.id, a.token.id, NOW) == 0  # single use
     assert await clients.delete(a.msp.id, a.spare_client.id) == 1
@@ -658,3 +660,16 @@ async def test_no_repo_commits(session, monkeypatch):
     await make_world(session, "c")
 
     assert committed == []
+
+
+async def test_hold_takes_a_client_of_its_own_msp_alone(session, worlds):
+    """`ClientRepo.hold` with A's msp_id and B's client takes nothing, so one
+    MSP's click never holds another's row."""
+    a, b = worlds
+    clients = ClientRepo(session)
+
+    assert await clients.hold(a.msp.id, b.client.id) is False
+    assert await clients.hold(b.msp.id, a.client.id) is False
+    assert await clients.hold(a.msp.id, uuid.uuid4()) is False
+    assert await clients.hold(a.msp.id, a.client.id) is True
+    assert await clients.hold(b.msp.id, b.client.id) is True

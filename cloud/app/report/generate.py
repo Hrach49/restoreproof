@@ -26,7 +26,7 @@ from app.onboarding import Created, worded
 from app.repo.audit import AuditRepo
 from app.repo.errors import CONSTRAINT_WORDS, RepoError
 from app.repo.reports import ReportRepo
-from app.report.data import Period, gather, interim_for
+from app.report.data import NOT_CLOSED, Period, closed, gather, interim_for
 from app.report.render import render_report
 from app.storage import Storage
 
@@ -42,6 +42,8 @@ class ReportFailed(RepoError):
 def now() -> dt.datetime:
     """The Cloud's clock for the CLI's report; a test moves it."""
     return dt.datetime.now(dt.timezone.utc)
+
+
 # The index's own word, so the read before the render and the index agree.
 ALREADY_REPORTED = CONSTRAINT_WORDS["uq_report_final_period"][1]
 
@@ -64,11 +66,16 @@ async def generate(
     user_id: UUID | None = None,
     ip: str | None = None,
 ) -> Created:
-    # A month's final report is made once: asked first, before the month is
-    # read (C6.6's job asks for every client of a month, so a month that has
-    # its report costs one read), so the word is the period's; the index is
-    # the line for two at once.
-    if not interim_for(period, now) and await ReportRepo(session).final(msp_id, client_id, period.start) is not None:
+    # A month's final report is made once, and never while the month still
+    # takes results (the C6.6 review's findings 1 and 2: a report made the
+    # minute a month ended froze it before its last results had arrived):
+    # asked first, before the month is read (C6.6's job asks for every client
+    # of a month, so a month that has its report costs one read), so the word
+    # is the period's; the index is the line for two at once.
+    final = not interim_for(period, now)
+    if final and not closed(period, now):
+        raise RepoError("period", NOT_CLOSED)
+    if final and await ReportRepo(session).final(msp_id, client_id, period.start) is not None:
         raise RepoError("period", ALREADY_REPORTED)
     data = await gather(session, msp_id, client_id, period, now=now)
     try:
@@ -89,7 +96,11 @@ async def generate(
             generated_at=now,
         )
     except IntegrityError as error:
-        raise worded(error) from None
+        # A final report's key is its period's, so whichever of the two
+        # uniques refused a final one, another was made meanwhile (the C6.6
+        # review's finding 7: the loser of two at once was told
+        # `storage_key: already used`, and the job counted it as a failure).
+        raise (RepoError("period", ALREADY_REPORTED) if final else worded(error)) from None
     await AuditRepo(session).write(msp_id, REPORT_CREATE, f"report:{row.id}", user_id=user_id, ip=ip)
     try:
         await asyncio.to_thread(storage.put, key, rendered.pdf, PDF_TYPE)

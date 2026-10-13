@@ -305,9 +305,18 @@ may have any number of them for a month beside the one final report (`uq_report_
 "Generate now" on a client's reports page makes one (C6.6), at most one per client every ten
 minutes and one render at a time per process.
 
+**Late result.** A result the Cloud received (`test_run.received_at`, the Cloud's clock at the
+upload) at 02:00 UTC on the 1st after the month its run ended in, or later (`RESULTS_CLOSE`). It
+is a test of the month it arrived in, since the month it ended in may have its final report; the
+report prints it with its own date and counts it on a Summary line of its own.
+
+**Closed month.** A month whose final report may be made: from 03:00 UTC on the 1st after it
+(`FINAL_AFTER`, an hour after it stopped taking results). `generate` refuses a final report
+earlier (`period: not closed until 03:00 UTC on the 1st`).
+
 **Report job.** The scheduler's third job (C6.6, `tick_reports`): on the 1st at 03:00 UTC and
-once at the process's start, the previous month's final report for every client with a run in
-it, one transaction per client, a month that has its report skipped and never a failure, a
+once at the process's start, the newest closed month's final report for every client with a run
+in it, one transaction per client, a month that has its report skipped and never a failure, a
 client's failure logged by type while the next is made. A final report is never re-made.
 
 **Reports page.** `/reports` (the nav's "Reports", C6.6): every report of the MSP newest first,

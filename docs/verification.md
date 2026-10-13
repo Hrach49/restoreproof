@@ -2297,12 +2297,34 @@ run's `tsa_time` against the period). Every other run belongs to the month of `c
 **is not a test**: an `expired` run is counted in the Summary ("Scheduled tests that did not
 run: N") and shown in the Test log as "did not run"; a `queued` or `dispatched` run is counted
 as "Scheduled tests with no result when this report was made: N" and shown as "no result yet",
-so a month whose Worker was off never reads as a month of passes. A run with no result when its
-month's final report is made stays in that report as such; if its bundle lands later it is the
-next month's test, by the time it ended. `period_filter` is the one condition, and the three
-reads of a month (`RunRepo.period`, `ItemRepo.counts_by_type_in_period`,
-`ItemRepo.unmatched_in_period`) share it; `app/report/data.py`'s `run_date` is the same rule on
-a row. A month that has not begun is `period: has not begun`; a month with no run of the client
+so a month whose Worker was off never reads as a month of passes.
+
+**A result that arrives late** (the C6.6 review's finding 1; `period_time`, `RESULTS_CLOSE`,
+`test_run.received_at`). `POST /v1/results` stamps the run with the Cloud's clock when it files
+the bundle (`received_at`; never a time of the bundle). A month takes results until **02:00 UTC
+on the 1st after it** (`RESULTS_CLOSE`, two hours); a tested run whose result the Cloud received
+at that time or later is **the month's it was received in**, not the month it ended in, because
+that month may have its final report by then: a run that ended on 30 September 23:50 and whose
+Worker reached the Cloud on 1 October 03:05 is October's test, and one received on 10 November
+is November's. So every result is in exactly one month as a test, and none is lost to a report
+that was already made. A run with no result when its month's final report is made stays in that
+report as "no result yet"; when its bundle lands it is a test of the month it lands in. In the
+report such a run keeps its own date (the Test log and the Failures print when it ended, and the
+month's order is by the tests' ends, so it stands first and "a later test of the same plan" is
+one that ended later), and the Summary counts it on a line of its own: "Tests that ended before
+this period and whose results arrived after that period had closed, counted here: N". A row no
+bundle wrote (`received_at` null) goes by its end. Q6.1's check of each run's `tsa_time` against
+the period allows for these: a run counted on that line is stamped before the period began.
+**No final report is made before 03:00 UTC on the 1st** (`FINAL_AFTER`, three hours: the job's
+hour, and `generate`'s refusal `period: not closed until 03:00 UTC on the 1st` for whoever asks
+earlier, the job's start run and the CLI included), so the hour between the two is the room an
+upload stamped just inside the close has to commit before the month is read; a test holds the
+order of the two constants.
+
+`period_filter` is the one condition, and the four reads of a month (`RunRepo.period`,
+`ItemRepo.counts_by_type_in_period`, `ItemRepo.unmatched_in_period`,
+`RunRepo.clients_in_period`) share it; `app/report/data.py`'s `run_date` is `_run_time`, the
+date and the order, on a row. A month that has not begun is `period: has not begun`; a month with no run of the client
 at all is `period: no run in the period`; nothing is written for either.
 
 **What each section reads.**
@@ -2345,7 +2367,10 @@ not before the generation day); the title says "Interim report" and the Summary 
 is not over. A month has **one final report** per client (`uq_report_final_period`, a partial
 unique on `(msp_id, client_id, period_start) WHERE NOT interim`; the generator asks
 `ReportRepo.final` before it renders and answers `period: already reported`, the index being the
-line for two at once) and as many interim ones as were asked for; a key is written once
+line for two at once: the loser's insert is refused by the key's unique or the period's, and
+since a final report's key is its period's the generator words either as `period: already
+reported`, which the job counts as `existing`; the C6.6 review's finding 7) and as many interim
+ones as were asked for; a key is written once
 (`uq_report_storage_key`). The object: `msp/{msp_id}/reports/{client_id}/{YYYY-MM}.pdf` for a
 final report, `…/{YYYY-MM}-interim-{YYYYMMDDTHHMMSSZ}.pdf` for an interim one, `application/pdf`,
 through `Storage.put` in a thread **after** the row and one audit row `report.create`
@@ -2353,7 +2378,8 @@ through `Storage.put` in a thread **after** the row and one audit row `report.cr
 a refused row writes no object and a failed put rolls the row back with the caller's
 transaction. Nothing edits, replaces or deletes a report; **a final report is never re-made**
 (C6.6): it says what the Cloud knew on the day it was made, a run with no result that day is in
-it as such, and that run's bundle, when it lands, is the next month's test by the time it ended.
+it as such, and that run's bundle, when it lands, is a test of the month it lands in ("A result
+that arrives late", above).
 The read for a final report the month already has comes first, before the month is read, so a
 month that has its report costs one statement (the C6.6 job asks for every client).
 
@@ -2386,7 +2412,10 @@ laptop's Docker, past the Done-when's minute, so the cap is 200 (its build notes
 **The monthly job** (C6.6; `app/scheduler.py` `tick_reports`; `docs/decisions.md` 2026-10-13,
 "C6.6, C6.5 and C6.7", point 1). The scheduler's third job, `CronTrigger(day=1, hour=3,
 minute=0)` in UTC with an hour's misfire grace, and once at the process's start like the other
-two: for every MSP, the clients with a run of the previous month (`RunRepo.clients_in_period`:
+two: for every MSP, the clients with a run of **the newest closed month**
+(`app.report.data.closed_month`: the previous month from 03:00 UTC on the 1st, the month before
+it until then, so a scheduler started at 00:00:30 on the 1st makes nothing of the month that
+just ended and the 03:00 run makes it; the C6.6 review's finding 2) (`RunRepo.clients_in_period`:
 any state, so a client whose only run expired or has no result gets a report that says so; one
 read in its own transaction), then **one transaction per client** calling `generate` for that
 month's final report with no user and no address, committed as soon as it is made; a month that
@@ -2411,7 +2440,8 @@ users' actions).
 - **`/reports`** (the "Reports" nav entry, every role): every report of the MSP, newest period
   first then newest generation (`ReportRepo.page`, one statement joined to the client on the
   key that starts with `msp_id`), in pages of 50 by keyset (`?before=<report id>`; the rows alone
-  for an htmx request), each row the client (a link to its reports), the period `YYYY-MM`, the
+  for an htmx request; the read asks for one row more than a page, so "more" is offered only
+  when a row follows, and a continuation with no row says nothing), each row the client (a link to its reports), the period `YYYY-MM`, the
   kind ("interim" or "final"), the generation time, the content hash, the file hash and a
   **Download** link to the route below. Three statements (the user, the MSP, the page).
 - **`/clients/{id}/reports`:** 404 for a client not this MSP's; the same rows without the client
@@ -2425,22 +2455,29 @@ users' actions).
   browser's file name is the key's last part (`2026-09.pdf`,
   `2026-10-interim-20261013T101500Z.pdf`).
 - **Generate now, `POST /clients/{id}/reports/generate`:** `SameOrigin`; 404 for another MSP's
-  client; **the cap**: the client's newest report read once, and if it is an interim one of the
+  client; **the client's row**: `ClientRepo.hold` takes it first (`FOR NO KEY UPDATE SKIP
+  LOCKED`: nothing waits, and a run or a report made for the client meanwhile is not kept
+  waiting) and keeps it until the request's transaction has committed, in whatever process, so
+  a second click while one is being made is the page with "A report is being made; try again in
+  a minute." and 429 at once, and a click after it reads the cap with the first's row there (two
+  clicks at once used to pass the cap together; the C6.6 review's finding 6); **the cap**: the
+  client's newest report read once under that hold, and if it is an interim one of the
   current month made less than ten minutes ago (`GENERATE_EVERY` 600 s) the answer is the
   client's reports page with "An interim report of this month was made at <time>; the next can
   be made from <time>." and 429 with `Retry-After`, no render, no row (two reports a minute apart
-  render the same rows to the same bytes, and a render is CPU seconds); **the render slot**: one
+  render the same rows to the same bytes, and a render is CPU seconds); the time named is the
+  next whole minute at which the cap lets a click through and `Retry-After` the seconds rounded
+  up, never a time it still refuses at (finding 12); **the render slot**: one
   render at a time per process (`app.state.render_slot`, a semaphore of one), a click while one
   runs waits five seconds (`RENDER_WAIT_S`) for the slot and is then the page with "A report is
   being made; try again in a minute." and 429; then `generate` for the current month with the
   user and the address under a savepoint (`session.begin_nested()`), and 303 to the client's
   reports page, where the new row is first. A `RepoError` (`period: no run in the period` for a
-  client with nothing this month; `storage_key: already used` for two clicks in one second) is
-  the page with the error's own line and 409; a `ReportFailed` (`report: not rendered (<type>)`,
+  client with nothing this month) is the page with the error's own line and 409; a `ReportFailed` (`report: not rendered (<type>)`,
   `storage: put failed (<type>)`) the page with that line and 503, the type logged with the ids
   and never the message; the savepoint rolls the report's rows back alone and the request's
   transaction commits nothing of it; **never a 500**. On success: the user, the MSP, the client,
-  the cap's read, the month's eight reads, the row and the audit row, then the put, the same for
+  its row's hold, the cap's read, the month's eight reads, the row and the audit row, then the put, the same for
   a month of one run and of thirty. The form is a plain POST (no htmx: the render takes seconds
   and a 303 keeps a refresh from posting again). The request's transaction is held across the
   render and the put (the C6.4 review's finding 13, kept and bounded: one render at a time, a

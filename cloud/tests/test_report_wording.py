@@ -24,6 +24,8 @@ SUMMARY = (
     "This report does not test full disaster recovery. It records what each test listed here found for the items it sampled, on the dates shown.",
     "The period is not over: this interim report covers the tests that have ended by",
     "The month's final report replaces nothing; it is made when the month has ended.",
+    # The C6.6 review's finding 1: a result that reached the Cloud after its month had its report.
+    "Tests that ended before this period and whose results arrived after that period had closed, counted here:",
 )
 
 # --- The Method (C6.5): the sampling, the targets, the comparison, the cleanup line, the levels line ---
@@ -54,6 +56,9 @@ ABOUT = (
     "what this report does not look at. A test marked fail or error shows nothing for the control; it is listed under "
     "Failures. The table describes this evidence; it is not an assessment of the control."
 )
+
+# The C6.6 review's finding 3: in place of a control's first sentence when no test of the report passed.
+NO_PASS = "No test in this report is marked pass, so it shows nothing for this control."
 
 MAPPING = {
     "ISO/IEC 27001:2022 A.8.13": (
@@ -96,9 +101,11 @@ def test_the_mapping_is_the_reviewed_text_verbatim_control_by_control():
     for control in frameworks.CONTROLS:
         assert (control.name, control.demonstrates, control.not_covered) == MAPPING[control.identifier], control.identifier
     assert frameworks.ABOUT == ABOUT
+    assert frameworks.NO_PASS == NO_PASS
+    assert "control.demonstrates if data.passed else data.no_pass" in template()
 
 
-@pytest.mark.parametrize("sentence", SUMMARY + METHOD + OTHER + (ABOUT,) + tuple(s for triple in MAPPING.values() for s in triple))
+@pytest.mark.parametrize("sentence", SUMMARY + METHOD + OTHER + (ABOUT, NO_PASS) + tuple(s for triple in MAPPING.values() for s in triple))
 def test_no_reviewed_sentence_claims_more_than_a_restore_test_shows(sentence):
     lowered = sentence.lower()
     for word in OVERCLAIMS:

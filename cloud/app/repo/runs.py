@@ -31,7 +31,7 @@ from dataclasses import dataclass
 from typing import NamedTuple
 from uuid import UUID
 
-from sqlalchemy import and_, case, func, select, true, tuple_
+from sqlalchemy import and_, case, func, literal_column, select, true, tuple_
 from sqlalchemy import update as sa_update
 from sqlalchemy.dialects.postgresql import distinct_on
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -71,20 +71,47 @@ def _aware(name: str, value: dt.datetime) -> None:
         raise ValueError(f"{name}: a time without a zone: give an aware UTC datetime")
 
 
+# The C6.6 review's finding 1: a month takes results for this long after its
+# last day; one the Cloud receives later is the month's it arrives in, since
+# the month it ended in may have its final report by then. Shorter than
+# `app/report/data.py`'s `FINAL_AFTER` (no final report before that), so a
+# result stamped just inside the hours is committed before the report reads
+# the month (a test holds the order of the two).
+RESULTS_CLOSE = dt.timedelta(hours=2)
+
+
+def _end_time():
+    """When a tested run ended: `finished_at`; a result written afterwards
+    has none (the Worker's `interrupted`, `internal`, `job_invalid`, ...), so
+    then the time it was stamped, else the time it was last handed out, and
+    only then its creation: a run is never dated by the time it was queued
+    when a later time of it is known (the C6.4 review's finding 3).
+    """
+    return func.coalesce(TestRun.finished_at, TestRun.tsa_time, TestRun.dispatched_at, TestRun.created_at)
+
+
+def _run_time():
+    """A run's date, and the order of a month's runs: a tested run's end
+    (`_end_time`), every other run's creation (expired, queued, dispatched:
+    it never ended). `app/report/data.py`'s `run_date` is the same rule on a
+    row."""
+    return case((TestRun.state.in_(TESTED_STATES), _end_time()), else_=TestRun.created_at)
+
+
 def period_time():
-    """The time that puts a run in a month. A tested run: when it ended; a
-    result written afterwards has no `ended_at` (the Worker's `interrupted`,
-    `internal`, `job_invalid`, ...), so then the time it was stamped, else
-    the time it was last handed out, and only then its creation: a run is
-    never dated by the time it was queued when a later time of it is known
-    (the C6.4 review's finding 3). Every other run (expired, queued,
-    dispatched) never ended: by its creation. `app/report/data.py`'s
-    `run_date` is the same rule on a row."""
+    """The time that puts a run in a month. A tested run: when it ended
+    (`_end_time`), unless the Cloud received its result `RESULTS_CLOSE` or
+    more after that month's last day: then when it was received, so a result
+    that arrives after its month's final report is in the report of the
+    month it arrived in and in no report twice as a test (the C6.6 review's
+    finding 1; `received_at` null is a row no bundle wrote, by its end).
+    Every other run (expired, queued, dispatched) never ended: by its
+    creation."""
+    ended = _end_time()
+    hours = int(RESULTS_CLOSE.total_seconds() // 3600)
+    closes = func.date_trunc("month", ended, "UTC") + literal_column(f"interval '1 month {hours} hours'")
     return case(
-        (
-            TestRun.state.in_(TESTED_STATES),
-            func.coalesce(TestRun.finished_at, TestRun.tsa_time, TestRun.dispatched_at, TestRun.created_at),
-        ),
+        (TestRun.state.in_(TESTED_STATES), case((TestRun.received_at >= closes, TestRun.received_at), else_=ended)),
         else_=TestRun.created_at,
     )
 
@@ -92,7 +119,8 @@ def period_time():
 def period_filter(client_id: UUID, start: dt.datetime, end: dt.datetime):
     """The conditions that make a run of `client_id` one of the span `[start,
     end)`: its `period_time` is in it, whatever its state. A tested run is
-    there by the time it ended; an expired one by its creation (not a test:
+    there by the time it ended (by the time its result arrived, once the
+    month it ended in had closed); an expired one by its creation (not a test:
     one that did not run); a queued or dispatched one by its creation too
     (not a test: one with no result when the report is made, so a month whose
     Worker was off does not read as a month of passes; the C6.4 review's
@@ -203,9 +231,11 @@ class RunRepo(Repo):
             .execution_options(populate_existing=True)
         )
 
-    async def receive(self, msp_id: UUID, run_id: UUID, *, worker_id: UUID, update: ReceivedRun) -> int:
-        """File the run's bundle: 1 when the run is this Worker's, was handed
-        out and holds no bundle yet; else 0 and nothing changes."""
+    async def receive(self, msp_id: UUID, run_id: UUID, *, worker_id: UUID, update: ReceivedRun, at: dt.datetime) -> int:
+        """File the run's bundle, received at `at` (the Cloud's clock): 1 when
+        the run is this Worker's, was handed out and holds no bundle yet;
+        else 0 and nothing changes."""
+        _aware("at", at)
         return await self._touched(
             sa_update(TestRun)
             .where(
@@ -229,6 +259,7 @@ class RunRepo(Repo):
                 signature_ok=True,
                 tsa_ok=update.tsa_ok,
                 tsa_time=update.tsa_time,
+                received_at=at,
                 cleanup_ok=update.cleanup_ok,
             )
             .execution_options(synchronize_session=False)
@@ -308,11 +339,14 @@ class RunRepo(Repo):
 
     async def period(self, msp_id: UUID, client_id: UUID, *, start: dt.datetime, end: dt.datetime) -> list[TestRun]:
         """The client's runs of the span `[start, end)` as `period_filter` has
-        them, oldest first by that time then id (C6.4, point 5). One statement."""
+        them, oldest first by `_run_time` then id (C6.4, point 5): by the
+        tests' ends, so a result that arrived after its month had closed
+        stands first, where it ended, and "a later test" is one that ended
+        later. One statement."""
         return await self._all(
             select(TestRun)
             .where(TestRun.msp_id == msp_id, *period_filter(client_id, start, end))
-            .order_by(period_time(), TestRun.id)
+            .order_by(_run_time(), TestRun.id)
         )
 
     async def clients_in_period(self, msp_id: UUID, *, start: dt.datetime, end: dt.datetime) -> list[UUID]:

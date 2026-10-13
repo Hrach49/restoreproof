@@ -298,7 +298,7 @@ async def test_a_run_that_was_handed_out_takes_its_bundle_whatever_the_sweep_did
     row = await dispatched_run(q, state=state, attempt=attempt)
     update = received(state="error", error_code="interrupted", error_message="the run was interrupted")
 
-    touched = await q.runs.receive(q.msp.id, row.id, worker_id=q.worker.id, update=update)
+    touched = await q.runs.receive(q.msp.id, row.id, worker_id=q.worker.id, update=update, at=NOW)
 
     assert touched == 1
     row = await q.fresh(row)
@@ -312,7 +312,7 @@ async def test_a_bundle_s_columns_are_written_as_given_and_signature_ok_is_true(
     row = await dispatched_run(q)
     update = received()
 
-    assert await q.runs.receive(q.msp.id, row.id, worker_id=q.worker.id, update=update) == 1
+    assert await q.runs.receive(q.msp.id, row.id, worker_id=q.worker.id, update=update, at=NOW) == 1
 
     row = await q.fresh(row)
     for column in ReceivedRun.__dataclass_fields__:
@@ -320,12 +320,28 @@ async def test_a_bundle_s_columns_are_written_as_given_and_signature_ok_is_true(
     assert row.signature_ok is True
 
 
+async def test_a_bundle_is_stamped_with_the_time_the_cloud_received_it_and_a_time_without_a_zone_is_refused(session):
+    """The C6.6 review's finding 1: a report's month goes by `received_at`
+    for a result that arrives once the month it ended in has closed."""
+    q = await Queue.make(session)
+    row = await dispatched_run(q)
+    arrived = NOW + dt.timedelta(days=3, hours=7)
+    assert row.received_at is None
+
+    with pytest.raises(ValueError, match="^at: a time without a zone"):
+        await q.runs.receive(q.msp.id, row.id, worker_id=q.worker.id, update=received(), at=arrived.replace(tzinfo=None))
+    assert (await q.fresh(row)).received_at is None
+
+    assert await q.runs.receive(q.msp.id, row.id, worker_id=q.worker.id, update=received(), at=arrived) == 1
+    assert (await q.fresh(row)).received_at == arrived
+
+
 async def test_a_run_never_handed_out_takes_no_bundle(session):
     q = await Queue.make(session)
     row = await q.run(created_at=NOW)
     assert (row.state, row.dispatched_at, row.attempt) == ("queued", None, 0)
 
-    assert await q.runs.receive(q.msp.id, row.id, worker_id=q.worker.id, update=received()) == 0
+    assert await q.runs.receive(q.msp.id, row.id, worker_id=q.worker.id, update=received(), at=NOW) == 0
 
     row = await q.fresh(row)
     assert (row.state, row.bundle_sha256, row.signature_ok) == ("queued", None, None)
@@ -336,9 +352,9 @@ async def test_a_run_that_holds_a_bundle_takes_no_second(session, state):
     q = await Queue.make(session)
     row = await dispatched_run(q)
     first = received(state=state, error_code="internal" if state == "error" else None)
-    assert await q.runs.receive(q.msp.id, row.id, worker_id=q.worker.id, update=first) == 1
+    assert await q.runs.receive(q.msp.id, row.id, worker_id=q.worker.id, update=first, at=NOW) == 1
 
-    assert await q.runs.receive(q.msp.id, row.id, worker_id=q.worker.id, update=received(bundle_sha256="cd" * 32)) == 0
+    assert await q.runs.receive(q.msp.id, row.id, worker_id=q.worker.id, update=received(bundle_sha256="cd" * 32), at=NOW) == 0
 
     row = await q.fresh(row)
     assert (row.state, row.bundle_sha256) == (state, "ab" * 32)
@@ -351,10 +367,10 @@ async def test_another_worker_s_run_another_msp_s_and_an_absent_one_take_no_bund
     others = await dispatched_run(q, other=True)
     theirs = await dispatched_run(b)
 
-    assert await q.runs.receive(q.msp.id, others.id, worker_id=q.worker.id, update=received()) == 0
-    assert await q.runs.receive(q.msp.id, theirs.id, worker_id=b.worker.id, update=received()) == 0
-    assert await q.runs.receive(q.msp.id, uuid.uuid4(), worker_id=q.worker.id, update=received()) == 0
-    assert await q.runs.receive(q.msp.id, mine.id, worker_id=q.worker.id, update=received()) == 1
+    assert await q.runs.receive(q.msp.id, others.id, worker_id=q.worker.id, update=received(), at=NOW) == 0
+    assert await q.runs.receive(q.msp.id, theirs.id, worker_id=b.worker.id, update=received(), at=NOW) == 0
+    assert await q.runs.receive(q.msp.id, uuid.uuid4(), worker_id=q.worker.id, update=received(), at=NOW) == 0
+    assert await q.runs.receive(q.msp.id, mine.id, worker_id=q.worker.id, update=received(), at=NOW) == 1
 
     for row in (others, theirs):
         row = await q.fresh(row)
@@ -389,7 +405,7 @@ async def test_receive_is_one_update(session, test_engine):
 
     event.listen(test_engine.sync_engine, "before_cursor_execute", record)
     try:
-        assert await q.runs.receive(q.msp.id, row.id, worker_id=q.worker.id, update=received()) == 1
+        assert await q.runs.receive(q.msp.id, row.id, worker_id=q.worker.id, update=received(), at=NOW) == 1
     finally:
         event.remove(test_engine.sync_engine, "before_cursor_execute", record)
 

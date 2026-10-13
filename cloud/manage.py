@@ -10,11 +10,13 @@ C5.9", points 1 to 5; docs/onboarding.md). From cloud/:
     uv run python manage.py create-user --msp-id <uuid> --email admin@example.test --role admin
     uv run python manage.py reset-password --email admin@example.test
     uv run python manage.py generate-report --msp-id <uuid> --client-id <uuid> [--period 2026-09]
+    uv run python manage.py check-report --msp-id <uuid> --report-id <uuid>
 
 or `docker compose exec api python manage.py <command> ...` inside the stack.
 `DATABASE_URL` alone, read as a migration reads it; no bucket, no SECRET_KEY,
-but for `generate-report` (C6.4), which writes the PDF to the bucket and so
-reads the five S3 variables too (`storage_settings_from_environment`), still
+but for `generate-report` (C6.4), which writes the PDF to the bucket, and
+`check-report` (Q6.1), which reads it and the runs' bundles back, and so
+read the five S3 variables too (`storage_settings_from_environment`), still
 no SECRET_KEY.
 Each command is one transaction, committed when its function returns and
 rolled back when it raises; the logic is app/onboarding.py's, over the repos,
@@ -40,11 +42,12 @@ from typing import Annotated
 import typer
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import onboarding
+from app import onboarding, results
 from app.cadence import DEFAULT_CADENCE
 from app.db import make_engine_for_url, make_session_factory
 from app.models import DEFAULT_CONNECTOR_TYPE, DEFAULT_RETENTION_DAYS
 from app.repo.errors import RepoError
+from app.report import check as report_check
 from app.report import data as report_data
 from app.report import generate as report_generate
 from app.settings import SettingsError, database_url_from_environment, storage_settings_from_environment
@@ -85,7 +88,7 @@ def _fail(line: str) -> None:
     raise typer.Exit(code=1)
 
 
-def run(work: Work) -> None:
+def run(work: Work) -> onboarding.Created:
     """Run one command's work in one transaction and print what it made."""
     try:
         url = database_url_from_environment()
@@ -103,6 +106,7 @@ def run(work: Work) -> None:
         typer.echo(f"{name} {value}")
     for note in created.notes:
         typer.echo(note, err=True)
+    return created
 
 
 @app.command("create-msp")
@@ -213,6 +217,42 @@ def reset_password(email: Email) -> None:
     run(lambda session: onboarding.reset_password(session, email=email, password=password))
 
 
+def _storage() -> Storage:
+    """The bucket as `generate-report` and `check-report` reach it: the five
+    S3 variables, a refusal naming the variable, never a value."""
+    try:
+        settings = storage_settings_from_environment()
+    except SettingsError as error:
+        _fail(str(error))
+    try:
+        return Storage.for_writing(settings)
+    except Exception as error:  # noqa: BLE001 - botocore names the endpoint's value in its message; the type alone
+        _fail(f"storage: not usable ({type(error).__name__})")
+
+
+@app.command("check-report")
+def check_report(
+    msp_id: MspId,
+    report_id: Annotated[uuid.UUID, typer.Option(help="the report's id")],
+) -> None:
+    """Check a stored report (Q6.1): the object under its key hashes to its
+    file_sha256; every run the report counts is as the row says (a stamped
+    run's token read back, verified under the Cloud's TSA root, its time the
+    row's, within the Worker's budget of the test's end; a late result the
+    period's by its arrival); for a final report every result arrived before
+    it. Prints the counts; each finding is one `<run id>: <word>` line on
+    stderr and the exit code is 1. Needs the S3 variables beside DATABASE_URL."""
+    storage = _storage()
+    tsa_ca = results.tsa_ca_pem()
+
+    async def work(session: AsyncSession) -> onboarding.Created:
+        return report_check.created_of(await report_check.check_report(session, storage, msp_id, report_id, tsa_ca=tsa_ca))
+
+    created = run(work)
+    if created.notes:
+        _fail(f"report: {len(created.notes)} check(s) failed")
+
+
 @app.command("generate-report")
 def generate_report(
     msp_id: MspId,
@@ -226,15 +266,9 @@ def generate_report(
     at = report_generate.now()
     try:
         month = report_data.period_of(period) if period is not None else report_data.previous_month(at.date())
-        settings = storage_settings_from_environment()
     except RepoError as error:
         _fail(str(error))
-    except SettingsError as error:
-        _fail(str(error))
-    try:
-        storage = Storage.for_writing(settings)
-    except Exception as error:  # noqa: BLE001 - botocore names the endpoint's value in its message; the type alone
-        _fail(f"storage: not usable ({type(error).__name__})")
+    storage = _storage()
     run(lambda session: report_generate.generate(session, storage, msp_id, client_id, month, now=at))
 
 

@@ -13,21 +13,21 @@ restored copy should look like, and how that expectation was obtained, its **exp
 builds it, pure, from the sampler's `Selection` and the canary manifest; the decisions are
 `docs/decisions.md` 2026-10-01, W3.1.
 
-There are three kinds, one per item, never mixed, and no "unknown" kind:
+There are four kinds, one per item, never mixed, and no "unknown" kind:
 
 | Kind | Items | Expected values | Content hash |
 |---|---|---|---|
 | `manifest` | canaries | from `lab/seed-manifest.json`. Mail: subject, sender address, sent and received time, internet message ID. File: name, and `stored_size` for a `bytes` file | yes: a mail's `body_sha256` by `text-v1`; a file's `content_sha256` by its `content_rule`, `bytes` or `office-v1` |
 | `fields` | random mails | from the backup's own listing (Veeam's browse): subject, received time, and the sender's display name and sent time when Veeam lists them | no: nothing knows the body before the restore |
-| `metadata` | random files | from the backup's own listing: the name, and the size Veeam lists unless the file is an Office package | no |
+| `metadata` | random files the backup didn't export (W6.3: no content rule, or the export gave nothing) | from the backup's own listing: the name, and the size Veeam lists unless the file is an Office package | no |
+| `backup_content` | random files the backup exported before the restore (W6.3) | the name, and the hash of the exported bytes by the file's rule: `bytes` (with the export's size) or `office-v1` (no size: SharePoint rewrites the package) | yes: from the backup's own copy, known before the restore |
 
 - **Random items are expected from the backup, not from Graph.** The Worker app may read only
   the restore targets, never a source, so the backup's listing is the only place a random
-  item's expectation can come from. A random file's content isn't expected in Stage 1 (a fourth
-  kind, `backup_content`, from Veeam's document export, is a follow-up task after W3.2). W6.1
-  (2026-10-14, `docs/api/veeam-notes.md` §12) showed that export works in admin mode for
-  SharePoint and OneDrive and gives the restored copy's bytes (plain files byte for byte, Office
-  files by `office-v1`), so W6.3 can build the kind under the limits §12.5 lists.
+  item's expectation can come from. W6.1 (2026-10-14, `docs/api/veeam-notes.md` §12) showed
+  that Veeam's document export works in admin mode for SharePoint and OneDrive and gives the
+  restored copy's bytes; W6.3 builds the fourth kind from it (below, "A random file's content
+  against the backup's copy").
 - **The sender.** A canary's sender is an address (the manifest's `sender`); a random mail's is
   a display name (`sender_name`), because Veeam's browse lists only that. W3.2 compares each
   with the matching Graph field.
@@ -46,6 +46,46 @@ There are three kinds, one per item, never mixed, and no "unknown" kind:
   canaries, SharePoint randoms, OneDrive canaries, OneDrive randoms), each with its `index`, so
   the n-th expected item lines up with the n-th `RestoreResult::items` entry. A canary is named
   by its manifest `id`, a random item by the sampler's key (`record.<kind>.random_keys`).
+
+### A random file's content against the backup's copy (W6.3)
+
+`docs/decisions.md` 2026-10-14, "W6.3 (#183) and W6.2 (#182)", approved as written; the code is
+`rp/backup_content.hpp`.
+
+- **Which files ask.** Every random file whose name has a content rule
+  (`verification::content_rule`): `office-v1` for a name ending, in any ASCII case, in `.docx` or
+  `.xlsx`; none for every other name of the rewritten Office family below (pptx, legacy Office,
+  the macro and template types), which stay `metadata` with the word `no_rule` until a rule
+  exists; `bytes` for every other name. Canaries never ask (the manifest's hash is the
+  expectation) and mails never do (no body check: a spike of its own if wanted).
+  `verification::mark_wanted` sets `want_content` on those selectors of the spec.
+- **The export.** The connector exports each of them inside its own explore session of the
+  type, after every item is found and before the first restore request, one attempt and never
+  resent (`POST …/Documents/{id}/save` with `{"asZip":false}`, `Accept: */*`, 60 s per file, 15
+  minutes for all of a run's exports, the bytes at most 64 MiB, the read back's own cap). The
+  answer must be 200 `application/octet-stream` with as many bytes as Veeam listed. The bytes go
+  to the pipeline's `ContentHasher`, which keeps their SHA-256 (and `office-v1` for a docx or
+  xlsx) and drops them; nothing of a file's bytes is written anywhere, a recording keeps their
+  digest.
+- **The words.** Each random file's expectation carries `export`: `exported`, `no_rule`,
+  `refused` (any other answer, a 401 too), `no_answer` (a transport failure or the timeout),
+  `size_mismatch`, `over_cap`, `invalid_package` (an exported docx or xlsx `office-v1` refused),
+  `not_in_backup` (the restore point doesn't hold the item: never asked), `budget` (the run's 15
+  minutes were spent: never asked).
+- **The raise.** Once `restore_sample` returns, and before anything is read back,
+  `verification::add_backup_content` raises each exported file with its digest to
+  `backup_content`; every other random file stays `metadata` with its word, checked by its name
+  and listed size as before. The expectation still comes from the backup, never from what the
+  read back finds, and it is on record in the result's `expected` before the check runs. Facts
+  that don't add up (an export for a file that isn't a random one of the set, a file with a rule
+  and no export) are the Worker's fault, a stop in the check phase, `error internal`.
+- **An export's own fault is never a `fail` and never an `error`.** The status table has no new
+  row and no new code: a `backup_content` item is `match`, `mismatch`, `missing` or `error` like
+  any other, so a restored copy whose bytes differ is a `mismatch` on `sha256` and the run is
+  `fail`. When an export gives nothing, the file is `metadata`, and the `content_export` warning
+  names it; when every export failed, a run whose names and sizes are right is `pass` with
+  `verified.backup_content` 0 and the warning, so the result never claims the content was
+  checked.
 
 ### The rule for the Office files SharePoint rewrites
 
@@ -68,7 +108,8 @@ hashes only the `word/` and `xl/` parts, so it covers docx and xlsx, not pptx.
 ### The result's `expected` object
 
 `to_json(ExpectedSet)`, snake_case like the `sample` object; a value that isn't known is left
-out, never `null`; `counts` always has all three kinds, so a report can say "n of m items
+out, never `null`; `manifest_sha256` is there exactly when the run had canaries (W6.2: the
+schema refuses an item of kind `manifest` without it); `counts` always has all four kinds, so a report can say "n of m items
 checked against a known hash" without recounting (W4.1 adopts it into `result.v1.json`). It
 writes nothing for an item whose fields don't back its kind (`manifest` without a canary ID, a
 lower-case hex hash and its type's rule; `fields` or `metadata` with a hash, a canary ID or no
@@ -79,7 +120,7 @@ whose `random_taken` or `canary_wanted` isn't what the selection holds.
 ```json
 {
   "manifest_sha256": "<64 hex>",
-  "counts": {"manifest": 3, "fields": 2, "metadata": 1},
+  "counts": {"manifest": 3, "fields": 2, "metadata": 1, "backup_content": 1},
   "items": [
     {"index": 0, "kind": "mail", "source": "canary", "expected_kind": "manifest",
      "canary_id": "RP-CANARY-0008", "subject": "RP-CANARY-0008",
@@ -90,7 +131,10 @@ whose `random_taken` or `canary_wanted` isn't what the selection holds.
      "key": ["alice@restoreprooflab.onmicrosoft.com", "Inbox", "Lunch", "...Z"],
      "subject": "Lunch", "sender_name": "Bob Test", "sent_at": "...Z", "received_at": "...Z"},
     {"index": 5, "kind": "sharepoint", "source": "random", "expected_kind": "metadata",
-     "key": ["<site id>", "<list guid>", "/", "Plan.docx"], "name": "Plan.docx"}
+     "key": ["<site id>", "<list guid>", "/", "Deck.pptx"], "name": "Deck.pptx", "export": "no_rule"},
+    {"index": 6, "kind": "sharepoint", "source": "random", "expected_kind": "backup_content",
+     "key": ["<site id>", "<list guid>", "/", "Plan.pdf"], "name": "Plan.pdf", "size_bytes": 899,
+     "sha256": "<64 hex>", "sha256_rule": "bytes", "export": "exported"}
   ]
 }
 ```
@@ -201,7 +245,8 @@ download, hash and `office-v1` time, plus its comparison. The run's step timings
 `rp/step_timer.hpp`): W3.2 point 7's "restore start → last item verified" is the span
 `recovery`, and its cleanup is the two spans `cleanup_before` and `cleanup_after`.
 
-**Not checked in Stage 1.** A random file's content (no expectation, W3.1 decision 3). A pptx,
+**Not checked in Stage 1.** The content of a random file the backup didn't export (W6.3: it is
+`metadata`, by name and size). A pptx,
 or any Office type but docx and xlsx: `office-v1` reads only `word/` and `xl/` parts, so
 these are checked by name only; a `ppt/` rule would be a new rule, `office-v2`.
 
@@ -384,7 +429,7 @@ address or Graph ID) and never an exception's `what()`, which goes to stderr onl
 | R5 | `<f> of <n> item(s) didn't verify (<x> missing, <y> mismatch)[; <u> couldn't be checked]` |
 | R6 | `the backup reported nothing restored, yet every item verified: the evidence contradicts itself` |
 | R7 | `<u> of <n> item(s) couldn't be checked (<code> <k>, ...)[; <v> verified]` |
-| R8 | `<n> of <n> item(s) verified: manifest <a>, fields <b>, metadata <c>` |
+| R8 | `<n> of <n> item(s) verified: manifest <a>, fields <b>, metadata <c>, backup_content <d>` |
 | `result_invalid` | `the result isn't valid restoreproof.result.v1; the run itself ended <pass\|fail\|error <code>>`: the replaced verdict's status and code, never its message (a code outside the table isn't repeated: `... ended error`) |
 | `interrupted`, a stop (R2) | R2's messages with the reason `the run was interrupted`: `the run stopped before the restore: the run was interrupted (interrupted); nothing was restored`, and so on by phase |
 | `interrupted`, replacing an `error` | `the Worker was stopped during the run; the run itself ended error <code>` (`interrupted(verdict)`: the words as `result_invalid` writes them, so `pass`, `fail` or `error <code>` of whatever verdict it is handed, a code outside the table not repeated; the pipeline hands it an `error` only) |
@@ -416,6 +461,7 @@ item `indexes` it concerns, in this order:
 | `duplicate` | items more than one of this run's copies matched (the newest was compared) | `<n> item(s) had more than one restored copy; the newest was checked` |
 | `shortfall` | per type and half that took fewer than it wanted | `<kind> <canary\|random>: <taken> of <wanted>` |
 | `stale_copies` | earlier runs' copies the check ignored | `<n> copies from earlier runs in the restore targets were ignored (mail <x>, sharepoint <y>, onedrive <z>)` |
+| `content_export` | W6.3: random files whose export from the backup was asked for and gave nothing (`refused`, `no_answer`, `size_mismatch`, `over_cap`, `invalid_package`, `budget`; never `no_rule` or `not_in_backup`), its indexes those files | `<n> of <m> file(s) couldn't be exported from the backup and were checked by name and size alone (<word> <k>, ...)` |
 
 A duplicate is a warning, never a status: the newest copy matched, so the backup delivered the
 data, and a second copy points at a double write, not at lost data. A shortfall never changes
@@ -437,7 +483,7 @@ result's `status` key ("The result" below), the one section that is never `null`
   "status": "error", "error_code": "stale_target", "restore_sent": true,
   "message": "1 of 3 item(s) couldn't be checked (stale_target 1); 2 verified",
   "counts": {"items": 3, "verified": 2, "failed": 0, "unchecked": 1},
-  "verified": {"manifest": 1, "fields": 1, "metadata": 0},
+  "verified": {"manifest": 1, "fields": 1, "metadata": 0, "backup_content": 0},
   "failed_items": [],
   "unchecked_items": [{"index": 1, "error_code": "stale_target"}],
   "warnings": [{"code": "stale_copies", "indexes": [],
@@ -688,7 +734,7 @@ the result invalid.
 | `check` | `verification::to_json(CheckResult)` (W3.2, above) | the check didn't run |
 | `status` | `verification::to_json(RunVerdict)` (W3.3, above) | never: a run without a verdict has no result |
 | `cleanup` | `to_json(RunCleanup)` (W3.4, above) | the run stopped before the clean before; `cleanup.after` when no clean after ran |
-| `timings` | `timing::to_json(RunTimings)` (W3.5): `{"spans": {...}}`, all eleven | never; a span that didn't run is `null` |
+| `timings` | `timing::to_json(RunTimings)` (W3.5): `{"spans": {...}}`, all twelve (W6.3's `content_export`, the exports inside `restore`, `{"note": "not_reported"}` when none was asked) | never; a span that didn't run is `null` |
 | `attachments` | `to_json(std::vector<Attachment>)` (W4.2, "The run folder" below): the run folder's files that the result covers (never `result.json` or `signature.json`), `[{name, sha256, size_bytes}]`, sorted by name | no run folder is written (`restore`, `test` without `--evidence`), and in the result as it is first validated |
 | `screenshot` | `to_json(Screenshot)` (W4.2): `{"state": "captured"}` or `{"state": "unavailable", "reason": <code>}` | as `attachments` |
 
@@ -838,6 +884,8 @@ No secret, and no exception's text. But more tenant data than stdout:
   region as Veeam sent them, the mailbox's Inbox ID, the library's list ID and site URL
   (`https://<tenant>.sharepoint.com/sites/...`) and the OneDrive's site URL
   (`https://<tenant>-my.sharepoint.com/personal/<user>`), as Graph wrote them;
+- since W6.3, a `backup_content` file's SHA-256 (or `office-v1`) of its exported bytes, and in
+  `items.csv` the restored copy's hash beside it: a hash, never a byte of the file;
 - `expected.items`: subjects, sender addresses and names, Internet message IDs, sent and
   received times, and file names;
 - `sample.*.random.keys`: mailbox addresses, folder names and paths, mail subjects and
@@ -961,7 +1009,7 @@ UTF-8 without a BOM, LF, a header row, one row per expected item in `index` orde
 | `type`, `source` | `mail`, `sharepoint` or `onedrive`; `canary` or `random` |
 | `canary_id` | a canary's ID in the manifest; empty for a random item |
 | `name` | the expected subject or file name |
-| `expected_kind` | `manifest`, `fields` or `metadata` |
+| `expected_kind` | `manifest`, `fields`, `metadata` or `backup_content` |
 | `sha256_rule`, `expected_sha256` | a `manifest` item's rule (`text-v1`, `bytes`, `office-v1`) and hash; empty otherwise |
 | `found_sha256` | the compared copy's hash by that rule, for an item that carries an expected hash only; empty otherwise, and when the copy has no hash by that rule |
 | `restore_outcome` | the backup's word for the item: `restored`, `failed`, `unknown`, `not_in_backup` |
@@ -973,7 +1021,10 @@ UTF-8 without a BOM, LF, a header row, one row per expected item in `index` orde
 each control character a space, so a row is one line whatever a subject holds. A cell of a
 step that didn't run is empty; a run that stopped before its sample has the header alone.
 
-- **A found hash only for a canary.** A canary's content is ours, so its hash says nothing of
+- **A found hash for an item that carries an expected hash**: a canary, or since W6.3 a
+  `backup_content` file, whose expected and found hash are both in the row (the owner's decision
+  of 2026-10-14: a real file's hash is what shows the match). Before W6.3 that was a canary
+  alone. A canary's content is ours, so its hash says nothing of
   the tenant. The SHA-256 of a real mail's body is never written, though the read back
   computes it: a short body can be confirmed from its hash. A random item is checked by its
   fields or its metadata, not by a hash, so there is none to show. `ItemCheck::found_sha256`
@@ -1619,7 +1670,7 @@ A valid `restoreproof.result.v1` with what the record knows and `null` for the r
 | `connector`, `restore_point` | the record's, written right after the run line (for a `connector_unknown` record, at its first write: the type the job asked for, `api` empty); else `{"api": "", "type": "veeam_m365"}` and the empty restore point the pipeline writes when none was chosen (`id` and `backup_time_raw` empty, `backup_time` `null`) |
 | `client` | the record's profile (the job's, W4.10) with the job's `client_id`; for a `job_invalid` record of a job whose profile couldn't be read, empty strings beside the job's `client_id` (the schema holds the strings to a length alone); `scope` and `resolved` `null` (W4.11: no result written afterwards passed the client check) |
 | `sample`, `expected`, `restore`, `check`, `cleanup` | `null` |
-| `timings` | every one of the eleven spans `null` |
+| `timings` | every one of the twelve spans `null` |
 | `attachments` | `items.csv` and `veeam-session.log`, with their hashes and sizes (below) |
 | `screenshot` | `{"state": "unavailable", "reason": "disabled"}`, or `no_page` when the config's `screenshots_enabled` is true: W4.2's rule for a run without a restore session to show. The capturer isn't asked, and it is the config's setting, not the job's: the record doesn't keep the job's flag |
 | `status` | `error` with the code; `restore_sent` the record's `restore_requested` (false for `job_invalid`); every count 0; `failed_items`, `unchecked_items` and `warnings` empty; the fixed message of the status table's "Messages" above |

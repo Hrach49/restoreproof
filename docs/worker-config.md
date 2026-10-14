@@ -787,7 +787,9 @@ rpworker restore [--mail <n>] [--sp <n>] [--od <n>] [--point latest|<id>] [--run
 ```
 
 **It writes to the tenant.** It picks a restore point of `veeam_org_name`, chooses a sample
-(W2.6: per type half canaries from the manifest, half random items from the restore point),
+(W2.6, W6.2: without canaries, the default, the whole sample of each type is random items
+from the restore point; with `--canary-cursor` or `--manifest`, per type half canaries from the
+manifest and half random items),
 and restores it through Veeam into the three restore targets: the test mailbox's Inbox, the
 RestoreTarget library and the test OneDrive's RestoreTarget folder, and nowhere else. The
 restore goes through the connector's `restore_sample`, whose first step is the restore-target
@@ -824,9 +826,12 @@ It needs:
   none, `graph_cert_password`. The certificate is opened and checked before any Veeam call, as
   `graph list` does: absent, not Base64, a password that doesn't open it, or not valid now is
   exit 1 with the same messages. See "Secrets";
-- the canary manifest (`lab/seed-manifest.json`, schema `seed-manifest.v1`), whose
-  `tenant_id` must be `graph_tenant_id` and which must name no restore target (`config error:
-  canary manifest: ...`, exit 1, before any Veeam call);
+- only for a run with canaries (W6.2: `--canary-cursor` or `--manifest` asks for them; neither,
+  and no manifest is looked for): the canary manifest (schema `seed-manifest.v1`; by default
+  `canaries\<graph_tenant_id>.json` beside the config file, the tenant in lower case; the lab's is
+  a copy of `lab/seed-manifest.json`), whose `tenant_id` must be `graph_tenant_id` and which must
+  name no restore target (`config error: canary manifest: ...`, exit 1, before any Veeam call; a
+  file that isn't there is `config error: canary manifest: <file>: cannot read the file`);
 - no restore session of the Veeam account still `Working`: the restore checks, after the
   guard and before any explore session, and refuses with `restore error: veeam_m365: Veeam has restore sessions of <account> still
   Working (<IDs>); stop them first (docs/api/veeam-m365/08-sweep-sessions.ps1); nothing was
@@ -857,8 +862,8 @@ The flags come in any order, each at most once:
 | `--mail <n>`, `--sp <n>`, `--od <n>` | `sample_mail`, `sample_sp`, `sample_od` | Items to restore per type: 1 to 3 ASCII digits, 0 to 100. At least one of the three must be above 0. |
 | `--point latest\|<id>` | `latest` | The newest restore point (`latest` in any case), or the one with this ID (1 to 128 ASCII letters, digits and hyphens, ignoring case), as `rpworker veeam list` shows it. |
 | `--run-id <id>` | a new one | The run ID the random draw is seeded from: 1 to 128 of `A-Z a-z 0-9 . _ : -`. Without it each run makes `rp-<YYYYMMDDTHHMMSSZ>-<8 random hex digits>` (UTC). Give a recorded one to repeat a sample. |
-| `--canary-cursor <m>,<s>,<o>` | `0,0,0` | Where each type's canary rotation starts: three numbers of 1 to 6 digits, no spaces, each below that type's canaries in the manifest (0 for a type it has none of). Nothing is stored on the Worker: carry the printed next cursor to the next run by hand. |
-| `--manifest <path>` | `seed-manifest.json` beside the config file | The canary manifest: `%ProgramData%\RestoreProof\seed-manifest.json`, or in the `--config` file's folder. |
+| `--canary-cursor <m>,<s>,<o>` | no canaries | Asks for canaries (W6.2) and says where each type's rotation starts: three numbers of 1 to 6 digits, no spaces, each below that type's canaries in the manifest (0 for a type it has none of). Nothing is stored on the Worker: carry the printed next cursor to the next run by hand. Without it and without `--manifest` the run has no canaries, prints `canaries: none` where the cursor line was, and the whole sample is random items. |
+| `--manifest <path>` | `canaries\<graph_tenant_id>.json` beside the config file | Asks for canaries from this manifest (with the cursor `0,0,0` unless `--canary-cursor` says another). Without it, a run with `--canary-cursor` reads `%ProgramData%\RestoreProof\canaries\<tenant>.json`, or the same name in the `--config` file's folder (W6.2: one manifest per tenant, so one Worker serves two clients). |
 | `--config <path>` | `%ProgramData%\RestoreProof\config.json` | As for every command. |
 | `--profile-file <file>` | the config's local client profile | The client the run is for (W4.10): a `restoreproof.client-profile.v1` file ("`rpworker client check`"), read right after the config and before the vault. Its tenant, app, organisation and restore targets are the run's and nothing else's, whatever the config's client keys say. Without it the config's eight client keys; with neither, `config error: the config has no client keys; give --profile-file <file> or set the eight client keys`, exit 1. A file at fault is `config error: --profile-file <file>: <problem>`, as `client check` says it. The guard still resolves every target per item: a profile is a set of IDs the guard checks, never a way around it. |
 
@@ -1184,7 +1189,12 @@ timings' table, `--record`, and the exit codes. The code is `rp::run_test_comman
 What stdout shows differs from `restore` in two places only:
 
 - **After the restore**, no per-item rows: the session rows and the `restore <status>: ...`
-  line follow the header. Veeam's per-item messages aren't printed.
+  line follow the header. Veeam's per-item messages aren't printed. When files asked for their
+  content (W6.3: every random file with a content rule), one more line: `content exports: <n> of
+  <m> file(s) exported from the backup`, and ` (<word> <k>, ...)` when some weren't, by the words
+  of `docs/verification.md` ("A random file's content against the backup's copy"); a file whose
+  export gave nothing is checked by name and size, and the status's `content_export` warning
+  names it on stderr.
 - **After the check**, one table, one row per sampled item, in place of `restore`'s check
   rows:
 
@@ -1192,7 +1202,7 @@ What stdout shows differs from `restore` in two places only:
   |---|---|
   | TYPE | `mail`, `sharepoint` or `onedrive` |
   | NAME | the expected subject or file name |
-  | EXPECTED | `manifest` (a canary), `fields` (a random mail) or `metadata` (a random file) |
+  | EXPECTED | `manifest` (a canary), `fields` (a random mail), `backup_content` (a random file checked against the backup's exported copy, W6.3) or `metadata` (any other random file) |
   | FOUND | `yes` when a copy of this run's was compared, else `no` |
   | MATCH | the check's outcome: `match`, `mismatch`, `missing` or `error` |
   | VERDICT | `verified`, `failed` or `unchecked <code>`; `-` when the status table's rows 1 to 4 decided the run, or the run is `error result_invalid`. An item Veeam failed for an infrastructure reason that the check doesn't find reads `unchecked backup_infrastructure`, never `failed` |
@@ -1912,8 +1922,9 @@ one outbox and one run mutex:
 | `%ProgramData%\RestoreProof\state\running.json` | the record of the one run the service has taken; `state\` is made when the first record is written |
 | `%ProgramData%\RestoreProof\state\done\<run_id>` | an empty file per run the service made, so its job is never run again; `done\` is made at the first mark |
 
-The vault is the default one (`%ProgramData%\RestoreProof\vault.bin`) and the manifest is
-`seed-manifest.json` beside the config file, as for the commands. Until the installer exists
+The vault is the default one (`%ProgramData%\RestoreProof\vault.bin`) and, for a job that asks
+for canaries (its `canary_cursor`), the manifest is `canaries\<tenant>.json` beside the config
+file, as for the commands. Until the installer exists
 (W7.1) the account `NT SERVICE\RestoreProof` is given by hand what the loop needs: `rpworker
 vault grant "NT SERVICE\RestoreProof"`, the Read entry on Veeam's certificate key (W4.12),
 Read on the config, the manifest, the jobs file and the CA files, and Modify on `runs\`,
@@ -1998,7 +2009,7 @@ A job is a closed object:
 | `sample_mail`, `sample_sp`, `sample_od` | yes | JSON integers 0 to 100 (`5.0` and `"5"` are wrong kinds), not all three 0 |
 | `restore_point` | yes | `latest` in any case, or a restore point ID by `--point`'s rule (1 to 128 ASCII letters, digits and hyphens) |
 | `screenshots_enabled` | yes | `true` or `false`; replaces the config's value for this run |
-| `canary_cursor` | no | an array of three integers, each 0 to 999999; without the key `0,0,0`. `null` is a wrong kind. The cursor is the Cloud's to keep and hand on; the Worker stores none |
+| `canary_cursor` | no | an array of three integers, each 0 to 999999. `null` is a wrong kind. **Its presence is the opt-in to canaries** (W6.2): with it the run has canaries from `canaries\<the client's tenant>.json` beside the config, rotated from this cursor; without it the run has none and its whole sample is random items, which is every job the Cloud dispatches today. The cursor is the Cloud's to keep and hand on; the Worker stores none |
 
 Any other key makes the job invalid. The run uses the job's profile and never the config's
 client keys, which the service's config may lack (W4.10); the guard still resolves every
@@ -2073,7 +2084,7 @@ then the run's own lines ("A run's lines in the log"), then one of:
 | `run <run_id>: ended before its run line; nothing was done` | `warning` | no folder, no result, as for the command; the record is deleted. Written once per run ID and exit code for as long as the document names the job. `last_error` `job_not_started` |
 
 A run ends before its run line for what stops `rpworker test` there: the vault or the signing
-key, the manifest, a cursor past the manifest's canaries, a restore point ID the organisation
+key, the manifest of a job that asks for canaries (missing or at fault), a cursor past the manifest's canaries, a restore point ID the organisation
 doesn't have, the run mutex held by a command, Veeam not answering when the restore points
 are listed (the run's own `config error`, `usage error` or `restore error` line is above the loop's). The
 stub file offers the job again at every poll, which is the retry, at the cost of a vault read

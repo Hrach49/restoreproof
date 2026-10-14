@@ -26,7 +26,15 @@
 # and the stack up, nothing installed and no session of rp-veeam Working:
 #
 #   pwsh -File docs\api\cloud-lab\c5.7-harness\c57-live.ps1 [-Prefix c57]
-param([string]$Prefix = 'c57')
+#
+# W6.3 (docs/decisions.md 2026-10-14, W6.3 and W6.2, point 15) runs it as its upload step with
+# its own -Title, -EvidenceDir and -Evidence, so the C5.7 file is never replaced by that run.
+param(
+    [string]$Prefix = 'c57',
+    [string]$Title = 'C5.7 (#60) Done-when, the live upload: a real Worker bundle from the Veeam VM lands as pass in the stack''s DB.',
+    [string]$EvidenceDir = '',
+    [string]$Evidence = 'c5.7-done-when.txt'
+)
 . (Join-Path $PSScriptRoot '..\..\veeam-lab\w4.8-harness\w48-run.ps1')
 
 $Cloud = 'http://127.0.0.1:8000'
@@ -63,7 +71,8 @@ function Save-C57Evidence([string]$Name, [string]$Text, [string[]]$Tokens) {
     foreach ($s in Get-W48Secrets) { if ($s -and $Text.Contains($s)) { throw "a secret survived in $Name; nothing written" } }
     foreach ($value in $Tokens) { if ($value -and $Text.Contains($value)) { throw "a token's value survived in $Name; nothing written" } }
     if ($Text -match 'eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.' -or $Text -match 'MII[A-Za-z0-9+/]{60,}' -or $Text -match 'MC4CAQAwBQYDK2VwBCIEI[A-Za-z0-9+/]{43}' -or $Text -match 'PRIVATE KEY') { throw "a token or key-shaped value in $Name; nothing written" }
-    $path = Join-Path $script:Repo "docs\api\cloud-lab\$Name"
+    $dir = $EvidenceDir ? $EvidenceDir : (Join-Path $script:Repo 'docs\api\cloud-lab')
+    $path = Join-Path $dir $Name
     [IO.File]::WriteAllText($path, $Text.Replace("`r`n", "`n").TrimEnd("`n") + "`n", [Text.UTF8Encoding]::new($false))
     "saved $path"
 }
@@ -76,7 +85,7 @@ function Get-C57Status([string]$Response) {
 }
 
 New-Item -ItemType Directory -Force $C57Temp, $C57Kept | Out-Null
-$t = @("C5.7 (#60) Done-when, the live upload: a real Worker bundle from the Veeam VM lands as pass in the stack's DB. $(Get-Utc), commit $commit, branch $(git -C $script:Repo branch --show-current)")
+$t = @("$Title $(Get-Utc), commit $commit, branch $(git -C $script:Repo branch --show-current)")
 $t += "Windows, Python 3.12, Docker Desktop, the Compose stack (postgres:16, MinIO, api) on 127.0.0.1; rpworker $((& $script:Worker --version) -join ' ')"
 $done = $false
 try {
@@ -228,6 +237,7 @@ for obj in s3.list_objects_v2(Bucket='restoreproof', Prefix=prefix)['Contents']:
     Remove-Item -Recurse -Force $C57Temp -ErrorAction SilentlyContinue
     $t += "`n$C57Temp removed (the tokens, the PEM, the downloaded and tampered copies)"
     # A run that failed never replaces the committed evidence, and its text passes the same screen.
-    Save-C57Evidence ($done ? 'c5.7-done-when.txt' : 'c5.7-done-when.failed.txt') ($t -join "`n") $tokens
-    if (-not $done) { 'a step failed; the text is in c5.7-done-when.failed.txt (not the evidence file)' }
+    $failedName = [IO.Path]::GetFileNameWithoutExtension($Evidence) + '.failed.txt'
+    Save-C57Evidence ($done ? $Evidence : $failedName) ($t -join "`n") $tokens
+    if (-not $done) { "a step failed; the text is in $failedName (not the evidence file)"; exit 1 }
 }

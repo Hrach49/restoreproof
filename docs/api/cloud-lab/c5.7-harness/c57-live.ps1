@@ -35,6 +35,10 @@ param(
     [string]$EvidenceDir = '',
     [string]$Evidence = 'c5.7-done-when.txt'
 )
+# The folder is kept under its own name before the libraries load: VeeamLab.ps1, which w48-run.ps1
+# dot-sources, sets $script:EvidenceDir to docs\api\veeam-lab, and PowerShell names ignore case,
+# so the parameter itself was overwritten (W6.3's run of 2026-10-14 saved its text into the repo).
+$C57EvidenceDir = $EvidenceDir
 . (Join-Path $PSScriptRoot '..\..\veeam-lab\w4.8-harness\w48-run.ps1')
 
 $Cloud = 'http://127.0.0.1:8000'
@@ -71,7 +75,7 @@ function Save-C57Evidence([string]$Name, [string]$Text, [string[]]$Tokens) {
     foreach ($s in Get-W48Secrets) { if ($s -and $Text.Contains($s)) { throw "a secret survived in $Name; nothing written" } }
     foreach ($value in $Tokens) { if ($value -and $Text.Contains($value)) { throw "a token's value survived in $Name; nothing written" } }
     if ($Text -match 'eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.' -or $Text -match 'MII[A-Za-z0-9+/]{60,}' -or $Text -match 'MC4CAQAwBQYDK2VwBCIEI[A-Za-z0-9+/]{43}' -or $Text -match 'PRIVATE KEY') { throw "a token or key-shaped value in $Name; nothing written" }
-    $dir = $EvidenceDir ? $EvidenceDir : (Join-Path $script:Repo 'docs\api\cloud-lab')
+    $dir = $C57EvidenceDir ? $C57EvidenceDir : (Join-Path $script:Repo 'docs\api\cloud-lab')
     $path = Join-Path $dir $Name
     [IO.File]::WriteAllText($path, $Text.Replace("`r`n", "`n").TrimEnd("`n") + "`n", [Text.UTF8Encoding]::new($false))
     "saved $path"

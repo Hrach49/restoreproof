@@ -1,0 +1,12 @@
+W6.3 (#183) step 1: rpworker graph list: the three restore targets must be empty.
+started 2026-10-14T17:37:25Z
+
+Mail (restoretest@RestoreProofLab.onmicrosoft.com, Inbox): 0 item(s)
+
+SharePoint (RestoreTarget library): 0 item(s)
+
+OneDrive (RestoreTarget folder): 0 item(s)
+
+0 item(s) in the three restore targets
+
+exit code 0

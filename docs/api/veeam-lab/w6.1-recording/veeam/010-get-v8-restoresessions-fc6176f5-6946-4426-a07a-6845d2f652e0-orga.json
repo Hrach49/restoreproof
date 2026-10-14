@@ -1,0 +1,474 @@
+{
+  "source": "rpworker 0.0.0 w6.1 export spike --record",
+  "request": "GET /v8/RestoreSessions/fc6176f5-6946-4426-a07a-6845d2f652e0/Organization/OneDrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/Documents?limit=1000&offset=0",
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8"
+  },
+  "body": {
+    "offset": 0,
+    "limit": 1000,
+    "_links": {
+      "self": {
+        "href": "/v8/RestoreSessions/fc6176f5-6946-4426-a07a-6845d2f652e0/Organization/OneDrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/Documents?offset=0&limit=1000"
+      }
+    },
+    "results": [
+      {
+        "oneDriveId": "6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325",
+        "sizeBytes": 12420,
+        "inheritedPermissions": true,
+        "version": "1.0",
+        "id": "401a6677-45a0-44e9-8aa1-5983ba76d23f",
+        "versionId": 2,
+        "name": "whiteboard-sketch.png",
+        "createdBy": "Alice Test",
+        "creationTime": "2026-10-03T16:13:35Z",
+        "modifiedBy": "Alice Test",
+        "modificationTime": "2026-10-03T16:13:35Z",
+        "isFolder": false,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/fc6176f5-6946-4426-a07a-6845d2f652e0/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/documents/401a6677-45a0-44e9-8aa1-5983ba76d23f"
+          },
+          "onedrive": {
+            "href": "/v8/restoresessions/fc6176f5-6946-4426-a07a-6845d2f652e0/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325"
+          },
+          "versions": {
+            "href": "/v8/restoresessions/fc6176f5-6946-4426-a07a-6845d2f652e0/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/documents/401a6677-45a0-44e9-8aa1-5983ba76d23f/versions"
+          }
+        }
+      },
+      {
+        "oneDriveId": "6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325",
+        "sizeBytes": 12420,
+        "inheritedPermissions": true,
+        "version": "1.0",
+        "id": "927b980e-548b-4f3c-b9c9-7c2e973ef256",
+        "versionId": 2,
+        "name": "holiday-photo.png",
+        "createdBy": "Alice Test",
+        "creationTime": "2026-10-03T16:13:34Z",
+        "modifiedBy": "Alice Test",
+        "modificationTime": "2026-10-03T16:13:34Z",
+        "isFolder": false,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/fc6176f5-6946-4426-a07a-6845d2f652e0/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/documents/927b980e-548b-4f3c-b9c9-7c2e973ef256"
+          },
+          "onedrive": {
+            "href": "/v8/restoresessions/fc6176f5-6946-4426-a07a-6845d2f652e0/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325"
+          },
+          "versions": {
+            "href": "/v8/restoresessions/fc6176f5-6946-4426-a07a-6845d2f652e0/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/documents/927b980e-548b-4f3c-b9c9-7c2e973ef256/versions"
+          }
+        }
+      },
+      {
+        "oneDriveId": "6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325",
+        "sizeBytes": 907,
+        "inheritedPermissions": true,
+        "version": "1.0",
+        "id": "e2a15aa8-35c5-44e2-8f0f-a4ce7faf1862",
+        "versionId": 1,
+        "name": "course-certificate.pdf",
+        "createdBy": "Alice Test",
+        "creationTime": "2026-10-03T16:13:34Z",
+        "modifiedBy": "Alice Test",
+        "modificationTime": "2026-10-03T16:13:34Z",
+        "isFolder": false,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/fc6176f5-6946-4426-a07a-6845d2f652e0/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/documents/e2a15aa8-35c5-44e2-8f0f-a4ce7faf1862"
+          },
+          "onedrive": {
+            "href": "/v8/restoresessions/fc6176f5-6946-4426-a07a-6845d2f652e0/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325"
+          },
+          "versions": {
+            "href": "/v8/restoresessions/fc6176f5-6946-4426-a07a-6845d2f652e0/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/documents/e2a15aa8-35c5-44e2-8f0f-a4ce7faf1862/versions"
+          }
+        }
+      },
+      {
+        "oneDriveId": "6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325",
+        "sizeBytes": 3230,
+        "inheritedPermissions": true,
+        "version": "1.0",
+        "id": "1c68d3e5-7052-4666-b510-c5011a32e0ac",
+        "versionId": 1,
+        "name": "weekly-status.docx",
+        "createdBy": "Alice Test",
+        "creationTime": "2026-10-03T16:13:35Z",
+        "modifiedBy": "Alice Test",
+        "modificationTime": "2026-10-03T16:13:35Z",
+        "isFolder": false,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/fc6176f5-6946-4426-a07a-6845d2f652e0/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/documents/1c68d3e5-7052-4666-b510-c5011a32e0ac"
+          },
+          "onedrive": {
+            "href": "/v8/restoresessions/fc6176f5-6946-4426-a07a-6845d2f652e0/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325"
+          },
+          "versions": {
+            "href": "/v8/restoresessions/fc6176f5-6946-4426-a07a-6845d2f652e0/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/documents/1c68d3e5-7052-4666-b510-c5011a32e0ac/versions"
+          }
+        }
+      },
+      {
+        "oneDriveId": "6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325",
+        "sizeBytes": 60,
+        "inheritedPermissions": true,
+        "version": "1.0",
+        "id": "b2703f17-6047-4ccc-bb32-0a26f693cce3",
+        "versionId": 1,
+        "name": "reading-list.txt",
+        "createdBy": "Alice Test",
+        "creationTime": "2026-10-03T16:13:32Z",
+        "modifiedBy": "Alice Test",
+        "modificationTime": "2026-10-03T16:13:32Z",
+        "isFolder": false,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/fc6176f5-6946-4426-a07a-6845d2f652e0/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/documents/b2703f17-6047-4ccc-bb32-0a26f693cce3"
+          },
+          "onedrive": {
+            "href": "/v8/restoresessions/fc6176f5-6946-4426-a07a-6845d2f652e0/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325"
+          },
+          "versions": {
+            "href": "/v8/restoresessions/fc6176f5-6946-4426-a07a-6845d2f652e0/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/documents/b2703f17-6047-4ccc-bb32-0a26f693cce3/versions"
+          }
+        }
+      },
+      {
+        "oneDriveId": "6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325",
+        "sizeBytes": 910,
+        "inheritedPermissions": true,
+        "version": "1.0",
+        "id": "5ea49be2-81bc-4ada-b109-42a112a21bda",
+        "versionId": 1,
+        "name": "expense-report-march.pdf",
+        "createdBy": "Alice Test",
+        "creationTime": "2026-10-03T16:13:33Z",
+        "modifiedBy": "Alice Test",
+        "modificationTime": "2026-10-03T16:13:33Z",
+        "isFolder": false,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/fc6176f5-6946-4426-a07a-6845d2f652e0/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/documents/5ea49be2-81bc-4ada-b109-42a112a21bda"
+          },
+          "onedrive": {
+            "href": "/v8/restoresessions/fc6176f5-6946-4426-a07a-6845d2f652e0/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325"
+          },
+          "versions": {
+            "href": "/v8/restoresessions/fc6176f5-6946-4426-a07a-6845d2f652e0/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/documents/5ea49be2-81bc-4ada-b109-42a112a21bda/versions"
+          }
+        }
+      },
+      {
+        "oneDriveId": "6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325",
+        "sizeBytes": 75,
+        "inheritedPermissions": true,
+        "version": "1.0",
+        "id": "c9549cb6-4652-49a6-b894-d115966da4fa",
+        "versionId": 1,
+        "name": "travel-notes.txt",
+        "createdBy": "Alice Test",
+        "creationTime": "2026-10-03T16:13:33Z",
+        "modifiedBy": "Alice Test",
+        "modificationTime": "2026-10-03T16:13:33Z",
+        "isFolder": false,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/fc6176f5-6946-4426-a07a-6845d2f652e0/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/documents/c9549cb6-4652-49a6-b894-d115966da4fa"
+          },
+          "onedrive": {
+            "href": "/v8/restoresessions/fc6176f5-6946-4426-a07a-6845d2f652e0/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325"
+          },
+          "versions": {
+            "href": "/v8/restoresessions/fc6176f5-6946-4426-a07a-6845d2f652e0/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/documents/c9549cb6-4652-49a6-b894-d115966da4fa/versions"
+          }
+        }
+      },
+      {
+        "oneDriveId": "6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325",
+        "sizeBytes": 12420,
+        "inheritedPermissions": true,
+        "version": "1.0",
+        "id": "493f21e6-1c82-48b0-be38-15f1fc056c33",
+        "versionId": 2,
+        "name": "rp-canary-20.png",
+        "createdBy": "Alice Test",
+        "creationTime": "2026-09-24T22:11:30Z",
+        "modifiedBy": "Alice Test",
+        "modificationTime": "2026-09-24T22:11:30Z",
+        "isFolder": false,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/fc6176f5-6946-4426-a07a-6845d2f652e0/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/documents/493f21e6-1c82-48b0-be38-15f1fc056c33"
+          },
+          "onedrive": {
+            "href": "/v8/restoresessions/fc6176f5-6946-4426-a07a-6845d2f652e0/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325"
+          },
+          "parent": {
+            "href": "/v8/restoresessions/fc6176f5-6946-4426-a07a-6845d2f652e0/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/folders/8bc02bbf-9d4e-4c61-865f-d8a1495fe45c"
+          },
+          "versions": {
+            "href": "/v8/restoresessions/fc6176f5-6946-4426-a07a-6845d2f652e0/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/documents/493f21e6-1c82-48b0-be38-15f1fc056c33/versions"
+          }
+        }
+      },
+      {
+        "oneDriveId": "6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325",
+        "sizeBytes": 12420,
+        "inheritedPermissions": true,
+        "version": "1.0",
+        "id": "33eaee1f-6e88-4552-bd5a-87609b43ce14",
+        "versionId": 2,
+        "name": "rp-canary-15.png",
+        "createdBy": "Alice Test",
+        "creationTime": "2026-09-24T22:11:27Z",
+        "modifiedBy": "Alice Test",
+        "modificationTime": "2026-09-24T22:11:27Z",
+        "isFolder": false,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/fc6176f5-6946-4426-a07a-6845d2f652e0/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/documents/33eaee1f-6e88-4552-bd5a-87609b43ce14"
+          },
+          "onedrive": {
+            "href": "/v8/restoresessions/fc6176f5-6946-4426-a07a-6845d2f652e0/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325"
+          },
+          "parent": {
+            "href": "/v8/restoresessions/fc6176f5-6946-4426-a07a-6845d2f652e0/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/folders/8bc02bbf-9d4e-4c61-865f-d8a1495fe45c"
+          },
+          "versions": {
+            "href": "/v8/restoresessions/fc6176f5-6946-4426-a07a-6845d2f652e0/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/documents/33eaee1f-6e88-4552-bd5a-87609b43ce14/versions"
+          }
+        }
+      },
+      {
+        "oneDriveId": "6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325",
+        "sizeBytes": 5859,
+        "inheritedPermissions": true,
+        "version": "1.0",
+        "id": "a9a92934-3531-4514-b6c0-c073cdfc9ba0",
+        "versionId": 1,
+        "name": "rp-canary-18.xlsx",
+        "createdBy": "Alice Test",
+        "creationTime": "2026-09-24T22:11:29Z",
+        "modifiedBy": "Alice Test",
+        "modificationTime": "2026-09-24T22:11:29Z",
+        "isFolder": false,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/fc6176f5-6946-4426-a07a-6845d2f652e0/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/documents/a9a92934-3531-4514-b6c0-c073cdfc9ba0"
+          },
+          "onedrive": {
+            "href": "/v8/restoresessions/fc6176f5-6946-4426-a07a-6845d2f652e0/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325"
+          },
+          "parent": {
+            "href": "/v8/restoresessions/fc6176f5-6946-4426-a07a-6845d2f652e0/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/folders/8bc02bbf-9d4e-4c61-865f-d8a1495fe45c"
+          },
+          "versions": {
+            "href": "/v8/restoresessions/fc6176f5-6946-4426-a07a-6845d2f652e0/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/documents/a9a92934-3531-4514-b6c0-c073cdfc9ba0/versions"
+          }
+        }
+      },
+      {
+        "oneDriveId": "6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325",
+        "sizeBytes": 3263,
+        "inheritedPermissions": true,
+        "version": "1.0",
+        "id": "22cc7d12-a4c1-41f6-bcea-af088bd9cef3",
+        "versionId": 1,
+        "name": "rp-canary-17.docx",
+        "createdBy": "Alice Test",
+        "creationTime": "2026-09-24T22:11:28Z",
+        "modifiedBy": "Alice Test",
+        "modificationTime": "2026-09-24T22:11:28Z",
+        "isFolder": false,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/fc6176f5-6946-4426-a07a-6845d2f652e0/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/documents/22cc7d12-a4c1-41f6-bcea-af088bd9cef3"
+          },
+          "onedrive": {
+            "href": "/v8/restoresessions/fc6176f5-6946-4426-a07a-6845d2f652e0/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325"
+          },
+          "parent": {
+            "href": "/v8/restoresessions/fc6176f5-6946-4426-a07a-6845d2f652e0/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/folders/8bc02bbf-9d4e-4c61-865f-d8a1495fe45c"
+          },
+          "versions": {
+            "href": "/v8/restoresessions/fc6176f5-6946-4426-a07a-6845d2f652e0/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/documents/22cc7d12-a4c1-41f6-bcea-af088bd9cef3/versions"
+          }
+        }
+      },
+      {
+        "oneDriveId": "6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325",
+        "sizeBytes": 5859,
+        "inheritedPermissions": true,
+        "version": "1.0",
+        "id": "1726fbfd-3644-466a-b132-07aeb6f2a8b6",
+        "versionId": 1,
+        "name": "rp-canary-13.xlsx",
+        "createdBy": "Alice Test",
+        "creationTime": "2026-09-24T22:11:26Z",
+        "modifiedBy": "Alice Test",
+        "modificationTime": "2026-09-24T22:11:26Z",
+        "isFolder": false,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/fc6176f5-6946-4426-a07a-6845d2f652e0/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/documents/1726fbfd-3644-466a-b132-07aeb6f2a8b6"
+          },
+          "onedrive": {
+            "href": "/v8/restoresessions/fc6176f5-6946-4426-a07a-6845d2f652e0/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325"
+          },
+          "parent": {
+            "href": "/v8/restoresessions/fc6176f5-6946-4426-a07a-6845d2f652e0/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/folders/8bc02bbf-9d4e-4c61-865f-d8a1495fe45c"
+          },
+          "versions": {
+            "href": "/v8/restoresessions/fc6176f5-6946-4426-a07a-6845d2f652e0/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/documents/1726fbfd-3644-466a-b132-07aeb6f2a8b6/versions"
+          }
+        }
+      },
+      {
+        "oneDriveId": "6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325",
+        "sizeBytes": 925,
+        "inheritedPermissions": true,
+        "version": "1.0",
+        "id": "14ad2a26-a9d6-4307-a1b0-7f15d8b7debb",
+        "versionId": 1,
+        "name": "rp-canary-16.pdf",
+        "createdBy": "Alice Test",
+        "creationTime": "2026-09-24T22:11:28Z",
+        "modifiedBy": "Alice Test",
+        "modificationTime": "2026-09-24T22:11:28Z",
+        "isFolder": false,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/fc6176f5-6946-4426-a07a-6845d2f652e0/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/documents/14ad2a26-a9d6-4307-a1b0-7f15d8b7debb"
+          },
+          "onedrive": {
+            "href": "/v8/restoresessions/fc6176f5-6946-4426-a07a-6845d2f652e0/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325"
+          },
+          "parent": {
+            "href": "/v8/restoresessions/fc6176f5-6946-4426-a07a-6845d2f652e0/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/folders/8bc02bbf-9d4e-4c61-865f-d8a1495fe45c"
+          },
+          "versions": {
+            "href": "/v8/restoresessions/fc6176f5-6946-4426-a07a-6845d2f652e0/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/documents/14ad2a26-a9d6-4307-a1b0-7f15d8b7debb/versions"
+          }
+        }
+      },
+      {
+        "oneDriveId": "6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325",
+        "sizeBytes": 164,
+        "inheritedPermissions": true,
+        "version": "1.0",
+        "id": "bac53525-4638-4ec9-8231-7e9a0f5292bd",
+        "versionId": 1,
+        "name": "rp-canary-19.txt",
+        "createdBy": "Alice Test",
+        "creationTime": "2026-09-24T22:11:30Z",
+        "modifiedBy": "Alice Test",
+        "modificationTime": "2026-09-24T22:11:30Z",
+        "isFolder": false,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/fc6176f5-6946-4426-a07a-6845d2f652e0/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/documents/bac53525-4638-4ec9-8231-7e9a0f5292bd"
+          },
+          "onedrive": {
+            "href": "/v8/restoresessions/fc6176f5-6946-4426-a07a-6845d2f652e0/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325"
+          },
+          "parent": {
+            "href": "/v8/restoresessions/fc6176f5-6946-4426-a07a-6845d2f652e0/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/folders/8bc02bbf-9d4e-4c61-865f-d8a1495fe45c"
+          },
+          "versions": {
+            "href": "/v8/restoresessions/fc6176f5-6946-4426-a07a-6845d2f652e0/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/documents/bac53525-4638-4ec9-8231-7e9a0f5292bd/versions"
+          }
+        }
+      },
+      {
+        "oneDriveId": "6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325",
+        "sizeBytes": 164,
+        "inheritedPermissions": true,
+        "version": "1.0",
+        "id": "4599b658-c061-49db-810e-29596ddb6a0f",
+        "versionId": 1,
+        "name": "rp-canary-14.txt",
+        "createdBy": "Alice Test",
+        "creationTime": "2026-09-24T22:11:26Z",
+        "modifiedBy": "Alice Test",
+        "modificationTime": "2026-09-24T22:11:26Z",
+        "isFolder": false,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/fc6176f5-6946-4426-a07a-6845d2f652e0/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/documents/4599b658-c061-49db-810e-29596ddb6a0f"
+          },
+          "onedrive": {
+            "href": "/v8/restoresessions/fc6176f5-6946-4426-a07a-6845d2f652e0/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325"
+          },
+          "parent": {
+            "href": "/v8/restoresessions/fc6176f5-6946-4426-a07a-6845d2f652e0/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/folders/8bc02bbf-9d4e-4c61-865f-d8a1495fe45c"
+          },
+          "versions": {
+            "href": "/v8/restoresessions/fc6176f5-6946-4426-a07a-6845d2f652e0/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/documents/4599b658-c061-49db-810e-29596ddb6a0f/versions"
+          }
+        }
+      },
+      {
+        "oneDriveId": "6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325",
+        "sizeBytes": 925,
+        "inheritedPermissions": true,
+        "version": "1.0",
+        "id": "bab96008-6315-4110-89bc-75f4f3d587a4",
+        "versionId": 1,
+        "name": "rp-canary-11.pdf",
+        "createdBy": "Alice Test",
+        "creationTime": "2026-09-24T22:11:23Z",
+        "modifiedBy": "Alice Test",
+        "modificationTime": "2026-09-24T22:11:23Z",
+        "isFolder": false,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/fc6176f5-6946-4426-a07a-6845d2f652e0/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/documents/bab96008-6315-4110-89bc-75f4f3d587a4"
+          },
+          "onedrive": {
+            "href": "/v8/restoresessions/fc6176f5-6946-4426-a07a-6845d2f652e0/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325"
+          },
+          "parent": {
+            "href": "/v8/restoresessions/fc6176f5-6946-4426-a07a-6845d2f652e0/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/folders/8bc02bbf-9d4e-4c61-865f-d8a1495fe45c"
+          },
+          "versions": {
+            "href": "/v8/restoresessions/fc6176f5-6946-4426-a07a-6845d2f652e0/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/documents/bab96008-6315-4110-89bc-75f4f3d587a4/versions"
+          }
+        }
+      },
+      {
+        "oneDriveId": "6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325",
+        "sizeBytes": 3263,
+        "inheritedPermissions": true,
+        "version": "1.0",
+        "id": "54c2c5db-082d-4877-a936-a83253b9a20a",
+        "versionId": 1,
+        "name": "rp-canary-12.docx",
+        "createdBy": "Alice Test",
+        "creationTime": "2026-09-24T22:11:25Z",
+        "modifiedBy": "Alice Test",
+        "modificationTime": "2026-09-24T22:11:25Z",
+        "isFolder": false,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/fc6176f5-6946-4426-a07a-6845d2f652e0/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/documents/54c2c5db-082d-4877-a936-a83253b9a20a"
+          },
+          "onedrive": {
+            "href": "/v8/restoresessions/fc6176f5-6946-4426-a07a-6845d2f652e0/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325"
+          },
+          "parent": {
+            "href": "/v8/restoresessions/fc6176f5-6946-4426-a07a-6845d2f652e0/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/folders/8bc02bbf-9d4e-4c61-865f-d8a1495fe45c"
+          },
+          "versions": {
+            "href": "/v8/restoresessions/fc6176f5-6946-4426-a07a-6845d2f652e0/organization/onedrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/documents/54c2c5db-082d-4877-a936-a83253b9a20a/versions"
+          }
+        }
+      }
+    ]
+  }
+}

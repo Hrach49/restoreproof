@@ -1,0 +1,679 @@
+{
+  "account": "rp-veeam",
+  "content_equal": 14,
+  "exports_ok": 14,
+  "files": [
+    {
+      "bytes_equal": true,
+      "content_equal": true,
+      "document_path": "/v8/RestoreSessions/4532c9c7-21af-4f68-a038-4cbdfefb8aa1/Organization/Sites/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689/Documents/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e6897ce76907-31fb-45fe-ad8f-960264f0313bc4f9093f-3fd8-460f-8550-8034b2535054",
+      "export": {
+        "bytes": 87,
+        "content_length": "87",
+        "content_type": "application/octet-stream",
+        "ms": 14915,
+        "office_v1": "",
+        "office_v1_error": "",
+        "sha256": "f1fb906f8d50c0fcd2e61952c82ccf04df717ee6cc9009b0745fd58909025d3e",
+        "status": 200
+      },
+      "kind": "sharepoint",
+      "name": "team-meeting-notes.txt",
+      "office": "",
+      "restored": {
+        "found": true,
+        "office_v1": "",
+        "office_v1_error": "",
+        "sha256": "f1fb906f8d50c0fcd2e61952c82ccf04df717ee6cc9009b0745fd58909025d3e",
+        "size": 87
+      },
+      "veeam_size": 87
+    },
+    {
+      "bytes_equal": true,
+      "content_equal": true,
+      "document_path": "/v8/RestoreSessions/4532c9c7-21af-4f68-a038-4cbdfefb8aa1/Organization/Sites/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689/Documents/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e6897ce76907-31fb-45fe-ad8f-960264f0313bdf5f6305-2587-4dcf-816b-66742de82950",
+      "export": {
+        "bytes": 84,
+        "content_length": "84",
+        "content_type": "application/octet-stream",
+        "ms": 1213,
+        "office_v1": "",
+        "office_v1_error": "",
+        "sha256": "05c0de9efc1e6113aa07caf47bbdc334fef014dcaaf055d9e816d49922c13b89",
+        "status": 200
+      },
+      "kind": "sharepoint",
+      "name": "supplier-contacts.txt",
+      "office": "",
+      "restored": {
+        "found": true,
+        "office_v1": "",
+        "office_v1_error": "",
+        "sha256": "05c0de9efc1e6113aa07caf47bbdc334fef014dcaaf055d9e816d49922c13b89",
+        "size": 84
+      },
+      "veeam_size": 84
+    },
+    {
+      "bytes_equal": true,
+      "content_equal": true,
+      "document_path": "/v8/RestoreSessions/4532c9c7-21af-4f68-a038-4cbdfefb8aa1/Organization/Sites/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689/Documents/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e6897ce76907-31fb-45fe-ad8f-960264f0313bbc7ad9d4-aa7e-459b-b153-4203b95841f8",
+      "export": {
+        "bytes": 899,
+        "content_length": "899",
+        "content_type": "application/octet-stream",
+        "ms": 768,
+        "office_v1": "",
+        "office_v1_error": "",
+        "sha256": "d74e92b0b5573ca29506f84669c8b6cdc0d926cca09c005dab6e821c3ec7af71",
+        "status": 200
+      },
+      "kind": "sharepoint",
+      "name": "project-brief.pdf",
+      "office": "",
+      "restored": {
+        "found": true,
+        "office_v1": "",
+        "office_v1_error": "",
+        "sha256": "d74e92b0b5573ca29506f84669c8b6cdc0d926cca09c005dab6e821c3ec7af71",
+        "size": 899
+      },
+      "veeam_size": 899
+    },
+    {
+      "bytes_equal": true,
+      "content_equal": true,
+      "document_path": "/v8/RestoreSessions/4532c9c7-21af-4f68-a038-4cbdfefb8aa1/Organization/Sites/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689/Documents/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e6897ce76907-31fb-45fe-ad8f-960264f0313bf16dd218-e354-4a66-9fc0-59caf9e10a05",
+      "export": {
+        "bytes": 894,
+        "content_length": "894",
+        "content_type": "application/octet-stream",
+        "ms": 734,
+        "office_v1": "",
+        "office_v1_error": "",
+        "sha256": "4acae6b1632752b9ce1b84a691691df9289eea3605fa7eaa66afc015d4ba8e43",
+        "status": 200
+      },
+      "kind": "sharepoint",
+      "name": "budget-summary.pdf",
+      "office": "",
+      "restored": {
+        "found": true,
+        "office_v1": "",
+        "office_v1_error": "",
+        "sha256": "4acae6b1632752b9ce1b84a691691df9289eea3605fa7eaa66afc015d4ba8e43",
+        "size": 894
+      },
+      "veeam_size": 894
+    },
+    {
+      "bytes_equal": true,
+      "content_equal": true,
+      "document_path": "/v8/RestoreSessions/4532c9c7-21af-4f68-a038-4cbdfefb8aa1/Organization/Sites/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689/Documents/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e6897ce76907-31fb-45fe-ad8f-960264f0313b672292aa-fa3c-4efd-9552-2165b1cf6571",
+      "export": {
+        "bytes": 12420,
+        "content_length": "12420",
+        "content_type": "application/octet-stream",
+        "ms": 1413,
+        "office_v1": "",
+        "office_v1_error": "",
+        "sha256": "7951cde1a0e313c1fce94d8271bf9b5f67a601b02ebd80907db0784036fe0246",
+        "status": 200
+      },
+      "kind": "sharepoint",
+      "name": "office-floor-plan.png",
+      "office": "",
+      "restored": {
+        "found": true,
+        "office_v1": "",
+        "office_v1_error": "",
+        "sha256": "7951cde1a0e313c1fce94d8271bf9b5f67a601b02ebd80907db0784036fe0246",
+        "size": 12420
+      },
+      "veeam_size": 12420
+    },
+    {
+      "bytes_equal": true,
+      "content_equal": true,
+      "document_path": "/v8/RestoreSessions/4532c9c7-21af-4f68-a038-4cbdfefb8aa1/Organization/Sites/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689/Documents/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e6897ce76907-31fb-45fe-ad8f-960264f0313b2a7d82cb-5505-47c3-8f6f-e520ab66fc1a",
+      "export": {
+        "bytes": 12420,
+        "content_length": "12420",
+        "content_type": "application/octet-stream",
+        "ms": 1201,
+        "office_v1": "",
+        "office_v1_error": "",
+        "sha256": "89a9f0d1ba70360f335250e508a9f859e8eb67f883a2de1d7d991ea2a022abd9",
+        "status": 200
+      },
+      "kind": "sharepoint",
+      "name": "brand-colours-draft.png",
+      "office": "",
+      "restored": {
+        "found": true,
+        "office_v1": "",
+        "office_v1_error": "",
+        "sha256": "89a9f0d1ba70360f335250e508a9f859e8eb67f883a2de1d7d991ea2a022abd9",
+        "size": 12420
+      },
+      "veeam_size": 12420
+    },
+    {
+      "bytes_equal": false,
+      "content_equal": true,
+      "document_path": "/v8/RestoreSessions/4532c9c7-21af-4f68-a038-4cbdfefb8aa1/Organization/Sites/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689/Documents/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e6897ce76907-31fb-45fe-ad8f-960264f0313bb0ac7f95-1cdf-4ca2-8232-d41c186f56af",
+      "export": {
+        "bytes": 19995,
+        "content_length": "19995",
+        "content_type": "application/octet-stream",
+        "ms": 1027,
+        "office_v1": "a2d69a1b8883dfd250d2e5ba44950e7edac8d20c526d4317fd953c26156c3c4e",
+        "office_v1_error": "",
+        "sha256": "69703b0295e517c7149743defae6397dde43952fe6f2012dcc0a126a00bf3795",
+        "status": 200
+      },
+      "kind": "sharepoint",
+      "name": "room-bookings.xlsx",
+      "office": "xlsx",
+      "restored": {
+        "found": true,
+        "office_v1": "a2d69a1b8883dfd250d2e5ba44950e7edac8d20c526d4317fd953c26156c3c4e",
+        "office_v1_error": "",
+        "sha256": "16f0b9d80077dec2a97b9cb277e026a1bb8d85ae8b164cf137fb6ee8f8b550b2",
+        "size": 22594
+      },
+      "veeam_size": 19995
+    },
+    {
+      "bytes_equal": true,
+      "content_equal": true,
+      "document_path": "/v8/RestoreSessions/fc6176f5-6946-4426-a07a-6845d2f652e0/Organization/OneDrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/Documents/b2703f17-6047-4ccc-bb32-0a26f693cce3",
+      "export": {
+        "bytes": 60,
+        "content_length": "60",
+        "content_type": "application/octet-stream",
+        "ms": 500,
+        "office_v1": "",
+        "office_v1_error": "",
+        "sha256": "100094ac90d10f71f9c1a60cdd06f0d6ea67e82442cca9f2e18f77ac17887bba",
+        "status": 200
+      },
+      "kind": "onedrive",
+      "name": "reading-list.txt",
+      "office": "",
+      "restored": {
+        "found": true,
+        "office_v1": "",
+        "office_v1_error": "",
+        "sha256": "100094ac90d10f71f9c1a60cdd06f0d6ea67e82442cca9f2e18f77ac17887bba",
+        "size": 60
+      },
+      "veeam_size": 60
+    },
+    {
+      "bytes_equal": true,
+      "content_equal": true,
+      "document_path": "/v8/RestoreSessions/fc6176f5-6946-4426-a07a-6845d2f652e0/Organization/OneDrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/Documents/c9549cb6-4652-49a6-b894-d115966da4fa",
+      "export": {
+        "bytes": 75,
+        "content_length": "75",
+        "content_type": "application/octet-stream",
+        "ms": 596,
+        "office_v1": "",
+        "office_v1_error": "",
+        "sha256": "4db1fbcb63b82aeee4ce41086ea5dd244a2798104768cc50a04bb5b9f551cad0",
+        "status": 200
+      },
+      "kind": "onedrive",
+      "name": "travel-notes.txt",
+      "office": "",
+      "restored": {
+        "found": true,
+        "office_v1": "",
+        "office_v1_error": "",
+        "sha256": "4db1fbcb63b82aeee4ce41086ea5dd244a2798104768cc50a04bb5b9f551cad0",
+        "size": 75
+      },
+      "veeam_size": 75
+    },
+    {
+      "bytes_equal": true,
+      "content_equal": true,
+      "document_path": "/v8/RestoreSessions/fc6176f5-6946-4426-a07a-6845d2f652e0/Organization/OneDrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/Documents/5ea49be2-81bc-4ada-b109-42a112a21bda",
+      "export": {
+        "bytes": 910,
+        "content_length": "910",
+        "content_type": "application/octet-stream",
+        "ms": 494,
+        "office_v1": "",
+        "office_v1_error": "",
+        "sha256": "b0ecbe97d0828844155e89e2cec42027dfc88e7793de08fe697d97d07fd44879",
+        "status": 200
+      },
+      "kind": "onedrive",
+      "name": "expense-report-march.pdf",
+      "office": "",
+      "restored": {
+        "found": true,
+        "office_v1": "",
+        "office_v1_error": "",
+        "sha256": "b0ecbe97d0828844155e89e2cec42027dfc88e7793de08fe697d97d07fd44879",
+        "size": 910
+      },
+      "veeam_size": 910
+    },
+    {
+      "bytes_equal": true,
+      "content_equal": true,
+      "document_path": "/v8/RestoreSessions/fc6176f5-6946-4426-a07a-6845d2f652e0/Organization/OneDrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/Documents/e2a15aa8-35c5-44e2-8f0f-a4ce7faf1862",
+      "export": {
+        "bytes": 907,
+        "content_length": "907",
+        "content_type": "application/octet-stream",
+        "ms": 493,
+        "office_v1": "",
+        "office_v1_error": "",
+        "sha256": "16237a1cdb3d1cf017cdd6562c085372670631ff5ff7f7f75987b946f01c5e02",
+        "status": 200
+      },
+      "kind": "onedrive",
+      "name": "course-certificate.pdf",
+      "office": "",
+      "restored": {
+        "found": true,
+        "office_v1": "",
+        "office_v1_error": "",
+        "sha256": "16237a1cdb3d1cf017cdd6562c085372670631ff5ff7f7f75987b946f01c5e02",
+        "size": 907
+      },
+      "veeam_size": 907
+    },
+    {
+      "bytes_equal": true,
+      "content_equal": true,
+      "document_path": "/v8/RestoreSessions/fc6176f5-6946-4426-a07a-6845d2f652e0/Organization/OneDrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/Documents/927b980e-548b-4f3c-b9c9-7c2e973ef256",
+      "export": {
+        "bytes": 12420,
+        "content_length": "12420",
+        "content_type": "application/octet-stream",
+        "ms": 808,
+        "office_v1": "",
+        "office_v1_error": "",
+        "sha256": "7731653c27df7ff2932094b2f436e82a10bed211898bd250de8076faaf0859ce",
+        "status": 200
+      },
+      "kind": "onedrive",
+      "name": "holiday-photo.png",
+      "office": "",
+      "restored": {
+        "found": true,
+        "office_v1": "",
+        "office_v1_error": "",
+        "sha256": "7731653c27df7ff2932094b2f436e82a10bed211898bd250de8076faaf0859ce",
+        "size": 12420
+      },
+      "veeam_size": 12420
+    },
+    {
+      "bytes_equal": true,
+      "content_equal": true,
+      "document_path": "/v8/RestoreSessions/fc6176f5-6946-4426-a07a-6845d2f652e0/Organization/OneDrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/Documents/401a6677-45a0-44e9-8aa1-5983ba76d23f",
+      "export": {
+        "bytes": 12420,
+        "content_length": "12420",
+        "content_type": "application/octet-stream",
+        "ms": 879,
+        "office_v1": "",
+        "office_v1_error": "",
+        "sha256": "e1f664a2d4736300375c4c58eb1a8c9fe3d94f60ad9decb16584e60168dadff8",
+        "status": 200
+      },
+      "kind": "onedrive",
+      "name": "whiteboard-sketch.png",
+      "office": "",
+      "restored": {
+        "found": true,
+        "office_v1": "",
+        "office_v1_error": "",
+        "sha256": "e1f664a2d4736300375c4c58eb1a8c9fe3d94f60ad9decb16584e60168dadff8",
+        "size": 12420
+      },
+      "veeam_size": 12420
+    },
+    {
+      "bytes_equal": true,
+      "content_equal": true,
+      "document_path": "/v8/RestoreSessions/fc6176f5-6946-4426-a07a-6845d2f652e0/Organization/OneDrives/6d600fc0-65f8-4811-ad18-096ec5b7e83498cfff1a-b404-4438-ae6e-6927a6ccc325/Documents/1c68d3e5-7052-4666-b510-c5011a32e0ac",
+      "export": {
+        "bytes": 3230,
+        "content_length": "3230",
+        "content_type": "application/octet-stream",
+        "ms": 736,
+        "office_v1": "bcf2ef44b8aea4e31ebe161ca93c441f90b3f706d0bd5d5a6ae8907c93df99a1",
+        "office_v1_error": "",
+        "sha256": "9396a67f678fd5f10649557f107fb22a00df7eed9c62c159589a388c0330b333",
+        "status": 200
+      },
+      "kind": "onedrive",
+      "name": "weekly-status.docx",
+      "office": "docx",
+      "restored": {
+        "found": true,
+        "office_v1": "bcf2ef44b8aea4e31ebe161ca93c441f90b3f706d0bd5d5a6ae8907c93df99a1",
+        "office_v1_error": "",
+        "sha256": "9396a67f678fd5f10649557f107fb22a00df7eed9c62c159589a388c0330b333",
+        "size": 3230
+      },
+      "veeam_size": 3230
+    }
+  ],
+  "notes": {
+    "as_zip": {
+      "bytes": 598,
+      "content_disposition": "attachment; filename=project-brief.pdf.zip; filename*=UTF-8''project-brief.pdf.zip",
+      "content_length": "598",
+      "content_type": "application/octet-stream",
+      "entries": 1,
+      "error": "",
+      "file": "project-brief.pdf",
+      "first_entry_bytes": 899,
+      "first_entry_equals_plain_export": true,
+      "first_entry_name": "project-brief.pdf",
+      "first_entry_sha256": "d74e92b0b5573ca29506f84669c8b6cdc0d926cca09c005dab6e821c3ec7af71",
+      "is_zip": true,
+      "ms": 1282,
+      "status": 200
+    },
+    "export_during_restore": {
+      "bytes": 899,
+      "equals_first_export": true,
+      "file": "project-brief.pdf",
+      "ms": 11958,
+      "seen": true,
+      "session_c": "29efce0b-388d-42db-a139-bd70f6dc2edb",
+      "sha256": "d74e92b0b5573ca29506f84669c8b6cdc0d926cca09c005dab6e821c3ec7af71",
+      "status": 200,
+      "working_vesp_sessions": [
+        {
+          "creationTime": "2026-10-13T23:38:05.0405654Z",
+          "id": "4dc4c706-5902-4e04-a8a6-145a88d2cfa7"
+        },
+        {
+          "creationTime": "2026-10-13T23:37:50.2263254Z",
+          "id": "687c3d24-301d-4b55-a91e-fd444360eb29"
+        }
+      ]
+    },
+    "restore": {
+      "items": [
+        {
+          "kind": "sharepoint",
+          "message": "Item team-meeting-notes.txt was restored successfully (type: File; source: /sites/RestoreTest/Shared Documents/team-meeting-notes.txt; target: https://restoreprooflab.sharepoint.com/sites/RestoreTest)",
+          "name": "team-meeting-notes.txt",
+          "outcome": "restored",
+          "session_id": "4dc4c706-5902-4e04-a8a6-145a88d2cfa7"
+        },
+        {
+          "kind": "sharepoint",
+          "message": "Item supplier-contacts.txt was restored successfully (type: File; source: /sites/RestoreTest/Shared Documents/supplier-contacts.txt; target: https://restoreprooflab.sharepoint.com/sites/RestoreTest)",
+          "name": "supplier-contacts.txt",
+          "outcome": "restored",
+          "session_id": "4dc4c706-5902-4e04-a8a6-145a88d2cfa7"
+        },
+        {
+          "kind": "sharepoint",
+          "message": "Item project-brief.pdf was restored successfully (type: File; source: /sites/RestoreTest/Shared Documents/project-brief.pdf; target: https://restoreprooflab.sharepoint.com/sites/RestoreTest)",
+          "name": "project-brief.pdf",
+          "outcome": "restored",
+          "session_id": "4dc4c706-5902-4e04-a8a6-145a88d2cfa7"
+        },
+        {
+          "kind": "sharepoint",
+          "message": "Item budget-summary.pdf was restored successfully (type: File; source: /sites/RestoreTest/Shared Documents/budget-summary.pdf; target: https://restoreprooflab.sharepoint.com/sites/RestoreTest)",
+          "name": "budget-summary.pdf",
+          "outcome": "restored",
+          "session_id": "4dc4c706-5902-4e04-a8a6-145a88d2cfa7"
+        },
+        {
+          "kind": "sharepoint",
+          "message": "Item office-floor-plan.png was restored successfully (type: File; source: /sites/RestoreTest/Shared Documents/office-floor-plan.png; target: https://restoreprooflab.sharepoint.com/sites/RestoreTest)",
+          "name": "office-floor-plan.png",
+          "outcome": "restored",
+          "session_id": "4dc4c706-5902-4e04-a8a6-145a88d2cfa7"
+        },
+        {
+          "kind": "sharepoint",
+          "message": "Item brand-colours-draft.png was restored successfully (type: File; source: /sites/RestoreTest/Shared Documents/brand-colours-draft.png; target: https://restoreprooflab.sharepoint.com/sites/RestoreTest)",
+          "name": "brand-colours-draft.png",
+          "outcome": "restored",
+          "session_id": "4dc4c706-5902-4e04-a8a6-145a88d2cfa7"
+        },
+        {
+          "kind": "sharepoint",
+          "message": "Item room-bookings.xlsx was restored successfully (type: File; source: /sites/RestoreTest/Shared Documents/room-bookings.xlsx; target: https://restoreprooflab.sharepoint.com/sites/RestoreTest)",
+          "name": "room-bookings.xlsx",
+          "outcome": "restored",
+          "session_id": "4dc4c706-5902-4e04-a8a6-145a88d2cfa7"
+        },
+        {
+          "kind": "onedrive",
+          "message": "Item reading-list.txt was restored successfully (type: File; source: personal/alice_restoreprooflab_onmicrosoft_com/Documents/RestoreTarget/reading-list.txt; target: https://restoreprooflab-my.sharepoint.com/personal/alice_restoreprooflab_onmicrosoft_com)",
+          "name": "reading-list.txt",
+          "outcome": "restored",
+          "session_id": "0b261e56-b78a-44b8-abdb-b97e0545e4f5"
+        },
+        {
+          "kind": "onedrive",
+          "message": "Item travel-notes.txt was restored successfully (type: File; source: personal/alice_restoreprooflab_onmicrosoft_com/Documents/RestoreTarget/travel-notes.txt; target: https://restoreprooflab-my.sharepoint.com/personal/alice_restoreprooflab_onmicrosoft_com)",
+          "name": "travel-notes.txt",
+          "outcome": "restored",
+          "session_id": "0b261e56-b78a-44b8-abdb-b97e0545e4f5"
+        },
+        {
+          "kind": "onedrive",
+          "message": "Item expense-report-march.pdf was restored successfully (type: File; source: personal/alice_restoreprooflab_onmicrosoft_com/Documents/RestoreTarget/expense-report-march.pdf; target: https://restoreprooflab-my.sharepoint.com/personal/alice_restoreprooflab_onmicrosoft_com)",
+          "name": "expense-report-march.pdf",
+          "outcome": "restored",
+          "session_id": "0b261e56-b78a-44b8-abdb-b97e0545e4f5"
+        },
+        {
+          "kind": "onedrive",
+          "message": "Item course-certificate.pdf was restored successfully (type: File; source: personal/alice_restoreprooflab_onmicrosoft_com/Documents/RestoreTarget/course-certificate.pdf; target: https://restoreprooflab-my.sharepoint.com/personal/alice_restoreprooflab_onmicrosoft_com)",
+          "name": "course-certificate.pdf",
+          "outcome": "restored",
+          "session_id": "0b261e56-b78a-44b8-abdb-b97e0545e4f5"
+        },
+        {
+          "kind": "onedrive",
+          "message": "Item holiday-photo.png was restored successfully (type: File; source: personal/alice_restoreprooflab_onmicrosoft_com/Documents/RestoreTarget/holiday-photo.png; target: https://restoreprooflab-my.sharepoint.com/personal/alice_restoreprooflab_onmicrosoft_com)",
+          "name": "holiday-photo.png",
+          "outcome": "restored",
+          "session_id": "0b261e56-b78a-44b8-abdb-b97e0545e4f5"
+        },
+        {
+          "kind": "onedrive",
+          "message": "Item whiteboard-sketch.png was restored successfully (type: File; source: personal/alice_restoreprooflab_onmicrosoft_com/Documents/RestoreTarget/whiteboard-sketch.png; target: https://restoreprooflab-my.sharepoint.com/personal/alice_restoreprooflab_onmicrosoft_com)",
+          "name": "whiteboard-sketch.png",
+          "outcome": "restored",
+          "session_id": "0b261e56-b78a-44b8-abdb-b97e0545e4f5"
+        },
+        {
+          "kind": "onedrive",
+          "message": "Item weekly-status.docx was restored successfully (type: File; source: personal/alice_restoreprooflab_onmicrosoft_com/Documents/RestoreTarget/weekly-status.docx; target: https://restoreprooflab-my.sharepoint.com/personal/alice_restoreprooflab_onmicrosoft_com)",
+          "name": "weekly-status.docx",
+          "outcome": "restored",
+          "session_id": "0b261e56-b78a-44b8-abdb-b97e0545e4f5"
+        }
+      ],
+      "items_restored": 14,
+      "items_sent": 14,
+      "sessions": [
+        {
+          "details": "7 items processed (7 successes)",
+          "ended_at": "2026-10-13T23:39:18.6901981Z",
+          "id": "4dc4c706-5902-4e04-a8a6-145a88d2cfa7",
+          "items_restored": 7,
+          "items_sent": 7,
+          "kind": "sharepoint",
+          "result": "Success",
+          "started_at": "2026-10-13T23:38:05.0405654Z"
+        },
+        {
+          "details": "7 items processed (7 successes)",
+          "ended_at": "2026-10-13T23:39:54.1336108Z",
+          "id": "0b261e56-b78a-44b8-abdb-b97e0545e4f5",
+          "items_restored": 7,
+          "items_sent": 7,
+          "kind": "onedrive",
+          "result": "Success",
+          "started_at": "2026-10-13T23:39:22.1835758Z"
+        }
+      ],
+      "status": "succeeded"
+    },
+    "session_after_exports": {
+      "document_reread_name": "team-meeting-notes.txt",
+      "session": "4532c9c7-21af-4f68-a038-4cbdfefb8aa1",
+      "state": "Working"
+    },
+    "source_unchanged": {
+      "library_after": {
+        "drive_id": "b!XQgI_nDr6EKVpkcBib2Y65nzyk4OzJVNs_7NCRoJ5okHaed8-zH-Ra2PlgJk8DE7",
+        "drive_name": "Dokumenty",
+        "items": [
+          {
+            "eTag": "\"{DF5F6305-2587-4DCF-816B-66742DE82950},1\"",
+            "id": "01BLWRTHIFMNP57BZFZ5GYC23GOQW6QKKQ",
+            "lastModifiedDateTime": "2026-10-03T16:13:29Z",
+            "name": "supplier-contacts.txt",
+            "size": 84
+          },
+          {
+            "eTag": "\"{F16DD218-E354-4A66-9FC0-59CAF9E10A05},1\"",
+            "id": "01BLWRTHIY2JW7CVHDMZFJ7QCZZL46CCQF",
+            "lastModifiedDateTime": "2026-10-03T16:13:30Z",
+            "name": "budget-summary.pdf",
+            "size": 894
+          },
+          {
+            "eTag": "\"{C4F9093F-3FD8-460F-8550-8034B2535054},1\"",
+            "id": "01BLWRTHJ7BH44JWB7B5DIKUEAGSZFGUCU",
+            "lastModifiedDateTime": "2026-10-03T16:13:29Z",
+            "name": "team-meeting-notes.txt",
+            "size": 87
+          },
+          {
+            "eTag": "\"{B0AC7F95-1CDF-4CA2-8232-D41C186F56AF},2\"",
+            "id": "01BLWRTHMVP6WLBXY4UJGIEMWUDQMG6VVP",
+            "lastModifiedDateTime": "2026-10-03T16:13:32Z",
+            "name": "room-bookings.xlsx",
+            "size": 19995
+          },
+          {
+            "eTag": "\"{672292AA-FA3C-4EFD-9552-2165B1CF6571},1\"",
+            "id": "01BLWRTHNKSIRGOPH27VHJKURBMWY46ZLR",
+            "lastModifiedDateTime": "2026-10-03T16:13:31Z",
+            "name": "office-floor-plan.png",
+            "size": 12420
+          },
+          {
+            "eTag": "\"{2A7D82CB-5505-47C3-8F6F-E520AB66FC1A},1\"",
+            "id": "01BLWRTHOLQJ6SUBKVYNDY637FECVWN7A2",
+            "lastModifiedDateTime": "2026-10-03T16:13:31Z",
+            "name": "brand-colours-draft.png",
+            "size": 12420
+          },
+          {
+            "eTag": "\"{BC7AD9D4-AA7E-459B-B153-4203B95841F8},1\"",
+            "id": "01BLWRTHOU3F5LY7VKTNC3CU2CAO4VQQPY",
+            "lastModifiedDateTime": "2026-10-03T16:13:30Z",
+            "name": "project-brief.pdf",
+            "size": 899
+          }
+        ]
+      },
+      "library_before": {
+        "drive_id": "b!XQgI_nDr6EKVpkcBib2Y65nzyk4OzJVNs_7NCRoJ5okHaed8-zH-Ra2PlgJk8DE7",
+        "drive_name": "Dokumenty",
+        "items": [
+          {
+            "eTag": "\"{DF5F6305-2587-4DCF-816B-66742DE82950},1\"",
+            "id": "01BLWRTHIFMNP57BZFZ5GYC23GOQW6QKKQ",
+            "lastModifiedDateTime": "2026-10-03T16:13:29Z",
+            "name": "supplier-contacts.txt",
+            "size": 84
+          },
+          {
+            "eTag": "\"{F16DD218-E354-4A66-9FC0-59CAF9E10A05},1\"",
+            "id": "01BLWRTHIY2JW7CVHDMZFJ7QCZZL46CCQF",
+            "lastModifiedDateTime": "2026-10-03T16:13:30Z",
+            "name": "budget-summary.pdf",
+            "size": 894
+          },
+          {
+            "eTag": "\"{C4F9093F-3FD8-460F-8550-8034B2535054},1\"",
+            "id": "01BLWRTHJ7BH44JWB7B5DIKUEAGSZFGUCU",
+            "lastModifiedDateTime": "2026-10-03T16:13:29Z",
+            "name": "team-meeting-notes.txt",
+            "size": 87
+          },
+          {
+            "eTag": "\"{B0AC7F95-1CDF-4CA2-8232-D41C186F56AF},2\"",
+            "id": "01BLWRTHMVP6WLBXY4UJGIEMWUDQMG6VVP",
+            "lastModifiedDateTime": "2026-10-03T16:13:32Z",
+            "name": "room-bookings.xlsx",
+            "size": 19995
+          },
+          {
+            "eTag": "\"{672292AA-FA3C-4EFD-9552-2165B1CF6571},1\"",
+            "id": "01BLWRTHNKSIRGOPH27VHJKURBMWY46ZLR",
+            "lastModifiedDateTime": "2026-10-03T16:13:31Z",
+            "name": "office-floor-plan.png",
+            "size": 12420
+          },
+          {
+            "eTag": "\"{2A7D82CB-5505-47C3-8F6F-E520AB66FC1A},1\"",
+            "id": "01BLWRTHOLQJ6SUBKVYNDY637FECVWN7A2",
+            "lastModifiedDateTime": "2026-10-03T16:13:31Z",
+            "name": "brand-colours-draft.png",
+            "size": 12420
+          },
+          {
+            "eTag": "\"{BC7AD9D4-AA7E-459B-B153-4203B95841F8},1\"",
+            "id": "01BLWRTHOU3F5LY7VKTNC3CU2CAO4VQQPY",
+            "lastModifiedDateTime": "2026-10-03T16:13:30Z",
+            "name": "project-brief.pdf",
+            "size": 899
+          }
+        ]
+      },
+      "library_equal": true,
+      "onedrive_root_after": {
+        "childCount": 10,
+        "eTag": "",
+        "id": "01ZK75LGF6Y2GOVW7725BZO354PWSELRRZ",
+        "lastModifiedDateTime": "2026-10-13T23:33:29Z",
+        "size": 75284
+      },
+      "onedrive_root_before": {
+        "childCount": 10,
+        "eTag": "",
+        "id": "01ZK75LGF6Y2GOVW7725BZO354PWSELRRZ",
+        "lastModifiedDateTime": "2026-10-13T23:33:29Z",
+        "size": 75284
+      },
+      "onedrive_root_equal": true
+    }
+  },
+  "restore_point": {
+    "backup_time": "2026-10-13T22:00:58.3211091Z",
+    "id": "c2f0f2e7-177f-48ac-992b-93a50cf702e33203ea1d-3395-4c0c-8cdf-9707be7125cd"
+  },
+  "sessions": {
+    "a_vesp": "4532c9c7-21af-4f68-a038-4cbdfefb8aa1",
+    "b_veod": "fc6176f5-6946-4426-a07a-6845d2f652e0"
+  },
+  "spike": "W6.1",
+  "started_at": "2026-10-13T23:36:52Z"
+}

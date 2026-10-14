@@ -1,0 +1,32 @@
+{
+  "source": "rpworker 0.0.0 w6.1 export spike --record",
+  "request": "GET /v8/RestoreSessions/4532c9c7-21af-4f68-a038-4cbdfefb8aa1/Organization/Sites/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689/Documents/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e6897ce76907-31fb-45fe-ad8f-960264f0313bc4f9093f-3fd8-460f-8550-8034b2535054",
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8"
+  },
+  "body": {
+    "siteId": "fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689",
+    "sizeBytes": 87,
+    "version": "1.0",
+    "versionId": 1,
+    "id": "fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e6897ce76907-31fb-45fe-ad8f-960264f0313bc4f9093f-3fd8-460f-8550-8034b2535054",
+    "name": "team-meeting-notes.txt",
+    "createdBy": "Hrachya Harutyunyan",
+    "creationTime": "2026-10-03T16:13:29Z",
+    "modifiedBy": "Hrachya Harutyunyan",
+    "modificationTime": "2026-10-03T16:13:29Z",
+    "isFolder": false,
+    "_links": {
+      "self": {
+        "href": "/v8/restoresessions/4532c9c7-21af-4f68-a038-4cbdfefb8aa1/organization/sites/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689/documents/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e6897ce76907-31fb-45fe-ad8f-960264f0313bc4f9093f-3fd8-460f-8550-8034b2535054"
+      },
+      "library": {
+        "href": "/v8/restoresessions/4532c9c7-21af-4f68-a038-4cbdfefb8aa1/organization/sites/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689/libraries/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e6897ce76907-31fb-45fe-ad8f-960264f0313b"
+      },
+      "versions": {
+        "href": "/v8/restoresessions/4532c9c7-21af-4f68-a038-4cbdfefb8aa1/organization/sites/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689/documents/fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e6897ce76907-31fb-45fe-ad8f-960264f0313bc4f9093f-3fd8-460f-8550-8034b2535054/versions"
+      }
+    }
+  }
+}

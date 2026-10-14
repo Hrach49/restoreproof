@@ -1,0 +1,1319 @@
+{
+  "source": "rpworker 0.0.0 w6.1 export spike --record",
+  "request": "GET /v8/RestoreSessions?limit=50",
+  "status": 200,
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8"
+  },
+  "body": {
+    "offset": 0,
+    "limit": 50,
+    "_links": {
+      "self": {
+        "href": "/v8/RestoreSessions?offset=0&limit=50"
+      },
+      "next": {
+        "href": "/v8/RestoreSessions?offset=50&limit=50"
+      }
+    },
+    "results": [
+      {
+        "id": "4dc4c706-5902-4e04-a8a6-145a88d2cfa7",
+        "name": "SharePoint restore (Entire organization - 10/13/2026 10:00:58 PM)",
+        "organization": "RestoreProofLab.onmicrosoft.com",
+        "type": "Vesp",
+        "creationTime": "2026-10-13T23:38:05.0405654Z",
+        "endTime": "9999-12-31T23:59:59.9999999",
+        "state": "Working",
+        "result": "Success",
+        "initiatedBy": "rp-veeam",
+        "scopeName": "",
+        "clientHost": "[::ffff:127.0.0.1]",
+        "eTag": 1,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/4dc4c706-5902-4e04-a8a6-145a88d2cfa7"
+          },
+          "organization": {
+            "href": "/v8/restoresessions/4dc4c706-5902-4e04-a8a6-145a88d2cfa7/organization"
+          },
+          "restoreSessionEvents": {
+            "href": "/v8/restoresessions/4dc4c706-5902-4e04-a8a6-145a88d2cfa7/events"
+          }
+        }
+      },
+      {
+        "id": "58a1b0cc-fe33-4569-a457-1349d64a89ba",
+        "name": "OneDrive restore (Entire organization - 10/13/2026 10:00:58 PM)",
+        "organization": "RestoreProofLab.onmicrosoft.com",
+        "type": "Veod",
+        "creationTime": "2026-10-13T23:37:59.1229419Z",
+        "endTime": "9999-12-31T23:59:59.9999999",
+        "state": "Working",
+        "result": "Success",
+        "initiatedBy": "rp-veeam",
+        "scopeName": "",
+        "clientHost": "localhost:4443 (via: [::ffff:127.0.0.1])",
+        "eTag": 1,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/58a1b0cc-fe33-4569-a457-1349d64a89ba"
+          },
+          "organization": {
+            "href": "/v8/restoresessions/58a1b0cc-fe33-4569-a457-1349d64a89ba/organization"
+          },
+          "restoreSessionEvents": {
+            "href": "/v8/restoresessions/58a1b0cc-fe33-4569-a457-1349d64a89ba/events"
+          }
+        }
+      },
+      {
+        "id": "687c3d24-301d-4b55-a91e-fd444360eb29",
+        "name": "SharePoint restore (Entire organization - 10/13/2026 10:00:58 PM)",
+        "organization": "RestoreProofLab.onmicrosoft.com",
+        "type": "Vesp",
+        "creationTime": "2026-10-13T23:37:50.2263254Z",
+        "endTime": "9999-12-31T23:59:59.9999999",
+        "state": "Working",
+        "result": "Success",
+        "initiatedBy": "rp-veeam",
+        "scopeName": "",
+        "clientHost": "localhost:4443 (via: [::ffff:127.0.0.1])",
+        "eTag": 1,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/687c3d24-301d-4b55-a91e-fd444360eb29"
+          },
+          "organization": {
+            "href": "/v8/restoresessions/687c3d24-301d-4b55-a91e-fd444360eb29/organization"
+          },
+          "restoreSessionEvents": {
+            "href": "/v8/restoresessions/687c3d24-301d-4b55-a91e-fd444360eb29/events"
+          }
+        }
+      },
+      {
+        "id": "fc6176f5-6946-4426-a07a-6845d2f652e0",
+        "name": "OneDrive restore (Entire organization - 10/13/2026 10:00:58 PM)",
+        "organization": "RestoreProofLab.onmicrosoft.com",
+        "type": "Veod",
+        "creationTime": "2026-10-13T23:37:40.8147482Z",
+        "endTime": "2026-10-13T23:37:47.9888086Z",
+        "state": "Stopped",
+        "result": "Success",
+        "initiatedBy": "rp-veeam",
+        "details": "7 items processed (7 successes)",
+        "scopeName": "",
+        "clientHost": "localhost:4443 (via: [::ffff:127.0.0.1])",
+        "eTag": 2,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/fc6176f5-6946-4426-a07a-6845d2f652e0"
+          },
+          "organization": {
+            "href": "/v8/restoresessions/fc6176f5-6946-4426-a07a-6845d2f652e0/organization"
+          },
+          "restoreSessionEvents": {
+            "href": "/v8/restoresessions/fc6176f5-6946-4426-a07a-6845d2f652e0/events"
+          }
+        }
+      },
+      {
+        "id": "4532c9c7-21af-4f68-a038-4cbdfefb8aa1",
+        "name": "SharePoint restore (Entire organization - 10/13/2026 10:00:58 PM)",
+        "organization": "RestoreProofLab.onmicrosoft.com",
+        "type": "Vesp",
+        "creationTime": "2026-10-13T23:37:11.3797489Z",
+        "endTime": "2026-10-13T23:37:48.338297Z",
+        "state": "Stopped",
+        "result": "Success",
+        "initiatedBy": "rp-veeam",
+        "details": "8 items processed (8 successes)",
+        "scopeName": "",
+        "clientHost": "localhost:4443 (via: [::ffff:127.0.0.1])",
+        "eTag": 2,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/4532c9c7-21af-4f68-a038-4cbdfefb8aa1"
+          },
+          "organization": {
+            "href": "/v8/restoresessions/4532c9c7-21af-4f68-a038-4cbdfefb8aa1/organization"
+          },
+          "restoreSessionEvents": {
+            "href": "/v8/restoresessions/4532c9c7-21af-4f68-a038-4cbdfefb8aa1/events"
+          }
+        }
+      },
+      {
+        "id": "84932a70-3329-4861-8070-36b8d2557b64",
+        "name": "OneDrive restore (Entire organization - 10/13/2026 10:00:58 PM)",
+        "organization": "RestoreProofLab.onmicrosoft.com",
+        "type": "Veod",
+        "creationTime": "2026-10-13T23:37:04.765823Z",
+        "endTime": "2026-10-13T23:37:09.2409997Z",
+        "state": "Stopped",
+        "result": "Success",
+        "initiatedBy": "rp-veeam",
+        "details": "0 items processed",
+        "scopeName": "",
+        "clientHost": "localhost:4443 (via: [::ffff:127.0.0.1])",
+        "eTag": 2,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/84932a70-3329-4861-8070-36b8d2557b64"
+          },
+          "organization": {
+            "href": "/v8/restoresessions/84932a70-3329-4861-8070-36b8d2557b64/organization"
+          },
+          "restoreSessionEvents": {
+            "href": "/v8/restoresessions/84932a70-3329-4861-8070-36b8d2557b64/events"
+          }
+        }
+      },
+      {
+        "id": "46486bbd-ae4d-4e60-babc-ac9ba987ac99",
+        "name": "SharePoint restore (Entire organization - 10/13/2026 10:00:58 PM)",
+        "organization": "RestoreProofLab.onmicrosoft.com",
+        "type": "Vesp",
+        "creationTime": "2026-10-13T23:36:53.7206146Z",
+        "endTime": "2026-10-13T23:37:08.6676656Z",
+        "state": "Stopped",
+        "result": "Success",
+        "initiatedBy": "rp-veeam",
+        "details": "0 items processed",
+        "scopeName": "",
+        "clientHost": "localhost:4443 (via: [::ffff:127.0.0.1])",
+        "eTag": 2,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/46486bbd-ae4d-4e60-babc-ac9ba987ac99"
+          },
+          "organization": {
+            "href": "/v8/restoresessions/46486bbd-ae4d-4e60-babc-ac9ba987ac99/organization"
+          },
+          "restoreSessionEvents": {
+            "href": "/v8/restoresessions/46486bbd-ae4d-4e60-babc-ac9ba987ac99/events"
+          }
+        }
+      },
+      {
+        "id": "b26040c3-0134-4283-a8a2-8098e16567b3",
+        "name": "OneDrive restore (Entire organization - 10/13/2026 10:00:58 PM)",
+        "organization": "RestoreProofLab.onmicrosoft.com",
+        "type": "Veod",
+        "creationTime": "2026-10-13T23:33:50.8013034Z",
+        "endTime": "2026-10-13T23:34:30.7648694Z",
+        "state": "Stopped",
+        "result": "Success",
+        "initiatedBy": "rp-veeam",
+        "details": "7 items processed (7 successes)",
+        "scopeName": "",
+        "clientHost": "[::ffff:127.0.0.1]",
+        "eTag": 2,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/b26040c3-0134-4283-a8a2-8098e16567b3"
+          },
+          "organization": {
+            "href": "/v8/restoresessions/b26040c3-0134-4283-a8a2-8098e16567b3/organization"
+          },
+          "restoreSessionEvents": {
+            "href": "/v8/restoresessions/b26040c3-0134-4283-a8a2-8098e16567b3/events"
+          }
+        }
+      },
+      {
+        "id": "dc6bfba7-978a-4fc1-baac-50683c307208",
+        "name": "SharePoint restore (Entire organization - 10/13/2026 10:00:58 PM)",
+        "organization": "RestoreProofLab.onmicrosoft.com",
+        "type": "Vesp",
+        "creationTime": "2026-10-13T23:32:38.3707239Z",
+        "endTime": "2026-10-13T23:33:45.1021338Z",
+        "state": "Stopped",
+        "result": "Success",
+        "initiatedBy": "rp-veeam",
+        "details": "7 items processed (7 successes)",
+        "scopeName": "",
+        "clientHost": "[::ffff:127.0.0.1]",
+        "eTag": 2,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/dc6bfba7-978a-4fc1-baac-50683c307208"
+          },
+          "organization": {
+            "href": "/v8/restoresessions/dc6bfba7-978a-4fc1-baac-50683c307208/organization"
+          },
+          "restoreSessionEvents": {
+            "href": "/v8/restoresessions/dc6bfba7-978a-4fc1-baac-50683c307208/events"
+          }
+        }
+      },
+      {
+        "id": "b538873d-5c70-4224-83f0-f389aca8f768",
+        "name": "OneDrive restore (Entire organization - 10/13/2026 10:00:58 PM)",
+        "organization": "RestoreProofLab.onmicrosoft.com",
+        "type": "Veod",
+        "creationTime": "2026-10-13T23:32:34.8442436Z",
+        "endTime": "2026-10-13T23:34:32.2040574Z",
+        "state": "Stopped",
+        "result": "Success",
+        "initiatedBy": "rp-veeam",
+        "details": "7 items processed (7 successes)",
+        "scopeName": "",
+        "clientHost": "localhost:4443 (via: [::ffff:127.0.0.1])",
+        "eTag": 2,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/b538873d-5c70-4224-83f0-f389aca8f768"
+          },
+          "organization": {
+            "href": "/v8/restoresessions/b538873d-5c70-4224-83f0-f389aca8f768/organization"
+          },
+          "restoreSessionEvents": {
+            "href": "/v8/restoresessions/b538873d-5c70-4224-83f0-f389aca8f768/events"
+          }
+        }
+      },
+      {
+        "id": "ba6d6228-41fd-4db9-bffb-71f523e7f483",
+        "name": "SharePoint restore (Entire organization - 10/13/2026 10:00:58 PM)",
+        "organization": "RestoreProofLab.onmicrosoft.com",
+        "type": "Vesp",
+        "creationTime": "2026-10-13T23:32:30.398352Z",
+        "endTime": "2026-10-13T23:34:31.9620231Z",
+        "state": "Stopped",
+        "result": "Success",
+        "initiatedBy": "rp-veeam",
+        "details": "7 items processed (7 successes)",
+        "scopeName": "",
+        "clientHost": "localhost:4443 (via: [::ffff:127.0.0.1])",
+        "eTag": 2,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/ba6d6228-41fd-4db9-bffb-71f523e7f483"
+          },
+          "organization": {
+            "href": "/v8/restoresessions/ba6d6228-41fd-4db9-bffb-71f523e7f483/organization"
+          },
+          "restoreSessionEvents": {
+            "href": "/v8/restoresessions/ba6d6228-41fd-4db9-bffb-71f523e7f483/events"
+          }
+        }
+      },
+      {
+        "id": "31620423-8b51-4ec4-b1a9-70e3302900c6",
+        "name": "OneDrive restore (Entire organization - 10/13/2026 10:00:58 PM)",
+        "organization": "RestoreProofLab.onmicrosoft.com",
+        "type": "Veod",
+        "creationTime": "2026-10-13T23:32:05.0844266Z",
+        "endTime": "2026-10-13T23:32:28.2058444Z",
+        "state": "Stopped",
+        "result": "Success",
+        "initiatedBy": "rp-veeam",
+        "details": "7 items processed (7 successes)",
+        "scopeName": "",
+        "clientHost": "localhost:4443 (via: [::ffff:127.0.0.1])",
+        "eTag": 2,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/31620423-8b51-4ec4-b1a9-70e3302900c6"
+          },
+          "organization": {
+            "href": "/v8/restoresessions/31620423-8b51-4ec4-b1a9-70e3302900c6/organization"
+          },
+          "restoreSessionEvents": {
+            "href": "/v8/restoresessions/31620423-8b51-4ec4-b1a9-70e3302900c6/events"
+          }
+        }
+      },
+      {
+        "id": "7330cb7f-2531-4347-ba91-8078c9335467",
+        "name": "SharePoint restore (Entire organization - 10/13/2026 10:00:58 PM)",
+        "organization": "RestoreProofLab.onmicrosoft.com",
+        "type": "Vesp",
+        "creationTime": "2026-10-13T23:31:43.3042701Z",
+        "endTime": "2026-10-13T23:32:28.4004942Z",
+        "state": "Stopped",
+        "result": "Success",
+        "initiatedBy": "rp-veeam",
+        "details": "8 items processed (8 successes)",
+        "scopeName": "",
+        "clientHost": "localhost:4443 (via: [::ffff:127.0.0.1])",
+        "eTag": 2,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/7330cb7f-2531-4347-ba91-8078c9335467"
+          },
+          "organization": {
+            "href": "/v8/restoresessions/7330cb7f-2531-4347-ba91-8078c9335467/organization"
+          },
+          "restoreSessionEvents": {
+            "href": "/v8/restoresessions/7330cb7f-2531-4347-ba91-8078c9335467/events"
+          }
+        }
+      },
+      {
+        "id": "0262aa3e-7c93-410f-b37f-335c13859b90",
+        "name": "OneDrive restore (Entire organization - 10/13/2026 10:00:58 PM)",
+        "organization": "RestoreProofLab.onmicrosoft.com",
+        "type": "Veod",
+        "creationTime": "2026-10-13T23:31:35.6321257Z",
+        "endTime": "2026-10-13T23:31:39.2372505Z",
+        "state": "Stopped",
+        "result": "Success",
+        "initiatedBy": "rp-veeam",
+        "details": "0 items processed",
+        "scopeName": "",
+        "clientHost": "localhost:4443 (via: [::ffff:127.0.0.1])",
+        "eTag": 2,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/0262aa3e-7c93-410f-b37f-335c13859b90"
+          },
+          "organization": {
+            "href": "/v8/restoresessions/0262aa3e-7c93-410f-b37f-335c13859b90/organization"
+          },
+          "restoreSessionEvents": {
+            "href": "/v8/restoresessions/0262aa3e-7c93-410f-b37f-335c13859b90/events"
+          }
+        }
+      },
+      {
+        "id": "2094ddf9-3ff4-4d06-be7f-65b134b51267",
+        "name": "SharePoint restore (Entire organization - 10/13/2026 10:00:58 PM)",
+        "organization": "RestoreProofLab.onmicrosoft.com",
+        "type": "Vesp",
+        "creationTime": "2026-10-13T23:31:13.4615435Z",
+        "endTime": "2026-10-13T23:31:38.9655625Z",
+        "state": "Stopped",
+        "result": "Success",
+        "initiatedBy": "rp-veeam",
+        "details": "0 items processed",
+        "scopeName": "",
+        "clientHost": "localhost:4443 (via: [::ffff:127.0.0.1])",
+        "eTag": 2,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/2094ddf9-3ff4-4d06-be7f-65b134b51267"
+          },
+          "organization": {
+            "href": "/v8/restoresessions/2094ddf9-3ff4-4d06-be7f-65b134b51267/organization"
+          },
+          "restoreSessionEvents": {
+            "href": "/v8/restoresessions/2094ddf9-3ff4-4d06-be7f-65b134b51267/events"
+          }
+        }
+      },
+      {
+        "id": "4afc00ef-7047-48f5-ae1d-df5ca44e809c",
+        "name": "OneDrive restore (Entire organization - 10/10/2026 10:00:40 PM)",
+        "organization": "RestoreProofLab.onmicrosoft.com",
+        "type": "Veod",
+        "creationTime": "2026-10-11T13:55:54.8859778Z",
+        "endTime": "2026-10-11T13:56:39.6245457Z",
+        "state": "Stopped",
+        "result": "Success",
+        "initiatedBy": "rp-veeam",
+        "details": "10 items processed (10 successes)",
+        "scopeName": "",
+        "clientHost": "[::ffff:127.0.0.1]",
+        "eTag": 2,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/4afc00ef-7047-48f5-ae1d-df5ca44e809c"
+          },
+          "organization": {
+            "href": "/v8/restoresessions/4afc00ef-7047-48f5-ae1d-df5ca44e809c/organization"
+          },
+          "restoreSessionEvents": {
+            "href": "/v8/restoresessions/4afc00ef-7047-48f5-ae1d-df5ca44e809c/events"
+          }
+        }
+      },
+      {
+        "id": "1393f2a4-a863-4e54-a585-77c9175fa448",
+        "name": "SharePoint restore (Entire organization - 10/10/2026 10:00:40 PM)",
+        "organization": "RestoreProofLab.onmicrosoft.com",
+        "type": "Vesp",
+        "creationTime": "2026-10-11T13:54:53.8944759Z",
+        "endTime": "2026-10-11T13:55:54.1198223Z",
+        "state": "Stopped",
+        "result": "Success",
+        "initiatedBy": "rp-veeam",
+        "details": "10 items processed (10 successes)",
+        "scopeName": "",
+        "clientHost": "[::ffff:127.0.0.1]",
+        "eTag": 2,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/1393f2a4-a863-4e54-a585-77c9175fa448"
+          },
+          "organization": {
+            "href": "/v8/restoresessions/1393f2a4-a863-4e54-a585-77c9175fa448/organization"
+          },
+          "restoreSessionEvents": {
+            "href": "/v8/restoresessions/1393f2a4-a863-4e54-a585-77c9175fa448/events"
+          }
+        }
+      },
+      {
+        "id": "9fc57bdb-4675-45f5-97dd-14285de0f48d",
+        "name": "Exchange restore (Entire organization - 10/10/2026 10:00:40 PM)",
+        "organization": "RestoreProofLab.onmicrosoft.com",
+        "type": "Vex",
+        "creationTime": "2026-10-11T13:54:23.0171142Z",
+        "endTime": "2026-10-11T13:54:53.4825454Z",
+        "state": "Stopped",
+        "result": "Success",
+        "initiatedBy": "rp-veeam",
+        "details": "5 items processed (5 successes)",
+        "scopeName": "",
+        "clientHost": "[::ffff:127.0.0.1]",
+        "eTag": 2,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/9fc57bdb-4675-45f5-97dd-14285de0f48d"
+          },
+          "organization": {
+            "href": "/v8/restoresessions/9fc57bdb-4675-45f5-97dd-14285de0f48d/organization"
+          },
+          "restoreSessionEvents": {
+            "href": "/v8/restoresessions/9fc57bdb-4675-45f5-97dd-14285de0f48d/events"
+          }
+        }
+      },
+      {
+        "id": "d8557878-f872-4f4a-b932-bbf2443350c6",
+        "name": "Exchange restore (Entire organization - 10/10/2026 10:00:40 PM)",
+        "organization": "RestoreProofLab.onmicrosoft.com",
+        "type": "Vex",
+        "creationTime": "2026-10-11T13:53:47.29874Z",
+        "endTime": "2026-10-11T13:54:18.1519348Z",
+        "state": "Stopped",
+        "result": "Success",
+        "initiatedBy": "rp-veeam",
+        "details": "5 items processed (5 successes)",
+        "scopeName": "",
+        "clientHost": "[::ffff:127.0.0.1]",
+        "eTag": 2,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/d8557878-f872-4f4a-b932-bbf2443350c6"
+          },
+          "organization": {
+            "href": "/v8/restoresessions/d8557878-f872-4f4a-b932-bbf2443350c6/organization"
+          },
+          "restoreSessionEvents": {
+            "href": "/v8/restoresessions/d8557878-f872-4f4a-b932-bbf2443350c6/events"
+          }
+        }
+      },
+      {
+        "id": "0ee68807-53bb-4571-944f-84bc3be03f52",
+        "name": "OneDrive restore (Entire organization - 10/10/2026 10:00:40 PM)",
+        "organization": "RestoreProofLab.onmicrosoft.com",
+        "type": "Veod",
+        "creationTime": "2026-10-11T13:53:44.8994714Z",
+        "endTime": "2026-10-11T13:56:40.8651489Z",
+        "state": "Stopped",
+        "result": "Success",
+        "initiatedBy": "rp-veeam",
+        "details": "10 items processed (10 successes)",
+        "scopeName": "",
+        "clientHost": "localhost:4443 (via: [::ffff:127.0.0.1])",
+        "eTag": 2,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/0ee68807-53bb-4571-944f-84bc3be03f52"
+          },
+          "organization": {
+            "href": "/v8/restoresessions/0ee68807-53bb-4571-944f-84bc3be03f52/organization"
+          },
+          "restoreSessionEvents": {
+            "href": "/v8/restoresessions/0ee68807-53bb-4571-944f-84bc3be03f52/events"
+          }
+        }
+      },
+      {
+        "id": "d7c24351-29fc-41ef-9bf3-1c60f2afcad4",
+        "name": "SharePoint restore (Entire organization - 10/10/2026 10:00:40 PM)",
+        "organization": "RestoreProofLab.onmicrosoft.com",
+        "type": "Vesp",
+        "creationTime": "2026-10-11T13:53:42.248902Z",
+        "endTime": "2026-10-11T13:56:40.7128382Z",
+        "state": "Stopped",
+        "result": "Success",
+        "initiatedBy": "rp-veeam",
+        "details": "10 items processed (10 successes)",
+        "scopeName": "",
+        "clientHost": "localhost:4443 (via: [::ffff:127.0.0.1])",
+        "eTag": 2,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/d7c24351-29fc-41ef-9bf3-1c60f2afcad4"
+          },
+          "organization": {
+            "href": "/v8/restoresessions/d7c24351-29fc-41ef-9bf3-1c60f2afcad4/organization"
+          },
+          "restoreSessionEvents": {
+            "href": "/v8/restoresessions/d7c24351-29fc-41ef-9bf3-1c60f2afcad4/events"
+          }
+        }
+      },
+      {
+        "id": "fef7839c-67f5-4954-8e68-c464747f0f88",
+        "name": "Exchange restore (Entire organization - 10/10/2026 10:00:40 PM)",
+        "organization": "RestoreProofLab.onmicrosoft.com",
+        "type": "Vex",
+        "creationTime": "2026-10-11T13:53:41.2920432Z",
+        "endTime": "2026-10-11T13:56:40.6173696Z",
+        "state": "Stopped",
+        "result": "Success",
+        "initiatedBy": "rp-veeam",
+        "details": "10 items processed (10 successes)",
+        "scopeName": "",
+        "clientHost": "localhost:4443 (via: [::ffff:127.0.0.1])",
+        "eTag": 2,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/fef7839c-67f5-4954-8e68-c464747f0f88"
+          },
+          "organization": {
+            "href": "/v8/restoresessions/fef7839c-67f5-4954-8e68-c464747f0f88/organization"
+          },
+          "restoreSessionEvents": {
+            "href": "/v8/restoresessions/fef7839c-67f5-4954-8e68-c464747f0f88/events"
+          }
+        }
+      },
+      {
+        "id": "5bc96ee1-02f1-49fa-80e5-3131224ab665",
+        "name": "OneDrive restore (Entire organization - 10/10/2026 10:00:40 PM)",
+        "organization": "RestoreProofLab.onmicrosoft.com",
+        "type": "Veod",
+        "creationTime": "2026-10-11T13:53:37.7439902Z",
+        "endTime": "2026-10-11T13:53:39.3833625Z",
+        "state": "Stopped",
+        "result": "Success",
+        "initiatedBy": "rp-veeam",
+        "details": "0 items processed",
+        "scopeName": "",
+        "clientHost": "localhost:4443 (via: [::ffff:127.0.0.1])",
+        "eTag": 2,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/5bc96ee1-02f1-49fa-80e5-3131224ab665"
+          },
+          "organization": {
+            "href": "/v8/restoresessions/5bc96ee1-02f1-49fa-80e5-3131224ab665/organization"
+          },
+          "restoreSessionEvents": {
+            "href": "/v8/restoresessions/5bc96ee1-02f1-49fa-80e5-3131224ab665/events"
+          }
+        }
+      },
+      {
+        "id": "6ecf2a7b-f25e-4e44-a311-6ae22e213f28",
+        "name": "SharePoint restore (Entire organization - 10/10/2026 10:00:40 PM)",
+        "organization": "RestoreProofLab.onmicrosoft.com",
+        "type": "Vesp",
+        "creationTime": "2026-10-11T13:53:23.5925022Z",
+        "endTime": "2026-10-11T13:53:39.2171494Z",
+        "state": "Stopped",
+        "result": "Success",
+        "initiatedBy": "rp-veeam",
+        "details": "0 items processed",
+        "scopeName": "",
+        "clientHost": "localhost:4443 (via: [::ffff:127.0.0.1])",
+        "eTag": 2,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/6ecf2a7b-f25e-4e44-a311-6ae22e213f28"
+          },
+          "organization": {
+            "href": "/v8/restoresessions/6ecf2a7b-f25e-4e44-a311-6ae22e213f28/organization"
+          },
+          "restoreSessionEvents": {
+            "href": "/v8/restoresessions/6ecf2a7b-f25e-4e44-a311-6ae22e213f28/events"
+          }
+        }
+      },
+      {
+        "id": "fedd7754-b23c-4896-9292-69a7d55ee1c5",
+        "name": "Exchange restore (Entire organization - 10/10/2026 10:00:40 PM)",
+        "organization": "RestoreProofLab.onmicrosoft.com",
+        "type": "Vex",
+        "creationTime": "2026-10-11T13:53:22.0079294Z",
+        "endTime": "2026-10-11T13:53:39.0996079Z",
+        "state": "Stopped",
+        "result": "Success",
+        "initiatedBy": "rp-veeam",
+        "details": "0 items processed",
+        "scopeName": "",
+        "clientHost": "localhost:4443 (via: [::ffff:127.0.0.1])",
+        "eTag": 2,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/fedd7754-b23c-4896-9292-69a7d55ee1c5"
+          },
+          "organization": {
+            "href": "/v8/restoresessions/fedd7754-b23c-4896-9292-69a7d55ee1c5/organization"
+          },
+          "restoreSessionEvents": {
+            "href": "/v8/restoresessions/fedd7754-b23c-4896-9292-69a7d55ee1c5/events"
+          }
+        }
+      },
+      {
+        "id": "7b476a91-e190-448a-b983-4a6a69e71aa5",
+        "name": "OneDrive restore (Entire organization - 10/9/2026 10:00:56 PM)",
+        "organization": "RestoreProofLab.onmicrosoft.com",
+        "type": "Veod",
+        "creationTime": "2026-10-10T16:46:25.3162782Z",
+        "endTime": "2026-10-10T16:47:02.7535173Z",
+        "state": "Stopped",
+        "result": "Success",
+        "initiatedBy": "rp-veeam",
+        "details": "10 items processed (10 successes)",
+        "scopeName": "",
+        "clientHost": "[::ffff:127.0.0.1]",
+        "eTag": 2,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/7b476a91-e190-448a-b983-4a6a69e71aa5"
+          },
+          "organization": {
+            "href": "/v8/restoresessions/7b476a91-e190-448a-b983-4a6a69e71aa5/organization"
+          },
+          "restoreSessionEvents": {
+            "href": "/v8/restoresessions/7b476a91-e190-448a-b983-4a6a69e71aa5/events"
+          }
+        }
+      },
+      {
+        "id": "ad0ef5e7-a36e-4e77-80b8-c89169e22fc0",
+        "name": "SharePoint restore (Entire organization - 10/9/2026 10:00:56 PM)",
+        "organization": "RestoreProofLab.onmicrosoft.com",
+        "type": "Vesp",
+        "creationTime": "2026-10-10T16:45:24.4364334Z",
+        "endTime": "2026-10-10T16:46:22.3417094Z",
+        "state": "Stopped",
+        "result": "Success",
+        "initiatedBy": "rp-veeam",
+        "details": "10 items processed (10 successes)",
+        "scopeName": "",
+        "clientHost": "[::ffff:127.0.0.1]",
+        "eTag": 2,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/ad0ef5e7-a36e-4e77-80b8-c89169e22fc0"
+          },
+          "organization": {
+            "href": "/v8/restoresessions/ad0ef5e7-a36e-4e77-80b8-c89169e22fc0/organization"
+          },
+          "restoreSessionEvents": {
+            "href": "/v8/restoresessions/ad0ef5e7-a36e-4e77-80b8-c89169e22fc0/events"
+          }
+        }
+      },
+      {
+        "id": "1661ef1f-74e3-44c2-b21f-03458b516feb",
+        "name": "Exchange restore (Entire organization - 10/9/2026 10:00:56 PM)",
+        "organization": "RestoreProofLab.onmicrosoft.com",
+        "type": "Vex",
+        "creationTime": "2026-10-10T16:44:53.5708082Z",
+        "endTime": "2026-10-10T16:45:21.67954Z",
+        "state": "Stopped",
+        "result": "Success",
+        "initiatedBy": "rp-veeam",
+        "details": "2 items processed (2 successes)",
+        "scopeName": "",
+        "clientHost": "[::ffff:127.0.0.1]",
+        "eTag": 2,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/1661ef1f-74e3-44c2-b21f-03458b516feb"
+          },
+          "organization": {
+            "href": "/v8/restoresessions/1661ef1f-74e3-44c2-b21f-03458b516feb/organization"
+          },
+          "restoreSessionEvents": {
+            "href": "/v8/restoresessions/1661ef1f-74e3-44c2-b21f-03458b516feb/events"
+          }
+        }
+      },
+      {
+        "id": "f2b7f835-c0cb-4597-9ac5-29b7a7415f3b",
+        "name": "Exchange restore (Entire organization - 10/9/2026 10:00:56 PM)",
+        "organization": "RestoreProofLab.onmicrosoft.com",
+        "type": "Vex",
+        "creationTime": "2026-10-10T16:44:17.560436Z",
+        "endTime": "2026-10-10T16:44:51.4735043Z",
+        "state": "Stopped",
+        "result": "Success",
+        "initiatedBy": "rp-veeam",
+        "details": "8 items processed (8 successes)",
+        "scopeName": "",
+        "clientHost": "[::ffff:127.0.0.1]",
+        "eTag": 2,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/f2b7f835-c0cb-4597-9ac5-29b7a7415f3b"
+          },
+          "organization": {
+            "href": "/v8/restoresessions/f2b7f835-c0cb-4597-9ac5-29b7a7415f3b/organization"
+          },
+          "restoreSessionEvents": {
+            "href": "/v8/restoresessions/f2b7f835-c0cb-4597-9ac5-29b7a7415f3b/events"
+          }
+        }
+      },
+      {
+        "id": "e87ad5e6-4ce0-47c3-82a5-c587aa75e2c2",
+        "name": "OneDrive restore (Entire organization - 10/9/2026 10:00:56 PM)",
+        "organization": "RestoreProofLab.onmicrosoft.com",
+        "type": "Veod",
+        "creationTime": "2026-10-10T16:44:14.8994333Z",
+        "endTime": "2026-10-10T16:47:06.3248545Z",
+        "state": "Stopped",
+        "result": "Success",
+        "initiatedBy": "rp-veeam",
+        "details": "10 items processed (10 successes)",
+        "scopeName": "",
+        "clientHost": "localhost:4443 (via: [::ffff:127.0.0.1])",
+        "eTag": 2,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/e87ad5e6-4ce0-47c3-82a5-c587aa75e2c2"
+          },
+          "organization": {
+            "href": "/v8/restoresessions/e87ad5e6-4ce0-47c3-82a5-c587aa75e2c2/organization"
+          },
+          "restoreSessionEvents": {
+            "href": "/v8/restoresessions/e87ad5e6-4ce0-47c3-82a5-c587aa75e2c2/events"
+          }
+        }
+      },
+      {
+        "id": "a81f9a67-4d00-4beb-8985-2bcb39567a2d",
+        "name": "SharePoint restore (Entire organization - 10/9/2026 10:00:56 PM)",
+        "organization": "RestoreProofLab.onmicrosoft.com",
+        "type": "Vesp",
+        "creationTime": "2026-10-10T16:44:11.5666525Z",
+        "endTime": "2026-10-10T16:47:06.1605338Z",
+        "state": "Stopped",
+        "result": "Success",
+        "initiatedBy": "rp-veeam",
+        "details": "10 items processed (10 successes)",
+        "scopeName": "",
+        "clientHost": "localhost:4443 (via: [::ffff:127.0.0.1])",
+        "eTag": 2,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/a81f9a67-4d00-4beb-8985-2bcb39567a2d"
+          },
+          "organization": {
+            "href": "/v8/restoresessions/a81f9a67-4d00-4beb-8985-2bcb39567a2d/organization"
+          },
+          "restoreSessionEvents": {
+            "href": "/v8/restoresessions/a81f9a67-4d00-4beb-8985-2bcb39567a2d/events"
+          }
+        }
+      },
+      {
+        "id": "fbaaa126-a4dd-48ff-a25b-34cbdab7d913",
+        "name": "Exchange restore (Entire organization - 10/9/2026 10:00:56 PM)",
+        "organization": "RestoreProofLab.onmicrosoft.com",
+        "type": "Vex",
+        "creationTime": "2026-10-10T16:44:09.674268Z",
+        "endTime": "2026-10-10T16:47:06.0007827Z",
+        "state": "Stopped",
+        "result": "Success",
+        "initiatedBy": "rp-veeam",
+        "details": "10 items processed (10 successes)",
+        "scopeName": "",
+        "clientHost": "localhost:4443 (via: [::ffff:127.0.0.1])",
+        "eTag": 2,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/fbaaa126-a4dd-48ff-a25b-34cbdab7d913"
+          },
+          "organization": {
+            "href": "/v8/restoresessions/fbaaa126-a4dd-48ff-a25b-34cbdab7d913/organization"
+          },
+          "restoreSessionEvents": {
+            "href": "/v8/restoresessions/fbaaa126-a4dd-48ff-a25b-34cbdab7d913/events"
+          }
+        }
+      },
+      {
+        "id": "6e80dfa9-a11d-4198-a83f-2acff6e456bb",
+        "name": "OneDrive restore (Entire organization - 10/9/2026 10:00:56 PM)",
+        "organization": "RestoreProofLab.onmicrosoft.com",
+        "type": "Veod",
+        "creationTime": "2026-10-10T16:44:04.8642826Z",
+        "endTime": "2026-10-10T16:44:07.6349552Z",
+        "state": "Stopped",
+        "result": "Success",
+        "initiatedBy": "rp-veeam",
+        "details": "0 items processed",
+        "scopeName": "",
+        "clientHost": "localhost:4443 (via: [::ffff:127.0.0.1])",
+        "eTag": 2,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/6e80dfa9-a11d-4198-a83f-2acff6e456bb"
+          },
+          "organization": {
+            "href": "/v8/restoresessions/6e80dfa9-a11d-4198-a83f-2acff6e456bb/organization"
+          },
+          "restoreSessionEvents": {
+            "href": "/v8/restoresessions/6e80dfa9-a11d-4198-a83f-2acff6e456bb/events"
+          }
+        }
+      },
+      {
+        "id": "98df3131-a052-4114-a2f5-d7740cbc4221",
+        "name": "SharePoint restore (Entire organization - 10/9/2026 10:00:56 PM)",
+        "organization": "RestoreProofLab.onmicrosoft.com",
+        "type": "Vesp",
+        "creationTime": "2026-10-10T16:43:56.3647375Z",
+        "endTime": "2026-10-10T16:44:07.4901007Z",
+        "state": "Stopped",
+        "result": "Success",
+        "initiatedBy": "rp-veeam",
+        "details": "0 items processed",
+        "scopeName": "",
+        "clientHost": "localhost:4443 (via: [::ffff:127.0.0.1])",
+        "eTag": 2,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/98df3131-a052-4114-a2f5-d7740cbc4221"
+          },
+          "organization": {
+            "href": "/v8/restoresessions/98df3131-a052-4114-a2f5-d7740cbc4221/organization"
+          },
+          "restoreSessionEvents": {
+            "href": "/v8/restoresessions/98df3131-a052-4114-a2f5-d7740cbc4221/events"
+          }
+        }
+      },
+      {
+        "id": "d7e2d0d1-d1d2-4287-b600-168d86649317",
+        "name": "Exchange restore (Entire organization - 10/9/2026 10:00:56 PM)",
+        "organization": "RestoreProofLab.onmicrosoft.com",
+        "type": "Vex",
+        "creationTime": "2026-10-10T16:43:55.1267802Z",
+        "endTime": "2026-10-10T16:44:07.3017801Z",
+        "state": "Stopped",
+        "result": "Success",
+        "initiatedBy": "rp-veeam",
+        "details": "0 items processed",
+        "scopeName": "",
+        "clientHost": "localhost:4443 (via: [::ffff:127.0.0.1])",
+        "eTag": 2,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/d7e2d0d1-d1d2-4287-b600-168d86649317"
+          },
+          "organization": {
+            "href": "/v8/restoresessions/d7e2d0d1-d1d2-4287-b600-168d86649317/organization"
+          },
+          "restoreSessionEvents": {
+            "href": "/v8/restoresessions/d7e2d0d1-d1d2-4287-b600-168d86649317/events"
+          }
+        }
+      },
+      {
+        "id": "7ddfdfd2-3b0f-403d-9209-d235c7059944",
+        "name": "OneDrive restore (Entire organization - 10/8/2026 11:43:58 PM)",
+        "organization": "RestoreProofLab.onmicrosoft.com",
+        "type": "Veod",
+        "creationTime": "2026-10-09T20:29:01.1840094Z",
+        "endTime": "2026-10-09T20:29:31.80401Z",
+        "state": "Stopped",
+        "result": "Success",
+        "initiatedBy": "rp-veeam",
+        "details": "1 item processed (1 success)",
+        "scopeName": "",
+        "clientHost": "[::ffff:127.0.0.1]",
+        "eTag": 2,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/7ddfdfd2-3b0f-403d-9209-d235c7059944"
+          },
+          "organization": {
+            "href": "/v8/restoresessions/7ddfdfd2-3b0f-403d-9209-d235c7059944/organization"
+          },
+          "restoreSessionEvents": {
+            "href": "/v8/restoresessions/7ddfdfd2-3b0f-403d-9209-d235c7059944/events"
+          }
+        }
+      },
+      {
+        "id": "8ef26a48-2474-480b-9f0f-81bccfd97aeb",
+        "name": "SharePoint restore (Entire organization - 10/8/2026 11:43:58 PM)",
+        "organization": "RestoreProofLab.onmicrosoft.com",
+        "type": "Vesp",
+        "creationTime": "2026-10-09T20:28:20.4804195Z",
+        "endTime": "2026-10-09T20:28:56.6546061Z",
+        "state": "Stopped",
+        "result": "Success",
+        "initiatedBy": "rp-veeam",
+        "details": "1 item processed (1 success)",
+        "scopeName": "",
+        "clientHost": "[::ffff:127.0.0.1]",
+        "eTag": 2,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/8ef26a48-2474-480b-9f0f-81bccfd97aeb"
+          },
+          "organization": {
+            "href": "/v8/restoresessions/8ef26a48-2474-480b-9f0f-81bccfd97aeb/organization"
+          },
+          "restoreSessionEvents": {
+            "href": "/v8/restoresessions/8ef26a48-2474-480b-9f0f-81bccfd97aeb/events"
+          }
+        }
+      },
+      {
+        "id": "7c8924d6-f69b-48d7-9031-3ed668cdaaea",
+        "name": "Exchange restore (Entire organization - 10/8/2026 11:43:58 PM)",
+        "organization": "RestoreProofLab.onmicrosoft.com",
+        "type": "Vex",
+        "creationTime": "2026-10-09T20:27:44.8954532Z",
+        "endTime": "2026-10-09T20:28:16.4799428Z",
+        "state": "Stopped",
+        "result": "Success",
+        "initiatedBy": "rp-veeam",
+        "details": "1 item processed (1 success)",
+        "scopeName": "",
+        "clientHost": "[::ffff:127.0.0.1]",
+        "eTag": 2,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/7c8924d6-f69b-48d7-9031-3ed668cdaaea"
+          },
+          "organization": {
+            "href": "/v8/restoresessions/7c8924d6-f69b-48d7-9031-3ed668cdaaea/organization"
+          },
+          "restoreSessionEvents": {
+            "href": "/v8/restoresessions/7c8924d6-f69b-48d7-9031-3ed668cdaaea/events"
+          }
+        }
+      },
+      {
+        "id": "f4eb420d-12f6-4a4e-9537-dcbf14f58632",
+        "name": "OneDrive restore (Entire organization - 10/8/2026 11:43:58 PM)",
+        "organization": "RestoreProofLab.onmicrosoft.com",
+        "type": "Veod",
+        "creationTime": "2026-10-09T20:27:44.2849194Z",
+        "endTime": "2026-10-09T20:29:37.1366702Z",
+        "state": "Stopped",
+        "result": "Success",
+        "initiatedBy": "rp-veeam",
+        "details": "1 item processed (1 success)",
+        "scopeName": "",
+        "clientHost": "localhost:4443 (via: [::ffff:127.0.0.1])",
+        "eTag": 2,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/f4eb420d-12f6-4a4e-9537-dcbf14f58632"
+          },
+          "organization": {
+            "href": "/v8/restoresessions/f4eb420d-12f6-4a4e-9537-dcbf14f58632/organization"
+          },
+          "restoreSessionEvents": {
+            "href": "/v8/restoresessions/f4eb420d-12f6-4a4e-9537-dcbf14f58632/events"
+          }
+        }
+      },
+      {
+        "id": "c5279d80-e618-4996-afb6-c109a64e5d32",
+        "name": "SharePoint restore (Entire organization - 10/8/2026 11:43:58 PM)",
+        "organization": "RestoreProofLab.onmicrosoft.com",
+        "type": "Vesp",
+        "creationTime": "2026-10-09T20:27:43.2142951Z",
+        "endTime": "2026-10-09T20:29:37.018718Z",
+        "state": "Stopped",
+        "result": "Success",
+        "initiatedBy": "rp-veeam",
+        "details": "1 item processed (1 success)",
+        "scopeName": "",
+        "clientHost": "localhost:4443 (via: [::ffff:127.0.0.1])",
+        "eTag": 2,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/c5279d80-e618-4996-afb6-c109a64e5d32"
+          },
+          "organization": {
+            "href": "/v8/restoresessions/c5279d80-e618-4996-afb6-c109a64e5d32/organization"
+          },
+          "restoreSessionEvents": {
+            "href": "/v8/restoresessions/c5279d80-e618-4996-afb6-c109a64e5d32/events"
+          }
+        }
+      },
+      {
+        "id": "bc31745d-0c31-42ca-b08e-8c6d5ff2b07b",
+        "name": "Exchange restore (Entire organization - 10/8/2026 11:43:58 PM)",
+        "organization": "RestoreProofLab.onmicrosoft.com",
+        "type": "Vex",
+        "creationTime": "2026-10-09T20:27:42.6892456Z",
+        "endTime": "2026-10-09T20:29:36.8448795Z",
+        "state": "Stopped",
+        "result": "Success",
+        "initiatedBy": "rp-veeam",
+        "details": "1 item processed (1 success)",
+        "scopeName": "",
+        "clientHost": "localhost:4443 (via: [::ffff:127.0.0.1])",
+        "eTag": 2,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/bc31745d-0c31-42ca-b08e-8c6d5ff2b07b"
+          },
+          "organization": {
+            "href": "/v8/restoresessions/bc31745d-0c31-42ca-b08e-8c6d5ff2b07b/organization"
+          },
+          "restoreSessionEvents": {
+            "href": "/v8/restoresessions/bc31745d-0c31-42ca-b08e-8c6d5ff2b07b/events"
+          }
+        }
+      },
+      {
+        "id": "f5161024-c6be-4853-aa44-ea89e6528402",
+        "name": "OneDrive restore (Entire organization - 10/8/2026 11:43:58 PM)",
+        "organization": "RestoreProofLab.onmicrosoft.com",
+        "type": "Veod",
+        "creationTime": "2026-10-09T20:26:18.5304843Z",
+        "endTime": "2026-10-09T20:26:51.2995001Z",
+        "state": "Stopped",
+        "result": "Success",
+        "initiatedBy": "rp-veeam",
+        "details": "1 item processed (1 success)",
+        "scopeName": "",
+        "clientHost": "[::ffff:127.0.0.1]",
+        "eTag": 2,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/f5161024-c6be-4853-aa44-ea89e6528402"
+          },
+          "organization": {
+            "href": "/v8/restoresessions/f5161024-c6be-4853-aa44-ea89e6528402/organization"
+          },
+          "restoreSessionEvents": {
+            "href": "/v8/restoresessions/f5161024-c6be-4853-aa44-ea89e6528402/events"
+          }
+        }
+      },
+      {
+        "id": "7c386030-dd24-49c8-b50e-1d1008e7622d",
+        "name": "SharePoint restore (Entire organization - 10/8/2026 11:43:58 PM)",
+        "organization": "RestoreProofLab.onmicrosoft.com",
+        "type": "Vesp",
+        "creationTime": "2026-10-09T20:25:37.7336491Z",
+        "endTime": "2026-10-09T20:26:16.1650557Z",
+        "state": "Stopped",
+        "result": "Success",
+        "initiatedBy": "rp-veeam",
+        "details": "1 item processed (1 success)",
+        "scopeName": "",
+        "clientHost": "[::ffff:127.0.0.1]",
+        "eTag": 2,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/7c386030-dd24-49c8-b50e-1d1008e7622d"
+          },
+          "organization": {
+            "href": "/v8/restoresessions/7c386030-dd24-49c8-b50e-1d1008e7622d/organization"
+          },
+          "restoreSessionEvents": {
+            "href": "/v8/restoresessions/7c386030-dd24-49c8-b50e-1d1008e7622d/events"
+          }
+        }
+      },
+      {
+        "id": "d42a81d2-8f4c-45ef-9c5b-87ea49c57fa3",
+        "name": "Exchange restore (Entire organization - 10/8/2026 11:43:58 PM)",
+        "organization": "RestoreProofLab.onmicrosoft.com",
+        "type": "Vex",
+        "creationTime": "2026-10-09T20:25:07.1583626Z",
+        "endTime": "2026-10-09T20:25:36.0232544Z",
+        "state": "Stopped",
+        "result": "Success",
+        "initiatedBy": "rp-veeam",
+        "details": "1 item processed (1 success)",
+        "scopeName": "",
+        "clientHost": "[::ffff:127.0.0.1]",
+        "eTag": 2,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/d42a81d2-8f4c-45ef-9c5b-87ea49c57fa3"
+          },
+          "organization": {
+            "href": "/v8/restoresessions/d42a81d2-8f4c-45ef-9c5b-87ea49c57fa3/organization"
+          },
+          "restoreSessionEvents": {
+            "href": "/v8/restoresessions/d42a81d2-8f4c-45ef-9c5b-87ea49c57fa3/events"
+          }
+        }
+      },
+      {
+        "id": "5c0b6330-c2b8-450a-a57e-2ce15a499cbf",
+        "name": "Exchange restore (Entire organization - 10/8/2026 11:43:58 PM)",
+        "organization": "RestoreProofLab.onmicrosoft.com",
+        "type": "Vex",
+        "creationTime": "2026-10-09T20:24:36.596144Z",
+        "endTime": "2026-10-09T20:25:05.9051515Z",
+        "state": "Stopped",
+        "result": "Success",
+        "initiatedBy": "rp-veeam",
+        "details": "1 item processed (1 success)",
+        "scopeName": "",
+        "clientHost": "[::ffff:127.0.0.1]",
+        "eTag": 2,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/5c0b6330-c2b8-450a-a57e-2ce15a499cbf"
+          },
+          "organization": {
+            "href": "/v8/restoresessions/5c0b6330-c2b8-450a-a57e-2ce15a499cbf/organization"
+          },
+          "restoreSessionEvents": {
+            "href": "/v8/restoresessions/5c0b6330-c2b8-450a-a57e-2ce15a499cbf/events"
+          }
+        }
+      },
+      {
+        "id": "ce656b4b-2812-4c4f-a7a9-d7f1322da0ca",
+        "name": "OneDrive restore (Entire organization - 10/8/2026 11:43:58 PM)",
+        "organization": "RestoreProofLab.onmicrosoft.com",
+        "type": "Veod",
+        "creationTime": "2026-10-09T20:24:36.0001892Z",
+        "endTime": "2026-10-09T20:26:54.380392Z",
+        "state": "Stopped",
+        "result": "Success",
+        "initiatedBy": "rp-veeam",
+        "details": "1 item processed (1 success)",
+        "scopeName": "",
+        "clientHost": "localhost:4443 (via: [::ffff:127.0.0.1])",
+        "eTag": 2,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/ce656b4b-2812-4c4f-a7a9-d7f1322da0ca"
+          },
+          "organization": {
+            "href": "/v8/restoresessions/ce656b4b-2812-4c4f-a7a9-d7f1322da0ca/organization"
+          },
+          "restoreSessionEvents": {
+            "href": "/v8/restoresessions/ce656b4b-2812-4c4f-a7a9-d7f1322da0ca/events"
+          }
+        }
+      },
+      {
+        "id": "4128fe68-0363-4958-949b-5fe13e458f19",
+        "name": "SharePoint restore (Entire organization - 10/8/2026 11:43:58 PM)",
+        "organization": "RestoreProofLab.onmicrosoft.com",
+        "type": "Vesp",
+        "creationTime": "2026-10-09T20:24:34.8474087Z",
+        "endTime": "2026-10-09T20:26:54.2849412Z",
+        "state": "Stopped",
+        "result": "Success",
+        "initiatedBy": "rp-veeam",
+        "details": "1 item processed (1 success)",
+        "scopeName": "",
+        "clientHost": "localhost:4443 (via: [::ffff:127.0.0.1])",
+        "eTag": 2,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/4128fe68-0363-4958-949b-5fe13e458f19"
+          },
+          "organization": {
+            "href": "/v8/restoresessions/4128fe68-0363-4958-949b-5fe13e458f19/organization"
+          },
+          "restoreSessionEvents": {
+            "href": "/v8/restoresessions/4128fe68-0363-4958-949b-5fe13e458f19/events"
+          }
+        }
+      },
+      {
+        "id": "2a593443-4089-42cb-8b3e-ebcdd6c92a36",
+        "name": "Exchange restore (Entire organization - 10/8/2026 11:43:58 PM)",
+        "organization": "RestoreProofLab.onmicrosoft.com",
+        "type": "Vex",
+        "creationTime": "2026-10-09T20:24:34.2137735Z",
+        "endTime": "2026-10-09T20:26:54.1589853Z",
+        "state": "Stopped",
+        "result": "Success",
+        "initiatedBy": "rp-veeam",
+        "details": "2 items processed (2 successes)",
+        "scopeName": "",
+        "clientHost": "localhost:4443 (via: [::ffff:127.0.0.1])",
+        "eTag": 2,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/2a593443-4089-42cb-8b3e-ebcdd6c92a36"
+          },
+          "organization": {
+            "href": "/v8/restoresessions/2a593443-4089-42cb-8b3e-ebcdd6c92a36/organization"
+          },
+          "restoreSessionEvents": {
+            "href": "/v8/restoresessions/2a593443-4089-42cb-8b3e-ebcdd6c92a36/events"
+          }
+        }
+      },
+      {
+        "id": "32d49d8c-c347-49d9-a983-12f4f15d1612",
+        "name": "Exchange restore (Entire organization - 10/8/2026 11:43:58 PM)",
+        "organization": "RestoreProofLab.onmicrosoft.com",
+        "type": "Vex",
+        "creationTime": "2026-10-09T20:24:31.0826797Z",
+        "endTime": "2026-10-09T20:24:32.1968146Z",
+        "state": "Stopped",
+        "result": "Success",
+        "initiatedBy": "rp-veeam",
+        "details": "0 items processed",
+        "scopeName": "",
+        "clientHost": "localhost:4443 (via: [::ffff:127.0.0.1])",
+        "eTag": 2,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/32d49d8c-c347-49d9-a983-12f4f15d1612"
+          },
+          "organization": {
+            "href": "/v8/restoresessions/32d49d8c-c347-49d9-a983-12f4f15d1612/organization"
+          },
+          "restoreSessionEvents": {
+            "href": "/v8/restoresessions/32d49d8c-c347-49d9-a983-12f4f15d1612/events"
+          }
+        }
+      },
+      {
+        "id": "c4705e45-78ca-4e37-be74-60d3b4221bd7",
+        "name": "OneDrive restore (Entire organization - 10/8/2026 11:43:58 PM)",
+        "organization": "RestoreProofLab.onmicrosoft.com",
+        "type": "Veod",
+        "creationTime": "2026-10-09T20:22:57.3935378Z",
+        "endTime": "2026-10-09T20:23:30.7218934Z",
+        "state": "Stopped",
+        "result": "Success",
+        "initiatedBy": "rp-veeam",
+        "details": "1 item processed (1 success)",
+        "scopeName": "",
+        "clientHost": "[::ffff:127.0.0.1]",
+        "eTag": 2,
+        "_links": {
+          "self": {
+            "href": "/v8/restoresessions/c4705e45-78ca-4e37-be74-60d3b4221bd7"
+          },
+          "organization": {
+            "href": "/v8/restoresessions/c4705e45-78ca-4e37-be74-60d3b4221bd7/organization"
+          },
+          "restoreSessionEvents": {
+            "href": "/v8/restoresessions/c4705e45-78ca-4e37-be74-60d3b4221bd7/events"
+          }
+        }
+      }
+    ]
+  }
+}

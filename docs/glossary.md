@@ -14,6 +14,13 @@ names the restore point it used, because "the data restores" is only true of a p
 original location, and never any other. Enforced per item by `TargetGuard`. (The `RestoreTest`
 library and OneDrive folder hold the canary files and are not restore targets.)
 
+**Document export.** Veeam's REST call that hands out a backed-up SharePoint or OneDrive
+document's bytes straight from the backup repository, inside an explore session
+(`POST …/Documents/{documentId}/save {"asZip": false}`, `application/octet-stream`). It names
+no Microsoft 365 credential and writes nothing in the tenant. W6.1 (`docs/decisions.md`
+2026-10-14) showed what it gives in admin mode against a restored copy; W6.3 would use it as the
+`backup_content` expected kind, a real file's content known before the restore.
+
 **Cleaner.** The Worker code that empties the three restore targets before and after each run
 (`rp::graph::Cleaner`, W3.4; the clean after is skipped while the run's restore may still be
 running in Veeam, W4.8): every mail in the `restoretest` Inbox (permanently deleted, never

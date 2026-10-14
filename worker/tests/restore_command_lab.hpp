@@ -19,6 +19,8 @@
 #include "../src/command_config.hpp"
 #include "../src/run_pipeline.hpp"
 
+#include "../src/text_util.hpp"
+
 #include <rp/canary_manifest.hpp>
 #include <rp/cli.hpp>
 #include <rp/config.hpp>
@@ -781,7 +783,10 @@ struct Harness {
                                                        "application/timestamp-reply");
                     });
         config_path = dir.write("config.json", config.dump(2));
-        manifest_path = dir.write("seed-manifest.json", lab_manifest_text());
+        // W6.2: the manifest's place is canaries\<tenant>.json beside the config.
+        tenant = rp::ascii_lower(config.at("graph_tenant_id").get<std::string>());
+        std::filesystem::create_directories(dir.path() / "canaries");
+        manifest_path = write_manifest(lab_manifest_text());
         // W4.11: the fake's organisation is the config's tenant's.
         fake.tenant_id = config.at("graph_tenant_id").get<std::string>();
         auto sink = std::make_shared<spdlog::sinks::ostream_sink_mt>(log_stream);
@@ -948,9 +953,34 @@ struct Harness {
         bool& held_;
     };
 
+    // The lab's manifest, written where the run looks for it (W6.2:
+    // canaries\<tenant>.json beside the config); the path.
+    std::filesystem::path write_manifest(std::string_view text)
+    {
+        return dir.write(std::filesystem::path("canaries") / (tenant + ".json"), text);
+    }
+
+    // W6.2: canaries are an opt-in. The Harness's runs opt in (the lab client
+    // has a manifest) by --canary-cursor 0,0,0, unless the test names
+    // --canary-cursor or --manifest itself, or turned `canaries` off.
+    void opt_in(Args& args) const
+    {
+        if (!canaries) {
+            return;
+        }
+        for (const std::string_view arg : args) {
+            if (arg == "--canary-cursor" || arg == "--manifest") {
+                return;
+            }
+        }
+        args.push_back("--canary-cursor");
+        args.push_back("0,0,0");
+    }
+
     // `args`, then --config <the temp config>.
     Run run(Args args)
     {
+        opt_in(args);
         const std::string path_arg = utf8(config_path);
         args.push_back("--config");
         args.push_back(path_arg);
@@ -960,6 +990,7 @@ struct Harness {
     // `args`, then --config, with stdout on `out`: the code and stderr.
     std::pair<int, std::string> run_to(Args args, std::ostream& out)
     {
+        opt_in(args);
         const std::string path_arg = utf8(config_path);
         args.push_back("--config");
         args.push_back(path_arg);
@@ -1047,6 +1078,11 @@ struct Harness {
     rp::test::TempDir dir;
     std::filesystem::path config_path;
     std::filesystem::path manifest_path;
+    // W6.2: the config's tenant in lower case, the manifest file's name.
+    std::string tenant;
+    // W6.2: false: run() and run_to() append no --canary-cursor, so a run
+    // without --canary-cursor or --manifest has no canaries.
+    bool canaries = true;
     FakeConnector fake;
     // The signing key is RFC 8032's published test key 1 (W4.3), never a
     // secret: only `test --evidence` parses it.
@@ -1170,6 +1206,6 @@ inline const std::string kCheckOfThree =
 // That run's status line: every item verified.
 inline const std::string kPassOfThree =
     "\n"
-    "status pass: 3 of 3 item(s) verified: manifest 2, fields 1, metadata 0\n";
+    "status pass: 3 of 3 item(s) verified: manifest 2, fields 1, metadata 0, backup_content 0\n";
 
 } // namespace rp::test::restore_command_lab

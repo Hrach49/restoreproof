@@ -69,7 +69,8 @@ using connector::ItemKind;
 
 constexpr std::size_t kMaxSizeDigits = 3;
 constexpr std::size_t kMaxCursorDigits = 6;
-constexpr std::string_view kManifestFile = "seed-manifest.json";
+// W6.2: the manifests' folder beside the config file, one file per tenant.
+constexpr std::string_view kCanariesFolder = "canaries";
 
 bool all_digits(std::string_view text) noexcept
 {
@@ -116,12 +117,16 @@ std::optional<sampling::CanaryCursor> parse_cursor(std::string_view text)
     return sampling::CanaryCursor{*parts[0], *parts[1], *parts[2]};
 }
 
-// The manifest --manifest names, or seed-manifest.json beside the config file.
+// The manifest --manifest names, or canaries\<tenant>.json beside the config
+// file (W6.2 point 10), the tenant the profile's graph_tenant_id in lower case.
 std::filesystem::path manifest_path(std::optional<std::string_view> manifest_arg,
-                                    const std::filesystem::path& config_path)
+                                    const std::filesystem::path& config_path,
+                                    const std::string& graph_tenant_id)
 {
     if (!manifest_arg) {
-        return config_path.parent_path() / kManifestFile;
+        // The tenant is a GUID (the profile's rule): ASCII, so a path as it is.
+        return config_path.parent_path() / kCanariesFolder /
+               std::filesystem::path(ascii_lower(graph_tenant_id) + ".json");
     }
     std::optional<std::filesystem::path> path = path_from_utf8(*manifest_arg);
     if (!path) {
@@ -179,12 +184,13 @@ std::string shortfall_note(ItemKind kind, const std::vector<verification::Shortf
                                         : "";
 }
 
-TableRow kind_row(ItemKind kind, const sampling::KindRecord& k,
+TableRow kind_row(ItemKind kind, const sampling::KindRecord& k, bool canaries,
                   const std::vector<verification::Shortfall>& shortfalls)
 {
-    std::vector<std::string> cells{kind_name(kind), std::to_string(k.requested),
-                                   of(static_cast<int>(k.canary_ids.size()), (k.requested + 1) / 2),
-                                   of(k.random_taken, k.random_wanted)};
+    std::vector<std::string> cells{
+        kind_name(kind), std::to_string(k.requested),
+        canaries ? of(static_cast<int>(k.canary_ids.size()), (k.requested + 1) / 2) : "none",
+        of(k.random_taken, k.random_wanted)};
     if (std::string note = shortfall_note(kind, shortfalls); !note.empty()) {
         cells.push_back(std::move(note));
     }
@@ -206,14 +212,17 @@ std::string format_sample(const sampling::Selection& selection, std::size_t item
                           const std::vector<verification::Shortfall>& shortfalls)
 {
     const sampling::SampleRecord& r = selection.record;
-    std::string text = std::format(
-        "canary cursor {} -> {}\n",
-        cursor_text(r.mail.cursor, r.sharepoint.cursor, r.onedrive.cursor),
-        cursor_text(r.mail.cursor_next, r.sharepoint.cursor_next, r.onedrive.cursor_next));
+    // W6.2: a run without canaries says so where the cursor line would be.
+    std::string text =
+        r.canaries ? std::format("canary cursor {} -> {}\n",
+                                 cursor_text(r.mail.cursor, r.sharepoint.cursor, r.onedrive.cursor),
+                                 cursor_text(r.mail.cursor_next, r.sharepoint.cursor_next,
+                                             r.onedrive.cursor_next))
+                   : std::string{"canaries: none\n"};
     text += format_table({{"  ", {"KIND", "REQUESTED", "CANARIES", "RANDOM", "NOTE"}},
-                          kind_row(ItemKind::mail, r.mail, shortfalls),
-                          kind_row(ItemKind::sharepoint, r.sharepoint, shortfalls),
-                          kind_row(ItemKind::onedrive, r.onedrive, shortfalls)});
+                          kind_row(ItemKind::mail, r.mail, r.canaries, shortfalls),
+                          kind_row(ItemKind::sharepoint, r.sharepoint, r.canaries, shortfalls),
+                          kind_row(ItemKind::onedrive, r.onedrive, r.canaries, shortfalls)});
     if (items > 0) {
         text += std::format("restoring {} item(s) ...\n", items);
     }
@@ -578,7 +587,7 @@ std::exception_ptr read_before(graph::GraphClient& client, IHttpClient& download
 constexpr graph::TargetCheckWording kClientWording{"restores only into", "nothing was restored"};
 
 std::exception_ptr check_client_step(connector::IConnector& source, const ClientProfile& profile,
-                                     const sampling::CanaryManifest& manifest,
+                                     const sampling::CanaryManifest* manifest,
                                      graph::GraphClient& graph,
                                      const connector::RestoreTargets& targets,
                                      const std::shared_ptr<spdlog::logger>& logger,
@@ -596,7 +605,9 @@ std::exception_ptr check_client_step(connector::IConnector& source, const Client
         if (const std::optional<ClientMismatch> mismatch = check_client(profile, facts)) {
             throw ClientMismatchError(*mismatch);
         }
-        sampling::check_manifest_tenant(manifest, profile.graph_tenant_id);
+        if (manifest != nullptr) {
+            sampling::check_manifest_tenant(*manifest, profile.graph_tenant_id);
+        }
         const graph::ResolvedMailbox mailbox =
             graph::check_restore_mailbox(graph, targets, kClientWording);
         const graph::ResolvedLibrary library =
@@ -1077,6 +1088,7 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
         if (timer.state(timing::Span::restore) != timing::SpanState::not_run) {
             timer.report(timing::Span::restore_submit, std::nullopt);
             timer.report(timing::Span::restore_wait, std::nullopt);
+            timer.report(timing::Span::content_export, std::nullopt);
         }
         timer.stop_open(timer.try_now(), timing::Span::total);
     };
@@ -1370,14 +1382,24 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
     // Everything that can throw is in here, the output included, so no
     // exception escapes.
     try {
-        const sampling::CanaryManifest manifest =
-            sampling::load_canary_manifest(manifest_path(parsed.manifest, config_path));
+        // W6.2 point 10: canaries are an opt-in, named by --canary-cursor or
+        // --manifest (a job: its canary_cursor key). Without, no manifest is
+        // looked for and the whole sample is random items.
+        const bool canaries = parsed.cursor.has_value() || parsed.manifest.has_value();
+        std::optional<sampling::CanaryManifest> loaded_manifest;
+        if (canaries) {
+            loaded_manifest = sampling::load_canary_manifest(
+                manifest_path(parsed.manifest, config_path, profile.graph_tenant_id));
+        }
+        const sampling::CanaryManifest* manifest = canaries ? &*loaded_manifest : nullptr;
         const connector::RestoreTargets targets = connector::RestoreTargets::from_profile(profile);
         // choose_sample's own checks, said before the connector is made: an
         // unreachable Veeam can't hide a manifest that names a restore target.
         // The manifest's tenant is the client check's (W4.11), after the run
         // line, so that a job of another tenant is reported.
-        sampling::check_manifest_targets(manifest, targets);
+        if (manifest != nullptr) {
+            sampling::check_manifest_targets(*manifest, targets);
+        }
         if (const std::optional<std::string> problem = sampling::cursor_problem(manifest, cursor)) {
             err << "usage error: --canary-cursor: " << *problem << '\n';
             return exit_code::usage;
@@ -1647,6 +1669,9 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
         timer.report(timing::Span::restore_wait,
                      timing::sum_session_durations(result->sessions,
                                                    &connector::RestoreSessionResult::wait_time));
+        // W6.3: the exports, as the connector measured them; not reported
+        // when none was asked.
+        timer.report(timing::Span::content_export, result->content_time);
         timer.end(timing::Span::restore, restored_at);
         timer.start(timing::Span::verify, restored_at);
 

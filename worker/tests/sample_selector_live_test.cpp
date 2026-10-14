@@ -209,15 +209,15 @@ TEST_CASE("live sample: choose_sample picks the same sample twice, the guard acc
 
     const sampling::Selection first =
         sampling::choose_sample(source, kLabOrgName, newest, targets, config.graph_tenant_id, plan,
-                                manifest, cursor, run_id);
+                                &manifest, cursor, run_id);
     const sampling::Selection second =
         sampling::choose_sample(source, kLabOrgName, newest, targets, config.graph_tenant_id, plan,
-                                manifest, cursor, run_id);
+                                &manifest, cursor, run_id);
 
     std::cout << "selection:\n" << selectors_json(first).dump(2) << "\n";
     std::cout << "sample:\n" << sampling::to_json(first.record).dump(2) << "\n";
     const rp::verification::ExpectedSet expected =
-        rp::verification::build_expected_set(first, manifest);
+        rp::verification::build_expected_set(first, &manifest);
     std::cout << "expected:\n" << rp::verification::to_json(expected).dump(2) << "\n";
     for (const std::size_t n : sent.onedrive_root_entries) {
         std::cout << "a OneDrive's Documents?parentId=root listed " << n << " entries\n";
@@ -230,7 +230,7 @@ TEST_CASE("live sample: choose_sample picks the same sample twice, the guard acc
     // Every item has its expected record; the second run's is the same.
     CHECK(expected.items.size() ==
           first.mail.size() + first.sharepoint.size() + first.onedrive.size());
-    CHECK(rp::verification::to_json(rp::verification::build_expected_set(second, manifest)) ==
+    CHECK(rp::verification::to_json(rp::verification::build_expected_set(second, &manifest)) ==
           rp::verification::to_json(expected));
 
     // 2. The target guard's layer 1 accepts it (Graph, read-only).

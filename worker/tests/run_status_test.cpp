@@ -1059,7 +1059,7 @@ TEST_CASE("run status: the messages of each row count, never name", "[run_status
                     It{.kind = ItemKind::sharepoint, .expected_kind = ExpectedKind::metadata},
                     It{.kind = ItemKind::onedrive, .expected_kind = ExpectedKind::manifest}});
         const verification::RunVerdict verdict = verification::decide_status(run.facts());
-        CHECK(verdict.message == "4 of 4 item(s) verified: manifest 2, fields 1, metadata 1");
+        CHECK(verdict.message == "4 of 4 item(s) verified: manifest 2, fields 1, metadata 1, backup_content 0");
         CHECK(verdict.verified() == 4);
         CHECK(verdict.items == 4);
     }
@@ -1175,6 +1175,24 @@ TEST_CASE("run status: shortfalls_of is the sample's NOTE rule", "[run_status]")
     CHECK(verification::shortfalls_of(rp::sampling::SampleRecord{}).empty());
 }
 
+TEST_CASE("run status: without canaries a shortfall is the random part's alone", "[run_status][w6.2]")
+{
+    rp::sampling::SampleRecord record;
+    record.canaries = false;
+    record.mail.requested = 3; // the whole size random
+    record.mail.random_wanted = 3;
+    record.mail.random_taken = 1;
+    record.sharepoint.requested = 2;
+    record.sharepoint.random_wanted = 2;
+    record.sharepoint.random_taken = 2;
+    const std::vector<Shortfall> shortfalls = verification::shortfalls_of(record);
+    REQUIRE(shortfalls.size() == 1);
+    CHECK(shortfalls[0].kind == ItemKind::mail);
+    CHECK(shortfalls[0].source == ItemSource::random);
+    CHECK(shortfalls[0].wanted == 3);
+    CHECK(shortfalls[0].taken == 1);
+}
+
 TEST_CASE("run status: to_json is the result's status object", "[run_status]")
 {
     SECTION("an error: its code, the unchecked items, warnings")
@@ -1186,7 +1204,7 @@ TEST_CASE("run status: to_json is the result's status object", "[run_status]")
                   "status": "error", "error_code": "stale_target", "restore_sent": true,
                   "message": "1 of 3 item(s) couldn't be checked (stale_target 1); 2 verified",
                   "counts": {"items": 3, "verified": 2, "failed": 0, "unchecked": 1},
-                  "verified": {"manifest": 1, "fields": 1, "metadata": 0},
+                  "verified": {"manifest": 1, "fields": 1, "metadata": 0, "backup_content": 0},
                   "failed_items": [],
                   "unchecked_items": [{"index": 1, "error_code": "stale_target"}],
                   "warnings": [{"code": "stale_copies", "indexes": [],
@@ -1203,7 +1221,7 @@ TEST_CASE("run status: to_json is the result's status object", "[run_status]")
                   "status": "fail", "restore_sent": true,
                   "message": "1 of 1 item(s) didn't verify (1 missing, 0 mismatch)",
                   "counts": {"items": 1, "verified": 0, "failed": 1, "unchecked": 0},
-                  "verified": {"manifest": 0, "fields": 0, "metadata": 0},
+                  "verified": {"manifest": 0, "fields": 0, "metadata": 0, "backup_content": 0},
                   "failed_items": [0], "unchecked_items": [], "warnings": []
               })j");
         CHECK(out == want);
@@ -1214,9 +1232,9 @@ TEST_CASE("run status: to_json is the result's status object", "[run_status]")
             verification::decide_status(run_of({It{.duplicate = true}}).facts()));
         const json want = json::parse(R"j({
                   "status": "pass", "restore_sent": true,
-                  "message": "1 of 1 item(s) verified: manifest 1, fields 0, metadata 0",
+                  "message": "1 of 1 item(s) verified: manifest 1, fields 0, metadata 0, backup_content 0",
                   "counts": {"items": 1, "verified": 1, "failed": 0, "unchecked": 0},
-                  "verified": {"manifest": 1, "fields": 0, "metadata": 0},
+                  "verified": {"manifest": 1, "fields": 0, "metadata": 0, "backup_content": 0},
                   "failed_items": [], "unchecked_items": [],
                   "warnings": [{"code": "duplicate", "indexes": [0],
                                 "message": "1 item(s) had more than one restored copy; the newest was checked"}]
@@ -1410,7 +1428,7 @@ TEST_CASE("run status: the public lists of error, unchecked-item and warning cod
     SECTION("warning_codes: in the order a verdict lists its warnings")
     {
         const std::vector<std::string_view> want{"backup_session", "backup_item", "duplicate",
-                                                 "shortfall", "stale_copies"};
+                                                 "shortfall", "stale_copies", "content_export"};
         CHECK(verification::warning_codes() == want);
         // Never a status: no warning code is an error code.
         for (const std::string_view code : want) {
@@ -1526,7 +1544,7 @@ TEST_CASE("run status: result_invalid replaces a verdict whose result didn't val
          "the result isn't valid restoreproof.result.v1; the run itself ended " + row.ended},
         {"restore_sent", row.restore_sent},
         {"counts", {{"items", row.items}, {"verified", 0}, {"failed", 0}, {"unchecked", 0}}},
-        {"verified", {{"manifest", 0}, {"fields", 0}, {"metadata", 0}}},
+        {"verified", {{"manifest", 0}, {"fields", 0}, {"metadata", 0}, {"backup_content", 0}}},
         {"failed_items", json::array()},
         {"unchecked_items", json::array()},
         {"warnings", warnings}};
@@ -1584,7 +1602,7 @@ json bare_status(const std::string& code, const std::string& message, bool resto
             {"message", message},
             {"restore_sent", restore_sent},
             {"counts", {{"items", 0}, {"verified", 0}, {"failed", 0}, {"unchecked", 0}}},
-            {"verified", {{"manifest", 0}, {"fields", 0}, {"metadata", 0}}},
+            {"verified", {{"manifest", 0}, {"fields", 0}, {"metadata", 0}, {"backup_content", 0}}},
             {"failed_items", json::array()},
             {"unchecked_items", json::array()},
             {"warnings", json::array()}};

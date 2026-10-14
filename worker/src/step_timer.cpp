@@ -15,9 +15,9 @@ using std::chrono::nanoseconds;
 using TimePoint = std::chrono::steady_clock::time_point;
 
 constexpr std::array<std::string_view, kSpanCount> kSpanNames = {
-    "restore_point_lookup", "cleanup_before", "sample_select", "target_snapshot",
-    "restore",              "restore_submit", "restore_wait",  "verify",
-    "recovery",             "cleanup_after",  "total"};
+    "restore_point_lookup", "cleanup_before", "sample_select",  "target_snapshot",
+    "restore",              "restore_submit", "restore_wait",   "content_export",
+    "verify",               "recovery",       "cleanup_after",  "total"};
 static_assert(static_cast<std::size_t>(Span::total) + 1 == kSpanCount);
 
 constexpr std::size_t kStateCount = 6;

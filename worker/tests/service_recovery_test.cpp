@@ -7,6 +7,7 @@
 
 #include "../src/run_pipeline.hpp"
 
+#include <rp/step_timer.hpp>
 #include <rp/canonical_json.hpp>
 #include <rp/connector_registry.hpp>
 #include <rp/result_schema.hpp>
@@ -1032,7 +1033,7 @@ TEST_CASE("the result written afterwards, for each code, is valid restoreproof.r
                {"message", row.message},
                {"restore_sent", row.restore_sent},
                {"counts", {{"items", 0}, {"verified", 0}, {"failed", 0}, {"unchecked", 0}}},
-               {"verified", {{"manifest", 0}, {"fields", 0}, {"metadata", 0}}},
+               {"verified", {{"manifest", 0}, {"fields", 0}, {"metadata", 0}, {"backup_content", 0}}},
                {"failed_items", json::array()},
                {"unchecked_items", json::array()},
                {"warnings", json::array()}});
@@ -1046,7 +1047,7 @@ TEST_CASE("the result written afterwards, for each code, is valid restoreproof.r
     for (const auto& span : document["timings"]["spans"]) {
         CHECK(span.is_null());
     }
-    CHECK(document["timings"]["spans"].size() == 11);
+    CHECK(document["timings"]["spans"].size() == rp::timing::kSpanCount);
     // The result's client: the record's profile cut to the result's object,
     // with the job's client_id (W4.10).
     REQUIRE(row.record.client);

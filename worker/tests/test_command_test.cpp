@@ -361,7 +361,7 @@ TEST_CASE("test: a run stopped before its run line writes no --json file and pri
         {"the secrets", [](TestLab& lab) { lab.load_secrets = [] { return rp::Secrets{}; }; },
          Args{}, rp::exit_code::config},
         {"a manifest that doesn't load",
-         [](TestLab& lab) { lab.dir.write("seed-manifest.json", "{"); }, Args{},
+         [](TestLab& lab) { lab.write_manifest("{"); }, Args{},
          rp::exit_code::config},
         {"a cursor out of range", [](TestLab&) {}, Args{"--canary-cursor", "99,0,0"},
          rp::exit_code::usage},
@@ -750,7 +750,7 @@ TEST_CASE("test --json: the result is valid and has the seventeen keys for each 
          Args{"--mail", "2", "--sp", "0", "--od", "0"}, rp::exit_code::transient,
          "error backup_transient", nothing_chosen},
         {"an empty sample",
-         [](TestLab& lab) { lab.dir.write("seed-manifest.json", trimmed_manifest(0, 1, 1)); },
+         [](TestLab& lab) { lab.write_manifest(trimmed_manifest(0, 1, 1)); },
          Args{"--mail", "1", "--sp", "0", "--od", "0"}, rp::exit_code::service,
          "error empty_sample", {"restore", "check"}},
         {"the reads before fail",
@@ -1197,8 +1197,7 @@ TEST_CASE("test --json: a run ID that holds ':' never names the file or its temp
     for (const auto& entry : std::filesystem::directory_iterator(lab.dir.path())) {
         names.insert(utf8(entry.path().filename()));
     }
-    CHECK(names == std::set<std::string>{"config.json", "run.json", "seed-manifest.json",
-                                           "tsa-ca.pem"});
+    CHECK(names == std::set<std::string>{"canaries", "config.json", "run.json", "tsa-ca.pem"});
 }
 
 TEST_CASE("test --json: a file that appeared after the check is never overwritten",
@@ -1506,7 +1505,7 @@ std::string shared_result()
     // The manifest's hash is in the result: LF, however the checkout has it.
     std::string manifest = lab_manifest_text();
     std::erase(manifest, '\r');
-    lab.dir.write("seed-manifest.json", manifest);
+    lab.write_manifest(manifest);
     lab.fake.pool.mail = {carol_mail(1)};
     lab.fake.pool.sharepoint = {
         {{lab_values().site_id, "b!madeUpSourceLibraryDrive", "/Projects", "report.pdf",
@@ -2169,7 +2168,7 @@ TEST_CASE("test --evidence: the whole pipeline's result is shared/testdata/resul
     CHECK(document.at("status").at("status") == "pass");
     CHECK(document.at("status").at("counts").at("items") == 6);
     CHECK(document.at("expected").at("counts") ==
-          json{{"manifest", 3}, {"fields", 1}, {"metadata", 2}});
+          json{{"manifest", 3}, {"fields", 1}, {"metadata", 2}, {"backup_content", 0}});
     CHECK(document.at("expected").at("items").at(2).at("sha256_rule") == "office-v1");
     CHECK(document.at("expected").at("items").at(4).at("sha256_rule") == "bytes");
     CHECK(document.at("check").at("items").at(3).at("copies") == 2);
@@ -2335,7 +2334,7 @@ TEST_CASE("test --evidence: a signing key that is unset or isn't one stops the r
         return true;
     };
     // Said before a manifest that doesn't load, too.
-    lab.dir.write("seed-manifest.json", "{");
+    lab.write_manifest("{");
 
     const Run run = evidence_run(lab);
 
@@ -3722,6 +3721,7 @@ TEST_CASE("the pipeline run without a report runs as with one", "[test_command][
         args.mail = 2;
         args.sharepoint = 1;
         args.onedrive = 0;
+        args.cursor = rp::sampling::CanaryCursor{}; // W6.2: the lab's canaries
         std::shared_ptr<rp::FixtureRecorder> recorder;
         const std::string config = utf8(lab.config_path);
         args.config = config;
@@ -3870,4 +3870,36 @@ TEST_CASE("test --json: a run whose client check passed says scope same_tenant a
                {"onedrive_folder",
                 {{"name", "RestoreTarget"},
                  {"site_url", folder.at("sharepointIds").at("siteUrl")}}}});
+}
+
+// --- W6.2: the result of a run without canaries -------------------------------------
+
+TEST_CASE("test --json: a run without canaries records no manifest hash and no rotation",
+          "[test_command][w6.2]")
+{
+    TestLab lab;
+    lab.canaries = false;
+    std::filesystem::remove(lab.manifest_path);
+    lab.fake.pool.mail = {carol_mail(1)};
+
+    const Run run = lab.run({"--json", lab.json_arg(), "--run-id", kRunId, "--mail", "1", "--sp",
+                             "0", "--od", "0"});
+
+    INFO(run.out);
+    INFO(run.err);
+    CHECK(run.exit_code == rp::exit_code::ok);
+    const json result = lab.result();
+    CHECK(result.at("status").at("status") == "pass");
+    const json& sample = result.at("sample");
+    CHECK_FALSE(sample.contains("manifest_sha256"));
+    for (const char* kind : {"mail", "sharepoint", "onedrive"}) {
+        CAPTURE(kind);
+        CHECK_FALSE(sample.at(kind).contains("canary"));
+    }
+    CHECK(sample.at("mail").at("random").at("wanted") == 1);
+    const json& expected = result.at("expected");
+    CHECK_FALSE(expected.contains("manifest_sha256"));
+    CHECK(expected.at("counts").at("manifest") == 0);
+    CHECK(expected.at("counts").at("fields") == 1);
+    CHECK(expected.at("items").at(0).at("source") == "random");
 }

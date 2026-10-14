@@ -150,10 +150,11 @@ struct RunVerdict {
     std::size_t verified_manifest = 0;
     std::size_t verified_fields = 0;
     std::size_t verified_metadata = 0;
+    std::size_t verified_backup_content = 0; // W6.3
 
     std::size_t verified() const noexcept
     {
-        return verified_manifest + verified_fields + verified_metadata;
+        return verified_manifest + verified_fields + verified_metadata + verified_backup_content;
     }
 };
 
@@ -271,7 +272,7 @@ std::vector<std::string_view> warning_codes();
 
 // The result's "status" object: {"status", "error_code" (error only),
 // "message", "restore_sent", "counts": {"items", "verified", "failed", "unchecked"},
-// "verified": {"manifest", "fields", "metadata"}, "failed_items": [index...],
+// "verified": {"manifest", "fields", "metadata", "backup_content"}, "failed_items": [index...],
 // "unchecked_items": [{"index", "error_code"}], "warnings": [{"code",
 // "message", "indexes"}]}. Every key but error_code always there.
 nlohmann::json to_json(const RunVerdict& verdict);

@@ -517,7 +517,6 @@
       "additionalProperties": false,
       "required": [
         "requested",
-        "canary",
         "random"
       ],
       "properties": {
@@ -616,7 +615,6 @@
       "additionalProperties": false,
       "required": [
         "requested",
-        "canary",
         "random"
       ],
       "properties": {
@@ -717,7 +715,6 @@
         "algorithm",
         "run_id",
         "seed",
-        "manifest_sha256",
         "mail",
         "sharepoint",
         "onedrive"
@@ -748,7 +745,73 @@
           "$ref": "#/$defs/sample_kind_key3"
         }
       },
-      "description": "How the sample was chosen: per type the canaries taken from the rotation cursor and the random draw. A random key is [mailbox, folder, subject, received_at] for a mail, [site_id, list_id, folder_path, name] for a SharePoint file and [user, folder_path, name] for a OneDrive file. containers_drawn is how many containers the draw looked into, never their names."
+      "description": "How the sample was chosen: per type the canaries taken from the rotation cursor and the random draw. A random key is [mailbox, folder, subject, received_at] for a mail, [site_id, list_id, folder_path, name] for a SharePoint file and [user, folder_path, name] for a OneDrive file. containers_drawn is how many containers the draw looked into, never their names. W6.2: a run without canaries (no manifest: canaries are an opt-in) leaves manifest_sha256 and each type's canary object out, never null; a run with canaries has all of them.",
+      "allOf": [
+        {
+          "if": {
+            "anyOf": [
+              {
+                "properties": {
+                  "mail": {
+                    "required": [
+                      "canary"
+                    ]
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "sharepoint": {
+                    "required": [
+                      "canary"
+                    ]
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "onedrive": {
+                    "required": [
+                      "canary"
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "then": {
+            "required": [
+              "manifest_sha256"
+            ]
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "manifest_sha256"
+            ]
+          },
+          "then": {
+            "properties": {
+              "mail": {
+                "required": [
+                  "canary"
+                ]
+              },
+              "sharepoint": {
+                "required": [
+                  "canary"
+                ]
+              },
+              "onedrive": {
+                "required": [
+                  "canary"
+                ]
+              }
+            }
+          }
+        }
+      ]
     },
     "expected_item": {
       "type": "object",
@@ -776,7 +839,8 @@
           "enum": [
             "manifest",
             "fields",
-            "metadata"
+            "metadata",
+            "backup_content"
           ]
         },
         "canary_id": {
@@ -831,9 +895,22 @@
             "bytes",
             "office-v1"
           ]
+        },
+        "export": {
+          "enum": [
+            "exported",
+            "no_rule",
+            "refused",
+            "no_answer",
+            "size_mismatch",
+            "over_cap",
+            "invalid_package",
+            "not_in_backup",
+            "budget"
+          ]
         }
       },
-      "description": "One sampled item's expectation. A key whose value isn't known is left out, never null. manifest: a canary, with the manifest's hash and its rule; fields: a random mail; metadata: a random file.",
+      "description": "One sampled item's expectation. A key whose value isn't known is left out, never null. manifest: a canary, with the manifest's hash and its rule; fields: a random mail; metadata: a random file by its name and the size the backup lists; backup_content (W6.3): a random file whose bytes the backup exported before the restore, with their hash by its rule (bytes, with the export's size, or office-v1, without one). export: what became of a random file's export from the backup, on a random file alone; a file whose export gave nothing is metadata.",
       "allOf": [
         {
           "if": {
@@ -885,7 +962,8 @@
               "expected_kind": {
                 "enum": [
                   "manifest",
-                  "metadata"
+                  "metadata",
+                  "backup_content"
                 ]
               },
               "sha256_rule": {
@@ -990,6 +1068,11 @@
                   "required": [
                     "sender_name"
                   ]
+                },
+                {
+                  "required": [
+                    "export"
+                  ]
                 }
               ]
             }
@@ -1008,16 +1091,6 @@
                 {
                   "required": [
                     "canary_id"
-                  ]
-                },
-                {
-                  "required": [
-                    "sha256"
-                  ]
-                },
-                {
-                  "required": [
-                    "sha256_rule"
                   ]
                 },
                 {
@@ -1102,6 +1175,87 @@
               "size_bytes"
             ]
           }
+        },
+        {
+          "if": {
+            "properties": {
+              "expected_kind": {
+                "enum": [
+                  "fields",
+                  "metadata"
+                ]
+              }
+            },
+            "required": [
+              "expected_kind"
+            ]
+          },
+          "then": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "sha256"
+                  ]
+                },
+                {
+                  "required": [
+                    "sha256_rule"
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "expected_kind": {
+                "const": "backup_content"
+              }
+            },
+            "required": [
+              "expected_kind"
+            ]
+          },
+          "then": {
+            "required": [
+              "sha256",
+              "sha256_rule",
+              "export"
+            ],
+            "properties": {
+              "export": {
+                "const": "exported"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "export"
+            ]
+          },
+          "then": {
+            "properties": {
+              "source": {
+                "const": "random"
+              },
+              "kind": {
+                "enum": [
+                  "sharepoint",
+                  "onedrive"
+                ]
+              },
+              "expected_kind": {
+                "enum": [
+                  "metadata",
+                  "backup_content"
+                ]
+              }
+            }
+          }
         }
       ]
     },
@@ -1109,7 +1263,6 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "manifest_sha256",
         "counts",
         "items"
       ],
@@ -1123,7 +1276,8 @@
           "required": [
             "manifest",
             "fields",
-            "metadata"
+            "metadata",
+            "backup_content"
           ],
           "properties": {
             "manifest": {
@@ -1134,6 +1288,9 @@
             },
             "metadata": {
               "$ref": "#/$defs/count"
+            },
+            "backup_content": {
+              "$ref": "#/$defs/count"
             }
           }
         },
@@ -1143,7 +1300,37 @@
             "$ref": "#/$defs/expected_item"
           }
         }
-      }
+      },
+      "description": "What each sampled item's restored copy should look like (docs/verification.md, the expected set). manifest_sha256 is there exactly when the run had canaries (W6.2): an item of kind manifest needs it.",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "items": {
+                "not": {
+                  "items": {
+                    "not": {
+                      "properties": {
+                        "expected_kind": {
+                          "const": "manifest"
+                        }
+                      },
+                      "required": [
+                        "expected_kind"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "manifest_sha256"
+            ]
+          }
+        }
+      ]
     },
     "restore": {
       "type": "object",
@@ -1672,7 +1859,8 @@
           "required": [
             "manifest",
             "fields",
-            "metadata"
+            "metadata",
+            "backup_content"
           ],
           "properties": {
             "manifest": {
@@ -1682,6 +1870,9 @@
               "$ref": "#/$defs/count"
             },
             "metadata": {
+              "$ref": "#/$defs/count"
+            },
+            "backup_content": {
               "$ref": "#/$defs/count"
             }
           }
@@ -1737,7 +1928,8 @@
                   "backup_item",
                   "duplicate",
                   "shortfall",
-                  "stale_copies"
+                  "stale_copies",
+                  "content_export"
                 ]
               },
               "message": {
@@ -1949,6 +2141,7 @@
             "restore",
             "restore_submit",
             "restore_wait",
+            "content_export",
             "verify",
             "recovery",
             "cleanup_after",
@@ -1974,6 +2167,9 @@
               "$ref": "#/$defs/span"
             },
             "restore_wait": {
+              "$ref": "#/$defs/span"
+            },
+            "content_export": {
               "$ref": "#/$defs/span"
             },
             "verify": {

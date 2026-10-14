@@ -99,7 +99,7 @@ Selection select(const SamplePlan& plan, const connector::CandidatePool& pool = 
                  const CanaryCursor& cursor = {}, std::string_view run_id = kRunId,
                  const CanaryManifest& manifest = lab_manifest())
 {
-    return SampleSelector::select(plan, manifest, cursor, targets(), pool, run_id);
+    return SampleSelector::select(plan, &manifest, cursor, targets(), pool, run_id);
 }
 
 // What a call threw: its kind and message.
@@ -224,7 +224,7 @@ Selection choose(connector::IConnector& c, const SamplePlan& plan,
                  const connector::CandidateLimits& limits = {})
 {
     return rp::sampling::choose_sample(c, "RestoreProofLab.onmicrosoft.com", lab_point(), targets(),
-                                       tenant, plan, lab_manifest(), cursor, run_id, limits);
+                                       tenant, plan, &lab_manifest(), cursor, run_id, limits);
 }
 
 } // namespace
@@ -269,14 +269,14 @@ TEST_CASE("select refuses a bad run ID, a size outside 0..100 or a cursor out of
     SamplingConnector c;
     const Thrown chosen = thrown_by([&] {
         rp::sampling::choose_sample(c, "client", lab_point(), targets(), manifest.tenant_id,
-                                    row.plan, manifest, row.cursor, row.run_id);
+                                    row.plan, &manifest, row.cursor, row.run_id);
     });
     CHECK(chosen.kind == "invalid_argument");
     CHECK(chosen.what == row.message);
     CHECK(c.queries.empty());
 
     // The one cursor rule, as `rpworker restore` says it before any Veeam call.
-    const std::optional<std::string> problem = rp::sampling::cursor_problem(manifest, row.cursor);
+    const std::optional<std::string> problem = rp::sampling::cursor_problem(&manifest, row.cursor);
     if (row.message.find(" cursor must be ") != std::string::npos) {
         CHECK(problem == row.message.substr(std::string_view{"sampler: "}.size()));
     } else {
@@ -334,7 +334,7 @@ TEST_CASE("select refuses a manifest with a canary in a restore target", "[sampl
     SamplingConnector c;
     const Thrown chosen = thrown_by([&] {
         rp::sampling::choose_sample(c, "client", lab_point(), targets(), manifest.tenant_id,
-                                    {4, 4, 4}, manifest, {}, kRunId);
+                                    {4, 4, 4}, &manifest, {}, kRunId);
     });
     CHECK(chosen.kind == "ManifestError");
     CHECK(chosen.what == row.message);
@@ -526,6 +526,146 @@ TEST_CASE("each type's sample is ceil(N/2) canaries, at most M, and floor(N/2) r
     CHECK(s.sharepoint.empty());
     CHECK(s.onedrive.empty());
     CHECK(s.record.sharepoint.canary_wanted == 0);
+}
+
+// W6.2: no manifest, no canaries (docs/decisions.md 2026-10-14, W6.3 and
+// W6.2, points 9 to 12).
+TEST_CASE("without a manifest the whole sample is random items and the record says it had no "
+          "canaries",
+          "[sample-selector][w6.2]")
+{
+    const auto [n, r] = GENERATE(table<int, int>({
+        {0, 0}, {1, 1}, {2, 2}, {5, 5}, {21, 21}, {60, 60}, {100, 60},
+    }));
+    CAPTURE(n);
+    connector::CandidatePool pool;
+    for (int i = 0; i < 60; ++i) {
+        pool.mail.push_back(mail_candidate(i));
+    }
+
+    const Selection s = SampleSelector::select({n, 0, 0}, nullptr, {}, targets(), pool, kRunId);
+
+    CHECK_FALSE(s.record.canaries);
+    CHECK(s.record.manifest_sha256.empty());
+    CHECK(s.record.mail.requested == n);
+    CHECK(s.record.mail.canary_wanted == 0);
+    CHECK(s.record.mail.canary_ids.empty());
+    CHECK(s.record.mail.cursor == 0);
+    CHECK(s.record.mail.cursor_next == 0);
+    CHECK(s.record.mail.random_wanted == n);
+    CHECK(s.record.mail.random_taken == r);
+    CHECK(s.record.mail.random_keys.size() == static_cast<std::size_t>(r));
+    CHECK(s.record.mail.pool_size == 60);
+    REQUIRE(s.mail.size() == static_cast<std::size_t>(r));
+    REQUIRE(s.mail_random.size() == static_cast<std::size_t>(r));
+    for (const connector::MailSelector& m : s.mail) {
+        CHECK(m.mailbox == kCarol);
+    }
+    CHECK(s.sharepoint.empty());
+    CHECK(s.onedrive.empty());
+}
+
+TEST_CASE("without a manifest every cursor must be 0", "[sample-selector][w6.2]")
+{
+    CHECK(rp::sampling::cursor_problem(nullptr, {}) == std::nullopt);
+    CHECK(rp::sampling::cursor_problem(nullptr, {1, 0, 0}) ==
+          "the mail cursor must be 0: the manifest has no mail canaries");
+    CHECK(rp::sampling::cursor_problem(nullptr, {0, 0, 2}) ==
+          "the onedrive cursor must be 0: the manifest has no onedrive canaries");
+    const Thrown thrown = thrown_by(
+        [&] { SampleSelector::select({1, 1, 0}, nullptr, {0, 1, 0}, targets(), {}, kRunId); });
+    CHECK(thrown.kind == "invalid_argument");
+    CHECK(thrown.what ==
+          "sampler: the sharepoint cursor must be 0: the manifest has no sharepoint canaries");
+}
+
+TEST_CASE("without a manifest the pool is still held to the restore targets and the rp-canary- "
+          "prefix",
+          "[sample-selector][w6.2]")
+{
+    connector::CandidatePool pool;
+    pool.mail = {mail_candidate(1)};
+    pool.mail.back().selector.subject = "rp-canary-0077";
+    const Thrown canary = thrown_by(
+        [&] { SampleSelector::select({1, 0, 0}, nullptr, {}, targets(), pool, kRunId); });
+    CHECK(canary.kind == "logic_error");
+    CHECK(canary.what.find("rp-canary-") != std::string::npos);
+
+    connector::CandidatePool in_target;
+    in_target.mail = {mail_candidate(1)};
+    in_target.mail.back().selector.mailbox = targets().mailbox();
+    const Thrown target = thrown_by(
+        [&] { SampleSelector::select({1, 0, 0}, nullptr, {}, targets(), in_target, kRunId); });
+    CHECK(target.kind == "logic_error");
+}
+
+TEST_CASE("to_json without canaries leaves manifest_sha256 and the canary objects out",
+          "[sample-selector][w6.2]")
+{
+    connector::CandidatePool pool;
+    pool.mail = {mail_candidate(7)};
+    const Selection s = SampleSelector::select({2, 1, 0}, nullptr, {}, targets(), pool, kRunId);
+
+    const json out = rp::sampling::to_json(s.record);
+
+    CHECK_FALSE(out.contains("manifest_sha256"));
+    for (const char* kind : {"mail", "sharepoint", "onedrive"}) {
+        CAPTURE(kind);
+        CHECK_FALSE(out.at(kind).contains("canary"));
+        CHECK(out.at(kind).contains("random"));
+    }
+    CHECK(out.at("mail").at("requested") == 2);
+    CHECK(out.at("mail").at("random").at("wanted") == 2);
+    CHECK(out.at("mail").at("random").at("taken") == 1);
+    CHECK(out.at("sharepoint").at("random").at("wanted") == 1);
+    CHECK(out.at("algorithm") == "sample-v1");
+    CHECK(out.at("seed") == "8b26e36a");
+    // With a manifest nothing moved.
+    const json with = rp::sampling::to_json(select({2, 1, 0}, pool).record);
+    CHECK(with.contains("manifest_sha256"));
+    CHECK(with.at("mail").contains("canary"));
+}
+
+TEST_CASE("choose_sample without a manifest asks for every type with a size, excludes nothing of "
+          "a manifest's, and checks no manifest",
+          "[sample-selector][w6.2]")
+{
+    SamplingConnector c;
+    c.pool.mail = {mail_candidate(1)};
+    c.pool.sharepoint = {sp_candidate(1)};
+    c.pool.onedrive = {od_candidate(1)};
+
+    const Selection s = rp::sampling::choose_sample(
+        c, "RestoreProofLab.onmicrosoft.com", lab_point(), targets(), "another-tenant-entirely",
+        {1, 1, 1}, nullptr, {}, kRunId);
+
+    REQUIRE(c.queries.size() == 1);
+    const connector::CandidateQuery& q = c.queries[0];
+    CHECK(q.mail);
+    CHECK(q.sharepoint);
+    CHECK(q.onedrive);
+    CHECK(q.exclude.list_ids.empty());
+    CHECK(q.exclude.subjects.empty());
+    CHECK(q.exclude.sharepoint_names.empty());
+    CHECK(q.exclude.onedrive_names.empty());
+    CHECK(q.exclude.onedrive_folders.empty());
+    CHECK_FALSE(s.record.canaries);
+    CHECK(s.mail.size() == 1);
+    CHECK(s.sharepoint.size() == 1);
+    CHECK(s.onedrive.size() == 1);
+    // A size of 1 lists its type (the whole size is random); with a manifest
+    // it wouldn't (floor(1/2) is 0).
+    SamplingConnector one;
+    rp::sampling::choose_sample(one, "client", lab_point(), targets(), "t", {1, 0, 0}, nullptr, {},
+                                kRunId);
+    REQUIRE(one.queries.size() == 1);
+    CHECK(one.queries[0].mail);
+    CHECK_FALSE(one.queries[0].sharepoint);
+    // Nothing asked for lists nothing.
+    SamplingConnector none;
+    rp::sampling::choose_sample(none, "client", lab_point(), targets(), "t", {0, 0, 0}, nullptr, {},
+                                kRunId);
+    CHECK(none.queries.empty());
 }
 
 // 5. The rotation's window and the next cursor.
@@ -1037,7 +1177,7 @@ TEST_CASE("choose_sample excludes each top-level folder the OneDrive canaries ar
     manifest.onedrive[3].folder_path = "/"; // at the root: no folder to leave out
     SamplingConnector c;
     rp::sampling::choose_sample(c, "client", lab_point(), targets(), manifest.tenant_id, {0, 0, 2},
-                                manifest, {}, kRunId);
+                                &manifest, {}, kRunId);
     REQUIRE(c.queries.size() == 1);
     CHECK(c.queries.front().exclude.onedrive_folders ==
           std::vector<std::string>{"RestoreTest", "Canaries"});
@@ -1105,8 +1245,8 @@ TEST_CASE("choose_sample asks for the types with a random half, with the canarie
     CHECK(s.onedrive.size() == 4);
     CHECK(s.record.onedrive.random_taken == 2);
     CHECK(everything(s) ==
-          everything(SampleSelector::select({5, 1, 4}, lab_manifest(), {3, 2, 1}, targets(), c.pool,
-                                            "run-0001")));
+          everything(SampleSelector::select({5, 1, 4}, &lab_manifest(), {3, 2, 1}, targets(),
+                                            c.pool, "run-0001")));
 }
 
 // 12. What the sampler chose passes the restore-target guard (W2.7, layer 1).

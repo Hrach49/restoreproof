@@ -240,7 +240,7 @@ TEST_CASE("restore: a cursor for a type the manifest has no canaries of must be 
           "[restore_command]")
 {
     Harness lab;
-    lab.dir.write("seed-manifest.json", trimmed_manifest(2, 2, 0));
+    lab.write_manifest(trimmed_manifest(2, 2, 0));
 
     const Run run = lab.run({"--canary-cursor", "0,0,1"});
 
@@ -268,7 +268,8 @@ TEST_CASE("restore: without --config it reads the default config", "[restore_com
 {
     Harness lab;
 
-    const Run run = lab.run_raw({"--run-id", kRunId, "--mail", "1", "--sp", "0", "--od", "0"});
+    const Run run = lab.run_raw(
+        {"--run-id", kRunId, "--mail", "1", "--sp", "0", "--od", "0", "--canary-cursor", "0,0,0"});
 
     CHECK(run.exit_code == rp::exit_code::ok);
     CHECK(lab.default_path_calls == 1);
@@ -452,7 +453,7 @@ TEST_CASE("restore: a manifest that doesn't load is a config error, before the c
     if (what == "missing") {
         std::filesystem::remove(lab.manifest_path);
     } else {
-        lab.dir.write("seed-manifest.json", "{not json");
+        lab.write_manifest("{not json");
     }
 
     const Run run = lab.run({});
@@ -477,7 +478,7 @@ TEST_CASE("restore: a manifest that names a restore target is a config error, be
     // Entry 30 is the first OneDrive canary.
     REQUIRE(manifest["entries"][30]["kind"] == "onedrive_file");
     manifest["entries"][30]["location"]["folder_path"] = "/RestoreTarget";
-    lab.dir.write("seed-manifest.json", manifest.dump());
+    lab.write_manifest(manifest.dump());
     // Veeam unreachable: the manifest must be refused first, never exit 3.
     lab.fake.points_throw = [] { throw connector::TransientError("Veeam unreachable"); };
 
@@ -1012,7 +1013,7 @@ TEST_CASE("restore: an empty sample restores nothing and is status error empty_s
              "canary cursor 0,0,0 -> 0,0,0\n", "warning: shortfall: mail canary: 0 of 1\n"},
         }));
     Harness lab;
-    lab.dir.write("seed-manifest.json", manifest);
+    lab.write_manifest(manifest);
     Args args = sizes;
     args.insert(args.end(), {"--run-id", kRunId});
 
@@ -1043,13 +1044,13 @@ TEST_CASE("restore: a status line lost without a restore is said on stderr, with
     const std::string status_line =
         "status error empty_sample: the sample is empty: nothing to restore\n";
     Harness whole;
-    whole.dir.write("seed-manifest.json", trimmed_manifest(0, 1, 1));
+    whole.write_manifest(trimmed_manifest(0, 1, 1));
     const Run full = whole.run(args);
     const std::string body = whole.body(full);
     REQUIRE(body.ends_with(status_line + kNothingRestored));
 
     Harness lab;
-    lab.dir.write("seed-manifest.json", trimmed_manifest(0, 1, 1));
+    lab.write_manifest(trimmed_manifest(0, 1, 1));
     // Everything but the status line (and the cleanup line after it) fits.
     RecordingStreamBuf buffer(body.size() - status_line.size() - kNothingRestored.size() + 5);
     std::ostream out(&buffer);
@@ -1161,6 +1162,7 @@ TEST_CASE("restore: a succeeded restore prints the header, both tables and the s
               "restore               0:02:03.000\n"
               "restore_submit        -            not reported\n"
               "restore_wait          -            not reported\n"
+              "content_export        -            not reported\n"
               "verify                0:18:27.000\n"
               "recovery              0:20:30.000\n"
               "cleanup_after         0:02:03.000\n"
@@ -1215,7 +1217,7 @@ TEST_CASE("restore: the backup's own status never decides the run's: a partial r
         GENERATE(table<connector::RestoreStatus, int, bool, int, std::string>({
             // W3.3: 0, not 5 as before.
             {connector::RestoreStatus::partial, 1, false, rp::exit_code::ok,
-             "status pass: 2 of 2 item(s) verified: manifest 2, fields 0, metadata 0"},
+             "status pass: 2 of 2 item(s) verified: manifest 2, fields 0, metadata 0, backup_content 0"},
             {connector::RestoreStatus::failed, 0, false, rp::exit_code::service,
              "status error restore_contradiction: the backup reported nothing restored, yet "
              "every item verified: the evidence contradicts itself"},
@@ -1297,7 +1299,7 @@ TEST_CASE("restore: an item the backup failed for an infrastructure reason is un
              {false, true},
              {false, false},
              rp::exit_code::ok,
-             "status pass: 2 of 2 item(s) verified: manifest 2, fields 0, metadata 0",
+             "status pass: 2 of 2 item(s) verified: manifest 2, fields 0, metadata 0, backup_content 0",
              "warning: backup_item: 1 verified item(s) the backup didn't report restored\n"},
             {connector::RestoreStatus::partial,
              {connector::ItemOutcome::restored, connector::ItemOutcome::failed},
@@ -1475,7 +1477,7 @@ TEST_CASE("restore: the edges of the command line are accepted", "[restore_comma
     }
     SECTION("a cursor of 0 for a type the manifest has no canaries of")
     {
-        lab.dir.write("seed-manifest.json", trimmed_manifest(1, 1, 0));
+        lab.write_manifest(trimmed_manifest(1, 1, 0));
         const Run run = lab.run(
             {"--run-id", kRunId, "--canary-cursor", "0,0,0", "--mail", "1", "--sp", "1", "--od", "0"});
         CHECK(run.exit_code == rp::exit_code::ok);
@@ -1492,7 +1494,7 @@ TEST_CASE("restore: the edges of the command line are accepted", "[restore_comma
         }
         REQUIRE(tenant != kTenant);
         manifest["tenant_id"] = tenant;
-        lab.dir.write("seed-manifest.json", manifest.dump());
+        lab.write_manifest(manifest.dump());
         const Run run = lab.run({"--run-id", kRunId, "--mail", "1", "--sp", "0", "--od", "0"});
         CHECK(run.exit_code == rp::exit_code::ok);
         CHECK(run.err.empty());
@@ -1580,7 +1582,7 @@ TEST_CASE("restore: a shortfall is named in the header and warned of, and is sti
          "warning: shortfall: mail canary: 1 of 2\nwarning: shortfall: mail random: 0 of 2\n"},
     }));
     Harness lab;
-    lab.dir.write("seed-manifest.json", trimmed_manifest(1, 1, 1));
+    lab.write_manifest(trimmed_manifest(1, 1, 1));
     for (int n = 1; n <= pool; ++n) {
         lab.fake.pool.mail.push_back(carol_mail(n));
     }
@@ -1712,7 +1714,8 @@ TEST_CASE("restore: log lines go to the logger, never to stdout; without one the
         const std::string path_arg = utf8(lab.config_path);
         lab.fake.out = &out;
         const int code = rp::run_restore_command(
-            Args{"--run-id", kRunId, "--mail", "1", "--sp", "0", "--od", "0", "--config", path_arg},
+            Args{"--run-id", kRunId, "--mail", "1", "--sp", "0", "--od", "0", "--canary-cursor",
+                 "0,0,0", "--config", path_arg},
             out, err, env);
         lab.fake.out = nullptr;
         CHECK(code == rp::exit_code::ok);
@@ -1904,7 +1907,7 @@ TEST_CASE("restore: every type checked: canaries and random items of each, the O
                    "\n"
                    "check: 6 match, 0 mismatch, 0 missing, 0 error\n"
                    "\n"
-                   "status pass: 6 of 6 item(s) verified: manifest 3, fields 1, metadata 2\n"));
+                   "status pass: 6 of 6 item(s) verified: manifest 3, fields 1, metadata 2, backup_content 0\n"));
 }
 
 TEST_CASE("restore: an item missing or not matching is status fail, exit 5",
@@ -2123,7 +2126,7 @@ TEST_CASE("restore: two copies of one item: the newest is checked, and DUP says 
     CHECK_THAT(run.out,
                ContainsSubstring("  mail  canary  RP-CANARY-0001  match    -       2 copies  123000\n"));
     CHECK(lab.body(run).ends_with("\nstatus pass: 1 of 1 item(s) verified: manifest 1, fields 0, "
-                                  "metadata 0\n" +
+                                  "metadata 0, backup_content 0\n" +
                                   clean_after_line(2, 0, 0)));
 }
 
@@ -2516,8 +2519,6 @@ struct SpanExpect {
     std::string_view note;
     int ticks = -1;
 };
-using SpansExpect = std::array<SpanExpect, rp::timing::kSpanCount>;
-
 constexpr SpanExpect kNotRun{"not run"};
 constexpr SpanExpect kNotReported{"not reported"};
 constexpr SpanExpect kWentBack{"clock went back"};
@@ -2529,6 +2530,35 @@ constexpr SpanExpect stopped(int ticks)
 {
     return {"stopped", ticks};
 }
+
+// Every span, listed as the eleven before W6.3: content_export (after
+// restore_wait) is derived, since no run here asks for content. It is
+// reported, as none, wherever restore_submit was reported or measured, and
+// not run where restore_submit wasn't (docs/decisions.md 2026-10-14, W6.3
+// point 7).
+struct SpansExpect {
+    SpansExpect(SpanExpect lookup, SpanExpect clean_before, SpanExpect select, SpanExpect snapshot,
+                SpanExpect restore, SpanExpect submit, SpanExpect wait, SpanExpect verify,
+                SpanExpect recovery, SpanExpect clean_after, SpanExpect total)
+        : v{lookup,
+            clean_before,
+            select,
+            snapshot,
+            restore,
+            submit,
+            wait,
+            submit.note == kNotRun.note ? kNotRun : kNotReported,
+            verify,
+            recovery,
+            clean_after,
+            total}
+    {
+    }
+    const SpanExpect& operator[](std::size_t i) const { return v[i]; }
+    SpanExpect& operator[](std::size_t i) { return v[i]; }
+    std::size_t size() const noexcept { return v.size(); }
+    std::array<SpanExpect, rp::timing::kSpanCount> v;
+};
 
 SpanState state_of(std::string_view note)
 {
@@ -2615,7 +2645,7 @@ TEST_CASE("restore: step timings: a run that stops before its run line prints no
         {"usage", [](Harness&) {}, Args{"--mail", "x"}, rp::exit_code::usage},
         {"config", [](Harness& lab) { lab.load_secrets = [] { return rp::Secrets{}; }; }, Args{},
          rp::exit_code::config},
-        {"manifest", [](Harness& lab) { lab.dir.write("seed-manifest.json", "{"); }, Args{},
+        {"manifest", [](Harness& lab) { lab.write_manifest("{"); }, Args{},
          rp::exit_code::config},
         {"cursor", [](Harness&) {}, Args{"--canary-cursor", "99,0,0"}, rp::exit_code::usage},
         {"run lock", [](Harness& lab) { lab.lock_taken = true; }, Args{}, rp::exit_code::service},
@@ -2714,7 +2744,7 @@ TEST_CASE("restore: step timings: each way a run ends has its spans; the table e
          {measured(1), measured(1), stopped(1), kNotRun, kNotRun, kNotRun, kNotRun, kNotRun,
           kNotRun, kNotRun, measured(6)}},
         {"an empty sample",
-         [](Harness& lab) { lab.dir.write("seed-manifest.json", trimmed_manifest(0, 1, 1)); },
+         [](Harness& lab) { lab.write_manifest(trimmed_manifest(0, 1, 1)); },
          Args{"--mail", "1", "--sp", "0", "--od", "0"}, rp::exit_code::service,
          {measured(1), measured(1), measured(1), kNotRun, kNotRun, kNotRun, kNotRun, kNotRun,
           kNotRun, kNotRun, measured(6)}},
@@ -2821,7 +2851,8 @@ TEST_CASE("restore: step timings: a clock that goes back makes no duration up, a
 {
     Harness lab;
     lab.fake.pool.mail = {carol_mail(1)};
-    const Args args{"--run-id", kRunId, "--mail", "2", "--sp", "1", "--od", "0"};
+    const Args args{"--run-id", kRunId, "--mail", "2", "--sp", "1", "--od", "0",
+                    "--canary-cursor", "0,0,0"};
     SECTION("once, at the restore point lookup's end: that span alone")
     {
         int readings = 0;
@@ -2870,6 +2901,7 @@ TEST_CASE("restore: step timings: a clock that goes back makes no duration up, a
                                      "restore               -     clock went back\n"
                                      "restore_submit        -     not reported\n"
                                      "restore_wait          -     not reported\n"
+                                     "content_export        -     not reported\n"
                                      "verify                -     clock went back\n"
                                      "recovery              -     clock went back\n"
                                      "cleanup_after         -     clock went back\n"
@@ -2904,7 +2936,8 @@ TEST_CASE("restore: step timings: a clock that throws once the clean after is do
     };
     const Case& c = cases[GENERATE(range(std::size_t{0}, std::size_t{2}))];
     CAPTURE(c.name);
-    const Args args{"--run-id", kRunId, "--mail", "2", "--sp", "1", "--od", "0"};
+    const Args args{"--run-id", kRunId, "--mail", "2", "--sp", "1", "--od", "0",
+                    "--canary-cursor", "0,0,0"};
     Harness steady;
     steady.tick = 1s;
     steady.fake.pool.mail = {carol_mail(1)};
@@ -3000,7 +3033,8 @@ TEST_CASE("restore: step timings: a clock that throws at a reading for the timin
     };
     const Case& c = cases[GENERATE(range(std::size_t{0}, std::size_t{11}))];
     CAPTURE(c.reading);
-    const Args args{"--run-id", kRunId, "--mail", "2", "--sp", "1", "--od", "0"};
+    const Args args{"--run-id", kRunId, "--mail", "2", "--sp", "1", "--od", "0",
+                    "--canary-cursor", "0,0,0"};
     Harness steady;
     steady.tick = 1s;
     steady.fake.pool.mail = {carol_mail(1)};
@@ -3071,8 +3105,8 @@ TEST_CASE("restore: step timings: without env.now they run on the connector's cl
     std::ostringstream out;
     std::ostringstream err;
     const std::string path_arg = utf8(lab.config_path);
-    const Args args{"--run-id", kRunId, "--mail", "2", "--sp", "1", "--od", "0", "--config",
-                    path_arg};
+    const Args args{"--run-id", kRunId, "--mail", "2", "--sp", "1", "--od", "0",
+                    "--canary-cursor", "0,0,0", "--config", path_arg};
 
     const int code = rp::run_restore_command(args, out, err, env);
 
@@ -3120,7 +3154,8 @@ TEST_CASE("restore: step timings: a table that fails to write, or an on_timings 
           "changes nothing",
           "[restore_command][step_timer]")
 {
-    const Args args{"--run-id", kRunId, "--mail", "2", "--sp", "1", "--od", "0"};
+    const Args args{"--run-id", kRunId, "--mail", "2", "--sp", "1", "--od", "0",
+                    "--canary-cursor", "0,0,0"};
     Harness whole;
     whole.fake.pool.mail = {carol_mail(1)};
     const Run full = whole.run(args);
@@ -3176,7 +3211,10 @@ struct RealRig {
     RealRig()
     {
         config_path = dir.write("config.json", config_values().dump(2));
-        dir.write("seed-manifest.json", lab_manifest_text());
+        // W6.2: canaries\<tenant>.json beside the config, the tenant in lower case.
+        std::filesystem::create_directories(dir.path() / "canaries");
+        dir.write(std::filesystem::path("canaries") / (rp::ascii_lower(std::string{kTenant}) + ".json"),
+                  lab_manifest_text());
         // W3.4: the Cleaner finds the three targets empty until a test says
         // otherwise.
         for (const connector::ItemKind kind :
@@ -3413,7 +3451,7 @@ TEST_CASE("restore through veeam_m365: a canary restored on the recorded run, ex
           "\n"
           "check: 1 match, 0 mismatch, 0 missing, 0 error\n"
           "\n"
-          "status pass: 1 of 1 item(s) verified: manifest 1, fields 0, metadata 0\n"
+          "status pass: 1 of 1 item(s) verified: manifest 1, fields 0, metadata 0, backup_content 0\n"
           "cleanup after ok: deleted 1 mail, 0 sharepoint, 0 onedrive\n"
           "\n"
           "STEP                  TIME         NOTE\n"
@@ -3424,16 +3462,21 @@ TEST_CASE("restore through veeam_m365: a canary restored on the recorded run, ex
           "restore               0:00:05.000\n"
           "restore_submit        0:00:00.000\n"
           "restore_wait          0:00:05.000\n"
+          "content_export        -            not reported\n"
           "verify                0:00:00.000\n"
           "recovery              0:00:05.000\n"
           "cleanup_after         0:00:00.000\n"
           "total                 0:00:05.000\n");
     // W3.5: a pass leaves no span stopped, open or unmeasured; the connector
     // reported its session's submit and wait on the rig's clock, which moves
-    // only on the poll's waits.
+    // only on the poll's waits. W6.3: no content was asked, so content_export
+    // alone is not reported.
     REQUIRE(real.timings.size() == 1);
-    for (const rp::timing::SpanTiming& span : real.timings[0].spans) {
-        CHECK(span.state == rp::timing::SpanState::measured);
+    for (std::size_t i = 0; i < real.timings[0].spans.size(); ++i) {
+        CAPTURE(i);
+        CHECK(real.timings[0].spans[i].state ==
+              (static_cast<rp::timing::Span>(i) == rp::timing::Span::content_export ? rp::timing::SpanState::not_reported
+                                                            : rp::timing::SpanState::measured));
     }
     CHECK(real.rig.restore_posts().size() == 1);
     // The mailbox was read once without bodies before the restore, once with
@@ -3477,7 +3520,7 @@ TEST_CASE("restore through veeam_m365 --record: every exchange written, the rest
     CHECK(run.out.ends_with("check: 1 match, 0 mismatch, 0 missing, 0 error\n"
                             "\n"
                             "status pass: 1 of 1 item(s) verified: manifest 1, fields 0, "
-                            "metadata 0\n"
+                            "metadata 0, backup_content 0\n"
                             "cleanup after ok: deleted 1 mail, 0 sharepoint, 0 onedrive\n" +
                             // W3.5: the step timings' table, then the recording's line.
                             timings_table(real.timings.at(0)) +
@@ -3727,7 +3770,7 @@ TEST_CASE("restore: a verdict decided after a stop: an error becomes error inter
             "error target_guard: the restore didn't start: the restore-target guard refused "
             "(target_guard); nothing was restored\n"},
         Row{"a pass", true, [](Harness&) {}, rp::exit_code::ok,
-            "pass: 3 of 3 item(s) verified: manifest 2, fields 1, metadata 0\n"},
+            "pass: 3 of 3 item(s) verified: manifest 2, fields 1, metadata 0, backup_content 0\n"},
         Row{"a fail", true,
             [](Harness& lab) {
                 lab.targets.after[kind_slot(connector::ItemKind::sharepoint)] = json::array();
@@ -4199,7 +4242,8 @@ TEST_CASE("rpworker restore takes --profile-file and runs on the file's client, 
         std::ostringstream out;
         std::ostringstream err;
         const int code = rp::run_restore_command(
-            Args{"--profile-file", file_arg, "--config", config}, out, err, lab.env());
+            Args{"--profile-file", file_arg, "--canary-cursor", "0,0,0", "--config", config}, out,
+            err, lab.env());
         CHECK(code == rp::exit_code::ok);
         CHECK(lab.fake.client_ref == "FromFile.onmicrosoft.com");
         CHECK_THAT(err.str(), !ContainsSubstring("error"));
@@ -4326,7 +4370,7 @@ TEST_CASE("restore: the client check: a manifest of another tenant ends the run 
     Harness lab;
     json manifest = json::parse(lab_manifest_text());
     manifest["tenant_id"] = "22222222-3333-4444-5555-666666666666";
-    lab.dir.write("seed-manifest.json", manifest.dump(2));
+    lab.write_manifest(manifest.dump(2));
     lab.fake.pool.mail = {carol_mail(1)};
 
     const Run run = lab.run({"--run-id", kRunId, "--mail", "2", "--sp", "1", "--od", "1"});
@@ -4468,4 +4512,69 @@ TEST_CASE("restore: the client check passes: its line follows the run line, the 
     CHECK(gets[0] == gl::inbox_url());
     CHECK(gets[1] == gl::drive_url());
     CHECK(gets[2] == gl::folder_url());
+}
+
+// --- W6.2: canaries are an opt-in -------------------------------------------------
+
+TEST_CASE("restore: without --canary-cursor or --manifest the run has no canaries: the whole "
+          "sample is random, no manifest is read, and the header says so",
+          "[restore_command][w6.2]")
+{
+    Harness lab;
+    lab.canaries = false;
+    std::filesystem::remove(lab.manifest_path);
+    lab.fake.pool.mail = {carol_mail(1), carol_mail(2)};
+
+    const Run run = lab.run({"--run-id", kRunId, "--mail", "2", "--sp", "0", "--od", "0"});
+
+    INFO(run.out);
+    CHECK(run.exit_code == rp::exit_code::ok);
+    CHECK(run.err.empty());
+    CHECK_THAT(run.out, ContainsSubstring("\ncanaries: none\n"));
+    CHECK_THAT(run.out, !ContainsSubstring("canary cursor"));
+    CHECK_THAT(run.out, ContainsSubstring("  mail        2          none      2 of 2\n"));
+    CHECK_THAT(run.out, ContainsSubstring("\nstatus pass: 2 of 2 item(s) verified: manifest 0, "
+                                          "fields 2, metadata 0, backup_content 0\n"));
+    REQUIRE(lab.fake.spec);
+    REQUIRE(lab.fake.spec->mail.size() == 2);
+    for (const connector::MailSelector& m : lab.fake.spec->mail) {
+        CHECK(m.mailbox == kCarol);
+    }
+    CHECK_FALSE(std::filesystem::exists(lab.manifest_path));
+}
+
+TEST_CASE("restore: --canary-cursor opts in and reads canaries\\<tenant>.json beside the config; "
+          "one that isn't there is a config error naming it",
+          "[restore_command][w6.2]")
+{
+    Harness lab;
+    CHECK(lab.manifest_path.parent_path().filename() == "canaries");
+    CHECK(lab.manifest_path.filename() == std::filesystem::path(lab.tenant + ".json"));
+    CHECK(lab.tenant == rp::ascii_lower(std::string{kTenant}));
+    std::filesystem::remove(lab.manifest_path);
+
+    const Run run = lab.run({"--canary-cursor", "0,0,0"});
+
+    CHECK(run.exit_code == rp::exit_code::config);
+    CHECK(run.out.empty());
+    CHECK(run.err == "config error: canary manifest: " + utf8(lab.manifest_path) +
+                         ": cannot read the file\n");
+    CHECK(lab.make_connector_calls == 0);
+}
+
+TEST_CASE("restore: --manifest alone opts in with the cursor 0,0,0", "[restore_command][w6.2]")
+{
+    Harness lab;
+    std::filesystem::remove(lab.manifest_path);
+    rp::test::TempDir other;
+    const std::string path = utf8(other.write("pilot-manifest.json", trimmed_manifest(1, 1, 1)));
+
+    const Run run = lab.run({"--manifest", path, "--run-id", kRunId, "--mail", "1", "--sp", "0",
+                             "--od", "0"});
+
+    CHECK(run.exit_code == rp::exit_code::ok);
+    CHECK_THAT(run.out, ContainsSubstring("\ncanary cursor 0,0,0 -> 0,0,0\n"));
+    REQUIRE(lab.fake.spec);
+    REQUIRE(lab.fake.spec->mail.size() == 1);
+    CHECK(lab.fake.spec->mail[0].subject.starts_with("RP-CANARY-"));
 }

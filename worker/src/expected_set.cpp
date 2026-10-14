@@ -153,6 +153,15 @@ void put(json& out, const char* key, const std::string& value)
     }
 }
 
+constexpr std::string_view kExportWords[] = {"exported",      "no_rule",  "refused",
+                                             "no_answer",     "size_mismatch", "over_cap",
+                                             "invalid_package", "not_in_backup", "budget"};
+
+bool is_export_word(std::string_view word) noexcept
+{
+    return std::ranges::find(kExportWords, word) != std::end(kExportWords);
+}
+
 bool is_lower_hex_sha256(const std::string& text)
 {
     return text.size() == 64 && std::ranges::all_of(text, [](char c) {
@@ -176,6 +185,12 @@ const char* inconsistency(const ExpectedItem& item, std::size_t position)
     if (item.mail.has_value() != mail || item.file.has_value() != file) {
         return "doesn't hold its type's fields";
     }
+    // W6.3: an export's word on a random file alone, and one of the words.
+    if (!item.export_word.empty() &&
+        (!file || item.source != ItemSource::random || !is_export_word(item.export_word) ||
+         item.expected_kind == ExpectedKind::manifest)) {
+        return "has an export word but isn't a random file";
+    }
     switch (item.expected_kind) {
     case ExpectedKind::manifest: {
         const bool rule = mail ? item.sha256_rule == "text-v1"
@@ -194,6 +209,17 @@ const char* inconsistency(const ExpectedItem& item, std::size_t position)
             return "is fields or metadata but not a random item of its type without a hash";
         }
         return nullptr;
+    case ExpectedKind::backup_content: {
+        // bytes with the export's size, office-v1 without one.
+        const bool bytes = item.sha256_rule == "bytes";
+        const bool office = item.sha256_rule == "office-v1";
+        if (!file || item.source != ItemSource::random || item.random_key.empty() ||
+            !item.canary_id.empty() || !is_lower_hex_sha256(item.sha256) || !(bytes || office) ||
+            item.file->size_bytes.has_value() != bytes || item.export_word != "exported") {
+            return "is backup_content but not a random file exported with a hash and its rule";
+        }
+        return nullptr;
+    }
     }
     return "has an unknown expected kind";
 }
@@ -224,6 +250,7 @@ json item_json(const ExpectedItem& item)
     }
     put(out, "sha256", item.sha256);
     put(out, "sha256_rule", item.sha256_rule);
+    put(out, "export", item.export_word);
     return out;
 }
 
@@ -238,8 +265,21 @@ std::string_view to_string(ExpectedKind kind) noexcept
         return "metadata";
     case ExpectedKind::manifest:
         return "manifest";
+    case ExpectedKind::backup_content:
+        return "backup_content";
     }
     return "unknown";
+}
+
+std::vector<std::string_view> export_words()
+{
+    return {std::begin(kExportWords), std::end(kExportWords)};
+}
+
+bool is_failed_export(std::string_view word) noexcept
+{
+    return word == "refused" || word == "no_answer" || word == "size_mismatch" ||
+           word == "over_cap" || word == "invalid_package" || word == "budget";
 }
 
 std::string_view to_string(ItemSource source) noexcept
@@ -254,27 +294,40 @@ std::string_view to_string(ItemSource source) noexcept
 }
 
 ExpectedSet build_expected_set(const sampling::Selection& selection,
-                               const sampling::CanaryManifest& manifest)
+                               const sampling::CanaryManifest* manifest)
 {
     const sampling::SampleRecord& record = selection.record;
-    if (record.manifest_sha256 != manifest.sha256) {
+    if (manifest == nullptr && record.canaries) {
+        throw std::invalid_argument(
+            "expected set: the selection was made from a manifest this call doesn't have");
+    }
+    if (manifest != nullptr && !record.canaries) {
+        throw std::invalid_argument("expected set: the selection was made without canaries");
+    }
+    if (manifest != nullptr && record.manifest_sha256 != manifest->sha256) {
         throw std::invalid_argument("expected set: the selection wasn't made from this manifest");
     }
+    // Without a manifest there is no canary to find: empty lists.
+    static const std::vector<CanaryMail> kNoMail;
+    static const std::vector<CanaryFile> kNoFiles;
+    const std::vector<CanaryMail>& mail = manifest == nullptr ? kNoMail : manifest->mail;
+    const std::vector<CanaryFile>& sharepoint = manifest == nullptr ? kNoFiles : manifest->sharepoint;
+    const std::vector<CanaryFile>& onedrive = manifest == nullptr ? kNoFiles : manifest->onedrive;
     check_counts(ItemKind::mail, selection.mail, record.mail, selection.mail_random);
     check_counts(ItemKind::sharepoint, selection.sharepoint, record.sharepoint,
                  selection.sharepoint_random);
     check_counts(ItemKind::onedrive, selection.onedrive, record.onedrive, selection.onedrive_random);
 
     ExpectedSet set;
-    set.manifest_sha256 = manifest.sha256;
-    set.canaries_seeded_at = manifest.seeded_at;
-    add_kind(ItemKind::mail, selection.mail, record.mail, selection.mail_random, manifest.mail,
+    set.canaries = manifest != nullptr;
+    set.manifest_sha256 = manifest == nullptr ? std::string{} : manifest->sha256;
+    set.canaries_seeded_at = manifest == nullptr ? std::string{} : manifest->seeded_at;
+    add_kind(ItemKind::mail, selection.mail, record.mail, selection.mail_random, mail,
              sampling::to_selector, set.items);
     add_kind(ItemKind::sharepoint, selection.sharepoint, record.sharepoint,
-             selection.sharepoint_random, manifest.sharepoint, sampling::to_sharepoint_selector,
-             set.items);
+             selection.sharepoint_random, sharepoint, sampling::to_sharepoint_selector, set.items);
     add_kind(ItemKind::onedrive, selection.onedrive, record.onedrive, selection.onedrive_random,
-             manifest.onedrive, sampling::to_onedrive_selector, set.items);
+             onedrive, sampling::to_onedrive_selector, set.items);
     return set;
 }
 
@@ -283,6 +336,7 @@ json to_json(const ExpectedSet& set)
     std::size_t manifest = 0;
     std::size_t fields = 0;
     std::size_t metadata = 0;
+    std::size_t backup_content = 0;
     json items = json::array();
     for (const ExpectedItem& item : set.items) {
         if (const char* why = inconsistency(item, items.size())) {
@@ -298,14 +352,24 @@ json to_json(const ExpectedSet& set)
         case ExpectedKind::metadata:
             ++metadata;
             break;
+        case ExpectedKind::backup_content:
+            ++backup_content;
+            break;
         }
         items.push_back(item_json(item));
     }
-    return {
-        {"manifest_sha256", set.manifest_sha256},
-        {"counts", {{"manifest", manifest}, {"fields", fields}, {"metadata", metadata}}},
+    json out = {
+        {"counts",
+         {{"manifest", manifest},
+          {"fields", fields},
+          {"metadata", metadata},
+          {"backup_content", backup_content}}},
         {"items", std::move(items)},
     };
+    if (set.canaries) {
+        out["manifest_sha256"] = set.manifest_sha256;
+    }
+    return out;
 }
 
 } // namespace rp::verification

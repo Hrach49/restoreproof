@@ -313,16 +313,22 @@ ctest name `live export spike: Veeam's document export in admin mode against the
 `docs/decisions.md` 2026-10-14, W6.1) is the spike's harness and no product code: as `rp-veeam`
 from the vault it finds the lab's 14 real files (L1.8) through the connector's `list_candidates`,
 exports each from explore sessions of its own (`POST …/Documents/{id}/save {"asZip":false}`, the
-pdf once more with `asZip` true), stops those sessions, restores the same 14 through
-`restore_sample` (the guarded path, on a thread, with one more export from a third session while
-the SharePoint restore is `Working`), reads the two file targets back with `TargetReader` and
+pdf once more with `asZip` true), stops those sessions and reads them again until neither is
+`Working` (one more Stop after a minute, as the connector sends one; still `Working` after three
+minutes fails the test there, before any restore, since the connector's preflight would refuse
+it), restores the same 14 through `restore_sample` (the guarded path, on a thread, with one more
+export from a third session while the SharePoint restore is `Working`: that session is opened as
+soon as the connector's explore session is listed, before its restore POST, so it is older than
+the connector's duplicate window, and the sessions are listed as `own_sessions` lists them, since
+the restore began, newest first), reads the two file targets back with `TargetReader` and
 compares: SHA-256 for pdf, txt and png, `office-v1` on both sides for the xlsx and the docx. It
 prints one table and writes it as JSON to `RP_LIVE_EVIDENCE_FILE`; with `RP_LIVE_RECORD_DIR` (a
 new or empty folder) its own Veeam exchanges are recorded, scrubbed, under `veeam/` (JSON) and
 `export/` (the exports as digests, never the bytes). **It does not clean:** run it through
 `docs/api/veeam-lab/w6.1-harness/w61-live.ps1` (elevated PowerShell 7), which checks the targets
-are empty first, runs the test, reads the copies back with `rpworker graph list --hash`, and runs
-the live cleanup test in its `finally`; it copies the evidence into `docs/api/veeam-lab/` only
+are empty first (targets that aren't are left as they are: nothing of this run is in them), runs
+the test, reads the copies back with `rpworker graph list --hash`, and runs the live cleanup test
+in its `finally` once the test has started; it copies the evidence into `docs/api/veeam-lab/` only
 when every step exited 0 and no file holds a token-, PFX-, PEM- or key-shaped value. It needs
 the variables of the live restore test above (the vault, `RP_LIVE_VEEAM_CA_FILE`, an elevated
 shell), and the restore point must hold the 14 files (a missing one stops it before any export).

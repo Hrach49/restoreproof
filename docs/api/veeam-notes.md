@@ -975,6 +975,14 @@ are what a restore puts back, byte for byte for plain files, and by `office-v1` 
   explore session `29efce0b…` was opened and `project-brief.pdf` exported from it: 200, the
   same SHA-256, 12.0 s; the restore went on to `Success` 7 of 7, and the OneDrive restore after
   it too (`notes.export_during_restore`, `notes.restore`). The export disturbed neither.
+  Since the code review (`docs/decisions.md` 2026-10-14, "W6.1 code review") the test opens that
+  third session as soon as the connector's explore session is listed, before the restore POST, so
+  it is older than the connector's duplicate window (restore-flow §8: a `Working` `Vesp` session
+  of ours created from 5 s before the POST is a second candidate and costs the restore its
+  verdict, the connector's rule and not Veeam's; `notes.export_during_restore
+  .session_c_before_duplicate_window` says whether it was), and it lists the sessions since the
+  restore began, newest first, as `own_sessions` does, never the server's default order of a page
+  of everything; the kept evidence is the run before that change.
 - **A Stop that hangs**, once more: the connector's OneDrive explore session `58a1b0cc…` did
   not answer two Stops within 30 s each and was left `Working` by the connector (its rule: at
   most two Stops, `veeam_explore.cpp`); the same thing §4.4 recorded on 2026-09-30 and W3.2's

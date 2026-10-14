@@ -29,6 +29,8 @@
 
 #include "live_secrets.hpp"
 #include "../src/command_config.hpp"
+#include "../src/veeam_restore.hpp"
+#include "../src/veeam_time.hpp"
 #include "graph_live_lab.hpp"
 #include "test_support.hpp"
 
@@ -82,6 +84,7 @@ namespace {
 
 namespace connector = rp::connector;
 namespace sampling = rp::sampling;
+namespace vr = rp::veeam_restore;
 using nlohmann::json;
 using rp::test::graph_live::env_or;
 
@@ -102,6 +105,14 @@ const std::string kZipProbe = "project-brief.pdf";
 constexpr std::uint64_t kMaxExportBytes = 64ull * 1024 * 1024;
 constexpr std::chrono::milliseconds kExportTimeout{120000};
 constexpr std::chrono::minutes kRestoreDeadline{25};
+// After a Stop, a session of ours is read again until it isn't Working (the
+// connector's preflight refuses to start while one is): every kStopPoll, one
+// more Stop at kStopRetryAfter as the connector's stop_working_session sends
+// one after a Stop that failed (veeam-notes §4.4), given up at kStopDeadline.
+constexpr std::chrono::seconds kStopPoll{5};
+constexpr std::chrono::seconds kStopRetryAfter{60};
+constexpr std::chrono::seconds kStopDeadline{180};
+constexpr std::chrono::seconds kOverlapPoll{2};
 
 std::string ascii_lower(std::string text)
 {
@@ -295,13 +306,19 @@ public:
         return ascii_lower(json::parse(response.body).at("id").get<std::string>());
     }
 
+    // The session's state as Veeam lists it ("" when it has none).
+    std::string session_state(const std::string& id)
+    {
+        return get("/v8/RestoreSessions/" + id).value("state", "");
+    }
+
     // Stops `id` if it is Working; never throws. Returns one line.
     std::string stop_session(const std::string& id) noexcept
     {
         try {
-            const json session = get("/v8/RestoreSessions/" + id);
-            if (session.value("state", "") != "Working") {
-                return "session " + id + " already " + session.value("state", "?");
+            const std::string state = session_state(id);
+            if (state != "Working") {
+                return "session " + id + " already " + (state.empty() ? "?" : state);
             }
             const rp::HttpResponse response = post_json("/v8/RestoreSessions/" + id + "/Stop", json{});
             return "stopped session " + id + " -> " + std::to_string(response.status);
@@ -350,6 +367,54 @@ public:
         while (!ids_.empty()) {
             std::cout << veeam_.stop_session(ids_.back()) << "\n";
             ids_.pop_back();
+        }
+    }
+
+    struct Waited {
+        std::vector<std::string> ids;           // every session stopped here
+        std::vector<std::string> still_working; // the ones Working at the deadline
+        std::int64_t ms = 0;
+        bool stop_resent = false;
+    };
+
+    // stop_all, then each session read again until none is Working: a Stop
+    // Veeam hangs on (seen twice in this task) answers late or not at all
+    // with the session still Working, and the connector's preflight would
+    // refuse the restore for it. One more Stop at kStopRetryAfter, the
+    // connector's own second try; the ones still Working at kStopDeadline
+    // are returned for the caller to fail on, before any restore.
+    Waited stop_all_and_wait() noexcept
+    {
+        Waited out;
+        out.ids = ids_;
+        std::reverse(out.ids.begin(), out.ids.end());
+        stop_all();
+        const auto began = std::chrono::steady_clock::now();
+        for (;;) {
+            out.still_working.clear();
+            for (const std::string& id : out.ids) {
+                try {
+                    if (veeam_.session_state(id) == "Working") {
+                        out.still_working.push_back(id);
+                    }
+                } catch (const std::exception& e) {
+                    std::cout << "could not read session " << id << ": " << e.what() << "\n";
+                    out.still_working.push_back(id);
+                }
+            }
+            const auto waited = std::chrono::steady_clock::now() - began;
+            out.ms = std::chrono::duration_cast<std::chrono::milliseconds>(waited).count();
+            if (out.still_working.empty() || waited >= kStopDeadline) {
+                return out;
+            }
+            if (!out.stop_resent && waited >= kStopRetryAfter) {
+                out.stop_resent = true;
+                for (const std::string& id : out.still_working) {
+                    std::cout << "still Working after " << out.ms << " ms; "
+                              << veeam_.stop_session(id) << "\n";
+                }
+            }
+            std::this_thread::sleep_for(kStopPoll);
         }
     }
 
@@ -914,9 +979,29 @@ TEST_CASE("live export spike: Veeam's document export in admin mode against the 
         do_export(row, onedrive_path + "/Documents/" + hits.front().at("id").get<std::string>());
     }
 
-    // A and B stopped before the restore: the connector's preflight refuses
-    // to start while a session of the account is Working.
-    stops.stop_all();
+    // A and B stopped before the restore, and read again until neither is
+    // Working: the connector's preflight refuses to start while a session of
+    // the account is, and a Stop that hangs (veeam-notes §4.4) would end the
+    // spike after the exports with nothing compared. A session still
+    // Working at the deadline fails the test here, before any restore.
+    {
+        const SessionStops::Waited waited = stops.stop_all_and_wait();
+        std::string still;
+        for (const std::string& id : waited.still_working) {
+            still += (still.empty() ? "" : ", ") + id;
+        }
+        notes["sessions_stopped"] = {{"ids", waited.ids},
+                                     {"waited_ms", waited.ms},
+                                     {"stop_resent", waited.stop_resent},
+                                     {"still_working", waited.still_working}};
+        std::cout << "sessions A and B stopped: waited " << waited.ms << " ms"
+                  << (waited.stop_resent ? ", Stop sent once more" : "")
+                  << (still.empty() ? "" : "; still Working: " + still) << "\n";
+        INFO("session(s) still Working after " << waited.ms << " ms: " << still
+             << "; the connector's preflight would refuse the restore; stop them "
+                "(docs/api/veeam-m365/08-sweep-sessions.ps1)");
+        REQUIRE(still.empty());
+    }
 
     // The source locations after the exports: unchanged.
     const json library_after = library_snapshot(graph, config.test_site_id);
@@ -954,33 +1039,65 @@ TEST_CASE("live export spike: Veeam's document export in admin mode against the 
         restore_done = true;
     });
 
+    // Session C, the one the export beside the restore is made from, is
+    // opened as soon as the connector's explore session is seen (so after
+    // its preflight) and before its restore POST: the connector's duplicate
+    // check after the POST (restore-flow §8) takes every Working Vesp
+    // session of ours created from kDuplicateFloor before the POST as a
+    // candidate, and a second candidate costs the restore its verdict (or
+    // ends it, after a POST with no answer). C is never in that window when
+    // it is older than the floor; the notes say whether it was.
     json overlap = {{"seen", false}};
+    std::string session_c;
+    std::string session_c_created;
     try {
         while (!restore_done &&
                std::chrono::steady_clock::now() - restore_began < kRestoreDeadline) {
-            std::this_thread::sleep_for(std::chrono::seconds(2));
-            std::size_t working_vesp = 0;
+            std::this_thread::sleep_for(kOverlapPoll);
+            // The sessions since the restore began, newest first, as the
+            // connector's own_sessions reads them (never the server's
+            // default order of a page of everything): this run's alone,
+            // whatever the server holds.
             json seen = json::array();
             // The page is kept in a local: a range-for over a temporary's
             // member dangles (the temporary goes before the loop).
-            const json page = veeam.get("/v8/RestoreSessions?limit=50");
+            const json page = veeam.get("/v8/RestoreSessions?startTimeFrom=" + restore_started +
+                                        "Z&orderBy=CreationTime&orderAsc=false&limit=" +
+                                        std::to_string(vr::kDuplicateLimit));
             for (const json& s : page.at("results")) {
                 const bool ours = ascii_lower(s.value("initiatedBy", "")) == account;
                 const bool working = s.value("state", "") == "Working";
                 const bool vesp = s.value("type", "") == "Vesp";
                 const bool recent = s.value("creationTime", "").substr(0, 19) >= restore_started;
-                if (ours && working && vesp && recent) {
-                    ++working_vesp;
-                    seen.push_back({{"id", s.value("id", "")},
+                const bool mine = ascii_lower(s.value("id", "")) == session_c;
+                if (ours && working && vesp && recent && !mine) {
+                    seen.push_back({{"id", ascii_lower(s.value("id", ""))},
                                     {"creationTime", s.value("creationTime", "")}});
                 }
             }
-            // Two Working Vesp sessions of ours: the connector's explore
-            // session and the restore it started (the list can't tell the
-            // two apart; a restore POST made the second).
-            if (working_vesp >= 2) {
-                const std::string session_c = veeam.open_explore(org_id, newest.backup_time, "Vesp");
-                stops.add(session_c);
+            if (session_c.empty()) {
+                // One Working Vesp session of ours: the connector's explore
+                // session, so its preflight has passed and its POST is to come.
+                if (!seen.empty()) {
+                    session_c = veeam.open_explore(org_id, newest.backup_time, "Vesp");
+                    stops.add(session_c);
+                    session_c_created =
+                        veeam.get("/v8/RestoreSessions/" + session_c).value("creationTime", "");
+                    std::cout << "session C (Vesp) " << session_c << " opened at "
+                              << session_c_created << ", beside the connector's explore session "
+                              << seen.front().value("id", "") << "\n";
+                }
+                continue;
+            }
+            // Two Working Vesp sessions of ours beside C: the connector's
+            // explore session and the restore it started (the list can't
+            // tell the two apart; a restore POST made the newer one).
+            if (seen.size() >= 2) {
+                const std::string restore_created = seen.front().value("creationTime", "");
+                const std::optional<rp::VeeamTime> c_at = rp::parse_veeam_time(session_c_created);
+                const std::optional<rp::VeeamTime> restore_at = rp::parse_veeam_time(restore_created);
+                const bool before_window =
+                    c_at && restore_at && *c_at + vr::kDuplicateFloor <= *restore_at;
                 // zip_probe_path is "/v8/RestoreSessions/<A>/Organization/..."; the
                 // same document under C (document IDs don't depend on the session).
                 const std::string under_c =
@@ -990,6 +1107,9 @@ TEST_CASE("live export spike: Veeam's document export in admin mode against the 
                 overlap = {{"seen", true},
                            {"working_vesp_sessions", seen},
                            {"session_c", session_c},
+                           {"session_c_created", session_c_created},
+                           {"restore_session_created", restore_created},
+                           {"session_c_before_duplicate_window", before_window},
                            {"file", kZipProbe},
                            {"status", e.status},
                            {"bytes", e.bytes.size()},
@@ -998,6 +1118,11 @@ TEST_CASE("live export spike: Veeam's document export in admin mode against the 
                            {"equals_first_export",
                             e.status == 200 && rp::sha256_hex(e.bytes) == zip_probe_sha256}};
                 std::cout << "export beside the running restore: " << overlap.dump() << "\n";
+                if (!before_window) {
+                    std::cout << "session C was opened inside the connector's duplicate window: a "
+                                 "refusal of the restore's verdict below is the connector's rule, "
+                                 "not Veeam's\n";
+                }
                 stops.stop_all();
                 break;
             }

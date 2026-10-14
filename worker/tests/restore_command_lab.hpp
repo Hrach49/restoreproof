@@ -237,6 +237,26 @@ inline connector::RestoreResult not_in_point(const connector::RestoreSpec& spec)
 }
 
 // A connector that answers from what the test set. Called on the test's thread.
+// W6.3: the bytes the backup holds of a random file and the fake targets
+// restore: for a docx or xlsx a real package (office-content-v1's, canary
+// content of ours), so office-v1 reads it; else `size` letters r.
+inline std::string random_file_bytes(const std::string& name, std::int64_t size)
+{
+    const auto read = [](const char* file) {
+        std::ifstream in(std::filesystem::path{RP_SHARED_DIR} / "testdata" / "office-content-v1" /
+                             file,
+                         std::ios::binary);
+        return std::string{std::istreambuf_iterator<char>(in), {}};
+    };
+    if (rp::ascii_ends_with_i(name, ".docx")) {
+        return read("rp-canary-02.local.docx");
+    }
+    if (rp::ascii_ends_with_i(name, ".xlsx")) {
+        return read("rp-canary-03.local.xlsx");
+    }
+    return std::string(static_cast<std::size_t>(std::max<std::int64_t>(size, 0)), 'r');
+}
+
 struct FakeConnector {
     std::vector<connector::RestorePoint> points{point(kNewestId, kNewestTime),
                                                 point(kOlderId, kOlderTime)};
@@ -270,7 +290,26 @@ struct FakeConnector {
     std::string client_ref;
     std::string out_at_restore;
     std::optional<connector::RestoreSpec> spec;
+    // W6.3: a file's export by name: nullopt (or unset) exported faithfully,
+    // else the word it came to; and the bytes it hands the sink, edited.
+    std::function<std::optional<connector::ContentOutcome>(const std::string& name)> export_outcome;
+    std::function<std::string(const std::string& name, std::string bytes)> export_bytes;
+    // A connector that ignores want_content: no export, no word.
+    bool ignore_content = false;
 };
+
+// The size the backup holds of a random file: its candidate's, else the
+// selector's.
+template <typename Candidate, typename Selector>
+std::int64_t candidate_size(const std::vector<Candidate>& candidates, const Selector& selector)
+{
+    for (const Candidate& c : candidates) {
+        if (c.selector.name == selector.name && c.selector.folder_path == selector.folder_path) {
+            return c.size_bytes;
+        }
+    }
+    return selector.size;
+}
 
 class ForwardingConnector final : public connector::IConnector {
 public:
@@ -331,7 +370,45 @@ public:
         if (fake_.restore_throw) {
             fake_.restore_throw();
         }
-        return fake_.answer(spec);
+        // W6.3: a faithful backup exports each file that asks for its content
+        // (the bytes the fake targets restore), before the restore; a test
+        // makes an export fail or changes its bytes.
+        std::vector<connector::ContentExport> content;
+        const auto export_file = [&](connector::ItemKind kind, std::size_t index,
+                                     const std::string& name, std::int64_t size) {
+            connector::ContentExport e{kind, index, connector::ContentOutcome::exported, -1, 0};
+            if (fake_.export_outcome) {
+                if (const std::optional<connector::ContentOutcome> o = fake_.export_outcome(name)) {
+                    e.outcome = *o;
+                }
+            }
+            if (e.outcome == connector::ContentOutcome::exported) {
+                std::string bytes = random_file_bytes(name, size);
+                if (fake_.export_bytes) {
+                    bytes = fake_.export_bytes(name, std::move(bytes));
+                }
+                spec.content_sink->on_content(kind, index, bytes);
+                e.size_bytes = static_cast<std::int64_t>(bytes.size());
+            }
+            content.push_back(e);
+        };
+        for (std::size_t i = 0; i < spec.sharepoint.size() && !fake_.ignore_content; ++i) {
+            if (spec.sharepoint[i].want_content) {
+                export_file(connector::ItemKind::sharepoint, i, spec.sharepoint[i].name,
+                            candidate_size(fake_.pool.sharepoint, spec.sharepoint[i]));
+            }
+        }
+        for (std::size_t i = 0; i < spec.onedrive.size() && !fake_.ignore_content; ++i) {
+            if (spec.onedrive[i].want_content) {
+                export_file(connector::ItemKind::onedrive, i, spec.onedrive[i].name,
+                            candidate_size(fake_.pool.onedrive, spec.onedrive[i]));
+            }
+        }
+        connector::RestoreResult result = fake_.answer(spec);
+        if (!content.empty() && result.content.empty()) {
+            result.content = std::move(content);
+        }
+        return result;
     }
 
 private:
@@ -636,10 +713,7 @@ struct TargetsLab {
                 entry("name", name) ? file_bytes(std::filesystem::path{RP_SOURCE_DIR} / ".." /
                                                  "lab" / "canary" / name)
                                     : std::nullopt;
-            std::string content = canary ? *canary
-                                         : std::string(static_cast<std::size_t>(
-                                                           std::max<std::int64_t>(size, 0)),
-                                                       'r');
+            std::string content = canary ? *canary : random_file_bytes(name, size);
             out.push_back(graph_file(id, name, content.size()));
             files[id] = std::move(content);
         };

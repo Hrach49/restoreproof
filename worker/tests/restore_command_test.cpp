@@ -1907,7 +1907,11 @@ TEST_CASE("restore: every type checked: canaries and random items of each, the O
                    "\n"
                    "check: 6 match, 0 mismatch, 0 missing, 0 error\n"
                    "\n"
-                   "status pass: 6 of 6 item(s) verified: manifest 3, fields 1, metadata 2, backup_content 0\n"));
+                   "status pass: 6 of 6 item(s) verified: manifest 3, fields 1, metadata 1, backup_content 1\n"));
+    // W6.3: report.pdf, the one random file with a content rule, was exported
+    // and checked against the backup's copy; deck.pptx has no rule.
+    CHECK_THAT(run.out, ContainsSubstring("\ncontent exports: 1 of 1 file(s) exported from the "
+                                          "backup\n"));
 }
 
 TEST_CASE("restore: an item missing or not matching is status fail, exit 5",

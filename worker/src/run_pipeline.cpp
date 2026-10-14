@@ -1,5 +1,6 @@
 #include "run_pipeline.hpp"
 
+#include <rp/backup_content.hpp>
 #include <rp/canary_manifest.hpp>
 #include <rp/cert_export.hpp>
 #include <rp/checker.hpp>
@@ -1607,12 +1608,27 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
                                             profile.graph_tenant_id, plan, manifest, cursor, run_id);
         timer.end(timing::Span::sample_select, timer.try_now());
         shortfalls = verification::shortfalls_of(selection->record);
-        const connector::RestoreSpec spec{.client_ref = profile.veeam_org_name,
-                                          .restore_point = *point,
-                                          .targets = targets,
-                                          .mail = selection->mail,
-                                          .sharepoint = selection->sharepoint,
-                                          .onedrive = selection->onedrive};
+        connector::RestoreSpec spec{.client_ref = profile.veeam_org_name,
+                                    .restore_point = *point,
+                                    .targets = targets,
+                                    .mail = selection->mail,
+                                    .sharepoint = selection->sharepoint,
+                                    .onedrive = selection->onedrive};
+        // W6.3 point 4: every random file with a content rule asks for its
+        // bytes from the backup; the connector exports them into the hasher
+        // before its first restore request, and the hasher keeps their hashes.
+        std::vector<std::string> sharepoint_names;
+        for (const connector::SharePointSelector& s : spec.sharepoint) {
+            sharepoint_names.push_back(s.name);
+        }
+        std::vector<std::string> onedrive_names;
+        for (const connector::OneDriveSelector& o : spec.onedrive) {
+            onedrive_names.push_back(o.name);
+        }
+        verification::ContentHasher hasher(std::move(sharepoint_names), std::move(onedrive_names));
+        if (verification::mark_wanted(spec, selection->record) > 0) {
+            spec.content_sink = &hasher;
+        }
 
         // No restore when the rest of the header can't be shown.
         out << format_sample(*selection, spec.item_count(), shortfalls);
@@ -1680,7 +1696,8 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
         // the exit code, and a restore whose output was lost isn't a success.
         bool output_lost = false;
         try {
-            out << format_result(*result, *selection, elapsed, presentation.restore_rows);
+            out << format_result(*result, *selection, elapsed, presentation.restore_rows)
+                << verification::content_exports_line(*result);
             flush_or_throw(out);
         } catch (...) {
             output_lost = true;
@@ -1692,6 +1709,11 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
         // the restore's tables already out.
         std::optional<verification::CheckResult> checked;
         try {
+            // W6.3 point 3: the exported files' expectation raised to
+            // backup_content before anything is read back; facts that don't
+            // add up (a connector that ignored want_content) are the Worker's
+            // fault, error internal.
+            verification::add_backup_content(*expected, *result, hasher.digests());
             const verification::TargetSnapshot snapshot = verification::snapshot_of(before);
             verification::TargetsRead after;
             read_after(*graph_client, *download_http, targets, spec, options.logger, now,

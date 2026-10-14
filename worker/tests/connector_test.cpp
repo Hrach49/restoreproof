@@ -474,9 +474,18 @@ TEST_CASE("the selectors' optional fields start unset", "[connector]")
     CHECK(sp.size == -1);
     const connector::OneDriveSelector od{"alice@x", "/RestoreTest", "f.pdf"};
     CHECK(od.size == -1);
-    // W6.3: no file asks for its content unless the pipeline says so.
+    // W6.3: no file asks for its content unless the pipeline says so, and
+    // asking doesn't make it another item.
     CHECK_FALSE(sp.want_content);
     CHECK_FALSE(od.want_content);
+    connector::SharePointSelector sp_asking = sp;
+    sp_asking.want_content = true;
+    CHECK(sp_asking == sp);
+    connector::OneDriveSelector od_asking = od;
+    od_asking.want_content = true;
+    CHECK(od_asking == od);
+    sp_asking.name = "g.pdf";
+    CHECK_FALSE(sp_asking == sp);
 }
 
 TEST_CASE("the content export's words, limits and defaults", "[connector][w6.3]")

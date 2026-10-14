@@ -50,8 +50,9 @@ constexpr std::string_view kBackupItem = "backup_item";
 constexpr std::string_view kDuplicate = "duplicate";
 constexpr std::string_view kShortfall = "shortfall";
 constexpr std::string_view kStaleCopies = "stale_copies";
-// W6.3: files whose export from the backup gave nothing, checked by name and
-// size alone (docs/decisions.md 2026-10-14, W6.3 and W6.2, point 5).
+// W6.3: files that couldn't be compared with the backup's copy, checked by
+// name and, where they carry one, size alone (docs/decisions.md 2026-10-14,
+// W6.3 and W6.2, point 5, and its code review's finding 4).
 constexpr std::string_view kContentExport = "content_export";
 constexpr std::array<std::string_view, 6> kWarningCodes{kBackupSession, kBackupItem, kDuplicate,
                                                         kShortfall, kStaleCopies, kContentExport};
@@ -480,11 +481,14 @@ std::vector<StatusWarning> warnings_of(const RunFacts& facts,
                  {}});
         }
     }
-    // W6.3: the files an export was asked for and gave nothing, so they were
-    // checked by name and size alone; counted by word in the words' order.
+    // W6.3: the files an export was asked for and that couldn't be compared
+    // with the backup's copy (no bytes, or a package office-v1 refused), so
+    // they were checked by name, and by size where they carry one (an Office
+    // file never does); counted by word in the words' order.
     if (facts.expected) {
         std::vector<std::size_t> failed;
         std::size_t asked = 0;
+        std::size_t sized = 0;
         std::map<std::string_view, std::size_t> by_word;
         for (const ExpectedItem& item : facts.expected->items) {
             const std::string& word = item.export_word;
@@ -495,6 +499,7 @@ std::vector<StatusWarning> warnings_of(const RunFacts& facts,
             if (is_failed_export(word)) {
                 failed.push_back(item.index);
                 ++by_word[word];
+                sized += item.file && item.file->size_bytes ? 1 : 0;
             }
         }
         if (!failed.empty()) {
@@ -507,9 +512,9 @@ std::vector<StatusWarning> warnings_of(const RunFacts& facts,
             }
             warnings.push_back(
                 {std::string{kContentExport},
-                 std::format("{} of {} file(s) couldn't be exported from the backup and were "
-                             "checked by name and size alone ({})",
-                             failed.size(), asked, counts),
+                 std::format("{} of {} file(s) couldn't be compared with the backup's own "
+                             "copy ({}): {} checked by name and size alone, {} by name alone",
+                             failed.size(), asked, counts, sized, failed.size() - sized),
                  std::move(failed)});
         }
     }

@@ -267,4 +267,16 @@ std::string cell_or_dash(std::string_view text);
 // The kind's name, "mail", "sharepoint" or "onedrive".
 std::string kind_name(connector::ItemKind kind);
 
+// What a recorded Veeam exchange keeps of its response body: `digest` for a
+// document export (POST .../Documents/{id}/save, whose body is a tenant's
+// file: W6.3 point 8), `content` for every other.
+RecordedBody veeam_recorded_body(const HttpRequest& request);
+
+// The connector's options with every HTTP client it makes recorded: Veeam's
+// under "veeam" by veeam_recorded_body, Graph's (the target guard's) under
+// "graph". A null maker is the connector's own default, made here so it can
+// be wrapped.
+connector::ConnectorOptions record_connector(connector::ConnectorOptions options,
+                                             const std::shared_ptr<FixtureRecorder>& recorder);
+
 } // namespace rp

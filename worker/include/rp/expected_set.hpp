@@ -94,7 +94,8 @@ struct ExpectedSet {
     std::string canaries_seeded_at;
     // W6.2: whether the run had canaries (a manifest); without, manifest_sha256
     // is empty and left out of the result, and canaries_seeded_at is empty.
-    bool canaries = true;
+    // False by default, as a run is (W6.3 review, finding 8).
+    bool canaries = false;
 };
 
 // Pure. One ExpectedItem per selector of `selection`, in RestoreSpec order:
@@ -143,7 +144,8 @@ ExpectedSet build_expected_set(const sampling::Selection& selection,
 // key, a lower-case hex sha256 and its type's rule (text-v1 for a mail,
 // bytes or office-v1 for a file); `fields` only for a random mail and
 // `metadata` only for a random file, each with a key and no canary_id or
-// hash; a mail holds `mail` and a file `file`, never both.
+// hash; a mail holds `mail` and a file `file`, never both; and for
+// `canaries` with an empty manifest_sha256.
 nlohmann::json to_json(const ExpectedSet& set);
 
 } // namespace rp::verification

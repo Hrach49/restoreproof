@@ -507,26 +507,6 @@ void make_graph_and_cleaner(std::optional<graph::GraphClient>& client,
     cleaner.emplace(*client, targets, cleaner_options);
 }
 
-// The connector's options with every HTTP client it makes recorded: Veeam's
-// under "veeam", Graph's (the target guard's) under "graph". A null maker is
-// the connector's own default, made here so it can be wrapped.
-connector::ConnectorOptions record_connector(connector::ConnectorOptions options,
-                                             const std::shared_ptr<FixtureRecorder>& recorder)
-{
-    options.make_http = [inner = options.make_http,
-                         recorder](const HttpClientOptions& http) -> std::unique_ptr<IHttpClient> {
-        return recorded(inner ? inner(http) : std::make_unique<HttpClient>(http), recorder,
-                        "veeam");
-    };
-    options.make_graph_http =
-        [inner = options.make_graph_http,
-         recorder](std::shared_ptr<spdlog::logger> logger) -> std::unique_ptr<IHttpClient> {
-        return recorded(inner ? inner(logger) : graph::make_graph_http_client(std::move(logger)),
-                        recorder, "graph");
-    };
-    return options;
-}
-
 // The reader of the restore targets (W2.2), its lines on `logger`.
 graph::TargetReader target_reader(graph::GraphClient& client, IHttpClient& download,
                                   const connector::RestoreTargets& targets,
@@ -723,6 +703,37 @@ std::filesystem::path check_evidence_root(std::string_view arg,
 }
 
 } // namespace
+
+RecordedBody veeam_recorded_body(const HttpRequest& request)
+{
+    const std::string_view path = request_path(request.url);
+    return request.method == HttpMethod::post && path.ends_with("/save") &&
+                   path.find("/Documents/") != std::string_view::npos
+               ? RecordedBody::digest
+               : RecordedBody::content;
+}
+
+connector::ConnectorOptions record_connector(connector::ConnectorOptions options,
+                                             const std::shared_ptr<FixtureRecorder>& recorder)
+{
+    options.make_http = [inner = options.make_http,
+                         recorder](const HttpClientOptions& http) -> std::unique_ptr<IHttpClient> {
+        std::unique_ptr<IHttpClient> client =
+            inner ? inner(http) : std::make_unique<HttpClient>(http);
+        if (!recorder || !client) {
+            return client;
+        }
+        return std::make_unique<RecordingHttpClient>(std::move(client), recorder, "veeam",
+                                                     veeam_recorded_body);
+    };
+    options.make_graph_http =
+        [inner = options.make_graph_http,
+         recorder](std::shared_ptr<spdlog::logger> logger) -> std::unique_ptr<IHttpClient> {
+        return recorded(inner ? inner(logger) : graph::make_graph_http_client(std::move(logger)),
+                        recorder, "graph");
+    };
+    return options;
+}
 
 bool parse_pipeline_args(const CommandOptions& options, PipelineArgs& parsed)
 {
@@ -1084,12 +1095,16 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
     // the status line and the clean after, which are no part of what it
     // interrupted. Once the restore had started a POST may have gone out:
     // its submit and wait, unless already reported, are not reported, never
-    // not run.
+    // not run; so are the content exports, when any was asked (W6.3 point 7:
+    // not run when none was).
+    bool content_asked = false;
     const auto stop_timings = [&]() noexcept {
         if (timer.state(timing::Span::restore) != timing::SpanState::not_run) {
             timer.report(timing::Span::restore_submit, std::nullopt);
             timer.report(timing::Span::restore_wait, std::nullopt);
-            timer.report(timing::Span::content_export, std::nullopt);
+            if (content_asked) {
+                timer.report(timing::Span::content_export, std::nullopt);
+            }
         }
         timer.stop_open(timer.try_now(), timing::Span::total);
     };
@@ -1628,6 +1643,7 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
         verification::ContentHasher hasher(std::move(sharepoint_names), std::move(onedrive_names));
         if (verification::mark_wanted(spec, selection->record) > 0) {
             spec.content_sink = &hasher;
+            content_asked = true;
         }
 
         // No restore when the rest of the header can't be shown.
@@ -1675,7 +1691,18 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
         restoring_run.reset();
         phase = verification::RunPhase::check;
         const auto restored_at = timer.now();
-        const auto elapsed = restored_at - started;
+        // W6.3: the exports ran inside restore_sample, but they verify and
+        // restore nothing: their time is left out of `restore`, `recovery`
+        // and the restore line's elapsed time, held to the span they're in
+        // (another clock's measure could be longer). A restore_sample that
+        // throws has handed no time back, and its spans keep them.
+        const std::chrono::nanoseconds exports = std::clamp<std::chrono::nanoseconds>(
+            result->content_time.value_or(std::chrono::nanoseconds{0}),
+            std::chrono::nanoseconds{0},
+            std::max<std::chrono::nanoseconds>(restored_at - started, std::chrono::nanoseconds{0}));
+        timer.delay_start(timing::Span::restore, exports);
+        timer.delay_start(timing::Span::recovery, exports);
+        const auto elapsed = restored_at - started - exports;
         // Each session's submit and wait, summed: the time spent in each
         // phase, or a state, never a partial number. Reported before
         // `restore` ends, with nothing between that can throw.
@@ -1685,9 +1712,12 @@ int run_pipeline(const PipelineArgs& parsed, std::ostream& out, std::ostream& er
         timer.report(timing::Span::restore_wait,
                      timing::sum_session_durations(result->sessions,
                                                    &connector::RestoreSessionResult::wait_time));
-        // W6.3: the exports, as the connector measured them; not reported
-        // when none was asked.
-        timer.report(timing::Span::content_export, result->content_time);
+        // W6.3: the exports, as the connector measured them; not run when
+        // none was asked (W6.3 point 7: null), not reported when asked and
+        // the connector gave no time.
+        if (content_asked) {
+            timer.report(timing::Span::content_export, result->content_time);
+        }
         timer.end(timing::Span::restore, restored_at);
         timer.start(timing::Span::verify, restored_at);
 

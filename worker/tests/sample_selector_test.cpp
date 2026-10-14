@@ -568,15 +568,17 @@ TEST_CASE("without a manifest the whole sample is random items and the record sa
 TEST_CASE("without a manifest every cursor must be 0", "[sample-selector][w6.2]")
 {
     CHECK(rp::sampling::cursor_problem(nullptr, {}) == std::nullopt);
+    // W6.3 review, finding 10: no manifest is a run without canaries, not
+    // an empty manifest.
     CHECK(rp::sampling::cursor_problem(nullptr, {1, 0, 0}) ==
-          "the mail cursor must be 0: the manifest has no mail canaries");
+          "the mail cursor must be 0: the run has no canaries");
     CHECK(rp::sampling::cursor_problem(nullptr, {0, 0, 2}) ==
-          "the onedrive cursor must be 0: the manifest has no onedrive canaries");
+          "the onedrive cursor must be 0: the run has no canaries");
     const Thrown thrown = thrown_by(
         [&] { SampleSelector::select({1, 1, 0}, nullptr, {0, 1, 0}, targets(), {}, kRunId); });
     CHECK(thrown.kind == "invalid_argument");
     CHECK(thrown.what ==
-          "sampler: the sharepoint cursor must be 0: the manifest has no sharepoint canaries");
+          "sampler: the sharepoint cursor must be 0: the run has no canaries");
 }
 
 TEST_CASE("without a manifest the pool is still held to the restore targets and the rp-canary- "
@@ -624,6 +626,24 @@ TEST_CASE("to_json without canaries leaves manifest_sha256 and the canary object
     const json with = rp::sampling::to_json(select({2, 1, 0}, pool).record);
     CHECK(with.contains("manifest_sha256"));
     CHECK(with.at("mail").contains("canary"));
+}
+
+TEST_CASE("a sample record built by hand has no canaries, and one that claims canaries without a "
+          "manifest hash is refused",
+          "[sample-selector][w6.2]")
+{
+    // W6.3 review, finding 8: the product's default is a run without
+    // canaries; an empty manifest hash with canary objects is no result.
+    rp::sampling::SampleRecord record;
+    CHECK_FALSE(record.canaries);
+    const json out = rp::sampling::to_json(record);
+    CHECK_FALSE(out.contains("manifest_sha256"));
+    CHECK_FALSE(out.at("mail").contains("canary"));
+
+    record.canaries = true;
+    const Thrown thrown = thrown_by([&] { rp::sampling::to_json(record); });
+    CHECK(thrown.kind == "logic_error");
+    CHECK(thrown.what == "sample: canaries without a manifest hash");
 }
 
 TEST_CASE("choose_sample without a manifest asks for every type with a size, excludes nothing of "

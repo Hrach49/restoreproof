@@ -1149,6 +1149,7 @@ TEST_CASE("run status: a backup_session warning keeps the backup's details only 
 TEST_CASE("run status: shortfalls_of is the sample's NOTE rule", "[run_status]")
 {
     rp::sampling::SampleRecord record;
+    record.canaries = true;
     record.mail.requested = 3; // 2 canaries wanted, 1 random
     record.mail.canary_ids = {"RP-CANARY-0001"};
     record.mail.random_wanted = 1;

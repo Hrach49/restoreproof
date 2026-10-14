@@ -681,18 +681,27 @@ std::vector<std::string> FixtureRecorder::problems() const
 RecordingHttpClient::RecordingHttpClient(std::unique_ptr<IHttpClient> inner,
                                          std::shared_ptr<FixtureRecorder> recorder,
                                          std::string service, RecordedBody body)
-    : inner_(std::move(inner)), recorder_(std::move(recorder)), service_(std::move(service)),
-      body_(body)
+    : RecordingHttpClient(std::move(inner), std::move(recorder), std::move(service),
+                          [body](const HttpRequest&) { return body; })
 {
-    if (!inner_ || !recorder_) {
-        throw std::invalid_argument("a recording HTTP client needs a client and a recorder");
+}
+
+RecordingHttpClient::RecordingHttpClient(std::unique_ptr<IHttpClient> inner,
+                                         std::shared_ptr<FixtureRecorder> recorder,
+                                         std::string service, BodyRule body_for)
+    : inner_(std::move(inner)), recorder_(std::move(recorder)), service_(std::move(service)),
+      body_for_(std::move(body_for))
+{
+    if (!inner_ || !recorder_ || !body_for_) {
+        throw std::invalid_argument(
+            "a recording HTTP client needs a client, a recorder and a body rule");
     }
 }
 
 HttpResponse RecordingHttpClient::send(const HttpRequest& request)
 {
     HttpResponse response = inner_->send(request);
-    recorder_->record(service_, request, response, body_);
+    recorder_->record(service_, request, response, body_for_(request));
     return response;
 }
 

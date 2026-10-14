@@ -412,6 +412,30 @@ TEST_CASE("step timer: report takes a connector's duration or marks it not repor
     CHECK(fake.reads == 0);
 }
 
+TEST_CASE("step timer: delay_start moves an open span's start later, and nothing else",
+          "[step_timer][w6.3]")
+{
+    FakeClock fake;
+    StepTimer timer{fake.clock()};
+    CHECK(timer.start(Span::restore, t0));
+    CHECK(timer.start(Span::recovery, t0));
+
+    CHECK(timer.delay_start(Span::restore, seconds{3}));
+    CHECK(timer.delay_start(Span::recovery, nanoseconds{0}));
+    // Refused: a negative shift, a span not open, a span outside the enum.
+    CHECK_FALSE(timer.delay_start(Span::restore, nanoseconds{-1}));
+    CHECK_FALSE(timer.delay_start(Span::verify, seconds{1}));
+    CHECK_FALSE(timer.delay_start(static_cast<Span>(99), seconds{1}));
+    CHECK(timer.end(Span::restore, t0 + seconds{10}));
+    CHECK(timer.end(Span::recovery, t0 + seconds{10}));
+    CHECK_FALSE(timer.delay_start(Span::restore, seconds{1}));
+
+    CHECK(span_of(timer, Span::restore).duration == seconds{7});
+    CHECK(span_of(timer, Span::recovery).duration == seconds{10});
+    CHECK(span_of(timer, Span::verify).state == SpanState::not_run);
+    CHECK(fake.reads == 0);
+}
+
 TEST_CASE("step timer: spans that share a reading share it exactly", "[step_timer]")
 {
     FakeClock fake;

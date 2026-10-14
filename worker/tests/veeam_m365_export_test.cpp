@@ -298,7 +298,9 @@ TEST_CASE("restore_sample: each export answer is its word, the sink takes export
         CHECK(taken.empty());
     }
     // One send, in the browsing session, with the cap, between the explore
-    // and the restore request; a 401 brings no second sign-in.
+    // and the restore request; a 401 is not resent, but its dead token is
+    // dropped, so the restore request after it signs in afresh (W6.3
+    // review, finding 5).
     const std::vector<HttpRequest> requests = rig.veeam.requests();
     std::vector<std::size_t> saves;
     for (std::size_t i = 0; i < requests.size(); ++i) {
@@ -320,7 +322,7 @@ TEST_CASE("restore_sample: each export answer is its word, the sink takes export
     REQUIRE(order.restores.size() == 1);
     CHECK(order.explores[0] < saves[0]);
     CHECK(saves[0] < order.restores[0]);
-    CHECK(rig.veeam.count(HttpMethod::post, url("/v8/token")) == 1);
+    CHECK(rig.veeam.count(HttpMethod::post, url("/v8/token")) == (row.name == "401" ? 2 : 1));
     // A failed export is one warning line of fixed words; the bytes nowhere.
     if (row.outcome != Outcome::exported) {
         CHECK_THAT(rig.log(), ContainsSubstring(std::string{connector::to_string(run.kind)} +

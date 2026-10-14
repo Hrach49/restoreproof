@@ -422,9 +422,13 @@ TEST_CASE("to_json refuses an item that claims more or other than it holds", "[e
         {"a mail without its fields", [](Items& i) { i[1].mail.reset(); }, item(1, "doesn't hold its type's fields")},
         {"a file holding a mail's fields too", [](Items& i) { i[2].mail = verification::ExpectedMail{}; },
          item(2, "doesn't hold its type's fields")},
+        // W6.3 review, finding 6: an export that gave its bytes is
+        // backup_content, never a file checked by name and size alone.
+        {"a metadata file whose export is exported", [](Items& i) { i[2].export_word = "exported"; },
+         item(2, "is metadata but its export gave its bytes")},
     }));
     CAPTURE(row.what);
-    ExpectedSet set{std::string(64, 'a'), consistent_items()};
+    ExpectedSet set{std::string(64, 'a'), consistent_items(), "", true};
     REQUIRE_NOTHROW(verification::to_json(set));
     row.edit(set.items);
     const Thrown thrown = thrown_by([&] { verification::to_json(set); });
@@ -790,6 +794,7 @@ TEST_CASE("to_json writes the result's expected object; unknown values are left 
           "[expected-set]")
 {
     ExpectedSet set;
+    set.canaries = true;
     set.manifest_sha256 = std::string(64, 'a');
     ExpectedItem canary;
     canary.index = 0;
@@ -844,7 +849,7 @@ TEST_CASE("to_json writes the result's expected object; unknown values are left 
                                            "<id@example.com>"};
     mail.sha256 = std::string(64, 'c');
     mail.sha256_rule = "text-v1";
-    const json one = verification::to_json(ExpectedSet{std::string(64, 'd'), {mail}});
+    const json one = verification::to_json(ExpectedSet{std::string(64, 'd'), {mail}, "", true});
     CHECK(one.at("counts") == json{{"manifest", 1}, {"fields", 0}, {"metadata", 0}, {"backup_content", 0}});
     CHECK(one.at("items")[0] == json::parse(R"({
         "index": 0, "kind": "mail", "source": "canary", "expected_kind": "manifest",
@@ -858,6 +863,22 @@ TEST_CASE("to_json writes the result's expected object; unknown values are left 
     const json empty = verification::to_json(ExpectedSet{});
     CHECK(empty.at("counts") == json{{"manifest", 0}, {"fields", 0}, {"metadata", 0}, {"backup_content", 0}});
     CHECK(empty.at("items") == json::array());
+}
+
+TEST_CASE("a set built by hand has no canaries, and one that claims canaries without a manifest "
+          "hash is refused",
+          "[expected-set][w6.2]")
+{
+    // W6.3 review, finding 8: the product's default is a run without
+    // canaries, so a default set writes no manifest_sha256.
+    ExpectedSet set;
+    CHECK_FALSE(set.canaries);
+    CHECK_FALSE(verification::to_json(set).contains("manifest_sha256"));
+
+    set.canaries = true;
+    const Thrown thrown = thrown_by([&] { verification::to_json(set); });
+    CHECK(thrown.kind == "logic_error");
+    CHECK(thrown.what == "expected set: canaries without a manifest hash");
 }
 
 TEST_CASE("the kinds and sources as strings", "[expected-set]")

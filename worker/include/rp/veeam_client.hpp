@@ -299,7 +299,9 @@ public:
     // max_attempts 1, retry_on_status off, `timeout` (above 0) and
     // max_body_bytes `max_bytes` (above 0), a token taken first. No resend
     // of any kind, after a 401 neither (docs/decisions.md 2026-10-14, W6.3
-    // point 1). Never throws for what the send brings: a transport failure
+    // point 1); an empty 401 drops the token it was sent with, unless it was
+    // replaced meanwhile, so the next request signs in afresh rather than
+    // meet the same 401 (a REST restart kills every token). Never throws for what the send brings: a transport failure
     // is status 0 with its message, any status is returned as it came, a
     // 2xx with its bytes (a body longer than max_bytes is cut after
     // max_bytes + 1 bytes and returned as it is, so the caller sees it is

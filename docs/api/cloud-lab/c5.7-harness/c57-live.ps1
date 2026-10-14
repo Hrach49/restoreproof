@@ -232,6 +232,10 @@ for obj in s3.list_objects_v2(Bucket='restoreproof', Prefix=prefix)['Contents']:
     $t += (Remove-W48Harness)
     $t += "sc query: $((sc.exe query $script:W48Service 2>&1) -join ' ')"
     $done = $true
+} catch {
+    # The step's own words go into the text: a failed run says why (W6.3's first run didn't).
+    $t += "`n== FAILED: $($_.Exception.Message)"
+    throw
 } finally {
     $tokens = @(Get-C57Tokens)
     Remove-Item -Recurse -Force $C57Temp -ErrorAction SilentlyContinue

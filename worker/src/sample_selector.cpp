@@ -58,7 +58,7 @@ void check_size(ItemKind kind, int size)
     }
 }
 
-void check_inputs(const SamplePlan& plan, const CanaryManifest& manifest, const CanaryCursor& cursor,
+void check_inputs(const SamplePlan& plan, const CanaryManifest* manifest, const CanaryCursor& cursor,
                   std::string_view run_id)
 {
     check_run_id(run_id);
@@ -116,16 +116,20 @@ struct Forbidden {
     std::set<std::string> list_ids;
     std::set<std::string> onedrive_folders; // top-level folders of the OneDrive canaries
 
-    explicit Forbidden(const CanaryManifest& manifest)
+    // Null (W6.2): no canary of a manifest's; the rp-canary- prefix still is.
+    explicit Forbidden(const CanaryManifest* manifest)
     {
-        for (const CanaryMail& mail : manifest.mail) {
+        if (manifest == nullptr) {
+            return;
+        }
+        for (const CanaryMail& mail : manifest->mail) {
             subjects.insert(ascii_lower(mail.subject));
         }
-        for (const CanaryFile& file : manifest.sharepoint) {
+        for (const CanaryFile& file : manifest->sharepoint) {
             sharepoint_names.insert(ascii_lower(file.name));
             list_ids.insert(ascii_lower(file.list_id));
         }
-        for (const CanaryFile& file : manifest.onedrive) {
+        for (const CanaryFile& file : manifest->onedrive) {
             onedrive_names.insert(ascii_lower(file.name));
             if (const auto folder = first_folder(file.folder_path); folder && !folder->empty()) {
                 onedrive_folders.insert(ascii_lower(*folder));
@@ -307,16 +311,24 @@ Key facts_of(const connector::OneDriveCandidate& c)
     return {std::to_string(c.size_bytes)};
 }
 
+// W6.2: how many random items a type's size asks for: half (rounded down)
+// beside canaries, the whole size without.
+int random_wanted(int size, bool canaries) noexcept
+{
+    return canaries ? size / 2 : size;
+}
+
+// `canaries` null (W6.2): no rotation, every item random.
 template <typename Canary, typename Candidate, typename ToSelector>
-void select_kind(ItemKind kind, int size, const std::vector<Canary>& canaries, std::uint32_t cursor,
+void select_kind(ItemKind kind, int size, const std::vector<Canary>* canaries, std::uint32_t cursor,
                  const std::vector<Candidate>& pool, const connector::BrowseRecord& browse,
                  std::uint32_t seed, ToSelector to_selector,
                  std::vector<decltype(Candidate::selector)>& out, std::vector<Candidate>& random_out,
                  KindRecord& record)
 {
-    const std::size_t m = canaries.size();
+    const std::size_t m = canaries == nullptr ? 0 : canaries->size();
     const int c = size == 0 ? 0 : static_cast<int>(std::min<std::size_t>((size + 1) / 2, m));
-    const int r = size / 2;
+    const int r = random_wanted(size, canaries != nullptr);
     record.requested = size;
     record.cursor = cursor;
     record.cursor_next = m == 0 ? 0 : static_cast<std::uint32_t>((cursor + c) % m);
@@ -326,7 +338,7 @@ void select_kind(ItemKind kind, int size, const std::vector<Canary>& canaries, s
 
     std::set<std::string> taken;
     for (int j = 0; j < c; ++j) {
-        const Canary& canary = canaries[(cursor + static_cast<std::size_t>(j)) % m];
+        const Canary& canary = (*canaries)[(cursor + static_cast<std::size_t>(j)) % m];
         out.push_back(to_selector(canary));
         record.canary_ids.push_back(canary.id);
         taken.insert(name_key(shown_name(out.back())));
@@ -387,13 +399,10 @@ void select_kind(ItemKind kind, int size, const std::vector<Canary>& canaries, s
     }
 }
 
-nlohmann::json kind_json(const KindRecord& k)
+nlohmann::json kind_json(const KindRecord& k, bool canaries)
 {
-    return {
+    nlohmann::json out = {
         {"requested", k.requested},
-        {"canary",
-         {{"cursor", k.cursor}, {"cursor_next", k.cursor_next}, {"wanted", k.canary_wanted},
-          {"ids", k.canary_ids}}},
         {"random",
          {{"wanted", k.random_wanted},
           {"taken", k.random_taken},
@@ -406,6 +415,13 @@ nlohmann::json kind_json(const KindRecord& k)
           {"folders_listed", k.browse.folders_listed},
           {"short_of_containers", k.browse.short_of_containers}}},
     };
+    if (canaries) {
+        out["canary"] = {{"cursor", k.cursor},
+                         {"cursor_next", k.cursor_next},
+                         {"wanted", k.canary_wanted},
+                         {"ids", k.canary_ids}};
+    }
+    return out;
 }
 
 // The canary exclusions a query carries, in manifest order, each once.
@@ -438,17 +454,19 @@ std::vector<std::string> random_key(const connector::OneDriveSelector& o)
     return {ascii_lower(o.user), o.folder_path, o.name};
 }
 
-std::optional<std::string> cursor_problem(const CanaryManifest& manifest,
+std::optional<std::string> cursor_problem(const CanaryManifest* manifest,
                                           const CanaryCursor& cursor)
 {
-    if (auto problem = kind_cursor_problem(ItemKind::mail, cursor.mail, manifest.mail.size())) {
+    const std::size_t mail = manifest == nullptr ? 0 : manifest->mail.size();
+    const std::size_t sharepoint = manifest == nullptr ? 0 : manifest->sharepoint.size();
+    const std::size_t onedrive = manifest == nullptr ? 0 : manifest->onedrive.size();
+    if (auto problem = kind_cursor_problem(ItemKind::mail, cursor.mail, mail)) {
         return problem;
     }
-    if (auto problem = kind_cursor_problem(ItemKind::sharepoint, cursor.sharepoint,
-                                           manifest.sharepoint.size())) {
+    if (auto problem = kind_cursor_problem(ItemKind::sharepoint, cursor.sharepoint, sharepoint)) {
         return problem;
     }
-    return kind_cursor_problem(ItemKind::onedrive, cursor.onedrive, manifest.onedrive.size());
+    return kind_cursor_problem(ItemKind::onedrive, cursor.onedrive, onedrive);
 }
 
 void check_manifest_tenant(const CanaryManifest& manifest, const std::string& graph_tenant_id)
@@ -478,37 +496,46 @@ SamplePlan SamplePlan::from_config(const Config& config)
 
 nlohmann::json to_json(const SampleRecord& record)
 {
-    return {
+    nlohmann::json out = {
         {"algorithm", record.algorithm},
         {"run_id", record.run_id},
         {"seed", seed_hex(record.seed)},
-        {"manifest_sha256", record.manifest_sha256},
-        {"mail", kind_json(record.mail)},
-        {"sharepoint", kind_json(record.sharepoint)},
-        {"onedrive", kind_json(record.onedrive)},
+        {"mail", kind_json(record.mail, record.canaries)},
+        {"sharepoint", kind_json(record.sharepoint, record.canaries)},
+        {"onedrive", kind_json(record.onedrive, record.canaries)},
     };
+    if (record.canaries) {
+        out["manifest_sha256"] = record.manifest_sha256;
+    }
+    return out;
 }
 
-Selection SampleSelector::select(const SamplePlan& plan, const CanaryManifest& manifest,
+Selection SampleSelector::select(const SamplePlan& plan, const CanaryManifest* manifest,
                                  const CanaryCursor& cursor,
                                  const connector::RestoreTargets& targets,
                                  const connector::CandidatePool& pool, std::string_view run_id)
 {
     check_inputs(plan, manifest, cursor, run_id);
-    check_canaries(manifest, targets);
+    if (manifest != nullptr) {
+        check_canaries(*manifest, targets);
+    }
     check_pool(pool, targets, Forbidden(manifest));
 
     Selection selection;
     SampleRecord& record = selection.record;
     record.run_id = std::string{run_id};
     record.seed = seed_from_run_id(run_id);
-    record.manifest_sha256 = manifest.sha256;
-    select_kind(ItemKind::mail, plan.mail, manifest.mail, cursor.mail, pool.mail, pool.mail_browse,
-                record.seed, to_selector, selection.mail, selection.mail_random, record.mail);
-    select_kind(ItemKind::sharepoint, plan.sharepoint, manifest.sharepoint, cursor.sharepoint,
+    record.canaries = manifest != nullptr;
+    record.manifest_sha256 = manifest == nullptr ? std::string{} : manifest->sha256;
+    select_kind(ItemKind::mail, plan.mail, manifest == nullptr ? nullptr : &manifest->mail,
+                cursor.mail, pool.mail, pool.mail_browse, record.seed, to_selector, selection.mail,
+                selection.mail_random, record.mail);
+    select_kind(ItemKind::sharepoint, plan.sharepoint,
+                manifest == nullptr ? nullptr : &manifest->sharepoint, cursor.sharepoint,
                 pool.sharepoint, pool.sharepoint_browse, record.seed, to_sharepoint_selector,
                 selection.sharepoint, selection.sharepoint_random, record.sharepoint);
-    select_kind(ItemKind::onedrive, plan.onedrive, manifest.onedrive, cursor.onedrive,
+    select_kind(ItemKind::onedrive, plan.onedrive,
+                manifest == nullptr ? nullptr : &manifest->onedrive, cursor.onedrive,
                 pool.onedrive, pool.onedrive_browse, record.seed, to_onedrive_selector,
                 selection.onedrive, selection.onedrive_random, record.onedrive);
     return selection;
@@ -518,44 +545,53 @@ Selection choose_sample(connector::IConnector& connector, const std::string& cli
                         const connector::RestorePoint& point,
                         const connector::RestoreTargets& targets,
                         const std::string& graph_tenant_id, const SamplePlan& plan,
-                        const CanaryManifest& manifest, const CanaryCursor& cursor,
+                        const CanaryManifest* manifest, const CanaryCursor& cursor,
                         std::string_view run_id, const connector::CandidateLimits& limits)
 {
     check_inputs(plan, manifest, cursor, run_id);
     // Pure: said before the connector is asked, so an unreachable backup
     // server can't hide a manifest that names a restore target.
-    check_manifest(manifest, targets, graph_tenant_id);
+    if (manifest != nullptr) {
+        check_manifest(*manifest, targets, graph_tenant_id);
+    }
+    const bool canaries = manifest != nullptr;
+    const int mail = random_wanted(plan.mail, canaries);
+    const int sharepoint = random_wanted(plan.sharepoint, canaries);
+    const int onedrive = random_wanted(plan.onedrive, canaries);
     connector::CandidatePool pool;
-    if (plan.mail / 2 > 0 || plan.sharepoint / 2 > 0 || plan.onedrive / 2 > 0) {
+    if (mail > 0 || sharepoint > 0 || onedrive > 0) {
         connector::CandidateQuery query{
             .client_ref = client_ref,
             .restore_point = point,
             .targets = targets,
-            .mail = plan.mail / 2 > 0,
-            .sharepoint = plan.sharepoint / 2 > 0,
-            .onedrive = plan.onedrive / 2 > 0,
+            .mail = mail > 0,
+            .sharepoint = sharepoint > 0,
+            .onedrive = onedrive > 0,
             .seed = seed_from_run_id(run_id),
             .exclude = {},
             .limits = limits,
         };
-        std::vector<std::string> list_ids;
-        std::vector<std::string> onedrive_folders;
-        for (const CanaryMail& mail : manifest.mail) {
-            query.exclude.subjects.push_back(mail.subject);
-        }
-        for (const CanaryFile& file : manifest.sharepoint) {
-            list_ids.push_back(file.list_id);
-            query.exclude.sharepoint_names.push_back(file.name);
-        }
-        for (const CanaryFile& file : manifest.onedrive) {
-            query.exclude.onedrive_names.push_back(file.name);
-            // check_canaries refused a ".." path above.
-            if (const std::string_view folder = *first_folder(file.folder_path); !folder.empty()) {
-                onedrive_folders.emplace_back(folder);
+        if (manifest != nullptr) {
+            std::vector<std::string> list_ids;
+            std::vector<std::string> onedrive_folders;
+            for (const CanaryMail& m : manifest->mail) {
+                query.exclude.subjects.push_back(m.subject);
             }
+            for (const CanaryFile& file : manifest->sharepoint) {
+                list_ids.push_back(file.list_id);
+                query.exclude.sharepoint_names.push_back(file.name);
+            }
+            for (const CanaryFile& file : manifest->onedrive) {
+                query.exclude.onedrive_names.push_back(file.name);
+                // check_canaries refused a ".." path above.
+                if (const std::string_view folder = *first_folder(file.folder_path);
+                    !folder.empty()) {
+                    onedrive_folders.emplace_back(folder);
+                }
+            }
+            query.exclude.list_ids = unique_folded(std::move(list_ids));
+            query.exclude.onedrive_folders = unique_folded(std::move(onedrive_folders));
         }
-        query.exclude.list_ids = unique_folded(std::move(list_ids));
-        query.exclude.onedrive_folders = unique_folded(std::move(onedrive_folders));
         pool = connector.list_candidates(query);
     }
     return SampleSelector::select(plan, manifest, cursor, targets, pool, run_id);

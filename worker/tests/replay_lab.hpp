@@ -165,7 +165,12 @@ struct Replay {
         : dir(std::filesystem::path{RP_FIXTURE_DIR} / "recordings" / name)
     {
         config_path = temp.write("config.json", lab_config().dump(2));
-        temp.write("seed-manifest.json", read_file(lab_dir() / "seed-manifest.json"));
+        // W6.2: the manifest at canaries\<tenant>.json beside the config; the
+        // live runs' command line opts in with --canary-cursor (run below).
+        std::filesystem::create_directories(temp.path() / "canaries");
+        temp.write(std::filesystem::path("canaries") /
+                       (lab_config().at("graph_tenant_id").get<std::string>() + ".json"),
+                   read_file(lab_dir() / "seed-manifest.json"));
         auto sink = std::make_shared<spdlog::sinks::ostream_sink_mt>(log_stream);
         logger = std::make_shared<spdlog::logger>("restore_replay_test", sink);
         logger->set_pattern("[%l] %v");
@@ -348,6 +353,13 @@ struct Replay {
         json config = lab_config();
         edit(config);
         config_path = temp.write("config.json", config.dump(2));
+    }
+
+    // W6.2: the lab manifest also under another tenant's name.
+    void copy_manifest_for(const std::string& tenant) const
+    {
+        temp.write(std::filesystem::path("canaries") / (tenant + ".json"),
+                   read_file(lab_dir() / "seed-manifest.json"));
     }
 
     // The live runs' command line, with the live run's ID; `more` after it

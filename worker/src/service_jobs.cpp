@@ -139,11 +139,12 @@ bool read_screenshots(const json& job, bool& into)
 }
 
 // canary_cursor: three integers by the cursor's rule; one that isn't there
-// is 0,0,0.
-bool read_cursor(const json& job, sampling::CanaryCursor& into)
+// leaves `into` unset: the run has no canaries (W6.2).
+bool read_cursor(const json& job, std::optional<sampling::CanaryCursor>& into)
 {
     const auto it = job.find(kCanaryCursor);
     if (it == job.end()) {
+        into.reset();
         return true;
     }
     if (!it->is_array() || it->size() != 3) {

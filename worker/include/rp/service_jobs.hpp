@@ -24,7 +24,8 @@
 //                        required integers 0 to 100, not all 0
 //   restore_point        required; `latest` or a restore point ID (--point's rule)
 //   screenshots_enabled  required boolean
-//   canary_cursor        optional; three integers 0 to 999999, default 0,0,0
+//   canary_cursor        optional; three integers 0 to 999999; there: the run
+//                        has canaries (W6.2); absent: none
 // The rules are the ones a command line is held to (src/job_rules.hpp), not a
 // copy. The schema shared/schemas/jobs.v1.json is the Cloud's copy of the
 // shape, and the shared vectors shared/testdata/jobs-v1/ hold the two
@@ -92,7 +93,11 @@ struct Job {
     // `latest`, in the case the document wrote it, or a restore point ID.
     std::string restore_point;
     bool screenshots_enabled = false;
-    sampling::CanaryCursor canary_cursor;
+    // W6.2 (docs/decisions.md 2026-10-14, W6.3 and W6.2, point 10): the key's
+    // presence is the opt-in. With it the run has canaries, from the manifest
+    // canaries\<tenant>.json beside the config; without it the run has none,
+    // which is every job the Cloud dispatches today.
+    std::optional<sampling::CanaryCursor> canary_cursor;
 };
 
 enum class JobState {

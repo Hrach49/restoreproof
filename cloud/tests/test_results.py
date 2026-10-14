@@ -791,7 +791,7 @@ def a_fail(document):
     document["check"]["counts"] = {"match": 3, "mismatch": 1, "missing": 1, "error": 1}
     document["status"] = {
         "status": "fail", "message": "3 of 6 item(s) verified; 2 failed; 1 unchecked", "restore_sent": True,
-        "counts": {"items": 6, "verified": 3, "failed": 2, "unchecked": 1}, "verified": {"manifest": 2, "fields": 0, "metadata": 1},
+        "counts": {"items": 6, "verified": 3, "failed": 2, "unchecked": 1}, "verified": {"manifest": 2, "fields": 0, "metadata": 1, "backup_content": 0},
         "failed_items": [1, 2], "unchecked_items": [{"index": 3, "error_code": "graph_transient"}], "warnings": [],
     }
     document["timings"]["spans"]["total"] = {"note": "open"}

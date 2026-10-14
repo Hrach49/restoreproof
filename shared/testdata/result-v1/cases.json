@@ -3091,54 +3091,13 @@
       ]
     },
     {
-      "name": "expected-backup-content-bytes",
-      "valid": true,
-      "patch": [
-        {
-          "op": "replace",
-          "path": "/expected/items/3/expected_kind",
-          "value": "backup_content"
-        },
-        {
-          "op": "add",
-          "path": "/expected/items/3/sha256",
-          "value": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-        },
-        {
-          "op": "add",
-          "path": "/expected/items/3/sha256_rule",
-          "value": "bytes"
-        },
-        {
-          "op": "add",
-          "path": "/expected/items/3/export",
-          "value": "exported"
-        }
-      ]
-    },
-    {
       "name": "expected-backup-content-office-v1",
       "valid": true,
       "patch": [
         {
           "op": "replace",
-          "path": "/expected/items/3/expected_kind",
-          "value": "backup_content"
-        },
-        {
-          "op": "add",
-          "path": "/expected/items/3/sha256",
-          "value": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-        },
-        {
-          "op": "add",
           "path": "/expected/items/3/sha256_rule",
           "value": "office-v1"
-        },
-        {
-          "op": "add",
-          "path": "/expected/items/3/export",
-          "value": "exported"
         },
         {
           "op": "remove",
@@ -3151,19 +3110,8 @@
       "valid": false,
       "patch": [
         {
-          "op": "replace",
-          "path": "/expected/items/3/expected_kind",
-          "value": "backup_content"
-        },
-        {
-          "op": "add",
-          "path": "/expected/items/3/sha256_rule",
-          "value": "bytes"
-        },
-        {
-          "op": "add",
-          "path": "/expected/items/3/export",
-          "value": "exported"
+          "op": "remove",
+          "path": "/expected/items/3/sha256"
         }
       ]
     },
@@ -3172,19 +3120,8 @@
       "valid": false,
       "patch": [
         {
-          "op": "replace",
-          "path": "/expected/items/3/expected_kind",
-          "value": "backup_content"
-        },
-        {
-          "op": "add",
-          "path": "/expected/items/3/sha256",
-          "value": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-        },
-        {
-          "op": "add",
-          "path": "/expected/items/3/export",
-          "value": "exported"
+          "op": "remove",
+          "path": "/expected/items/3/sha256_rule"
         }
       ]
     },
@@ -3193,19 +3130,8 @@
       "valid": false,
       "patch": [
         {
-          "op": "replace",
-          "path": "/expected/items/3/expected_kind",
-          "value": "backup_content"
-        },
-        {
-          "op": "add",
-          "path": "/expected/items/3/sha256",
-          "value": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-        },
-        {
-          "op": "add",
-          "path": "/expected/items/3/sha256_rule",
-          "value": "bytes"
+          "op": "remove",
+          "path": "/expected/items/3/export"
         }
       ]
     },
@@ -3215,21 +3141,6 @@
       "patch": [
         {
           "op": "replace",
-          "path": "/expected/items/3/expected_kind",
-          "value": "backup_content"
-        },
-        {
-          "op": "add",
-          "path": "/expected/items/3/sha256",
-          "value": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-        },
-        {
-          "op": "add",
-          "path": "/expected/items/3/sha256_rule",
-          "value": "bytes"
-        },
-        {
-          "op": "add",
           "path": "/expected/items/3/export",
           "value": "refused"
         }
@@ -3241,23 +3152,8 @@
       "patch": [
         {
           "op": "replace",
-          "path": "/expected/items/3/expected_kind",
-          "value": "backup_content"
-        },
-        {
-          "op": "add",
-          "path": "/expected/items/3/sha256",
-          "value": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-        },
-        {
-          "op": "add",
           "path": "/expected/items/3/sha256_rule",
           "value": "text-v1"
-        },
-        {
-          "op": "add",
-          "path": "/expected/items/3/export",
-          "value": "exported"
         }
       ]
     },
@@ -3267,23 +3163,8 @@
       "patch": [
         {
           "op": "replace",
-          "path": "/expected/items/3/expected_kind",
-          "value": "backup_content"
-        },
-        {
-          "op": "add",
-          "path": "/expected/items/3/sha256",
-          "value": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-        },
-        {
-          "op": "add",
           "path": "/expected/items/3/sha256_rule",
           "value": "office-v1"
-        },
-        {
-          "op": "add",
-          "path": "/expected/items/3/export",
-          "value": "exported"
         }
       ]
     },
@@ -3291,26 +3172,6 @@
       "name": "expected-backup-content-bytes-without-a-size",
       "valid": false,
       "patch": [
-        {
-          "op": "replace",
-          "path": "/expected/items/3/expected_kind",
-          "value": "backup_content"
-        },
-        {
-          "op": "add",
-          "path": "/expected/items/3/sha256",
-          "value": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-        },
-        {
-          "op": "add",
-          "path": "/expected/items/3/sha256_rule",
-          "value": "bytes"
-        },
-        {
-          "op": "add",
-          "path": "/expected/items/3/export",
-          "value": "exported"
-        },
         {
           "op": "remove",
           "path": "/expected/items/3/size_bytes"
@@ -3360,11 +3221,47 @@
       ]
     },
     {
+      "name": "expected-metadata-without-export",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/expected/items/3/expected_kind",
+          "value": "metadata"
+        },
+        {
+          "op": "remove",
+          "path": "/expected/items/3/sha256"
+        },
+        {
+          "op": "remove",
+          "path": "/expected/items/3/sha256_rule"
+        },
+        {
+          "op": "remove",
+          "path": "/expected/items/3/export"
+        }
+      ]
+    },
+    {
       "name": "expected-metadata-export-refused",
       "valid": true,
       "patch": [
         {
-          "op": "add",
+          "op": "replace",
+          "path": "/expected/items/3/expected_kind",
+          "value": "metadata"
+        },
+        {
+          "op": "remove",
+          "path": "/expected/items/3/sha256"
+        },
+        {
+          "op": "remove",
+          "path": "/expected/items/3/sha256_rule"
+        },
+        {
+          "op": "replace",
           "path": "/expected/items/3/export",
           "value": "refused"
         }
@@ -3375,7 +3272,20 @@
       "valid": true,
       "patch": [
         {
-          "op": "add",
+          "op": "replace",
+          "path": "/expected/items/3/expected_kind",
+          "value": "metadata"
+        },
+        {
+          "op": "remove",
+          "path": "/expected/items/3/sha256"
+        },
+        {
+          "op": "remove",
+          "path": "/expected/items/3/sha256_rule"
+        },
+        {
+          "op": "replace",
           "path": "/expected/items/3/export",
           "value": "no_rule"
         }
@@ -3386,19 +3296,14 @@
       "valid": false,
       "patch": [
         {
-          "op": "add",
+          "op": "replace",
+          "path": "/expected/items/3/expected_kind",
+          "value": "metadata"
+        },
+        {
+          "op": "replace",
           "path": "/expected/items/3/export",
           "value": "refused"
-        },
-        {
-          "op": "add",
-          "path": "/expected/items/3/sha256",
-          "value": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-        },
-        {
-          "op": "add",
-          "path": "/expected/items/3/sha256_rule",
-          "value": "bytes"
         }
       ]
     },
@@ -3407,7 +3312,7 @@
       "valid": false,
       "patch": [
         {
-          "op": "add",
+          "op": "replace",
           "path": "/expected/items/3/export",
           "value": "lost"
         }
@@ -3467,7 +3372,7 @@
             "indexes": [
               3
             ],
-            "message": "1 of 1 file(s) couldn't be exported from the backup and were checked by name and size alone (refused 1)"
+            "message": "1 of 2 file(s) couldn't be exported from the backup and were checked by name and size alone (refused 1)"
           }
         }
       ]

@@ -112,7 +112,17 @@ struct SharePointSelector {
     // random file whose name has a content rule, never on a canary.
     bool want_content = false;
 
-    bool operator==(const SharePointSelector&) const = default;
+    // The same item: want_content is the request's, not the item's, so it
+    // takes no part (W6.3).
+    bool operator==(const SharePointSelector& other) const
+    {
+        return site_id == other.site_id &&
+               drive_id == other.drive_id &&
+               folder_path == other.folder_path &&
+               name == other.name &&
+               list_id == other.list_id &&
+               size == other.size;
+    }
 };
 
 struct OneDriveSelector {
@@ -124,7 +134,15 @@ struct OneDriveSelector {
     // W6.3: as SharePointSelector::want_content.
     bool want_content = false;
 
-    bool operator==(const OneDriveSelector&) const = default;
+    // The same item: want_content is the request's, not the item's, so it
+    // takes no part (W6.3).
+    bool operator==(const OneDriveSelector& other) const
+    {
+        return user == other.user &&
+               folder_path == other.folder_path &&
+               name == other.name &&
+               size == other.size;
+    }
 };
 
 // The restore's own outcome, as the backup product reported it. Not

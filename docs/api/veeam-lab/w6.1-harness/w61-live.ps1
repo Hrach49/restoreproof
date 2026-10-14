@@ -1,12 +1,14 @@
 # W6.1 (#181): the export spike, run by hand from an ELEVATED PowerShell 7 on the Veeam server
 # (docs/decisions.md 2026-10-14, W6.1). In order:
-#   1. rpworker graph list                      the three restore targets, empty (else it stops)
+#   1. rpworker graph list                      the three restore targets, empty (else it stops, and
+#                                               step 4 is not run: what is in them is not this run's)
 #   2. rptests "live export spike*"             the spike (worker/tests/export_spike_live_test.cpp):
 #                                               14 exports, the restore of the same 14 through the
 #                                               guarded path, the read-back and the comparison;
 #                                               it does not clean
 #   3. rpworker graph list --hash               a second tool's reading of the restored copies
-#   4. rptests "live cleanup*" + graph list     the targets emptied again (in the finally)
+#   4. rptests "live cleanup*" + graph list     the targets emptied again (in the finally, once
+#                                               step 2 has started)
 # Everything is written to a run folder outside the repository first. Only when every step exited 0
 # and no file holds a token-, PFX-, PEM- or key-shaped value are the files copied into
 # docs/api/veeam-lab/ (w6.1-*.txt, w6.1-results.json, w6.1-recording/), the copy last, so a failed
@@ -77,13 +79,18 @@ $env:RP_LIVE_RESTORE = '1'
 $env:RP_LIVE_VEEAM_CA_FILE = $caFile
 $env:RP_LIVE_EVIDENCE_FILE = Join-Path $RunDir 'w6.1-results.json'
 $env:RP_LIVE_RECORD_DIR = Join-Path $RunDir 'w6.1-recording'
+# The cleanup of the finally runs only once the spike has started: before that, what the targets
+# hold is not this run's (another tool's copies, kept for a look), and step 1's refusal must not
+# delete it.
+$spikeStarted = $false
 try {
     $codes['w6.1-1-graph-list-before'] = Invoke-Step 'w6.1-1-graph-list-before' 'W6.1 (#181) step 1: rpworker graph list before the spike: the three restore targets must be empty.' {
         & $worker graph list --config $labConfig }
     $before = Get-Content (Join-Path $RunDir 'w6.1-1-graph-list-before.txt') -Raw
     if ($codes['w6.1-1-graph-list-before'] -ne 0 -or $before -notmatch '(?m)^0 item\(s\) in the three restore targets') {
-        throw 'the restore targets are not empty (or graph list failed); run the live cleanup test first'
+        throw 'the restore targets are not empty (or graph list failed); nothing is cleaned: run the live cleanup test first if what they hold can go'
     }
+    $spikeStarted = $true
     $codes['w6.1-2-export-spike'] = Invoke-Step 'w6.1-2-export-spike' 'W6.1 (#181) step 2: rptests "live export spike*" (worker/tests/export_spike_live_test.cpp): the 14 exports, the restore through the guarded path, the read-back and the comparison. The copies are left for step 3.' {
         & $tests 'live export spike*' }
     $codes['w6.1-3-graph-list-hash-after'] = Invoke-Step 'w6.1-3-graph-list-hash-after' 'W6.1 (#181) step 3: rpworker graph list --hash right after the spike: the restored copies as a second tool reads them (bytes SHA-256).' {
@@ -92,11 +99,15 @@ try {
     # The cleanup test records nothing: it refuses a recording folder that isn't new or empty, and
     # the spike's folder holds the spike's exchanges by now.
     Remove-Item Env:RP_LIVE_RECORD_DIR, Env:RP_LIVE_EVIDENCE_FILE -ErrorAction SilentlyContinue
-    $codes['w6.1-4-cleanup'] = Invoke-Step 'w6.1-4-cleanup' 'W6.1 (#181) step 4: the live cleanup test empties the three restore targets, then rpworker graph list shows them empty.' {
-        & $tests 'live cleanup*'
-        $c = $LASTEXITCODE
-        & $worker graph list --config $labConfig
-        if ($c -ne 0) { $global:LASTEXITCODE = $c }
+    if ($spikeStarted) {
+        $codes['w6.1-4-cleanup'] = Invoke-Step 'w6.1-4-cleanup' 'W6.1 (#181) step 4: the live cleanup test empties the three restore targets, then rpworker graph list shows them empty.' {
+            & $tests 'live cleanup*'
+            $c = $LASTEXITCODE
+            & $worker graph list --config $labConfig
+            if ($c -ne 0) { $global:LASTEXITCODE = $c }
+        }
+    } else {
+        Write-Host '--- w6.1-4-cleanup not run: the spike did not start, so the targets hold nothing of this run'
     }
     Remove-Item Env:RP_LIVE, Env:RP_LIVE_RESTORE, Env:RP_LIVE_VEEAM_CA_FILE, Env:RP_LIVE_EVIDENCE_FILE, Env:RP_LIVE_RECORD_DIR -ErrorAction SilentlyContinue
 }

@@ -284,6 +284,11 @@ private:
     TypeWork resolve_onedrive();
     void restore_call(const TypeWork& work, const std::vector<std::size_t>& call,
                       connector::RestoreResult& result);
+    // W6.3: the content exports, after every type is resolved and before
+    // the first restore request.
+    void export_content(const std::vector<TypeWork>& work, connector::RestoreResult& result);
+    connector::ContentExport export_one(const TypeWork& type, const Resolved& item,
+                                        connector::ContentExport out);
     std::vector<std::string> target_texts(const TypeWork& work) const;
     // Where a type's items start in RestoreResult::items: mail, SharePoint, OneDrive.
     std::size_t item_offset(ItemKind kind) const noexcept
@@ -1048,6 +1053,10 @@ connector::RestoreResult RestoreRun::run()
         not_in_point += type.not_in_point.size();
         sent += type.items.size();
     }
+    // W6.3: the exports come after every type is resolved (every browsing
+    // session open, every document ID known) and before the first restore
+    // request, so a stop or a sink that fails still leaves nothing restored.
+    export_content(work, result);
     for (const TypeWork& type : work) {
         if (type.items.empty()) {
             continue; // every item of the type is missing from the restore point
@@ -1067,6 +1076,97 @@ connector::RestoreResult RestoreRun::run()
     result.status =
         vr::overall_status(result.sessions.size(), restored_, all_succeeded_, not_in_point);
     return result;
+}
+
+void RestoreRun::export_content(const std::vector<TypeWork>& work,
+                                connector::RestoreResult& result)
+{
+    if (c_.spec.content_count() == 0) {
+        return;
+    }
+    const auto started = c_.now();
+    for (const TypeWork& type : work) {
+        if (type.kind == ItemKind::mail) {
+            continue;
+        }
+        const std::size_t count = type.kind == ItemKind::sharepoint ? c_.spec.sharepoint.size()
+                                                                     : c_.spec.onedrive.size();
+        for (std::size_t i = 0; i < count; ++i) {
+            const bool wanted = type.kind == ItemKind::sharepoint
+                                    ? c_.spec.sharepoint[i].want_content
+                                    : c_.spec.onedrive[i].want_content;
+            if (!wanted) {
+                continue;
+            }
+            connector::ContentExport out;
+            out.kind = type.kind;
+            out.index = i;
+            const auto found = std::ranges::find_if(
+                type.items, [&](const Resolved& item) { return item.index == i; });
+            if (found == type.items.end()) {
+                // Q3.1: the restore point doesn't hold it; the restore result says so.
+                out.outcome = connector::ContentOutcome::not_in_backup;
+            } else if (c_.now() - started >= connector::kContentExportBudget) {
+                out.outcome = connector::ContentOutcome::budget;
+            } else {
+                // W4.8 point 13: a stop asked for by now ends the call before
+                // any restore request, as one before the first request does.
+                if (stop_requested()) {
+                    withdraw(type, true);
+                }
+                out = export_one(type, *found, out);
+            }
+            if (out.outcome != connector::ContentOutcome::exported) {
+                warn("veeam_m365: " + std::string{connector::to_string(type.kind)} + " item " +
+                     std::to_string(i) + ": content export " +
+                     std::string{connector::to_string(out.outcome)});
+            }
+            result.content.push_back(out);
+        }
+    }
+    result.content_time = c_.now() - started;
+}
+
+connector::ContentExport RestoreRun::export_one(const TypeWork& type, const Resolved& item,
+                                                connector::ContentExport out)
+{
+    const std::string path =
+        "/v8/RestoreSessions/" + type.explore +
+        (type.kind == ItemKind::sharepoint ? "/Organization/Sites/" : "/Organization/OneDrives/") +
+        item.container + "/Documents/" + form_encode(item.id) + "/save";
+    std::int64_t listed = -1;
+    if (const auto bytes = item.document.find("sizeBytes");
+        bytes != item.document.end() && bytes->is_number_integer()) {
+        listed = bytes->get<std::int64_t>();
+    }
+    const auto asked = c_.now();
+    const VeeamClient::ExportAnswer answer = c_.client.export_document(
+        path, connector::kContentExportTimeout, c_.spec.content_max_bytes);
+    out.ms = std::chrono::duration_cast<std::chrono::milliseconds>(c_.now() - asked).count();
+    const std::uint64_t size = answer.body.size();
+    if (answer.status == 0) {
+        out.outcome = connector::ContentOutcome::no_answer;
+    } else if (answer.status < 200 || answer.status > 299 ||
+               !ascii_lower(answer.content_type).starts_with("application/octet-stream")) {
+        out.outcome = connector::ContentOutcome::refused;
+    } else if (size > c_.spec.content_max_bytes) {
+        out.outcome = connector::ContentOutcome::over_cap;
+    } else if (listed >= 0 && static_cast<std::int64_t>(size) != listed) {
+        out.outcome = connector::ContentOutcome::size_mismatch;
+    } else {
+        try {
+            c_.spec.content_sink->on_content(type.kind, item.index, answer.body);
+        } catch (...) {
+            // The sink is the caller's: its message may not be safe to show.
+            throw connector::Error("veeam_m365: the content sink failed on " +
+                                   std::string{connector::to_string(type.kind)} + " item " +
+                                   std::to_string(item.index) +
+                                   std::string{connector::kNothingRestored});
+        }
+        out.outcome = connector::ContentOutcome::exported;
+        out.size_bytes = static_cast<std::int64_t>(size);
+    }
+    return out;
 }
 
 } // namespace
@@ -1236,6 +1336,11 @@ connector::RestoreResult VeeamM365Connector::restore_sample(const connector::Res
     };
     one_name_each("sharepoint", spec.sharepoint);
     one_name_each("onedrive", spec.onedrive);
+    // W6.3: bytes nobody takes are never asked for.
+    if (spec.content_count() > 0 && spec.content_sink == nullptr) {
+        throw std::invalid_argument("veeam_m365: a file selector wants content and the spec has "
+                                    "no content sink; nothing was restored");
+    }
 
     RestoreRun run({*client_, spec, *checked, guard_options_, cert_exporter_.get(), wall_now_,
                     now_, sleep_, logger_, account_, candidate_sessions_,

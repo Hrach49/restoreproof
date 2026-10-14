@@ -89,6 +89,39 @@ std::string_view to_string(ItemKind kind) noexcept
     return "mail";
 }
 
+std::string_view to_string(ContentOutcome outcome) noexcept
+{
+    switch (outcome) {
+    case ContentOutcome::exported:
+        return "exported";
+    case ContentOutcome::refused:
+        return "refused";
+    case ContentOutcome::no_answer:
+        return "no_answer";
+    case ContentOutcome::size_mismatch:
+        return "size_mismatch";
+    case ContentOutcome::over_cap:
+        return "over_cap";
+    case ContentOutcome::not_in_backup:
+        return "not_in_backup";
+    case ContentOutcome::budget:
+        return "budget";
+    }
+    return "unknown";
+}
+
+std::size_t RestoreSpec::content_count() const noexcept
+{
+    std::size_t n = 0;
+    for (const SharePointSelector& sel : sharepoint) {
+        n += sel.want_content ? 1 : 0;
+    }
+    for (const OneDriveSelector& sel : onedrive) {
+        n += sel.want_content ? 1 : 0;
+    }
+    return n;
+}
+
 std::string_view to_string(ItemOutcome outcome) noexcept
 {
     switch (outcome) {

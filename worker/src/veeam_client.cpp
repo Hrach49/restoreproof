@@ -1011,6 +1011,72 @@ VeeamClient::RestorePostOutcome VeeamClient::post_restore_once(const std::string
     return out;
 }
 
+VeeamClient::ExportAnswer VeeamClient::export_document(const std::string& path,
+                                                       std::chrono::milliseconds timeout,
+                                                       std::uint64_t max_bytes)
+{
+    check_api_path(path);
+    if (!path.ends_with("/save")) {
+        throw std::invalid_argument("a document export's path must end with /save");
+    }
+    if (timeout <= milliseconds::zero()) {
+        throw std::invalid_argument("a document export's timeout must be above 0 ms");
+    }
+    if (max_bytes == 0) {
+        throw std::invalid_argument("a document export's cap must be above 0 bytes");
+    }
+    const std::string what = "Veeam POST " + path;
+    // Taken before the send: a failure here has sent nothing, and is thrown.
+    const Token token = current_token();
+
+    HttpRequest request;
+    request.method = HttpMethod::post;
+    request.url = base_url_ + path;
+    request.headers["Authorization"] = "Bearer " + token.access;
+    // As the spike sent it and was answered (veeam-notes §12.1); the
+    // answer's type is what the caller holds.
+    request.headers["Accept"] = "*/*";
+    request.body = R"({"asZip":false})";
+    request.content_type = std::string{kJsonContentType};
+    request.timeout = timeout;
+    request.max_body_bytes = max_bytes;
+    // One send and no more, whatever comes back.
+    request.retry_on_status = false;
+    request.max_attempts = 1;
+
+    ExportAnswer out;
+    HttpResponse response;
+    try {
+        response = http_.send(request);
+    } catch (const HttpError& e) {
+        out.message = redact(one_line(what + ": no answer (" + e.what() + ")"));
+    } catch (const std::exception&) {
+        // Not ours, so its message may not be safe to show.
+        out.message = redact(one_line(what + ": no answer (the send failed)"));
+    }
+    if (!out.message.empty()) {
+        log_debug(out.message);
+        return out;
+    }
+
+    out.status = response.status;
+    if (const auto it = response.headers.find("Content-Type"); it != response.headers.end()) {
+        out.content_type = it->second;
+    }
+    if (response.status >= 200 && response.status <= 299) {
+        out.body = std::move(response.body);
+        out.message = what + ": HTTP " + std::to_string(response.status) + ", " +
+                      std::to_string(out.body.size()) + " byte(s)";
+    } else {
+        const ErrorBody error = parse_error_body(response.body);
+        out.error_code = error.error_code;
+        out.message = what + ": " + describe(response.status, error);
+    }
+    out.message = redact(one_line(out.message));
+    log_debug(out.message);
+    return out;
+}
+
 void VeeamClient::stop_session(const std::string& session_id)
 {
     if (!is_uuid(session_id)) {

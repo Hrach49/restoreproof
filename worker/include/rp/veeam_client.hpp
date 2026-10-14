@@ -283,6 +283,34 @@ public:
     RestorePostOutcome post_restore_once(const std::string& path, const std::string& body,
                                          std::chrono::milliseconds timeout);
 
+    // W6.3: what one document export's single send came to.
+    struct ExportAnswer {
+        int status = 0;           // the HTTP status; 0 without a response
+        std::string content_type; // the answer's Content-Type as sent; "" when none
+        std::string body;         // a 2xx's bytes, as many as came (at most
+                                  // max_bytes + 1); empty for any other status
+        std::string error_code;   // Veeam's errorCode, if the answer had one
+        // One line, through rp::redact: what happened. Never a byte of the body.
+        std::string message;
+    };
+
+    // POST `path` (a .../Documents/{id}/save path under /v8/) with exactly
+    // {"asZip":false} and Accept */*, once: one IHttpClient::send with
+    // max_attempts 1, retry_on_status off, `timeout` (above 0) and
+    // max_body_bytes `max_bytes` (above 0), a token taken first. No resend
+    // of any kind, after a 401 neither (docs/decisions.md 2026-10-14, W6.3
+    // point 1). Never throws for what the send brings: a transport failure
+    // is status 0 with its message, any status is returned as it came, a
+    // 2xx with its bytes (a body longer than max_bytes is cut after
+    // max_bytes + 1 bytes and returned as it is, so the caller sees it is
+    // over the cap). Throws std::invalid_argument for a path that doesn't
+    // start with "/v8/" or end with "/save", a timeout or a cap of 0 or
+    // less, and whatever getting the token throws (AuthError,
+    // TransientError, ...), with nothing sent then. The body is never
+    // logged or quoted.
+    ExportAnswer export_document(const std::string& path, std::chrono::milliseconds timeout,
+                                 std::uint64_t max_bytes);
+
     // POST /v8/RestoreSessions/{session_id}/Stop. A 2xx is done; anything
     // else throws as get_json does. Sent again only when it never went out,
     // or after an empty 401. `session_id` must be a UUID

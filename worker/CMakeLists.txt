@@ -276,6 +276,7 @@ add_executable(rptests
     tests/veeam_command_test.cpp
     tests/veeam_m365_candidates_test.cpp
     tests/veeam_m365_connector_test.cpp
+    tests/veeam_m365_export_test.cpp
     tests/veeam_m365_restore_guard_test.cpp
     tests/veeam_m365_restore_live_test.cpp
     tests/veeam_m365_restore_test.cpp

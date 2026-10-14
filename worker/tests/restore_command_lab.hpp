@@ -19,6 +19,8 @@
 #include "../src/command_config.hpp"
 #include "../src/run_pipeline.hpp"
 
+#include "../src/text_util.hpp"
+
 #include <rp/canary_manifest.hpp>
 #include <rp/cli.hpp>
 #include <rp/config.hpp>
@@ -235,6 +237,26 @@ inline connector::RestoreResult not_in_point(const connector::RestoreSpec& spec)
 }
 
 // A connector that answers from what the test set. Called on the test's thread.
+// W6.3: the bytes the backup holds of a random file and the fake targets
+// restore: for a docx or xlsx a real package (office-content-v1's, canary
+// content of ours), so office-v1 reads it; else `size` letters r.
+inline std::string random_file_bytes(const std::string& name, std::int64_t size)
+{
+    const auto read = [](const char* file) {
+        std::ifstream in(std::filesystem::path{RP_SHARED_DIR} / "testdata" / "office-content-v1" /
+                             file,
+                         std::ios::binary);
+        return std::string{std::istreambuf_iterator<char>(in), {}};
+    };
+    if (rp::ascii_ends_with_i(name, ".docx")) {
+        return read("rp-canary-02.local.docx");
+    }
+    if (rp::ascii_ends_with_i(name, ".xlsx")) {
+        return read("rp-canary-03.local.xlsx");
+    }
+    return std::string(static_cast<std::size_t>(std::max<std::int64_t>(size, 0)), 'r');
+}
+
 struct FakeConnector {
     std::vector<connector::RestorePoint> points{point(kNewestId, kNewestTime),
                                                 point(kOlderId, kOlderTime)};
@@ -268,7 +290,29 @@ struct FakeConnector {
     std::string client_ref;
     std::string out_at_restore;
     std::optional<connector::RestoreSpec> spec;
+    // W6.3: a file's export by name: nullopt (or unset) exported faithfully,
+    // else the word it came to; and the bytes it hands the sink, edited.
+    std::function<std::optional<connector::ContentOutcome>(const std::string& name)> export_outcome;
+    std::function<std::string(const std::string& name, std::string bytes)> export_bytes;
+    // A connector that ignores want_content: no export, no word.
+    bool ignore_content = false;
+    // The exports' time the fake reports when it exported anything; none
+    // (not reported) unless a test sets one.
+    std::optional<std::chrono::nanoseconds> content_time;
 };
+
+// The size the backup holds of a random file: its candidate's, else the
+// selector's.
+template <typename Candidate, typename Selector>
+std::int64_t candidate_size(const std::vector<Candidate>& candidates, const Selector& selector)
+{
+    for (const Candidate& c : candidates) {
+        if (c.selector.name == selector.name && c.selector.folder_path == selector.folder_path) {
+            return c.size_bytes;
+        }
+    }
+    return selector.size;
+}
 
 class ForwardingConnector final : public connector::IConnector {
 public:
@@ -329,7 +373,46 @@ public:
         if (fake_.restore_throw) {
             fake_.restore_throw();
         }
-        return fake_.answer(spec);
+        // W6.3: a faithful backup exports each file that asks for its content
+        // (the bytes the fake targets restore), before the restore; a test
+        // makes an export fail or changes its bytes.
+        std::vector<connector::ContentExport> content;
+        const auto export_file = [&](connector::ItemKind kind, std::size_t index,
+                                     const std::string& name, std::int64_t size) {
+            connector::ContentExport e{kind, index, connector::ContentOutcome::exported, -1, 0};
+            if (fake_.export_outcome) {
+                if (const std::optional<connector::ContentOutcome> o = fake_.export_outcome(name)) {
+                    e.outcome = *o;
+                }
+            }
+            if (e.outcome == connector::ContentOutcome::exported) {
+                std::string bytes = random_file_bytes(name, size);
+                if (fake_.export_bytes) {
+                    bytes = fake_.export_bytes(name, std::move(bytes));
+                }
+                spec.content_sink->on_content(kind, index, bytes);
+                e.size_bytes = static_cast<std::int64_t>(bytes.size());
+            }
+            content.push_back(e);
+        };
+        for (std::size_t i = 0; i < spec.sharepoint.size() && !fake_.ignore_content; ++i) {
+            if (spec.sharepoint[i].want_content) {
+                export_file(connector::ItemKind::sharepoint, i, spec.sharepoint[i].name,
+                            candidate_size(fake_.pool.sharepoint, spec.sharepoint[i]));
+            }
+        }
+        for (std::size_t i = 0; i < spec.onedrive.size() && !fake_.ignore_content; ++i) {
+            if (spec.onedrive[i].want_content) {
+                export_file(connector::ItemKind::onedrive, i, spec.onedrive[i].name,
+                            candidate_size(fake_.pool.onedrive, spec.onedrive[i]));
+            }
+        }
+        connector::RestoreResult result = fake_.answer(spec);
+        if (!content.empty() && result.content.empty()) {
+            result.content = std::move(content);
+            result.content_time = fake_.content_time;
+        }
+        return result;
     }
 
 private:
@@ -634,10 +717,7 @@ struct TargetsLab {
                 entry("name", name) ? file_bytes(std::filesystem::path{RP_SOURCE_DIR} / ".." /
                                                  "lab" / "canary" / name)
                                     : std::nullopt;
-            std::string content = canary ? *canary
-                                         : std::string(static_cast<std::size_t>(
-                                                           std::max<std::int64_t>(size, 0)),
-                                                       'r');
+            std::string content = canary ? *canary : random_file_bytes(name, size);
             out.push_back(graph_file(id, name, content.size()));
             files[id] = std::move(content);
         };
@@ -781,7 +861,10 @@ struct Harness {
                                                        "application/timestamp-reply");
                     });
         config_path = dir.write("config.json", config.dump(2));
-        manifest_path = dir.write("seed-manifest.json", lab_manifest_text());
+        // W6.2: the manifest's place is canaries\<tenant>.json beside the config.
+        tenant = rp::ascii_lower(config.at("graph_tenant_id").get<std::string>());
+        std::filesystem::create_directories(dir.path() / "canaries");
+        manifest_path = write_manifest(lab_manifest_text());
         // W4.11: the fake's organisation is the config's tenant's.
         fake.tenant_id = config.at("graph_tenant_id").get<std::string>();
         auto sink = std::make_shared<spdlog::sinks::ostream_sink_mt>(log_stream);
@@ -948,9 +1031,34 @@ struct Harness {
         bool& held_;
     };
 
+    // The lab's manifest, written where the run looks for it (W6.2:
+    // canaries\<tenant>.json beside the config); the path.
+    std::filesystem::path write_manifest(std::string_view text)
+    {
+        return dir.write(std::filesystem::path("canaries") / (tenant + ".json"), text);
+    }
+
+    // W6.2: canaries are an opt-in. The Harness's runs opt in (the lab client
+    // has a manifest) by --canary-cursor 0,0,0, unless the test names
+    // --canary-cursor or --manifest itself, or turned `canaries` off.
+    void opt_in(Args& args) const
+    {
+        if (!canaries) {
+            return;
+        }
+        for (const std::string_view arg : args) {
+            if (arg == "--canary-cursor" || arg == "--manifest") {
+                return;
+            }
+        }
+        args.push_back("--canary-cursor");
+        args.push_back("0,0,0");
+    }
+
     // `args`, then --config <the temp config>.
     Run run(Args args)
     {
+        opt_in(args);
         const std::string path_arg = utf8(config_path);
         args.push_back("--config");
         args.push_back(path_arg);
@@ -960,6 +1068,7 @@ struct Harness {
     // `args`, then --config, with stdout on `out`: the code and stderr.
     std::pair<int, std::string> run_to(Args args, std::ostream& out)
     {
+        opt_in(args);
         const std::string path_arg = utf8(config_path);
         args.push_back("--config");
         args.push_back(path_arg);
@@ -1047,6 +1156,11 @@ struct Harness {
     rp::test::TempDir dir;
     std::filesystem::path config_path;
     std::filesystem::path manifest_path;
+    // W6.2: the config's tenant in lower case, the manifest file's name.
+    std::string tenant;
+    // W6.2: false: run() and run_to() append no --canary-cursor, so a run
+    // without --canary-cursor or --manifest has no canaries.
+    bool canaries = true;
     FakeConnector fake;
     // The signing key is RFC 8032's published test key 1 (W4.3), never a
     // secret: only `test --evidence` parses it.
@@ -1170,6 +1284,6 @@ inline const std::string kCheckOfThree =
 // That run's status line: every item verified.
 inline const std::string kPassOfThree =
     "\n"
-    "status pass: 3 of 3 item(s) verified: manifest 2, fields 1, metadata 0\n";
+    "status pass: 3 of 3 item(s) verified: manifest 2, fields 1, metadata 0, backup_content 0\n";
 
 } // namespace rp::test::restore_command_lab

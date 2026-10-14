@@ -251,7 +251,10 @@ TEST_CASE("the result schema's enums are the code's words", "[result_schema]")
         REQUIRE(list("/$defs/expected_item/properties/expected_kind/enum") ==
                 std::vector<std::string>{text(v::to_string(v::ExpectedKind::manifest)),
                                          text(v::to_string(v::ExpectedKind::fields)),
-                                         text(v::to_string(v::ExpectedKind::metadata))});
+                                         text(v::to_string(v::ExpectedKind::metadata)),
+                                         text(v::to_string(v::ExpectedKind::backup_content))});
+        // W6.3: the export's words are expected_set's one list.
+        REQUIRE(list("/$defs/expected_item/properties/export/enum") == strings(v::export_words()));
         // No table in the code: text-v1 is the manifest loader's one mail
         // rule, bytes and office-v1 are expected_set.cpp's file rules.
         REQUIRE(list("/$defs/expected_item/properties/sha256_rule/enum") ==
@@ -327,7 +330,7 @@ TEST_CASE("the result schema's enums are the code's words", "[result_schema]")
         for (std::size_t i = 0; i < rp::timing::kSpanCount; ++i) {
             names.push_back(text(rp::timing::to_string(static_cast<rp::timing::Span>(i))));
         }
-        REQUIRE(names.size() == 11);
+        REQUIRE(names.size() == 12);
         REQUIRE(list("/$defs/timings/properties/spans/required") == names);
         const json spans = at("/$defs/timings/properties/spans/properties");
         REQUIRE(spans.size() == names.size());
@@ -513,9 +516,9 @@ TEST_CASE("the shared result documents validate as they say", "[result_schema]")
     const json& cases = cases_file().at("cases");
     REQUIRE(cases_file().at("format") == std::string{rp::kResultFormat});
     // The file can't shrink unnoticed.
-    REQUIRE(cases.size() == 201);
+    REQUIRE(cases.size() == 230);
 
-    const std::size_t i = GENERATE(range(std::size_t{0}, std::size_t{201}));
+    const std::size_t i = GENERATE(range(std::size_t{0}, std::size_t{230}));
     const json& entry = cases.at(i);
     const std::string name = entry.at("name");
     INFO(name);
@@ -543,7 +546,7 @@ TEST_CASE("the shared result documents' names are unique and both kinds are ther
         REQUIRE(entry.size() == 3);
         REQUIRE(entry.at("patch").is_array());
     }
-    REQUIRE(valid == 52);
+    REQUIRE(valid == 59);
     REQUIRE(names.contains("base"));
     // valid.json is canonical-json-v1: one line, no trailing newline.
     const std::string text = rp::test::read_shared("testdata/result-v1/valid.json");

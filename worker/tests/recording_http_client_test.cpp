@@ -3,6 +3,7 @@
 // something secret survives scrubbing. The commands' --record runs are in
 // veeam_command_test.cpp, graph_command_test.cpp and restore_command_test.cpp.
 
+#include "../src/run_pipeline.hpp"
 #include "fake_http_client.hpp"
 #include "test_support.hpp"
 
@@ -28,6 +29,7 @@
 #include <string_view>
 #include <thread>
 #include <tuple>
+#include <utility>
 #include <vector>
 
 using Catch::Matchers::ContainsSubstring;
@@ -689,6 +691,60 @@ TEST_CASE("the recording client needs a client and a recorder", "[record]")
     CHECK_THROWS_AS(rp::RecordingHttpClient(std::make_unique<rp::test::ForwardingHttpClient>(live),
                                             nullptr, "veeam"),
                     std::invalid_argument);
+    CHECK_THROWS_AS(rp::RecordingHttpClient(std::make_unique<rp::test::ForwardingHttpClient>(live),
+                                            recorder, "veeam", rp::RecordingHttpClient::BodyRule{}),
+                    std::invalid_argument);
+}
+
+TEST_CASE("a pipeline's recorded Veeam exchanges keep a document export's bytes as a digest, "
+          "every other body as content",
+          "[record][w6.3]")
+{
+    // An export's body is a tenant's file: never written into a fixture
+    // (docs/decisions.md 2026-10-14, W6.3 point 8).
+    rp::test::TempDir dir;
+    auto recorder = std::make_shared<rp::FixtureRecorder>(dir.path() / "rec", kSource,
+                                                          std::vector<std::string>{});
+    rp::test::FakeHttpClient live;
+    const std::string save = kVeeam + "/v8/RestoreSessions/s1/Organization/Sites/x/Documents/d/save";
+    live.on(HttpMethod::post, save,
+            {make_response(200, R"({"SENTINEL-FILE-TEXT":"a client's file"})", "application/json")});
+    live.on(HttpMethod::get, kVeeam + "/v8/RestoreSessions/s1",
+            {make_response(200, R"({"state":"Working"})")});
+    rp::connector::ConnectorOptions options;
+    options.make_http = [&live](const rp::HttpClientOptions&) -> std::unique_ptr<rp::IHttpClient> {
+        return std::make_unique<rp::test::ForwardingHttpClient>(live);
+    };
+    const rp::connector::ConnectorOptions wrapped = rp::record_connector(options, recorder);
+    const std::unique_ptr<rp::IHttpClient> client = wrapped.make_http(rp::HttpClientOptions{});
+    client->post(save, R"({"asZip":false})", "application/json");
+    client->get(kVeeam + "/v8/RestoreSessions/s1");
+
+    REQUIRE(recorder->problems().empty());
+    const std::vector<std::string> names = names_in(dir.path() / "rec" / "veeam");
+    REQUIRE(names.size() == 2);
+    const auto read = [&dir](const std::string& name) {
+        std::ifstream file(dir.path() / "rec" / "veeam" / name, std::ios::binary);
+        return std::string{std::istreambuf_iterator<char>(file), {}};
+    };
+    const std::string exported = read(names[0]);
+    CHECK(exported.find("SENTINEL-FILE-TEXT") == std::string::npos);
+    const nlohmann::json fixture = nlohmann::json::parse(exported);
+    CHECK(fixture["body"].is_null());
+    CHECK(fixture.contains("body_sha256"));
+    CHECK(fixture["request_body"] == nlohmann::json{{"asZip", false}});
+    CHECK(nlohmann::json::parse(read(names[1]))["body"] == nlohmann::json{{"state", "Working"}});
+
+    CHECK(rp::veeam_recorded_body(rp::HttpRequest{rp::HttpMethod::post, save}) ==
+          RecordedBody::digest);
+    for (const auto& [method, url] : std::vector<std::pair<rp::HttpMethod, std::string>>{
+             {rp::HttpMethod::get, save},
+             {rp::HttpMethod::post, kVeeam + "/v8/RestoreSessions/s1/Stop"},
+             {rp::HttpMethod::post, kVeeam + "/v8/RestoreSessions/s1/Organization/Mailboxes/m/"
+                                             "Items/i/restoreTo"}}) {
+        CAPTURE(url);
+        CHECK(rp::veeam_recorded_body(rp::HttpRequest{method, url}) == RecordedBody::content);
+    }
 }
 
 // --- Replay ----------------------------------------------------------------------------

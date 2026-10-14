@@ -120,7 +120,7 @@ connector::CandidatePool mixed_pool()
 Selection select(const SamplePlan& plan, const connector::CandidatePool& pool = {},
                  const CanaryCursor& cursor = {})
 {
-    return rp::sampling::SampleSelector::select(plan, lab_manifest(), cursor, targets(), pool,
+    return rp::sampling::SampleSelector::select(plan, &lab_manifest(), cursor, targets(), pool,
                                                 kRunId);
 }
 
@@ -303,14 +303,69 @@ TEST_CASE("build_expected_set refuses a selection that isn't this manifest's or 
     REQUIRE(s.sharepoint.size() == 4);
     REQUIRE(s.onedrive.size() == 3);
     CanaryManifest manifest = lab_manifest();
-    REQUIRE_NOTHROW(verification::build_expected_set(s, manifest));
+    REQUIRE_NOTHROW(verification::build_expected_set(s, &manifest));
     row.edit(s, manifest);
-    const Thrown thrown = thrown_by([&] { verification::build_expected_set(s, manifest); });
+    const Thrown thrown = thrown_by([&] { verification::build_expected_set(s, &manifest); });
     CHECK(thrown.kind == row.kind);
     CHECK(thrown.what == row.message);
 }
 
 // 2. to_json writes no item whose expected kind its fields don't back.
+// W6.2: a selection made without canaries.
+TEST_CASE("without a manifest every item is a random one's and the set says it had no canaries",
+          "[expected-set][w6.2]")
+{
+    connector::CandidatePool pool;
+    pool.mail = {mail_candidate(1), mail_candidate(2)};
+    pool.sharepoint = {sp_candidate(1, "plan.pdf")};
+    pool.onedrive = {od_candidate("notes.txt")};
+    const Selection s = rp::sampling::SampleSelector::select({2, 1, 1}, nullptr, {}, targets(),
+                                                             pool, kRunId);
+
+    const ExpectedSet set = verification::build_expected_set(s, nullptr);
+
+    CHECK_FALSE(set.canaries);
+    CHECK(set.manifest_sha256.empty());
+    CHECK(set.canaries_seeded_at.empty());
+    REQUIRE(set.items.size() == 4);
+    for (std::size_t i = 0; i < set.items.size(); ++i) {
+        CAPTURE(i);
+        CHECK(set.items[i].index == i);
+        CHECK(set.items[i].source == ItemSource::random);
+        CHECK(set.items[i].canary_id.empty());
+        CHECK_FALSE(set.items[i].random_key.empty());
+        CHECK(set.items[i].sha256.empty());
+    }
+    CHECK(set.items[0].expected_kind == ExpectedKind::fields);
+    CHECK(set.items[1].expected_kind == ExpectedKind::fields);
+    CHECK(set.items[2].expected_kind == ExpectedKind::metadata);
+    CHECK(set.items[3].expected_kind == ExpectedKind::metadata);
+    const json out = verification::to_json(set);
+    CHECK_FALSE(out.contains("manifest_sha256"));
+    CHECK(out.at("counts") == json{{"manifest", 0}, {"fields", 2}, {"metadata", 2}, {"backup_content", 0}});
+    CHECK(out.at("items").size() == 4);
+}
+
+TEST_CASE("build_expected_set refuses a manifest it wasn't given, and one it was",
+          "[expected-set][w6.2]")
+{
+    connector::CandidatePool pool;
+    pool.mail = {mail_candidate(1)};
+    const Selection with = select({1, 0, 0}, pool);
+    const Selection without =
+        rp::sampling::SampleSelector::select({1, 0, 0}, nullptr, {}, targets(), pool, kRunId);
+
+    const Thrown missing = thrown_by([&] { verification::build_expected_set(with, nullptr); });
+    CHECK(missing.kind == "invalid_argument");
+    CHECK(missing.what ==
+          "expected set: the selection was made from a manifest this call doesn't have");
+
+    const Thrown extra =
+        thrown_by([&] { verification::build_expected_set(without, &lab_manifest()); });
+    CHECK(extra.kind == "invalid_argument");
+    CHECK(extra.what == "expected set: the selection was made without canaries");
+}
+
 TEST_CASE("to_json refuses an item that claims more or other than it holds", "[expected-set]")
 {
     struct Row {
@@ -367,9 +422,13 @@ TEST_CASE("to_json refuses an item that claims more or other than it holds", "[e
         {"a mail without its fields", [](Items& i) { i[1].mail.reset(); }, item(1, "doesn't hold its type's fields")},
         {"a file holding a mail's fields too", [](Items& i) { i[2].mail = verification::ExpectedMail{}; },
          item(2, "doesn't hold its type's fields")},
+        // W6.3 review, finding 6: an export that gave its bytes is
+        // backup_content, never a file checked by name and size alone.
+        {"a metadata file whose export is exported", [](Items& i) { i[2].export_word = "exported"; },
+         item(2, "is metadata but its export gave its bytes")},
     }));
     CAPTURE(row.what);
-    ExpectedSet set{std::string(64, 'a'), consistent_items()};
+    ExpectedSet set{std::string(64, 'a'), consistent_items(), "", true};
     REQUIRE_NOTHROW(verification::to_json(set));
     row.edit(set.items);
     const Thrown thrown = thrown_by([&] { verification::to_json(set); });
@@ -408,7 +467,7 @@ TEST_CASE("every sampled item has an expected record, in RestoreSpec order, with
     PoolConnector c(mixed_pool());
     const Selection s = rp::sampling::choose_sample(
         c, "RestoreProofLab.onmicrosoft.com", lab_point(), targets(), lab_manifest().tenant_id,
-        row.plan, lab_manifest(), row.cursor, kRunId);
+        row.plan, &lab_manifest(), row.cursor, kRunId);
     CHECK(s.record.mail.random_wanted == row.wanted[0]);
     CHECK(s.record.sharepoint.random_wanted == row.wanted[1]);
     CHECK(s.record.onedrive.random_wanted == row.wanted[2]);
@@ -422,7 +481,7 @@ TEST_CASE("every sampled item has an expected record, in RestoreSpec order, with
     CHECK(s.sharepoint.size() == row.selectors[1]);
     CHECK(s.onedrive.size() == row.selectors[2]);
 
-    const ExpectedSet set = verification::build_expected_set(s, lab_manifest());
+    const ExpectedSet set = verification::build_expected_set(s, &lab_manifest());
     CHECK(count_of(set, ExpectedKind::manifest) == row.counts[0]);
     CHECK(count_of(set, ExpectedKind::fields) == row.counts[1]);
     CHECK(count_of(set, ExpectedKind::metadata) == row.counts[2]);
@@ -484,7 +543,8 @@ TEST_CASE("every sampled item has an expected record, in RestoreSpec order, with
 
     const json out = verification::to_json(set);
     const json& counts = out.at("counts");
-    CHECK(counts.size() == 3);
+    CHECK(counts.size() == 4);
+    CHECK(counts.at("backup_content").get<std::size_t>() == 0);
     CHECK(counts.at("manifest").get<std::size_t>() == count_of(set, ExpectedKind::manifest));
     CHECK(counts.at("fields").get<std::size_t>() == count_of(set, ExpectedKind::fields));
     CHECK(counts.at("metadata").get<std::size_t>() == count_of(set, ExpectedKind::metadata));
@@ -505,7 +565,7 @@ TEST_CASE("a canary mail expects the manifest's fields and its body hash by text
     const std::uint32_t cursor = GENERATE(0u, 7u, 15u);
     CAPTURE(cursor);
     const ExpectedSet set =
-        verification::build_expected_set(select({1, 0, 0}, {}, {cursor, 0, 0}), lab_manifest());
+        verification::build_expected_set(select({1, 0, 0}, {}, {cursor, 0, 0}), &lab_manifest());
     REQUIRE(set.items.size() == 1);
     const ExpectedItem& item = set.items[0];
     const json& entry = lab_entries().at(cursor);
@@ -546,7 +606,7 @@ TEST_CASE("a canary file expects its content hash by its rule, and its size only
     }));
     CAPTURE(row.what);
     const ExpectedSet set =
-        verification::build_expected_set(select(row.plan, {}, row.cursor), lab_manifest());
+        verification::build_expected_set(select(row.plan, {}, row.cursor), &lab_manifest());
     REQUIRE(set.items.size() == 1);
     const ExpectedItem& item = set.items[0];
     const json& entry = lab_entries().at(row.entry);
@@ -585,7 +645,7 @@ TEST_CASE("a random mail expects the backup's fields; what the backup didn't say
     CAPTURE(row.what);
     connector::CandidatePool pool;
     pool.mail = {mail_candidate(4, row.sender, row.sent)};
-    const ExpectedSet set = verification::build_expected_set(select({2, 0, 0}, pool), lab_manifest());
+    const ExpectedSet set = verification::build_expected_set(select({2, 0, 0}, pool), &lab_manifest());
     REQUIRE(set.items.size() == 2);
     const ExpectedItem& item = set.items[1];
     CHECK(item.index == 1);
@@ -638,7 +698,7 @@ TEST_CASE("a random file expects its name, and the backup's size unless SharePoi
         pool.onedrive = {od_candidate(row.name, 4321)};
     }
     const ExpectedSet set = verification::build_expected_set(
-        select({0, sharepoint ? 2 : 0, sharepoint ? 0 : 2}, pool), lab_manifest());
+        select({0, sharepoint ? 2 : 0, sharepoint ? 0 : 2}, pool), &lab_manifest());
     REQUIRE(set.items.size() == 2);
     const ExpectedItem& item = set.items[1];
     CHECK(item.kind == (sharepoint ? ItemKind::sharepoint : ItemKind::onedrive));
@@ -665,7 +725,7 @@ TEST_CASE("a random file whose size the backup didn't give expects no size", "[e
         pool.onedrive = {od_candidate("report.pdf", size)};
     }
     const ExpectedSet set = verification::build_expected_set(
-        select({0, sharepoint ? 2 : 0, sharepoint ? 0 : 2}, pool), lab_manifest());
+        select({0, sharepoint ? 2 : 0, sharepoint ? 0 : 2}, pool), &lab_manifest());
     REQUIRE(set.items.size() == 2);
     REQUIRE(set.items[1].file);
     CHECK(set.items[1].expected_kind == ExpectedKind::metadata);
@@ -678,7 +738,7 @@ TEST_CASE("a random empty file expects size 0", "[expected-set]")
 {
     connector::CandidatePool pool;
     pool.onedrive = {od_candidate("empty.txt", 0)};
-    const ExpectedSet set = verification::build_expected_set(select({0, 0, 2}, pool), lab_manifest());
+    const ExpectedSet set = verification::build_expected_set(select({0, 0, 2}, pool), &lab_manifest());
     REQUIRE(set.items.size() == 2);
     REQUIRE(set.items[1].file);
     CHECK(set.items[1].file->size_bytes == std::optional<std::int64_t>{0});
@@ -734,6 +794,7 @@ TEST_CASE("to_json writes the result's expected object; unknown values are left 
           "[expected-set]")
 {
     ExpectedSet set;
+    set.canaries = true;
     set.manifest_sha256 = std::string(64, 'a');
     ExpectedItem canary;
     canary.index = 0;
@@ -765,7 +826,7 @@ TEST_CASE("to_json writes the result's expected object; unknown values are left 
 
     CHECK(verification::to_json(set) == json::parse(R"({
         "manifest_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-        "counts": {"manifest": 1, "fields": 1, "metadata": 1},
+        "counts": {"manifest": 1, "fields": 1, "metadata": 1, "backup_content": 0},
         "items": [
             {"index": 0, "kind": "sharepoint", "source": "canary", "expected_kind": "manifest",
              "canary_id": "rp-canary-01.pdf", "name": "rp-canary-01.pdf", "size_bytes": 925,
@@ -788,8 +849,8 @@ TEST_CASE("to_json writes the result's expected object; unknown values are left 
                                            "<id@example.com>"};
     mail.sha256 = std::string(64, 'c');
     mail.sha256_rule = "text-v1";
-    const json one = verification::to_json(ExpectedSet{std::string(64, 'd'), {mail}});
-    CHECK(one.at("counts") == json{{"manifest", 1}, {"fields", 0}, {"metadata", 0}});
+    const json one = verification::to_json(ExpectedSet{std::string(64, 'd'), {mail}, "", true});
+    CHECK(one.at("counts") == json{{"manifest", 1}, {"fields", 0}, {"metadata", 0}, {"backup_content", 0}});
     CHECK(one.at("items")[0] == json::parse(R"({
         "index": 0, "kind": "mail", "source": "canary", "expected_kind": "manifest",
         "canary_id": "RP-CANARY-0008", "subject": "RP-CANARY-0008",
@@ -800,8 +861,24 @@ TEST_CASE("to_json writes the result's expected object; unknown values are left 
     })"));
 
     const json empty = verification::to_json(ExpectedSet{});
-    CHECK(empty.at("counts") == json{{"manifest", 0}, {"fields", 0}, {"metadata", 0}});
+    CHECK(empty.at("counts") == json{{"manifest", 0}, {"fields", 0}, {"metadata", 0}, {"backup_content", 0}});
     CHECK(empty.at("items") == json::array());
+}
+
+TEST_CASE("a set built by hand has no canaries, and one that claims canaries without a manifest "
+          "hash is refused",
+          "[expected-set][w6.2]")
+{
+    // W6.3 review, finding 8: the product's default is a run without
+    // canaries, so a default set writes no manifest_sha256.
+    ExpectedSet set;
+    CHECK_FALSE(set.canaries);
+    CHECK_FALSE(verification::to_json(set).contains("manifest_sha256"));
+
+    set.canaries = true;
+    const Thrown thrown = thrown_by([&] { verification::to_json(set); });
+    CHECK(thrown.kind == "logic_error");
+    CHECK(thrown.what == "expected set: canaries without a manifest hash");
 }
 
 TEST_CASE("the kinds and sources as strings", "[expected-set]")

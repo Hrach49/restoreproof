@@ -71,7 +71,7 @@ async def test_the_four_pages_render_real_data_from_the_sprint_5_runs_and_a_revo
     assert client.text.count('class="day') == STRIP_DAYS
     assert "<td>yes</td>\n    <td>yes</td>" in client.text  # cleanup ok, timestamped
     # /runs/{id}: the items, the files, the columns.
-    cell(run.text, f"Run <code>{run_id}</code>", "rp-canary-01.pdf", "rp-canary-11.pdf", "41:00", "20:30", VECTOR["bundle_sha256"], "2026-09-29 22:00:45 UTC")
+    cell(run.text, f"Run <code>{run_id}</code>", "project-brief.pdf", "reading-list.txt", "41:00", "20:30", VECTOR["bundle_sha256"], "2026-09-29 22:00:45 UTC")
     for name in VECTOR_FILES:
         cell(run.text, f'href="/runs/{run_id}/files/{name}">{name}<')
     assert "<p>Bundle: " in run.text and "<p>Attachments: " in run.text

@@ -244,6 +244,8 @@ inline json lab_profile_json()
     return profile;
 }
 
+// W6.2: the lab's jobs opt in to canaries (the key's presence), as the lab's
+// manifest is beside the config; a test drops the key for a run without.
 inline json job(const std::string& id, int mail = 2, int sp = 1, int od = 0,
                 const std::string& connector = "veeam_m365")
 {
@@ -255,7 +257,8 @@ inline json job(const std::string& id, int mail = 2, int sp = 1, int od = 0,
             {"sample_sp", sp},
             {"sample_od", od},
             {"restore_point", "latest"},
-            {"screenshots_enabled", false}};
+            {"screenshots_enabled", false},
+            {"canary_cursor", json::array({0, 0, 0})}};
 }
 
 inline bool has(const std::string& text, const std::string& part)

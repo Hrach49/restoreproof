@@ -2190,6 +2190,224 @@ TEST_CASE("a restore POST with a token due for renewal renews it first", "[veeam
     CHECK(bearer(lab.http.requests().back()) == "Bearer access-refresh-1");
 }
 
+// ---- W6.3: the document export, one send ---------------------------------------------
+
+namespace {
+
+const std::string kExportPath =
+    "/v8/RestoreSessions/9aa65291-c162-4769-acb0-ccc39eead76e/Organization/Sites/"
+    "fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689/Documents/"
+    "fe08085d-eb70-42e8-95a6-470189bd98eb4ecaf399-cc0e-4d95-b3fe-cd091a09e689"
+    "7eb0f08a-f57b-418c-8ca6-f2ab812976665ac127fb-0646-464e-a89a-76e93e62feb8/save";
+// Bytes with a sentinel in them: never in a log line or a message.
+const std::string kExportBytes = "%PDF-1.4 SENTINEL-EXPORT-BYTES\n%%EOF\n";
+
+HttpResponse octet_stream(std::string bytes, std::string content_type = "application/octet-stream")
+{
+    HttpResponse response = make_response(200, std::move(bytes), std::move(content_type));
+    response.headers["Content-Disposition"] = "attachment; filename=rp-canary-06.pdf";
+    return response;
+}
+
+} // namespace
+
+TEST_CASE("a document export goes out exactly once, whatever comes back", "[veeam][w6.3]")
+{
+    struct Row {
+        std::string name;
+        Answer answer;
+        int status;
+        std::string content_type;
+        std::string body;
+        std::string error_code;
+        std::string message; // a part of the answer's message
+    };
+    const Row row = GENERATE_COPY(values<Row>({
+        {"dropped", transport(rp::TransportError::dropped), 0, "", "", "", ": no answer ("},
+        {"timeout", transport(rp::TransportError::timeout), 0, "", "", "", ": no answer ("},
+        {"connect", transport(rp::TransportError::connect), 0, "", "", "", ": no answer ("},
+        {"handshake", transport(rp::TransportError::handshake), 0, "", "", "", ": no answer ("},
+        {"not an HttpError",
+         [](const HttpRequest&) -> HttpResponse { throw std::runtime_error("SENTINEL-WHAT"); }, 0,
+         "", "", "", ": no answer (the send failed)"},
+        {"500",
+         respond(make_response(500, R"({"message":"Export failed.","errorCode":"InternalError"})")),
+         500, "application/json; charset=utf-8", "", "InternalError",
+         ": HTTP 500 (InternalError): Export failed."},
+        {"502", respond(make_response(502)), 502, "", "", "", ": HTTP 502"},
+        {"404",
+         respond(make_response(
+             404, R"({"message":"Document not found.","errorCode":"ResourceNotFound"})")),
+         404, "application/json; charset=utf-8", "", "ResourceNotFound",
+         ": HTTP 404 (ResourceNotFound): Document not found."},
+        {"401", respond(load_fixture("veeam", "api-expired-token-401")), 401, "", "", "",
+         ": HTTP 401"},
+        {"403",
+         respond(make_response(403,
+                               R"({"message":"Access denied.","errorCode":"ResourceAccessDenied"})")),
+         403, "application/json; charset=utf-8", "", "ResourceAccessDenied", ": HTTP 403"},
+        // A 2xx is handed back with its bytes and its type, whatever they
+        // are: the connector holds them to octet-stream and the listed size.
+        {"200 octet-stream", respond(octet_stream(kExportBytes)), 200, "application/octet-stream",
+         kExportBytes, "", ": HTTP 200, " + std::to_string(kExportBytes.size()) + " byte(s)"},
+        {"200 JSON", respond(make_response(200, R"({"id":"x"})")), 200,
+         "application/json; charset=utf-8", R"({"id":"x"})", "", ": HTTP 200, 10 byte(s)"},
+        {"204 empty", respond(make_response(204)), 204, "", "", "", ": HTTP 204, 0 byte(s)"},
+    }));
+    CAPTURE(row.name);
+    Lab lab;
+    const std::string url = kBase + kExportPath;
+    lab.http.on(HttpMethod::post, url, row.answer);
+    auto client = lab.make_client();
+
+    const rp::VeeamClient::ExportAnswer out = client->export_document(kExportPath, 60s, 1000);
+
+    CHECK(out.status == row.status);
+    CHECK(out.content_type == row.content_type);
+    CHECK(out.body == row.body);
+    CHECK(out.error_code == row.error_code);
+    CHECK(out.message.starts_with("Veeam POST " + kExportPath));
+    CHECK(out.message.find(row.message) != std::string::npos);
+    CHECK(out.message.find('\n') == std::string::npos);
+    // One send, and nothing but the sign-in before it: no resend, and no
+    // fresh sign-in after a 401.
+    const std::vector<HttpRequest> sent = lab.http.requests();
+    REQUIRE(sent.size() == 2);
+    CHECK(sent[0].url == kTokenUrl);
+    const HttpRequest& post = sent[1];
+    CHECK(post.method == HttpMethod::post);
+    CHECK(post.url == url);
+    CHECK(post.body == R"({"asZip":false})");
+    CHECK(post.content_type == "application/json; charset=utf-8");
+    CHECK(post.headers.at("Accept") == "*/*");
+    CHECK(post.max_attempts == 1);
+    CHECK_FALSE(post.retry_on_status);
+    CHECK(post.timeout == 60s);
+    CHECK(post.max_body_bytes == 1000);
+    CHECK(bearer(post) == "Bearer access-login-1");
+    CHECK(lab.logins == 1);
+    // The bytes never reach a log line or the message.
+    const std::string log = lab.log();
+    for (const std::string secret : {"SENTINEL-EXPORT-BYTES", "SENTINEL-WHAT"}) {
+        CHECK(out.message.find(secret) == std::string::npos);
+        CHECK(log.find(secret) == std::string::npos);
+    }
+}
+
+TEST_CASE("a document export refuses a path, timeout or cap outside its rules before any request",
+          "[veeam][w6.3]")
+{
+    Lab lab;
+    lab.http.on(HttpMethod::post, kBase + kExportPath, {octet_stream(kExportBytes)});
+    auto client = lab.make_client();
+
+    for (const std::string& path : std::vector<std::string>{
+             "/v7/RestoreSessions/x/save", "RestoreSessions/x/save",
+             kExportPath.substr(0, kExportPath.size() - 5), kExportPath + "/"}) {
+        CAPTURE(path);
+        CHECK_THROWS_AS(client->export_document(path, 60s, 1000), std::invalid_argument);
+    }
+    CHECK_THROWS_AS(client->export_document(kExportPath, 0ms, 1000), std::invalid_argument);
+    CHECK_THROWS_AS(client->export_document(kExportPath, -1ms, 1000), std::invalid_argument);
+    CHECK_THROWS_AS(client->export_document(kExportPath, 60s, 0), std::invalid_argument);
+    CHECK(lab.http.requests().empty());
+
+    client->export_document(kExportPath, 1234ms, 7);
+    const HttpRequest post = lab.http.requests().back();
+    CHECK(post.timeout == 1234ms);
+    CHECK(post.max_body_bytes == 7);
+}
+
+TEST_CASE("a document export whose token can't be had throws and sends nothing", "[veeam][w6.3]")
+{
+    Lab lab;
+    lab.on_login = [](int) { return load_fixture("veeam", "token-rejected-401"); };
+    lab.http.on(HttpMethod::post, kBase + kExportPath, {octet_stream(kExportBytes)});
+    auto client = lab.make_client();
+
+    CHECK(thrown_kind([&] { client->export_document(kExportPath, 60s, 1000); }) == "AuthError");
+    CHECK(lab.http.count(HttpMethod::post, kBase + kExportPath) == 0);
+}
+
+TEST_CASE("a document export with a token due for renewal renews it first", "[veeam][w6.3]")
+{
+    Lab lab;
+    lab.http.on(HttpMethod::post, kBase + kExportPath, {octet_stream(kExportBytes)});
+    auto client = lab.make_client();
+    client->ensure_token();
+    lab.advance(3541s);
+
+    client->export_document(kExportPath, 60s, 1000);
+
+    CHECK(lab.grants() == std::vector<std::string>{"password", "refresh_token"});
+    CHECK(bearer(lab.http.requests().back()) == "Bearer access-refresh-1");
+}
+
+TEST_CASE("a document export's empty 401 drops its token, so the next export signs in afresh",
+          "[veeam][w6.3]")
+{
+    // A REST service restart kills every token (veeam-notes §1.3): the export
+    // that met it is not resent, but the dead token is not handed to the
+    // next one either.
+    Lab lab;
+    int posts = 0;
+    lab.http.on(HttpMethod::post, kBase + kExportPath, [&posts](const HttpRequest& request) {
+        ++posts;
+        return bearer(request) == "Bearer access-login-1"
+                   ? load_fixture("veeam", "api-invalid-token-401")
+                   : octet_stream(kExportBytes);
+    });
+    auto client = lab.make_client();
+
+    CHECK(client->export_document(kExportPath, 60s, 1000).status == 401);
+    const rp::VeeamClient::ExportAnswer second = client->export_document(kExportPath, 60s, 1000);
+
+    CHECK(second.status == 200);
+    CHECK(second.body == kExportBytes);
+    CHECK(posts == 2);
+    CHECK(lab.grants() == std::vector<std::string>{"password", "password"});
+    CHECK(bearer(lab.http.requests().back()) == "Bearer access-login-2");
+}
+
+TEST_CASE("a document export's 401 with a message keeps the token: signing in changes nothing",
+          "[veeam][w6.3]")
+{
+    Lab lab;
+    lab.http.on(HttpMethod::post, kBase + kExportPath,
+                {make_response(401, R"({"message":"Access denied.","errorCode":"Unauthorized"})"),
+                 octet_stream(kExportBytes)});
+    auto client = lab.make_client();
+
+    CHECK(client->export_document(kExportPath, 60s, 1000).status == 401);
+    CHECK(client->export_document(kExportPath, 60s, 1000).status == 200);
+
+    CHECK(lab.grants() == std::vector<std::string>{"password"});
+}
+
+TEST_CASE("a document export's empty 401 for a token already replaced leaves the newer one",
+          "[veeam][w6.3]")
+{
+    // Another caller signed in while the export was out: its token is newer,
+    // and the export's 401 says nothing about it.
+    Lab lab;
+    rp::VeeamClient* client_ptr = nullptr;
+    lab.http.on(HttpMethod::post, kBase + kExportPath, [&client_ptr](const HttpRequest& request) {
+        if (bearer(request) == "Bearer access-login-1") {
+            client_ptr->login();
+            return load_fixture("veeam", "api-invalid-token-401");
+        }
+        return octet_stream(kExportBytes);
+    });
+    auto client = lab.make_client();
+    client_ptr = client.get();
+
+    CHECK(client->export_document(kExportPath, 60s, 1000).status == 401);
+    CHECK(client->export_document(kExportPath, 60s, 1000).status == 200);
+
+    CHECK(lab.grants() == std::vector<std::string>{"password", "password"});
+    CHECK(bearer(lab.http.requests().back()) == "Bearer access-login-2");
+}
+
 TEST_CASE("stop_session refuses an ID that isn't a UUID before any request", "[veeam][w2.5]")
 {
     const std::string id = GENERATE(as<std::string>{}, "", "x", kSessionId + "/Stop",

@@ -904,7 +904,7 @@ TEST_CASE("worker body: one job from the stub file to the outbox and the Cloud, 
     CHECK(has(log, "[info] run job-1: starting (mail 2, sharepoint 1, onedrive 0, point latest)"));
     CHECK(has(log, "[info] [job-1] run job-1  seed " + seed_of("job-1")));
     CHECK(has(log, "[info] [job-1] status pass: 3 of 3 item(s) verified: manifest 2, fields 1, "
-                   "metadata 0"));
+                   "metadata 0, backup_content 0"));
     CHECK(has(log, "[info] [job-1] cleanup after ok: deleted 2 mail, 1 sharepoint, 0 onedrive"));
     CHECK(has(log, "[info] [job-1] queued " + utf8(lab.queued("job-1"))));
     CHECK(has(log, "[info] run job-1: ended pass; queued"));
@@ -1254,7 +1254,7 @@ TEST_CASE("worker body: a folder closed after a stop has no token, and is what t
                {"restore_sent", true},
                {"status", "error"},
                {"unchecked_items", json::array()},
-               {"verified", {{"fields", 0}, {"manifest", 0}, {"metadata", 0}}},
+               {"verified", {{"fields", 0}, {"manifest", 0}, {"metadata", 0}, {"backup_content", 0}}},
                {"warnings", json::array()}});
 
     // The shared folder verifies as it is, under the key it names.
@@ -1347,8 +1347,19 @@ ordered_json dispatched_vector()
                                   tsa_keys.at("tsa_private_key_pem").get<std::string>());
     lab.h.tsa.time = std::chrono::system_clock::to_time_t(rp::test::graph_lab::kNow);
     lab.h.dir.write("tsa-ca.pem", root);
+    // W6.2: the Cloud's job carries no canary_cursor, so the run has no
+    // canaries: one random SharePoint file and one random OneDrive file, each
+    // named as an L1.8 real file is and in a test account's OneDrive (no
+    // person named).
     json one = job(kDispatchedRunId, 0, 1, 1);
     one["client_id"] = kDispatchedClientId;
+    one.erase("canary_cursor");
+    lab.h.fake.pool.sharepoint = {
+        {{rp::test::graph_lab::lab_values().site_id, "b!madeUpSourceLibraryDrive", "/",
+          "project-brief.pdf", "7ce76907-0000-4000-8000-00000000d0c5"},
+         899}};
+    lab.h.fake.pool.onedrive = {
+        {{"alice@RestoreProofLab.onmicrosoft.com", "/", "reading-list.txt"}, 60}};
     lab.write_jobs(json::array({one}));
 
     const std::optional<std::string> last_error = lab.run_loop();
@@ -1623,4 +1634,87 @@ TEST_CASE("worker body: a job without a profile is never run on the config's cli
     CHECK(run.folder == rp::JobFolder::none);
     CHECK(lab.h.make_connector_calls == 0);
     CHECK(lab.h.fake.points_calls == 0);
+}
+
+// --- W6.2: a job's canary_cursor is the opt-in; two tenants on one Worker -----------
+
+TEST_CASE("worker body: a job without canary_cursor runs without canaries: no manifest read, the "
+          "whole sample random",
+          "[worker_body][w6.2]")
+{
+    BodyLab lab;
+    std::filesystem::remove(lab.h.manifest_path);
+    lab.h.fake.pool.mail = {carol_mail(1), carol_mail(2)};
+    json one = job("job-1", 2, 0, 0);
+    one.erase("canary_cursor");
+    lab.write_jobs(json::array({one}));
+
+    const std::optional<std::string> last_error = lab.run_loop();
+
+    REQUIRE_FALSE(last_error);
+    const std::string log = lab.h.log();
+    CHECK(has(log, "[info] [job-1] canaries: none"));
+    CHECK(has(log, "[info] [job-1] status pass: 2 of 2 item(s) verified: manifest 0, fields 2, "
+                   "metadata 0, backup_content 0"));
+    CHECK(has(log, "[info] run job-1: ended pass; queued"));
+    const json result = json::parse(bytes_of(lab.sent("job-1") / "result.json"));
+    CHECK_FALSE(result.at("sample").contains("manifest_sha256"));
+    CHECK_FALSE(result.at("expected").contains("manifest_sha256"));
+    CHECK(result.at("expected").at("counts").at("manifest") == 0);
+    REQUIRE(lab.h.fake.spec);
+    CHECK(lab.h.fake.spec->mail.size() == 2);
+}
+
+TEST_CASE("worker body: two jobs of two tenants run on one Worker, each under its own profile",
+          "[worker_body][w6.2]")
+{
+    BodyLab lab;
+    std::filesystem::remove(lab.h.manifest_path);
+    lab.h.fake.pool.mail = {carol_mail(1)};
+    const std::string lab_tenant = lab.h.fake.tenant_id;
+    const std::string other_tenant = "11111111-2222-3333-4444-555555555555";
+    const std::string other_org = "Other.onmicrosoft.com";
+    json first = job("job-1", 1, 0, 0);
+    first.erase("canary_cursor");
+    json second = job("job-2", 1, 0, 0);
+    second.erase("canary_cursor");
+    second["client"]["graph_tenant_id"] = other_tenant;
+    second["client"]["veeam_org_name"] = other_org;
+    // The backup knows both organisations, each with its own tenant, and the
+    // fake Graph signs the Worker app in to the second tenant too (its own
+    // token endpoint; the targets' IDs are the lab's in both profiles).
+    lab.h.fake.at_facts = [&] {
+        const bool second = lab.h.fake.facts_ref == other_org;
+        lab.h.fake.tenant_id = second ? other_tenant : lab_tenant;
+        // The fake targets mirror the last restore's copies once a restore
+        // ran; the second run's targets start empty, as its clean before made them.
+        if (second) {
+            lab.h.fake.restore_calls = 0;
+        }
+    };
+    lab.h.targets.graph.on(rp::HttpMethod::post,
+                           "https://login.microsoftonline.com/" + other_tenant + "/oauth2/v2.0/token",
+                           {rp::test::graph_lab::token_response()});
+    lab.write_jobs(json::array({first, second}));
+
+    const std::optional<std::string> last_error = lab.run_loop(3);
+
+    REQUIRE_FALSE(last_error);
+    const std::string log = lab.h.log();
+    INFO(log);
+    CHECK(has(log, "[info] run job-1: ended pass; queued"));
+    CHECK(has(log, "[info] run job-2: ended pass; queued"));
+    const json one = json::parse(bytes_of(lab.sent("job-1") / "result.json"));
+    const json two = json::parse(bytes_of(lab.sent("job-2") / "result.json"));
+    CHECK(one.at("client").at("tenant_id") == lab_tenant);
+    CHECK(one.at("client").at("veeam_org_name") == kOrgName);
+    CHECK(one.at("client").at("scope") == "same_tenant");
+    CHECK(two.at("client").at("tenant_id") == other_tenant);
+    CHECK(two.at("client").at("veeam_org_name") == other_org);
+    CHECK(two.at("client").at("scope") == "same_tenant");
+    CHECK(two.at("client").at("resolved").at("organization").at("tenant_id") == other_tenant);
+    for (const json& result : {one, two}) {
+        CHECK(result.at("status").at("status") == "pass");
+        CHECK_FALSE(result.at("sample").contains("manifest_sha256"));
+    }
 }

@@ -32,9 +32,11 @@ SUMMARY = (
 
 METHOD = (
     "from one restore point of the backup.",
-    "The items of a test are a sample: canary items seeded in the tenant for this purpose, whose content is known in advance, plus items chosen at random from the backup's own listing.",
+    # The W6.3 review's finding 3: canaries are an opt-in (W6.2) and a random file is compared with the
+    # backup's own copy when the backup gave one (W6.3).
+    "The items of a test are a sample chosen at random from the backup's own listing; a test set up with canary items, seeded in the tenant for this purpose and whose content is known in advance, samples some of those too.",
     "A test restores each item into a restore target set aside for testing (the <code>restoretest</code> mailbox, the <code>RestoreTarget</code> library or the <code>RestoreTarget</code> OneDrive folder), reads it back through Microsoft Graph, compares it, and removes it from the target afterwards.",
-    "A canary is compared by the SHA-256 of its content; a random mail by its subject and received time, and by its sender's name when the backup lists one; a random file by its name and, unless it is an Office document, its size.",
+    "A canary is compared by the SHA-256 of its content. A random file is compared by the SHA-256 of the copy the backup gave of it before the restore (for a Word or Excel document, of the document's content, since the restore rewrites the rest of the file), or, when the backup gave no copy, by its name and, unless it is an Office document, its size. A random mail is compared by its subject and received time, and by its sender's name when the backup lists one.",
     "of this period the removal from the restore target did not complete.",
     "Verification levels covered: 1, 2, 3",
     "; level 4 partially (files opened and read via Microsoft Graph)",

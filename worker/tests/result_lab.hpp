@@ -107,6 +107,7 @@ inline ResultFacts full_result_facts()
     sampling::SampleRecord& sample = facts.sample;
     sample.run_id = "rp-20261004T100000Z-0a1b2c3d";
     sample.seed = 0x6138257d;
+    sample.canaries = true;
     sample.manifest_sha256 = kLabManifestSha256;
     const auto kind = [](std::string canary, std::vector<std::string> key, std::string container) {
         sampling::KindRecord record;
@@ -133,6 +134,7 @@ inline ResultFacts full_result_facts()
     sample.onedrive.browse.short_of_containers = true;
 
     verification::ExpectedSet& expected = facts.expected;
+    expected.canaries = true;
     expected.manifest_sha256 = kLabManifestSha256;
     expected.canaries_seeded_at = "2026-09-25T09:00:00Z";
     const auto item = [&](ItemKind item_kind, ItemSource source, ExpectedKind expected_kind) {

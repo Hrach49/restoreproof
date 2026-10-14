@@ -11,6 +11,7 @@
 #include <cstddef>
 #include <deque>
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -189,13 +190,22 @@ public:
                         std::shared_ptr<FixtureRecorder> recorder, std::string service,
                         RecordedBody body = RecordedBody::content);
 
+    // What each exchange keeps, decided per request: a service whose
+    // exchanges are mostly JSON but some carry a file's bytes (a Veeam
+    // document export). Throws std::invalid_argument for a null `body_for`
+    // too.
+    using BodyRule = std::function<RecordedBody(const HttpRequest&)>;
+    RecordingHttpClient(std::unique_ptr<IHttpClient> inner,
+                        std::shared_ptr<FixtureRecorder> recorder, std::string service,
+                        BodyRule body_for);
+
     HttpResponse send(const HttpRequest& request) override;
 
 private:
     std::unique_ptr<IHttpClient> inner_;
     std::shared_ptr<FixtureRecorder> recorder_;
     std::string service_;
-    RecordedBody body_;
+    BodyRule body_for_;
 };
 
 } // namespace rp

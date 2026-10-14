@@ -247,7 +247,7 @@ Until the lab holds real (non-canary) data the random half is mostly a recorded 
 
 ### Live restore (writes to the lab tenant)
 
-**These three tests write.** They are the only live tests that change anything: one restores
+**These four tests write.** They are the only live tests that change anything: one restores
 canaries into the three restore targets and deletes them again, one (W6.1's export spike, below)
 restores the 14 real files into the two file targets and leaves them for the harness to read and
 clean, the other only deletes
@@ -302,8 +302,8 @@ $env:RP_LIVE_EVIDENCE_FILE = "$env:TEMP\w2.5-live-restore.json"   # optional
 ctest --preset dev -R "live restore" -V
 ```
 
-(`.\build\dev\rptests.exe "[live][writes]"` runs all three writing tests, the export spike
-included). The restored copies are
+(`.\build\dev\rptests.exe "[live][writes]"` runs all four writing tests, the export spike and
+the backup-content test included). The restored copies are
 deleted at the test's end, so `rpworker graph list --hash` afterwards shows empty targets; to
 read a restore's copies back and compare them with the manifest, use `rpworker restore` (below),
 whose check does it before its clean after.
@@ -332,6 +332,52 @@ in its `finally` once the test has started; it copies the evidence into `docs/ap
 when every step exited 0 and no file holds a token-, PFX-, PEM- or key-shaped value. It needs
 the variables of the live restore test above (the vault, `RP_LIVE_VEEAM_CA_FILE`, an elevated
 shell), and the restore point must hold the 14 files (a missing one stops it before any export).
+
+**The backup-content test (W6.3).** `worker/tests/backup_content_live_test.cpp` (tag
+`[live][writes]`, ctest name `live backup content: real files checked by hash against the
+backup's copy, a changed byte fails its item, a failed export is not a fail`; `docs/decisions.md`
+2026-10-14, "W6.3 (#183) and W6.2 (#182)", point 15) is the live Done-when of W6.3. As `rp-veeam`
+from the vault it finds the lab's 14 real files through `list_candidates` with no manifest (the
+lister's own rules, the restore targets and the `rp-canary-` prefix, keep canaries out), builds a
+selection without canaries of exactly those 14, and restores them three times through the
+connector's guarded path with the pipeline's own pieces (`mark_wanted`, the `ContentHasher`,
+`add_backup_content`, `TargetReader`, `check`, `decide_status`), the Cleaner's clean before and
+after each: **(a)** as they are: 14 `backup_content` (12 by `bytes`, the xlsx and the docx by
+`office-v1`), 14 match, `pass`; **(b)** with one byte of `team-meeting-notes.txt`'s restored copy
+flipped before the read back: one `PUT …/items/{copy}/content` by the test itself, with a token of
+its own from the Worker app's certificate (as the live cleanup test sends its seeds), on the copy
+in the RestoreTarget library alone, the library resolved through the guard's
+`check_restore_library` first, under the app's `write` on the RestoreTarget list and nothing wider;
+that item `mismatch` on `sha256`, `fail` with its index, the other 13 match (if the grant refuses
+the PUT the test stops there and says so: change one byte of that copy by hand in the browser as
+the admin, then read back with `rpworker graph list --hash`); **(c)** with `content_max_bytes` 1:
+14 `over_cap`, 14 `metadata` matched by name and size, `pass` with the `content_export` warning
+naming 14 and `verified.backup_content` 0. It writes the three runs as JSON to
+`RP_LIVE_EVIDENCE_FILE` (names, sizes, hashes, words, statuses). Run it through
+`docs/api/veeam-lab/w6.3-harness/w63-live.ps1` (elevated PowerShell 7, Docker Desktop running):
+the targets must be empty first; then the test; `rpworker graph list`; then C5.7's upload
+harness (`docs/api/cloud-lab/c5.7-harness/c57-live.ps1`, with the W6.3 title and evidence place)
+on a job the Cloud dispatches with no `canary_cursor`, so the service runs a run without canaries
+whose files are `backup_content`, both verifiers say `verified` on the sent folder and the bundle
+posted by hand with the API token (the Worker sends none until W5.1) is 202 twice; then the shape
+check and the live cleanup test in its `finally`. The evidence goes into `docs/api/veeam-lab/`
+(`w6.3-*`) only when every step exited 0, the shape holds and no file holds a secret-shaped
+value. Since W6.3 the kept bundle the Cloud's by-hand harnesses upload must be one in the new
+`result.v1` shape: the sent folder this run keeps under the W4.8 harness's root (`c57\<run id>`).
+
+**Unit tests of W6.2 and W6.3.** `[w6.2]` and `[w6.3]`: the sampler, the expected set and the
+pipeline without a manifest (the whole sample random, `canaries: none`, no manifest read, the
+result without `manifest_sha256` or a rotation), the opt-in (`--canary-cursor`, `--manifest`, a
+job's `canary_cursor`, the manifest at `canaries\<tenant>.json`), two jobs of two tenants on one
+Worker (`worker_body_test.cpp`); the export call (`VeeamClient::export_document`, one send), the
+connector's export step on W2.4's recorded runs with bytes the tests make
+(`veeam_m365_export_test.cpp`), the rule by name, the hasher and the raise
+(`backup_content_test.cpp`, the Office packages office-content-v1's), and the pipeline through the
+fake backup of `restore_command_lab.hpp`, which exports each file that asks with the bytes the
+fake targets restore (a docx or xlsx as office-content-v1's package), and in a test refuses an
+export or changes its bytes (`test_command_test.cpp`: `backup_content` by hash, `items.csv`'s two
+hashes, every failed export's word and the warning, a changed byte `fail`, a connector that
+ignores the request `error internal`).
 
 **The live cleanup test.** `worker/tests/cleaner_live_test.cpp` (W3.4, tag `[live][writes]`,
 ctest name `live cleanup: the Cleaner empties the three restore targets with folders and all`;
@@ -442,8 +488,9 @@ targets; nothing was done`, exit 4). The targets needn't be empty first.
    .\build\dev\rpworker.exe graph list --config <your config.json>
    ```
 
-4. Restore, with the lab manifest (or leave `--manifest` out when a `seed-manifest.json` is
-   beside the config):
+4. Restore, with the lab manifest (`--manifest` asks for canaries, W6.2; `--canary-cursor`
+   alone reads `canaries\<graph_tenant_id>.json` beside the config; neither, and the run has no
+   canaries and its whole sample is random items, checked against the backup's own copy):
 
    ```powershell
    .\build\dev\rpworker.exe restore --mail 5 --sp 5 --od 5 --config <your config.json> --manifest ..\lab\seed-manifest.json

@@ -121,8 +121,8 @@ async def test_the_tests_pass_and_a_real_worker_bundle_lands_as_pass_in_the_db(l
     assert (row.error_code, row.error_message) == (None, None)
     assert row.started_at == dt.datetime(2026, 9, 28, 12, 0, 0, tzinfo=UTC)
     assert row.finished_at == dt.datetime(2026, 9, 28, 12, 0, 0, tzinfo=UTC)
-    assert row.total_ms == 3_936_000
-    assert row.recovery_ms == 2_706_000  # C6.2: timings.spans.recovery.ms
+    assert row.total_ms == 4_182_000
+    assert row.recovery_ms == 2_952_000  # C6.2: timings.spans.recovery.ms
     assert row.restore_point_at == dt.datetime(2026, 9, 29, 22, 0, 45, tzinfo=UTC)
     assert row.bundle_key == key == f"msp/{lab.msp_id}/runs/{run_id}/"
     assert row.bundle_sha256 == hashlib.sha256(parts["result"]).hexdigest()
@@ -133,13 +133,14 @@ async def test_the_tests_pass_and_a_real_worker_bundle_lands_as_pass_in_the_db(l
         (0, "mail", "RP-CANARY-0001", "manifest"),
         (1, "mail", "real mail 01", "fields"),
         (2, "sharepoint", "rp-canary-02.docx", "manifest"),
-        (3, "sharepoint", "report.pdf", "metadata"),
+        (3, "sharepoint", "report.pdf", "backup_content"),
         (4, "onedrive", "rp-canary-11.pdf", "manifest"),
-        (5, "onedrive", "Übersicht.docx", "metadata"),
+        (5, "onedrive", "Übersicht.docx", "backup_content"),
     ]
-    assert [i.expected_sha256 is not None for i in items] == [True, False, True, False, True, False]
+    # W6.3: the two random files were checked against the backup's own copy.
+    assert [i.expected_sha256 is not None for i in items] == [True, False, True, True, True, True]
     assert all((i.found, i.match, i.reason, i.found_sha256) == (True, True, None, None) for i in items)
-    assert [i.ms for i in items] == [123_000, 123_000, 246_000, 246_000, 246_000, 123_000]
+    assert [i.ms for i in items] == [123_000, 123_000, 246_000, 246_000, 246_000, 246_000]
     assert await lab.wrote(before) == [("result.received", f"run:{run_id}")]
     after = await lab.counts()
     assert rows_only(after) == {**rows_only(before), "test_item": before["test_item"] + 6, "audit_log": before["audit_log"] + 1}
@@ -791,7 +792,7 @@ def a_fail(document):
     document["check"]["counts"] = {"match": 3, "mismatch": 1, "missing": 1, "error": 1}
     document["status"] = {
         "status": "fail", "message": "3 of 6 item(s) verified; 2 failed; 1 unchecked", "restore_sent": True,
-        "counts": {"items": 6, "verified": 3, "failed": 2, "unchecked": 1}, "verified": {"manifest": 2, "fields": 0, "metadata": 1},
+        "counts": {"items": 6, "verified": 3, "failed": 2, "unchecked": 1}, "verified": {"manifest": 2, "fields": 0, "metadata": 1, "backup_content": 0},
         "failed_items": [1, 2], "unchecked_items": [{"index": 3, "error_code": "graph_transient"}], "warnings": [],
     }
     document["timings"]["spans"]["total"] = {"note": "open"}
@@ -847,7 +848,7 @@ async def test_a_fail_s_items_and_columns(lab):
         (2, False, False, "no restored copy found", None),
         (3, False, None, "the sharepoint restore target couldn't be read (graph_transient)", None),
         (4, True, True, None, None),  # a clock that went back: not known
-        (5, True, True, None, 123_000),
+        (5, True, True, None, 246_000),
     ]
 
 
@@ -876,7 +877,7 @@ async def test_the_recovery_span_is_filed_as_the_total_is(lab, span, stored):
 
     assert (await lab.upload(parts)).status_code == 202
     row = await lab.run_row(run_id)
-    assert (row.recovery_ms, row.total_ms) == (stored, 3_936_000)
+    assert (row.recovery_ms, row.total_ms) == (stored, 4_182_000)
 
 
 async def test_a_run_that_sampled_but_was_not_checked_files_its_items_as_not_known(lab):

@@ -18,8 +18,11 @@ library and OneDrive folder hold the canary files and are not restore targets.)
 document's bytes straight from the backup repository, inside an explore session
 (`POST …/Documents/{documentId}/save {"asZip": false}`, `application/octet-stream`). It names
 no Microsoft 365 credential and writes nothing in the tenant. W6.1 (`docs/decisions.md`
-2026-10-14) showed what it gives in admin mode against a restored copy; W6.3 would use it as the
-`backup_content` expected kind, a real file's content known before the restore.
+2026-10-14) showed what it gives in admin mode against a restored copy. Since W6.3 every run
+asks for it: the connector exports each random file with a content rule inside its own explore
+session, after every item is found and before the first restore request, one attempt each and
+never resent, and the Worker keeps the bytes' hash alone (the `backup_content` expected kind). A
+file the export can't give is checked by name and size as before, with the export's word.
 
 **Cleaner.** The Worker code that empties the three restore targets before and after each run
 (`rp::graph::Cleaner`, W3.4; the clean after is skipped while the run's restore may still be
@@ -37,29 +40,37 @@ copies before they are checked.
 `lab/seed-manifest.json` (mails `RP-CANARY-0001`…`0020`, files `rp-canary-01.pdf`…
 `rp-canary-20.png`, whose types cycle pdf, docx, xlsx, txt, png; see `lab/README.md`). Because the manifest holds the expected subject, sender, date and
 SHA-256, a canary can be checked against a known-correct answer rather than against the live
-tenant. Half of every sample is canaries, rotated so all of them get tested over a few runs.
+tenant. Canaries are an opt-in per client since W6.2 (`docs/decisions.md` 2026-10-14): a job
+with a `canary_cursor` (or a command line with `--canary-cursor` or `--manifest`) has them, and
+the manifest is then the Worker's `canaries\<tenant>.json`; a run with them takes half of each
+type's sample from them, rotated so all of them get tested over a few runs. A run without them
+plants nothing and tests the client's own data alone.
 
 **Random item.** An item picked from the customer's real backed-up data, not seeded by us.
 Its expected values come from the backup's own listing (Veeam's browse of the restore point),
 not from Graph: the Worker app may read only the restore targets (`docs/decisions.md`
-2026-10-01, W3.1). A random mail is expected by its header fields (expected kind `fields`), a
-random file by its name and listed size (`metadata`); neither has a content hash before the
-restore. Random items prove the test covers real content and not just our own planted
-evidence.
+2026-10-01, W3.1). A random mail is expected by its header fields (expected kind `fields`). A
+random file is expected by its content when the backup exported it before the restore
+(`backup_content`, W6.3: the bytes' SHA-256, or `office-v1` for a docx or xlsx), else by its
+name and listed size (`metadata`). Random items prove the test covers real content and not just
+our own planted evidence.
 
 **Expected kind.** How one sampled item's expectation was obtained, recorded with it before
 anything is compared (`rp::verification::ExpectedKind`, `docs/verification.md`): `manifest`
 for a canary (the manifest's values and content hash), `fields` for a random mail (subject,
-sender name, sent and received time as the backup lists them), `metadata` for a random file
-(its name, and the backup's size unless it is an Office package). Every item has exactly one;
+sender name, sent and received time as the backup lists them), `backup_content` for a random
+file the backup exported before the restore (W6.3: its name and the hash of the exported bytes
+by its rule, `bytes` or `office-v1`), `metadata` for any other random file (its name, and the
+backup's size unless it is an Office package). Every item has exactly one;
 the result records it per item and counts each, and the report (W3.3/W4.1) shows them, so it
 never claims more than was checked.
 
-**Sample.** The set of items one run selects and tests — canaries plus random items, chosen
-from a seed and a rotation cursor so the selection is reproducible. Per type, half the sample
-size (rounded up) are canaries, taken in manifest order from the cursor on so each is tested in
-turn; the other half are drawn from real data in the restore point with a seed derived from
-the run ID (`docs/decisions.md` 2026-09-30, W2.6).
+**Sample.** The set of items one run selects and tests, chosen from a seed (and, with canaries,
+a rotation cursor) so the selection is reproducible. Without canaries, the default since W6.2
+(`docs/decisions.md` 2026-10-14), the whole sample of each type is drawn from real data in the
+restore point with a seed derived from the run ID. With canaries, half of each type's size
+(rounded up) are canaries, taken in manifest order from the cursor on so each is tested in turn,
+and the other half are random items (`docs/decisions.md` 2026-09-30, W2.6).
 
 **Client.** One of an MSP's customers: one Microsoft 365 tenant, which Veeam backs up as one
 organisation. One Veeam server may back up many clients; one Worker talks to it with one set

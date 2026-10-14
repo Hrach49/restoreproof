@@ -1,0 +1,28 @@
+W6.3 (#183) step 6: the live cleanup test empties the three restore targets, then rpworker graph list shows them empty.
+started 2026-10-14T17:50:41Z
+
+Filters: "live cleanup*"
+Randomness seeded to: 387424323
+seed PUT /drives/b!XQgI_nDr6EKVpkcBib2Y65nzyk4OzJVNs_7NCRoJ5omdBuz_5GU6TJ2irAhs-dr6/items/root:/rp-probe-3a54c2d6-81a8-44e8-8df3-1c27f1c32327.txt:/content?%40microsoft.graph.conflictBehavior=fail: HTTP 201
+seed PUT /drives/b!wA9gbfhlEUitGAluxbfoNBr_z5gEtDhErm5pJ6bMwyXfZJ8a_dkCQ696RX0r7_U3/items/01ZK75LGDGB6QOO3MGNFGYOY6C6VBDG5OH:/rp-probe-3a54c2d6-81a8-44e8-8df3-1c27f1c32327.txt:/content?%40microsoft.graph.conflictBehavior=fail: HTTP 201
+seed POST /users/restoretest@RestoreProofLab.onmicrosoft.com/mailFolders/inbox/messages: HTTP 201
+[2026-10-14 19:50:44.033] [live_cleanup] [info] cleanup after: the test mailbox's Inbox: deleted 0, gone 1, left 0, skipped 0 in 1 round(s)
+
+[2026-10-14 19:50:44.874] [live_cleanup] [info] cleanup after: the RestoreTarget library: deleted 0, gone 1, left 0, skipped 0 in 1 round(s)
+
+[2026-10-14 19:50:45.616] [live_cleanup] [info] cleanup after: the test OneDrive folder: deleted 1, gone 0, left 0, skipped 0 in 1 round(s)
+
+cleanup {"mail":{"deleted":0,"found":1,"gone":1,"left":0,"rounds":1,"skipped":0},"onedrive":{"deleted":1,"found":1,"gone":0,"left":0,"rounds":1,"skipped":0},"sharepoint":{"deleted":0,"found":1,"gone":1,"left":0,"rounds":1,"skipped":0}}
+deletes sent twice: 2
+===============================================================================
+All tests passed (34 assertions in 1 test case)
+
+Mail (restoretest@RestoreProofLab.onmicrosoft.com, Inbox): 0 item(s)
+
+SharePoint (RestoreTarget library): 0 item(s)
+
+OneDrive (RestoreTarget folder): 0 item(s)
+
+0 item(s) in the three restore targets
+
+exit code 0

@@ -53,6 +53,7 @@ add_library(rpcore STATIC
     src/connector_registry.cpp
     src/ed25519.cpp
     src/evidence_builder.cpp
+    src/backup_content.cpp
     src/expected_set.cpp
     src/file_read.cpp
     src/folder_ops.cpp
@@ -183,6 +184,8 @@ target_link_libraries(rpworker PRIVATE rpcore)
 
 add_executable(rptests
     tests/atomic_file_test.cpp
+    tests/backup_content_live_test.cpp
+    tests/backup_content_test.cpp
     tests/base64_test.cpp
     tests/canary_manifest_test.cpp
     tests/canonical_json_test.cpp
@@ -276,6 +279,7 @@ add_executable(rptests
     tests/veeam_command_test.cpp
     tests/veeam_m365_candidates_test.cpp
     tests/veeam_m365_connector_test.cpp
+    tests/veeam_m365_export_test.cpp
     tests/veeam_m365_restore_guard_test.cpp
     tests/veeam_m365_restore_live_test.cpp
     tests/veeam_m365_restore_test.cpp

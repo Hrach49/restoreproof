@@ -1009,3 +1009,10 @@ per export and the 64 MiB cap**, the export inside the connector's own explore s
 the restore POST (an export leaves the session usable, and runs beside a restore). The one
 product seam the spike did not build is a `VeeamClient` method for an octet-stream POST, W6.3's
 with its unit tests (`docs/decisions.md` 2026-10-14, W6.1, point 1).
+
+**Built (W6.3, `docs/decisions.md` 2026-10-14, "W6.3 (#183) and W6.2 (#182)").** Under those four
+limits: `VeeamClient::export_document` (one send, `Accept: */*` as the spike sent it, the answer's
+type held to `application/octet-stream`), the connector's export step inside `restore_sample`
+after every item is found and before the first restore request, 60 s per file and 15 minutes per
+run, the 64 MiB cap; a file the export can't give is checked by name and size and named by the
+`content_export` warning.

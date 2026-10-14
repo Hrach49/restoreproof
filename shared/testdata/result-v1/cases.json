@@ -268,7 +268,8 @@
             "verified": {
               "manifest": 0,
               "fields": 0,
-              "metadata": 0
+              "metadata": 0,
+              "backup_content": 0
             },
             "failed_items": [],
             "unchecked_items": [],
@@ -2597,7 +2598,8 @@
             "verified": {
               "manifest": 0,
               "fields": 0,
-              "metadata": 0
+              "metadata": 0,
+              "backup_content": 0
             },
             "failed_items": [],
             "unchecked_items": [],
@@ -2731,7 +2733,8 @@
             "verified": {
               "manifest": 0,
               "fields": 0,
-              "metadata": 0
+              "metadata": 0,
+              "backup_content": 0
             },
             "failed_items": [],
             "unchecked_items": [],
@@ -2836,7 +2839,8 @@
             "verified": {
               "manifest": 0,
               "fields": 0,
-              "metadata": 0
+              "metadata": 0,
+              "backup_content": 0
             },
             "failed_items": [],
             "unchecked_items": [],
@@ -2941,7 +2945,8 @@
             "verified": {
               "manifest": 0,
               "fields": 0,
-              "metadata": 0
+              "metadata": 0,
+              "backup_content": 0
             },
             "failed_items": [],
             "unchecked_items": [],
@@ -3075,12 +3080,416 @@
             "verified": {
               "manifest": 0,
               "fields": 0,
-              "metadata": 0
+              "metadata": 0,
+              "backup_content": 0
             },
             "failed_items": [],
             "unchecked_items": [],
             "warnings": []
           }
+        }
+      ]
+    },
+    {
+      "name": "expected-backup-content-office-v1",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/expected/items/3/sha256_rule",
+          "value": "office-v1"
+        },
+        {
+          "op": "remove",
+          "path": "/expected/items/3/size_bytes"
+        }
+      ]
+    },
+    {
+      "name": "expected-backup-content-without-its-hash",
+      "valid": false,
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/expected/items/3/sha256"
+        }
+      ]
+    },
+    {
+      "name": "expected-backup-content-without-its-rule",
+      "valid": false,
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/expected/items/3/sha256_rule"
+        }
+      ]
+    },
+    {
+      "name": "expected-backup-content-without-export",
+      "valid": false,
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/expected/items/3/export"
+        }
+      ]
+    },
+    {
+      "name": "expected-backup-content-export-refused",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/expected/items/3/export",
+          "value": "refused"
+        }
+      ]
+    },
+    {
+      "name": "expected-backup-content-with-the-mail-rule",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/expected/items/3/sha256_rule",
+          "value": "text-v1"
+        }
+      ]
+    },
+    {
+      "name": "expected-backup-content-office-v1-with-a-size",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/expected/items/3/sha256_rule",
+          "value": "office-v1"
+        }
+      ]
+    },
+    {
+      "name": "expected-backup-content-bytes-without-a-size",
+      "valid": false,
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/expected/items/3/size_bytes"
+        }
+      ]
+    },
+    {
+      "name": "expected-backup-content-as-a-canary",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/expected/items/2/expected_kind",
+          "value": "backup_content"
+        },
+        {
+          "op": "add",
+          "path": "/expected/items/2/export",
+          "value": "exported"
+        }
+      ]
+    },
+    {
+      "name": "expected-backup-content-for-a-mail",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/expected/items/1/expected_kind",
+          "value": "backup_content"
+        },
+        {
+          "op": "add",
+          "path": "/expected/items/1/sha256",
+          "value": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        {
+          "op": "add",
+          "path": "/expected/items/1/sha256_rule",
+          "value": "text-v1"
+        },
+        {
+          "op": "add",
+          "path": "/expected/items/1/export",
+          "value": "exported"
+        }
+      ]
+    },
+    {
+      "name": "expected-metadata-without-export",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/expected/items/3/expected_kind",
+          "value": "metadata"
+        },
+        {
+          "op": "remove",
+          "path": "/expected/items/3/sha256"
+        },
+        {
+          "op": "remove",
+          "path": "/expected/items/3/sha256_rule"
+        },
+        {
+          "op": "remove",
+          "path": "/expected/items/3/export"
+        }
+      ]
+    },
+    {
+      "name": "expected-metadata-export-refused",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/expected/items/3/expected_kind",
+          "value": "metadata"
+        },
+        {
+          "op": "remove",
+          "path": "/expected/items/3/sha256"
+        },
+        {
+          "op": "remove",
+          "path": "/expected/items/3/sha256_rule"
+        },
+        {
+          "op": "replace",
+          "path": "/expected/items/3/export",
+          "value": "refused"
+        }
+      ]
+    },
+    {
+      "name": "expected-metadata-export-no-rule",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/expected/items/3/expected_kind",
+          "value": "metadata"
+        },
+        {
+          "op": "remove",
+          "path": "/expected/items/3/sha256"
+        },
+        {
+          "op": "remove",
+          "path": "/expected/items/3/sha256_rule"
+        },
+        {
+          "op": "replace",
+          "path": "/expected/items/3/export",
+          "value": "no_rule"
+        }
+      ]
+    },
+    {
+      "name": "expected-metadata-export-exported",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/expected/items/3/expected_kind",
+          "value": "metadata"
+        },
+        {
+          "op": "remove",
+          "path": "/expected/items/3/sha256"
+        },
+        {
+          "op": "remove",
+          "path": "/expected/items/3/sha256_rule"
+        }
+      ]
+    },
+    {
+      "name": "expected-metadata-with-a-hash-and-export",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/expected/items/3/expected_kind",
+          "value": "metadata"
+        },
+        {
+          "op": "replace",
+          "path": "/expected/items/3/export",
+          "value": "refused"
+        }
+      ]
+    },
+    {
+      "name": "expected-export-unknown-word",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/expected/items/3/export",
+          "value": "lost"
+        }
+      ]
+    },
+    {
+      "name": "expected-export-on-a-canary",
+      "valid": false,
+      "patch": [
+        {
+          "op": "add",
+          "path": "/expected/items/2/export",
+          "value": "exported"
+        }
+      ]
+    },
+    {
+      "name": "expected-export-on-a-mail",
+      "valid": false,
+      "patch": [
+        {
+          "op": "add",
+          "path": "/expected/items/1/export",
+          "value": "refused"
+        }
+      ]
+    },
+    {
+      "name": "counts-without-backup-content",
+      "valid": false,
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/expected/counts/backup_content"
+        }
+      ]
+    },
+    {
+      "name": "verified-without-backup-content",
+      "valid": false,
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/status/verified/backup_content"
+        }
+      ]
+    },
+    {
+      "name": "warning-content-export",
+      "valid": true,
+      "patch": [
+        {
+          "op": "add",
+          "path": "/status/warnings/-",
+          "value": {
+            "code": "content_export",
+            "indexes": [
+              3
+            ],
+            "message": "1 of 2 file(s) couldn't be compared with the backup's own copy (refused 1): 1 checked by name and size alone, 0 by name alone"
+          }
+        }
+      ]
+    },
+    {
+      "name": "spans-without-content-export",
+      "valid": false,
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/timings/spans/content_export"
+        }
+      ]
+    },
+    {
+      "name": "span-content-export-measured",
+      "valid": true,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/timings/spans/content_export",
+          "value": {
+            "ms": 1500
+          }
+        }
+      ]
+    },
+    {
+      "name": "sample-without-canaries",
+      "valid": true,
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/sample/manifest_sha256"
+        },
+        {
+          "op": "remove",
+          "path": "/sample/mail/canary"
+        },
+        {
+          "op": "remove",
+          "path": "/sample/sharepoint/canary"
+        },
+        {
+          "op": "remove",
+          "path": "/sample/onedrive/canary"
+        }
+      ]
+    },
+    {
+      "name": "sample-manifest-sha256-null",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/sample/manifest_sha256",
+          "value": null
+        }
+      ]
+    },
+    {
+      "name": "sample-canary-without-manifest-sha256",
+      "valid": false,
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/sample/manifest_sha256"
+        }
+      ]
+    },
+    {
+      "name": "sample-manifest-sha256-without-a-rotation",
+      "valid": false,
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/sample/onedrive/canary"
+        }
+      ]
+    },
+    {
+      "name": "expected-manifest-item-without-manifest-sha256",
+      "valid": false,
+      "patch": [
+        {
+          "op": "remove",
+          "path": "/expected/manifest_sha256"
+        }
+      ]
+    },
+    {
+      "name": "expected-manifest-sha256-null",
+      "valid": false,
+      "patch": [
+        {
+          "op": "replace",
+          "path": "/expected/manifest_sha256",
+          "value": null
         }
       ]
     }

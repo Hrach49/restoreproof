@@ -1,0 +1,871 @@
+{
+  "restore_point": {
+    "backup_time": "2026-10-13T22:00:58.3211091Z",
+    "id": "c2f0f2e7-177f-48ac-992b-93a50cf702e33203ea1d-3395-4c0c-8cdf-9707be7125cd"
+  },
+  "runs": [
+    {
+      "exports": [
+        {
+          "index": 0,
+          "kind": "sharepoint",
+          "ms": 3736,
+          "outcome": "exported",
+          "size_bytes": 87
+        },
+        {
+          "index": 1,
+          "kind": "sharepoint",
+          "ms": 207,
+          "outcome": "exported",
+          "size_bytes": 84
+        },
+        {
+          "index": 2,
+          "kind": "sharepoint",
+          "ms": 291,
+          "outcome": "exported",
+          "size_bytes": 899
+        },
+        {
+          "index": 3,
+          "kind": "sharepoint",
+          "ms": 189,
+          "outcome": "exported",
+          "size_bytes": 894
+        },
+        {
+          "index": 4,
+          "kind": "sharepoint",
+          "ms": 5765,
+          "outcome": "exported",
+          "size_bytes": 12420
+        },
+        {
+          "index": 5,
+          "kind": "sharepoint",
+          "ms": 309,
+          "outcome": "exported",
+          "size_bytes": 12420
+        },
+        {
+          "index": 6,
+          "kind": "sharepoint",
+          "ms": 5336,
+          "outcome": "exported",
+          "size_bytes": 19995
+        },
+        {
+          "index": 0,
+          "kind": "onedrive",
+          "ms": 452,
+          "outcome": "exported",
+          "size_bytes": 60
+        },
+        {
+          "index": 1,
+          "kind": "onedrive",
+          "ms": 335,
+          "outcome": "exported",
+          "size_bytes": 75
+        },
+        {
+          "index": 2,
+          "kind": "onedrive",
+          "ms": 497,
+          "outcome": "exported",
+          "size_bytes": 910
+        },
+        {
+          "index": 3,
+          "kind": "onedrive",
+          "ms": 321,
+          "outcome": "exported",
+          "size_bytes": 907
+        },
+        {
+          "index": 4,
+          "kind": "onedrive",
+          "ms": 263,
+          "outcome": "exported",
+          "size_bytes": 12420
+        },
+        {
+          "index": 5,
+          "kind": "onedrive",
+          "ms": 277,
+          "outcome": "exported",
+          "size_bytes": 12420
+        },
+        {
+          "index": 6,
+          "kind": "onedrive",
+          "ms": 4418,
+          "outcome": "exported",
+          "size_bytes": 3230
+        }
+      ],
+      "items": [
+        {
+          "expected_kind": "backup_content",
+          "expected_sha256": "f1fb906f8d50c0fcd2e61952c82ccf04df717ee6cc9009b0745fd58909025d3e",
+          "export": "exported",
+          "found_sha256": "f1fb906f8d50c0fcd2e61952c82ccf04df717ee6cc9009b0745fd58909025d3e",
+          "index": 0,
+          "kind": "sharepoint",
+          "name": "team-meeting-notes.txt",
+          "outcome": "match",
+          "sha256_rule": "bytes"
+        },
+        {
+          "expected_kind": "backup_content",
+          "expected_sha256": "05c0de9efc1e6113aa07caf47bbdc334fef014dcaaf055d9e816d49922c13b89",
+          "export": "exported",
+          "found_sha256": "05c0de9efc1e6113aa07caf47bbdc334fef014dcaaf055d9e816d49922c13b89",
+          "index": 1,
+          "kind": "sharepoint",
+          "name": "supplier-contacts.txt",
+          "outcome": "match",
+          "sha256_rule": "bytes"
+        },
+        {
+          "expected_kind": "backup_content",
+          "expected_sha256": "d74e92b0b5573ca29506f84669c8b6cdc0d926cca09c005dab6e821c3ec7af71",
+          "export": "exported",
+          "found_sha256": "d74e92b0b5573ca29506f84669c8b6cdc0d926cca09c005dab6e821c3ec7af71",
+          "index": 2,
+          "kind": "sharepoint",
+          "name": "project-brief.pdf",
+          "outcome": "match",
+          "sha256_rule": "bytes"
+        },
+        {
+          "expected_kind": "backup_content",
+          "expected_sha256": "4acae6b1632752b9ce1b84a691691df9289eea3605fa7eaa66afc015d4ba8e43",
+          "export": "exported",
+          "found_sha256": "4acae6b1632752b9ce1b84a691691df9289eea3605fa7eaa66afc015d4ba8e43",
+          "index": 3,
+          "kind": "sharepoint",
+          "name": "budget-summary.pdf",
+          "outcome": "match",
+          "sha256_rule": "bytes"
+        },
+        {
+          "expected_kind": "backup_content",
+          "expected_sha256": "7951cde1a0e313c1fce94d8271bf9b5f67a601b02ebd80907db0784036fe0246",
+          "export": "exported",
+          "found_sha256": "7951cde1a0e313c1fce94d8271bf9b5f67a601b02ebd80907db0784036fe0246",
+          "index": 4,
+          "kind": "sharepoint",
+          "name": "office-floor-plan.png",
+          "outcome": "match",
+          "sha256_rule": "bytes"
+        },
+        {
+          "expected_kind": "backup_content",
+          "expected_sha256": "89a9f0d1ba70360f335250e508a9f859e8eb67f883a2de1d7d991ea2a022abd9",
+          "export": "exported",
+          "found_sha256": "89a9f0d1ba70360f335250e508a9f859e8eb67f883a2de1d7d991ea2a022abd9",
+          "index": 5,
+          "kind": "sharepoint",
+          "name": "brand-colours-draft.png",
+          "outcome": "match",
+          "sha256_rule": "bytes"
+        },
+        {
+          "expected_kind": "backup_content",
+          "expected_sha256": "a2d69a1b8883dfd250d2e5ba44950e7edac8d20c526d4317fd953c26156c3c4e",
+          "export": "exported",
+          "found_sha256": "a2d69a1b8883dfd250d2e5ba44950e7edac8d20c526d4317fd953c26156c3c4e",
+          "index": 6,
+          "kind": "sharepoint",
+          "name": "room-bookings.xlsx",
+          "outcome": "match",
+          "sha256_rule": "office-v1"
+        },
+        {
+          "expected_kind": "backup_content",
+          "expected_sha256": "100094ac90d10f71f9c1a60cdd06f0d6ea67e82442cca9f2e18f77ac17887bba",
+          "export": "exported",
+          "found_sha256": "100094ac90d10f71f9c1a60cdd06f0d6ea67e82442cca9f2e18f77ac17887bba",
+          "index": 7,
+          "kind": "onedrive",
+          "name": "reading-list.txt",
+          "outcome": "match",
+          "sha256_rule": "bytes"
+        },
+        {
+          "expected_kind": "backup_content",
+          "expected_sha256": "4db1fbcb63b82aeee4ce41086ea5dd244a2798104768cc50a04bb5b9f551cad0",
+          "export": "exported",
+          "found_sha256": "4db1fbcb63b82aeee4ce41086ea5dd244a2798104768cc50a04bb5b9f551cad0",
+          "index": 8,
+          "kind": "onedrive",
+          "name": "travel-notes.txt",
+          "outcome": "match",
+          "sha256_rule": "bytes"
+        },
+        {
+          "expected_kind": "backup_content",
+          "expected_sha256": "b0ecbe97d0828844155e89e2cec42027dfc88e7793de08fe697d97d07fd44879",
+          "export": "exported",
+          "found_sha256": "b0ecbe97d0828844155e89e2cec42027dfc88e7793de08fe697d97d07fd44879",
+          "index": 9,
+          "kind": "onedrive",
+          "name": "expense-report-march.pdf",
+          "outcome": "match",
+          "sha256_rule": "bytes"
+        },
+        {
+          "expected_kind": "backup_content",
+          "expected_sha256": "16237a1cdb3d1cf017cdd6562c085372670631ff5ff7f7f75987b946f01c5e02",
+          "export": "exported",
+          "found_sha256": "16237a1cdb3d1cf017cdd6562c085372670631ff5ff7f7f75987b946f01c5e02",
+          "index": 10,
+          "kind": "onedrive",
+          "name": "course-certificate.pdf",
+          "outcome": "match",
+          "sha256_rule": "bytes"
+        },
+        {
+          "expected_kind": "backup_content",
+          "expected_sha256": "7731653c27df7ff2932094b2f436e82a10bed211898bd250de8076faaf0859ce",
+          "export": "exported",
+          "found_sha256": "7731653c27df7ff2932094b2f436e82a10bed211898bd250de8076faaf0859ce",
+          "index": 11,
+          "kind": "onedrive",
+          "name": "holiday-photo.png",
+          "outcome": "match",
+          "sha256_rule": "bytes"
+        },
+        {
+          "expected_kind": "backup_content",
+          "expected_sha256": "e1f664a2d4736300375c4c58eb1a8c9fe3d94f60ad9decb16584e60168dadff8",
+          "export": "exported",
+          "found_sha256": "e1f664a2d4736300375c4c58eb1a8c9fe3d94f60ad9decb16584e60168dadff8",
+          "index": 12,
+          "kind": "onedrive",
+          "name": "whiteboard-sketch.png",
+          "outcome": "match",
+          "sha256_rule": "bytes"
+        },
+        {
+          "expected_kind": "backup_content",
+          "expected_sha256": "bcf2ef44b8aea4e31ebe161ca93c441f90b3f706d0bd5d5a6ae8907c93df99a1",
+          "export": "exported",
+          "found_sha256": "bcf2ef44b8aea4e31ebe161ca93c441f90b3f706d0bd5d5a6ae8907c93df99a1",
+          "index": 13,
+          "kind": "onedrive",
+          "name": "weekly-status.docx",
+          "outcome": "match",
+          "sha256_rule": "office-v1"
+        }
+      ],
+      "restore": "succeeded",
+      "scenario": "a: as it is",
+      "status": {
+        "counts": {
+          "failed": 0,
+          "items": 14,
+          "unchecked": 0,
+          "verified": 14
+        },
+        "failed_items": [],
+        "message": "14 of 14 item(s) verified: manifest 0, fields 0, metadata 0, backup_content 14",
+        "restore_sent": true,
+        "status": "pass",
+        "unchecked_items": [],
+        "verified": {
+          "backup_content": 14,
+          "fields": 0,
+          "manifest": 0,
+          "metadata": 0
+        },
+        "warnings": []
+      }
+    },
+    {
+      "exports": [
+        {
+          "index": 0,
+          "kind": "sharepoint",
+          "ms": 4147,
+          "outcome": "exported",
+          "size_bytes": 87
+        },
+        {
+          "index": 1,
+          "kind": "sharepoint",
+          "ms": 371,
+          "outcome": "exported",
+          "size_bytes": 84
+        },
+        {
+          "index": 2,
+          "kind": "sharepoint",
+          "ms": 521,
+          "outcome": "exported",
+          "size_bytes": 899
+        },
+        {
+          "index": 3,
+          "kind": "sharepoint",
+          "ms": 410,
+          "outcome": "exported",
+          "size_bytes": 894
+        },
+        {
+          "index": 4,
+          "kind": "sharepoint",
+          "ms": 371,
+          "outcome": "exported",
+          "size_bytes": 12420
+        },
+        {
+          "index": 5,
+          "kind": "sharepoint",
+          "ms": 388,
+          "outcome": "exported",
+          "size_bytes": 12420
+        },
+        {
+          "index": 6,
+          "kind": "sharepoint",
+          "ms": 400,
+          "outcome": "exported",
+          "size_bytes": 19995
+        },
+        {
+          "index": 0,
+          "kind": "onedrive",
+          "ms": 401,
+          "outcome": "exported",
+          "size_bytes": 60
+        },
+        {
+          "index": 1,
+          "kind": "onedrive",
+          "ms": 381,
+          "outcome": "exported",
+          "size_bytes": 75
+        },
+        {
+          "index": 2,
+          "kind": "onedrive",
+          "ms": 320,
+          "outcome": "exported",
+          "size_bytes": 910
+        },
+        {
+          "index": 3,
+          "kind": "onedrive",
+          "ms": 259,
+          "outcome": "exported",
+          "size_bytes": 907
+        },
+        {
+          "index": 4,
+          "kind": "onedrive",
+          "ms": 248,
+          "outcome": "exported",
+          "size_bytes": 12420
+        },
+        {
+          "index": 5,
+          "kind": "onedrive",
+          "ms": 279,
+          "outcome": "exported",
+          "size_bytes": 12420
+        },
+        {
+          "index": 6,
+          "kind": "onedrive",
+          "ms": 259,
+          "outcome": "exported",
+          "size_bytes": 3230
+        }
+      ],
+      "items": [
+        {
+          "expected_kind": "backup_content",
+          "expected_sha256": "f1fb906f8d50c0fcd2e61952c82ccf04df717ee6cc9009b0745fd58909025d3e",
+          "export": "exported",
+          "found_sha256": "39330f4af604dec7fcc64437e1e002ff8b18d3f2e9d91df7ce7baebb0903529b",
+          "index": 0,
+          "kind": "sharepoint",
+          "name": "team-meeting-notes.txt",
+          "outcome": "mismatch",
+          "sha256_rule": "bytes"
+        },
+        {
+          "expected_kind": "backup_content",
+          "expected_sha256": "05c0de9efc1e6113aa07caf47bbdc334fef014dcaaf055d9e816d49922c13b89",
+          "export": "exported",
+          "found_sha256": "05c0de9efc1e6113aa07caf47bbdc334fef014dcaaf055d9e816d49922c13b89",
+          "index": 1,
+          "kind": "sharepoint",
+          "name": "supplier-contacts.txt",
+          "outcome": "match",
+          "sha256_rule": "bytes"
+        },
+        {
+          "expected_kind": "backup_content",
+          "expected_sha256": "d74e92b0b5573ca29506f84669c8b6cdc0d926cca09c005dab6e821c3ec7af71",
+          "export": "exported",
+          "found_sha256": "d74e92b0b5573ca29506f84669c8b6cdc0d926cca09c005dab6e821c3ec7af71",
+          "index": 2,
+          "kind": "sharepoint",
+          "name": "project-brief.pdf",
+          "outcome": "match",
+          "sha256_rule": "bytes"
+        },
+        {
+          "expected_kind": "backup_content",
+          "expected_sha256": "4acae6b1632752b9ce1b84a691691df9289eea3605fa7eaa66afc015d4ba8e43",
+          "export": "exported",
+          "found_sha256": "4acae6b1632752b9ce1b84a691691df9289eea3605fa7eaa66afc015d4ba8e43",
+          "index": 3,
+          "kind": "sharepoint",
+          "name": "budget-summary.pdf",
+          "outcome": "match",
+          "sha256_rule": "bytes"
+        },
+        {
+          "expected_kind": "backup_content",
+          "expected_sha256": "7951cde1a0e313c1fce94d8271bf9b5f67a601b02ebd80907db0784036fe0246",
+          "export": "exported",
+          "found_sha256": "7951cde1a0e313c1fce94d8271bf9b5f67a601b02ebd80907db0784036fe0246",
+          "index": 4,
+          "kind": "sharepoint",
+          "name": "office-floor-plan.png",
+          "outcome": "match",
+          "sha256_rule": "bytes"
+        },
+        {
+          "expected_kind": "backup_content",
+          "expected_sha256": "89a9f0d1ba70360f335250e508a9f859e8eb67f883a2de1d7d991ea2a022abd9",
+          "export": "exported",
+          "found_sha256": "89a9f0d1ba70360f335250e508a9f859e8eb67f883a2de1d7d991ea2a022abd9",
+          "index": 5,
+          "kind": "sharepoint",
+          "name": "brand-colours-draft.png",
+          "outcome": "match",
+          "sha256_rule": "bytes"
+        },
+        {
+          "expected_kind": "backup_content",
+          "expected_sha256": "a2d69a1b8883dfd250d2e5ba44950e7edac8d20c526d4317fd953c26156c3c4e",
+          "export": "exported",
+          "found_sha256": "a2d69a1b8883dfd250d2e5ba44950e7edac8d20c526d4317fd953c26156c3c4e",
+          "index": 6,
+          "kind": "sharepoint",
+          "name": "room-bookings.xlsx",
+          "outcome": "match",
+          "sha256_rule": "office-v1"
+        },
+        {
+          "expected_kind": "backup_content",
+          "expected_sha256": "100094ac90d10f71f9c1a60cdd06f0d6ea67e82442cca9f2e18f77ac17887bba",
+          "export": "exported",
+          "found_sha256": "100094ac90d10f71f9c1a60cdd06f0d6ea67e82442cca9f2e18f77ac17887bba",
+          "index": 7,
+          "kind": "onedrive",
+          "name": "reading-list.txt",
+          "outcome": "match",
+          "sha256_rule": "bytes"
+        },
+        {
+          "expected_kind": "backup_content",
+          "expected_sha256": "4db1fbcb63b82aeee4ce41086ea5dd244a2798104768cc50a04bb5b9f551cad0",
+          "export": "exported",
+          "found_sha256": "4db1fbcb63b82aeee4ce41086ea5dd244a2798104768cc50a04bb5b9f551cad0",
+          "index": 8,
+          "kind": "onedrive",
+          "name": "travel-notes.txt",
+          "outcome": "match",
+          "sha256_rule": "bytes"
+        },
+        {
+          "expected_kind": "backup_content",
+          "expected_sha256": "b0ecbe97d0828844155e89e2cec42027dfc88e7793de08fe697d97d07fd44879",
+          "export": "exported",
+          "found_sha256": "b0ecbe97d0828844155e89e2cec42027dfc88e7793de08fe697d97d07fd44879",
+          "index": 9,
+          "kind": "onedrive",
+          "name": "expense-report-march.pdf",
+          "outcome": "match",
+          "sha256_rule": "bytes"
+        },
+        {
+          "expected_kind": "backup_content",
+          "expected_sha256": "16237a1cdb3d1cf017cdd6562c085372670631ff5ff7f7f75987b946f01c5e02",
+          "export": "exported",
+          "found_sha256": "16237a1cdb3d1cf017cdd6562c085372670631ff5ff7f7f75987b946f01c5e02",
+          "index": 10,
+          "kind": "onedrive",
+          "name": "course-certificate.pdf",
+          "outcome": "match",
+          "sha256_rule": "bytes"
+        },
+        {
+          "expected_kind": "backup_content",
+          "expected_sha256": "7731653c27df7ff2932094b2f436e82a10bed211898bd250de8076faaf0859ce",
+          "export": "exported",
+          "found_sha256": "7731653c27df7ff2932094b2f436e82a10bed211898bd250de8076faaf0859ce",
+          "index": 11,
+          "kind": "onedrive",
+          "name": "holiday-photo.png",
+          "outcome": "match",
+          "sha256_rule": "bytes"
+        },
+        {
+          "expected_kind": "backup_content",
+          "expected_sha256": "e1f664a2d4736300375c4c58eb1a8c9fe3d94f60ad9decb16584e60168dadff8",
+          "export": "exported",
+          "found_sha256": "e1f664a2d4736300375c4c58eb1a8c9fe3d94f60ad9decb16584e60168dadff8",
+          "index": 12,
+          "kind": "onedrive",
+          "name": "whiteboard-sketch.png",
+          "outcome": "match",
+          "sha256_rule": "bytes"
+        },
+        {
+          "expected_kind": "backup_content",
+          "expected_sha256": "bcf2ef44b8aea4e31ebe161ca93c441f90b3f706d0bd5d5a6ae8907c93df99a1",
+          "export": "exported",
+          "found_sha256": "bcf2ef44b8aea4e31ebe161ca93c441f90b3f706d0bd5d5a6ae8907c93df99a1",
+          "index": 13,
+          "kind": "onedrive",
+          "name": "weekly-status.docx",
+          "outcome": "match",
+          "sha256_rule": "office-v1"
+        }
+      ],
+      "restore": "succeeded",
+      "scenario": "b: one byte changed in the restored copy",
+      "status": {
+        "counts": {
+          "failed": 1,
+          "items": 14,
+          "unchecked": 0,
+          "verified": 13
+        },
+        "failed_items": [
+          0
+        ],
+        "message": "1 of 14 item(s) didn't verify (0 missing, 1 mismatch)",
+        "restore_sent": true,
+        "status": "fail",
+        "unchecked_items": [],
+        "verified": {
+          "backup_content": 13,
+          "fields": 0,
+          "manifest": 0,
+          "metadata": 0
+        },
+        "warnings": []
+      }
+    },
+    {
+      "exports": [
+        {
+          "index": 0,
+          "kind": "sharepoint",
+          "ms": 5046,
+          "outcome": "over_cap",
+          "size_bytes": -1
+        },
+        {
+          "index": 1,
+          "kind": "sharepoint",
+          "ms": 507,
+          "outcome": "over_cap",
+          "size_bytes": -1
+        },
+        {
+          "index": 2,
+          "kind": "sharepoint",
+          "ms": 379,
+          "outcome": "over_cap",
+          "size_bytes": -1
+        },
+        {
+          "index": 3,
+          "kind": "sharepoint",
+          "ms": 378,
+          "outcome": "over_cap",
+          "size_bytes": -1
+        },
+        {
+          "index": 4,
+          "kind": "sharepoint",
+          "ms": 224,
+          "outcome": "over_cap",
+          "size_bytes": -1
+        },
+        {
+          "index": 5,
+          "kind": "sharepoint",
+          "ms": 291,
+          "outcome": "over_cap",
+          "size_bytes": -1
+        },
+        {
+          "index": 6,
+          "kind": "sharepoint",
+          "ms": 276,
+          "outcome": "over_cap",
+          "size_bytes": -1
+        },
+        {
+          "index": 0,
+          "kind": "onedrive",
+          "ms": 272,
+          "outcome": "over_cap",
+          "size_bytes": -1
+        },
+        {
+          "index": 1,
+          "kind": "onedrive",
+          "ms": 280,
+          "outcome": "over_cap",
+          "size_bytes": -1
+        },
+        {
+          "index": 2,
+          "kind": "onedrive",
+          "ms": 321,
+          "outcome": "over_cap",
+          "size_bytes": -1
+        },
+        {
+          "index": 3,
+          "kind": "onedrive",
+          "ms": 290,
+          "outcome": "over_cap",
+          "size_bytes": -1
+        },
+        {
+          "index": 4,
+          "kind": "onedrive",
+          "ms": 337,
+          "outcome": "over_cap",
+          "size_bytes": -1
+        },
+        {
+          "index": 5,
+          "kind": "onedrive",
+          "ms": 242,
+          "outcome": "over_cap",
+          "size_bytes": -1
+        },
+        {
+          "index": 6,
+          "kind": "onedrive",
+          "ms": 474,
+          "outcome": "over_cap",
+          "size_bytes": -1
+        }
+      ],
+      "items": [
+        {
+          "expected_kind": "metadata",
+          "expected_sha256": "",
+          "export": "over_cap",
+          "found_sha256": "",
+          "index": 0,
+          "kind": "sharepoint",
+          "name": "team-meeting-notes.txt",
+          "outcome": "match",
+          "sha256_rule": ""
+        },
+        {
+          "expected_kind": "metadata",
+          "expected_sha256": "",
+          "export": "over_cap",
+          "found_sha256": "",
+          "index": 1,
+          "kind": "sharepoint",
+          "name": "supplier-contacts.txt",
+          "outcome": "match",
+          "sha256_rule": ""
+        },
+        {
+          "expected_kind": "metadata",
+          "expected_sha256": "",
+          "export": "over_cap",
+          "found_sha256": "",
+          "index": 2,
+          "kind": "sharepoint",
+          "name": "project-brief.pdf",
+          "outcome": "match",
+          "sha256_rule": ""
+        },
+        {
+          "expected_kind": "metadata",
+          "expected_sha256": "",
+          "export": "over_cap",
+          "found_sha256": "",
+          "index": 3,
+          "kind": "sharepoint",
+          "name": "budget-summary.pdf",
+          "outcome": "match",
+          "sha256_rule": ""
+        },
+        {
+          "expected_kind": "metadata",
+          "expected_sha256": "",
+          "export": "over_cap",
+          "found_sha256": "",
+          "index": 4,
+          "kind": "sharepoint",
+          "name": "office-floor-plan.png",
+          "outcome": "match",
+          "sha256_rule": ""
+        },
+        {
+          "expected_kind": "metadata",
+          "expected_sha256": "",
+          "export": "over_cap",
+          "found_sha256": "",
+          "index": 5,
+          "kind": "sharepoint",
+          "name": "brand-colours-draft.png",
+          "outcome": "match",
+          "sha256_rule": ""
+        },
+        {
+          "expected_kind": "metadata",
+          "expected_sha256": "",
+          "export": "over_cap",
+          "found_sha256": "",
+          "index": 6,
+          "kind": "sharepoint",
+          "name": "room-bookings.xlsx",
+          "outcome": "match",
+          "sha256_rule": ""
+        },
+        {
+          "expected_kind": "metadata",
+          "expected_sha256": "",
+          "export": "over_cap",
+          "found_sha256": "",
+          "index": 7,
+          "kind": "onedrive",
+          "name": "reading-list.txt",
+          "outcome": "match",
+          "sha256_rule": ""
+        },
+        {
+          "expected_kind": "metadata",
+          "expected_sha256": "",
+          "export": "over_cap",
+          "found_sha256": "",
+          "index": 8,
+          "kind": "onedrive",
+          "name": "travel-notes.txt",
+          "outcome": "match",
+          "sha256_rule": ""
+        },
+        {
+          "expected_kind": "metadata",
+          "expected_sha256": "",
+          "export": "over_cap",
+          "found_sha256": "",
+          "index": 9,
+          "kind": "onedrive",
+          "name": "expense-report-march.pdf",
+          "outcome": "match",
+          "sha256_rule": ""
+        },
+        {
+          "expected_kind": "metadata",
+          "expected_sha256": "",
+          "export": "over_cap",
+          "found_sha256": "",
+          "index": 10,
+          "kind": "onedrive",
+          "name": "course-certificate.pdf",
+          "outcome": "match",
+          "sha256_rule": ""
+        },
+        {
+          "expected_kind": "metadata",
+          "expected_sha256": "",
+          "export": "over_cap",
+          "found_sha256": "",
+          "index": 11,
+          "kind": "onedrive",
+          "name": "holiday-photo.png",
+          "outcome": "match",
+          "sha256_rule": ""
+        },
+        {
+          "expected_kind": "metadata",
+          "expected_sha256": "",
+          "export": "over_cap",
+          "found_sha256": "",
+          "index": 12,
+          "kind": "onedrive",
+          "name": "whiteboard-sketch.png",
+          "outcome": "match",
+          "sha256_rule": ""
+        },
+        {
+          "expected_kind": "metadata",
+          "expected_sha256": "",
+          "export": "over_cap",
+          "found_sha256": "",
+          "index": 13,
+          "kind": "onedrive",
+          "name": "weekly-status.docx",
+          "outcome": "match",
+          "sha256_rule": ""
+        }
+      ],
+      "restore": "succeeded",
+      "scenario": "c: every export over a cap of 1 byte",
+      "status": {
+        "counts": {
+          "failed": 0,
+          "items": 14,
+          "unchecked": 0,
+          "verified": 14
+        },
+        "failed_items": [],
+        "message": "14 of 14 item(s) verified: manifest 0, fields 0, metadata 14, backup_content 0",
+        "restore_sent": true,
+        "status": "pass",
+        "unchecked_items": [],
+        "verified": {
+          "backup_content": 0,
+          "fields": 0,
+          "manifest": 0,
+          "metadata": 14
+        },
+        "warnings": [
+          {
+            "code": "content_export",
+            "indexes": [
+              0,
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8,
+              9,
+              10,
+              11,
+              12,
+              13
+            ],
+            "message": "14 of 14 file(s) couldn't be exported from the backup and were checked by name and size alone (over_cap 14)"
+          }
+        ]
+      }
+    }
+  ]
+}

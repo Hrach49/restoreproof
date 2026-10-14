@@ -234,3 +234,26 @@ token, PFX, PEM and key shapes before it was written (`w4.5-harness/w45-service-
 | [`w4.5-5-other-account.txt`](w4.5-5-other-account.txt) | the issue's manual test, under machine scope: a temporary local non-administrator reads the vault (`can't be read`), reads it once granted `Read` (`ok`: DPAPI decrypts for any account the ACL admits), can't write it (`couldn't be written`), and a vault it wrote in its own folder is refused to the administrator by the ownership rule; a copy on another machine not tried (one machine) |
 | [`w4.5-6-teardown.txt`](w4.5-6-teardown.txt) | the service, its ACEs on the key file and the vault, the spike folder and the probe account taken away again; the lab's `vault.bin` stays, with its five names |
 | [`w4.5-harness/`](w4.5-harness/) | `w45-service-run.ps1`: the W4.12 library reused with an empty pipe (the service gets no variable), the grant, the restore, the teardown and the evidence writer. Kept as text; not run by any test |
+
+## W6.1 spike: Veeam's document export in admin mode
+
+W6.1 (#181, `docs/decisions.md` 2026-10-14; the findings in `docs/api/veeam-notes.md` §12), run
+on 2026-10-14 by `w6.1-harness/w61-live.ps1` from an elevated shell: the live test
+`worker/tests/export_spike_live_test.cpp` (`docs/testing.md`, "The export spike") as `rp-veeam`
+from the vault, on the lab's 14 real files (L1.8: 7 SharePoint, 7 OneDrive; no canary, no mail).
+Text files as the console showed them, the table as JSON, and the test's own Veeam exchanges as
+scrubbed fixtures (the exports as digests: size and SHA-256, never a byte of a file). Every file
+was checked by shape (token, PFX, PEM, key) by the harness before it was copied, by the
+recorder's own scrubber against the vault's values as it was written, by `audit-evidence.ps1 -Path
+..\veeam-lab\w6.1-*` and by `tools/fixture_secret_scan.py` before the commit: no hits. The
+commands print no credential.
+
+| File | What it is |
+|---|---|
+| [`w6.1-1-graph-list-before.txt`](w6.1-1-graph-list-before.txt) | `rpworker graph list` before: the three targets empty |
+| [`w6.1-2-export-spike.txt`](w6.1-2-export-spike.txt) | the test's console: the restore point, the 14 candidates, each export's status, type, length, time and hashes, `asZip`, the session after the exports, the source locations before and after (unchanged), the restore's sessions and items, the export beside the running restore, the read-back and the table |
+| [`w6.1-results.json`](w6.1-results.json) | the same table as the test wrote it: per file the Veeam size, the export (status, type, length, bytes, SHA-256, `office-v1`, ms) and the restored copy (size, SHA-256, `office-v1`), `bytes_equal`, `content_equal`; the notes (`as_zip`, `session_after_exports`, `source_unchanged`, `export_during_restore`, `restore`) |
+| [`w6.1-3-graph-list-hash-after.txt`](w6.1-3-graph-list-hash-after.txt) | `rpworker graph list --hash` right after: the 14 copies as a second tool reads them (bytes SHA-256) |
+| [`w6.1-4-cleanup.txt`](w6.1-4-cleanup.txt) | the live cleanup test emptying the targets, then `graph list` 0 |
+| [`w6.1-recording/`](w6.1-recording/) | the test's own Veeam exchanges, scrubbed as `--record` scrubs them: `veeam/` the sign-in, the organisation, the explore sessions, the listings, the session reads and the Stops; `export/` each `…/save` as a digest |
+| [`w6.1-harness/`](w6.1-harness/) | `w61-live.ps1`: the four steps, the run folder outside the repository, the copy only on success. Kept as text; not run by any test |

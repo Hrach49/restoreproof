@@ -1,0 +1,40 @@
+{
+  "source": "rpworker 0.0.0 w6.1 export spike --record",
+  "request": "POST /v8/Organizations/ff96d072-29e2-4cb4-a155-2590f5473176/explore",
+  "status": 201,
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8",
+    "Location": "/v8/restoresessions/29efce0b-388d-42db-a139-bd70f6dc2edb"
+  },
+  "body": {
+    "id": "29efce0b-388d-42db-a139-bd70f6dc2edb",
+    "name": "SharePoint restore (Entire organization - 10/13/2026 10:00:58 PM)",
+    "organization": "RestoreProofLab.onmicrosoft.com",
+    "type": "Vesp",
+    "creationTime": "2026-10-13T23:38:06.567777Z",
+    "endTime": "9999-12-31T23:59:59.9999999",
+    "state": "Working",
+    "result": "Success",
+    "initiatedBy": "rp-veeam",
+    "scopeName": "",
+    "clientHost": "localhost:4443 (via: [::ffff:127.0.0.1])",
+    "eTag": 1,
+    "_links": {
+      "self": {
+        "href": "/v8/restoresessions/29efce0b-388d-42db-a139-bd70f6dc2edb"
+      },
+      "organization": {
+        "href": "/v8/restoresessions/29efce0b-388d-42db-a139-bd70f6dc2edb/organization"
+      },
+      "restoreSessionEvents": {
+        "href": "/v8/restoresessions/29efce0b-388d-42db-a139-bd70f6dc2edb/events"
+      }
+    }
+  },
+  "request_body": {
+    "dateTime": "2026-10-13T22:00:58.3211091Z",
+    "showAllVersions": false,
+    "showDeleted": false,
+    "type": "Vesp"
+  }
+}
